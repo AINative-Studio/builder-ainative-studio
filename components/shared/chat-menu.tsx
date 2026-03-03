@@ -2,12 +2,11 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { MoreHorizontal, Copy, Trash2, ExternalLink } from 'lucide-react'
+import { MoreHorizontal, Copy, Trash2 } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
@@ -17,7 +16,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 
@@ -100,18 +98,6 @@ export function ChatMenu({ chatId }: ChatMenuProps) {
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem asChild>
-            <a
-              href={`https://v0.app/chat/${chatId}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center"
-            >
-              <ExternalLink className="mr-2 h-4 w-4" />
-              View on v0.dev
-            </a>
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
           <DropdownMenuItem
             onClick={() => setIsDuplicateDialogOpen(true)}
             disabled={isLoading}

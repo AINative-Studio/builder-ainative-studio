@@ -1,5 +1,5 @@
 {
-  "name": "llama-ui",
+  "name": "builder-ainative-studio",
   "version": "1.0.0",
   "private": true,
   "scripts": {
@@ -62,7 +62,6 @@
     "@types/ws": "^8.18.1",
     "@upstash/ratelimit": "^2.0.6",
     "@upstash/redis": "^1.35.1",
-    "@v0-sdk/react": "workspace:*",
     "@vercel/postgres": "^0.10.0",
     "@vitest/coverage-v8": "^3.2.4",
     "adm-zip": "^0.5.16",
@@ -100,7 +99,6 @@
     "tsx": "^4.19.2",
     "unsplash-js": "^7.0.20",
     "use-stick-to-bottom": "^1.1.1",
-    "v0-sdk": "workspace:*",
     "vitest": "^3.2.4",
     "ws": "^8.18.3",
     "zod": "^4.1.1"

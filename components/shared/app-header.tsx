@@ -140,17 +140,17 @@ export function AppHeader({ className = '' }: AppHeaderProps) {
               >
                 Next.js
               </a>{' '}
-              and the{' '}
+              and{' '}
               <a
-                href="https://v0-sdk.dev"
+                href="https://www.anthropic.com/claude"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="underline text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300"
               >
-                v0 SDK
+                Anthropic Claude Sonnet 4
               </a>{' '}
-              to provide a full-featured interface with authentication, database
-              integration, and real-time streaming responses.
+              using a hierarchical multi-agent system to provide intelligent component generation
+              with authentication, database integration, and real-time streaming responses.
             </p>
             <p>
               Try the demo or{' '}

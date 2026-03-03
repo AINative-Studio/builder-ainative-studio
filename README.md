@@ -1,13 +1,13 @@
-# v0 clone
+# AINative Component Builder
 
-> **⚠️ Developer Preview**: This SDK is currently in beta and is subject to change. Use in production at your own risk.
+> **Production Ready**: AI-powered React component builder using Anthropic Claude Sonnet 4 in a hierarchical multi-agent system
 
 <p align="center">
-    <img src="./screenshot.png" alt="v0 Clone Screenshot" width="800" />
+    <img src="./screenshot.png" alt="AINative Component Builder Screenshot" width="800" />
 </p>
 
 <p align="center">
-    An example of how to use the AI Elements to build a v0 clone with authentication and multi-tenant support.
+    Build production-ready React components using AI-powered agents with Claude Sonnet 4
 </p>
 
 <p align="center">
@@ -15,17 +15,55 @@
   <a href="#deploy-your-own"><strong>Deploy Your Own</strong></a> ·
   <a href="#setup"><strong>Setup</strong></a> ·
   <a href="#getting-started"><strong>Getting Started</strong></a> ·
-  <a href="#usage"><strong>Usage</strong></a>
+  <a href="#architecture"><strong>Architecture</strong></a>
 </p>
 <br/>
 
 ## Deploy Your Own
 
-You can deploy your own version of the v0 clone to Vercel with one click:
+You can deploy your own version of AINative Component Builder to Vercel with one click:
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fvercel%2Fv0-sdk%2Ftree%2Fmain%2Fexamples%2Fv0-clone&env=V0_API_KEY,AUTH_SECRET&envDescription=Get+your+v0+API+key&envLink=https%3A%2F%2Fv0.app%2Fchat%2Fsettings%2Fkeys&products=%255B%257B%2522type%2522%253A%2522integration%2522%252C%2522protocol%2522%253A%2522storage%2522%252C%2522productSlug%2522%253A%2522neon%2522%252C%2522integrationSlug%2522%253A%2522neon%2522%257D%255D&project-name=v0-clone&repository-name=v0-clone&demo-title=v0+Clone&demo-description=A+full-featured+v0+clone+built+with+Next.js%2C+AI+Elements%2C+and+the+v0+SDK&demo-url=https%3A%2F%2Fclone-demo.v0-sdk.dev)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FAINative-Studio%2Fbuilder-ainative-studio&env=DATABASE_URL,AUTH_SECRET,ANTHROPIC_API_KEY&envDescription=Required+environment+variables&envLink=https%3A%2F%2Fgithub.com%2FAINative-Studio%2Fbuilder-ainative-studio%23environment-variables&project-name=builder-ainative-studio&repository-name=builder-ainative-studio&demo-title=AINative+Component+Builder&demo-description=AI-powered+React+component+builder+using+Anthropic+Claude+Sonnet+4&skippable-integrations=1)
+
+## Features
+
+### AI-Powered Generation System
+
+- **Hierarchical Multi-Agent Architecture**: 4-tier agent system (Orchestrator + 3 specialized subagents)
+  - **Design Subagent**: Analyzes requirements and creates design specifications
+  - **Code Subagent**: Generates React components from design specs
+  - **Validation Subagent**: Tests and validates generated code
+- **Anthropic Claude Sonnet 4**: Primary model (claude-sonnet-4-20250514) with extended thinking
+- **Extended Thinking**: 2000-token thinking budget for improved quality and reasoning
+- **Template System**: 35 predefined templates with semantic matching
+- **Custom Prompt Support**: Full support for custom component generation from natural language
+- **Memory System**: Anthropic Memory API for cross-conversation context persistence
+
+### Core Features
+
+- **Real-time Preview**: Split-screen interface with chat and live preview panels
+- **Streaming Support**: Real-time AI response streaming with visual feedback
+- **Image Integration**: Unsplash API integration for component imagery
+- **Conversation History**: Maintains chat history throughout the session
+- **Suggestion System**: Helpful prompts to guide users
+
+### Authentication & Multi-Tenant Features
+
+- **Anonymous Access**: Create chats without registration (with rate limits)
+- **Guest Access**: Temporary accounts for persistent sessions
+- **User Registration/Login**: Email/password authentication with secure password hashing
+- **Session Management**: Secure session handling with NextAuth.js
+- **Multi-Tenant Architecture**: Multiple users with isolated data
+- **Ownership Mapping**: Users only see their own chats and projects
+- **Rate Limiting**: Different limits for anonymous, guest, and registered users
 
 ## Setup
+
+### Prerequisites
+
+- Node.js 18+ and pnpm
+- PostgreSQL database
+- Anthropic API key ([Get one here](https://console.anthropic.com/))
 
 ### Environment Variables
 
@@ -38,14 +76,23 @@ Create a `.env` file with all required variables:
 AUTH_SECRET=your-auth-secret-here
 
 # Database URL - PostgreSQL connection string
-POSTGRES_URL=postgresql://user:password@localhost:5432/v0_clone
-# For Vercel Postgres, use the connection string from your dashboard
+DATABASE_URL=postgresql://user:password@localhost:5432/ainative_db
+POSTGRES_URL=postgresql://user:password@localhost:5432/ainative_db
 
-# Get your API key from https://v0.dev/chat/settings/keys
-V0_API_KEY=your_v0_api_key_here
+# Anthropic API Key - Get from https://console.anthropic.com/
+ANTHROPIC_API_KEY=your-anthropic-api-key-here
 
-# Optional: Use a custom API URL
-# V0_API_URL=http://localhost:3001/v1
+# Anthropic Model Configuration
+ANTHROPIC_MODEL=claude-sonnet-4-20250514
+
+# OpenAI API Key (for embeddings and utilities only)
+OPENAI_API_KEY=your-openai-api-key-here
+
+# Unsplash API Key (for image integration)
+UNSPLASH_ACCESS_KEY=your-unsplash-access-key
+
+# Subagents Configuration
+USE_SUBAGENTS=true  # Enable hierarchical multi-agent system
 ```
 
 ### Database Setup
@@ -53,13 +100,11 @@ V0_API_KEY=your_v0_api_key_here
 This project uses PostgreSQL with Drizzle ORM. Set up your database:
 
 1. **Generate Database Schema**:
-
    ```bash
    pnpm db:generate
    ```
 
 2. **Run Database Migrations**:
-
    ```bash
    pnpm db:migrate
    ```
@@ -71,128 +116,173 @@ This project uses PostgreSQL with Drizzle ORM. Set up your database:
 
 ## Getting Started
 
-Then, run the development server:
+1. **Install Dependencies**:
+   ```bash
+   pnpm install
+   ```
 
-```bash
-pnpm dev
-```
+2. **Set Up Environment**:
+   - Copy `.env.example` to `.env`
+   - Add your Anthropic API key
+   - Configure database connection
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+3. **Run Database Migrations**:
+   ```bash
+   pnpm db:migrate
+   ```
 
-## Features
+4. **Start Development Server**:
+   ```bash
+   pnpm dev
+   ```
 
-This v0 clone includes:
-
-### Core Features
-
-- **AI Elements Integration**: Uses AI Elements components for a polished UI
-- **v0 SDK Integration**: Connects to the v0 Platform API for generating apps
-- **Real-time Preview**: Split-screen interface with chat and preview panels
-- **Conversation History**: Maintains chat history throughout the session
-- **Suggestion System**: Provides helpful prompts to get users started
-- **Streaming Support**: Toggle between streaming and non-streaming AI responses for real-time updates
-- **Comprehensive Task Support**: Full support for all v0 Platform API task types including:
-  - `task-thinking-v1` - AI reasoning and thought processes
-  - `task-search-web-v1` - Web search operations with results
-  - `task-search-repo-v1` - Repository/codebase search functionality
-  - `task-diagnostics-v1` - Code analysis and issue detection
-  - `task-read-file-v1` - File reading operations
-  - `task-coding-v1` - Code generation and editing tasks
-  - `task-generate-design-inspiration-v1` - Design inspiration generation
-  - **Graceful fallback** for unknown task types with user-friendly display
-
-### Authentication & Multi-Tenant Features
-
-- **Anonymous Access**: Unauthenticated users can create chats directly (with rate limits)
-- **Guest Access**: Users can register as guests for persistent sessions
-- **User Registration/Login**: Email/password authentication with secure password hashing
-- **Session Management**: Secure session handling with NextAuth.js
-- **Multi-Tenant Architecture**: Multiple users share the same v0 API organization
-- **Ownership Mapping**: Authenticated users only see their own chats and projects
-- **Rate Limiting**: Different limits for anonymous, guest, and registered users
-- **User Navigation**: Header dropdown with user info and sign-out options
-
-## Usage
-
-### Setup
-
-1. Set up all environment variables in `.env`
-2. Run database migrations with `pnpm db:migrate`
-3. Start the development server with `pnpm dev` or production server with `pnpm start`
-
-### Using the App
-
-4. **Anonymous Usage**: Visit the homepage and start creating chats immediately (3 chats/day limit)
-5. **Guest Access**: Register as a guest for persistent sessions (5 chats/day limit)
-6. **Full Account**: Create a permanent account for higher limits (50 chats/day)
-7. Use the "Streaming" toggle in the header to enable/disable real-time streaming responses
-8. Enter a prompt describing the app you want to build
-9. Watch as v0 generates your app in real-time in the preview panel
-10. Continue the conversation to iterate and improve your app
-11. Authenticated users' chats are automatically saved and associated with their account
+5. **Open Application**:
+   Open [http://localhost:3000](http://localhost:3000) to start building components
 
 ## Architecture
 
-### Frontend
+### Multi-Agent System
 
-- `app/page.tsx` - Main UI with chat interface, streaming toggle, and preview panel
-- `components/ai-elements/` - AI Elements components for the UI
-- `components/shared/app-header.tsx` - Navigation header with user authentication
-- Uses `@v0-sdk/react` components for rendering streaming AI responses
+```
+┌─────────────────────────────────────┐
+│   Orchestrator Agent (Cody)        │
+│   - Team leader                     │
+│   - Coordinates workflow            │
+│   - 30 years of experience          │
+└────────────┬────────────────────────┘
+             │
+     ┌───────┴────────┬──────────────┐
+     │                │               │
+┌────▼────┐     ┌────▼─────┐    ┌───▼──────┐
+│ Design  │     │   Code   │    │Validation│
+│Subagent │────▶│ Subagent │───▶│ Subagent │
+└─────────┘     └──────────┘    └──────────┘
+```
 
-### Backend & API
+**Workflow**:
+1. User enters prompt → Orchestrator analyzes request
+2. Design Subagent creates component specification
+3. Code Subagent generates React component code
+4. Validation Subagent tests and validates output
+5. Result streamed back to user in real-time
 
-- `app/api/chat/route.ts` - Chat creation and messaging with ownership tracking
-- `app/api/chats/` - User's chat listing and individual chat access
-- `app/api/projects/` - User's project listing and individual project access
-- `app/(auth)/` - Authentication configuration and login/register pages
+### Technology Stack
 
-### Database
+**Frontend**:
+- Next.js 15 with App Router
+- React 19
+- Tailwind CSS
+- Shadcn/ui Components
+- Monaco Editor for code display
+- Real-time preview rendering
 
-- **Users**: Store user accounts with email and hashed passwords
-- **ProjectOwnership**: Maps v0 API project IDs → user IDs (ownership only)
-- **ChatOwnership**: Maps v0 API chat IDs → user IDs with optional project association
-- **AnonymousChatLog**: Tracks anonymous chat creation by IP address for rate limiting
+**Backend**:
+- Next.js API Routes
+- Anthropic Claude Sonnet 4 API
+- OpenAI API (embeddings only)
+- WebSocket for real-time streaming
+- Drizzle ORM + PostgreSQL
+- NextAuth.js for authentication
 
-### Multi-Tenant Design
+**AI Integration**:
+- Anthropic SDK for Claude integration
+- Tool Use API for structured output
+- Anthropic Memory API for context
+- Extended thinking for quality
+- Prompt caching (90% cost reduction)
 
-- **v0 API as Source of Truth**: All actual chat/project data stays in v0 API
-- **Ownership Layer**: Database only tracks "who owns what"
-- **Access Control**: API routes filter v0 data based on ownership
-- **No Data Duplication**: Avoids storing redundant data
+### Database Schema
 
-### Streaming Implementation
+- **Users**: User accounts with authentication
+- **ProjectOwnership**: Maps projects to users
+- **ChatOwnership**: Maps chats to users
+- **AnonymousChatLog**: Rate limiting for anonymous users
 
-When streaming is enabled:
+### Key Components
 
-- Frontend sends `streaming: true` to the API route
-- API route calls `v0.chats.create({ responseMode: 'experimental_stream' })`
-- Server returns a streaming response with `Content-Type: text/event-stream`
-- Frontend uses `StreamingMessage` component from `@v0-sdk/react` to render responses in real-time
+- `app/page.tsx` - Main UI with chat and preview
+- `app/api/chat-ws/route.ts` - WebSocket endpoint for streaming
+- `lib/agent/subagents.ts` - Multi-agent orchestration
+- `lib/agent/orchestrator.ts` - Main orchestrator logic
+- `components/ai-elements/` - AI UI components
+- `components/shared/` - Shared UI components
 
 ## Database Commands
 
 - `pnpm db:generate` - Generate migration files from schema changes
 - `pnpm db:migrate` - Apply pending migrations
 - `pnpm db:studio` - Open Drizzle Studio for database inspection
-- `pnpm db:push` - Push schema changes directly (for development)
+- `pnpm db:push` - Push schema changes directly (development only)
+
+## Testing
+
+```bash
+# Run all tests
+pnpm test
+
+# Run tests in watch mode
+pnpm test:watch
+
+# Run tests with coverage
+pnpm test:coverage
+
+# Run specific test suites
+pnpm test:unit
+pnpm test:integration
+```
 
 ## Security Features
 
-- Password hashing with bcrypt
-- Secure session cookies
+- Password hashing with bcrypt-ts
+- Secure session cookies with NextAuth.js
 - CSRF protection
 - SQL injection protection via Drizzle ORM
 - User data isolation through ownership mapping
+- Rate limiting for anonymous access
 
 ## User Types & Rate Limits
 
-- **Anonymous Users**: No account needed, 3 chats per day, no data persistence
-- **Guest Users**: Auto-created accounts, 5 chats per day, data persists during session
-- **Registered Users**: Permanent accounts, 50 chats per day, data persists across sessions and devices
+- **Anonymous Users**: No account, 3 chats/day, no persistence
+- **Guest Users**: Auto-created accounts, 5 chats/day, session persistence
+- **Registered Users**: Permanent accounts, 50 chats/day, full features
 
-Rate limits are enforced per 24-hour period and reset daily.
+Rate limits reset every 24 hours.
+
+## Model Configuration
+
+### Primary Model
+- **claude-sonnet-4-20250514**: Used for all component generation
+- Extended thinking enabled (2000 tokens)
+- Prompt caching for cost optimization
+
+### Secondary Models (Utilities Only)
+- **OpenAI text-embedding-ada-002**: Template similarity matching
+- **OpenAI GPT-4**: Translation and utility functions (if configured)
+
+## Agent Profiles
+
+The system uses agent profiles from `~/.claude/agents/`:
+- `cody-team-leader.md` - Orchestrator configuration
+- `ai-product-architect.md` - Design subagent
+- `frontend-ui-builder.md` - Code subagent
+- `qa-bug-hunter.md` - Validation subagent
+
+## Documentation
+
+- [Implementation Plan](./docs/BUILDER_AINATIVE_STUDIO_IMPLEMENTATION_PLAN.md)
+- [Quick Summary](./docs/QUICK_SUMMARY.md)
+- [GitHub Setup](./docs/GITHUB_SETUP_COMPLETE.md)
+
+## Contributing
+
+Contributions are welcome! Please see the issues in the repository for tasks that need work.
+
+## License
+
+MIT License - see LICENSE file for details
 
 ---
 
-You now have a working multi-tenant v0 clone with authentication! Feel free to explore the [v0 Platform API](https://v0.dev/docs/api/platform) and extend your app with additional features.
+**Built with AI by AINative Studio**
+
+Powered by Anthropic Claude Sonnet 4 and Next.js
