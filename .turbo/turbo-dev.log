@@ -1,0 +1,692 @@
+
+> llama-ui@1.0.0 dev /Users/aideveloper/v0-sdk/examples/llama-ui
+> next dev --turbopack
+
+   ▲ Next.js 15.5.0 (Turbopack)
+   - Local:        http://localhost:3000
+   - Network:      http://192.168.170.198:3000
+   - Environments: .env
+
+ ✓ Starting...
+ ✓ Compiled middleware in 151ms
+ ✓ Ready in 980ms
+ ○ Compiling / ...
+ ✓ Compiled / in 2.5s
+[ChatSelector] Rendering with chats: 0 []
+[ChatSelector] Current chat ID: null
+[ChatSelector] Session: undefined
+ GET / 200 in 3007ms
+ ✓ Compiled /favicon.ico in 159ms
+ GET /favicon.ico?favicon.0b3bf435.ico 200 in 178ms
+ GET /favicon.ico?favicon.0b3bf435.ico 200 in 314ms
+ ○ Compiling /api/chats ...
+ ✓ Compiled /api/chats in 518ms
+ GET /api/chats 200 in 636ms
+🗄️  Using PostgreSQL database
+🗄️  Using PostgreSQL database
+ GET /api/auth/session 200 in 1308ms
+ GET /api/auth/session 200 in 236ms
+🗄️  Using PostgreSQL database
+ ✓ Compiled /_not-found/page in 158ms
+ GET /sw.js 404 in 208ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 263ms
+ ✓ Compiled /api/chat-ws in 262ms
+✅ Loaded 27 agent profiles from /Users/aideveloper/.claude/agents
+🤖 Available agent profiles: unknown, ai-product-architect, backend-api-architect, cody-team-leader, cross-platform-developer, data-pipeline-architect, devops-orchestrator, edge-ai-optimizer, frontend-ui-builder, gpu-ml-systems-reviewer, ml-engineering-ops, ml-research-explorer, mobile-devops-orchestrator, mobile-native-builder, mobile-performance-optimizer, qa-bug-hunter, quantum-algorithm-architect, quantum-classical-orchestrator, quantum-hardware-interface, quantum-protocol-engineer, quantum-simulator, sre-reliability-engineer, streaming-media-specialist, system-architect, test-engineer, ux-advocate, xr-spatial-builder
+Starting LLAMA WebSocket-style streaming...
+📋 PRD Analysis: {
+  pages: [ { name: 'Landing Page', route: '/' } ],
+  components: [],
+  features: [],
+  buildSteps: [
+    'Analyzing requirements and architecture...',
+    'Creating Landing Page (/)',
+    'Loading preview environment...'
+  ]
+}
+Fetching Unsplash images for: "business" (from prompt: "Landing page")
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 262ms
+ GET /api/chats 200 in 252ms
+ GET /api/chats 200 in 273ms
+ GET /api/chats 200 in 263ms
+ GET /api/chats 200 in 277ms
+ GET /api/chats 200 in 254ms
+ GET /api/chats 200 in 309ms
+ GET /api/chats 200 in 235ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 271ms
+ GET /api/chats 200 in 239ms
+ GET /api/chats 200 in 285ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 266ms
+ GET /api/chats 200 in 238ms
+
+📊 TOKEN USAGE for y-HtM1oZ-LqC_bKL2-1GN:
+   Input tokens: 2898
+   Output tokens: 6247
+   Cache creation tokens: 6496
+   Total tokens: 9145
+   Estimated cost: $0.1024
+⚠️ Structured output validation failed: [ 'Code contains forbidden gradients' ]
+Preview updated (streaming) for ID: y-HtM1oZ-LqC_bKL2-1GN, length: 16265
+⚠️ Claude generated code with Tailwind gradients - auto-removing: [ 'to-1556740772-1' ]
+⚠️ Minor syntax warning (treating as valid): Unterminated string constant.
+Preview stored with ID: y-HtM1oZ-LqC_bKL2-1GN, total stored: 1
+ POST /api/chat-ws 200 in 80242ms
+ ✓ Compiled in 412ms
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.
+[ChatSelector] Rendering with chats: 0 []
+[ChatSelector] Current chat ID: null
+[ChatSelector] Session: undefined
+ GET / 200 in 761ms
+ GET /favicon.ico?favicon.0b3bf435.ico 200 in 302ms
+ GET /api/chats 200 in 285ms
+ GET /api/auth/session 200 in 283ms
+ GET /favicon.ico?favicon.0b3bf435.ico 200 in 362ms
+ GET /api/auth/session 200 in 228ms
+🗄️  Using PostgreSQL database
+ GET /sw.js 404 in 58ms
+ GET /api/chats 200 in 237ms
+ GET /api/chats 200 in 243ms
+ GET /api/chats 200 in 234ms
+ GET /api/chats 200 in 231ms
+ GET /api/chats 200 in 232ms
+ GET /api/chats 200 in 231ms
+ GET /api/chats 200 in 229ms
+ GET /api/chats 200 in 230ms
+ GET /api/chats 200 in 224ms
+ GET /api/chats 200 in 226ms
+ GET /api/chats 200 in 236ms
+ GET /api/chats 200 in 302ms
+ GET /api/chats 200 in 242ms
+ GET /api/chats 200 in 240ms
+ GET /api/chats 200 in 231ms
+ GET /api/chats 200 in 254ms
+ GET /api/chats 200 in 261ms
+ GET /api/chats 200 in 365ms
+ GET /api/chats 200 in 256ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 266ms
+ GET /api/chats 200 in 254ms
+ GET /api/chats 200 in 242ms
+ GET /api/chats 200 in 294ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 253ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 242ms
+ GET /api/chats 200 in 240ms
+ GET /api/chats 200 in 253ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 254ms
+ GET /api/chats 200 in 263ms
+ GET /api/chats 200 in 235ms
+ GET /api/chats 200 in 242ms
+ GET /api/chats 200 in 241ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 300ms
+ GET /api/chats 200 in 306ms
+ GET /api/chats 200 in 281ms
+ GET /api/chats 200 in 280ms
+ GET /api/chats 200 in 264ms
+ GET /api/chats 200 in 294ms
+ GET /api/chats 200 in 269ms
+ GET /api/chats 200 in 305ms
+ GET /api/chats 200 in 291ms
+ GET /api/chats 200 in 279ms
+ GET /api/chats 200 in 294ms
+ GET /api/chats 200 in 305ms
+ GET /api/chats 200 in 284ms
+ GET /api/chats 200 in 295ms
+ GET /api/chats 200 in 275ms
+ GET /api/chats 200 in 286ms
+ GET /api/chats 200 in 299ms
+ GET /api/chats 200 in 337ms
+ GET /api/chats 200 in 317ms
+ GET /api/chats 200 in 335ms
+ GET /api/chats 200 in 263ms
+ GET /api/chats 200 in 294ms
+ GET /api/chats 200 in 321ms
+ GET /api/chats 200 in 407ms
+ GET /api/chats 200 in 308ms
+ GET /api/chats 200 in 262ms
+ GET /api/chats 200 in 300ms
+ GET /api/chats 200 in 258ms
+ GET /api/chats 200 in 304ms
+ GET /api/chats 200 in 341ms
+ GET /api/chats 200 in 336ms
+ GET /api/chats 200 in 244ms
+ GET /api/chats 200 in 236ms
+Starting LLAMA WebSocket-style streaming...
+📋 PRD Analysis: {
+  pages: [ { name: 'Dashboard', route: '/' } ],
+  components: [],
+  features: [],
+  buildSteps: [
+    'Analyzing requirements and architecture...',
+    'Creating Dashboard (/)',
+    'Loading preview environment...'
+  ]
+}
+Fetching Unsplash images for: "data" (from prompt: "Dashboard")
+ GET /api/chats 200 in 238ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 268ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 252ms
+ GET /api/chats 200 in 242ms
+[ChatSelector] Rendering with chats: 0 []
+[ChatSelector] Current chat ID: null
+[ChatSelector] Session: undefined
+ POST /api/chat-ws 200 in 31604ms
+ GET /?reset=true 200 in 111ms
+ GET /favicon.ico?favicon.0b3bf435.ico 200 in 320ms
+ GET /api/chats 200 in 275ms
+ GET /api/auth/session 200 in 279ms
+ GET /api/auth/session 200 in 269ms
+🗄️  Using PostgreSQL database
+ GET /sw.js 404 in 67ms
+ GET /api/chats 200 in 254ms
+ GET /api/chats 200 in 241ms
+ ○ Compiling /login ...
+ ✓ Compiled /login in 684ms
+🗄️  Using PostgreSQL database
+ GET /login 200 in 821ms
+[Auth] Attempting AINative authentication for: admin@ainative.studio
+[AINative Auth] Login failed: 500
+[Auth] Falling back to local database authentication
+ GET /?refresh=session 200 in 41ms
+ POST /login 303 in 1246ms
+ GET /api/chats 200 in 237ms
+ GET /api/auth/session 200 in 252ms
+ GET /api/chats 200 in 248ms
+ GET /api/auth/session 200 in 251ms
+🗄️  Using PostgreSQL database
+ GET /api/chats 200 in 231ms
+
+📊 TOKEN USAGE for LghAagnJwCxldelurTS7E:
+   Input tokens: 3782
+   Output tokens: 5921
+   Cache creation tokens: 6446
+   Total tokens: 9703
+   Estimated cost: $0.1002
+⚠️ Structured output validation failed: [ "Variable 'assignees' used in .map() but not defined" ]
+Preview updated (streaming) for ID: LghAagnJwCxldelurTS7E, length: 16409
+Preview stored with ID: LghAagnJwCxldelurTS7E, total stored: 2
+Streaming error: TypeError: Invalid state: Controller is already closed
+    at Object.start (app/api/chat-ws/route.ts:444:22)
+  442 |           }
+  443 |
+> 444 |           controller.close()
+      |                      ^
+  445 |         } catch (error) {
+  446 |           console.error('Streaming error:', error)
+  447 |           safeEnqueue(encoder.encode(`data: ${JSON.stringify({ {
+  code: 'ERR_INVALID_STATE'
+}
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 242ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 243ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 242ms
+ GET /api/chats 200 in 240ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 267ms
+ GET /api/chats 200 in 244ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 254ms
+ GET /api/chats 200 in 241ms
+ GET /api/chats 200 in 257ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 256ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 271ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 252ms
+ GET /api/chats 200 in 259ms
+ GET /api/chats 200 in 242ms
+ GET /api/chats 200 in 244ms
+ GET /api/chats 200 in 242ms
+ GET /api/chats 200 in 252ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 252ms
+ GET /api/chats 200 in 242ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 262ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 239ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 264ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 240ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 243ms
+ GET /api/chats 200 in 257ms
+ GET /api/chats 200 in 255ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 240ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 243ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 270ms
+ GET /api/chats 200 in 252ms
+ GET /api/chats 200 in 255ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 243ms
+ GET /api/chats 200 in 258ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 241ms
+ GET /api/chats 200 in 244ms
+ GET /api/chats 200 in 243ms
+ GET /api/chats 200 in 241ms
+ GET /api/chats 200 in 244ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 253ms
+ GET /api/chats 200 in 240ms
+ GET /api/chats 200 in 288ms
+ GET /api/chats 200 in 261ms
+ GET /api/chats 200 in 266ms
+ GET /api/chats 200 in 296ms
+ GET /api/chats 200 in 289ms
+ GET /api/chats 200 in 286ms
+ GET /api/chats 200 in 296ms
+ GET /api/chats 200 in 295ms
+ GET /api/chats 200 in 323ms
+ GET /api/chats 200 in 275ms
+ GET /api/chats 200 in 275ms
+ GET /api/chats 200 in 259ms
+ GET /api/chats 200 in 260ms
+ GET /api/chats 200 in 333ms
+ GET /api/chats 200 in 280ms
+ GET /api/chats 200 in 263ms
+ GET /api/chats 200 in 317ms
+ GET /api/chats 200 in 277ms
+ GET /api/chats 200 in 301ms
+ GET /api/chats 200 in 295ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 236ms
+ GET /api/chats 200 in 255ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 244ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 243ms
+ GET /api/chats 200 in 273ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 277ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 258ms
+ GET /api/chats 200 in 275ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 260ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 243ms
+ GET /api/chats 200 in 252ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 243ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 253ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 256ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 252ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 252ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 252ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 244ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 244ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 241ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 252ms
+ GET /api/chats 200 in 252ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 244ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 253ms
+ GET /api/chats 200 in 279ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 257ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 252ms
+ GET /api/chats 200 in 252ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 254ms
+ GET /api/chats 200 in 264ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 252ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 253ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 240ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 244ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 271ms
+ GET /api/chats 200 in 437ms
+ GET /api/chats 200 in 388ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 283ms
+ GET /api/chats 200 in 254ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 241ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 934ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 259ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 242ms
+ GET /api/chats 200 in 234ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 244ms
+ GET /api/chats 200 in 276ms
+ GET /api/chats 200 in 254ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 255ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 235ms
+ GET /api/chats 200 in 1073ms
+ GET /api/chats 200 in 797ms
+ GET /api/chats 200 in 257ms
+ GET /api/chats 200 in 242ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 243ms
+ GET /api/chats 200 in 272ms
+ GET /api/chats 200 in 237ms
+ GET /api/chats 200 in 243ms
+ GET /api/chats 200 in 244ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 239ms
+ GET /api/chats 200 in 243ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 244ms
+ GET /api/chats 200 in 244ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 242ms
+ GET /api/chats 200 in 255ms
+ GET /api/chats 200 in 261ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 243ms
+ GET /api/chats 200 in 300ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 2875ms
+ GET /api/chats 200 in 313ms
+ GET /api/chats 200 in 552ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 255ms
+ GET /api/chats 200 in 267ms
+ GET /api/chats 200 in 267ms
+ GET /api/chats 200 in 257ms
+ GET /api/chats 200 in 265ms
+ GET /api/chats 200 in 252ms
+ GET /api/chats 200 in 264ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 244ms
+ GET /api/chats 200 in 256ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 266ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 240ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 255ms
+ GET /api/chats 200 in 261ms
+ GET /api/chats 200 in 385ms
+ GET /api/chats 200 in 287ms
+ GET /api/chats 200 in 252ms
+ GET /api/chats 200 in 253ms
+ GET /api/chats 200 in 257ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 331ms
+ GET /api/chats 200 in 239ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 241ms
+ GET /api/chats 200 in 242ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 260ms
+ GET /api/chats 200 in 244ms
+ GET /api/chats 200 in 254ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 236ms
+ GET /api/chats 200 in 244ms
+ GET /api/chats 200 in 259ms
+ GET /api/chats 200 in 241ms
+ GET /api/chats 200 in 284ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 237ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 244ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 244ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 242ms
+ GET /api/chats 200 in 243ms
+ GET /api/chats 200 in 239ms
+ GET /api/chats 200 in 266ms
+ GET /api/chats 200 in 252ms
+ GET /api/chats 200 in 243ms
+ GET /api/chats 200 in 243ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 252ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 240ms
+ GET /api/chats 200 in 240ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 236ms
+ GET /api/chats 200 in 237ms
+ GET /api/chats 200 in 240ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 236ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 243ms
+ GET /api/chats 200 in 242ms
+ GET /api/chats 200 in 237ms
+ GET /api/chats 200 in 403ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 252ms
+ GET /api/chats 200 in 237ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 238ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 243ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 253ms
+ GET /api/chats 200 in 239ms
+ GET /api/chats 200 in 262ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 236ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 237ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 240ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 253ms
+ GET /api/chats 200 in 240ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 243ms
+ GET /api/chats 200 in 244ms
+ GET /api/chats 200 in 237ms
+ GET /api/chats 200 in 238ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 239ms
+ GET /api/chats 200 in 238ms
+ GET /api/chats 200 in 237ms
+ GET /api/chats 200 in 238ms
+ GET /api/chats 200 in 254ms
+ GET /api/chats 200 in 252ms
+ GET /api/chats 200 in 266ms
+ GET /api/chats 200 in 243ms
+ GET /api/chats 200 in 236ms
+ GET /api/chats 200 in 233ms
+ GET /api/chats 200 in 236ms
+ GET /api/chats 200 in 240ms
+ GET /api/chats 200 in 244ms
+ GET /api/chats 200 in 240ms
+ GET /api/chats 200 in 237ms
+ GET /api/chats 200 in 239ms
+ GET /api/chats 200 in 237ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 240ms
+ GET /api/chats 200 in 244ms
+ GET /api/chats 200 in 236ms
+ GET /api/chats 200 in 238ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 239ms
+ GET /api/chats 200 in 242ms
+ GET /api/chats 200 in 235ms
+ GET /api/chats 200 in 246ms
+ GET /api/chats 200 in 331ms
+ GET /api/chats 200 in 882ms
+ GET /api/chats 200 in 239ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 243ms
+ GET /api/chats 200 in 261ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 243ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 251ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 249ms
+ GET /api/chats 200 in 355ms
+ GET /api/chats 200 in 247ms
+ GET /api/chats 200 in 235ms
+ GET /api/chats 200 in 240ms
+ GET /api/chats 200 in 233ms
+ GET /api/chats 200 in 238ms
+ GET /api/chats 200 in 386ms
+ GET /api/chats 200 in 237ms
+ GET /api/chats 200 in 242ms
+ GET /api/chats 200 in 261ms
+ GET /api/chats 200 in 289ms
+ GET /api/chats 200 in 252ms
+ GET /api/chats 200 in 255ms
+ GET /api/chats 200 in 243ms
+ GET /api/chats 200 in 260ms
+ GET /api/chats 200 in 248ms
+ GET /api/chats 200 in 244ms
+ GET /api/chats 200 in 250ms
+ GET /api/chats 200 in 241ms
+ GET /api/chats 200 in 242ms
+ GET /api/chats 200 in 245ms
+ GET /api/chats 200 in 239ms
+ GET /api/chats 200 in 240ms
+ GET /api/chats 200 in 291ms
+ GET /api/chats 200 in 270ms
+ GET /api/chats 200 in 244ms
+ GET /api/chats 200 in 247ms

@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>React Render Test</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/shadcn-components.js"></script>
+    <style>
+      body { margin: 0; font-family: system-ui, sans-serif; background: #f5f5f5; }
+      .status { padding: 20px; background: white; margin: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+      .success { color: #10b981; }
+      .error { color: #ef4444; }
+    </style>
+</head>
+<body>
+    <div class="status">
+      <h2>React Render Test</h2>
+      <p id="status">Initializing...</p>
+    </div>
+    <div id="root"></div>
+
+    <script type="text/babel">
+      const statusEl = document.getElementById('status');
+
+      function updateStatus(msg, isError = false) {
+        console.log('[Test]', msg);
+        statusEl.innerHTML += `<br/><span class="${isError ? 'error' : 'success'}">${msg}</span>`;
+      }
+
+      try {
+        updateStatus('✓ Script executing');
+
+        const { useState } = React;
+        updateStatus('✓ React hooks loaded');
+
+        const { Button, Card, CardContent } = window.ShadcnComponents || {};
+        updateStatus(`✓ Shadcn components: Button=${!!Button}, Card=${!!Card}`);
+
+        // Simple test component
+        function SimpleTest() {
+          const [count, setCount] = useState(0);
+          return (
+            <div style={{ padding: '20px' }}>
+              <h1>Simple Counter</h1>
+              <p>Count: {count}</p>
+              <button onClick={() => setCount(count + 1)} style={{
+                padding: '10px 20px',
+                background: '#3b82f6',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer'
+              }}>
+                Increment
+              </button>
+            </div>
+          );
+        }
+
+        updateStatus('✓ Component defined');
+
+        const rootEl = document.getElementById('root');
+        const root = ReactDOM.createRoot(rootEl);
+        updateStatus('✓ React root created');
+
+        root.render(React.createElement(SimpleTest));
+        updateStatus('✓ Render called');
+
+        setTimeout(() => {
+          const content = rootEl.innerHTML;
+          if (content && content.trim()) {
+            updateStatus(`✓ SUCCESS! Content rendered (${content.length} chars)`);
+          } else {
+            updateStatus('✗ FAILED! Root is still empty', true);
+          }
+        }, 200);
+
+      } catch (error) {
+        updateStatus(`✗ ERROR: ${error.message}`, true);
+        console.error('[Test] Error:', error);
+      }
+    </script>
+</body>
+</html>
