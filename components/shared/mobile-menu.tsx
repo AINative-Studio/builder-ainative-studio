@@ -6,8 +6,8 @@ import { usePathname } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { Menu, X, Info, LayoutTemplate } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { GitHubIcon, VercelIcon } from '@/components/ui/icons'
-import { DEPLOY_URL, RAILWAY_DEPLOY_URL } from '@/lib/constants'
+import { GitHubIcon } from '@/components/ui/icons'
+import { RAILWAY_DEPLOY_URL } from '@/lib/constants'
 import { ChatSelector } from './chat-selector'
 import {
   Dialog,
@@ -172,29 +172,6 @@ export function MobileMenu({ onInfoDialogOpen }: MobileMenuProps) {
                     asChild
                   >
                     <Link
-                      href={DEPLOY_URL}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={closeMenu}
-                    >
-                      <div className="flex items-center gap-3 w-full">
-                        <VercelIcon size={16} />
-                        <div className="flex-1">
-                          <div className="font-medium">Deploy to Vercel</div>
-                          <div className="text-sm text-muted-foreground">
-                            Get your own AI Builder
-                          </div>
-                        </div>
-                      </div>
-                    </Link>
-                  </Button>
-
-                  <Button
-                    variant="ghost"
-                    className="w-full justify-start h-auto p-3 text-left"
-                    asChild
-                  >
-                    <Link
                       href={RAILWAY_DEPLOY_URL}
                       target="_blank"
                       rel="noopener noreferrer"
@@ -205,7 +182,7 @@ export function MobileMenu({ onInfoDialogOpen }: MobileMenuProps) {
                         <div className="flex-1">
                           <div className="font-medium">Deploy to Railway</div>
                           <div className="text-sm text-muted-foreground">
-                            Alternative deployment option
+                            Get your own AI Builder
                           </div>
                         </div>
                       </div>

@@ -695,16 +695,16 @@ NEXT_PUBLIC_APP_NAME="AINative Builder"
 NEXT_PUBLIC_APP_URL="https://builder.ainative.studio"
 ```
 
-**Vercel Deployment:**
+**Deployment:**
+Deploy to any Next.js-compatible hosting platform (Railway, Vercel, Netlify, etc.):
 ```bash
-# Install Vercel CLI
-pnpm add -g vercel
+# Build for production
+pnpm build
 
-# Deploy
-cd /Users/aideveloper/builder-ainative-studio
-vercel --prod
+# Start production server
+pnpm start
 
-# Set environment variables in Vercel dashboard
+# Set environment variables in your hosting platform dashboard
 ```
 
 ---

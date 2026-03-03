@@ -120,7 +120,7 @@
 
 #### **Issue #13: Production Deployment Configuration**
 - **Deploy to:** builder.ainative.studio
-- **Platform:** Vercel
+- **Platform:** Railway, Vercel, Netlify, or any Next.js host
 - **Monitoring:** Token usage, generation time, errors
 - **Link:** https://github.com/AINative-Studio/builder-ainative-studio/issues/13
 

@@ -21,9 +21,7 @@
 
 ## Deploy Your Own
 
-You can deploy your own version of AINative Component Builder to Vercel with one click:
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FAINative-Studio%2Fbuilder-ainative-studio&env=DATABASE_URL,AUTH_SECRET,ANTHROPIC_API_KEY&envDescription=Required+environment+variables&envLink=https%3A%2F%2Fgithub.com%2FAINative-Studio%2Fbuilder-ainative-studio%23environment-variables&project-name=builder-ainative-studio&repository-name=builder-ainative-studio&demo-title=AINative+Component+Builder&demo-description=AI-powered+React+component+builder+using+Anthropic+Claude+Sonnet+4&skippable-integrations=1)
+Deploy your own instance of AINative Component Builder to any hosting platform that supports Next.js applications.
 
 ## Features
 
@@ -72,7 +70,6 @@ Create a `.env` file with all required variables:
 ```bash
 # Auth Secret - Generate a random string for production
 # Generate with: openssl rand -base64 32
-# Or visit: https://generate-secret.vercel.app/32
 AUTH_SECRET=your-auth-secret-here
 
 # Database URL - PostgreSQL connection string
