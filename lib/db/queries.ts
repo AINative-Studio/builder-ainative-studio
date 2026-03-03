@@ -83,32 +83,32 @@ export async function createGuestUser(): Promise<User[]> {
 
 // Chat ownership functions
 export async function createChatOwnership({
-  v0ChatId,
+  chatId,
   userId,
 }: {
-  v0ChatId: string
+  chatId: string
   userId: string
 }) {
   try {
     return await db
       .insert(chat_ownerships)
       .values({
-        v0_chat_id: v0ChatId,
+        chat_id: chatId,
         user_id: userId,
       })
-      .onConflictDoNothing({ target: chat_ownerships.v0_chat_id })
+      .onConflictDoNothing({ target: chat_ownerships.chat_id })
   } catch (error) {
     console.error('Failed to create chat ownership in database')
     throw error
   }
 }
 
-export async function getChatOwnership({ v0ChatId }: { v0ChatId: string }) {
+export async function getChatOwnership({ chatId }: { chatId: string }) {
   try {
     const [ownership] = await db
       .select()
       .from(chat_ownerships)
-      .where(eq(chat_ownerships.v0_chat_id, v0ChatId))
+      .where(eq(chat_ownerships.chat_id, chatId))
     return ownership
   } catch (error) {
     console.error('Failed to get chat ownership from database')
@@ -123,23 +123,23 @@ export async function getChatIdsByUserId({
 }): Promise<string[]> {
   try {
     const ownerships = await db
-      .select({ v0ChatId: chat_ownerships.v0_chat_id })
+      .select({ chatId: chat_ownerships.chat_id })
       .from(chat_ownerships)
       .where(eq(chat_ownerships.user_id, userId))
       .orderBy(desc(chat_ownerships.created_at))
 
-    return ownerships.map((o: { v0ChatId: string }) => o.v0ChatId)
+    return ownerships.map((o: { chatId: string }) => o.chatId)
   } catch (error) {
     console.error('Failed to get chat IDs by user from database')
     throw error
   }
 }
 
-export async function deleteChatOwnership({ v0ChatId }: { v0ChatId: string }) {
+export async function deleteChatOwnership({ chatId }: { chatId: string }) {
   try {
     return await db
       .delete(chat_ownerships)
-      .where(eq(chat_ownerships.v0_chat_id, v0ChatId))
+      .where(eq(chat_ownerships.chat_id, chatId))
   } catch (error) {
     console.error('Failed to delete chat ownership from database')
     throw error
@@ -203,15 +203,15 @@ export async function getChatCountByIP({
 
 export async function createAnonymousChatLog({
   ipAddress,
-  v0ChatId,
+  chatId,
 }: {
   ipAddress: string
-  v0ChatId: string
+  chatId: string
 }) {
   try {
     return await db.insert(anonymous_chat_logs).values({
       ip_address: ipAddress,
-      v0_chat_id: v0ChatId,
+      chat_id: chatId,
     })
   } catch (error) {
     console.error('Failed to create anonymous chat log in database')
