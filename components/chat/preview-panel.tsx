@@ -6,12 +6,13 @@ import {
   WebPreviewUrl,
   WebPreviewBody,
 } from '@/components/ai-elements/web-preview'
-import { RefreshCw, Monitor, Maximize, Minimize, Download, Rocket, Code } from 'lucide-react'
+import { RefreshCw, Monitor, Maximize, Minimize, Download, Rocket, Code, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ExportButton } from '@/components/export-button'
 import { DeployDialog } from '@/components/deploy-dialog'
 import { Button } from '@/components/ui/button'
 import { CodeViewer } from '@/components/chat/code-viewer'
+import { A2UIPreviewWithFallback } from '@/components/a2ui'
 
 interface Chat {
   id: string
@@ -41,6 +42,7 @@ export function PreviewPanel({
   const [showDeployDialog, setShowDeployDialog] = useState(false)
   const [showCodeViewer, setShowCodeViewer] = useState(false)
   const [progress, setProgress] = useState(0)
+  const [useA2UI, setUseA2UI] = useState(false)
 
   // Simulate progress based on build steps
   React.useEffect(() => {
@@ -90,6 +92,14 @@ export function PreviewPanel({
             <Code className="h-4 w-4" />
           </WebPreviewNavigationButton>
 
+          <WebPreviewNavigationButton
+            onClick={() => setUseA2UI(!useA2UI)}
+            tooltip={useA2UI ? 'Switch to static preview' : 'Enable A2UI dynamic preview'}
+            disabled={!currentChat?.id}
+          >
+            <Zap className={cn('h-4 w-4', useA2UI && 'text-blue-600')} />
+          </WebPreviewNavigationButton>
+
           <WebPreviewUrl
             readOnly
             placeholder="Your app will appear here..."
@@ -137,6 +147,26 @@ export function PreviewPanel({
                 isOpen={showCodeViewer}
                 onClose={() => setShowCodeViewer(false)}
                 chatId={currentChat?.id || null}
+              />
+            ) : useA2UI ? (
+              <A2UIPreviewWithFallback
+                chatId={currentChat.id}
+                enableA2UI={true}
+                fallbackSrc={
+                  currentChat.demo.startsWith('/preview/')
+                    ? `/api${currentChat.demo}`
+                    : currentChat.demo.startsWith('/api/preview/')
+                    ? currentChat.demo
+                    : currentChat.demo
+                }
+                showControls={false}
+                showStatus={true}
+                className="w-full h-full"
+                onError={(error) => {
+                  console.error('[PreviewPanel] A2UI Error:', error)
+                  // Auto-fallback to static preview on error
+                  setUseA2UI(false)
+                }}
               />
             ) : (
               <WebPreviewBody
