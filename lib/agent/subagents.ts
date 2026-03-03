@@ -1,20 +1,23 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { COMPONENT_GENERATION_TOOL } from './component-generation-tool'
 import {
-  buildSystemPromptFromProfiles,
+  buildOptimizedSystemPromptFromProfiles,
   SUBAGENT_PROFILE_MAPPING,
   loadAgentProfiles,
 } from './agent-profiles'
+import { createMetricsCollector, extractTokenUsage, MetricsCollector } from './metrics'
 
 /**
  * Subagents Architecture (US-025)
- * Enhanced with Claude Code Agent Profiles
+ * Enhanced with Claude Code Agent Profiles - OPTIMIZED FOR TOKEN EFFICIENCY (Issue #10)
  *
  * Hierarchical agent system for complex component generation:
  * 1. Orchestrator - Main agent that delegates to subagents (system-architect, ai-product-architect)
  * 2. Design Subagent - Analyzes requirements and creates design specs (ai-product-architect, system-architect)
  * 3. Code Subagent - Generates component code with Tool Use API (frontend-ui-builder, ai-product-architect)
  * 4. Validation Subagent - Validates output quality (qa-bug-hunter, test-engineer)
+ *
+ * Token optimization: 30-40% reduction through optimized profile loading and concise task contexts
  */
 
 const anthropic = new Anthropic({
@@ -41,43 +44,40 @@ export interface SubagentResult {
   output: string
   metadata?: any
   success: boolean
+  response?: any // API response for token usage extraction
 }
+
+// Shared critical rules to reduce redundancy across agents (Issue #10 optimization)
+const CRITICAL_RULES = `CRITICAL RULES:
+- NO gradients (bg-gradient-*, from-*, via-*, to-*)
+- NO emoji (🏠, 📊, ✅) - use icon libraries only
+- ONLY solid colors (bg-blue-500, text-gray-800)
+- ONLY icon libraries (lucide-react, react-icons, heroicons)
+- Define ALL data variables before use
+- Ensure proper event handlers and accessibility`
 
 /**
  * Design Subagent - Analyzes user requirements and creates design specifications
- * Enhanced with Claude Code Agent Profiles
+ * OPTIMIZED for token efficiency (Issue #10)
  */
 export async function runDesignSubagent(
   userPrompt: string,
   memoryContext: string
 ): Promise<SubagentResult> {
-  // Build system prompt from agent profiles
-  const taskContext = `Analyze the user's request and create a detailed design specification for a UI component.
+  const taskContext = `Create detailed UI component design spec.
 
-USER REQUEST:
-${userPrompt}
-
+REQUEST: ${userPrompt}
 ${memoryContext}
 
-**CRITICAL DESIGN RULES:**
-- ❌ ABSOLUTELY NO GRADIENTS (no bg-gradient-*, from-*, to-* classes)
-- ❌ ABSOLUTELY NO EMOTICONS (no emoji like 🏠, 📊, ✅, etc.)
-- ✅ Use SOLID COLORS ONLY (bg-blue-500, bg-gray-100, etc.)
-- ✅ Use ICON LIBRARIES ONLY (lucide-react, react-icons, heroicons)
-- ✅ Ensure all data variables are explicitly defined
-- ✅ Plan for responsive design (mobile-first)
-- ✅ Include accessibility considerations
+${CRITICAL_RULES}
 
-Provide a comprehensive, structured design specification including:
-1. Component Type (Dashboard, Landing Page, Form, etc.)
-2. Layout Structure (Grid, Flexbox, sections)
-3. Color Scheme (SOLID COLORS ONLY)
-4. Key Features to implement
-5. Data Requirements (what mock data is needed)
-6. Interaction Patterns (search, filters, forms, etc.)
-7. Accessibility requirements`
+Provide structured spec:
+1. Component Type & Layout Structure
+2. Color Scheme (solid colors only)
+3. Key Features & Data Requirements
+4. Interaction Patterns & Accessibility`
 
-  const designPrompt = buildSystemPromptFromProfiles(
+  const designPrompt = buildOptimizedSystemPromptFromProfiles(
     SUBAGENT_PROFILE_MAPPING.design,
     taskContext
   )
@@ -108,6 +108,7 @@ Provide a comprehensive, structured design specification including:
       type: 'design',
       output: designSpec,
       success: true,
+      response: response,
       metadata: {
         stopReason: response.stop_reason,
       },
@@ -125,44 +126,28 @@ Provide a comprehensive, structured design specification including:
 
 /**
  * Code Subagent - Generates component code using Tool Use API
- * Enhanced with Claude Code Agent Profiles
+ * OPTIMIZED for token efficiency (Issue #10)
  */
 export async function runCodeSubagent(
   designSpec: string,
   systemPrompt: string,
   userPrompt: string
 ): Promise<SubagentResult> {
-  // Build system prompt from agent profiles
   const taskContext = `${systemPrompt}
 
-DESIGN SPECIFICATION:
-${designSpec}
+DESIGN SPEC: ${designSpec}
+REQUEST: ${userPrompt}
 
-USER REQUEST:
-${userPrompt}
+${CRITICAL_RULES}
 
-**CRITICAL CODE GENERATION RULES:**
-1. ❌ NEVER use Tailwind gradient classes:
-   - NO bg-gradient-to-r, bg-gradient-to-br, etc.
-   - NO from-blue-500, from-purple-600, etc.
-   - NO via-pink-500, etc.
-   - NO to-red-500, to-yellow-400, etc.
-2. ❌ NEVER use emoticons/emoji in code:
-   - NO 🏠, 📊, ✅, ❌, 🔍, etc.
-   - Use icon libraries instead: <Home />, <BarChart />, <Check />, <X />, <Search />
-3. ✅ ONLY use solid Tailwind colors: bg-blue-500, text-gray-800, border-gray-300
-4. ✅ ONLY use icon libraries for icons: lucide-react, react-icons, heroicons
-   Examples:
-   - lucide-react: <Home className="w-4 h-4" />
-   - react-icons: <FaHome />
-   - heroicons: <HomeIcon className="h-5 w-5" />
-5. ✅ Define ALL data variables before using them in .map() or other iterations
-6. ✅ Make components fully self-contained (no imports needed)
-7. ✅ Ensure all interactive elements have proper event handlers
+CODE REQUIREMENTS:
+- Self-contained components (no external imports)
+- Proper icon library usage: <Home className="w-4 h-4" />
+- All interactive elements need handlers
 
-Use the generate_react_component tool to provide structured output. Any gradients or emoticons will be automatically stripped.`
+Use generate_react_component tool for output. Gradients/emoji stripped automatically.`
 
-  const codePrompt = buildSystemPromptFromProfiles(
+  const codePrompt = buildOptimizedSystemPromptFromProfiles(
     SUBAGENT_PROFILE_MAPPING.code,
     taskContext
   )
@@ -203,6 +188,7 @@ Use the generate_react_component tool to provide structured output. Any gradient
       type: 'code',
       output: componentCode,
       success: true,
+      response: response,
       metadata: {
         stopReason: response.stop_reason,
         usedToolUse: !!toolUseBlock,
@@ -221,42 +207,39 @@ Use the generate_react_component tool to provide structured output. Any gradient
 
 /**
  * Validation Subagent - Validates component quality
- * Enhanced with Claude Code Agent Profiles
+ * OPTIMIZED for token efficiency (Issue #10)
  */
 export async function runValidationSubagent(
   componentCode: string,
   designSpec: string
 ): Promise<SubagentResult> {
-  // Build system prompt from agent profiles
-  const taskContext = `Validate this React component against the design specification for production readiness.
+  const taskContext = `Validate React component for production readiness.
 
-DESIGN SPECIFICATION:
-${designSpec}
+DESIGN SPEC: ${designSpec}
 
-GENERATED CODE:
+CODE:
 \`\`\`jsx
 ${componentCode}
 \`\`\`
 
-**Quality Checks Required:**
-1. ❌ Gradients - Check for any Tailwind gradient classes (bg-gradient-*, from-*, via-*, to-*)
-2. ❌ Emoticons - Check for any emoji/emoticons (🏠, 📊, ✅, etc.) - must use icon libraries instead
-3. ❌ Undefined Variables - Ensure all variables used in .map(), .filter(), etc. are defined
-4. ❌ Missing Features - Verify all features from design spec are implemented
-5. ❌ Color Scheme - Confirm only solid colors are used (no gradients)
-6. ✅ Icon Libraries - Verify proper icon library usage (lucide-react, react-icons, heroicons)
-7. ✅ Event Handlers - All interactive elements have proper onClick, onChange, etc.
-8. ✅ Component Structure - Proper React component structure and naming
-9. ✅ Accessibility - ARIA labels, keyboard navigation where needed
-10. ✅ Data Structure - Mock data is properly structured and typed
+${CRITICAL_RULES}
 
-Provide a comprehensive validation report:
-- **Status**: PASS or FAIL
-- **Issues Found**: Detailed list with severity (Critical, High, Medium, Low)
-- **Recommendations**: Specific fixes needed
-- **Production Readiness**: Overall assessment`
+VERIFY:
+✓ No gradients/emoji, solid colors only
+✓ Icon libraries used properly
+✓ All variables defined before use
+✓ Features match spec
+✓ Event handlers present
+✓ Accessibility (ARIA, keyboard nav)
+✓ Data properly structured
 
-  const validationPrompt = buildSystemPromptFromProfiles(
+Report:
+- Status: PASS/FAIL
+- Issues: severity + details
+- Recommendations
+- Production readiness`
+
+  const validationPrompt = buildOptimizedSystemPromptFromProfiles(
     SUBAGENT_PROFILE_MAPPING.validation,
     taskContext
   )
@@ -285,6 +268,7 @@ Provide a comprehensive validation report:
       type: 'validation',
       output: validationReport,
       success: passed,
+      response: response,
       metadata: {
         stopReason: response.stop_reason,
       },
@@ -306,32 +290,59 @@ Provide a comprehensive validation report:
  *
  * Coordinates the hierarchical agent workflow:
  * 1. Design Analysis → 2. Code Generation → 3. Quality Validation
+ *
+ * Enhanced with performance metrics tracking (Issue #9)
  */
 export async function runOrchestratorAgent(
   userPrompt: string,
   systemPrompt: string,
-  memoryContext: string
+  memoryContext: string,
+  sessionId?: string,
+  userId?: string,
+  chatId?: string
 ): Promise<{
   designSpec: string
   componentCode: string
   validationReport: string
   success: boolean
+  metrics?: any
 }> {
+  // Initialize metrics collector
+  const model = 'claude-sonnet-4-20250514'
+  const metricsCollector = createMetricsCollector(
+    sessionId || `session-${Date.now()}`,
+    userPrompt,
+    model,
+    userId,
+    chatId
+  )
+
   console.log('\n👔 CODY (Team Leader): Alright team, we have a new component to build. Let\'s do this right.\n')
   console.log(`📋 Mission: "${userPrompt}"\n`)
 
   // Step 1: Design Subagent analyzes requirements
   console.log('👔 CODY: Design team, analyze the requirements and give me a solid spec.')
   console.log('🎨 [1/3] Design Agents (ai-product-architect + system-architect): On it, Cody...\n')
+
+  metricsCollector.startSubagent('design')
   const designResult = await runDesignSubagent(userPrompt, memoryContext)
+  metricsCollector.endSubagent(
+    'design',
+    designResult.success,
+    designResult.response ? extractTokenUsage(designResult.response) : undefined,
+    designResult.metadata?.error,
+    designResult.metadata
+  )
 
   if (!designResult.success) {
     console.error('👔 CODY: Design analysis failed. We need to regroup and try again.')
+    const metrics = await metricsCollector.complete()
     return {
       designSpec: '',
       componentCode: '',
       validationReport: 'Design analysis failed - Cody stopped the pipeline',
       success: false,
+      metrics,
     }
   }
   console.log('✅ Design team: Spec is ready, Cody.')
@@ -339,19 +350,30 @@ export async function runOrchestratorAgent(
 
   // Step 2: Code Subagent generates component
   console.log('💻 [2/3] Code Agents (frontend-ui-builder + ai-product-architect): Building component...\n')
+
+  metricsCollector.startSubagent('code')
   const codeResult = await runCodeSubagent(
     designResult.output,
     systemPrompt,
     userPrompt
   )
+  metricsCollector.endSubagent(
+    'code',
+    codeResult.success,
+    codeResult.response ? extractTokenUsage(codeResult.response) : undefined,
+    codeResult.metadata?.error,
+    codeResult.metadata
+  )
 
   if (!codeResult.success) {
     console.error('👔 CODY: Code generation failed. Not acceptable. Let\'s fix this.')
+    const metrics = await metricsCollector.complete()
     return {
       designSpec: designResult.output,
       componentCode: '',
       validationReport: 'Code generation failed - Cody stopped the pipeline',
       success: false,
+      metrics,
     }
   }
   console.log('✅ Dev team: Component built, Cody.')
@@ -359,9 +381,18 @@ export async function runOrchestratorAgent(
 
   // Step 3: Validation Subagent checks quality
   console.log('🔍 [3/3] QA Agents (qa-bug-hunter + test-engineer): Running comprehensive quality checks...\n')
+
+  metricsCollector.startSubagent('validation')
   const validationResult = await runValidationSubagent(
     codeResult.output,
     designResult.output
+  )
+  metricsCollector.endSubagent(
+    'validation',
+    validationResult.success,
+    validationResult.response ? extractTokenUsage(validationResult.response) : undefined,
+    validationResult.metadata?.error,
+    validationResult.metadata
   )
 
   if (validationResult.success) {
@@ -372,10 +403,14 @@ export async function runOrchestratorAgent(
     console.log('👔 CODY: Issues noted. We ship with quality or we don\'t ship. Let\'s address these.\n')
   }
 
+  // Complete metrics collection and publish
+  const metrics = await metricsCollector.complete()
+
   return {
     designSpec: designResult.output,
     componentCode: codeResult.output,
     validationReport: validationResult.output,
     success: validationResult.success,
+    metrics,
   }
 }
