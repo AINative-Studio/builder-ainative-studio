@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
     if (session?.user?.id) {
       // Authenticated user - create ownership mapping
       await createChatOwnership({
-        v0ChatId: chatId,
+        chatId: chatId,
         userId: session.user.id,
       })
       console.log('Chat ownership created via API:', chatId)
@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
       const clientIP = getClientIP(request)
       await createAnonymousChatLog({
         ipAddress: clientIP,
-        v0ChatId: chatId,
+        chatId: chatId,
       })
       console.log('Anonymous chat logged via API:', chatId, 'IP:', clientIP)
     }
