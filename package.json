@@ -29,7 +29,10 @@
     "test:sprint5-6-coverage": "vitest run --coverage __tests__/services/template-matcher __tests__/services/template-customizer __tests__/api/templates.test.ts __tests__/api/templates-analytics __tests__/api/template-submission __tests__/api/admin-template-review __tests__/integration/template-flow __tests__/components/ui __tests__/lib/component-verifier __tests__/integration/sprint-5-6-flow",
     "test:integration-sprint5-6": "vitest run __tests__/integration/sprint-5-6-flow.test.ts",
     "test:sprint7": "vitest run __tests__/lib/mcp/zerodb-client.test.ts __tests__/services/crud-intent-detector.test.ts __tests__/services/schema.test.ts __tests__/services/schema-prompt-enhancer.test.ts __tests__/api/zerodb",
-    "test:sprint7-coverage": "vitest run --coverage __tests__/lib/mcp/zerodb-client.test.ts __tests__/services/crud-intent-detector.test.ts __tests__/services/schema.test.ts __tests__/services/schema-prompt-enhancer.test.ts __tests__/api/zerodb"
+    "test:sprint7-coverage": "vitest run --coverage __tests__/lib/mcp/zerodb-client.test.ts __tests__/services/crud-intent-detector.test.ts __tests__/services/schema.test.ts __tests__/services/schema-prompt-enhancer.test.ts __tests__/api/zerodb",
+    "validate:env": "npx tsx scripts/validate-env.ts",
+    "deploy:preview": "vercel",
+    "deploy:production": "./scripts/deploy-production.sh"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.0",
