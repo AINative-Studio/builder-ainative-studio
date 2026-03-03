@@ -22,6 +22,10 @@ import {
   sessions,
   design_tokens,
   generations,
+  skills,
+  skill_collections,
+  skill_usage,
+  skill_ratings,
   type User,
   type ChatOwnership,
   type AnonymousChatLog,
@@ -30,6 +34,10 @@ import {
   type Session,
   type DesignToken,
   type Generation,
+  type Skill,
+  type SkillCollection,
+  type SkillUsage,
+  type SkillRating,
 } from './schema'
 import { generateUUID } from '../utils'
 import { generateHashedPassword } from './utils'
@@ -751,6 +759,529 @@ export async function getGenerationsByDesignToken(
       .orderBy(desc(generations.created_at))
   } catch (error) {
     console.error('Failed to get generations by design token from database:', error)
+    throw error
+  }
+}
+
+// ============================================
+// Agent Skill System Queries (Issue #16)
+// ============================================
+
+/**
+ * Create a new skill
+ */
+export async function createSkill({
+  id,
+  name,
+  description,
+  version,
+  authorId,
+  authorName,
+  authorEmail,
+  tags,
+  triggerPatterns,
+  dependencies,
+  tokenCostMetadata,
+  tokenCostFull,
+  compatibility,
+  content,
+  references,
+  examples,
+  validationRules,
+  commands,
+  isBuiltIn,
+}: {
+  id: string
+  name: string
+  description: string
+  version: string
+  authorId: string
+  authorName: string
+  authorEmail?: string
+  tags: string[]
+  triggerPatterns?: string[]
+  dependencies?: string[]
+  tokenCostMetadata?: number
+  tokenCostFull?: number
+  compatibility?: {
+    frameworks?: string[]
+    languages?: string[]
+    minVersion?: string
+  }
+  content: string
+  references?: Array<{
+    name: string
+    path: string
+    type: 'markdown' | 'code' | 'url' | 'example'
+    description?: string
+  }>
+  examples?: Array<{
+    title: string
+    content: string
+    language?: string
+    description?: string
+  }>
+  validationRules?: string[]
+  commands?: string[]
+  isBuiltIn?: boolean
+}): Promise<Skill[]> {
+  try {
+    return await db
+      .insert(skills)
+      .values({
+        id,
+        name,
+        description,
+        version,
+        author_id: authorId,
+        author_name: authorName,
+        author_email: authorEmail,
+        tags,
+        trigger_patterns: triggerPatterns,
+        dependencies,
+        token_cost_metadata: tokenCostMetadata ?? 100,
+        token_cost_full: tokenCostFull ?? 2000,
+        compatibility,
+        content,
+        references,
+        examples,
+        validation_rules: validationRules,
+        commands,
+        is_built_in: isBuiltIn ?? false,
+      })
+      .returning()
+  } catch (error) {
+    console.error('Failed to create skill in database:', error)
+    throw error
+  }
+}
+
+/**
+ * Get a skill by ID
+ */
+export async function getSkillById(skillId: string): Promise<Skill | null> {
+  try {
+    const result = await db
+      .select()
+      .from(skills)
+      .where(eq(skills.id, skillId))
+      .limit(1)
+
+    return result[0] || null
+  } catch (error) {
+    console.error('Failed to get skill from database:', error)
+    throw error
+  }
+}
+
+/**
+ * Get all active skills
+ */
+export async function getAllActiveSkills(): Promise<Skill[]> {
+  try {
+    return await db
+      .select()
+      .from(skills)
+      .where(eq(skills.is_active, true))
+      .orderBy(asc(skills.name))
+  } catch (error) {
+    console.error('Failed to get active skills from database:', error)
+    throw error
+  }
+}
+
+/**
+ * Get built-in skills
+ */
+export async function getBuiltInSkills(): Promise<Skill[]> {
+  try {
+    return await db
+      .select()
+      .from(skills)
+      .where(and(
+        eq(skills.is_built_in, true),
+        eq(skills.is_active, true)
+      ))
+      .orderBy(asc(skills.name))
+  } catch (error) {
+    console.error('Failed to get built-in skills from database:', error)
+    throw error
+  }
+}
+
+/**
+ * Get skills by author
+ */
+export async function getSkillsByAuthor(authorId: string): Promise<Skill[]> {
+  try {
+    return await db
+      .select()
+      .from(skills)
+      .where(eq(skills.author_id, authorId))
+      .orderBy(desc(skills.created_at))
+  } catch (error) {
+    console.error('Failed to get skills by author from database:', error)
+    throw error
+  }
+}
+
+/**
+ * Update a skill
+ */
+export async function updateSkill(
+  skillId: string,
+  updates: Partial<{
+    name: string
+    description: string
+    version: string
+    tags: string[]
+    triggerPatterns: string[]
+    dependencies: string[]
+    tokenCostMetadata: number
+    tokenCostFull: number
+    compatibility: {
+      frameworks?: string[]
+      languages?: string[]
+      minVersion?: string
+    }
+    content: string
+    references: Array<{
+      name: string
+      path: string
+      type: 'markdown' | 'code' | 'url' | 'example'
+      description?: string
+    }>
+    examples: Array<{
+      title: string
+      content: string
+      language?: string
+      description?: string
+    }>
+    validationRules: string[]
+    commands: string[]
+    isActive: boolean
+  }>
+): Promise<Skill[]> {
+  try {
+    const updateData: any = {}
+
+    if (updates.name !== undefined) updateData.name = updates.name
+    if (updates.description !== undefined) updateData.description = updates.description
+    if (updates.version !== undefined) updateData.version = updates.version
+    if (updates.tags !== undefined) updateData.tags = updates.tags
+    if (updates.triggerPatterns !== undefined) updateData.trigger_patterns = updates.triggerPatterns
+    if (updates.dependencies !== undefined) updateData.dependencies = updates.dependencies
+    if (updates.tokenCostMetadata !== undefined) updateData.token_cost_metadata = updates.tokenCostMetadata
+    if (updates.tokenCostFull !== undefined) updateData.token_cost_full = updates.tokenCostFull
+    if (updates.compatibility !== undefined) updateData.compatibility = updates.compatibility
+    if (updates.content !== undefined) updateData.content = updates.content
+    if (updates.references !== undefined) updateData.references = updates.references
+    if (updates.examples !== undefined) updateData.examples = updates.examples
+    if (updates.validationRules !== undefined) updateData.validation_rules = updates.validationRules
+    if (updates.commands !== undefined) updateData.commands = updates.commands
+    if (updates.isActive !== undefined) updateData.is_active = updates.isActive
+
+    updateData.updated_at = new Date()
+
+    return await db
+      .update(skills)
+      .set(updateData)
+      .where(eq(skills.id, skillId))
+      .returning()
+  } catch (error) {
+    console.error('Failed to update skill in database:', error)
+    throw error
+  }
+}
+
+/**
+ * Delete a skill
+ */
+export async function deleteSkill(skillId: string): Promise<void> {
+  try {
+    await db
+      .delete(skills)
+      .where(eq(skills.id, skillId))
+  } catch (error) {
+    console.error('Failed to delete skill from database:', error)
+    throw error
+  }
+}
+
+/**
+ * Create skill collection
+ */
+export async function createSkillCollection({
+  name,
+  description,
+  skillIds,
+  isBuiltIn,
+  isTeam,
+  teamId,
+  userId,
+}: {
+  name: string
+  description: string
+  skillIds: string[]
+  isBuiltIn?: boolean
+  isTeam?: boolean
+  teamId?: string
+  userId?: string
+}): Promise<SkillCollection[]> {
+  try {
+    return await db
+      .insert(skill_collections)
+      .values({
+        name,
+        description,
+        skill_ids: skillIds,
+        is_built_in: isBuiltIn ?? false,
+        is_team: isTeam ?? false,
+        team_id: teamId,
+        user_id: userId,
+      })
+      .returning()
+  } catch (error) {
+    console.error('Failed to create skill collection in database:', error)
+    throw error
+  }
+}
+
+/**
+ * Get skill collection by ID
+ */
+export async function getSkillCollectionById(collectionId: string): Promise<SkillCollection | null> {
+  try {
+    const result = await db
+      .select()
+      .from(skill_collections)
+      .where(eq(skill_collections.id, collectionId))
+      .limit(1)
+
+    return result[0] || null
+  } catch (error) {
+    console.error('Failed to get skill collection from database:', error)
+    throw error
+  }
+}
+
+/**
+ * Get all skill collections for a user
+ */
+export async function getSkillCollectionsByUser(userId: string): Promise<SkillCollection[]> {
+  try {
+    return await db
+      .select()
+      .from(skill_collections)
+      .where(eq(skill_collections.user_id, userId))
+      .orderBy(asc(skill_collections.name))
+  } catch (error) {
+    console.error('Failed to get user skill collections from database:', error)
+    throw error
+  }
+}
+
+/**
+ * Get built-in skill collections
+ */
+export async function getBuiltInSkillCollections(): Promise<SkillCollection[]> {
+  try {
+    return await db
+      .select()
+      .from(skill_collections)
+      .where(eq(skill_collections.is_built_in, true))
+      .orderBy(asc(skill_collections.name))
+  } catch (error) {
+    console.error('Failed to get built-in skill collections from database:', error)
+    throw error
+  }
+}
+
+/**
+ * Track skill usage
+ */
+export async function trackSkillUsage({
+  skillId,
+  userId,
+  sessionId,
+  projectId,
+  loadType,
+  triggerPattern,
+  context,
+  loadTimeMs,
+  metadataLoaded,
+  contentLoaded,
+  referencesLoaded,
+  tokensUsed,
+}: {
+  skillId: string
+  userId: string
+  sessionId?: string
+  projectId?: string
+  loadType: 'manual' | 'auto' | 'recommended'
+  triggerPattern?: string
+  context?: {
+    currentFile?: string
+    gitBranch?: string
+    hasUncommittedChanges?: boolean
+    recentMessages?: string[]
+  }
+  loadTimeMs: number
+  metadataLoaded: boolean
+  contentLoaded: boolean
+  referencesLoaded: boolean
+  tokensUsed: number
+}): Promise<SkillUsage[]> {
+  try {
+    return await db
+      .insert(skill_usage)
+      .values({
+        skill_id: skillId,
+        user_id: userId,
+        session_id: sessionId,
+        project_id: projectId,
+        load_type: loadType,
+        trigger_pattern: triggerPattern,
+        context,
+        load_time_ms: loadTimeMs,
+        metadata_loaded: metadataLoaded,
+        content_loaded: contentLoaded,
+        references_loaded: referencesLoaded,
+        tokens_used: tokensUsed,
+      })
+      .returning()
+  } catch (error) {
+    console.error('Failed to track skill usage in database:', error)
+    throw error
+  }
+}
+
+/**
+ * Get skill usage statistics
+ */
+export async function getSkillUsageStats(skillId: string): Promise<{
+  totalLoads: number
+  autoTriggers: number
+  manualInvokes: number
+  avgLoadTime: number
+  totalTokensUsed: number
+}> {
+  try {
+    const result = await db
+      .select()
+      .from(skill_usage)
+      .where(eq(skill_usage.skill_id, skillId))
+
+    const totalLoads = result.length
+    const autoTriggers = result.filter(r => r.load_type === 'auto').length
+    const manualInvokes = result.filter(r => r.load_type === 'manual').length
+    const avgLoadTime = totalLoads > 0
+      ? result.reduce((sum, r) => sum + r.load_time_ms, 0) / totalLoads
+      : 0
+    const totalTokensUsed = result.reduce((sum, r) => sum + r.tokens_used, 0)
+
+    return {
+      totalLoads,
+      autoTriggers,
+      manualInvokes,
+      avgLoadTime,
+      totalTokensUsed,
+    }
+  } catch (error) {
+    console.error('Failed to get skill usage stats from database:', error)
+    throw error
+  }
+}
+
+/**
+ * Get user's skill usage history
+ */
+export async function getUserSkillUsage(
+  userId: string,
+  limit: number = 50
+): Promise<SkillUsage[]> {
+  try {
+    return await db
+      .select()
+      .from(skill_usage)
+      .where(eq(skill_usage.user_id, userId))
+      .orderBy(desc(skill_usage.created_at))
+      .limit(limit)
+  } catch (error) {
+    console.error('Failed to get user skill usage from database:', error)
+    throw error
+  }
+}
+
+/**
+ * Create or update skill rating
+ */
+export async function upsertSkillRating({
+  skillId,
+  userId,
+  rating,
+  feedbackText,
+  helpful,
+}: {
+  skillId: string
+  userId: string
+  rating: number
+  feedbackText?: string
+  helpful?: boolean
+}): Promise<SkillRating[]> {
+  try {
+    return await db
+      .insert(skill_ratings)
+      .values({
+        skill_id: skillId,
+        user_id: userId,
+        rating,
+        feedback_text: feedbackText,
+        helpful: helpful ?? true,
+      })
+      .onConflictDoUpdate({
+        target: [skill_ratings.user_id, skill_ratings.skill_id],
+        set: {
+          rating,
+          feedback_text: feedbackText,
+          helpful: helpful ?? true,
+          updated_at: new Date(),
+        },
+      })
+      .returning()
+  } catch (error) {
+    console.error('Failed to upsert skill rating in database:', error)
+    throw error
+  }
+}
+
+/**
+ * Get skill ratings
+ */
+export async function getSkillRatings(skillId: string): Promise<{
+  averageRating: number
+  totalRatings: number
+  ratings: SkillRating[]
+}> {
+  try {
+    const result = await db
+      .select()
+      .from(skill_ratings)
+      .where(eq(skill_ratings.skill_id, skillId))
+      .orderBy(desc(skill_ratings.created_at))
+
+    const totalRatings = result.length
+    const averageRating = totalRatings > 0
+      ? result.reduce((sum, r) => sum + r.rating, 0) / totalRatings
+      : 0
+
+    return {
+      averageRating,
+      totalRatings,
+      ratings: result,
+    }
+  } catch (error) {
+    console.error('Failed to get skill ratings from database:', error)
     throw error
   }
 }
