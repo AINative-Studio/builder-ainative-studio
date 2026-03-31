@@ -24,6 +24,7 @@ interface ChatData {
   validationError?: string
   isStreaming?: boolean
   usage?: TokenUsage
+  ainativeFiles?: Record<string, string>
 }
 
 declare global {
@@ -47,7 +48,7 @@ export function storePreview(
   id: string,
   content: string,
   userMessage?: string,
-  metadata?: { validationError?: string; usage?: TokenUsage }
+  metadata?: { validationError?: string; usage?: TokenUsage; ainativeFiles?: Record<string, string> }
 ): void {
   previewStore.set(id, content)
   console.log(`Preview stored with ID: ${id}, total stored: ${previewStore.size}`)
@@ -83,7 +84,8 @@ export function storePreview(
     name: existingChat?.name || (userMessage ? userMessage.slice(0, 50) : `Chat ${id.slice(0, 8)}`),
     validationError: metadata?.validationError,
     isStreaming: false,  // Mark as complete
-    usage: metadata?.usage
+    usage: metadata?.usage,
+    ainativeFiles: metadata?.ainativeFiles
   })
 
   // Clean up old previews after 24 hours (increased from 1 hour)
@@ -101,6 +103,10 @@ export function getPreview(id: string): string | undefined {
 
 export function getChatData(id: string): ChatData | undefined {
   return chatStore.get(id)
+}
+
+export function getAINativeFiles(id: string): Record<string, string> | undefined {
+  return chatStore.get(id)?.ainativeFiles
 }
 
 export function hasPreview(id: string): boolean {

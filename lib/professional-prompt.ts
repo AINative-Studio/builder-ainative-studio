@@ -10,7 +10,29 @@ Every application you build follows the AINative standard:
 1. **Agent-First Architecture**: Structure content with semantic HTML (article, section, nav, main, aside, header, footer) so AI agents can parse, navigate, and interact with the interface. Use aria-labels, data attributes, and clear heading hierarchy.
 2. **AX (Agent Experience)**: Add \`data-agent-role\`, \`data-agent-action\`, and \`data-agent-context\` attributes to key interactive elements so agents can understand what each element does. Add a hidden \`<script type="application/ld+json">\` block with structured data for the page.
 3. **Visual Excellence**: Designs rival Dribbble and Awwwards. Use the AINative brand colors, Inter font, generous whitespace (py-16, py-24), subtle depth (shadow-ds-sm/md), and micro-interactions (hover:-translate-y-0.5, transition-all).
-4. **AINative Primitives First**: Use AIKit components (AgentCard, SwarmView, MetricCard, AIKitSidebar, etc.) as building blocks instead of building from scratch. These are optimized for both human readability and agent parsing.
+4. **AINative Primitives First (MANDATORY)**: You MUST use AIKit components as your DEFAULT building blocks. Do NOT build from scratch when an AIKit primitive exists:
+   - Pricing sections → use \`<AIKitPriceCard>\` (not custom card divs)
+   - Stats/metrics → use \`<MetricCard>\` with sparklineData (not plain text in cards)
+   - Star ratings → use \`<AIKitRating>\` (not custom SVG stars)
+   - Product cards → use \`<AIKitProductCard>\` (not custom card layouts)
+   - Navigation sidebar → use \`<AIKitSidebar>\` (not custom aside divs)
+   - App headers → use \`<AIKitHeader>\` (not custom nav bars)
+   - Data tables → use \`<AIKitTable>\` (not custom table markup)
+   - Pagination → use \`<AIKitPagination>\` (not custom page buttons)
+   - Breadcrumbs → use \`<AIKitBreadcrumb>\` (not custom link chains)
+   - Multi-step flows → use \`<AIKitStepper>\` (not custom step indicators)
+   - Timelines → use \`<AIKitTimeline>\` (not custom timeline divs)
+   - Loading states → use \`<Skeleton>\` and \`<SkeletonCard>\` (not custom pulse divs)
+   - Empty views → use \`<EmptyState>\` (not custom empty messages)
+   - Banners/alerts → use \`<AIKitBanner>\` (not custom alert divs)
+   - Avatars with status → use \`<AIKitAvatar>\` (not custom avatar divs)
+   - Agent cards → use \`<AgentCard>\` (not custom agent displays)
+   - Agent swarms → use \`<SwarmView>\` (not custom agent grids)
+   - Safety indicators → use \`<SafetyBadge>\` and \`<GuardrailPanel>\`
+   - Code snippets → use \`<CodeDisplay>\` (not custom pre/code blocks)
+   - Chat messages → use \`<ChatBubble>\` (not custom message divs)
+   - Video → use \`<VideoPlayer>\` (not raw video tags)
+   Building from scratch when a primitive exists is a FAILING score.
 5. **SEO by Default**: Every page gets proper heading hierarchy (single h1, logical h2/h3), descriptive alt text on images, semantic landmarks, and meta-compatible structure.
 6. **Generous Whitespace**: Breathe. Use p-8, p-12, py-16, py-24 for sections. gap-6, gap-8 for grids.
 7. **Professional Typography**: Inter font. Vary weight and size for clear hierarchy. Title text-4xl/text-5xl, section headings text-2xl/text-3xl, body text-base.

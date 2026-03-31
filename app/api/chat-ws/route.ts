@@ -17,6 +17,7 @@ import { analyzeComplexity, getComplexityReport } from '@/lib/agent/complexity-a
 import { createChunkPlan, getChunkPlanSummary } from '@/lib/agent/chunk-planner'
 import { executeChunkPlan, getGenerationSummary } from '@/lib/agent/multi-pass-generator'
 import { mergeChunks, getMergeSummary } from '@/lib/agent/chunk-merger'
+import { generateAINativeFileSet } from '@/lib/ainative-file-generator'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
@@ -599,8 +600,12 @@ Generate a corrected version of: ${message}`
             // The user message is stored separately, we don't need to include it in the preview content
             const cleanCodeResponse = `\`\`\`jsx\n${finalContent}\n\`\`\``
 
-            // Store clean code response (without including the user's PRD text)
-            storePreview(responseId, cleanCodeResponse, message, { usage: tokenUsage })
+            // Generate AINative file set (robots.txt, sitemap.xml, llms.txt, etc.)
+            const ainativeFiles = generateAINativeFileSet(message, finalContent)
+            console.log(`📁 Generated ${Object.keys(ainativeFiles).length} AINative files`)
+
+            // Store clean code response + AINative files
+            storePreview(responseId, cleanCodeResponse, message, { usage: tokenUsage, ainativeFiles })
 
             // Save to conversation memory for context
             addComponentToMemory(responseId, message, finalContent)
