@@ -1,24 +1,53 @@
 import { NextRequest } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
+import OpenAI from 'openai'
 import { nanoid } from 'nanoid'
 import { verifyAndEnhancePrompt } from '@/lib/component-verifier'
 import { PROFESSIONAL_SYSTEM_PROMPT } from '@/lib/professional-prompt'
 import { enhancePromptWithMockData } from '@/lib/mock-data-generator'
 import { updatePreviewPartial, storePreview, getChatData } from '@/lib/preview-store'
 import { validateGeneratedCode } from '@/lib/code-validator'
+import { stripGradients } from '@/lib/gradient-blocker'
 import { fetchContextualImages, formatImagesForPrompt, getFallbackImages } from '@/lib/services/unsplash.service'
 import { COMPONENT_GENERATION_TOOL, extractComponentCode, validateComponentGeneration } from '@/lib/agent/component-generation-tool'
 import { getConversationMemory, addComponentToMemory, formatMemoryForPrompt } from '@/lib/services/memory.service'
 import { runOrchestratorAgent } from '@/lib/agent/subagents'
 import { parsePRDForBuildSteps } from '@/lib/prd-parser'
+import { analyzeComplexity, getComplexityReport } from '@/lib/agent/complexity-analyzer'
+import { createChunkPlan, getChunkPlanSummary } from '@/lib/agent/chunk-planner'
+import { executeChunkPlan, getGenerationSummary } from '@/lib/agent/multi-pass-generator'
+import { mergeChunks, getMergeSummary } from '@/lib/agent/chunk-merger'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
 })
 
+// AINative API client (OpenAI-compatible) for GPT models
+const ainativeClient = new OpenAI({
+  apiKey: process.env.ZERODB_API_KEY || '',
+  baseURL: 'https://api.ainative.studio/v1',
+})
+
+// Model routing config
+const MODEL_CONFIG: Record<string, { provider: 'anthropic' | 'ainative'; modelId: string }> = {
+  'claude-sonnet-4': { provider: 'anthropic', modelId: 'claude-sonnet-4-20250514' },
+  'claude-opus-4': { provider: 'anthropic', modelId: 'claude-opus-4-20250514' },
+  // OpenAI (via AINative)
+  'gpt-4': { provider: 'ainative', modelId: 'gpt-4' },
+  'gpt-3.5-turbo': { provider: 'ainative', modelId: 'gpt-3.5-turbo' },
+  // NousResearch (via AINative/HuggingFace)
+  'nouscoder-14b': { provider: 'ainative', modelId: 'nouscoder-14b' },
+  // Qwen Coder (via AINative/HuggingFace)
+  'qwen-coder-7b': { provider: 'ainative', modelId: 'qwen-coder-7b' },
+  'qwen-coder-32b': { provider: 'ainative', modelId: 'qwen-coder-32b' },
+  // DeepSeek (via AINative/HuggingFace)
+  'deepseek-r1': { provider: 'ainative', modelId: 'deepseek-r1' },
+  'deepseek-r1-distill-qwen-7b': { provider: 'ainative', modelId: 'deepseek-r1-distill-qwen-7b' },
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const { message, chatId } = await request.json()
+    const { message, chatId, model: requestedModel } = await request.json()
 
     if (!message) {
       return Response.json({ error: 'Message is required' }, { status: 400 })
@@ -74,6 +103,10 @@ export async function POST(request: NextRequest) {
             buildSteps: prdAnalysis.buildSteps
           })
 
+          // Analyze complexity to determine if chunking is needed
+          const complexityScore = analyzeComplexity(prdAnalysis, message)
+          console.log('\n' + getComplexityReport(complexityScore))
+
           // Send dynamic build steps to client
           for (const step of prdAnalysis.buildSteps) {
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({
@@ -108,8 +141,71 @@ export async function POST(request: NextRequest) {
           const memoryContext = formatMemoryForPrompt(responseId)
           const enhancedSystemPrompt = PROFESSIONAL_SYSTEM_PROMPT + imagePrompt + memoryContext
 
-          // Check if subagents mode is enabled
-          const useSubagents = process.env.USE_SUBAGENTS === 'true'
+          // CHUNKING SYSTEM: Route to multi-pass generation if complexity requires it
+          if (complexityScore.requiresChunking && previousMessages.length === 0) {
+            console.log('\n🔄 COMPLEX APPLICATION DETECTED - Using multi-pass chunking strategy')
+            console.log(`   Strategy: ${complexityScore.chunkingStrategy}`)
+            console.log(`   Estimated tokens: ${complexityScore.estimatedTokens.toLocaleString()}`)
+
+            // Create chunk plan
+            const chunkPlan = createChunkPlan(message, prdAnalysis, complexityScore)
+            console.log('\n' + getChunkPlanSummary(chunkPlan))
+
+            // Execute chunk plan with progress streaming
+            const chunks = await executeChunkPlan(
+              chunkPlan,
+              anthropic,
+              (phase, totalPhases, message, data) => {
+                // Stream chunk progress to client
+                safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+                  type: 'chunk_progress',
+                  phase,
+                  totalPhases,
+                  message,
+                  ...data
+                })}\n\n`))
+
+                console.log(`   [Phase ${phase}/${totalPhases}] ${message}`)
+              }
+            )
+
+            // Log generation summary
+            console.log('\n' + getGenerationSummary(chunks))
+
+            // Merge all chunks into final application
+            console.log('\n🔀 Merging chunks...')
+            fullContent = mergeChunks(chunks)
+
+            // Log merge summary
+            console.log('\n' + getMergeSummary(chunks, fullContent))
+
+            // Update preview with merged code
+            updatePreviewPartial(responseId, fullContent)
+
+            // Calculate total token usage from all chunks
+            tokenUsage = {
+              input_tokens: chunks.reduce((sum, c) => sum + c.tokenUsage.input, 0),
+              output_tokens: chunks.reduce((sum, c) => sum + c.tokenUsage.output, 0),
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 0,
+              total_tokens: chunks.reduce((sum, c) => sum + c.tokenUsage.total, 0),
+              estimated_cost: 0 // Will be calculated below
+            }
+
+            tokenUsage.estimated_cost = (tokenUsage.input_tokens * 0.003 + tokenUsage.output_tokens * 0.015) / 1000
+
+            console.log(`\n📊 TOTAL TOKEN USAGE (Multi-Pass):`)
+            console.log(`   Input tokens: ${tokenUsage.input_tokens}`)
+            console.log(`   Output tokens: ${tokenUsage.output_tokens}`)
+            console.log(`   Total tokens: ${tokenUsage.total_tokens}`)
+            console.log(`   Estimated cost: $${tokenUsage.estimated_cost.toFixed(4)}`)
+
+          } else {
+            // Use single-pass generation for simple applications or continuations
+            console.log('\n✅ Simple application - Using single-pass generation')
+
+            // Check if subagents mode is enabled
+            const useSubagents = process.env.USE_SUBAGENTS === 'true'
 
           if (useSubagents) {
             // Use Subagents orchestrator for complex multi-step generation
@@ -128,25 +224,122 @@ export async function POST(request: NextRequest) {
               throw new Error('Subagent orchestration failed')
             }
           } else {
-            // Use standard streaming with Tool Use API
-          // Use prompt caching for 90% cost reduction on system prompt
+            // Route to correct provider based on selected model
+            const modelConfig = MODEL_CONFIG[requestedModel] || MODEL_CONFIG['claude-sonnet-4']
+            const provider = modelConfig.provider
+            const modelId = modelConfig.modelId
+            console.log(`🤖 Using model: ${modelId} (provider: ${provider})`)
+
+          if (provider === 'ainative') {
+            // ============ GPT/NOUS MODELS VIA AINATIVE MANAGED CHAT (SSE streaming) ============
+            console.log(`🔄 Calling AINative Managed Chat API: ${modelId} (streaming)`)
+
+            // Condensed prompt for non-Claude models (smaller context windows)
+            const gptSystemPrompt = enhancedSystemPrompt.split('## FEW-SHOT EXAMPLES')[0] +
+              '\n\nGenerate a complete, production-ready React component. Use Lucide icons, Tailwind CSS, and shadcn/ui components. Follow all AX requirements.'
+
+            safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Generating with ' + modelId + '...' })}\n\n`))
+
+            // Use the managed-chat streaming endpoint
+            const aiNativeResponse = await fetch('https://api.ainative.studio/api/v1/managed-chat/completions', {
+              method: 'POST',
+              headers: {
+                'X-API-Key': process.env.ZERODB_API_KEY || '',
+                'Authorization': `Bearer ${process.env.ZERODB_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                model: modelId,
+                messages: [
+                  { role: 'system', content: gptSystemPrompt },
+                  ...conversationMessages,
+                ],
+                max_tokens: 8000,
+                temperature: 0.7,
+                stream: true,
+              }),
+            })
+
+            if (!aiNativeResponse.ok) {
+              // Fallback to non-streaming /v1/chat/completions
+              console.log(`⚠️ Managed chat failed (${aiNativeResponse.status}), falling back to /v1/chat/completions`)
+              const fallbackResponse = await ainativeClient.chat.completions.create({
+                model: modelId,
+                max_tokens: 8000,
+                temperature: 0.7,
+                messages: [
+                  { role: 'system', content: gptSystemPrompt },
+                  ...conversationMessages,
+                ],
+              })
+              fullContent = fallbackResponse.choices?.[0]?.message?.content || ''
+            } else {
+              // Parse SSE stream
+              const reader = aiNativeResponse.body?.getReader()
+              const decoder = new TextDecoder()
+              if (reader) {
+                let buffer = ''
+                while (true) {
+                  const { done, value } = await reader.read()
+                  if (done) break
+                  buffer += decoder.decode(value, { stream: true })
+                  const lines = buffer.split('\n')
+                  buffer = lines.pop() || ''
+                  for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                      const data = line.slice(6).trim()
+                      if (data === '[DONE]' || data === '') continue
+                      try {
+                        const parsed = JSON.parse(data)
+                        const content = parsed.choices?.[0]?.delta?.content || parsed.choices?.[0]?.message?.content || ''
+                        if (content) {
+                          fullContent += content
+                          updatePreviewPartial(responseId, fullContent)
+                          const now = Date.now()
+                          if (now - lastUpdateTime > 500) {
+                            safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'refresh' })}\n\n`))
+                            lastUpdateTime = now
+                          }
+                        }
+                      } catch (_) { /* skip unparseable chunks */ }
+                    }
+                    if (line.startsWith('event: done')) break
+                  }
+                }
+              }
+            }
+
+            updatePreviewPartial(responseId, fullContent)
+            safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'refresh' })}\n\n`))
+
+            tokenUsage = {
+              input_tokens: 0, output_tokens: 0,
+              cache_creation_input_tokens: 0, cache_read_input_tokens: 0,
+              total_tokens: 0,
+              estimated_cost: 0
+            }
+
+            console.log(`📊 ${modelId} generation complete: ${fullContent.length} chars`)
+
+          } else {
+            // ============ CLAUDE MODELS VIA ANTHROPIC SDK ============
           const stream = await anthropic.messages.stream({
-            model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514',
-            max_tokens: 8000,
+            model: modelId,
+            max_tokens: 32000,
             temperature: 1,  // Must be 1 when using extended thinking
             thinking: {
               type: 'enabled',
-              budget_tokens: 2000  // Allow Claude to think before generating (improves quality significantly)
+              budget_tokens: 2000
             },
             system: [
               {
                 type: 'text',
                 text: enhancedSystemPrompt,
-                cache_control: { type: 'ephemeral' }  // Cache system prompt for 5 minutes
+                cache_control: { type: 'ephemeral' }
               }
             ],
             messages: conversationMessages,
-            tools: [COMPONENT_GENERATION_TOOL],  // Enable structured outputs via Tool Use API
+            tools: [COMPONENT_GENERATION_TOOL],
           })
 
           let toolUseInput: any = null
@@ -199,6 +392,11 @@ export async function POST(request: NextRequest) {
           // Capture token usage after stream completes
           const finalMessage = await stream.finalMessage()
 
+          // Check if output was truncated due to max_tokens
+          if (finalMessage.stop_reason === 'max_tokens') {
+            console.warn('⚠️ Output was TRUNCATED (hit max_tokens). Code may be incomplete.')
+          }
+
           if (finalMessage.usage) {
             const usage = finalMessage.usage
             const totalTokens = usage.input_tokens + usage.output_tokens
@@ -247,11 +445,18 @@ export async function POST(request: NextRequest) {
               console.log('Accumulated JSON:', toolInputJson)
             }
           }
-          } // End of streaming mode (else block)
+          } // End of Anthropic (else of provider routing)
+          } // End of provider routing + subagents else
+          } // End of chunking else (single-pass)
+
+          // Strip any gradient classes that slipped through
+          fullContent = stripGradients(fullContent)
 
           // Validate generated code before storing
           let validation = validateGeneratedCode(fullContent)
-          let finalContent = fullContent
+          // CRITICAL: Use the VALIDATED/FIXED code, not the original raw content
+          // validation.code has markdown extracted and auto-fixes applied
+          let finalContent = validation.code
           let retryAttempted = false
 
           // AUTO-RETRY: If validation fails, automatically retry once with error feedback
@@ -280,7 +485,7 @@ Generate a corrected version of: ${message}`
               // Make retry API call
               const retryStream = await anthropic.messages.stream({
                 model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514',
-                max_tokens: 8000,
+                max_tokens: 32000,
                 temperature: 1,
                 thinking: {
                   type: 'enabled',
@@ -441,14 +646,14 @@ Generate a corrected version of: ${message}`
             })}\n\n`))
           }
 
-          controller.close()
+          try { controller.close() } catch (_) { /* already closed */ }
         } catch (error) {
           console.error('Streaming error:', error)
           safeEnqueue(encoder.encode(`data: ${JSON.stringify({
             type: 'error',
             error: 'Stream failed'
           })}\n\n`))
-          controller.close()
+          try { controller.close() } catch (_) { /* already closed */ }
         }
       }
     })

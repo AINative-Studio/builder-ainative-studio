@@ -54,7 +54,7 @@ export function HomeClient() {
   const [isLoading, setIsLoading] = useState(false)
   const [showChatInterface, setShowChatInterface] = useState(false)
   const [attachments, setAttachments] = useState<ImageAttachment[]>([])
-  const [useLlama, setUseLlama] = useState(false)
+  const [selectedModel, setSelectedModel] = useState('claude-sonnet-4')
   const [isDragOver, setIsDragOver] = useState(false)
   const [chatHistory, setChatHistory] = useState<
     Array<{
@@ -194,6 +194,7 @@ export function HomeClient() {
         body: JSON.stringify({
           message: userMessage,
           chatId: currentChatId,
+          model: selectedModel,
         }),
       })
 
@@ -260,10 +261,23 @@ export function HomeClient() {
                 // Handle different event types from WebSocket-style streaming
                 switch (data.type) {
                   case 'init':
-                    // Initialize chat ID only - don't show preview until complete
+                    // Initialize chat ID and set preview URL immediately
                     chatId = data.chatId
                     setCurrentChatId(data.chatId)
-                    console.log('WebSocket stream initialized:', data.chatId)
+                    console.log('[DEBUG] Init event received:', {
+                      chatId: data.chatId,
+                      demo: data.demo,
+                      hasDemoUrl: !!data.demo
+                    })
+
+                    // Set currentChat with demo URL immediately so preview loads
+                    if (data.demo) {
+                      setCurrentChat({
+                        id: data.chatId,
+                        demo: data.demo
+                      })
+                      console.log('[DEBUG] Preview URL set from init:', data.demo)
+                    }
                     break
 
                   case 'build_step':
@@ -314,13 +328,18 @@ export function HomeClient() {
                     })
 
                     // Set chat data with demo URL
+                    console.log('[DEBUG] Complete event received:', {
+                      chatId: data.chatId,
+                      demo: data.demo,
+                      hasDemoUrl: !!data.demo
+                    })
                     setCurrentChat({
                       id: data.chatId,
                       demo: data.demo
                     })
                     setCurrentChatId(data.chatId)
                     setIsLoading(false)
-                    console.log('isLoading state updated to FALSE')
+                    console.log('[DEBUG] isLoading state updated to FALSE, preview URL:', data.demo)
 
                     // Clear build steps when generation completes
                     // Keep them visible briefly, then clear
@@ -637,9 +656,13 @@ export function HomeClient() {
       <div className="flex-1 flex items-center justify-center px-4 sm:px-6 lg:px-8">
         <div className="max-w-4xl w-full">
           <div className="text-center mb-8 md:mb-12">
-            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900 dark:text-white mb-4">
-              What can we build together?
+            <p className="text-sm font-semibold text-[#5867EF] tracking-wide uppercase mb-3">We Build AINative Applications</p>
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900 dark:text-white mb-3">
+              What AINative app are we building?
             </h2>
+            <p className="text-base text-gray-500 dark:text-gray-400 max-w-xl mx-auto">
+              Every interface is agent-optimized with AX, SEO, and structured data built in.
+            </p>
           </div>
 
           {/* Prompt Input */}
@@ -661,7 +684,7 @@ export function HomeClient() {
                 ref={textareaRef}
                 onChange={(e) => setMessage(e.target.value)}
                 value={message}
-                placeholder="Describe what you want to build..."
+                placeholder="Describe your AINative application..."
                 className="min-h-[80px] text-base"
                 disabled={isLoading}
               />
@@ -671,6 +694,35 @@ export function HomeClient() {
                     onImageSelect={handleImageFiles}
                     disabled={isLoading}
                   />
+                  {/* Model Selector */}
+                  <div className="relative">
+                    <select
+                      value={selectedModel}
+                      onChange={(e) => setSelectedModel(e.target.value)}
+                      disabled={isLoading}
+                      className="appearance-none h-8 pl-2 pr-7 text-xs font-medium bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-[#5867EF]/20"
+                      title="Select AI model"
+                    >
+                      <optgroup label="Anthropic">
+                        <option value="claude-sonnet-4">Claude Sonnet 4</option>
+                        <option value="claude-opus-4">Claude Opus 4 (Enterprise)</option>
+                      </optgroup>
+                      <optgroup label="OpenAI">
+                        <option value="gpt-4">GPT-4</option>
+                        <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
+                      </optgroup>
+                      <optgroup label="Code Specialists">
+                        <option value="nouscoder-14b">NousCoder 14B</option>
+                        <option value="qwen-coder-7b">Qwen Coder 7B</option>
+                        <option value="qwen-coder-32b">Qwen Coder 32B</option>
+                      </optgroup>
+                      <optgroup label="Reasoning">
+                        <option value="deepseek-r1">DeepSeek R1 (Enterprise)</option>
+                        <option value="deepseek-r1-distill-qwen-7b">DeepSeek R1 Distill 7B</option>
+                      </optgroup>
+                    </select>
+                    <svg className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                  </div>
                 </PromptInputTools>
                 <PromptInputTools>
                   <PromptInputMicButton
@@ -693,113 +745,33 @@ export function HomeClient() {
             </PromptInput>
           </div>
 
-          {/* Suggestions */}
+          {/* AINative Application Archetypes */}
           <div className="mt-4 max-w-2xl mx-auto">
             <Suggestions>
-              <Suggestion
-                onClick={() => {
-                  setMessage('Landing page')
-                  // Submit after setting message
-                  setTimeout(() => {
-                    const form = textareaRef.current?.form
-                    if (form) {
-                      form.requestSubmit()
-                    }
-                  }, 0)
-                }}
-                suggestion="Landing page"
-              />
-              <Suggestion
-                onClick={() => {
-                  setMessage('Todo app')
-                  // Submit after setting message
-                  setTimeout(() => {
-                    const form = textareaRef.current?.form
-                    if (form) {
-                      form.requestSubmit()
-                    }
-                  }, 0)
-                }}
-                suggestion="Todo app"
-              />
-              <Suggestion
-                onClick={() => {
-                  setMessage('Dashboard')
-                  // Submit after setting message
-                  setTimeout(() => {
-                    const form = textareaRef.current?.form
-                    if (form) {
-                      form.requestSubmit()
-                    }
-                  }, 0)
-                }}
-                suggestion="Dashboard"
-              />
-              <Suggestion
-                onClick={() => {
-                  setMessage('Blog')
-                  // Submit after setting message
-                  setTimeout(() => {
-                    const form = textareaRef.current?.form
-                    if (form) {
-                      form.requestSubmit()
-                    }
-                  }, 0)
-                }}
-                suggestion="Blog"
-              />
-              <Suggestion
-                onClick={() => {
-                  setMessage('E-commerce')
-                  // Submit after setting message
-                  setTimeout(() => {
-                    const form = textareaRef.current?.form
-                    if (form) {
-                      form.requestSubmit()
-                    }
-                  }, 0)
-                }}
-                suggestion="E-commerce"
-              />
-              <Suggestion
-                onClick={() => {
-                  setMessage('Portfolio')
-                  // Submit after setting message
-                  setTimeout(() => {
-                    const form = textareaRef.current?.form
-                    if (form) {
-                      form.requestSubmit()
-                    }
-                  }, 0)
-                }}
-                suggestion="Portfolio"
-              />
-              <Suggestion
-                onClick={() => {
-                  setMessage('Chat app')
-                  // Submit after setting message
-                  setTimeout(() => {
-                    const form = textareaRef.current?.form
-                    if (form) {
-                      form.requestSubmit()
-                    }
-                  }, 0)
-                }}
-                suggestion="Chat app"
-              />
-              <Suggestion
-                onClick={() => {
-                  setMessage('Calculator')
-                  // Submit after setting message
-                  setTimeout(() => {
-                    const form = textareaRef.current?.form
-                    if (form) {
-                      form.requestSubmit()
-                    }
-                  }, 0)
-                }}
-                suggestion="Calculator"
-              />
+              {[
+                { label: 'Agent Dashboard', prompt: 'Build an AINative agent monitoring dashboard with SwarmView showing active agents, MetricCards with sparklines for token usage and success rates, AgentTimeline for execution traces, GuardrailPanel for safety rules, and ConnectionStatus indicators' },
+                { label: 'AI Chat Interface', prompt: 'Build an AINative AI chat interface with ChatBubble messages, StreamingIndicator for typing state, CodeDisplay for code responses, a conversation sidebar, and agent-optimized semantic HTML structure' },
+                { label: 'SaaS Platform', prompt: 'Build an AINative SaaS landing page with hero section, feature cards with Lucide icons, pricing tiers using AIKitPriceCard, testimonials, and agent-readable structured data throughout' },
+                { label: 'Swarm Monitor', prompt: 'Build an AINative multi-agent swarm operations center with SwarmView, multiple AgentCards showing status and tasks, TokenUsageBar for budget tracking, SafetyBadge trust scores, and real-time AgentTimeline' },
+                { label: 'E-commerce Store', prompt: 'Build an AINative e-commerce storefront with AIKitProductCard grid, AIKitRating reviews, AIKitBreadcrumb navigation, AIKitPagination, and AIKitBanner for promotions, optimized for agent-first browsing' },
+                { label: 'Admin Panel', prompt: 'Build an AINative admin panel with AIKitSidebar navigation, AIKitTable with sortable data, MetricCards for KPIs, AIKitStepper for workflows, AIKitBreadcrumb, and role-based access indicators' },
+                { label: 'Analytics Dashboard', prompt: 'Build an AINative analytics dashboard with AIKitSidebar, MetricCards with sparklineData, Recharts AreaChart and BarChart visualizations, AIKitTable for data, and AIKitTimeline for events' },
+                { label: 'AI Safety Dashboard', prompt: 'Build an AINative AI safety and compliance dashboard with GuardrailPanel showing pass/fail rules, SafetyBadge trust scores, AgentTimeline for audit trail, TokenUsageBar for consumption, and AIKitBanner alerts' },
+              ].map((item) => (
+                <Suggestion
+                  key={item.label}
+                  onClick={() => {
+                    setMessage(item.prompt)
+                    setTimeout(() => {
+                      const form = textareaRef.current?.form
+                      if (form) {
+                        form.requestSubmit()
+                      }
+                    }, 0)
+                  }}
+                  suggestion={item.label}
+                />
+              ))}
             </Suggestions>
           </div>
 

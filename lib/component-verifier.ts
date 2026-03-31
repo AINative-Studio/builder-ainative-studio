@@ -1,17 +1,14 @@
-// Component verification and replacement system for LLAMA UI
+// Component verification and replacement system for AINative UI Builder
 
-// Available Shadcn components in our preview environment (18 components total)
+// Available components in the preview environment
 const AVAILABLE_COMPONENTS = [
-  // Basic UI Components (Sprint 1-2)
+  // Shadcn UI Components
   'Button',
   'Card', 'CardHeader', 'CardTitle', 'CardDescription', 'CardContent', 'CardFooter',
-  'Input',
-  'Label',
-  'Badge',
+  'Input', 'Label', 'Badge',
   'Avatar', 'AvatarImage', 'AvatarFallback',
   'Table', 'TableHeader', 'TableBody', 'TableRow', 'TableHead', 'TableCell',
   'Separator',
-  // Advanced Components (Sprint 5-6)
   'Dialog', 'DialogOverlay', 'DialogContent', 'DialogHeader', 'DialogTitle', 'DialogDescription', 'DialogFooter',
   'Select', 'SelectTrigger', 'SelectValue', 'SelectContent', 'SelectItem',
   'Tabs', 'TabsList', 'TabsTrigger', 'TabsContent',
@@ -21,61 +18,58 @@ const AVAILABLE_COMPONENTS = [
   'Toast', 'ToastTitle', 'ToastDescription',
   'Accordion', 'AccordionItem', 'AccordionTrigger', 'AccordionContent',
   'Alert', 'AlertTitle', 'AlertDescription',
-  'Popover', 'PopoverTrigger', 'PopoverContent'
+  'Popover', 'PopoverTrigger', 'PopoverContent',
+  // Recharts (data visualization)
+  'ReLineChart', 'Line', 'ReBarChart', 'Bar', 'RePieChart', 'Pie', 'Cell',
+  'AreaChart', 'Area', 'RadarChart', 'Radar',
+  'XAxis', 'YAxis', 'CartesianGrid', 'RechartsTooltip', 'Legend', 'ResponsiveContainer',
+  'RadialBarChart', 'RadialBar', 'ComposedChart', 'Scatter', 'ScatterChart',
+  // Lucide Icons (all available globally)
+  'Search', 'Menu', 'X', 'ChevronDown', 'ChevronRight', 'ChevronLeft', 'ChevronUp',
+  'Home', 'Settings', 'Users', 'BarChart3', 'FileText', 'Bell', 'Mail', 'Star',
+  'Heart', 'ShoppingCart', 'Plus', 'Minus', 'Edit', 'Trash2', 'Eye', 'Check',
+  'AlertCircle', 'Info', 'ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown',
+  'ExternalLink', 'Download', 'Upload', 'Share2', 'Filter', 'Calendar', 'Clock',
+  'MapPin', 'Phone', 'Globe', 'Lock', 'Shield', 'Zap', 'TrendingUp', 'TrendingDown',
+  'Activity', 'DollarSign', 'CreditCard', 'Package', 'Truck', 'Sun', 'Moon',
+  'Laptop', 'Smartphone', 'Code', 'Terminal', 'GitBranch', 'Send', 'MessageSquare',
+  'Bookmark', 'Tag', 'Copy', 'Save', 'RefreshCw', 'MoreHorizontal', 'MoreVertical',
+  'Layers', 'Layout', 'Grid', 'List', 'PieChart', 'LineChart', 'BarChart', 'Target',
+  'Award', 'Sparkles', 'Rocket', 'Building2', 'Briefcase', 'BookOpen', 'Bot', 'Brain',
+  'LogOut', 'LogIn', 'UserPlus', 'Users2', 'FolderOpen', 'File', 'Box', 'Inbox',
+  'CircleDot', 'Hexagon', 'Wand2', 'Palette', 'Lightbulb',
+  // AIKit / AINative Primitive Components
+  'StreamingIndicator', 'VideoPlayer', 'CodeDisplay', 'StreamingText',
+  'ChatBubble', 'MediaGallery', 'Skeleton', 'SkeletonCard', 'MetricCard', 'EmptyState',
+  'AIKitSidebar', 'AIKitHeader', 'AIKitBreadcrumb', 'AIKitPagination',
+  'AIKitStepper', 'AIKitTimeline', 'AIKitTable', 'AIKitRating',
+  'AIKitProductCard', 'AIKitPriceCard', 'AIKitAvatar', 'AIKitBanner',
 ]
 
-// Common component replacements mapping
+// Component replacements for truly unavailable components
 const COMPONENT_REPLACEMENTS: Record<string, string> = {
-  // Chart components -> basic UI
-  'LineChart': 'Card with div elements for chart visualization',
-  'BarChart': 'Card with div elements for bar visualization',
-  'PieChart': 'Card with div elements for pie visualization',
-  'Chart': 'Card with div elements for data visualization',
-  'ResponsiveContainer': 'div container',
-  'XAxis': 'div with labels',
-  'YAxis': 'div with labels',
-  'CartesianGrid': 'div with grid styling',
-  'Tooltip': 'div with hover effects',
-  'Legend': 'div with legend styling',
-
-  // Form components
+  // Form components not in shadcn lite
   'Form': 'div with form styling',
   'FormItem': 'div with form item styling',
   'FormLabel': 'Label',
   'FormControl': 'div',
   'FormMessage': 'div with error styling',
-  'Select': 'div with dropdown styling',
-  'SelectContent': 'div',
-  'SelectItem': 'div',
-  'SelectTrigger': 'Button',
-  'SelectValue': 'span',
 
   // Navigation
-  'Navigation': 'nav element',
   'NavigationMenu': 'nav element',
   'NavigationMenuItem': 'div',
   'NavigationMenuTrigger': 'Button',
   'NavigationMenuContent': 'div',
-  'Sidebar': 'div with sidebar styling',
-  'Header': 'header element',
-  'Footer': 'footer element',
 
-  // Advanced components (now available - no need to replace)
+  // Advanced components
   'AlertDialog': 'Dialog component',
   'Sheet': 'Dialog component with slide animation',
 
   // Data display
   'DataTable': 'Table',
-  'ScrollArea': 'div with overflow styling',
+  'ScrollArea': 'div with overflow-auto styling',
   'Command': 'div with command styling',
   'HoverCard': 'div with hover card styling',
-
-  // Layout
-  'Container': 'div with container styling',
-  'Grid': 'div with grid styling',
-  'Flex': 'div with flex styling',
-  'Box': 'div',
-  'Stack': 'div with stack styling'
 }
 
 // Extract component names from user message
@@ -162,15 +156,13 @@ Available Shadcn components: ${AVAILABLE_COMPONENTS.join(', ')}
   }
 
   enhancedPrompt += `GENERATION RULES:
-1. ONLY use components from the available list above
-2. Create self-contained components with no external imports
-3. Use built-in React hooks (useState, useEffect, etc.)
-4. Use Tailwind CSS classes for styling
-5. Create impressive visual effects with CSS animations and gradients
-6. If you need charts or complex components, create them using div elements and CSS
-7. Make the component functional and interactive
-
-Generate a single React component that works in the browser with no external dependencies.`
+1. Use components from the available list above, plus Lucide icons and Recharts
+2. Create self-contained components with no import statements
+3. Use built-in React hooks (useState, useEffect, etc.) - globally available
+4. Use Tailwind CSS classes for styling with Inter font
+5. Use Lucide icons for all visual indicators (not emoji or text labels)
+6. Use Recharts (ReLineChart, ReBarChart, AreaChart, etc.) for data visualization
+7. Make the component functional and interactive with beautiful design`
 
   return enhancedPrompt
 }

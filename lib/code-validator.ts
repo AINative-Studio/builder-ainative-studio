@@ -18,17 +18,37 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
   let fixedCode = code
   const fixes: string[] = []
 
-  // Fix 1: Remove invalid number-identifier patterns like "1px", "2em", etc in JS context
-  // These are valid in CSS but not in JS variable names
-  const invalidIdentifiers = fixedCode.match(/\b\d+[a-zA-Z]+\b/g)
-  if (invalidIdentifiers) {
-    invalidIdentifiers.forEach(invalid => {
-      // Replace with valid identifier by adding underscore
-      const fixed = `_${invalid}`
-      fixedCode = fixedCode.replace(new RegExp(`\\b${invalid}\\b`, 'g'), fixed)
-      fixes.push(`Fixed invalid identifier: ${invalid} → ${fixed}`)
-    })
+  // Fix 0: CRITICAL - Add missing parentheses to function declarations
+  // Claude sometimes generates: function LandingPage { or function LandingPage{ instead of function LandingPage() {
+  // Use a simple, direct global replace that handles all whitespace variations
+  const beforeFix = fixedCode
+  const matches = [...fixedCode.matchAll(/function\s+([A-Z][a-zA-Z0-9]*)\s*\{/g)]
+
+  fixedCode = fixedCode.replace(
+    /function\s+([A-Z][a-zA-Z0-9]*)\s*\{/g,
+    'function $1() {'
+  )
+
+  if (fixedCode !== beforeFix && matches.length > 0) {
+    const funcNames = matches.map(m => m[1])
+    fixes.push(`Added missing parentheses to function ${funcNames.join(', ')}()`)
   }
+
+  // Fix 0.5: CRITICAL - Remove semicolons after opening braces/brackets
+  // Claude sometimes generates: const data = [{; or useState({; which breaks syntax
+  const beforeSemicolonFix = fixedCode
+  fixedCode = fixedCode.replace(/([{\[])\s*;/g, '$1')
+
+  if (fixedCode !== beforeSemicolonFix) {
+    fixes.push('Removed semicolons after opening braces/brackets')
+  }
+
+  // Fix 1: DISABLED — was breaking Tailwind classes like text-5xl, h-14, w-12 by
+  // converting them to text-_5xl, h-_14, w-_12. The regex matched numbers inside
+  // CSS class strings which are valid in that context. Only actual JS identifiers
+  // starting with digits (like "1px" as a variable name) would be invalid, but
+  // Claude's generated code rarely has this issue, and the fix caused more harm
+  // than good by destroying all Tailwind numeric classes.
 
   // Fix 2: Ensure ALL component functions are properly exposed to window
   // Find all component definitions (functions or const with capital first letter)
@@ -62,12 +82,26 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
 
   // Fix 5: Remove empty function calls like () or ""()
   // These cause "" is not a function errors at runtime
+  // BUT DON'T remove () from function declarations!
   fixedCode = fixedCode.replace(/['""]?\s*\(\s*\)(?!\s*=>)/g, (match, offset) => {
-    // Only remove if it's not part of an arrow function definition
     const before = fixedCode.substring(Math.max(0, offset - 20), offset)
+
+    // Keep if it's an arrow function definition
     if (before.match(/\w+\s*=\s*$/)) {
-      return match // Keep it, it's an arrow function
+      return match
     }
+
+    // Keep if it's a function declaration (function Name() {)
+    if (before.match(/function\s+\w+$/)) {
+      return match
+    }
+
+    // Keep if it's after an identifier (like functionName())
+    if (before.match(/\w$/)) {
+      return match
+    }
+
+    // Only remove if it's a standalone empty call
     fixes.push('Removed empty function call that would cause runtime error')
     return ''
   })
@@ -95,7 +129,28 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
 
   // Fix 9: Ensure all statements end with semicolon or newline (helps Babel parser)
   // Add semicolons after const/let/var declarations if missing
-  fixedCode = fixedCode.replace(/^(\s*(?:const|let|var)\s+[^=]+=\s*[^;\n]+)$/gm, '$1;')
+  // BUT DON'T add semicolons after opening braces/brackets!
+  fixedCode = fixedCode.replace(/^(\s*(?:const|let|var)\s+[^=]+=\s*[^;\n{[\]]+)$/gm, '$1;')
+
+  // Fix 10: AX Standard — Enforce single h1 per page
+  // Convert all <h1> after the first one to <h2> (and </h1> to </h2>)
+  let h1Count = 0
+  fixedCode = fixedCode.replace(/<h1(\s|>)/g, (match) => {
+    h1Count++
+    if (h1Count > 1) {
+      fixes.push('Converted extra <h1> to <h2> (AX-5: single h1 rule)')
+      return '<h2' + match.slice(3)
+    }
+    return match
+  })
+  if (h1Count > 1) {
+    // Also fix closing tags — convert extra </h1> to </h2>
+    let closeCount = 0
+    fixedCode = fixedCode.replace(/<\/h1>/g, () => {
+      closeCount++
+      return closeCount > 1 ? '</h2>' : '</h1>'
+    })
+  }
 
   return { code: fixedCode, fixes }
 }
@@ -143,20 +198,16 @@ export function validateJavaScriptCode(code: string): ValidationResult {
         ? error.message.replace(/\(\d+:\d+\)/, '').trim()
         : 'Unknown syntax error'
 
-    // Check if it's a MINOR error that we can safely ignore
+    // Check if it's a CATASTROPHIC error that will definitely break in browser
     const errorLower = errorMessage.toLowerCase()
-    const isMinorError =
-      errorLower.includes('semicolon') ||
-      errorLower.includes('missing semicolon') ||
-      errorLower.includes('unexpected token') ||
-      errorLower.includes('expected')
 
-    // ONLY fail for CATASTROPHIC errors that will definitely break in browser
-    // NOTE: Even "unterminated string" can sometimes work in browser Babel, so be very lenient
+    // CRITICAL: Unterminated strings MUST be rejected - they break Babel in browser
     const isCatastrophicError =
       errorLower.includes('unexpected end of file') ||
       errorLower.includes('unexpected eof') ||
-      (errorLower.includes('unterminated') && errorLower.includes('comment')) // Only fail on unterminated comments
+      errorLower.includes('unterminated string') ||  // ← FIXED: Reject unterminated strings
+      errorLower.includes('unterminated') ||         // ← FIXED: Catch all unterminated errors
+      (errorLower.includes('unexpected token') && !errorLower.includes('semicolon')) // ← FIXED: Only allow semicolon-related unexpected tokens
 
     if (isCatastrophicError) {
       // This will definitely fail in browser - report error
@@ -186,18 +237,30 @@ export function validateJavaScriptCode(code: string): ValidationResult {
 /**
  * Extract code block from markdown-wrapped code
  * Handles code wrapped in ```jsx, ```javascript, or ```tsx blocks
+ * Also handles malformed wrappers like ""`jsx, ```jsx", etc.
  */
 export function extractCodeFromMarkdown(content: string): string {
-  // Match code blocks with language specifier
-  const codeBlockRegex = /```(?:jsx|javascript|tsx|js|ts)\n([\s\S]*?)```/
+  // Try proper markdown code blocks first
+  const codeBlockRegex = /```(?:jsx|javascript|tsx|js|ts|react)?\s*\n([\s\S]*?)```/
   const match = content.match(codeBlockRegex)
 
   if (match && match[1]) {
     return match[1].trim()
   }
 
-  // Return original if no code block found
-  return content.trim()
+  // If no proper markdown found, aggressively clean malformed wrappers
+  // Claude sometimes returns: ""`jsx, "`jsx, ```jsx", "```jsx, etc.
+  let cleaned = content
+    // Remove ALL combinations of quotes/backticks + language identifiers at start
+    .replace(/^[\s\n\r]*["'`]{1,10}(?:jsx|javascript|tsx|ts|js|react)?[\s\n\r]*/gi, '')
+    // Remove ALL combinations of quotes/backticks at end
+    .replace(/[\s\n\r]*["'`]{1,10}[\s\n\r]*$/gi, '')
+    // Remove any remaining weird leading characters before 'function' or 'const'
+    .replace(/^[^a-zA-Z/\s]+(function|const|import|export)/i, '$1')
+    .trim()
+
+  // Return cleaned content
+  return cleaned
 }
 
 /**

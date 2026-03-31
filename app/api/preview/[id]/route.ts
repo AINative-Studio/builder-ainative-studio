@@ -85,10 +85,15 @@ export async function GET(
     // This happens when Tool Use API returns unwrapped code
     console.log('No code blocks found, using raw content for ID:', id)
 
-    // Clean up malformed markdown wrappers like ""`jsx or ```jsx without proper closing
+    // CRITICAL: Aggressively clean up ALL malformed markdown wrappers
+    // Claude sometimes returns: ""`jsx, "`jsx, ```jsx", "```jsx, etc.
     let cleanedContent = content
-      .replace(/^["'`]{1,3}`?(?:jsx|javascript|tsx|ts|js)\s*/i, '') // Remove opening wrapper including ""`jsx
-      .replace(/["'`]{2,3}$/i, '') // Remove closing wrapper
+      // Remove ALL combinations of quotes/backticks + language identifiers at start
+      .replace(/^[\s\n\r]*["'`]{1,10}(?:jsx|javascript|tsx|ts|js|react)?[\s\n\r]*/gi, '')
+      // Remove ALL combinations of quotes/backticks at end
+      .replace(/[\s\n\r]*["'`]{1,10}[\s\n\r]*$/gi, '')
+      // Remove any remaining weird leading characters before 'function' or 'const'
+      .replace(/^[^a-zA-Z/\s]+(function|const|import|export)/i, '$1')
       .trim()
 
     // Check if content looks like React/JSX code (contains function or const with JSX)
@@ -120,12 +125,13 @@ export async function GET(
   // CRITICAL: Clean up malformed markdown wrappers that might be in the extracted code
   // This aggressively removes any combination of quotes/backticks at start and end
   componentCode = componentCode
-    .replace(/^[\s\n\r]*["'`]{1,5}(?:jsx|javascript|tsx|ts|js)?[\s\n\r]*/gi, '') // Remove any wrapper at start
-    .replace(/[\s\n\r]*["'`]{1,5}[\s\n\r]*$/gi, '') // Remove any wrapper at end
+    // Remove ALL combinations of quotes/backticks + language identifiers at start
+    .replace(/^[\s\n\r]*["'`]{1,10}(?:jsx|javascript|tsx|ts|js|react)?[\s\n\r]*/gi, '')
+    // Remove ALL combinations of quotes/backticks at end
+    .replace(/[\s\n\r]*["'`]{1,10}[\s\n\r]*$/gi, '')
+    // Remove any remaining weird leading characters before 'function' or 'const'
+    .replace(/^[^a-zA-Z/\s]+(function|const|import|export)/i, '$1')
     .trim()
-
-  // Double-check: if it still starts with weird chars, strip them
-  componentCode = componentCode.replace(/^[^a-zA-Z/\s]*/, '')
 
   // Clean up the code
   componentCode = componentCode
@@ -162,6 +168,21 @@ export async function GET(
   });
 
   componentCode = componentCode.trim()
+
+  // AX-5 ENFORCEMENT: Convert extra <h1> tags to <h2> (single h1 rule)
+  let h1Idx = 0
+  componentCode = componentCode.replace(/<h1([\s>])/g, (match: string, after: string) => {
+    h1Idx++
+    return h1Idx > 1 ? '<h2' + after : match
+  })
+  if (h1Idx > 1) {
+    let closeIdx = 0
+    componentCode = componentCode.replace(/<\/h1>/g, () => {
+      closeIdx++
+      return closeIdx > 1 ? '</h2>' : '</h1>'
+    })
+    console.log(`[Preview] AX-5: Converted ${h1Idx - 1} extra <h1> to <h2>`)
+  }
 
   // CRITICAL FIX: Convert template literals with interpolations to string concatenation
   // This prevents Babel from choking on ${} expressions in template literals
@@ -270,13 +291,64 @@ export async function GET(
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Preview</title>
+    <!-- Google Fonts: Inter (primary) + Geist-like fallback -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <!-- Core: React 18 -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Lucide Icons (vanilla) + React bridge -->
+    <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.min.js"></script>
+    <!-- PropTypes (required by Recharts) -->
+    <script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
+    <!-- Recharts for data visualization -->
+    <script src="https://unpkg.com/recharts@2.15.0/umd/Recharts.js"></script>
+    <!-- Tailwind CSS with custom AINative config -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'Poppins', 'system-ui', 'sans-serif'],
+            },
+            colors: {
+              'brand-primary': '#5867EF',
+              'dark-1': '#131726',
+              'dark-2': '#22263c',
+              'dark-3': '#31395a',
+            },
+            boxShadow: {
+              'ds-sm': '0 2px 4px rgba(19, 23, 38, 0.1), 0 1px 2px rgba(19, 23, 38, 0.06)',
+              'ds-md': '0 4px 8px rgba(19, 23, 38, 0.12), 0 2px 4px rgba(19, 23, 38, 0.08)',
+              'ds-lg': '0 12px 24px rgba(19, 23, 38, 0.15), 0 4px 8px rgba(19, 23, 38, 0.1)',
+            },
+            keyframes: {
+              'fade-in': { from: { opacity: '0', transform: 'translateY(10px)' }, to: { opacity: '1', transform: 'translateY(0)' } },
+              'slide-in': { from: { opacity: '0', transform: 'translateX(-10px)' }, to: { opacity: '1', transform: 'translateX(0)' } },
+              'float': { '0%, 100%': { transform: 'translateY(0px)' }, '50%': { transform: 'translateY(-10px)' } },
+            },
+            animation: {
+              'fade-in': 'fade-in 0.5s ease-out',
+              'slide-in': 'slide-in 0.4s ease-out',
+              'float': 'float 3s ease-in-out infinite',
+            },
+          },
+        },
+      }
+    </script>
     <script src="/shadcn-components.js"></script>
+    <script src="/aikit-components.js"></script>
     <style>
-      body { margin: 0; font-family: system-ui, sans-serif; }
+      body { margin: 0; font-family: 'Inter', 'Poppins', system-ui, sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+      *, *::before, *::after { box-sizing: border-box; }
+      /* Smooth scrolling */
+      html { scroll-behavior: smooth; }
+      /* Better default text rendering */
+      h1, h2, h3, h4, h5, h6 { text-wrap: balance; }
+      p { text-wrap: pretty; }
     </style>
 </head>
 <body>
@@ -284,9 +356,320 @@ export async function GET(
     <script type="text/babel">
       console.log('[Preview] Starting preview initialization...');
 
+      // AX-5 ENFORCEMENT: Intercept React.createElement to ensure single h1
+      // This works WITH React instead of fighting it
+      const _originalCreateElement = React.createElement;
+      let _h1Count = 0;
+      React.createElement = function(type) {
+        if (type === 'h1') {
+          _h1Count++;
+          if (_h1Count > 1) {
+            // Convert extra h1 to h2 at the React level
+            var args = Array.prototype.slice.call(arguments);
+            args[0] = 'h2';
+            return _originalCreateElement.apply(React, args);
+          }
+        }
+        return _originalCreateElement.apply(React, arguments);
+      };
+
       // Make React hooks available
-      const { useState, useEffect, useCallback, useMemo, useRef } = React;
+      const { useState, useEffect, useCallback, useMemo, useRef, useContext, createContext, Fragment } = React;
       console.log('[Preview] React hooks loaded:', { useState, useEffect, useCallback, useMemo, useRef });
+
+      // Create React components from Lucide vanilla SVG icon definitions
+      // lucide (vanilla) exports icons as ["svg", {svgAttrs}, [[tag, attrs], ...]]
+      const _lucideIcons = window.lucide || {};
+      function _createLucideIcon(name) {
+        const iconData = _lucideIcons[name];
+        if (!iconData || !Array.isArray(iconData)) return function FallbackIcon(props) {
+          return React.createElement('span', { className: props.className || '', style: props.style }, '');
+        };
+        // iconData[0] = "svg", iconData[1] = svg attrs, iconData[2] = children array
+        const children = iconData[2] || [];
+        return function LucideIcon({ className = 'w-4 h-4', size, color, strokeWidth, fill, style, ...rest }) {
+          const s = size || undefined;
+          return React.createElement('svg', {
+            xmlns: 'http://www.w3.org/2000/svg',
+            width: s || 24,
+            height: s || 24,
+            viewBox: '0 0 24 24',
+            fill: fill || 'none',
+            stroke: color || 'currentColor',
+            strokeWidth: strokeWidth || 2,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+            className: className,
+            style: style,
+            ...rest
+          }, ...children.map(function(child, i) {
+            // child is [tagName, attributes]
+            var tag = child[0];
+            var attrs = Object.assign({}, child[1] || {}, { key: i });
+            // Convert hyphenated attrs to camelCase for React
+            if (attrs['stroke-width']) { attrs.strokeWidth = attrs['stroke-width']; delete attrs['stroke-width']; }
+            if (attrs['stroke-linecap']) { attrs.strokeLinecap = attrs['stroke-linecap']; delete attrs['stroke-linecap']; }
+            if (attrs['stroke-linejoin']) { attrs.strokeLinejoin = attrs['stroke-linejoin']; delete attrs['stroke-linejoin']; }
+            if (attrs['fill-rule']) { attrs.fillRule = attrs['fill-rule']; delete attrs['fill-rule']; }
+            if (attrs['clip-rule']) { attrs.clipRule = attrs['clip-rule']; delete attrs['clip-rule']; }
+            return React.createElement(tag, attrs);
+          }));
+        };
+      }
+
+      // Create all icon components
+      const _iconNames = Object.keys(_lucideIcons);
+      const _iconComponents = {};
+      _iconNames.forEach(function(name) {
+        _iconComponents[name] = _createLucideIcon(name);
+      });
+
+      // Safe icon accessor — returns fallback circle for unknown icons
+      // All returned functions are tagged with _isLucideIcon for detection
+      function _getIcon(name) {
+        if (_iconComponents[name]) {
+          _iconComponents[name]._isLucideIcon = true;
+          return _iconComponents[name];
+        }
+        var fallback = function UnknownIcon(props) {
+          var cn = (props && props.className) || 'w-4 h-4';
+          var sz = (props && props.size) || 24;
+          var clr = (props && props.color) || 'currentColor';
+          return React.createElement('svg', {
+            xmlns: 'http://www.w3.org/2000/svg', width: sz, height: sz,
+            viewBox: '0 0 24 24', fill: 'none', stroke: clr, strokeWidth: 2,
+            strokeLinecap: 'round', strokeLinejoin: 'round', className: cn
+          }, React.createElement('circle', { cx: '12', cy: '12', r: '10' }));
+        };
+        fallback._isLucideIcon = true;
+        return fallback;
+      }
+
+      // Create all common icon constants using safe accessor
+      const Search = _getIcon("Search");
+      const Menu = _getIcon("Menu");
+      const X = _getIcon("X");
+      const ChevronDown = _getIcon("ChevronDown");
+      const ChevronRight = _getIcon("ChevronRight");
+      const ChevronLeft = _getIcon("ChevronLeft");
+      const ChevronUp = _getIcon("ChevronUp");
+      const Home = _getIcon("Home");
+      const Settings = _getIcon("Settings");
+      const Users = _getIcon("Users");
+      const BarChart3 = _getIcon("BarChart3");
+      const FileText = _getIcon("FileText");
+      const Bell = _getIcon("Bell");
+      const Mail = _getIcon("Mail");
+      const Star = _getIcon("Star");
+      const Heart = _getIcon("Heart");
+      const ShoppingCart = _getIcon("ShoppingCart");
+      const Plus = _getIcon("Plus");
+      const Minus = _getIcon("Minus");
+      const Edit = _getIcon("Pencil");
+      const Edit2 = _getIcon("Pencil");
+      const Pencil = _getIcon("Pencil");
+      const Trash2 = _getIcon("Trash2");
+      const Eye = _getIcon("Eye");
+      const EyeOff = _getIcon("EyeOff");
+      const Check = _getIcon("Check");
+      const AlertCircle = _getIcon("AlertCircle");
+      const Info = _getIcon("Info");
+      const HelpCircle = _getIcon("HelpCircle");
+      const ArrowRight = _getIcon("ArrowRight");
+      const ArrowLeft = _getIcon("ArrowLeft");
+      const ArrowUp = _getIcon("ArrowUp");
+      const ArrowDown = _getIcon("ArrowDown");
+      const ExternalLink = _getIcon("ExternalLink");
+      const Download = _getIcon("Download");
+      const Upload = _getIcon("Upload");
+      const Share2 = _getIcon("Share2");
+      const Filter = _getIcon("Filter");
+      const Calendar = _getIcon("Calendar");
+      const Clock = _getIcon("Clock");
+      const MapPin = _getIcon("MapPin");
+      const Phone = _getIcon("Phone");
+      const Globe = _getIcon("Globe");
+      const Lock = _getIcon("Lock");
+      const Unlock = _getIcon("Unlock");
+      const Shield = _getIcon("Shield");
+      const Zap = _getIcon("Zap");
+      const TrendingUp = _getIcon("TrendingUp");
+      const TrendingDown = _getIcon("TrendingDown");
+      const Activity = _getIcon("Activity");
+      const DollarSign = _getIcon("DollarSign");
+      const CreditCard = _getIcon("CreditCard");
+      const Package = _getIcon("Package");
+      const Truck = _getIcon("Truck");
+      const Gift = _getIcon("Gift");
+      const Sun = _getIcon("Sun");
+      const Moon = _getIcon("Moon");
+      const Laptop = _getIcon("Laptop");
+      const Smartphone = _getIcon("Smartphone");
+      const Code = _getIcon("Code");
+      const Terminal = _getIcon("Terminal");
+      const GitBranch = _getIcon("GitBranch");
+      const Send = _getIcon("Send");
+      const MessageSquare = _getIcon("MessageSquare");
+      const MessageCircle = _getIcon("MessageCircle");
+      const Bookmark = _getIcon("Bookmark");
+      const Tag = _getIcon("Tag");
+      const Copy = _getIcon("Copy");
+      const Save = _getIcon("Save");
+      const RefreshCw = _getIcon("RefreshCw");
+      const MoreHorizontal = _getIcon("MoreHorizontal");
+      const MoreVertical = _getIcon("MoreVertical");
+      const Layers = _getIcon("Layers");
+      const Layout = _getIcon("Layout");
+      const Grid = _getIcon("Grid3x3");
+      const List = _getIcon("List");
+      const PieChart = _getIcon("PieChart");
+      const LineChart = _getIcon("LineChart");
+      const BarChart = _getIcon("BarChart");
+      const Target = _getIcon("Target");
+      const Award = _getIcon("Award");
+      const Sparkles = _getIcon("Sparkles");
+      const Rocket = _getIcon("Rocket");
+      const Building2 = _getIcon("Building2");
+      const Briefcase = _getIcon("Briefcase");
+      const BookOpen = _getIcon("BookOpen");
+      const Bot = _getIcon("Bot");
+      const Brain = _getIcon("Brain");
+      const LogOut = _getIcon("LogOut");
+      const LogIn = _getIcon("LogIn");
+      const UserPlus = _getIcon("UserPlus");
+      const Users2 = _getIcon("Users2");
+      const FolderOpen = _getIcon("FolderOpen");
+      const File = _getIcon("File");
+      const Box = _getIcon("Box");
+      const Inbox = _getIcon("Inbox");
+      const CircleDot = _getIcon("CircleDot");
+      const Wand2 = _getIcon("Wand2");
+      const Palette = _getIcon("Palette");
+      const Lightbulb = _getIcon("Lightbulb");
+      const Newspaper = _getIcon("Newspaper");
+      const GraduationCap = _getIcon("GraduationCap");
+      const Hexagon = _getIcon("Hexagon");
+      const Maximize = _getIcon("Maximize");
+      const Minimize = _getIcon("Minimize");
+      const Maximize2 = _getIcon("Maximize2");
+      const Minimize2 = _getIcon("Minimize2");
+      // Additional commonly-used icons
+      const Play = _getIcon("Play");
+      const Pause = _getIcon("Pause");
+      const SkipForward = _getIcon("SkipForward");
+      const SkipBack = _getIcon("SkipBack");
+      const Volume2 = _getIcon("Volume2");
+      const VolumeX = _getIcon("VolumeX");
+      const Mic = _getIcon("Mic");
+      const MicOff = _getIcon("MicOff");
+      const Camera = _getIcon("Camera");
+      const Video = _getIcon("Video");
+      const Image = _getIcon("Image");
+      const Music = _getIcon("Music");
+      const Wifi = _getIcon("Wifi");
+      const Cloud = _getIcon("Cloud");
+      const Database = _getIcon("Database");
+      const Server = _getIcon("Server");
+      const HardDrive = _getIcon("HardDrive");
+      const Monitor = _getIcon("Monitor");
+      const Cpu = _getIcon("Cpu");
+      const Github = _getIcon("Github");
+      const Twitter = _getIcon("Twitter");
+      const Linkedin = _getIcon("Linkedin");
+      const Facebook = _getIcon("Facebook");
+      const Instagram = _getIcon("Instagram");
+      const Youtube = _getIcon("Youtube");
+      const Hash = _getIcon("Hash");
+      const AtSign = _getIcon("AtSign");
+      const Paperclip = _getIcon("Paperclip");
+      const Link = _getIcon("Link");
+      const Clipboard = _getIcon("Clipboard");
+      const Printer = _getIcon("Printer");
+      const RotateCcw = _getIcon("RotateCcw");
+      const Move = _getIcon("Move");
+      const Grip = _getIcon("Grip");
+      const Table2 = _getIcon("Table2");
+      const Trophy = _getIcon("Trophy");
+      const Flag = _getIcon("Flag");
+      const Flame = _getIcon("Flame");
+      const Brush = _getIcon("Brush");
+      const Pen = _getIcon("Pen");
+      const Network = _getIcon("Network");
+      const Workflow = _getIcon("Workflow");
+      const Route = _getIcon("Route");
+      const Compass = _getIcon("Compass");
+      const Navigation = _getIcon("Navigation");
+      const UserMinus = _getIcon("UserMinus");
+      const UserCheck = _getIcon("UserCheck");
+      const FolderClosed = _getIcon("FolderClosed");
+      const FilePlus = _getIcon("FilePlus");
+      const FileCheck = _getIcon("FileCheck");
+      const FileX = _getIcon("FileX");
+      const Boxes = _getIcon("Boxes");
+      const Archive = _getIcon("Archive");
+      const Circle = _getIcon("Circle");
+      const Square = _getIcon("Square");
+      const Triangle = _getIcon("Triangle");
+      const Octagon = _getIcon("Octagon");
+      const Pentagon = _getIcon("Pentagon");
+      const Crosshair = _getIcon("Crosshair");
+      const MousePointer = _getIcon("MousePointer");
+      const Fingerprint = _getIcon("Fingerprint");
+      const QrCode = _getIcon("QrCode");
+      const ScanLine = _getIcon("ScanLine");
+      const CircuitBoard = _getIcon("CircuitBoard");
+      const Headphones = _getIcon("Headphones");
+      const AlertTriangle = _getIcon("AlertTriangle");
+      const CheckCircle = _getIcon("CheckCircle");
+      const CheckCircle2 = _getIcon("CheckCircle2");
+      const XCircle = _getIcon("XCircle");
+      const MinusCircle = _getIcon("MinusCircle");
+      const PlusCircle = _getIcon("PlusCircle");
+      const ArrowUpRight = _getIcon("ArrowUpRight");
+      const ArrowDownRight = _getIcon("ArrowDownRight");
+      const ChevronFirst = _getIcon("ChevronFirst");
+      const ChevronLast = _getIcon("ChevronLast");
+      const Repeat = _getIcon("Repeat");
+      const Shuffle = _getIcon("Shuffle");
+      const SlidersHorizontal = _getIcon("SlidersHorizontal");
+      const Cog = _getIcon("Settings"); // alias
+      const Gear = _getIcon("Settings"); // alias
+
+      // Make ALL lucide icons available as window globals so any icon name works in JSX.
+      // The component detector's _isIconWrapper check prevents these from being picked as page components.
+      _iconNames.forEach(function(name) {
+        var icon = _getIcon(name);
+        if (!window[name]) window[name] = icon;
+      });
+
+      console.log('[Preview] Lucide icons loaded:', _iconNames.length, 'icons available on window');
+
+      // Make Recharts available globally
+      const recharts = window.Recharts || {};
+      const {
+        LineChart: ReLineChart, Line, BarChart: ReBarChart, Bar,
+        PieChart: RePieChart, Pie, Cell, AreaChart, Area,
+        RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
+        ComposedChart, Scatter, ScatterChart,
+        XAxis, YAxis, CartesianGrid, Tooltip: RechartsTooltip,
+        Legend, ResponsiveContainer, RadialBarChart, RadialBar,
+        Treemap, Funnel, FunnelChart
+      } = recharts;
+      console.log('[Preview] Recharts loaded:', !!recharts.LineChart);
+
+      // Make AIKit / AINative Primitive components available
+      const aikit = window.AIKitComponents || {};
+      const {
+        StreamingIndicator, VideoPlayer, CodeDisplay, StreamingText,
+        ChatBubble, MediaGallery, Skeleton, SkeletonCard,
+        MetricCard, EmptyState,
+        AIKitSidebar, AIKitHeader, AIKitBreadcrumb, AIKitPagination,
+        AIKitStepper, AIKitTimeline, AIKitTable, AIKitRating,
+        AIKitProductCard, AIKitPriceCard, AIKitAvatar, AIKitBanner,
+        AgentCard, SwarmView, AgentTimeline, ConnectionStatus,
+        TokenUsageBar, SafetyBadge, GuardrailPanel
+      } = aikit;
+      console.log('[Preview] AIKit loaded:', Object.keys(aikit).length, 'components');
 
       // Make shadcn components available
       const { Button, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter,
@@ -391,86 +774,130 @@ export async function GET(
 
         console.log('[Preview] Component code executed successfully');
 
-        // Auto-export any defined component functions to window for easier detection
-        // This helps when components are defined as 'function Name()' without explicit window assignment
-        const possibleComponentNames = ['LandingPage', 'Dashboard', 'ProjectDashboard', 'App', 'Component', 'Main', 'ProductCard', 'AdminPanel', 'EcommercePage', 'BlogPage', 'Counter', 'TodoList', 'ProductList', 'ShoppingCart'];
-        possibleComponentNames.forEach(name => {
-          try {
-            // Use eval to check if the variable exists in current scope
-            if (typeof eval(name) === 'function' && !window[name]) {
-              window[name] = eval(name);
-              console.log('[Preview] Auto-exported ' + name + ' to window');
-            }
-          } catch (e) {
-            // Variable doesn't exist, skip
-          }
-        });
-
-        // Find the component to render
+        // Find the main page component to render.
+        // Strategy: Check known component name patterns FIRST (most reliable),
+        // then fall back to scanning window for anything that looks like a page component.
         let Component = null;
 
-        // Shadcn component names to exclude from search
-        const shadcnComponentNames = [
-          'Button', 'Card', 'CardHeader', 'CardTitle', 'CardDescription', 'CardContent', 'CardFooter',
-          'Input', 'Label', 'Badge', 'Avatar', 'AvatarImage', 'AvatarFallback',
-          'Table', 'TableHeader', 'TableBody', 'TableRow', 'TableHead', 'TableCell',
-          'Separator', 'Dialog', 'DialogOverlay', 'DialogContent', 'DialogHeader',
-          'DialogTitle', 'DialogDescription', 'DialogFooter', 'Select', 'SelectTrigger',
-          'SelectValue', 'SelectContent', 'SelectItem', 'Tabs', 'TabsList', 'TabsTrigger',
-          'TabsContent', 'Progress', 'CircularProgress', 'Checkbox', 'RadioGroup',
-          'RadioGroupItem', 'Accordion', 'AccordionItem', 'AccordionTrigger',
-          'AccordionContent', 'Toast', 'ToastTitle', 'ToastDescription',
-          'Alert', 'AlertTitle', 'AlertDescription', 'Popover', 'PopoverTrigger',
-          'PopoverContent', 'ErrorBoundary'
+        // Step 1: Try to find component by eval in local scope (Babel scope)
+        // These are the most common names Claude generates for page components
+        // Page component names to try (NO single-word names that could be Lucide icons!)
+        const _pageNames = [
+          // Landing pages
+          'LandingPage', 'TaskFlowLanding', 'InkFlowLanding', 'ReviewBotLanding',
+          'ReviewBotLandingPage', 'CodeLensLanding', 'DevPulseLanding',
+          // Dashboards
+          'Dashboard', 'ProjectDashboard', 'SalesDashboard', 'AgentOpsDashboard',
+          'AdminDashboard', 'AnalyticsDashboard', 'MetricsDashboard',
+          'AgentMonitoringDashboard', 'SocialMediaDashboard',
+          // Panels
+          'AdminPanel', 'ControlPanel',
+          // E-commerce
+          'EcommercePage', 'EcommerceApp', 'EcommerceSite', 'StorePage',
+          'SneakerStore', 'SneakerShop', 'SneakerStorePage',
+          'ShoppingApp', 'CartPage', 'ProductListingPage', 'ProductListPage',
+          // Content
+          'BlogPage', 'BlogLayout',
+          // Marketplace / Hub / Docs
+          'MarketplacePage', 'AgentHubMarketplace', 'AgentHub',
+          'DocsPage', 'DocumentationPage', 'ApiDocsPage',
+          'GateForgeDocs', 'GateForgeApp',
+          // Apps
+          'HomePage', 'MainApp', 'PageLayout',
+          'TodoList', 'TodoApp', 'ChatApp', 'ChatInterface',
+          // Generic (last resort, icon check will filter)
+          'App', 'Main', 'Component', 'Page',
         ];
 
-        // First, try to find ANY component exposed to window (dynamic search)
-        console.log('[Preview] Searching for component in window object...');
-        for (const key in window) {
-          // Look for any function with a capital first letter (React component convention)
-          if (typeof window[key] === 'function' && /^[A-Z]/.test(key)) {
-            // Skip React's built-in functions and shadcn components
-            if (key !== 'React' && key !== 'ReactDOM' && key !== 'Babel' &&
-                !shadcnComponentNames.includes(key)) {
-              Component = window[key];
-              console.log('[Preview] ✓ Found component via window.' + key);
+        // Suffixes that indicate a page-level component
+        const _componentSuffixes = ['Page', 'App', 'Dashboard', 'Panel', 'Landing', 'Site', 'View', 'Store', 'Shop', 'Marketplace', 'Hub', 'Docs', 'Portal', 'Interface', 'Platform'];
+
+        console.log('[Preview] Searching for page component...');
+
+        // Check if a function was created by _getIcon (our Lucide wrapper)
+        // We tag icon functions with a marker property for reliable detection
+        function _isIconWrapper(fn) {
+          if (!fn) return false;
+          if (fn._isLucideIcon) return true;
+          var str = fn.toString();
+          // Icon wrappers are small and contain SVG-related code
+          return str.length < 600 && (str.includes('viewBox') || str.includes('UnknownIcon') || str.includes('LucideIcon') || str.includes('_createLucideIcon') || str.includes('0 0 24 24'));
+        }
+
+        // First, scan for known page component names in local scope
+        for (const name of _pageNames) {
+          try {
+            const fn = eval(name);
+            if (typeof fn === 'function' && !_isIconWrapper(fn)) {
+              Component = fn;
+              console.log('[Preview] ✓ Found component: ' + name + ' (local scope)');
               break;
+            }
+          } catch (e) {}
+        }
+
+        // If not found, search window for names ending with page-like suffixes
+        if (!Component) {
+          for (const key in window) {
+            if (typeof window[key] === 'function' && /^[A-Z]/.test(key)) {
+              // Check if name ends with a page suffix
+              const matchesSuffix = _componentSuffixes.some(function(s) { return key.endsWith(s); });
+              // Also skip known AIKit component names
+              const _aikitNames = ['SwarmView', 'AgentCard', 'AgentTimeline', 'ConnectionStatus', 'TokenUsageBar', 'SafetyBadge', 'GuardrailPanel', 'AIKitSidebar', 'AIKitHeader', 'AIKitTable', 'AIKitBreadcrumb', 'AIKitPagination', 'AIKitStepper', 'AIKitTimeline', 'AIKitRating', 'AIKitProductCard', 'AIKitPriceCard', 'AIKitAvatar', 'AIKitBanner', 'MetricCard', 'MediaGallery', 'Skeleton', 'SkeletonCard', 'EmptyState', 'StreamingIndicator', 'VideoPlayer', 'CodeDisplay', 'StreamingText', 'ChatBubble'];
+              if (matchesSuffix && key !== 'React' && key !== 'ReactDOM' && !_isIconWrapper(window[key]) && !_aikitNames.includes(key)) {
+                Component = window[key];
+                console.log('[Preview] ✓ Found component: ' + key + ' (window, suffix match)');
+                break;
+              }
             }
           }
         }
 
-        // If that didn't work, try common component names as fallback
+        // Last resort: find any window function that's NOT a known library component
         if (!Component) {
-          const possibleNames = ['Dashboard', 'ProjectDashboard', 'App', 'Component', 'Main', 'ProductCard', 'AdminPanel', 'LandingPage', 'EcommercePage', 'BlogPage'];
-          for (const name of possibleNames) {
-            console.log('[Preview] Checking window.' + name + ':', typeof window[name]);
-            if (typeof window[name] === 'function') {
-              Component = window[name];
-              console.log('[Preview] ✓ Found component via window.' + name);
-              break;
+          // Build a comprehensive set of names to skip
+          const _skipNames = new Set([
+            'React', 'ReactDOM', 'Babel', 'ErrorBoundary', 'ShadcnComponents',
+            'UnknownIcon', 'LucideIcon', 'FallbackIcon',
+            // All shadcn component names
+            'Button', 'Card', 'CardHeader', 'CardTitle', 'CardDescription', 'CardContent', 'CardFooter',
+            'Input', 'Label', 'Badge', 'Avatar', 'AvatarImage', 'AvatarFallback',
+            'Table', 'TableHeader', 'TableBody', 'TableRow', 'TableHead', 'TableCell',
+            'Separator', 'Dialog', 'DialogOverlay', 'DialogContent', 'DialogHeader',
+            'DialogTitle', 'DialogDescription', 'DialogFooter', 'Select', 'SelectTrigger',
+            'SelectValue', 'SelectContent', 'SelectItem', 'Tabs', 'TabsList', 'TabsTrigger',
+            'TabsContent', 'Progress', 'CircularProgress', 'Checkbox', 'RadioGroup',
+            'RadioGroupItem', 'Accordion', 'AccordionItem', 'AccordionTrigger',
+            'AccordionContent', 'Toast', 'ToastTitle', 'ToastDescription',
+            'Alert', 'AlertTitle', 'AlertDescription', 'Popover', 'PopoverTrigger', 'PopoverContent',
+            ..._iconNames,
+          // AIKit / AINative Primitive components
+          'StreamingIndicator', 'VideoPlayer', 'CodeDisplay', 'StreamingText',
+          'ChatBubble', 'MediaGallery', 'Skeleton', 'SkeletonCard', 'MetricCard', 'EmptyState',
+          'AIKitSidebar', 'AIKitHeader', 'AIKitBreadcrumb', 'AIKitPagination',
+          'AIKitStepper', 'AIKitTimeline', 'AIKitTable', 'AIKitRating',
+          'AIKitProductCard', 'AIKitPriceCard', 'AIKitAvatar', 'AIKitBanner',
+          'AgentCard', 'SwarmView', 'AgentTimeline', 'ConnectionStatus',
+          'TokenUsageBar', 'SafetyBadge', 'GuardrailPanel',
+          // Recharts
+          'ReLineChart', 'ReBarChart', 'RePieChart', 'ResponsiveContainer',
+          'XAxis', 'YAxis', 'CartesianGrid', 'RechartsTooltip', 'Legend',
+          'Line', 'Bar', 'Pie', 'Cell', 'AreaChart', 'Area',
+          'RadarChart', 'Radar', 'PolarGrid', 'PolarAngleAxis', 'PolarRadiusAxis',
+          'ComposedChart', 'Scatter', 'ScatterChart', 'RadialBarChart', 'RadialBar',
+          'Treemap', 'Funnel', 'FunnelChart',
+          ]);
+          // Also skip single-word names under 8 chars (likely icons or utils)
+          for (const key in window) {
+            if (typeof window[key] === 'function' && /^[A-Z]/.test(key) && !_skipNames.has(key)) {
+              // Prefer names with 2+ words or longer than 8 chars (page components)
+              if ((key.length > 8 || /[a-z][A-Z]/.test(key)) && !_isIconWrapper(window[key])) {
+                Component = window[key];
+                console.log('[Preview] ✓ Found component: ' + key + ' (window, last resort)');
+                break;
+              }
             }
           }
-        }
-
-        // If that didn't work, try common component names in local scope
-        if (!Component) {
-          console.log('[Preview] Component not found in window, checking local scope...');
-          if (typeof ProjectDashboard !== 'undefined') { Component = ProjectDashboard; console.log('[Preview] ✓ Found ProjectDashboard'); }
-          else if (typeof SalesDashboard !== 'undefined') { Component = SalesDashboard; console.log('[Preview] ✓ Found SalesDashboard'); }
-          else if (typeof AdminDashboard !== 'undefined') { Component = AdminDashboard; console.log('[Preview] ✓ Found AdminDashboard'); }
-          else if (typeof Dashboard !== 'undefined') { Component = Dashboard; console.log('[Preview] ✓ Found Dashboard'); }
-          else if (typeof ProductListingPage !== 'undefined') { Component = ProductListingPage; console.log('[Preview] ✓ Found ProductListingPage'); }
-          else if (typeof AnalyticsDashboard !== 'undefined') { Component = AnalyticsDashboard; console.log('[Preview] ✓ Found AnalyticsDashboard'); }
-          else if (typeof Counter !== 'undefined') { Component = Counter; console.log('[Preview] ✓ Found Counter'); }
-          else if (typeof CounterButton !== 'undefined') { Component = CounterButton; console.log('[Preview] ✓ Found CounterButton'); }
-          else if (typeof App !== 'undefined') { Component = App; console.log('[Preview] ✓ Found App'); }
-          else if (typeof TodoList !== 'undefined') { Component = TodoList; console.log('[Preview] ✓ Found TodoList'); }
-          else if (typeof TodoApp !== 'undefined') { Component = TodoApp; console.log('[Preview] ✓ Found TodoApp'); }
-          else if (typeof LandingPage !== 'undefined') { Component = LandingPage; console.log('[Preview] ✓ Found LandingPage'); }
-          else if (typeof EcommerceApp !== 'undefined') { Component = EcommerceApp; console.log('[Preview] ✓ Found EcommerceApp'); }
-          else if (typeof ProductList !== 'undefined') { Component = ProductList; console.log('[Preview] ✓ Found ProductList'); }
-          else if (typeof ShoppingCart !== 'undefined') { Component = ShoppingCart; console.log('[Preview] ✓ Found ShoppingCart'); }
-          else { console.log('[Preview] ✗ No component found in local scope'); }
         }
 
         if (Component) {
@@ -490,7 +917,7 @@ export async function GET(
           root.render(wrappedElement);
           console.log('[Preview] ✓ Render called successfully!');
 
-          // Add a small delay to check if render actually worked
+          // Add a small delay to check if render actually worked + enforce AX standards
           setTimeout(() => {
             const content = document.getElementById('root').innerHTML;
             console.log('[Preview] Root innerHTML after render (first 200 chars):', content.substring(0, 200));
@@ -498,6 +925,29 @@ export async function GET(
               console.error('[Preview] ✗ Root is empty after render! Component may have returned null or errored silently.');
               console.error('[Preview] Check if component is using undefined shadcn components or has syntax errors.');
             }
+
+            // AX-5 POST-RENDER ENFORCEMENT: Convert extra h1 elements to h2
+            // Use MutationObserver to catch React re-renders
+            function enforceH1Rule() {
+              var h1s = document.querySelectorAll('h1');
+              if (h1s.length > 1) {
+                for (var i = 1; i < h1s.length; i++) {
+                  var h2 = document.createElement('h2');
+                  for (var j = 0; j < h1s[i].attributes.length; j++) {
+                    h2.setAttribute(h1s[i].attributes[j].name, h1s[i].attributes[j].value);
+                  }
+                  h2.innerHTML = h1s[i].innerHTML;
+                  h1s[i].parentNode.replaceChild(h2, h1s[i]);
+                }
+                console.log('[Preview] AX-5: Converted ' + (h1s.length - 1) + ' extra h1 to h2');
+              }
+            }
+            enforceH1Rule();
+            // Re-enforce after React state changes
+            var axObserver = new MutationObserver(function() { setTimeout(enforceH1Rule, 50); });
+            axObserver.observe(document.getElementById('root'), { childList: true, subtree: true });
+            // Stop observing after 10 seconds
+            setTimeout(function() { axObserver.disconnect(); }, 10000);
           }, 100);
         } else {
           console.error('[Preview] ✗ Component not found!');
@@ -535,7 +985,7 @@ export async function GET(
       'Content-Type': 'text/html',
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       // Allow iframe embedding and external resources
-      'Content-Security-Policy': "default-src 'self' 'unsafe-inline' 'unsafe-eval'; script-src 'unsafe-eval' 'unsafe-inline' 'self' https://cdn.tailwindcss.com https://unpkg.com; style-src 'unsafe-inline' 'self' https://cdn.tailwindcss.com; img-src 'self' data: https: http:; font-src 'self' data: https:; connect-src 'self' https:; frame-ancestors 'self';",
+      'Content-Security-Policy': "default-src 'self' 'unsafe-inline' 'unsafe-eval'; script-src 'unsafe-eval' 'unsafe-inline' 'self' https://cdn.tailwindcss.com https://unpkg.com https://cdn.jsdelivr.net; style-src 'unsafe-inline' 'self' https://cdn.tailwindcss.com https://fonts.googleapis.com; img-src 'self' data: https: http:; font-src 'self' data: https: https://fonts.gstatic.com; connect-src 'self' https:; frame-ancestors 'self';",
       // Allow SAMEORIGIN so iframe can load within our app
       'X-Frame-Options': 'SAMEORIGIN',
       'X-Content-Type-Options': 'nosniff',
