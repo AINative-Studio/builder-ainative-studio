@@ -35,9 +35,20 @@ export function SandpackPreview({ files, theme = 'light', className }: SandpackP
   // Get the main component code
   let mainCode = mainFile ? sandpackFiles[mainFile] : ''
 
+  // Inject React imports if missing — Claude often omits them
+  if (mainCode && !mainCode.includes('import React')) {
+    const needsHooks = /\b(useState|useEffect|useRef|useMemo|useCallback|useContext|useReducer)\b/.test(mainCode)
+    const hooks = ['useState', 'useEffect', 'useRef', 'useMemo', 'useCallback', 'useContext', 'useReducer']
+      .filter(h => mainCode.includes(h))
+    if (needsHooks) {
+      mainCode = `import React, { ${hooks.join(', ')} } from 'react'\n${mainCode}`
+    } else {
+      mainCode = `import React from 'react'\n${mainCode}`
+    }
+  }
+
   // Ensure it has a default export
   if (mainCode && !mainCode.includes('export default')) {
-    // Find the main function component name
     const match = mainCode.match(/function\s+([A-Z]\w+)/)
     if (match) {
       mainCode += `\n\nexport default ${match[1]}`
@@ -46,6 +57,18 @@ export function SandpackPreview({ files, theme = 'light', className }: SandpackP
 
   // Set as /App.tsx (Sandpack's expected entry)
   sandpackFiles['/App.tsx'] = mainCode
+
+  // Also fix imports in all other component files
+  for (const [path, code] of Object.entries(sandpackFiles)) {
+    if (path.endsWith('.tsx') && path !== '/App.tsx' && !code.includes('import React')) {
+      const needsHooks = /\b(useState|useEffect|useRef|useMemo|useCallback)\b/.test(code)
+      if (needsHooks) {
+        const hooks = ['useState', 'useEffect', 'useRef', 'useMemo', 'useCallback']
+          .filter(h => code.includes(h))
+        sandpackFiles[path] = `import React, { ${hooks.join(', ')} } from 'react'\n${code}`
+      }
+    }
+  }
 
   return (
     <div className={cn('w-full h-full flex flex-col', className)} style={{ minHeight: 0 }}>
