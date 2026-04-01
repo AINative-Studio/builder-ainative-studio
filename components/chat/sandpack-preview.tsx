@@ -6,6 +6,7 @@ import {
   SandpackLayout,
 } from '@codesandbox/sandpack-react'
 import { cn } from '@/lib/utils'
+import { fixJsxErrors } from '@/lib/sandpack/jsx-fixer'
 
 interface SandpackPreviewProps {
   files: Record<string, string>
@@ -161,7 +162,7 @@ export function SandpackPreview({ files, theme = 'light', className }: SandpackP
       }
     }
 
-    sandpackFiles[path] = fixed
+    sandpackFiles[path] = fixJsxErrors(fixed)
   }
 
   return (
