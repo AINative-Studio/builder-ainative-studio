@@ -73,6 +73,7 @@ export function HomeClient() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [activePanel, setActivePanel] = useState<'chat' | 'preview'>('chat')
   const [buildSteps, setBuildSteps] = useState<string[]>([])
+  const [sandpackFiles, setSandpackFiles] = useState<Record<string, string> | null>(null)
   const [showFeedbackDialog, setShowFeedbackDialog] = useState(false)
   const router = useRouter()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -352,6 +353,12 @@ export function HomeClient() {
                     }, 2000)
                     break
 
+                  case 'files':
+                    // Sandpack file map from multi-file generation
+                    console.log('[DEBUG] Files event received:', Object.keys(data.files).length, 'files')
+                    setSandpackFiles(data.files)
+                    break
+
                   case 'validation_error':
                     console.warn('Code validation error:', data.error)
                     // Still show the chat, but the preview will display the validation error page
@@ -612,6 +619,7 @@ export function HomeClient() {
                 setRefreshKey={setRefreshKey}
                 isGenerating={isLoading}
                 buildSteps={buildSteps}
+                sandpackFiles={sandpackFiles}
               />
             }
           />

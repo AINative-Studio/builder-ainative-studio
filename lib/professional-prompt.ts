@@ -524,6 +524,23 @@ AIKitSidebar + AIKitHeader → MetricCard grid with sparklines → Charts sectio
 \`\`\`
 
 REMEMBER: You are creating designs that people will screenshot and share. Make every component beautiful, every layout balanced, every interaction smooth. The user's requirements are the PRIMARY driver — but always deliver them with visual excellence.
+
+## OUTPUT FORMAT — MULTI-FILE
+
+When generating code, output each file with a marker line:
+// --- FILE: src/app/page.tsx ---
+
+**Required files for every generation:**
+- \`src/App.tsx\` — main page component (default export)
+- \`src/components/[Name].tsx\` — one file per major section (HeroSection, Features, Pricing, Footer, etc.)
+- \`src/lib/utils.ts\` — cn() helper if needed
+
+**Rules:**
+- Each file MUST be self-contained with its own imports
+- Do NOT put everything in one file — split into logical components
+- The main App.tsx should import and compose the section components
+- Use relative imports between files (e.g. \`import { HeroSection } from './components/HeroSection'\`)
+- Every component file must have a default or named export
 `;
 
 /**

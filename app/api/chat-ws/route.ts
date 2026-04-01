@@ -19,6 +19,8 @@ import { executeChunkPlan, getGenerationSummary } from '@/lib/agent/multi-pass-g
 import { mergeChunks, getMergeSummary } from '@/lib/agent/chunk-merger'
 import { generateAINativeFileSet } from '@/lib/ainative-file-generator'
 import { selectTheme, formatThemeForPrompt } from '@/lib/theme-system'
+import { parseMultiFileOutput } from '@/lib/multi-file-parser'
+import { storeFiles as storeFilesV2 } from '@/lib/preview-store-v2'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
@@ -621,8 +623,21 @@ Generate a corrected version of: ${message}`
             const ainativeFiles = generateAINativeFileSet(message, finalContent)
             console.log(`📁 Generated ${Object.keys(ainativeFiles).length} AINative files`)
 
-            // Store clean code response + AINative files
+            // Store clean code response + AINative files (legacy preview)
             storePreview(responseId, cleanCodeResponse, message, { usage: tokenUsage, ainativeFiles })
+
+            // Parse into multi-file output for Sandpack
+            const parsedFiles = parseMultiFileOutput(finalContent, message)
+            console.log(`📦 Parsed ${Object.keys(parsedFiles).length} files for Sandpack`)
+
+            // Store in V2 store
+            storeFilesV2(responseId, parsedFiles, { usage: tokenUsage })
+
+            // Send files to client for Sandpack preview
+            safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+              type: 'files',
+              files: parsedFiles
+            })}\n\n`))
 
             // Save to conversation memory for context
             addComponentToMemory(responseId, message, finalContent)
