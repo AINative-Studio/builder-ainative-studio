@@ -270,13 +270,14 @@ export function HomeClient() {
                       hasDemoUrl: !!data.demo
                     })
 
-                    // Set currentChat with demo URL immediately so preview loads
+                    // Store demo URL but DON'T load preview yet — content isn't generated
+                    // Preview will load when 'complete' event fires with refreshKey bump
                     if (data.demo) {
                       setCurrentChat({
                         id: data.chatId,
                         demo: data.demo
                       })
-                      console.log('[DEBUG] Preview URL set from init:', data.demo)
+                      console.log('[DEBUG] Preview URL set from init (will refresh on complete):', data.demo)
                     }
                     break
 
@@ -341,16 +342,14 @@ export function HomeClient() {
                     setIsLoading(false)
                     console.log('[DEBUG] isLoading state updated to FALSE, preview URL:', data.demo)
 
+                    // Force refresh the preview iframe now that content is ready
+                    setRefreshKey((prev) => prev + 1)
+
                     // Clear build steps when generation completes
                     // Keep them visible briefly, then clear
                     setTimeout(() => {
                       setBuildSteps([])
                     }, 2000)
-
-                    // Show feedback dialog after generation completes
-                    setTimeout(() => {
-                      setShowFeedbackDialog(true)
-                    }, 1000)
                     break
 
                   case 'validation_error':
@@ -703,22 +702,27 @@ export function HomeClient() {
                       className="appearance-none h-8 pl-2 pr-7 text-xs font-medium bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-[#5867EF]/20"
                       title="Select AI model"
                     >
-                      <optgroup label="Anthropic">
+                      <optgroup label="Anthropic (Direct)">
                         <option value="claude-sonnet-4">Claude Sonnet 4</option>
-                        <option value="claude-opus-4">Claude Opus 4 (Enterprise)</option>
-                      </optgroup>
-                      <optgroup label="OpenAI">
-                        <option value="gpt-4">GPT-4</option>
-                        <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
+                        <option value="claude-opus-4">Claude Opus 4</option>
                       </optgroup>
                       <optgroup label="Code Specialists">
-                        <option value="nouscoder-14b">NousCoder 14B</option>
-                        <option value="qwen-coder-7b">Qwen Coder 7B</option>
                         <option value="qwen-coder-32b">Qwen Coder 32B</option>
+                        <option value="qwen-coder-7b">Qwen Coder 7B (Fast)</option>
+                        <option value="nouscoder-14b">NousCoder 14B</option>
+                      </optgroup>
+                      <optgroup label="Premium (AINative)">
+                        <option value="claude-sonnet-4.5">Claude Sonnet 4.5</option>
+                        <option value="claude-3-5-haiku">Claude Haiku 4.5 (Fast)</option>
+                      </optgroup>
+                      <optgroup label="General">
+                        <option value="gemma-9b">Gemma 9B</option>
+                        <option value="qwen-7b">Qwen 7B</option>
+                        <option value="gemma-2b">Gemma 2B (Ultra-fast)</option>
                       </optgroup>
                       <optgroup label="Reasoning">
-                        <option value="deepseek-r1">DeepSeek R1 (Enterprise)</option>
-                        <option value="deepseek-r1-distill-qwen-7b">DeepSeek R1 Distill 7B</option>
+                        <option value="deepseek-r1-distill-qwen-7b">DeepSeek R1 Qwen 7B</option>
+                        <option value="deepseek-r1-distill-llama-8b">DeepSeek R1 Llama 8B</option>
                       </optgroup>
                     </select>
                     <svg className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>

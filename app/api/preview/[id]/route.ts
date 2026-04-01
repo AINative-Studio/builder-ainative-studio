@@ -184,6 +184,56 @@ export async function GET(
     console.log(`[Preview] AX-5: Converted ${h1Idx - 1} extra <h1> to <h2>`)
   }
 
+  // SAFETY NET: Scan for undefined PascalCase JSX components and pre-define them as fallbacks.
+  // This prevents "X is not defined" ReferenceErrors that crash the entire page.
+  const knownComponents = new Set([
+    // HTML elements (lowercase, won't match)
+    // React
+    'React', 'Fragment',
+    // Shadcn
+    'Button', 'Card', 'CardHeader', 'CardTitle', 'CardDescription', 'CardContent', 'CardFooter',
+    'Input', 'Label', 'Badge', 'Avatar', 'AvatarImage', 'AvatarFallback',
+    'Table', 'TableHeader', 'TableBody', 'TableRow', 'TableHead', 'TableCell', 'Separator',
+    'Dialog', 'DialogOverlay', 'DialogContent', 'DialogHeader', 'DialogTitle', 'DialogDescription', 'DialogFooter',
+    'Select', 'SelectTrigger', 'SelectValue', 'SelectContent', 'SelectItem',
+    'Tabs', 'TabsList', 'TabsTrigger', 'TabsContent',
+    'Progress', 'CircularProgress', 'Checkbox', 'RadioGroup', 'RadioGroupItem',
+    'Accordion', 'AccordionItem', 'AccordionTrigger', 'AccordionContent',
+    'Toast', 'ToastTitle', 'ToastDescription', 'Alert', 'AlertTitle', 'AlertDescription',
+    'Popover', 'PopoverTrigger', 'PopoverContent',
+    // AIKit
+    'StreamingIndicator', 'VideoPlayer', 'CodeDisplay', 'StreamingText', 'ChatBubble',
+    'MediaGallery', 'Skeleton', 'SkeletonCard', 'MetricCard', 'EmptyState',
+    'AIKitSidebar', 'AIKitHeader', 'AIKitBreadcrumb', 'AIKitPagination',
+    'AIKitStepper', 'AIKitTimeline', 'AIKitTable', 'AIKitRating',
+    'AIKitProductCard', 'AIKitPriceCard', 'AIKitAvatar', 'AIKitBanner',
+    'AgentCard', 'SwarmView', 'AgentTimeline', 'ConnectionStatus',
+    'TokenUsageBar', 'SafetyBadge', 'GuardrailPanel',
+    // Recharts
+    'ReLineChart', 'ReBarChart', 'RePieChart', 'ResponsiveContainer',
+    'XAxis', 'YAxis', 'CartesianGrid', 'RechartsTooltip', 'Legend',
+    'Line', 'Bar', 'Pie', 'Cell', 'AreaChart', 'Area',
+    'RadarChart', 'Radar', 'PolarGrid', 'PolarAngleAxis', 'PolarRadiusAxis',
+    'ComposedChart', 'RadialBarChart', 'RadialBar',
+    // ErrorBoundary
+    'ErrorBoundary',
+  ])
+
+  // Find all PascalCase JSX tags in the code
+  const jsxTagMatches = componentCode.match(/<([A-Z][a-zA-Z0-9]+)[\s/>]/g) || []
+  const jsxTags = [...new Set(jsxTagMatches.map((m: string) => m.slice(1).replace(/[\s/>]/g, '')))]
+  const unknownTags = jsxTags.filter((tag: string) => !knownComponents.has(tag))
+
+  if (unknownTags.length > 0) {
+    // Generate fallback component definitions to prepend to the code
+    const fallbacks = unknownTags.map((tag: string) =>
+      `function ${tag}(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': '${tag}' }, props && props.children); }\nwindow.${tag} = ${tag};`
+    ).join('\n')
+
+    componentCode = fallbacks + '\n\n' + componentCode
+    console.log(`[Preview] Auto-defined ${unknownTags.length} unknown components: ${unknownTags.join(', ')}`)
+  }
+
   // CRITICAL FIX: Convert template literals with interpolations to string concatenation
   // This prevents Babel from choking on ${} expressions in template literals
   // Example: className={`w-10 h-10 ${color} rounded`} -> className={`w-10 h-10 ` + color + ` rounded`}

@@ -24,14 +24,23 @@ export function stripGradients(code: string): string {
     cleanedCode = cleanedCode.replace(pattern, '')
   })
 
-  // Clean up multiple spaces left after removal
+  // Clean up multiple spaces left after removal in DOUBLE-QUOTED className
   cleanedCode = cleanedCode.replace(/className="([^"]*\s{2,}[^"]*)"/g, (match, classes) => {
     return `className="${classes.replace(/\s+/g, ' ').trim()}"`
   })
 
-  // Clean up empty className attributes
+  // Clean up multiple spaces left after removal in TEMPLATE LITERAL className
+  cleanedCode = cleanedCode.replace(/className=\{`([^`]*\s{2,}[^`]*)`\}/g, (_match, classes) => {
+    return `className={\`${classes.replace(/\s+/g, ' ').trim()}\`}`
+  })
+
+  // Clean up empty className attributes (double quotes)
   cleanedCode = cleanedCode.replace(/className=""\s*/g, '')
   cleanedCode = cleanedCode.replace(/className="\s+"/g, '')
+
+  // Clean up empty className attributes (template literals)
+  cleanedCode = cleanedCode.replace(/className=\{`\s*`\}\s*/g, '')
+  cleanedCode = cleanedCode.replace(/className=\{`\s+`\}/g, '')
 
   return cleanedCode
 }

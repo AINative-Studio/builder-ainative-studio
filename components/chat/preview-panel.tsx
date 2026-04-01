@@ -44,6 +44,16 @@ export function PreviewPanel({
   const [progress, setProgress] = useState(0)
   const [useA2UI, setUseA2UI] = useState(false)
 
+  // Debug: Log currentChat changes
+  React.useEffect(() => {
+    console.log('[PreviewPanel DEBUG] currentChat changed:', {
+      hasChat: !!currentChat,
+      chatId: currentChat?.id,
+      demoUrl: currentChat?.demo,
+      hasDemoUrl: !!currentChat?.demo
+    })
+  }, [currentChat])
+
   // Simulate progress based on build steps
   React.useEffect(() => {
     console.log('[PreviewPanel] isGenerating changed:', isGenerating, 'buildSteps:', buildSteps.length)
@@ -140,7 +150,7 @@ export function PreviewPanel({
           </WebPreviewNavigationButton>
         </WebPreviewNavigation>
         {currentChat?.demo ? (
-          <div className="relative flex-1 min-h-0 overflow-hidden">
+          <div className="relative flex-1 min-h-0 overflow-hidden flex flex-col">
             {/* Show Code Viewer inline when code button clicked */}
             {showCodeViewer ? (
               <CodeViewer

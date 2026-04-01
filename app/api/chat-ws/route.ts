@@ -18,6 +18,7 @@ import { createChunkPlan, getChunkPlanSummary } from '@/lib/agent/chunk-planner'
 import { executeChunkPlan, getGenerationSummary } from '@/lib/agent/multi-pass-generator'
 import { mergeChunks, getMergeSummary } from '@/lib/agent/chunk-merger'
 import { generateAINativeFileSet } from '@/lib/ainative-file-generator'
+import { selectTheme, formatThemeForPrompt } from '@/lib/theme-system'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
@@ -29,21 +30,25 @@ const ainativeClient = new OpenAI({
   baseURL: 'https://api.ainative.studio/v1',
 })
 
-// Model routing config
+// Model routing config — IDs match AINative API /api/v1/chat/completions
 const MODEL_CONFIG: Record<string, { provider: 'anthropic' | 'ainative'; modelId: string }> = {
+  // Direct Anthropic SDK (extended thinking + tool use)
   'claude-sonnet-4': { provider: 'anthropic', modelId: 'claude-sonnet-4-20250514' },
   'claude-opus-4': { provider: 'anthropic', modelId: 'claude-opus-4-20250514' },
-  // OpenAI (via AINative)
-  'gpt-4': { provider: 'ainative', modelId: 'gpt-4' },
-  'gpt-3.5-turbo': { provider: 'ainative', modelId: 'gpt-3.5-turbo' },
-  // NousResearch (via AINative/HuggingFace)
-  'nouscoder-14b': { provider: 'ainative', modelId: 'nouscoder-14b' },
-  // Qwen Coder (via AINative/HuggingFace)
-  'qwen-coder-7b': { provider: 'ainative', modelId: 'qwen-coder-7b' },
+  // Code Specialists (via AINative API — best for UI generation)
   'qwen-coder-32b': { provider: 'ainative', modelId: 'qwen-coder-32b' },
-  // DeepSeek (via AINative/HuggingFace)
-  'deepseek-r1': { provider: 'ainative', modelId: 'deepseek-r1' },
+  'qwen-coder-7b': { provider: 'ainative', modelId: 'qwen-coder-7b' },
+  'nouscoder-14b': { provider: 'ainative', modelId: 'nouscoder-14b' },
+  // Premium (via AINative API)
+  'claude-sonnet-4.5': { provider: 'ainative', modelId: 'claude-sonnet-4.5' },
+  'claude-3-5-haiku': { provider: 'ainative', modelId: 'claude-3-5-haiku' },
+  // Text / General (via AINative API)
+  'qwen-7b': { provider: 'ainative', modelId: 'qwen-7b' },
+  'gemma-9b': { provider: 'ainative', modelId: 'gemma-9b' },
+  'gemma-2b': { provider: 'ainative', modelId: 'gemma-2b' },
+  // Reasoning (via AINative API)
   'deepseek-r1-distill-qwen-7b': { provider: 'ainative', modelId: 'deepseek-r1-distill-qwen-7b' },
+  'deepseek-r1-distill-llama-8b': { provider: 'ainative', modelId: 'deepseek-r1-distill-llama-8b' },
 }
 
 export async function POST(request: NextRequest) {
@@ -138,9 +143,14 @@ export async function POST(request: NextRequest) {
             { role: 'user' as const, content: enhancedPrompt }
           ]
 
-          // Build enhanced system prompt with images + memory context
+          // Select a color theme based on the prompt (variety instead of same purple every time)
+          const selectedTheme = selectTheme(message)
+          const themePrompt = formatThemeForPrompt(selectedTheme)
+          console.log(`🎨 Theme selected: ${selectedTheme.name} (${selectedTheme.primary})`)
+
+          // Build enhanced system prompt with theme + images + memory context
           const memoryContext = formatMemoryForPrompt(responseId)
-          const enhancedSystemPrompt = PROFESSIONAL_SYSTEM_PROMPT + imagePrompt + memoryContext
+          const enhancedSystemPrompt = PROFESSIONAL_SYSTEM_PROMPT + themePrompt + imagePrompt + memoryContext
 
           // CHUNKING SYSTEM: Route to multi-pass generation if complexity requires it
           if (complexityScore.requiresChunking && previousMessages.length === 0) {
@@ -324,7 +334,10 @@ export async function POST(request: NextRequest) {
 
           } else {
             // ============ CLAUDE MODELS VIA ANTHROPIC SDK ============
-          const stream = await anthropic.messages.stream({
+          console.log(`🔑 Anthropic call: model=${modelId}, system=${enhancedSystemPrompt.length} chars, messages=${conversationMessages.length}, max_tokens=32000`)
+          let stream: any
+          try {
+          stream = await anthropic.messages.stream({
             model: modelId,
             max_tokens: 32000,
             temperature: 1,  // Must be 1 when using extended thinking
@@ -342,6 +355,10 @@ export async function POST(request: NextRequest) {
             messages: conversationMessages,
             tools: [COMPONENT_GENERATION_TOOL],
           })
+          } catch (apiError: any) {
+            console.error('❌ ANTHROPIC API ERROR:', apiError?.status, apiError?.error || apiError?.message?.slice(0, 500))
+            throw apiError
+          }
 
           let toolUseInput: any = null
           let toolInputJson = ''

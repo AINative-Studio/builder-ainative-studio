@@ -1,11 +1,11 @@
 export const MOCK_DATA_TEMPLATES = {
   users: {
     template: `[
-      { id: 1, name: 'John Harrison', initials: 'JH', email: 'john@example.com', role: 'Senior Developer', avatar: null, color: 'from-purple-400 to-pink-400' },
-      { id: 2, name: 'Anna Chen', initials: 'AC', email: 'anna@example.com', role: 'Product Designer', avatar: null, color: 'from-blue-400 to-cyan-400' },
-      { id: 3, name: 'Marcus Kim', initials: 'MK', email: 'marcus@example.com', role: 'Project Manager', avatar: null, color: 'from-green-400 to-teal-400' },
-      { id: 4, name: 'Victoria Kumar', initials: 'VK', email: 'victoria@example.com', role: 'UX Researcher', avatar: null, color: 'from-orange-400 to-red-400' },
-      { id: 5, name: 'David Brown', initials: 'DB', email: 'david@example.com', role: 'Backend Engineer', avatar: null, color: 'from-indigo-400 to-purple-400' }
+      { id: 1, name: 'John Harrison', initials: 'JH', email: 'john@example.com', role: 'Senior Developer', avatar: null, color: 'bg-[#5867EF]' },
+      { id: 2, name: 'Anna Chen', initials: 'AC', email: 'anna@example.com', role: 'Product Designer', avatar: null, color: 'bg-[#338585]' },
+      { id: 3, name: 'Marcus Kim', initials: 'MK', email: 'marcus@example.com', role: 'Project Manager', avatar: null, color: 'bg-[#FCAE39]' },
+      { id: 4, name: 'Victoria Kumar', initials: 'VK', email: 'victoria@example.com', role: 'UX Researcher', avatar: null, color: 'bg-rose-500' },
+      { id: 5, name: 'David Brown', initials: 'DB', email: 'david@example.com', role: 'Backend Engineer', avatar: null, color: 'bg-slate-700' }
     ]`,
     usage: 'Team members, assignees, or user profiles'
   },
@@ -79,8 +79,8 @@ export const MOCK_DATA_TEMPLATES = {
             description: 'Set up OAuth 2.0 with Google and GitHub providers, implement JWT tokens',
             priority: 'high',
             assignees: [
-              { name: 'JH', color: 'from-purple-400 to-pink-400' },
-              { name: 'DB', color: 'from-indigo-400 to-purple-400' }
+              { name: 'JH', color: 'bg-[#5867EF]' },
+              { name: 'DB', color: 'bg-slate-700' }
             ],
             comments: 8,
             attachments: 3,
@@ -96,7 +96,7 @@ export const MOCK_DATA_TEMPLATES = {
             description: 'Create mobile-first navigation with hamburger menu and smooth transitions',
             priority: 'medium',
             assignees: [
-              { name: 'AC', color: 'from-blue-400 to-cyan-400' }
+              { name: 'AC', color: 'bg-[#338585]' }
             ],
             comments: 5,
             attachments: 2,
@@ -112,7 +112,7 @@ export const MOCK_DATA_TEMPLATES = {
             description: 'Index frequently queried columns and implement caching strategy',
             priority: 'low',
             assignees: [
-              { name: 'DB', color: 'from-indigo-400 to-purple-400' }
+              { name: 'DB', color: 'bg-slate-700' }
             ],
             comments: 3,
             attachments: 1,
@@ -136,8 +136,8 @@ export const MOCK_DATA_TEMPLATES = {
             priority: 'high',
             progress: 65,
             assignees: [
-              { name: 'VK', color: 'from-orange-400 to-red-400' },
-              { name: 'JH', color: 'from-purple-400 to-pink-400' }
+              { name: 'VK', color: 'bg-rose-500' },
+              { name: 'JH', color: 'bg-[#5867EF]' }
             ],
             comments: 12,
             attachments: 5,
@@ -156,7 +156,7 @@ export const MOCK_DATA_TEMPLATES = {
             priority: 'medium',
             progress: 40,
             assignees: [
-              { name: 'MK', color: 'from-green-400 to-teal-400' }
+              { name: 'MK', color: 'bg-[#FCAE39]' }
             ],
             comments: 6,
             attachments: 2,
@@ -181,8 +181,8 @@ export const MOCK_DATA_TEMPLATES = {
             description: 'Document all new endpoints with examples and response schemas',
             priority: 'medium',
             assignees: [
-              { name: 'AC', color: 'from-blue-400 to-cyan-400' },
-              { name: 'MK', color: 'from-green-400 to-teal-400' }
+              { name: 'AC', color: 'bg-[#338585]' },
+              { name: 'MK', color: 'bg-[#FCAE39]' }
             ],
             comments: 4,
             attachments: 3,
@@ -208,7 +208,7 @@ export const MOCK_DATA_TEMPLATES = {
             description: 'Configure GitHub Actions for automated testing and deployment',
             priority: 'low',
             assignees: [
-              { name: 'DB', color: 'from-indigo-400 to-purple-400' }
+              { name: 'DB', color: 'bg-slate-700' }
             ],
             comments: 8,
             attachments: 4,
@@ -227,8 +227,8 @@ export const MOCK_DATA_TEMPLATES = {
             description: 'Successfully migrated from MySQL to PostgreSQL with zero downtime',
             priority: 'high',
             assignees: [
-              { name: 'JH', color: 'from-purple-400 to-pink-400' },
-              { name: 'DB', color: 'from-indigo-400 to-purple-400' }
+              { name: 'JH', color: 'bg-[#5867EF]' },
+              { name: 'DB', color: 'bg-slate-700' }
             ],
             comments: 15,
             attachments: 6,
@@ -254,7 +254,8 @@ export const MOCK_DATA_TEMPLATES = {
         originalPrice: 399.99,
         discount: 25,
         category: 'Electronics',
-        image: '🎧',
+        imageLabel: 'H',
+        imageColor: 'bg-[#5867EF]',
         rating: 4.5,
         reviews: 234,
         inStock: true,
@@ -271,7 +272,8 @@ export const MOCK_DATA_TEMPLATES = {
         originalPrice: 649.00,
         discount: 15,
         category: 'Furniture',
-        image: '🪑',
+        imageLabel: 'C',
+        imageColor: 'bg-[#338585]',
         rating: 4.8,
         reviews: 189,
         inStock: true,
@@ -288,7 +290,8 @@ export const MOCK_DATA_TEMPLATES = {
         originalPrice: 249.99,
         discount: 20,
         category: 'Wearables',
-        image: '⌚',
+        imageLabel: 'W',
+        imageColor: 'bg-[#FCAE39]',
         rating: 4.3,
         reviews: 567,
         inStock: true,
@@ -358,7 +361,7 @@ export const MOCK_DATA_TEMPLATES = {
         timestamp: '10:30 AM',
         unread: true,
         avatar: null,
-        color: 'from-blue-400 to-cyan-400',
+        color: 'bg-[#338585]',
         status: 'online'
       },
       {
@@ -369,18 +372,18 @@ export const MOCK_DATA_TEMPLATES = {
         timestamp: '9:45 AM',
         unread: true,
         avatar: null,
-        color: 'from-green-400 to-teal-400',
+        color: 'bg-[#FCAE39]',
         status: 'online'
       },
       {
         id: 3,
         sender: 'Victoria Kumar',
         initials: 'VK',
-        message: 'Great work on the presentation! The client loved it 🎉',
+        message: 'Great work on the presentation! The client loved it.',
         timestamp: 'Yesterday',
         unread: false,
         avatar: null,
-        color: 'from-orange-400 to-red-400',
+        color: 'bg-rose-500',
         status: 'away'
       }
     ]`,
