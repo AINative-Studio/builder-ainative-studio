@@ -14,48 +14,73 @@ interface SandpackPreviewProps {
 }
 
 export function SandpackPreview({ files, theme = 'light', className }: SandpackPreviewProps) {
-  // Ensure we have an entry point
-  const sandpackFiles: Record<string, string> = { ...files }
+  const sandpackFiles: Record<string, string> = {}
 
-  // If no /App.tsx or /src/app/page.tsx, create a wrapper
-  if (!sandpackFiles['/App.tsx'] && !sandpackFiles['/src/app/page.tsx']) {
-    // Find the main component file
-    const mainFile = Object.keys(sandpackFiles).find(
-      (f) => f.endsWith('page.tsx') || f.endsWith('App.tsx') || f.endsWith('index.tsx')
-    )
-    if (mainFile && !sandpackFiles['/App.tsx']) {
-      sandpackFiles['/App.tsx'] = sandpackFiles[mainFile]
+  // Copy files, normalizing paths for Sandpack
+  for (const [path, content] of Object.entries(files)) {
+    // Skip non-code files (robots.txt, sitemap.xml, etc.)
+    if (path.endsWith('.txt') || path.endsWith('.xml') || path.endsWith('.json') && path.includes('well-known')) {
+      continue
+    }
+    sandpackFiles[path] = content
+  }
+
+  // Find the main component file
+  const mainFile = Object.keys(sandpackFiles).find(
+    f => f === '/src/App.tsx' || f === '/App.tsx'
+  ) || Object.keys(sandpackFiles).find(
+    f => f.endsWith('page.tsx') || f.endsWith('App.tsx')
+  ) || Object.keys(sandpackFiles)[0]
+
+  // Get the main component code
+  let mainCode = mainFile ? sandpackFiles[mainFile] : ''
+
+  // Ensure it has a default export
+  if (mainCode && !mainCode.includes('export default')) {
+    // Find the main function component name
+    const match = mainCode.match(/function\s+([A-Z]\w+)/)
+    if (match) {
+      mainCode += `\n\nexport default ${match[1]}`
     }
   }
 
+  // Set as /App.tsx (Sandpack's expected entry)
+  sandpackFiles['/App.tsx'] = mainCode
+
   return (
-    <div className={cn('w-full h-full', className)}>
+    <div className={cn('w-full h-full flex flex-col', className)} style={{ minHeight: 0 }}>
       <SandpackProvider
         template="react-ts"
         files={sandpackFiles}
         customSetup={{
           dependencies: {
-            'lucide-react': 'latest',
-            recharts: '2.15.0',
-            clsx: 'latest',
-            'tailwind-merge': 'latest',
+            'lucide-react': '0.344.0',
+            'recharts': '2.15.0',
+            'clsx': '2.1.0',
+            'tailwind-merge': '2.2.0',
           },
         }}
         options={{
           externalResources: ['https://cdn.tailwindcss.com'],
-          classes: {
-            'sp-wrapper': 'h-full',
-            'sp-layout': 'h-full',
-            'sp-preview': 'h-full',
-          },
+          activeFile: '/App.tsx',
         }}
         theme={theme === 'dark' ? 'dark' : 'light'}
       >
-        <SandpackLayout style={{ height: '100%', border: 'none' }}>
+        <SandpackLayout
+          style={{
+            height: '100%',
+            border: 'none',
+            borderRadius: 0,
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
           <SandpackPreviewComponent
             showNavigator={false}
-            showRefreshButton={false}
-            style={{ height: '100%' }}
+            showRefreshButton
+            showOpenInCodeSandbox={false}
+            style={{ flex: 1, height: '100%' }}
           />
         </SandpackLayout>
       </SandpackProvider>
