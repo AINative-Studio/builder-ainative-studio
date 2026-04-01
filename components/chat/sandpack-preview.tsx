@@ -58,16 +58,63 @@ export function SandpackPreview({ files, theme = 'light', className }: SandpackP
   // Set as /App.tsx (Sandpack's expected entry)
   sandpackFiles['/App.tsx'] = mainCode
 
-  // Also fix imports in all other component files
+  // Fix missing imports in ALL .tsx files (App + components)
   for (const [path, code] of Object.entries(sandpackFiles)) {
-    if (path.endsWith('.tsx') && path !== '/App.tsx' && !code.includes('import React')) {
-      const needsHooks = /\b(useState|useEffect|useRef|useMemo|useCallback)\b/.test(code)
-      if (needsHooks) {
-        const hooks = ['useState', 'useEffect', 'useRef', 'useMemo', 'useCallback']
-          .filter(h => code.includes(h))
-        sandpackFiles[path] = `import React, { ${hooks.join(', ')} } from 'react'\n${code}`
+    if (!path.endsWith('.tsx')) continue
+    let fixed = code
+
+    // Auto-inject React imports
+    if (!fixed.includes('import React')) {
+      const hooks = ['useState', 'useEffect', 'useRef', 'useMemo', 'useCallback', 'useContext', 'useReducer']
+        .filter(h => fixed.includes(h))
+      if (hooks.length > 0) {
+        fixed = `import React, { ${hooks.join(', ')} } from 'react'\n${fixed}`
+      } else {
+        fixed = `import React from 'react'\n${fixed}`
       }
     }
+
+    // Auto-inject Lucide icon imports
+    if (!fixed.includes('from \'lucide-react\'') && !fixed.includes('from "lucide-react"')) {
+      const allLucideIcons = [
+        'Activity', 'AlertCircle', 'AlertTriangle', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowUp',
+        'Award', 'BarChart', 'BarChart2', 'BarChart3', 'Bell', 'Book', 'BookOpen', 'Bot',
+        'Brain', 'Briefcase', 'Calendar', 'Camera', 'Check', 'CheckCircle', 'CheckCircle2',
+        'ChevronDown', 'ChevronLeft', 'ChevronRight', 'ChevronUp', 'Circle', 'Clock', 'Cloud',
+        'Code', 'Code2', 'Cog', 'Command', 'Copy', 'CreditCard', 'Crown',
+        'Database', 'DollarSign', 'Download', 'Edit', 'Edit2', 'Edit3', 'ExternalLink', 'Eye', 'EyeOff',
+        'Facebook', 'File', 'FileText', 'Filter', 'Flag', 'Flame', 'Folder', 'FolderOpen',
+        'Gift', 'Github', 'Globe', 'Grid', 'Grip', 'Hash', 'Headphones', 'Heart', 'HelpCircle', 'Home',
+        'Image', 'Inbox', 'Info', 'Instagram', 'Key', 'Laptop', 'Layout', 'LayoutDashboard',
+        'Layers', 'Library', 'Lightbulb', 'LineChart', 'Link', 'Linkedin', 'List', 'Loader', 'Loader2',
+        'Lock', 'LogIn', 'LogOut', 'Mail', 'Map', 'MapPin', 'Maximize', 'Maximize2',
+        'Menu', 'MessageCircle', 'MessageSquare', 'Mic', 'Minimize', 'Minimize2', 'Minus', 'Monitor',
+        'Moon', 'MoreHorizontal', 'MoreVertical', 'Mountain', 'MousePointer', 'Music', 'Navigation',
+        'Package', 'Palette', 'Paperclip', 'Pause', 'PenTool', 'Percent', 'Phone', 'PieChart',
+        'Pin', 'Play', 'PlayCircle', 'Plus', 'PlusCircle', 'Podcast', 'Power',
+        'Printer', 'QrCode', 'Quote', 'Radio', 'RefreshCw', 'Repeat', 'Reply', 'Rocket',
+        'RotateCcw', 'RotateCw', 'Rss', 'Save', 'Scale', 'Scan', 'Search', 'Send', 'Server',
+        'Settings', 'Settings2', 'Share', 'Share2', 'Shield', 'ShieldCheck', 'ShoppingBag',
+        'ShoppingCart', 'Shuffle', 'Sidebar', 'Signal', 'Slack', 'Sliders', 'Smartphone',
+        'Smile', 'Sparkle', 'Sparkles', 'Speaker', 'Square', 'Star', 'Sun', 'Sunrise', 'Sunset',
+        'Swords', 'Table', 'Tablet', 'Tag', 'Target', 'Terminal', 'ThumbsDown', 'ThumbsUp',
+        'Timer', 'ToggleLeft', 'ToggleRight', 'Tool', 'Trash', 'Trash2', 'TrendingDown', 'TrendingUp',
+        'Triangle', 'Trophy', 'Truck', 'Tv', 'Twitter', 'Type', 'Umbrella', 'Underline',
+        'Undo', 'Unlock', 'Upload', 'UploadCloud', 'User', 'UserCheck', 'UserMinus', 'UserPlus',
+        'Users', 'Video', 'Volume', 'Volume1', 'Volume2', 'VolumeX', 'Wallet', 'Wand', 'Wand2',
+        'Watch', 'Wifi', 'WifiOff', 'Wind', 'Wrench', 'X', 'XCircle', 'Youtube', 'Zap', 'ZoomIn', 'ZoomOut',
+      ]
+      const usedIcons = allLucideIcons.filter(icon => {
+        // Match the icon name as a word boundary (not inside another word)
+        const regex = new RegExp(`\\b${icon}\\b`)
+        return regex.test(fixed)
+      })
+      if (usedIcons.length > 0) {
+        fixed = `import { ${usedIcons.join(', ')} } from 'lucide-react'\n${fixed}`
+      }
+    }
+
+    sandpackFiles[path] = fixed
   }
 
   return (
