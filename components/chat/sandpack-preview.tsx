@@ -7,6 +7,7 @@ import {
 } from '@codesandbox/sandpack-react'
 import { cn } from '@/lib/utils'
 import { fixJsxErrors } from '@/lib/sandpack/jsx-fixer'
+import { getBuiltinFiles } from '@/lib/sandpack/setup'
 
 interface SandpackPreviewProps {
   files: Record<string, string>
@@ -15,12 +16,13 @@ interface SandpackPreviewProps {
 }
 
 export function SandpackPreview({ files, theme = 'light', className }: SandpackPreviewProps) {
-  const sandpackFiles: Record<string, string> = {}
+  // Start with all built-in files (AIKit, shadcn, template)
+  const sandpackFiles: Record<string, string> = { ...getBuiltinFiles() }
 
-  // Copy files, normalizing paths for Sandpack
+  // Overlay generated files on top
   for (const [path, content] of Object.entries(files)) {
     // Skip non-code files (robots.txt, sitemap.xml, etc.)
-    if (path.endsWith('.txt') || path.endsWith('.xml') || path.endsWith('.json') && path.includes('well-known')) {
+    if (path.endsWith('.txt') || path.endsWith('.xml') || (path.endsWith('.json') && path.includes('well-known'))) {
       continue
     }
     sandpackFiles[path] = content
@@ -59,9 +61,13 @@ export function SandpackPreview({ files, theme = 'light', className }: SandpackP
   // Set as /App.tsx (Sandpack's expected entry)
   sandpackFiles['/App.tsx'] = mainCode
 
-  // Fix missing imports in ALL .tsx files (App + components)
+  // Track which files are generated (not built-in) so we only fix those
+  const builtinPaths = new Set(Object.keys(getBuiltinFiles()))
+
+  // Fix missing imports only in GENERATED .tsx files (not built-in AIKit/shadcn)
   for (const [path, code] of Object.entries(sandpackFiles)) {
     if (!path.endsWith('.tsx')) continue
+    if (builtinPaths.has(path)) continue // Don't touch built-in files
     let fixed = code
 
     // Auto-inject React imports

@@ -69,14 +69,32 @@ body {
 
 /**
  * Get all built-in files for a Sandpack sandbox.
- * These are merged with the generated app files.
+ * Duplicates files at both /src/ and root / paths so any import style works.
  */
 export function getBuiltinFiles(): Record<string, string> {
-  return {
+  const files: Record<string, string> = {
     ...templateFiles,
     ...shadcnFiles,
     ...aikitFiles,
   }
+
+  // Duplicate /src/components/* to /components/* so both import paths work:
+  // import { Button } from './components/ui/button'  (from /App.tsx)
+  // import { Button } from '../components/ui/button' (from /src/*)
+  // import { Button } from '@/components/ui/button'  (alias — not supported in Sandpack)
+  const dupes: Record<string, string> = {}
+  for (const [path, content] of Object.entries(files)) {
+    if (path.startsWith('/src/components/')) {
+      const rootPath = path.replace('/src/components/', '/components/')
+      dupes[rootPath] = content
+    }
+    if (path.startsWith('/src/lib/')) {
+      const rootPath = path.replace('/src/lib/', '/lib/')
+      dupes[rootPath] = content
+    }
+  }
+
+  return { ...files, ...dupes }
 }
 
 /**
