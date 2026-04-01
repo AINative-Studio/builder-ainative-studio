@@ -598,6 +598,7 @@ export function HomeClient() {
                     onChatData={handleChatData}
                     onStreamingStarted={() => setIsLoading(false)}
                     buildSteps={buildSteps}
+                    sandpackFiles={sandpackFiles}
                   />
                 </div>
 

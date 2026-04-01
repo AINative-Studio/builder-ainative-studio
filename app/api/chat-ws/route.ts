@@ -628,7 +628,7 @@ Generate a corrected version of: ${message}`
 
             // Parse into multi-file output for Sandpack
             const parsedFiles = parseMultiFileOutput(finalContent, message)
-            console.log(`📦 Parsed ${Object.keys(parsedFiles).length} files for Sandpack`)
+            console.log(`📦 Parsed ${Object.keys(parsedFiles).length} files for Sandpack:`, Object.keys(parsedFiles))
 
             // Store in V2 store
             storeFilesV2(responseId, parsedFiles, { usage: tokenUsage })

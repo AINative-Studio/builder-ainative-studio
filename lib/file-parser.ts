@@ -2,7 +2,95 @@ import { FileNode, FileGroup } from '@/components/chat/file-tree'
 import { nanoid } from 'nanoid'
 
 /**
- * Parses generated code and extracts file structure information
+ * Create a REAL file tree from actual Sandpack files.
+ * Groups files into categories: Configuration, Components, Styles, Pages, AINative Agent Files.
+ */
+export function createFileTreeFromFiles(files: Record<string, string>): FileGroup[] {
+  const groups: Record<string, FileNode[]> = {
+    'ainative': [],
+    'config': [],
+    'components': [],
+    'styles': [],
+    'pages': [],
+    'other': [],
+  }
+
+  for (const [path] of Object.entries(files)) {
+    const name = path.split('/').pop() || path
+    const node: FileNode = {
+      id: nanoid(),
+      path,
+      name,
+      type: 'file',
+      status: 'completed',
+      action: 'create',
+    }
+
+    // Classify by path
+    if (isAgentFile(path)) {
+      groups['ainative'].push(node)
+    } else if (isConfigFile(path)) {
+      node.action = 'update'
+      groups['config'].push(node)
+    } else if (isComponentFile(path)) {
+      groups['components'].push(node)
+    } else if (isStyleFile(path)) {
+      node.action = 'update'
+      groups['styles'].push(node)
+    } else if (isPageFile(path)) {
+      groups['pages'].push(node)
+    } else {
+      groups['other'].push(node)
+    }
+  }
+
+  const result: FileGroup[] = []
+
+  if (groups['config'].length > 0) {
+    result.push({ id: 'config', title: 'Configuration', files: groups['config'] })
+  }
+  if (groups['components'].length > 0) {
+    result.push({ id: 'components', title: 'Components', files: groups['components'] })
+  }
+  if (groups['styles'].length > 0) {
+    result.push({ id: 'styles', title: 'Styles', files: groups['styles'] })
+  }
+  if (groups['pages'].length > 0) {
+    result.push({ id: 'pages', title: 'Pages', files: groups['pages'] })
+  }
+  if (groups['ainative'].length > 0) {
+    result.push({ id: 'ainative', title: 'AINative Agent Files', files: groups['ainative'] })
+  }
+  if (groups['other'].length > 0) {
+    result.push({ id: 'other', title: 'Other', files: groups['other'] })
+  }
+
+  return result
+}
+
+function isAgentFile(path: string): boolean {
+  return /robots\.txt|sitemap\.xml|llms\.txt|ai-plugin\.json|security\.txt|well-known/i.test(path)
+}
+
+function isConfigFile(path: string): boolean {
+  return /package\.json|tsconfig|tailwind\.config|next\.config|postcss|\.env/i.test(path)
+}
+
+function isComponentFile(path: string): boolean {
+  return /\/components?\//i.test(path) || /Component\.tsx$/i.test(path)
+}
+
+function isStyleFile(path: string): boolean {
+  return /\.css$|\/styles?\//i.test(path)
+}
+
+function isPageFile(path: string): boolean {
+  return /\/app\/|\/pages?\//i.test(path) || /page\.tsx$|layout\.tsx$/i.test(path) || /App\.tsx$/i.test(path)
+}
+
+/**
+ * @deprecated Use createFileTreeFromFiles() with real Sandpack files instead.
+ * Parses generated code and extracts file structure information.
  */
 export function parseGeneratedFiles(content: string): FileGroup[] {
   const groups: FileGroup[] = []
