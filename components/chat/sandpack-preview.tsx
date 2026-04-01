@@ -74,6 +74,53 @@ export function SandpackPreview({ files, theme = 'light', className }: SandpackP
       }
     }
 
+    // Auto-inject AIKit component imports
+    if (!fixed.includes('from \'@/components/aikit') && !fixed.includes('from "./components/aikit')) {
+      const aikitComponents = [
+        'MetricCard', 'AIKitPriceCard', 'AIKitRating', 'AgentCard', 'SwarmView',
+        'SafetyBadge', 'GuardrailPanel', 'ChatBubble', 'StreamingIndicator', 'CodeDisplay',
+        'TokenUsageBar', 'ConnectionStatus', 'AIKitHeader', 'AIKitSidebar', 'AIKitTable',
+        'AIKitTimeline', 'AIKitBanner', 'AIKitAvatar', 'Skeleton', 'SkeletonCard',
+        'EmptyState', 'AIKitProductCard', 'AIKitPagination', 'AIKitBreadcrumb',
+        'AIKitStepper', 'VideoPlayer', 'StreamingText', 'MediaGallery', 'AgentTimeline',
+      ]
+      const usedAikit = aikitComponents.filter(c => new RegExp(`<${c}[\\s/>]`).test(fixed))
+      if (usedAikit.length > 0) {
+        fixed = `import { ${usedAikit.join(', ')} } from './components/aikit'\n${fixed}`
+      }
+    }
+
+    // Auto-inject shadcn/ui component imports
+    if (!fixed.includes('from \'@/components/ui') && !fixed.includes('from "./components/ui')) {
+      const shadcnMap: Record<string, string[]> = {
+        './components/ui/button': ['Button'],
+        './components/ui/card': ['Card', 'CardHeader', 'CardContent', 'CardTitle', 'CardDescription', 'CardFooter'],
+        './components/ui/badge': ['Badge'],
+        './components/ui/avatar': ['Avatar', 'AvatarImage', 'AvatarFallback'],
+        './components/ui/input': ['Input'],
+        './components/ui/tabs': ['Tabs', 'TabsList', 'TabsTrigger', 'TabsContent'],
+        './components/ui/label': ['Label'],
+        './components/ui/table': ['Table', 'TableHeader', 'TableBody', 'TableRow', 'TableHead', 'TableCell'],
+        './components/ui/separator': ['Separator'],
+        './components/ui/progress': ['Progress', 'CircularProgress'],
+        './components/ui/alert': ['Alert', 'AlertTitle', 'AlertDescription'],
+        './components/ui/dialog': ['Dialog', 'DialogContent', 'DialogHeader', 'DialogTitle', 'DialogDescription', 'DialogFooter'],
+        './components/ui/select': ['Select', 'SelectTrigger', 'SelectValue', 'SelectContent', 'SelectItem'],
+        './components/ui/checkbox': ['Checkbox', 'RadioGroup', 'RadioGroupItem'],
+        './components/ui/accordion': ['Accordion', 'AccordionItem', 'AccordionTrigger', 'AccordionContent'],
+      }
+      const imports: string[] = []
+      for (const [mod, components] of Object.entries(shadcnMap)) {
+        const used = components.filter(c => new RegExp(`<${c}[\\s/>]|\\b${c}\\b`).test(fixed))
+        if (used.length > 0) {
+          imports.push(`import { ${used.join(', ')} } from '${mod}'`)
+        }
+      }
+      if (imports.length > 0) {
+        fixed = imports.join('\n') + '\n' + fixed
+      }
+    }
+
     // Auto-inject Lucide icon imports
     if (!fixed.includes('from \'lucide-react\'') && !fixed.includes('from "lucide-react"')) {
       const allLucideIcons = [
