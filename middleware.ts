@@ -53,9 +53,22 @@ export async function middleware(request: NextRequest) {
   })
 
   if (!token) {
-    // Allow API routes to proceed without authentication for anonymous chat creation
-    if (pathname.startsWith('/api/')) {
+    // Only allow explicitly public API routes without authentication
+    const isPublicApiRoute =
+      pathname.startsWith('/api/auth/') ||
+      pathname === '/api/health' ||
+      pathname.startsWith('/api/preview/')
+
+    if (pathname.startsWith('/api/') && isPublicApiRoute) {
       return NextResponse.next()
+    }
+
+    // Reject all other API routes with 401 Unauthorized
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json(
+        { error: 'Authentication required' },
+        { status: 401 },
+      )
     }
 
     // Allow homepage for anonymous users

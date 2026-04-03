@@ -9,13 +9,19 @@ import type { DefaultJWT } from 'next-auth/jwt'
 const isDevelopment = process.env.NODE_ENV === 'development'
 
 // Check for required environment variables
-// Set default AUTH_SECRET for development if missing
-if (!process.env.AUTH_SECRET && isDevelopment) {
-  console.warn(
-    '⚠️  AUTH_SECRET not found. Using default secret for development.\n' +
-      'For production, please set AUTH_SECRET in your environment variables.\n',
-  )
-  process.env.AUTH_SECRET = 'dev-secret-key-not-for-production'
+if (!process.env.AUTH_SECRET) {
+  if (isDevelopment) {
+    console.warn(
+      '[auth] WARNING: AUTH_SECRET is not set. Using an insecure default for local development only.\n' +
+        'Set AUTH_SECRET in your .env.local to silence this warning (generate with: openssl rand -base64 32).\n',
+    )
+    process.env.AUTH_SECRET = 'dev-secret-key-not-for-production'
+  } else {
+    throw new Error(
+      'AUTH_SECRET environment variable is required in production. ' +
+        'Generate one with: openssl rand -base64 32',
+    )
+  }
 }
 
 // AINative Authentication Helper

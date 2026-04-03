@@ -697,7 +697,12 @@ export class ContextBudgetService {
       tokens: data.tokens,
       percentage: totalBudget > 0 ? Math.round((data.tokens / totalBudget) * 100) : 0,
       itemCount: data.count,
-      isOverBudget: false, // TODO: Check against category preferences
+      isOverBudget: (() => {
+        const pref = DEFAULT_BUDGET_CONFIG.categoryPreferences[category];
+        if (!pref) return false;
+        const percentage = totalBudget > 0 ? Math.round((data.tokens / totalBudget) * 100) : 0;
+        return percentage > pref.maxPercentage;
+      })(),
     }));
   }
 
@@ -917,8 +922,18 @@ export class ContextBudgetService {
       mostExpensiveItem: mostExpensive ? this.mapDbItemToContextItem(mostExpensive) : undefined,
       leastUsedItems: leastUsed.map(this.mapDbItemToContextItem),
       optimizationsApplied: optimizationEvents.length,
-      tokensSaved: 0, // TODO: Calculate from events
-      efficiencyScore: 0, // TODO: Calculate efficiency score
+      tokensSaved: events
+        .filter((e: { token_delta: number }) => e.token_delta < 0)
+        .reduce((sum: number, e: { token_delta: number }) => sum + Math.abs(e.token_delta), 0),
+      efficiencyScore: peakUsage > 0
+        ? Math.round(
+            (events
+              .filter((e: { token_delta: number }) => e.token_delta < 0)
+              .reduce((sum: number, e: { token_delta: number }) => sum + Math.abs(e.token_delta), 0) /
+              peakUsage) *
+              100,
+          )
+        : 0,
       timeRange,
     };
   }

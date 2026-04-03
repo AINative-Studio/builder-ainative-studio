@@ -38,7 +38,7 @@ export function AuthForm({ type }: AuthFormProps) {
             placeholder="Password"
             required
             className="w-full"
-            minLength={type === 'signup' ? 6 : 1}
+            minLength={type === 'signup' ? 12 : 1}
           />
         </div>
 
