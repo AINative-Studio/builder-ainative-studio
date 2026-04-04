@@ -7,5 +7,5 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function generateUUID(): string {
-  return nanoid()
+  return crypto.randomUUID()
 }

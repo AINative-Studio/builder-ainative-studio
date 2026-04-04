@@ -61,6 +61,7 @@ export async function createUser(
     return await db
       .insert(users)
       .values({
+        id: generateUUID(),
         email,
         password: hashedPassword,
         workspace_id: DEFAULT_WORKSPACE_ID,
@@ -84,6 +85,7 @@ export async function createGuestUser(): Promise<User[]> {
     return await db
       .insert(users)
       .values({
+        id: generateUUID(),
         email: guestEmail,
         password: generateHashedPassword(generateUUID()),
         workspace_id: DEFAULT_WORKSPACE_ID,
