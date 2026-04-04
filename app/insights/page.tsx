@@ -109,6 +109,19 @@ export default function InsightsPage() {
           </div>
         </div>
 
+        {/* No Data State */}
+        {!isLoading && !error && (!data || !data.summary) && (
+          <div className="text-center py-12">
+            <Activity className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+              No insights data yet
+            </h3>
+            <p className="text-gray-600 dark:text-gray-400">
+              Generate some components and provide feedback to see quality metrics here.
+            </p>
+          </div>
+        )}
+
         {/* Loading State */}
         {isLoading && (
           <div className="text-center py-12">
@@ -216,7 +229,7 @@ export default function InsightsPage() {
                 </CardHeader>
                 <CardContent>
                   <ResponsiveContainer width="100%" height={300}>
-                    <LineChart data={data.ratingOverTime}>
+                    <LineChart data={data.ratingOverTime || []}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis
                         dataKey="date"
@@ -255,7 +268,7 @@ export default function InsightsPage() {
                 </CardHeader>
                 <CardContent>
                   <ResponsiveContainer width="100%" height={300}>
-                    <BarChart data={data.breakdown}>
+                    <BarChart data={data.breakdown || []}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="category" angle={-45} textAnchor="end" height={80} />
                       <YAxis domain={[0, 5]} />
@@ -290,7 +303,7 @@ export default function InsightsPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {data.detailedBreakdown.map((row: any) => (
+                      {(data.detailedBreakdown || []).map((row: any) => (
                         <TableRow key={row.id}>
                           <TableCell className="font-medium">
                             {row.category}
