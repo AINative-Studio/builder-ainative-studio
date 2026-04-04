@@ -1,4 +1,4 @@
-CREATE TABLE "deployment_credentials" (
+CREATE TABLE IF NOT EXISTS "deployment_credentials" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
 	"platform" varchar(50) NOT NULL,
@@ -10,7 +10,7 @@ CREATE TABLE "deployment_credentials" (
 	CONSTRAINT "deployment_credentials_user_id_platform_unique" UNIQUE("user_id","platform")
 );
 --> statement-breakpoint
-CREATE TABLE "deployments" (
+CREATE TABLE IF NOT EXISTS "deployments" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
 	"generation_id" uuid,
@@ -26,9 +26,9 @@ CREATE TABLE "deployments" (
 ALTER TABLE "deployment_credentials" ADD CONSTRAINT "deployment_credentials_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "deployments" ADD CONSTRAINT "deployments_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "deployments" ADD CONSTRAINT "deployments_generation_id_generations_id_fk" FOREIGN KEY ("generation_id") REFERENCES "public"."generations"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX "deployment_credentials_user_id_idx" ON "deployment_credentials" USING btree ("user_id");--> statement-breakpoint
-CREATE INDEX "deployments_user_id_idx" ON "deployments" USING btree ("user_id");--> statement-breakpoint
-CREATE INDEX "deployments_status_idx" ON "deployments" USING btree ("status");--> statement-breakpoint
-CREATE INDEX "deployments_platform_idx" ON "deployments" USING btree ("platform");--> statement-breakpoint
-CREATE INDEX "deployments_generation_id_idx" ON "deployments" USING btree ("generation_id");--> statement-breakpoint
-CREATE INDEX "deployments_created_at_idx" ON "deployments" USING btree ("created_at");
+CREATE INDEX IF NOT EXISTS "deployment_credentials_user_id_idx" ON "deployment_credentials" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "deployments_user_id_idx" ON "deployments" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "deployments_status_idx" ON "deployments" USING btree ("status");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "deployments_platform_idx" ON "deployments" USING btree ("platform");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "deployments_generation_id_idx" ON "deployments" USING btree ("generation_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "deployments_created_at_idx" ON "deployments" USING btree ("created_at");

@@ -14,15 +14,15 @@ CREATE TABLE IF NOT EXISTS "design_tokens" (
 );
 
 -- Create indexes for design_tokens
-CREATE INDEX IF NOT EXISTS "design_tokens_user_id_idx" ON "design_tokens" ("user_id");
-CREATE INDEX IF NOT EXISTS "design_tokens_version_idx" ON "design_tokens" ("version");
-CREATE UNIQUE INDEX IF NOT EXISTS "design_tokens_user_name_version_unique" ON "design_tokens" ("user_id", "name", "version");
+CREATE INDEX IF NOT EXISTS IF NOT EXISTS "design_tokens_user_id_idx" ON "design_tokens" ("user_id");
+CREATE INDEX IF NOT EXISTS IF NOT EXISTS "design_tokens_version_idx" ON "design_tokens" ("version");
+CREATE UNIQUE INDEX IF NOT EXISTS IF NOT EXISTS "design_tokens_user_name_version_unique" ON "design_tokens" ("user_id", "name", "version");
 
 -- Add design_tokens_version_id to generations table
 ALTER TABLE "generations" ADD COLUMN IF NOT EXISTS "design_tokens_version_id" uuid;
 
 -- Create index for design_tokens_version_id
-CREATE INDEX IF NOT EXISTS "generations_design_tokens_idx" ON "generations" ("design_tokens_version_id");
+CREATE INDEX IF NOT EXISTS IF NOT EXISTS "generations_design_tokens_idx" ON "generations" ("design_tokens_version_id");
 
 -- Add foreign key constraint (note: we use a soft reference to avoid strict FK constraint)
 -- This allows tokens to be deleted without affecting generation history
