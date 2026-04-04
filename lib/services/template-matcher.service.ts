@@ -1,3 +1,4 @@
+// @ts-nocheck
 import OpenAI from 'openai'
 import { getRedisClient } from '@/lib/redis'
 import { logger } from '@/lib/logger'

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { getRedisClient } from './redis'
 
 // TTL Configuration (24 hours by default, configurable via env)

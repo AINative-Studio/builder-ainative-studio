@@ -2,44 +2,55 @@ import Redis from 'ioredis'
 
 // Redis connection singleton
 let redisClient: Redis | null = null
+let redisUnavailable = false
 
 /**
- * Get or create Redis client instance
- * Uses singleton pattern to reuse connection across hot reloads
+ * Get or create Redis client instance.
+ * Returns null if Redis is not configured or unreachable.
  */
-export function getRedisClient(): Redis {
+export function getRedisClient(): Redis | null {
+  if (redisUnavailable) return null
+
   if (!redisClient) {
-    const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379'
+    const redisUrl = process.env.REDIS_URL
+
+    // Skip Redis entirely if no URL configured or pointing to localhost in production
+    if (!redisUrl || (process.env.NODE_ENV === 'production' && redisUrl.includes('localhost'))) {
+      console.log('Redis not configured — running without cache')
+      redisUnavailable = true
+      return null
+    }
 
     redisClient = new Redis(redisUrl, {
       maxRetriesPerRequest: 3,
+      lazyConnect: true,
       retryStrategy(times) {
-        const delay = Math.min(times * 50, 2000)
-        return delay
-      },
-      // Enable keepalive to prevent connection drops
-      keepAlive: 30000,
-      // Reconnect on error
-      reconnectOnError(err) {
-        const targetError = 'READONLY'
-        if (err.message.includes(targetError)) {
-          // Only reconnect when the error contains "READONLY"
-          return true
+        if (times > 3) {
+          console.warn('Redis: max retries reached, giving up')
+          redisUnavailable = true
+          return null // stop retrying
         }
-        return false
+        return Math.min(times * 200, 2000)
+      },
+      keepAlive: 30000,
+      reconnectOnError(err) {
+        return err.message.includes('READONLY')
       },
     })
 
     redisClient.on('error', (error) => {
-      console.error('Redis connection error:', error)
+      console.error('Redis connection error:', error.message)
     })
 
     redisClient.on('connect', () => {
       console.log('Redis connected successfully')
     })
 
-    redisClient.on('ready', () => {
-      console.log('Redis client ready')
+    // Attempt connection (non-blocking)
+    redisClient.connect().catch(() => {
+      console.warn('Redis: initial connection failed, running without cache')
+      redisUnavailable = true
+      redisClient = null
     })
   }
 
@@ -62,10 +73,10 @@ export async function closeRedis(): Promise<void> {
 export async function isRedisHealthy(): Promise<boolean> {
   try {
     const client = getRedisClient()
+    if (!client) return false
     const result = await client.ping()
     return result === 'PONG'
   } catch (error) {
-    console.error('Redis health check failed:', error)
     return false
   }
 }
@@ -76,10 +87,10 @@ export async function isRedisHealthy(): Promise<boolean> {
 export async function cacheGet<T>(key: string): Promise<T | null> {
   try {
     const client = getRedisClient()
+    if (!client) return null
     const value = await client.get(key)
     return value ? JSON.parse(value) : null
   } catch (error) {
-    console.error('Redis cache get error:', error)
     return null
   }
 }
@@ -94,9 +105,10 @@ export async function cacheSet(
 ): Promise<void> {
   try {
     const client = getRedisClient()
+    if (!client) return
     await client.setex(key, ttlSeconds, JSON.stringify(value))
   } catch (error) {
-    console.error('Redis cache set error:', error)
+    // silently skip cache writes
   }
 }
 
@@ -106,9 +118,10 @@ export async function cacheSet(
 export async function cacheDelete(key: string): Promise<void> {
   try {
     const client = getRedisClient()
+    if (!client) return
     await client.del(key)
   } catch (error) {
-    console.error('Redis cache delete error:', error)
+    // silently skip
   }
 }
 
@@ -118,11 +131,12 @@ export async function cacheDelete(key: string): Promise<void> {
 export async function cacheDeletePattern(pattern: string): Promise<void> {
   try {
     const client = getRedisClient()
+    if (!client) return
     const keys = await client.keys(pattern)
     if (keys.length > 0) {
       await client.del(...keys)
     }
   } catch (error) {
-    console.error('Redis cache delete pattern error:', error)
+    // silently skip
   }
 }

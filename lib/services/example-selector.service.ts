@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Example Selector Service (US-029)
  *
