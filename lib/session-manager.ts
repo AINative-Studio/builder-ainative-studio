@@ -24,8 +24,7 @@ export interface SessionData {
 }
 
 /**
- * Create a new session in both Redis and PostgreSQL
- * US-010: Session Management with Redis
+ * Create a new session in both Redis (if available) and PostgreSQL
  */
 export async function createUserSession(
   userId: string,
@@ -34,7 +33,7 @@ export async function createUserSession(
   const redis = getRedisClient()
 
   try {
-    const sessionId = nanoid(32) // Generate secure session ID
+    const sessionId = nanoid(32)
     const now = new Date()
     const expiresAt = new Date(now.getTime() + SESSION_TTL * 1000)
 
@@ -46,21 +45,14 @@ export async function createUserSession(
       expiresAt: expiresAt.toISOString(),
     }
 
-    // Store in Redis with TTL
-    await redis.setex(
-      SESSION_KEY(sessionId),
-      SESSION_TTL,
-      JSON.stringify(sessionData)
-    )
+    // Store in Redis with TTL (if available)
+    if (redis) {
+      await redis.setex(SESSION_KEY(sessionId), SESSION_TTL, JSON.stringify(sessionData))
+    }
 
     // Store in PostgreSQL for persistence
-    await createSession({
-      sessionId,
-      userId,
-      expiresAt,
-    })
+    await createSession({ sessionId, userId, expiresAt })
 
-    console.log(`Session created for user ${userId}: ${sessionId}`)
     return { sessionId, expiresAt }
   } catch (error) {
     console.error('Failed to create session:', error)
@@ -78,34 +70,27 @@ export async function getUserSession(
 
   try {
     // Try Redis first (fast path)
-    const redisData = await redis.get(SESSION_KEY(sessionId))
-
-    if (redisData) {
-      const sessionData: SessionData = JSON.parse(redisData)
-
-      // Check if session is expired
-      if (new Date(sessionData.expiresAt) < new Date()) {
-        await invalidateSession(sessionId)
-        return null
+    if (redis) {
+      const redisData = await redis.get(SESSION_KEY(sessionId))
+      if (redisData) {
+        const sessionData: SessionData = JSON.parse(redisData)
+        if (new Date(sessionData.expiresAt) < new Date()) {
+          await invalidateSession(sessionId)
+          return null
+        }
+        return sessionData
       }
-
-      return sessionData
     }
 
     // Fall back to PostgreSQL
     const dbSession = await getSession(sessionId)
+    if (!dbSession) return null
 
-    if (!dbSession) {
-      return null
-    }
-
-    // Check if session is expired
     if (dbSession.expires_at < new Date()) {
       await invalidateSession(sessionId)
       return null
     }
 
-    // Reconstruct session data and cache in Redis
     const sessionData: SessionData = {
       userId: dbSession.user_id,
       createdAt: dbSession.created_at.toISOString(),
@@ -113,16 +98,12 @@ export async function getUserSession(
       expiresAt: dbSession.expires_at.toISOString(),
     }
 
-    // Re-cache in Redis
-    const ttl = Math.floor(
-      (dbSession.expires_at.getTime() - Date.now()) / 1000
-    )
-    if (ttl > 0) {
-      await redis.setex(
-        SESSION_KEY(sessionId),
-        ttl,
-        JSON.stringify(sessionData)
-      )
+    // Re-cache in Redis if available
+    if (redis) {
+      const ttl = Math.floor((dbSession.expires_at.getTime() - Date.now()) / 1000)
+      if (ttl > 0) {
+        await redis.setex(SESSION_KEY(sessionId), ttl, JSON.stringify(sessionData))
+      }
     }
 
     return sessionData
@@ -134,29 +115,20 @@ export async function getUserSession(
 
 /**
  * Refresh session TTL on activity
- * US-010: Refresh TTL on activity
  */
 export async function refreshSession(sessionId: string): Promise<boolean> {
   const redis = getRedisClient()
 
   try {
     const sessionData = await getUserSession(sessionId)
+    if (!sessionData) return false
 
-    if (!sessionData) {
-      return false
-    }
-
-    // Update last activity
     sessionData.lastActivity = new Date().toISOString()
 
-    // Reset TTL in Redis
-    await redis.setex(
-      SESSION_KEY(sessionId),
-      SESSION_TTL,
-      JSON.stringify(sessionData)
-    )
+    if (redis) {
+      await redis.setex(SESSION_KEY(sessionId), SESSION_TTL, JSON.stringify(sessionData))
+    }
 
-    // Update activity in PostgreSQL (async, don't wait)
     updateSessionActivity(sessionId).catch((error) => {
       console.error('Failed to update session activity in DB:', error)
     })
@@ -170,19 +142,15 @@ export async function refreshSession(sessionId: string): Promise<boolean> {
 
 /**
  * Invalidate session immediately (for logout)
- * US-010: Logout invalidates session immediately
  */
 export async function invalidateSession(sessionId: string): Promise<void> {
   const redis = getRedisClient()
 
   try {
-    // Delete from Redis immediately
-    await redis.del(SESSION_KEY(sessionId))
-
-    // Delete from PostgreSQL
+    if (redis) {
+      await redis.del(SESSION_KEY(sessionId))
+    }
     await deleteSession(sessionId)
-
-    console.log(`Session invalidated: ${sessionId}`)
   } catch (error) {
     console.error('Failed to invalidate session:', error)
     throw error
@@ -196,24 +164,20 @@ export async function invalidateUserSessions(userId: string): Promise<void> {
   const redis = getRedisClient()
 
   try {
-    // Get all session keys from Redis
-    const keys = await redis.keys(SESSION_KEY('*'))
-
-    // Filter sessions for this user
-    for (const key of keys) {
-      const data = await redis.get(key)
-      if (data) {
-        const sessionData: SessionData = JSON.parse(data)
-        if (sessionData.userId === userId) {
-          await redis.del(key)
+    if (redis) {
+      const keys = await redis.keys(SESSION_KEY('*'))
+      for (const key of keys) {
+        const data = await redis.get(key)
+        if (data) {
+          const sessionData: SessionData = JSON.parse(data)
+          if (sessionData.userId === userId) {
+            await redis.del(key)
+          }
         }
       }
     }
 
-    // Delete from PostgreSQL
     await deleteUserSessions(userId)
-
-    console.log(`All sessions invalidated for user: ${userId}`)
   } catch (error) {
     console.error('Failed to invalidate user sessions:', error)
     throw error
@@ -222,21 +186,15 @@ export async function invalidateUserSessions(userId: string): Promise<void> {
 
 /**
  * Validate session and return user ID
- * Returns null if session is invalid or expired
  */
 export async function validateSession(
   sessionId: string
 ): Promise<string | null> {
   try {
     const sessionData = await getUserSession(sessionId)
+    if (!sessionData) return null
 
-    if (!sessionData) {
-      return null
-    }
-
-    // Refresh session on successful validation
     await refreshSession(sessionId)
-
     return sessionData.userId
   } catch (error) {
     console.error('Failed to validate session:', error)
