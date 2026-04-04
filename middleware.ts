@@ -50,6 +50,7 @@ export async function middleware(request: NextRequest) {
     const isPublicApiRoute =
       pathname.startsWith('/api/auth/') ||
       pathname === '/api/health' ||
+      pathname === '/api/debug-auth' ||
       pathname.startsWith('/api/preview/')
 
     if (pathname.startsWith('/api/') && isPublicApiRoute) {
