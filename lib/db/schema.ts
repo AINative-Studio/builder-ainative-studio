@@ -16,7 +16,10 @@ import {
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().notNull().defaultRandom(),
   email: varchar('email', { length: 255 }).notNull(),
-  password: varchar('hashed_password', { length: 255 }), // Maps to hashed_password column in AINative DB
+  password: varchar('password_hash', { length: 255 }), // Maps to password_hash column in AINative core DB
+  full_name: varchar('full_name', { length: 255 }),
+  workspace_id: uuid('workspace_id'), // Required in AINative core DB
+  is_active: boolean('is_active').notNull().default(true),
   created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
 

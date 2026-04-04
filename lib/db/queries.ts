@@ -63,6 +63,8 @@ export async function createUser(
       .values({
         email,
         password: hashedPassword,
+        workspace_id: DEFAULT_WORKSPACE_ID,
+        is_active: true,
       })
       .returning()
   } catch (error) {
@@ -70,6 +72,9 @@ export async function createUser(
     throw error
   }
 }
+
+// Default workspace ID for guest users (AINative core platform)
+const DEFAULT_WORKSPACE_ID = 'dc17346c-f46c-4cd4-9277-a2efcaadfbb2'
 
 export async function createGuestUser(): Promise<User[]> {
   try {
@@ -81,10 +86,12 @@ export async function createGuestUser(): Promise<User[]> {
       .values({
         email: guestEmail,
         password: generateHashedPassword(generateUUID()),
+        workspace_id: DEFAULT_WORKSPACE_ID,
+        is_active: true,
       })
       .returning()
   } catch (error) {
-    console.error('Failed to create guest user in database')
+    console.error('Failed to create guest user in database:', error)
     throw error
   }
 }

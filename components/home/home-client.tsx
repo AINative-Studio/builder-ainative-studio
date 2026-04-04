@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useEffect, useRef, Suspense } from 'react'
+import { useState, useEffect, useRef, useCallback, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { useSession, signIn } from 'next-auth/react'
 import Link from 'next/link'
 import {
   PromptInput,
@@ -159,10 +160,24 @@ export function HomeClient() {
     setIsDragOver(false)
   }
 
+  const { data: session, status: sessionStatus } = useSession()
+
+  // Auto-sign-in as guest if not authenticated
+  const ensureAuthenticated = useCallback(async () => {
+    if (sessionStatus === 'unauthenticated') {
+      await signIn('guest', { redirect: false })
+      // Wait briefly for session to update
+      await new Promise(resolve => setTimeout(resolve, 500))
+    }
+  }, [sessionStatus])
+
   const handleSendMessage = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     console.log('handleSendMessage called with message:', message)
     if (!message.trim() || isLoading) return
+
+    // Ensure user is authenticated (auto-create guest session if needed)
+    await ensureAuthenticated()
 
     const userMessage = message.trim()
     const currentAttachments = [...attachments]
