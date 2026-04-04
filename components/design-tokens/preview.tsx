@@ -212,7 +212,7 @@ export function DesignTokenPreview({ tokens }: DesignTokenPreviewProps) {
             ...cssVars,
             '--preview-background': tokens.colors.foreground || '#0A0A0A',
             '--preview-foreground': tokens.colors.background || '#FFFFFF',
-          }}
+          } as React.CSSProperties}
           className="rounded-lg border border-zinc-800 bg-zinc-950 p-6 space-y-6"
         >
           {/* Typography Preview - Dark */}

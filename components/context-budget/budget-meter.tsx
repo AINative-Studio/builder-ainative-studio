@@ -76,7 +76,6 @@ export function BudgetMeter({ budget, className, showDetails = true }: BudgetMet
             <Progress
               value={budget.usagePercentage}
               className="h-3"
-              indicatorClassName={statusConfig.color}
             />
             {showDetails && (
               <div className="flex justify-between text-sm text-muted-foreground">

@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
 
     const zipData = await exportProject(projectFiles, appName)
 
-    return new NextResponse(zipData, {
+    return new NextResponse(zipData as unknown as BodyInit, {
       headers: {
         'Content-Type': 'application/zip',
         'Content-Disposition': `attachment; filename="${appName.toLowerCase().replace(/[^a-z0-9-]/g, '-')}.zip"`,

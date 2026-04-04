@@ -299,7 +299,7 @@ export async function buildEnhancedPrompt(
     // Step 7: Build final system prompt
     const systemPromptParts = [
       budgetResult.sections.constraints,
-      budgetResult.sections.aiKitComponents,
+      (budgetResult.sections as any).aiKitComponents,
       budgetResult.sections.designTokens,
       budgetResult.sections.componentDocs,
       budgetResult.sections.fewShotExamples
@@ -337,7 +337,7 @@ export async function buildEnhancedPrompt(
       }
     }
   } catch (error) {
-    logger.error('Prompt enhancement failed', { error })
+    logger.error('Prompt enhancement failed', error as Error)
 
     // Fallback: return minimal enhancement
     return {

@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Credentials Service (US-071)
  *

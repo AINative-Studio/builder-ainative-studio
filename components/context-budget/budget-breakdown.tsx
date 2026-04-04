@@ -120,7 +120,7 @@ export function BudgetBreakdown({ budget, className }: BudgetBreakdownProps) {
                 cx="50%"
                 cy="50%"
                 labelLine={false}
-                label={(entry) => `${entry.percentage}%`}
+                label={(entry: any) => `${entry.percentage}%`}
                 outerRadius={100}
                 fill="#8884d8"
                 dataKey="value"

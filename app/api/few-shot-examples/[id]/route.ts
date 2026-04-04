@@ -19,10 +19,10 @@ import { logger } from '@/lib/logger'
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params
+    const { id } = await params
 
     logger.info('Fetching few-shot example', { id })
 
@@ -41,7 +41,7 @@ export async function GET(
 
     return NextResponse.json({ example })
   } catch (error) {
-    logger.error('Failed to fetch few-shot example', { error })
+    logger.error('Failed to fetch few-shot example', error as Error)
     return NextResponse.json(
       { error: 'Failed to fetch example' },
       { status: 500 }
@@ -55,10 +55,10 @@ export async function GET(
  */
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params
+    const { id } = await params
     const body = await request.json()
     const { category, prompt, good_output, explanation, tags } = body
 
@@ -97,7 +97,7 @@ export async function PUT(
       message: 'Example updated successfully'
     })
   } catch (error) {
-    logger.error('Failed to update few-shot example', { error })
+    logger.error('Failed to update few-shot example', error as Error)
     return NextResponse.json(
       { error: 'Failed to update example' },
       { status: 500 }
@@ -111,10 +111,10 @@ export async function PUT(
  */
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params
+    const { id } = await params
 
     logger.info('Deleting few-shot example', { id })
 
@@ -135,7 +135,7 @@ export async function DELETE(
       example: deletedExample
     })
   } catch (error) {
-    logger.error('Failed to delete few-shot example', { error })
+    logger.error('Failed to delete few-shot example', error as Error)
     return NextResponse.json(
       { error: 'Failed to delete example' },
       { status: 500 }

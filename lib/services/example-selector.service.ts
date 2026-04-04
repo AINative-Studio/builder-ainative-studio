@@ -235,7 +235,7 @@ export async function selectExamplesBySimilarity(
       selectionTimeMs
     }
   } catch (error) {
-    logger.error('Semantic selection failed, using fallback', { error })
+    logger.error('Semantic selection failed, using fallback', error as Error)
     return selectExamplesFallback(category, Date.now() - startTime)
   }
 }
@@ -292,7 +292,7 @@ async function selectExamplesFallback(
       selectionTimeMs: Date.now() - startTime + elapsedTimeMs
     }
   } catch (error) {
-    logger.error('Fallback selection failed', { error })
+    logger.error('Fallback selection failed', error as Error)
     return {
       examples: [],
       method: 'fallback',

@@ -11,7 +11,7 @@ import { logger } from '@/lib/logger'
 
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { tokenId: string } }
+  { params }: { params: Promise<{ tokenId: string }> }
 ) {
   try {
     // Verify authentication
@@ -25,7 +25,7 @@ export async function PUT(
     }
 
     const userId = user.userId
-    const { tokenId } = params
+    const { tokenId } = await params
 
     // Get design token to verify ownership
     const designToken = await getDesignToken(tokenId)
@@ -60,7 +60,7 @@ export async function PUT(
       },
     })
   } catch (error) {
-    logger.error('Failed to activate design token', { error })
+    logger.error('Failed to activate design token', error as Error)
     return NextResponse.json(
       { error: 'Failed to activate design token' },
       { status: 500 }

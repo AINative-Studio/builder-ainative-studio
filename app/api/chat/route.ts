@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import OpenAI from 'openai'
+import Anthropic from '@anthropic-ai/sdk'
 import { auth } from '@/app/(auth)/auth'
 import { nanoid } from 'nanoid'
 import { storePreview } from '@/lib/preview-store'
@@ -16,6 +17,16 @@ const llama = new OpenAI({
   baseURL: process.env.META_BASE_URL || 'https://api.llama.com/compat/v1',
 })
 
+// Anthropic client for Claude models
+const anthropic = process.env.ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  : null
+
+function isClaudeModel(model?: string): boolean {
+  if (!model) return false
+  return model.toLowerCase().includes('claude') || model.toLowerCase().includes('anthropic')
+}
+
 // Available components for LLAMA to use
 const AVAILABLE_COMPONENTS = [
   'Button', 'Card', 'CardHeader', 'CardTitle', 'CardDescription', 'CardContent', 'CardFooter',
@@ -25,7 +36,7 @@ const AVAILABLE_COMPONENTS = [
 
 export async function POST(request: NextRequest) {
   try {
-    const { message, chatId, attachments, streaming } = await request.json()
+    const { message, chatId, attachments, streaming, model: selectedModel } = await request.json()
 
     if (!message) {
       return Response.json({ error: 'Message is required' }, { status: 400 })
@@ -269,16 +280,78 @@ export async function POST(request: NextRequest) {
         })
       }
 
-      // Normal LLAMA streaming generation
-      console.log('Starting LLAMA streaming generation...')
-      const model = process.env.LLAMA_MODEL || 'Llama-4-Maverick-17B-128E-Instruct-FP8'
-      const stream = await llama.chat.completions.create({
-        model,
-        messages: conversationMessages,
-        temperature: 0.7,
-        max_tokens: 3000,
-        stream: true,
-      })
+      // Model routing - use Claude if selected, otherwise LLAMA
+      const useClaudeModel = isClaudeModel(selectedModel) && anthropic
+      const llamaModel = process.env.LLAMA_MODEL || 'Llama-4-Maverick-17B-128E-Instruct-FP8'
+      console.log(`Starting ${useClaudeModel ? 'Claude' : 'LLAMA'} streaming generation...`)
+
+      const stream = useClaudeModel
+        ? null // Claude uses a different streaming pattern below
+        : await llama.chat.completions.create({
+            model: llamaModel,
+            messages: conversationMessages,
+            temperature: 0.7,
+            max_tokens: 3000,
+            stream: true,
+          })
+
+      // Handle Claude streaming separately
+      if (useClaudeModel && anthropic) {
+        const claudeModel = selectedModel?.includes('opus') ? 'claude-opus-4-20250514' :
+                           selectedModel?.includes('haiku') ? 'claude-haiku-4-5-20251001' :
+                           'claude-sonnet-4-20250514'
+        const encoder = new TextEncoder()
+        const responseId = chatId || nanoid()
+        const claudeReadable = new ReadableStream({
+          async start(controller) {
+            try {
+              let fullContent = ''
+              const claudeStream = anthropic.messages.stream({
+                model: claudeModel,
+                max_tokens: 4096,
+                system: enhancedSystemPrompt,
+                messages: conversationMessages.filter((m: { role: string }) => m.role !== 'system').map((m: { role: string; content: string }) => ({
+                  role: m.role as 'user' | 'assistant',
+                  content: m.content,
+                })),
+              })
+
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ chatId: responseId })}\n\n`))
+
+              for await (const event of claudeStream) {
+                if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+                  fullContent += event.delta.text
+                  controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+                    choices: [{ delta: { content: event.delta.text } }]
+                  })}\n\n`))
+                }
+              }
+
+              // Store preview
+              if (fullContent) {
+                const { updatePreviewPartial } = await import('@/lib/preview-store')
+                updatePreviewPartial(responseId, fullContent)
+              }
+
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ finish_reason: 'stop' }] })}\n\n`))
+              controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+              controller.close()
+            } catch (error) {
+              console.error('Claude streaming error:', error)
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: 'Claude generation failed' })}\n\n`))
+              controller.close()
+            }
+          },
+        })
+
+        return new Response(claudeReadable, {
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          },
+        })
+      }
 
       // Create a TransformStream to handle the streaming response
       const encoder = new TextEncoder()
@@ -295,7 +368,7 @@ export async function POST(request: NextRequest) {
               demo: `/preview/${responseId}`
             })}\n\n`))
 
-            for await (const chunk of stream) {
+            for await (const chunk of stream!) {
               const content = chunk.choices[0]?.delta?.content || ''
               if (content) {
                 fullContent += content

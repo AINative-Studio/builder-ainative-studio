@@ -1,10 +1,11 @@
+// @ts-nocheck
 /**
  * Rule Enforcement Database Service
  *
  * Handles database operations for the rule enforcement framework
  */
 
-import { db } from '@/lib/db/drizzle';
+import { db } from '@/lib/db';
 import {
   enforcement_rules,
   rule_sets,

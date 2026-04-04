@@ -178,7 +178,7 @@ export async function translateToEnglish(
 
     return translated
   } catch (error) {
-    logger.error('Translation failed', { error, sourceLanguage })
+    logger.error('Translation failed', error as Error)
     // Fallback: return original text
     return text
   }

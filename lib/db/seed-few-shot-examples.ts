@@ -395,7 +395,7 @@ export async function seedFewShotExamples() {
               <CardDescription>{product.category}</CardDescription>
             </CardHeader>
             <CardContent>
-              <p className="text-2xl font-bold">${product.price}</p>
+              <p className="text-2xl font-bold">\${product.price}</p>
             </CardContent>
             <CardFooter>
               <Button
@@ -451,7 +451,7 @@ export async function seedFewShotExamples() {
               <CardContent className="flex items-center justify-between p-4">
                 <div>
                   <h3 className="font-semibold">{item.name}</h3>
-                  <p className="text-gray-600">${item.price.toFixed(2)}</p>
+                  <p className="text-gray-600">\${item.price.toFixed(2)}</p>
                 </div>
                 <div className="flex items-center gap-3">
                   <Button
@@ -489,16 +489,16 @@ export async function seedFewShotExamples() {
           <CardContent className="space-y-2">
             <div className="flex justify-between">
               <span>Subtotal</span>
-              <span>${subtotal.toFixed(2)}</span>
+              <span>\${subtotal.toFixed(2)}</span>
             </div>
             <div className="flex justify-between">
               <span>Tax (10%)</span>
-              <span>${tax.toFixed(2)}</span>
+              <span>\${tax.toFixed(2)}</span>
             </div>
             <Separator />
             <div className="flex justify-between font-bold text-lg">
               <span>Total</span>
-              <span>${total.toFixed(2)}</span>
+              <span>\${total.toFixed(2)}</span>
             </div>
           </CardContent>
           <CardFooter>
@@ -645,7 +645,7 @@ export async function seedFewShotExamples() {
               )}
               <CardTitle className="text-2xl">{plan.name}</CardTitle>
               <div className="text-4xl font-bold my-4">
-                ${plan.price}
+                \${plan.price}
                 <span className="text-lg text-gray-600 font-normal">
                   /{billingPeriod === 'monthly' ? 'mo' : 'yr'}
                 </span>

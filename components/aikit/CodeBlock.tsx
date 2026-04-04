@@ -7,7 +7,7 @@ import {
   dracula,
   atomDark,
 } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { CodeBlockProps } from '../types';
+import { CodeBlockProps } from './types';
 
 const themeMap = {
   dark: atomDark,

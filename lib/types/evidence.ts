@@ -259,6 +259,9 @@ export interface MetadataExtractor {
     buildSuccess?: RegExp
     buildErrors?: RegExp
     duration?: RegExp
+    bundleSize?: RegExp
+    chunks?: RegExp
+    [key: string]: RegExp | undefined
   }
   extract: (output: string) => Partial<EvidenceMetadata>
 }

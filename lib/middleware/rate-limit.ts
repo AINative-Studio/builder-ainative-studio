@@ -1,7 +1,6 @@
 import { Ratelimit } from '@upstash/ratelimit'
 import { Redis } from '@upstash/redis'
 import { NextRequest, NextResponse } from 'next/server'
-import { logger } from '../logger'
 
 // Redis client for rate limiting (using Upstash Redis for Edge Runtime compatibility)
 const redis = process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN
@@ -52,6 +51,48 @@ export interface RateLimitConfig {
   success: boolean
 }
 
+// In-memory sliding window fallback when Redis is not available
+const inMemoryStore = new Map<string, number[]>()
+
+function inMemoryRateLimit(
+  ip: string,
+  pathname: string,
+): { success: boolean; response?: NextResponse } {
+  const isAuth = pathname.startsWith('/api/auth/')
+  const isGeneration = pathname.includes('/api/chat') || pathname.includes('/api/generate') || pathname.includes('/api/chat-llama')
+  const limit = isAuth ? 5 : isGeneration ? 10 : 60
+  const windowMs = 60_000
+
+  const key = `${ip}:${isAuth ? 'auth' : isGeneration ? 'gen' : 'general'}`
+  const now = Date.now()
+  const timestamps = (inMemoryStore.get(key) || []).filter((t) => now - t < windowMs)
+
+  if (timestamps.length >= limit) {
+    return {
+      success: false,
+      response: NextResponse.json(
+        { error: 'Too Many Requests', message: 'Rate limit exceeded. Please try again later.' },
+        { status: 429, headers: { 'Retry-After': '60' } },
+      ),
+    }
+  }
+
+  timestamps.push(now)
+  inMemoryStore.set(key, timestamps)
+
+  // Periodic cleanup to prevent memory leaks
+  if (inMemoryStore.size > 10_000) {
+    const cutoff = now - windowMs
+    for (const [k, v] of inMemoryStore) {
+      const filtered = v.filter((t) => t > cutoff)
+      if (filtered.length === 0) inMemoryStore.delete(k)
+      else inMemoryStore.set(k, filtered)
+    }
+  }
+
+  return { success: true }
+}
+
 export async function applyRateLimit(
   request: NextRequest,
 ): Promise<{ success: boolean; response?: NextResponse }> {
@@ -64,14 +105,9 @@ export async function applyRateLimit(
     return { success: true }
   }
 
-  // If Redis is not configured in production, log error but allow request
+  // If Redis is not configured, use in-memory fallback
   if (!redis) {
-    logger.error('Redis not configured for rate limiting in production', undefined, {
-      path: pathname,
-      method,
-      ip,
-    })
-    return { success: true }
+    return inMemoryRateLimit(ip, pathname)
   }
 
   try {
@@ -85,11 +121,6 @@ export async function applyRateLimit(
     const identifier = `${ip}:${isGenerationEndpoint ? 'generation' : 'general'}`
 
     if (!rateLimit) {
-      logger.error('Rate limit not initialized', undefined, {
-        path: pathname,
-        method,
-        ip,
-      })
       return { success: true }
     }
 
@@ -98,15 +129,7 @@ export async function applyRateLimit(
 
     // Log rate limit check
     if (!success) {
-      logger.warn('Rate limit exceeded', {
-        ip,
-        path: pathname,
-        method,
-        limit,
-        remaining,
-        reset,
-        endpoint_type: isGenerationEndpoint ? 'generation' : 'general',
-      })
+      console.warn('[rate-limit] Rate limit exceeded', { ip, path: pathname, method })
     }
 
     // If rate limit exceeded, return 429 response
@@ -146,16 +169,7 @@ export async function applyRateLimit(
 
     return { success: true, response }
   } catch (error) {
-    // Log error but don't block request
-    logger.error(
-      'Rate limit check failed',
-      error as Error,
-      {
-        path: pathname,
-        method,
-        ip,
-      },
-    )
+    console.error('[rate-limit] Rate limit check failed', error)
     return { success: true }
   }
 }
@@ -179,7 +193,7 @@ export async function getRateLimitStatus(
       success: result.success,
     }
   } catch (error) {
-    logger.error('Failed to get rate limit status', error as Error, { identifier, type })
+    console.error('[rate-limit] Failed to get rate limit status', error)
     return null
   }
 }

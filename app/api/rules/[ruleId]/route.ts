@@ -24,10 +24,10 @@ const ruleUpdateSchema = z.object({
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { ruleId: string } }
+  { params }: { params: Promise<{ ruleId: string }> }
 ) {
   try {
-    const { ruleId } = params;
+    const { ruleId } = await params;
 
     const dbService = getRuleEnforcementDbService();
     const rule = await dbService.getRule(ruleId);
@@ -65,10 +65,10 @@ export async function GET(
  */
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { ruleId: string } }
+  { params }: { params: Promise<{ ruleId: string }> }
 ) {
   try {
-    const { ruleId } = params;
+    const { ruleId } = await params;
     const body = await request.json();
 
     // Validate request body
@@ -106,7 +106,7 @@ export async function PUT(
         {
           success: false,
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         },
         { status: 400 }
       );
@@ -130,10 +130,10 @@ export async function PUT(
  */
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { ruleId: string } }
+  { params }: { params: Promise<{ ruleId: string }> }
 ) {
   try {
-    const { ruleId } = params;
+    const { ruleId } = await params;
 
     const dbService = getRuleEnforcementDbService();
 

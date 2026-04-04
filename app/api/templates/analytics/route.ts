@@ -31,9 +31,9 @@ export async function GET(request: NextRequest) {
       .groupBy(templates.category)
 
     // Calculate total for percentages
-    const totalUsage = categoryStats.reduce((sum, cat) => sum + Number(cat.total_usage), 0)
+    const totalUsage = categoryStats.reduce((sum: number, cat: any) => sum + Number(cat.total_usage), 0)
 
-    const categoryBreakdown = categoryStats.map((cat) => ({
+    const categoryBreakdown = categoryStats.map((cat: any) => ({
       category: cat.category,
       count: Number(cat.count),
       usage: Number(cat.total_usage),

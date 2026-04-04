@@ -5,6 +5,7 @@ import { createGuestUser, getUser } from '@/lib/db/queries'
 import { authConfig } from './auth.config'
 import { DUMMY_PASSWORD } from '@/lib/constants'
 import type { DefaultJWT } from 'next-auth/jwt'
+import { shouldRefreshToken, refreshAINativeToken } from '@/lib/auth/tokenRefresh'
 
 const isDevelopment = process.env.NODE_ENV === 'development'
 
@@ -158,10 +159,30 @@ export const {
       if (user) {
         token.id = user.id as string
         token.type = user.type
+        token.name = (user as any).name || user.email?.split('@')[0]
         // Store AINative access token if present
         if ((user as any).accessToken) {
           token.accessToken = (user as any).accessToken
-          token.expiresIn = (user as any).expiresIn
+          token.expiresAt = (user as any).expiresIn
+            ? Date.now() + (user as any).expiresIn * 1000
+            : undefined
+        }
+      }
+
+      // Auto-refresh AINative token if close to expiry
+      if (token.type === 'ainative' && token.accessToken && token.expiresAt) {
+        if (shouldRefreshToken(token.expiresAt as number)) {
+          try {
+            const result = await refreshAINativeToken(token.accessToken as string)
+            if (result) {
+              token.accessToken = result.accessToken
+              token.expiresAt = result.expiresIn
+                ? Date.now() + result.expiresIn * 1000
+                : token.expiresAt
+            }
+          } catch (error) {
+            console.error('[Auth] Token refresh failed:', error)
+          }
         }
       }
 
@@ -171,7 +192,8 @@ export const {
       if (session.user) {
         session.user.id = token.id
         session.user.type = token.type
-        // Pass access token to session if needed
+        session.user.name = token.name as string
+        // Pass access token to session for API calls
         if (token.accessToken) {
           (session as any).accessToken = token.accessToken
         }

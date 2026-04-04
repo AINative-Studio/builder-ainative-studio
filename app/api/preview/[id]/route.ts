@@ -109,7 +109,7 @@ export async function GET(
           <p>The generated content doesn't contain any code blocks.</p>
           <details>
             <summary>Raw content</summary>
-            <pre>${content.substring(0, 500)}</pre>
+            <pre>${content.substring(0, 500).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
           </details>
         </body>
         </html>
@@ -874,10 +874,16 @@ export async function GET(
           return str.length < 600 && (str.includes('viewBox') || str.includes('UnknownIcon') || str.includes('LucideIcon') || str.includes('_createLucideIcon') || str.includes('0 0 24 24'));
         }
 
-        // First, scan for known page component names in local scope
+        // Build a safe component registry instead of using eval()
+        var _localComponents = {};
+        _pageNames.forEach(function(n) {
+          try { _localComponents[n] = new Function('return typeof ' + n + ' !== "undefined" ? ' + n + ' : undefined')(); } catch(e) {}
+        });
+
+        // First, scan for known page component names via registry
         for (const name of _pageNames) {
           try {
-            const fn = eval(name);
+            const fn = _localComponents[name];
             if (typeof fn === 'function' && !_isIconWrapper(fn)) {
               Component = fn;
               console.log('[Preview] ✓ Found component: ' + name + ' (local scope)');
@@ -1018,11 +1024,12 @@ export async function GET(
       } catch (error) {
         console.error('[Preview] ✗ Error during execution:', error);
         console.error('[Preview] Error stack:', error.stack);
+        var _esc = function(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
         document.getElementById('root').innerHTML =
           '<div style="padding: 20px; color: red;">' +
           '<h3>Error rendering component</h3>' +
-          '<pre>' + error.message + '</pre>' +
-          '<pre style="font-size: 12px; margin-top: 10px;">' + (error.stack || '') + '</pre>' +
+          '<pre>' + _esc(error.message) + '</pre>' +
+          '<pre style="font-size: 12px; margin-top: 10px;">' + _esc(error.stack || '') + '</pre>' +
           '</div>';
       }
     </script>

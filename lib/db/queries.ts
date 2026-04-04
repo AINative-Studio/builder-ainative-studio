@@ -1173,12 +1173,12 @@ export async function getSkillUsageStats(skillId: string): Promise<{
       .where(eq(skill_usage.skill_id, skillId))
 
     const totalLoads = result.length
-    const autoTriggers = result.filter(r => r.load_type === 'auto').length
-    const manualInvokes = result.filter(r => r.load_type === 'manual').length
+    const autoTriggers = result.filter((r: any) => r.load_type === 'auto').length
+    const manualInvokes = result.filter((r: any) => r.load_type === 'manual').length
     const avgLoadTime = totalLoads > 0
-      ? result.reduce((sum, r) => sum + r.load_time_ms, 0) / totalLoads
+      ? result.reduce((sum: number, r: any) => sum + r.load_time_ms, 0) / totalLoads
       : 0
-    const totalTokensUsed = result.reduce((sum, r) => sum + r.tokens_used, 0)
+    const totalTokensUsed = result.reduce((sum: number, r: any) => sum + r.tokens_used, 0)
 
     return {
       totalLoads,
@@ -1272,7 +1272,7 @@ export async function getSkillRatings(skillId: string): Promise<{
 
     const totalRatings = result.length
     const averageRating = totalRatings > 0
-      ? result.reduce((sum, r) => sum + r.rating, 0) / totalRatings
+      ? result.reduce((sum: number, r: any) => sum + r.rating, 0) / totalRatings
       : 0
 
     return {

@@ -1262,7 +1262,7 @@ export const evidence = pgTable(
     project_id: varchar('project_id', { length: 255 }), // For multi-project support
     git_commit: varchar('git_commit', { length: 255 }), // Git commit SHA
     git_branch: varchar('git_branch', { length: 255 }), // Git branch name
-    parent_evidence_id: uuid('parent_evidence_id').references(() => evidence.id), // Link related evidence
+    parent_evidence_id: uuid('parent_evidence_id'), // Link related evidence (self-referencing)
     created_at: timestamp('created_at').notNull().defaultNow(),
     updated_at: timestamp('updated_at').notNull().defaultNow(),
   },

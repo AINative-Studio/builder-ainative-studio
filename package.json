@@ -61,6 +61,7 @@
     "@radix-ui/react-toast": "^1.2.15",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@radix-ui/react-use-controllable-state": "^1.2.2",
+    "@sentry/nextjs": "^9.47.1",
     "@types/adm-zip": "^0.5.7",
     "@types/archiver": "^6.0.3",
     "@types/ioredis": "^5.0.0",

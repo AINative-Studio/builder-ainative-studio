@@ -75,7 +75,7 @@ export function BudgetDashboard({
           setSuggestions(data.suggestions);
         }
       } else {
-        throw new Error(data.error || 'Unknown error');
+        throw new Error((data as any).error || 'Unknown error');
       }
     } catch (error) {
       console.error('Failed to fetch budget:', error);

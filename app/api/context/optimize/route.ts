@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(response);
   } catch (error) {
-    logger.error('Failed to generate optimization suggestions', { error });
+    logger.error('Failed to generate optimization suggestions', error as Error);
 
     return NextResponse.json(
       {

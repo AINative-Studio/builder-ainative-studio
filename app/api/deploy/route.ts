@@ -32,7 +32,7 @@ const deployRequestSchema = z.object({
 export async function POST(request: NextRequest) {
   try {
     const session = await getSession()
-    const userId = session?.userId
+    const userId = session?.user?.id
 
     if (!userId) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 })
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
 
     if (!validationResult.success) {
       return NextResponse.json(
-        { error: 'Invalid request', details: validationResult.error.errors },
+        { error: 'Invalid request', details: validationResult.error.issues },
         { status: 400 }
       )
     }
@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
       .where(eq(deployments.user_id, userId))
       .limit(10)
 
-    if (recentDeployments.filter(d => d.created_at > oneHourAgo).length >= 5) {
+    if (recentDeployments.filter((d: any) => d.created_at > oneHourAgo).length >= 5) {
       return NextResponse.json(
         { error: 'Rate limit exceeded. Max 5 deployments per hour.' },
         { status: 429 }

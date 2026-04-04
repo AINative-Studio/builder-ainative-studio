@@ -198,7 +198,7 @@ export const componentRegistry = {
     )
   },
   'heading': ({ level = 1, children, ...props }: any) => {
-    const Tag = `h${level}` as keyof JSX.IntrinsicElements
+    const Tag = `h${level}` as keyof React.JSX.IntrinsicElements
     const sizes = {
       1: 'text-4xl font-bold',
       2: 'text-3xl font-semibold',

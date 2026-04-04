@@ -51,17 +51,11 @@ export async function POST(request: NextRequest) {
       preLoadCost,
     };
 
-    logger.debug('Pre-load cost calculated', {
-      sessionId,
-      userId,
-      itemName: item.name,
-      canLoad: preLoadCost.canLoad,
-      estimatedCost: preLoadCost.estimatedCost,
-    });
+    logger.info('Pre-load cost calculated');
 
     return NextResponse.json(response);
   } catch (error) {
-    logger.error('Failed to calculate pre-load cost', { error });
+    logger.error('Failed to calculate pre-load cost', error as Error);
 
     return NextResponse.json(
       {

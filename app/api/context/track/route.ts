@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(response);
   } catch (error) {
-    logger.error('Failed to track context item', { error });
+    logger.error('Failed to track context item', error as Error);
 
     return NextResponse.json(
       {

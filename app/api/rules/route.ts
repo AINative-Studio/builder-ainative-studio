@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
     const validated = ruleSchema.parse(body);
 
     const dbService = getRuleEnforcementDbService();
-    const rule = await dbService.upsertRule(validated);
+    const rule = await dbService.upsertRule(validated as any);
 
     return NextResponse.json(
       {
@@ -101,7 +101,7 @@ export async function POST(request: NextRequest) {
         {
           success: false,
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         },
         { status: 400 }
       );

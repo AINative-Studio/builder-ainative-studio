@@ -15,11 +15,11 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await getSession()
-    const userId = session?.userId
+    const userId = session?.user?.id
 
     if (!userId) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 })
@@ -28,7 +28,7 @@ export async function GET(
     const [deployment] = await db
       .select()
       .from(deployments)
-      .where(and(eq(deployments.id, params.id), eq(deployments.user_id, userId)))
+      .where(and(eq(deployments.id, (await params).id), eq(deployments.user_id, userId)))
       .limit(1)
 
     if (!deployment) {
@@ -44,11 +44,11 @@ export async function GET(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await getSession()
-    const userId = session?.userId
+    const userId = session?.user?.id
 
     if (!userId) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 })
@@ -56,7 +56,7 @@ export async function DELETE(
 
     const result = await db
       .delete(deployments)
-      .where(and(eq(deployments.id, params.id), eq(deployments.user_id, userId)))
+      .where(and(eq(deployments.id, (await params).id), eq(deployments.user_id, userId)))
       .returning()
 
     if (result.length === 0) {

@@ -8,9 +8,9 @@ import { db } from '@/lib/db'
 import { artifacts } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 
-export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const { id } = params
+    const { id } = await params
 
     // Get artifacts for this evidence
     const results = await db.select().from(artifacts).where(eq(artifacts.evidence_id, id))

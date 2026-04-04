@@ -12,7 +12,7 @@ import type { AgentAction, RuleViolation } from '@/lib/types/enforcement-rules';
 const autoFixSchema = z.object({
   action: z.object({
     type: z.string(),
-    data: z.record(z.unknown()),
+    data: z.record(z.string(), z.unknown()),
     userId: z.string(),
     projectId: z.string(),
   }),
@@ -90,7 +90,7 @@ export async function POST(request: NextRequest) {
         {
           success: false,
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         },
         { status: 400 }
       );

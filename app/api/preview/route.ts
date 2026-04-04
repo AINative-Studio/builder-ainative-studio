@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
+import crypto from 'crypto'
+
+function generateNonce(): string {
+  return crypto.randomBytes(16).toString('base64')
+}
 
 export async function POST(request: NextRequest) {
   try {
     const { code } = await request.json()
+    const nonce = generateNonce()
 
     if (!code) {
       return NextResponse.json({ error: 'No code provided' }, { status: 400 })
@@ -58,10 +64,12 @@ export async function POST(request: NextRequest) {
     return new NextResponse(html, {
       headers: {
         'Content-Type': 'text/html',
-        'Content-Security-Policy': "default-src 'self'; script-src 'unsafe-eval' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com; style-src 'unsafe-inline' https://cdn.tailwindcss.com; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self';",
+        'Content-Security-Policy': `default-src 'self'; script-src 'unsafe-eval' 'nonce-${nonce}' https://cdn.tailwindcss.com https://unpkg.com; style-src 'nonce-${nonce}' https://cdn.tailwindcss.com; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://cdn.tailwindcss.com;`,
         'X-Frame-Options': 'SAMEORIGIN',
         'X-Content-Type-Options': 'nosniff',
-        'X-XSS-Protection': '1; mode=block',
+        'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload',
+        'Referrer-Policy': 'strict-origin-when-cross-origin',
+        'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
       },
     });
   } catch (error) {

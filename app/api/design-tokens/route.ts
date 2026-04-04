@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
       tokens: transformedTokens,
     })
   } catch (error) {
-    logger.error('Failed to list design tokens', { error })
+    logger.error('Failed to list design tokens', error as Error)
     return NextResponse.json(
       { error: 'Failed to retrieve design tokens' },
       { status: 500 }

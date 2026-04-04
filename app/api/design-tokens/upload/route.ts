@@ -255,7 +255,7 @@ export async function POST(req: NextRequest) {
       warnings: validation.warnings,
     })
   } catch (error) {
-    logger.error('Design token upload failed', { error })
+    logger.error('Design token upload failed', error as Error)
     return NextResponse.json(
       { error: 'Failed to upload design tokens' },
       { status: 500 }

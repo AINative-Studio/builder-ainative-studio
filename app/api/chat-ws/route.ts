@@ -21,6 +21,10 @@ import { generateAINativeFileSet } from '@/lib/ainative-file-generator'
 import { selectTheme, formatThemeForPrompt } from '@/lib/theme-system'
 import { parseMultiFileOutput } from '@/lib/multi-file-parser'
 import { storeFiles as storeFilesV2 } from '@/lib/preview-store-v2'
+import { logModelConfiguration } from '@/lib/config/model-validator'
+
+// Log model configuration on first module load
+logModelConfiguration()
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,

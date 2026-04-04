@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
       ),
     });
 
-    const items = dbItems.map((item) => ({
+    const items = dbItems.map((item: any) => ({
       id: item.id,
       type: item.type,
       name: item.name,
@@ -75,11 +75,11 @@ export async function GET(request: NextRequest) {
     if (includeHistory) {
       const events = await db.query.budget_events.findMany({
         where: eq(context_items.session_id, sessionId),
-        orderBy: (events, { desc }) => [desc(events.created_at)],
+        orderBy: (events: any, { desc }: any) => [desc(events.created_at)],
         limit: 50,
       });
 
-      response.history = events.map((event) => ({
+      response.history = events.map((event: any) => ({
         id: event.id,
         sessionId: event.session_id,
         userId: event.user_id,
@@ -94,7 +94,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(response);
   } catch (error) {
-    logger.error('Failed to get context budget', { error });
+    logger.error('Failed to get context budget', error as Error);
 
     return NextResponse.json(
       {

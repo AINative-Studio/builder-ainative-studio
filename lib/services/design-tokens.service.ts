@@ -84,7 +84,7 @@ export async function extractDesignTokens(
       source: extractedTokens ? 'mcp' : 'default',
     }
   } catch (error) {
-    logger.error('Failed to extract design tokens from MCP', { error, templateId })
+    logger.error('Failed to extract design tokens from MCP', error as Error)
 
     // Fall back to defaults
     return {
@@ -104,14 +104,14 @@ export async function getCachedTokens(templateId: string): Promise<DesignTokensR
     const cached = await cacheGet<DesignTokensResponse>(cacheKey)
 
     if (cached) {
-      logger.debug('Cache hit for design tokens', { templateId })
+      logger.info('Cache hit for design tokens', { templateId })
       return cached
     }
 
-    logger.debug('Cache miss for design tokens', { templateId })
+    logger.info('Cache miss for design tokens', { templateId })
     return null
   } catch (error) {
-    logger.error('Error getting cached design tokens', { error, templateId })
+    logger.error('Error getting cached design tokens', error as Error)
     return null
   }
 }
@@ -126,9 +126,9 @@ export async function cacheTokens(
   try {
     const cacheKey = getCacheKey(templateId)
     await cacheSet(cacheKey, tokens, CACHE_TTL_SECONDS)
-    logger.debug('Cached design tokens', { templateId, ttl: CACHE_TTL_SECONDS })
+    logger.info('Cached design tokens', { templateId, ttl: CACHE_TTL_SECONDS })
   } catch (error) {
-    logger.error('Error caching design tokens', { error, templateId })
+    logger.error('Error caching design tokens', error as Error)
   }
 }
 
@@ -141,7 +141,7 @@ export async function invalidateTokenCache(templateId: string): Promise<void> {
     await cacheDelete(cacheKey)
     logger.info('Invalidated design token cache', { templateId })
   } catch (error) {
-    logger.error('Error invalidating design token cache', { error, templateId })
+    logger.error('Error invalidating design token cache', error as Error)
   }
 }
 
@@ -200,7 +200,7 @@ export function getTokenSummary(tokens: DesignTokensResponse): string {
  */
 export async function getActiveDesignTokens(userId: string): Promise<DesignTokensResponse | null> {
   // Placeholder implementation - returns null until user design tokens are implemented
-  logger.debug('Getting active design tokens for user (not yet implemented)', { userId })
+  logger.info('Getting active design tokens for user (not yet implemented)', { userId })
   return null
 }
 

@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
     const { message, chatId, attachments } = await request.json()
 
     if (!message) {
-      return new ChatSDKError('invalid_request', 'Message is required').toResponse()
+      return new ChatSDKError('bad_request:api', 'Message is required').toResponse()
     }
 
     // Check authentication and rate limits
@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
         },
       ],
       temperature: 0.7,
-      maxTokens: 2000,
+      maxOutputTokens: 2000,
     })
 
     // Log anonymous chat if needed (disabled for testing)
@@ -93,9 +93,9 @@ export async function POST(request: NextRequest) {
     console.error('LLAMA Chat API Error:', error)
 
     if (error instanceof Error) {
-      return new ChatSDKError('server_error', error.message).toResponse()
+      return new ChatSDKError('bad_request:api', error.message).toResponse()
     }
 
-    return new ChatSDKError('server_error', 'Failed to process request').toResponse()
+    return new ChatSDKError('bad_request:api', 'Failed to process request').toResponse()
   }
 }

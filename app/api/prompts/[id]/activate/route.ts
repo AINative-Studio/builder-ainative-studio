@@ -4,10 +4,10 @@ import { activatePrompt } from '@/lib/services/prompt.service'
 // PUT /api/prompts/[id]/activate - Activate a prompt version
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const prompt = await activatePrompt(params.id)
+    const prompt = await activatePrompt((await params).id)
 
     return NextResponse.json({
       prompt,

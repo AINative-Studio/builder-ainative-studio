@@ -500,7 +500,7 @@ export function HomeClient() {
     setChatHistory((prev) => [...prev, { type: 'user', content: userMessage }])
 
     try {
-      const endpoint = '/api/chat' // Always use LLAMA API
+      const endpoint = '/api/chat'
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
@@ -509,6 +509,7 @@ export function HomeClient() {
         body: JSON.stringify({
           message: userMessage,
           chatId: currentChatId,
+          model: selectedModel,
           streaming: true,
         }),
       })

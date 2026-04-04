@@ -8,8 +8,8 @@ import { MobileMenu } from './mobile-menu'
 import { useSession } from 'next-auth/react'
 import { UserNavClient } from '@/components/user-nav-client'
 import { Button } from '@/components/ui/button'
-import { DEPLOY_URL } from '@/lib/constants'
-import { LayoutTemplate } from 'lucide-react'
+import { DEPLOY_URL, APP_NAME } from '@/lib/constants'
+import { LayoutTemplate, Rocket, Settings } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -84,7 +84,7 @@ export function AppHeader({ className = '' }: AppHeaderProps) {
                 <path d="M59.7906 65.596L17.4922 65.596C13.9793 65.596 11.1314 62.7481 11.1314 59.2351L11.1314 43.7918C11.1314 41.9821 10.3606 40.2581 9.01197 39.0514L3.57796 34.1894L9.01197 29.3274C10.3606 28.1207 11.1314 26.3967 11.1314 24.587L11.1314 9.93879C11.1314 6.4258 13.9793 3.57796 17.4923 3.57796L59.7906 3.57797" stroke="white" strokeWidth="7.1413" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
               <span className="font-bold text-gray-900 dark:text-white">
-                AINative
+                {APP_NAME}
               </span>
             </Link>
             {/* Hide ChatSelector on mobile */}
@@ -99,6 +99,12 @@ export function AppHeader({ className = '' }: AppHeaderProps) {
               <Link href="/templates">
                 <LayoutTemplate className="w-4 h-4 mr-1" />
                 Templates
+              </Link>
+            </Button>
+            <Button variant="ghost" size="sm" asChild>
+              <Link href="/deployments">
+                <Rocket className="w-4 h-4 mr-1" />
+                Deployments
               </Link>
             </Button>
             <UserNavClient session={session} />

@@ -15,7 +15,7 @@ interface RevertRequest {
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { tokenId: string } }
+  { params }: { params: Promise<{ tokenId: string }> }
 ) {
   try {
     // Verify authentication
@@ -29,7 +29,7 @@ export async function POST(
     }
 
     const userId = user.userId
-    const { tokenId } = params
+    const { tokenId } = await params
 
     // Parse request body
     const body = await req.json() as RevertRequest
@@ -92,7 +92,7 @@ export async function POST(
       },
     })
   } catch (error) {
-    logger.error('Failed to revert design token', { error })
+    logger.error('Failed to revert design token', error as Error)
     return NextResponse.json(
       { error: 'Failed to revert design token' },
       { status: 500 }

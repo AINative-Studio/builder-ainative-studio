@@ -64,7 +64,7 @@ export async function checkAndRollbackPrompt(): Promise<RollbackResult> {
         )
 
       // Filter to only those with feedback
-      const withRatings = generationsWithFeedback.filter(g => g.rating !== null)
+      const withRatings = generationsWithFeedback.filter((g: any) => g.rating !== null)
       const sampleSize = withRatings.length
 
       // Need at least 50 samples
@@ -76,7 +76,7 @@ export async function checkAndRollbackPrompt(): Promise<RollbackResult> {
       }
 
       // Calculate average rating
-      const totalRating = withRatings.reduce((sum, g) => sum + (g.rating || 0), 0)
+      const totalRating = withRatings.reduce((sum: number, g: any) => sum + (g.rating || 0), 0)
       const avgRating = totalRating / sampleSize
 
       // Check if avg rating is below 3.5

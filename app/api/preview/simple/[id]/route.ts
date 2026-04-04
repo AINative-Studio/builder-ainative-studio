@@ -73,8 +73,9 @@ export async function GET(
         root.render(React.createElement(ComponentToRender));
 
       } catch (error) {
+        var _esc = function(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
         document.getElementById('root').innerHTML =
-          '<div style="padding: 20px; color: red;">Error: ' + error.message + '</div>';
+          '<div style="padding: 20px; color: red;">Error: ' + _esc(error.message) + '</div>';
         console.error('Component error:', error);
       }
     </script>

@@ -1,8 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { guestRegex, isDevelopmentEnvironment } from './lib/constants'
-// import { applyRateLimit } from './lib/middleware/rate-limit' // Disabled for Edge Runtime
-// import { logger } from './lib/logger' // Disabled for Edge Runtime
+import { applyRateLimit } from './lib/middleware/rate-limit'
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
@@ -21,22 +20,16 @@ export async function middleware(request: NextRequest) {
   }
 
   // Apply rate limiting to API routes
-  // Temporarily disabled for Edge Runtime compatibility
-  // TODO: Move rate limiting to API routes or use Edge-compatible solution
-  // if (pathname.startsWith('/api/')) {
-  //   try {
-  //     const { success, response } = await applyRateLimit(request)
-  //     if (!success && response) {
-  //       return response
-  //     }
-  //   } catch (error) {
-  //     logger.error('Rate limit middleware error', error as Error, {
-  //       path: pathname,
-  //       method: request.method,
-  //     })
-  //     // Continue on error - don't block the request
-  //   }
-  // }
+  if (pathname.startsWith('/api/')) {
+    try {
+      const { success, response } = await applyRateLimit(request)
+      if (!success && response) {
+        return response
+      }
+    } catch (error) {
+      console.error('[middleware] Rate limit error', error)
+    }
+  }
 
   // Check for required environment variables
   if (!process.env.AUTH_SECRET) {
@@ -87,7 +80,8 @@ export async function middleware(request: NextRequest) {
     }
 
     // Redirect protected pages to login
-    if (['/chats', '/projects'].some((path) => pathname.startsWith(path))) {
+    const protectedPaths = ['/chats', '/projects', '/deployments', '/settings', '/design-tokens', '/insights', '/admin']
+    if (protectedPaths.some((path) => pathname.startsWith(path))) {
       return NextResponse.redirect(new URL('/login', request.url))
     }
 

@@ -11,9 +11,11 @@ import { auth } from '@/lib/auth';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { commandId: string } }
+  { params }: { params: Promise<{ commandId: string }> }
 ) {
   try {
+    const { commandId } = await params;
+
     // Authenticate user
     const session = await auth();
     if (!session?.user?.id) {
@@ -30,7 +32,7 @@ export async function POST(
 
     // Get command
     const command = await commandService.getCommand(
-      params.commandId,
+      commandId,
       session.user.id
     );
 
