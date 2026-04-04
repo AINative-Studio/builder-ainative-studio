@@ -13,9 +13,11 @@ import { auth } from '@/lib/auth';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { commandId: string } }
+  { params }: { params: Promise<{ commandId: string }> }
 ) {
   try {
+    const { commandId } = await params;
+
     // Authenticate user
     const session = await auth();
     if (!session?.user?.id) {
@@ -26,7 +28,7 @@ export async function GET(
     }
 
     const commandService = getCommandService();
-    const command = await commandService.getCommand(params.commandId, session.user.id);
+    const command = await commandService.getCommand(commandId, session.user.id);
 
     if (!command) {
       return NextResponse.json(
@@ -47,9 +49,11 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { commandId: string } }
+  { params }: { params: Promise<{ commandId: string }> }
 ) {
   try {
+    const { commandId } = await params;
+
     // Authenticate user
     const session = await auth();
     if (!session?.user?.id) {
@@ -65,7 +69,7 @@ export async function PUT(
 
     // Check if command exists and user has permission
     const existingCommand = await commandService.getCommand(
-      params.commandId,
+      commandId,
       session.user.id
     );
 
@@ -89,7 +93,7 @@ export async function PUT(
 
     // Update command
     const updatedCommand = await commandService.updateCommand(
-      params.commandId,
+      commandId,
       body,
       session.user.id
     );
@@ -106,9 +110,11 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { commandId: string } }
+  { params }: { params: Promise<{ commandId: string }> }
 ) {
   try {
+    const { commandId } = await params;
+
     // Authenticate user
     const session = await auth();
     if (!session?.user?.id) {
@@ -122,7 +128,7 @@ export async function DELETE(
 
     // Check if command exists and user has permission
     const existingCommand = await commandService.getCommand(
-      params.commandId,
+      commandId,
       session.user.id
     );
 
@@ -152,7 +158,7 @@ export async function DELETE(
       );
     }
 
-    await commandService.deleteCommand(params.commandId);
+    await commandService.deleteCommand(commandId);
 
     return NextResponse.json({ success: true });
   } catch (error) {

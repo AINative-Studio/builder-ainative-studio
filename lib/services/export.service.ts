@@ -1,5 +1,5 @@
 import AdmZip from 'adm-zip';
-import { getPreview } from '@/lib/preview-store';
+import { getPreview, getAINativeFiles } from '@/lib/preview-store';
 
 export interface ExportOptions {
   generationId: string;
@@ -78,6 +78,15 @@ export async function exportProject(
   // Add README.md
   const readme = generateReadme(generation);
   zip.addFile('README.md', Buffer.from(readme));
+
+  // Add AINative file set (robots.txt, sitemap.xml, llms.txt, ai-plugin.json, etc.)
+  const ainativeFiles = getAINativeFiles(generationId);
+  if (ainativeFiles) {
+    for (const [filePath, content] of Object.entries(ainativeFiles)) {
+      zip.addFile(filePath, Buffer.from(content));
+    }
+    console.log(`📁 Added ${Object.keys(ainativeFiles).length} AINative files to export`);
+  }
 
   // Add .gitignore
   const gitignore = generateGitignore();

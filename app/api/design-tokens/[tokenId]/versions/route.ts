@@ -11,7 +11,7 @@ import { logger } from '@/lib/logger'
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { tokenId: string } }
+  { params }: { params: Promise<{ tokenId: string }> }
 ) {
   try {
     // Verify authentication
@@ -25,7 +25,7 @@ export async function GET(
     }
 
     const userId = user.userId
-    const { tokenId } = params
+    const { tokenId } = await params
 
     // Get design token to verify ownership
     const designToken = await getDesignToken(tokenId)
@@ -63,7 +63,7 @@ export async function GET(
       versions,
     })
   } catch (error) {
-    logger.error('Failed to get design token versions', { error })
+    logger.error('Failed to get design token versions', error as Error)
     return NextResponse.json(
       { error: 'Failed to retrieve versions' },
       { status: 500 }

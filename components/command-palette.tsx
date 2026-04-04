@@ -199,7 +199,7 @@ export function CommandPalette({
         <CommandInput
           placeholder="Search commands..."
           value={searchQuery}
-          onValueChange={setSearchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
         />
         <CommandList>
           <CommandEmpty>
@@ -209,13 +209,13 @@ export function CommandPalette({
           {/* Recent Commands */}
           {!searchQuery && recentCommands.length > 0 && (
             <>
-              <CommandGroup heading="Recent">
+              <CommandGroup aria-label="Recent">
                 {recentCommands.map((command) => (
                   <CommandItem
                     key={command.metadata.id}
-                    value={command.metadata.id}
-                    onSelect={() => handleCommandSelect(command)}
-                    className="flex items-center gap-3 px-4 py-3"
+                    data-value={command.metadata.id}
+                    onClick={() => handleCommandSelect(command)}
+                    className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-accent"
                   >
                     <div className="flex items-center gap-2 flex-1">
                       <div className="flex-shrink-0">
@@ -257,13 +257,13 @@ export function CommandPalette({
 
           {/* Search Results */}
           {commands.length > 0 && (
-            <CommandGroup heading={searchQuery ? 'Search Results' : 'All Commands'}>
+            <CommandGroup aria-label={searchQuery ? 'Search Results' : 'All Commands'}>
               {commands.map((command) => (
                 <CommandItem
                   key={command.metadata.id}
-                  value={command.metadata.id}
-                  onSelect={() => handleCommandSelect(command)}
-                  className="flex items-center gap-3 px-4 py-3"
+                  data-value={command.metadata.id}
+                  onClick={() => handleCommandSelect(command)}
+                  className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-accent"
                 >
                   <div className="flex items-center gap-2 flex-1">
                     <div className="flex-shrink-0">

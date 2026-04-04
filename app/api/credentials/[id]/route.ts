@@ -13,17 +13,17 @@ export const dynamic = 'force-dynamic'
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await getSession()
-    const userId = session?.userId
+    const userId = session?.user?.id
 
     if (!userId) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 })
     }
 
-    const platform = params.id as Platform
+    const platform = (await params).id as Platform
     const deleted = await deleteCredentials(userId, platform)
 
     if (!deleted) {

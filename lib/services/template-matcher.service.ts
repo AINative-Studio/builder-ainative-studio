@@ -149,7 +149,7 @@ export class TemplateMatcherService {
 
       return response.data[0].embedding
     } catch (error) {
-      logger.error('Failed to generate embedding', { error, text })
+      logger.error('Failed to generate embedding', error as Error)
       throw new Error('Failed to generate embedding')
     }
   }
@@ -235,7 +235,7 @@ export class TemplateMatcherService {
       // Normalize similarity from [-1, 1] to [0, 1]
       return (similarity + 1) / 2
     } catch (error) {
-      logger.error('Failed to calculate semantic score', { error, prompt, category })
+      logger.error('Failed to calculate semantic score', error as Error)
       return 0
     }
   }
@@ -316,7 +316,7 @@ export class TemplateMatcherService {
         matchType: 'none',
       }
     } catch (error) {
-      logger.error('Template matching failed', { error, prompt })
+      logger.error('Template matching failed', error as Error)
       return {
         confidence: 0,
         matchType: 'none',

@@ -1,5 +1,5 @@
 import React from 'react';
-import { StreamingIndicatorProps } from '../types';
+import { StreamingIndicatorProps } from './types';
 
 /**
  * StreamingIndicator - Displays an animated indicator while streaming is in progress

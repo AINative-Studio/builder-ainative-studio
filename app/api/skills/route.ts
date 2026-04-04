@@ -82,14 +82,14 @@ export async function POST(request: NextRequest) {
       ...validatedData,
       authorId: session.user.id,
       authorName: session.user.email || 'Unknown',
-      authorEmail: session.user.email,
+      authorEmail: session.user.email || undefined,
     })
 
     return NextResponse.json({ skill: result[0] }, { status: 201 })
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
-        { error: 'Validation error', details: error.errors },
+        { error: 'Validation error', details: error.issues },
         { status: 400 }
       )
     }

@@ -41,7 +41,7 @@ const evidenceCaptureSchema = z.object({
   ]),
   command: z.string().min(1),
   cwd: z.string().optional(),
-  env: z.record(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
   timeout: z.number().min(1000).max(600000).optional(),
   captureOutput: z.boolean().default(true),
   captureArtifacts: z.boolean().default(true),
@@ -136,7 +136,7 @@ export async function GET(request: NextRequest) {
     console.error('Evidence list error:', error)
 
     if (error instanceof z.ZodError) {
-      return NextResponse.json({ error: 'Invalid parameters', details: error.errors }, { status: 400 })
+      return NextResponse.json({ error: 'Invalid parameters', details: error.issues }, { status: 400 })
     }
 
     return NextResponse.json({ error: 'Failed to list evidence' }, { status: 500 })
@@ -174,7 +174,7 @@ export async function POST(request: NextRequest) {
     console.error('Evidence capture error:', error)
 
     if (error instanceof z.ZodError) {
-      return NextResponse.json({ error: 'Invalid request body', details: error.errors }, { status: 400 })
+      return NextResponse.json({ error: 'Invalid request body', details: error.issues }, { status: 400 })
     }
 
     return NextResponse.json(

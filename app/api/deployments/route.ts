@@ -15,7 +15,7 @@ export const dynamic = 'force-dynamic'
 export async function GET(request: NextRequest) {
   try {
     const session = await getSession()
-    const userId = session?.userId
+    const userId = session?.user?.id
 
     if (!userId) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 })

@@ -5,13 +5,16 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { promises as fs } from 'fs'
+import path from 'path'
 import { db } from '@/lib/db'
 import { artifacts } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 
-export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
+const ARTIFACTS_BASE_DIR = path.resolve(process.cwd(), 'artifacts')
+
+export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const { id } = params
+    const { id } = await params
 
     // Get artifact metadata
     const [artifact] = await db.select().from(artifacts).where(eq(artifacts.id, id)).limit(1)
@@ -20,8 +23,14 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
       return NextResponse.json({ error: 'Artifact not found' }, { status: 404 })
     }
 
+    // Path traversal protection
+    const resolvedPath = path.resolve(ARTIFACTS_BASE_DIR, artifact.storage_path)
+    if (!resolvedPath.startsWith(ARTIFACTS_BASE_DIR)) {
+      return NextResponse.json({ error: 'Access denied' }, { status: 403 })
+    }
+
     // Read file content
-    const content = await fs.readFile(artifact.storage_path)
+    const content = await fs.readFile(resolvedPath)
 
     // Return file with appropriate headers
     return new NextResponse(content, {

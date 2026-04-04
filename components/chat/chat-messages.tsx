@@ -9,7 +9,7 @@ import { MessageRenderer } from '@/components/message-renderer'
 import { sharedComponents } from '@/components/shared-components'
 import { BuildProgress, BuildTask } from '@/components/chat/build-progress'
 import { FileTree, FileGroup } from '@/components/chat/file-tree'
-import { createFileTree, simulateFileProgress } from '@/lib/file-parser'
+import { createFileTree, simulateFileProgress, createFileTreeFromFiles } from '@/lib/file-parser'
 import { StreamingMessage } from '@/components/aikit/StreamingMessage'
 
 interface ChatMessage {
@@ -34,6 +34,7 @@ interface ChatMessagesProps {
   onChatData: (chatData: any) => void
   onStreamingStarted?: () => void
   buildSteps?: string[]
+  sandpackFiles?: Record<string, string> | null
 }
 
 export function ChatMessages({
@@ -44,32 +45,44 @@ export function ChatMessages({
   onChatData,
   onStreamingStarted,
   buildSteps = [],
+  sandpackFiles,
 }: ChatMessagesProps) {
   const streamingStartedRef = useRef(false)
   const [buildTasks, setBuildTasks] = useState<BuildTask[]>([])
   const [fileGroups, setFileGroups] = useState<FileGroup[]>([])
+
+  // When real Sandpack files arrive, show REAL file tree
+  useEffect(() => {
+    if (sandpackFiles && Object.keys(sandpackFiles).length > 0) {
+      setFileGroups(createFileTreeFromFiles(sandpackFiles))
+    }
+  }, [sandpackFiles])
 
   // Reset the streaming started flag when a new message starts loading
   useEffect(() => {
     if (isLoading) {
       streamingStartedRef.current = false
 
-      // Get the last user message to determine file structure
-      const lastUserMessage = chatHistory
-        .slice()
-        .reverse()
-        .find((msg) => msg.type === 'user')
+      // Only show fake file tree if no real sandpack files
+      if (!sandpackFiles || Object.keys(sandpackFiles).length === 0) {
+        // Get the last user message to determine file structure
+        const lastUserMessage = chatHistory
+          .slice()
+          .reverse()
+          .find((msg) => msg.type === 'user')
 
-      const userPrompt = typeof lastUserMessage?.content === 'string'
-        ? lastUserMessage.content
-        : 'Create a component'
+        const userPrompt = typeof lastUserMessage?.content === 'string'
+          ? lastUserMessage.content
+          : 'Create a component'
 
-      // Create file tree based on the prompt
-      const files = createFileTree(userPrompt)
-      setFileGroups(files)
+        // Create file tree based on the prompt (fallback)
+        const fakeFiles = createFileTree(userPrompt)
+        setFileGroups(fakeFiles)
 
-      // Start simulating file progress
-      const cleanup = simulateFileProgress(files, setFileGroups)
+        // Start simulating file progress (only for fake files)
+        const cleanup = simulateFileProgress(fakeFiles, setFileGroups)
+        return cleanup
+      }
 
       // Initialize build tasks when generation starts
       setBuildTasks([
@@ -99,10 +112,8 @@ export function ChatMessages({
           description: 'Loading preview environment'
         }
       ])
-
-      return cleanup
     }
-  }, [isLoading, chatHistory])
+  }, [isLoading, chatHistory, sandpackFiles])
 
   // Update build tasks as generation progresses
   useEffect(() => {

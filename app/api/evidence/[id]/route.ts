@@ -8,9 +8,9 @@ import { db } from '@/lib/db'
 import { evidence } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 
-export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const { id } = params
+    const { id } = await params
 
     // Get evidence
     const [result] = await db.select().from(evidence).where(eq(evidence.id, id)).limit(1)

@@ -9,3 +9,11 @@ export const RAILWAY_DEPLOY_URL =
   'https://railway.app/template/deploy?referralCode=ainative-studio'
 
 export const DEPLOY_URL = RAILWAY_DEPLOY_URL
+
+// Application branding
+export const APP_NAME = process.env.NEXT_PUBLIC_APP_NAME || 'AINative Builder'
+export const APP_DESCRIPTION = process.env.NEXT_PUBLIC_APP_DESCRIPTION || 'AI-powered React component builder'
+export const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+
+// AINative Platform
+export const AINATIVE_API_BASE_URL = process.env.AINATIVE_API_BASE_URL || 'https://api.ainative.studio'

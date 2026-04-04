@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
         unloadedItems.push(result.item);
         tokensSaved += item.tokenCost;
       } catch (error) {
-        logger.error('Failed to unload item', { itemId, error });
+        logger.error(`Failed to unload item ${itemId}`, error as Error);
       }
     }
 
@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(response);
   } catch (error) {
-    logger.error('Failed to unload context items', { error });
+    logger.error('Failed to unload context items', error as Error);
 
     return NextResponse.json(
       {

@@ -11,7 +11,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyToken } from '@/lib/auth-jwt'
+import { verifyJWT as verifyToken } from '@/lib/auth-jwt'
 import {
   getDesignTokensByUserId,
   getDesignTokenVersions,
@@ -105,7 +105,7 @@ export async function GET(req: NextRequest) {
       tokens: response,
     })
   } catch (error) {
-    logger.error('Failed to get design token versions', { error })
+    logger.error('Failed to get design token versions', error as Error)
     return NextResponse.json(
       { error: 'Failed to retrieve design token versions' },
       { status: 500 }

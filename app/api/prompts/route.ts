@@ -11,7 +11,7 @@ const CreatePromptSchema = z.object({
   type: z.enum(['system', 'enhancement']),
   version: z.string().min(1).max(50),
   content: z.string().min(1),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.any()).optional(),
   abTestPercentage: z.number().int().min(0).max(100).optional(),
 })
 

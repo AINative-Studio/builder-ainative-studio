@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, lazy, Suspense } from 'react'
 import {
   WebPreview,
   WebPreviewNavigation,
@@ -14,6 +14,8 @@ import { Button } from '@/components/ui/button'
 import { CodeViewer } from '@/components/chat/code-viewer'
 import { A2UIPreviewWithFallback } from '@/components/a2ui'
 
+const SandpackPreviewLazy = lazy(() => import('@/components/chat/sandpack-preview').then(m => ({ default: m.SandpackPreview })))
+
 interface Chat {
   id: string
   demo?: string
@@ -28,6 +30,7 @@ interface PreviewPanelProps {
   setRefreshKey: (key: number | ((prev: number) => number)) => void
   isGenerating?: boolean
   buildSteps?: string[]
+  sandpackFiles?: Record<string, string> | null
 }
 
 export function PreviewPanel({
@@ -38,11 +41,23 @@ export function PreviewPanel({
   setRefreshKey,
   isGenerating = false,
   buildSteps = [],
+  sandpackFiles,
 }: PreviewPanelProps) {
   const [showDeployDialog, setShowDeployDialog] = useState(false)
   const [showCodeViewer, setShowCodeViewer] = useState(false)
   const [progress, setProgress] = useState(0)
   const [useA2UI, setUseA2UI] = useState(false)
+  const useSandpack = !!sandpackFiles && Object.keys(sandpackFiles).length > 0
+
+  // Debug: Log currentChat changes
+  React.useEffect(() => {
+    console.log('[PreviewPanel DEBUG] currentChat changed:', {
+      hasChat: !!currentChat,
+      chatId: currentChat?.id,
+      demoUrl: currentChat?.demo,
+      hasDemoUrl: !!currentChat?.demo
+    })
+  }, [currentChat])
 
   // Simulate progress based on build steps
   React.useEffect(() => {
@@ -139,8 +154,8 @@ export function PreviewPanel({
             )}
           </WebPreviewNavigationButton>
         </WebPreviewNavigation>
-        {currentChat?.demo ? (
-          <div className="relative flex-1 min-h-0 overflow-hidden">
+        {currentChat?.demo || useSandpack ? (
+          <div className="relative flex-1 min-h-0 overflow-hidden flex flex-col">
             {/* Show Code Viewer inline when code button clicked */}
             {showCodeViewer ? (
               <CodeViewer
@@ -148,27 +163,34 @@ export function PreviewPanel({
                 onClose={() => setShowCodeViewer(false)}
                 chatId={currentChat?.id || null}
               />
-            ) : useA2UI ? (
+            ) : useSandpack ? (
+              <Suspense fallback={<div className="flex-1 flex items-center justify-center"><p className="text-sm text-gray-500">Loading Sandpack...</p></div>}>
+                <SandpackPreviewLazy
+                  key={refreshKey}
+                  files={sandpackFiles!}
+                  className="w-full h-full"
+                />
+              </Suspense>
+            ) : useA2UI && currentChat ? (
               <A2UIPreviewWithFallback
                 chatId={currentChat.id}
                 enableA2UI={true}
                 fallbackSrc={
-                  currentChat.demo.startsWith('/preview/')
+                  currentChat.demo?.startsWith('/preview/')
                     ? `/api${currentChat.demo}`
-                    : currentChat.demo.startsWith('/api/preview/')
+                    : currentChat.demo?.startsWith('/api/preview/')
                     ? currentChat.demo
-                    : currentChat.demo
+                    : currentChat.demo || ''
                 }
                 showControls={false}
                 showStatus={true}
                 className="w-full h-full"
-                onError={(error) => {
+                onError={(error: any) => {
                   console.error('[PreviewPanel] A2UI Error:', error)
-                  // Auto-fallback to static preview on error
                   setUseA2UI(false)
                 }}
               />
-            ) : (
+            ) : currentChat?.demo ? (
               <WebPreviewBody
                 key={refreshKey}
                 src={currentChat.demo.startsWith('/preview/')
@@ -179,6 +201,10 @@ export function PreviewPanel({
                 }
                 className="w-full h-full"
               />
+            ) : (
+              <div className="flex-1 flex items-center justify-center">
+                <p className="text-sm text-gray-500">Waiting for preview...</p>
+              </div>
             )}
 
             {/* Progress indicator overlay during generation */}

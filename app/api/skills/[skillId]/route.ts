@@ -12,7 +12,7 @@ import { auth } from '@/app/(auth)/auth'
 // GET /api/skills/[skillId] - Get a specific skill
 export async function GET(
   request: NextRequest,
-  { params }: { params: { skillId: string } }
+  { params }: { params: Promise<{ skillId: string }> }
 ) {
   try {
     const session = await auth()
@@ -21,7 +21,7 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { skillId } = params
+    const { skillId } = await params
     const { searchParams } = new URL(request.url)
     const includeStats = searchParams.get('includeStats') === 'true'
     const includeRatings = searchParams.get('includeRatings') === 'true'
@@ -89,7 +89,7 @@ const updateSkillSchema = z.object({
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { skillId: string } }
+  { params }: { params: Promise<{ skillId: string }> }
 ) {
   try {
     const session = await auth()
@@ -98,7 +98,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { skillId } = params
+    const { skillId } = await params
     const body = await request.json()
     const validatedData = updateSkillSchema.parse(body)
 
@@ -119,7 +119,7 @@ export async function PATCH(
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
-        { error: 'Validation error', details: error.errors },
+        { error: 'Validation error', details: error.issues },
         { status: 400 }
       )
     }
@@ -135,7 +135,7 @@ export async function PATCH(
 // DELETE /api/skills/[skillId] - Delete a skill
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { skillId: string } }
+  { params }: { params: Promise<{ skillId: string }> }
 ) {
   try {
     const session = await auth()
@@ -144,7 +144,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { skillId } = params
+    const { skillId } = await params
 
     // Check if skill exists and user has permission
     const skill = await getSkillById(skillId)

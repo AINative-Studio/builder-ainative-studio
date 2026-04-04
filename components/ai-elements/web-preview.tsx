@@ -50,6 +50,14 @@ export const WebPreview = ({
   const [url, setUrl] = useState(defaultUrl)
   const [consoleOpen, setConsoleOpen] = useState(false)
 
+  // Update URL when defaultUrl changes (e.g., when currentChat.demo is set)
+  useEffect(() => {
+    if (defaultUrl && defaultUrl !== url) {
+      console.log('[WebPreview] defaultUrl changed, updating URL:', defaultUrl)
+      setUrl(defaultUrl)
+    }
+  }, [defaultUrl])
+
   const handleUrlChange = (newUrl: string) => {
     setUrl(newUrl)
     onUrlChange?.(newUrl)

@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
       count: examples.length
     })
   } catch (error) {
-    logger.error('Failed to fetch few-shot examples', { error })
+    logger.error('Failed to fetch few-shot examples', error as Error)
     return NextResponse.json(
       { error: 'Failed to fetch examples' },
       { status: 500 }
@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
       { status: 201 }
     )
   } catch (error) {
-    logger.error('Failed to create few-shot example', { error })
+    logger.error('Failed to create few-shot example', error as Error)
     return NextResponse.json(
       { error: 'Failed to create example' },
       { status: 500 }

@@ -202,7 +202,7 @@ export default function TemplateAnalyticsPage() {
                     cx="50%"
                     cy="50%"
                     outerRadius={100}
-                    label={({ category, percentage }) => `${category} (${percentage}%)`}
+                    label={({ category, percentage }: any) => `${category} (${percentage}%)`}
                   >
                     {analytics.categoryBreakdown.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />

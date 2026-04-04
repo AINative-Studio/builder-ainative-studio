@@ -48,7 +48,7 @@ export async function GET(
     const exportResult = await getExportWithMetadata(generationId)
 
     // Return zip file with appropriate headers
-    return new NextResponse(exportResult.buffer, {
+    return new NextResponse(new Uint8Array(exportResult.buffer), {
       headers: {
         'Content-Type': 'application/zip',
         'Content-Disposition': `attachment; filename="${exportResult.filename}"`,

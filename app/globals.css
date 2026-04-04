@@ -222,3 +222,15 @@
 button {
   cursor: pointer;
 }
+
+/* Sandpack preview — fill parent height */
+.sp-wrapper,
+.sp-layout,
+.sp-preview-container,
+.sp-preview-iframe {
+  height: 100% !important;
+  min-height: 0 !important;
+}
+.sp-preview-actions {
+  z-index: 10;
+}

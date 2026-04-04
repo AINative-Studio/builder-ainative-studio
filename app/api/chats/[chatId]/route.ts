@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { getPreview, getChatData } from '@/lib/preview-store'
+import { getChatOwnership } from '@/lib/db/queries'
 
 export async function GET(
   request: NextRequest,
@@ -10,10 +11,26 @@ export async function GET(
     const { chatId } = await params
     const session = await auth()
 
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: 'Authentication required' },
+        { status: 401 }
+      )
+    }
+
     if (!chatId) {
       return NextResponse.json(
         { error: 'Chat ID is required' },
         { status: 400 }
+      )
+    }
+
+    // Verify chat ownership (allow access if no ownership record exists for backward compat)
+    const ownership = await getChatOwnership({ chatId })
+    if (ownership && ownership.user_id !== session.user.id) {
+      return NextResponse.json(
+        { error: 'Forbidden' },
+        { status: 403 }
       )
     }
 

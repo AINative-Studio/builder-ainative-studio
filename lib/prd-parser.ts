@@ -11,6 +11,34 @@ export interface ParsedPRD {
 }
 
 /**
+ * Parse explicitly listed pages from structured PRDs
+ * Handles formats like:
+ * - "1. **Homepage** (/)"
+ * - "- Blog Detail (/blog/:slug)"
+ * - "2. About Page (/about)"
+ */
+function parseExplicitPages(text: string): Array<{ name: string; route: string }> {
+  const pages: Array<{ name: string; route: string }> = []
+  const lines = text.split('\n')
+
+  for (const line of lines) {
+    // Match patterns like: "1. **Homepage** (/)" or "- Blog List (/blog)"
+    const match = line.match(/(?:^|\s)(?:\d+\.|[-*])\s*\*?\*?([^(]*?)\*?\*?\s*\(([^)]+)\)/i)
+    if (match) {
+      const name = match[1].trim()
+      const route = match[2].trim()
+
+      // Only add if it looks like a page (has a name and starts with /)
+      if (name && route.startsWith('/')) {
+        pages.push({ name, route })
+      }
+    }
+  }
+
+  return pages
+}
+
+/**
  * Parse user message/PRD to extract actual pages and components being built
  * This generates dynamic, context-aware build steps for better UX
  */
@@ -20,30 +48,42 @@ export function parsePRDForBuildSteps(userMessage: string): ParsedPRD {
   const components: string[] = []
   const features: string[] = []
 
-  // Detect common page patterns
-  const pagePatterns = [
-    { keywords: ['login', 'signin', 'sign in', 'authentication'], name: 'Login Page', route: '/login' },
-    { keywords: ['register', 'signup', 'sign up', 'registration'], name: 'Registration Page', route: '/register' },
-    { keywords: ['dashboard', 'admin panel', 'control panel'], name: 'Dashboard', route: '/' },
-    { keywords: ['profile', 'user profile', 'account settings'], name: 'Profile Page', route: '/profile' },
-    { keywords: ['settings', 'preferences', 'configuration'], name: 'Settings Page', route: '/settings' },
-    { keywords: ['home', 'landing', 'homepage', 'landing page'], name: 'Landing Page', route: '/' },
-    { keywords: ['about', 'about us', 'company info'], name: 'About Page', route: '/about' },
-    { keywords: ['contact', 'contact us', 'get in touch'], name: 'Contact Page', route: '/contact' },
-    { keywords: ['product', 'products', 'catalog'], name: 'Products Page', route: '/products' },
-    { keywords: ['cart', 'shopping cart', 'basket'], name: 'Shopping Cart', route: '/cart' },
-    { keywords: ['checkout', 'payment'], name: 'Checkout Page', route: '/checkout' },
-    { keywords: ['blog', 'articles', 'posts'], name: 'Blog Page', route: '/blog' },
-    { keywords: ['chat', 'messaging', 'messages'], name: 'Chat Interface', route: '/chat' },
-    { keywords: ['analytics', 'reports', 'statistics'], name: 'Analytics Dashboard', route: '/analytics' },
-  ]
+  // First, try to parse explicit page lists (like "1. **Homepage** (/)" or "- Homepage (/)")
+  const explicitPages = parseExplicitPages(userMessage)
+  if (explicitPages.length > 0) {
+    pages.push(...explicitPages)
+  } else {
+    // Fall back to keyword-based detection
+    const pagePatterns = [
+      { keywords: ['login', 'signin', 'sign in', 'authentication page'], name: 'Login Page', route: '/login' },
+      { keywords: ['register', 'signup', 'sign up', 'registration'], name: 'Registration Page', route: '/register' },
+      { keywords: ['dashboard', 'admin panel', 'control panel'], name: 'Dashboard', route: '/' },
+      { keywords: ['profile', 'user profile', 'account settings'], name: 'Profile Page', route: '/profile' },
+      { keywords: ['settings', 'preferences', 'configuration'], name: 'Settings Page', route: '/settings' },
+      { keywords: ['home', 'landing', 'homepage', 'landing page'], name: 'Landing Page', route: '/' },
+      { keywords: ['about', 'about us', 'company info'], name: 'About Page', route: '/about' },
+      { keywords: ['contact', 'contact us', 'get in touch'], name: 'Contact Page', route: '/contact' },
+      { keywords: ['product', 'products', 'catalog'], name: 'Products Page', route: '/products' },
+      { keywords: ['cart', 'shopping cart', 'basket'], name: 'Shopping Cart', route: '/cart' },
+      { keywords: ['checkout', 'payment'], name: 'Checkout Page', route: '/checkout' },
+      { keywords: ['blog list', 'articles', 'posts'], name: 'Blog Page', route: '/blog' },
+      { keywords: ['blog detail', 'article detail', 'post detail'], name: 'Blog Detail', route: '/blog/:slug' },
+      { keywords: ['categories', 'category'], name: 'Categories Page', route: '/categories' },
+      { keywords: ['archive', 'archives'], name: 'Archive Page', route: '/archive' },
+      { keywords: ['podcast', 'podcasts', 'audio'], name: 'Podcast Page', route: '/podcast' },
+      { keywords: ['subscription', 'subscribe'], name: 'Subscription Page', route: '/subscription' },
+      { keywords: ['insights', 'analytics page'], name: 'Insights Page', route: '/insights' },
+      { keywords: ['chat', 'messaging', 'messages'], name: 'Chat Interface', route: '/chat' },
+      { keywords: ['analytics', 'reports', 'statistics'], name: 'Analytics Dashboard', route: '/analytics' },
+    ]
 
-  // Find matching pages
-  pagePatterns.forEach(pattern => {
-    if (pattern.keywords.some(keyword => lower.includes(keyword))) {
-      pages.push({ name: pattern.name, route: pattern.route })
-    }
-  })
+    // Find matching pages
+    pagePatterns.forEach(pattern => {
+      if (pattern.keywords.some(keyword => lower.includes(keyword))) {
+        pages.push({ name: pattern.name, route: pattern.route })
+      }
+    })
+  }
 
   // Detect component patterns
   const componentPatterns = [

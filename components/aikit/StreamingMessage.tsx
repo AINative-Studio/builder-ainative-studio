@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { StreamingMessageProps } from '../types';
+import { StreamingMessageProps } from './types';
 import { StreamingIndicator } from './StreamingIndicator';
 import { CodeBlock } from './CodeBlock';
 
@@ -33,8 +33,8 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({
   const [displayedContent, setDisplayedContent] = useState('');
   const [isAnimating, setIsAnimating] = useState(false);
   const previousContentRef = useRef('');
-  const animationFrameRef = useRef<number>();
-  const timeoutRef = useRef<NodeJS.Timeout>();
+  const animationFrameRef = useRef<number>(undefined);
+  const timeoutRef = useRef<NodeJS.Timeout>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Default role colors

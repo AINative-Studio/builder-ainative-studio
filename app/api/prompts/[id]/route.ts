@@ -8,17 +8,17 @@ import {
 // Schema for updating a prompt version
 const UpdatePromptSchema = z.object({
   content: z.string().min(1).optional(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.any()).optional(),
   abTestPercentage: z.number().int().min(0).max(100).optional(),
 })
 
 // GET /api/prompts/[id] - Get prompt by ID
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const prompt = await getPromptById(params.id)
+    const prompt = await getPromptById((await params).id)
     return NextResponse.json({ prompt })
   } catch (error) {
     console.error('Error fetching prompt:', error)
@@ -48,7 +48,7 @@ export async function GET(
 // PUT /api/prompts/[id] - Update prompt version
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const body = await request.json()
@@ -68,7 +68,7 @@ export async function PUT(
     const data = validation.data
 
     // Update prompt
-    const prompt = await updatePrompt(params.id, {
+    const prompt = await updatePrompt((await params).id, {
       content: data.content,
       metadata: data.metadata,
       abTestPercentage: data.abTestPercentage,

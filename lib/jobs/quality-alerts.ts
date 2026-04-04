@@ -39,18 +39,18 @@ export async function checkQualityDegradation(): Promise<AlertResult> {
       .leftJoin(feedback, eq(feedback.generation_id, generations.id))
       .where(gte(generations.created_at, oneHourAgo))
 
-    const withRatings = generationsWithFeedback.filter(g => g.rating !== null)
+    const withRatings = generationsWithFeedback.filter((g: any) => g.rating !== null)
     const sampleSize = withRatings.length
 
     if (sampleSize === 0) {
       return { alertTriggered: false, reason: 'No data in last hour' }
     }
 
-    const totalRating = withRatings.reduce((sum, g) => sum + (g.rating || 0), 0)
+    const totalRating = withRatings.reduce((sum: number, g: any) => sum + (g.rating || 0), 0)
     const avgRating = totalRating / sampleSize
 
     const firstPassSuccess = withRatings.filter(
-      g => g.rating && g.rating >= 4 && !g.wasEdited
+      (g: any) => g.rating && g.rating >= 4 && !g.wasEdited
     ).length
     const firstPassSuccessRate = (firstPassSuccess / sampleSize) * 100
 

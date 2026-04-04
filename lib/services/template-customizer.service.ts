@@ -281,11 +281,7 @@ export class TemplateCustomizerService {
 
       return result
     } catch (error) {
-      logger.error('Template customization failed', {
-        error,
-        templateCategory,
-        prompt: userPrompt.substring(0, 100),
-      })
+      logger.error('Template customization failed', error as Error)
 
       return {
         customizedCode: templateCode,

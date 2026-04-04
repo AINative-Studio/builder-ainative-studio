@@ -105,7 +105,7 @@ class DesignSystemMCPClient {
       logger.info('Successfully connected to Design System MCP server', { healthCheck })
       return true
     } catch (error) {
-      logger.error('Failed to connect to Design System MCP server', { error })
+      logger.error('Failed to connect to Design System MCP server', error as Error)
       this.connected = false
       return false
     }
@@ -157,7 +157,7 @@ class DesignSystemMCPClient {
 
       return response as DesignTokensResponse
     } catch (error) {
-      logger.error('Failed to extract design tokens', { error })
+      logger.error('Failed to extract design tokens', error as Error)
       return null
     }
   }
@@ -194,7 +194,7 @@ class DesignSystemMCPClient {
 
       return response as MCPValidateResponse
     } catch (error) {
-      logger.error('Failed to validate design tokens', { error })
+      logger.error('Failed to validate design tokens', error as Error)
       return { valid: false, errors: ['Validation request failed'] }
     }
   }
@@ -235,7 +235,7 @@ class DesignSystemMCPClient {
       return await requestFn()
     } catch (error) {
       if (attempt >= this.maxRetries) {
-        logger.error(`Request failed after ${this.maxRetries} attempts`, { error })
+        logger.error(`Request failed after ${this.maxRetries} attempts`, error as Error)
         throw error
       }
 

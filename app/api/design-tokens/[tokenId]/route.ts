@@ -17,7 +17,7 @@ import { logger } from '@/lib/logger'
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { tokenId: string } }
+  { params }: { params: Promise<{ tokenId: string }> }
 ) {
   try {
     // Verify authentication
@@ -31,7 +31,7 @@ export async function GET(
     }
 
     const userId = user.userId
-    const { tokenId } = params
+    const { tokenId } = await params
 
     // Get design token
     const designToken = await getDesignToken(tokenId)
@@ -56,7 +56,7 @@ export async function GET(
       token: designToken,
     })
   } catch (error) {
-    logger.error('Failed to get design token', { error })
+    logger.error('Failed to get design token', error as Error)
     return NextResponse.json(
       { error: 'Failed to retrieve design token' },
       { status: 500 }
@@ -66,7 +66,7 @@ export async function GET(
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { tokenId: string } }
+  { params }: { params: Promise<{ tokenId: string }> }
 ) {
   try {
     // Verify authentication
@@ -80,7 +80,7 @@ export async function PATCH(
     }
 
     const userId = user.userId
-    const { tokenId } = params
+    const { tokenId } = await params
 
     // Get design token to verify ownership
     const designToken = await getDesignToken(tokenId)
@@ -110,7 +110,7 @@ export async function PATCH(
       token: updatedToken,
     })
   } catch (error) {
-    logger.error('Failed to set active design token', { error })
+    logger.error('Failed to set active design token', error as Error)
     return NextResponse.json(
       { error: 'Failed to set active design token' },
       { status: 500 }
@@ -120,7 +120,7 @@ export async function PATCH(
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { tokenId: string } }
+  { params }: { params: Promise<{ tokenId: string }> }
 ) {
   try {
     // Verify authentication
@@ -134,7 +134,7 @@ export async function DELETE(
     }
 
     const userId = user.userId
-    const { tokenId } = params
+    const { tokenId } = await params
 
     // Get design token to verify ownership
     const designToken = await getDesignToken(tokenId)
@@ -164,7 +164,7 @@ export async function DELETE(
       message: 'Design token deleted successfully',
     })
   } catch (error) {
-    logger.error('Failed to delete design token', { error })
+    logger.error('Failed to delete design token', error as Error)
     return NextResponse.json(
       { error: 'Failed to delete design token' },
       { status: 500 }

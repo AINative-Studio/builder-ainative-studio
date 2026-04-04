@@ -36,7 +36,7 @@ const actionSchema = z.object({
     testOutput: z.string().optional(),
     buildCommand: z.string().optional(),
     buildOutput: z.string().optional(),
-    metadata: z.record(z.unknown()).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
   }),
   userId: z.string(),
   projectId: z.string(),
@@ -114,7 +114,7 @@ export async function POST(request: NextRequest) {
         {
           success: false,
           error: 'Validation error',
-          details: error.errors,
+          details: error.issues,
         },
         { status: 400 }
       );
