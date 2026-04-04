@@ -9,17 +9,16 @@ import { shouldRefreshToken, refreshAINativeToken } from '@/lib/auth/tokenRefres
 
 const isDevelopment = process.env.NODE_ENV === 'development'
 
-// Check for required environment variables
+// Ensure AUTH_SECRET is always set — required by NextAuth
 if (!process.env.AUTH_SECRET) {
-  console.warn(
-    '[auth] WARNING: AUTH_SECRET is not set. Using a generated fallback.\n' +
-      'Set AUTH_SECRET in your environment (generate with: openssl rand -base64 32).\n',
-  )
-  // Use a deterministic fallback derived from other available secrets
-  // This ensures sessions survive across hot reloads but is NOT secure for production
-  process.env.AUTH_SECRET = process.env.ANTHROPIC_API_KEY
-    ? require('crypto').createHash('sha256').update(process.env.ANTHROPIC_API_KEY).digest('base64')
-    : 'fallback-secret-please-set-AUTH_SECRET'
+  // Derive from any available secret so sessions work even if AUTH_SECRET is missing
+  const seed = process.env.ANTHROPIC_API_KEY || process.env.AINATIVE_API_TOKEN || process.env.DATABASE_URL || 'ainative-builder-fallback'
+  let hash = 0
+  for (let i = 0; i < seed.length; i++) {
+    hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0
+  }
+  process.env.AUTH_SECRET = `ainative-${Math.abs(hash).toString(36)}-${seed.slice(-8)}`
+  console.warn('[auth] AUTH_SECRET not set — using derived fallback. Set AUTH_SECRET for production security.')
 }
 
 // AINative Authentication Helper
