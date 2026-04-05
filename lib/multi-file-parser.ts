@@ -73,7 +73,9 @@ export function parseMultiFileOutput(rawOutput: string, userPrompt?: string): Re
   try {
     const agentFiles = generateAINativeFileSet(userPrompt || '', rawOutput)
     for (const [name, content] of Object.entries(agentFiles)) {
-      files[`/public/${name}`] = content
+      // Generator returns paths like 'public/robots.txt' and 'app/layout.tsx'
+      // Prefix with / for absolute path (no double-nesting)
+      files[`/${name}`] = content
     }
   } catch (e) {
     // Non-critical — agent files are optional

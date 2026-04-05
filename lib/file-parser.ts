@@ -69,7 +69,8 @@ export function createFileTreeFromFiles(files: Record<string, string>): FileGrou
 }
 
 function isAgentFile(path: string): boolean {
-  return /robots\.txt|sitemap\.xml|llms\.txt|ai-plugin\.json|security\.txt|well-known/i.test(path)
+  return /robots\.(txt|ts)|sitemap\.(xml|ts)|llms\.txt|ai-plugin\.json|security\.txt|well-known/i.test(path)
+    || (path.includes('/app/layout.tsx') && !path.includes('src/'))
 }
 
 function isConfigFile(path: string): boolean {
