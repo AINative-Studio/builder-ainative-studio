@@ -12,10 +12,10 @@ export const entitlementsByUserType: Record<UserType, Entitlements> = {
    * For users without an account (anonymous)
    */
   guest: {
-    maxMessagesPerDay: 5,
-    maxTokensPerRequest: 4000,
+    maxMessagesPerDay: 20,
+    maxTokensPerRequest: 8000,
     canUseExtendedThinking: false,
-    canSelectModel: false,
+    canSelectModel: true,
   },
 
   /*
@@ -41,7 +41,7 @@ export const entitlementsByUserType: Record<UserType, Entitlements> = {
 
 // For anonymous users (no session)
 export const anonymousEntitlements: Entitlements = {
-  maxMessagesPerDay: 3,
+  maxMessagesPerDay: 10,
   maxTokensPerRequest: 4000,
   canUseExtendedThinking: false,
   canSelectModel: false,
