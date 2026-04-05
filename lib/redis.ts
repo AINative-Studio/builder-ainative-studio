@@ -2,60 +2,65 @@ import Redis from 'ioredis'
 
 // Redis connection singleton
 let redisClient: Redis | null = null
-let redisUnavailable = false
+let redisUnavailable = true // Default to unavailable — only enable after successful connect
 
 /**
  * Get or create Redis client instance.
  * Returns null if Redis is not configured or unreachable.
  */
 export function getRedisClient(): Redis | null {
-  if (redisUnavailable) return null
-
-  if (!redisClient) {
-    const redisUrl = process.env.REDIS_URL
-
-    // Skip Redis entirely if no URL configured or pointing to localhost in production
-    if (!redisUrl || (process.env.NODE_ENV === 'production' && redisUrl.includes('localhost'))) {
-      console.log('Redis not configured — running without cache')
-      redisUnavailable = true
-      return null
-    }
-
-    redisClient = new Redis(redisUrl, {
-      maxRetriesPerRequest: 3,
-      lazyConnect: true,
-      retryStrategy(times) {
-        if (times > 3) {
-          console.warn('Redis: max retries reached, giving up')
-          redisUnavailable = true
-          return null // stop retrying
-        }
-        return Math.min(times * 200, 2000)
-      },
-      keepAlive: 30000,
-      reconnectOnError(err) {
-        return err.message.includes('READONLY')
-      },
-    })
-
-    redisClient.on('error', (error) => {
-      console.error('Redis connection error:', error.message)
-    })
-
-    redisClient.on('connect', () => {
-      console.log('Redis connected successfully')
-    })
-
-    // Attempt connection (non-blocking)
-    redisClient.connect().catch(() => {
-      console.warn('Redis: initial connection failed, running without cache')
-      redisUnavailable = true
-      redisClient = null
-    })
-  }
-
+  if (!redisClient && redisUnavailable) return null
   return redisClient
 }
+
+// Initialize Redis connection at module load (non-blocking)
+function initRedis() {
+  const redisUrl = process.env.REDIS_URL
+  if (!redisUrl) {
+    console.log('[Redis] No REDIS_URL — running without cache')
+    return
+  }
+
+  try {
+    const client = new Redis(redisUrl, {
+      maxRetriesPerRequest: 1,
+      lazyConnect: true,
+      connectTimeout: 5000,
+      retryStrategy(times) {
+        if (times > 2) {
+          console.warn('[Redis] Connection failed after retries, disabling')
+          return null
+        }
+        return Math.min(times * 500, 2000)
+      },
+    })
+
+    // CRITICAL: Attach error handler BEFORE connecting to prevent unhandled errors
+    client.on('error', () => {
+      // Silently swallow — prevents Node.js crash from unhandled error events
+    })
+
+    client.on('connect', () => {
+      console.log('[Redis] Connected successfully')
+      redisClient = client
+      redisUnavailable = false
+    })
+
+    client.on('close', () => {
+      redisClient = null
+      redisUnavailable = true
+    })
+
+    client.connect().catch(() => {
+      console.warn('[Redis] Initial connection failed — running without cache')
+      client.disconnect()
+    })
+  } catch (e) {
+    console.warn('[Redis] Failed to initialize:', e)
+  }
+}
+
+initRedis()
 
 /**
  * Close Redis connection (for graceful shutdown)
