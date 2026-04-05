@@ -130,8 +130,8 @@ export function ChatSelector() {
 
     fetchChats()
 
-    // Refresh chats every 5 seconds to pick up new generations
-    const interval = setInterval(fetchChats, 5000)
+    // Refresh chats every 30 seconds to pick up new generations
+    const interval = setInterval(fetchChats, 30000)
     return () => clearInterval(interval)
   }, [])
 

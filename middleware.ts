@@ -19,8 +19,15 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  // Apply rate limiting to API routes
-  if (pathname.startsWith('/api/')) {
+  // Apply rate limiting to API routes (skip read-only polling endpoints)
+  const isRateLimitExempt =
+    pathname.startsWith('/api/chats') ||
+    pathname.startsWith('/api/preview') ||
+    pathname.startsWith('/api/auth') ||
+    pathname === '/api/health' ||
+    pathname === '/api/debug-auth'
+
+  if (pathname.startsWith('/api/') && !isRateLimitExempt) {
     try {
       const { success, response } = await applyRateLimit(request)
       if (!success && response) {
