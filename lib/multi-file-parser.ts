@@ -126,12 +126,37 @@ const LUCIDE_ICONS = [
   'Play', 'Pause', 'SkipForward', 'Volume2', 'Image', 'Video', 'Music', 'Mic',
 ]
 
+/** AIKit components available in Sandpack */
+const AIKIT_COMPONENTS = [
+  'MetricCard', 'AIKitPriceCard', 'AIKitRating', 'AgentCard', 'SwarmView',
+  'SafetyBadge', 'GuardrailPanel', 'ChatBubble', 'StreamingIndicator', 'CodeDisplay',
+  'TokenUsageBar', 'ConnectionStatus', 'AIKitHeader', 'AIKitSidebar', 'AIKitTable',
+  'AIKitTimeline', 'AIKitBanner', 'AIKitAvatar', 'Skeleton', 'SkeletonCard',
+  'EmptyState', 'AIKitProductCard', 'AIKitPagination', 'AIKitBreadcrumb',
+  'AIKitStepper', 'AgentTimeline',
+]
+
 /**
- * Auto-inject missing imports for recharts and lucide-react.
- * Scans code for component usage and adds import statements if missing.
+ * Auto-inject missing imports for recharts, lucide-react, and AIKit.
+ * Also fixes @/ import aliases to relative paths for Sandpack.
  */
 function injectMissingImports(code: string): string {
+  // Fix @/components/ alias to relative paths (Sandpack doesn't support aliases)
+  code = code.replace(/from ['"]@\/components\//g, "from './components/")
+  code = code.replace(/from ['"]@\/lib\//g, "from './lib/")
+
   const imports: string[] = []
+
+  // Check for AIKit component usage
+  const hasAikitImport = code.includes('/components/aikit') || code.includes("from 'aikit'")
+  if (!hasAikitImport) {
+    const usedAikit = AIKIT_COMPONENTS.filter(c =>
+      new RegExp(`<${c}[\\s/>]`).test(code)
+    )
+    if (usedAikit.length > 0) {
+      imports.push(`import { ${usedAikit.join(', ')} } from './components/aikit'`)
+    }
+  }
 
   // Check for recharts usage
   const usedRecharts = RECHARTS_COMPONENTS.filter(c =>

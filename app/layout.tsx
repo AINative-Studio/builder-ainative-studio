@@ -23,9 +23,25 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'AINative UI Builder',
+  title: 'AINative Builder - AI-powered React Component Builder',
   description:
-    'Generate beautiful React components and applications with AI - Professional UI generation platform powered by AINative',
+    'Generate production-ready React components with AI. Agent-optimized with AX scoring, SEO, structured data, and multi-model support. Powered by Claude Sonnet 4.',
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio'),
+  icons: {
+    icon: '/icon.svg',
+    apple: '/apple-icon.png',
+  },
+  openGraph: {
+    title: 'AINative Builder',
+    description: 'AI-powered React component builder with AX optimization, SEO, and structured data built in.',
+    siteName: 'AINative Builder',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'AINative Builder',
+    description: 'AI-powered React component builder with AX optimization, SEO, and structured data built in.',
+  },
 }
 
 export default function RootLayout({

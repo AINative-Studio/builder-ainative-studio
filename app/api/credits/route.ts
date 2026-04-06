@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { AINATIVE_API_BASE_URL } from '@/lib/constants'
+import { getUserPlan, getDefaultPlan } from '@/lib/services/plan.service'
 
 /**
  * GET /api/credits - Get current user's credit balance and usage
@@ -18,12 +19,13 @@ export async function GET(request: NextRequest) {
 
     const accessToken = (session as any).accessToken
     if (!accessToken) {
-      // Non-AINative users don't have credits - return defaults
+      // Non-AINative users get default plan
+      const plan = getDefaultPlan(session.user.type)
       return NextResponse.json({
         balance: null,
         usage: null,
+        plan,
         userType: session.user.type,
-        message: 'Credits available for AINative platform users',
       })
     }
 
@@ -46,9 +48,13 @@ export async function GET(request: NextRequest) {
       ? await usageRes.value.json()
       : null
 
+    // Get plan details
+    const plan = await getUserPlan(accessToken)
+
     return NextResponse.json({
       balance,
       usage,
+      plan,
       userType: session.user.type,
     })
   } catch (error) {
