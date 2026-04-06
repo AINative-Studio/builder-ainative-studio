@@ -72,8 +72,8 @@ export default function DeploymentsPage() {
 
   useEffect(() => {
     fetchDeployments()
-    // Set up polling for real-time updates every 10 seconds
-    const interval = setInterval(fetchDeployments, 10000)
+    // Poll for updates every 30 seconds (not 10 - reduces rate limit pressure)
+    const interval = setInterval(fetchDeployments, 30000)
     return () => clearInterval(interval)
   }, [])
 
@@ -106,6 +106,13 @@ export default function DeploymentsPage() {
       }
 
       const response = await fetch('/api/deployments')
+
+      // On 401, redirect to login instead of showing error
+      if (response.status === 401) {
+        router.push('/login')
+        return
+      }
+
       if (!response.ok) {
         throw new Error('Failed to fetch deployments')
       }
@@ -114,11 +121,14 @@ export default function DeploymentsPage() {
       setDeployments(data.deployments || [])
     } catch (error) {
       console.error('Error fetching deployments:', error)
-      toast({
-        title: 'Failed to load deployments',
-        description: error instanceof Error ? error.message : 'Unknown error',
-        variant: 'destructive'
-      })
+      // Only show toast for non-auth errors
+      if (!(error instanceof Error && error.message.includes('401'))) {
+        toast({
+          title: 'Failed to load deployments',
+          description: error instanceof Error ? error.message : 'Unknown error',
+          variant: 'destructive'
+        })
+      }
     } finally {
       setLoading(false)
       if (showRefreshIndicator) {

@@ -1,28 +1,7 @@
+
 # Context Budget Manager
 
 A comprehensive token budget management system that helps users optimize context usage through smart loading, real-time tracking, and intelligent optimization suggestions.
-
-## Integration Status
-
-| Layer | Status | Notes |
-|-------|--------|-------|
-| DB Schema | Done | 4 tables in `lib/db/schema.ts` (budget_tracking, context_items, budget_events, budget_configurations) |
-| Types | Done | `lib/types/context-budget.ts` |
-| Service | 95% Done | `lib/services/context-budget.service.ts` - 2 minor TODOs: `tokensSaved` and `efficiencyScore` in `getBudgetStatistics()` |
-| API Routes | Done | 5 routes under `/api/context/` (budget, track, optimize, unload, preload-cost) |
-| UI Components | Done | 5 components in `components/context-budget/` |
-| Demo Page | Done | `/context-budget-demo` - uses hardcoded demo session/user |
-| **Chat Integration** | **NOT DONE** | Budget manager is NOT wired into the actual chat flow |
-| **Navigation** | **NOT DONE** | No link to budget dashboard from main app UI |
-| **Session Binding** | **NOT DONE** | Demo page uses fake session ID, not real auth session |
-
-### What Needs to Happen
-1. Wire `contextBudgetService.trackItem()` into the chat API route to track token usage per message
-2. Add `BudgetMeter` component to the chat UI (sidebar or header)
-3. Bind to real session ID and authenticated user ID (not demo values)
-4. Add navigation link to full budget dashboard
-5. Complete the 2 remaining TODOs in `getBudgetStatistics()` (lines 920-921)
-6. Connect auto-unload to actual context compression in the agent loop
 
 ## Overview
 
@@ -141,6 +120,13 @@ CREATE TABLE budget_configurations (
   updated_at TIMESTAMP DEFAULT NOW()
 );
 ```
+
+
+
+
+
+
+
 
 ## API Reference
 
@@ -462,39 +448,27 @@ Expected coverage: 80%+ across all metrics.
 - UI refresh: <100ms
 - Compression operations: <500ms
 
-## Next Steps (Priority Order)
+## Future Enhancements
 
-### 1. Chat Integration (Blocker for Production)
-- Wire `contextBudgetService.trackItem()` into `app/api/chat/route.ts`
-- Track each message, tool call, and context injection as a budget item
-- Bind to real auth session (replace demo hardcoded IDs)
-- Port cody-cli's 5-layer context compression into auto-unload (see issue #30)
-
-### 2. UI Integration
-- Add `BudgetMeter` to chat sidebar or header
-- Add navigation link to full `/context-budget` dashboard
-- Replace `/context-budget-demo` with real authenticated page
-
-### 3. Complete Service TODOs
-- `tokensSaved` calculation from budget_events (line 920)
-- `efficiencyScore` calculation (line 921)
-- `isOverBudget` check against category preferences in `calculateAllocations()` (line 700)
-
-### 4. Compression Engine
+### Phase 4: Compression Engine (Week 3)
 - File summarization
 - Metadata-only skill loading
 - Message compression
 - Output summarization
 
-### 5. Advanced Optimization
-- Usage forecasting and pattern analysis
+### Phase 5: Advanced Optimization (Week 3)
+- Unused item detection
+- Smart auto-unload
 - Compression recommendations
-- Proactive budget alerts before threshold
+- Usage forecasting
+- Pattern analysis
 
-### 6. Team Features (Future)
-- Budget profiles per team/org
-- Team analytics dashboard
-- Slack/email notifications on budget alerts
+### Phase 6: Team Features (Week 4)
+- Budget profiles
+- Team analytics
+- Optimization tips
+- Notifications (Slack/email)
+- Report exports
 
 ## Troubleshooting
 
@@ -516,6 +490,6 @@ Expected coverage: 80%+ across all metrics.
 ## Support
 
 For issues or questions:
-- GitHub Issues: https://github.com/AINative-Studio/cody-builder/issues
+- GitHub Issues: https://github.com/AINative-Studio/builder-ainative-studio/issues
 - Documentation: /docs/context-budget-manager.md
 - Example Usage: /components/context-budget/budget-dashboard.tsx

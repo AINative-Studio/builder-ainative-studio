@@ -1,3 +1,4 @@
+
 # Competitor Analysis: Bolt.new, Lovable.ai, Base44 (2025)
 
 ## Executive Summary

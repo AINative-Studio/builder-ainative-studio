@@ -1,3 +1,4 @@
+
 # Subagent Architecture
 
 > **Hierarchical Multi-Agent System for AI-Powered Component Generation**
