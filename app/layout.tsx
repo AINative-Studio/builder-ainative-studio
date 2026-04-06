@@ -31,15 +31,33 @@ export const metadata: Metadata = {
     'Build production-ready React apps and components with AI. The best alternative to v0, Lovable, and Bolt. Agent-optimized with AX scoring, SEO, structured data, and multi-model support including Claude Sonnet 4.',
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio'),
   icons: {
-    icon: '/icon.svg',
+    icon: [
+      { url: '/icon.svg', type: 'image/svg+xml' },
+      { url: '/ainative-logo-v2.png', sizes: '192x192', type: 'image/png' },
+    ],
     apple: '/apple-icon.png',
   },
+  manifest: '/manifest.json',
   keywords: [
-    'AI app builder', 'AI UI generator', 'React component generator', 'text to UI',
-    'prompt to website', 'AI frontend builder', 'AI code generator', 'Next.js generator',
-    'v0 alternative', 'lovable alternative', 'bolt alternative', 'base44 alternative',
-    'AI web app builder', 'agent-optimized', 'AX optimization', 'shadcn AI',
-    'build app with AI', 'no code AI builder', 'Claude Sonnet 4',
+    // Primary - exact match targets
+    'AI app builder', 'AI UI generator', 'AI web app builder', 'AI frontend builder',
+    'React component generator', 'Next.js generator', 'AI code generator',
+    'text to UI', 'prompt to website', 'build app with AI',
+    // Competitor alternatives
+    'v0 alternative', 'lovable alternative', 'bolt alternative', 'bolt.new alternative',
+    'base44 alternative', 'replit alternative', 'cursor alternative', 'create.xyz alternative',
+    // AINative differentiators
+    'agent-optimized', 'AX optimization', 'agent experience', 'agent-first architecture',
+    'AI agent builder', 'agent accessible', 'structured data generator',
+    // Technology
+    'shadcn AI', 'Claude Sonnet 4', 'multi-model AI', 'Qwen Coder',
+    'no code AI builder', 'AI prototype builder', 'AI SaaS builder',
+    // Use cases
+    'AI dashboard generator', 'AI landing page builder', 'AI e-commerce builder',
+    'AI admin panel generator', 'generate React app', 'AI component library',
+    // Long-tail
+    'best AI app builder 2026', 'free AI website builder', 'AI builder with SEO',
+    'open source AI builder', 'AINative Studio builder', 'ZeroDB AI builder',
   ],
   openGraph: {
     title: 'AINative Builder - Build React Apps with AI',
@@ -79,13 +97,14 @@ const jsonLd = {
       offers: {
         '@type': 'AggregateOffer',
         lowPrice: '0',
-        highPrice: '99',
+        highPrice: '699',
         priceCurrency: 'USD',
-        offerCount: 3,
+        offerCount: 4,
         offers: [
-          { '@type': 'Offer', name: 'Free', price: '0', priceCurrency: 'USD', description: '10K tokens/month, open-source models' },
-          { '@type': 'Offer', name: 'Pro', price: '29', priceCurrency: 'USD', description: '500K tokens/month, Claude Sonnet 4' },
-          { '@type': 'Offer', name: 'Team', price: '99', priceCurrency: 'USD', description: '2M tokens/month, all models' },
+          { '@type': 'Offer', name: 'Starter', price: '0', priceCurrency: 'USD', description: '10K LLM tokens/month, 1K API credits, open-source models' },
+          { '@type': 'Offer', name: 'Pro', price: '49', priceCurrency: 'USD', description: '1M LLM tokens/month, 50K API credits, Claude Sonnet 4, 10GB storage' },
+          { '@type': 'Offer', name: 'Business', price: '149', priceCurrency: 'USD', description: '5M LLM tokens/month, 150K API credits, all models, Cody AI agent, 50GB storage' },
+          { '@type': 'Offer', name: 'Enterprise', price: '699', priceCurrency: 'USD', description: '10M LLM tokens/month, 200K API credits, Agent Swarm, 100GB storage, SSO' },
         ],
       },
       featureList: [
@@ -102,13 +121,30 @@ const jsonLd = {
       softwareVersion: '1.0.0',
     },
     {
+      '@type': 'WebSite',
+      name: 'AINative Builder',
+      url: 'https://builder.ainative.studio',
+      potentialAction: {
+        '@type': 'SearchAction',
+        target: 'https://builder.ainative.studio/templates?search={search_term_string}',
+        'query-input': 'required name=search_term_string',
+      },
+    },
+    {
       '@type': 'Organization',
       name: 'AINative Studio',
       url: 'https://ainative.studio',
       logo: 'https://builder.ainative.studio/ainative-logo-v2.png',
+      description: 'Open-source AI-native IDE with agent memory, vector search, and multi-model support.',
       sameAs: [
         'https://github.com/AINative-Studio',
+        'https://twitter.com/AINativeStudio',
       ],
+      parentOrganization: {
+        '@type': 'Organization',
+        name: 'AINative Studio',
+        url: 'https://ainative.studio',
+      },
     },
   ],
 }
@@ -151,10 +187,15 @@ export default function RootLayout({
       <body
         className={`${poppins.variable} ${geistSans.variable} ${geistMono.variable} antialiased`}
       >
+        <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:bg-white focus:px-4 focus:py-2 focus:rounded focus:shadow-lg focus:text-black">
+          Skip to main content
+        </a>
         <SessionProvider>
           <SWRProvider>
             <StreamingProvider>
-              {children}
+              <div id="main-content">
+                {children}
+              </div>
               <Toaster />
             </StreamingProvider>
           </SWRProvider>

@@ -16,32 +16,32 @@ export interface UserPlan {
   defaultModel: string
 }
 
+// Aligned with ainative.studio pricing: Starter, Pro $49, Business $149, Enterprise $699
 const PLAN_CONFIGS: Record<string, Omit<UserPlan, 'tokensUsed' | 'tokensRemaining'>> = {
   free: {
     tier: 'free',
-    monthlyTokenLimit: 10_000,
+    monthlyTokenLimit: 10_000,    // 10K LLM tokens
     maxTokensPerRequest: 4_000,
-    // Free users get fast open-source models via AINative managed API
     models: ['qwen-coder-7b', 'gemma-2b', 'gemma-9b'],
     defaultModel: 'qwen-coder-7b',
   },
   pro: {
     tier: 'pro',
-    monthlyTokenLimit: 500_000,
+    monthlyTokenLimit: 1_000_000,  // 1M LLM tokens ($49/mo)
     maxTokensPerRequest: 32_000,
     models: ['claude-sonnet-4', 'claude-opus-4', 'qwen-coder-32b', 'nouscoder-14b', 'qwen-coder-7b', 'gemma-9b'],
     defaultModel: 'claude-sonnet-4',
   },
   team: {
     tier: 'team',
-    monthlyTokenLimit: 2_000_000,
+    monthlyTokenLimit: 5_000_000,  // 5M LLM tokens ($149/mo)
     maxTokensPerRequest: 32_000,
     models: ['claude-sonnet-4', 'claude-opus-4', 'claude-sonnet-4.5', 'qwen-coder-32b', 'nouscoder-14b', 'qwen-coder-7b'],
     defaultModel: 'claude-sonnet-4',
   },
   enterprise: {
     tier: 'enterprise',
-    monthlyTokenLimit: Infinity,
+    monthlyTokenLimit: 10_000_000, // 10M LLM tokens ($699/mo)
     maxTokensPerRequest: 32_000,
     models: ['claude-sonnet-4', 'claude-opus-4', 'claude-sonnet-4.5', 'claude-3-5-haiku', 'qwen-coder-32b', 'nouscoder-14b'],
     defaultModel: 'claude-sonnet-4',
