@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useSession, signIn } from 'next-auth/react'
 import Link from 'next/link'
+import { UpgradeBanner } from '@/components/upgrade-banner'
 import {
   PromptInput,
   PromptInputImageButton,
@@ -77,6 +78,7 @@ export function HomeClient() {
   const [buildSteps, setBuildSteps] = useState<string[]>([])
   const [sandpackFiles, setSandpackFiles] = useState<Record<string, string> | null>(null)
   const [showFeedbackDialog, setShowFeedbackDialog] = useState(false)
+  const [showUpgrade, setShowUpgrade] = useState<'limit-reached' | 'approaching-limit' | null>(null)
   const router = useRouter()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const { startHandoff } = useStreaming()
@@ -216,23 +218,16 @@ export function HomeClient() {
       })
 
       if (!response.ok) {
-        // Try to get the specific error message from the response
-        let errorMessage =
-          'Sorry, there was an error processing your message. Please try again.'
+        if (response.status === 429) {
+          setShowUpgrade('limit-reached')
+          throw new Error('You\'ve reached your generation limit. Upgrade to Pro for 100x more tokens and Claude Sonnet 4.')
+        }
+        let errorMessage = 'Sorry, there was an error processing your message. Please try again.'
         try {
           const errorData = await response.json()
-          if (errorData.message) {
-            errorMessage = errorData.message
-          } else if (response.status === 429) {
-            errorMessage =
-              'You have exceeded your maximum number of messages for the day. Please try again later.'
-          }
+          if (errorData.message) errorMessage = errorData.message
         } catch (parseError) {
           console.error('Error parsing error response:', parseError)
-          if (response.status === 429) {
-            errorMessage =
-              'You have exceeded your maximum number of messages for the day. Please try again later.'
-          }
         }
         throw new Error(errorMessage)
       }
@@ -532,22 +527,16 @@ export function HomeClient() {
 
       if (!response.ok) {
         // Try to get the specific error message from the response
-        let errorMessage =
-          'Sorry, there was an error processing your message. Please try again.'
+        if (response.status === 429) {
+          setShowUpgrade('limit-reached')
+          throw new Error('You\'ve reached your generation limit. Upgrade to Pro for 100x more tokens and Claude Sonnet 4.')
+        }
+        let errorMessage = 'Sorry, there was an error processing your message. Please try again.'
         try {
           const errorData = await response.json()
-          if (errorData.message) {
-            errorMessage = errorData.message
-          } else if (response.status === 429) {
-            errorMessage =
-              'You have exceeded your maximum number of messages for the day. Please try again later.'
-          }
+          if (errorData.message) errorMessage = errorData.message
         } catch (parseError) {
           console.error('Error parsing error response:', parseError)
-          if (response.status === 429) {
-            errorMessage =
-              'You have exceeded your maximum number of messages for the day. Please try again later.'
-          }
         }
         throw new Error(errorMessage)
       }
@@ -618,6 +607,10 @@ export function HomeClient() {
                     sandpackFiles={sandpackFiles}
                   />
                 </div>
+
+                {showUpgrade && (
+                  <UpgradeBanner type={showUpgrade} onDismiss={() => setShowUpgrade(null)} />
+                )}
 
                 <ChatInput
                   message={message}
