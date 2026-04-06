@@ -71,15 +71,16 @@ export function parseMultiFileOutput(rawOutput: string, userPrompt?: string): Re
 
   // Add AINative agent files (robots.txt, sitemap.xml, llms.txt, etc.)
   try {
-    const agentFiles = generateAINativeFileSet(userPrompt || '', rawOutput)
+    const agentFiles = generateAINativeFileSet(userPrompt || '', Object.values(files).join('\n'))
+    const axFileCount = Object.keys(agentFiles).length
+    console.log(`📁 Adding ${axFileCount} AINative agent files to output`)
     for (const [name, content] of Object.entries(agentFiles)) {
       // Generator returns paths like 'public/robots.txt' and 'app/layout.tsx'
-      // Prefix with / for absolute path (no double-nesting)
       files[`/${name}`] = content
     }
+    console.log(`📦 Total files after AX injection: ${Object.keys(files).length}`, Object.keys(files))
   } catch (e) {
-    // Non-critical — agent files are optional
-    console.warn('Failed to generate AINative agent files:', e)
+    console.error('Failed to generate AINative agent files:', e)
   }
 
   return files
