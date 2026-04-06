@@ -51,6 +51,7 @@ function SearchParamsHandler({ onReset }: { onReset: () => void }) {
 }
 
 export function HomeClient() {
+  const { status: sessionStatus } = useSession()
   const [message, setMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [showChatInterface, setShowChatInterface] = useState(false)
@@ -80,7 +81,7 @@ export function HomeClient() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const { startHandoff } = useStreaming()
 
-  const handleReset = () => {
+  const handleReset = useCallback(() => {
     // Reset all chat-related state
     setShowChatInterface(false)
     setChatHistory([])
@@ -90,6 +91,8 @@ export function HomeClient() {
     setAttachments([])
     setIsLoading(false)
     setIsFullscreen(false)
+    setSandpackFiles(null)
+    setBuildSteps([])
     setRefreshKey((prev) => prev + 1)
 
     // Clear any stored data
@@ -101,7 +104,7 @@ export function HomeClient() {
         textareaRef.current.focus()
       }
     }, 0)
-  }
+  }, [])
 
   // Auto-focus the textarea on page load and restore from sessionStorage
   useEffect(() => {
@@ -159,8 +162,6 @@ export function HomeClient() {
   const handleDrop = () => {
     setIsDragOver(false)
   }
-
-  const { data: session, status: sessionStatus } = useSession()
 
   // Auto-sign-in as guest if not authenticated
   const ensureAuthenticated = useCallback(async () => {

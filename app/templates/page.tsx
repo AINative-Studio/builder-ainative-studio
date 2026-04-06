@@ -10,6 +10,7 @@ import { CustomizeDialog } from '@/components/templates/customize-dialog'
 import { Button } from '@/components/ui/button'
 import { Plus, Loader2 } from 'lucide-react'
 import Link from 'next/link'
+import { AppHeader } from '@/components/shared/app-header'
 
 export default function TemplatesPage() {
   const router = useRouter()
@@ -114,6 +115,7 @@ export default function TemplatesPage() {
 
   return (
     <div className="min-h-screen bg-background">
+      <AppHeader />
       <div className="container mx-auto px-4 py-8">
         {/* Header */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
