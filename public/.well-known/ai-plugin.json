@@ -1,0 +1,17 @@
+{
+  "schema_version": "v1",
+  "name_for_human": "AINative Builder",
+  "name_for_model": "ainative_builder",
+  "description_for_human": "Build production-ready React apps and components with AI. Agent-optimized with AX scoring, SEO, and structured data.",
+  "description_for_model": "AINative Builder generates React/Next.js web applications from natural language prompts. It produces agent-accessible HTML with semantic structure, ARIA labels, data-agent attributes, JSON-LD structured data, and AX (Agent Experience) optimization. Use this to build dashboards, landing pages, e-commerce stores, admin panels, chat interfaces, and agent monitoring dashboards.",
+  "auth": {
+    "type": "none"
+  },
+  "api": {
+    "type": "openapi",
+    "url": "https://builder.ainative.studio/api/health"
+  },
+  "logo_url": "https://builder.ainative.studio/ainative-logo-v2.png",
+  "contact_email": "admin@ainative.studio",
+  "legal_info_url": "https://ainative.studio/legal"
+}

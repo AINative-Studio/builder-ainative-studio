@@ -1,0 +1,35 @@
+# AINative Builder
+> AI-powered React component builder with Agent Experience (AX) optimization
+
+## About
+AINative Builder is a production-grade AI application builder that generates beautiful, agent-optimized React components and full web applications from natural language prompts. Every generated application includes AX (Agent Experience) optimization, SEO, structured data, and semantic HTML.
+
+## Capabilities
+- Generate React/Next.js components from text prompts
+- Multi-model support: Claude Sonnet 4, Qwen Coder, Gemma, DeepSeek
+- Real-time streaming preview with Sandpack
+- AX Standard: 10-point agent accessibility scoring
+- Automatic SEO: robots.txt, sitemap.xml, JSON-LD, OpenGraph
+- Agent-optimized output with data-agent-* attributes
+- Template gallery with 12+ pre-built templates
+- Multi-file generation with component splitting
+- Design token system for brand customization
+- One-click deploy to Vercel, Netlify, Railway
+
+## URLs
+- Homepage: https://builder.ainative.studio
+- Templates: https://builder.ainative.studio/templates
+- Documentation: https://builder.ainative.studio/docs/components
+
+## API
+- Chat Generation: POST /api/chat-ws
+- Templates: GET /api/templates
+- Preview: GET /api/preview/{id}
+- Health: GET /api/health
+
+## Keywords
+AI app builder, AI UI generator, React component generator, text to UI, prompt to website, AI frontend builder, agent-optimized, AX optimization, SEO builder, shadcn AI, Next.js generator, AI code generator, lovable alternative, v0 alternative, bolt alternative
+
+## Contact
+- Website: https://ainative.studio
+- Builder: https://builder.ainative.studio

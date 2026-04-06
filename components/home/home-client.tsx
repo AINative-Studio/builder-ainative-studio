@@ -669,7 +669,7 @@ export function HomeClient() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-black flex flex-col">
+    <div className="min-h-screen bg-gray-50 dark:bg-black flex flex-col" data-agent-role="application" data-agent-context="ai-builder">
       {/* Handle search params with Suspense boundary */}
       <Suspense fallback={null}>
         <SearchParamsHandler onReset={handleReset} />
@@ -678,17 +678,17 @@ export function HomeClient() {
       <AppHeader />
 
       {/* Main Content */}
-      <div className="flex-1 flex items-center justify-center px-4 sm:px-6 lg:px-8">
+      <main className="flex-1 flex items-center justify-center px-4 sm:px-6 lg:px-8" aria-label="AI Application Builder">
         <div className="max-w-4xl w-full">
-          <div className="text-center mb-8 md:mb-12">
-            <p className="text-sm font-semibold text-[#5867EF] tracking-wide uppercase mb-3">We Build AINative Applications</p>
-            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900 dark:text-white mb-3">
-              What AINative app are we building?
-            </h2>
+          <section className="text-center mb-8 md:mb-12" aria-label="Hero" data-agent-role="hero" data-agent-context="value-proposition">
+            <p className="text-sm font-semibold text-[#5867EF] tracking-wide uppercase mb-3">AI App Builder — Best v0, Lovable & Bolt Alternative</p>
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900 dark:text-white mb-3">
+              Build React Apps with AI in Seconds
+            </h1>
             <p className="text-base text-gray-500 dark:text-gray-400 max-w-xl mx-auto">
-              Every interface is agent-optimized with AX, SEO, and structured data built in.
+              Generate production-ready React components from prompts. Every app is agent-optimized with AX, SEO, and structured data built in.
             </p>
-          </div>
+          </section>
 
           {/* Prompt Input */}
           <div className="max-w-2xl mx-auto">
@@ -806,7 +806,7 @@ export function HomeClient() {
           </div>
 
         </div>
-      </div>
+      </main>
     </div>
   )
 }
