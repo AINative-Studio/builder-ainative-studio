@@ -5,6 +5,7 @@ import { StreamingProvider } from '@/contexts/streaming-context'
 import { SWRProvider } from '@/components/providers/swr-provider'
 import { SessionProvider } from '@/components/providers/session-provider'
 import { Toaster } from '@/components/ui/toaster'
+import GoogleAnalytics from '@/components/analytics/google-analytics'
 
 const poppins = Poppins({
   weight: ['300', '400', '500', '600', '700'],
@@ -200,6 +201,7 @@ export default function RootLayout({
             </StreamingProvider>
           </SWRProvider>
         </SessionProvider>
+        <GoogleAnalytics />
       </body>
     </html>
   )

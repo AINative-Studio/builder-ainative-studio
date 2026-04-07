@@ -23,6 +23,7 @@ import {
 } from '@/components/ai-elements/prompt-input'
 import { Suggestions, Suggestion } from '@/components/ai-elements/suggestion'
 import { AppHeader } from '@/components/shared/app-header'
+import { trackEvent } from '@/components/analytics/google-analytics'
 import { useStreaming } from '@/contexts/streaming-context'
 import { ChatMessages } from '@/components/chat/chat-messages'
 import { ChatInput } from '@/components/chat/chat-input'
@@ -181,6 +182,8 @@ export function HomeClient() {
 
     // Ensure user is authenticated (auto-create guest session if needed)
     await ensureAuthenticated()
+
+    trackEvent('generate_app', 'engagement', message.trim().slice(0, 50))
 
     const userMessage = message.trim()
     const currentAttachments = [...attachments]
