@@ -57,7 +57,7 @@ export function HomeClient() {
   const [isLoading, setIsLoading] = useState(false)
   const [showChatInterface, setShowChatInterface] = useState(false)
   const [attachments, setAttachments] = useState<ImageAttachment[]>([])
-  const [selectedModel, setSelectedModel] = useState('claude-sonnet-4')
+  const [selectedModel, setSelectedModel] = useState('qwen-coder-7b')
   const [isDragOver, setIsDragOver] = useState(false)
   const [chatHistory, setChatHistory] = useState<
     Array<{
@@ -712,40 +712,35 @@ export function HomeClient() {
                     onImageSelect={handleImageFiles}
                     disabled={isLoading}
                   />
-                  {/* Model Selector */}
-                  <div className="relative">
-                    <select
-                      value={selectedModel}
-                      onChange={(e) => setSelectedModel(e.target.value)}
-                      disabled={isLoading}
-                      className="appearance-none h-8 pl-2 pr-7 text-xs font-medium bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-[#5867EF]/20"
-                      title="Select AI model"
-                    >
-                      <optgroup label="Anthropic (Direct)">
-                        <option value="claude-sonnet-4">Claude Sonnet 4</option>
-                        <option value="claude-opus-4">Claude Opus 4</option>
-                      </optgroup>
-                      <optgroup label="Code Specialists">
-                        <option value="qwen-coder-32b">Qwen Coder 32B</option>
-                        <option value="qwen-coder-7b">Qwen Coder 7B (Fast)</option>
-                        <option value="nouscoder-14b">NousCoder 14B</option>
-                      </optgroup>
-                      <optgroup label="Premium (AINative)">
-                        <option value="claude-sonnet-4.5">Claude Sonnet 4.5</option>
-                        <option value="claude-3-5-haiku">Claude Haiku 4.5 (Fast)</option>
-                      </optgroup>
-                      <optgroup label="General">
-                        <option value="gemma-9b">Gemma 9B</option>
-                        <option value="qwen-7b">Qwen 7B</option>
-                        <option value="gemma-2b">Gemma 2B (Ultra-fast)</option>
-                      </optgroup>
-                      <optgroup label="Reasoning">
-                        <option value="deepseek-r1-distill-qwen-7b">DeepSeek R1 Qwen 7B</option>
-                        <option value="deepseek-r1-distill-llama-8b">DeepSeek R1 Llama 8B</option>
-                      </optgroup>
-                    </select>
-                    <svg className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-                  </div>
+                  {/* Model Selector - only shown to authenticated users */}
+                  {sessionStatus === 'authenticated' && (
+                    <div className="relative">
+                      <select
+                        value={selectedModel}
+                        onChange={(e) => setSelectedModel(e.target.value)}
+                        disabled={isLoading}
+                        className="appearance-none h-8 pl-2 pr-7 text-xs font-medium bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-[#5867EF]/20"
+                        title="Select AI model"
+                      >
+                        <optgroup label="Code Specialists (Free)">
+                          <option value="qwen-coder-7b">Qwen Coder 7B (Fast)</option>
+                          <option value="gemma-2b">Gemma 2B (Ultra-fast)</option>
+                          <option value="gemma-9b">Gemma 9B</option>
+                        </optgroup>
+                        <optgroup label="Pro Models (Paid)">
+                          <option value="claude-sonnet-4">Claude Sonnet 4</option>
+                          <option value="claude-opus-4">Claude Opus 4</option>
+                          <option value="qwen-coder-32b">Qwen Coder 32B</option>
+                          <option value="nouscoder-14b">NousCoder 14B</option>
+                        </optgroup>
+                        <optgroup label="Premium (Paid)">
+                          <option value="claude-sonnet-4.5">Claude Sonnet 4.5</option>
+                          <option value="claude-3-5-haiku">Claude Haiku 4.5</option>
+                        </optgroup>
+                      </select>
+                      <svg className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                    </div>
+                  )}
                 </PromptInputTools>
                 <PromptInputTools>
                   <PromptInputMicButton

@@ -64,15 +64,22 @@ export const Suggestions = ({
         </>
       )}
 
-      {/* Right fade overlay with arrow indicator */}
+      {/* Right fade overlay with clickable arrow */}
       {canScrollRight && (
         <>
-          <div className="absolute -right-px -top-px z-10 h-[calc(100%+1px)] w-16 bg-gradient-to-l from-gray-50 dark:from-black to-transparent pointer-events-none" />
-          <div className="absolute right-2 top-1/2 -translate-y-1/2 z-20 pointer-events-none">
-            <div className="w-6 h-6 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center shadow-md">
+          <div className="absolute -right-px -top-px z-10 h-[calc(100%+1px)] w-20 bg-gradient-to-l from-gray-50 dark:from-black to-transparent pointer-events-none" />
+          <button
+            className="absolute right-1 top-1/2 -translate-y-1/2 z-20 cursor-pointer"
+            onClick={() => {
+              const viewport = scrollAreaRef.current?.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement
+              if (viewport) viewport.scrollBy({ left: 200, behavior: 'smooth' })
+            }}
+            aria-label="Scroll right for more suggestions"
+          >
+            <div className="w-7 h-7 rounded-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 flex items-center justify-center shadow-md hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
               <span className="text-gray-600 dark:text-gray-300 text-xs">→</span>
             </div>
-          </div>
+          </button>
         </>
       )}
 
@@ -82,7 +89,7 @@ export const Suggestions = ({
         {...props}
       >
         <div
-          className={cn('flex w-max flex-nowrap items-center gap-2', className)}
+          className={cn('flex w-max flex-nowrap items-center gap-2 pr-10', className)}
         >
           {children}
         </div>
