@@ -6,6 +6,9 @@
 export function fixJsxErrors(code: string): string {
   let fixed = code
 
+  // Fix 0: Sanitize broken/overlapping imports (most common AI generation error)
+  fixed = sanitizeImports(fixed)
+
   // Fix 1: Balance unclosed JSX tags
   fixed = balanceJsxTags(fixed)
 
@@ -122,4 +125,65 @@ function fixCommonSyntax(code: string): string {
   fixed = fixed.replace(/^window\.[A-Z]\w+\s*=\s*[A-Z]\w+;?\s*$/gm, '')
 
   return fixed
+}
+
+/**
+ * Sanitize broken/overlapping import statements.
+ * AI models sometimes generate incomplete imports (unclosed braces)
+ * followed by another import, producing invalid syntax like:
+ *   import {
+ *   import { Foo } from 'bar'
+ *     Button,
+ *     Card,
+ * This function detects and fixes these patterns.
+ */
+function sanitizeImports(code: string): string {
+  const lines = code.split('\n')
+  const result: string[] = []
+  let i = 0
+
+  while (i < lines.length) {
+    const line = lines[i]
+    const trimmed = line.trim()
+
+    // Detect an import that opens a brace but never closes it on this line
+    if (/^import\s+\{[^}]*$/.test(trimmed)) {
+      // Look ahead: does the next non-empty line start with another import?
+      let j = i + 1
+      while (j < lines.length && lines[j].trim() === '') j++
+
+      if (j < lines.length && /^import\s+/.test(lines[j].trim())) {
+        // This is a broken import — the brace was never closed.
+        // Skip this line entirely (the next import will be kept).
+        i++
+        continue
+      }
+
+      // Otherwise collect the multi-line import normally
+      let importBlock = line
+      i++
+      while (i < lines.length) {
+        importBlock += '\n' + lines[i]
+        if (lines[i].includes('}')) break
+        // If we hit another import statement inside the block, the block is broken
+        if (/^import\s+/.test(lines[i].trim())) {
+          // Broken mid-import — discard the incomplete outer import,
+          // rewind to this line and let the loop handle it fresh
+          importBlock = ''
+          break
+        }
+        i++
+      }
+      if (importBlock) {
+        result.push(importBlock)
+      }
+      i++
+      continue
+    }
+
+    result.push(line)
+    i++
+  }
+
+  return result.join('\n')
 }

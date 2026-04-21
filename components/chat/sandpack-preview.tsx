@@ -1,5 +1,6 @@
 'use client'
 
+import React from 'react'
 import {
   SandpackProvider,
   SandpackPreview as SandpackPreviewComponent,
@@ -8,6 +9,39 @@ import {
 import { cn } from '@/lib/utils'
 import { fixJsxErrors } from '@/lib/sandpack/jsx-fixer'
 import { getBuiltinFiles } from '@/lib/sandpack/setup'
+
+class SandpackErrorBoundary extends React.Component<
+  { children: React.ReactNode; className?: string },
+  { error: Error | null }
+> {
+  state = { error: null as Error | null }
+
+  static getDerivedStateFromError(error: Error) {
+    return { error }
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className={cn('flex items-center justify-center h-full bg-red-50 dark:bg-red-950 p-6', this.props.className)}>
+          <div className="text-center max-w-md">
+            <p className="text-sm font-medium text-red-800 dark:text-red-200 mb-2">Preview failed to render</p>
+            <p className="text-xs text-red-600 dark:text-red-400 font-mono whitespace-pre-wrap break-all">
+              {this.state.error.message?.slice(0, 300) || 'Syntax error in generated code'}
+            </p>
+            <button
+              className="mt-4 px-3 py-1.5 text-xs bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300 rounded hover:bg-red-200 dark:hover:bg-red-800"
+              onClick={() => this.setState({ error: null })}
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 interface SandpackPreviewProps {
   files: Record<string, string>
@@ -64,14 +98,20 @@ export function SandpackPreview({ files, theme = 'light', className }: SandpackP
   // Track which files are generated (not built-in) so we only fix those
   const builtinPaths = new Set(Object.keys(getBuiltinFiles()))
 
-  // Fix missing imports only in GENERATED .tsx files (not built-in AIKit/shadcn)
+  // Fix syntax errors and sanitize imports in GENERATED .tsx files (not built-in AIKit/shadcn)
   for (const [path, code] of Object.entries(sandpackFiles)) {
     if (!path.endsWith('.tsx')) continue
     if (builtinPaths.has(path)) continue // Don't touch built-in files
-    let fixed = code
 
-    // Auto-inject React imports
-    if (!fixed.includes('import React')) {
+    // First: sanitize broken imports and fix syntax errors
+    let fixed = fixJsxErrors(code)
+
+    // Then: inject missing imports only if the module isn't already imported.
+    // The multi-file-parser already injects most imports, so this is a safety net.
+    // We check for the module source string to avoid duplicates.
+
+    // React
+    if (!fixed.includes("from 'react'") && !fixed.includes('from "react"')) {
       const hooks = ['useState', 'useEffect', 'useRef', 'useMemo', 'useCallback', 'useContext', 'useReducer']
         .filter(h => fixed.includes(h))
       if (hooks.length > 0) {
@@ -81,8 +121,8 @@ export function SandpackPreview({ files, theme = 'light', className }: SandpackP
       }
     }
 
-    // Auto-inject AIKit component imports
-    if (!fixed.includes('from \'@/components/aikit') && !fixed.includes('from "./components/aikit')) {
+    // AIKit components
+    if (!fixed.includes('/components/aikit')) {
       const aikitComponents = [
         'MetricCard', 'AIKitPriceCard', 'AIKitRating', 'AgentCard', 'SwarmView',
         'SafetyBadge', 'GuardrailPanel', 'ChatBubble', 'StreamingIndicator', 'CodeDisplay',
@@ -97,8 +137,8 @@ export function SandpackPreview({ files, theme = 'light', className }: SandpackP
       }
     }
 
-    // Auto-inject shadcn/ui component imports
-    if (!fixed.includes('from \'@/components/ui') && !fixed.includes('from "./components/ui')) {
+    // shadcn/ui components
+    if (!fixed.includes('/components/ui')) {
       const shadcnMap: Record<string, string[]> = {
         './components/ui/button': ['Button'],
         './components/ui/card': ['Card', 'CardHeader', 'CardContent', 'CardTitle', 'CardDescription', 'CardFooter'],
@@ -128,8 +168,8 @@ export function SandpackPreview({ files, theme = 'light', className }: SandpackP
       }
     }
 
-    // Auto-inject Lucide icon imports
-    if (!fixed.includes('from \'lucide-react\'') && !fixed.includes('from "lucide-react"')) {
+    // Lucide icons
+    if (!fixed.includes("from 'lucide-react'") && !fixed.includes('from "lucide-react"')) {
       const allLucideIcons = [
         'Activity', 'AlertCircle', 'AlertTriangle', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowUp',
         'Award', 'BarChart', 'BarChart2', 'BarChart3', 'Bell', 'Book', 'BookOpen', 'Bot',
@@ -158,21 +198,18 @@ export function SandpackPreview({ files, theme = 'light', className }: SandpackP
         'Users', 'Video', 'Volume', 'Volume1', 'Volume2', 'VolumeX', 'Wallet', 'Wand', 'Wand2',
         'Watch', 'Wifi', 'WifiOff', 'Wind', 'Wrench', 'X', 'XCircle', 'Youtube', 'Zap', 'ZoomIn', 'ZoomOut',
       ]
-      const usedIcons = allLucideIcons.filter(icon => {
-        // Match the icon name as a word boundary (not inside another word)
-        const regex = new RegExp(`\\b${icon}\\b`)
-        return regex.test(fixed)
-      })
+      const usedIcons = allLucideIcons.filter(icon => new RegExp(`\\b${icon}\\b`).test(fixed))
       if (usedIcons.length > 0) {
         fixed = `import { ${usedIcons.join(', ')} } from 'lucide-react'\n${fixed}`
       }
     }
 
-    sandpackFiles[path] = fixJsxErrors(fixed)
+    sandpackFiles[path] = fixed
   }
 
   return (
     <div className={cn('w-full h-full flex flex-col', className)} style={{ minHeight: 0 }}>
+      <SandpackErrorBoundary className="flex-1">
       <SandpackProvider
         template="react-ts"
         files={sandpackFiles}
@@ -208,6 +245,7 @@ export function SandpackPreview({ files, theme = 'light', className }: SandpackP
           />
         </SandpackLayout>
       </SandpackProvider>
+      </SandpackErrorBoundary>
     </div>
   )
 }
