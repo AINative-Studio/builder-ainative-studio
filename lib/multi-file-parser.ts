@@ -148,15 +148,13 @@ function injectMissingImports(code: string): string {
 
   const imports: string[] = []
 
-  // Check for AIKit component usage
-  const hasAikitImport = code.includes('/components/aikit') || code.includes("from 'aikit'")
-  if (!hasAikitImport) {
-    const usedAikit = AIKIT_COMPONENTS.filter(c =>
-      new RegExp(`<${c}[\\s/>]`).test(code)
-    )
-    if (usedAikit.length > 0) {
-      imports.push(`import { ${usedAikit.join(', ')} } from './components/aikit'`)
-    }
+  // Check for AIKit component usage — skip any already imported individually
+  const usedAikit = AIKIT_COMPONENTS.filter(c =>
+    new RegExp(`<${c}[\\s/>]`).test(code) &&
+    !new RegExp(`import\\s+.*\\b${c}\\b.*from\\s+`).test(code)
+  )
+  if (usedAikit.length > 0) {
+    imports.push(`import { ${usedAikit.join(', ')} } from './components/aikit'`)
   }
 
   // Check for recharts usage

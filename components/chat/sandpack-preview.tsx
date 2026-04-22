@@ -154,8 +154,8 @@ export function SandpackPreview({ files, theme = 'light', className }: SandpackP
       }
     }
 
-    // AIKit components
-    if (!fixed.includes('/components/aikit')) {
+    // AIKit components — only inject imports for components not already imported
+    {
       const aikitComponents = [
         'MetricCard', 'AIKitPriceCard', 'AIKitRating', 'AgentCard', 'SwarmView',
         'SafetyBadge', 'GuardrailPanel', 'ChatBubble', 'StreamingIndicator', 'CodeDisplay',
@@ -164,14 +164,17 @@ export function SandpackPreview({ files, theme = 'light', className }: SandpackP
         'EmptyState', 'AIKitProductCard', 'AIKitPagination', 'AIKitBreadcrumb',
         'AIKitStepper', 'VideoPlayer', 'StreamingText', 'MediaGallery', 'AgentTimeline',
       ]
-      const usedAikit = aikitComponents.filter(c => new RegExp(`<${c}[\\s/>]`).test(fixed))
+      const usedAikit = aikitComponents.filter(c =>
+        new RegExp(`<${c}[\\s/>]`).test(fixed) &&
+        !new RegExp(`import\\s+.*\\b${c}\\b.*from\\s+`).test(fixed)
+      )
       if (usedAikit.length > 0) {
         fixed = `import { ${usedAikit.join(', ')} } from './components/aikit'\n${fixed}`
       }
     }
 
-    // shadcn/ui components
-    if (!fixed.includes('/components/ui')) {
+    // shadcn/ui components — skip any already imported
+    {
       const shadcnMap: Record<string, string[]> = {
         './components/ui/button': ['Button'],
         './components/ui/card': ['Card', 'CardHeader', 'CardContent', 'CardTitle', 'CardDescription', 'CardFooter'],
@@ -191,7 +194,10 @@ export function SandpackPreview({ files, theme = 'light', className }: SandpackP
       }
       const imports: string[] = []
       for (const [mod, components] of Object.entries(shadcnMap)) {
-        const used = components.filter(c => new RegExp(`<${c}[\\s/>]|\\b${c}\\b`).test(fixed))
+        const used = components.filter(c =>
+          (new RegExp(`<${c}[\\s/>]|\\b${c}\\b`).test(fixed)) &&
+          !new RegExp(`import\\s+.*\\b${c}\\b.*from\\s+`).test(fixed)
+        )
         if (used.length > 0) {
           imports.push(`import { ${used.join(', ')} } from '${mod}'`)
         }
