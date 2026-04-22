@@ -53,13 +53,35 @@ export function SandpackPreview({ files, theme = 'light', className }: SandpackP
   // Start with all built-in files (AIKit, shadcn, template)
   const sandpackFiles: Record<string, string> = { ...getBuiltinFiles() }
 
-  // Overlay generated files on top
+  // Overlay generated files on top, normalizing paths for Sandpack.
+  // Sandpack's entry point is /App.tsx at the root, so we flatten /src/ paths
+  // and duplicate files at multiple paths so relative imports resolve correctly.
   for (const [path, content] of Object.entries(files)) {
     // Skip non-code files (robots.txt, sitemap.xml, etc.)
     if (path.endsWith('.txt') || path.endsWith('.xml') || (path.endsWith('.json') && path.includes('well-known'))) {
       continue
     }
     sandpackFiles[path] = content
+
+    // Duplicate /src/* files at root /* so both import styles work:
+    // from './components/Foo' (when App.tsx is at /)
+    // from '../components/Foo' (when importing from /src/)
+    if (path.startsWith('/src/') && !path.includes('/App.tsx')) {
+      const rootPath = path.replace(/^\/src\//, '/')
+      sandpackFiles[rootPath] = content
+    }
+    // Also duplicate /app/* files at root /* for Next.js-style paths
+    if (path.startsWith('/src/app/') || path.startsWith('/app/')) {
+      const rootPath = path.replace(/^\/src\/app\//, '/app/').replace(/^\/app\//, '/app/')
+      sandpackFiles[rootPath] = content
+      // Also make page.tsx available as a direct import
+      if (path.endsWith('/page.tsx') || path.endsWith('/page.ts')) {
+        const dirPath = rootPath.replace(/\/page\.tsx?$/, '')
+        if (dirPath !== '') {
+          sandpackFiles[dirPath + '.tsx'] = content
+        }
+      }
+    }
   }
 
   // Find the main component file
@@ -71,6 +93,17 @@ export function SandpackPreview({ files, theme = 'light', className }: SandpackP
 
   // Get the main component code
   let mainCode = mainFile ? sandpackFiles[mainFile] : ''
+
+  // Rewrite relative imports that reference /src/ or /app/ paths
+  // so they resolve from / (where /App.tsx lives in Sandpack)
+  mainCode = mainCode.replace(
+    /from\s+['"]\.\/src\//g,
+    "from './"
+  )
+  mainCode = mainCode.replace(
+    /from\s+['"]\.\/app\/page['"]/g,
+    "from './app/page'"
+  )
 
   // Inject React imports if missing — Claude often omits them
   if (mainCode && !mainCode.includes('import React')) {
