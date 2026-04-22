@@ -44,3 +44,6 @@ next-env.d.ts
 .ainative
 .claude
 .mcp.json
+e2e/screenshots/
+e2e/test-results/
+playwright-report/
