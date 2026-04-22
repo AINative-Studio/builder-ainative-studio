@@ -6,7 +6,10 @@
 export function fixJsxErrors(code: string): string {
   let fixed = code
 
-  // Fix 0: Sanitize broken/overlapping imports (most common AI generation error)
+  // Fix 0: Rewrite barrel imports that Sandpack can't resolve
+  fixed = rewriteBarrelImports(fixed)
+
+  // Fix 0b: Sanitize broken/overlapping imports (most common AI generation error)
   fixed = sanitizeImports(fixed)
 
   // Fix 1: Balance unclosed JSX tags
@@ -125,6 +128,73 @@ function fixCommonSyntax(code: string): string {
   fixed = fixed.replace(/^window\.[A-Z]\w+\s*=\s*[A-Z]\w+;?\s*$/gm, '')
 
   return fixed
+}
+
+/**
+ * Rewrite barrel imports that Sandpack can't resolve.
+ * AI often generates `import { X, Y } from './components'` or `from '../components'`
+ * which assumes a barrel file (index.ts) that doesn't exist in Sandpack.
+ * We rewrite these to import from the known AIKit/shadcn/lucide sources.
+ */
+function rewriteBarrelImports(code: string): string {
+  // Match imports from bare './components' or '../components' (no subpath)
+  return code.replace(
+    /import\s+\{([^}]+)\}\s+from\s+['"]\.\.?\/components['"]\s*;?/g,
+    (_match, names: string) => {
+      const components = names.split(',').map((n: string) => n.trim()).filter(Boolean)
+
+      // Known AIKit components
+      const aikitNames = new Set([
+        'MetricCard', 'AIKitPriceCard', 'AIKitRating', 'AgentCard', 'SwarmView',
+        'SafetyBadge', 'GuardrailPanel', 'ChatBubble', 'StreamingIndicator', 'CodeDisplay',
+        'TokenUsageBar', 'ConnectionStatus', 'AIKitHeader', 'AIKitSidebar', 'AIKitTable',
+        'AIKitTimeline', 'AIKitBanner', 'AIKitAvatar', 'Skeleton', 'SkeletonCard',
+        'EmptyState', 'AIKitProductCard', 'AIKitPagination', 'AIKitBreadcrumb',
+        'AIKitStepper', 'VideoPlayer', 'StreamingText', 'MediaGallery', 'AgentTimeline',
+      ])
+      // Known shadcn components
+      const shadcnNames = new Set([
+        'Button', 'Card', 'CardHeader', 'CardContent', 'CardTitle', 'CardDescription', 'CardFooter',
+        'Badge', 'Avatar', 'AvatarImage', 'AvatarFallback', 'Input', 'Label',
+        'Tabs', 'TabsList', 'TabsTrigger', 'TabsContent',
+        'Table', 'TableHeader', 'TableBody', 'TableRow', 'TableHead', 'TableCell',
+        'Separator', 'Progress', 'CircularProgress',
+        'Alert', 'AlertTitle', 'AlertDescription',
+        'Dialog', 'DialogContent', 'DialogHeader', 'DialogTitle', 'DialogDescription', 'DialogFooter',
+        'Select', 'SelectTrigger', 'SelectValue', 'SelectContent', 'SelectItem',
+        'Checkbox', 'RadioGroup', 'RadioGroupItem',
+        'Accordion', 'AccordionItem', 'AccordionTrigger', 'AccordionContent',
+      ])
+      // Known recharts components
+      const rechartsNames = new Set([
+        'ResponsiveContainer', 'LineChart', 'Line', 'BarChart', 'Bar', 'PieChart', 'Pie', 'Cell',
+        'AreaChart', 'Area', 'RadarChart', 'Radar', 'RadialBarChart', 'RadialBar',
+        'ComposedChart', 'Scatter', 'ScatterChart', 'XAxis', 'YAxis', 'CartesianGrid',
+        'Tooltip', 'Legend', 'PolarGrid', 'PolarAngleAxis', 'PolarRadiusAxis',
+      ])
+
+      const aikit: string[] = []
+      const shadcn: string[] = []
+      const recharts: string[] = []
+      const unknown: string[] = []
+
+      for (const c of components) {
+        if (aikitNames.has(c)) aikit.push(c)
+        else if (shadcnNames.has(c)) shadcn.push(c)
+        else if (rechartsNames.has(c)) recharts.push(c)
+        else unknown.push(c)
+      }
+
+      const imports: string[] = []
+      if (aikit.length > 0) imports.push(`import { ${aikit.join(', ')} } from './components/aikit'`)
+      if (shadcn.length > 0) imports.push(`import { ${shadcn.join(', ')} } from './components/ui/card'`)
+      if (recharts.length > 0) imports.push(`import { ${recharts.join(', ')} } from 'recharts'`)
+      // Unknown components — still import from aikit as best guess
+      if (unknown.length > 0) imports.push(`import { ${unknown.join(', ')} } from './components/aikit'`)
+
+      return imports.join('\n')
+    }
+  )
 }
 
 /**

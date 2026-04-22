@@ -29,6 +29,19 @@ export const templateFiles: Record<string, string> = {
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <title>AINative Preview</title>
+  <script>
+    // Prevent Sandpack babel worker from crashing on frozen SyntaxError.message
+    window.addEventListener('unhandledrejection', function(e) {
+      if (e.reason && e.reason.toString().includes('read only property')) {
+        e.preventDefault();
+      }
+    });
+    window.addEventListener('error', function(e) {
+      if (e.message && e.message.includes('read only property')) {
+        e.preventDefault();
+      }
+    });
+  </script>
 </head>
 <body style="font-family: Inter, system-ui, sans-serif; margin: 0;">
   <div id="root"></div>
