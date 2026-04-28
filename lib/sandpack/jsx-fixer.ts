@@ -6,10 +6,18 @@
 export function fixJsxErrors(code: string): string {
   let fixed = code
 
-  // Fix 0: Rewrite barrel imports that Sandpack can't resolve
+  // Fix 0: Rewrite @/ path aliases — Sandpack doesn't support tsconfig path aliases
+  fixed = fixed.replace(/from ['"]@\/components\//g, "from './components/")
+  fixed = fixed.replace(/from ['"]@\/lib\//g, "from './lib/")
+  fixed = fixed.replace(/from ['"]@\//g, "from './")
+
+  // Fix 0b: Rewrite barrel imports that Sandpack can't resolve
   fixed = rewriteBarrelImports(fixed)
 
-  // Fix 0b: Sanitize broken/overlapping imports (most common AI generation error)
+  // Fix 0c: Rewrite hallucinated package names to known equivalents
+  fixed = rewriteHallucinatedPackages(fixed)
+
+  // Fix 0d: Sanitize broken/overlapping imports (most common AI generation error)
   fixed = sanitizeImports(fixed)
 
   // Fix 1: Balance unclosed JSX tags
@@ -193,6 +201,36 @@ function rewriteBarrelImports(code: string): string {
       if (unknown.length > 0) imports.push(`import { ${unknown.join(', ')} } from './components/aikit'`)
 
       return imports.join('\n')
+    }
+  )
+}
+
+/**
+ * Rewrite hallucinated package names to known Sandpack-available equivalents.
+ * Only targets packages that are clearly invented/non-existent (e.g. 'AINativePrimitives').
+ * Real packages like 'aikit', '@ainative/react-sdk', etc. are preserved.
+ */
+function rewriteHallucinatedPackages(code: string): string {
+  // Only rewrite packages that are clearly fake — ones with made-up suffixes.
+  // Observed hallucinations: 'AINativePrimitives', 'AINativeComponents', 'AINativeUI'
+  // These are bare unscoped strings that don't match any real npm package.
+  // Real packages to PRESERVE: 'aikit', '@ainative/react-sdk', '@ainative/next-sdk', etc.
+  const hallucinatedPatterns = [
+    /^AINativePrimitives$/,
+    /^AINativeComponents$/,
+    /^AINativeUI$/,
+    /^AINativeKit$/,
+    /^AIKitPrimitives$/,
+    /^AIKitComponents$/,
+  ]
+
+  return code.replace(
+    /import\s+\{([^}]+)\}\s+from\s+['"]([A-Za-z][\w/-]*)['"](\s*;?)/g,
+    (match, names: string, pkg: string, semi: string) => {
+      const isHallucinated = hallucinatedPatterns.some(p => p.test(pkg))
+      if (!isHallucinated) return match
+      const components = names.split(',').map((n: string) => n.trim()).filter(Boolean)
+      return `import { ${components.join(', ')} } from './components/aikit'${semi}`
     }
   )
 }

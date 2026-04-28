@@ -136,8 +136,14 @@ export function SandpackPreview({ files, theme = 'light', className }: SandpackP
     if (!path.endsWith('.tsx')) continue
     if (builtinPaths.has(path)) continue // Don't touch built-in files
 
-    // First: sanitize broken imports and fix syntax errors
-    let fixed = fixJsxErrors(code)
+    // Fix @/ path aliases before anything else — Sandpack doesn't support them
+    let fixed = code
+      .replace(/from ['"]@\/components\//g, "from './components/")
+      .replace(/from ['"]@\/lib\//g, "from './lib/")
+      .replace(/from ['"]@\//g, "from './")
+
+    // Fix: sanitize broken imports and fix syntax errors
+    fixed = fixJsxErrors(fixed)
 
     // Then: inject missing imports only if the module isn't already imported.
     // The multi-file-parser already injects most imports, so this is a safety net.

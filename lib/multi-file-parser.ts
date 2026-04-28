@@ -146,6 +146,9 @@ function injectMissingImports(code: string): string {
   code = code.replace(/from ['"]@\/components\//g, "from './components/")
   code = code.replace(/from ['"]@\/lib\//g, "from './lib/")
 
+  // Fix any remaining @/ aliases (e.g. @/utils, @/hooks, @/types)
+  code = code.replace(/from ['"]@\//g, "from './")
+
   const imports: string[] = []
 
   // Check for AIKit component usage — skip any already imported individually

@@ -240,14 +240,49 @@ Add a skip-to-content link and ensure tab order is logical:
 1. Generate COMPLETE, FULL-PAGE applications — production-ready, not snippets
 2. Name your main function appropriately (LandingPage, Dashboard, AdminPanel, etc.)
 3. Write \`function ComponentName() {\` — always include parentheses ()
-4. NO import statements — everything is globally available
-5. Wrap code in triple backticks with \`jsx\` language tag
-6. Define ALL data before using it: \`const items = [...]; items.map(...)\`
-7. Avoid dollar signs ($) in string values — use "USD" instead
-8. Keep strings on single lines, properly closed
-9. NEVER use gradients (bg-gradient-to-*, from-*, to-*, via-*) — use solid colors only
-10. Use Lucide icons, NEVER emoji/emoticons
-11. EXACTLY ONE \`<h1>\` per page — section headings use \`<h2>\`, never \`<h1>\`
+4. ALWAYS include import statements at the top of EVERY file. Use the exact import sources listed below.
+5. Define ALL data before using it: \`const items = [...]; items.map(...)\`
+6. Avoid dollar signs ($) in string values — use "USD" instead
+7. Keep strings on single lines, properly closed
+8. NEVER use gradients (bg-gradient-to-*, from-*, to-*, via-*) — use solid colors only
+9. Use Lucide icons, NEVER emoji/emoticons
+10. EXACTLY ONE \`<h1>\` per page — section headings use \`<h2>\`, never \`<h1>\`
+
+## IMPORT RULES — CRITICAL (follow exactly)
+
+Every file you generate must start with these imports (only include what you actually use):
+
+\`\`\`tsx
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+// shadcn/ui components:
+import { Button } from './components/ui/button'
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from './components/ui/card'
+import { Badge } from './components/ui/badge'
+import { Input } from './components/ui/input'
+import { Label } from './components/ui/label'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from './components/ui/tabs'
+import { Avatar, AvatarImage, AvatarFallback } from './components/ui/avatar'
+import { Separator } from './components/ui/separator'
+import { Progress } from './components/ui/progress'
+import { Alert, AlertTitle, AlertDescription } from './components/ui/alert'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from './components/ui/dialog'
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from './components/ui/select'
+import { Checkbox } from './components/ui/checkbox'
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from './components/ui/table'
+import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from './components/ui/accordion'
+// AIKit components:
+import { MetricCard, AIKitPriceCard, AIKitRating, AgentCard, SwarmView, SafetyBadge, GuardrailPanel, ChatBubble, StreamingIndicator, CodeDisplay, TokenUsageBar, ConnectionStatus, AIKitHeader, AIKitSidebar, AIKitTable, AIKitTimeline, AIKitBanner, AIKitAvatar, Skeleton, SkeletonCard, EmptyState, AIKitProductCard, AIKitPagination, AIKitBreadcrumb, AIKitStepper, VideoPlayer, StreamingText, MediaGallery, AgentTimeline } from './components/aikit'
+// Icons:
+import { Search, Menu, X, ChevronDown, ChevronRight, Home, Settings, Users, Bell, Mail, Star, Plus, Edit, Trash2, ArrowRight, ArrowLeft, TrendingUp, TrendingDown, Activity, DollarSign, Zap, Shield, Globe, Lock, Sparkles, Rocket, Brain, Bot, BarChart3, LineChart, PieChart } from 'lucide-react'
+// Charts:
+import { ResponsiveContainer, LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts'
+\`\`\`
+
+**CRITICAL import rules:**
+- NEVER import from \`@ainative/\*\`, \`aikit\`, or any npm package for AIKit — use \`'./components/aikit'\`
+- NEVER import from \`@/components/\*\` — use \`'./components/\*'\` (relative, no @ alias)
+- ALWAYS import React explicitly: \`import React from 'react'\`
+- Sub-component files (HeroSection.tsx, etc.) MUST import their own dependencies — they are NOT globally available
 
 ## COLOR SYSTEM — INJECTED BY THEME (see COLOR THEME section below)
 
