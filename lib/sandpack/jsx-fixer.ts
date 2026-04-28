@@ -211,23 +211,15 @@ function rewriteBarrelImports(code: string): string {
  * Real packages like 'aikit', '@ainative/react-sdk', etc. are preserved.
  */
 function rewriteHallucinatedPackages(code: string): string {
-  // Only rewrite packages that are clearly fake — ones with made-up suffixes.
-  // Observed hallucinations: 'AINativePrimitives', 'AINativeComponents', 'AINativeUI'
-  // These are bare unscoped strings that don't match any real npm package.
-  // Real packages to PRESERVE: 'aikit', '@ainative/react-sdk', '@ainative/next-sdk', etc.
-  const hallucinatedPatterns = [
-    /^AINativePrimitives$/,
-    /^AINativeComponents$/,
-    /^AINativeUI$/,
-    /^AINativeKit$/,
-    /^AIKitPrimitives$/,
-    /^AIKitComponents$/,
-  ]
-
+  // Rewrite packages that are clearly hallucinated bare CamelCase names.
+  // Rule: bare (unscoped, no slashes) package names that start with AINative or AIKit
+  // are fake — real packages are either scoped (@ainative/*) or lowercase ('aikit').
+  // Real packages PRESERVED: '@ainative/react-sdk', '@ainative/next-sdk', 'aikit', etc.
   return code.replace(
-    /import\s+\{([^}]+)\}\s+from\s+['"]([A-Za-z][\w/-]*)['"](\s*;?)/g,
+    /import\s+\{([^}]+)\}\s+from\s+['"]([A-Za-z][\w]*)['"](\s*;?)/g,
     (match, names: string, pkg: string, semi: string) => {
-      const isHallucinated = hallucinatedPatterns.some(p => p.test(pkg))
+      // Bare CamelCase names starting with AINative or AIKit = hallucinated
+      const isHallucinated = /^(AINative|AIKit|AiNative|AiKit)[A-Z]?\w*$/.test(pkg)
       if (!isHallucinated) return match
       const components = names.split(',').map((n: string) => n.trim()).filter(Boolean)
       return `import { ${components.join(', ')} } from './components/aikit'${semi}`
