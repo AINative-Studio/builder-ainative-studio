@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getPreview, isPreviewStreaming } from '@/lib/preview-store'
+import { getPreview, isPreviewStreaming, storePreview } from '@/lib/preview-store'
 import { validateJavaScriptCode } from '@/lib/code-validator'
 
 export async function GET(
@@ -7,7 +7,29 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
-  const content = getPreview(id)
+  let content = getPreview(id)
+
+  // Not in memory — try restoring from DB (survives server restarts)
+  if (!content) {
+    try {
+      const { db } = await import('@/lib/db')
+      const { generations } = await import('@/lib/db/schema')
+      const { eq } = await import('drizzle-orm')
+      const [row] = await db
+        .select({ generated_code: generations.generated_code })
+        .from(generations)
+        .where(eq(generations.chat_id, id))
+        .orderBy(generations.created_at)
+        .limit(1)
+      if (row?.generated_code) {
+        content = row.generated_code as string
+        storePreview(id, content) // repopulate in-memory cache
+        console.log(`[Preview] Restored from DB for ID: ${id}`)
+      }
+    } catch (e) {
+      console.warn('[Preview] DB restore failed:', e)
+    }
+  }
 
   if (!content) {
     // Return a helpful error page for expired previews
