@@ -94,6 +94,14 @@ export async function POST(request: NextRequest) {
           }
         }
 
+        // Send SSE keepalive every 15s to prevent Railway/HTTP2 from closing the stream
+        // during long AI generation (can take 60-120s for complex apps)
+        let keepaliveActive = true
+        const keepaliveInterval = setInterval(() => {
+          if (!keepaliveActive) return
+          try { controller.enqueue(encoder.encode(': keepalive\n\n')) } catch (_) { /* closed */ }
+        }, 15_000)
+
         try {
           let fullContent = ''
           let lastUpdateTime = Date.now()
@@ -687,9 +695,13 @@ Generate a corrected version of: ${message}`
             })}\n\n`))
           }
 
+          keepaliveActive = false
+          clearInterval(keepaliveInterval)
           try { controller.close() } catch (_) { /* already closed */ }
         } catch (error) {
           console.error('Streaming error:', error)
+          keepaliveActive = false
+          clearInterval(keepaliveInterval)
           safeEnqueue(encoder.encode(`data: ${JSON.stringify({
             type: 'error',
             error: 'Stream failed'
