@@ -31,6 +31,21 @@ export async function GET(
     }
   }
 
+  // Not in PostgreSQL — try ZeroDB (persistent across deploys)
+  if (!content) {
+    try {
+      const { loadGeneration } = await import('@/lib/zerodb-store')
+      const gen = await loadGeneration(id)
+      if (gen?.generatedCode) {
+        content = gen.generatedCode
+        storePreview(id, content) // repopulate in-memory cache
+        console.log(`[Preview] Restored from ZeroDB for ID: ${id}`)
+      }
+    } catch (e) {
+      console.warn('[Preview] ZeroDB restore failed:', e)
+    }
+  }
+
   if (!content) {
     // Return a helpful error page for expired previews
     const errorHtml = `

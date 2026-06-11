@@ -558,9 +558,19 @@ Generate a corrected version of: ${message}`
               demo: `/preview/${responseId}`
             })}\n\n`))
 
-            // Auto-add to showcase with generated code (in-process, fire-and-forget)
+            // Persist to ZeroDB (survives deploys) + add to in-memory showcase
             try {
+              const { saveGeneration } = await import('@/lib/zerodb-store')
               const { addToShowcase } = await import('@/lib/showcase-store')
+              const isShowcase = finalContent.length > 3000
+              saveGeneration({
+                chatId: responseId,
+                prompt: message,
+                generatedCode: finalContent,
+                model: requestedModel || DEFAULT_MODEL,
+                codeLength: finalContent.length,
+                isShowcase,
+              }).catch(() => {})
               addToShowcase(message, responseId, finalContent.length, finalContent)
             } catch (_) {}
           }
