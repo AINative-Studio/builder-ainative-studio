@@ -35,14 +35,13 @@ const metaClient = new OpenAI({
   baseURL: process.env.META_BASE_URL || 'https://api.llama.com/compat/v1',
 })
 
-// AINative API client — use Railway internal networking if available (same project)
-// AINATIVE_INTERNAL_URL=http://ainative-backend.railway.internal:PORT/v1
-const ainativeBaseURL = process.env.AINATIVE_INTERNAL_URL || 'https://api.ainative.studio/v1'
+// AINative API client — bypass APISIX gateway for reliability
+// Direct core URL avoids the gateway bottleneck that causes 50%+ timeouts
+const ainativeBaseURL = process.env.AINATIVE_API_URL || 'https://ainative-browser-builder.up.railway.app/api/v1'
 const ainativeClient = new OpenAI({
   apiKey: process.env.ZERODB_API_KEY || '',
   baseURL: ainativeBaseURL,
 })
-console.log(`🔗 AINative API: ${ainativeBaseURL.includes('internal') ? 'internal (Railway)' : 'public'}`)
 
 // Get the appropriate client based on environment
 function getLLMClient(): OpenAI {
