@@ -328,30 +328,46 @@ Export default. Include realistic mock data. Modern design with rounded-xl, shad
                 ...conversationMessages,
               ]
 
+              // Fallback chain: DeepSeek → Llama 3.3 70B (completes naturally) → Llama Maverick
+              const FALLBACK_MODELS = ['Llama-3.3-70B-Instruct', 'Llama-4-Maverick-17B-128E-Instruct-FP8']
+              let activeModel = modelId
+
               for (let attempt = 1; attempt <= MAX_CONTINUATIONS; attempt++) {
                 let response
                 try {
                   response = await client.chat.completions.create({
-                    model: modelId,
+                    model: activeModel,
                     max_tokens: 4096,
                     temperature: 0.7,
                     messages: continuationMessages,
                   })
                 } catch (apiError: any) {
                   const status = apiError?.status || 0
-                  console.log(`⚠️ API error on attempt ${attempt}: ${status} ${apiError?.message?.substring(0, 100)}`)
-                  // If DigitalOcean model fails (502/503/504), fall back to Llama Maverick
-                  if (status >= 500 && modelId !== 'Llama-4-Maverick-17B-128E-Instruct-FP8') {
-                    console.log(`🔄 Falling back to Llama Maverick`)
-                    const fallbackResp = await client.chat.completions.create({
-                      model: 'Llama-4-Maverick-17B-128E-Instruct-FP8',
-                      max_tokens: 4096,
-                      temperature: 0.7,
-                      messages: continuationMessages,
-                    })
-                    response = fallbackResp
-                  } else {
-                    break // Give up on unrecoverable errors
+                  console.log(`⚠️ API error on attempt ${attempt} (${activeModel}): ${status} ${apiError?.message?.substring(0, 100)}`)
+
+                  // Try fallback models in order
+                  let recovered = false
+                  for (const fallback of FALLBACK_MODELS) {
+                    if (fallback === activeModel) continue
+                    try {
+                      console.log(`🔄 Trying fallback: ${fallback}`)
+                      response = await client.chat.completions.create({
+                        model: fallback,
+                        max_tokens: 4096,
+                        temperature: 0.7,
+                        messages: continuationMessages,
+                      })
+                      activeModel = fallback // Stick with this model for remaining continuations
+                      recovered = true
+                      console.log(`✅ Fallback to ${fallback} succeeded`)
+                      break
+                    } catch (fallbackErr: any) {
+                      console.log(`⚠️ Fallback ${fallback} also failed: ${fallbackErr?.status || fallbackErr?.message?.substring(0, 50)}`)
+                    }
+                  }
+                  if (!recovered) {
+                    console.log(`❌ All models failed on attempt ${attempt}, giving up`)
+                    break
                   }
                 }
 
@@ -436,21 +452,33 @@ Please regenerate the component with these requirements:
 
 Generate a corrected version of: ${message}`
 
-              // Always use AINative for retry (most reliable)
-              const retryResponse = await ainativeClient.chat.completions.create({
-                model: DEFAULT_MODEL,
-                max_tokens: 16000,
-                temperature: 0.7,
-                messages: [
-                  { role: 'system', content: 'Fix the syntax errors in the code below. Return ONLY valid, complete React code wrapped in ```jsx markers. Ensure all JSX tags are properly closed, all strings are terminated, and all brackets match.' },
-                  ...previousMessages,
-                  { role: 'user' as const, content: enhancedPrompt },
-                  { role: 'assistant' as const, content: fullContent },
-                  { role: 'user' as const, content: retryPrompt }
-                ],
-              })
-
-              const retryContent = retryResponse.choices?.[0]?.message?.content || ''
+              // Try retry with fallback chain
+              const retryModels = [DEFAULT_MODEL, 'Llama-3.3-70B-Instruct', 'qwen3-coder-flash']
+              let retryContent = ''
+              const retryMessages = [
+                { role: 'system' as const, content: 'Fix the syntax errors in the code below. Return ONLY valid, complete React code wrapped in ```jsx markers. Ensure all JSX tags are properly closed, all strings are terminated, and all brackets match.' },
+                ...previousMessages,
+                { role: 'user' as const, content: enhancedPrompt },
+                { role: 'assistant' as const, content: fullContent },
+                { role: 'user' as const, content: retryPrompt }
+              ]
+              for (const retryModel of retryModels) {
+                try {
+                  const retryResponse = await ainativeClient.chat.completions.create({
+                    model: retryModel,
+                    max_tokens: 4096,
+                    temperature: 0.7,
+                    messages: retryMessages,
+                  })
+                  retryContent = retryResponse.choices?.[0]?.message?.content || ''
+                  if (retryContent.length > 500) {
+                    console.log(`✅ Retry succeeded with ${retryModel}: ${retryContent.length} chars`)
+                    break
+                  }
+                } catch (retryErr: any) {
+                  console.log(`⚠️ Retry with ${retryModel} failed: ${retryErr?.status || retryErr?.message?.substring(0, 50)}`)
+                }
+              }
 
               // Validate retry result
               const retryValidation = validateGeneratedCode(retryContent)
