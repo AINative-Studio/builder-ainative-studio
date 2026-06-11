@@ -103,6 +103,7 @@ export default async function ShowcaseDetailPage({ params }: Props) {
               </div>
               <span className="text-xs text-gray-500 ml-2 font-mono">preview — {entry.title.toLowerCase().replace(/\s+/g, '-')}.app</span>
             </div>
+            {/* Preview — tries chatId first, then showcase preview API, then generate CTA */}
             {entry.chatId ? (
               <iframe
                 src={`/api/preview/${entry.chatId}`}
@@ -113,19 +114,14 @@ export default async function ShowcaseDetailPage({ params }: Props) {
                 loading="lazy"
               />
             ) : (
-              <div className="aspect-video bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 flex items-center justify-center">
-                <div className="text-center">
-                  <p className="text-sm text-gray-400 dark:text-gray-500 mb-3">
-                    Preview available after generation
-                  </p>
-                  <Link
-                    href={`/?prompt=${encodeURIComponent(entry.prompt)}`}
-                    className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-medium px-4 py-2 rounded-lg transition-colors text-sm"
-                  >
-                    Generate This App
-                  </Link>
-                </div>
-              </div>
+              <iframe
+                src={`/api/showcase/preview?slug=${entry.slug}`}
+                className="w-full border-0"
+                style={{ height: '70vh' }}
+                title={`Preview of ${entry.title}`}
+                sandbox="allow-scripts allow-same-origin"
+                loading="lazy"
+              />
             )}
           </div>
         </section>

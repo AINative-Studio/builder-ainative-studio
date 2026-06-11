@@ -17,7 +17,7 @@ const dynamicEntries = globalStore.__showcaseDynamic
 /**
  * Add a generation to the showcase
  */
-export function addToShowcase(prompt: string, chatId: string, codeLength: number): boolean {
+export function addToShowcase(prompt: string, chatId: string, codeLength: number, generatedCode?: string): boolean {
   // Quality gate
   if (codeLength < 3000) return false
 
@@ -63,6 +63,7 @@ export function addToShowcase(prompt: string, chatId: string, codeLength: number
     category,
     prompt,
     chatId,
+    generatedCode: generatedCode || undefined,
     tags,
     featured: false,
     createdAt: new Date().toISOString().split('T')[0],

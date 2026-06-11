@@ -12,6 +12,7 @@ export interface ShowcaseEntry {
   category: string
   prompt: string
   chatId?: string
+  generatedCode?: string
   thumbnail?: string
   tags: string[]
   featured: boolean

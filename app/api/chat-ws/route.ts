@@ -599,10 +599,10 @@ Generate a corrected version of: ${message}`
               demo: `/preview/${responseId}`
             })}\n\n`))
 
-            // Auto-add to showcase (in-process, fire-and-forget)
+            // Auto-add to showcase with generated code (in-process, fire-and-forget)
             try {
               const { addToShowcase } = await import('@/lib/showcase-store')
-              addToShowcase(message, responseId, finalContent.length)
+              addToShowcase(message, responseId, finalContent.length, finalContent)
             } catch (_) {}
           }
 
