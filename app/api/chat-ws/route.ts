@@ -46,25 +46,25 @@ function getLLMClient(): OpenAI {
   return isLocal ? metaClient : ainativeClient
 }
 
-// Default Llama model
-const DEFAULT_MODEL = process.env.LLAMA_MODEL || 'Llama-4-Maverick-17B-128E-Instruct-FP8'
+// Default model — DeepSeek 4 Flash: best balance of speed, quality, and token output
+const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'deepseek-4-flash'
 
-// Model routing config — all models route through Meta (local) or AINative (cloud)
+// Model routing config — all models route through AINative API
 const MODEL_CONFIG: Record<string, { provider: 'meta' | 'ainative'; modelId: string }> = {
-  // Llama Models (via Meta API locally, AINative in cloud)
+  // Top tier — DigitalOcean hosted, high token output, no truncation
+  'kimi-k2': { provider: 'ainative', modelId: 'kimi-k2' },
+  'deepseek-4-flash': { provider: 'ainative', modelId: 'deepseek-4-flash' },
+  'qwen3-coder-flash': { provider: 'ainative', modelId: 'qwen3-coder-flash' },
+  // Llama Models (Meta API — 512 token cap, needs continuation)
   'llama-4-maverick': { provider: isLocal ? 'meta' : 'ainative', modelId: 'Llama-4-Maverick-17B-128E-Instruct-FP8' },
-  'llama-4-scout': { provider: isLocal ? 'meta' : 'ainative', modelId: 'Llama-4-Scout-17B-16E-Instruct' },
-  // Code Specialists (via AINative API)
+  'llama-3.3-70b': { provider: 'ainative', modelId: 'Llama-3.3-70B-Instruct' },
+  // Code Specialists
   'qwen-coder-32b': { provider: 'ainative', modelId: 'qwen-coder-32b' },
-  'qwen-coder-7b': { provider: 'ainative', modelId: 'qwen-coder-7b' },
   'nouscoder-14b': { provider: 'ainative', modelId: 'nouscoder-14b' },
-  // Text / General (via AINative API)
-  'qwen-7b': { provider: 'ainative', modelId: 'qwen-7b' },
+  // General
   'gemma-9b': { provider: 'ainative', modelId: 'gemma-9b' },
-  'gemma-2b': { provider: 'ainative', modelId: 'gemma-2b' },
-  // Reasoning (via AINative API)
+  // Reasoning
   'deepseek-r1-distill-qwen-7b': { provider: 'ainative', modelId: 'deepseek-r1-distill-qwen-7b' },
-  'deepseek-r1-distill-llama-8b': { provider: 'ainative', modelId: 'deepseek-r1-distill-llama-8b' },
 }
 
 export async function POST(request: NextRequest) {
@@ -261,7 +261,7 @@ export async function POST(request: NextRequest) {
             }
           } else {
             // Route to correct provider based on selected model
-            const modelConfig = MODEL_CONFIG[requestedModel] || { provider: isLocal ? 'meta' : 'ainative', modelId: DEFAULT_MODEL }
+            const modelConfig = MODEL_CONFIG[requestedModel] || { provider: 'ainative', modelId: DEFAULT_MODEL }
             const provider = modelConfig.provider
             const modelId = modelConfig.modelId
             const client = provider === 'meta' ? metaClient : ainativeClient
