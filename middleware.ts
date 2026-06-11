@@ -59,9 +59,8 @@ export async function middleware(request: NextRequest) {
       pathname === '/api/health' ||
       pathname === '/api/debug-auth' ||
       pathname.startsWith('/api/preview/') ||
-      pathname === '/api/chat-ws' ||
-      pathname === '/api/chat' ||
-      pathname === '/api/showcase'
+      pathname === '/api/showcase' ||
+      pathname.startsWith('/api/showcase/')
 
     if (pathname.startsWith('/api/') && isPublicApiRoute) {
       return NextResponse.next()
@@ -111,6 +110,14 @@ export async function middleware(request: NextRequest) {
   }
 
   const isGuest = guestRegex.test(token?.email ?? '')
+
+  // Block guest users from generation endpoints — must register to generate
+  if (isGuest && (pathname === '/api/chat-ws' || pathname === '/api/chat')) {
+    return NextResponse.json(
+      { error: 'Registration required', message: 'Please create a free account to generate apps.' },
+      { status: 403 },
+    )
+  }
 
   if (token && !isGuest && ['/login', '/register'].includes(pathname)) {
     return NextResponse.redirect(new URL('/', request.url))
