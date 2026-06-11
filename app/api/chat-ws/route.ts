@@ -35,9 +35,9 @@ const metaClient = new OpenAI({
   baseURL: process.env.META_BASE_URL || 'https://api.llama.com/compat/v1',
 })
 
-// AINative API client — bypass APISIX gateway for reliability
-// Direct core URL avoids the gateway bottleneck that causes 50%+ timeouts
-const ainativeBaseURL = process.env.AINATIVE_API_URL || 'https://ainative-browser-builder.up.railway.app/api/v1'
+// AINative API client
+// Use AINATIVE_API_URL to override (e.g. for direct core access)
+const ainativeBaseURL = process.env.AINATIVE_API_URL || 'https://api.ainative.studio/v1'
 const ainativeClient = new OpenAI({
   apiKey: process.env.ZERODB_API_KEY || '',
   baseURL: ainativeBaseURL,
