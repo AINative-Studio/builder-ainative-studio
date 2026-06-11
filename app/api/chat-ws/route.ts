@@ -321,104 +321,53 @@ Export default. Include realistic mock data. Modern design with rounded-xl, shad
                 fullContent = fallbackResponse.choices?.[0]?.message?.content || ''
               }
             } else {
-              // AINative: use continuation-based generation to bypass 512-token cap
-              // The /v1/ endpoint caps at 512 completion tokens per request
-              // We chain requests until finish_reason === 'stop'
-              console.log(`📡 Calling AINative API with continuation: ${modelId}`)
+              // AINative: single-turn generation (system+user only)
+              // Multi-turn conversations get capped at 512 tokens by the API
+              // Single-turn with system message gets full output (~1500-2500 tokens)
+              console.log(`📡 Calling AINative API (single-turn): ${modelId}`)
 
-              const MAX_CONTINUATIONS = 10
-              let continuationMessages: Array<{ role: 'system' | 'user' | 'assistant', content: string }> = [
-                { role: 'system', content: llmSystemPrompt },
-                ...conversationMessages,
+              // Single-turn call with fallback chain
+              // CRITICAL: Only system+user messages (2 messages). Multi-turn (>2) triggers 512-token cap.
+              const MODELS_TO_TRY = [modelId, 'Llama-3.3-70B-Instruct', 'Llama-4-Maverick-17B-128E-Instruct-FP8']
+              const singleTurnMessages = [
+                { role: 'system' as const, content: llmSystemPrompt },
+                // Merge conversation history into a single user message to keep it 2-message single-turn
+                { role: 'user' as const, content: previousMessages.length > 0
+                  ? `Previous context:\n${previousMessages.map(m => `${m.role}: ${m.content}`).join('\n')}\n\nNew request: ${enhancedPrompt}`
+                  : enhancedPrompt
+                },
               ]
 
-              // Fallback chain: DeepSeek → Llama 3.3 70B (completes naturally) → Llama Maverick
-              const FALLBACK_MODELS = ['Llama-3.3-70B-Instruct', 'Llama-4-Maverick-17B-128E-Instruct-FP8']
-              let activeModel = modelId
-
-              // Helper: call LLM with timeout + same-model retry
-              async function callWithRetry(model: string, messages: any[], retries = 2, timeoutMs = 45_000) {
-                for (let r = 0; r < retries; r++) {
-                  try {
-                    const ctrl = new AbortController()
-                    const timer = setTimeout(() => ctrl.abort(), timeoutMs)
-                    const resp = await client.chat.completions.create(
-                      { model, max_tokens: 4096, temperature: 0.7, messages },
-                      { signal: ctrl.signal }
-                    )
-                    clearTimeout(timer)
-                    return resp
-                  } catch (err: any) {
-                    const isTimeout = err?.name === 'AbortError' || err?.message?.includes('aborted')
-                    if (isTimeout && r < retries - 1) {
-                      console.log(`⏱️ Timeout on ${model} (retry ${r + 1}/${retries}), trying again...`)
-                      continue
-                    }
-                    throw err
-                  }
-                }
-                throw new Error('All retries exhausted')
-              }
-
-              for (let attempt = 1; attempt <= MAX_CONTINUATIONS; attempt++) {
-                let response
+              for (const tryModel of MODELS_TO_TRY) {
                 try {
-                  response = await callWithRetry(activeModel, continuationMessages)
-                } catch (apiError: any) {
-                  const status = apiError?.status || 0
-                  console.log(`⚠️ API error on attempt ${attempt} (${activeModel}): ${status} ${apiError?.message?.substring(0, 100)}`)
+                  const ctrl = new AbortController()
+                  const timer = setTimeout(() => ctrl.abort(), 60_000)
+                  const response = await client.chat.completions.create(
+                    { model: tryModel, max_tokens: 4096, temperature: 0.7, messages: singleTurnMessages },
+                    { signal: ctrl.signal }
+                  )
+                  clearTimeout(timer)
 
-                  // Try fallback models in order
-                  let recovered = false
-                  for (const fallback of FALLBACK_MODELS) {
-                    if (fallback === activeModel) continue
-                    try {
-                      console.log(`🔄 Trying fallback: ${fallback}`)
-                      response = await callWithRetry(fallback, continuationMessages, 2, 45_000)
-                      activeModel = fallback // Stick with this model for remaining continuations
-                      recovered = true
-                      console.log(`✅ Fallback to ${fallback} succeeded`)
-                      break
-                    } catch (fallbackErr: any) {
-                      console.log(`⚠️ Fallback ${fallback} also failed: ${fallbackErr?.status || fallbackErr?.message?.substring(0, 50)}`)
-                    }
-                  }
-                  if (!recovered) {
-                    console.log(`❌ All models failed on attempt ${attempt}, giving up`)
-                    break
+                  fullContent = response.choices?.[0]?.message?.content || ''
+                  const tokens = response.usage?.completion_tokens || 0
+                  const finish = response.choices?.[0]?.finish_reason
+                  console.log(`📊 ${tryModel}: ${fullContent.length} chars (${tokens} tok) finish=${finish}`)
+
+                  updatePreviewPartial(responseId, fullContent)
+                  safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'refresh' })}\n\n`))
+
+                  if (fullContent.length > 500) break // Good enough output
+                  console.log(`⚠️ Output too short (${fullContent.length} chars), trying next model...`)
+                } catch (err: any) {
+                  const isTimeout = err?.name === 'AbortError' || err?.message?.includes('aborted')
+                  console.log(`⚠️ ${tryModel} failed: ${isTimeout ? 'timeout' : err?.status || err?.message?.substring(0, 80)}`)
+                  if (MODELS_TO_TRY.indexOf(tryModel) === MODELS_TO_TRY.length - 1) {
+                    console.log('❌ All models failed')
                   }
                 }
-
-                let chunk = response.choices?.[0]?.message?.content || ''
-                const finishReason = response.choices?.[0]?.finish_reason
-                const tokens = response.usage?.completion_tokens || 0
-
-                // Clean continuation artifacts — remove leading ```jsx or ``` markers from continuation chunks
-                if (attempt > 1) {
-                  chunk = chunk.replace(/^```jsx?\s*\n?/, '').replace(/^```\s*\n?/, '')
-                }
-
-                fullContent += chunk
-
-                console.log(`  📝 Attempt ${attempt}: +${chunk.length} chars (${tokens} tokens) finish=${finishReason} | total=${fullContent.length}`)
-
-                // Update preview with progress
-                updatePreviewPartial(responseId, fullContent)
-                safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'refresh' })}\n\n`))
-
-                // If model finished naturally, we're done
-                if (finishReason === 'stop') break
-
-                // If truncated, ask model to continue
-                continuationMessages = [
-                  { role: 'system', content: llmSystemPrompt },
-                  ...conversationMessages,
-                  { role: 'assistant', content: fullContent },
-                  { role: 'user', content: 'Continue generating from exactly where you left off. Do NOT repeat any code already written. Just output the remaining code to complete the component.' },
-                ]
               }
 
-              console.log(`📊 AINative response: ${fullContent.length} chars (continuation)`)
+              console.log(`📊 Final response: ${fullContent.length} chars`)
             }
 
             updatePreviewPartial(responseId, fullContent)
