@@ -58,7 +58,7 @@ export function HomeClient() {
   const [isLoading, setIsLoading] = useState(false)
   const [showChatInterface, setShowChatInterface] = useState(false)
   const [attachments, setAttachments] = useState<ImageAttachment[]>([])
-  const [selectedModel, setSelectedModel] = useState('deepseek-4-flash')
+  const [selectedModel, setSelectedModel] = useState('llama-4-maverick')
   const [isDragOver, setIsDragOver] = useState(false)
   const [chatHistory, setChatHistory] = useState<
     Array<{
@@ -742,14 +742,14 @@ export function HomeClient() {
                         className="appearance-none h-8 pl-2 pr-7 text-xs font-medium bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-[#5867EF]/20"
                         title="Select AI model"
                       >
-                        <optgroup label="Best for Code (Recommended)">
-                          <option value="deepseek-4-flash">DeepSeek 4 Flash (Default)</option>
-                          <option value="kimi-k2">Kimi K2 (Best Quality)</option>
-                          <option value="qwen3-coder-flash">Qwen3 Coder Flash</option>
-                        </optgroup>
-                        <optgroup label="Llama Models">
-                          <option value="llama-4-maverick">Llama 4 Maverick 17B</option>
+                        <optgroup label="Recommended (Fast + Reliable)">
+                          <option value="llama-4-maverick">Llama 4 Maverick (Default)</option>
                           <option value="llama-3.3-70b">Llama 3.3 70B</option>
+                        </optgroup>
+                        <optgroup label="High Quality (Slower)">
+                          <option value="deepseek-4-flash">DeepSeek 4 Flash</option>
+                          <option value="kimi-k2">Kimi K2</option>
+                          <option value="qwen3-coder-flash">Qwen3 Coder Flash</option>
                         </optgroup>
                         <optgroup label="Other">
                           <option value="qwen-coder-32b">Qwen Coder 32B</option>

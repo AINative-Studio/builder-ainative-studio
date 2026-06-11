@@ -46,8 +46,9 @@ function getLLMClient(): OpenAI {
   return isLocal ? metaClient : ainativeClient
 }
 
-// Default model — DeepSeek 4 Flash: best balance of speed, quality, and token output
-const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'deepseek-4-flash'
+// Default model — Llama Maverick on production (fast + reliable via Meta API)
+// DeepSeek 4 Flash is higher quality but DigitalOcean backend is unreliable (30-50% timeout)
+const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'Llama-4-Maverick-17B-128E-Instruct-FP8'
 
 // Model routing config — all models route through AINative API
 const MODEL_CONFIG: Record<string, { provider: 'meta' | 'ainative'; modelId: string }> = {
