@@ -335,12 +335,16 @@ Export default. Include realistic mock data. Modern design with rounded-xl, shad
               for (let attempt = 1; attempt <= MAX_CONTINUATIONS; attempt++) {
                 let response
                 try {
+                  // 60s timeout per request to prevent hanging on unresponsive providers
+                  const controller = new AbortController()
+                  const timeout = setTimeout(() => controller.abort(), 60_000)
                   response = await client.chat.completions.create({
                     model: activeModel,
                     max_tokens: 4096,
                     temperature: 0.7,
                     messages: continuationMessages,
-                  })
+                  }, { signal: controller.signal })
+                  clearTimeout(timeout)
                 } catch (apiError: any) {
                   const status = apiError?.status || 0
                   console.log(`⚠️ API error on attempt ${attempt} (${activeModel}): ${status} ${apiError?.message?.substring(0, 100)}`)
@@ -351,12 +355,15 @@ Export default. Include realistic mock data. Modern design with rounded-xl, shad
                     if (fallback === activeModel) continue
                     try {
                       console.log(`🔄 Trying fallback: ${fallback}`)
+                      const fbController = new AbortController()
+                      const fbTimeout = setTimeout(() => fbController.abort(), 45_000)
                       response = await client.chat.completions.create({
                         model: fallback,
                         max_tokens: 4096,
                         temperature: 0.7,
                         messages: continuationMessages,
-                      })
+                      }, { signal: fbController.signal })
+                      clearTimeout(fbTimeout)
                       activeModel = fallback // Stick with this model for remaining continuations
                       recovered = true
                       console.log(`✅ Fallback to ${fallback} succeeded`)
