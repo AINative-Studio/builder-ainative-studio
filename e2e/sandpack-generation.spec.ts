@@ -8,7 +8,7 @@
  */
 import { test, expect, type Page } from '@playwright/test'
 
-const BASE_URL = 'https://builder.ainative.studio'
+const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3000'
 const GENERATION_TIMEOUT = 120_000 // 2 min for AI generation
 const HYDRATION_WAIT = 3_000      // Wait for React to hydrate before interacting
 

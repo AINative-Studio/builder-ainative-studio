@@ -1,5 +1,4 @@
 import { NextRequest } from 'next/server'
-import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 import { nanoid } from 'nanoid'
 import { verifyAndEnhancePrompt } from '@/lib/component-verifier'
@@ -9,8 +8,8 @@ import { updatePreviewPartial, storePreview, getChatData } from '@/lib/preview-s
 import { validateGeneratedCode } from '@/lib/code-validator'
 import { stripGradients } from '@/lib/gradient-blocker'
 import { fetchContextualImages, formatImagesForPrompt, getFallbackImages } from '@/lib/services/unsplash.service'
-import { COMPONENT_GENERATION_TOOL, extractComponentCode, validateComponentGeneration } from '@/lib/agent/component-generation-tool'
-import { getConversationMemory, addComponentToMemory, formatMemoryForPrompt } from '@/lib/services/memory.service'
+import { extractComponentCode } from '@/lib/agent/component-generation-tool'
+import { addComponentToMemory, formatMemoryForPrompt } from '@/lib/services/memory.service'
 import { runOrchestratorAgent } from '@/lib/agent/subagents'
 import { parsePRDForBuildSteps } from '@/lib/prd-parser'
 import { analyzeComplexity, getComplexityReport } from '@/lib/agent/complexity-analyzer'
@@ -26,28 +25,39 @@ import { logModelConfiguration } from '@/lib/config/model-validator'
 // Log model configuration on first module load
 logModelConfiguration()
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY!,
+// Use Meta API ONLY when explicitly enabled via USE_META_API=true
+// Default to AINative API which is more reliable
+const isLocal = process.env.USE_META_API === 'true'
+
+// Meta Llama API client (for local development / benchmarking)
+const metaClient = new OpenAI({
+  apiKey: process.env.META_API_KEY || '',
+  baseURL: process.env.META_BASE_URL || 'https://api.llama.com/compat/v1',
 })
 
-// AINative API client (OpenAI-compatible) for GPT models
+// AINative API client (for cloud / production)
 const ainativeClient = new OpenAI({
   apiKey: process.env.ZERODB_API_KEY || '',
   baseURL: 'https://api.ainative.studio/v1',
 })
 
-// Model routing config — IDs match AINative API /api/v1/chat/completions
-const MODEL_CONFIG: Record<string, { provider: 'anthropic' | 'ainative'; modelId: string }> = {
-  // Direct Anthropic SDK (extended thinking + tool use)
-  'claude-sonnet-4': { provider: 'anthropic', modelId: 'claude-sonnet-4-20250514' },
-  'claude-opus-4': { provider: 'anthropic', modelId: 'claude-opus-4-20250514' },
-  // Code Specialists (via AINative API — best for UI generation)
+// Get the appropriate client based on environment
+function getLLMClient(): OpenAI {
+  return isLocal ? metaClient : ainativeClient
+}
+
+// Default Llama model
+const DEFAULT_MODEL = process.env.LLAMA_MODEL || 'Llama-4-Maverick-17B-128E-Instruct-FP8'
+
+// Model routing config — all models route through Meta (local) or AINative (cloud)
+const MODEL_CONFIG: Record<string, { provider: 'meta' | 'ainative'; modelId: string }> = {
+  // Llama Models (via Meta API locally, AINative in cloud)
+  'llama-4-maverick': { provider: isLocal ? 'meta' : 'ainative', modelId: 'Llama-4-Maverick-17B-128E-Instruct-FP8' },
+  'llama-4-scout': { provider: isLocal ? 'meta' : 'ainative', modelId: 'Llama-4-Scout-17B-16E-Instruct' },
+  // Code Specialists (via AINative API)
   'qwen-coder-32b': { provider: 'ainative', modelId: 'qwen-coder-32b' },
   'qwen-coder-7b': { provider: 'ainative', modelId: 'qwen-coder-7b' },
   'nouscoder-14b': { provider: 'ainative', modelId: 'nouscoder-14b' },
-  // Premium (via AINative API)
-  'claude-sonnet-4.5': { provider: 'ainative', modelId: 'claude-sonnet-4.5' },
-  'claude-3-5-haiku': { provider: 'ainative', modelId: 'claude-3-5-haiku' },
   // Text / General (via AINative API)
   'qwen-7b': { provider: 'ainative', modelId: 'qwen-7b' },
   'gemma-9b': { provider: 'ainative', modelId: 'gemma-9b' },
@@ -179,7 +189,8 @@ export async function POST(request: NextRequest) {
             // Execute chunk plan with progress streaming
             const chunks = await executeChunkPlan(
               chunkPlan,
-              anthropic,
+              getLLMClient(),
+              DEFAULT_MODEL,
               (phase, totalPhases, message, data) => {
                 // Stream chunk progress to client
                 safeEnqueue(encoder.encode(`data: ${JSON.stringify({
@@ -250,88 +261,111 @@ export async function POST(request: NextRequest) {
             }
           } else {
             // Route to correct provider based on selected model
-            const modelConfig = MODEL_CONFIG[requestedModel] || MODEL_CONFIG['claude-sonnet-4']
+            const modelConfig = MODEL_CONFIG[requestedModel] || { provider: isLocal ? 'meta' : 'ainative', modelId: DEFAULT_MODEL }
             const provider = modelConfig.provider
             const modelId = modelConfig.modelId
-            console.log(`🤖 Using model: ${modelId} (provider: ${provider})`)
+            const client = provider === 'meta' ? metaClient : ainativeClient
+            console.log(`🤖 Using model: ${modelId} (provider: ${provider}, env: ${isLocal ? 'local' : 'cloud'})`)
 
-          if (provider === 'ainative') {
-            // ============ GPT/NOUS MODELS VIA AINATIVE MANAGED CHAT (SSE streaming) ============
-            console.log(`🔄 Calling AINative Managed Chat API: ${modelId} (streaming)`)
-
-            // Condensed prompt for non-Claude models (smaller context windows)
-            const gptSystemPrompt = enhancedSystemPrompt.split('## FEW-SHOT EXAMPLES')[0] +
-              '\n\nGenerate a complete, production-ready React component. Use Lucide icons, Tailwind CSS, and shadcn/ui components. Follow all AX requirements.'
+            // ============ ALL MODELS VIA OPENAI-COMPATIBLE API (Meta or AINative) ============
+            // Ultra-compact prompt — maximizes output token budget for Llama
+            const llmSystemPrompt = `Generate a React component. Return ONLY code in \`\`\`jsx markers. No explanations.
+Use: Tailwind CSS, Lucide icons, MetricCard from @/components/aikit for stats, Button/Card/Badge from @/components/ui/*, recharts for charts.
+Use semantic HTML (header/main/section/footer), aria-label on buttons, data-agent-role on containers.
+Export default. Include realistic mock data. Modern design with rounded-xl, shadow-sm, bg-gray-50.`
 
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Generating with ' + modelId + '...' })}\n\n`))
 
-            // Use the managed-chat streaming endpoint
-            const aiNativeResponse = await fetch('https://api.ainative.studio/api/v1/managed-chat/completions', {
-              method: 'POST',
-              headers: {
-                'X-API-Key': process.env.ZERODB_API_KEY || '',
-                'Authorization': `Bearer ${process.env.ZERODB_API_KEY}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                model: modelId,
-                messages: [
-                  { role: 'system', content: gptSystemPrompt },
-                  ...conversationMessages,
-                ],
-                max_tokens: 8000,
-                temperature: 0.7,
-                stream: true,
-              }),
-            })
+            // Use non-streaming for AINative (streaming returns empty), streaming for Meta
+            if (provider === 'meta') {
+              try {
+                const stream = await client.chat.completions.create({
+                  model: modelId,
+                  messages: [
+                    { role: 'system', content: llmSystemPrompt },
+                    ...conversationMessages,
+                  ],
+                  max_tokens: 16000,
+                  temperature: 0.7,
+                  stream: true,
+                })
 
-            if (!aiNativeResponse.ok) {
-              // Fallback to non-streaming /v1/chat/completions
-              console.log(`⚠️ Managed chat failed (${aiNativeResponse.status}), falling back to /v1/chat/completions`)
-              const fallbackResponse = await ainativeClient.chat.completions.create({
-                model: modelId,
-                max_tokens: 8000,
-                temperature: 0.7,
-                messages: [
-                  { role: 'system', content: gptSystemPrompt },
-                  ...conversationMessages,
-                ],
-              })
-              fullContent = fallbackResponse.choices?.[0]?.message?.content || ''
-            } else {
-              // Parse SSE stream
-              const reader = aiNativeResponse.body?.getReader()
-              const decoder = new TextDecoder()
-              if (reader) {
-                let buffer = ''
-                while (true) {
-                  const { done, value } = await reader.read()
-                  if (done) break
-                  buffer += decoder.decode(value, { stream: true })
-                  const lines = buffer.split('\n')
-                  buffer = lines.pop() || ''
-                  for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                      const data = line.slice(6).trim()
-                      if (data === '[DONE]' || data === '') continue
-                      try {
-                        const parsed = JSON.parse(data)
-                        const content = parsed.choices?.[0]?.delta?.content || parsed.choices?.[0]?.message?.content || ''
-                        if (content) {
-                          fullContent += content
-                          updatePreviewPartial(responseId, fullContent)
-                          const now = Date.now()
-                          if (now - lastUpdateTime > 500) {
-                            safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'refresh' })}\n\n`))
-                            lastUpdateTime = now
-                          }
-                        }
-                      } catch (_) { /* skip unparseable chunks */ }
+                for await (const chunk of stream) {
+                  const content = chunk.choices?.[0]?.delta?.content || ''
+                  if (content) {
+                    fullContent += content
+                    updatePreviewPartial(responseId, fullContent)
+                    const now = Date.now()
+                    if (now - lastUpdateTime > 500) {
+                      safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'refresh' })}\n\n`))
+                      lastUpdateTime = now
                     }
-                    if (line.startsWith('event: done')) break
                   }
                 }
+              } catch (streamError: any) {
+                // Meta streaming failed — fall back to AINative non-streaming
+                console.log(`⚠️ Meta streaming failed (${streamError?.message}), falling back to AINative`)
+                const fallbackResponse = await ainativeClient.chat.completions.create({
+                  model: modelId,
+                  max_tokens: 16000,
+                  temperature: 0.7,
+                  messages: [
+                    { role: 'system', content: llmSystemPrompt },
+                    ...conversationMessages,
+                  ],
+                })
+                fullContent = fallbackResponse.choices?.[0]?.message?.content || ''
               }
+            } else {
+              // AINative: use continuation-based generation to bypass 512-token cap
+              // The /v1/ endpoint caps at 512 completion tokens per request
+              // We chain requests until finish_reason === 'stop'
+              console.log(`📡 Calling AINative API with continuation: ${modelId}`)
+
+              const MAX_CONTINUATIONS = 10
+              let continuationMessages: Array<{ role: 'system' | 'user' | 'assistant', content: string }> = [
+                { role: 'system', content: llmSystemPrompt },
+                ...conversationMessages,
+              ]
+
+              for (let attempt = 1; attempt <= MAX_CONTINUATIONS; attempt++) {
+                const response = await client.chat.completions.create({
+                  model: modelId,
+                  max_tokens: 4096,
+                  temperature: 0.7,
+                  messages: continuationMessages,
+                })
+
+                let chunk = response.choices?.[0]?.message?.content || ''
+                const finishReason = response.choices?.[0]?.finish_reason
+                const tokens = response.usage?.completion_tokens || 0
+
+                // Clean continuation artifacts — remove leading ```jsx or ``` markers from continuation chunks
+                if (attempt > 1) {
+                  chunk = chunk.replace(/^```jsx?\s*\n?/, '').replace(/^```\s*\n?/, '')
+                }
+
+                fullContent += chunk
+
+                console.log(`  📝 Attempt ${attempt}: +${chunk.length} chars (${tokens} tokens) finish=${finishReason} | total=${fullContent.length}`)
+
+                // Update preview with progress
+                updatePreviewPartial(responseId, fullContent)
+                safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'refresh' })}\n\n`))
+
+                // If model finished naturally, we're done
+                if (finishReason === 'stop') break
+
+                // If truncated, ask model to continue
+                continuationMessages = [
+                  { role: 'system', content: llmSystemPrompt },
+                  ...conversationMessages,
+                  { role: 'assistant', content: fullContent },
+                  { role: 'user', content: 'Continue generating from exactly where you left off. Do NOT repeat any code already written. Just output the remaining code to complete the component.' },
+                ]
+              }
+
+              console.log(`📊 AINative response: ${fullContent.length} chars (continuation)`)
             }
 
             updatePreviewPartial(responseId, fullContent)
@@ -346,138 +380,6 @@ export async function POST(request: NextRequest) {
 
             console.log(`📊 ${modelId} generation complete: ${fullContent.length} chars`)
 
-          } else {
-            // ============ CLAUDE MODELS VIA ANTHROPIC SDK ============
-          console.log(`🔑 Anthropic call: model=${modelId}, system=${enhancedSystemPrompt.length} chars, messages=${conversationMessages.length}, max_tokens=32000`)
-          let stream: any
-          try {
-          stream = await anthropic.messages.stream({
-            model: modelId,
-            max_tokens: 32000,
-            temperature: 1,  // Must be 1 when using extended thinking
-            thinking: {
-              type: 'enabled',
-              budget_tokens: 2000
-            },
-            system: [
-              {
-                type: 'text',
-                text: enhancedSystemPrompt,
-                cache_control: { type: 'ephemeral' }
-              }
-            ],
-            messages: conversationMessages,
-            tools: [COMPONENT_GENERATION_TOOL],
-          })
-          } catch (apiError: any) {
-            console.error('❌ ANTHROPIC API ERROR:', apiError?.status, apiError?.error || apiError?.message?.slice(0, 500))
-            throw apiError
-          }
-
-          let toolUseInput: any = null
-          let toolInputJson = ''
-
-          for await (const chunk of stream) {
-            // Skip thinking blocks - these are internal reasoning, not user-facing content
-            if (chunk.type === 'content_block_start' && chunk.content_block.type === 'thinking') {
-              continue
-            }
-            if (chunk.type === 'content_block_delta' && chunk.delta.type === 'thinking_delta') {
-              continue
-            }
-
-            // Handle tool use (structured outputs)
-            if (chunk.type === 'content_block_start' && chunk.content_block.type === 'tool_use') {
-              toolUseInput = { id: chunk.content_block.id, name: chunk.content_block.name, input: {} }
-              toolInputJson = ''
-            }
-
-            if (chunk.type === 'content_block_delta' && chunk.delta.type === 'input_json_delta') {
-              // Accumulate tool input JSON string (partial JSON arrives in chunks)
-              if (toolUseInput && chunk.delta.partial_json) {
-                toolInputJson += chunk.delta.partial_json
-              }
-            }
-
-            // Handle text output (fallback if tool use fails)
-            if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
-              const content = chunk.delta.text
-              fullContent += content
-
-              // Update preview store immediately (no throttling for true real-time)
-              updatePreviewPartial(responseId, fullContent)
-
-              // DON'T send code chunks to client during streaming (prevents code from showing in chat)
-              // Users will see build steps instead, and final conversational message at the end
-
-              // Send periodic refresh signal every 500ms
-              const now = Date.now()
-              if (now - lastUpdateTime > 500) {
-                safeEnqueue(encoder.encode(`data: ${JSON.stringify({
-                  type: 'refresh'
-                })}\n\n`))
-                lastUpdateTime = now
-              }
-            }
-          }
-
-          // Capture token usage after stream completes
-          const finalMessage = await stream.finalMessage()
-
-          // Check if output was truncated due to max_tokens
-          if (finalMessage.stop_reason === 'max_tokens') {
-            console.warn('⚠️ Output was TRUNCATED (hit max_tokens). Code may be incomplete.')
-          }
-
-          if (finalMessage.usage) {
-            const usage = finalMessage.usage
-            const totalTokens = usage.input_tokens + usage.output_tokens
-            const estimatedCost = (usage.input_tokens * 0.003 + usage.output_tokens * 0.015) / 1000
-
-            tokenUsage = {
-              input_tokens: usage.input_tokens,
-              output_tokens: usage.output_tokens,
-              cache_creation_input_tokens: usage.cache_creation_input_tokens,
-              cache_read_input_tokens: usage.cache_read_input_tokens,
-              total_tokens: totalTokens,
-              estimated_cost: estimatedCost
-            }
-
-            console.log(`\n📊 TOKEN USAGE for ${responseId}:`)
-            console.log(`   Input tokens: ${usage.input_tokens}`)
-            console.log(`   Output tokens: ${usage.output_tokens}`)
-            if (usage.cache_creation_input_tokens) {
-              console.log(`   Cache creation tokens: ${usage.cache_creation_input_tokens}`)
-            }
-            if (usage.cache_read_input_tokens) {
-              console.log(`   Cache read tokens: ${usage.cache_read_input_tokens} (90% cost savings!)`)
-            }
-            console.log(`   Total tokens: ${totalTokens}`)
-            console.log(`   Estimated cost: $${estimatedCost.toFixed(4)}`)
-          }
-
-          // Extract code from tool use if available
-          if (toolUseInput && toolInputJson) {
-            try {
-              // Parse accumulated JSON
-              const componentResult = JSON.parse(toolInputJson)
-              const structuredValidation = validateComponentGeneration(componentResult)
-
-              if (!structuredValidation.valid) {
-                console.warn('⚠️ Structured output validation failed:', structuredValidation.errors)
-              }
-
-              fullContent = extractComponentCode(componentResult)
-              updatePreviewPartial(responseId, fullContent)
-
-              // DON'T send code to client (prevents code from showing in chat)
-              // The conversational message will be sent after validation
-            } catch (parseError) {
-              console.error('Failed to parse tool input JSON:', parseError)
-              console.log('Accumulated JSON:', toolInputJson)
-            }
-          }
-          } // End of Anthropic (else of provider routing)
           } // End of provider routing + subagents else
           } // End of chunking else (single-pass)
 
@@ -511,74 +413,25 @@ Please regenerate the component with these requirements:
 3. Ensure all JSX is valid and properly closed
 4. Make sure the component function is properly defined and exported
 5. Use only valid JavaScript/JSX syntax
+6. Return ONLY the code wrapped in \`\`\`jsx and \`\`\` markers.
 
 Generate a corrected version of: ${message}`
 
-              // Make retry API call
-              const retryStream = await anthropic.messages.stream({
-                model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514',
-                max_tokens: 32000,
-                temperature: 1,
-                thinking: {
-                  type: 'enabled',
-                  budget_tokens: 2000
-                },
-                system: [
-                  {
-                    type: 'text',
-                    text: enhancedSystemPrompt + '\n\nIMPORTANT: The previous generation failed validation. Pay extra attention to syntax correctness.',
-                    cache_control: { type: 'ephemeral' }
-                  }
-                ],
+              // Always use AINative for retry (most reliable)
+              const retryResponse = await ainativeClient.chat.completions.create({
+                model: DEFAULT_MODEL,
+                max_tokens: 16000,
+                temperature: 0.7,
                 messages: [
+                  { role: 'system', content: 'Fix the syntax errors in the code below. Return ONLY valid, complete React code wrapped in ```jsx markers. Ensure all JSX tags are properly closed, all strings are terminated, and all brackets match.' },
                   ...previousMessages,
                   { role: 'user' as const, content: enhancedPrompt },
                   { role: 'assistant' as const, content: fullContent },
                   { role: 'user' as const, content: retryPrompt }
                 ],
-                tools: [COMPONENT_GENERATION_TOOL],
               })
 
-              let retryContent = ''
-              let retryToolInput: any = null
-              let retryToolJson = ''
-
-              for await (const chunk of retryStream) {
-                // Skip thinking blocks
-                if (chunk.type === 'content_block_start' && chunk.content_block.type === 'thinking') {
-                  continue
-                }
-                if (chunk.type === 'content_block_delta' && chunk.delta.type === 'thinking_delta') {
-                  continue
-                }
-
-                // Handle tool use
-                if (chunk.type === 'content_block_start' && chunk.content_block.type === 'tool_use') {
-                  retryToolInput = { id: chunk.content_block.id, name: chunk.content_block.name, input: {} }
-                  retryToolJson = ''
-                }
-
-                if (chunk.type === 'content_block_delta' && chunk.delta.type === 'input_json_delta') {
-                  if (retryToolInput && chunk.delta.partial_json) {
-                    retryToolJson += chunk.delta.partial_json
-                  }
-                }
-
-                // Handle text output
-                if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
-                  retryContent += chunk.delta.text
-                }
-              }
-
-              // Extract code from retry
-              if (retryToolInput && retryToolJson) {
-                try {
-                  const componentResult = JSON.parse(retryToolJson)
-                  retryContent = extractComponentCode(componentResult)
-                } catch (parseError) {
-                  console.error('Failed to parse retry tool input:', parseError)
-                }
-              }
+              const retryContent = retryResponse.choices?.[0]?.message?.content || ''
 
               // Validate retry result
               const retryValidation = validateGeneratedCode(retryContent)
@@ -593,11 +446,9 @@ Generate a corrected version of: ${message}`
                 updatePreviewPartial(responseId, finalContent)
               } else {
                 console.error('❌ Auto-retry failed validation:', retryValidation.error)
-                // Keep original content and let error handling below proceed
               }
             } catch (retryError) {
               console.error('Auto-retry API call failed:', retryError)
-              // Keep original content and let error handling below proceed
             }
           }
 

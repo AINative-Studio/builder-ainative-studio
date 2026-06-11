@@ -18,6 +18,73 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
   let fixedCode = code
   const fixes: string[] = []
 
+  // Fix TRUNCATION: Close unterminated JSX comments from LLM truncation
+  // Llama continuation sometimes produces {/* without closing */}
+  const openComments = (fixedCode.match(/\/\*/g) || []).length
+  const closeComments = (fixedCode.match(/\*\//g) || []).length
+  if (openComments > closeComments) {
+    fixedCode += ' */}'
+    fixes.push('Closed unterminated JSX comment from truncation')
+  }
+
+  // Fix TRUNCATION: If code is truncated mid-expression, find the last complete statement and close from there
+  // This handles cases where the LLM output was cut at 512 tokens
+  const openBraces = (fixedCode.match(/\{/g) || []).length
+  const closeBraces = (fixedCode.match(/\}/g) || []).length
+  const openParens = (fixedCode.match(/\(/g) || []).length
+  const closeParens = (fixedCode.match(/\)/g) || []).length
+  const unclosedBraces = openBraces - closeBraces
+  const unclosedParens = openParens - closeParens
+
+  if (unclosedBraces > 0 || unclosedParens > 0) {
+    // Find the last line that looks like a complete statement
+    const lines = fixedCode.split('\n')
+    let lastGoodLine = lines.length - 1
+
+    // Walk backwards to find last complete-ish line
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim()
+      if (line.endsWith(',') || line.endsWith('{') || line.endsWith('(') ||
+          line.endsWith(':') || line === '' || line.startsWith('//')) {
+        continue
+      }
+      if (line.endsWith('}') || line.endsWith(';') || line.endsWith(')') ||
+          line.endsWith('>') || line.endsWith('/>') || line.endsWith('],')) {
+        lastGoodLine = i
+        break
+      }
+    }
+
+    // Truncate to last good line and close brackets
+    fixedCode = lines.slice(0, lastGoodLine + 1).join('\n')
+
+    // Recount after truncation
+    const ob = (fixedCode.match(/\{/g) || []).length
+    const cb = (fixedCode.match(/\}/g) || []).length
+    const op = (fixedCode.match(/\(/g) || []).length
+    const cp = (fixedCode.match(/\)/g) || []).length
+
+    let suffix = ''
+    // Close JSX return: need );\n} pattern
+    for (let i = 0; i < op - cp; i++) suffix += ')'
+    if (suffix) suffix += ';\n'
+    for (let i = 0; i < ob - cb; i++) suffix += '}\n'
+
+    if (suffix) {
+      fixedCode += '\n' + suffix
+      fixes.push(`Closed ${(ob-cb) + (op-cp)} unclosed brackets from truncation (truncated at line ${lastGoodLine + 1} of ${lines.length})`)
+    }
+  }
+
+  // Fix CONTINUATION DUPLICATION: Remove duplicate jsx markers from continuation stitching
+  // e.g. ```jsx appearing mid-code from continuation
+  fixedCode = fixedCode.replace(/```jsx?\s*\n/g, (match, offset) => {
+    if (offset === 0) return match // Keep first one
+    fixes.push('Removed duplicate jsx marker from continuation')
+    return ''
+  })
+  fixedCode = fixedCode.replace(/\n```\s*\n```jsx?\s*\n/g, '\n')
+
   // Fix 0: CRITICAL - Add missing parentheses to function declarations
   // Claude sometimes generates: function LandingPage { or function LandingPage{ instead of function LandingPage() {
   // Use a simple, direct global replace that handles all whitespace variations

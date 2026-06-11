@@ -10,7 +10,7 @@ export default defineConfig({
   timeout: 120_000, // 2 min per test (AI generation can be slow)
 
   use: {
-    baseURL: 'https://builder.ainative.studio',
+    baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3000',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'on-first-retry',

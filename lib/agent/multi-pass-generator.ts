@@ -2,10 +2,10 @@
  * Multi-Pass Generator
  *
  * Executes a chunk plan by generating each phase sequentially,
- * calling Claude API for each phase and managing the workflow.
+ * calling LLM API (Meta Llama or AINative) for each phase.
  */
 
-import Anthropic from '@anthropic-ai/sdk'
+import OpenAI from 'openai'
 import { ChunkPlan, ChunkPhase } from './chunk-planner'
 import { extractComponentCode } from './component-generation-tool'
 import { validateGeneratedCode } from '../code-validator'
@@ -37,7 +37,8 @@ export interface ProgressCallback {
  */
 export async function executeChunkPlan(
   plan: ChunkPlan,
-  anthropic: Anthropic,
+  client: OpenAI,
+  modelId: string,
   onProgress: ProgressCallback
 ): Promise<GeneratedChunk[]> {
   const chunks: GeneratedChunk[] = []
@@ -55,7 +56,7 @@ export async function executeChunkPlan(
     })
 
     try {
-      const chunk = await generateChunk(phase, anthropic, phaseNum, totalPhases, onProgress)
+      const chunk = await generateChunk(phase, client, modelId, phaseNum, totalPhases, onProgress)
       chunks.push(chunk)
 
       if (!chunk.success) {
@@ -65,14 +66,13 @@ export async function executeChunkPlan(
 
         // Try one retry on failure
         onProgress(phaseNum, totalPhases, `Retrying phase ${phaseNum}...`)
-        const retryChunk = await generateChunk(phase, anthropic, phaseNum, totalPhases, onProgress)
+        const retryChunk = await generateChunk(phase, client, modelId, phaseNum, totalPhases, onProgress)
 
         if (retryChunk.success) {
           chunks[chunks.length - 1] = retryChunk
           onProgress(phaseNum, totalPhases, `Phase ${phaseNum} succeeded on retry`)
         } else {
           onProgress(phaseNum, totalPhases, `Phase ${phaseNum} failed after retry`)
-          // Continue with other phases even if one fails
         }
       } else {
         onProgress(phaseNum, totalPhases, `Phase ${phaseNum} completed successfully`, {
@@ -85,7 +85,6 @@ export async function executeChunkPlan(
       const errorMsg = error instanceof Error ? error.message : String(error)
       onProgress(phaseNum, totalPhases, `Phase ${phaseNum} error: ${errorMsg}`)
 
-      // Add failed chunk to results
       chunks.push({
         chunkId: phase.chunkId,
         phase: phase.phaseNumber,
@@ -110,11 +109,12 @@ export async function executeChunkPlan(
 }
 
 /**
- * Generate a single chunk (one phase)
+ * Generate a single chunk (one phase) using OpenAI-compatible API
  */
 async function generateChunk(
   phase: ChunkPhase,
-  anthropic: Anthropic,
+  client: OpenAI,
+  modelId: string,
   phaseNum: number,
   totalPhases: number,
   onProgress: ProgressCallback
@@ -122,13 +122,9 @@ async function generateChunk(
   const startTime = Date.now()
 
   try {
-    // Enhanced system prompt for chunked generation
-    // Start with comprehensive professional prompt (includes all design standards, syntax rules, etc.)
     const phaseGuidance = phase.phaseType === 'core' ? `
 
 ## MULTI-PHASE GENERATION - PHASE 1 (CORE STRUCTURE)
-
-**CRITICAL: This is Phase 1 of a multi-phase generation process**
 
 YOUR ROLE IN THIS PHASE:
 - Focus on architecture, routing, and foundational setup
@@ -136,179 +132,74 @@ YOUR ROLE IN THIS PHASE:
 - Define ALL TypeScript types and interfaces
 - Set up mock data generators
 - Establish global state management (if needed)
-- Create shared component library (Button, Card, etc. - already available globally)
 - DO NOT implement full page content yet - placeholders only!
-
-DELIVERABLES:
-- Root layout with navigation structure
-- Routing configuration for all pages
-- Type definitions (TypeScript interfaces)
-- Mock data generators with realistic data
-- Placeholder page components (just structure, no content)
 
 DEPENDENCIES: ${phase.dependencies.length > 0 ? phase.dependencies.join(', ') : 'None (first phase)'}
 ` : phase.phaseType === 'feature' ? `
 
 ## MULTI-PHASE GENERATION - PHASE ${phase.phaseNumber} (FEATURE IMPLEMENTATION)
 
-**CRITICAL: This is a feature implementation phase in a multi-phase process**
-
-CONTEXT FROM PREVIOUS PHASES:
-- Core structure exists from Phase 1 (types, routing, mock data)
-- Other features may have been generated in parallel
-- You are implementing ONLY the pages assigned to this chunk
-
 YOUR ROLE IN THIS PHASE:
 - Implement the specific pages listed in the prompt
 - Use existing types and mock data from Phase 1
 - Make pages fully functional with real interactivity
 - Focus ONLY on pages assigned to this chunk
-- Maintain consistency with design system and standards
-
-AVAILABLE FROM PHASE 1:
-- TypeScript type definitions
-- Mock data generators
-- Routing structure
-- Global UI components
 
 DEPENDENCIES: ${phase.dependencies.join(', ')}
 ` : `
 
 ## MULTI-PHASE GENERATION - PHASE ${phase.phaseNumber} (INTEGRATION)
 
-**CRITICAL: This is the final integration phase**
-
-CONTEXT:
-- All features have been generated in previous phases
-- Core structure and individual pages exist
-- Your job is to tie everything together
-
 YOUR ROLE IN THIS PHASE:
 - Connect modules together seamlessly
 - Add cross-module navigation and links
 - Implement shared features and state
 - Add error handling and loading states
-- Apply final polish (responsive, accessibility, etc.)
-- Ensure consistent design across all pages
+- Apply final polish (responsive, accessibility)
 
 DEPENDENCIES: ${phase.dependencies.join(', ')}
 `
 
-    // Add coding standards enforcement (security & accessibility)
     const codingStandards = `
 
 ## CODING STANDARDS (MANDATORY)
-
-### Security Requirements
 - NEVER hardcode API keys, secrets, or credentials
-- NEVER log sensitive data (passwords, tokens, PII)
-- ALWAYS validate and sanitize user inputs
-- Use environment variables for configuration
-- Implement proper error boundaries
-
-### Accessibility Requirements (WCAG AA)
 - Use semantic HTML elements (header, nav, main, article, etc.)
 - Include ARIA labels on interactive elements
-- Ensure keyboard navigation works (Tab, Enter, Escape)
-- Maintain color contrast ratios (4.5:1 for text)
-- Add alt text to all images
-- Support screen readers
-
-### Code Quality
+- Ensure keyboard navigation works
 - Use descriptive variable names (camelCase)
-- Add TypeScript types for all functions
 - Handle errors gracefully with try/catch
-- Keep functions focused and under 50 lines
-- NO console.log in production code (use proper error handling)
+- Return ONLY the code wrapped in \`\`\`jsx and \`\`\` markers.
 `
 
-    const systemPrompt = PROFESSIONAL_SYSTEM_PROMPT + phaseGuidance + codingStandards
+    const systemPrompt = PROFESSIONAL_SYSTEM_PROMPT.split('## FEW-SHOT EXAMPLES')[0] + phaseGuidance + codingStandards
 
-    onProgress(phaseNum, totalPhases, `Calling Claude API for phase ${phaseNum}...`)
+    onProgress(phaseNum, totalPhases, `Calling LLM API for phase ${phaseNum}...`)
 
-    // Call Claude API with streaming
-    const stream = await anthropic.messages.stream({
-      model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514',
-      max_tokens: 32000, // High limit since we're targeting 4-8k per chunk
-      temperature: 1,
-      // Note: thinking cannot be enabled when tool_choice forces tool use
-      system: [
-        {
-          type: 'text',
-          text: systemPrompt,
-          cache_control: { type: 'ephemeral' }
-        }
-      ],
+    const response = await client.chat.completions.create({
+      model: modelId,
+      max_tokens: 16000,
+      temperature: 0.7,
       messages: [
-        {
-          role: 'user',
-          content: phase.prompt
-        }
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: phase.prompt }
       ],
-      tools: [{
-        name: 'generate_react_component',
-        description: 'Generate a complete React component with all necessary code',
-        input_schema: {
-          type: 'object',
-          properties: {
-            code: {
-              type: 'string',
-              description: 'Complete React component code'
-            },
-            description: {
-              type: 'string',
-              description: 'Brief description of what was generated'
-            }
-          },
-          required: ['code', 'description']
-        }
-      }],
-      tool_choice: {
-        type: 'tool',
-        name: 'generate_react_component'
-      }
     })
 
-    let rawResponse = ''
-    let toolUseInput: any = null
-    let tokenUsage = { input: 0, output: 0, total: 0 }
-
-    // Process stream
-    for await (const event of stream) {
-      if (event.type === 'content_block_delta') {
-        if (event.delta.type === 'input_json_delta') {
-          rawResponse += event.delta.partial_json
-        }
-      } else if (event.type === 'message_stop') {
-        const message = await stream.finalMessage()
-        tokenUsage.input = message.usage.input_tokens
-        tokenUsage.output = message.usage.output_tokens
-        tokenUsage.total = tokenUsage.input + tokenUsage.output
-
-        // Extract tool use
-        const toolUse = message.content.find(c => c.type === 'tool_use')
-        if (toolUse && toolUse.type === 'tool_use') {
-          toolUseInput = toolUse.input
-        }
-      }
-    }
-
-    if (!toolUseInput) {
-      throw new Error('No tool use found in response')
+    const rawResponse = response.choices?.[0]?.message?.content || ''
+    const tokenUsage = {
+      input: response.usage?.prompt_tokens || 0,
+      output: response.usage?.completion_tokens || 0,
+      total: response.usage?.total_tokens || 0
     }
 
     onProgress(phaseNum, totalPhases, `Extracting and validating code for phase ${phaseNum}...`, {
       outputTokens: tokenUsage.output
     })
 
-    // Extract code
-    let code = extractComponentCode(toolUseInput)
-
-    // Validate code (auto-fixes are applied internally by validateGeneratedCode)
-    const validation = validateGeneratedCode(code)
-
-    // Use the validated/fixed code
-    code = validation.code
+    // Validate code (auto-fixes are applied internally)
+    const validation = validateGeneratedCode(rawResponse)
+    const code = validation.code
     const validationPassed = validation.valid
 
     if (!validationPassed) {

@@ -1,6 +1,7 @@
 /**
  * Model Configuration Validator
  * Validates AI model configuration on startup (Issue #5)
+ * Updated: Uses Meta Llama (local) / AINative (cloud) — no Anthropic
  */
 
 export interface ModelValidationResult {
@@ -9,53 +10,50 @@ export interface ModelValidationResult {
   errors: string[]
   config: {
     primaryModel: string
-    hasAnthropicKey: boolean
+    environment: 'local' | 'cloud'
+    hasMetaKey: boolean
     hasAINativeToken: boolean
-    extendedThinkingEnabled: boolean
   }
 }
 
-const RECOMMENDED_MODEL = 'claude-sonnet-4-20250514'
+const DEFAULT_MODEL = 'Llama-4-Maverick-17B-128E-Instruct-FP8'
 
 export function validateModelConfiguration(): ModelValidationResult {
   const warnings: string[] = []
   const errors: string[] = []
 
-  const anthropicKey = process.env.ANTHROPIC_API_KEY
-  const anthropicModel = process.env.ANTHROPIC_MODEL || RECOMMENDED_MODEL
+  const isLocal = process.env.NODE_ENV === 'development' || process.env.USE_META_API === 'true'
+  const metaKey = process.env.META_API_KEY
   const ainativeToken = process.env.AINATIVE_API_TOKEN || process.env.ZERODB_API_KEY
+  const primaryModel = process.env.LLAMA_MODEL || DEFAULT_MODEL
 
-  // Check required API key
-  if (!anthropicKey) {
-    errors.push('ANTHROPIC_API_KEY is not set. Primary generation will fail.')
-  } else if (!anthropicKey.startsWith('sk-ant-')) {
-    warnings.push('ANTHROPIC_API_KEY does not start with sk-ant-. Verify it is a valid Anthropic key.')
+  if (isLocal) {
+    // Local development — need Meta API key
+    if (!metaKey) {
+      errors.push('META_API_KEY is not set. Local Llama generation will fail.')
+    }
+  } else {
+    // Cloud/production — need AINative token
+    if (!ainativeToken) {
+      errors.push('ZERODB_API_KEY/AINATIVE_API_TOKEN is not set. Cloud generation will fail.')
+    }
   }
 
-  // Check model configuration
-  if (anthropicModel !== RECOMMENDED_MODEL) {
-    warnings.push(
-      `ANTHROPIC_MODEL is set to "${anthropicModel}" instead of recommended "${RECOMMENDED_MODEL}".`
-    )
+  if (ainativeToken && metaKey) {
+    // Both configured — good for flexibility
+  } else if (!ainativeToken && !metaKey) {
+    errors.push('No API keys configured. Set META_API_KEY (local) or ZERODB_API_KEY (cloud).')
   }
-
-  // Check AINative token for multi-model routing
-  if (!ainativeToken) {
-    warnings.push('AINATIVE_API_TOKEN/ZERODB_API_KEY not set. Non-Anthropic models will be unavailable.')
-  }
-
-  // Extended thinking check
-  const extendedThinkingEnabled = true // Always enabled in chat-ws route
 
   return {
     valid: errors.length === 0,
     warnings,
     errors,
     config: {
-      primaryModel: anthropicModel,
-      hasAnthropicKey: !!anthropicKey,
+      primaryModel,
+      environment: isLocal ? 'local' : 'cloud',
+      hasMetaKey: !!metaKey,
       hasAINativeToken: !!ainativeToken,
-      extendedThinkingEnabled,
     },
   }
 }
@@ -65,9 +63,9 @@ export function logModelConfiguration(): void {
 
   console.log('\n=== Model Configuration ===')
   console.log(`  Primary model: ${result.config.primaryModel}`)
-  console.log(`  Anthropic API key: ${result.config.hasAnthropicKey ? 'configured' : 'MISSING'}`)
+  console.log(`  Environment: ${result.config.environment}`)
+  console.log(`  Meta API key: ${result.config.hasMetaKey ? 'configured' : 'not set'}`)
   console.log(`  AINative token: ${result.config.hasAINativeToken ? 'configured' : 'not set'}`)
-  console.log(`  Extended thinking: ${result.config.extendedThinkingEnabled ? 'enabled' : 'disabled'}`)
 
   if (result.errors.length > 0) {
     console.error('\n  ERRORS:')
