@@ -333,19 +333,34 @@ Export default. Include realistic mock data. Modern design with rounded-xl, shad
               const FALLBACK_MODELS = ['Llama-3.3-70B-Instruct', 'Llama-4-Maverick-17B-128E-Instruct-FP8']
               let activeModel = modelId
 
+              // Helper: call LLM with timeout + same-model retry
+              async function callWithRetry(model: string, messages: any[], retries = 2, timeoutMs = 45_000) {
+                for (let r = 0; r < retries; r++) {
+                  try {
+                    const ctrl = new AbortController()
+                    const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+                    const resp = await client.chat.completions.create(
+                      { model, max_tokens: 4096, temperature: 0.7, messages },
+                      { signal: ctrl.signal }
+                    )
+                    clearTimeout(timer)
+                    return resp
+                  } catch (err: any) {
+                    const isTimeout = err?.name === 'AbortError' || err?.message?.includes('aborted')
+                    if (isTimeout && r < retries - 1) {
+                      console.log(`⏱️ Timeout on ${model} (retry ${r + 1}/${retries}), trying again...`)
+                      continue
+                    }
+                    throw err
+                  }
+                }
+                throw new Error('All retries exhausted')
+              }
+
               for (let attempt = 1; attempt <= MAX_CONTINUATIONS; attempt++) {
                 let response
                 try {
-                  // 60s timeout per request to prevent hanging on unresponsive providers
-                  const controller = new AbortController()
-                  const timeout = setTimeout(() => controller.abort(), 60_000)
-                  response = await client.chat.completions.create({
-                    model: activeModel,
-                    max_tokens: 4096,
-                    temperature: 0.7,
-                    messages: continuationMessages,
-                  }, { signal: controller.signal })
-                  clearTimeout(timeout)
+                  response = await callWithRetry(activeModel, continuationMessages)
                 } catch (apiError: any) {
                   const status = apiError?.status || 0
                   console.log(`⚠️ API error on attempt ${attempt} (${activeModel}): ${status} ${apiError?.message?.substring(0, 100)}`)
@@ -356,15 +371,7 @@ Export default. Include realistic mock data. Modern design with rounded-xl, shad
                     if (fallback === activeModel) continue
                     try {
                       console.log(`🔄 Trying fallback: ${fallback}`)
-                      const fbController = new AbortController()
-                      const fbTimeout = setTimeout(() => fbController.abort(), 45_000)
-                      response = await client.chat.completions.create({
-                        model: fallback,
-                        max_tokens: 4096,
-                        temperature: 0.7,
-                        messages: continuationMessages,
-                      }, { signal: fbController.signal })
-                      clearTimeout(fbTimeout)
+                      response = await callWithRetry(fallback, continuationMessages, 2, 45_000)
                       activeModel = fallback // Stick with this model for remaining continuations
                       recovered = true
                       console.log(`✅ Fallback to ${fallback} succeeded`)
