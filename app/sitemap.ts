@@ -1,8 +1,17 @@
 import { MetadataRoute } from 'next'
+import { SEED_SHOWCASE } from '@/lib/showcase-data'
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const baseUrl = 'https://builder.ainative.studio'
   const now = new Date().toISOString()
+
+  // Showcase entry pages — high SEO value
+  const showcaseEntries: MetadataRoute.Sitemap = SEED_SHOWCASE.map(entry => ({
+    url: `${baseUrl}/showcase/${entry.slug}`,
+    lastModified: entry.createdAt || now,
+    changeFrequency: 'weekly' as const,
+    priority: entry.featured ? 0.9 : 0.8,
+  }))
 
   return [
     {
@@ -11,6 +20,13 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: 'daily',
       priority: 1,
     },
+    {
+      url: `${baseUrl}/showcase`,
+      lastModified: now,
+      changeFrequency: 'daily',
+      priority: 0.95,
+    },
+    ...showcaseEntries,
     {
       url: `${baseUrl}/templates`,
       lastModified: now,

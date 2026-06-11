@@ -608,6 +608,23 @@ export function HomeClient() {
                     onStreamingStarted={() => setIsLoading(false)}
                     buildSteps={buildSteps}
                     sandpackFiles={sandpackFiles}
+                    onFeedback={(type) => {
+                      if (type === 'down') {
+                        setShowFeedbackDialog(true)
+                      } else {
+                        // Quick thumbs-up — submit positive feedback silently
+                        fetch('/api/rlhf/submit-feedback', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            chatId: currentChat?.id || currentChatId,
+                            rating: 5,
+                            feedback: 'Thumbs up',
+                            wasEdited: false,
+                          }),
+                        }).catch(() => {})
+                      }
+                    }}
                   />
                 </div>
 

@@ -79,6 +79,11 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next()
     }
 
+    // Allow showcase pages for anonymous users (public gallery + SEO)
+    if (pathname.startsWith('/showcase')) {
+      return NextResponse.next()
+    }
+
     // Allow preview routes for anonymous users
     if (pathname.startsWith('/preview/')) {
       return NextResponse.next()

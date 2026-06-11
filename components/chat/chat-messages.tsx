@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react'
+import { ThumbsUp, ThumbsDown } from 'lucide-react'
 import { Message, MessageContent } from '@/components/ai-elements/message'
 import {
   Conversation,
@@ -35,6 +36,7 @@ interface ChatMessagesProps {
   onStreamingStarted?: () => void
   buildSteps?: string[]
   sandpackFiles?: Record<string, string> | null
+  onFeedback?: (type: 'up' | 'down') => void
 }
 
 export function ChatMessages({
@@ -46,6 +48,7 @@ export function ChatMessages({
   onStreamingStarted,
   buildSteps = [],
   sandpackFiles,
+  onFeedback,
 }: ChatMessagesProps) {
   const streamingStartedRef = useRef(false)
   const [buildTasks, setBuildTasks] = useState<BuildTask[]>([])
@@ -226,16 +229,43 @@ export function ChatMessages({
                     </div>
                 )}
 
-                {/* Show build progress and file tree for assistant messages */}
+                {/* Show build progress, file tree, and RLHF feedback for assistant messages */}
                 {msg.type === 'assistant' &&
                  index === chatHistory.length - 1 &&
-                 (buildTasks.length > 0 || fileGroups.length > 0) && (
+                 !msg.isStreaming &&
+                 (buildTasks.length > 0 || fileGroups.length > 0 || displayContent) && (
                 <div className="mt-4 space-y-4 w-full max-w-2xl">
-                  <div className="text-sm text-gray-600 dark:text-gray-400">
-                    Component generated successfully
+                  {(buildTasks.length > 0 || fileGroups.length > 0) && (
+                    <>
+                      <div className="text-sm text-gray-600 dark:text-gray-400">
+                        Component generated successfully
+                      </div>
+                      <BuildProgress tasks={buildTasks} />
+                      <FileTree groups={fileGroups} />
+                    </>
+                  )}
+                  {/* RLHF Feedback — Thumbs Up / Down */}
+                  <div className="flex items-center gap-2 pt-2">
+                    <span className="text-xs text-gray-400 mr-1">Rate this generation:</span>
+                    <button
+                      onClick={() => onFeedback?.('up')}
+                      className="p-1.5 rounded-md hover:bg-green-50 dark:hover:bg-green-900/20 text-gray-400 hover:text-green-600 transition-colors"
+                      aria-label="Thumbs up — good generation"
+                      data-agent-action="click"
+                      data-agent-context="positive feedback"
+                    >
+                      <ThumbsUp className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => onFeedback?.('down')}
+                      className="p-1.5 rounded-md hover:bg-red-50 dark:hover:bg-red-900/20 text-gray-400 hover:text-red-600 transition-colors"
+                      aria-label="Thumbs down — bad generation"
+                      data-agent-action="click"
+                      data-agent-context="negative feedback"
+                    >
+                      <ThumbsDown className="w-4 h-4" />
+                    </button>
                   </div>
-                  <BuildProgress tasks={buildTasks} />
-                  <FileTree groups={fileGroups} />
                 </div>
                 )}
               </div>
