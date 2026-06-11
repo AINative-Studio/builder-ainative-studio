@@ -35,11 +35,14 @@ const metaClient = new OpenAI({
   baseURL: process.env.META_BASE_URL || 'https://api.llama.com/compat/v1',
 })
 
-// AINative API client (for cloud / production)
+// AINative API client — use Railway internal networking if available (same project)
+// AINATIVE_INTERNAL_URL=http://ainative-backend.railway.internal:PORT/v1
+const ainativeBaseURL = process.env.AINATIVE_INTERNAL_URL || 'https://api.ainative.studio/v1'
 const ainativeClient = new OpenAI({
   apiKey: process.env.ZERODB_API_KEY || '',
-  baseURL: 'https://api.ainative.studio/v1',
+  baseURL: ainativeBaseURL,
 })
+console.log(`🔗 AINative API: ${ainativeBaseURL.includes('internal') ? 'internal (Railway)' : 'public'}`)
 
 // Get the appropriate client based on environment
 function getLLMClient(): OpenAI {
