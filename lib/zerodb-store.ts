@@ -64,7 +64,7 @@ export async function saveGeneration(data: {
     const result = await zerodbRequest(
       'POST',
       `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/rows`,
-      { rows: [row] }
+      { row_data: row }
     )
 
     if (result) {
@@ -83,17 +83,15 @@ export async function saveGeneration(data: {
  */
 export async function loadGeneration(chatId: string): Promise<{ prompt: string; generatedCode: string } | null> {
   try {
+    // GET with filter query param
     const result = await zerodbRequest(
-      'POST',
-      `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/rows/query`,
-      {
-        filters: { chat_id: chatId },
-        limit: 1,
-      }
+      'GET',
+      `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/rows?limit=1&filter_chat_id=${encodeURIComponent(chatId)}`
     )
 
-    if (result?.rows?.length > 0) {
-      const row = result.rows[0]
+    const rows = result?.data || []
+    if (rows.length > 0) {
+      const row = rows[0].row_data || rows[0]
       console.log(`[ZeroDB] Loaded generation ${chatId}`)
       return {
         prompt: row.prompt,
@@ -113,15 +111,10 @@ export async function loadGeneration(chatId: string): Promise<{ prompt: string; 
 export async function listShowcaseEntries(limit = 50): Promise<any[]> {
   try {
     const result = await zerodbRequest(
-      'POST',
-      `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/rows/query`,
-      {
-        filters: { is_showcase: true },
-        limit,
-        sort: { created_at: 'desc' },
-      }
+      'GET',
+      `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/rows?limit=${limit}&filter_is_showcase=true`
     )
-    return result?.rows || []
+    return (result?.data || []).map((r: any) => r.row_data || r)
   } catch (e) {
     console.warn('[ZeroDB] List showcase failed:', e)
     return []
@@ -134,14 +127,10 @@ export async function listShowcaseEntries(limit = 50): Promise<any[]> {
 export async function listGenerations(limit = 50): Promise<any[]> {
   try {
     const result = await zerodbRequest(
-      'POST',
-      `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/rows/query`,
-      {
-        limit,
-        sort: { created_at: 'desc' },
-      }
+      'GET',
+      `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/rows?limit=${limit}`
     )
-    return result?.rows || []
+    return (result?.data || []).map((r: any) => r.row_data || r)
   } catch (e) {
     console.warn('[ZeroDB] List generations failed:', e)
     return []
