@@ -2,14 +2,19 @@ import { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { SEED_SHOWCASE, SHOWCASE_CATEGORIES } from '@/lib/showcase-data'
+import { getDynamicShowcase } from '@/lib/showcase-store'
 
 interface Props {
   params: Promise<{ slug: string }>
 }
 
+function findEntry(slug: string) {
+  return SEED_SHOWCASE.find(e => e.slug === slug) || getDynamicShowcase().find(e => e.slug === slug)
+}
+
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params
-  const entry = SEED_SHOWCASE.find(e => e.slug === slug)
+  const entry = findEntry(slug)
   if (!entry) return { title: 'Not Found' }
 
   return {
@@ -34,11 +39,12 @@ export function generateStaticParams() {
 
 export default async function ShowcaseDetailPage({ params }: Props) {
   const { slug } = await params
-  const entry = SEED_SHOWCASE.find(e => e.slug === slug)
+  const entry = findEntry(slug)
   if (!entry) notFound()
 
   const category = SHOWCASE_CATEGORIES.find(c => c.id === entry.category)
-  const related = SEED_SHOWCASE.filter(e => e.category === entry.category && e.slug !== slug).slice(0, 3)
+  const allEntries = [...SEED_SHOWCASE, ...getDynamicShowcase()]
+  const related = allEntries.filter(e => e.category === entry.category && e.slug !== slug).slice(0, 3)
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-black" data-agent-role="application" data-agent-context={`showcase: ${entry.title}`}>
@@ -86,7 +92,7 @@ export default async function ShowcaseDetailPage({ params }: Props) {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" data-agent-role="content">
-        {/* Live preview placeholder */}
+        {/* Live preview — renders the already-generated app via iframe */}
         <section className="mb-10" aria-label="App preview">
           <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm">
             <div className="bg-gray-100 dark:bg-gray-800 px-4 py-2 flex items-center gap-2 border-b border-gray-200 dark:border-gray-700">
@@ -97,19 +103,30 @@ export default async function ShowcaseDetailPage({ params }: Props) {
               </div>
               <span className="text-xs text-gray-500 ml-2 font-mono">preview — {entry.title.toLowerCase().replace(/\s+/g, '-')}.app</span>
             </div>
-            <div className="aspect-video bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 flex items-center justify-center">
-              <div className="text-center">
-                <p className="text-lg font-semibold text-gray-400 dark:text-gray-500 mb-3">
-                  Interactive Preview
-                </p>
-                <Link
-                  href={`/?prompt=${encodeURIComponent(entry.prompt)}`}
-                  className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-medium px-4 py-2 rounded-lg transition-colors text-sm"
-                >
-                  Generate Live Preview
-                </Link>
+            {entry.chatId ? (
+              <iframe
+                src={`/api/preview/${entry.chatId}`}
+                className="w-full border-0"
+                style={{ height: '70vh' }}
+                title={`Preview of ${entry.title}`}
+                sandbox="allow-scripts allow-same-origin"
+                loading="lazy"
+              />
+            ) : (
+              <div className="aspect-video bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 flex items-center justify-center">
+                <div className="text-center">
+                  <p className="text-sm text-gray-400 dark:text-gray-500 mb-3">
+                    Preview available after generation
+                  </p>
+                  <Link
+                    href={`/?prompt=${encodeURIComponent(entry.prompt)}`}
+                    className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-medium px-4 py-2 rounded-lg transition-colors text-sm"
+                  >
+                    Generate This App
+                  </Link>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </section>
 

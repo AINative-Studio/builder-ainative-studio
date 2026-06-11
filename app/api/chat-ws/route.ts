@@ -563,6 +563,12 @@ Generate a corrected version of: ${message}`
               chatId: responseId,
               demo: `/preview/${responseId}`
             })}\n\n`))
+
+            // Auto-add to showcase (in-process, fire-and-forget)
+            try {
+              const { addToShowcase } = await import('@/lib/showcase-store')
+              addToShowcase(message, responseId, finalContent.length)
+            } catch (_) {}
           }
 
           keepaliveActive = false
