@@ -329,12 +329,31 @@ Export default. Include realistic mock data. Modern design with rounded-xl, shad
               ]
 
               for (let attempt = 1; attempt <= MAX_CONTINUATIONS; attempt++) {
-                const response = await client.chat.completions.create({
-                  model: modelId,
-                  max_tokens: 4096,
-                  temperature: 0.7,
-                  messages: continuationMessages,
-                })
+                let response
+                try {
+                  response = await client.chat.completions.create({
+                    model: modelId,
+                    max_tokens: 4096,
+                    temperature: 0.7,
+                    messages: continuationMessages,
+                  })
+                } catch (apiError: any) {
+                  const status = apiError?.status || 0
+                  console.log(`⚠️ API error on attempt ${attempt}: ${status} ${apiError?.message?.substring(0, 100)}`)
+                  // If DigitalOcean model fails (502/503/504), fall back to Llama Maverick
+                  if (status >= 500 && modelId !== 'Llama-4-Maverick-17B-128E-Instruct-FP8') {
+                    console.log(`🔄 Falling back to Llama Maverick`)
+                    const fallbackResp = await client.chat.completions.create({
+                      model: 'Llama-4-Maverick-17B-128E-Instruct-FP8',
+                      max_tokens: 4096,
+                      temperature: 0.7,
+                      messages: continuationMessages,
+                    })
+                    response = fallbackResp
+                  } else {
+                    break // Give up on unrecoverable errors
+                  }
+                }
 
                 let chunk = response.choices?.[0]?.message?.content || ''
                 const finishReason = response.choices?.[0]?.finish_reason
