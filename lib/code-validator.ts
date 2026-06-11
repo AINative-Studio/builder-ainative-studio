@@ -268,13 +268,15 @@ export function validateJavaScriptCode(code: string): ValidationResult {
     // Check if it's a CATASTROPHIC error that will definitely break in browser
     const errorLower = errorMessage.toLowerCase()
 
-    // CRITICAL: Unterminated strings MUST be rejected - they break Babel in browser
+    // CRITICAL: Only reject errors that DEFINITELY break in browser
     const isCatastrophicError =
       errorLower.includes('unexpected end of file') ||
       errorLower.includes('unexpected eof') ||
-      errorLower.includes('unterminated string') ||  // ← FIXED: Reject unterminated strings
-      errorLower.includes('unterminated') ||         // ← FIXED: Catch all unterminated errors
-      (errorLower.includes('unexpected token') && !errorLower.includes('semicolon')) // ← FIXED: Only allow semicolon-related unexpected tokens
+      errorLower.includes('unterminated string') ||
+      errorLower.includes('unterminated template') ||
+      errorLower.includes('unterminated jsx contents')
+      // Note: "unexpected token" errors are often recoverable by browser Babel
+      // with errorRecovery mode, so we let them through as warnings
 
     if (isCatastrophicError) {
       // This will definitely fail in browser - report error
