@@ -30,11 +30,13 @@ interface ChatData {
 declare global {
   var __previewStore: Map<string, string> | undefined
   var __chatStore: Map<string, ChatData> | undefined
+  var __ssrStore: Map<string, string> | undefined
 }
 
 // Use global store in development to persist across hot reloads
 const previewStore = global.__previewStore || new Map<string, string>()
 const chatStore = global.__chatStore || new Map<string, ChatData>()
+const ssrStore = global.__ssrStore || new Map<string, string>()
 
 if (!global.__previewStore) {
   global.__previewStore = previewStore
@@ -42,6 +44,24 @@ if (!global.__previewStore) {
 
 if (!global.__chatStore) {
   global.__chatStore = chatStore
+}
+
+if (!global.__ssrStore) {
+  global.__ssrStore = ssrStore
+}
+
+/**
+ * Store SSR-rendered HTML for a preview
+ */
+export function storeSSRPreview(id: string, html: string) {
+  ssrStore.set(id, html)
+}
+
+/**
+ * Get SSR-rendered HTML for a preview (instant rendering)
+ */
+export function getSSRPreview(id: string): string | null {
+  return ssrStore.get(id) || null
 }
 
 export function storePreview(

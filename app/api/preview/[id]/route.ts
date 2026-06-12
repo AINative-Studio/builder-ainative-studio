@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getPreview, isPreviewStreaming, storePreview } from '@/lib/preview-store'
+import { getPreview, isPreviewStreaming, storePreview, getSSRPreview } from '@/lib/preview-store'
 import { validateJavaScriptCode } from '@/lib/code-validator'
 
 export async function GET(
@@ -7,6 +7,21 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+
+  // FASTEST: Check for SSR-rendered HTML (instant, no CDN scripts needed)
+  const ssrHtml = getSSRPreview(id)
+  if (ssrHtml) {
+    console.log(`[Preview] Serving SSR HTML for ${id} (${ssrHtml.length}b)`)
+    return new Response(ssrHtml, {
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'X-Frame-Options': 'SAMEORIGIN',
+        'X-Preview-Source': 'ssr',
+        'Cache-Control': 'public, max-age=300',
+      },
+    })
+  }
+
   let content = getPreview(id)
 
   // Not in memory — try restoring from DB (survives server restarts)
@@ -37,11 +52,12 @@ export async function GET(
       const { loadGeneration } = await import('@/lib/zerodb-store')
       const gen = await loadGeneration(id)
       if (gen?.ssrHtml) {
-        // Serve pre-rendered SSR HTML directly (fastest path)
         console.log(`[Preview] Serving SSR HTML from ZeroDB for ID: ${id}`)
         return new Response(gen.ssrHtml, {
           headers: {
             'Content-Type': 'text/html; charset=utf-8',
+            'X-Frame-Options': 'SAMEORIGIN',
+            'X-Preview-Source': 'ssr-zerodb',
             'Cache-Control': 'public, max-age=3600',
           },
         })

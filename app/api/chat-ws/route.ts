@@ -593,13 +593,14 @@ Generate a corrected version of: ${message}`
               demo: `/preview/${responseId}`
             })}\n\n`))
 
-            // Persist to ZeroDB + showcase (fire-and-forget, no SSR build to avoid delay)
+            // Persist + SSR build (fire-and-forget, non-blocking)
             try {
               const { saveGeneration } = await import('@/lib/zerodb-store')
               const { addToShowcase } = await import('@/lib/showcase-store')
+              const { storeSSRPreview } = await import('@/lib/preview-store')
               const isShowcase = finalContent.length > 1000
 
-              // Save code to ZeroDB immediately (SSR build happens on-demand)
+              // Save code to ZeroDB
               saveGeneration({
                 chatId: responseId,
                 prompt: message,
@@ -610,6 +611,16 @@ Generate a corrected version of: ${message}`
               }).catch(e => console.warn('[ZeroDB save failed]', e))
 
               addToShowcase(message, responseId, finalContent.length, finalContent)
+
+              // SSR build in background — when done, the next iframe refresh shows instant content
+              import('@/lib/sandbox-builder').then(({ buildInSandbox }) => {
+                buildInSandbox(finalContent).then(ssrResult => {
+                  if (ssrResult.success) {
+                    storeSSRPreview(responseId, ssrResult.html)
+                    console.log(`🏗️ SSR ready for ${responseId}: ${ssrResult.html.length}b in ${ssrResult.buildTimeMs}ms`)
+                  }
+                }).catch(() => {})
+              }).catch(() => {})
             } catch (_) {}
           }
 
