@@ -17,7 +17,7 @@ import { createChunkPlan, getChunkPlanSummary } from '@/lib/agent/chunk-planner'
 import { executeChunkPlan, getGenerationSummary } from '@/lib/agent/multi-pass-generator'
 import { mergeChunks, getMergeSummary } from '@/lib/agent/chunk-merger'
 import { generateAINativeFileSet } from '@/lib/ainative-file-generator'
-import { selectTheme, formatThemeForPrompt } from '@/lib/theme-system'
+import { selectTheme, formatThemeForPrompt, applyThemeToPrompt } from '@/lib/theme-system'
 import { parseMultiFileOutput } from '@/lib/multi-file-parser'
 import { storeFiles as storeFilesV2 } from '@/lib/preview-store-v2'
 import { logModelConfiguration } from '@/lib/config/model-validator'
@@ -184,8 +184,11 @@ export async function POST(request: NextRequest) {
           console.log(`🎨 Theme selected: ${selectedTheme.name} (${selectedTheme.primary})`)
 
           // Build enhanced system prompt with theme + images + memory context
+          // applyThemeToPrompt replaces THEME_PRIMARY/SECONDARY/ACCENT/DARK placeholders
+          // so all code examples in the prompt use the actual selected theme colors
           const memoryContext = formatMemoryForPrompt(responseId)
-          const enhancedSystemPrompt = PROFESSIONAL_SYSTEM_PROMPT + themePrompt + imagePrompt + memoryContext
+          const themedPrompt = applyThemeToPrompt(PROFESSIONAL_SYSTEM_PROMPT, selectedTheme)
+          const enhancedSystemPrompt = themedPrompt + themePrompt + imagePrompt + memoryContext
 
           // CHUNKING SYSTEM: Route to multi-pass generation if complexity requires it
           if (complexityScore.requiresChunking && previousMessages.length === 0) {
@@ -279,9 +282,86 @@ export async function POST(request: NextRequest) {
             console.log(`🤖 Using model: ${modelId} (provider: ${provider}, env: ${isLocal ? 'local' : 'cloud'})`)
 
             // ============ ALL MODELS VIA OPENAI-COMPATIBLE API (Meta or AINative) ============
-            // Use the FULL enhanced system prompt (with theme, images, memory) for ALL paths
-            // This was previously a compact hardcoded prompt that produced monotone gray designs
-            const llmSystemPrompt = enhancedSystemPrompt
+            // Compact system prompt focused on design quality + theme colors.
+            // Open-source models (codestral, devstral, etc.) ignore long prompts.
+            // Theme colors are injected directly into examples so the model copies them.
+            const llmSystemPrompt = `You are a senior React developer. Generate a COMPLETE, SINGLE-FILE React functional component.
+
+RULES:
+1. Output REACT code wrapped in \`\`\`jsx markers. No explanations.
+2. import React and hooks at top. ONE default export function. ALL code in ONE file.
+3. Use Tailwind CSS classes. Include realistic mock data. Use useState for interactivity.
+4. Use Lucide React icons (import from 'lucide-react'). NEVER use emoji as icons.
+5. Available: recharts (ResponsiveContainer, LineChart, BarChart, PieChart, etc.), lucide-react icons.
+6. ALL components below are available as globals — use them directly, NO import needed.
+
+AIKIT COMPONENTS (use these instead of building from scratch):
+- MetricCard: <MetricCard title="Revenue" value="USD 84K" change="+12.5%" changeType="positive" sparklineData={[10,20,15,30,25,40]} icon={<DollarSign />} />
+- AIKitPriceCard: <AIKitPriceCard name="Pro" price="USD 29" period="/month" features={['Feature 1']} popular={true} cta="Start Trial" />
+- AIKitRating: <AIKitRating value={4.7} max={5} showValue reviews={1200} />
+- AIKitProductCard: <AIKitProductCard name="Product" price={99} originalPrice={129} badge="Sale" rating={4.5} reviews={500} onAddToCart={fn} />
+- AIKitTable: <AIKitTable columns={[{key:'name', label:'Name'}]} data={rows} onSort={fn} />
+- AIKitSidebar: <AIKitSidebar items={[{icon, label, id}]} activeItem="dashboard" onItemClick={fn} title="App" />
+- AIKitHeader: <AIKitHeader title="App" navItems={[{label, href}]} onSearch={fn} />
+- AIKitTimeline: <AIKitTimeline items={[{title, description, time, color}]} />
+- AIKitAvatar: <AIKitAvatar name="John" status="online" size="md" />
+- ChatBubble: <ChatBubble role="assistant" name="AI" timestamp="2m ago">Message</ChatBubble>
+- AgentCard: <AgentCard name="DataBot" role="ETL Agent" status="active" tasks={24} model="claude-sonnet-4" />
+- SafetyBadge: <SafetyBadge score={95} /> — AI safety trust score
+- Skeleton/SkeletonCard: loading states
+- EmptyState: <EmptyState icon={<Inbox />} title="No data" description="..." />
+
+WHEN TO USE AIKIT (MANDATORY):
+- Stats/KPIs → MetricCard (NOT plain text in cards)
+- Pricing → AIKitPriceCard (NOT custom divs)
+- Ratings → AIKitRating (NOT custom stars)
+- Products → AIKitProductCard (NOT custom cards)
+- Data tables → AIKitTable (NOT custom tables)
+- Dashboards → AIKitSidebar + AIKitHeader + MetricCard
+- AI/Agent UIs → AgentCard, ChatBubble, SafetyBadge
+- Loading → Skeleton/SkeletonCard
+- Empty → EmptyState
+
+COLOR THEME — ${selectedTheme.name.toUpperCase()} (USE THESE EXACT HEX COLORS):
+- Primary: ${selectedTheme.primary} (buttons, links, active states, icon backgrounds)
+- Primary hover: ${selectedTheme.primaryHover}
+- Dark: ${selectedTheme.dark} (hero backgrounds, dark sections, sidebars)
+- Secondary: ${selectedTheme.secondary} (secondary elements, tags)
+- Light: ${selectedTheme.light} (page background — NOT gray-50)
+- Accent: ${selectedTheme.accent} (badges, highlights, alerts)
+
+DESIGN PATTERNS (use these EXACT classes):
+- Page bg: bg-[${selectedTheme.light}] (NOT bg-gray-50)
+- Hero: bg-gradient-to-br from-[${selectedTheme.dark}] to-[${selectedTheme.primary}]/20 with text-white
+- Hero glow: absolute div with bg-[${selectedTheme.primary}]/15 blur-[120px] rounded-full
+- Cards: bg-white border border-slate-200 shadow-sm rounded-xl p-6 hover:shadow-md transition-all
+- Buttons: bg-[${selectedTheme.primary}] hover:bg-[${selectedTheme.primaryHover}] text-white rounded-lg shadow-lg
+- Nav: sticky top-0 bg-white/80 backdrop-blur-md border-b border-slate-200
+- Dark section: bg-[${selectedTheme.dark}] text-white py-20
+- Alternate sections: white → bg-[${selectedTheme.light}] → white → dark → white
+
+LAYOUT VARIETY — make each app unique:
+- Landing: hero + stats (MetricCard) + features grid + pricing (AIKitPriceCard) + testimonials + CTA
+- Dashboard: AIKitSidebar + AIKitHeader + MetricCard grid + charts + AIKitTable
+- E-commerce: header + product grid (AIKitProductCard) + filters + cart sidebar
+- AI/Agent: AgentCard grid + ChatBubble conversation + SafetyBadge + AIKitTimeline
+
+STRUCTURE:
+\`\`\`jsx
+import React, { useState, useEffect } from 'react'
+import { Icon1, Icon2, ArrowRight } from 'lucide-react'
+
+const mockData = [/* realistic data */]
+
+export default function AppName() {
+  const [activeView, setActiveView] = useState('overview')
+  return (
+    <div className="min-h-screen bg-[${selectedTheme.light}]">
+      {/* nav, hero, sections with AIKit components, footer */}
+    </div>
+  )
+}
+\`\`\``
 
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Generating with ' + modelId + '...' })}\n\n`))
 

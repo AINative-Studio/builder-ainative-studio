@@ -198,3 +198,16 @@ CRITICAL COLOR RULES:
 `
 }
 
+/**
+ * Apply theme colors to a system prompt by replacing THEME_* placeholders.
+ * The professional prompt uses THEME_PRIMARY, THEME_SECONDARY, THEME_ACCENT, THEME_DARK
+ * as placeholders so all examples use the actual selected theme colors.
+ */
+export function applyThemeToPrompt(prompt: string, theme: ThemePalette): string {
+  return prompt
+    .replace(/THEME_PRIMARY/g, theme.primary)
+    .replace(/THEME_SECONDARY/g, theme.secondary)
+    .replace(/THEME_ACCENT/g, theme.accent)
+    .replace(/THEME_DARK/g, theme.dark)
+}
+

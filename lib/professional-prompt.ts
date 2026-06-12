@@ -150,7 +150,7 @@ Tables, charts, modals, tabs, and live status areas MUST have explicit ARIA role
 Add a skip-to-content link and ensure tab order is logical:
 \`\`\`jsx
 {/* First element in the page */}
-<a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:bg-white focus:px-4 focus:py-2 focus:rounded-lg focus:shadow-lg focus:text-[#5867EF] focus:font-semibold" data-agent-action="skip-nav">
+<a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:bg-white focus:px-4 focus:py-2 focus:rounded-lg focus:shadow-lg focus:text-[THEME_PRIMARY] focus:font-semibold" data-agent-action="skip-nav">
   Skip to main content
 </a>
 {/* ... nav ... */}
@@ -180,7 +180,7 @@ Add a skip-to-content link and ensure tab order is logical:
 **AINative Primitives / AIKit Components** (use these for rich, professional interfaces):
 
 *Core AI Components:*
-- \`<StreamingIndicator variant="dots|pulse|wave" color="#5867EF" size="sm|default|lg" />\` — Animated loading indicators
+- \`<StreamingIndicator variant="dots|pulse|wave" color="THEME_PRIMARY" size="sm|default|lg" />\` — Animated loading indicators
 - \`<StreamingText text="Full text here" speed={30} />\` — Typewriter text animation
 - \`<ChatBubble role="user|assistant" name="Sarah" timestamp="2m ago">Message</ChatBubble>\` — Chat message bubbles
 - \`<CodeDisplay code={codeString} language="javascript" theme="dark|monokai" showLineNumbers={true} />\` — Code blocks with copy button
@@ -286,7 +286,7 @@ import { ResponsiveContainer, LineChart, Line, BarChart, Bar, PieChart, Pie, Cel
 
 ## COLOR SYSTEM — INJECTED BY THEME (see COLOR THEME section below)
 
-The color palette is injected dynamically based on the app being built. Look for the "COLOR THEME" section appended to this prompt. Use ONLY those colors — never hardcode #5867EF or any other fixed palette.
+The color palette is injected dynamically based on the app being built. Look for the "COLOR THEME" section appended to this prompt. Use ONLY those colors — never hardcode THEME_PRIMARY or any other fixed palette.
 
 **Cards**: \`bg-white border border-slate-200 shadow-ds-sm rounded-xl\`
 **Neutrals**: slate-50 (backgrounds), white (cards), slate-600/700 (body text), slate-900 (headings)
@@ -313,7 +313,7 @@ NEVER use: \`via.placeholder.com\`, \`placehold.co\`, \`picsum.photos\`, \`lorem
 
 ### Rule 4: Visual Hierarchy & Depth
 Each section MUST have distinct visual weight. Never use the same white bg for all sections.
-Alternate backgrounds: white → slate-50 → white → bg-[#131726] (dark) → white.
+Alternate backgrounds: white → slate-50 → white → bg-[THEME_DARK] (dark) → white.
 Cards MUST have shadow (\`shadow-ds-sm\`) AND border — never flat white boxes on white bg.
 Use subtle section dividers or color shifts to create clear visual breaks.
 
@@ -356,7 +356,7 @@ Company names: Use plausible startup names (DevScale, CodeStack, ShipFast) not "
 ALL buttons: Must have \`hover:\` and \`transition-colors\` or \`transition-all\` defined.
 ALL cards: Must have \`hover:shadow-ds-md hover:-translate-y-0.5 transition-all duration-300\`.
 ALL links: Must have \`hover:text-slate-900 transition-colors\`.
-ALL inputs: Must show focus state \`focus:ring-2 focus:ring-[#5867EF]/20 focus:border-[#5867EF]\`.
+ALL inputs: Must show focus state \`focus:ring-2 focus:ring-[THEME_PRIMARY]/20 focus:border-[THEME_PRIMARY]\`.
 
 ### Rule 11: Badges Only When Meaningful
 Do NOT sprinkle "Most Popular", "New", "Trusted by X" badges randomly.
@@ -373,12 +373,12 @@ NEVER require JS animation libraries. CSS transitions only.
 
 **Hero uses gradient backgrounds OR provided Unsplash images for visual impact:**
 \`\`\`jsx
-<section aria-label="Hero" className="relative min-h-[700px] bg-gradient-to-br from-[#131726] via-[#1a1f3a] to-[#0f172a] overflow-hidden" data-agent-role="hero" data-agent-context="hero-section">
+<section aria-label="Hero" className="relative min-h-[700px] bg-gradient-to-br from-[THEME_DARK] via-[#1a1f3a] to-[#0f172a] overflow-hidden" data-agent-role="hero" data-agent-context="hero-section">
   {/* Decorative background — gradients + blur glows for depth */}
   <div className="absolute inset-0">
-    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-[#5867EF]/10 rounded-full blur-[120px]" />
-    <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-[#338585]/8 rounded-full blur-[100px]" />
-    <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-[#FCAE39]/5 rounded-full blur-[80px]" />
+    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-[THEME_PRIMARY]/10 rounded-full blur-[120px]" />
+    <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-[THEME_SECONDARY]/8 rounded-full blur-[100px]" />
+    <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-[THEME_ACCENT]/5 rounded-full blur-[80px]" />
   </div>
 
   <div className="relative z-10 max-w-5xl mx-auto px-6 flex flex-col items-center justify-center min-h-[700px] text-center">
@@ -387,14 +387,14 @@ NEVER require JS animation libraries. CSS transitions only.
     </Badge>
     <h1 className="text-5xl sm:text-6xl lg:text-7xl font-extrabold text-white tracking-tight leading-[1.08] mb-8">
       Three to five<br />
-      <span className="text-[#5867EF]">word headline</span>
+      <span className="text-[THEME_PRIMARY]">word headline</span>
     </h1>
     <p className="text-lg lg:text-xl text-slate-300 mb-12 max-w-2xl leading-relaxed font-light">
       One sentence value proposition — under 15 words.
     </p>
     <div className="flex flex-col sm:flex-row gap-4 w-full max-w-lg">
       <Input className="h-14 text-base rounded-xl bg-white/10 border-white/20 text-white placeholder:text-white/40 backdrop-blur-sm flex-1" placeholder="Enter your work email" />
-      <Button className="h-14 px-10 bg-[#5867EF] hover:bg-[#4B6FED] text-white rounded-xl text-base font-bold whitespace-nowrap shadow-lg shadow-[#5867EF]/25 transition-all">
+      <Button className="h-14 px-10 bg-[THEME_PRIMARY] hover:bg-[#4B6FED] text-white rounded-xl text-base font-bold whitespace-nowrap shadow-lg shadow-[THEME_PRIMARY]/25 transition-all">
         Start Free <ArrowRight className="w-5 h-5 ml-2" />
       </Button>
     </div>
@@ -410,25 +410,25 @@ NEVER require JS animation libraries. CSS transitions only.
 Logo + nav links + CTA button. All links have \`hover:text-slate-900 transition-colors\`.
 
 ### Feature Cards
-Icon in colored container: \`w-12 h-12 rounded-xl bg-[#5867EF]/10 flex items-center justify-center\`.
-Lucide icon inside: \`className="w-6 h-6 text-[#5867EF]"\`. Vary colors across cards using secondary/accent.
+Icon in colored container: \`w-12 h-12 rounded-xl bg-[THEME_PRIMARY]/10 flex items-center justify-center\`.
+Lucide icon inside: \`className="w-6 h-6 text-[THEME_PRIMARY]"\`. Vary colors across cards using secondary/accent.
 Card: \`bg-white rounded-xl border border-slate-200 shadow-ds-sm p-8 hover:shadow-ds-md hover:-translate-y-0.5 transition-all duration-300\`.
 
 ### Charts (Recharts)
 Wrap in \`<ResponsiveContainer width="100%" height={300}>\`.
-Brand colors: "#5867EF", "#338585", "#FCAE39", "#6366f1", "#8b5cf6".
+Brand colors: "THEME_PRIMARY", "THEME_SECONDARY", "THEME_ACCENT", "#6366f1", "#8b5cf6".
 \`<CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />\`
 
 ### Section Alternation
-Alternate: white bg → slate-50 bg → white → dark (\`bg-[#131726]\` with white text) → white.
+Alternate: white bg → slate-50 bg → white → dark (\`bg-[THEME_DARK]\` with white text) → white.
 Every section: \`py-20 lg:py-24\`. Container: \`max-w-7xl mx-auto px-6\`.
 Section headers: centered, with Badge label above h2, subtitle below.
 - Section padding: \`py-16 lg:py-24\`
 - Section headers: centered, with badge/label above title, subtitle below
 
 ### Sidebar Dashboard Layout
-- Fixed sidebar (w-64) with dark bg-[#131726], white text, icon + label nav items
-- Active item: bg-white/10 or bg-[#5867EF] with rounded-lg
+- Fixed sidebar (w-64) with dark bg-[THEME_DARK], white text, icon + label nav items
+- Active item: bg-white/10 or bg-[THEME_PRIMARY] with rounded-lg
 - Main content area with top header bar and scrollable content
 
 ## FUNCTIONALITY REQUIREMENTS
@@ -512,8 +512,8 @@ AIKitSidebar + AIKitHeader → MetricCard grid with sparklines → Charts sectio
 
 ### CORRECT: Lucide icons with tinted background
 \`\`\`jsx
-<div className="w-10 h-10 rounded-xl bg-[#5867EF]/10 flex items-center justify-center">
-  <DollarSign className="w-5 h-5 text-[#5867EF]" />
+<div className="w-10 h-10 rounded-xl bg-[THEME_PRIMARY]/10 flex items-center justify-center">
+  <DollarSign className="w-5 h-5 text-[THEME_PRIMARY]" />
 </div>
 \`\`\`
 
@@ -529,7 +529,7 @@ AIKitSidebar + AIKitHeader → MetricCard grid with sparklines → Charts sectio
 <nav className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">
   <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
     <div className="flex items-center gap-2">
-      <Zap className="w-5 h-5 text-[#5867EF]" />
+      <Zap className="w-5 h-5 text-[THEME_PRIMARY]" />
       <span className="text-xl font-bold">My App</span>
     </div>
   </div>
@@ -546,8 +546,8 @@ AIKitSidebar + AIKitHeader → MetricCard grid with sparklines → Charts sectio
 <Card className="border border-slate-200 shadow-ds-sm rounded-xl">
   <CardContent className="p-6">
     <div className="flex items-center justify-between mb-4">
-      <div className="w-10 h-10 rounded-lg bg-[#5867EF]/10 flex items-center justify-center">
-        <DollarSign className="w-5 h-5 text-[#5867EF]" />
+      <div className="w-10 h-10 rounded-lg bg-[THEME_PRIMARY]/10 flex items-center justify-center">
+        <DollarSign className="w-5 h-5 text-[THEME_PRIMARY]" />
       </div>
       <div className="flex items-center gap-1 text-sm font-medium text-emerald-600">
         <TrendingUp className="w-4 h-4" /> +12.5%
