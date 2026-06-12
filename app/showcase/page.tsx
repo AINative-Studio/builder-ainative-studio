@@ -26,12 +26,22 @@ function ShowcaseCard({ entry }: { entry: ShowcaseEntry }) {
       data-agent-role="content"
       data-agent-context={`showcase entry: ${entry.title}`}
     >
-      <div className="aspect-video bg-gradient-to-br from-gray-100 to-gray-50 dark:from-gray-800 dark:to-gray-900 flex items-center justify-center relative">
-        <div className="text-4xl font-bold text-gray-200 dark:text-gray-700 group-hover:scale-105 transition-transform">
-          {entry.title.split(' ').map(w => w[0]).join('').slice(0, 2)}
-        </div>
+      <div className="aspect-video bg-gradient-to-br from-gray-100 to-gray-50 dark:from-gray-800 dark:to-gray-900 relative overflow-hidden">
+        {/* Live SSR preview thumbnail */}
+        <iframe
+          src={entry.chatId
+            ? `/api/preview/${entry.chatId}`
+            : `/api/showcase/preview?slug=${entry.slug}`
+          }
+          className="w-[200%] h-[200%] origin-top-left scale-50 pointer-events-none border-0"
+          loading="lazy"
+          sandbox="allow-scripts allow-same-origin"
+          title={entry.title}
+        />
+        {/* Overlay to prevent interaction and show featured badge */}
+        <div className="absolute inset-0 bg-transparent group-hover:bg-black/5 transition-colors" />
         {entry.featured && (
-          <span className="absolute top-3 right-3 bg-blue-600 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wider">
+          <span className="absolute top-3 right-3 bg-blue-600 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wider z-10">
             Featured
           </span>
         )}
