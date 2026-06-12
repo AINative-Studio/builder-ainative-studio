@@ -593,39 +593,21 @@ Generate a corrected version of: ${message}`
               demo: `/preview/${responseId}`
             })}\n\n`))
 
-            // Persist to ZeroDB + SSR build + showcase (fire-and-forget)
+            // Persist to ZeroDB + showcase (fire-and-forget, no SSR build to avoid delay)
             try {
               const { saveGeneration } = await import('@/lib/zerodb-store')
               const { addToShowcase } = await import('@/lib/showcase-store')
-              const { buildInSandbox } = await import('@/lib/sandbox-builder')
-              const isShowcase = finalContent.length > 3000
+              const isShowcase = finalContent.length > 1000
 
-              // SSR build in sandbox (async, don't block response)
-              buildInSandbox(finalContent).then(ssrResult => {
-                if (ssrResult.success) {
-                  console.log(`🏗️ SSR preview built: ${ssrResult.html.length}b in ${ssrResult.buildTimeMs}ms`)
-                }
-                // Save to ZeroDB with SSR HTML
-                saveGeneration({
-                  chatId: responseId,
-                  prompt: message,
-                  generatedCode: finalContent,
-                  model: requestedModel || DEFAULT_MODEL,
-                  codeLength: finalContent.length,
-                  isShowcase,
-                  ssrHtml: ssrResult.success ? ssrResult.html : undefined,
-                }).catch(() => {})
-              }).catch(() => {
-                // SSR failed — save without HTML
-                saveGeneration({
-                  chatId: responseId,
-                  prompt: message,
-                  generatedCode: finalContent,
-                  model: requestedModel || DEFAULT_MODEL,
-                  codeLength: finalContent.length,
-                  isShowcase,
-                }).catch(() => {})
-              })
+              // Save code to ZeroDB immediately (SSR build happens on-demand)
+              saveGeneration({
+                chatId: responseId,
+                prompt: message,
+                generatedCode: finalContent,
+                model: requestedModel || DEFAULT_MODEL,
+                codeLength: finalContent.length,
+                isShowcase,
+              }).catch(e => console.warn('[ZeroDB save failed]', e))
 
               addToShowcase(message, responseId, finalContent.length, finalContent)
             } catch (_) {}
