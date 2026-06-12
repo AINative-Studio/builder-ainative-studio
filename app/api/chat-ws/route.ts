@@ -37,9 +37,9 @@ const metaClient = new OpenAI({
 
 // AINative API client
 // Use AINATIVE_API_URL to override (e.g. for direct core access)
-const ainativeBaseURL = process.env.AINATIVE_API_URL || 'https://api.ainative.studio/v1'
+const ainativeBaseURL = (process.env.AINATIVE_API_URL || 'https://api.ainative.studio') + '/v1'
 const ainativeClient = new OpenAI({
-  apiKey: process.env.ZERODB_API_KEY || '',
+  apiKey: process.env.AINATIVE_API_KEY || process.env.API_Key || process.env.ZERODB_API_KEY || '',
   baseURL: ainativeBaseURL,
 })
 
@@ -48,26 +48,33 @@ function getLLMClient(): OpenAI {
   return isLocal ? metaClient : ainativeClient
 }
 
-// Default model — Llama Maverick on production (fast + reliable via Meta API)
-// DeepSeek 4 Flash is higher quality but DigitalOcean backend is unreliable (30-50% timeout)
-const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'Llama-4-Maverick-17B-128E-Instruct-FP8'
+// Default model — kimi-k2 on production (highest quality, no truncation)
+// Fallbacks: deepseek-v4-flash, llama-4-maverick, qwen3-32b
+const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'kimi-k2'
 
 // Model routing config — all models route through AINative API
+// Model IDs must match AINative API exactly (lowercase, no version suffixes)
 const MODEL_CONFIG: Record<string, { provider: 'meta' | 'ainative'; modelId: string }> = {
-  // Top tier — DigitalOcean hosted, high token output, no truncation
+  // Top tier — high token output, best quality
   'kimi-k2': { provider: 'ainative', modelId: 'kimi-k2' },
-  'deepseek-4-flash': { provider: 'ainative', modelId: 'deepseek-4-flash' },
-  'qwen3-coder-flash': { provider: 'ainative', modelId: 'qwen3-coder-flash' },
-  // Llama Models (Meta API — 512 token cap, needs continuation)
-  'llama-4-maverick': { provider: isLocal ? 'meta' : 'ainative', modelId: 'Llama-4-Maverick-17B-128E-Instruct-FP8' },
-  'llama-3.3-70b': { provider: 'ainative', modelId: 'Llama-3.3-70B-Instruct' },
+  'deepseek-v4-flash': { provider: 'ainative', modelId: 'deepseek-v4-flash' },
+  'deepseek-v3': { provider: 'ainative', modelId: 'deepseek-v3' },
+  'qwen3.5-72b': { provider: 'ainative', modelId: 'qwen3.5-72b-instruct' },
+  // Llama Models
+  'llama-4-maverick': { provider: isLocal ? 'meta' : 'ainative', modelId: 'llama-4-maverick' },
+  'llama-4-scout': { provider: 'ainative', modelId: 'llama-4-scout' },
+  'llama-3.3-70b': { provider: 'ainative', modelId: 'llama-3.3-70b' },
   // Code Specialists
   'qwen-coder-32b': { provider: 'ainative', modelId: 'qwen-coder-32b' },
-  'nouscoder-14b': { provider: 'ainative', modelId: 'nouscoder-14b' },
+  'devstral': { provider: 'ainative', modelId: 'devstral' },
+  'codestral-22b': { provider: 'ainative', modelId: 'codestral-22b' },
+  'nous-coder': { provider: 'ainative', modelId: 'nous-coder' },
   // General
-  'gemma-9b': { provider: 'ainative', modelId: 'gemma-9b' },
+  'qwen3-32b': { provider: 'ainative', modelId: 'qwen3-32b' },
+  'gemma-4-31b': { provider: 'ainative', modelId: 'gemma-4-31b' },
   // Reasoning
-  'deepseek-r1-distill-qwen-7b': { provider: 'ainative', modelId: 'deepseek-r1-distill-qwen-7b' },
+  'deepseek-r1': { provider: 'ainative', modelId: 'deepseek-r1' },
+  'qwq-32b': { provider: 'ainative', modelId: 'qwq-32b' },
 }
 
 export async function POST(request: NextRequest) {
@@ -271,46 +278,9 @@ export async function POST(request: NextRequest) {
             console.log(`🤖 Using model: ${modelId} (provider: ${provider}, env: ${isLocal ? 'local' : 'cloud'})`)
 
             // ============ ALL MODELS VIA OPENAI-COMPATIBLE API (Meta or AINative) ============
-            // System prompt — generates proper React functional components (NOT raw HTML)
-            const llmSystemPrompt = `You are a senior React developer. Generate a COMPLETE, SINGLE-FILE React functional component.
-
-CRITICAL RULES:
-1. Output a REACT COMPONENT — NOT raw HTML. Must have: import React, function declaration, return JSX, export default.
-2. Wrap output in \`\`\`jsx markers. No explanations before or after.
-3. ALL imports at the top: React hooks, Lucide icons, shadcn/ui components, Recharts.
-4. ONE default export function component. All code in ONE file.
-5. Use useState/useEffect for interactivity. Include realistic mock data arrays.
-6. Use Tailwind CSS classes for ALL styling. No inline styles. No CSS files.
-
-STRUCTURE (follow exactly):
-\`\`\`jsx
-import React, { useState } from 'react'
-import { Icon1, Icon2 } from 'lucide-react'
-
-const mockData = [...]  // realistic sample data
-
-export default function AppName() {
-  const [state, setState] = useState(initialValue)
-  return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      {/* semantic HTML: header, main, section, footer */}
-      {/* Tailwind: rounded-xl, shadow-sm, gap-6, etc */}
-    </div>
-  )
-}
-\`\`\`
-
-AVAILABLE IMPORTS:
-- 'lucide-react': any icon (Users, DollarSign, TrendingUp, Search, Plus, etc.)
-- '@/components/ui/button': Button
-- '@/components/ui/card': Card, CardHeader, CardTitle, CardContent
-- '@/components/ui/badge': Badge
-- '@/components/ui/input': Input
-- '@/components/ui/tabs': Tabs, TabsList, TabsTrigger, TabsContent
-- 'recharts': BarChart, LineChart, PieChart, XAxis, YAxis, Tooltip, ResponsiveContainer
-- '@/components/aikit': MetricCard (for stat displays)
-
-DESIGN: Modern, clean. bg-gray-50 background, white cards with shadow-sm and rounded-xl, generous spacing (p-6, gap-4).`
+            // Use the FULL enhanced system prompt (with theme, images, memory) for ALL paths
+            // This was previously a compact hardcoded prompt that produced monotone gray designs
+            const llmSystemPrompt = enhancedSystemPrompt
 
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Generating with ' + modelId + '...' })}\n\n`))
 
@@ -362,7 +332,7 @@ DESIGN: Modern, clean. bg-gray-50 background, white cards with shadow-sm and rou
 
               // Single-turn call with fallback chain
               // CRITICAL: Only system+user messages (2 messages). Multi-turn (>2) triggers 512-token cap.
-              const MODELS_TO_TRY = [modelId, 'Llama-3.3-70B-Instruct', 'Llama-4-Maverick-17B-128E-Instruct-FP8']
+              const MODELS_TO_TRY = [modelId, 'deepseek-v4-flash', 'llama-4-maverick', 'qwen3-32b']
               const singleTurnMessages = [
                 { role: 'system' as const, content: llmSystemPrompt },
                 // Merge conversation history into a single user message to keep it 2-message single-turn
@@ -377,7 +347,7 @@ DESIGN: Modern, clean. bg-gray-50 background, white cards with shadow-sm and rou
                   const ctrl = new AbortController()
                   const timer = setTimeout(() => ctrl.abort(), 60_000)
                   const response = await client.chat.completions.create(
-                    { model: tryModel, max_tokens: 4096, temperature: 0.7, messages: singleTurnMessages },
+                    { model: tryModel, max_tokens: 8192, temperature: 0.7, messages: singleTurnMessages },
                     { signal: ctrl.signal }
                   )
                   clearTimeout(timer)
@@ -419,8 +389,8 @@ DESIGN: Modern, clean. bg-gray-50 background, white cards with shadow-sm and rou
           } // End of provider routing + subagents else
           } // End of chunking else (single-pass)
 
-          // Strip any gradient classes that slipped through
-          fullContent = stripGradients(fullContent)
+          // NOTE: Gradient stripping removed — gradients add visual richness
+          // (hero sections, backgrounds, accent elements) matching Bolt/Lovable quality
 
           // Validate generated code before storing
           let validation = validateGeneratedCode(fullContent)
@@ -454,7 +424,7 @@ Please regenerate the component with these requirements:
 Generate a corrected version of: ${message}`
 
               // Try retry with fallback chain
-              const retryModels = [DEFAULT_MODEL, 'Llama-3.3-70B-Instruct', 'qwen3-coder-flash']
+              const retryModels = [DEFAULT_MODEL, 'deepseek-v4-flash', 'qwen-coder-32b']
               let retryContent = ''
               const retryMessages = [
                 { role: 'system' as const, content: 'Fix the syntax errors in the code below. Return ONLY valid, complete React code wrapped in ```jsx markers. Ensure all JSX tags are properly closed, all strings are terminated, and all brackets match.' },

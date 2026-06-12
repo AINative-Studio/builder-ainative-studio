@@ -166,23 +166,35 @@ export function selectTheme(prompt: string): ThemePalette {
  */
 export function formatThemeForPrompt(theme: ThemePalette): string {
   return `
-## COLOR THEME — ${theme.name.toUpperCase()} PALETTE (USE THESE EXACT COLORS)
+## COLOR THEME — ${theme.name.toUpperCase()} PALETTE (MANDATORY — USE THESE COLORS)
 
-**Primary**: \`bg-[${theme.primary}]\` / \`text-[${theme.primary}]\` — CTAs, buttons, active states, key accents
+⚠️ THIS IS THE MOST IMPORTANT SECTION. Every element must use these colors. DO NOT default to blue/gray.
+
+**Primary**: \`bg-[${theme.primary}]\` / \`text-[${theme.primary}]\` — CTAs, buttons, active states, icon containers, links
 **Primary Hover**: \`hover:bg-[${theme.primaryHover}]\`
 **Dark Surfaces**: \`bg-[${theme.dark}]\` — hero backgrounds, headers, dark sections, sidebars
-**Secondary**: \`bg-[${theme.secondary}]\` / \`text-[${theme.secondary}]\` — secondary actions, supporting elements
-**Light**: \`${theme.light}\` — light backgrounds, card surfaces (use as bg-[${theme.light}] or bg-white)
-**Accent**: \`bg-[${theme.accent}]\` / \`text-[${theme.accent}]\` — highlights, badges, alerts
+**Secondary**: \`bg-[${theme.secondary}]\` / \`text-[${theme.secondary}]\` — secondary actions, tags, supporting elements
+**Light**: \`bg-[${theme.light}]\` — page backgrounds, alternating sections (NOT gray-50, use THIS)
+**Accent**: \`bg-[${theme.accent}]\` / \`text-[${theme.accent}]\` — highlights, badges, alerts, special callouts
 **Neutral**: \`text-[${theme.neutral}]\` — body text, muted elements
 
-**Hero sections**: Use \`bg-[${theme.dark}]\` with white text and decorative blur glows using primary color
-**Cards**: \`bg-white border border-slate-200 shadow-ds-sm rounded-xl\`
-**Primary buttons**: \`bg-[${theme.primary}] hover:bg-[${theme.primaryHover}] text-white\`
-**Decorative glows**: Use \`bg-[${theme.primary}]/10\` and \`bg-[${theme.secondary}]/8\` with blur-[120px]
-**Accent color word in hero headline**: \`<span className="text-[${theme.primary}]">keyword</span>\`
-**Badge background**: \`bg-[${theme.primary}]/10 text-[${theme.primary}] border-[${theme.primary}]/20\`
+**Hero gradient**: \`bg-gradient-to-br from-[${theme.dark}] via-[${theme.dark}] to-[${theme.primary}]/20\` — rich gradient, not flat
+**Hero accent glow**: \`bg-[${theme.primary}]/15 rounded-full blur-[120px]\` — decorative blob
+**Hero headline accent**: \`<span className="text-[${theme.primary}]">keyword</span>\` or \`bg-gradient-to-r from-[${theme.primary}] to-[${theme.secondary}] bg-clip-text text-transparent\`
+**Cards**: \`bg-white border border-slate-200 shadow-sm rounded-xl\` on light sections, \`bg-white/5 border border-white/10\` on dark
+**Primary buttons**: \`bg-[${theme.primary}] hover:bg-[${theme.primaryHover}] text-white shadow-lg shadow-[${theme.primary}]/25\`
+**Icon containers**: \`w-12 h-12 rounded-xl bg-[${theme.primary}]/10\` with icon \`text-[${theme.primary}]\`
+**Vary icon container colors**: Use primary for first, secondary for second, accent for third — DON'T make them all the same color
+**Badge**: \`bg-[${theme.primary}]/10 text-[${theme.primary}] border border-[${theme.primary}]/20\`
+**Section backgrounds**: Alternate between \`bg-white\`, \`bg-[${theme.light}]\`, and \`bg-[${theme.dark}] text-white\`
+**Stats/metrics accent**: Use \`text-emerald-600\` for positive, \`text-red-500\` for negative trends
 
-IMPORTANT: Do NOT use #5867EF (the AINative brand purple). Use the theme colors above instead.
+CRITICAL COLOR RULES:
+- Do NOT use gray-50, gray-100, gray-200 — use the theme light color \`bg-[${theme.light}]\` instead
+- Do NOT use blue-500, indigo-600, or ANY Tailwind default color — use ONLY the hex values above
+- Do NOT use #5867EF (AINative brand purple) — use [${theme.primary}] instead
+- Feature cards should each have a DIFFERENT icon container color (primary, secondary, accent) — not all the same
+- The hero section MUST use the dark color with gradient, not a flat solid color
 `
 }
+

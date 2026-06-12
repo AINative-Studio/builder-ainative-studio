@@ -15,10 +15,10 @@ const isLocal = (process.env.NODE_ENV === 'development' || process.env.USE_META_
 
 // LLAMA Configuration using OpenAI SDK directly
 const llama = new OpenAI({
-  apiKey: isLocal ? (process.env.META_API_KEY || '') : (process.env.ZERODB_API_KEY || ''),
+  apiKey: isLocal ? (process.env.META_API_KEY || '') : (process.env.AINATIVE_API_KEY || process.env.API_Key || process.env.ZERODB_API_KEY || ''),
   baseURL: isLocal
     ? (process.env.META_BASE_URL || 'https://api.llama.com/compat/v1')
-    : 'https://api.ainative.studio/v1',
+    : (process.env.AINATIVE_API_URL || 'https://api.ainative.studio') + '/v1',
 })
 
 // Available components for LLAMA to use
@@ -275,7 +275,7 @@ export async function POST(request: NextRequest) {
       }
 
       // All models route through Llama (Meta locally, AINative in cloud)
-      const llamaModel = process.env.LLAMA_MODEL || 'Llama-4-Maverick-17B-128E-Instruct-FP8'
+      const llamaModel = process.env.LLAMA_MODEL || 'kimi-k2'
       console.log(`Starting LLAMA streaming generation (model: ${llamaModel}, env: ${isLocal ? 'local' : 'cloud'})...`)
 
       const stream = await llama.chat.completions.create({
@@ -360,7 +360,7 @@ export async function POST(request: NextRequest) {
 
     // Non-streaming mode (fallback)
     console.log('Starting LLAMA generation with professional prompt...')
-    const model = process.env.LLAMA_MODEL || 'Llama-4-Maverick-17B-128E-Instruct-FP8'
+    const model = process.env.LLAMA_MODEL || 'kimi-k2'
     const result = await llama.chat.completions.create({
       model,
       messages: conversationMessages,

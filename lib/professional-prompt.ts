@@ -244,7 +244,7 @@ Add a skip-to-content link and ensure tab order is logical:
 5. Define ALL data before using it: \`const items = [...]; items.map(...)\`
 6. Avoid dollar signs ($) in string values — use "USD" instead
 7. Keep strings on single lines, properly closed
-8. NEVER use gradients (bg-gradient-to-*, from-*, to-*, via-*) — use solid colors only
+8. USE gradients tastefully for hero sections and accent elements (bg-gradient-to-r, from-*, to-*) — they add visual richness
 9. Use Lucide icons, NEVER emoji/emoticons
 10. EXACTLY ONE \`<h1>\` per page — section headings use \`<h2>\`, never \`<h1>\`
 
@@ -304,12 +304,12 @@ Feature cards: \`w-6 h-6\` inside a \`w-12 h-12 rounded-xl\` container.
 Navigation: \`w-5 h-5\`. Inline: \`w-4 h-4\`.
 NEVER mix icon libraries or use inline emoji as substitutes.
 
-### Rule 3: NO External Image URLs
-NEVER use Unsplash URLs, placeholder.com, via.placeholder.com, or any external image service.
-Hero backgrounds: Use CSS — dark bg + decorative blur glows (\`blur-[120px]\` rounded divs).
-Product images: Use colored divs with Lucide icons (\`<Package />\`, \`<Box />\`, \`<Laptop />\`) — NEVER img tags with URLs.
+### Rule 3: Image Strategy
+If Unsplash hero images are provided in the AVAILABLE HERO IMAGES section below, USE THEM for hero backgrounds and feature sections with proper attribution.
+If NO hero images are provided: Use CSS — dark bg + decorative blur glows (\`blur-[120px]\` rounded divs) or gradient backgrounds.
+Product images: Use colored divs with Lucide icons (\`<Package />\`, \`<Box />\`, \`<Laptop />\`).
 Avatars: Use \`<Avatar><AvatarFallback>SC</AvatarFallback></Avatar>\` with initials.
-ALSO NEVER use: \`via.placeholder.com\`, \`placehold.co\`, \`picsum.photos\`, \`loremflickr.com\`, or any URL in \`<img src=\`.
+NEVER use: \`via.placeholder.com\`, \`placehold.co\`, \`picsum.photos\`, \`loremflickr.com\`, or made-up URLs.
 
 ### Rule 4: Visual Hierarchy & Depth
 Each section MUST have distinct visual weight. Never use the same white bg for all sections.
@@ -338,12 +338,13 @@ h3: \`text-xl font-semibold\` — card titles, sub-headings.
 Body: \`text-base text-slate-600 leading-relaxed\`. Captions: \`text-sm text-slate-500\`.
 Headlines use \`tracking-tight\`. Body text uses default tracking.
 
-### Rule 8: Color Discipline
-Primary (\`#5867EF\`) appears in MAX 3 places per viewport: CTA button, accent text, active state.
-Most UI is neutral: slate-50, white, slate-600, slate-900.
-Accent (\`#FCAE39\`) ONLY for badges, warnings, star ratings — not buttons or text.
-Dark sections (\`bg-[#131726]\`): Must have WCAG AA contrast — use text-white and text-slate-300.
+### Rule 8: Color Discipline — USE THE INJECTED THEME
+Use the COLOR THEME palette injected below — every app gets a UNIQUE color palette. Do NOT default to blue/gray/purple.
+Primary color appears in: CTA buttons, accent text, active states, icon containers, gradient accents.
+Use the theme's dark color for hero/dark sections, secondary for supporting elements, accent for highlights.
+Dark sections: Must have WCAG AA contrast — use text-white and text-slate-300.
 Warm neutrals: prefer \`slate\` over \`gray\` (warmer feel).
+VARIETY IS KEY: If the theme is green, make a green-dominant design. If red, make it bold and warm. Match the palette.
 
 ### Rule 9: Realistic Placeholder Content
 NEVER use perfect 5-star ratings everywhere — use 4.7, 4.8, 4.5 for believability.
@@ -370,10 +371,10 @@ NEVER require JS animation libraries. CSS transitions only.
 
 ## HERO SECTION — MANDATORY PATTERN
 
-**Hero uses CSS backgrounds — NO external image URLs:**
+**Hero uses gradient backgrounds OR provided Unsplash images for visual impact:**
 \`\`\`jsx
-<section aria-label="Hero" className="relative min-h-[700px] bg-[#131726] overflow-hidden" data-agent-role="hero" data-agent-context="hero-section">
-  {/* Decorative background — CSS only, no external images */}
+<section aria-label="Hero" className="relative min-h-[700px] bg-gradient-to-br from-[#131726] via-[#1a1f3a] to-[#0f172a] overflow-hidden" data-agent-role="hero" data-agent-context="hero-section">
+  {/* Decorative background — gradients + blur glows for depth */}
   <div className="absolute inset-0">
     <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-[#5867EF]/10 rounded-full blur-[120px]" />
     <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-[#338585]/8 rounded-full blur-[100px]" />
