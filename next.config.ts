@@ -28,20 +28,13 @@ const nextConfig: NextConfig = {
         ],
       },
       {
-        // Allow showcase preview to be iframed (same-origin)
-        source: '/api/showcase/preview',
-        headers: [
-          { key: 'X-Content-Type-Options', value: 'nosniff' },
-          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
-        ],
-      },
-      {
-        // All other routes: strict security
-        source: '/((?!preview|api/preview|api/showcase/preview).*)',
+        // All other routes — SAMEORIGIN allows iframes from same domain
+        // (needed for preview iframes in builder and showcase)
+        source: '/:path*',
         headers: [
           { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },
           { key: 'X-Content-Type-Options', value: 'nosniff' },
-          { key: 'X-Frame-Options', value: 'DENY' },
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
         ],
       },
