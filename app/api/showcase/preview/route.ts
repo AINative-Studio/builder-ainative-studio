@@ -25,13 +25,25 @@ export async function GET(request: NextRequest) {
     return Response.redirect(new URL(`/api/preview/${entry.chatId}`, request.url))
   }
 
-  // If the entry has stored generated code, render it
+  // If the entry has stored generated code in memory, render it
   if (entry.generatedCode) {
     const html = renderReactPreview(entry.generatedCode, entry.title)
     return new Response(html, {
       headers: { 'Content-Type': 'text/html; charset=utf-8' },
     })
   }
+
+  // Try loading from ZeroDB (seed entries stored with chat_id = "showcase-{slug}")
+  try {
+    const { loadGeneration } = await import('@/lib/zerodb-store')
+    const gen = await loadGeneration(`showcase-${slug}`)
+    if (gen?.generatedCode) {
+      const html = renderReactPreview(gen.generatedCode, entry.title)
+      return new Response(html, {
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      })
+    }
+  } catch (_) {}
 
   // No preview available
   return new Response(`
