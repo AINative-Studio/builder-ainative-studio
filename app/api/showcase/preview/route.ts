@@ -29,7 +29,11 @@ export async function GET(request: NextRequest) {
   if (entry.generatedCode) {
     const html = renderReactPreview(entry.generatedCode, entry.title)
     return new Response(html, {
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Content-Security-Policy': "default-src 'self'; script-src 'unsafe-eval' https://cdn.tailwindcss.com https://unpkg.com; style-src 'unsafe-inline' https://cdn.tailwindcss.com; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://cdn.tailwindcss.com;",
+          'X-Frame-Options': 'SAMEORIGIN',
+        },
     })
   }
 
@@ -40,7 +44,11 @@ export async function GET(request: NextRequest) {
     if (gen?.generatedCode) {
       const html = renderReactPreview(gen.generatedCode, entry.title)
       return new Response(html, {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Content-Security-Policy': "default-src 'self'; script-src 'unsafe-eval' https://cdn.tailwindcss.com https://unpkg.com; style-src 'unsafe-inline' https://cdn.tailwindcss.com; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://cdn.tailwindcss.com;",
+          'X-Frame-Options': 'SAMEORIGIN',
+        },
       })
     }
   } catch (_) {}
@@ -56,24 +64,45 @@ export async function GET(request: NextRequest) {
   `, { headers: { 'Content-Type': 'text/html' } })
 }
 
-function renderReactPreview(code: string, title: string): string {
+function renderReactPreview(rawCode: string, title: string): string {
+  // Extract code from markdown if wrapped
+  const codeMatch = rawCode.match(/```(?:typescript|tsx|jsx|javascript|js)?\n([\s\S]*?)```/)
+  let code = codeMatch ? codeMatch[1] : rawCode
+
+  // Handle export default — convert to named assignment
+  code = code.replace(/export\s+default\s+function\s+(\w+)/g, 'function $1')
+  code = code.replace(/export\s+default\s+/g, 'const __DefaultComponent__ = ')
+
+  // Find the main component name
+  const componentMatch = code.match(/(?:function|const)\s+([A-Z]\w+)/)
+  const componentName = componentMatch ? componentMatch[1] : '__DefaultComponent__'
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${title} — AINative Builder Preview</title>
-  <script src="https://cdn.tailwindcss.com"><\/script>
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"><\/script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"><\/script>
+  <title>${title}</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"><\/script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"><\/script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"><\/script>
+  <script src="https://cdn.tailwindcss.com"><\/script>
+  <style>
+    body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    #root { width: 100%; min-height: 100vh; }
+  </style>
 </head>
 <body>
   <div id="root"></div>
   <script type="text/babel">
+    const { useState, useEffect, useMemo, useCallback, useRef } = React;
     ${code}
-    const App = window.App || window.default || Object.values(window).find(v => typeof v === 'function' && v.toString().includes('createElement'));
-    if (App) ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+    try {
+      const App = ${componentName} || window.${componentName};
+      if (App) ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+    } catch(e) {
+      document.getElementById('root').innerHTML = '<div style="padding:2rem;color:#666">Preview loading error: ' + e.message + '</div>';
+    }
   <\/script>
 </body>
 </html>`
