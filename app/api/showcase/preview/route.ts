@@ -41,7 +41,33 @@ export async function GET(request: NextRequest) {
   try {
     const { loadGeneration } = await import('@/lib/zerodb-store')
     const gen = await loadGeneration(`showcase-${slug}`)
+
+    // Best: serve pre-rendered SSR HTML (fastest, no CDN scripts needed)
+    if (gen?.ssrHtml) {
+      return new Response(gen.ssrHtml, {
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'public, max-age=3600',
+        },
+      })
+    }
+
+    // Fallback: SSR build on-the-fly if we have the code
     if (gen?.generatedCode) {
+      try {
+        const { buildInSandbox } = await import('@/lib/sandbox-builder')
+        const ssrResult = await buildInSandbox(gen.generatedCode)
+        if (ssrResult.success) {
+          return new Response(ssrResult.html, {
+            headers: {
+              'Content-Type': 'text/html; charset=utf-8',
+              'Cache-Control': 'public, max-age=3600',
+            },
+          })
+        }
+      } catch (_) {}
+
+      // Last resort: client-side Babel rendering
       const html = renderReactPreview(gen.generatedCode, entry.title)
       return new Response(html, {
         headers: {

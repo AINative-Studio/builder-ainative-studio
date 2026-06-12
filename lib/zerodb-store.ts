@@ -48,9 +48,10 @@ export async function saveGeneration(data: {
   category?: string
   title?: string
   isShowcase?: boolean
+  ssrHtml?: string
 }): Promise<boolean> {
   try {
-    const row = {
+    const row: Record<string, any> = {
       chat_id: data.chatId,
       prompt: data.prompt,
       generated_code: data.generatedCode,
@@ -61,6 +62,7 @@ export async function saveGeneration(data: {
       is_showcase: data.isShowcase || false,
       created_at: new Date().toISOString(),
     }
+    if (data.ssrHtml) row.ssr_html = data.ssrHtml
 
     const result = await zerodbRequest(
       'POST',
@@ -82,7 +84,7 @@ export async function saveGeneration(data: {
 /**
  * Load a generation by chatId from ZeroDB
  */
-export async function loadGeneration(chatId: string): Promise<{ prompt: string; generatedCode: string } | null> {
+export async function loadGeneration(chatId: string): Promise<{ prompt: string; generatedCode: string; ssrHtml?: string } | null> {
   try {
     // ZeroDB doesn't support server-side filtering — fetch recent and filter client-side
     const result = await zerodbRequest(
@@ -102,6 +104,7 @@ export async function loadGeneration(chatId: string): Promise<{ prompt: string; 
       return {
         prompt: row.prompt,
         generatedCode: row.generated_code,
+        ssrHtml: row.ssr_html,
       }
     }
     return null

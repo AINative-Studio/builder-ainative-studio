@@ -36,10 +36,20 @@ export async function GET(
     try {
       const { loadGeneration } = await import('@/lib/zerodb-store')
       const gen = await loadGeneration(id)
+      if (gen?.ssrHtml) {
+        // Serve pre-rendered SSR HTML directly (fastest path)
+        console.log(`[Preview] Serving SSR HTML from ZeroDB for ID: ${id}`)
+        return new Response(gen.ssrHtml, {
+          headers: {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Cache-Control': 'public, max-age=3600',
+          },
+        })
+      }
       if (gen?.generatedCode) {
         content = gen.generatedCode
         storePreview(id, content) // repopulate in-memory cache
-        console.log(`[Preview] Restored from ZeroDB for ID: ${id}`)
+        console.log(`[Preview] Restored code from ZeroDB for ID: ${id}`)
       }
     } catch (e) {
       console.warn('[Preview] ZeroDB restore failed:', e)
