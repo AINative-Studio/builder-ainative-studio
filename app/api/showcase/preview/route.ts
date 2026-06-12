@@ -69,6 +69,10 @@ function renderReactPreview(rawCode: string, title: string): string {
   const codeMatch = rawCode.match(/```(?:typescript|tsx|jsx|javascript|js)?\n([\s\S]*?)```/)
   let code = codeMatch ? codeMatch[1] : rawCode
 
+  // Strip import statements (not supported in browser text/babel)
+  // Lucide icons become simple SVG stubs, shadcn components become divs
+  code = code.replace(/^import\s+.*from\s+['"].*['"];?\s*$/gm, '')
+
   // Handle export default — convert to named assignment
   code = code.replace(/export\s+default\s+function\s+(\w+)/g, 'function $1')
   code = code.replace(/export\s+default\s+/g, 'const __DefaultComponent__ = ')
@@ -95,7 +99,50 @@ function renderReactPreview(rawCode: string, title: string): string {
 <body>
   <div id="root"></div>
   <script type="text/babel">
-    const { useState, useEffect, useMemo, useCallback, useRef } = React;
+    const { useState, useEffect, useMemo, useCallback, useRef, Fragment } = React;
+
+    // Stub Lucide icons as simple SVG placeholders
+    const iconStub = (props) => React.createElement('svg', {
+      width: props?.size || props?.className?.match(/w-(\\d+)/)?.[1] * 4 || 20,
+      height: props?.size || props?.className?.match(/h-(\\d+)/)?.[1] * 4 || 20,
+      viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2,
+      strokeLinecap: 'round', strokeLinejoin: 'round', className: props?.className || '',
+      ...props,
+    }, React.createElement('circle', {cx:12, cy:12, r:10}));
+
+    // Common Lucide icon names
+    const icons = ['ArrowRight','ArrowLeft','ArrowUp','ArrowDown','Check','X','Plus','Minus',
+      'Search','Star','Heart','Home','Settings','User','Users','Mail','Phone','Calendar',
+      'Clock','Bell','Shield','Zap','Globe','BarChart','BarChart3','LineChart','PieChart',
+      'TrendingUp','TrendingDown','DollarSign','Activity','Eye','Edit','Trash','Download',
+      'Upload','Share','ExternalLink','ChevronDown','ChevronRight','Menu','Filter','Sun','Moon',
+      'Play','Pause','SkipForward','SkipBack','Volume2','Music','Image','File','Folder',
+      'MessageSquare','Send','Inbox','AlertCircle','Info','HelpCircle','CheckCircle','XCircle',
+      'Copy','Save','RefreshCw','RotateCw','Layers','Layout','Grid','List','Map','MapPin',
+      'Building','Briefcase','GraduationCap','Award','Trophy','Target','Cpu','Database',
+      'Server','Wifi','Cloud','Lock','Unlock','Key','CreditCard','ShoppingCart','Package',
+      'Truck','Gift','Tag','Bookmark','Flag','ThumbsUp','ThumbsDown','Smile','Frown'];
+    icons.forEach(name => { if (!window[name]) window[name] = iconStub; });
+
+    // Stub shadcn/ui components as simple divs
+    const stubComponent = ({children, className, ...props}) => React.createElement('div', {className, ...props}, children);
+    const stubButton = ({children, className, variant, size, ...props}) => React.createElement('button', {className: 'px-4 py-2 rounded ' + (className||''), ...props}, children);
+    ['Card','CardHeader','CardTitle','CardDescription','CardContent','CardFooter',
+     'Badge','Input','Label','Separator','Tabs','TabsList','TabsTrigger','TabsContent',
+     'Avatar','AvatarImage','AvatarFallback','Select','SelectTrigger','SelectValue',
+     'SelectContent','SelectItem','Table','TableHeader','TableBody','TableRow','TableHead','TableCell',
+     'MetricCard','AIKitTable','AIKitHeader','AIKitSidebar','AIKitRating','AIKitAvatar',
+     'EmptyState','Skeleton','Progress'].forEach(name => { if (!window[name]) window[name] = stubComponent; });
+    if (!window.Button) window.Button = stubButton;
+
+    // Stub recharts
+    const chartStub = ({children, className, ...props}) => React.createElement('div', {className: 'bg-gray-100 rounded p-4 flex items-center justify-center text-gray-400 ' + (className||''), style:{height:props.height||200}}, children || 'Chart');
+    ['BarChart','LineChart','AreaChart','PieChart','RadarChart','ScatterChart',
+     'Bar','Line','Area','Pie','Cell','XAxis','YAxis','CartesianGrid','Tooltip',
+     'Legend','ResponsiveContainer','RadialBarChart','RadialBar','Treemap','Funnel',
+     'FunnelChart','Radar','PolarGrid','PolarAngleAxis','PolarRadiusAxis',
+     'Scatter','ComposedChart'].forEach(name => { if (!window[name]) window[name] = chartStub; });
+
     ${code}
     try {
       const App = ${componentName} || window.${componentName};
