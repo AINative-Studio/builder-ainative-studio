@@ -111,13 +111,10 @@ export async function middleware(request: NextRequest) {
 
   const isGuest = guestRegex.test(token?.email ?? '')
 
-  // Block guest users from generation endpoints — must register to generate
-  if (isGuest && (pathname === '/api/chat-ws' || pathname === '/api/chat')) {
-    return NextResponse.json(
-      { error: 'Registration required', message: 'Please create a free account to generate apps.' },
-      { status: 403 },
-    )
-  }
+  // Guest users get limited free generations before requiring registration
+  // This allows the homepage suggestion buttons to work as a demo
+  // Rate limiting handles abuse (10 requests/minute already configured)
+  // The UI shows upgrade prompts after the free tier is exhausted
 
   if (token && !isGuest && ['/login', '/register'].includes(pathname)) {
     return NextResponse.redirect(new URL('/', request.url))
