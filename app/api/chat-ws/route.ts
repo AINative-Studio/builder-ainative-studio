@@ -48,9 +48,10 @@ function getLLMClient(): OpenAI {
   return isLocal ? metaClient : ainativeClient
 }
 
-// Default model — kimi-k2 on production (highest quality, no truncation)
-// Fallbacks: deepseek-v4-flash, llama-4-maverick, qwen3-32b
-const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'kimi-k2'
+// Default model — codestral-22b: best speed/quality for code gen (9K chars, 48s)
+// Fallbacks: devstral (10K, 55s), nous-coder (5K, 34s), qwen3-32b (10K, 95s)
+// AVOID: Llama models (512-token cap), deepseek (502 timeouts), kimi-k2 (200s slow)
+const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'codestral-22b'
 
 // Model routing config — all models route through AINative API
 // Model IDs must match AINative API exactly (lowercase, no version suffixes)
@@ -332,7 +333,7 @@ export async function POST(request: NextRequest) {
 
               // Single-turn call with fallback chain
               // CRITICAL: Only system+user messages (2 messages). Multi-turn (>2) triggers 512-token cap.
-              const MODELS_TO_TRY = [modelId, 'deepseek-v4-flash', 'llama-4-maverick', 'qwen3-32b']
+              const MODELS_TO_TRY = [modelId, 'devstral', 'nous-coder', 'qwen3-32b']
               const singleTurnMessages = [
                 { role: 'system' as const, content: llmSystemPrompt },
                 // Merge conversation history into a single user message to keep it 2-message single-turn
@@ -345,7 +346,7 @@ export async function POST(request: NextRequest) {
               for (const tryModel of MODELS_TO_TRY) {
                 try {
                   const ctrl = new AbortController()
-                  const timer = setTimeout(() => ctrl.abort(), 60_000)
+                  const timer = setTimeout(() => ctrl.abort(), 120_000)
                   const response = await client.chat.completions.create(
                     { model: tryModel, max_tokens: 8192, temperature: 0.7, messages: singleTurnMessages },
                     { signal: ctrl.signal }
@@ -424,7 +425,7 @@ Please regenerate the component with these requirements:
 Generate a corrected version of: ${message}`
 
               // Try retry with fallback chain
-              const retryModels = [DEFAULT_MODEL, 'deepseek-v4-flash', 'qwen-coder-32b']
+              const retryModels = [DEFAULT_MODEL, 'devstral', 'nous-coder']
               let retryContent = ''
               const retryMessages = [
                 { role: 'system' as const, content: 'Fix the syntax errors in the code below. Return ONLY valid, complete React code wrapped in ```jsx markers. Ensure all JSX tags are properly closed, all strings are terminated, and all brackets match.' },
