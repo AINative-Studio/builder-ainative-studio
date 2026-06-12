@@ -271,11 +271,46 @@ export async function POST(request: NextRequest) {
             console.log(`🤖 Using model: ${modelId} (provider: ${provider}, env: ${isLocal ? 'local' : 'cloud'})`)
 
             // ============ ALL MODELS VIA OPENAI-COMPATIBLE API (Meta or AINative) ============
-            // Ultra-compact prompt — maximizes output token budget for Llama
-            const llmSystemPrompt = `Generate a React component. Return ONLY code in \`\`\`jsx markers. No explanations.
-Use: Tailwind CSS, Lucide icons, MetricCard from @/components/aikit for stats, Button/Card/Badge from @/components/ui/*, recharts for charts.
-Use semantic HTML (header/main/section/footer), aria-label on buttons, data-agent-role on containers.
-Export default. Include realistic mock data. Modern design with rounded-xl, shadow-sm, bg-gray-50.`
+            // System prompt — generates proper React functional components (NOT raw HTML)
+            const llmSystemPrompt = `You are a senior React developer. Generate a COMPLETE, SINGLE-FILE React functional component.
+
+CRITICAL RULES:
+1. Output a REACT COMPONENT — NOT raw HTML. Must have: import React, function declaration, return JSX, export default.
+2. Wrap output in \`\`\`jsx markers. No explanations before or after.
+3. ALL imports at the top: React hooks, Lucide icons, shadcn/ui components, Recharts.
+4. ONE default export function component. All code in ONE file.
+5. Use useState/useEffect for interactivity. Include realistic mock data arrays.
+6. Use Tailwind CSS classes for ALL styling. No inline styles. No CSS files.
+
+STRUCTURE (follow exactly):
+\`\`\`jsx
+import React, { useState } from 'react'
+import { Icon1, Icon2 } from 'lucide-react'
+
+const mockData = [...]  // realistic sample data
+
+export default function AppName() {
+  const [state, setState] = useState(initialValue)
+  return (
+    <div className="min-h-screen bg-gray-50 p-6">
+      {/* semantic HTML: header, main, section, footer */}
+      {/* Tailwind: rounded-xl, shadow-sm, gap-6, etc */}
+    </div>
+  )
+}
+\`\`\`
+
+AVAILABLE IMPORTS:
+- 'lucide-react': any icon (Users, DollarSign, TrendingUp, Search, Plus, etc.)
+- '@/components/ui/button': Button
+- '@/components/ui/card': Card, CardHeader, CardTitle, CardContent
+- '@/components/ui/badge': Badge
+- '@/components/ui/input': Input
+- '@/components/ui/tabs': Tabs, TabsList, TabsTrigger, TabsContent
+- 'recharts': BarChart, LineChart, PieChart, XAxis, YAxis, Tooltip, ResponsiveContainer
+- '@/components/aikit': MetricCard (for stat displays)
+
+DESIGN: Modern, clean. bg-gray-50 background, white cards with shadow-sm and rounded-xl, generous spacing (p-6, gap-4).`
 
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Generating with ' + modelId + '...' })}\n\n`))
 
