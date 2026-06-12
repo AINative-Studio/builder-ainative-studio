@@ -163,8 +163,20 @@ export function PreviewPanel({
                 onClose={() => setShowCodeViewer(false)}
                 chatId={currentChat?.id || null}
               />
+            ) : currentChat?.demo ? (
+              /* Use SSR preview iframe (more reliable than Sandpack) */
+              <WebPreviewBody
+                src={
+                  currentChat.demo?.startsWith('/preview/')
+                    ? `/api${currentChat.demo}`
+                    : currentChat.demo?.startsWith('/api/preview/')
+                    ? currentChat.demo
+                    : currentChat.demo || ''
+                }
+                key={refreshKey}
+              />
             ) : useSandpack ? (
-              <Suspense fallback={<div className="flex-1 flex items-center justify-center"><p className="text-sm text-gray-500">Loading Sandpack...</p></div>}>
+              <Suspense fallback={<div className="flex-1 flex items-center justify-center"><p className="text-sm text-gray-500">Loading preview...</p></div>}>
                 <SandpackPreviewLazy
                   key={refreshKey}
                   files={sandpackFiles!}
