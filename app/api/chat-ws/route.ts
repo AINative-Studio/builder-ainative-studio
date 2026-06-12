@@ -48,10 +48,10 @@ function getLLMClient(): OpenAI {
   return isLocal ? metaClient : ainativeClient
 }
 
-// Default model — codestral-22b: best speed/quality for code gen (9K chars, 48s)
-// Fallbacks: devstral (10K, 55s), nous-coder (5K, 34s), qwen3-32b (10K, 95s)
-// AVOID: Llama models (512-token cap), deepseek (502 timeouts), kimi-k2 (200s slow)
-const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'codestral-22b'
+// Default model — nous-coder: fast (7s), reliable, follows theme colors (7x theme hits)
+// Mistral models (codestral/devstral) intermittently down. qwen3-32b/deepseek-v3 slow but work.
+// AVOID: Llama (512-token cap), kimi-k2 (200s+)
+const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'nous-coder'
 
 // Model routing config — all models route through AINative API
 // Model IDs must match AINative API exactly (lowercase, no version suffixes)
@@ -322,23 +322,38 @@ WHEN TO USE AIKIT (MANDATORY):
 - Loading → Skeleton/SkeletonCard
 - Empty → EmptyState
 
-COLOR THEME — ${selectedTheme.name.toUpperCase()} (USE THESE EXACT HEX COLORS):
-- Primary: ${selectedTheme.primary} (buttons, links, active states, icon backgrounds)
-- Primary hover: ${selectedTheme.primaryHover}
-- Dark: ${selectedTheme.dark} (hero backgrounds, dark sections, sidebars)
-- Secondary: ${selectedTheme.secondary} (secondary elements, tags)
-- Light: ${selectedTheme.light} (page background — NOT gray-50)
-- Accent: ${selectedTheme.accent} (badges, highlights, alerts)
+⚠️ MANDATORY COLOR THEME — ${selectedTheme.name.toUpperCase()} — NEVER USE bg-blue-*, bg-gray-*, bg-indigo-*:
 
-DESIGN PATTERNS (use these EXACT classes):
-- Page bg: bg-[${selectedTheme.light}] (NOT bg-gray-50)
-- Hero: bg-gradient-to-br from-[${selectedTheme.dark}] to-[${selectedTheme.primary}]/20 with text-white
-- Hero glow: absolute div with bg-[${selectedTheme.primary}]/15 blur-[120px] rounded-full
-- Cards: bg-white border border-slate-200 shadow-sm rounded-xl p-6 hover:shadow-md transition-all
-- Buttons: bg-[${selectedTheme.primary}] hover:bg-[${selectedTheme.primaryHover}] text-white rounded-lg shadow-lg
-- Nav: sticky top-0 bg-white/80 backdrop-blur-md border-b border-slate-200
-- Dark section: bg-[${selectedTheme.dark}] text-white py-20
-- Alternate sections: white → bg-[${selectedTheme.light}] → white → dark → white
+Every element MUST use Tailwind arbitrary value syntax with these exact hex codes:
+
+// PAGE WRAPPER — use this exact class:
+<div className="min-h-screen bg-[${selectedTheme.light}]">
+
+// NAVIGATION — sticky frosted glass:
+<nav className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">
+
+// HERO SECTION — dark gradient with glow:
+<section className="relative min-h-[600px] bg-gradient-to-br from-[${selectedTheme.dark}] via-[${selectedTheme.dark}] to-[${selectedTheme.primary}]/20 overflow-hidden">
+  <div className="absolute inset-0">
+    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-[${selectedTheme.primary}]/15 rounded-full blur-[100px]" />
+  </div>
+  <h1 className="text-5xl font-extrabold text-white">Headline <span className="text-[${selectedTheme.primary}]">accent</span></h1>
+  <button className="bg-[${selectedTheme.primary}] hover:bg-[${selectedTheme.primaryHover}] text-white px-8 py-3 rounded-lg font-semibold shadow-lg shadow-[${selectedTheme.primary}]/25 transition-all">CTA</button>
+</section>
+
+// CARDS — white on light bg:
+<div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 hover:shadow-md transition-all">
+  <div className="w-12 h-12 rounded-xl bg-[${selectedTheme.primary}]/10 flex items-center justify-center mb-4">
+    <Icon className="w-6 h-6 text-[${selectedTheme.primary}]" />
+  </div>
+</div>
+
+// DARK SECTION — use for CTA or features:
+<section className="bg-[${selectedTheme.dark}] text-white py-20">
+  <span className="bg-[${selectedTheme.primary}]/10 text-[${selectedTheme.primary}] border border-[${selectedTheme.primary}]/20 px-3 py-1 rounded-full text-sm">Badge</span>
+</section>
+
+// ALTERNATE SECTIONS: bg-[${selectedTheme.light}] → bg-white → bg-[${selectedTheme.dark}] → bg-white
 
 LAYOUT VARIETY — make each app unique:
 - Landing: hero + stats (MetricCard) + features grid + pricing (AIKitPriceCard) + testimonials + CTA
@@ -413,7 +428,7 @@ export default function AppName() {
 
               // Single-turn call with fallback chain
               // CRITICAL: Only system+user messages (2 messages). Multi-turn (>2) triggers 512-token cap.
-              const MODELS_TO_TRY = [modelId, 'devstral', 'nous-coder', 'qwen3-32b']
+              const MODELS_TO_TRY = [modelId, 'nous-coder', 'codestral-22b', 'qwen3-32b']
               const singleTurnMessages = [
                 { role: 'system' as const, content: llmSystemPrompt },
                 // Merge conversation history into a single user message to keep it 2-message single-turn
@@ -505,7 +520,7 @@ Please regenerate the component with these requirements:
 Generate a corrected version of: ${message}`
 
               // Try retry with fallback chain
-              const retryModels = [DEFAULT_MODEL, 'devstral', 'nous-coder']
+              const retryModels = [DEFAULT_MODEL, 'codestral-22b', 'qwen3-32b']
               let retryContent = ''
               const retryMessages = [
                 { role: 'system' as const, content: 'Fix the syntax errors in the code below. Return ONLY valid, complete React code wrapped in ```jsx markers. Ensure all JSX tags are properly closed, all strings are terminated, and all brackets match.' },
