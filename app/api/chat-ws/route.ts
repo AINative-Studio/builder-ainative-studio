@@ -453,6 +453,38 @@ export default function AppName() {
                   const finish = response.choices?.[0]?.finish_reason
                   console.log(`📊 ${tryModel}: ${fullContent.length} chars (${tokens} tok) finish=${finish}`)
 
+                  // Handle truncation: if finish_reason=length, close the component
+                  if (finish === 'length' && fullContent.length > 500) {
+                    console.log('⚠️ Output truncated — applying closure fix')
+                    // Find the last complete JSX line and close from there
+                    const lines = fullContent.split('\n')
+                    let cutPoint = lines.length
+                    for (let i = lines.length - 1; i >= Math.max(0, lines.length - 20); i--) {
+                      const line = lines[i].trim()
+                      if (line.endsWith('>') || line.endsWith('/>') || line.endsWith('}') || line.endsWith(');')) {
+                        cutPoint = i + 1
+                        break
+                      }
+                    }
+                    fullContent = lines.slice(0, cutPoint).join('\n')
+                    // Count unclosed braces/parens and close them
+                    const ob = (fullContent.match(/\{/g) || []).length
+                    const cb = (fullContent.match(/\}/g) || []).length
+                    const op = (fullContent.match(/\(/g) || []).length
+                    const cp = (fullContent.match(/\)/g) || []).length
+                    let closure = '\n'
+                    for (let i = 0; i < op - cp; i++) closure += ')'
+                    if (op > cp) closure += ';\n'
+                    for (let i = 0; i < ob - cb; i++) closure += '}\n'
+                    // Ensure there's a default export
+                    if (!fullContent.includes('export default')) {
+                      const funcMatch = fullContent.match(/(?:function|const)\s+([A-Z]\w+)/)
+                      if (funcMatch) closure += `\nexport default ${funcMatch[1]};\n`
+                    }
+                    fullContent += closure
+                    console.log(`📊 Truncation fixed: added ${ob-cb} braces, ${op-cp} parens`)
+                  }
+
                   updatePreviewPartial(responseId, fullContent)
                   safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'refresh' })}\n\n`))
 

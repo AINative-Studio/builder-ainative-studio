@@ -19,12 +19,37 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
   const fixes: string[] = []
 
   // Fix TRUNCATION: Close unterminated JSX comments from LLM truncation
-  // Llama continuation sometimes produces {/* without closing */}
   const openComments = (fixedCode.match(/\/\*/g) || []).length
   const closeComments = (fixedCode.match(/\*\//g) || []).length
   if (openComments > closeComments) {
     fixedCode += ' */}'
     fixes.push('Closed unterminated JSX comment from truncation')
+  }
+
+  // Fix TRUNCATION: Close unterminated strings and template literals
+  // Count unmatched quotes/backticks — if odd number, the last one is unterminated
+  const lines = fixedCode.split('\n')
+  const lastLines = lines.slice(-5).join('\n')
+  // If the last few lines have an unterminated string, chop them
+  const singleQuotes = (lastLines.match(/'/g) || []).length
+  const doubleQuotes = (lastLines.match(/"/g) || []).length
+  const backticks = (lastLines.match(/`/g) || []).length
+  if (singleQuotes % 2 !== 0 || doubleQuotes % 2 !== 0 || backticks % 2 !== 0) {
+    // Remove last incomplete line(s) until quotes balance
+    let trimmedLines = lines.slice()
+    while (trimmedLines.length > 10) {
+      const lastLine = trimmedLines[trimmedLines.length - 1].trim()
+      trimmedLines.pop()
+      const remaining = trimmedLines.join('\n')
+      const sq = (remaining.match(/'/g) || []).length
+      const dq = (remaining.match(/"/g) || []).length
+      const bt = (remaining.match(/`/g) || []).length
+      if (sq % 2 === 0 && dq % 2 === 0 && bt % 2 === 0) {
+        fixedCode = remaining
+        fixes.push('Removed truncated lines with unterminated strings')
+        break
+      }
+    }
   }
 
   // Fix TRUNCATION: If code is truncated mid-expression, find the last complete statement and close from there
