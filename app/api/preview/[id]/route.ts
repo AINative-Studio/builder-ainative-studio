@@ -196,10 +196,38 @@ export async function GET(
     .replace(/^[^a-zA-Z/\s]+(function|const|import|export)/i, '$1')
     .trim()
 
-  // Clean up the code
-  componentCode = componentCode
-    // Remove all imports
-    .replace(/import\s+.*?from\s+['"].*?['"]\s*;?\s*/g, '')
+  // Clean up the code — remove all import statements
+  // Process line-by-line to safely handle multi-line imports like:
+  //   import {
+  //     Bot,
+  //     Brain
+  //   } from 'lucide-react'
+  const codeLines = componentCode.split('\n')
+  const cleanedLines: string[] = []
+  let insideImport = false
+  for (const line of codeLines) {
+    const trimmed = line.trim()
+    if (trimmed.startsWith('import ') || trimmed.startsWith('import{')) {
+      if (trimmed.includes('from ') && (trimmed.includes("'") || trimmed.includes('"'))) {
+        // Single-line import — skip it entirely
+        continue
+      }
+      // Start of multi-line import
+      insideImport = true
+      continue
+    }
+    if (insideImport) {
+      if (trimmed.includes('from ') && (trimmed.includes("'") || trimmed.includes('"'))) {
+        // End of multi-line import
+        insideImport = false
+        continue
+      }
+      // Still inside multi-line import — skip
+      continue
+    }
+    cleanedLines.push(line)
+  }
+  componentCode = cleanedLines.join('\n')
     // Remove export statements
     .replace(/export\s+default\s+/g, '')
     .replace(/export\s+/g, '')
