@@ -169,9 +169,9 @@ export async function POST(request: NextRequest) {
             enhancedPrompt = enhancePromptWithMockData(componentVerifiedPrompt)
           }
 
-          // REAL STEP 3: Fetch contextual hero images
-          const images = await fetchContextualImages(message, 3)
-          const imagePrompt = formatImagesForPrompt(images.length > 0 ? images : getFallbackImages())
+          // Skip Unsplash images — adds latency and open-source models ignore URLs
+          // Use CSS gradients + blur glows instead (already in the theme prompt)
+          const imagePrompt = ''
 
           // Build conversation messages
           const conversationMessages = [
@@ -517,7 +517,7 @@ export default function AppName() {
               for (const tryModel of MODELS_TO_TRY) {
                 try {
                   const ctrl = new AbortController()
-                  const timer = setTimeout(() => ctrl.abort(), 120_000)
+                  const timer = setTimeout(() => ctrl.abort(), 60_000)
                   const response = await client.chat.completions.create(
                     { model: tryModel, max_tokens: 4096, temperature: 0.7, messages: singleTurnMessages },
                     { signal: ctrl.signal }
