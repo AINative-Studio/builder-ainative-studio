@@ -959,13 +959,41 @@ export async function GET(
           console.log('[Preview] Transform done: ' + _transformed.code.length + ' chars');
           eval(_transformed.code);
           console.log('[Preview] Eval done');
-          // Hide loading indicator immediately after eval
           document.getElementById('loading-indicator').style.display = 'none';
         } catch(babelErr) {
-          console.error('[Preview] Error:', babelErr);
-          document.getElementById('loading-indicator').innerHTML =
-            '<div style="text-align:center;padding:40px;"><h3 style="color:#dc2626;">Error</h3><pre style="text-align:left;background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b;">' +
-            String(babelErr.message || babelErr).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px;">Retry</button></div>';
+          console.warn('[Preview] First transform failed, attempting auto-fix...', babelErr.message);
+          // AUTO-RECOVERY: truncate to last complete function and close brackets
+          try {
+            var _lines = _src.split('\\n');
+            var _cutAt = _lines.length;
+            // Walk backwards to find last line ending with } or )
+            for (var _j = _lines.length - 1; _j > Math.max(0, _lines.length - 50); _j--) {
+              var _ln = _lines[_j].trim();
+              if (_ln === '}' || _ln === '};' || _ln === ');' || _ln === '})' || _ln === '});') {
+                _cutAt = _j + 1;
+                break;
+              }
+            }
+            var _fixed = _lines.slice(0, _cutAt).join('\\n');
+            // Close unclosed brackets
+            var _ob = (_fixed.match(/\\{/g) || []).length;
+            var _cb = (_fixed.match(/\\}/g) || []).length;
+            var _op = (_fixed.match(/\\(/g) || []).length;
+            var _cp = (_fixed.match(/\\)/g) || []).length;
+            for (var _k = 0; _k < _op - _cp; _k++) _fixed += ')';
+            if (_op > _cp) _fixed += ';\\n';
+            for (var _k = 0; _k < _ob - _cb; _k++) _fixed += '}\\n';
+
+            var _transformed2 = Babel.transform(_fixed, { presets: ['react'] });
+            console.log('[Preview] Auto-fix succeeded: ' + _transformed2.code.length + ' chars');
+            eval(_transformed2.code);
+            document.getElementById('loading-indicator').style.display = 'none';
+          } catch(fixErr) {
+            console.error('[Preview] Auto-fix also failed:', fixErr.message);
+            document.getElementById('loading-indicator').innerHTML =
+              '<div style="text-align:center;padding:40px;"><h3 style="color:#dc2626;">Compilation Error</h3><pre style="text-align:left;background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b;">' +
+              String(babelErr.message || babelErr).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px;">Retry</button></div>';
+          }
         }
       }
 

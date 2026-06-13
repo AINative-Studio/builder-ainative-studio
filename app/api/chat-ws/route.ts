@@ -288,6 +288,10 @@ export async function POST(request: NextRequest) {
             // Theme colors are injected directly into examples so the model copies them.
             const llmSystemPrompt = `You are a senior React developer. Generate a COMPLETE, SINGLE-FILE React functional component.
 
+⚠️ CRITICAL: Use ONLY these hex colors — NEVER use bg-blue-*, bg-gray-*, bg-indigo-*, bg-purple-*:
+PRIMARY: ${selectedTheme.primary} | DARK: ${selectedTheme.dark} | SECONDARY: ${selectedTheme.secondary} | LIGHT BG: ${selectedTheme.light} | ACCENT: ${selectedTheme.accent}
+Buttons: bg-[${selectedTheme.primary}] | Hero: bg-gradient-to-br from-[${selectedTheme.dark}] to-[${selectedTheme.primary}]/20 | Page: bg-[${selectedTheme.light}]
+
 RULES:
 1. Output REACT code wrapped in \`\`\`jsx markers. No explanations.
 2. import React and hooks at top. ONE default export function. ALL code in ONE file.
