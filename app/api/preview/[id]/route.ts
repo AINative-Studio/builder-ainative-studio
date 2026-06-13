@@ -230,6 +230,10 @@ export async function GET(
     cleanedLines.push(line)
   }
   componentCode = cleanedLines.join('\n')
+    // Fix stray semicolons after => (common model error: .filter(x =>;)
+    .replace(/=>\s*;/g, '=>')
+    // Fix stray semicolons before ? in ternary (x === 'a' ; ? ...)
+    .replace(/\s*;\s*\?\s/g, ' ? ')
     // Remove export statements
     .replace(/export\s+default\s+/g, '')
     .replace(/export\s+/g, '')
