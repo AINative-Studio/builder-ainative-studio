@@ -62,7 +62,8 @@ export async function middleware(request: NextRequest) {
       pathname === '/api/showcase' ||
       pathname.startsWith('/api/showcase/') ||
       pathname === '/api/chat-ws' ||
-      pathname === '/api/chat'
+      pathname === '/api/chat' ||
+      pathname.startsWith('/api/rlhf/')
 
     if (pathname.startsWith('/api/') && isPublicApiRoute) {
       return NextResponse.next()
