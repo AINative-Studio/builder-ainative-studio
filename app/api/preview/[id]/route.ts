@@ -399,14 +399,13 @@ export async function GET(
   //   return `"${escaped}"`
   // })
 
-  const usedServerTransform = false
-  const transformedCode = componentCode
+  // All scripts now served locally from /vendor/ — no CDN dependency
 
   // Skip validation if still streaming (incomplete code)
   const streaming = isPreviewStreaming(id)
   if (!streaming) {
     // Only validate when streaming is complete
-    const validation = validateJavaScriptCode(transformedCode || componentCode)
+    const validation = validateJavaScriptCode(componentCode)
     if (!validation.valid) {
       console.error('Preview validation failed for ID:', id, 'Error:', validation.error)
       const errorHtml = `
@@ -445,17 +444,14 @@ export async function GET(
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <!-- Core: React 18 -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    ${usedServerTransform ? '<!-- Babel not needed: JSX pre-compiled by esbuild -->' : '<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>'}
-    <!-- Lucide Icons (vanilla) + React bridge -->
-    <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.min.js"></script>
-    <!-- PropTypes (required by Recharts) -->
-    <script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
-    <!-- Recharts for data visualization -->
-    <script src="https://unpkg.com/recharts@2.15.0/umd/Recharts.js"></script>
-    <!-- Tailwind CSS with custom AINative config -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Local vendor scripts — no CDN dependency, instant load -->
+    <script src="/vendor/react.min.js"></script>
+    <script src="/vendor/react-dom.min.js"></script>
+    <script src="/vendor/babel.min.js"></script>
+    <script src="/vendor/lucide.min.js"></script>
+    <script src="/vendor/prop-types.min.js"></script>
+    <script src="/vendor/recharts.min.js"></script>
+    <script src="/vendor/tailwind.min.js"></script>
     <script>
       tailwind.config = {
         theme: {
@@ -522,7 +518,7 @@ export async function GET(
 <body>
     <div id="loading-indicator"><div class="spinner"></div><p>Loading preview...</p></div>
     <div id="root"></div>
-    <script ${usedServerTransform ? '' : 'type="text/babel"'}>
+    <script type="text/babel">
       console.log('[Preview] Starting preview initialization...');
 
       // AX-5 ENFORCEMENT: Intercept React.createElement to ensure single h1
@@ -939,7 +935,7 @@ export async function GET(
         console.log('[Preview] Code length: ${componentCode.length} characters');
 
         // Insert the component code
-        ${usedServerTransform ? transformedCode : componentCode}
+        ${componentCode}
 
         console.log('[Preview] Component code executed successfully');
 
