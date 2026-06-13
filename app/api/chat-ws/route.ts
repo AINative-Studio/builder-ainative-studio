@@ -126,6 +126,7 @@ export async function POST(request: NextRequest) {
         try {
           let fullContent = ''
           let lastUpdateTime = Date.now()
+          const generationStartTime = Date.now()
           let tokenUsage: any = undefined
 
           // Send initial metadata
@@ -716,7 +717,7 @@ Generate a corrected version of: ${message}`
                 theme: selectedTheme.name,
                 codeLength: finalContent.length,
                 passedValidation: validation.valid,
-                generationTimeMs: Date.now() - (tokenUsage?.startTime || Date.now()),
+                generationTimeMs: Date.now() - generationStartTime,
                 retryCount: retryAttempted ? 1 : 0,
                 finishReason: 'stop',
               }).catch(e => console.warn('[RLHF log failed]', e))
