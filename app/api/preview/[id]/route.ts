@@ -444,7 +444,7 @@ export async function GET(
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <!-- Core: React 18 -->
-    <!-- Local vendor scripts — no CDN dependency, instant load -->
+    <!-- All vendor scripts served locally -->
     <script src="/vendor/react.min.js"></script>
     <script src="/vendor/react-dom.min.js"></script>
     <script src="/vendor/babel.min.js"></script>
@@ -932,41 +932,26 @@ export async function GET(
       }
 
     </script>
-    <!-- Component code (needs Babel for JSX) -->
-    <script type="text/babel" data-type="module">
-      try {
+    <!-- Component code: transformed by Babel.transform() synchronously, then eval'd -->
+    <script id="component-source" type="text/plain">
         ${componentCode}
-        console.log('[Preview] Component code executed, length: ${componentCode.length}');
-      } catch(e) { console.error('[Preview] Component error:', e); }
     </script>
-    <!-- Rendering script: find component and mount it -->
+    <!-- Transform and render -->
     <script>
-      // Poll until Babel finishes transforming the component (checks every 200ms, up to 30s)
-      var _renderAttempts = 0;
-      var _maxAttempts = 150; // 150 * 200ms = 30 seconds
-      function _tryRender() {
-        _renderAttempts++;
-        // Check if any PascalCase function appeared on window (sign Babel is done)
-        var _foundAny = false;
-        for (var k in window) {
-          if (typeof window[k] === 'function' && /^[A-Z]/.test(k) && k.length > 3 &&
-              !['React','ReactDOM','Babel','ErrorBoundary','ShadcnComponents'].includes(k) &&
-              window[k].toString().length > 500) {
-            _foundAny = true;
-            break;
-          }
-        }
-        if (!_foundAny && _renderAttempts < _maxAttempts) {
-          setTimeout(_tryRender, 200);
-          return;
-        }
-        if (!_foundAny) {
-          console.error('[Preview] Babel transform timed out after 30s');
-          var loader = document.getElementById('loading-indicator');
-          if (loader) loader.innerHTML = '<div style="text-align:center;padding:40px;"><h3 style="color:#1e293b;">Preview Failed</h3><p style="color:#64748b;">Component code could not be compiled.</p><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;">Retry</button></div>';
-          return;
-        }
-        console.log('[Preview] Babel ready after ' + (_renderAttempts * 200) + 'ms, rendering...');
+      // Use Babel.transform() synchronously — no async waiting needed
+      try {
+        var _src = document.getElementById('component-source').textContent;
+        console.log('[Preview] Transforming ' + _src.length + ' chars of JSX...');
+        var _transformed = Babel.transform(_src, { presets: ['react'], filename: 'component.jsx' });
+        console.log('[Preview] Babel transform complete: ' + _transformed.code.length + ' chars');
+        eval(_transformed.code);
+        console.log('[Preview] Component code evaluated successfully');
+      } catch(babelErr) {
+        console.error('[Preview] Babel transform/eval error:', babelErr);
+        document.getElementById('loading-indicator').innerHTML =
+          '<div style="text-align:center;padding:40px;"><h3 style="color:#dc2626;">Compilation Error</h3><pre style="text-align:left;background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b;">' +
+          (babelErr.message || 'Unknown error').replace(/</g,'&lt;') + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;margin-top:12px;">Retry</button></div>';
+      }
 
       try {
 
@@ -1179,8 +1164,7 @@ export async function GET(
           '<pre>' + _esc(error.message) + '</pre>' +
           '</div>';
       }
-      } // end _tryRender
-      _tryRender();
+      }
     </script>
 </body>
 </html>
