@@ -48,34 +48,34 @@ function getLLMClient(): OpenAI {
   return isLocal ? metaClient : ainativeClient
 }
 
-// Default model — nous-coder: fast (7s), reliable, follows theme colors (7x theme hits)
-// Mistral models (codestral/devstral) intermittently down. qwen3-32b/deepseek-v3 slow but work.
-// AVOID: Llama (512-token cap), kimi-k2 (200s+)
+// Model strategy (benchmarked 2026-06-13):
+// FREE: nous-coder (16s, 9K chars, best theme compliance)
+// PAID: kimi-k2.6 (71s, 23K chars, best quality — via DigitalOcean)
 const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'nous-coder'
+const PAID_MODEL = process.env.PAID_MODEL || 'kimi-k2.6'
+
+// Fallback chains by tier
+const FREE_FALLBACKS = ['nous-coder', 'gpt-oss-20b', 'ministral-14b', 'llama-4-maverick']
+const PAID_FALLBACKS = ['kimi-k2.6', 'nous-coder', 'nemotron-70b', 'ministral-14b']
 
 // Model routing config — all models route through AINative API
-// Model IDs must match AINative API exactly (lowercase, no version suffixes)
-const MODEL_CONFIG: Record<string, { provider: 'meta' | 'ainative'; modelId: string }> = {
-  // Top tier — high token output, best quality
-  'kimi-k2': { provider: 'ainative', modelId: 'kimi-k2' },
-  'deepseek-v4-flash': { provider: 'ainative', modelId: 'deepseek-v4-flash' },
-  'deepseek-v3': { provider: 'ainative', modelId: 'deepseek-v3' },
-  'qwen3.5-72b': { provider: 'ainative', modelId: 'qwen3.5-72b-instruct' },
-  // Llama Models
-  'llama-4-maverick': { provider: isLocal ? 'meta' : 'ainative', modelId: 'llama-4-maverick' },
-  'llama-4-scout': { provider: 'ainative', modelId: 'llama-4-scout' },
-  'llama-3.3-70b': { provider: 'ainative', modelId: 'llama-3.3-70b' },
-  // Code Specialists
-  'qwen-coder-32b': { provider: 'ainative', modelId: 'qwen-coder-32b' },
-  'devstral': { provider: 'ainative', modelId: 'devstral' },
-  'codestral-22b': { provider: 'ainative', modelId: 'codestral-22b' },
-  'nous-coder': { provider: 'ainative', modelId: 'nous-coder' },
-  // General
-  'qwen3-32b': { provider: 'ainative', modelId: 'qwen3-32b' },
-  'gemma-4-31b': { provider: 'ainative', modelId: 'gemma-4-31b' },
-  // Reasoning
-  'deepseek-r1': { provider: 'ainative', modelId: 'deepseek-r1' },
-  'qwq-32b': { provider: 'ainative', modelId: 'qwq-32b' },
+const MODEL_CONFIG: Record<string, { provider: 'meta' | 'ainative'; modelId: string; tier: 'free' | 'paid' }> = {
+  // === PAID TIER — best quality, longer output ===
+  'kimi-k2.6': { provider: 'ainative', modelId: 'kimi-k2.6', tier: 'paid' },
+  'kimi-k2': { provider: 'ainative', modelId: 'kimi-k2', tier: 'paid' },
+  'nemotron-70b': { provider: 'ainative', modelId: 'nemotron-70b', tier: 'paid' },
+  // === FREE TIER — fast, reliable ===
+  'nous-coder': { provider: 'ainative', modelId: 'nous-coder', tier: 'free' },
+  'gpt-oss-20b': { provider: 'ainative', modelId: 'gpt-oss-20b', tier: 'free' },
+  'ministral-14b': { provider: 'ainative', modelId: 'ministral-14b', tier: 'free' },
+  'llama-4-maverick': { provider: isLocal ? 'meta' : 'ainative', modelId: 'llama-4-maverick', tier: 'free' },
+  'nemotron-super-49b': { provider: 'ainative', modelId: 'nemotron-super-49b', tier: 'free' },
+  'cohere-command': { provider: 'ainative', modelId: 'cohere-command', tier: 'free' },
+  // === INTERMITTENT — may come back online ===
+  'codestral-22b': { provider: 'ainative', modelId: 'codestral-22b', tier: 'free' },
+  'devstral': { provider: 'ainative', modelId: 'devstral', tier: 'free' },
+  'deepseek-v3': { provider: 'ainative', modelId: 'deepseek-v3', tier: 'free' },
+  'qwen3-32b': { provider: 'ainative', modelId: 'qwen3-32b', tier: 'free' },
 }
 
 export async function POST(request: NextRequest) {
@@ -441,7 +441,11 @@ export default function AppName() {
 
               // Single-turn call with fallback chain
               // CRITICAL: Only system+user messages (2 messages). Multi-turn (>2) triggers 512-token cap.
-              const MODELS_TO_TRY = [modelId, 'nous-coder', 'codestral-22b', 'qwen3-32b']
+              // Use tier-appropriate fallback chain
+              const modelTier = MODEL_CONFIG[requestedModel]?.tier || 'free'
+              const MODELS_TO_TRY = modelTier === 'paid'
+                ? [modelId, ...PAID_FALLBACKS.filter(m => m !== modelId)]
+                : [modelId, ...FREE_FALLBACKS.filter(m => m !== modelId)]
               const singleTurnMessages = [
                 { role: 'system' as const, content: llmSystemPrompt },
                 // Merge conversation history into a single user message to keep it 2-message single-turn
@@ -565,7 +569,7 @@ Please regenerate the component with these requirements:
 Generate a corrected version of: ${message}`
 
               // Try retry with fallback chain
-              const retryModels = [DEFAULT_MODEL, 'codestral-22b', 'qwen3-32b']
+              const retryModels = [DEFAULT_MODEL, 'gpt-oss-20b', 'ministral-14b']
               let retryContent = ''
               const retryMessages = [
                 { role: 'system' as const, content: 'Fix the syntax errors in the code below. Return ONLY valid, complete React code wrapped in ```jsx markers. Ensure all JSX tags are properly closed, all strings are terminated, and all brackets match.' },
