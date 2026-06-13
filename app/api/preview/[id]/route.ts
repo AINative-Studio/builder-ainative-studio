@@ -518,7 +518,8 @@ export async function GET(
 <body>
     <div id="loading-indicator"><div class="spinner"></div><p>Loading preview...</p></div>
     <div id="root"></div>
-    <script type="text/babel">
+    <!-- Setup script: icons, hooks, libraries (plain JS, no Babel needed) -->
+    <script>
       console.log('[Preview] Starting preview initialization...');
 
       // AX-5 ENFORCEMENT: Intercept React.createElement to ensure single h1
@@ -930,14 +931,20 @@ export async function GET(
         }
       }
 
+    </script>
+    <!-- Component code (needs Babel for JSX) -->
+    <script type="text/babel" data-type="module">
       try {
-        console.log('[Preview] Executing component code...');
-        console.log('[Preview] Code length: ${componentCode.length} characters');
-
-        // Insert the component code
         ${componentCode}
-
-        console.log('[Preview] Component code executed successfully');
+        console.log('[Preview] Component code executed, length: ${componentCode.length}');
+      } catch(e) { console.error('[Preview] Component error:', e); }
+    </script>
+    <!-- Rendering script: find component and mount it -->
+    <script>
+      // Wait for Babel to process the component script
+      setTimeout(function() {
+      try {
+        console.log('[Preview] Looking for component to render...');
 
         // Find the main page component to render.
         // Strategy: Check known component name patterns FIRST (most reliable),
@@ -1141,15 +1148,14 @@ export async function GET(
         }
       } catch (error) {
         console.error('[Preview] ✗ Error during execution:', error);
-        console.error('[Preview] Error stack:', error.stack);
         var _esc = function(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
         document.getElementById('root').innerHTML =
           '<div style="padding: 20px; color: red;">' +
           '<h3>Error rendering component</h3>' +
           '<pre>' + _esc(error.message) + '</pre>' +
-          '<pre style="font-size: 12px; margin-top: 10px;">' + _esc(error.stack || '') + '</pre>' +
           '</div>';
       }
+      }, 500); // end setTimeout — wait for Babel to process component
     </script>
 </body>
 </html>
