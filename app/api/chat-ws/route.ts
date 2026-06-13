@@ -296,7 +296,11 @@ RULES:
 1. Output REACT code wrapped in \`\`\`jsx markers. No explanations.
 2. import React and hooks at top. ONE default export function. ALL code in ONE file.
 3. Use Tailwind CSS classes. Use useState/useEffect for interactivity.
-⚠️ KEEP CODE UNDER 200 LINES. Do NOT generate overly long components. Be concise — use map() for repeated elements, keep JSX compact.
+⚠️ KEEP CODE UNDER 150 LINES TOTAL. This is critical — code over 150 lines will be truncated and break.
+- Use map() for ALL repeated elements (cards, rows, list items) — NEVER write them individually
+- Define data arrays at top, map over them in JSX
+- Use compact Tailwind classes, no verbose className strings
+- ONE main view — do NOT build multiple tabs/views. Just the primary screen.
 4. Use Lucide React icons (import from 'lucide-react'). NEVER use emoji as icons.
 5. Available: recharts (ResponsiveContainer, LineChart, BarChart, PieChart, etc.), lucide-react icons.
 6. ALL components below are available as globals — use them directly, NO import needed.
