@@ -246,6 +246,42 @@ export async function GET(
     .replace(/:\s*boolean/g, '')
     .replace(/interface\s+\w+\s*{[^}]*}/g, '')
 
+  // SERVER-SIDE JSX TRUNCATION FIXER
+  // If code is truncated (common with 4096 max_tokens), close all open brackets
+  const openBraces = (componentCode.match(/{/g) || []).length
+  const closeBraces = (componentCode.match(/}/g) || []).length
+  const openParens = (componentCode.match(/\(/g) || []).length
+  const closeParens = (componentCode.match(/\)/g) || []).length
+  const unclosedBraces = openBraces - closeBraces
+  const unclosedParens = openParens - closeParens
+
+  if (unclosedBraces > 0 || unclosedParens > 0) {
+    console.log(`[Preview] Fixing truncation: ${unclosedBraces} braces, ${unclosedParens} parens`)
+    // Walk backwards to find last complete line
+    const fixLines = componentCode.split('\n')
+    let cutPoint = fixLines.length
+    for (let i = fixLines.length - 1; i >= Math.max(0, fixLines.length - 30); i--) {
+      const line = fixLines[i].trim()
+      if (line.endsWith('>') || line.endsWith('/>') || line.endsWith('}') || line.endsWith(');') || line.endsWith(',')) {
+        cutPoint = i + 1
+        break
+      }
+    }
+    componentCode = fixLines.slice(0, cutPoint).join('\n')
+    // Recount and close
+    const ob2 = (componentCode.match(/{/g) || []).length
+    const cb2 = (componentCode.match(/}/g) || []).length
+    const op2 = (componentCode.match(/\(/g) || []).length
+    const cp2 = (componentCode.match(/\)/g) || []).length
+    let closure = '\n'
+    // Close JSX: need </div> for unclosed tags, then ) for return, then } for function
+    for (let k = 0; k < op2 - cp2; k++) closure += ')'
+    if (op2 > cp2) closure += ';\n'
+    for (let k = 0; k < ob2 - cb2; k++) closure += '}\n'
+    componentCode += closure
+    console.log(`[Preview] Truncation fixed: added ${ob2-cb2} braces, ${op2-cp2} parens`)
+  }
+
   // Remove duplicate shadcn component declarations (they're already loaded from /shadcn-components.js)
   // This prevents "Identifier has already been declared" errors
   const shadcnComponents = ['Button', 'Card', 'CardHeader', 'CardTitle', 'CardDescription', 'CardContent', 'CardFooter', 'Input', 'Label', 'Badge', 'Avatar', 'AvatarImage', 'AvatarFallback', 'Table', 'TableHeader', 'TableBody', 'TableRow', 'TableHead', 'TableCell', 'Separator'];

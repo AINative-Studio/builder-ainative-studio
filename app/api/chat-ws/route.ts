@@ -524,7 +524,7 @@ export default function AppName() {
                   const ctrl = new AbortController()
                   const timer = setTimeout(() => ctrl.abort(), 60_000)
                   const response = await client.chat.completions.create(
-                    { model: tryModel, max_tokens: 3000, temperature: 0.7, messages: singleTurnMessages },
+                    { model: tryModel, max_tokens: 4096, temperature: 0.7, messages: singleTurnMessages },
                     { signal: ctrl.signal }
                   )
                   clearTimeout(timer)
@@ -646,7 +646,7 @@ Generate a corrected version of: ${message}`
                 try {
                   const retryResponse = await ainativeClient.chat.completions.create({
                     model: retryModel,
-                    max_tokens: 3000,
+                    max_tokens: 4096,
                     temperature: 0.7,
                     messages: retryMessages,
                   })
