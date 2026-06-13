@@ -1,0 +1,8 @@
+allowBuilds:
+  '@sentry/cli': set this to true or false
+  bufferutil: set this to true or false
+  es5-ext: set this to true or false
+  esbuild: set this to true or false
+  redis-memory-server: set this to true or false
+  sharp: set this to true or false
+  unrs-resolver: set this to true or false
