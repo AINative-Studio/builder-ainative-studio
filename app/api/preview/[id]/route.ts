@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getPreview, isPreviewStreaming, storePreview, getSSRPreview } from '@/lib/preview-store'
 import { validateJavaScriptCode } from '@/lib/code-validator'
+// Note: server-side JSX transform not possible in Next.js webpack (native deps)
+// Using client-side Babel with loading indicator + timeout fallback
 
 export async function GET(
   request: NextRequest,
@@ -397,11 +399,14 @@ export async function GET(
   //   return `"${escaped}"`
   // })
 
+  const usedServerTransform = false
+  const transformedCode = componentCode
+
   // Skip validation if still streaming (incomplete code)
   const streaming = isPreviewStreaming(id)
   if (!streaming) {
     // Only validate when streaming is complete
-    const validation = validateJavaScriptCode(componentCode)
+    const validation = validateJavaScriptCode(transformedCode || componentCode)
     if (!validation.valid) {
       console.error('Preview validation failed for ID:', id, 'Error:', validation.error)
       const errorHtml = `
@@ -442,7 +447,7 @@ export async function GET(
     <!-- Core: React 18 -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    ${usedServerTransform ? '<!-- Babel not needed: JSX pre-compiled by esbuild -->' : '<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>'}
     <!-- Lucide Icons (vanilla) + React bridge -->
     <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.min.js"></script>
     <!-- PropTypes (required by Recharts) -->
@@ -488,16 +493,36 @@ export async function GET(
     <style>
       body { margin: 0; font-family: 'Inter', 'Poppins', system-ui, sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
       *, *::before, *::after { box-sizing: border-box; }
-      /* Smooth scrolling */
       html { scroll-behavior: smooth; }
-      /* Better default text rendering */
       h1, h2, h3, h4, h5, h6 { text-wrap: balance; }
       p { text-wrap: pretty; }
+      /* Loading spinner shown until React renders */
+      #loading-indicator {
+        position: fixed; inset: 0; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; background: #f8fafc; z-index: 9999;
+      }
+      #loading-indicator .spinner {
+        width: 40px; height: 40px; border: 3px solid #e2e8f0; border-top-color: #3b82f6;
+        border-radius: 50%; animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      #loading-indicator p { margin-top: 16px; color: #64748b; font-size: 14px; }
     </style>
+    <script>
+      // Timeout: if React doesn't render within 15s, show error
+      setTimeout(function() {
+        var root = document.getElementById('root');
+        var loader = document.getElementById('loading-indicator');
+        if (root && (!root.innerHTML || root.innerHTML.trim() === '') && loader) {
+          loader.innerHTML = '<div style="text-align:center;padding:40px;"><h3 style="color:#1e293b;font-size:18px;">Preview Loading Slowly</h3><p style="color:#64748b;margin:8px 0;">CDN scripts are still loading. Try refreshing.</p><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-size:14px;margin-top:12px;">Refresh</button></div>';
+        }
+      }, 15000);
+    </script>
 </head>
 <body>
+    <div id="loading-indicator"><div class="spinner"></div><p>Loading preview...</p></div>
     <div id="root"></div>
-    <script type="text/babel">
+    <script ${usedServerTransform ? '' : 'type="text/babel"'}>
       console.log('[Preview] Starting preview initialization...');
 
       // AX-5 ENFORCEMENT: Intercept React.createElement to ensure single h1
@@ -914,7 +939,7 @@ export async function GET(
         console.log('[Preview] Code length: ${componentCode.length} characters');
 
         // Insert the component code
-        ${componentCode}
+        ${usedServerTransform ? transformedCode : componentCode}
 
         console.log('[Preview] Component code executed successfully');
 
@@ -1066,6 +1091,9 @@ export async function GET(
 
           root.render(wrappedElement);
           console.log('[Preview] ✓ Render called successfully!');
+          // Hide loading indicator
+          var loader = document.getElementById('loading-indicator');
+          if (loader) loader.style.display = 'none';
 
           // Add a small delay to check if render actually worked + enforce AX standards
           setTimeout(() => {
