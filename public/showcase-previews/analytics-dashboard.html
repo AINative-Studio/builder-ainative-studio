@@ -9,17 +9,15 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <!-- Core: React 18 -->
+    <!-- Critical: React + Babel from CDN (local copies have compatibility issues) -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Lucide Icons (vanilla) + React bridge -->
-    <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.min.js"></script>
-    <!-- PropTypes (required by Recharts) -->
-    <script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
-    <!-- Recharts for data visualization -->
-    <script src="https://unpkg.com/recharts@2.15.0/umd/Recharts.js"></script>
-    <!-- Tailwind CSS with custom AINative config -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Non-critical: served locally for speed -->
+    <script src="/vendor/lucide.min.js"></script>
+    <script src="/vendor/prop-types.min.js"></script>
+    <script src="/vendor/recharts.min.js"></script>
+    <script src="/vendor/tailwind.min.js"></script>
     <script>
       tailwind.config = {
         theme: {
@@ -57,16 +55,37 @@
     <style>
       body { margin: 0; font-family: 'Inter', 'Poppins', system-ui, sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
       *, *::before, *::after { box-sizing: border-box; }
-      /* Smooth scrolling */
       html { scroll-behavior: smooth; }
-      /* Better default text rendering */
       h1, h2, h3, h4, h5, h6 { text-wrap: balance; }
       p { text-wrap: pretty; }
+      /* Loading spinner shown until React renders */
+      #loading-indicator {
+        position: fixed; inset: 0; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; background: #f8fafc; z-index: 9999;
+      }
+      #loading-indicator .spinner {
+        width: 40px; height: 40px; border: 3px solid #e2e8f0; border-top-color: #3b82f6;
+        border-radius: 50%; animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      #loading-indicator p { margin-top: 16px; color: #64748b; font-size: 14px; }
     </style>
+    <script>
+      // Timeout: if React doesn't render within 15s, show error
+      setTimeout(function() {
+        var root = document.getElementById('root');
+        var loader = document.getElementById('loading-indicator');
+        if (root && (!root.innerHTML || root.innerHTML.trim() === '') && loader) {
+          loader.innerHTML = '<div style="text-align:center;padding:40px;"><h3 style="color:#1e293b;font-size:18px;">Preview Loading Slowly</h3><p style="color:#64748b;margin:8px 0;">CDN scripts are still loading. Try refreshing.</p><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-size:14px;margin-top:12px;">Refresh</button></div>';
+        }
+      }, 15000);
+    </script>
 </head>
 <body>
+    <div id="loading-indicator"><div class="spinner"></div><p>Loading preview...</p></div>
     <div id="root"></div>
-    <script type="text/babel">
+    <!-- Setup script: icons, hooks, libraries (plain JS, no Babel needed) -->
+    <script>
       console.log('[Preview] Starting preview initialization...');
 
       // AX-5 ENFORCEMENT: Intercept React.createElement to ensure single h1
@@ -478,201 +497,415 @@
         }
       }
 
-      try {
-        console.log('[Preview] Executing component code...');
-        console.log('[Preview] Code length: 10244 characters');
-
-        // Insert the component code
-        function Users(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Users' }, props && props.children); }
-window.Users = Users;
-function DollarSign(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'DollarSign' }, props && props.children); }
-window.DollarSign = DollarSign;
-function Activity(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Activity' }, props && props.children); }
-window.Activity = Activity;
-function TrendingUp(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'TrendingUp' }, props && props.children); }
-window.TrendingUp = TrendingUp;
-
-const mockTransactions = [
-  { id: 1, customer: 'John Smith', amount: '$245.00', status: 'Completed', date: '2023-06-15' },
-  { id: 2, customer: 'Sarah Johnson', amount: '$120.50', status: 'Pending', date: '2023-06-14' },
-  { id: 3, customer: 'Michael Brown', amount: '$89.99', status: 'Completed', date: '2023-06-12' },
-  { id: 4, customer: 'Emily Davis', amount: '$342.75', status: 'Failed', date: '2023-06-10' },
-  { id: 5, customer: 'Robert Wilson', amount: '$56.25', status: 'Completed', date: '2023-06-08' }
-];
-
-const monthlyData = [
+    </script>
+    <!-- Component code: transformed by Babel.transform() synchronously, then eval'd -->
+    <script id="component-source" type="text/plain">
+        // Mock data for revenue trends
+const revenueData = [
   { month: 'Jan', revenue: 4000 },
   { month: 'Feb', revenue: 3000 },
   { month: 'Mar', revenue: 2000 },
   { month: 'Apr', revenue: 2780 },
   { month: 'May', revenue: 1890 },
-  { month: 'Jun', revenue: 2390 }
+  { month: 'Jun', revenue: 2390 },
+  { month: 'Jul', revenue: 3490 },
 ];
 
-function Dashboard() {
-  const [activeTab, setActiveTab] = useState('overview');
+// Mock transaction data
+const transactions = [
+  { id: 1, customer: 'Alex Johnson', amount: '$245.00', status: 'Completed' },
+  { id: 2, customer: 'Maria Garcia', amount: '$120.50', status: 'Pending' },
+  { id: 3, customer: 'David Smith', amount: '$890.75', status: 'Completed' },
+  { id: 4, customer: 'Sarah Williams', amount: '$56.25', status: 'Failed' },
+  { id: 5, customer: 'Robert Brown', amount: '$342.00', status: 'Completed' },
+];
+
+// Status badge component
+const StatusBadge = ({ status }) => {
+  let bgColor = 'bg-gray-100 text-gray-800';
+  let textColor = 'text-gray-800';
+  
+  switch (status) {
+    case 'Completed':
+      bgColor = 'bg-green-100 text-green-800';
+      textColor = 'text-green-800';
+      break;
+    case 'Pending':
+      bgColor = 'bg-yellow-100 text-yellow-800';
+      textColor = 'text-yellow-800';
+      break;
+    case 'Failed':
+      bgColor = 'bg-red-100 text-red-800';
+      textColor = 'text-red-800';
+      break;
+    default:
+      bgColor = 'bg-gray-100 text-gray-800';
+      textColor = 'text-gray-800';
+  }
+  
+  return (
+    <span className={"px-2 py-1 rounded-full text-xs font-medium " + bgColor + " " + textColor}>
+      {status}
+    </span>
+  );
+};
+
+// Metric card component
+const MetricCard = ({ title, value, change, changeType, sparklineData, icon }) => {
+  return (
+    <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 hover:shadow-md transition-all">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm font-medium text-slate-500">{title}</p>
+          <h3 className="text-2xl font-bold text-slate-900 mt-1">{value}</h3>
+          <div className="flex items-center mt-2">
+            <span className={"text-sm font-medium " + changeType === 'positive' ? 'text-green-600' : 'text-red-600'}>
+              {change}
+            </span>
+            <span className="ml-1 text-sm text-slate-500">from last month</span>
+          </div>
+        </div>
+        <div className="w-12 h-12 rounded-xl bg-[#83A66A]/10 flex items-center justify-center">
+          {icon}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Bar chart component
+const RevenueChart = () => {
+  const maxValue = Math.max(...revenueData.map(d => d.revenue));
+  
+  return (
+    <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6">
+      <div className="flex items-center justify-between mb-6">
+        <h3 className="text-lg font-semibold text-slate-900">Monthly Revenue</h3>
+        <button className="text-sm text-slate-500 hover:text-slate-700">
+          View Report
+        </button>
+      </div>
+      
+      <div className="flex items-end h-64 gap-2 mt-8">
+        {revenueData.map((data, index) => (
+          <div key={index} className="flex flex-col items-center flex-1">
+            <div className="text-xs text-slate-500 mb-2">{data.month}</div>
+            <div 
+              className="w-full bg-[#83A66A]/20 rounded-t-md transition-all duration-500 ease-in-out"
+              style={{ height: `${(data.revenue / maxValue) * 100}%` }}
+            />
+            <div className="text-xs text-slate-500 mt-2">{data.revenue}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// Transaction table component
+const TransactionTable = () => {
+  return (
+    <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6">
+      <div className="flex items-center justify-between mb-6">
+        <h3 className="text-lg font-semibold text-slate-900">Recent Transactions</h3>
+        <button className="text-sm text-slate-500 hover:text-slate-700 flex items-center">
+          <Plus className="w-4 h-4 mr-1" />
+          Add Transaction
+        </button>
+      </div>
+      
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-slate-200">
+              <th className="pb-3 text-left text-sm font-medium text-slate-500">Customer</th>
+              <th className="pb-3 text-left text-sm font-medium text-slate-500">Amount</th>
+              <th className="pb-3 text-left text-sm font-medium text-slate-500">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {transactions.map((transaction) => (
+              <tr key={transaction.id} className="border-b border-slate-100 hover:bg-slate-50">
+                <td className="py-4">
+                  <div className="font-medium text-slate-900">{transaction.customer}</div>
+                </td>
+                <td className="py-4">
+                  <div className="text-slate-900 font-medium">{transaction.amount}</div>
+                </td>
+                <td className="py-4">
+                  <StatusBadge status={transaction.status} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
+function AnalyticsDashboard() {
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // Simulate loading
+    setTimeout(() => {
+      setLoading(false);
+    }, 800);
+  }, []);
+
+  if (loading) {
+    return (
+      <main aria-label="Analytics Dashboard" className="min-h-screen bg-[#F2F2F2]">
+        <div className="bg-slate-900">
+          <div className="px-8 py-6">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white text-2xl font-bold">
+                  A
+                </div>
+                <div>
+                  <h1 className="text-2xl font-bold text-white">Analytics Dashboard</h1>
+                  <p className="text-slate-300 text-sm mt-1">Monitor your business metrics</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <button className="bg-slate-700 text-white border border-slate-600 hover:bg-slate-600 px-4 py-2 rounded-lg text-sm">
+                  Search
+                </button>
+                <button className="bg-blue-600 text-white hover:bg-blue-700 px-4 py-2 rounded-lg text-sm">
+                  New Report
+                </button>
+                <div className="ml-3 flex items-center gap-2">
+                  <button className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-white hover:bg-slate-600">
+                    •
+                  </button>
+                  <div className="w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold border-2 border-white">
+                    AJ
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div className="container mx-auto px-6 py-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="bg-white border border-slate-200 shadow-sm rounded-xl p-6">
+                <div className="animate-pulse">
+                  <div className="h-4 bg-slate-200 rounded w-1/3 mb-4" />
+                  <div className="h-8 bg-slate-200 rounded w-1/2 mb-2" />
+                  <div className="h-4 bg-slate-200 rounded w-1/4" />
+                </div>
+              </div>
+            ))}
+          </div>
+          
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+            <div className="lg:col-span-2 bg-white border border-slate-200 shadow-sm rounded-xl p-6">
+              <div className="animate-pulse h-64" />
+            </div>
+            <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6">
+              <div className="animate-pulse h-64" />
+            </div>
+          </div>
+          
+          <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6">
+            <div className="animate-pulse h-64" />
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-[#F5F8F0]">
-      {/* Professional Header */}
+    <main aria-label="Analytics Dashboard" className="min-h-screen bg-[#F2F2F2]">
       <div className="bg-slate-900">
         <div className="px-8 py-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white text-2xl font-bold">
-                D
+                A
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-white">Dashboard</h1>
+                <h2 className="text-2xl font-bold text-white">Analytics Dashboard</h2>
                 <p className="text-slate-300 text-sm mt-1">Monitor your business metrics</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <button className="bg-slate-700 text-white border border-slate-600 hover:bg-slate-600 px-4 py-2 rounded-lg text-sm font-medium">
+              <button className="bg-slate-700 text-white border border-slate-600 hover:bg-slate-600 px-4 py-2 rounded-lg text-sm flex items-center">
+                <Search className="w-4 h-4 mr-2" />
                 Search
               </button>
-              <button className="bg-blue-600 text-white hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-medium">
+              <button className="bg-blue-600 text-white hover:bg-blue-700 px-4 py-2 rounded-lg text-sm flex items-center">
+                <Plus className="w-4 h-4 mr-2" />
                 New Report
               </button>
               <div className="ml-3 flex items-center gap-2">
                 <button className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-white hover:bg-slate-600">
-                  •
+                  <Bell className="w-4 h-4" />
                 </button>
                 <div className="w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold border-2 border-white">
-                  JD
+                  AJ
                 </div>
               </div>
             </div>
           </div>
         </div>
       </div>
-
-      <div className="max-w-7xl mx-auto px-6 py-8">
-        {/* Metrics Section */}
+      
+      <div className="container mx-auto px-6 py-8">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 hover:shadow-md transition-all">
-            <div className="w-12 h-12 rounded-xl bg-[#BAF241]/10 flex items-center justify-center mb-4">
-              <Users className="w-6 h-6 text-[#BAF241]" />
-            </div>
-            <h3 className="text-2xl font-bold text-slate-900">2,543</h3>
-            <p className="text-slate-500 text-sm mt-1">Total Users</p>
-          </div>
-
-          <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 hover:shadow-md transition-all">
-            <div className="w-12 h-12 rounded-xl bg-[#BAF241]/10 flex items-center justify-center mb-4">
-              <DollarSign className="w-6 h-6 text-[#BAF241]" />
-            </div>
-            <h3 className="text-2xl font-bold text-slate-900">USD 45,678</h3>
-            <p className="text-slate-500 text-sm mt-1">Total Revenue</p>
-          </div>
-
-          <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 hover:shadow-md transition-all">
-            <div className="w-12 h-12 rounded-xl bg-[#BAF241]/10 flex items-center justify-center mb-4">
-              <Activity className="w-6 h-6 text-[#BAF241]" />
-            </div>
-            <h3 className="text-2xl font-bold text-slate-900">342</h3>
-            <p className="text-slate-500 text-sm mt-1">Sessions</p>
-          </div>
-
-          <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 hover:shadow-md transition-all">
-            <div className="w-12 h-12 rounded-xl bg-[#BAF241]/10 flex items-center justify-center mb-4">
-              <TrendingUp className="w-6 h-6 text-[#BAF241]" />
-            </div>
-            <h3 className="text-2xl font-bold text-slate-900">12.5%</h3>
-            <p className="text-slate-500 text-sm mt-1">Growth Rate</p>
-          </div>
+          <MetricCard 
+            title="Users" 
+            value="2,543" 
+            change="+12.5%" 
+            changeType="positive" 
+            icon={<Users className="w-6 h-6 text-[#83A66A]" />}
+          />
+          <MetricCard 
+            title="Revenue" 
+            value="USD 45,678" 
+            change="+8.2%" 
+            changeType="positive" 
+            icon={<DollarSign className="w-6 h-6 text-[#83A66A]" />}
+          />
+          <MetricCard 
+            title="Sessions" 
+            value="342" 
+            change="+3.1%" 
+            changeType="positive" 
+            icon={<Activity className="w-6 h-6 text-[#83A66A]" />}
+          />
+          <MetricCard 
+            title="Growth Rate" 
+            value="12.5%" 
+            change="+2.3%" 
+            changeType="positive" 
+            icon={<TrendingUp className="w-6 h-6 text-[#83A66A]" />}
+          />
         </div>
-
-        {/* Charts Section */}
+        
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-          <div className="lg:col-span-2 bg-white border border-slate-200 shadow-sm rounded-xl p-6 hover:shadow-md transition-all">
-            <h3 className="text-lg font-semibold text-slate-900 mb-4">Monthly Revenue</h3>
-            <div className="h-80">
-              <ResponsiveContainer width="100%" height="100%">
-                <ReBarChart data={monthlyData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="month" stroke="#64748b" />
-                  <YAxis stroke="#64748b" />
-                  <RechartsTooltip 
-                    contentStyle={{ 
-                      backgroundColor: '#fff', 
-                      borderColor: '#e2e8f0', 
-                      borderRadius: '0.5rem',
-                      boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
-                    }} 
-                  />
-                  <Bar dataKey="revenue" fill="#BAF241" radius={[4, 4, 0, 0]} />
-                </ReBarChart>
-              </ResponsiveContainer>
-            </div>
+          <div className="lg:col-span-2">
+            <RevenueChart />
           </div>
-
-          <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 hover:shadow-md transition-all">
-            <h3 className="text-lg font-semibold text-slate-900 mb-4">Recent Transactions</h3>
+          <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-semibold text-slate-900">Performance Metrics</h3>
+              <button className="text-sm text-slate-500 hover:text-slate-700">
+                View All
+              </button>
+            </div>
+            
             <div className="space-y-4">
-              {mockTransactions.map((transaction) => (
-                <div key={transaction.id} className="flex items-center justify-between pb-3 border-b border-slate-100 last:border-0">
-                  <div>
-                    <p className="font-medium text-slate-900">{transaction.customer}</p>
-                    <p className="text-sm text-slate-500">{transaction.date}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-medium text-slate-900">{transaction.amount}</p>
-                    <span className={"inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium " + transaction.status === 'Completed' ? 'bg-green-100 text-green-800' : transaction.status === 'Pending' ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}>
-                      {transaction.status}
-                    </span>
-                  </div>
+              <div>
+                <div className="flex justify-between mb-1">
+                  <span className="text-sm font-medium text-slate-700">Conversion Rate</span>
+                  <span className="text-sm font-medium text-slate-700">8.2%</span>
                 </div>
-              ))}
+                <div className="w-full bg-slate-200 rounded-full h-2">
+                  <div className="bg-[#83A66A] h-2 rounded-full" style={{ width: '82%' }} />
+                </div>
+              </div>
+              
+              <div>
+                <div className="flex justify-between mb-1">
+                  <span className="text-sm font-medium text-slate-700">Engagement</span>
+                  <span className="text-sm font-medium text-slate-700">67%</span>
+                </div>
+                <div className="w-full bg-slate-200 rounded-full h-2">
+                  <div className="bg-[#83A66A]/70 h-2 rounded-full" style={{ width: '67%' }} />
+                </div>
+              </div>
+              
+              <div>
+                <div className="flex justify-between mb-1">
+                  <span className="text-sm font-medium text-slate-700">Retention</span>
+                  <span className="text-sm font-medium text-slate-700">42%</span>
+                </div>
+                <div className="w-full bg-slate-200 rounded-full h-2">
+                  <div className="bg-[#83A66A]/50 h-2 rounded-full" style={{ width: '42%' }} />
+                </div>
+              </div>
+              
+              <div>
+                <div className="flex justify-between mb-1">
+                  <span className="text-sm font-medium text-slate-700">Avg. Session</span>
+                  <span className="text-sm font-medium text-slate-700">4m 23s</span>
+                </div>
+                <div className="w-full bg-slate-200 rounded-full h-2">
+                  <div className="bg-[#83A66A]/30 h-2 rounded-full" style={{ width: '35%' }} />
+                </div>
+              </div>
             </div>
           </div>
         </div>
-
-        {/* Recent Activity Table */}
-        <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 hover:shadow-md transition-all">
-          <h3 className="text-lg font-semibold text-slate-900 mb-4">Recent Transactions</h3>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-200">
-              <thead>
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Customer</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Amount</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Status</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Date</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-slate-200">
-                {mockTransactions.map((transaction) => (
-                  <tr key={transaction.id} className="hover:bg-slate-50">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-slate-900">{transaction.customer}</div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-slate-900">{transaction.amount}</div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={"inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium " + transaction.status === 'Completed' ? 'bg-green-100 text-green-800' : transaction.status === 'Pending' ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}>
-                        {transaction.status}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
-                      {transaction.date}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        
+        <TransactionTable />
       </div>
-    </div>
+      
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ 
+        __html: JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "WebApplication",
+          "name": "Analytics Dashboard",
+          "description": "Professional analytics dashboard with metrics, charts and transaction data"
+        }) 
+      }} />
+    </main>
   );
 }
 
 // Expose components to window for preview
-window.Dashboard = Dashboard;
+window.StatusBadge = StatusBadge;
+window.MetricCard = MetricCard;
+window.RevenueChart = RevenueChart;
+window.TransactionTable = TransactionTable;
+window.AnalyticsDashboard = AnalyticsDashboard;
+    </script>
+    <!-- Fallback components (plain JS, runs before Babel transform) -->
+    <script>if (typeof window.Plus === 'undefined') { window.Plus = function Plus(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Plus' }, props && props.children); }; }
+if (typeof window.StatusBadge === 'undefined') { window.StatusBadge = function StatusBadge(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'StatusBadge' }, props && props.children); }; }
+if (typeof window.Search === 'undefined') { window.Search = function Search(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Search' }, props && props.children); }; }
+if (typeof window.Bell === 'undefined') { window.Bell = function Bell(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Bell' }, props && props.children); }; }
+if (typeof window.Users === 'undefined') { window.Users = function Users(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Users' }, props && props.children); }; }
+if (typeof window.DollarSign === 'undefined') { window.DollarSign = function DollarSign(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'DollarSign' }, props && props.children); }; }
+if (typeof window.Activity === 'undefined') { window.Activity = function Activity(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Activity' }, props && props.children); }; }
+if (typeof window.TrendingUp === 'undefined') { window.TrendingUp = function TrendingUp(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'TrendingUp' }, props && props.children); }; }
+if (typeof window.RevenueChart === 'undefined') { window.RevenueChart = function RevenueChart(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'RevenueChart' }, props && props.children); }; }
+if (typeof window.TransactionTable === 'undefined') { window.TransactionTable = function TransactionTable(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'TransactionTable' }, props && props.children); }; }</script>
+    <!-- Transform and render -->
+    <script>
+      // Use Babel.transform() synchronously — no async waiting needed
+      console.log('[Preview] Checking Babel availability:', typeof Babel);
+      console.log('[Preview] Checking React availability:', typeof React);
+      if (typeof Babel === 'undefined') {
+        console.error('[Preview] Babel not loaded!');
+        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>Babel Not Loaded</h3><p>Scripts still loading. <button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></p></div>';
+      } else if (typeof React === 'undefined') {
+        console.error('[Preview] React not loaded!');
+        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>React Not Loaded</h3><p><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></p></div>';
+      } else {
+        try {
+          var _src = document.getElementById('component-source').textContent;
+          console.log('[Preview] Transforming ' + _src.length + ' chars...');
+          var _transformed = Babel.transform(_src, { presets: ['react'] });
+          console.log('[Preview] Transform done: ' + _transformed.code.length + ' chars');
+          eval(_transformed.code);
+          console.log('[Preview] Eval done');
+          // Hide loading indicator immediately after eval
+          document.getElementById('loading-indicator').style.display = 'none';
+        } catch(babelErr) {
+          console.error('[Preview] Error:', babelErr);
+          document.getElementById('loading-indicator').innerHTML =
+            '<div style="text-align:center;padding:40px;"><h3 style="color:#dc2626;">Error</h3><pre style="text-align:left;background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b;">' +
+            String(babelErr.message || babelErr).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px;">Retry</button></div>';
+        }
+      }
 
-        console.log('[Preview] Component code executed successfully');
+      try {
 
         // Find the main page component to render.
         // Strategy: Check known component name patterns FIRST (most reliable),
@@ -822,6 +1055,9 @@ window.Dashboard = Dashboard;
 
           root.render(wrappedElement);
           console.log('[Preview] ✓ Render called successfully!');
+          // Hide loading indicator
+          var loader = document.getElementById('loading-indicator');
+          if (loader) loader.style.display = 'none';
 
           // Add a small delay to check if render actually worked + enforce AX standards
           setTimeout(() => {
@@ -873,13 +1109,11 @@ window.Dashboard = Dashboard;
         }
       } catch (error) {
         console.error('[Preview] ✗ Error during execution:', error);
-        console.error('[Preview] Error stack:', error.stack);
         var _esc = function(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
         document.getElementById('root').innerHTML =
           '<div style="padding: 20px; color: red;">' +
           '<h3>Error rendering component</h3>' +
           '<pre>' + _esc(error.message) + '</pre>' +
-          '<pre style="font-size: 12px; margin-top: 10px;">' + _esc(error.stack || '') + '</pre>' +
           '</div>';
       }
     </script>

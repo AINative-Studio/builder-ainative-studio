@@ -801,7 +801,8 @@ Generate a corrected version of: ${message}`
                 finishReason: 'stop',
               }).catch(e => console.warn('[RLHF log failed]', e))
 
-              addToShowcase(message, responseId, finalContent.length, finalContent)
+              // Showcase auto-populate disabled — creates junk entries
+              // addToShowcase(message, responseId, finalContent.length, finalContent)
 
               // SSR build in background — when done, the next iframe refresh shows instant content
               import('@/lib/sandbox-builder').then(({ buildInSandbox }) => {

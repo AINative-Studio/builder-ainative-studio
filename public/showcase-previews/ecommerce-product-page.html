@@ -9,17 +9,15 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <!-- Core: React 18 -->
+    <!-- Critical: React + Babel from CDN (local copies have compatibility issues) -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Lucide Icons (vanilla) + React bridge -->
-    <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.min.js"></script>
-    <!-- PropTypes (required by Recharts) -->
-    <script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
-    <!-- Recharts for data visualization -->
-    <script src="https://unpkg.com/recharts@2.15.0/umd/Recharts.js"></script>
-    <!-- Tailwind CSS with custom AINative config -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Non-critical: served locally for speed -->
+    <script src="/vendor/lucide.min.js"></script>
+    <script src="/vendor/prop-types.min.js"></script>
+    <script src="/vendor/recharts.min.js"></script>
+    <script src="/vendor/tailwind.min.js"></script>
     <script>
       tailwind.config = {
         theme: {
@@ -57,16 +55,37 @@
     <style>
       body { margin: 0; font-family: 'Inter', 'Poppins', system-ui, sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
       *, *::before, *::after { box-sizing: border-box; }
-      /* Smooth scrolling */
       html { scroll-behavior: smooth; }
-      /* Better default text rendering */
       h1, h2, h3, h4, h5, h6 { text-wrap: balance; }
       p { text-wrap: pretty; }
+      /* Loading spinner shown until React renders */
+      #loading-indicator {
+        position: fixed; inset: 0; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; background: #f8fafc; z-index: 9999;
+      }
+      #loading-indicator .spinner {
+        width: 40px; height: 40px; border: 3px solid #e2e8f0; border-top-color: #3b82f6;
+        border-radius: 50%; animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      #loading-indicator p { margin-top: 16px; color: #64748b; font-size: 14px; }
     </style>
+    <script>
+      // Timeout: if React doesn't render within 15s, show error
+      setTimeout(function() {
+        var root = document.getElementById('root');
+        var loader = document.getElementById('loading-indicator');
+        if (root && (!root.innerHTML || root.innerHTML.trim() === '') && loader) {
+          loader.innerHTML = '<div style="text-align:center;padding:40px;"><h3 style="color:#1e293b;font-size:18px;">Preview Loading Slowly</h3><p style="color:#64748b;margin:8px 0;">CDN scripts are still loading. Try refreshing.</p><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-size:14px;margin-top:12px;">Refresh</button></div>';
+        }
+      }, 15000);
+    </script>
 </head>
 <body>
+    <div id="loading-indicator"><div class="spinner"></div><p>Loading preview...</p></div>
     <div id="root"></div>
-    <script type="text/babel">
+    <!-- Setup script: icons, hooks, libraries (plain JS, no Babel needed) -->
+    <script>
       console.log('[Preview] Starting preview initialization...');
 
       // AX-5 ENFORCEMENT: Intercept React.createElement to ensure single h1
@@ -478,126 +497,101 @@
         }
       }
 
-      try {
-        console.log('[Preview] Executing component code...');
-        console.log('[Preview] Code length: 16238 characters');
-
-        // Insert the component code
-        function Search(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Search' }, props && props.children); }
-window.Search = Search;
-function Bell(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Bell' }, props && props.children); }
-window.Bell = Bell;
-function Heart(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Heart' }, props && props.children); }
-window.Heart = Heart;
-function Star(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Star' }, props && props.children); }
-window.Star = Star;
-function Check(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Check' }, props && props.children); }
-window.Check = Check;
-function Package(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Package' }, props && props.children); }
-window.Package = Package;
-function Truck(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Truck' }, props && props.children); }
-window.Truck = Truck;
-function Shield(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Shield' }, props && props.children); }
-window.Shield = Shield;
-function Minus(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Minus' }, props && props.children); }
-window.Minus = Minus;
-function Plus(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Plus' }, props && props.children); }
-window.Plus = Plus;
-function ShoppingCart(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'ShoppingCart' }, props && props.children); }
-window.ShoppingCart = ShoppingCart;
-function Share2(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Share2' }, props && props.children); }
-window.Share2 = Share2;
-
-const ProductPage = () => {
+    </script>
+    <!-- Component code: transformed by Babel.transform() synchronously, then eval'd -->
+    <script id="component-source" type="text/plain">
+        const ProductDetailPage = () => {
+  const [selectedColor, setSelectedColor] = useState('midnight-black');
   const [quantity, setQuantity] = useState(1);
-  const [selectedImage, setSelectedImage] = useState(0);
-  const [isFavorite, setIsFavorite] = useState(false);
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
+  const [isWishlisted, setIsWishlisted] = useState(false);
 
   const product = {
-    name: "Premium Wireless Headphones",
+    id: 1,
+    name: 'Premium Wireless Headphones',
     price: 129.99,
     originalPrice: 199.99,
-    rating: 4.5,
-    reviewCount: 128,
-    images: [
-      "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=600&q=80",
-      "https://images.unsplash.com/photo-1546868871-7041f2a55e12?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=600&q=80",
-      "https://images.unsplash.com/photo-1572536147248-ac59a8abfa4b?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=600&q=80"
+    rating: 4.8,
+    reviews: 128,
+    colors: [
+      { id: 'midnight-black', name: 'Midnight Black', hex: '#1a1a1a' },
+      { id: 'space-gray', name: 'Space Gray', hex: '#4a4a4a' },
+      { id: 'silver', name: 'Silver', hex: '#c0c0c0' },
+      { id: 'rose-gold', name: 'Rose Gold', hex: '#e0b0b0' }
     ],
-    description: "Experience crystal-clear sound with our premium wireless headphones. Featuring active noise cancellation, 30-hour battery life, and premium comfort padding for extended listening sessions.",
     features: [
-      "Active Noise Cancellation",
-      "30-hour battery life",
-      "Premium memory foam ear cushions",
-      "Bluetooth 5.2 with multipoint connection",
-      "Built-in microphone for calls",
-      "Quick charge (10 min = 3 hours playtime)"
+      'Active Noise Cancellation',
+      '30-hour battery life',
+      'Premium leather ear cushions',
+      'Bluetooth 5.2 connectivity',
+      'Voice assistant compatible',
+      'Quick charge (10 min = 3 hours)'
     ],
-    specifications: [
-      { category: "Audio", details: "Driver Size: 40mm, Impedance: 32 Ohms" },
-      { category: "Connectivity", details: "Bluetooth 5.2, NFC, 3.5mm Jack" },
-      { category: "Battery", details: "30 hours playback, 10 min quick charge" },
-      { category: "Physical", details: "Weight: 250g, Foldable design" },
-      { category: "Compatibility", details: "iOS, Android, Windows, Mac" }
+    images: [
+      '/placeholder.svg?height=500&width=500&text=Headphones+Front',
+      '/placeholder.svg?height=500&width=500&text=Headphones+Side',
+      '/placeholder.svg?height=500&width=500&text=Headphones+Back',
+      '/placeholder.svg?height=500&width=500&text=Headphones+Detail'
     ]
   };
 
   const reviews = [
     {
       id: 1,
-      name: "Alex Johnson",
+      name: 'Alex Johnson',
       rating: 5,
-      date: "2023-10-15",
-      comment: "These headphones are amazing! The noise cancellation works perfectly and the battery life is incredible. Highly recommend!",
+      date: '2023-10-15',
+      comment: 'These headphones exceeded my expectations. The noise cancellation is incredible and the sound quality is crystal clear.',
       verified: true
     },
     {
       id: 2,
-      name: "Sarah Miller",
+      name: 'Maria Garcia',
       rating: 4,
-      date: "2023-09-28",
-      comment: "Great sound quality and very comfortable for long periods. The only downside is they're a bit bulky when folded.",
+      date: '2023-10-05',
+      comment: 'Great build quality and comfortable for long listening sessions. Battery life is impressive.',
       verified: true
     },
     {
       id: 3,
-      name: "Michael Chen",
+      name: 'David Smith',
       rating: 5,
-      date: "2023-10-05",
-      comment: "Best headphones I've ever owned. The noise cancellation makes a huge difference in my office environment. Worth every penny!",
+      date: '2023-09-28',
+      comment: 'Best headphones I\'ve ever owned. The ANC works perfectly in noisy environments.',
       verified: true
     }
   ];
 
-  const incrementQuantity = () => setQuantity(prev => prev + 1);
-  const decrementQuantity = () => setQuantity(prev => Math.max(1, prev - 1));
+  const incrementQuantity = () => setQuantity(q => q + 1);
+  const decrementQuantity = () => setQuantity(q => Math.max(1, q - 1));
 
   return (
     <div className="min-h-screen bg-[#F2F2F2]">
-      {/* Professional Header */}
+      {/* Header */}
       <div className="bg-slate-900">
         <div className="px-8 py-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white text-2xl font-bold">
-                P
+                H
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-white">TechStore</h1>
-                <p className="text-slate-300 text-sm mt-1">Premium Electronics</p>
+                <h1 className="text-2xl font-bold text-white">HeadphoneHub</h1>
+                <p className="text-slate-300 text-sm mt-1">Premium Audio Experience</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <button className="bg-slate-700 text-white border border-slate-600 hover:bg-slate-600 px-4 py-2 rounded-lg flex items-center gap-2">
+              <button className="bg-slate-700 text-white px-4 py-2 rounded-lg border border-slate-600 hover:bg-slate-600 flex items-center gap-2">
                 <Search className="w-4 h-4" />
                 Search
               </button>
-              <button className="bg-blue-600 text-white hover:bg-blue-700 px-4 py-2 rounded-lg">
+              <button className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2">
+                <ShoppingCart className="w-4 h-4" />
                 Cart (0)
               </button>
               <div className="ml-3 flex items-center gap-2">
                 <button className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-white hover:bg-slate-600">
-                  <Bell className="w-4 h-4" />
+                  •
                 </button>
                 <div className="w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold border-2 border-white">
                   AJ
@@ -608,41 +602,71 @@ const ProductPage = () => {
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 py-8">
+      <main className="max-w-7xl mx-auto px-4 py-8">
         {/* Breadcrumb */}
         <div className="mb-6">
-          <nav className="text-sm text-slate-600">
-            <span>Home</span> / 
-            <span className="text-slate-900 font-medium ml-1">Electronics</span> / 
-            <span className="text-slate-900 font-medium ml-1">Audio</span> / 
-            <span className="text-slate-900 font-medium ml-1">Headphones</span>
+          <nav className="flex text-sm text-slate-500" aria-label="Breadcrumb">
+            <ol className="inline-flex items-center space-x-1 md:space-x-3">
+              <li className="inline-flex items-center">
+                <a href="#" className="inline-flex items-center text-slate-500 hover:text-slate-700">
+                  <Home className="w-4 h-4 mr-2" />
+                  Home
+                </a>
+              </li>
+              <li>
+                <div className="flex items-center">
+                  <ChevronRight className="w-4 h-4 text-slate-300" />
+                  <a href="#" className="ml-1 text-slate-500 hover:text-slate-700">Electronics</a>
+                </div>
+              </li>
+              <li>
+                <div className="flex items-center">
+                  <ChevronRight className="w-4 h-4 text-slate-300" />
+                  <a href="#" className="ml-1 text-slate-500 hover:text-slate-700">Audio</a>
+                </div>
+              </li>
+              <li>
+                <div className="flex items-center">
+                  <ChevronRight className="w-4 h-4 text-slate-300" />
+                  <span className="ml-1 text-slate-700 font-medium">Headphones</span>
+                </div>
+              </li>
+            </ol>
           </nav>
         </div>
 
-        {/* Product Section */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 mb-16">
           {/* Product Images */}
-          <div>
-            <div className="relative bg-white rounded-xl border border-slate-200 p-6 mb-4">
+          <div className="space-y-4">
+            <div className="relative aspect-square bg-white rounded-2xl overflow-hidden border border-slate-200">
               <img 
-                src={product.images[selectedImage]} 
+                src={product.images[activeImageIndex]} 
                 alt={product.name}
-                className="w-full h-96 object-contain rounded-lg"
+                className="w-full h-full object-contain"
               />
               <button 
-                onClick={() => setIsFavorite(!isFavorite)}
-                className={"absolute top-4 right-4 p-2 rounded-full " + isFavorite ? 'bg-red-100 text-red-600' : 'bg-white text-slate-600' + " hover:bg-slate-100 transition-colors"}
+                onClick={() => setActiveImageIndex(prev => (prev === 0 ? product.images.length - 1 : prev - 1))}
+                className="absolute left-4 top-1/2 transform -translate-y-1/2 bg-white/80 backdrop-blur-sm rounded-full p-2 hover:bg-white"
+                aria-label="Previous image"
               >
-                <Heart className={"w-5 h-5 " + isFavorite ? 'fill-current' : ''} />
+                <ChevronLeft className="w-6 h-6 text-slate-700" />
+              </button>
+              <button 
+                onClick={() => setActiveImageIndex(prev => (prev === product.images.length - 1 ? 0 : prev + 1))}
+                className="absolute right-4 top-1/2 transform -translate-y-1/2 bg-white/80 backdrop-blur-sm rounded-full p-2 hover:bg-white"
+                aria-label="Next image"
+              >
+                <ChevronRight className="w-6 h-6 text-slate-700" />
               </button>
             </div>
             
-            <div className="flex gap-4 overflow-x-auto pb-2">
+            <div className="grid grid-cols-4 gap-4">
               {product.images.map((image, index) => (
                 <button
                   key={index}
-                  onClick={() => setSelectedImage(index)}
-                  className={"flex-shrink-0 w-24 h-24 rounded-lg border-2 overflow-hidden " + selectedImage === index ? 'border-blue-600' : 'border-slate-200'}
+                  onClick={() => setActiveImageIndex(index)}
+                  className={"aspect-square rounded-lg overflow-hidden border-2 " + activeImageIndex === index ? 'border-blue-500' : 'border-slate-200' + " hover:border-slate-300 transition-colors"}
+                  aria-label={`View image ${index + 1}`}
                 >
                   <img 
                     src={image} 
@@ -655,165 +679,238 @@ const ProductPage = () => {
           </div>
 
           {/* Product Details */}
-          <div>
-            <div className="mb-4">
-              <span className="bg-[#F2357B]/10 text-[#F2357B] border border-[#F2357B]/20 px-3 py-1 rounded-full text-sm inline-block">
-                Featured
-              </span>
-            </div>
-            
-            <h2 className="text-3xl font-bold text-slate-900 mb-2">{product.name}</h2>
-            
-            <div className="flex items-center gap-4 mb-4">
-              <div className="flex items-center">
-                {[...Array(5)].map((_, i) => (
-                  <Star 
-                    key={i} 
-                    className={"w-5 h-5 " + i < Math.floor(product.rating) ? 'text-yellow-400 fill-current' : 'text-slate-300'} 
-                  />
-                ))}
-                <span className="ml-2 text-slate-600">{product.rating} ({product.reviewCount} reviews)</span>
+          <div className="space-y-6">
+            <div>
+              <h2 className="text-3xl font-bold text-slate-900">{product.name}</h2>
+              <div className="mt-2 flex items-center gap-4">
+                <div className="flex items-center">
+                  <div className="flex">
+                    {[...Array(5)].map((_, i) => (
+                      <Star 
+                        key={i} 
+                        className={"w-5 h-5 " + i < Math.floor(product.rating) ? 'fill-yellow-400 text-yellow-400' : 'text-slate-300'} 
+                      />
+                    ))}
+                  </div>
+                  <span className="ml-2 text-slate-600">{product.rating} ({product.reviews} reviews)</span>
+                </div>
+                <button 
+                  onClick={() => setIsWishlisted(!isWishlisted)}
+                  className="flex items-center gap-1 text-slate-500 hover:text-red-500 transition-colors"
+                  aria-label={isWishlisted ? "Remove from wishlist" : "Add to wishlist"}
+                >
+                  <Heart className={"w-5 h-5 " + isWishlisted ? 'fill-red-500 text-red-500' : ''} />
+                  <span>Wishlist</span>
+                </button>
               </div>
             </div>
-            
-            <div className="flex items-center gap-4 mb-6">
+
+            <div className="flex items-center gap-4">
               <span className="text-3xl font-bold text-slate-900">${product.price.toFixed(2)}</span>
               <span className="text-xl text-slate-500 line-through">${product.originalPrice.toFixed(2)}</span>
-              <span className="bg-green-100 text-green-800 px-2 py-1 rounded text-sm font-medium">Save 35%</span>
+              <Badge className="bg-green-100 text-green-800">Save 35%</Badge>
             </div>
-            
-            <p className="text-slate-600 mb-6">{product.description}</p>
-            
-            <div className="mb-8">
-              <h3 className="font-semibold text-slate-900 mb-3">Features:</h3>
-              <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                {product.features.map((feature, index) => (
-                  <li key={index} className="flex items-start gap-2">
-                    <Check className="w-5 h-5 text-green-500 mt-0.5 flex-shrink-0" />
-                    <span className="text-slate-700">{feature}</span>
-                  </li>
+
+            <div>
+              <h3 className="text-lg font-semibold text-slate-900 mb-3">Color</h3>
+              <div className="flex gap-3">
+                {product.colors.map(color => (
+                  <button
+                    key={color.id}
+                    onClick={() => setSelectedColor(color.id)}
+                    className={"flex items-center justify-center w-12 h-12 rounded-full border-2 " + selectedColor === color.id ? 'border-blue-500 ring-2 ring-blue-200' : 'border-slate-300'}
+                    aria-label={`Select ${color.name} color`}
+                    style={{ backgroundColor: color.hex }}
+                  >
+                    {selectedColor === color.id && (
+                      <Check className="w-6 h-6 text-white" />
+                    )}
+                  </button>
                 ))}
-              </ul>
-            </div>
-            
-            <div className="flex items-center gap-4 mb-8">
-              <div className="flex items-center gap-2">
-                <Package className="w-5 h-5 text-slate-600" />
-                <span className="text-slate-700">Free shipping</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Truck className="w-5 h-5 text-slate-600" />
-                <span className="text-slate-700">30-day returns</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Shield className="w-5 h-5 text-slate-600" />
-                <span className="text-slate-700">2-year warranty</span>
               </div>
             </div>
-            
-            <div className="flex items-center gap-4 mb-6">
-              <div className="flex items-center border border-slate-300 rounded-lg overflow-hidden">
+
+            <div>
+              <h3 className="text-lg font-semibold text-slate-900 mb-3">Quantity</h3>
+              <div className="flex items-center gap-3">
                 <button 
                   onClick={decrementQuantity}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 transition-colors"
+                  className="w-10 h-10 rounded-full border border-slate-300 flex items-center justify-center hover:bg-slate-50"
+                  aria-label="Decrease quantity"
                 >
                   <Minus className="w-4 h-4" />
                 </button>
-                <span className="px-4 py-2 w-12 text-center">{quantity}</span>
+                <span className="w-12 text-center font-medium">{quantity}</span>
                 <button 
                   onClick={incrementQuantity}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 transition-colors"
+                  className="w-10 h-10 rounded-full border border-slate-300 flex items-center justify-center hover:bg-slate-50"
+                  aria-label="Increase quantity"
                 >
                   <Plus className="w-4 h-4" />
                 </button>
               </div>
-              
+            </div>
+
+            <div className="flex gap-4">
               <button className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 px-6 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors">
                 <ShoppingCart className="w-5 h-5" />
                 Add to Cart
               </button>
-              
-              <button className="p-3 border border-slate-300 rounded-lg hover:bg-slate-100 transition-colors">
+              <button className="w-12 h-12 border border-slate-300 rounded-lg flex items-center justify-center hover:bg-slate-50">
                 <Share2 className="w-5 h-5 text-slate-600" />
               </button>
+            </div>
+
+            <div className="pt-4 border-t border-slate-200">
+              <div className="flex items-center gap-3">
+                <Package className="w-5 h-5 text-slate-500" />
+                <span className="text-sm text-slate-600">Free shipping on orders over $50</span>
+              </div>
+              <div className="flex items-center gap-3 mt-2">
+                <Shield className="w-5 h-5 text-slate-500" />
+                <span className="text-sm text-slate-600">30-day money-back guarantee</span>
+              </div>
+              <div className="flex items-center gap-3 mt-2">
+                <Zap className="w-5 h-5 text-slate-500" />
+                <span className="text-sm text-slate-600">2-year warranty included</span>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Specifications */}
-        <div className="bg-white border border-slate-200 rounded-xl p-6 mb-12">
-          <h2 className="text-xl font-bold text-slate-900 mb-6">Product Specifications</h2>
-          
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <tbody>
-                {product.specifications.map((spec, index) => (
-                  <tr key={index} className="border-b border-slate-100 last:border-0">
-                    <td className="py-4 pr-6 font-medium text-slate-900 w-1/4">{spec.category}</td>
-                    <td className="py-4 pl-6 text-slate-700">{spec.details}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Reviews */}
-        <div className="bg-white border border-slate-200 rounded-xl p-6">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-xl font-bold text-slate-900">Customer Reviews</h2>
-            <button className="text-blue-600 hover:text-blue-700 font-medium">
-              Write a Review
-            </button>
-          </div>
-          
-          <div className="space-y-6">
-            {reviews.map(review => (
-              <div key={review.id} className="border-b border-slate-100 pb-6 last:border-0">
-                <div className="flex items-start gap-4">
-                  <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-800 font-bold">
-                    {review.name.charAt(0)}
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between mb-2">
-                      <h3 className="font-medium text-slate-900">{review.name}</h3>
-                      <div className="flex items-center gap-1">
-                        {[...Array(5)].map((_, i) => (
-                          <Star 
-                            key={i} 
-                            className={"w-4 h-4 " + i < review.rating ? 'text-yellow-400 fill-current' : 'text-slate-300'} 
-                          />
-                        ))}
-                      </div>
-                    </div>
-                    
-                    <div className="flex items-center gap-2 mb-3">
-                      <span className="text-xs text-slate-500">{review.date}</span>
-                      {review.verified && (
-                        <span className="bg-green-100 text-green-800 text-xs px-2 py-1 rounded">
-                          Verified Purchase
-                        </span>
-                      )}
-                    </div>
-                    
-                    <p className="text-slate-700">{review.comment}</p>
-                  </div>
+        {/* Features Section */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-8 mb-12">
+          <h2 className="text-2xl font-bold text-slate-900 mb-6">Key Features</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {product.features.map((feature, index) => (
+              <div key={index} className="flex items-start gap-3">
+                <div className="mt-1 w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                  <Check className="w-4 h-4 text-blue-600" />
                 </div>
+                <p className="text-slate-700">{feature}</p>
               </div>
             ))}
           </div>
         </div>
-      </div>
-    </div>
-  );
-};
 
-ProductPage;
+        {/* Reviews Section */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-8">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-2xl font-bold text-slate-900">Customer Reviews</h2>
+            <button className="text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1">
+              Write a Review
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {reviews.map(review => (
+              <div key={review.id} className="border border-slate-200 rounded-xl p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center text-slate-700 font-medium">
+                      {review.name.charAt(0)}
+                    </div>
+                    <div>
+                      <h4 className="font-medium text-slate-900">{review.name}</h4>
+                      <div className="flex items-center gap-1">
+                        {[...Array(5)].map((_, i) => (
+                          <Star 
+                            key={i} 
+                            className={"w-4 h-4 " + i < review.rating ? 'fill-yellow-400 text-yellow-400' : 'text-slate-300'} 
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  {review.verified && (
+                    <Badge className="bg-green-100 text-green-800 text-xs">Verified</Badge>
+                  )}
+                </div>
+                <p className="text-slate-700 mb-4">{review.comment}</p>
+                <p className="text-sm text-slate-500">{review.date}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </main>
+
+      <footer className="bg-slate-900 text-white py-12 mt-16">
+        <div className="max-w-7xl mx-auto px-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+            <div>
+              <div className="flex items-center gap-2 mb-4">
+                <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold">
+                  H
+                </div>
+                <span className="text-xl font-bold">HeadphoneHub</span>
+              </div>
+              <p className="text-slate-400">Premium audio solutions for the modern world.</p>
+            </div>
+            <div>
+              <h3 className="font-semibold mb-4">Shop</h3>
+              <ul className="space-y-2 text-slate-400">
+                <li><a href="#" className="hover:text-white">Headphones</a></li>
+                <li><a href="#" className="hover:text-white">Speakers</a></li>
+                <li><a href="#" className="hover:text-white">Accessories</a></li>
+                <li><a href="#" className="hover:text-white">New Arrivals</a></li>
+              </ul>
+            </div>
+            <div>
+              <h3 className="font-semibold mb-4">Support</h3>
+              <ul className="space-y-2 text-slate-400">
+);
+}
+
 
 // Expose components to window for preview
-window.ProductPage = ProductPage;
+window.ProductDetailPage = ProductDetailPage;
+    </script>
+    <!-- Fallback components (plain JS, runs before Babel transform) -->
+    <script>if (typeof window.Search === 'undefined') { window.Search = function Search(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Search' }, props && props.children); }; }
+if (typeof window.ShoppingCart === 'undefined') { window.ShoppingCart = function ShoppingCart(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'ShoppingCart' }, props && props.children); }; }
+if (typeof window.Home === 'undefined') { window.Home = function Home(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Home' }, props && props.children); }; }
+if (typeof window.ChevronRight === 'undefined') { window.ChevronRight = function ChevronRight(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'ChevronRight' }, props && props.children); }; }
+if (typeof window.ChevronLeft === 'undefined') { window.ChevronLeft = function ChevronLeft(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'ChevronLeft' }, props && props.children); }; }
+if (typeof window.Star === 'undefined') { window.Star = function Star(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Star' }, props && props.children); }; }
+if (typeof window.Heart === 'undefined') { window.Heart = function Heart(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Heart' }, props && props.children); }; }
+if (typeof window.Check === 'undefined') { window.Check = function Check(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Check' }, props && props.children); }; }
+if (typeof window.Minus === 'undefined') { window.Minus = function Minus(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Minus' }, props && props.children); }; }
+if (typeof window.Plus === 'undefined') { window.Plus = function Plus(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Plus' }, props && props.children); }; }
+if (typeof window.Share2 === 'undefined') { window.Share2 = function Share2(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Share2' }, props && props.children); }; }
+if (typeof window.Package === 'undefined') { window.Package = function Package(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Package' }, props && props.children); }; }
+if (typeof window.Shield === 'undefined') { window.Shield = function Shield(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Shield' }, props && props.children); }; }
+if (typeof window.Zap === 'undefined') { window.Zap = function Zap(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Zap' }, props && props.children); }; }</script>
+    <!-- Transform and render -->
+    <script>
+      // Use Babel.transform() synchronously — no async waiting needed
+      console.log('[Preview] Checking Babel availability:', typeof Babel);
+      console.log('[Preview] Checking React availability:', typeof React);
+      if (typeof Babel === 'undefined') {
+        console.error('[Preview] Babel not loaded!');
+        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>Babel Not Loaded</h3><p>Scripts still loading. <button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></p></div>';
+      } else if (typeof React === 'undefined') {
+        console.error('[Preview] React not loaded!');
+        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>React Not Loaded</h3><p><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></p></div>';
+      } else {
+        try {
+          var _src = document.getElementById('component-source').textContent;
+          console.log('[Preview] Transforming ' + _src.length + ' chars...');
+          var _transformed = Babel.transform(_src, { presets: ['react'] });
+          console.log('[Preview] Transform done: ' + _transformed.code.length + ' chars');
+          eval(_transformed.code);
+          console.log('[Preview] Eval done');
+          // Hide loading indicator immediately after eval
+          document.getElementById('loading-indicator').style.display = 'none';
+        } catch(babelErr) {
+          console.error('[Preview] Error:', babelErr);
+          document.getElementById('loading-indicator').innerHTML =
+            '<div style="text-align:center;padding:40px;"><h3 style="color:#dc2626;">Error</h3><pre style="text-align:left;background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b;">' +
+            String(babelErr.message || babelErr).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px;">Retry</button></div>';
+        }
+      }
 
-        console.log('[Preview] Component code executed successfully');
+      try {
 
         // Find the main page component to render.
         // Strategy: Check known component name patterns FIRST (most reliable),
@@ -963,6 +1060,9 @@ window.ProductPage = ProductPage;
 
           root.render(wrappedElement);
           console.log('[Preview] ✓ Render called successfully!');
+          // Hide loading indicator
+          var loader = document.getElementById('loading-indicator');
+          if (loader) loader.style.display = 'none';
 
           // Add a small delay to check if render actually worked + enforce AX standards
           setTimeout(() => {
@@ -1014,13 +1114,11 @@ window.ProductPage = ProductPage;
         }
       } catch (error) {
         console.error('[Preview] ✗ Error during execution:', error);
-        console.error('[Preview] Error stack:', error.stack);
         var _esc = function(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
         document.getElementById('root').innerHTML =
           '<div style="padding: 20px; color: red;">' +
           '<h3>Error rendering component</h3>' +
           '<pre>' + _esc(error.message) + '</pre>' +
-          '<pre style="font-size: 12px; margin-top: 10px;">' + _esc(error.stack || '') + '</pre>' +
           '</div>';
       }
     </script>

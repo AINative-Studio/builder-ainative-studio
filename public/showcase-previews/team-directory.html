@@ -9,17 +9,15 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <!-- Core: React 18 -->
+    <!-- Critical: React + Babel from CDN (local copies have compatibility issues) -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Lucide Icons (vanilla) + React bridge -->
-    <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.min.js"></script>
-    <!-- PropTypes (required by Recharts) -->
-    <script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
-    <!-- Recharts for data visualization -->
-    <script src="https://unpkg.com/recharts@2.15.0/umd/Recharts.js"></script>
-    <!-- Tailwind CSS with custom AINative config -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Non-critical: served locally for speed -->
+    <script src="/vendor/lucide.min.js"></script>
+    <script src="/vendor/prop-types.min.js"></script>
+    <script src="/vendor/recharts.min.js"></script>
+    <script src="/vendor/tailwind.min.js"></script>
     <script>
       tailwind.config = {
         theme: {
@@ -57,16 +55,37 @@
     <style>
       body { margin: 0; font-family: 'Inter', 'Poppins', system-ui, sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
       *, *::before, *::after { box-sizing: border-box; }
-      /* Smooth scrolling */
       html { scroll-behavior: smooth; }
-      /* Better default text rendering */
       h1, h2, h3, h4, h5, h6 { text-wrap: balance; }
       p { text-wrap: pretty; }
+      /* Loading spinner shown until React renders */
+      #loading-indicator {
+        position: fixed; inset: 0; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; background: #f8fafc; z-index: 9999;
+      }
+      #loading-indicator .spinner {
+        width: 40px; height: 40px; border: 3px solid #e2e8f0; border-top-color: #3b82f6;
+        border-radius: 50%; animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      #loading-indicator p { margin-top: 16px; color: #64748b; font-size: 14px; }
     </style>
+    <script>
+      // Timeout: if React doesn't render within 15s, show error
+      setTimeout(function() {
+        var root = document.getElementById('root');
+        var loader = document.getElementById('loading-indicator');
+        if (root && (!root.innerHTML || root.innerHTML.trim() === '') && loader) {
+          loader.innerHTML = '<div style="text-align:center;padding:40px;"><h3 style="color:#1e293b;font-size:18px;">Preview Loading Slowly</h3><p style="color:#64748b;margin:8px 0;">CDN scripts are still loading. Try refreshing.</p><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-size:14px;margin-top:12px;">Refresh</button></div>';
+        }
+      }, 15000);
+    </script>
 </head>
 <body>
+    <div id="loading-indicator"><div class="spinner"></div><p>Loading preview...</p></div>
     <div id="root"></div>
-    <script type="text/babel">
+    <!-- Setup script: icons, hooks, libraries (plain JS, no Babel needed) -->
+    <script>
       console.log('[Preview] Starting preview initialization...');
 
       // AX-5 ENFORCEMENT: Intercept React.createElement to ensure single h1
@@ -478,101 +497,179 @@
         }
       }
 
-      try {
-        console.log('[Preview] Executing component code...');
-        console.log('[Preview] Code length: 9416 characters');
-
-        // Insert the component code
-        function Search(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Search' }, props && props.children); }
-window.Search = Search;
-function Users(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Users' }, props && props.children); }
-window.Users = Users;
-function Building2(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Building2' }, props && props.children); }
-window.Building2 = Building2;
-function Mail(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Mail' }, props && props.children); }
-window.Mail = Mail;
-function Phone(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Phone' }, props && props.children); }
-window.Phone = Phone;
-function MapPin(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'MapPin' }, props && props.children); }
-window.MapPin = MapPin;
-
-const mockTeamMembers = [
+    </script>
+    <!-- Component code: transformed by Babel.transform() synchronously, then eval'd -->
+    <script id="component-source" type="text/plain">
+        // Mock data for team members
+const teamMembers = [
   {
     id: 1,
-    name: "Alex Morgan",
-    role: "Senior Product Designer",
-    department: "Design",
-    email: "alex.morgan@company.com",
+    name: "Alex Johnson",
+    jobTitle: "Senior Software Engineer",
+    department: "Engineering",
+    email: "alex.johnson@company.com",
     phone: "+1 (555) 123-4567",
     location: "San Francisco, CA",
-    avatar: "AM"
+    avatar: "AJ"
   },
   {
     id: 2,
-    name: "Jordan Taylor",
-    role: "Frontend Developer",
-    department: "Engineering",
-    email: "jordan.taylor@company.com",
+    name: "Maria Garcia",
+    jobTitle: "Product Manager",
+    department: "Product",
+    email: "maria.garcia@company.com",
     phone: "+1 (555) 234-5678",
     location: "New York, NY",
-    avatar: "JT"
+    avatar: "MG"
   },
   {
     id: 3,
-    name: "Taylor Kim",
-    role: "Data Scientist",
-    department: "Analytics",
-    email: "taylor.kim@company.com",
+    name: "David Chen",
+    jobTitle: "UX Designer",
+    department: "Design",
+    email: "david.chen@company.com",
     phone: "+1 (555) 345-6789",
     location: "Austin, TX",
-    avatar: "TK"
+    avatar: "DC"
   },
   {
     id: 4,
-    name: "Casey Smith",
-    role: "Marketing Director",
+    name: "Sarah Williams",
+    jobTitle: "Marketing Director",
     department: "Marketing",
-    email: "casey.smith@company.com",
+    email: "sarah.williams@company.com",
     phone: "+1 (555) 456-7890",
-    location: "Chicago, IL",
-    avatar: "CS"
+    location: "Los Angeles, CA",
+    avatar: "SW"
   },
   {
     id: 5,
-    name: "Riley Johnson",
-    role: "Backend Engineer",
-    department: "Engineering",
-    email: "riley.johnson@company.com",
+    name: "James Wilson",
+    jobTitle: "Data Scientist",
+    department: "Analytics",
+    email: "james.wilson@company.com",
     phone: "+1 (555) 567-8901",
-    location: "Seattle, WA",
-    avatar: "RJ"
+    location: "Chicago, IL",
+    avatar: "JW"
   },
   {
     id: 6,
-    name: "Morgan Lee",
-    role: "UX Researcher",
-    department: "Design",
-    email: "morgan.lee@company.com",
+    name: "Emma Thompson",
+    jobTitle: "HR Specialist",
+    department: "Human Resources",
+    email: "emma.thompson@company.com",
     phone: "+1 (555) 678-9012",
-    location: "Boston, MA",
-    avatar: "ML"
+    location: "Seattle, WA",
+    avatar: "ET"
   }
 ];
 
-function TeamDirectory() {
-  const [searchTerm, setSearchTerm] = useState('');
+// Department options for filtering
+const departments = ["All", "Engineering", "Product", "Design", "Marketing", "Analytics", "Human Resources"];
 
-  const filteredMembers = useMemo(() => {
-    if (!searchTerm) return mockTeamMembers;
-    return mockTeamMembers.filter(member => 
-      member.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      member.role.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      member.department.toLowerCase().includes(searchTerm.toLowerCase())
+function TeamDirectory() {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedDepartment, setSelectedDepartment] = useState("All");
+  const [filteredMembers, setFilteredMembers] = useState(teamMembers);
+  const [loading, setLoading] = useState(true);
+
+  // Simulate loading data
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setLoading(false);
+    }, 800);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Filter members based on search term and department
+  useEffect(() => {
+    let result = teamMembers;
+    
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      result = result.filter(member => 
+        member.name.toLowerCase().includes(term) ||
+        member.jobTitle.toLowerCase().includes(term) ||
+        member.email.toLowerCase().includes(term) ||
+        member.location.toLowerCase().includes(term)
+      );
+    }
+    
+    if (selectedDepartment !== "All") {
+      result = result.filter(member => member.department === selectedDepartment);
+    }
+    
+    setFilteredMembers(result);
+  }, [searchTerm, selectedDepartment]);
+
+  // Get unique departments for tab display
+  const getUniqueDepartments = () => {
+    const deptSet = new Set(teamMembers.map(member => member.department));
+    return ["All", ...Array.from(deptSet)];
+  };
+
+  if (loading) {
+    return (
+      <main aria-label="Team Directory" className="min-h-screen bg-[#B0D1D9]">
+        <div className="bg-slate-900">
+          <div className="px-8 py-6">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white text-2xl font-bold">
+                  T
+                </div>
+                <div>
+                  <h1 className="text-2xl font-bold text-white">Team Directory</h1>
+                  <p className="text-slate-300 text-sm mt-1">Browse our team members</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <button className="bg-slate-700 text-white border border-slate-600 hover:bg-slate-600 px-4 py-2 rounded-lg flex items-center gap-2">
+                  <Search className="w-4 h-4" />
+                  <span>Search</span>
+                </button>
+                <button className="bg-blue-600 text-white hover:bg-blue-700 px-4 py-2 rounded-lg">
+                  Add Member
+                </button>
+                <div className="ml-3 flex items-center gap-2">
+                  <button className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-white hover:bg-slate-600">
+                    •
+                  </button>
+                  <div className="w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold border-2 border-white">
+                    AJ
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div className="max-w-7xl mx-auto px-4 py-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[...Array(6)].map((_, index) => (
+              <div key={index} className="bg-white border border-slate-200 shadow-sm rounded-xl p-6">
+                <div className="animate-pulse">
+                  <div className="flex items-start gap-4">
+                    <div className="w-16 h-16 rounded-full bg-slate-200" />
+                    <div className="flex-1 space-y-3">
+                      <div className="h-5 bg-slate-200 rounded w-3/4" />
+                      <div className="h-4 bg-slate-200 rounded w-1/2" />
+                      <div className="h-4 bg-slate-200 rounded w-full" />
+                      <div className="h-4 bg-slate-200 rounded w-5/6" />
+                      <div className="h-4 bg-slate-200 rounded w-2/3" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </main>
     );
-  }, [searchTerm]);
+  }
 
   return (
-    <div className="min-h-screen bg-[#F0F8F3]">
+    <main aria-label="Team Directory" className="min-h-screen bg-[#B0D1D9]">
       {/* Professional Header */}
       <div className="bg-slate-900">
         <div className="px-8 py-6">
@@ -582,17 +679,16 @@ function TeamDirectory() {
                 T
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-white">Team Directory</h1>
-                <p className="text-slate-300 text-sm mt-1">Manage and connect with your team members</p>
+                <h2 className="text-2xl font-bold text-white">Team Directory</h2>
+                <p className="text-slate-300 text-sm mt-1">Browse our team members</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
               <button className="bg-slate-700 text-white border border-slate-600 hover:bg-slate-600 px-4 py-2 rounded-lg flex items-center gap-2">
                 <Search className="w-4 h-4" />
-                Search
+                <span>Search</span>
               </button>
-              <button className="bg-blue-600 text-white hover:bg-blue-700 px-4 py-2 rounded-lg flex items-center gap-2">
-                <Users className="w-4 h-4" />
+              <button className="bg-blue-600 text-white hover:bg-blue-700 px-4 py-2 rounded-lg">
                 Add Member
               </button>
               <div className="ml-3 flex items-center gap-2">
@@ -600,7 +696,7 @@ function TeamDirectory() {
                   •
                 </button>
                 <div className="w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold border-2 border-white">
-                  JM
+                  AJ
                 </div>
               </div>
             </div>
@@ -609,103 +705,137 @@ function TeamDirectory() {
       </div>
 
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Search Section */}
+      <div className="max-w-7xl mx-auto px-4 py-8">
+        {/* Search and Filter Section */}
         <div className="mb-8">
-          <div className="relative max-w-md">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <Search className="h-5 w-5 text-slate-400" />
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div className="relative flex-1">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <Search className="h-5 w-5 text-slate-400" />
+              </div>
+              <input
+                type="text"
+                placeholder="Search team members..."
+                className="block w-full pl-10 pr-3 py-3 border border-slate-300 rounded-lg bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
             </div>
-            <input
-              type="text"
-              className="block w-full pl-10 pr-3 py-3 border border-slate-300 rounded-lg bg-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-[#0A37BF] focus:border-transparent"
-              placeholder="Search team members..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
+            
+            <div className="flex items-center gap-2">
+              <Filter className="h-5 w-5 text-slate-500" />
+              <div className="inline-flex rounded-md shadow-sm" role="group">
+                {getUniqueDepartments().map((dept) => (
+                  <button
+                    key={dept}
+                    type="button"
+                    onClick={() => setSelectedDepartment(dept)}
+                    className={"px-4 py-2 text-sm font-medium rounded-md " + selectedDepartment === dept ? 'bg-blue-600 text-white' : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-300'}
+                  >
+                    {dept}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Results Summary */}
-        <div className="mb-6 flex items-center justify-between">
-          <h2 className="text-xl font-semibold text-slate-900">
-            Team Members
-            <span className="ml-2 text-slate-500 text-base font-normal">
-              ({filteredMembers.length} found)
-            </span>
-          </h2>
-        </div>
-
-        {/* Team Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredMembers.map((member) => (
-            <div key={member.id} className="bg-white border border-slate-200 shadow-sm rounded-xl overflow-hidden hover:shadow-md transition-all duration-200">
-              <div className="p-6">
+        {/* Team Members Grid */}
+        {filteredMembers.length === 0 ? (
+          <div className="text-center py-12">
+            <Users className="mx-auto h-12 w-12 text-slate-400" />
+            <h3 className="mt-2 text-sm font-medium text-slate-900">No team members found</h3>
+            <p className="mt-1 text-sm text-slate-500">Try adjusting your search or filter criteria</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredMembers.map((member) => (
+              <div 
+                key={member.id} 
+                className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 hover:shadow-md transition-all duration-200"
+                data-agent-role="content"
+                data-agent-context={`team-member-${member.id}`}
+              >
                 <div className="flex items-start gap-4">
                   <div className="flex-shrink-0">
-                    <div className="w-16 h-16 rounded-full bg-[#0A37BF]/10 flex items-center justify-center text-[#0A37BF] font-bold text-xl">
+                    <div className="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center text-blue-800 font-bold text-xl">
                       {member.avatar}
                     </div>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h3 className="text-lg font-semibold text-slate-900 truncate">{member.name}</h3>
-                    <p className="text-[#0A37BF] font-medium mt-1">{member.role}</p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-[#0A37BF]/10 text-[#0A37BF]">
-                        <Building2 className="w-3 h-3 mr-1" />
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-lg font-semibold text-slate-900 truncate">{member.name}</h3>
+                      <Badge className="bg-blue-100 text-blue-800 text-xs font-medium">
                         {member.department}
-                      </span>
+                      </Badge>
+                    </div>
+                    <p className="text-slate-600 text-sm mt-1">{member.jobTitle}</p>
+                    
+                    <div className="mt-4 space-y-2">
+                      <div className="flex items-center text-slate-600 text-sm">
+                        <Mail className="h-4 w-4 mr-2 text-slate-400" />
+                        {member.email}
+                      </div>
+                      <div className="flex items-center text-slate-600 text-sm">
+                        <Phone className="h-4 w-4 mr-2 text-slate-400" />
+                        {member.phone}
+                      </div>
+                      <div className="flex items-center text-slate-600 text-sm">
+                        <MapPin className="h-4 w-4 mr-2 text-slate-400" />
+                        {member.location}
+                      </div>
                     </div>
                   </div>
                 </div>
-
-                <div className="mt-6 space-y-3">
-                  <div className="flex items-center text-sm text-slate-600">
-                    <Mail className="w-4 h-4 mr-2 text-slate-400" />
-                    <span className="truncate">{member.email}</span>
-                  </div>
-                  <div className="flex items-center text-sm text-slate-600">
-                    <Phone className="w-4 h-4 mr-2 text-slate-400" />
-                    <span>{member.phone}</span>
-                  </div>
-                  <div className="flex items-center text-sm text-slate-600">
-                    <MapPin className="w-4 h-4 mr-2 text-slate-400" />
-                    <span>{member.location}</span>
-                  </div>
-                </div>
-
-                <div className="mt-6 flex gap-3">
-                  <button className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 py-2 px-4 rounded-lg text-sm font-medium transition-colors">
-                    Message
-                  </button>
-                  <button className="flex-1 bg-[#0A37BF] hover:bg-[#082DA0] text-white py-2 px-4 rounded-lg text-sm font-medium transition-colors">
-                    View Profile
-                  </button>
-                </div>
               </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Empty State */}
-        {filteredMembers.length === 0 && (
-          <div className="text-center py-12">
-            <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-slate-100">
-              <Search className="h-6 w-6 text-slate-500" />
-            </div>
-            <h3 className="mt-2 text-sm font-medium text-slate-900">No team members found</h3>
-            <p className="mt-1 text-sm text-slate-500">Try adjusting your search query</p>
+            ))}
           </div>
         )}
       </div>
-    </div>
+    </main>
   );
 }
 
 // Expose components to window for preview
 window.TeamDirectory = TeamDirectory;
+    </script>
+    <!-- Fallback components (plain JS, runs before Babel transform) -->
+    <script>if (typeof window.Search === 'undefined') { window.Search = function Search(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Search' }, props && props.children); }; }
+if (typeof window.Filter === 'undefined') { window.Filter = function Filter(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Filter' }, props && props.children); }; }
+if (typeof window.Users === 'undefined') { window.Users = function Users(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Users' }, props && props.children); }; }
+if (typeof window.Mail === 'undefined') { window.Mail = function Mail(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Mail' }, props && props.children); }; }
+if (typeof window.Phone === 'undefined') { window.Phone = function Phone(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Phone' }, props && props.children); }; }
+if (typeof window.MapPin === 'undefined') { window.MapPin = function MapPin(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'MapPin' }, props && props.children); }; }</script>
+    <!-- Transform and render -->
+    <script>
+      // Use Babel.transform() synchronously — no async waiting needed
+      console.log('[Preview] Checking Babel availability:', typeof Babel);
+      console.log('[Preview] Checking React availability:', typeof React);
+      if (typeof Babel === 'undefined') {
+        console.error('[Preview] Babel not loaded!');
+        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>Babel Not Loaded</h3><p>Scripts still loading. <button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></p></div>';
+      } else if (typeof React === 'undefined') {
+        console.error('[Preview] React not loaded!');
+        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>React Not Loaded</h3><p><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></p></div>';
+      } else {
+        try {
+          var _src = document.getElementById('component-source').textContent;
+          console.log('[Preview] Transforming ' + _src.length + ' chars...');
+          var _transformed = Babel.transform(_src, { presets: ['react'] });
+          console.log('[Preview] Transform done: ' + _transformed.code.length + ' chars');
+          eval(_transformed.code);
+          console.log('[Preview] Eval done');
+          // Hide loading indicator immediately after eval
+          document.getElementById('loading-indicator').style.display = 'none';
+        } catch(babelErr) {
+          console.error('[Preview] Error:', babelErr);
+          document.getElementById('loading-indicator').innerHTML =
+            '<div style="text-align:center;padding:40px;"><h3 style="color:#dc2626;">Error</h3><pre style="text-align:left;background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b;">' +
+            String(babelErr.message || babelErr).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px;">Retry</button></div>';
+        }
+      }
 
-        console.log('[Preview] Component code executed successfully');
+      try {
 
         // Find the main page component to render.
         // Strategy: Check known component name patterns FIRST (most reliable),
@@ -855,6 +985,9 @@ window.TeamDirectory = TeamDirectory;
 
           root.render(wrappedElement);
           console.log('[Preview] ✓ Render called successfully!');
+          // Hide loading indicator
+          var loader = document.getElementById('loading-indicator');
+          if (loader) loader.style.display = 'none';
 
           // Add a small delay to check if render actually worked + enforce AX standards
           setTimeout(() => {
@@ -906,13 +1039,11 @@ window.TeamDirectory = TeamDirectory;
         }
       } catch (error) {
         console.error('[Preview] ✗ Error during execution:', error);
-        console.error('[Preview] Error stack:', error.stack);
         var _esc = function(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
         document.getElementById('root').innerHTML =
           '<div style="padding: 20px; color: red;">' +
           '<h3>Error rendering component</h3>' +
           '<pre>' + _esc(error.message) + '</pre>' +
-          '<pre style="font-size: 12px; margin-top: 10px;">' + _esc(error.stack || '') + '</pre>' +
           '</div>';
       }
     </script>

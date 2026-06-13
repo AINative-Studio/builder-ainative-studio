@@ -9,17 +9,15 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <!-- Core: React 18 -->
+    <!-- Critical: React + Babel from CDN (local copies have compatibility issues) -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Lucide Icons (vanilla) + React bridge -->
-    <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.min.js"></script>
-    <!-- PropTypes (required by Recharts) -->
-    <script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
-    <!-- Recharts for data visualization -->
-    <script src="https://unpkg.com/recharts@2.15.0/umd/Recharts.js"></script>
-    <!-- Tailwind CSS with custom AINative config -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Non-critical: served locally for speed -->
+    <script src="/vendor/lucide.min.js"></script>
+    <script src="/vendor/prop-types.min.js"></script>
+    <script src="/vendor/recharts.min.js"></script>
+    <script src="/vendor/tailwind.min.js"></script>
     <script>
       tailwind.config = {
         theme: {
@@ -57,16 +55,37 @@
     <style>
       body { margin: 0; font-family: 'Inter', 'Poppins', system-ui, sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
       *, *::before, *::after { box-sizing: border-box; }
-      /* Smooth scrolling */
       html { scroll-behavior: smooth; }
-      /* Better default text rendering */
       h1, h2, h3, h4, h5, h6 { text-wrap: balance; }
       p { text-wrap: pretty; }
+      /* Loading spinner shown until React renders */
+      #loading-indicator {
+        position: fixed; inset: 0; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; background: #f8fafc; z-index: 9999;
+      }
+      #loading-indicator .spinner {
+        width: 40px; height: 40px; border: 3px solid #e2e8f0; border-top-color: #3b82f6;
+        border-radius: 50%; animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      #loading-indicator p { margin-top: 16px; color: #64748b; font-size: 14px; }
     </style>
+    <script>
+      // Timeout: if React doesn't render within 15s, show error
+      setTimeout(function() {
+        var root = document.getElementById('root');
+        var loader = document.getElementById('loading-indicator');
+        if (root && (!root.innerHTML || root.innerHTML.trim() === '') && loader) {
+          loader.innerHTML = '<div style="text-align:center;padding:40px;"><h3 style="color:#1e293b;font-size:18px;">Preview Loading Slowly</h3><p style="color:#64748b;margin:8px 0;">CDN scripts are still loading. Try refreshing.</p><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-size:14px;margin-top:12px;">Refresh</button></div>';
+        }
+      }, 15000);
+    </script>
 </head>
 <body>
+    <div id="loading-indicator"><div class="spinner"></div><p>Loading preview...</p></div>
     <div id="root"></div>
-    <script type="text/babel">
+    <!-- Setup script: icons, hooks, libraries (plain JS, no Babel needed) -->
+    <script>
       console.log('[Preview] Starting preview initialization...');
 
       // AX-5 ENFORCEMENT: Intercept React.createElement to ensure single h1
@@ -478,291 +497,55 @@
         }
       }
 
+    </script>
+    <!-- Component code: transformed by Babel.transform() synchronously, then eval'd -->
+    <script id="component-source" type="text/plain">
+        const SEED_CONVERSATIONS = [
+  { id: 1, title: "Project Planning Discussion", lastMessage: "Let's schedule our next meeting...", timestamp: "2 hours ago" },
+  { id: 2, title: "Design System Review", lastMessage: "The new components look great!", timestamp: "1 day ago" },
+  { id: 3, title: "API Integration Help", lastMessage: "I'm having trouble with authentication...", timestamp: "3 days ago" },
+  { id: 4, title: "Team Standup Notes", lastMessage: "All tasks completed for today.", timestamp: "1 week ago" },
+  { id: 5, title: "Performance Optimization", lastMessage: "Let's discuss bottlenecks in our app...", timestamp: "2 weeks ago" }
+];
+
+const MOCK_MESSAGES = [
+  { id: 1, role: 'user', content: "Hello! I need help with my project setup.", timestamp: "10:00 AM" },
+  { id: 2, role: 'assistant', content: "Hi there! I'd be happy to help you with your project setup. What specifically are you having trouble with?", timestamp: "10:01 AM" },
+  { id: 3, role: 'user', content: "I'm trying to integrate the API but getting authentication errors.", timestamp: "10:02 AM" },
+  { id: 4, role: 'assistant', content: "Authentication errors can be tricky. Could you share what error messages you're seeing? Also, what framework are you using for your project?", timestamp: "10:03 AM" },
+    </script>
+    <!-- Fallback components (plain JS, runs before Babel transform) -->
+    <script></script>
+    <!-- Transform and render -->
+    <script>
+      // Use Babel.transform() synchronously — no async waiting needed
+      console.log('[Preview] Checking Babel availability:', typeof Babel);
+      console.log('[Preview] Checking React availability:', typeof React);
+      if (typeof Babel === 'undefined') {
+        console.error('[Preview] Babel not loaded!');
+        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>Babel Not Loaded</h3><p>Scripts still loading. <button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></p></div>';
+      } else if (typeof React === 'undefined') {
+        console.error('[Preview] React not loaded!');
+        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>React Not Loaded</h3><p><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></p></div>';
+      } else {
+        try {
+          var _src = document.getElementById('component-source').textContent;
+          console.log('[Preview] Transforming ' + _src.length + ' chars...');
+          var _transformed = Babel.transform(_src, { presets: ['react'] });
+          console.log('[Preview] Transform done: ' + _transformed.code.length + ' chars');
+          eval(_transformed.code);
+          console.log('[Preview] Eval done');
+          // Hide loading indicator immediately after eval
+          document.getElementById('loading-indicator').style.display = 'none';
+        } catch(babelErr) {
+          console.error('[Preview] Error:', babelErr);
+          document.getElementById('loading-indicator').innerHTML =
+            '<div style="text-align:center;padding:40px;"><h3 style="color:#dc2626;">Error</h3><pre style="text-align:left;background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b;">' +
+            String(babelErr.message || babelErr).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px;">Retry</button></div>';
+        }
+      }
+
       try {
-        console.log('[Preview] Executing component code...');
-        console.log('[Preview] Code length: 14443 characters');
-
-        // Insert the component code
-        function Search(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Search' }, props && props.children); }
-window.Search = Search;
-function Plus(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Plus' }, props && props.children); }
-window.Plus = Plus;
-function Bell(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Bell' }, props && props.children); }
-window.Bell = Bell;
-function MessageSquare(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'MessageSquare' }, props && props.children); }
-window.MessageSquare = MessageSquare;
-function User(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'User' }, props && props.children); }
-window.User = User;
-function MoreVertical(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'MoreVertical' }, props && props.children); }
-window.MoreVertical = MoreVertical;
-function Bot(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Bot' }, props && props.children); }
-window.Bot = Bot;
-function Settings(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Settings' }, props && props.children); }
-window.Settings = Settings;
-function Send(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Send' }, props && props.children); }
-window.Send = Send;
-
-const mockConversations = [
-  { id: 1, title: 'Project Planning Discussion', lastMessage: 'Let me know if you need any additional details...', timestamp: '2 hours ago' },
-  { id: 2, title: 'Technical Architecture Review', lastMessage: 'I\'ve reviewed the proposed architecture...', timestamp: 'Yesterday' },
-  { id: 3, title: 'Marketing Strategy Meeting', lastMessage: 'The campaign timeline looks good!', timestamp: '2 days ago' },
-  { id: 4, title: 'Product Design Feedback', lastMessage: 'Thanks for the detailed feedback...', timestamp: '3 days ago' },
-  { id: 5, title: 'API Integration Help', lastMessage: 'I can help with the authentication flow...', timestamp: '1 week ago' }
-];
-
-const mockMessages = [
-  { id: 1, role: 'user', content: 'Can you explain how the new API works?', timestamp: '10:30 AM' },
-  { id: 2, role: 'assistant', content: 'Certainly! The new API provides endpoints for user management, data retrieval, and real-time updates.', timestamp: '10:31 AM' },
-  { id: 3, role: 'user', content: 'What are the authentication requirements?', timestamp: '10:32 AM' },
-  { id: 4, role: 'assistant', content: 'Authentication is handled through OAuth 2.0 with JWT tokens. You\'ll need to register your application to get client credentials.', timestamp: '10:33 AM' },
-  { id: 5, role: 'user', content: 'How do I handle rate limiting?', timestamp: '10:35 AM' },
-  { id: 6, role: 'assistant', content: 'Rate limits are set at 1000 requests per hour per IP. We provide headers with remaining requests and reset times.', timestamp: '10:36 AM' }
-];
-
-function AIChatInterface() {
-  const [conversations] = useState(mockConversations);
-  const [messages, setMessages] = useState(mockMessages);
-  const [newMessage, setNewMessage] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
-  const messagesEndRef = useRef(null);
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  const handleSendMessage = (e) => {
-    e.preventDefault();
-    if (!newMessage.trim()) return;
-
-    const userMessage = {
-      id: messages.length + 1,
-      role: 'user',
-      content: newMessage,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    };
-
-    setMessages([...messages, userMessage]);
-    setNewMessage('');
-    
-    // Simulate typing indicator
-    setIsTyping(true);
-    
-    // Simulate assistant response after delay
-    setTimeout(() => {
-      const assistantResponse = {
-        id: messages.length + 2,
-        role: 'assistant',
-        content: 'Thanks for your message! I\'ve received your query and will respond shortly with more information.',
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      };
-      setMessages(prev => [...prev, assistantResponse]);
-      setIsTyping(false);
-    }, 1500);
-  };
-
-  return (
-    <div className="min-h-screen bg-[#F8F0FE] flex flex-col">
-      {/* Professional Header */}
-      <div className="bg-slate-900">
-        <div className="px-8 py-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white text-2xl font-bold">
-                A
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold text-white">AI Assistant</h1>
-                <p className="text-slate-300 text-sm mt-1">Chat with our intelligent agent</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <button className="bg-slate-700 text-white border border-slate-600 hover:bg-slate-600 px-4 py-2 rounded-lg flex items-center gap-2">
-                <Search className="w-4 h-4" />
-                Search
-              </button>
-              <button className="bg-blue-600 text-white hover:bg-blue-700 px-4 py-2 rounded-lg flex items-center gap-2">
-                <Plus className="w-4 h-4" />
-                New Chat
-              </button>
-              <div className="ml-3 flex items-center gap-2">
-                <button className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-white hover:bg-slate-600">
-                  <Bell className="w-4 h-4" />
-                </button>
-                <div className="w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold border-2 border-white">
-                  JA
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar */}
-        <div className="w-80 bg-white border-r border-slate-200 flex flex-col">
-          <div className="p-4 border-b border-slate-200">
-            <div className="flex items-center justify-between">
-              <h2 className="font-semibold text-slate-800">Conversations</h2>
-              <button className="p-1 rounded-lg hover:bg-slate-100">
-                <Plus className="w-5 h-5 text-slate-600" />
-              </button>
-            </div>
-          </div>
-          
-          <div className="flex-1 overflow-y-auto">
-            {conversations.map((conv) => (
-              <div 
-                key={conv.id} 
-                className="p-4 border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors"
-              >
-                <div className="flex items-start gap-3">
-                  <div className="mt-1 w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center">
-                    <MessageSquare className="w-4 h-4 text-slate-600" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-medium text-slate-900 truncate">{conv.title}</h3>
-                    <p className="text-sm text-slate-500 truncate mt-1">{conv.lastMessage}</p>
-                    <p className="text-xs text-slate-400 mt-1">{conv.timestamp}</p>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-          
-          <div className="p-4 border-t border-slate-200">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center">
-                <User className="w-5 h-5 text-slate-600" />
-              </div>
-              <div>
-                <p className="font-medium text-slate-900">John Anderson</p>
-                <p className="text-xs text-slate-500">Free Plan</p>
-              </div>
-              <button className="ml-auto p-2 rounded-lg hover:bg-slate-100">
-                <MoreVertical className="w-4 h-4 text-slate-500" />
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Main Chat Area */}
-        <div className="flex-1 flex flex-col">
-          {/* Chat Header */}
-          <div className="bg-white border-b border-slate-200 p-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center">
-                <Bot className="w-5 h-5 text-slate-600" />
-              </div>
-              <div>
-                <h3 className="font-semibold text-slate-900">AI Assistant</h3>
-                <p className="text-sm text-slate-500">Online • Responds instantly</p>
-              </div>
-              <div className="ml-auto flex items-center gap-2">
-                <button className="p-2 rounded-lg hover:bg-slate-100">
-                  <Settings className="w-4 h-4 text-slate-500" />
-                </button>
-                <button className="p-2 rounded-lg hover:bg-slate-100">
-                  <MoreVertical className="w-4 h-4 text-slate-500" />
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Messages Container */}
-          <div className="flex-1 overflow-y-auto p-6 bg-[#F8F0FE]">
-            <div className="max-w-4xl mx-auto space-y-6">
-              {messages.map((message) => (
-                <div 
-                  key={message.id} 
-                  className={"flex " + message.role === 'user' ? 'justify-end' : 'justify-start'}
-                >
-                  <div 
-                    className={"max-w-[80%] rounded-2xl p-4 " + message.role === 'user' ? 'bg-blue-600 text-white rounded-tr-none' : 'bg-white border border-slate-200 rounded-tl-none'}
-                  >
-                    <div className="flex items-start gap-3">
-                      {message.role === 'assistant' && (
-                        <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center flex-shrink-0">
-                          <Bot className="w-4 h-4 text-slate-600" />
-                        </div>
-                      )}
-                      <div>
-                        <p className="whitespace-pre-wrap">{message.content}</p>
-                        <p className={"text-xs mt-2 " + message.role === 'user' ? 'text-blue-100' : 'text-slate-500'}>
-                          {message.timestamp}
-                        </p>
-                      </div>
-                      {message.role === 'user' && (
-                        <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center flex-shrink-0">
-                          <User className="w-4 h-4 text-slate-600" />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-
-              {isTyping && (
-                <div className="flex justify-start">
-                  <div className="bg-white border border-slate-200 rounded-2xl rounded-tl-none p-4 max-w-[80%]">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center">
-                        <Bot className="w-4 h-4 text-slate-600" />
-                      </div>
-                      <div className="flex space-x-1">
-                        <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" />
-                        <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }} />
-                        <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }} />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-              
-              <div ref={messagesEndRef} />
-            </div>
-          </div>
-
-          {/* Input Area */}
-          <div className="bg-white border-t border-slate-200 p-4">
-            <form onSubmit={handleSendMessage} className="max-w-4xl mx-auto">
-              <div className="flex items-end gap-3">
-                <div className="flex-1 relative">
-                  <textarea
-                    value={newMessage}
-                    onChange={(e) => setNewMessage(e.target.value)}
-                    placeholder="Type your message..."
-                    className="w-full border border-slate-300 rounded-2xl py-3 px-4 pr-12 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
-                    rows="1"
-                    style={{ minHeight: '44px', maxHeight: '120px' }}
-                  />
-                  <button 
-                    type="submit"
-                    disabled={!newMessage.trim()}
-                    className="absolute right-2 bottom-2 p-2 rounded-full bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  >
-                    <Send className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-              <div className="mt-2 text-xs text-slate-500 text-center">
-                AI Assistant can make mistakes. Consider checking important information.
-              </div>
-            </form>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Expose components to window for preview
-window.AIChatInterface = AIChatInterface;
-
-        console.log('[Preview] Component code executed successfully');
 
         // Find the main page component to render.
         // Strategy: Check known component name patterns FIRST (most reliable),
@@ -912,6 +695,9 @@ window.AIChatInterface = AIChatInterface;
 
           root.render(wrappedElement);
           console.log('[Preview] ✓ Render called successfully!');
+          // Hide loading indicator
+          var loader = document.getElementById('loading-indicator');
+          if (loader) loader.style.display = 'none';
 
           // Add a small delay to check if render actually worked + enforce AX standards
           setTimeout(() => {
@@ -963,13 +749,11 @@ window.AIChatInterface = AIChatInterface;
         }
       } catch (error) {
         console.error('[Preview] ✗ Error during execution:', error);
-        console.error('[Preview] Error stack:', error.stack);
         var _esc = function(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
         document.getElementById('root').innerHTML =
           '<div style="padding: 20px; color: red;">' +
           '<h3>Error rendering component</h3>' +
           '<pre>' + _esc(error.message) + '</pre>' +
-          '<pre style="font-size: 12px; margin-top: 10px;">' + _esc(error.stack || '') + '</pre>' +
           '</div>';
       }
     </script>

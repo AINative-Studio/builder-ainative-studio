@@ -9,17 +9,15 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <!-- Core: React 18 -->
+    <!-- Critical: React + Babel from CDN (local copies have compatibility issues) -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Lucide Icons (vanilla) + React bridge -->
-    <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.min.js"></script>
-    <!-- PropTypes (required by Recharts) -->
-    <script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
-    <!-- Recharts for data visualization -->
-    <script src="https://unpkg.com/recharts@2.15.0/umd/Recharts.js"></script>
-    <!-- Tailwind CSS with custom AINative config -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Non-critical: served locally for speed -->
+    <script src="/vendor/lucide.min.js"></script>
+    <script src="/vendor/prop-types.min.js"></script>
+    <script src="/vendor/recharts.min.js"></script>
+    <script src="/vendor/tailwind.min.js"></script>
     <script>
       tailwind.config = {
         theme: {
@@ -57,16 +55,37 @@
     <style>
       body { margin: 0; font-family: 'Inter', 'Poppins', system-ui, sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
       *, *::before, *::after { box-sizing: border-box; }
-      /* Smooth scrolling */
       html { scroll-behavior: smooth; }
-      /* Better default text rendering */
       h1, h2, h3, h4, h5, h6 { text-wrap: balance; }
       p { text-wrap: pretty; }
+      /* Loading spinner shown until React renders */
+      #loading-indicator {
+        position: fixed; inset: 0; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; background: #f8fafc; z-index: 9999;
+      }
+      #loading-indicator .spinner {
+        width: 40px; height: 40px; border: 3px solid #e2e8f0; border-top-color: #3b82f6;
+        border-radius: 50%; animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      #loading-indicator p { margin-top: 16px; color: #64748b; font-size: 14px; }
     </style>
+    <script>
+      // Timeout: if React doesn't render within 15s, show error
+      setTimeout(function() {
+        var root = document.getElementById('root');
+        var loader = document.getElementById('loading-indicator');
+        if (root && (!root.innerHTML || root.innerHTML.trim() === '') && loader) {
+          loader.innerHTML = '<div style="text-align:center;padding:40px;"><h3 style="color:#1e293b;font-size:18px;">Preview Loading Slowly</h3><p style="color:#64748b;margin:8px 0;">CDN scripts are still loading. Try refreshing.</p><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-size:14px;margin-top:12px;">Refresh</button></div>';
+        }
+      }, 15000);
+    </script>
 </head>
 <body>
+    <div id="loading-indicator"><div class="spinner"></div><p>Loading preview...</p></div>
     <div id="root"></div>
-    <script type="text/babel">
+    <!-- Setup script: icons, hooks, libraries (plain JS, no Babel needed) -->
+    <script>
       console.log('[Preview] Starting preview initialization...');
 
       // AX-5 ENFORCEMENT: Intercept React.createElement to ensure single h1
@@ -478,27 +497,10 @@
         }
       }
 
-      try {
-        console.log('[Preview] Executing component code...');
-        console.log('[Preview] Code length: 16001 characters');
-
-        // Insert the component code
-        function Search(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Search' }, props && props.children); }
-window.Search = Search;
-function Plus(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Plus' }, props && props.children); }
-window.Plus = Plus;
-function Filter(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Filter' }, props && props.children); }
-window.Filter = Filter;
-function Calendar(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Calendar' }, props && props.children); }
-window.Calendar = Calendar;
-function MoreHorizontal(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'MoreHorizontal' }, props && props.children); }
-window.MoreHorizontal = MoreHorizontal;
-function MessageSquare(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'MessageSquare' }, props && props.children); }
-window.MessageSquare = MessageSquare;
-function Paperclip(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Paperclip' }, props && props.children); }
-window.Paperclip = Paperclip;
-
-const mockData = {
+    </script>
+    <!-- Component code: transformed by Babel.transform() synchronously, then eval'd -->
+    <script id="component-source" type="text/plain">
+        const kanbanTasks = {
   todo: {
     title: 'To Do',
     count: 12,
@@ -676,19 +678,13 @@ const mockData = {
   }
 };
 
-const TaskBoard = () => {
-  const [columns] = useState([
-    mockData.todo,
-    mockData.inProgress,
-    mockData.review,
-    mockData.completed
-  ]);
-  
+function KanbanBoard() {
+  const [columns] = useState(kanbanTasks);
   const [draggedTask, setDraggedTask] = useState(null);
   const [draggedOver, setDraggedOver] = useState(null);
 
   const handleDragStart = (e, task, columnId) => {
-    setDraggedTask({ task, columnId });
+    setDraggedTask({ task, sourceColumn: columnId });
     e.dataTransfer.effectAllowed = 'move';
   };
 
@@ -705,60 +701,56 @@ const TaskBoard = () => {
     e.preventDefault();
     setDraggedOver(null);
     
-    if (draggedTask && draggedTask.columnId !== targetColumnId) {
-      // In a real app, you would update state here to move the task
-      console.log(`Moving task ${draggedTask.task.id} from ${draggedTask.columnId} to ${targetColumnId}`);
+    if (draggedTask && draggedTask.sourceColumn !== targetColumnId) {
+      // In a real app, you would update the backend here
+      console.log(`Moved task ${draggedTask.task.id} from ${draggedTask.sourceColumn} to ${targetColumnId}`);
     }
     
     setDraggedTask(null);
   };
 
-  const getPriorityBadge = (priority) => {
+  const getPriorityColor = (priority) => {
     switch (priority) {
-      case 'high':
-        return <span className="px-2 py-1 bg-red-100 text-red-800 text-xs font-medium rounded-full">High</span>;
-      case 'medium':
-        return <span className="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs font-medium rounded-full">Medium</span>;
-      case 'low':
-        return <span className="px-2 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-full">Low</span>;
-      default:
-        return null;
+      case 'high': return 'bg-red-100 text-red-700';
+      case 'medium': return 'bg-yellow-100 text-yellow-700';
+      case 'low': return 'bg-green-100 text-green-700';
+      default: return 'bg-gray-100 text-gray-700';
     }
   };
 
   const formatDate = (dateString) => {
-    if (!dateString) return 'No date';
+    if (!dateString) return '';
     const date = new Date(dateString);
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
   return (
-    <div className="min-h-screen bg-[#F0F4F3]">
+    <main aria-label="Kanban Board" className="min-h-screen bg-[#DFE9F2]">
       {/* Professional Header */}
       <div className="bg-slate-900">
         <div className="px-8 py-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white text-2xl font-bold">
-                T
+                K
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-white">Task Board</h1>
-                <p className="text-slate-300 text-sm mt-1">Manage your team's workflow efficiently</p>
+                <h1 className="text-2xl font-bold text-white">Project Dashboard</h1>
+                <p className="text-slate-300 text-sm mt-1">Manage your team efficiently</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <button className="bg-slate-700 text-white px-4 py-2 rounded-lg border border-slate-600 hover:bg-slate-600 flex items-center gap-2">
+              <button className="bg-slate-700 text-white border border-slate-600 hover:bg-slate-600 px-4 py-2 rounded-lg flex items-center gap-2">
                 <Search className="w-4 h-4" />
                 Search
               </button>
-              <button className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2">
+              <button className="bg-blue-600 text-white hover:bg-blue-700 px-4 py-2 rounded-lg flex items-center gap-2">
                 <Plus className="w-4 h-4" />
                 New Task
               </button>
               <div className="ml-3 flex items-center gap-2">
                 <button className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-white hover:bg-slate-600">
-                  <span className="w-2 h-2 bg-red-500 rounded-full" />
+                  •
                 </button>
                 <div className="w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold border-2 border-white">
                   JH
@@ -769,36 +761,21 @@ const TaskBoard = () => {
         </div>
       </div>
 
-      {/* Main Content */}
+      {/* Kanban Board */}
       <div className="container mx-auto px-6 py-8">
-        <div className="flex items-center justify-between mb-8">
-          <h2 className="text-2xl font-bold text-slate-900">Project Workflow</h2>
-          <div className="flex gap-2">
-            <button className="px-4 py-2 bg-white border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 flex items-center gap-2">
-              <Filter className="w-4 h-4" />
-              Filter
-            </button>
-            <button className="px-4 py-2 bg-white border border-slate-200 rounded-lg text-slate-700 hover:bg-slate-50 flex items-center gap-2">
-              <Calendar className="w-4 h-4" />
-              View
-            </button>
-          </div>
-        </div>
-
-        {/* Kanban Board */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {columns.map((column) => (
+          {Object.entries(columns).map(([columnId, column]) => (
             <div 
-              key={column.title}
-              className={column.color + " rounded-xl p-4 min-h-[600px] border border-slate-200"}
-              onDragOver={(e) => handleDragOver(e, column.title)}
+              key={columnId}
+              className={"rounded-xl p-4 " + column.color + " border border-slate-200"}
+              onDragOver={(e) => handleDragOver(e, columnId)}
               onDragLeave={handleDragLeave}
-              onDrop={(e) => handleDrop(e, column.title)}
+              onDrop={(e) => handleDrop(e, columnId)}
             >
               <div className="flex items-center justify-between mb-4">
-                <h3 className="font-semibold text-slate-900">{column.title}</h3>
+                <h2 className="font-semibold text-slate-800">{column.title}</h2>
                 <span className="bg-slate-200 text-slate-700 text-xs font-medium px-2.5 py-0.5 rounded-full">
-                  {column.count}
+                  {column.items.length}
                 </span>
               </div>
               
@@ -807,59 +784,44 @@ const TaskBoard = () => {
                   <div 
                     key={task.id}
                     draggable
-                    onDragStart={(e) => handleDragStart(e, task, column.title)}
-                    className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow cursor-move"
+                    onDragStart={(e) => handleDragStart(e, task, columnId)}
+                    className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm hover:shadow-md transition-all cursor-move"
                   >
-                    <div className="flex items-start justify-between mb-2">
-                      <h4 className="font-medium text-slate-900 text-sm leading-tight">{task.title}</h4>
+                    <div className="flex justify-between items-start mb-2">
+                      <h3 className="font-medium text-slate-800 text-sm leading-tight">{task.title}</h3>
                       <button className="text-slate-400 hover:text-slate-600">
                         <MoreHorizontal className="w-4 h-4" />
                       </button>
                     </div>
                     
-                    <div className="mb-3">
-                      <span className={"text-xs px-2 py-1 rounded-full " + task.categoryColor}>
-                        {task.category}
-                      </span>
-                    </div>
-                    
                     <p className="text-xs text-slate-600 mb-3 line-clamp-2">{task.description}</p>
                     
                     <div className="flex items-center justify-between mb-3">
-                      {getPriorityBadge(task.priority)}
-                      <span className="text-xs text-slate-500 flex items-center gap-1">
-                        <Calendar className="w-3 h-3" />
-                        {formatDate(task.createdAt)}
+                      <span className={"text-xs font-medium px-2 py-1 rounded " + task.categoryColor}>
+                        {task.category}
+                      </span>
+                      <span className={"text-xs font-medium px-2 py-1 rounded " + getPriorityColor(task.priority)}>
+                        {task.priority.charAt(0).toUpperCase() + task.priority.slice(1)}
                       </span>
                     </div>
                     
                     <div className="flex items-center justify-between">
-                      <div className="flex -space-x-2">
-                        {task.assignees.slice(0, 3).map((assignee, index) => (
+                      <div className="flex items-center gap-2">
+                        {task.assignees.map((assignee, index) => (
                           <div 
                             key={index} 
-                            className={"w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-medium border-2 border-white " + assignee.color}
+                            className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium text-white"
+                            style={{ backgroundColor: assignee.color }}
                             title={assignee.name}
                           >
-                            {assignee.name.charAt(0)}
+                            {assignee.name}
                           </div>
                         ))}
-                        {task.assignees.length > 3 && (
-                          <div className="w-7 h-7 rounded-full bg-slate-300 flex items-center justify-center text-slate-700 text-xs font-medium border-2 border-white">
-                            +{task.assignees.length - 3}
-                          </div>
-                        )}
                       </div>
                       
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-slate-500 flex items-center gap-1">
-                          <MessageSquare className="w-3 h-3" />
-                          {task.comments}
-                        </span>
-                        <span className="text-xs text-slate-500 flex items-center gap-1">
-                          <Paperclip className="w-3 h-3" />
-                          {task.attachments}
-                        </span>
+                      <div className="flex items-center gap-1 text-xs text-slate-500">
+                        <Calendar className="w-3 h-3" />
+                        <span>{formatDate(task.createdAt)}</span>
                       </div>
                     </div>
                     
@@ -884,16 +846,57 @@ const TaskBoard = () => {
           ))}
         </div>
       </div>
-    </div>
+      
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ 
+        __html: JSON.stringify({
+          "@context": "https://schema.org",
+          "@type": "WebApplication",
+          "name": "Kanban Board",
+          "description": "Project management kanban board with To Do, In Progress, and Done columns"
+        }) 
+      }} />
+    </main>
   );
-};
-
-TaskBoard;
+}
 
 // Expose components to window for preview
-window.TaskBoard = TaskBoard;
+window.KanbanBoard = KanbanBoard;
+    </script>
+    <!-- Fallback components (plain JS, runs before Babel transform) -->
+    <script>if (typeof window.Search === 'undefined') { window.Search = function Search(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Search' }, props && props.children); }; }
+if (typeof window.Plus === 'undefined') { window.Plus = function Plus(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Plus' }, props && props.children); }; }
+if (typeof window.MoreHorizontal === 'undefined') { window.MoreHorizontal = function MoreHorizontal(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'MoreHorizontal' }, props && props.children); }; }
+if (typeof window.Calendar === 'undefined') { window.Calendar = function Calendar(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Calendar' }, props && props.children); }; }</script>
+    <!-- Transform and render -->
+    <script>
+      // Use Babel.transform() synchronously — no async waiting needed
+      console.log('[Preview] Checking Babel availability:', typeof Babel);
+      console.log('[Preview] Checking React availability:', typeof React);
+      if (typeof Babel === 'undefined') {
+        console.error('[Preview] Babel not loaded!');
+        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>Babel Not Loaded</h3><p>Scripts still loading. <button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></p></div>';
+      } else if (typeof React === 'undefined') {
+        console.error('[Preview] React not loaded!');
+        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>React Not Loaded</h3><p><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></p></div>';
+      } else {
+        try {
+          var _src = document.getElementById('component-source').textContent;
+          console.log('[Preview] Transforming ' + _src.length + ' chars...');
+          var _transformed = Babel.transform(_src, { presets: ['react'] });
+          console.log('[Preview] Transform done: ' + _transformed.code.length + ' chars');
+          eval(_transformed.code);
+          console.log('[Preview] Eval done');
+          // Hide loading indicator immediately after eval
+          document.getElementById('loading-indicator').style.display = 'none';
+        } catch(babelErr) {
+          console.error('[Preview] Error:', babelErr);
+          document.getElementById('loading-indicator').innerHTML =
+            '<div style="text-align:center;padding:40px;"><h3 style="color:#dc2626;">Error</h3><pre style="text-align:left;background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b;">' +
+            String(babelErr.message || babelErr).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px;">Retry</button></div>';
+        }
+      }
 
-        console.log('[Preview] Component code executed successfully');
+      try {
 
         // Find the main page component to render.
         // Strategy: Check known component name patterns FIRST (most reliable),
@@ -1043,6 +1046,9 @@ window.TaskBoard = TaskBoard;
 
           root.render(wrappedElement);
           console.log('[Preview] ✓ Render called successfully!');
+          // Hide loading indicator
+          var loader = document.getElementById('loading-indicator');
+          if (loader) loader.style.display = 'none';
 
           // Add a small delay to check if render actually worked + enforce AX standards
           setTimeout(() => {
@@ -1094,13 +1100,11 @@ window.TaskBoard = TaskBoard;
         }
       } catch (error) {
         console.error('[Preview] ✗ Error during execution:', error);
-        console.error('[Preview] Error stack:', error.stack);
         var _esc = function(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
         document.getElementById('root').innerHTML =
           '<div style="padding: 20px; color: red;">' +
           '<h3>Error rendering component</h3>' +
           '<pre>' + _esc(error.message) + '</pre>' +
-          '<pre style="font-size: 12px; margin-top: 10px;">' + _esc(error.stack || '') + '</pre>' +
           '</div>';
       }
     </script>
