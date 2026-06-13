@@ -964,25 +964,22 @@ export async function GET(
           console.warn('[Preview] First transform failed, attempting auto-fix...', babelErr.message);
           // AUTO-RECOVERY: truncate to last complete function and close brackets
           try {
-            var _lines = _src.split('\\n');
+            var _lines = _src.split(String.fromCharCode(10));
             var _cutAt = _lines.length;
-            // Walk backwards to find last line ending with } or )
             for (var _j = _lines.length - 1; _j > Math.max(0, _lines.length - 50); _j--) {
               var _ln = _lines[_j].trim();
               if (_ln === '}' || _ln === '};' || _ln === ');' || _ln === '})' || _ln === '});') {
-                _cutAt = _j + 1;
-                break;
+                _cutAt = _j + 1; break;
               }
             }
-            var _fixed = _lines.slice(0, _cutAt).join('\\n');
-            // Close unclosed brackets
-            var _ob = (_fixed.match(/\\{/g) || []).length;
-            var _cb = (_fixed.match(/\\}/g) || []).length;
-            var _op = (_fixed.match(/\\(/g) || []).length;
-            var _cp = (_fixed.match(/\\)/g) || []).length;
+            var _fixed = _lines.slice(0, _cutAt).join(String.fromCharCode(10));
+            var _ob = (_fixed.match(/{/g) || []).length;
+            var _cb = (_fixed.match(/}/g) || []).length;
+            var _op = (_fixed.match(/[(]/g) || []).length;
+            var _cp = (_fixed.match(/[)]/g) || []).length;
             for (var _k = 0; _k < _op - _cp; _k++) _fixed += ')';
-            if (_op > _cp) _fixed += ';\\n';
-            for (var _k = 0; _k < _ob - _cb; _k++) _fixed += '}\\n';
+            if (_op > _cp) _fixed += ';' + String.fromCharCode(10);
+            for (var _k = 0; _k < _ob - _cb; _k++) _fixed += '}' + String.fromCharCode(10);
 
             var _transformed2 = Babel.transform(_fixed, { presets: ['react'] });
             console.log('[Preview] Auto-fix succeeded: ' + _transformed2.code.length + ' chars');
