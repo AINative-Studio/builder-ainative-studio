@@ -691,9 +691,9 @@ Generate a corrected version of: ${message}`
               demo: `/preview/${responseId}`
             })}\n\n`))
 
-            // Persist + SSR build (fire-and-forget, non-blocking)
+            // Persist + RLHF logging + SSR build (fire-and-forget, non-blocking)
             try {
-              const { saveGeneration } = await import('@/lib/zerodb-store')
+              const { saveGeneration, logGenerationEvent } = await import('@/lib/zerodb-store')
               const { addToShowcase } = await import('@/lib/showcase-store')
               const { storeSSRPreview } = await import('@/lib/preview-store')
               const isShowcase = finalContent.length > 1000
@@ -707,6 +707,19 @@ Generate a corrected version of: ${message}`
                 codeLength: finalContent.length,
                 isShowcase,
               }).catch(e => console.warn('[ZeroDB save failed]', e))
+
+              // RLHF: Log generation event for tracking + learning
+              logGenerationEvent({
+                chatId: responseId,
+                prompt: message,
+                model: requestedModel || DEFAULT_MODEL,
+                theme: selectedTheme.name,
+                codeLength: finalContent.length,
+                passedValidation: validation.valid,
+                generationTimeMs: Date.now() - (tokenUsage?.startTime || Date.now()),
+                retryCount: retryAttempted ? 1 : 0,
+                finishReason: 'stop',
+              }).catch(e => console.warn('[RLHF log failed]', e))
 
               addToShowcase(message, responseId, finalContent.length, finalContent)
 

@@ -145,3 +145,197 @@ export async function listGenerations(limit = 50): Promise<any[]> {
     return []
   }
 }
+
+// ============================================================
+// RLHF FEEDBACK — stored in ZeroDB (survives deploys)
+// ============================================================
+
+const RLHF_TABLE = 'rlhf_feedback'
+
+/**
+ * Submit RLHF feedback for a generation (thumbs up/down)
+ */
+export async function submitRLHFFeedback(data: {
+  chatId: string
+  rating: number         // 1-5 (1=thumbs down, 5=thumbs up)
+  feedback?: string      // optional text
+  prompt?: string        // the original prompt
+  model?: string         // which model generated it
+  theme?: string         // which theme was used
+  codeLength?: number    // length of generated code
+  passedValidation?: boolean
+}): Promise<boolean> {
+  try {
+    const row = {
+      chat_id: data.chatId,
+      rating: data.rating,
+      feedback_text: data.feedback || '',
+      prompt: data.prompt || '',
+      model: data.model || '',
+      theme: data.theme || '',
+      code_length: data.codeLength || 0,
+      passed_validation: data.passedValidation !== false,
+      created_at: new Date().toISOString(),
+    }
+
+    const result = await zerodbRequest(
+      'POST',
+      `/v1/projects/${PROJECT_ID}/database/tables/${RLHF_TABLE}/rows`,
+      { row_data: row }
+    )
+
+    if (result) {
+      console.log(`[RLHF] Feedback saved: chatId=${data.chatId} rating=${data.rating}`)
+      return true
+    }
+    return false
+  } catch (e) {
+    console.warn('[RLHF] Feedback save failed:', e)
+    return false
+  }
+}
+
+/**
+ * Log a generation event for RLHF tracking
+ * Called automatically after every successful generation
+ */
+export async function logGenerationEvent(data: {
+  chatId: string
+  prompt: string
+  model: string
+  theme: string
+  codeLength: number
+  passedValidation: boolean
+  generationTimeMs: number
+  retryCount: number
+  finishReason: string
+}): Promise<boolean> {
+  try {
+    const row = {
+      chat_id: data.chatId,
+      prompt: data.prompt,
+      model: data.model,
+      theme: data.theme,
+      code_length: data.codeLength,
+      passed_validation: data.passedValidation,
+      generation_time_ms: data.generationTimeMs,
+      retry_count: data.retryCount,
+      finish_reason: data.finishReason,
+      created_at: new Date().toISOString(),
+      // Auto-categorize for analysis
+      category: categorizePrompt(data.prompt),
+    }
+
+    const result = await zerodbRequest(
+      'POST',
+      `/v1/projects/${PROJECT_ID}/database/tables/${RLHF_TABLE}/rows`,
+      { row_data: row }
+    )
+
+    if (result) {
+      console.log(`[RLHF] Generation logged: ${data.chatId} (${data.model}, ${data.codeLength} chars, ${data.passedValidation ? 'PASS' : 'FAIL'})`)
+      return true
+    }
+    return false
+  } catch (e) {
+    console.warn('[RLHF] Generation log failed:', e)
+    return false
+  }
+}
+
+/**
+ * Get RLHF insights — aggregate metrics from feedback
+ */
+export async function getRLHFInsights(): Promise<{
+  totalGenerations: number
+  avgRating: number
+  passRate: number
+  avgCodeLength: number
+  modelBreakdown: Record<string, { count: number; avgRating: number; passRate: number }>
+  categoryBreakdown: Record<string, { count: number; avgRating: number }>
+} | null> {
+  try {
+    const result = await zerodbRequest(
+      'GET',
+      `/v1/projects/${PROJECT_ID}/database/tables/${RLHF_TABLE}/rows?limit=500`
+    )
+
+    const rows = (result?.data || []).map((r: any) => r.row_data || r)
+    if (rows.length === 0) return null
+
+    const totalGenerations = rows.length
+    const withRating = rows.filter((r: any) => r.rating > 0)
+    const avgRating = withRating.length > 0
+      ? withRating.reduce((sum: number, r: any) => sum + r.rating, 0) / withRating.length
+      : 0
+    const passCount = rows.filter((r: any) => r.passed_validation).length
+    const passRate = (passCount / totalGenerations) * 100
+    const avgCodeLength = rows.reduce((sum: number, r: any) => sum + (r.code_length || 0), 0) / totalGenerations
+
+    // Model breakdown
+    const modelBreakdown: Record<string, { count: number; totalRating: number; passCount: number }> = {}
+    rows.forEach((r: any) => {
+      const model = r.model || 'unknown'
+      if (!modelBreakdown[model]) modelBreakdown[model] = { count: 0, totalRating: 0, passCount: 0 }
+      modelBreakdown[model].count++
+      if (r.rating > 0) modelBreakdown[model].totalRating += r.rating
+      if (r.passed_validation) modelBreakdown[model].passCount++
+    })
+
+    const modelResult: Record<string, { count: number; avgRating: number; passRate: number }> = {}
+    for (const [model, data] of Object.entries(modelBreakdown)) {
+      modelResult[model] = {
+        count: data.count,
+        avgRating: data.totalRating > 0 ? data.totalRating / data.count : 0,
+        passRate: (data.passCount / data.count) * 100,
+      }
+    }
+
+    // Category breakdown
+    const categoryBreakdown: Record<string, { count: number; totalRating: number }> = {}
+    rows.forEach((r: any) => {
+      const cat = r.category || 'unknown'
+      if (!categoryBreakdown[cat]) categoryBreakdown[cat] = { count: 0, totalRating: 0 }
+      categoryBreakdown[cat].count++
+      if (r.rating > 0) categoryBreakdown[cat].totalRating += r.rating
+    })
+
+    const catResult: Record<string, { count: number; avgRating: number }> = {}
+    for (const [cat, data] of Object.entries(categoryBreakdown)) {
+      catResult[cat] = {
+        count: data.count,
+        avgRating: data.totalRating > 0 ? data.totalRating / data.count : 0,
+      }
+    }
+
+    return {
+      totalGenerations,
+      avgRating,
+      passRate,
+      avgCodeLength,
+      modelBreakdown: modelResult,
+      categoryBreakdown: catResult,
+    }
+  } catch (e) {
+    console.warn('[RLHF] Insights failed:', e)
+    return null
+  }
+}
+
+/**
+ * Auto-categorize a prompt for RLHF analysis
+ */
+function categorizePrompt(prompt: string): string {
+  const lower = prompt.toLowerCase()
+  if (lower.includes('dashboard') || lower.includes('analytics')) return 'dashboard'
+  if (lower.includes('landing') || lower.includes('hero') || lower.includes('pricing')) return 'landing'
+  if (lower.includes('ecommerce') || lower.includes('store') || lower.includes('shop') || lower.includes('cart')) return 'ecommerce'
+  if (lower.includes('chat') || lower.includes('message') || lower.includes('social')) return 'social'
+  if (lower.includes('task') || lower.includes('kanban') || lower.includes('todo')) return 'productivity'
+  if (lower.includes('crm') || lower.includes('saas') || lower.includes('team')) return 'saas'
+  if (lower.includes('blog') || lower.includes('article')) return 'content'
+  if (lower.includes('music') || lower.includes('player') || lower.includes('weather')) return 'creative'
+  if (lower.includes('fitness') || lower.includes('health') || lower.includes('workout')) return 'health'
+  if (lower.includes('food') || lower.includes('restaurant') || lower.includes('recipe')) return 'food'
+  return 'general'
+}
