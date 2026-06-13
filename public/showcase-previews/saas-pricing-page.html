@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Preview</title>
+    <!-- Google Fonts: Inter (primary) + Geist-like fallback -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <!-- Core: React 18 -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Lucide Icons (vanilla) + React bridge -->
+    <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.min.js"></script>
+    <!-- PropTypes (required by Recharts) -->
+    <script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
+    <!-- Recharts for data visualization -->
+    <script src="https://unpkg.com/recharts@2.15.0/umd/Recharts.js"></script>
+    <!-- Tailwind CSS with custom AINative config -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'Poppins', 'system-ui', 'sans-serif'],
+            },
+            colors: {
+              'brand-primary': '#5867EF',
+              'dark-1': '#131726',
+              'dark-2': '#22263c',
+              'dark-3': '#31395a',
+            },
+            boxShadow: {
+              'ds-sm': '0 2px 4px rgba(19, 23, 38, 0.1), 0 1px 2px rgba(19, 23, 38, 0.06)',
+              'ds-md': '0 4px 8px rgba(19, 23, 38, 0.12), 0 2px 4px rgba(19, 23, 38, 0.08)',
+              'ds-lg': '0 12px 24px rgba(19, 23, 38, 0.15), 0 4px 8px rgba(19, 23, 38, 0.1)',
+            },
+            keyframes: {
+              'fade-in': { from: { opacity: '0', transform: 'translateY(10px)' }, to: { opacity: '1', transform: 'translateY(0)' } },
+              'slide-in': { from: { opacity: '0', transform: 'translateX(-10px)' }, to: { opacity: '1', transform: 'translateX(0)' } },
+              'float': { '0%, 100%': { transform: 'translateY(0px)' }, '50%': { transform: 'translateY(-10px)' } },
+            },
+            animation: {
+              'fade-in': 'fade-in 0.5s ease-out',
+              'slide-in': 'slide-in 0.4s ease-out',
+              'float': 'float 3s ease-in-out infinite',
+            },
+          },
+        },
+      }
+    </script>
+    <script src="/shadcn-components.js"></script>
+    <script src="/aikit-components.js"></script>
+    <style>
+      body { margin: 0; font-family: 'Inter', 'Poppins', system-ui, sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+      *, *::before, *::after { box-sizing: border-box; }
+      /* Smooth scrolling */
+      html { scroll-behavior: smooth; }
+      /* Better default text rendering */
+      h1, h2, h3, h4, h5, h6 { text-wrap: balance; }
+      p { text-wrap: pretty; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+      console.log('[Preview] Starting preview initialization...');
+
+      // AX-5 ENFORCEMENT: Intercept React.createElement to ensure single h1
+      // This works WITH React instead of fighting it
+      const _originalCreateElement = React.createElement;
+      let _h1Count = 0;
+      React.createElement = function(type) {
+        if (type === 'h1') {
+          _h1Count++;
+          if (_h1Count > 1) {
+            // Convert extra h1 to h2 at the React level
+            var args = Array.prototype.slice.call(arguments);
+            args[0] = 'h2';
+            return _originalCreateElement.apply(React, args);
+          }
+        }
+        return _originalCreateElement.apply(React, arguments);
+      };
+
+      // Make React hooks available
+      const { useState, useEffect, useCallback, useMemo, useRef, useContext, createContext, Fragment } = React;
+      console.log('[Preview] React hooks loaded:', { useState, useEffect, useCallback, useMemo, useRef });
+
+      // Create React components from Lucide vanilla SVG icon definitions
+      // lucide (vanilla) exports icons as ["svg", {svgAttrs}, [[tag, attrs], ...]]
+      const _lucideIcons = window.lucide || {};
+      function _createLucideIcon(name) {
+        const iconData = _lucideIcons[name];
+        if (!iconData || !Array.isArray(iconData)) return function FallbackIcon(props) {
+          return React.createElement('span', { className: props.className || '', style: props.style }, '');
+        };
+        // iconData[0] = "svg", iconData[1] = svg attrs, iconData[2] = children array
+        const children = iconData[2] || [];
+        return function LucideIcon({ className = 'w-4 h-4', size, color, strokeWidth, fill, style, ...rest }) {
+          const s = size || undefined;
+          return React.createElement('svg', {
+            xmlns: 'http://www.w3.org/2000/svg',
+            width: s || 24,
+            height: s || 24,
+            viewBox: '0 0 24 24',
+            fill: fill || 'none',
+            stroke: color || 'currentColor',
+            strokeWidth: strokeWidth || 2,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+            className: className,
+            style: style,
+            ...rest
+          }, ...children.map(function(child, i) {
+            // child is [tagName, attributes]
+            var tag = child[0];
+            var attrs = Object.assign({}, child[1] || {}, { key: i });
+            // Convert hyphenated attrs to camelCase for React
+            if (attrs['stroke-width']) { attrs.strokeWidth = attrs['stroke-width']; delete attrs['stroke-width']; }
+            if (attrs['stroke-linecap']) { attrs.strokeLinecap = attrs['stroke-linecap']; delete attrs['stroke-linecap']; }
+            if (attrs['stroke-linejoin']) { attrs.strokeLinejoin = attrs['stroke-linejoin']; delete attrs['stroke-linejoin']; }
+            if (attrs['fill-rule']) { attrs.fillRule = attrs['fill-rule']; delete attrs['fill-rule']; }
+            if (attrs['clip-rule']) { attrs.clipRule = attrs['clip-rule']; delete attrs['clip-rule']; }
+            return React.createElement(tag, attrs);
+          }));
+        };
+      }
+
+      // Create all icon components
+      const _iconNames = Object.keys(_lucideIcons);
+      const _iconComponents = {};
+      _iconNames.forEach(function(name) {
+        _iconComponents[name] = _createLucideIcon(name);
+      });
+
+      // Safe icon accessor — returns fallback circle for unknown icons
+      // All returned functions are tagged with _isLucideIcon for detection
+      function _getIcon(name) {
+        if (_iconComponents[name]) {
+          _iconComponents[name]._isLucideIcon = true;
+          return _iconComponents[name];
+        }
+        var fallback = function UnknownIcon(props) {
+          var cn = (props && props.className) || 'w-4 h-4';
+          var sz = (props && props.size) || 24;
+          var clr = (props && props.color) || 'currentColor';
+          return React.createElement('svg', {
+            xmlns: 'http://www.w3.org/2000/svg', width: sz, height: sz,
+            viewBox: '0 0 24 24', fill: 'none', stroke: clr, strokeWidth: 2,
+            strokeLinecap: 'round', strokeLinejoin: 'round', className: cn
+          }, React.createElement('circle', { cx: '12', cy: '12', r: '10' }));
+        };
+        fallback._isLucideIcon = true;
+        return fallback;
+      }
+
+      // Create all common icon constants using safe accessor
+      const Search = _getIcon("Search");
+      const Menu = _getIcon("Menu");
+      const X = _getIcon("X");
+      const ChevronDown = _getIcon("ChevronDown");
+      const ChevronRight = _getIcon("ChevronRight");
+      const ChevronLeft = _getIcon("ChevronLeft");
+      const ChevronUp = _getIcon("ChevronUp");
+      const Home = _getIcon("Home");
+      const Settings = _getIcon("Settings");
+      const Users = _getIcon("Users");
+      const BarChart3 = _getIcon("BarChart3");
+      const FileText = _getIcon("FileText");
+      const Bell = _getIcon("Bell");
+      const Mail = _getIcon("Mail");
+      const Star = _getIcon("Star");
+      const Heart = _getIcon("Heart");
+      const ShoppingCart = _getIcon("ShoppingCart");
+      const Plus = _getIcon("Plus");
+      const Minus = _getIcon("Minus");
+      const Edit = _getIcon("Pencil");
+      const Edit2 = _getIcon("Pencil");
+      const Pencil = _getIcon("Pencil");
+      const Trash2 = _getIcon("Trash2");
+      const Eye = _getIcon("Eye");
+      const EyeOff = _getIcon("EyeOff");
+      const Check = _getIcon("Check");
+      const AlertCircle = _getIcon("AlertCircle");
+      const Info = _getIcon("Info");
+      const HelpCircle = _getIcon("HelpCircle");
+      const ArrowRight = _getIcon("ArrowRight");
+      const ArrowLeft = _getIcon("ArrowLeft");
+      const ArrowUp = _getIcon("ArrowUp");
+      const ArrowDown = _getIcon("ArrowDown");
+      const ExternalLink = _getIcon("ExternalLink");
+      const Download = _getIcon("Download");
+      const Upload = _getIcon("Upload");
+      const Share2 = _getIcon("Share2");
+      const Filter = _getIcon("Filter");
+      const Calendar = _getIcon("Calendar");
+      const Clock = _getIcon("Clock");
+      const MapPin = _getIcon("MapPin");
+      const Phone = _getIcon("Phone");
+      const Globe = _getIcon("Globe");
+      const Lock = _getIcon("Lock");
+      const Unlock = _getIcon("Unlock");
+      const Shield = _getIcon("Shield");
+      const Zap = _getIcon("Zap");
+      const TrendingUp = _getIcon("TrendingUp");
+      const TrendingDown = _getIcon("TrendingDown");
+      const Activity = _getIcon("Activity");
+      const DollarSign = _getIcon("DollarSign");
+      const CreditCard = _getIcon("CreditCard");
+      const Package = _getIcon("Package");
+      const Truck = _getIcon("Truck");
+      const Gift = _getIcon("Gift");
+      const Sun = _getIcon("Sun");
+      const Moon = _getIcon("Moon");
+      const Laptop = _getIcon("Laptop");
+      const Smartphone = _getIcon("Smartphone");
+      const Code = _getIcon("Code");
+      const Terminal = _getIcon("Terminal");
+      const GitBranch = _getIcon("GitBranch");
+      const Send = _getIcon("Send");
+      const MessageSquare = _getIcon("MessageSquare");
+      const MessageCircle = _getIcon("MessageCircle");
+      const Bookmark = _getIcon("Bookmark");
+      const Tag = _getIcon("Tag");
+      const Copy = _getIcon("Copy");
+      const Save = _getIcon("Save");
+      const RefreshCw = _getIcon("RefreshCw");
+      const MoreHorizontal = _getIcon("MoreHorizontal");
+      const MoreVertical = _getIcon("MoreVertical");
+      const Layers = _getIcon("Layers");
+      const Layout = _getIcon("Layout");
+      const Grid = _getIcon("Grid3x3");
+      const List = _getIcon("List");
+      const PieChart = _getIcon("PieChart");
+      const LineChart = _getIcon("LineChart");
+      const BarChart = _getIcon("BarChart");
+      const Target = _getIcon("Target");
+      const Award = _getIcon("Award");
+      const Sparkles = _getIcon("Sparkles");
+      const Rocket = _getIcon("Rocket");
+      const Building2 = _getIcon("Building2");
+      const Briefcase = _getIcon("Briefcase");
+      const BookOpen = _getIcon("BookOpen");
+      const Bot = _getIcon("Bot");
+      const Brain = _getIcon("Brain");
+      const LogOut = _getIcon("LogOut");
+      const LogIn = _getIcon("LogIn");
+      const UserPlus = _getIcon("UserPlus");
+      const Users2 = _getIcon("Users2");
+      const FolderOpen = _getIcon("FolderOpen");
+      const File = _getIcon("File");
+      const Box = _getIcon("Box");
+      const Inbox = _getIcon("Inbox");
+      const CircleDot = _getIcon("CircleDot");
+      const Wand2 = _getIcon("Wand2");
+      const Palette = _getIcon("Palette");
+      const Lightbulb = _getIcon("Lightbulb");
+      const Newspaper = _getIcon("Newspaper");
+      const GraduationCap = _getIcon("GraduationCap");
+      const Hexagon = _getIcon("Hexagon");
+      const Maximize = _getIcon("Maximize");
+      const Minimize = _getIcon("Minimize");
+      const Maximize2 = _getIcon("Maximize2");
+      const Minimize2 = _getIcon("Minimize2");
+      // Additional commonly-used icons
+      const Play = _getIcon("Play");
+      const Pause = _getIcon("Pause");
+      const SkipForward = _getIcon("SkipForward");
+      const SkipBack = _getIcon("SkipBack");
+      const Volume2 = _getIcon("Volume2");
+      const VolumeX = _getIcon("VolumeX");
+      const Mic = _getIcon("Mic");
+      const MicOff = _getIcon("MicOff");
+      const Camera = _getIcon("Camera");
+      const Video = _getIcon("Video");
+      const Image = _getIcon("Image");
+      const Music = _getIcon("Music");
+      const Wifi = _getIcon("Wifi");
+      const Cloud = _getIcon("Cloud");
+      const Database = _getIcon("Database");
+      const Server = _getIcon("Server");
+      const HardDrive = _getIcon("HardDrive");
+      const Monitor = _getIcon("Monitor");
+      const Cpu = _getIcon("Cpu");
+      const Github = _getIcon("Github");
+      const Twitter = _getIcon("Twitter");
+      const Linkedin = _getIcon("Linkedin");
+      const Facebook = _getIcon("Facebook");
+      const Instagram = _getIcon("Instagram");
+      const Youtube = _getIcon("Youtube");
+      const Hash = _getIcon("Hash");
+      const AtSign = _getIcon("AtSign");
+      const Paperclip = _getIcon("Paperclip");
+      const Link = _getIcon("Link");
+      const Clipboard = _getIcon("Clipboard");
+      const Printer = _getIcon("Printer");
+      const RotateCcw = _getIcon("RotateCcw");
+      const Move = _getIcon("Move");
+      const Grip = _getIcon("Grip");
+      const Table2 = _getIcon("Table2");
+      const Trophy = _getIcon("Trophy");
+      const Flag = _getIcon("Flag");
+      const Flame = _getIcon("Flame");
+      const Brush = _getIcon("Brush");
+      const Pen = _getIcon("Pen");
+      const Network = _getIcon("Network");
+      const Workflow = _getIcon("Workflow");
+      const Route = _getIcon("Route");
+      const Compass = _getIcon("Compass");
+      const Navigation = _getIcon("Navigation");
+      const UserMinus = _getIcon("UserMinus");
+      const UserCheck = _getIcon("UserCheck");
+      const FolderClosed = _getIcon("FolderClosed");
+      const FilePlus = _getIcon("FilePlus");
+      const FileCheck = _getIcon("FileCheck");
+      const FileX = _getIcon("FileX");
+      const Boxes = _getIcon("Boxes");
+      const Archive = _getIcon("Archive");
+      const Circle = _getIcon("Circle");
+      const Square = _getIcon("Square");
+      const Triangle = _getIcon("Triangle");
+      const Octagon = _getIcon("Octagon");
+      const Pentagon = _getIcon("Pentagon");
+      const Crosshair = _getIcon("Crosshair");
+      const MousePointer = _getIcon("MousePointer");
+      const Fingerprint = _getIcon("Fingerprint");
+      const QrCode = _getIcon("QrCode");
+      const ScanLine = _getIcon("ScanLine");
+      const CircuitBoard = _getIcon("CircuitBoard");
+      const Headphones = _getIcon("Headphones");
+      const AlertTriangle = _getIcon("AlertTriangle");
+      const CheckCircle = _getIcon("CheckCircle");
+      const CheckCircle2 = _getIcon("CheckCircle2");
+      const XCircle = _getIcon("XCircle");
+      const MinusCircle = _getIcon("MinusCircle");
+      const PlusCircle = _getIcon("PlusCircle");
+      const ArrowUpRight = _getIcon("ArrowUpRight");
+      const ArrowDownRight = _getIcon("ArrowDownRight");
+      const ChevronFirst = _getIcon("ChevronFirst");
+      const ChevronLast = _getIcon("ChevronLast");
+      const Repeat = _getIcon("Repeat");
+      const Shuffle = _getIcon("Shuffle");
+      const SlidersHorizontal = _getIcon("SlidersHorizontal");
+      const Cog = _getIcon("Settings"); // alias
+      const Gear = _getIcon("Settings"); // alias
+
+      // Make ALL lucide icons available as window globals so any icon name works in JSX.
+      // The component detector's _isIconWrapper check prevents these from being picked as page components.
+      _iconNames.forEach(function(name) {
+        var icon = _getIcon(name);
+        if (!window[name]) window[name] = icon;
+      });
+
+      console.log('[Preview] Lucide icons loaded:', _iconNames.length, 'icons available on window');
+
+      // Make Recharts available globally
+      const recharts = window.Recharts || {};
+      const {
+        LineChart: ReLineChart, Line, BarChart: ReBarChart, Bar,
+        PieChart: RePieChart, Pie, Cell, AreaChart, Area,
+        RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
+        ComposedChart, Scatter, ScatterChart,
+        XAxis, YAxis, CartesianGrid, Tooltip: RechartsTooltip,
+        Legend, ResponsiveContainer, RadialBarChart, RadialBar,
+        Treemap, Funnel, FunnelChart
+      } = recharts;
+      console.log('[Preview] Recharts loaded:', !!recharts.LineChart);
+
+      // Make AIKit / AINative Primitive components available
+      const aikit = window.AIKitComponents || {};
+      const {
+        StreamingIndicator, VideoPlayer, CodeDisplay, StreamingText,
+        ChatBubble, MediaGallery, Skeleton, SkeletonCard,
+        MetricCard, EmptyState,
+        AIKitSidebar, AIKitHeader, AIKitBreadcrumb, AIKitPagination,
+        AIKitStepper, AIKitTimeline, AIKitTable, AIKitRating,
+        AIKitProductCard, AIKitPriceCard, AIKitAvatar, AIKitBanner,
+        AgentCard, SwarmView, AgentTimeline, ConnectionStatus,
+        TokenUsageBar, SafetyBadge, GuardrailPanel
+      } = aikit;
+      console.log('[Preview] AIKit loaded:', Object.keys(aikit).length, 'components');
+
+      // Make shadcn components available
+      const { Button, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter,
+              Input, Label, Badge, Avatar, AvatarImage, AvatarFallback, Table, TableHeader,
+              TableBody, TableRow, TableHead, TableCell, Separator,
+              Dialog, DialogOverlay, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+              Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
+              Tabs, TabsList, TabsTrigger, TabsContent,
+              Progress, CircularProgress, Checkbox, RadioGroup, RadioGroupItem,
+              Accordion, AccordionItem, AccordionTrigger, AccordionContent,
+              Toast, ToastTitle, ToastDescription,
+              Alert, AlertTitle, AlertDescription,
+              Popover, PopoverTrigger, PopoverContent,
+              cn } = window.ShadcnComponents || {};
+
+      // Check all shadcn components
+      const allComponents = {
+        Button, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter,
+        Input, Label, Badge, Avatar, AvatarImage, AvatarFallback, Table, TableHeader,
+        TableBody, TableRow, TableHead, TableCell, Separator,
+        Dialog, DialogOverlay, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+        Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
+        Tabs, TabsList, TabsTrigger, TabsContent,
+        Progress, CircularProgress, Checkbox, RadioGroup, RadioGroupItem,
+        Accordion, AccordionItem, AccordionTrigger, AccordionContent,
+        Toast, ToastTitle, ToastDescription,
+        Alert, AlertTitle, AlertDescription,
+        Popover, PopoverTrigger, PopoverContent,
+        cn
+      };
+
+      const missingComponents = Object.entries(allComponents)
+        .filter(([name, comp]) => !comp)
+        .map(([name]) => name);
+
+      console.log('[Preview] Shadcn components loaded:', {
+        Button: !!Button,
+        Card: !!Card,
+        Input: !!Input,
+        Tabs: !!Tabs,
+        TabsList: !!TabsList,
+        TabsTrigger: !!TabsTrigger,
+        TabsContent: !!TabsContent,
+        Separator: !!Separator,
+        cn: !!cn
+      });
+
+      if (missingComponents.length > 0) {
+        console.error('[Preview] ✗ Missing shadcn components:', missingComponents);
+      }
+
+      // Sample data for components
+      const products = [
+        { id: 1, name: 'Product 1', price: 29.99, image: 'https://via.placeholder.com/200' },
+        { id: 2, name: 'Product 2', price: 39.99, image: 'https://via.placeholder.com/200' }
+      ];
+
+      // Create an error boundary to catch React rendering errors
+      class ErrorBoundary extends React.Component {
+        constructor(props) {
+          super(props);
+          this.state = { hasError: false, error: null, errorInfo: null };
+        }
+
+        static getDerivedStateFromError(error) {
+          return { hasError: true };
+        }
+
+        componentDidCatch(error, errorInfo) {
+          console.error('[Preview] React Error Boundary caught error:', error);
+          console.error('[Preview] Error info:', errorInfo);
+          this.setState({ error, errorInfo });
+        }
+
+        render() {
+          if (this.state.hasError) {
+            return React.createElement('div', {
+              style: { padding: '20px', color: 'red', fontFamily: 'monospace' }
+            }, [
+              React.createElement('h3', { key: 'title' }, 'React Rendering Error'),
+              React.createElement('pre', { key: 'error', style: { background: '#fee', padding: '10px', borderRadius: '4px' } },
+                this.state.error?.toString() || 'Unknown error'
+              ),
+              React.createElement('details', { key: 'details' }, [
+                React.createElement('summary', { key: 'summary' }, 'Component Stack'),
+                React.createElement('pre', { key: 'stack', style: { fontSize: '11px', overflow: 'auto' } },
+                  this.state.errorInfo?.componentStack || 'No stack trace'
+                )
+              ])
+            ]);
+          }
+          return this.props.children;
+        }
+      }
+
+      try {
+        console.log('[Preview] Executing component code...');
+        console.log('[Preview] Code length: 15675 characters');
+
+        // Insert the component code
+        function ArrowRight(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'ArrowRight' }, props && props.children); }
+window.ArrowRight = ArrowRight;
+function Star(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Star' }, props && props.children); }
+window.Star = Star;
+function Check(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Check' }, props && props.children); }
+window.Check = Check;
+
+import { 
+  Check, 
+  ArrowRight, 
+  Shield, 
+  Users, 
+  BarChart3, 
+  Lock, 
+  Zap, 
+  Star,
+  TrendingUp,
+  Package,
+  Clock,
+  Globe,
+  Heart
+} from 'lucide-react';
+
+const mockData = [
+  {
+    title: 'Total Revenue',
+    value: '$45,231',
+    change: '+20.1%',
+    trend: 'up',
+    description: 'vs last month',
+    iconLabel: '$',
+    color: 'bg-green-600',
+    sparkline: [30, 40, 35, 50, 45, 60, 55, 70, 65, 75]
+  },
+  {
+    title: 'Active Users',
+    value: '12,543',
+    change: '+12.5%',
+    trend: 'up',
+    description: 'vs last week',
+    iconLabel: 'U',
+    color: 'bg-blue-600',
+    sparkline: [100, 120, 115, 130, 140, 135, 150, 145, 160, 155]
+  },
+  {
+    title: 'Conversion Rate',
+    value: '3.24%',
+    change: '-0.5%',
+    trend: 'down',
+    description: 'vs last period',
+    iconLabel: '%',
+    color: 'bg-purple-600',
+    sparkline: [3.5, 3.4, 3.3, 3.4, 3.2, 3.3, 3.25, 3.24, 3.24, 3.24]
+  },
+  {
+    title: 'Avg Response Time',
+    value: '1.2s',
+    change: '-15.3%',
+    trend: 'up',
+    description: 'improvement',
+    iconLabel: 'T',
+    color: 'bg-orange-600',
+    sparkline: [1.5, 1.4, 1.35, 1.3, 1.28, 1.25, 1.22, 1.2, 1.2, 1.2]
+  }
+];
+
+const features = {
+  free: [
+    'Basic analytics dashboard',
+    'Up to 5 projects',
+    'Email support',
+    '1GB storage',
+    'Community access'
+  ],
+  pro: [
+    'Advanced analytics dashboard',
+    'Unlimited projects',
+    'Priority support',
+    '10GB storage',
+    'Team collaboration',
+    'Custom branding',
+    'API access',
+    'Advanced security'
+  ],
+  enterprise: [
+    'All Pro features',
+    'Unlimited storage',
+    'Dedicated account manager',
+    'Custom integrations',
+    'SLA guarantee',
+    'Advanced compliance',
+    'On-premise deployment',
+    '24/7 premium support'
+  ]
+};
+
+const pricingPlans = [
+  {
+    name: 'Free',
+    price: 'USD 0',
+    period: '/month',
+    description: 'Perfect for individuals getting started',
+    features: features.free,
+    cta: 'Get Started',
+    popular: false
+  },
+  {
+    name: 'Pro',
+    price: 'USD 29',
+    period: '/month',
+    description: 'Ideal for growing teams',
+    features: features.pro,
+    cta: 'Start Free Trial',
+    popular: true
+  },
+  {
+    name: 'Enterprise',
+    price: 'USD 99',
+    period: '/month',
+    description: 'For large organizations',
+    features: features.enterprise,
+    cta: 'Contact Sales',
+    popular: false
+  }
+];
+
+function App() {
+  const [activePlan, setActivePlan] = useState('pro');
+
+  return (
+    <div className="min-h-screen bg-[#B0D1D9]">
+      {/* Professional Header */}
+      <div className="bg-slate-900">
+        <div className="px-8 py-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white text-2xl font-bold">
+                P
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-white">Platform Name</h1>
+                <p className="text-slate-300 text-sm mt-1">Professional analytics platform</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <button className="bg-slate-700 text-white border border-slate-600 hover:bg-slate-600 px-4 py-2 rounded-lg text-sm font-medium">
+                Search
+              </button>
+              <button className="bg-blue-600 text-white hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-medium">
+                New Project
+              </button>
+              <div className="ml-3 flex items-center gap-2">
+                <button className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-white hover:bg-slate-600">
+                  •
+                </button>
+                <div className="w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold border-2 border-white">
+                  JD
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Hero Section */}
+      <section className="relative min-h-[600px] bg-gradient-to-br from-[#0A1A30] via-[#0A1A30] to-[#056CF2]/20 overflow-hidden">
+        <div className="absolute inset-0">
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-[#056CF2]/15 rounded-full blur-[100px]" />
+        </div>
+        <div className="container mx-auto px-6 py-24 relative z-10">
+          <div className="max-w-3xl mx-auto text-center">
+            <h2 className="text-5xl font-extrabold text-white mb-6">
+              Simple, transparent <span className="text-[#056CF2]">pricing</span>
+            </h2>
+            <p className="text-xl text-slate-200 mb-10 max-w-2xl mx-auto">
+              Choose the perfect plan for your needs. All plans include a 14-day free trial with no credit card required.
+            </p>
+            <button className="bg-[#056CF2] hover:bg-[#045AD0] text-white px-8 py-3 rounded-lg font-semibold shadow-lg shadow-[#056CF2]/25 transition-all flex items-center gap-2 mx-auto">
+              Get Started <ArrowRight className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* Pricing Plans */}
+      <section className="py-20">
+        <div className="container mx-auto px-6">
+          <div className="text-center mb-16">
+            <h2 className="text-4xl font-bold text-slate-900 mb-4">Simple, transparent pricing</h2>
+            <p className="text-xl text-slate-600 max-w-2xl mx-auto">
+              Everything you need to build and scale your business, with no hidden fees.
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-3 gap-8 max-w-6xl mx-auto">
+            {pricingPlans.map((plan) => (
+              <div 
+                key={plan.name}
+                className={"bg-white border border-slate-200 shadow-sm rounded-xl p-8 hover:shadow-md transition-all relative " + plan.popular ? 'ring-2 ring-[#056CF2] transform scale-105' : ''}
+              >
+                {plan.popular && (
+                  <div className="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
+                    <div className="bg-[#056CF2] text-white px-4 py-1 rounded-full text-sm font-medium flex items-center gap-2">
+                      <Star className="w-4 h-4" />
+                      Most Popular
+                    </div>
+                  </div>
+                )}
+                
+                <div className="text-center mb-8">
+                  <h3 className="text-2xl font-bold text-slate-900 mb-2">{plan.name}</h3>
+                  <p className="text-slate-600 mb-6">{plan.description}</p>
+                  <div className="mb-6">
+                    <span className="text-5xl font-bold text-slate-900">{plan.price}</span>
+                    <span className="text-slate-600">{plan.period}</span>
+                  </div>
+                  <button 
+                    className={"w-full py-3 rounded-lg font-semibold transition-all " + plan.popular ? 'bg-[#056CF2] hover:bg-[#045AD0] text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-900'}
+                  >
+                    {plan.cta}
+                  </button>
+                </div>
+
+                <ul className="space-y-4 mb-8">
+                  {plan.features.map((feature, index) => (
+                    <li key={index} className="flex items-start gap-3">
+                      <Check className="w-5 h-5 text-green-500 mt-0.5 flex-shrink-0" />
+                      <span className="text-slate-700">{feature}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Feature Comparison */}
+      <section className="py-20 bg-white">
+        <div className="container mx-auto px-6">
+          <div className="text-center mb-16">
+            <h2 className="text-4xl font-bold text-slate-900 mb-4">Compare features</h2>
+            <p className="text-xl text-slate-600 max-w-2xl mx-auto">
+              See what's included in each plan to find the perfect fit for your team.
+            </p>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-slate-200">
+                  <th className="text-left py-4 px-6 text-slate-900 font-semibold">Features</th>
+                  <th className="text-center py-4 px-6 text-slate-900 font-semibold">Free</th>
+                  <th className="text-center py-4 px-6 text-slate-900 font-semibold">Pro</th>
+                  <th className="text-center py-4 px-6 text-slate-900 font-semibold">Enterprise</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-b border-slate-100">
+                  <td className="py-4 px-6 text-slate-700">Analytics Dashboard</td>
+                  <td className="py-4 px-6 text-center">
+                    <Check className="w-5 h-5 text-green-500 mx-auto" />
+                  </td>
+                  <td className="py-4 px-6 text-center">
+                    <Check className="w-5 h-5 text-green-500 mx-auto" />
+                  </td>
+                  <td className="py-4 px-6 text-center">
+                    <Check className="w-5 h-5 text-green-500 mx-auto" />
+                  </td>
+                </tr>
+                <tr className="border-b border-slate-100">
+                  <td className="py-4 px-6 text-slate-700">Projects</td>
+                  <td className="py-4 px-6 text-center">5</td>
+                  <td className="py-4 px-6 text-center">Unlimited</td>
+                  <td className="py-4 px-6 text-center">Unlimited</td>
+                </tr>
+                <tr className="border-b border-slate-100">
+                  <td className="py-4 px-6 text-slate-700">Storage</td>
+                  <td className="py-4 px-6 text-center">1GB</td>
+                  <td className="py-4 px-6 text-center">10GB</td>
+                  <td className="py-4 px-6 text-center">Unlimited</td>
+                </tr>
+                <tr className="border-b border-slate-100">
+                  <td className="py-4 px-6 text-slate-700">Support</td>
+                  <td className="py-4 px-6 text-center">Email</td>
+                  <td className="py-4 px-6 text-center">Priority</td>
+                  <td className="py-4 px-6 text-center">24/7 Premium</td>
+                </tr>
+                <tr className="border-b border-slate-100">
+                  <td className="py-4 px-6 text-slate-700">Team Collaboration</td>
+                  <td className="py-4 px-6 text-center">
+                    <Check className="w-5 h-5 text-green-500 mx-auto" />
+                  </td>
+                  <td className="py-4 px-6 text-center">
+                    <Check className="w-5 h-5 text-green-500 mx-auto" />
+                  </td>
+                  <td className="py-4 px-6 text-center">
+                    <Check className="w-5 h-5 text-green-500 mx-auto" />
+                  </td>
+                </tr>
+                <tr className="border-b border-slate-100">
+                  <td className="py-4 px-6 text-slate-700">API Access</td>
+                  <td className="py-4 px-6 text-center">
+                    <X className="w-5 h-5 text-red-500 mx-auto" />
+                  </td>
+                  <td className="py-4 px-6 text-center">
+                    <Check className="w-5 h-5 text-green-500 mx-auto" />
+                  </td>
+                  <td className="py-4 px-6 text-center">
+                    <Check className="w-5 h-5 text-green-500 mx-auto" />
+                  </td>
+                </tr>
+                <tr className="border-b border-slate-100">
+                  <td className="py-4 px-6 text-slate-700">Advanced Security</td>
+                  <td className="py-4 px-6 text-center">
+                    <X className="w-5 h-5 text-red-500 mx-auto" />
+                  </td>
+                  <td className="py-4 px-6 text-center">
+                    <Check className="w-5 h-5 text-green-500 mx-auto" />
+                  </td>
+                  <td className="py-4 px-6 text-center">
+                    <Check className="w-5 h-5 text-green-500 mx-auto" />
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      {/* Testimonials */}
+      <section className="py-20 bg-[#0A1A30] text-white">
+        <div className="container mx-auto px-6">
+          <div className="text-center mb-16">
+            <h2 className="text-4xl font-bold mb-4">Trusted by professionals</h2>
+            <p className="text-xl text-slate-300 max-w-2xl mx-auto">
+              Join thousands of satisfied users who have transformed their workflow.
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-3 gap-8">
+            <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-white/20">
+              <div className="flex items-center mb-4">
+                <div className="w-10 h-10 rounded-full bg-[#056CF2] flex items-center justify-center text-white font-bold mr-3">
+                  JD
+                </div>
+                <div>
+                  <h4 className="font-bold">John Doe</h4>
+                  <p className="text-slate-300 text-sm">Marketing Director</p>
+                </div>
+              </div>
+              <p className="text-slate-200 italic">
+                "This platform has completely transformed how our team works. The analytics capabilities alone have saved us countless hours."
+              </p>
+            </div>
+
+            <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-white/20">
+              <div className="flex items-center mb-4">
+                <div className="w-10 h-10 rounded-full bg-[#056CF2] flex items-center justify-center text-white font-bold mr-3">
+                  SA
+                </div>
+                <div>
+                  <h4 className="font-bold">Sarah Anderson</h4>
+                  <p className="text-slate-300 text-sm">Product Manager</p>
+                </div>
+              </div>
+              <p className="text-slate-200 italic">
+                "The Pro plan was worth every penny. Our productivity increased by 40% after implementing the platform."
+              </p>
+            </div>
+
+            <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-white/20">
+              <div className="flex items-center mb-4">
+                <div className="w-10 h-10 rounded-full bg-[#056CF2] flex items-center justify-center text-white font-bold mr-3">
+                  MR
+                </div>
+                <div>
+);
+}
+
+
+// Expose components to window for preview
+window.App = App;
+
+        console.log('[Preview] Component code executed successfully');
+
+        // Find the main page component to render.
+        // Strategy: Check known component name patterns FIRST (most reliable),
+        // then fall back to scanning window for anything that looks like a page component.
+        let Component = null;
+
+        // Step 1: Try to find component by eval in local scope (Babel scope)
+        // These are the most common names Claude generates for page components
+        // Page component names to try (NO single-word names that could be Lucide icons!)
+        const _pageNames = [
+          // Landing pages
+          'LandingPage', 'TaskFlowLanding', 'InkFlowLanding', 'ReviewBotLanding',
+          'ReviewBotLandingPage', 'CodeLensLanding', 'DevPulseLanding',
+          // Dashboards
+          'Dashboard', 'ProjectDashboard', 'SalesDashboard', 'AgentOpsDashboard',
+          'AdminDashboard', 'AnalyticsDashboard', 'MetricsDashboard',
+          'AgentMonitoringDashboard', 'SocialMediaDashboard',
+          // Panels
+          'AdminPanel', 'ControlPanel',
+          // E-commerce
+          'EcommercePage', 'EcommerceApp', 'EcommerceSite', 'StorePage',
+          'SneakerStore', 'SneakerShop', 'SneakerStorePage',
+          'ShoppingApp', 'CartPage', 'ProductListingPage', 'ProductListPage',
+          // Content
+          'BlogPage', 'BlogLayout',
+          // Marketplace / Hub / Docs
+          'MarketplacePage', 'AgentHubMarketplace', 'AgentHub',
+          'DocsPage', 'DocumentationPage', 'ApiDocsPage',
+          'GateForgeDocs', 'GateForgeApp',
+          // Apps
+          'HomePage', 'MainApp', 'PageLayout',
+          'TodoList', 'TodoApp', 'ChatApp', 'ChatInterface',
+          // Generic (last resort, icon check will filter)
+          'App', 'Main', 'Component', 'Page',
+        ];
+
+        // Suffixes that indicate a page-level component
+        const _componentSuffixes = ['Page', 'App', 'Dashboard', 'Panel', 'Landing', 'Site', 'View', 'Store', 'Shop', 'Marketplace', 'Hub', 'Docs', 'Portal', 'Interface', 'Platform'];
+
+        console.log('[Preview] Searching for page component...');
+
+        // Check if a function was created by _getIcon (our Lucide wrapper)
+        // We tag icon functions with a marker property for reliable detection
+        function _isIconWrapper(fn) {
+          if (!fn) return false;
+          if (fn._isLucideIcon) return true;
+          var str = fn.toString();
+          // Icon wrappers are small and contain SVG-related code
+          return str.length < 600 && (str.includes('viewBox') || str.includes('UnknownIcon') || str.includes('LucideIcon') || str.includes('_createLucideIcon') || str.includes('0 0 24 24'));
+        }
+
+        // Build a safe component registry instead of using eval()
+        var _localComponents = {};
+        _pageNames.forEach(function(n) {
+          try { _localComponents[n] = new Function('return typeof ' + n + ' !== "undefined" ? ' + n + ' : undefined')(); } catch(e) {}
+        });
+
+        // First, scan for known page component names via registry
+        for (const name of _pageNames) {
+          try {
+            const fn = _localComponents[name];
+            if (typeof fn === 'function' && !_isIconWrapper(fn)) {
+              Component = fn;
+              console.log('[Preview] ✓ Found component: ' + name + ' (local scope)');
+              break;
+            }
+          } catch (e) {}
+        }
+
+        // If not found, search window for names ending with page-like suffixes
+        if (!Component) {
+          for (const key in window) {
+            if (typeof window[key] === 'function' && /^[A-Z]/.test(key)) {
+              // Check if name ends with a page suffix
+              const matchesSuffix = _componentSuffixes.some(function(s) { return key.endsWith(s); });
+              // Also skip known AIKit component names
+              const _aikitNames = ['SwarmView', 'AgentCard', 'AgentTimeline', 'ConnectionStatus', 'TokenUsageBar', 'SafetyBadge', 'GuardrailPanel', 'AIKitSidebar', 'AIKitHeader', 'AIKitTable', 'AIKitBreadcrumb', 'AIKitPagination', 'AIKitStepper', 'AIKitTimeline', 'AIKitRating', 'AIKitProductCard', 'AIKitPriceCard', 'AIKitAvatar', 'AIKitBanner', 'MetricCard', 'MediaGallery', 'Skeleton', 'SkeletonCard', 'EmptyState', 'StreamingIndicator', 'VideoPlayer', 'CodeDisplay', 'StreamingText', 'ChatBubble'];
+              if (matchesSuffix && key !== 'React' && key !== 'ReactDOM' && !_isIconWrapper(window[key]) && !_aikitNames.includes(key)) {
+                Component = window[key];
+                console.log('[Preview] ✓ Found component: ' + key + ' (window, suffix match)');
+                break;
+              }
+            }
+          }
+        }
+
+        // Last resort: find any window function that's NOT a known library component
+        if (!Component) {
+          // Build a comprehensive set of names to skip
+          const _skipNames = new Set([
+            'React', 'ReactDOM', 'Babel', 'ErrorBoundary', 'ShadcnComponents',
+            'UnknownIcon', 'LucideIcon', 'FallbackIcon',
+            // All shadcn component names
+            'Button', 'Card', 'CardHeader', 'CardTitle', 'CardDescription', 'CardContent', 'CardFooter',
+            'Input', 'Label', 'Badge', 'Avatar', 'AvatarImage', 'AvatarFallback',
+            'Table', 'TableHeader', 'TableBody', 'TableRow', 'TableHead', 'TableCell',
+            'Separator', 'Dialog', 'DialogOverlay', 'DialogContent', 'DialogHeader',
+            'DialogTitle', 'DialogDescription', 'DialogFooter', 'Select', 'SelectTrigger',
+            'SelectValue', 'SelectContent', 'SelectItem', 'Tabs', 'TabsList', 'TabsTrigger',
+            'TabsContent', 'Progress', 'CircularProgress', 'Checkbox', 'RadioGroup',
+            'RadioGroupItem', 'Accordion', 'AccordionItem', 'AccordionTrigger',
+            'AccordionContent', 'Toast', 'ToastTitle', 'ToastDescription',
+            'Alert', 'AlertTitle', 'AlertDescription', 'Popover', 'PopoverTrigger', 'PopoverContent',
+            ..._iconNames,
+          // AIKit / AINative Primitive components
+          'StreamingIndicator', 'VideoPlayer', 'CodeDisplay', 'StreamingText',
+          'ChatBubble', 'MediaGallery', 'Skeleton', 'SkeletonCard', 'MetricCard', 'EmptyState',
+          'AIKitSidebar', 'AIKitHeader', 'AIKitBreadcrumb', 'AIKitPagination',
+          'AIKitStepper', 'AIKitTimeline', 'AIKitTable', 'AIKitRating',
+          'AIKitProductCard', 'AIKitPriceCard', 'AIKitAvatar', 'AIKitBanner',
+          'AgentCard', 'SwarmView', 'AgentTimeline', 'ConnectionStatus',
+          'TokenUsageBar', 'SafetyBadge', 'GuardrailPanel',
+          // Recharts
+          'ReLineChart', 'ReBarChart', 'RePieChart', 'ResponsiveContainer',
+          'XAxis', 'YAxis', 'CartesianGrid', 'RechartsTooltip', 'Legend',
+          'Line', 'Bar', 'Pie', 'Cell', 'AreaChart', 'Area',
+          'RadarChart', 'Radar', 'PolarGrid', 'PolarAngleAxis', 'PolarRadiusAxis',
+          'ComposedChart', 'Scatter', 'ScatterChart', 'RadialBarChart', 'RadialBar',
+          'Treemap', 'Funnel', 'FunnelChart',
+          ]);
+          // Also skip single-word names under 8 chars (likely icons or utils)
+          for (const key in window) {
+            if (typeof window[key] === 'function' && /^[A-Z]/.test(key) && !_skipNames.has(key)) {
+              // Prefer names with 2+ words or longer than 8 chars (page components)
+              if ((key.length > 8 || /[a-z][A-Z]/.test(key)) && !_isIconWrapper(window[key])) {
+                Component = window[key];
+                console.log('[Preview] ✓ Found component: ' + key + ' (window, last resort)');
+                break;
+              }
+            }
+          }
+        }
+
+        if (Component) {
+          console.log('[Preview] Component found, attempting to render...', Component.name || 'Anonymous');
+          const rootElement = document.getElementById('root');
+          console.log('[Preview] Root element:', rootElement);
+
+          const root = ReactDOM.createRoot(rootElement);
+          console.log('[Preview] React root created:', root);
+
+          // Wrap component in ErrorBoundary to catch rendering errors
+          const wrappedElement = React.createElement(ErrorBoundary, null,
+            React.createElement(Component)
+          );
+          console.log('[Preview] React element created (wrapped in ErrorBoundary)');
+
+          root.render(wrappedElement);
+          console.log('[Preview] ✓ Render called successfully!');
+
+          // Add a small delay to check if render actually worked + enforce AX standards
+          setTimeout(() => {
+            const content = document.getElementById('root').innerHTML;
+            console.log('[Preview] Root innerHTML after render (first 200 chars):', content.substring(0, 200));
+            if (!content || content.trim() === '') {
+              console.error('[Preview] ✗ Root is empty after render! Component may have returned null or errored silently.');
+              console.error('[Preview] Check if component is using undefined shadcn components or has syntax errors.');
+            }
+
+            // AX-5 POST-RENDER ENFORCEMENT: Convert extra h1 elements to h2
+            // Use MutationObserver to catch React re-renders
+            function enforceH1Rule() {
+              var h1s = document.querySelectorAll('h1');
+              if (h1s.length > 1) {
+                for (var i = 1; i < h1s.length; i++) {
+                  var h2 = document.createElement('h2');
+                  for (var j = 0; j < h1s[i].attributes.length; j++) {
+                    h2.setAttribute(h1s[i].attributes[j].name, h1s[i].attributes[j].value);
+                  }
+                  h2.innerHTML = h1s[i].innerHTML;
+                  h1s[i].parentNode.replaceChild(h2, h1s[i]);
+                }
+                console.log('[Preview] AX-5: Converted ' + (h1s.length - 1) + ' extra h1 to h2');
+              }
+            }
+            enforceH1Rule();
+            // Re-enforce after React state changes
+            var axObserver = new MutationObserver(function() { setTimeout(enforceH1Rule, 50); });
+            axObserver.observe(document.getElementById('root'), { childList: true, subtree: true });
+            // Stop observing after 10 seconds
+            setTimeout(function() { axObserver.disconnect(); }, 10000);
+          }, 100);
+        } else {
+          console.error('[Preview] ✗ Component not found!');
+          document.getElementById('root').innerHTML =
+            '<div style="padding: 40px; max-width: 600px; margin: 0 auto; font-family: system-ui, sans-serif; text-align: center;">' +
+            '<svg style="width: 64px; height: 64px; margin: 0 auto 20px; color: #9ca3af;" fill="none" stroke="currentColor" viewBox="0 0 24 24">' +
+            '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>' +
+            '</svg>' +
+            '<h2 style="font-size: 24px; font-weight: 600; color: #111827; margin-bottom: 12px;">Component Not Found</h2>' +
+            '<p style="color: #6b7280; margin-bottom: 20px;">The generated code executed successfully, but no component function could be identified.</p>' +
+            '<div style="background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 20px; text-align: left;">' +
+            '<p style="font-size: 14px; color: #374151; margin-bottom: 8px; font-weight: 500;">Expected component names:</p>' +
+            '<code style="display: block; font-size: 13px; color: #6b7280; line-height: 1.6;">Dashboard, ProjectDashboard, App, Counter, TodoList, ProductList, LandingPage, etc.</code>' +
+            '</div>' +
+            '<button onclick="window.parent.location.reload()" style="background: rgb(59, 130, 246); color: white; border: none; padding: 10px 24px; border-radius: 6px; font-weight: 500; cursor: pointer;">Try Regenerating</button>' +
+            '</div>';
+        }
+      } catch (error) {
+        console.error('[Preview] ✗ Error during execution:', error);
+        console.error('[Preview] Error stack:', error.stack);
+        var _esc = function(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
+        document.getElementById('root').innerHTML =
+          '<div style="padding: 20px; color: red;">' +
+          '<h3>Error rendering component</h3>' +
+          '<pre>' + _esc(error.message) + '</pre>' +
+          '<pre style="font-size: 12px; margin-top: 10px;">' + _esc(error.stack || '') + '</pre>' +
+          '</div>';
+      }
+    </script>
+</body>
+</html>

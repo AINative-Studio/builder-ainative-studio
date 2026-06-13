@@ -27,12 +27,9 @@ function ShowcaseCard({ entry }: { entry: ShowcaseEntry }) {
       data-agent-context={`showcase entry: ${entry.title}`}
     >
       <div className="aspect-video bg-gradient-to-br from-gray-100 to-gray-50 dark:from-gray-800 dark:to-gray-900 relative overflow-hidden">
-        {/* Live SSR preview thumbnail */}
+        {/* Static preview thumbnail — baked into public/ for reliability across deploys */}
         <iframe
-          src={entry.chatId
-            ? `/api/preview/${entry.chatId}`
-            : `/api/showcase/preview?slug=${entry.slug}`
-          }
+          src={`/showcase-previews/${entry.slug}.html`}
           className="w-[200%] h-[200%] origin-top-left scale-50 pointer-events-none border-0"
           loading="lazy"
           sandbox="allow-scripts allow-same-origin"

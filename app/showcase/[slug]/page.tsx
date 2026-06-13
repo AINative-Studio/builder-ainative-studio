@@ -103,26 +103,15 @@ export default async function ShowcaseDetailPage({ params }: Props) {
               </div>
               <span className="text-xs text-gray-500 ml-2 font-mono">preview — {entry.title.toLowerCase().replace(/\s+/g, '-')}.app</span>
             </div>
-            {/* Preview — tries chatId first, then showcase preview API, then generate CTA */}
-            {entry.chatId ? (
-              <iframe
-                src={`/api/preview/${entry.chatId}`}
-                className="w-full border-0"
-                style={{ height: '70vh' }}
-                title={`Preview of ${entry.title}`}
-                sandbox="allow-scripts allow-same-origin"
-                loading="lazy"
-              />
-            ) : (
-              <iframe
-                src={`/api/showcase/preview?slug=${entry.slug}`}
-                className="w-full border-0"
-                style={{ height: '70vh' }}
-                title={`Preview of ${entry.title}`}
-                sandbox="allow-scripts allow-same-origin"
-                loading="lazy"
-              />
-            )}
+            {/* Preview — uses static HTML from public/showcase-previews/ */}
+            <iframe
+              src={`/showcase-previews/${entry.slug}.html`}
+              className="w-full border-0"
+              style={{ height: '70vh' }}
+              title={`Preview of ${entry.title}`}
+              sandbox="allow-scripts allow-same-origin"
+              loading="lazy"
+            />
           </div>
         </section>
 
