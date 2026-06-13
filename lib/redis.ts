@@ -23,21 +23,29 @@ function initRedis() {
 
   try {
     const client = new Redis(redisUrl, {
-      maxRetriesPerRequest: 1,
+      maxRetriesPerRequest: 0,   // Don't retry failed requests
       lazyConnect: true,
-      connectTimeout: 5000,
+      connectTimeout: 3000,
+      enableOfflineQueue: false, // Don't queue commands when disconnected
       retryStrategy(times) {
-        if (times > 2) {
-          console.warn('[Redis] Connection failed after retries, disabling')
-          return null
+        if (times > 1) {
+          console.warn('[Redis] Connection failed, disabling permanently')
+          redisUnavailable = true
+          return null // Stop retrying
         }
-        return Math.min(times * 500, 2000)
+        return 1000
       },
     })
 
     // CRITICAL: Attach error handler BEFORE connecting to prevent unhandled errors
-    client.on('error', () => {
+    // Must handle BOTH 'error' events — ioredis fires them on connection AND command failures
+    client.on('error', (err) => {
       // Silently swallow — prevents Node.js crash from unhandled error events
+      if (!redisUnavailable) {
+        console.warn('[Redis] Error, disabling:', err?.message?.substring(0, 50))
+        redisUnavailable = true
+        redisClient = null
+      }
     })
 
     client.on('connect', () => {
@@ -51,9 +59,15 @@ function initRedis() {
       redisUnavailable = true
     })
 
+    client.on('end', () => {
+      redisClient = null
+      redisUnavailable = true
+    })
+
     client.connect().catch(() => {
       console.warn('[Redis] Initial connection failed — running without cache')
-      client.disconnect()
+      redisUnavailable = true
+      try { client.disconnect(false) } catch (_) {}
     })
   } catch (e) {
     console.warn('[Redis] Failed to initialize:', e)
