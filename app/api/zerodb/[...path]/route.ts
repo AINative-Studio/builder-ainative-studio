@@ -20,20 +20,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyJWT } from '@/lib/auth-jwt'
 import { getZeroDBClient, CRUDOperation } from '@/lib/mcp/zerodb-client'
 import { Ratelimit } from '@upstash/ratelimit'
-import { Redis } from 'ioredis'
+// Redis DISABLED — ioredis floods Node.js event loop with connection errors
+// Rate limiting disabled until we switch to a non-Redis solution
 import { logger } from '@/lib/logger'
 
-// Rate limiter for ZeroDB operations
-const redis = process.env.REDIS_URL ? new Redis(process.env.REDIS_URL) : null
-
-const zerodbRateLimit = redis
-  ? new Ratelimit({
-      redis: redis as any,
-      limiter: Ratelimit.slidingWindow(100, '1 m'), // 100 requests per minute
-      analytics: true,
-      prefix: '@ratelimit/zerodb',
-    })
-  : null
+const zerodbRateLimit = null
 
 /**
  * GET /api/zerodb/:table - List all records
@@ -439,41 +430,9 @@ interface RateLimitResult {
   response?: NextResponse
 }
 
-async function applyZeroDBRateLimit(userId: string): Promise<RateLimitResult> {
-  if (!zerodbRateLimit) {
-    // Rate limiting disabled (no Redis)
-    return { success: true }
-  }
-
-  const { success, limit, reset, remaining } = await zerodbRateLimit.limit(
-    `zerodb:${userId}`
-  )
-
-  if (!success) {
-    const retryAfter = Math.ceil((reset - Date.now()) / 1000)
-
-    return {
-      success: false,
-      response: NextResponse.json(
-        {
-          error: 'Too Many Requests',
-          message: 'Rate limit exceeded for ZeroDB operations',
-          limit,
-          remaining: 0,
-          reset: new Date(reset).toISOString(),
-        },
-        {
-          status: 429,
-          headers: {
-            'Retry-After': retryAfter.toString(),
-            'X-RateLimit-Limit': limit.toString(),
-            'X-RateLimit-Remaining': '0',
-            'X-RateLimit-Reset': new Date(reset).toISOString(),
-          },
-        }
-      ),
-    }
-  }
+async function applyZeroDBRateLimit(_userId: string): Promise<RateLimitResult> {
+  // Rate limiting disabled — Redis removed to prevent event loop flooding
+  return { success: true }
 
   return { success: true }
 }
