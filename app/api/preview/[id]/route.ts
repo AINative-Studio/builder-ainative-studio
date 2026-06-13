@@ -316,13 +316,16 @@ export async function GET(
   const unknownTags = jsxTags.filter((tag: string) => !knownComponents.has(tag))
 
   if (unknownTags.length > 0) {
-    // Generate fallback component definitions to prepend to the code
+    // Generate fallback component definitions — BUT only for tags that aren't already
+    // defined on window (Lucide icons, Recharts, etc. are all set as window globals)
+    // Using typeof check at RUNTIME to avoid overwriting real components
     const fallbacks = unknownTags.map((tag: string) =>
-      `function ${tag}(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': '${tag}' }, props && props.children); }\nwindow.${tag} = ${tag};`
+      `if (typeof window.${tag} === 'undefined') { function ${tag}(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': '${tag}' }, props && props.children); } window.${tag} = ${tag}; }`
     ).join('\n')
 
-    componentCode = fallbacks + '\n\n' + componentCode
-    console.log(`[Preview] Auto-defined ${unknownTags.length} unknown components: ${unknownTags.join(', ')}`)
+    // Append AFTER the component code (not before) so component's own definitions take priority
+    componentCode = componentCode + '\n\n' + fallbacks
+    console.log(`[Preview] Conditional fallbacks for ${unknownTags.length} unknown components: ${unknownTags.join(', ')}`)
   }
 
   // CRITICAL FIX: Convert template literals with interpolations to string concatenation
