@@ -362,6 +362,16 @@ LAYOUT VARIETY — make each app unique:
 - E-commerce: header + product grid (AIKitProductCard) + filters + cart sidebar
 - AI/Agent: AgentCard grid + ChatBubble conversation + SafetyBadge + AIKitTimeline
 
+AX (AGENT EXPERIENCE) — MANDATORY on every page:
+1. Wrap page in <main aria-label="App Name - description">
+2. Add aria-label to every <nav>, <section>, <header>, <footer>
+3. EXACTLY ONE <h1> per page. Sections use <h2>, subsections <h3>.
+4. Add data-agent-role="navigation|content|form|metric" to key elements
+5. Add data-agent-action="click|navigate|search|filter" to interactive elements
+6. Add data-agent-context="descriptive-id" to every interactive element
+7. Add hidden JSON-LD: <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify({ "@context": "https://schema.org", "@type": "WebApplication", name: "App Name", description: "..." }) }} />
+8. Add skip nav link as first element: <a href="#main-content" className="sr-only focus:not-sr-only ...">Skip to main content</a>
+
 STRUCTURE:
 \`\`\`jsx
 import React, { useState, useEffect } from 'react'
@@ -372,9 +382,11 @@ const mockData = [/* realistic data */]
 export default function AppName() {
   const [activeView, setActiveView] = useState('overview')
   return (
-    <div className="min-h-screen bg-[${selectedTheme.light}]">
+    <main aria-label="App Name - description" className="min-h-screen bg-[${selectedTheme.light}]">
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:bg-white focus:px-4 focus:py-2 focus:rounded-lg focus:shadow-lg">Skip to main content</a>
       {/* nav, hero, sections with AIKit components, footer */}
-    </div>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify({ "@context": "https://schema.org", "@type": "WebApplication", name: "App Name" }) }} />
+    </main>
   )
 }
 \`\`\``
