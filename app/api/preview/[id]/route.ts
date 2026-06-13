@@ -444,10 +444,11 @@ export async function GET(
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <!-- Core: React 18 -->
-    <!-- All vendor scripts served locally -->
-    <script src="/vendor/react.min.js"></script>
-    <script src="/vendor/react-dom.min.js"></script>
-    <script src="/vendor/babel.min.js"></script>
+    <!-- Critical: React + Babel from CDN (local copies have compatibility issues) -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Non-critical: served locally for speed -->
     <script src="/vendor/lucide.min.js"></script>
     <script src="/vendor/prop-types.min.js"></script>
     <script src="/vendor/recharts.min.js"></script>
