@@ -286,175 +286,44 @@ export async function POST(request: NextRequest) {
             // Compact system prompt focused on design quality + theme colors.
             // Open-source models (codestral, devstral, etc.) ignore long prompts.
             // Theme colors are injected directly into examples so the model copies them.
-            const llmSystemPrompt = `You are a senior React developer. Generate a COMPLETE, SINGLE-FILE React functional component.
+            const llmSystemPrompt = `You are a React developer. Generate a SINGLE-FILE React component. KEEP UNDER 120 LINES.
 
-⚠️ CRITICAL: Use ONLY these hex colors — NEVER use bg-blue-*, bg-gray-*, bg-indigo-*, bg-purple-*:
-PRIMARY: ${selectedTheme.primary} | DARK: ${selectedTheme.dark} | SECONDARY: ${selectedTheme.secondary} | LIGHT BG: ${selectedTheme.light} | ACCENT: ${selectedTheme.accent}
-Buttons: bg-[${selectedTheme.primary}] | Hero: bg-gradient-to-br from-[${selectedTheme.dark}] to-[${selectedTheme.primary}]/20 | Page: bg-[${selectedTheme.light}]
+Colors: PRIMARY=${selectedTheme.primary} DARK=${selectedTheme.dark} LIGHT=${selectedTheme.light} ACCENT=${selectedTheme.accent}
+Use bg-[${selectedTheme.primary}] for buttons, bg-[${selectedTheme.dark}] for header/hero, bg-[${selectedTheme.light}] for page bg.
+NEVER use bg-blue-*, bg-gray-*, bg-purple-*. Use the hex colors above.
 
-RULES:
-1. Output REACT code wrapped in \`\`\`jsx markers. No explanations.
-2. import React and hooks at top. ONE default export function. ALL code in ONE file.
-3. Use Tailwind CSS classes. Use useState/useEffect for interactivity.
-⚠️ KEEP CODE UNDER 150 LINES TOTAL. This is critical — code over 150 lines will be truncated and break.
-- Use map() for ALL repeated elements (cards, rows, list items) — NEVER write them individually
-- Define data arrays at top, map over them in JSX
-- Use compact Tailwind classes, no verbose className strings
-- ONE main view — do NOT build multiple tabs/views. Just the primary screen.
-4. Use Lucide React icons (import from 'lucide-react'). NEVER use emoji as icons.
-5. Available: recharts (ResponsiveContainer, LineChart, BarChart, PieChart, etc.), lucide-react icons.
-6. ALL components below are available as globals — use them directly, NO import needed.
-7. CRITICAL: Use the DATABASE API below for ALL data — NO hardcoded mock data arrays.
+Rules:
+- Wrap in \`\`\`jsx markers. No explanations before or after.
+- import React, { useState } from 'react' and icons from 'lucide-react'
+- ONE export default function. Use Tailwind CSS.
+- Define data as arrays, use .map() for ALL repeated elements
+- Dark nav header, white cards with shadow-sm rounded-xl, hover effects
+- Use realistic mock data (names, numbers, dates)
 
-DATABASE API — ZeroDB (use fetch for all data operations):
-The app has a built-in database at /api/db/{table}. Use it for CRUD:
-
-// LOAD data on mount:
-const [items, setItems] = useState([]);
-const [loading, setLoading] = useState(true);
-useEffect(() => {
-  fetch('/api/db/myapp_items').then(r => r.json()).then(data => {
-    setItems((data.data || []).map(r => ({ id: r.row_id, ...r.row_data })));
-    setLoading(false);
-  }).catch(() => setLoading(false));
-}, []);
-
-// CREATE:
-const addItem = async (item) => {
-  const res = await fetch('/api/db/myapp_items', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(item) });
-  const data = await res.json();
-  setItems(prev => [...prev, { id: data.row_id, ...item }]);
-};
-
-// DELETE:
-const deleteItem = async (id) => {
-  await fetch('/api/db/myapp_items?id=' + id, { method: 'DELETE' });
-  setItems(prev => prev.filter(i => i.id !== id));
-};
-
-TABLE NAMING: Use the app name as prefix. E.g. for a todo app: "todo_items", for CRM: "crm_contacts".
-LOADING STATE: Show <Skeleton /> or <SkeletonCard /> while loading is true.
-EMPTY STATE: Show <EmptyState icon={<Inbox />} title="No items yet" /> when items array is empty.
-SEED DATA: On first load, if items are empty, auto-insert 3-5 seed rows so the app isn't blank.
-
-AIKIT COMPONENTS (use these instead of building from scratch):
-- MetricCard: <MetricCard title="Revenue" value="USD 84K" change="+12.5%" changeType="positive" sparklineData={[10,20,15,30,25,40]} icon={<DollarSign />} />
-- AIKitPriceCard: <AIKitPriceCard name="Pro" price="USD 29" period="/month" features={['Feature 1']} popular={true} cta="Start Trial" />
-- AIKitRating: <AIKitRating value={4.7} max={5} showValue reviews={1200} />
-- AIKitProductCard: <AIKitProductCard name="Product" price={99} originalPrice={129} badge="Sale" rating={4.5} reviews={500} onAddToCart={fn} />
-- AIKitTable: <AIKitTable columns={[{key:'name', label:'Name'}]} data={rows} onSort={fn} />
-- AIKitSidebar: <AIKitSidebar items={[{icon, label, id}]} activeItem="dashboard" onItemClick={fn} title="App" />
-- AIKitHeader: <AIKitHeader title="App" navItems={[{label, href}]} onSearch={fn} />
-- AIKitTimeline: <AIKitTimeline items={[{title, description, time, color}]} />
-- AIKitAvatar: <AIKitAvatar name="John" status="online" size="md" />
-- ChatBubble: <ChatBubble role="assistant" name="AI" timestamp="2m ago">Message</ChatBubble>
-- AgentCard: <AgentCard name="DataBot" role="ETL Agent" status="active" tasks={24} model="claude-sonnet-4" />
-- SafetyBadge: <SafetyBadge score={95} /> — AI safety trust score
-- Skeleton/SkeletonCard: loading states
-- EmptyState: <EmptyState icon={<Inbox />} title="No data" description="..." />
-
-WHEN TO USE AIKIT (MANDATORY):
-- Stats/KPIs → MetricCard (NOT plain text in cards)
-- Pricing → AIKitPriceCard (NOT custom divs)
-- Ratings → AIKitRating (NOT custom stars)
-- Products → AIKitProductCard (NOT custom cards)
-- Data tables → AIKitTable (NOT custom tables)
-- Dashboards → AIKitSidebar + AIKitHeader + MetricCard
-- AI/Agent UIs → AgentCard, ChatBubble, SafetyBadge
-- Loading → Skeleton/SkeletonCard
-- Empty → EmptyState
-
-⚠️ MANDATORY COLOR THEME — ${selectedTheme.name.toUpperCase()} — NEVER USE bg-blue-*, bg-gray-*, bg-indigo-*:
-
-Every element MUST use Tailwind arbitrary value syntax with these exact hex codes:
-
-// PAGE WRAPPER — use this exact class:
-<div className="min-h-screen bg-[${selectedTheme.light}]">
-
-// NAVIGATION — sticky frosted glass:
-<nav className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">
-
-// HERO SECTION — dark gradient with glow:
-<section className="relative min-h-[600px] bg-gradient-to-br from-[${selectedTheme.dark}] via-[${selectedTheme.dark}] to-[${selectedTheme.primary}]/20 overflow-hidden">
-  <div className="absolute inset-0">
-    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-[${selectedTheme.primary}]/15 rounded-full blur-[100px]" />
-  </div>
-  <h1 className="text-5xl font-extrabold text-white">Headline <span className="text-[${selectedTheme.primary}]">accent</span></h1>
-  <button className="bg-[${selectedTheme.primary}] hover:bg-[${selectedTheme.primaryHover}] text-white px-8 py-3 rounded-lg font-semibold shadow-lg shadow-[${selectedTheme.primary}]/25 transition-all">CTA</button>
-</section>
-
-// CARDS — white on light bg:
-<div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 hover:shadow-md transition-all">
-  <div className="w-12 h-12 rounded-xl bg-[${selectedTheme.primary}]/10 flex items-center justify-center mb-4">
-    <Icon className="w-6 h-6 text-[${selectedTheme.primary}]" />
-  </div>
-</div>
-
-// DARK SECTION — use for CTA or features:
-<section className="bg-[${selectedTheme.dark}] text-white py-20">
-  <span className="bg-[${selectedTheme.primary}]/10 text-[${selectedTheme.primary}] border border-[${selectedTheme.primary}]/20 px-3 py-1 rounded-full text-sm">Badge</span>
-</section>
-
-// ALTERNATE SECTIONS: bg-[${selectedTheme.light}] → bg-white → bg-[${selectedTheme.dark}] → bg-white
-
-LAYOUT VARIETY — make each app unique:
-- Landing: hero + stats (MetricCard) + features grid + pricing (AIKitPriceCard) + testimonials + CTA
-- Dashboard: AIKitSidebar + AIKitHeader + MetricCard grid + charts + AIKitTable
-- E-commerce: header + product grid (AIKitProductCard) + filters + cart sidebar
-- AI/Agent: AgentCard grid + ChatBubble conversation + SafetyBadge + AIKitTimeline
-
-AX (AGENT EXPERIENCE) — MANDATORY on every page:
-1. Wrap page in <main aria-label="App Name - description">
-2. Add aria-label to every <nav>, <section>, <header>, <footer>
-3. EXACTLY ONE <h1> per page. Sections use <h2>, subsections <h3>.
-4. Add data-agent-role="navigation|content|form|metric" to key elements
-5. Add data-agent-action="click|navigate|search|filter" to interactive elements
-6. Add data-agent-context="descriptive-id" to every interactive element
-7. Add hidden JSON-LD: <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify({ "@context": "https://schema.org", "@type": "WebApplication", name: "App Name", description: "..." }) }} />
-8. Add skip nav link as first element: <a href="#main-content" className="sr-only focus:not-sr-only ...">Skip to main content</a>
-
-STRUCTURE:
 \`\`\`jsx
-import React, { useState, useEffect } from 'react'
-import { Icon1, Icon2, Plus, Trash2 } from 'lucide-react'
+import React, { useState } from 'react'
+import { Search, Plus, Trash2, DollarSign, Users, TrendingUp } from 'lucide-react'
 
-// Seed data — auto-inserted on first load if DB is empty
-const SEED_DATA = [
-  { name: "Item 1", status: "active", value: 100 },
-  { name: "Item 2", status: "pending", value: 200 },
-  { name: "Item 3", status: "completed", value: 150 },
-];
+const data = [{id:1, name:"Item 1", value:100}, {id:2, name:"Item 2", value:200}]
 
-export default function AppName() {
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  // Load from database on mount
-  useEffect(() => {
-    fetch('/api/db/appname_items')
-      .then(r => r.json())
-      .then(data => {
-        const rows = (data.data || []).map(r => ({ id: r.row_id, ...r.row_data }));
-        if (rows.length === 0) {
-          // Seed the database on first use
-          Promise.all(SEED_DATA.map(item =>
-            fetch('/api/db/appname_items', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(item) })
-              .then(r => r.json()).then(d => ({ id: d.row_id, ...item }))
-          )).then(seeded => { setItems(seeded); setLoading(false); });
-        } else {
-          setItems(rows);
-          setLoading(false);
-        }
-      })
-      .catch(() => { setItems(SEED_DATA.map((d,i) => ({id:i,...d}))); setLoading(false); });
-  }, []);
-
+export default function App() {
+  const [items] = useState(data)
   return (
-    <main aria-label="App Name" className="min-h-screen bg-[${selectedTheme.light}]">
-      {loading ? <SkeletonCard lines={3} showAvatar /> : items.length === 0 ? <EmptyState icon={<Inbox />} title="No items" /> : (
-        <div>{/* Render items with AIKit components */}</div>
-      )}
-    </main>
+    <div className="min-h-screen bg-[${selectedTheme.light}]">
+      <header className="bg-[${selectedTheme.dark}] text-white p-4 flex justify-between items-center">
+        <h1 className="text-xl font-bold">App Name</h1>
+        <button className="bg-[${selectedTheme.primary}] px-4 py-2 rounded-lg">Action</button>
+      </header>
+      <main className="max-w-6xl mx-auto p-6">
+        <div className="grid grid-cols-3 gap-4">
+          {items.map(item => (
+            <div key={item.id} className="bg-white rounded-xl shadow-sm border p-4 hover:shadow-md transition-all">
+              <h3>{item.name}</h3>
+            </div>
+          ))}
+        </div>
+      </main>
+    </div>
   )
 }
 \`\`\``
