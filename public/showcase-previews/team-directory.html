@@ -480,97 +480,99 @@
 
       try {
         console.log('[Preview] Executing component code...');
-        console.log('[Preview] Code length: 7617 characters');
+        console.log('[Preview] Code length: 9416 characters');
 
         // Insert the component code
         function Search(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Search' }, props && props.children); }
 window.Search = Search;
-function Building(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Building' }, props && props.children); }
-window.Building = Building;
+function Users(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Users' }, props && props.children); }
+window.Users = Users;
+function Building2(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Building2' }, props && props.children); }
+window.Building2 = Building2;
 function Mail(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Mail' }, props && props.children); }
 window.Mail = Mail;
 function Phone(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Phone' }, props && props.children); }
 window.Phone = Phone;
+function MapPin(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'MapPin' }, props && props.children); }
+window.MapPin = MapPin;
 
-const teamMembers = [
+const mockTeamMembers = [
   {
     id: 1,
-    name: "Alex Johnson",
-    role: "Senior Developer",
-    department: "Engineering",
-    email: "alex.johnson@company.com",
+    name: "Alex Morgan",
+    role: "Senior Product Designer",
+    department: "Design",
+    email: "alex.morgan@company.com",
     phone: "+1 (555) 123-4567",
-    avatar: "AJ"
+    location: "San Francisco, CA",
+    avatar: "AM"
   },
   {
     id: 2,
-    name: "Maria Garcia",
-    role: "Product Manager",
-    department: "Product",
-    email: "maria.garcia@company.com",
+    name: "Jordan Taylor",
+    role: "Frontend Developer",
+    department: "Engineering",
+    email: "jordan.taylor@company.com",
     phone: "+1 (555) 234-5678",
-    avatar: "MG"
+    location: "New York, NY",
+    avatar: "JT"
   },
   {
     id: 3,
-    name: "David Chen",
-    role: "UX Designer",
-    department: "Design",
-    email: "david.chen@company.com",
+    name: "Taylor Kim",
+    role: "Data Scientist",
+    department: "Analytics",
+    email: "taylor.kim@company.com",
     phone: "+1 (555) 345-6789",
-    avatar: "DC"
+    location: "Austin, TX",
+    avatar: "TK"
   },
   {
     id: 4,
-    name: "Sarah Williams",
+    name: "Casey Smith",
     role: "Marketing Director",
     department: "Marketing",
-    email: "sarah.williams@company.com",
+    email: "casey.smith@company.com",
     phone: "+1 (555) 456-7890",
-    avatar: "SW"
+    location: "Chicago, IL",
+    avatar: "CS"
   },
   {
     id: 5,
-    name: "Michael Brown",
-    role: "Data Scientist",
-    department: "Analytics",
-    email: "michael.brown@company.com",
+    name: "Riley Johnson",
+    role: "Backend Engineer",
+    department: "Engineering",
+    email: "riley.johnson@company.com",
     phone: "+1 (555) 567-8901",
-    avatar: "MB"
+    location: "Seattle, WA",
+    avatar: "RJ"
   },
   {
     id: 6,
-    name: "Emily Davis",
-    role: "HR Specialist",
-    department: "Human Resources",
-    email: "emily.davis@company.com",
+    name: "Morgan Lee",
+    role: "UX Researcher",
+    department: "Design",
+    email: "morgan.lee@company.com",
     phone: "+1 (555) 678-9012",
-    avatar: "ED"
+    location: "Boston, MA",
+    avatar: "ML"
   }
 ];
 
-function TeamPage() {
+function TeamDirectory() {
   const [searchTerm, setSearchTerm] = useState('');
-  const [filteredMembers, setFilteredMembers] = useState(teamMembers);
 
-  const handleSearch = (e) => {
-    const term = e.target.value.toLowerCase();
-    setSearchTerm(term);
-    
-    if (term === '') {
-      setFilteredMembers(teamMembers);
-    } else {
-      const filtered = teamMembers.filter(member => ;
-        member.name.toLowerCase().includes(term) ||
-        member.role.toLowerCase().includes(term) ||
-        member.department.toLowerCase().includes(term)
-      );
-      setFilteredMembers(filtered);
-    }
-  };
+  const filteredMembers = useMemo(() => {
+    if (!searchTerm) return mockTeamMembers;
+    return mockTeamMembers.filter(member => 
+      member.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      member.role.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      member.department.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [searchTerm]);
 
   return (
-    <div className="min-h-screen bg-[#F2F2F2]">
+    <div className="min-h-screen bg-[#F0F8F3]">
       {/* Professional Header */}
       <div className="bg-slate-900">
         <div className="px-8 py-6">
@@ -580,8 +582,8 @@ function TeamPage() {
                 T
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-white">Team Dashboard</h1>
-                <p className="text-slate-300 text-sm mt-1">Manage your team members efficiently</p>
+                <h1 className="text-2xl font-bold text-white">Team Directory</h1>
+                <p className="text-slate-300 text-sm mt-1">Manage and connect with your team members</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
@@ -589,7 +591,8 @@ function TeamPage() {
                 <Search className="w-4 h-4" />
                 Search
               </button>
-              <button className="bg-blue-600 text-white hover:bg-blue-700 px-4 py-2 rounded-lg">
+              <button className="bg-blue-600 text-white hover:bg-blue-700 px-4 py-2 rounded-lg flex items-center gap-2">
+                <Users className="w-4 h-4" />
                 Add Member
               </button>
               <div className="ml-3 flex items-center gap-2">
@@ -597,7 +600,7 @@ function TeamPage() {
                   •
                 </button>
                 <div className="w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold border-2 border-white">
-                  AJ
+                  JM
                 </div>
               </div>
             </div>
@@ -606,7 +609,7 @@ function TeamPage() {
       </div>
 
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-4 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Search Section */}
         <div className="mb-8">
           <div className="relative max-w-md">
@@ -615,45 +618,69 @@ function TeamPage() {
             </div>
             <input
               type="text"
+              className="block w-full pl-10 pr-3 py-3 border border-slate-300 rounded-lg bg-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-[#0A37BF] focus:border-transparent"
               placeholder="Search team members..."
-              className="block w-full pl-10 pr-3 py-3 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               value={searchTerm}
-              onChange={handleSearch}
+              onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
         </div>
 
-        {/* Team Members Grid */}
+        {/* Results Summary */}
+        <div className="mb-6 flex items-center justify-between">
+          <h2 className="text-xl font-semibold text-slate-900">
+            Team Members
+            <span className="ml-2 text-slate-500 text-base font-normal">
+              ({filteredMembers.length} found)
+            </span>
+          </h2>
+        </div>
+
+        {/* Team Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredMembers.map((member) => (
-            <div key={member.id} className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 hover:shadow-md transition-all">
-              <div className="flex items-start gap-4">
-                <div className="w-16 h-16 rounded-full bg-[#80BF41]/10 flex items-center justify-center text-[#80BF41] font-bold text-xl">
-                  {member.avatar}
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h3 className="text-lg font-semibold text-slate-900">{member.name}</h3>
-                      <p className="text-slate-600">{member.role}</p>
+            <div key={member.id} className="bg-white border border-slate-200 shadow-sm rounded-xl overflow-hidden hover:shadow-md transition-all duration-200">
+              <div className="p-6">
+                <div className="flex items-start gap-4">
+                  <div className="flex-shrink-0">
+                    <div className="w-16 h-16 rounded-full bg-[#0A37BF]/10 flex items-center justify-center text-[#0A37BF] font-bold text-xl">
+                      {member.avatar}
                     </div>
                   </div>
-                  
-                  <div className="mt-3 flex items-center gap-2">
-                    <Building className="w-4 h-4 text-slate-500" />
-                    <span className="text-sm text-slate-600">{member.department}</span>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-lg font-semibold text-slate-900 truncate">{member.name}</h3>
+                    <p className="text-[#0A37BF] font-medium mt-1">{member.role}</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-[#0A37BF]/10 text-[#0A37BF]">
+                        <Building2 className="w-3 h-3 mr-1" />
+                        {member.department}
+                      </span>
+                    </div>
                   </div>
-                  
-                  <div className="mt-4 flex flex-col gap-2">
-                    <button className="flex items-center gap-2 text-slate-700 hover:text-blue-600 transition-colors">
-                      <Mail className="w-4 h-4" />
-                      <span className="text-sm">Send Email</span>
-                    </button>
-                    <button className="flex items-center gap-2 text-slate-700 hover:text-blue-600 transition-colors">
-                      <Phone className="w-4 h-4" />
-                      <span className="text-sm">Call</span>
-                    </button>
+                </div>
+
+                <div className="mt-6 space-y-3">
+                  <div className="flex items-center text-sm text-slate-600">
+                    <Mail className="w-4 h-4 mr-2 text-slate-400" />
+                    <span className="truncate">{member.email}</span>
                   </div>
+                  <div className="flex items-center text-sm text-slate-600">
+                    <Phone className="w-4 h-4 mr-2 text-slate-400" />
+                    <span>{member.phone}</span>
+                  </div>
+                  <div className="flex items-center text-sm text-slate-600">
+                    <MapPin className="w-4 h-4 mr-2 text-slate-400" />
+                    <span>{member.location}</span>
+                  </div>
+                </div>
+
+                <div className="mt-6 flex gap-3">
+                  <button className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 py-2 px-4 rounded-lg text-sm font-medium transition-colors">
+                    Message
+                  </button>
+                  <button className="flex-1 bg-[#0A37BF] hover:bg-[#082DA0] text-white py-2 px-4 rounded-lg text-sm font-medium transition-colors">
+                    View Profile
+                  </button>
                 </div>
               </div>
             </div>
@@ -663,11 +690,11 @@ function TeamPage() {
         {/* Empty State */}
         {filteredMembers.length === 0 && (
           <div className="text-center py-12">
-            <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Search className="w-8 h-8 text-slate-400" />
+            <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-slate-100">
+              <Search className="h-6 w-6 text-slate-500" />
             </div>
-            <h3 className="text-lg font-medium text-slate-900 mb-1">No team members found</h3>
-            <p className="text-slate-500">Try adjusting your search terms</p>
+            <h3 className="mt-2 text-sm font-medium text-slate-900">No team members found</h3>
+            <p className="mt-1 text-sm text-slate-500">Try adjusting your search query</p>
           </div>
         )}
       </div>
@@ -676,7 +703,7 @@ function TeamPage() {
 }
 
 // Expose components to window for preview
-window.TeamPage = TeamPage;
+window.TeamDirectory = TeamDirectory;
 
         console.log('[Preview] Component code executed successfully');
 
