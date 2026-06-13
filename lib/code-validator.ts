@@ -101,6 +101,18 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
     }
   }
 
+  // Fix ARROW FUNCTION: Remove stray semicolons after => that break arrow functions
+  // Model sometimes generates: .filter(item =>; or .map(x =>;
+  const beforeArrowFix = fixedCode
+  fixedCode = fixedCode.replace(/=>\s*;/g, '=>')
+  if (fixedCode !== beforeArrowFix) {
+    fixes.push('Removed stray semicolons after arrow function (=>)')
+  }
+
+  // Fix TERNARY: Remove stray semicolons before ? in ternary expressions
+  // Model sometimes generates: const x = condition ; ? 'yes' : 'no'
+  fixedCode = fixedCode.replace(/\s*;\s*\?\s/g, ' ? ')
+
   // Fix CONTINUATION DUPLICATION: Remove duplicate jsx markers from continuation stitching
   // e.g. ```jsx appearing mid-code from continuation
   fixedCode = fixedCode.replace(/```jsx?\s*\n/g, (match, offset) => {

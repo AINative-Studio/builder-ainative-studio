@@ -317,16 +317,13 @@ export async function GET(
   const jsxTags = [...new Set(jsxTagMatches.map((m: string) => m.slice(1).replace(/[\s/>]/g, '')))]
   const unknownTags = jsxTags.filter((tag: string) => !knownComponents.has(tag))
 
+  // Store fallback definitions separately — they're plain JS, NOT JSX
+  // They'll be injected into a plain <script> block, not the Babel block
+  let fallbackScript = ''
   if (unknownTags.length > 0) {
-    // Generate fallback component definitions — BUT only for tags that aren't already
-    // defined on window (Lucide icons, Recharts, etc. are all set as window globals)
-    // Using typeof check at RUNTIME to avoid overwriting real components
-    const fallbacks = unknownTags.map((tag: string) =>
-      `if (typeof window.${tag} === 'undefined') { function ${tag}(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': '${tag}' }, props && props.children); } window.${tag} = ${tag}; }`
+    fallbackScript = unknownTags.map((tag: string) =>
+      `if (typeof window.${tag} === 'undefined') { window.${tag} = function ${tag}(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': '${tag}' }, props && props.children); }; }`
     ).join('\n')
-
-    // Append AFTER the component code (not before) so component's own definitions take priority
-    componentCode = componentCode + '\n\n' + fallbacks
     console.log(`[Preview] Conditional fallbacks for ${unknownTags.length} unknown components: ${unknownTags.join(', ')}`)
   }
 
@@ -937,6 +934,8 @@ export async function GET(
     <script id="component-source" type="text/plain">
         ${componentCode}
     </script>
+    <!-- Fallback components (plain JS, runs before Babel transform) -->
+    <script>${fallbackScript}</script>
     <!-- Transform and render -->
     <script>
       // Use Babel.transform() synchronously — no async waiting needed
@@ -952,7 +951,7 @@ export async function GET(
         try {
           var _src = document.getElementById('component-source').textContent;
           console.log('[Preview] Transforming ' + _src.length + ' chars...');
-          var _transformed = Babel.transform(_src, { presets: ['env', 'react'] });
+          var _transformed = Babel.transform(_src, { presets: ['react'] });
           console.log('[Preview] Transform done: ' + _transformed.code.length + ' chars');
           eval(_transformed.code);
           console.log('[Preview] Eval done');

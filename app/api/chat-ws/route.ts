@@ -291,10 +291,42 @@ export async function POST(request: NextRequest) {
 RULES:
 1. Output REACT code wrapped in \`\`\`jsx markers. No explanations.
 2. import React and hooks at top. ONE default export function. ALL code in ONE file.
-3. Use Tailwind CSS classes. Include realistic mock data. Use useState for interactivity.
+3. Use Tailwind CSS classes. Use useState/useEffect for interactivity.
 4. Use Lucide React icons (import from 'lucide-react'). NEVER use emoji as icons.
 5. Available: recharts (ResponsiveContainer, LineChart, BarChart, PieChart, etc.), lucide-react icons.
 6. ALL components below are available as globals — use them directly, NO import needed.
+7. CRITICAL: Use the DATABASE API below for ALL data — NO hardcoded mock data arrays.
+
+DATABASE API — ZeroDB (use fetch for all data operations):
+The app has a built-in database at /api/db/{table}. Use it for CRUD:
+
+// LOAD data on mount:
+const [items, setItems] = useState([]);
+const [loading, setLoading] = useState(true);
+useEffect(() => {
+  fetch('/api/db/myapp_items').then(r => r.json()).then(data => {
+    setItems((data.data || []).map(r => ({ id: r.row_id, ...r.row_data })));
+    setLoading(false);
+  }).catch(() => setLoading(false));
+}, []);
+
+// CREATE:
+const addItem = async (item) => {
+  const res = await fetch('/api/db/myapp_items', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(item) });
+  const data = await res.json();
+  setItems(prev => [...prev, { id: data.row_id, ...item }]);
+};
+
+// DELETE:
+const deleteItem = async (id) => {
+  await fetch('/api/db/myapp_items?id=' + id, { method: 'DELETE' });
+  setItems(prev => prev.filter(i => i.id !== id));
+};
+
+TABLE NAMING: Use the app name as prefix. E.g. for a todo app: "todo_items", for CRM: "crm_contacts".
+LOADING STATE: Show <Skeleton /> or <SkeletonCard /> while loading is true.
+EMPTY STATE: Show <EmptyState icon={<Inbox />} title="No items yet" /> when items array is empty.
+SEED DATA: On first load, if items are empty, auto-insert 3-5 seed rows so the app isn't blank.
 
 AIKIT COMPONENTS (use these instead of building from scratch):
 - MetricCard: <MetricCard title="Revenue" value="USD 84K" change="+12.5%" changeType="positive" sparklineData={[10,20,15,30,25,40]} icon={<DollarSign />} />
@@ -375,17 +407,44 @@ AX (AGENT EXPERIENCE) — MANDATORY on every page:
 STRUCTURE:
 \`\`\`jsx
 import React, { useState, useEffect } from 'react'
-import { Icon1, Icon2, ArrowRight } from 'lucide-react'
+import { Icon1, Icon2, Plus, Trash2 } from 'lucide-react'
 
-const mockData = [/* realistic data */]
+// Seed data — auto-inserted on first load if DB is empty
+const SEED_DATA = [
+  { name: "Item 1", status: "active", value: 100 },
+  { name: "Item 2", status: "pending", value: 200 },
+  { name: "Item 3", status: "completed", value: 150 },
+];
 
 export default function AppName() {
-  const [activeView, setActiveView] = useState('overview')
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  // Load from database on mount
+  useEffect(() => {
+    fetch('/api/db/appname_items')
+      .then(r => r.json())
+      .then(data => {
+        const rows = (data.data || []).map(r => ({ id: r.row_id, ...r.row_data }));
+        if (rows.length === 0) {
+          // Seed the database on first use
+          Promise.all(SEED_DATA.map(item =>
+            fetch('/api/db/appname_items', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(item) })
+              .then(r => r.json()).then(d => ({ id: d.row_id, ...item }))
+          )).then(seeded => { setItems(seeded); setLoading(false); });
+        } else {
+          setItems(rows);
+          setLoading(false);
+        }
+      })
+      .catch(() => { setItems(SEED_DATA.map((d,i) => ({id:i,...d}))); setLoading(false); });
+  }, []);
+
   return (
-    <main aria-label="App Name - description" className="min-h-screen bg-[${selectedTheme.light}]">
-      <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:bg-white focus:px-4 focus:py-2 focus:rounded-lg focus:shadow-lg">Skip to main content</a>
-      {/* nav, hero, sections with AIKit components, footer */}
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify({ "@context": "https://schema.org", "@type": "WebApplication", name: "App Name" }) }} />
+    <main aria-label="App Name" className="min-h-screen bg-[${selectedTheme.light}]">
+      {loading ? <SkeletonCard lines={3} showAvatar /> : items.length === 0 ? <EmptyState icon={<Inbox />} title="No items" /> : (
+        <div>{/* Render items with AIKit components */}</div>
+      )}
     </main>
   )
 }
