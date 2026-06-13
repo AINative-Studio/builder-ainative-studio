@@ -296,6 +296,7 @@ RULES:
 1. Output REACT code wrapped in \`\`\`jsx markers. No explanations.
 2. import React and hooks at top. ONE default export function. ALL code in ONE file.
 3. Use Tailwind CSS classes. Use useState/useEffect for interactivity.
+⚠️ KEEP CODE UNDER 200 LINES. Do NOT generate overly long components. Be concise — use map() for repeated elements, keep JSX compact.
 4. Use Lucide React icons (import from 'lucide-react'). NEVER use emoji as icons.
 5. Available: recharts (ResponsiveContainer, LineChart, BarChart, PieChart, etc.), lucide-react icons.
 6. ALL components below are available as globals — use them directly, NO import needed.
@@ -523,7 +524,7 @@ export default function AppName() {
                   const ctrl = new AbortController()
                   const timer = setTimeout(() => ctrl.abort(), 60_000)
                   const response = await client.chat.completions.create(
-                    { model: tryModel, max_tokens: 4096, temperature: 0.7, messages: singleTurnMessages },
+                    { model: tryModel, max_tokens: 3000, temperature: 0.7, messages: singleTurnMessages },
                     { signal: ctrl.signal }
                   )
                   clearTimeout(timer)
@@ -645,7 +646,7 @@ Generate a corrected version of: ${message}`
                 try {
                   const retryResponse = await ainativeClient.chat.completions.create({
                     model: retryModel,
-                    max_tokens: 4096,
+                    max_tokens: 3000,
                     temperature: 0.7,
                     messages: retryMessages,
                   })
