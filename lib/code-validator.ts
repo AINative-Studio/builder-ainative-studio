@@ -294,14 +294,15 @@ export function validateJavaScriptCode(code: string): ValidationResult {
     const errorLower = errorMessage.toLowerCase()
 
     // CRITICAL: Only reject errors that DEFINITELY break in browser
+    // "Unterminated JSX contents" and "unexpected token" are often recoverable
+    // by browser Babel with errorRecovery mode, so we let them through as warnings
     const isCatastrophicError =
       errorLower.includes('unexpected end of file') ||
       errorLower.includes('unexpected eof') ||
       errorLower.includes('unterminated string') ||
-      errorLower.includes('unterminated template') ||
-      errorLower.includes('unterminated jsx contents')
-      // Note: "unexpected token" errors are often recoverable by browser Babel
-      // with errorRecovery mode, so we let them through as warnings
+      errorLower.includes('unterminated template')
+      // Removed: 'unterminated jsx contents' — browser Babel handles this
+      // Removed: 'unexpected token' — browser Babel handles this
 
     if (isCatastrophicError) {
       // This will definitely fail in browser - report error
