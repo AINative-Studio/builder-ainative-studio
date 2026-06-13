@@ -24,16 +24,12 @@ if (!process.env.AUTH_SECRET) {
 // AINative Authentication Helper
 async function authenticateWithAINative(email: string, password: string) {
   try {
-    const formData = new URLSearchParams()
-    formData.append('username', email)
-    formData.append('password', password)
-
     const response = await fetch(`${process.env.AINATIVE_API_BASE_URL}/v1/auth/login`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Type': 'application/json',
       },
-      body: formData,
+      body: JSON.stringify({ username: email, password }),
     })
 
     if (!response.ok) {
@@ -60,6 +56,7 @@ async function authenticateWithAINative(email: string, password: string) {
           name: profile.full_name || profile.username,
           type: 'ainative' as const,
           accessToken: data.access_token,
+          refreshToken: data.refresh_token,
           expiresIn: data.expires_in,
         }
       }
@@ -156,9 +153,10 @@ export const {
         token.id = user.id as string
         token.type = user.type
         token.name = (user as any).name || user.email?.split('@')[0]
-        // Store AINative access token if present
+        // Store AINative access + refresh tokens if present
         if ((user as any).accessToken) {
           token.accessToken = (user as any).accessToken
+          token.refreshToken = (user as any).refreshToken
           token.expiresAt = (user as any).expiresIn
             ? Date.now() + (user as any).expiresIn * 1000
             : undefined
@@ -169,7 +167,7 @@ export const {
       if (token.type === 'ainative' && token.accessToken && token.expiresAt) {
         if (shouldRefreshToken(token.expiresAt as number)) {
           try {
-            const result = await refreshAINativeToken(token.accessToken as string)
+            const result = await refreshAINativeToken((token.refreshToken || token.accessToken) as string)
             if (result) {
               token.accessToken = result.accessToken
               token.expiresAt = result.expiresIn
