@@ -49,6 +49,7 @@ export function PreviewPanel({
   const [useA2UI, setUseA2UI] = useState(false)
   const useSandpack = !!sandpackFiles && Object.keys(sandpackFiles).length > 0
 
+
   // Debug: Log currentChat changes
   React.useEffect(() => {
     console.log('[PreviewPanel DEBUG] currentChat changed:', {
@@ -164,7 +165,8 @@ export function PreviewPanel({
                 chatId={currentChat?.id || null}
               />
             ) : currentChat?.demo ? (
-              /* Use SSR preview iframe (more reliable than Sandpack) */
+              /* Preview iframe — uses /api/preview/ which has code in server memory.
+                 Falls back to ZeroDB/DB if server restarted. */
               <WebPreviewBody
                 src={
                   currentChat.demo?.startsWith('/preview/')

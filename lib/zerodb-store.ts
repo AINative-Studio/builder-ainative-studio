@@ -86,21 +86,17 @@ export async function saveGeneration(data: {
  */
 export async function loadGeneration(chatId: string): Promise<{ prompt: string; generatedCode: string; ssrHtml?: string } | null> {
   try {
-    // ZeroDB doesn't support server-side filtering — fetch recent and filter client-side
+    // Use ZeroDB query endpoint with server-side filtering by chat_id
     const result = await zerodbRequest(
-      'GET',
-      `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/rows?limit=100`
+      'POST',
+      `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/query`,
+      { filters: { chat_id: chatId }, limit: 1 }
     )
 
     const rows = result?.data || []
-    const match = rows.find((r: any) => {
-      const rd = r.row_data || r
-      return rd.chat_id === chatId
-    })
-
-    if (match) {
-      const row = match.row_data || match
-      console.log(`[ZeroDB] Loaded generation ${chatId}`)
+    if (rows.length > 0) {
+      const row = rows[0].row_data || rows[0]
+      console.log(`[ZeroDB] Loaded generation ${chatId} (${row.code_length || '?'} chars)`)
       return {
         prompt: row.prompt,
         generatedCode: row.generated_code,
