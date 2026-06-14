@@ -4,6 +4,16 @@ import { withSentryConfig } from '@sentry/nextjs'
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   serverExternalPackages: ['sucrase'],
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      // Don't bundle sucrase — use node_modules version at runtime
+      config.externals = config.externals || []
+      if (Array.isArray(config.externals)) {
+        config.externals.push('sucrase')
+      }
+    }
+    return config
+  },
   images: {
     dangerouslyAllowSVG: true,
     contentDispositionType: 'attachment',
