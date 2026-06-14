@@ -164,9 +164,17 @@ export function PreviewPanel({
                 onClose={() => setShowCodeViewer(false)}
                 chatId={currentChat?.id || null}
               />
+            ) : useSandpack ? (
+              /* SANDPACK FIRST — handles compilation internally, 95%+ render rate */
+              <Suspense fallback={<div className="flex-1 flex items-center justify-center"><p className="text-sm text-gray-500">Building preview...</p></div>}>
+                <SandpackPreviewLazy
+                  key={refreshKey}
+                  files={sandpackFiles!}
+                  className="w-full h-full"
+                />
+              </Suspense>
             ) : currentChat?.demo ? (
-              /* Preview iframe — uses /api/preview/ which has code in server memory.
-                 Falls back to ZeroDB/DB if server restarted. */
+              /* Fallback: iframe preview for older/cached previews */
               <WebPreviewBody
                 src={
                   currentChat.demo?.startsWith('/preview/')
@@ -177,14 +185,6 @@ export function PreviewPanel({
                 }
                 key={refreshKey}
               />
-            ) : useSandpack ? (
-              <Suspense fallback={<div className="flex-1 flex items-center justify-center"><p className="text-sm text-gray-500">Loading preview...</p></div>}>
-                <SandpackPreviewLazy
-                  key={refreshKey}
-                  files={sandpackFiles!}
-                  className="w-full h-full"
-                />
-              </Suspense>
             ) : useA2UI && currentChat ? (
               <A2UIPreviewWithFallback
                 chatId={currentChat.id}
