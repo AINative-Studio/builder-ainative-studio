@@ -3,7 +3,14 @@ import { getPreview, isPreviewStreaming, storePreview, getSSRPreview } from '@/l
 import { validateJavaScriptCode } from '@/lib/code-validator'
 // Use dynamic require to avoid Next.js webpack bundling issues with sucrase
 const sucraseTransform = (() => {
-  try { return require('sucrase').transform } catch { return null }
+  try {
+    const s = require('sucrase')
+    console.log('[Preview] Sucrase loaded successfully')
+    return s.transform
+  } catch (e: any) {
+    console.error('[Preview] Sucrase FAILED to load:', e?.message?.substring(0, 100))
+    return null
+  }
 })()
 
 export async function GET(
