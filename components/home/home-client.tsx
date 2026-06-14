@@ -216,7 +216,7 @@ export function HomeClient() {
         body: JSON.stringify({
           message: userMessage,
           chatId: currentChatId,
-          model: selectedModel,
+          // model handled server-side — don't send from client
         }),
       })
 
@@ -522,7 +522,7 @@ export function HomeClient() {
         body: JSON.stringify({
           message: userMessage,
           chatId: currentChatId,
-          model: selectedModel,
+          // model handled server-side
           streaming: true,
         }),
       })
