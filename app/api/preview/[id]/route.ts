@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getPreview, isPreviewStreaming, storePreview, getSSRPreview } from '@/lib/preview-store'
 import { validateJavaScriptCode } from '@/lib/code-validator'
-import { transformJSX } from '@/lib/jsx-transform'
+// Lazy import — if sucrase fails to load, this returns null
+let _transformJSX: ((code: string) => { code: string } | null) | null = null
+try {
+  _transformJSX = require('@/lib/jsx-transform').transformJSX
+  console.log('[Preview] jsx-transform module loaded')
+} catch (e) {
+  console.error('[Preview] jsx-transform FAILED to load:', (e as any)?.message?.substring(0, 100))
+}
 
 export async function GET(
   request: NextRequest,
@@ -473,7 +480,8 @@ export async function GET(
   let finalCode = componentCode
   let usedSucrase = false
   try {
-    const result = transformJSX(componentCode)
+    if (!_transformJSX) throw new Error('jsx-transform not loaded')
+    const result = _transformJSX(componentCode)
     if (!result) throw new Error('transformJSX returned null')
     finalCode = result.code
     usedSucrase = true
