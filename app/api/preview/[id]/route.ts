@@ -1,17 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getPreview, isPreviewStreaming, storePreview, getSSRPreview } from '@/lib/preview-store'
 import { validateJavaScriptCode } from '@/lib/code-validator'
-// Use dynamic require to avoid Next.js webpack bundling issues with sucrase
-const sucraseTransform = (() => {
-  try {
-    const s = require('sucrase')
-    console.log('[Preview] Sucrase loaded successfully')
-    return s.transform
-  } catch (e: any) {
-    console.error('[Preview] Sucrase FAILED to load:', e?.message?.substring(0, 100))
-    return null
-  }
-})()
+// Sucrase loaded lazily inside the handler to avoid webpack issues
 
 export async function GET(
   request: NextRequest,
@@ -482,12 +472,11 @@ export async function GET(
   // When this fails: falls back to client-side Babel
   let finalCode = componentCode
   let usedSucrase = false
-  if (!sucraseTransform) {
-    console.warn('[Preview] Sucrase not loaded — using client Babel')
-  }
   try {
-    if (!sucraseTransform) throw new Error('Sucrase not available')
-    const result = sucraseTransform(componentCode, {
+    // Dynamic import inside handler — webpack can't tree-shake this
+    const sucrase = await import('sucrase')
+    console.log('[Preview] Sucrase loaded dynamically')
+    const result = sucrase.transform(componentCode, {
       transforms: ['jsx'],
       jsxPragma: 'React.createElement',
       jsxFragmentPragma: 'React.Fragment',
