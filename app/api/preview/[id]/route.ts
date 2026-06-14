@@ -467,9 +467,11 @@ export async function GET(
     console.log(`Preview still streaming for ID: ${id}, skipping validation`)
   }
 
-  // SERVER-SIDE JSX → JS TRANSFORM (sucrase — no client-side Babel needed)
-  let transformedCode = componentCode
-  let serverTransformOk = false
+  // SERVER-SIDE JSX → JS TRANSFORM (sucrase)
+  // When this succeeds: no Babel needed, code runs directly
+  // When this fails: falls back to client-side Babel
+  let finalCode = componentCode
+  let usedSucrase = false
   try {
     const result = sucraseTransform(componentCode, {
       transforms: ['jsx'],
@@ -477,13 +479,44 @@ export async function GET(
       jsxFragmentPragma: 'React.Fragment',
       production: true,
     })
-    transformedCode = result.code
-    serverTransformOk = true
-    console.log(`[Preview] Sucrase JSX transform: ${componentCode.length} → ${transformedCode.length} chars`)
+    finalCode = result.code
+    usedSucrase = true
+    console.log(`[Preview] Sucrase OK: ${componentCode.length} → ${finalCode.length} chars`)
   } catch (sucraseErr: any) {
-    console.warn(`[Preview] Sucrase failed (falling back to client Babel): ${sucraseErr?.message?.substring(0, 80)}`)
-    // Keep original componentCode — client-side Babel will handle it
+    console.warn(`[Preview] Sucrase failed: ${sucraseErr?.message?.substring(0, 80)}`)
   }
+
+  // Build the component script block — either pre-compiled or Babel-dependent
+  const componentScriptBlock = usedSucrase
+    ? `<script>
+try {
+  ${fallbackScript}
+  ${finalCode}
+  console.log('[Preview] Pre-compiled code executed');
+  document.getElementById('loading-indicator').style.display = 'none';
+} catch(e) {
+  console.error('[Preview] Runtime error:', e);
+  document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px"><h3 style="color:#dc2626">Error</h3><pre style="background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b">' + String(e.message||e).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px">Retry</button></div>';
+}
+</script>`
+    : `<script id="component-source" type="text/plain">
+${componentCode}
+</script>
+<script>${fallbackScript}</script>
+<script>
+if (typeof Babel !== 'undefined' && typeof React !== 'undefined') {
+  try {
+    var _s = document.getElementById('component-source').textContent;
+    var _t = Babel.transform(_s, {presets:['react']});
+    eval(_t.code);
+    document.getElementById('loading-indicator').style.display = 'none';
+  } catch(e) {
+    document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px"><h3 style="color:#dc2626">Error</h3><pre style="background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b">' + String(e.message||e).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px">Retry</button></div>';
+  }
+} else {
+  document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px"><h3>Scripts Loading...</h3><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer">Retry</button></div>';
+}
+</script>`
 
   // Create simple HTML with the component
   const html = `
@@ -501,7 +534,7 @@ export async function GET(
     <!-- React 18 from CDN -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    ${serverTransformOk ? '<!-- Babel not needed: JSX pre-compiled by sucrase -->' : '<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>'}
+    ${usedSucrase ? '<!-- Babel not needed: JSX pre-compiled by sucrase -->' : '<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>'}
     <!-- Non-critical: served locally for speed -->
     <script src="/vendor/lucide.min.js"></script>
     <script src="/vendor/prop-types.min.js"></script>
@@ -987,71 +1020,9 @@ export async function GET(
       }
 
     </script>
-    ${serverTransformOk ? `
-    <!-- Component code: pre-compiled by sucrase (no Babel needed) -->
-    <script>${fallbackScript}</script>
+    ${componentScriptBlock}
+    <!-- Component detection and rendering -->
     <script>
-      try {
-        ${transformedCode}
-        console.log('[Preview] Sucrase pre-compiled code executed');
-        document.getElementById('loading-indicator').style.display = 'none';
-      } catch(e) {
-        console.error('[Preview] Eval error:', e);
-        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3 style="color:#dc2626;">Runtime Error</h3><pre style="text-align:left;background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b;">' + String(e.message).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px;">Retry</button></div>';
-      }
-    ` : `
-    <!-- Component code: needs client-side Babel transform (sucrase failed) -->
-    <script id="component-source" type="text/plain">
-        ${componentCode}
-    </script>
-    <script>${fallbackScript}</script>
-    <script>
-      if (typeof Babel === 'undefined') {
-        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>Loading Scripts...</h3><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></div>';
-      } else {
-    `}
-        try {
-          var _src = document.getElementById('component-source').textContent;
-          console.log('[Preview] Transforming ' + _src.length + ' chars...');
-          var _transformed = Babel.transform(_src, { presets: ['react'] });
-          console.log('[Preview] Transform done: ' + _transformed.code.length + ' chars');
-          eval(_transformed.code);
-          console.log('[Preview] Eval done');
-          document.getElementById('loading-indicator').style.display = 'none';
-        } catch(babelErr) {
-          console.warn('[Preview] First transform failed, attempting auto-fix...', babelErr.message);
-          // AUTO-RECOVERY: truncate to last complete function and close brackets
-          try {
-            var _lines = _src.split(String.fromCharCode(10));
-            var _cutAt = _lines.length;
-            for (var _j = _lines.length - 1; _j > Math.max(0, _lines.length - 50); _j--) {
-              var _ln = _lines[_j].trim();
-              if (_ln === '}' || _ln === '};' || _ln === ');' || _ln === '})' || _ln === '});') {
-                _cutAt = _j + 1; break;
-              }
-            }
-            var _fixed = _lines.slice(0, _cutAt).join(String.fromCharCode(10));
-            var _ob = (_fixed.match(/{/g) || []).length;
-            var _cb = (_fixed.match(/}/g) || []).length;
-            var _op = (_fixed.match(/[(]/g) || []).length;
-            var _cp = (_fixed.match(/[)]/g) || []).length;
-            for (var _k = 0; _k < _op - _cp; _k++) _fixed += ')';
-            if (_op > _cp) _fixed += ';' + String.fromCharCode(10);
-            for (var _k = 0; _k < _ob - _cb; _k++) _fixed += '}' + String.fromCharCode(10);
-
-            var _transformed2 = Babel.transform(_fixed, { presets: ['react'] });
-            console.log('[Preview] Auto-fix succeeded: ' + _transformed2.code.length + ' chars');
-            eval(_transformed2.code);
-            document.getElementById('loading-indicator').style.display = 'none';
-          } catch(fixErr) {
-            console.error('[Preview] Auto-fix also failed:', fixErr.message);
-            document.getElementById('loading-indicator').innerHTML =
-              '<div style="text-align:center;padding:40px;"><h3 style="color:#dc2626;">Compilation Error</h3><pre style="text-align:left;background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b;">' +
-              String(babelErr.message || babelErr).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px;">Retry</button></div>';
-          }
-        }
-      }
-
       try {
 
         // Find the main page component to render.
