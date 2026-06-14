@@ -279,7 +279,9 @@ export async function POST(request: NextRequest) {
             }
           } else {
             // Route to correct provider based on selected model
-            const modelConfig = MODEL_CONFIG[requestedModel] || { provider: 'ainative', modelId: DEFAULT_MODEL }
+            // BLOCK maverick — AINative caps it at 512 tokens (ALWAYS truncated)
+            const safeModel = requestedModel === 'llama-4-maverick' ? DEFAULT_MODEL : requestedModel
+            const modelConfig = MODEL_CONFIG[safeModel] || { provider: 'ainative', modelId: DEFAULT_MODEL }
             const provider = modelConfig.provider
             const modelId = modelConfig.modelId
             const client = provider === 'meta' ? metaClient : ainativeClient
