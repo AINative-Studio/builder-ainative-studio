@@ -3,6 +3,7 @@ import { withSentryConfig } from '@sentry/nextjs'
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  serverExternalPackages: ['sucrase'],
   images: {
     dangerouslyAllowSVG: true,
     contentDispositionType: 'attachment',
