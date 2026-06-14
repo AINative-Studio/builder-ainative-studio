@@ -394,7 +394,7 @@ RULES:
               for (const tryModel of MODELS_TO_TRY) {
                 try {
                   const ctrl = new AbortController()
-                  const timer = setTimeout(() => ctrl.abort(), 60_000)
+                  const timer = setTimeout(() => ctrl.abort(), 90_000)
                   const response = await client.chat.completions.create(
                     { model: tryModel, max_tokens: 4096, temperature: 0.7, messages: singleTurnMessages },
                     { signal: ctrl.signal }
