@@ -1,22 +1,39 @@
 /**
- * Server-side JSX transform using a pre-bundled sucrase (680KB, zero deps).
- * Uses path.join + require to prevent webpack from resolving at build time.
+ * Server-side JSX transform using a pre-bundled sucrase.
+ * Bundle is in public/ (always deployed) and loaded via absolute path.
  */
 import path from 'path'
+import fs from 'fs'
 
 let _sucrase: any = null
+let _loadAttempted = false
 
 function getSucrase() {
-  if (_sucrase) return _sucrase
-  try {
-    // Use path.join to prevent webpack from resolving the require at build time
-    const bundlePath = path.join(process.cwd(), 'lib', 'sucrase-bundle.js')
-    _sucrase = require(bundlePath)
-    console.log('[jsx-transform] Sucrase loaded from:', bundlePath)
-  } catch (e) {
-    console.error('[jsx-transform] Failed to load sucrase:', (e as Error)?.message?.substring(0, 100))
+  if (_sucrase || _loadAttempted) return _sucrase
+  _loadAttempted = true
+
+  // Try multiple paths where the bundle might be
+  const paths = [
+    path.join(process.cwd(), 'public', 'sucrase-bundle.js'),
+    path.join(process.cwd(), 'lib', 'sucrase-bundle.js'),
+    path.join(__dirname, 'sucrase-bundle.js'),
+    path.join(__dirname, '..', 'public', 'sucrase-bundle.js'),
+  ]
+
+  for (const p of paths) {
+    try {
+      if (fs.existsSync(p)) {
+        _sucrase = require(p)
+        console.log('[jsx-transform] Sucrase loaded from:', p)
+        return _sucrase
+      }
+    } catch (e) {
+      console.warn('[jsx-transform] Failed at', p, ':', (e as Error)?.message?.substring(0, 50))
+    }
   }
-  return _sucrase
+
+  console.error('[jsx-transform] Sucrase bundle not found at any path:', paths.join(', '))
+  return null
 }
 
 export function transformJSX(code: string): { code: string } | null {
