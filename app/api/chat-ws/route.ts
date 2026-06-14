@@ -51,8 +51,8 @@ function getLLMClient(): OpenAI {
 // Model strategy (benchmarked 2026-06-13):
 // FREE: nous-coder (16s, 9K chars, best theme compliance)
 // PAID: kimi-k2.6 (71s, 23K chars, best quality — via DigitalOcean)
-// kimi-k2.6: 5194 tokens, 23K chars, complete code — slower (71s) but RENDERS
-const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'kimi-k2.6'
+// nous-coder: fast (16s) + sucrase server-side transform fixes JSX errors
+const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'nous-coder'
 const PAID_MODEL = process.env.PAID_MODEL || 'kimi-k2.6'
 
 // Fallback chains by tier
@@ -398,7 +398,7 @@ export default function App() {
                   const ctrl = new AbortController()
                   const timer = setTimeout(() => ctrl.abort(), 60_000)
                   const response = await client.chat.completions.create(
-                    { model: tryModel, max_tokens: 8192, temperature: 0.7, messages: singleTurnMessages },
+                    { model: tryModel, max_tokens: 4096, temperature: 0.7, messages: singleTurnMessages },
                     { signal: ctrl.signal }
                   )
                   clearTimeout(timer)
@@ -520,7 +520,7 @@ Generate a corrected version of: ${message}`
                 try {
                   const retryResponse = await ainativeClient.chat.completions.create({
                     model: retryModel,
-                    max_tokens: 8192,
+                    max_tokens: 4096,
                     temperature: 0.7,
                     messages: retryMessages,
                   })
