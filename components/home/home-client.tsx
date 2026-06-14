@@ -288,15 +288,13 @@ export function HomeClient() {
                       hasDemoUrl: !!data.demo
                     })
 
-                    // Store demo URL but DON'T load preview yet — content isn't generated
-                    // Preview will load when 'complete' event fires with refreshKey bump
-                    if (data.demo) {
-                      setCurrentChat({
-                        id: data.chatId,
-                        demo: data.demo
-                      })
-                      console.log('[DEBUG] Preview URL set from init (will refresh on complete):', data.demo)
-                    }
+                    // Store chatId but NOT demo URL — we want Sandpack to handle preview
+                    // Demo URL will be set on 'complete' ONLY if sandpackFiles is null
+                    setCurrentChat({
+                      id: data.chatId,
+                      // demo intentionally NOT set here — Sandpack takes priority
+                    })
+                    console.log('[DEBUG] Init: chatId set, demo deferred for Sandpack')
                     break
 
                   case 'build_step':
@@ -352,10 +350,11 @@ export function HomeClient() {
                       demo: data.demo,
                       hasDemoUrl: !!data.demo
                     })
-                    setCurrentChat({
+                    setCurrentChat(prev => ({
                       id: data.chatId,
-                      demo: data.demo
-                    })
+                      // Don't set demo if sandpackFiles are available — let Sandpack handle preview
+                      demo: sandpackFiles ? undefined : data.demo
+                    }))
                     setCurrentChatId(data.chatId)
                     setIsLoading(false)
                     console.log('[DEBUG] isLoading state updated to FALSE, preview URL:', data.demo)
@@ -374,6 +373,8 @@ export function HomeClient() {
                     // Sandpack file map from multi-file generation
                     console.log('[DEBUG] Files event received:', Object.keys(data.files).length, 'files')
                     setSandpackFiles(data.files)
+                    // Clear demo URL so Sandpack takes priority over iframe
+                    setCurrentChat(prev => prev ? { ...prev, demo: undefined } : prev)
                     break
 
                   case 'validation_error':

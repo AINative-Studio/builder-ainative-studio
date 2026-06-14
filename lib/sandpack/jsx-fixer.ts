@@ -20,8 +20,9 @@ export function fixJsxErrors(code: string): string {
   // Fix 0d: Sanitize broken/overlapping imports (most common AI generation error)
   fixed = sanitizeImports(fixed)
 
-  // Fix 1: Balance unclosed JSX tags
-  fixed = balanceJsxTags(fixed)
+  // Fix 1: DISABLED — balanceJsxTags adds closing tags in wrong context
+  // causing "Unexpected token, expected ','" errors in Sandpack
+  // fixed = balanceJsxTags(fixed)
 
   // Fix 2: Remove trailing content after the component (like stray backticks, markdown)
   fixed = removeTrailingNoise(fixed)
@@ -37,30 +38,35 @@ export function fixJsxErrors(code: string): string {
  * Tracks open/close tags and inserts missing closing tags.
  */
 function balanceJsxTags(code: string): string {
-  // Simple approach: find self-closing component tags and ensure they're properly closed
-  // This catches the most common issue: <CardContent> ... </Card> (should be </CardContent></Card>)
+  // Track ALL JSX tags (both HTML lowercase and React PascalCase)
+  // to catch unclosed <div>, <section>, <main>, etc.
 
   const lines = code.split('\n')
   const tagStack: string[] = []
   const result: string[] = []
 
+  // Void HTML elements that don't need closing tags
+  const voidElements = new Set(['br', 'hr', 'img', 'input', 'meta', 'link', 'area', 'base', 'col', 'embed', 'source', 'track', 'wbr'])
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
 
-    // Find opening JSX tags (not self-closing, not closing)
-    const openTags = line.matchAll(/<([A-Z][A-Za-z0-9]*)(?:\s[^>]*)?(?<!\/)\s*>/g)
+    // Find opening JSX tags — both <div ...> and <CardContent ...>
+    const openTags = line.matchAll(/<([a-zA-Z][A-Za-z0-9]*)(?:\s[^>]*)?(?<!\/)\s*>/g)
     for (const match of openTags) {
-      tagStack.push(match[1])
+      if (!voidElements.has(match[1].toLowerCase())) {
+        tagStack.push(match[1])
+      }
     }
 
     // Find self-closing tags — don't add to stack
-    const selfClosing = line.matchAll(/<([A-Z][A-Za-z0-9]*)(?:\s[^>]*)?\s*\/>/g)
+    const selfClosing = line.matchAll(/<([a-zA-Z][A-Za-z0-9]*)(?:\s[^>]*)?\s*\/>/g)
     for (const _match of selfClosing) {
       // These are fine, no stack change
     }
 
     // Find closing tags
-    const closeTags = line.matchAll(/<\/([A-Z][A-Za-z0-9]*)\s*>/g)
+    const closeTags = line.matchAll(/<\/([a-zA-Z][A-Za-z0-9]*)\s*>/g)
     for (const match of closeTags) {
       const closeTag = match[1]
       const lastOpen = tagStack[tagStack.length - 1]
@@ -134,6 +140,11 @@ function fixCommonSyntax(code: string): string {
 
   // Fix: window.X = X; at end (from old preview system)
   fixed = fixed.replace(/^window\.[A-Z]\w+\s*=\s*[A-Z]\w+;?\s*$/gm, '')
+
+  // Fix: Expose components to window comment (from old preview system)
+  fixed = fixed.replace(/^\/\/\s*Expose components to window.*$/gm, '')
+
+  // Bracket balancing disabled — causes more Sandpack errors than it fixes
 
   return fixed
 }

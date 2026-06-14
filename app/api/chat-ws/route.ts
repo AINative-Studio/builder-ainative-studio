@@ -287,47 +287,15 @@ export async function POST(request: NextRequest) {
             // Compact system prompt focused on design quality + theme colors.
             // Open-source models (codestral, devstral, etc.) ignore long prompts.
             // Theme colors are injected directly into examples so the model copies them.
-            const llmSystemPrompt = `You are a React developer. Generate a SINGLE-FILE React component. KEEP UNDER 120 LINES.
-
-Colors: PRIMARY=${selectedTheme.primary} DARK=${selectedTheme.dark} LIGHT=${selectedTheme.light} ACCENT=${selectedTheme.accent}
-Use bg-[${selectedTheme.primary}] for buttons, bg-[${selectedTheme.dark}] for header/hero, bg-[${selectedTheme.light}] for page bg.
-NEVER use bg-blue-*, bg-gray-*, bg-purple-*. Use the hex colors above.
-
-Rules:
-- Wrap in \`\`\`jsx markers. No explanations before or after.
-- import React, { useState } from 'react' and icons from 'lucide-react'
-- ONE export default function. Use Tailwind CSS.
-- Define data as arrays, use .map() for ALL repeated elements
-- Dark nav header, white cards with shadow-sm rounded-xl, hover effects
-- Use realistic mock data (names, numbers, dates)
-
-\`\`\`jsx
-import React, { useState } from 'react'
-import { Search, Plus, Trash2, DollarSign, Users, TrendingUp } from 'lucide-react'
-
-const data = [{id:1, name:"Item 1", value:100}, {id:2, name:"Item 2", value:200}]
-
-export default function App() {
-  const [items] = useState(data)
-  return (
-    <div className="min-h-screen bg-[${selectedTheme.light}]">
-      <header className="bg-[${selectedTheme.dark}] text-white p-4 flex justify-between items-center">
-        <h1 className="text-xl font-bold">App Name</h1>
-        <button className="bg-[${selectedTheme.primary}] px-4 py-2 rounded-lg">Action</button>
-      </header>
-      <main className="max-w-6xl mx-auto p-6">
-        <div className="grid grid-cols-3 gap-4">
-          {items.map(item => (
-            <div key={item.id} className="bg-white rounded-xl shadow-sm border p-4 hover:shadow-md transition-all">
-              <h3>{item.name}</h3>
-            </div>
-          ))}
-        </div>
-      </main>
-    </div>
-  )
-}
-\`\`\``
+            const llmSystemPrompt = `Generate a React component. STRICT RULES:
+1. Output ONLY code in \`\`\`jsx markers. Zero explanations.
+2. MAXIMUM 80 LINES of code. This is a HARD LIMIT. Code over 80 lines will CRASH.
+3. Use Tailwind CSS. Import React and lucide-react icons.
+4. Define ALL data as a const array at the top. Use .map() to render.
+5. ONE export default function. NO filter(), NO search logic, NO complex state.
+6. Colors: buttons=bg-[${selectedTheme.primary}] header=bg-[${selectedTheme.dark}] page=bg-[${selectedTheme.light}]
+7. NEVER use bg-blue-*, bg-gray-*, bg-purple-*. Only the hex colors above.
+8. Every JSX tag you open, you MUST close. Check: every <div> has </div>.`
 
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Generating with ' + modelId + '...' })}\n\n`))
 
