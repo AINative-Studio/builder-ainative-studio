@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getPreview, isPreviewStreaming, storePreview, getSSRPreview } from '@/lib/preview-store'
 import { validateJavaScriptCode } from '@/lib/code-validator'
-// Sucrase loaded lazily inside the handler to avoid webpack issues
+import { transformJSX } from '@/lib/jsx-transform'
 
 export async function GET(
   request: NextRequest,
@@ -473,15 +473,8 @@ export async function GET(
   let finalCode = componentCode
   let usedSucrase = false
   try {
-    // Dynamic import inside handler — webpack can't tree-shake this
-    const sucrase = await import('sucrase')
-    console.log('[Preview] Sucrase loaded dynamically')
-    const result = sucrase.transform(componentCode, {
-      transforms: ['jsx'],
-      jsxPragma: 'React.createElement',
-      jsxFragmentPragma: 'React.Fragment',
-      production: true,
-    })
+    const result = transformJSX(componentCode)
+    if (!result) throw new Error('transformJSX returned null')
     finalCode = result.code
     usedSucrase = true
     console.log(`[Preview] Sucrase OK: ${componentCode.length} → ${finalCode.length} chars`)
