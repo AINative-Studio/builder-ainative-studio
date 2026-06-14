@@ -154,29 +154,8 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
   // Claude's generated code rarely has this issue, and the fix caused more harm
   // than good by destroying all Tailwind numeric classes.
 
-  // Fix 2: Ensure ALL component functions are properly exposed to window
-  // Find all component definitions (functions or const with capital first letter)
-  const componentMatches = fixedCode.matchAll(/(?:function|const)\s+([A-Z][a-zA-Z0-9]*)\s*[=(]/g)
-  const exposedComponents: string[] = []
-
-  for (const match of componentMatches) {
-    const componentName = match[1]
-    // Skip if already exposed or if it's a type/interface
-    if (!fixedCode.includes(`window.${componentName}`) &&
-        !fixedCode.includes(`interface ${componentName}`) &&
-        !fixedCode.includes(`type ${componentName}`)) {
-      exposedComponents.push(componentName)
-    }
-  }
-
-  // Add window exposure for all components
-  if (exposedComponents.length > 0) {
-    const exposureCode = exposedComponents.map(name =>
-      `window.${name} = ${name};`
-    ).join('\n')
-    fixedCode += `\n\n// Expose components to window for preview\n${exposureCode}\n`
-    fixes.push(`Exposed components to window: ${exposedComponents.join(', ')}`)
-  }
+  // Window exposure DISABLED — Sandpack uses ESM exports, not window globals
+  // The old Babel iframe path needed window.X = X, but Sandpack doesn't
 
   // Fix 3: Remove trailing commas in function calls (not in objects/arrays)
   fixedCode = fixedCode.replace(/,(\s*\))/g, '$1')

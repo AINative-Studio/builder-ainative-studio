@@ -58,7 +58,7 @@ export function HomeClient() {
   const [isLoading, setIsLoading] = useState(false)
   const [showChatInterface, setShowChatInterface] = useState(false)
   const [attachments, setAttachments] = useState<ImageAttachment[]>([])
-  const [selectedModel, setSelectedModel] = useState('llama-4-maverick')
+  const [selectedModel, setSelectedModel] = useState('ministral-14b')
   const [isDragOver, setIsDragOver] = useState(false)
   const [chatHistory, setChatHistory] = useState<
     Array<{
@@ -747,7 +747,8 @@ export function HomeClient() {
                         title="Select AI model"
                       >
                         <optgroup label="Recommended (Fast + Reliable)">
-                          <option value="llama-4-maverick">Llama 4 Maverick (Default)</option>
+                          <option value="ministral-14b">Ministral 14B (Default)</option>
+                          <option value="llama-4-maverick">Llama 4 Maverick</option>
                           <option value="llama-3.3-70b">Llama 3.3 70B</option>
                         </optgroup>
                         <optgroup label="High Quality (Slower)">

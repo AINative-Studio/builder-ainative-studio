@@ -51,12 +51,13 @@ function getLLMClient(): OpenAI {
 // Model strategy (benchmarked 2026-06-13):
 // FREE: nous-coder (16s, 9K chars, best theme compliance)
 // PAID: kimi-k2.6 (71s, 23K chars, best quality — via DigitalOcean)
-// llama-4-maverick: reliable via AINative proxy, nous-coder having 503s
-const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'llama-4-maverick'
+// ministral-14b: 933+ tokens complete output, no 512-cap
+// llama-4-maverick capped at 512 tokens by AINative proxy — UNUSABLE
+const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'ministral-14b'
 const PAID_MODEL = process.env.PAID_MODEL || 'kimi-k2.6'
 
 // Fallback chains by tier
-const FREE_FALLBACKS = ['llama-4-maverick', 'ministral-14b', 'nous-coder', 'gpt-oss-20b']
+const FREE_FALLBACKS = ['ministral-14b', 'nous-coder', 'llama-4-maverick', 'gpt-oss-20b']
 const PAID_FALLBACKS = ['kimi-k2.6', 'nous-coder', 'nemotron-70b', 'ministral-14b']
 
 // Model routing config — all models route through AINative API
@@ -287,15 +288,43 @@ export async function POST(request: NextRequest) {
             // Compact system prompt focused on design quality + theme colors.
             // Open-source models (codestral, devstral, etc.) ignore long prompts.
             // Theme colors are injected directly into examples so the model copies them.
-            const llmSystemPrompt = `Generate a React component. STRICT RULES:
-1. Output ONLY code in \`\`\`jsx markers. Zero explanations.
-2. MAXIMUM 80 LINES of code. This is a HARD LIMIT. Code over 80 lines will CRASH.
-3. Use Tailwind CSS. Import React and lucide-react icons.
-4. Define ALL data as a const array at the top. Use .map() to render.
-5. ONE export default function. NO filter(), NO search logic, NO complex state.
-6. Colors: buttons=bg-[${selectedTheme.primary}] header=bg-[${selectedTheme.dark}] page=bg-[${selectedTheme.light}]
-7. NEVER use bg-blue-*, bg-gray-*, bg-purple-*. Only the hex colors above.
-8. Every JSX tag you open, you MUST close. Check: every <div> has </div>.`
+            const llmSystemPrompt = `Generate a React component. Follow this EXACT structure:
+
+\`\`\`jsx
+import React, { useState } from 'react'
+import { Icon1, Icon2 } from 'lucide-react'
+
+const items = [{id:1, name:"X", value:0}, {id:2, name:"Y", value:0}]
+
+export default function App() {
+  const [data] = useState(items)
+  return (
+    <div className="min-h-screen bg-[${selectedTheme.light}]">
+      <header className="bg-[${selectedTheme.dark}] text-white p-4">
+        <h1 className="text-xl font-bold">App Title</h1>
+      </header>
+      <main className="max-w-5xl mx-auto p-6">
+        <div className="grid grid-cols-3 gap-4">
+          {data.map(item => (
+            <div key={item.id} className="bg-white rounded-xl shadow-sm p-4">
+              <h3 className="font-semibold">{item.name}</h3>
+            </div>
+          ))}
+        </div>
+      </main>
+    </div>
+  )
+}
+\`\`\`
+
+RULES:
+- MAXIMUM 60 LINES. Shorter is better. NEVER exceed 60 lines.
+- The return() with JSX must come EARLY. Do NOT write long data arrays first.
+- Keep data arrays SHORT (3-5 items, 1 line each).
+- Use .map() for ALL repeated elements.
+- Colors: bg-[${selectedTheme.primary}] bg-[${selectedTheme.dark}] bg-[${selectedTheme.light}]
+- NEVER use bg-blue, bg-gray, bg-purple. Only hex colors above.
+- Every <div> must have </div>. Every <section> must have </section>.`
 
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Generating with ' + modelId + '...' })}\n\n`))
 

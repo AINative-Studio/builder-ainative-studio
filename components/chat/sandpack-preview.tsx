@@ -128,6 +128,12 @@ export function SandpackPreview({ files, theme = 'light', className }: SandpackP
   // Set as /App.tsx (Sandpack's expected entry)
   sandpackFiles['/App.tsx'] = mainCode
 
+  // Debug: log what Sandpack receives
+  console.log('[SandpackPreview] App.tsx:', mainCode.length, 'chars,', mainCode.split('\n').length, 'lines')
+  console.log('[SandpackPreview] Has return+JSX:', mainCode.includes('return') && mainCode.includes('<div'))
+  console.log('[SandpackPreview] Has export default:', mainCode.includes('export default'))
+  console.log('[SandpackPreview] Last 3 lines:', mainCode.split('\n').slice(-3).join(' | '))
+
   // Track which files are generated (not built-in) so we only fix those
   const builtinPaths = new Set(Object.keys(getBuiltinFiles()))
 
@@ -250,6 +256,10 @@ export function SandpackPreview({ files, theme = 'light', className }: SandpackP
     }
 
     sandpackFiles[path] = fixed
+    if (path === '/App.tsx') {
+      console.log('[SandpackPreview] POST-FIX App.tsx:', fixed.length, 'chars,', fixed.split('\n').length, 'lines')
+      console.log('[SandpackPreview] POST-FIX last 3:', fixed.split('\n').slice(-3).join(' | '))
+    }
   }
 
   return (
