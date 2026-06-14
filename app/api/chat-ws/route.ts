@@ -57,7 +57,8 @@ const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'ministral-14b'
 const PAID_MODEL = process.env.PAID_MODEL || 'kimi-k2.6'
 
 // Fallback chains by tier
-const FREE_FALLBACKS = ['ministral-14b', 'nous-coder', 'llama-4-maverick', 'gpt-oss-20b']
+// NEVER use llama-4-maverick — AINative caps it at 512 tokens (ALWAYS truncated)
+const FREE_FALLBACKS = ['ministral-14b', 'nous-coder', 'gpt-oss-20b']
 const PAID_FALLBACKS = ['kimi-k2.6', 'nous-coder', 'nemotron-70b', 'ministral-14b']
 
 // Model routing config — all models route through AINative API
