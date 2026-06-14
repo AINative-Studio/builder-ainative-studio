@@ -51,12 +51,12 @@ function getLLMClient(): OpenAI {
 // Model strategy (benchmarked 2026-06-13):
 // FREE: nous-coder (16s, 9K chars, best theme compliance)
 // PAID: kimi-k2.6 (71s, 23K chars, best quality — via DigitalOcean)
-// nous-coder: fast (16s) + sucrase server-side transform fixes JSX errors
-const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'nous-coder'
+// llama-4-maverick: reliable via AINative proxy, nous-coder having 503s
+const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'llama-4-maverick'
 const PAID_MODEL = process.env.PAID_MODEL || 'kimi-k2.6'
 
 // Fallback chains by tier
-const FREE_FALLBACKS = ['nous-coder', 'gpt-oss-20b', 'ministral-14b', 'llama-4-maverick']
+const FREE_FALLBACKS = ['llama-4-maverick', 'ministral-14b', 'nous-coder', 'gpt-oss-20b']
 const PAID_FALLBACKS = ['kimi-k2.6', 'nous-coder', 'nemotron-70b', 'ministral-14b']
 
 // Model routing config — all models route through AINative API
