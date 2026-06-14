@@ -71,7 +71,8 @@ const MODEL_CONFIG: Record<string, { provider: 'meta' | 'ainative'; modelId: str
   'nous-coder': { provider: 'ainative', modelId: 'nous-coder', tier: 'free' },
   'gpt-oss-20b': { provider: 'ainative', modelId: 'gpt-oss-20b', tier: 'free' },
   'ministral-14b': { provider: 'ainative', modelId: 'ministral-14b', tier: 'free' },
-  'llama-4-maverick': { provider: isLocal ? 'meta' : 'ainative', modelId: 'llama-4-maverick', tier: 'free' },
+  // llama-4-maverick REMOVED — AINative caps at 512 tokens, ALWAYS truncated
+  // 'llama-4-maverick': { provider: isLocal ? 'meta' : 'ainative', modelId: 'llama-4-maverick', tier: 'free' },
   'nemotron-super-49b': { provider: 'ainative', modelId: 'nemotron-super-49b', tier: 'free' },
   'cohere-command': { provider: 'ainative', modelId: 'cohere-command', tier: 'free' },
   // === INTERMITTENT — may come back online ===
