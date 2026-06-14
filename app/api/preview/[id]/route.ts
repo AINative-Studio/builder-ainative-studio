@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getPreview, isPreviewStreaming, storePreview, getSSRPreview } from '@/lib/preview-store'
 import { validateJavaScriptCode } from '@/lib/code-validator'
-// Note: server-side JSX transform not possible in Next.js webpack (native deps)
-// Using client-side Babel with loading indicator + timeout fallback
+import { transform as sucraseTransform } from 'sucrase'
 
 export async function GET(
   request: NextRequest,
@@ -468,6 +467,24 @@ export async function GET(
     console.log(`Preview still streaming for ID: ${id}, skipping validation`)
   }
 
+  // SERVER-SIDE JSX → JS TRANSFORM (sucrase — no client-side Babel needed)
+  let transformedCode = componentCode
+  let serverTransformOk = false
+  try {
+    const result = sucraseTransform(componentCode, {
+      transforms: ['jsx'],
+      jsxPragma: 'React.createElement',
+      jsxFragmentPragma: 'React.Fragment',
+      production: true,
+    })
+    transformedCode = result.code
+    serverTransformOk = true
+    console.log(`[Preview] Sucrase JSX transform: ${componentCode.length} → ${transformedCode.length} chars`)
+  } catch (sucraseErr: any) {
+    console.warn(`[Preview] Sucrase failed (falling back to client Babel): ${sucraseErr?.message?.substring(0, 80)}`)
+    // Keep original componentCode — client-side Babel will handle it
+  }
+
   // Create simple HTML with the component
   const html = `
 <!DOCTYPE html>
@@ -481,10 +498,10 @@ export async function GET(
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <!-- Core: React 18 -->
-    <!-- Critical: React + Babel from CDN (local copies have compatibility issues) -->
+    <!-- React 18 from CDN -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    ${serverTransformOk ? '<!-- Babel not needed: JSX pre-compiled by sucrase -->' : '<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>'}
     <!-- Non-critical: served locally for speed -->
     <script src="/vendor/lucide.min.js"></script>
     <script src="/vendor/prop-types.min.js"></script>
@@ -970,24 +987,29 @@ export async function GET(
       }
 
     </script>
-    <!-- Component code: transformed by Babel.transform() synchronously, then eval'd -->
+    ${serverTransformOk ? `
+    <!-- Component code: pre-compiled by sucrase (no Babel needed) -->
+    <script>${fallbackScript}</script>
+    <script>
+      try {
+        ${transformedCode}
+        console.log('[Preview] Sucrase pre-compiled code executed');
+        document.getElementById('loading-indicator').style.display = 'none';
+      } catch(e) {
+        console.error('[Preview] Eval error:', e);
+        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3 style="color:#dc2626;">Runtime Error</h3><pre style="text-align:left;background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b;">' + String(e.message).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px;">Retry</button></div>';
+      }
+    ` : `
+    <!-- Component code: needs client-side Babel transform (sucrase failed) -->
     <script id="component-source" type="text/plain">
         ${componentCode}
     </script>
-    <!-- Fallback components (plain JS, runs before Babel transform) -->
     <script>${fallbackScript}</script>
-    <!-- Transform and render -->
     <script>
-      // Use Babel.transform() synchronously — no async waiting needed
-      console.log('[Preview] Checking Babel availability:', typeof Babel);
-      console.log('[Preview] Checking React availability:', typeof React);
       if (typeof Babel === 'undefined') {
-        console.error('[Preview] Babel not loaded!');
-        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>Babel Not Loaded</h3><p>Scripts still loading. <button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></p></div>';
-      } else if (typeof React === 'undefined') {
-        console.error('[Preview] React not loaded!');
-        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>React Not Loaded</h3><p><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></p></div>';
+        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>Loading Scripts...</h3><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></div>';
       } else {
+    `}
         try {
           var _src = document.getElementById('component-source').textContent;
           console.log('[Preview] Transforming ' + _src.length + ' chars...');

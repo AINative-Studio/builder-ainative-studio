@@ -101,6 +101,7 @@
     "remark-gfm": "^4.0.1",
     "shiki": "^3.12.2",
     "streamdown": "^1.0.12",
+    "sucrase": "^3.35.1",
     "swr": "^2.3.6",
     "tailwind-merge": "^2.5.5",
     "tsx": "^4.19.2",
