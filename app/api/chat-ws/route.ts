@@ -51,7 +51,7 @@ function getLLMClient(): OpenAI {
 // Model strategy (benchmarked 2026-06-13):
 // FREE: nous-coder (16s, 9K chars, best theme compliance)
 // PAID: kimi-k2.6 (71s, 23K chars, best quality — via DigitalOcean)
-const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'nous-coder'
+const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'ministral-14b'
 const PAID_MODEL = process.env.PAID_MODEL || 'kimi-k2.6'
 
 // Fallback chains by tier
