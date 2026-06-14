@@ -1,11 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getPreview, isPreviewStreaming, storePreview, getSSRPreview } from '@/lib/preview-store'
 import { validateJavaScriptCode } from '@/lib/code-validator'
-import { transformJSX as _transformJSXImport } from '@/lib/jsx-transform'
-// Wrap in a variable that can be null if the module fails
-const _transformJSX = typeof _transformJSXImport === 'function' ? _transformJSXImport : null
-if (_transformJSX) console.log('[Preview] Sucrase JSX transform available')
-else console.warn('[Preview] Sucrase NOT available — using client Babel')
+// Sucrase removed — builds were failing. Using client-side Babel.
+// The key fix is using models that produce COMPLETE code (not maverick 512-tok)
 
 export async function GET(
   request: NextRequest,
@@ -471,36 +468,8 @@ export async function GET(
     console.log(`Preview still streaming for ID: ${id}, skipping validation`)
   }
 
-  // SERVER-SIDE JSX → JS TRANSFORM (sucrase)
-  // When this succeeds: no Babel needed, code runs directly
-  // When this fails: falls back to client-side Babel
-  let finalCode = componentCode
-  let usedSucrase = false
-  try {
-    if (!_transformJSX) throw new Error('jsx-transform not loaded')
-    const result = _transformJSX(componentCode)
-    if (!result) throw new Error('transformJSX returned null')
-    finalCode = result.code
-    usedSucrase = true
-    console.log(`[Preview] Sucrase OK: ${componentCode.length} → ${finalCode.length} chars`)
-  } catch (sucraseErr: any) {
-    console.warn(`[Preview] Sucrase failed: ${sucraseErr?.message?.substring(0, 80)}`)
-  }
-
-  // Build the component script block — either pre-compiled or Babel-dependent
-  const componentScriptBlock = usedSucrase
-    ? `<script>
-try {
-  ${fallbackScript}
-  ${finalCode}
-  console.log('[Preview] Pre-compiled code executed');
-  document.getElementById('loading-indicator').style.display = 'none';
-} catch(e) {
-  console.error('[Preview] Runtime error:', e);
-  document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px"><h3 style="color:#dc2626">Error</h3><pre style="background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b">' + String(e.message||e).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px">Retry</button></div>';
-}
-</script>`
-    : `<script id="component-source" type="text/plain">
+  // Build the component script block — client-side Babel transform
+  const componentScriptBlock = `<script id="component-source" type="text/plain">
 ${componentCode}
 </script>
 <script>${fallbackScript}</script>
@@ -535,12 +504,11 @@ if (typeof Babel !== 'undefined' && typeof React !== 'undefined') {
     <!-- React 18 from CDN -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    ${usedSucrase ? '<!-- Babel not needed: JSX pre-compiled by sucrase -->' : '<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>'}
-    <!-- Non-critical: served locally for speed -->
-    <script src="/vendor/lucide.min.js"></script>
-    <script src="/vendor/prop-types.min.js"></script>
-    <script src="/vendor/recharts.min.js"></script>
-    <script src="/vendor/tailwind.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.min.js"></script>
+    <script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.15.0/umd/Recharts.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
         theme: {
