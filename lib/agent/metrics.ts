@@ -353,6 +353,37 @@ export class MetricsCollector {
       logger.error('Failed to send metrics to analytics', error)
     })
 
+    // Wire agent run into AINative intelligence loop (Refs builder#40)
+    try {
+      const apiUrl = process.env.AINATIVE_API_URL || process.env.NEXT_PUBLIC_API_BASE || 'https://api.ainative.studio'
+      const apiKey = process.env.ZERODB_API_KEY || process.env.AINATIVE_API_KEY || ''
+      if (apiKey) {
+        fetch(`${apiUrl}/api/v1/public/memory/v2/remember`, {
+          method: 'POST',
+          headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            content: `Builder orchestrator run: ${metrics.userPrompt.slice(0, 100)} — ${metrics.totalTime}ms, ${metrics.success ? 'success' : 'failed'}`,
+            tags: ['builder', 'agent-run', metrics.success ? 'success' : 'failure'],
+            importance: metrics.success ? 0.3 : 0.7,
+            metadata: {
+              agent: 'builder-orchestrator',
+              sessionId: metrics.sessionId,
+              totalTime: metrics.totalTime,
+              success: metrics.success,
+              designTime: metrics.designTime,
+              codeTime: metrics.codeTime,
+              validationTime: metrics.validationTime,
+              totalTokens: metrics.tokenUsage?.total?.totalTokens,
+              source: 'builder.ainative.studio',
+            },
+          }),
+          signal: AbortSignal.timeout(5000),
+        }).catch(() => {})
+      }
+    } catch {
+      // Best-effort
+    }
+
     return metrics
   }
 

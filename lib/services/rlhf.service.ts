@@ -13,6 +13,27 @@ export interface GenerationData {
   model: string
   templateUsed?: string | null
   generationTimeMs: number
+  // RLHF fine-tuning fields
+  systemPrompt?: string
+  fullConversation?: Array<{ role: string; content: string }>
+  tokenUsage?: {
+    input_tokens?: number
+    output_tokens?: number
+    total_tokens?: number
+  }
+  modelConfig?: {
+    temperature?: number
+    max_tokens?: number
+    provider?: string
+  }
+  validationResult?: {
+    valid: boolean
+    error?: string
+    retryAttempted?: boolean
+  }
+  status?: 'success' | 'validation_error' | 'failure'
+  theme?: string
+  codeLength?: number
 }
 
 export interface FeedbackData {
@@ -62,8 +83,13 @@ export interface InsightsResponse {
   }>
 }
 
-// Log a new generation
+// Log a new generation — captures full training data for fine-tuning
 export async function logGeneration(data: GenerationData): Promise<string> {
+  // Always log to ZeroDB for fine-tuning data (more fields, no schema migration needed)
+  logGenerationToZeroDB(data).catch(err => {
+    console.warn('[RLHF] ZeroDB log failed:', err?.message || err)
+  })
+
   if (!db) {
     throw new Error('Database not available')
   }
@@ -86,6 +112,122 @@ export async function logGeneration(data: GenerationData): Promise<string> {
   await cacheDeletePattern('insights:*')
 
   return result.id
+}
+
+// Log generation failure — captures failed attempts for debugging and training
+export async function logGenerationFailure(data: {
+  chatId: string
+  userId: string
+  prompt: string
+  model: string
+  error: string
+  systemPrompt?: string
+  generationTimeMs: number
+  retryCount?: number
+}): Promise<void> {
+  logGenerationToZeroDB({
+    chatId: data.chatId,
+    userId: data.userId,
+    prompt: data.prompt,
+    generatedCode: '',
+    model: data.model,
+    generationTimeMs: data.generationTimeMs,
+    status: 'failure',
+    validationResult: {
+      valid: false,
+      error: data.error,
+      retryAttempted: (data.retryCount || 0) > 0,
+    },
+    systemPrompt: data.systemPrompt,
+  }).catch(err => {
+    console.warn('[RLHF] Failed to log generation failure:', err?.message || err)
+  })
+}
+
+// Write full training data — local JSONL + ZeroDB
+async function logGenerationToZeroDB(data: GenerationData): Promise<void> {
+  console.log(`[RLHF] logGenerationToZeroDB called for ${data.chatId}`)
+  // 1. ALWAYS write to local JSONL first (synchronous, guaranteed)
+  writeLocalTrainingData(data)
+
+  // 2. Then try ZeroDB (async, best-effort)
+  try {
+    const apiKey = process.env.ZERODB_API_KEY || process.env.AINATIVE_API_KEY || ''
+    const projectId = process.env.ZERODB_PROJECT_ID || '0ba21db1-a688-4176-90d1-4be02fa4354d'
+    if (!apiKey) return
+
+    const baseUrl = process.env.ZERODB_BASE_URL || 'https://api.zerodb.ai'
+    const row = {
+      chat_id: data.chatId, user_id: data.userId, prompt: data.prompt,
+      generated_code: data.generatedCode?.slice(0, 50000) || '',
+      system_prompt: data.systemPrompt?.slice(0, 10000) || '',
+      full_conversation: JSON.stringify(data.fullConversation || []),
+      model: data.model, template_used: data.templateUsed || null,
+      generation_time_ms: data.generationTimeMs, status: data.status || 'success',
+      input_tokens: data.tokenUsage?.input_tokens || 0,
+      output_tokens: data.tokenUsage?.output_tokens || 0,
+      total_tokens: data.tokenUsage?.total_tokens || 0,
+      temperature: data.modelConfig?.temperature || 0.7,
+      max_tokens: data.modelConfig?.max_tokens || 8192,
+      provider: data.modelConfig?.provider || 'ainative',
+      validation_valid: data.validationResult?.valid ?? true,
+      validation_error: data.validationResult?.error || null,
+      retry_attempted: data.validationResult?.retryAttempted || false,
+      theme: data.theme || null,
+      code_length: data.codeLength || data.generatedCode?.length || 0,
+      created_at: new Date().toISOString(),
+    }
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 5_000)
+    const res = await fetch(`${baseUrl}/v1/tables/${projectId}/rlhf_training_data/rows`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rows: [row] }),
+      signal: controller.signal,
+    })
+    clearTimeout(timer)
+    if (res.ok) console.log(`[RLHF] ✅ ZeroDB: ${data.chatId}`)
+    else console.warn(`[RLHF] ZeroDB ${res.status}`)
+  } catch (err: any) {
+    console.warn(`[RLHF] ZeroDB: ${err?.name || 'error'}`)
+  }
+}
+
+// Synchronous local JSONL write — guaranteed to run
+function writeLocalTrainingData(data: GenerationData): void {
+  console.log(`[RLHF] writeLocalTrainingData called for ${data.chatId}`)
+  try {
+    // Use dynamic require to avoid Turbopack bundling issues
+    const nodeFs = eval('require')('fs')
+    const nodePath = eval('require')('path')
+    console.log(`[RLHF] fs loaded, cwd=${process.cwd()}`)
+    const logDir = nodePath.join(process.cwd(), 'data')
+    if (!nodeFs.existsSync(logDir)) nodeFs.mkdirSync(logDir, { recursive: true })
+    const logFile = nodePath.join(logDir, 'rlhf-training-data.jsonl')
+
+    const row = {
+      messages: data.fullConversation || [
+        { role: 'system', content: data.systemPrompt?.slice(0, 5000) || '' },
+        { role: 'user', content: data.prompt },
+        { role: 'assistant', content: data.generatedCode?.slice(0, 20000) || '' },
+      ],
+      metadata: {
+        chat_id: data.chatId, model: data.model, status: data.status || 'success',
+        validation_valid: data.validationResult?.valid ?? true,
+        generation_time_ms: data.generationTimeMs,
+        code_length: data.codeLength || data.generatedCode?.length || 0,
+        theme: data.theme, temperature: data.modelConfig?.temperature || 0.7,
+        max_tokens: data.modelConfig?.max_tokens || 8192,
+        created_at: new Date().toISOString(),
+      },
+    }
+
+    nodeFs.appendFileSync(logFile, JSON.stringify(row) + '\n')
+    console.log(`[RLHF] 📝 Local: ${data.chatId} (${data.generatedCode?.length || 0} chars)`)
+  } catch (err: any) {
+    console.warn(`[RLHF] Local write failed: ${err?.message || err}`)
+  }
 }
 
 // Submit user feedback
@@ -121,6 +263,19 @@ export async function submitFeedback(data: FeedbackData): Promise<string> {
     // Invalidate insights cache
     await cacheDeletePattern('insights:*')
 
+    // Feed into AINative intelligence loop (Refs builder#40)
+    sendToIntelligenceLoop({
+      agentId: 'builder-component-gen',
+      score: data.rating / 5, // normalize 1-5 to 0-1
+      context: {
+        generationId: data.generationId,
+        rating: data.rating,
+        wasEdited: data.wasEdited,
+        iterations: data.iterations,
+        feedbackText: data.feedbackText?.slice(0, 100),
+      },
+    }).catch(() => {})
+
     return result.id
   } catch (error) {
     // Table doesn't exist in AINative database - log warning and return placeholder
@@ -130,6 +285,34 @@ export async function submitFeedback(data: FeedbackData): Promise<string> {
     })
     // Return a placeholder ID so the UI doesn't error
     return 'feedback-placeholder'
+  }
+}
+
+// Wire builder feedback into AINative intelligence loop (Refs builder#40)
+async function sendToIntelligenceLoop(data: {
+  agentId: string
+  score: number
+  context: Record<string, any>
+}): Promise<void> {
+  try {
+    const apiUrl = process.env.AINATIVE_API_URL || process.env.NEXT_PUBLIC_API_BASE || 'https://api.ainative.studio'
+    const apiKey = process.env.ZERODB_API_KEY || process.env.AINATIVE_API_KEY || ''
+    if (!apiKey) return
+
+    // 1. Store as ZeroMemory for episodic consolidation
+    await fetch(`${apiUrl}/api/v1/public/memory/v2/remember`, {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        content: `Builder agent ${data.agentId} scored ${data.score.toFixed(2)}: ${JSON.stringify(data.context).slice(0, 200)}`,
+        tags: ['builder', 'rlhf', data.agentId, 'intelligence-loop'],
+        importance: data.score < 0.5 ? 0.8 : 0.5,
+        metadata: { agent: data.agentId, score: data.score, source: 'builder.ainative.studio', ...data.context },
+      }),
+      signal: AbortSignal.timeout(5000),
+    })
+  } catch {
+    // Best-effort — never block the builder
   }
 }
 

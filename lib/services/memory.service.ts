@@ -35,6 +35,35 @@ export interface ConversationMemory {
 // In-memory store (replace with database in production)
 const memoryStore = new Map<string, ConversationMemory>()
 
+// Persist to ZeroMemory for cross-deploy persistence (Refs builder#40)
+async function persistToZeroMemory(chatId: string, memory: ConversationMemory): Promise<void> {
+  try {
+    const apiUrl = process.env.AINATIVE_API_URL || process.env.NEXT_PUBLIC_API_BASE || 'https://api.ainative.studio'
+    const apiKey = process.env.ZERODB_API_KEY || process.env.AINATIVE_API_KEY || ''
+    if (!apiKey) return
+
+    await fetch(`${apiUrl}/api/v1/public/memory/v2/remember`, {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        content: `Builder session ${chatId}: ${memory.componentHistory.length} components, ${memory.userFeedback.length} feedback items`,
+        tags: ['builder', 'session', chatId],
+        importance: 0.4,
+        metadata: {
+          chatId,
+          componentCount: memory.componentHistory.length,
+          feedbackCount: memory.userFeedback.length,
+          designPreferences: memory.designPreferences,
+          lastComponent: memory.componentHistory[memory.componentHistory.length - 1]?.prompt?.slice(0, 100),
+        },
+      }),
+      signal: AbortSignal.timeout(5000),
+    })
+  } catch {
+    // Best-effort
+  }
+}
+
 /**
  * Initialize or get conversation memory
  */
@@ -63,6 +92,9 @@ export function addComponentToMemory(
     component,
     timestamp: Date.now(),
   })
+
+  // Persist to ZeroMemory (Refs builder#40)
+  persistToZeroMemory(chatId, memory).catch(() => {})
 }
 
 /**
@@ -93,6 +125,9 @@ export function addUserFeedback(
     resolution,
     timestamp: Date.now(),
   })
+
+  // Persist to ZeroMemory (Refs builder#40)
+  persistToZeroMemory(chatId, memory).catch(() => {})
 }
 
 /**
