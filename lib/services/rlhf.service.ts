@@ -153,10 +153,10 @@ async function logGenerationToZeroDB(data: GenerationData): Promise<void> {
   // 2. Then try ZeroDB (async, best-effort)
   try {
     const apiKey = process.env.ZERODB_API_KEY || process.env.AINATIVE_API_KEY || ''
-    const projectId = process.env.ZERODB_PROJECT_ID || '0ba21db1-a688-4176-90d1-4be02fa4354d'
+    const projectId = process.env.ZERODB_PROJECT_ID || '29e8754c-c67d-4a74-9167-a069d87ab1aa'
     if (!apiKey) return
 
-    const baseUrl = process.env.ZERODB_BASE_URL || 'https://api.zerodb.ai'
+    const baseUrl = process.env.AINATIVE_API_URL || process.env.ZERODB_BASE_URL || 'https://api.ainative.studio'
     const row = {
       chat_id: data.chatId, user_id: data.userId, prompt: data.prompt,
       generated_code: data.generatedCode?.slice(0, 50000) || '',
@@ -180,10 +180,10 @@ async function logGenerationToZeroDB(data: GenerationData): Promise<void> {
 
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 5_000)
-    const res = await fetch(`${baseUrl}/v1/tables/${projectId}/rlhf_training_data/rows`, {
+    const res = await fetch(`${baseUrl}/api/v1/projects/${projectId}/database/tables/rlhf_training_data/rows`, {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rows: [row] }),
+      headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ row_data: row }),
       signal: controller.signal,
     })
     clearTimeout(timer)
