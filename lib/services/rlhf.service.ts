@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { eq, and, gte, lte, sql, desc, asc } from 'drizzle-orm'
+import { eq, and, gte } from 'drizzle-orm'
 import db from '@/lib/db/connection'
 import { generations, feedback, prompt_versions } from '@/lib/db/schema'
 import { cacheGet, cacheSet, cacheDeletePattern } from '@/lib/redis'
@@ -90,28 +90,7 @@ export async function logGeneration(data: GenerationData): Promise<string> {
     console.warn('[RLHF] ZeroDB log failed:', err?.message || err)
   })
 
-  if (!db) {
-    throw new Error('Database not available')
-  }
-
-  const [result] = await db
-    .insert(generations)
-    .values({
-      chat_id: data.chatId,
-      user_id: data.userId,
-      prompt: data.prompt,
-      generated_code: data.generatedCode,
-      prompt_version_id: data.promptVersionId || null,
-      model: data.model,
-      template_used: data.templateUsed || null,
-      generation_time_ms: data.generationTimeMs,
-    })
-    .returning({ id: generations.id })
-
-  // Invalidate insights cache
-  await cacheDeletePattern('insights:*')
-
-  return result.id
+  return crypto.randomUUID()
 }
 
 // Log generation failure — captures failed attempts for debugging and training
@@ -144,13 +123,10 @@ export async function logGenerationFailure(data: {
   })
 }
 
-// Write full training data — local JSONL + ZeroDB
+// Write training data to ZeroDB
 async function logGenerationToZeroDB(data: GenerationData): Promise<void> {
   console.log(`[RLHF] logGenerationToZeroDB called for ${data.chatId}`)
-  // 1. ALWAYS write to local JSONL first (synchronous, guaranteed)
-  writeLocalTrainingData(data)
 
-  // 2. Then try ZeroDB (async, best-effort)
   try {
     const apiKey = process.env.ZERODB_API_KEY || process.env.AINATIVE_API_KEY || ''
     const projectId = process.env.ZERODB_PROJECT_ID || '29e8754c-c67d-4a74-9167-a069d87ab1aa'
@@ -191,42 +167,6 @@ async function logGenerationToZeroDB(data: GenerationData): Promise<void> {
     else console.warn(`[RLHF] ZeroDB ${res.status}`)
   } catch (err: any) {
     console.warn(`[RLHF] ZeroDB: ${err?.name || 'error'}`)
-  }
-}
-
-// Synchronous local JSONL write — guaranteed to run
-function writeLocalTrainingData(data: GenerationData): void {
-  console.log(`[RLHF] writeLocalTrainingData called for ${data.chatId}`)
-  try {
-    // Use dynamic require to avoid Turbopack bundling issues
-    const nodeFs = eval('require')('fs')
-    const nodePath = eval('require')('path')
-    console.log(`[RLHF] fs loaded, cwd=${process.cwd()}`)
-    const logDir = nodePath.join(process.cwd(), 'data')
-    if (!nodeFs.existsSync(logDir)) nodeFs.mkdirSync(logDir, { recursive: true })
-    const logFile = nodePath.join(logDir, 'rlhf-training-data.jsonl')
-
-    const row = {
-      messages: data.fullConversation || [
-        { role: 'system', content: data.systemPrompt?.slice(0, 5000) || '' },
-        { role: 'user', content: data.prompt },
-        { role: 'assistant', content: data.generatedCode?.slice(0, 20000) || '' },
-      ],
-      metadata: {
-        chat_id: data.chatId, model: data.model, status: data.status || 'success',
-        validation_valid: data.validationResult?.valid ?? true,
-        generation_time_ms: data.generationTimeMs,
-        code_length: data.codeLength || data.generatedCode?.length || 0,
-        theme: data.theme, temperature: data.modelConfig?.temperature || 0.7,
-        max_tokens: data.modelConfig?.max_tokens || 8192,
-        created_at: new Date().toISOString(),
-      },
-    }
-
-    nodeFs.appendFileSync(logFile, JSON.stringify(row) + '\n')
-    console.log(`[RLHF] 📝 Local: ${data.chatId} (${data.generatedCode?.length || 0} chars)`)
-  } catch (err: any) {
-    console.warn(`[RLHF] Local write failed: ${err?.message || err}`)
   }
 }
 
