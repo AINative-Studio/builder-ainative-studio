@@ -10,6 +10,7 @@ import { ChunkPlan, ChunkPhase } from './chunk-planner'
 import { extractComponentCode } from './component-generation-tool'
 import { validateGeneratedCode } from '../code-validator'
 import { PROFESSIONAL_SYSTEM_PROMPT } from '../professional-prompt'
+import { recallPastPerformance, storeGenerationMemory } from './zeromemory'
 
 export interface GeneratedChunk {
   chunkId: string
@@ -43,6 +44,14 @@ export async function executeChunkPlan(
 ): Promise<GeneratedChunk[]> {
   const chunks: GeneratedChunk[] = []
   const totalPhases = plan.phases.length
+
+  // Recall past performance for similar prompts (Refs #43)
+  const firstPrompt = plan.phases[0]?.prompt || ''
+  const pastLearnings = await recallPastPerformance(firstPrompt)
+  if (pastLearnings) {
+    // Inject past learnings into phase 1 prompt so the LLM benefits
+    plan.phases[0].prompt = `Past learnings for similar requests:\n${pastLearnings}\n\n${plan.phases[0].prompt}`
+  }
 
   onProgress(0, totalPhases, 'Starting multi-phase generation...')
 
@@ -104,6 +113,16 @@ export async function executeChunkPlan(
     successCount: chunks.filter(c => c.success).length,
     totalChunks: chunks.length
   })
+
+  // Store generation result for cross-product learning (Refs #43)
+  const successCount = chunks.filter(c => c.success).length
+  const allSuccess = successCount === chunks.length
+  const quality = chunks.length > 0 ? successCount / chunks.length : 0
+  storeGenerationMemory(firstPrompt.slice(0, 300), allSuccess, quality, {
+    source: 'multi-pass-generator',
+    totalPhases: chunks.length,
+    successCount,
+  }).catch(() => {})
 
   return chunks
 }

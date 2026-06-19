@@ -6,6 +6,7 @@ import {
   loadAgentProfiles,
 } from './agent-profiles'
 import { createMetricsCollector, extractTokenUsage, MetricsCollector } from './metrics'
+import { recallPastPerformance, storeGenerationMemory } from './zeromemory'
 
 /**
  * Subagents Architecture (US-025)
@@ -320,12 +321,22 @@ export async function runOrchestratorAgent(
   console.log('\n👔 CODY (Team Leader): Alright team, we have a new component to build. Let\'s do this right.\n')
   console.log(`📋 Mission: "${userPrompt}"\n`)
 
+  // Recall past performance for similar prompts (Refs #43)
+  const pastLearnings = await recallPastPerformance(userPrompt)
+  const enrichedMemoryContext = pastLearnings
+    ? `Past learnings for similar requests:\n${pastLearnings}\n\n${memoryContext}`
+    : memoryContext
+
+  if (pastLearnings) {
+    console.log('📚 CODY: Found past learnings from similar builds. Injecting into context.\n')
+  }
+
   // Step 1: Design Subagent analyzes requirements
   console.log('👔 CODY: Design team, analyze the requirements and give me a solid spec.')
   console.log('🎨 [1/3] Design Agents (ai-product-architect + system-architect): On it, Cody...\n')
 
   metricsCollector.startSubagent('design')
-  const designResult = await runDesignSubagent(userPrompt, memoryContext)
+  const designResult = await runDesignSubagent(userPrompt, enrichedMemoryContext)
   metricsCollector.endSubagent(
     'design',
     designResult.success,
@@ -405,6 +416,15 @@ export async function runOrchestratorAgent(
 
   // Complete metrics collection and publish
   const metrics = await metricsCollector.complete()
+
+  // Store generation result for cross-product learning (Refs #43)
+  const quality = validationResult.success ? 0.85 : 0.3
+  storeGenerationMemory(userPrompt, validationResult.success, quality, {
+    sessionId: sessionId || `session-${Date.now()}`,
+    model,
+    totalTime: metrics.totalTime,
+    totalTokens: metrics.tokenUsage?.total?.totalTokens,
+  }).catch(() => {})
 
   return {
     designSpec: designResult.output,
