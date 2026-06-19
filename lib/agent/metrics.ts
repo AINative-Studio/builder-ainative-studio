@@ -83,6 +83,8 @@ export class MetricsCollector {
   private subagentMetrics: Map<string, SubagentMetrics>
   private startTime: number
 
+  private templateId?: string
+
   constructor(sessionId: string, userPrompt: string, model: string, userId?: string, chatId?: string) {
     this.sessionId = sessionId
     this.userId = userId
@@ -97,6 +99,13 @@ export class MetricsCollector {
       userId: this.userId,
       chatId: this.chatId,
     })
+  }
+
+  /**
+   * Set the template/prompt version used for this generation (Refs #43)
+   */
+  setTemplateId(templateId: string): void {
+    this.templateId = templateId
   }
 
   /**
@@ -207,6 +216,7 @@ export class MetricsCollector {
         designMetadata: designMetrics?.metadata,
         codeMetadata: codeMetrics?.metadata,
         validationMetadata: validationMetrics?.metadata,
+        templateId: this.templateId,
       },
     }
   }
@@ -374,6 +384,7 @@ export class MetricsCollector {
               codeTime: metrics.codeTime,
               validationTime: metrics.validationTime,
               totalTokens: metrics.tokenUsage?.total?.totalTokens,
+              templateId: this.templateId,
               source: 'builder.ainative.studio',
             },
           }),
