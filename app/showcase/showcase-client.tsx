@@ -264,39 +264,29 @@ function CommunityCard({ entry }: { entry: ShowcaseEntry }) {
   const cat = detectCategory(entry.prompt || entry.title || '')
   const category = SHOWCASE_CATEGORIES.find(c => c.id === cat)
   const title = cleanTitle(entry.title || '')
+  // Use /api/preview which handles code rendering server-side
   const previewUrl = entry.chatId ? `/api/preview/${entry.chatId}` : ''
 
   return (
-    <Link
-      href={entry.chatId ? `/chats/${entry.chatId}` : `/`}
+    <a
+      href={previewUrl || '/'}
+      target="_blank"
+      rel="noopener noreferrer"
       className="group block bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden hover:shadow-lg hover:border-blue-300 dark:hover:border-blue-700 transition-all duration-200"
     >
-      {/* Preview thumbnail — uses srcdoc for entries with code, iframe for others */}
+      {/* Live preview thumbnail via iframe */}
       <div className="aspect-video bg-gray-50 dark:bg-gray-800 relative overflow-hidden">
-        {entry.generatedCode ? (
-          <iframe
-            srcDoc={buildPreviewHtml(entry.generatedCode)}
-            className="w-[200%] h-[200%] origin-top-left scale-50 pointer-events-none border-0"
-            loading="lazy"
-            sandbox="allow-scripts"
-            title={title}
-          />
-        ) : previewUrl ? (
+        {previewUrl ? (
           <iframe
             src={previewUrl}
             className="w-[200%] h-[200%] origin-top-left scale-50 pointer-events-none border-0"
             loading="lazy"
-            sandbox="allow-scripts"
+            sandbox="allow-scripts allow-same-origin"
             title={title}
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
-            <div className="text-center">
-              <div className="w-10 h-10 mx-auto mb-2 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center">
-                <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
-              </div>
-              <span className="text-xs text-gray-400">Preview</span>
-            </div>
+            <span className="text-xs text-gray-400">Preview</span>
           </div>
         )}
         <div className="absolute inset-0 bg-transparent group-hover:bg-black/5 transition-colors" />
@@ -316,7 +306,7 @@ function CommunityCard({ entry }: { entry: ShowcaseEntry }) {
           {entry.description || entry.prompt?.slice(0, 100)}
         </p>
       </div>
-    </Link>
+    </a>
   )
 }
 
