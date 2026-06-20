@@ -27,6 +27,7 @@ export async function GET(request: NextRequest) {
           category: r.category || 'creative',
           prompt: r.prompt || '',
           chatId: r.chat_id,
+          generatedCode: r.generated_code || undefined,
           tags: ['ai-generated', 'react'],
           featured: false,
           createdAt: r.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
