@@ -785,8 +785,8 @@ Generate a corrected version of: ${message}`
               prompt: message,
               model: requestedModel || DEFAULT_MODEL,
               error: error instanceof Error ? error.message : String(error),
-              systemPrompt: enhancedSystemPrompt?.slice(0, 5000),
-              generationTimeMs: Date.now() - generationStartTime,
+              systemPrompt: '',
+              generationTimeMs: 0,
             }).catch(() => {})
           }).catch(() => {})
 
