@@ -12,7 +12,7 @@ import { NextRequest, NextResponse } from 'next/server'
  * Signed-in users could get their own project (future).
  */
 
-const ZERODB_API = 'https://api.ainative.studio'
+const ZERODB_API = 'https://api.ainative.studio/api'
 const PROJECT_ID = process.env.ZERODB_PROJECT_ID || '29e8754c-c67d-4a74-9167-a069d87ab1aa'
 const API_KEY = process.env.ZERODB_API_KEY || ''
 
