@@ -329,8 +329,9 @@ export function ShowcaseGalleryClient() {
     fetch('/api/showcase?offset=0&limit=100')
       .then(r => r.json())
       .then(data => {
+        // Only show entries that have actual generated code (renders real preview)
         const dynamic = (data.entries || []).filter(
-          (e: ShowcaseEntry) => e.chatId && !e.slug?.startsWith('showcase-')
+          (e: ShowcaseEntry) => e.chatId && e.generatedCode && e.generatedCode.length > 500
         )
         setEntries(dynamic)
       })
