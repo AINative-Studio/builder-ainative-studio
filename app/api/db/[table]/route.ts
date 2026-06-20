@@ -13,7 +13,7 @@ import { NextRequest, NextResponse } from 'next/server'
  */
 
 const ZERODB_API = 'https://api.ainative.studio'
-const PROJECT_ID = process.env.ZERODB_PROJECT_ID || '0ba21db1-a688-4176-90d1-4be02fa4354d'
+const PROJECT_ID = process.env.ZERODB_PROJECT_ID || '29e8754c-c67d-4a74-9167-a069d87ab1aa'
 const API_KEY = process.env.ZERODB_API_KEY || ''
 
 async function zerodbFetch(method: string, path: string, body?: any) {
