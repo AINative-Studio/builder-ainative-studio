@@ -10,7 +10,7 @@
 
 const ZERODB_API = 'https://api.ainative.studio/api'
 // Use env var for project ID — different keys have different projects
-const PROJECT_ID = process.env.ZERODB_PROJECT_ID || '29e8754c-c67d-4a74-9167-a069d87ab1aa'
+const PROJECT_ID = process.env.ZERODB_PROJECT_ID || '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
 const TABLE_NAME = 'generations'
 
 function getApiKey(): string {

@@ -131,7 +131,7 @@ async function logGenerationToZeroDB(data: GenerationData): Promise<void> {
 
   try {
     const apiKey = process.env.ZERODB_API_KEY || process.env.AINATIVE_API_KEY || ''
-    const projectId = process.env.ZERODB_PROJECT_ID || '29e8754c-c67d-4a74-9167-a069d87ab1aa'
+    const projectId = process.env.ZERODB_PROJECT_ID || '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
     if (!apiKey) return
 
     const baseUrl = process.env.AINATIVE_API_URL || process.env.ZERODB_BASE_URL || 'https://api.ainative.studio'

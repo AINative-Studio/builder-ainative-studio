@@ -9,7 +9,7 @@
 
 const API_URL = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 const API_KEY = process.env.ZERODB_API_KEY || process.env.AINATIVE_API_KEY || ''
-const PROJECT_ID = process.env.ZERODB_PROJECT_ID || '29e8754c-c67d-4a74-9167-a069d87ab1aa'
+const PROJECT_ID = process.env.ZERODB_PROJECT_ID || '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
 
 const TRAINING_TABLE = 'rlhf_training_data'
 const FEEDBACK_TABLE = 'rlhf_feedback'

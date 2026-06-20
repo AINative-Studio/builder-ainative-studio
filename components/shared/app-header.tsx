@@ -61,7 +61,7 @@ export function AppHeader({ className = '' }: AppHeaderProps) {
   }
 
   return (
-    <div
+    <header
       className={`${!isHomepage ? 'border-b border-border dark:border-input' : ''} ${className}`}
     >
       {/* Handle search params with Suspense boundary */}
@@ -185,6 +185,6 @@ export function AppHeader({ className = '' }: AppHeaderProps) {
           </div>
         </DialogContent>
       </Dialog>
-    </div>
+    </header>
   )
 }

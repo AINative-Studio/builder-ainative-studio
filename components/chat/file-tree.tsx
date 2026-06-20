@@ -23,6 +23,7 @@ export interface FileGroup {
 interface FileTreeProps {
   groups: FileGroup[]
   className?: string
+  defaultCollapsed?: boolean
 }
 
 const getStatusText = (status: FileStatus, action?: 'create' | 'update' | 'delete') => {
@@ -87,7 +88,8 @@ const CollapsibleGroup = ({ group }: { group: FileGroup }) => {
   )
 }
 
-export function FileTree({ groups, className = '' }: FileTreeProps) {
+export function FileTree({ groups, className = '', defaultCollapsed = false }: FileTreeProps) {
+  const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed)
   if (groups.length === 0) {
     return null
   }
@@ -102,8 +104,13 @@ export function FileTree({ groups, className = '' }: FileTreeProps) {
   return (
     <div className={cn('rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-5 shadow-sm', className)}>
       {/* Main section header */}
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-[16px] font-semibold text-black dark:text-white">Files</h3>
+      <button
+        onClick={() => setIsCollapsed(!isCollapsed)}
+        className="flex items-center justify-between w-full text-left mb-4"
+      >
+        <h3 className="text-[16px] font-semibold text-black dark:text-white">
+          Files {isCollapsed ? '▸' : '▾'}
+        </h3>
         <div className="flex items-center gap-3">
           <span className="text-[12px] text-gray-500 dark:text-gray-400 font-normal">
             {completedFiles} of {totalFiles} completed
@@ -116,14 +123,16 @@ export function FileTree({ groups, className = '' }: FileTreeProps) {
             />
           </div>
         </div>
-      </div>
+      </button>
 
       {/* Collapsible sub-sections */}
-      <div>
-        {groups.map((group) => (
-          <CollapsibleGroup key={group.id} group={group} />
-        ))}
-      </div>
+      {!isCollapsed && (
+        <div>
+          {groups.map((group) => (
+            <CollapsibleGroup key={group.id} group={group} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }

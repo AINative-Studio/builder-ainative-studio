@@ -270,6 +270,60 @@ export function PopoverContent({ children, className = '' }: { children: React.R
 }
 `,
 
+  '/src/components/ui/switch.tsx': `
+import React from 'react'
+export function Switch({ checked, onCheckedChange, className = '', ...props }) {
+  return <button role="switch" aria-checked={checked} onClick={() => onCheckedChange?.(!checked)} className={\`relative inline-flex h-6 w-11 items-center rounded-full transition-colors \${checked ? 'bg-blue-600' : 'bg-gray-200'} \${className}\`} {...props}><span className={\`inline-block h-4 w-4 transform rounded-full bg-white transition-transform \${checked ? 'translate-x-6' : 'translate-x-1'}\`} /></button>
+}
+`,
+
+  '/src/components/ui/textarea.tsx': `
+import React from 'react'
+export function Textarea({ className = '', ...props }) {
+  return <textarea className={\`flex min-h-[80px] w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 disabled:opacity-50 \${className}\`} {...props} />
+}
+`,
+
+  '/src/components/ui/slider.tsx': `
+import React from 'react'
+export function Slider({ value = [50], onValueChange, min = 0, max = 100, step = 1, className = '' }) {
+  return <input type="range" min={min} max={max} step={step} value={value[0]} onChange={e => onValueChange?.([Number(e.target.value)])} className={\`w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600 \${className}\`} />
+}
+`,
+
+  '/src/components/ui/dropdown-menu.tsx': `
+import React, { useState } from 'react'
+export function DropdownMenu({ children }) { return <div className="relative inline-block">{children}</div> }
+export function DropdownMenuTrigger({ children, asChild, ...props }) { return <div {...props}>{children}</div> }
+export function DropdownMenuContent({ children, className = '', align = 'start' }) {
+  return <div className={\`absolute z-50 mt-2 min-w-[180px] bg-white rounded-lg border border-gray-200 shadow-lg py-1 \${align === 'end' ? 'right-0' : 'left-0'} \${className}\`}>{children}</div>
+}
+export function DropdownMenuItem({ children, onClick, className = '' }) {
+  return <button onClick={onClick} className={\`w-full text-left px-3 py-2 text-sm hover:bg-gray-100 transition-colors \${className}\`}>{children}</button>
+}
+export function DropdownMenuSeparator() { return <div className="my-1 h-px bg-gray-200" /> }
+export function DropdownMenuLabel({ children, className = '' }) { return <div className={\`px-3 py-2 text-xs font-semibold text-gray-500 uppercase \${className}\`}>{children}</div> }
+`,
+
+  '/src/components/ui/tooltip.tsx': `
+import React, { useState } from 'react'
+export function TooltipProvider({ children }) { return <>{children}</> }
+export function Tooltip({ children }) { return <div className="relative inline-block">{children}</div> }
+export function TooltipTrigger({ children, asChild, ...props }) { return <div className="inline-block" {...props}>{children}</div> }
+export function TooltipContent({ children, className = '' }) { return <div className={\`absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 bg-gray-900 text-white text-xs rounded-md whitespace-nowrap \${className}\`}>{children}</div> }
+`,
+
+  '/src/components/ui/scroll-area.tsx': `
+import React from 'react'
+export function ScrollArea({ children, className = '' }) { return <div className={\`overflow-auto \${className}\`}>{children}</div> }
+export function ScrollBar() { return null }
+`,
+
+  '/src/components/ui/skeleton.tsx': `
+import React from 'react'
+export function Skeleton({ className = '' }) { return <div className={\`animate-pulse bg-gray-200 rounded-md \${className}\`} /> }
+`,
+
   '/src/lib/utils.ts': `
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'

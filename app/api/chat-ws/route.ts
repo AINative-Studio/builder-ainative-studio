@@ -289,46 +289,32 @@ export async function POST(request: NextRequest) {
             console.log(`🤖 Using model: ${modelId} (provider: ${provider}, env: ${isLocal ? 'local' : 'cloud'})`)
 
             // ============ ALL MODELS VIA OPENAI-COMPATIBLE API (Meta or AINative) ============
-            // Compact system prompt focused on design quality + theme colors.
-            // Open-source models (codestral, devstral, etc.) ignore long prompts.
-            // Theme colors are injected directly into examples so the model copies them.
-            const llmSystemPrompt = `Generate a React component. Follow this EXACT structure:
+            // Use the full professional system prompt (enhancedSystemPrompt) which includes:
+            // - 580-line PROFESSIONAL_SYSTEM_PROMPT with AIKit components, AX standards, design rules
+            // - Theme colors injected into all examples via applyThemeToPrompt()
+            // - Unsplash hero images if available
+            // - Memory context from previous generations
+            //
+            // The old 35-line hardcoded prompt capped at 60 lines was the #1 quality bottleneck.
+            // Open-source models (ministral-14b, kimi-k2, nous-coder) handle 4K+ system prompts fine.
+            const llmSystemPrompt = enhancedSystemPrompt + `
 
-\`\`\`jsx
-import React, { useState } from 'react'
-import { Icon1, Icon2 } from 'lucide-react'
+## SANDPACK ENVIRONMENT — AVAILABLE IMPORTS (use ONLY these)
 
-const items = [{id:1, name:"X", value:0}, {id:2, name:"Y", value:0}]
+**npm packages (installed):** react, react-dom, lucide-react, recharts@2.15.0, clsx, tailwind-merge
+**shadcn/ui components (from './components/ui/...'):** button, card, badge, input, tabs, label, table, separator, dialog, select, progress, checkbox, accordion, alert, toast, popover, avatar
+**AIKit components (from './components/aikit'):** MetricCard, AIKitPriceCard, AIKitRating, AgentCard, SwarmView, SafetyBadge, GuardrailPanel, ChatBubble, StreamingIndicator, CodeDisplay, TokenUsageBar, ConnectionStatus, AIKitHeader, AIKitSidebar, AIKitTable, AIKitTimeline, AIKitBanner, AIKitAvatar, Skeleton, SkeletonCard, EmptyState, AIKitProductCard, AIKitPagination, AIKitBreadcrumb, AIKitStepper, VideoPlayer, StreamingText, MediaGallery, AgentTimeline
+**Icons (from 'lucide-react'):** Any Lucide icon
 
-export default function App() {
-  const [data] = useState(items)
-  return (
-    <div className="min-h-screen bg-[${selectedTheme.light}]">
-      <header className="bg-[${selectedTheme.dark}] text-white p-4">
-        <h1 className="text-xl font-bold">App Title</h1>
-      </header>
-      <main className="max-w-5xl mx-auto p-6">
-        <div className="grid grid-cols-3 gap-4">
-          {data.map(item => (
-            <div key={item.id} className="bg-white rounded-xl shadow-sm p-4">
-              <h3 className="font-semibold">{item.name}</h3>
-            </div>
-          ))}
-        </div>
-      </main>
-    </div>
-  )
-}
-\`\`\`
+**DO NOT import:** framer-motion, @radix-ui/*, date-fns, react-hook-form, zod, @tanstack/*, react-router-dom, axios, react-icons, sonner, next/link, next/image
+**DO NOT import from:** @ainative/*, @/components/*, aikit (npm) — use relative paths only
 
-RULES:
-- MAXIMUM 60 LINES. Shorter is better. NEVER exceed 60 lines.
-- The return() with JSX must come EARLY. Do NOT write long data arrays first.
-- Keep data arrays SHORT (3-5 items, 1 line each).
-- Use .map() for ALL repeated elements.
-- Colors: bg-[${selectedTheme.primary}] bg-[${selectedTheme.dark}] bg-[${selectedTheme.light}]
-- NEVER use bg-blue, bg-gray, bg-purple. Only hex colors above.
-- Every <div> must have </div>. Every <section> must have </section>.`
+## CRITICAL SYNTAX RULES
+- Write \`function ComponentName() {\` — always include parentheses
+- Keep ALL strings on single lines. Close every quote.
+- Close every JSX tag. Every <div> has </div>.
+- Use "USD" not "$" in string values.
+- export default function App() — always export default.`
 
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Generating with ' + modelId + '...' })}\n\n`))
 
@@ -399,7 +385,7 @@ RULES:
                   const ctrl = new AbortController()
                   const timer = setTimeout(() => ctrl.abort(), 90_000)
                   const response = await client.chat.completions.create(
-                    { model: tryModel, max_tokens: 4096, temperature: 0.7, messages: singleTurnMessages },
+                    { model: tryModel, max_tokens: 8192, temperature: 0.7, messages: singleTurnMessages },
                     { signal: ctrl.signal }
                   )
                   clearTimeout(timer)
@@ -477,10 +463,12 @@ RULES:
           // (hero sections, backgrounds, accent elements) matching Bolt/Lovable quality
 
           // Validate generated code before storing
+          console.log('[VALIDATION] Running validateGeneratedCode, fullContent length:', fullContent.length)
           let validation = validateGeneratedCode(fullContent)
           // CRITICAL: Use the VALIDATED/FIXED code, not the original raw content
           // validation.code has markdown extracted and auto-fixes applied
           let finalContent = validation.code
+          console.log('[VALIDATION] Result:', validation.valid ? '✅ valid' : '❌ invalid', 'finalContent:', finalContent.length, 'chars')
           let retryAttempted = false
 
           // AUTO-RETRY: If validation fails, automatically retry once with error feedback
@@ -510,18 +498,16 @@ Generate a corrected version of: ${message}`
               // Try retry with fallback chain
               const retryModels = [DEFAULT_MODEL, 'gpt-oss-20b', 'ministral-14b']
               let retryContent = ''
+              // Keep to 2 messages (system + user) to avoid multi-turn 512-token cap
               const retryMessages = [
                 { role: 'system' as const, content: 'Fix the syntax errors in the code below. Return ONLY valid, complete React code wrapped in ```jsx markers. Ensure all JSX tags are properly closed, all strings are terminated, and all brackets match.' },
-                ...previousMessages,
-                { role: 'user' as const, content: enhancedPrompt },
-                { role: 'assistant' as const, content: fullContent },
-                { role: 'user' as const, content: retryPrompt }
+                { role: 'user' as const, content: `Here is the broken code:\n\`\`\`jsx\n${fullContent.slice(0, 6000)}\n\`\`\`\n\n${retryPrompt}` }
               ]
               for (const retryModel of retryModels) {
                 try {
                   const retryResponse = await ainativeClient.chat.completions.create({
                     model: retryModel,
-                    max_tokens: 4096,
+                    max_tokens: 8192,
                     temperature: 0.7,
                     messages: retryMessages,
                   })
@@ -568,8 +554,22 @@ Generate a corrected version of: ${message}`
                 : 'The generated code has syntax errors. Please try regenerating.'
             })}\n\n`))
 
-            // Store the invalid code with error marker
-            storePreview(responseId, finalContent, message, { validationError: validation.error, usage: tokenUsage })
+            // Store the invalid code with error marker — wrap in markdown so iframe preview can extract it
+            const wrappedInvalidCode = `\`\`\`jsx\n${finalContent}\n\`\`\``
+            storePreview(responseId, wrappedInvalidCode, message, { validationError: validation.error, usage: tokenUsage })
+
+            // Still send files for Sandpack (it has its own error boundary)
+            try {
+              const parsedFiles = parseMultiFileOutput(finalContent, message)
+              if (Object.keys(parsedFiles).length > 0) {
+                safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+                  type: 'files',
+                  files: parsedFiles
+                })}\n\n`))
+              }
+            } catch (parseErr) {
+              console.warn('Failed to parse files for Sandpack on validation error path:', parseErr)
+            }
 
             // Send completion with error flag
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({
@@ -648,37 +648,139 @@ Generate a corrected version of: ${message}`
             })}\n\n`))
 
             // Persist + RLHF logging + SSR build (fire-and-forget, non-blocking)
+            // Write RLHF training data directly (before any async imports that might hang)
+            try {
+              const _fs = eval('require')('fs')
+              const _path = eval('require')('path')
+              const _dir = _path.join(process.cwd(), 'data')
+              if (!_fs.existsSync(_dir)) _fs.mkdirSync(_dir, { recursive: true })
+              _fs.appendFileSync(_path.join(_dir, 'rlhf-training-data.jsonl'), JSON.stringify({
+                messages: [
+                  { role: 'system', content: (enhancedSystemPrompt || '').slice(0, 5000) },
+                  ...(previousMessages || []),
+                  { role: 'user', content: enhancedPrompt || message },
+                  { role: 'assistant', content: (finalContent || '').slice(0, 20000) },
+                ],
+                metadata: {
+                  chat_id: responseId, model: usedModel,
+                  status: validation.valid ? 'success' : 'validation_error',
+                  validation_valid: validation.valid, generation_time_ms: genTimeMs,
+                  code_length: finalContent?.length || 0, theme: selectedTheme?.name,
+                  temperature: 0.7, max_tokens: 8192, provider: isLocal ? 'meta' : 'ainative',
+                  retry_attempted: retryAttempted, created_at: new Date().toISOString(),
+                },
+              }) + '\n')
+              console.log(`[RLHF] 📝 Training data saved: ${responseId} (${finalContent.length} chars)`)
+            } catch (_rlhfErr: any) {
+              console.warn('[RLHF] Local JSONL failed:', _rlhfErr?.message || _rlhfErr)
+            }
+
+            console.log('[PERSIST] Starting fire-and-forget block for', responseId)
             try {
               const { saveGeneration, logGenerationEvent } = await import('@/lib/zerodb-store')
-              const { addToShowcase } = await import('@/lib/showcase-store')
               const { storeSSRPreview } = await import('@/lib/preview-store')
+              const { logGeneration: logGenToDrizzle } = await import('@/lib/services/rlhf.service')
               const isShowcase = finalContent.length > 1000
+              const usedModel = requestedModel || DEFAULT_MODEL
+              const genTimeMs = Date.now() - generationStartTime
 
               // Save code to ZeroDB
               saveGeneration({
                 chatId: responseId,
                 prompt: message,
                 generatedCode: finalContent,
-                model: requestedModel || DEFAULT_MODEL,
+                model: usedModel,
                 codeLength: finalContent.length,
                 isShowcase,
               }).catch(e => console.warn('[ZeroDB save failed]', e))
+
+              // Auto-populate showcase with quality generations (validation passed + substantial code)
+              if (validation.valid && finalContent.length > 3000) {
+                import('@/lib/showcase-store').then(({ addToShowcase }) => {
+                  const added = addToShowcase(message, responseId, finalContent.length, finalContent)
+                  if (added) console.log(`🏆 Added to showcase: ${responseId} (${finalContent.length} chars)`)
+                }).catch(() => {})
+              }
 
               // RLHF: Log generation event for tracking + learning
               logGenerationEvent({
                 chatId: responseId,
                 prompt: message,
-                model: requestedModel || DEFAULT_MODEL,
+                model: usedModel,
                 theme: selectedTheme.name,
                 codeLength: finalContent.length,
                 passedValidation: validation.valid,
-                generationTimeMs: Date.now() - generationStartTime,
+                generationTimeMs: genTimeMs,
                 retryCount: retryAttempted ? 1 : 0,
                 finishReason: 'stop',
               }).catch(e => console.warn('[RLHF log failed]', e))
 
-              // Showcase auto-populate disabled — creates junk entries
-              // addToShowcase(message, responseId, finalContent.length, finalContent)
+              // RLHF: Write local JSONL training data (guaranteed, synchronous)
+              try {
+                const rlhfFs = eval('require')('fs')
+                const rlhfPath = eval('require')('path')
+                const rlhfDir = rlhfPath.join(process.cwd(), 'data')
+                if (!rlhfFs.existsSync(rlhfDir)) rlhfFs.mkdirSync(rlhfDir, { recursive: true })
+                const rlhfFile = rlhfPath.join(rlhfDir, 'rlhf-training-data.jsonl')
+                const rlhfRow = {
+                  messages: [
+                    { role: 'system', content: llmSystemPrompt.slice(0, 5000) },
+                    ...(previousMessages || []),
+                    { role: 'user', content: enhancedPrompt },
+                    { role: 'assistant', content: finalContent.slice(0, 20000) },
+                  ],
+                  metadata: {
+                    chat_id: responseId, model: usedModel,
+                    status: validation.valid ? 'success' : 'validation_error',
+                    validation_valid: validation.valid,
+                    generation_time_ms: genTimeMs,
+                    code_length: finalContent.length,
+                    theme: selectedTheme.name,
+                    temperature: 0.7, max_tokens: 8192,
+                    provider: isLocal ? 'meta' : 'ainative',
+                    retry_attempted: retryAttempted,
+                    created_at: new Date().toISOString(),
+                  },
+                }
+                rlhfFs.appendFileSync(rlhfFile, JSON.stringify(rlhfRow) + '\n')
+                console.log(`[RLHF] 📝 Training data saved: ${responseId} (${finalContent.length} chars)`)
+              } catch (rlhfErr: any) {
+                console.warn('[RLHF] Local JSONL failed:', rlhfErr?.message || rlhfErr)
+              }
+
+              // RLHF: Also try Drizzle DB (may fail locally)
+              console.log('[RLHF] 🔄 Calling logGenToDrizzle for', responseId)
+              logGenToDrizzle({
+                chatId: responseId,
+                userId: 'anonymous', // TODO: get from session
+                prompt: message,
+                generatedCode: finalContent,
+                model: usedModel,
+                generationTimeMs: genTimeMs,
+                templateUsed: null,
+                // Fine-tuning data
+                systemPrompt: enhancedSystemPrompt,
+                fullConversation: [
+                  { role: 'system', content: (enhancedSystemPrompt || '').slice(0, 5000) },
+                  ...(previousMessages || []),
+                  { role: 'user', content: enhancedPrompt },
+                  { role: 'assistant', content: finalContent.slice(0, 10000) },
+                ],
+                tokenUsage: tokenUsage || undefined,
+                modelConfig: {
+                  temperature: 0.7,
+                  max_tokens: 8192,
+                  provider: isLocal ? 'meta' : 'ainative',
+                },
+                validationResult: {
+                  valid: validation.valid,
+                  error: validation.valid ? undefined : validation.error,
+                  retryAttempted,
+                },
+                status: validation.valid ? 'success' : 'validation_error',
+                theme: selectedTheme.name,
+                codeLength: finalContent.length,
+              }).catch(e => console.warn('[RLHF Drizzle log failed]', e))
 
               // SSR build in background — when done, the next iframe refresh shows instant content
               import('@/lib/sandbox-builder').then(({ buildInSandbox }) => {
@@ -689,7 +791,9 @@ Generate a corrected version of: ${message}`
                   }
                 }).catch(() => {})
               }).catch(() => {})
-            } catch (_) {}
+            } catch (persistErr: any) {
+              console.error('[PERSIST] Fire-and-forget block failed:', persistErr?.message || persistErr)
+            }
           }
 
           keepaliveActive = false
@@ -703,6 +807,20 @@ Generate a corrected version of: ${message}`
             type: 'error',
             error: 'Stream failed'
           })}\n\n`))
+
+          // RLHF: Log failure for training data
+          import('@/lib/services/rlhf.service').then(({ logGenerationFailure }) => {
+            logGenerationFailure({
+              chatId: responseId,
+              userId: 'anonymous',
+              prompt: message,
+              model: requestedModel || DEFAULT_MODEL,
+              error: error instanceof Error ? error.message : String(error),
+              systemPrompt: enhancedSystemPrompt?.slice(0, 5000),
+              generationTimeMs: Date.now() - generationStartTime,
+            }).catch(() => {})
+          }).catch(() => {})
+
           try { controller.close() } catch (_) { /* already closed */ }
         }
       }

@@ -508,12 +508,14 @@ export function HomeClient() {
     const userMessage = message.trim()
     setMessage('')
     setIsLoading(true)
+    setBuildSteps([])
 
     // Add user message to chat history
     setChatHistory((prev) => [...prev, { type: 'user', content: userMessage }])
 
     try {
-      const endpoint = '/api/chat'
+      // Use chat-ws endpoint for follow-ups too — same SSE format as initial message
+      const endpoint = '/api/chat-ws'
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
@@ -522,13 +524,10 @@ export function HomeClient() {
         body: JSON.stringify({
           message: userMessage,
           chatId: currentChatId,
-          // model handled server-side
-          streaming: true,
         }),
       })
 
       if (!response.ok) {
-        // Try to get the specific error message from the response
         if (response.status === 429) {
           setShowUpgrade('limit-reached')
           throw new Error('You\'ve reached your generation limit. Upgrade to Pro for 100x more tokens and Claude Sonnet 4.')
@@ -543,26 +542,102 @@ export function HomeClient() {
         throw new Error(errorMessage)
       }
 
-      if (!response.body) {
-        throw new Error('No response body for streaming')
+      // Handle streaming response — same SSE parsing as initial message
+      const reader = response.body?.getReader()
+      const decoder = new TextDecoder()
+
+      if (!reader) {
+        throw new Error('No response body')
       }
 
-      setIsLoading(false)
+      let accumulatedContent = ''
 
-      // Add streaming response
+      // Add placeholder message for streaming
       setChatHistory((prev) => [
         ...prev,
         {
           type: 'assistant',
-          content: [],
+          content: '',
           isStreaming: true,
-          stream: response.body,
         },
       ])
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) {
+            setIsLoading(false)
+            break
+          }
+
+          const chunk = decoder.decode(value)
+          const lines = chunk.split('\n')
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6))
+
+                switch (data.type) {
+                  case 'init':
+                    setCurrentChatId(data.chatId)
+                    setCurrentChat({ id: data.chatId, demo: data.demo })
+                    break
+
+                  case 'build_step':
+                    setBuildSteps((prev) => [...prev, data.step])
+                    break
+
+                  case 'chunk':
+                    accumulatedContent += data.content
+                    setChatHistory((prev) => {
+                      const updated = [...prev]
+                      const lastIndex = updated.length - 1
+                      if (lastIndex >= 0 && updated[lastIndex].isStreaming) {
+                        updated[lastIndex] = { ...updated[lastIndex], content: accumulatedContent }
+                      }
+                      return updated
+                    })
+                    break
+
+                  case 'files':
+                    setSandpackFiles(data.files)
+                    break
+
+                  case 'complete':
+                    setChatHistory((prev) => {
+                      const updated = [...prev]
+                      const lastIndex = updated.length - 1
+                      if (lastIndex >= 0) {
+                        updated[lastIndex] = { ...updated[lastIndex], content: accumulatedContent, isStreaming: false }
+                      }
+                      return updated
+                    })
+                    setCurrentChat({ id: data.chatId, demo: data.demo })
+                    setCurrentChatId(data.chatId)
+                    setIsLoading(false)
+                    setRefreshKey((prev) => prev + 1)
+                    setTimeout(() => setBuildSteps([]), 2000)
+                    break
+
+                  case 'error':
+                    console.error('Stream error:', data.error)
+                    setIsLoading(false)
+                    break
+                }
+              } catch (parseError) {
+                console.error('Error parsing SSE data:', parseError)
+              }
+            }
+          }
+        }
+      } catch (streamError) {
+        console.error('Stream reading error:', streamError)
+        setIsLoading(false)
+      }
     } catch (error) {
       console.error('Error:', error)
 
-      // Use the specific error message if available, otherwise fall back to generic message
       const errorMessage =
         error instanceof Error
           ? error.message
@@ -596,8 +671,8 @@ export function HomeClient() {
             singlePanelMode={false}
             activePanel={activePanel === 'chat' ? 'left' : 'right'}
             leftPanel={
-              <div className="flex flex-col h-full">
-                <div className="flex-1 overflow-y-auto">
+              <div className="flex flex-col h-full min-h-0">
+                <div className="flex-1 overflow-y-auto min-h-0">
                   <ChatMessages
                     chatHistory={chatHistory}
                     isLoading={isLoading}

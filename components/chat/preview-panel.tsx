@@ -221,41 +221,23 @@ export function PreviewPanel({
               </div>
             )}
 
-            {/* Progress indicator overlay during generation */}
+            {/* Subtle progress bar at top during generation — doesn't block preview */}
             {isGenerating && !showCodeViewer && (
-              <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
-                <div className="bg-white dark:bg-gray-800 rounded-lg shadow-2xl p-8 max-w-md w-full mx-4">
-                  <div className="text-center mb-6">
-                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-blue-100 dark:bg-blue-900 mb-4">
-                      <svg className="w-8 h-8 text-blue-600 dark:text-blue-400 animate-spin" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
-                    </div>
-                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-                      Generating your component
-                    </h3>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">
-                      {buildSteps.length > 0 ? buildSteps[buildSteps.length - 1] : 'Please wait...'}
-                    </p>
-                  </div>
-
-                  {/* Progress bar */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400">
-                      <span>Progress</span>
-                      <span>{Math.round(progress)}%</span>
-                    </div>
-                    <div className="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-blue-600 dark:bg-blue-500 transition-all duration-500 ease-out"
-                        style={{ width: `${progress}%` }}
-                      />
-                    </div>
-                    <div className="text-xs text-gray-500 dark:text-gray-500 text-center pt-2">
-                      {buildSteps.length} steps completed
-                    </div>
-                  </div>
+              <div className="absolute top-0 left-0 right-0 z-50">
+                <div className="h-1 bg-gray-200 dark:bg-gray-700 overflow-hidden">
+                  <div
+                    className="h-full bg-blue-600 dark:bg-blue-500 transition-all duration-500 ease-out"
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-white/90 dark:bg-gray-900/90 backdrop-blur-sm border-b border-gray-200 dark:border-gray-700">
+                  <svg className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 animate-spin flex-shrink-0" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span className="text-xs text-gray-600 dark:text-gray-400 truncate">
+                    {buildSteps.length > 0 ? buildSteps[buildSteps.length - 1] : 'Building your app...'}
+                  </span>
                 </div>
               </div>
             )}
@@ -263,21 +245,21 @@ export function PreviewPanel({
         ) : (
           <div className="flex-1 flex items-center justify-center bg-gray-50 dark:bg-black">
             {isGenerating ? (
-              <div className="text-center">
-                <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-blue-100 dark:bg-blue-900 mb-4">
-                  <svg className="w-8 h-8 text-blue-600 dark:text-blue-400 animate-spin" fill="none" viewBox="0 0 24 24">
+              <div className="text-center px-6">
+                <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-blue-100 dark:bg-blue-900 mb-3">
+                  <svg className="w-6 h-6 text-blue-600 dark:text-blue-400 animate-spin" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                   </svg>
                 </div>
-                <p className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">
-                  Generating your component
+                <p className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">
+                  Building your app
                 </p>
-                <p className="text-xs text-gray-600 dark:text-gray-400">
-                  {buildSteps.length > 0 ? buildSteps[buildSteps.length - 1] : 'Please wait...'}
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  {buildSteps.length > 0 ? buildSteps[buildSteps.length - 1] : 'Analyzing your requirements...'}
                 </p>
-                <div className="mt-4 max-w-xs mx-auto">
-                  <div className="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                <div className="mt-3 max-w-xs mx-auto">
+                  <div className="h-1 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
                     <div
                       className="h-full bg-blue-600 dark:bg-blue-500 transition-all duration-500 ease-out"
                       style={{ width: `${progress}%` }}
@@ -286,12 +268,15 @@ export function PreviewPanel({
                 </div>
               </div>
             ) : (
-              <div className="text-center">
+              <div className="text-center px-6">
+                <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-gray-100 dark:bg-gray-800 mb-3">
+                  <Monitor className="w-6 h-6 text-gray-400" />
+                </div>
                 <p className="text-sm font-medium text-gray-700 dark:text-gray-200">
-                  No preview available
+                  Your app will appear here
                 </p>
-                <p className="text-xs text-gray-700/50 dark:text-gray-200/50">
-                  Start a conversation to see your app here
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Describe what you want to build and watch it come to life
                 </p>
               </div>
             )}

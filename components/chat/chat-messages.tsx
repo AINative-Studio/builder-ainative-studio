@@ -146,6 +146,12 @@ export function ChatMessages({
     }
   }, [buildTasks, isLoading])
 
+  // Auto-scroll to bottom when new messages arrive or during streaming
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [chatHistory.length, isLoading])
+
   if (chatHistory.length === 0) {
     return (
       <Conversation>
@@ -237,11 +243,12 @@ export function ChatMessages({
                 <div className="mt-4 space-y-4 w-full max-w-2xl">
                   {(buildTasks.length > 0 || fileGroups.length > 0) && (
                     <>
-                      <div className="text-sm text-gray-600 dark:text-gray-400">
-                        Component generated successfully
-                      </div>
-                      <BuildProgress tasks={buildTasks} />
-                      <FileTree groups={fileGroups} />
+                      {buildTasks.length > 0 && (
+                        <BuildProgress tasks={buildTasks} />
+                      )}
+                      {fileGroups.length > 0 && (
+                        <FileTree groups={fileGroups} defaultCollapsed={!isLoading} />
+                      )}
                     </>
                   )}
                   {/* RLHF Feedback — Thumbs Up / Down */}
@@ -276,6 +283,7 @@ export function ChatMessages({
               <Loader size={16} className="text-gray-500 dark:text-gray-400" />
             </div>
           )}
+          <div ref={messagesEndRef} />
         </ConversationContent>
       </Conversation>
     </>

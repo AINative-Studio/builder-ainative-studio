@@ -12,6 +12,8 @@ export const sandpackDependencies: Record<string, string> = {
   recharts: '2.15.0',
   clsx: 'latest',
   'tailwind-merge': 'latest',
+  'framer-motion': '11.0.0',
+  'date-fns': '3.6.0',
 }
 
 /** External resources loaded via CDN (Tailwind JIT) */
