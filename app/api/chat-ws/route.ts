@@ -695,7 +695,7 @@ Generate a corrected version of: ${message}`
               }).catch(e => console.warn('[ZeroDB save failed]', e))
 
               // Auto-populate showcase with quality generations (validation passed + substantial code)
-              if (validation.valid && finalContent.length > 3000) {
+              if (validation.valid && finalContent.length > 1500) {
                 import('@/lib/showcase-store').then(({ addToShowcase }) => {
                   const added = addToShowcase(message, responseId, finalContent.length, finalContent)
                   if (added) console.log(`🏆 Added to showcase: ${responseId} (${finalContent.length} chars)`)

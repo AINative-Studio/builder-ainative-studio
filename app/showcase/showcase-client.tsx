@@ -53,12 +53,12 @@ export function ShowcaseGalleryClient() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch('/api/showcase?offset=0&limit=20')
+    fetch('/api/showcase?offset=0&limit=100')
       .then(r => r.json())
       .then(data => {
-        // Filter to only show dynamic entries (not seeds — those are already shown above)
+        // Filter to only show dynamic entries with chatId (not seeds)
         const dynamic = (data.entries || []).filter(
-          (e: ShowcaseEntry) => e.chatId
+          (e: ShowcaseEntry) => e.chatId && !e.slug?.startsWith('showcase-')
         )
         setEntries(dynamic)
       })

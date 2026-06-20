@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
   try {
     const rows = await listGenerations(100)
     zerodbEntries = rows
-      .filter((r: any) => r.code_length > 3000)
+      .filter((r: any) => r.code_length > 1500)
       .map((r: any) => {
         const title = r.title || r.prompt?.replace(/^Build\s+(a|an)\s+/i, '').split(/[.!]/)[0]?.trim()?.split(' ').slice(0, 6).map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') || 'Untitled'
         return {

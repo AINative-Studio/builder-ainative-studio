@@ -18,8 +18,8 @@ const dynamicEntries = globalStore.__showcaseDynamic
  * Add a generation to the showcase
  */
 export function addToShowcase(prompt: string, chatId: string, codeLength: number, generatedCode?: string): boolean {
-  // Quality gate
-  if (codeLength < 3000) return false
+  // Quality gate — 1500+ chars = meaningful component (was 3000, lowered for open-source model output)
+  if (codeLength < 1500) return false
 
   // Generate title from prompt
   const title = prompt
