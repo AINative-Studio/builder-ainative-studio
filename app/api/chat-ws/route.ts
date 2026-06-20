@@ -662,9 +662,9 @@ Generate a corrected version of: ${message}`
                   { role: 'assistant', content: (finalContent || '').slice(0, 20000) },
                 ],
                 metadata: {
-                  chat_id: responseId, model: usedModel,
+                  chat_id: responseId, model: requestedModel || DEFAULT_MODEL,
                   status: validation.valid ? 'success' : 'validation_error',
-                  validation_valid: validation.valid, generation_time_ms: genTimeMs,
+                  validation_valid: validation.valid, generation_time_ms: Date.now() - generationStartTime,
                   code_length: finalContent?.length || 0, theme: selectedTheme?.name,
                   temperature: 0.7, max_tokens: 8192, provider: isLocal ? 'meta' : 'ainative',
                   retry_attempted: retryAttempted, created_at: new Date().toISOString(),
