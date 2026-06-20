@@ -715,38 +715,7 @@ Generate a corrected version of: ${message}`
                 finishReason: 'stop',
               }).catch(e => console.warn('[RLHF log failed]', e))
 
-              // RLHF: Write local JSONL training data (guaranteed, synchronous)
-              try {
-                const rlhfFs = eval('require')('fs')
-                const rlhfPath = eval('require')('path')
-                const rlhfDir = rlhfPath.join(process.cwd(), 'data')
-                if (!rlhfFs.existsSync(rlhfDir)) rlhfFs.mkdirSync(rlhfDir, { recursive: true })
-                const rlhfFile = rlhfPath.join(rlhfDir, 'rlhf-training-data.jsonl')
-                const rlhfRow = {
-                  messages: [
-                    { role: 'system', content: llmSystemPrompt.slice(0, 5000) },
-                    ...(previousMessages || []),
-                    { role: 'user', content: enhancedPrompt },
-                    { role: 'assistant', content: finalContent.slice(0, 20000) },
-                  ],
-                  metadata: {
-                    chat_id: responseId, model: usedModel,
-                    status: validation.valid ? 'success' : 'validation_error',
-                    validation_valid: validation.valid,
-                    generation_time_ms: genTimeMs,
-                    code_length: finalContent.length,
-                    theme: selectedTheme.name,
-                    temperature: 0.7, max_tokens: 8192,
-                    provider: isLocal ? 'meta' : 'ainative',
-                    retry_attempted: retryAttempted,
-                    created_at: new Date().toISOString(),
-                  },
-                }
-                rlhfFs.appendFileSync(rlhfFile, JSON.stringify(rlhfRow) + '\n')
-                console.log(`[RLHF] 📝 Training data saved: ${responseId} (${finalContent.length} chars)`)
-              } catch (rlhfErr: any) {
-                console.warn('[RLHF] Local JSONL failed:', rlhfErr?.message || rlhfErr)
-              }
+              // JSONL local write removed — ZeroDB is source of truth (Refs builder#41)
 
               // RLHF: Also try Drizzle DB (may fail locally)
               console.log('[RLHF] 🔄 Calling logGenToDrizzle for', responseId)
