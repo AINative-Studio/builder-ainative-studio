@@ -458,38 +458,74 @@ export async function GET(
   // Build the component script block
   // Use type="text/babel" — Babel standalone auto-compiles these in the global scope
   // This avoids all eval/scope issues — the code runs like any normal <script>
-  // SERVER-SIDE JSX COMPILATION
-  // Compile JSX to plain JS on the server using @babel/parser + transform
-  // This eliminates ALL client-side Babel issues (scope, async, CSP, CDN)
-  let compiledCode = ''
-  try {
-    const babel = await import('@babel/core')
-    const result = babel.transformSync(componentCode, {
-      presets: [['@babel/preset-react', { runtime: 'classic' }]],
-      filename: 'component.jsx',
-    })
-    compiledCode = result?.code || ''
-    console.log(`[Preview] Server-side Babel compiled: ${compiledCode.length} chars`)
-  } catch (babelErr: any) {
-    console.warn(`[Preview] Server-side Babel FAILED: ${babelErr?.message?.slice(0, 200)}`)
-    compiledCode = ''
-  }
+  const safeComponentCode = componentCode.replace(/<\/script>/gi, '<\\/script>')
 
-  const safeComponentCode = (compiledCode || componentCode).replace(/<\/script>/gi, '<\\/script>')
-
-  const componentScriptBlock = compiledCode
-    ? `<script>${fallbackScript}</script>
+  // Client-side Babel transform + eval with global scope setup
+  // The trick: wrap the compiled code in a Function that receives all globals as params
+  const componentScriptBlock = `<script>${fallbackScript}</script>
 <script>
-// Server-compiled JS (no client-side Babel needed)
-${safeComponentCode}
-window.${detectedComponentName} = typeof ${detectedComponentName} !== 'undefined' ? ${detectedComponentName} : null;
-console.log('[Preview] Server-compiled component loaded:', typeof window['${detectedComponentName}']);
-</script>`
-    : `<script>${fallbackScript}</script>
-<script>window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";</script>
-<script type="text/babel">
-${componentCode.replace(/<\/script>/gi, '<\\/script>')}
-if (typeof ${detectedComponentName} !== 'undefined') window.${detectedComponentName} = ${detectedComponentName};
+window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
+if (typeof Babel !== 'undefined' && typeof React !== 'undefined') {
+  try {
+    var _src = ${JSON.stringify(componentCode)};
+    var _compiled = Babel.transform(_src, {presets:[['react', {runtime:'classic'}]]}).code;
+    // Create a function that receives all globals and executes the compiled code
+    // This gives the code access to useState, Button, AIKitSidebar, etc.
+    var _fn = new Function(
+      'React','useState','useEffect','useCallback','useMemo','useRef','Fragment',
+      'Button','Card','CardHeader','CardTitle','CardDescription','CardContent','CardFooter',
+      'Input','Label','Badge','Avatar','AvatarImage','AvatarFallback',
+      'Table','TableHeader','TableBody','TableRow','TableHead','TableCell','Separator',
+      'Dialog','DialogContent','DialogHeader','DialogTitle','DialogDescription','DialogFooter',
+      'Select','SelectTrigger','SelectValue','SelectContent','SelectItem',
+      'Tabs','TabsList','TabsTrigger','TabsContent','Progress','Checkbox',
+      'Accordion','AccordionItem','AccordionTrigger','AccordionContent',
+      'Alert','AlertTitle','AlertDescription',
+      'MetricCard','AIKitPriceCard','AIKitRating','AgentCard','SwarmView','SafetyBadge',
+      'GuardrailPanel','ChatBubble','StreamingIndicator','CodeDisplay','TokenUsageBar',
+      'ConnectionStatus','AIKitHeader','AIKitSidebar','AIKitTable','AIKitTimeline',
+      'AIKitBanner','AIKitAvatar','Skeleton','SkeletonCard','EmptyState',
+      'AIKitProductCard','AIKitPagination','AIKitBreadcrumb','AIKitStepper',
+      'VideoPlayer','StreamingText','MediaGallery','AgentTimeline',
+      'ResponsiveContainer','ReLineChart','Line','ReBarChart','Bar',
+      'RePieChart','Pie','Cell','AreaChart','Area','XAxis','YAxis',
+      'CartesianGrid','RechartsTooltip','Legend',
+      'cn',
+      _compiled + ';\\nreturn typeof ${detectedComponentName} !== "undefined" ? ${detectedComponentName} : null;'
+    );
+    var _component = _fn(
+      React, useState, useEffect, useCallback, useMemo, useRef, Fragment,
+      Button, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter,
+      Input, Label, Badge, Avatar, AvatarImage, AvatarFallback,
+      Table, TableHeader, TableBody, TableRow, TableHead, TableCell, Separator,
+      Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+      Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
+      Tabs, TabsList, TabsTrigger, TabsContent, Progress, Checkbox,
+      Accordion, AccordionItem, AccordionTrigger, AccordionContent,
+      Alert, AlertTitle, AlertDescription,
+      MetricCard, AIKitPriceCard, AIKitRating, AgentCard, SwarmView, SafetyBadge,
+      GuardrailPanel, ChatBubble, StreamingIndicator, CodeDisplay, TokenUsageBar,
+      ConnectionStatus, AIKitHeader, AIKitSidebar, AIKitTable, AIKitTimeline,
+      AIKitBanner, AIKitAvatar, Skeleton, SkeletonCard, EmptyState,
+      AIKitProductCard, AIKitPagination, AIKitBreadcrumb, AIKitStepper,
+      VideoPlayer, StreamingText, MediaGallery, AgentTimeline,
+      ResponsiveContainer, ReLineChart, Line, ReBarChart, Bar,
+      RePieChart, Pie, Cell, AreaChart, Area, XAxis, YAxis,
+      CartesianGrid, RechartsTooltip, Legend,
+      cn
+    );
+    if (_component) {
+      window['${detectedComponentName}'] = _component;
+      console.log('[Preview] ✓ Component compiled and exposed: ${detectedComponentName}');
+    } else {
+      console.error('[Preview] ✗ Component returned null from eval');
+    }
+    document.getElementById('loading-indicator').style.display = 'none';
+  } catch(e) {
+    console.error('[Preview] Babel/eval error:', e.message);
+    document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px"><h3 style="color:#dc2626">Error</h3><pre style="background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b">' + String(e.message||e).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px">Retry</button></div>';
+  }
+}
 </script>`
 
   // Create simple HTML with the component
@@ -996,19 +1032,6 @@ if (typeof ${detectedComponentName} !== 'undefined') window.${detectedComponentN
     ${componentScriptBlock}
     <!-- Component detection and rendering — wait for Babel to process text/babel scripts -->
     <script>
-      // Babel standalone processes text/babel scripts asynchronously
-      // Poll for the component to appear on window
-      var _pollCount = 0;
-      var _pollInterval = setInterval(function() {
-        _pollCount++;
-        if (window['${detectedComponentName}'] || _pollCount > 40) {
-          clearInterval(_pollInterval);
-          console.log('[Preview] Poll done after ' + (_pollCount * 250) + 'ms, component:', typeof window['${detectedComponentName}']);
-          _renderComponent();
-        }
-      }, 250);
-
-      function _renderComponent() {
       try {
 
         // Find the main page component to render.
@@ -1231,7 +1254,6 @@ if (typeof ${detectedComponentName} !== 'undefined') window.${detectedComponentN
           '<pre>' + _esc(error.message) + '</pre>' +
           '</div>';
       }
-      } // end _renderComponent
     </script>
 </body>
 </html>
