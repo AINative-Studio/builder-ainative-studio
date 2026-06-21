@@ -468,6 +468,12 @@ if (typeof Babel !== 'undefined' && typeof React !== 'undefined') {
     var _s = document.getElementById('component-source').textContent;
     var _t = Babel.transform(_s, {presets:['react']});
     eval(_t.code);
+    // CRITICAL: Make the detected component available on window
+    // Babel eval creates functions in eval scope, not window scope
+    try {
+      var _detComp = eval("${detectedComponentName}");
+      if (typeof _detComp === 'function') window["${detectedComponentName}"] = _detComp;
+    } catch(e) {}
     document.getElementById('loading-indicator').style.display = 'none';
   } catch(e) {
     document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px"><h3 style="color:#dc2626">Error</h3><pre style="background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b">' + String(e.message||e).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px">Retry</button></div>';

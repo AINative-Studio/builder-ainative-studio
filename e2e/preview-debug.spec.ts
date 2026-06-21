@@ -1,43 +1,28 @@
-import { test, expect } from '@playwright/test'
+import { test } from '@playwright/test'
 
-test('debug preview rendering', async ({ page }) => {
-  await page.goto('https://builder.ainative.studio', { waitUntil: 'networkidle', timeout: 30000 })
-  await page.waitForTimeout(3000)
-  
-  // Click Agent Dashboard
-  const btn = page.getByText('Agent Dashboard', { exact: true }).first()
-  await btn.click()
-  
-  console.log('Clicked, waiting...')
-  
-  // Wait for generation to complete
-  await page.waitForTimeout(50000)
-  
-  // Take screenshot
-  await page.screenshot({ path: '/tmp/preview-debug.png', fullPage: true })
-  
-  // Debug: list all iframes
-  const iframes = await page.locator('iframe').all()
-  console.log('Total iframes:', iframes.length)
-  for (let i = 0; i < iframes.length; i++) {
-    const src = await iframes[i].getAttribute('src')
-    const visible = await iframes[i].isVisible()
-    const box = await iframes[i].boundingBox()
-    console.log(`  iframe[${i}]: src=${src} visible=${visible} box=${JSON.stringify(box)}`)
-  }
-  
-  // Check the page content for any preview-related elements
-  const content = await page.content()
-  console.log('Has WebPreviewBody:', content.includes('WebPreviewBody') || content.includes('Preview'))
-  console.log('Has /api/preview:', content.includes('/api/preview'))
-  console.log('Has iframe tag:', content.includes('<iframe'))
-  console.log('Has demo URL:', content.includes('/preview/'))
-  
-  // Check console logs
+test('capture preview console', async ({ page }) => {
+  const errors: string[] = []
   const logs: string[] = []
-  page.on('console', msg => logs.push(msg.text()))
-  await page.waitForTimeout(2000)
-  const previewLogs = logs.filter(l => l.includes('Preview') || l.includes('preview') || l.includes('iframe') || l.includes('DEBUG'))
-  console.log('Preview-related console logs:', previewLogs.length)
-  previewLogs.forEach(l => console.log('  ', l))
+  page.on('console', msg => {
+    const text = msg.text()
+    if (msg.type() === 'error') errors.push(text)
+    else logs.push(text)
+  })
+  page.on('pageerror', err => errors.push('PAGEERROR: ' + err.message))
+
+  await page.goto('https://builder.ainative.studio/api/preview/yjoECcJYbTiiqezIb1kd9', {
+    waitUntil: 'networkidle',
+    timeout: 30000
+  }).catch(() => {})
+  await page.waitForTimeout(15000)
+
+  console.log('=== LOGS ===')
+  logs.forEach(l => console.log(l.substring(0, 300)))
+  console.log('=== ERRORS ===')
+  errors.forEach(e => console.log(e.substring(0, 300)))
+
+  const root = await page.evaluate(() => document.getElementById('root')?.innerHTML?.substring(0, 500) || 'ROOT_EMPTY')
+  const loader = await page.evaluate(() => document.getElementById('loading-indicator')?.style.display || 'NO_LOADER')
+  console.log('=== ROOT ===', root)
+  console.log('=== LOADER ===', loader)
 })
