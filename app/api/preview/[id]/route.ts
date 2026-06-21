@@ -463,16 +463,15 @@ export async function GET(
   // This eliminates ALL client-side Babel issues (scope, async, CSP, CDN)
   let compiledCode = ''
   try {
-    const { transformSync } = require('@babel/core')
-    const result = transformSync(componentCode, {
-      presets: ['@babel/preset-react'],
+    const babel = await import('@babel/core')
+    const result = babel.transformSync(componentCode, {
+      presets: [await import('@babel/preset-react').then(m => m.default || m)],
       filename: 'component.jsx',
     })
     compiledCode = result?.code || ''
     console.log(`[Preview] Server-side Babel compiled: ${compiledCode.length} chars`)
   } catch (babelErr: any) {
-    console.warn(`[Preview] Server-side Babel failed, falling back to client-side: ${babelErr?.message?.slice(0, 100)}`)
-    // Fallback: use client-side Babel (old approach)
+    console.warn(`[Preview] Server-side Babel failed: ${babelErr?.message?.slice(0, 150)}`)
     compiledCode = ''
   }
 
