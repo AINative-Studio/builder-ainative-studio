@@ -465,7 +465,7 @@ export async function GET(
   try {
     const babel = await import('@babel/core')
     const result = babel.transformSync(componentCode, {
-      presets: ['@babel/preset-react'],
+      presets: [['@babel/preset-react', { runtime: 'classic' }]],
       filename: 'component.jsx',
     })
     compiledCode = result?.code || ''
