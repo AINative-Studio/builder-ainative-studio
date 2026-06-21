@@ -123,69 +123,56 @@ export async function GET(
     })
   }
 
-  // Extract all code blocks - handle both complete and streaming (incomplete) blocks
-  // This regex is more flexible to handle streaming content
-  const allCodeMatches = content.match(/```(?:typescript|tsx|jsx|javascript|js)?[\r\n]?([\s\S]*?)(?:```|$)/g)
-
-  let codeMatch = null
-  if (allCodeMatches && allCodeMatches.length > 0) {
-    // Look for a code block that doesn't have imports (self-contained)
-    const selfContainedBlock = allCodeMatches.find(block => {
-      const blockContent = block.match(/```(?:typescript|tsx|jsx|javascript|js)?[\r\n]?([\s\S]*?)(?:```|$)/)
-      return blockContent && !blockContent[1].includes('import {') && !blockContent[1].includes('from "@')
-    })
-
-    if (selfContainedBlock) {
-      codeMatch = selfContainedBlock.match(/```(?:typescript|tsx|jsx|javascript|js)?[\r\n]?([\s\S]*?)(?:```|$)/)
-    } else {
-      // Fall back to the first block if no self-contained one found
-      codeMatch = allCodeMatches[0].match(/```(?:typescript|tsx|jsx|javascript|js)?[\r\n]?([\s\S]*?)(?:```|$)/)
-    }
-  }
+  // ====================================================================
+  // STEP 1: Extract code from content (handles markdown, multi-file, raw)
+  // ====================================================================
 
   let componentCode = ''
 
-  if (!codeMatch || !codeMatch[1]) {
-    // No markdown code blocks found - try using raw content
-    // This happens when Tool Use API returns unwrapped code
-    console.log('No code blocks found, using raw content for ID:', id)
-
-    // CRITICAL: Aggressively clean up ALL malformed markdown wrappers
-    // Claude sometimes returns: ""`jsx, "`jsx, ```jsx", "```jsx, etc.
-    let cleanedContent = content
-      // Remove ALL combinations of quotes/backticks + language identifiers at start
-      .replace(/^[\s\n\r]*["'`]{1,10}(?:jsx|javascript|tsx|ts|js|react)?[\s\n\r]*/gi, '')
-      // Remove ALL combinations of quotes/backticks at end
-      .replace(/[\s\n\r]*["'`]{1,10}[\s\n\r]*$/gi, '')
-      // Remove any remaining weird leading characters before 'function' or 'const'
-      .replace(/^[^a-zA-Z/\s]+(function|const|import|export)/i, '$1')
-      .trim()
-
-    // Check if content looks like React/JSX code (contains function or const with JSX)
-    if (cleanedContent.includes('function ') || (cleanedContent.includes('const ') && cleanedContent.includes('return'))) {
-      componentCode = cleanedContent
-    } else {
-      // Still no valid code - return error
-      const errorHtml = `
-        <!DOCTYPE html>
-        <html>
-        <body style="font-family: sans-serif; padding: 20px;">
-          <h2>No code found in content</h2>
-          <p>The generated content doesn't contain any code blocks.</p>
-          <details>
-            <summary>Raw content</summary>
-            <pre>${content.substring(0, 500).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
-          </details>
-        </body>
-        </html>
-      `
-      return new NextResponse(errorHtml, {
-        headers: { 'Content-Type': 'text/html' },
-      })
+  // Handle multi-file output: extract only the main App.tsx file
+  if (content.includes('// --- FILE:')) {
+    const files = content.split(/\/\/\s*---\s*FILE:\s*/i)
+    // Find App.tsx or the first .tsx/.jsx file
+    let mainFile = files.find(f => /^src\/App\.tsx|^App\.tsx/i.test(f.trim()))
+    if (!mainFile) mainFile = files.find(f => /\.tsx|\.jsx/i.test(f.split('\n')[0]))
+    if (!mainFile) mainFile = files[1] // First file after split
+    if (mainFile) {
+      // Remove the file path line (first line like "src/App.tsx ---")
+      componentCode = mainFile.replace(/^.*?---\s*\n?/, '').trim()
+      console.log(`[Preview] Extracted main file from multi-file output (${componentCode.length} chars)`)
     }
-  } else {
-    componentCode = codeMatch[1]
   }
+
+  // If no multi-file, try markdown code blocks
+  if (!componentCode) {
+    const codeBlockMatch = content.match(/```(?:tsx?|jsx?|javascript|typescript)?\s*\n([\s\S]*?)```/)
+    if (codeBlockMatch) {
+      componentCode = codeBlockMatch[1].trim()
+    }
+  }
+
+  // If no code blocks, use raw content
+  if (!componentCode) {
+    componentCode = content
+      .replace(/^[\s\n\r]*["'`]{1,10}(?:jsx|javascript|tsx|ts|js|react)?[\s\n\r]*/gi, '')
+      .replace(/[\s\n\r]*["'`]{1,10}[\s\n\r]*$/gi, '')
+      .trim()
+  }
+
+  // Must have actual code
+  if (!componentCode.includes('function ') && !componentCode.includes('const ') && !componentCode.includes('return')) {
+    return new NextResponse(`<!DOCTYPE html><html><body style="font-family:sans-serif;padding:20px;text-align:center"><h2>No renderable code found</h2><p>Content length: ${content.length}</p></body></html>`, {
+      headers: { 'Content-Type': 'text/html' },
+    })
+  }
+
+  // CRITICAL: Detect the main component name BEFORE stripping exports
+  // This is the most reliable way — don't rely on scanning window later
+  const exportDefaultMatch = componentCode.match(/export\s+default\s+function\s+([A-Z]\w+)/)
+  const exportDefaultConstMatch = componentCode.match(/export\s+default\s+([A-Z]\w+)/)
+  const standaloneFunction = componentCode.match(/^function\s+([A-Z]\w+)\s*\(/m)
+  const detectedComponentName = exportDefaultMatch?.[1] || exportDefaultConstMatch?.[1] || standaloneFunction?.[1] || 'App'
+  console.log(`[Preview] Detected component name: ${detectedComponentName}`)
 
   // CRITICAL: Clean up malformed markdown wrappers that might be in the extracted code
   // This aggressively removes any combination of quotes/backticks at start and end
@@ -469,11 +456,13 @@ export async function GET(
   }
 
   // Build the component script block — client-side Babel transform
+  // Inject detected component name so rendering doesn't have to guess
   const componentScriptBlock = `<script id="component-source" type="text/plain">
 ${componentCode}
 </script>
 <script>${fallbackScript}</script>
 <script>
+window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
 if (typeof Babel !== 'undefined' && typeof React !== 'undefined') {
   try {
     var _s = document.getElementById('component-source').textContent;
@@ -1035,31 +1024,42 @@ if (typeof Babel !== 'undefined' && typeof React !== 'undefined') {
         console.log('[Preview] Searching for page component...');
 
         // Check if a function was created by _getIcon (our Lucide wrapper)
-        // We tag icon functions with a marker property for reliable detection
         function _isIconWrapper(fn) {
           if (!fn) return false;
           if (fn._isLucideIcon) return true;
           var str = fn.toString();
-          // Icon wrappers are small and contain SVG-related code
-          return str.length < 600 && (str.includes('viewBox') || str.includes('UnknownIcon') || str.includes('LucideIcon') || str.includes('_createLucideIcon') || str.includes('0 0 24 24'));
+          return str.length < 600 && (str.includes('viewBox') || str.includes('UnknownIcon') || str.includes('LucideIcon') || str.includes('0 0 24 24'));
         }
 
-        // Build a safe component registry instead of using eval()
-        var _localComponents = {};
-        _pageNames.forEach(function(n) {
-          try { _localComponents[n] = new Function('return typeof ' + n + ' !== "undefined" ? ' + n + ' : undefined')(); } catch(e) {}
-        });
-
-        // First, scan for known page component names via registry
-        for (const name of _pageNames) {
+        // PRIORITY 1: Use the server-detected component name (most reliable)
+        var _detectedName = window.__DETECTED_COMPONENT_NAME__;
+        if (_detectedName) {
           try {
-            const fn = _localComponents[name];
-            if (typeof fn === 'function' && !_isIconWrapper(fn)) {
-              Component = fn;
-              console.log('[Preview] ✓ Found component: ' + name + ' (local scope)');
-              break;
+            var _detected = new Function('return typeof ' + _detectedName + ' !== "undefined" ? ' + _detectedName + ' : undefined')();
+            if (typeof _detected === 'function' && !_isIconWrapper(_detected)) {
+              Component = _detected;
+              console.log('[Preview] ✓ Found component via server detection: ' + _detectedName);
             }
-          } catch (e) {}
+          } catch(e) {}
+        }
+
+        // PRIORITY 2: Build a safe component registry for known names
+        if (!Component) {
+          var _localComponents = {};
+          _pageNames.forEach(function(n) {
+            try { _localComponents[n] = new Function('return typeof ' + n + ' !== "undefined" ? ' + n + ' : undefined')(); } catch(e) {}
+          });
+
+          for (const name of _pageNames) {
+            try {
+              const fn = _localComponents[name];
+              if (typeof fn === 'function' && !_isIconWrapper(fn)) {
+                Component = fn;
+                console.log('[Preview] ✓ Found component: ' + name + ' (local scope)');
+                break;
+              }
+            } catch (e) {}
+          }
         }
 
         // If not found, search window for names ending with page-like suffixes
