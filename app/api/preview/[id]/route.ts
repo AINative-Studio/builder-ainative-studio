@@ -465,13 +465,13 @@ export async function GET(
   try {
     const babel = await import('@babel/core')
     const result = babel.transformSync(componentCode, {
-      presets: [await import('@babel/preset-react').then(m => m.default || m)],
+      presets: ['@babel/preset-react'],
       filename: 'component.jsx',
     })
     compiledCode = result?.code || ''
     console.log(`[Preview] Server-side Babel compiled: ${compiledCode.length} chars`)
   } catch (babelErr: any) {
-    console.warn(`[Preview] Server-side Babel failed: ${babelErr?.message?.slice(0, 150)}`)
+    console.warn(`[Preview] Server-side Babel FAILED: ${babelErr?.message?.slice(0, 200)}`)
     compiledCode = ''
   }
 
