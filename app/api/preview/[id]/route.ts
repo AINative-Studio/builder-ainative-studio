@@ -475,73 +475,30 @@ export async function GET(
   // This avoids all eval/scope issues — the code runs like any normal <script>
   const safeComponentCode = componentCode.replace(/<\/script>/gi, '<\\/script>')
 
-  // Client-side Babel transform + eval with global scope setup
-  // The trick: wrap the compiled code in a Function that receives all globals as params
+  // Compile JSX → JS with Babel, then inject as a <script> tag in global scope
+  // This approach: Babel transform happens in script 1, compiled JS runs in script 2
+  // Script 2 shares scope with the setup script (icons, React, shadcn, AIKit all available)
   const componentScriptBlock = `<script>${fallbackScript}</script>
 <script>
 window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
-if (typeof Babel !== 'undefined' && typeof React !== 'undefined') {
+(function() {
+  if (typeof Babel === 'undefined' || typeof React === 'undefined') return;
   try {
     var _src = ${JSON.stringify(componentCode)};
     var _compiled = Babel.transform(_src, {presets:[['react', {runtime:'classic'}]]}).code;
-    // Create a function that receives all globals and executes the compiled code
-    // This gives the code access to useState, Button, AIKitSidebar, etc.
-    var _fn = new Function(
-      'React','useState','useEffect','useCallback','useMemo','useRef','Fragment',
-      'Button','Card','CardHeader','CardTitle','CardDescription','CardContent','CardFooter',
-      'Input','Label','Badge','Avatar','AvatarImage','AvatarFallback',
-      'Table','TableHeader','TableBody','TableRow','TableHead','TableCell','Separator',
-      'Dialog','DialogContent','DialogHeader','DialogTitle','DialogDescription','DialogFooter',
-      'Select','SelectTrigger','SelectValue','SelectContent','SelectItem',
-      'Tabs','TabsList','TabsTrigger','TabsContent','Progress','Checkbox',
-      'Accordion','AccordionItem','AccordionTrigger','AccordionContent',
-      'Alert','AlertTitle','AlertDescription',
-      'MetricCard','AIKitPriceCard','AIKitRating','AgentCard','SwarmView','SafetyBadge',
-      'GuardrailPanel','ChatBubble','StreamingIndicator','CodeDisplay','TokenUsageBar',
-      'ConnectionStatus','AIKitHeader','AIKitSidebar','AIKitTable','AIKitTimeline',
-      'AIKitBanner','AIKitAvatar','Skeleton','SkeletonCard','EmptyState',
-      'AIKitProductCard','AIKitPagination','AIKitBreadcrumb','AIKitStepper',
-      'VideoPlayer','StreamingText','MediaGallery','AgentTimeline',
-      'ResponsiveContainer','ReLineChart','Line','ReBarChart','Bar',
-      'RePieChart','Pie','Cell','AreaChart','Area','XAxis','YAxis',
-      'CartesianGrid','RechartsTooltip','Legend',
-      'cn',
-      _compiled + ';\\nreturn typeof ${detectedComponentName} !== "undefined" ? ${detectedComponentName} : null;'
-    );
-    var _component = _fn(
-      React, useState, useEffect, useCallback, useMemo, useRef, Fragment,
-      Button, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter,
-      Input, Label, Badge, Avatar, AvatarImage, AvatarFallback,
-      Table, TableHeader, TableBody, TableRow, TableHead, TableCell, Separator,
-      Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
-      Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
-      Tabs, TabsList, TabsTrigger, TabsContent, Progress, Checkbox,
-      Accordion, AccordionItem, AccordionTrigger, AccordionContent,
-      Alert, AlertTitle, AlertDescription,
-      MetricCard, AIKitPriceCard, AIKitRating, AgentCard, SwarmView, SafetyBadge,
-      GuardrailPanel, ChatBubble, StreamingIndicator, CodeDisplay, TokenUsageBar,
-      ConnectionStatus, AIKitHeader, AIKitSidebar, AIKitTable, AIKitTimeline,
-      AIKitBanner, AIKitAvatar, Skeleton, SkeletonCard, EmptyState,
-      AIKitProductCard, AIKitPagination, AIKitBreadcrumb, AIKitStepper,
-      VideoPlayer, StreamingText, MediaGallery, AgentTimeline,
-      ResponsiveContainer, ReLineChart, Line, ReBarChart, Bar,
-      RePieChart, Pie, Cell, AreaChart, Area, XAxis, YAxis,
-      CartesianGrid, RechartsTooltip, Legend,
-      cn
-    );
-    if (_component) {
-      window['${detectedComponentName}'] = _component;
-      console.log('[Preview] ✓ Component compiled and exposed: ${detectedComponentName}');
-    } else {
-      console.error('[Preview] ✗ Component returned null from eval');
-    }
+    // Inject compiled JS as a new script tag — runs in GLOBAL scope
+    // (same scope as React, shadcn, AIKit, Lucide icons)
+    var _s = document.createElement('script');
+    _s.textContent = _compiled + ';\\nif(typeof ${detectedComponentName}!=="undefined")window.${detectedComponentName}=${detectedComponentName};';
+    document.body.appendChild(_s);
+    console.log('[Preview] ✓ Compiled and injected: ${detectedComponentName}, exists:', typeof window['${detectedComponentName}']);
     document.getElementById('loading-indicator').style.display = 'none';
   } catch(e) {
-    console.error('[Preview] Babel/eval error:', e.message);
+    console.error('[Preview] Babel error:', e.message);
     window.__BABEL_FAILED__ = true;
-    document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px"><h3 style="color:#dc2626">Error</h3><pre style="background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b">' + String(e.message||e).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px">Retry</button></div>';
+    document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px"><h3 style="color:#dc2626">Syntax Error</h3><pre style="background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b;text-align:left">' + String(e.message||e).replace(/</g,'&lt;').substring(0,500) + '</pre></div>';
   }
-}
+})();
 </script>`
 
   // Create simple HTML with the component
