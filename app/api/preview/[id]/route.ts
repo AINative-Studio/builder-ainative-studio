@@ -980,9 +980,19 @@ if (typeof ${detectedComponentName} !== 'undefined') {
     ${componentScriptBlock}
     <!-- Component detection and rendering — wait for Babel to process text/babel scripts -->
     <script>
-      // Babel standalone processes text/babel scripts async
-      // Wait briefly then detect + render
-      setTimeout(function() {
+      // Babel standalone processes text/babel scripts asynchronously
+      // Poll for the component to appear on window
+      var _pollCount = 0;
+      var _pollInterval = setInterval(function() {
+        _pollCount++;
+        if (window['${detectedComponentName}'] || _pollCount > 40) {
+          clearInterval(_pollInterval);
+          console.log('[Preview] Poll done after ' + (_pollCount * 250) + 'ms, component:', typeof window['${detectedComponentName}']);
+          _renderComponent();
+        }
+      }, 250);
+
+      function _renderComponent() {
       try {
 
         // Find the main page component to render.
@@ -1205,7 +1215,7 @@ if (typeof ${detectedComponentName} !== 'undefined') {
           '<pre>' + _esc(error.message) + '</pre>' +
           '</div>';
       }
-      }, 500); // Wait 500ms for Babel to process text/babel scripts
+      } // end _renderComponent
     </script>
 </body>
 </html>
