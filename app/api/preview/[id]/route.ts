@@ -467,10 +467,9 @@ if (typeof Babel !== 'undefined' && typeof React !== 'undefined') {
   try {
     var _s = document.getElementById('component-source').textContent;
     var _t = Babel.transform(_s, {presets:['react']});
-    // CRITICAL: Append code to expose the component on window
-    // eval() creates vars in its own scope — we need them on window for the detector
-    var _exposer = '\\nif (typeof ${detectedComponentName} === "function") window["${detectedComponentName}"] = ${detectedComponentName};';
-    eval(_t.code + _exposer);
+    // Use indirect eval — (0, eval)() executes in GLOBAL scope
+    // This makes function declarations available on window (unlike direct eval)
+    (0, eval)(_t.code);
     document.getElementById('loading-indicator').style.display = 'none';
   } catch(e) {
     document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px"><h3 style="color:#dc2626">Error</h3><pre style="background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b">' + String(e.message||e).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px">Retry</button></div>';
