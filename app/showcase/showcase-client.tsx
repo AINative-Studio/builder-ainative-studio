@@ -247,17 +247,42 @@ function detectCategory(prompt: string): string {
 
 // Clean up auto-generated titles
 function cleanTitle(title: string): string {
-  return title
+  let t = title
+    // Convert kebab-case slugs to words
+    .replace(/-/g, ' ')
+    // Remove "Build a/an" prefix
     .replace(/^Build\s+(a|an)\s+/i, '')
+    // Remove everything after "with", "using", "for" (prompt details)
     .replace(/\s+with\s+.*/i, '')
     .replace(/\s+using\s+.*/i, '')
     .replace(/\s+for\s+"[^"]*"/, '')
+    // Take first part before comma
     .split(',')[0]
     .trim()
-    .split(' ')
+  // Title case
+  t = t.split(' ')
     .slice(0, 5)
-    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
     .join(' ')
+  return t || 'Generated App'
+}
+
+// Generate a real description from the prompt
+function cleanDescription(prompt: string, title: string): string {
+  if (!prompt || prompt === title) {
+    return `A production-ready React application generated with AI`
+  }
+  // Remove "Build a/an" prefix and clean up
+  let desc = prompt
+    .replace(/^Build\s+(a|an)\s+/i, 'A ')
+    .replace(/AIKitSidebar|AIKitHeader|AIKitTable|AIKitPriceCard|MetricCard|AIKitRating|AIKitAvatar|AIKitBreadcrumb|AIKitPagination|AIKitStepper|AIKitTimeline|AIKitBanner|AIKitProductCard|AgentCard|SwarmView|SafetyBadge|GuardrailPanel|ChatBubble|StreamingIndicator|CodeDisplay|TokenUsageBar|ConnectionStatus|AgentTimeline|Recharts|sparklineData/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+  // Cap at 120 chars
+  if (desc.length > 120) {
+    desc = desc.slice(0, 117) + '...'
+  }
+  return desc
 }
 
 function CommunityCard({ entry }: { entry: ShowcaseEntry }) {
@@ -303,7 +328,7 @@ function CommunityCard({ entry }: { entry: ShowcaseEntry }) {
           {title}
         </h3>
         <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 mt-1">
-          {entry.description || entry.prompt?.slice(0, 100)}
+          {cleanDescription(entry.prompt || '', title)}
         </p>
       </div>
     </a>
@@ -319,9 +344,19 @@ export function ShowcaseGalleryClient() {
     fetch('/api/showcase?offset=0&limit=100')
       .then(r => r.json())
       .then(data => {
-        // Only show entries that have actual generated code (renders real preview)
+        // Only show entries with substantial, valid code
         const dynamic = (data.entries || []).filter(
-          (e: ShowcaseEntry) => e.chatId && e.generatedCode && e.generatedCode.length > 500
+          (e: ShowcaseEntry) => {
+            if (!e.chatId || !e.generatedCode) return false
+            const code = e.generatedCode
+            // Must have real code
+            if (code.length < 2000) return false
+            // Must contain a function (component definition)
+            if (!code.includes('function ') && !code.includes('const ')) return false
+            // Must have JSX
+            if (!code.includes('return') || !code.includes('<div')) return false
+            return true
+          }
         )
         setEntries(dynamic)
       })
