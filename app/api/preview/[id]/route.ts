@@ -284,9 +284,26 @@ export async function GET(
     console.log(`[Preview] Truncation fixed: added ${ob2-cb2} braces, ${op2-cp2} parens`)
   }
 
-  // Remove duplicate shadcn component declarations (they're already loaded from /shadcn-components.js)
-  // This prevents "Identifier has already been declared" errors
-  const shadcnComponents = ['Button', 'Card', 'CardHeader', 'CardTitle', 'CardDescription', 'CardContent', 'CardFooter', 'Input', 'Label', 'Badge', 'Avatar', 'AvatarImage', 'AvatarFallback', 'Table', 'TableHeader', 'TableBody', 'TableRow', 'TableHead', 'TableCell', 'Separator'];
+  // Remove duplicate component declarations (they're already loaded from /shadcn-components.js + /aikit-components.js)
+  // This prevents "Identifier has already been declared" errors when injecting compiled code
+  const shadcnComponents = [
+    // shadcn
+    'Button', 'Card', 'CardHeader', 'CardTitle', 'CardDescription', 'CardContent', 'CardFooter',
+    'Input', 'Label', 'Badge', 'Avatar', 'AvatarImage', 'AvatarFallback',
+    'Table', 'TableHeader', 'TableBody', 'TableRow', 'TableHead', 'TableCell', 'Separator',
+    'Dialog', 'DialogContent', 'DialogHeader', 'DialogTitle', 'DialogDescription', 'DialogFooter',
+    'Select', 'SelectTrigger', 'SelectValue', 'SelectContent', 'SelectItem',
+    'Tabs', 'TabsList', 'TabsTrigger', 'TabsContent', 'Progress', 'Checkbox',
+    'Accordion', 'AccordionItem', 'AccordionTrigger', 'AccordionContent',
+    'Alert', 'AlertTitle', 'AlertDescription', 'Popover', 'PopoverTrigger', 'PopoverContent',
+    // AIKit
+    'MetricCard', 'AIKitPriceCard', 'AIKitRating', 'AgentCard', 'SwarmView', 'SafetyBadge',
+    'GuardrailPanel', 'ChatBubble', 'StreamingIndicator', 'CodeDisplay', 'TokenUsageBar',
+    'ConnectionStatus', 'AIKitHeader', 'AIKitSidebar', 'AIKitTable', 'AIKitTimeline',
+    'AIKitBanner', 'AIKitAvatar', 'Skeleton', 'SkeletonCard', 'EmptyState',
+    'AIKitProductCard', 'AIKitPagination', 'AIKitBreadcrumb', 'AIKitStepper',
+    'VideoPlayer', 'StreamingText', 'MediaGallery', 'AgentTimeline',
+  ];
 
   // Remove "Available Shadcn components" comment and everything after it
   componentCode = componentCode.replace(/\/\/\s*Available\s+Shadcn\s+components[\s\S]*/gi, '')
