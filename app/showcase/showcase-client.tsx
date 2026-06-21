@@ -412,17 +412,23 @@ export function ShowcaseGalleryClient() {
     fetch('/api/showcase?offset=0&limit=100')
       .then(r => r.json())
       .then(data => {
-        // Only show entries with substantial, valid code
+        // Only show entries with substantial, valid code that renders
         const dynamic = (data.entries || []).filter(
           (e: ShowcaseEntry) => {
             if (!e.chatId || !e.generatedCode) return false
             const code = e.generatedCode
-            // Must have real code
             if (code.length < 2000) return false
-            // Must contain a function (component definition)
             if (!code.includes('function ') && !code.includes('const ')) return false
-            // Must have JSX
             if (!code.includes('return') || !code.includes('<div')) return false
+            // Exclude entries with known rendering issues
+            // Multi-file with only stub page.tsx
+            const hasFileMarkers = code.includes('// --- FILE:')
+            if (hasFileMarkers) {
+              // Check if the largest file section has actual component code
+              const sections = code.split(/\/\/\s*---\s*FILE:\s*/i)
+              const mainSection = sections.reduce((a, b) => a.length > b.length ? a : b, '')
+              if (!mainSection.includes('function ') && !mainSection.includes('const ')) return false
+            }
             return true
           }
         )
