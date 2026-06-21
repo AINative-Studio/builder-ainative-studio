@@ -469,11 +469,11 @@ if (typeof Babel !== 'undefined' && typeof React !== 'undefined') {
     var _s = document.getElementById('component-source').textContent;
     _s = 'window.${detectedComponentName} = ' + _s;
     var _t = Babel.transform(_s, {presets:['react']});
-    // CRITICAL: Execute in global scope using script injection
-    // eval() can't access variables from other <script> blocks (useState, Button, etc.)
-    // Script injection runs in the same global scope as all other scripts
+    // Execute in global scope using script injection
+    // Wrap in try-catch to capture errors
+    var _wrappedCode = 'try {\\n' + _t.code + '\\nconsole.log("[Preview] Script executed OK");\\n} catch(_err) { console.error("[Preview] Script execution error:", _err.message, _err.stack?.substring(0,300)); }';
     var _script = document.createElement('script');
-    _script.textContent = _t.code;
+    _script.textContent = _wrappedCode;
     document.head.appendChild(_script);
     console.log('[Preview] Component compiled + injected, window.${detectedComponentName}:', typeof window['${detectedComponentName}']);
     document.getElementById('loading-indicator').style.display = 'none';
