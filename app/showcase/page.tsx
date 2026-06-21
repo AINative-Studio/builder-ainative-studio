@@ -27,12 +27,12 @@ function ShowcaseCard({ entry }: { entry: ShowcaseEntry }) {
       data-agent-context={`showcase entry: ${entry.title}`}
     >
       <div className="aspect-video bg-gradient-to-br from-gray-100 to-gray-50 dark:from-gray-800 dark:to-gray-900 relative overflow-hidden">
-        {/* Static screenshot thumbnail — instant load, no CDN scripts needed */}
-        <img
-          src={`/showcase-thumbnails/${entry.slug}.png`}
-          alt={`Preview of ${entry.title}`}
-          className="w-full h-full object-cover object-top"
+        {/* Live iframe preview from static HTML files */}
+        <iframe
+          src={`/showcase-previews/${entry.slug}.html`}
+          className="w-[200%] h-[200%] origin-top-left scale-50 pointer-events-none border-0"
           loading="lazy"
+          title={`Preview of ${entry.title}`}
         />
         {/* Overlay to prevent interaction and show featured badge */}
         <div className="absolute inset-0 bg-transparent group-hover:bg-black/5 transition-colors" />
@@ -67,7 +67,8 @@ function ShowcaseCard({ entry }: { entry: ShowcaseEntry }) {
 }
 
 export default function ShowcasePage() {
-  const featured = SEED_SHOWCASE.filter(e => e.featured)
+  // Show ALL seed entries as featured (they all have working HTML previews)
+  const featured = SEED_SHOWCASE
   const all = SEED_SHOWCASE
 
   return (
