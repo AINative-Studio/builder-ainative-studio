@@ -352,14 +352,6 @@ function CommunityCard({ entry }: { entry: ShowcaseEntry }) {
   const title = cleanTitle(entry.title || '')
   const previewUrl = entry.chatId ? `/api/preview/${entry.chatId}` : ''
 
-  // Build srcdoc HTML from generatedCode (self-contained, no server dependency)
-  const previewHtml = useMemo(() => {
-    if (entry.generatedCode && entry.generatedCode.length > 1000) {
-      return buildPreviewHtml(entry.generatedCode)
-    }
-    return null
-  }, [entry.generatedCode])
-
   return (
     <a
       href={previewUrl || '/'}
@@ -367,30 +359,30 @@ function CommunityCard({ entry }: { entry: ShowcaseEntry }) {
       rel="noopener noreferrer"
       className="group block bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden hover:shadow-lg hover:border-blue-300 dark:hover:border-blue-700 transition-all duration-200"
     >
-      {/* Preview thumbnail — srcdoc for entries with code (works offline), fallback to /api/preview */}
-      <div className="aspect-video bg-gray-50 dark:bg-gray-800 relative overflow-hidden">
-        {previewHtml ? (
-          <iframe
-            srcDoc={previewHtml}
-            className="w-[200%] h-[200%] origin-top-left scale-50 pointer-events-none border-0"
-            loading="lazy"
-            sandbox="allow-scripts"
-            title={title}
-          />
-        ) : previewUrl ? (
-          <iframe
-            src={previewUrl}
-            className="w-[200%] h-[200%] origin-top-left scale-50 pointer-events-none border-0"
-            loading="lazy"
-            sandbox="allow-scripts allow-same-origin"
-            title={title}
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center">
-            <span className="text-xs text-gray-400">Preview</span>
+      {/* Thumbnail — stylish gradient with app icon, loads instantly */}
+      <div className="aspect-video relative overflow-hidden" style={{
+        background: cat === 'dashboard' ? 'linear-gradient(135deg, #1e293b 0%, #334155 100%)' :
+          cat === 'landing' ? 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)' :
+          cat === 'ecommerce' ? 'linear-gradient(135deg, #059669 0%, #10b981 100%)' :
+          cat === 'social' ? 'linear-gradient(135deg, #2563eb 0%, #3b82f6 100%)' :
+          cat === 'productivity' ? 'linear-gradient(135deg, #d97706 0%, #f59e0b 100%)' :
+          cat === 'saas' ? 'linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%)' :
+          'linear-gradient(135deg, #6366f1 0%, #818cf8 100%)'
+      }}>
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-white p-4">
+          <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center mb-2 backdrop-blur-sm">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              {cat === 'dashboard' ? <path strokeLinecap="round" strokeLinejoin="round" d="M3 3v18h18" /> :
+               cat === 'landing' ? <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" /> :
+               cat === 'ecommerce' ? <path strokeLinecap="round" strokeLinejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 100 4 2 2 0 000-4z" /> :
+               cat === 'social' ? <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /> :
+               <path strokeLinecap="round" strokeLinejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />}
+            </svg>
           </div>
-        )}
-        <div className="absolute inset-0 bg-transparent group-hover:bg-black/5 transition-colors" />
+          <span className="text-sm font-semibold text-center leading-tight">{title}</span>
+          <span className="text-[10px] text-white/60 mt-1">{category?.label || cat}</span>
+        </div>
+        <div className="absolute inset-0 bg-transparent group-hover:bg-white/10 transition-colors" />
       </div>
 
       {/* Card info */}
