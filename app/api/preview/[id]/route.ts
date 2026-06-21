@@ -458,22 +458,39 @@ export async function GET(
   // Build the component script block
   // Use type="text/babel" — Babel standalone auto-compiles these in the global scope
   // This avoids all eval/scope issues — the code runs like any normal <script>
-  // Escape the component code for safe embedding in a script tag
-  // Replace </script> sequences that would break the HTML parser
-  const safeComponentCode = componentCode.replace(/<\/script>/gi, '<\\/script>')
+  // SERVER-SIDE JSX COMPILATION
+  // Compile JSX to plain JS on the server using @babel/parser + transform
+  // This eliminates ALL client-side Babel issues (scope, async, CSP, CDN)
+  let compiledCode = ''
+  try {
+    const { transformSync } = require('@babel/core')
+    const result = transformSync(componentCode, {
+      presets: ['@babel/preset-react'],
+      filename: 'component.jsx',
+    })
+    compiledCode = result?.code || ''
+    console.log(`[Preview] Server-side Babel compiled: ${compiledCode.length} chars`)
+  } catch (babelErr: any) {
+    console.warn(`[Preview] Server-side Babel failed, falling back to client-side: ${babelErr?.message?.slice(0, 100)}`)
+    // Fallback: use client-side Babel (old approach)
+    compiledCode = ''
+  }
 
-  const componentScriptBlock = `<script>${fallbackScript}</script>
+  const safeComponentCode = (compiledCode || componentCode).replace(/<\/script>/gi, '<\\/script>')
+
+  const componentScriptBlock = compiledCode
+    ? `<script>${fallbackScript}</script>
+<script>
+// Server-compiled JS (no client-side Babel needed)
+${safeComponentCode}
+window.${detectedComponentName} = typeof ${detectedComponentName} !== 'undefined' ? ${detectedComponentName} : null;
+console.log('[Preview] Server-compiled component loaded:', typeof window['${detectedComponentName}']);
+</script>`
+    : `<script>${fallbackScript}</script>
 <script>window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";</script>
 <script type="text/babel">
-${safeComponentCode}
-
-// Expose component to window for the detector
-if (typeof ${detectedComponentName} !== 'undefined') {
-  window.${detectedComponentName} = ${detectedComponentName};
-  console.log('[Preview] ✓ Component exposed to window: ${detectedComponentName}');
-} else {
-  console.error('[Preview] ✗ Component ${detectedComponentName} not defined after Babel transform');
-}
+${componentCode.replace(/<\/script>/gi, '<\\/script>')}
+if (typeof ${detectedComponentName} !== 'undefined') window.${detectedComponentName} = ${detectedComponentName};
 </script>`
 
   // Create simple HTML with the component
