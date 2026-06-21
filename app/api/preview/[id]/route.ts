@@ -1008,8 +1008,7 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
       // Skip component detection if Babel compilation failed
       if (window.__BABEL_FAILED__) {
         console.log('[Preview] Skipping component detection — Babel failed');
-        return;
-      }
+      } else {
       try {
 
         // Find the main page component to render.
@@ -1232,6 +1231,7 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
           '<pre>' + _esc(error.message) + '</pre>' +
           '</div>';
       }
+      } // end else !__BABEL_FAILED__
     </script>
 </body>
 </html>
