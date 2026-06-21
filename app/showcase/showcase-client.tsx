@@ -6,21 +6,38 @@ import { SHOWCASE_CATEGORIES, type ShowcaseEntry } from '@/lib/showcase-data'
 
 // Build a self-contained HTML page that renders React code using CDN scripts
 function buildPreviewHtml(code: string): string {
-  // Extract JSX code from markdown fences if present
   let cleanCode = code
-  const fenceMatch = code.match(/```(?:jsx?|tsx?)\s*\n([\s\S]*?)```/)
+
+  // Handle multi-file output — extract only the main App file
+  if (cleanCode.includes('// --- FILE:')) {
+    const files = cleanCode.split(/\/\/\s*---\s*FILE:\s*/i)
+    let mainFile = files.find(f => /^src\/App\.tsx|^App\.tsx/i.test(f.trim()))
+    if (!mainFile) mainFile = files.find(f => /\.tsx|\.jsx/i.test(f.split('\n')[0]))
+    if (!mainFile && files.length > 1) mainFile = files[1]
+    if (mainFile) cleanCode = mainFile.replace(/^.*?---\s*\n?/, '').trim()
+  }
+
+  // Extract from markdown fences if present
+  const fenceMatch = cleanCode.match(/```(?:jsx?|tsx?)\s*\n([\s\S]*?)```/)
   if (fenceMatch) cleanCode = fenceMatch[1]
 
-  // Strip import statements (CDN globals handle everything)
+  // Detect component name BEFORE stripping exports
+  const exportMatch = cleanCode.match(/export\s+default\s+function\s+([A-Z]\w+)/)
+  const exportConstMatch = cleanCode.match(/export\s+default\s+([A-Z]\w+)/)
+  const funcDeclMatch = cleanCode.match(/^function\s+([A-Z]\w+)/m)
+  const constDeclMatch = cleanCode.match(/^const\s+([A-Z]\w+)\s*=/m)
+  const componentName = exportMatch?.[1] || funcDeclMatch?.[1] || exportConstMatch?.[1] || constDeclMatch?.[1] || 'App'
+
+  // Strip imports and exports
   cleanCode = cleanCode
     .replace(/^import\s+.*$/gm, '')
-    .replace(/^export\s+default\s+/gm, 'const __ExportedComponent__ = ')
+    .replace(/^export\s+default\s+/gm, '')
     .replace(/^export\s+/gm, '')
+    // Strip TypeScript types
+    .replace(/:\s*React\.FC<.*?>/g, '')
+    .replace(/:\s*React\.FC/g, '')
+    .replace(/interface\s+\w+\s*\{[^}]*\}/g, '')
     .trim()
-
-  // Find the component name
-  const funcMatch = cleanCode.match(/(?:function|const)\s+([A-Z]\w+)/)
-  const componentName = funcMatch ? funcMatch[1] : '__ExportedComponent__'
 
   return `<!DOCTYPE html>
 <html><head>
@@ -221,10 +238,54 @@ const RadialBar = () => null;
 const cn = (...args) => args.filter(Boolean).join(' ');
 
 try {
-${cleanCode}
-
-  const root = ReactDOM.createRoot(document.getElementById('root'));
-  root.render(React.createElement(${componentName}));
+  // Compile JSX with Babel, then execute with all globals available
+  var _src = ${JSON.stringify(cleanCode)};
+  var _compiled = Babel.transform(_src, {presets:[['react',{runtime:'classic'}]]}).code;
+  // Execute in a function scope with all component globals
+  var _fn = new Function(
+    'React','useState','useEffect','useCallback','useMemo','useRef','Fragment',
+    'Button','Card','CardHeader','CardTitle','CardDescription','CardContent','CardFooter',
+    'Input','Label','Badge','Avatar','AvatarImage','AvatarFallback',
+    'Table','TableHeader','TableBody','TableRow','TableHead','TableCell','Separator',
+    'Tabs','TabsList','TabsTrigger','TabsContent','Progress','Checkbox',
+    'Dialog','DialogContent','DialogHeader','DialogTitle',
+    'Select','SelectTrigger','SelectValue','SelectContent','SelectItem',
+    'Accordion','AccordionItem','AccordionTrigger','AccordionContent',
+    'Alert','AlertTitle','AlertDescription',
+    'MetricCard','AIKitPriceCard','AIKitRating','AgentCard','SwarmView','SafetyBadge',
+    'GuardrailPanel','ChatBubble','StreamingIndicator','CodeDisplay','TokenUsageBar',
+    'ConnectionStatus','AIKitHeader','AIKitSidebar','AIKitTable','AIKitTimeline',
+    'AIKitBanner','AIKitAvatar','Skeleton','SkeletonCard','EmptyState',
+    'AIKitProductCard','AIKitPagination','AIKitBreadcrumb','AIKitStepper',
+    'VideoPlayer','StreamingText','MediaGallery','AgentTimeline',
+    'ResponsiveContainer','ReLineChart','Line','ReBarChart','Bar',
+    'RePieChart','Pie','Cell','AreaChart','Area','XAxis','YAxis',
+    'CartesianGrid','RechartsTooltip','Tooltip','Legend','cn',
+    _compiled + ';\\nreturn typeof ${componentName} !== "undefined" ? ${componentName} : null;'
+  );
+  var _comp = _fn(
+    React, useState, useEffect, useCallback, useMemo, useRef, Fragment,
+    Button, Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter,
+    Input, Label, Badge, Avatar, AvatarImage, AvatarFallback,
+    Table, TableHeader, TableBody, TableRow, TableHead, TableCell, Separator,
+    Tabs, TabsList, TabsTrigger, TabsContent, Progress, Checkbox,
+    Dialog, DialogContent, DialogHeader, DialogTitle,
+    Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
+    Accordion, AccordionItem, AccordionTrigger, AccordionContent,
+    Alert, AlertTitle, AlertDescription,
+    MetricCard, AIKitPriceCard, AIKitRating, AgentCard, SwarmView, SafetyBadge,
+    GuardrailPanel, ChatBubble, StreamingIndicator, CodeDisplay, TokenUsageBar,
+    ConnectionStatus, AIKitHeader, AIKitSidebar, AIKitTable, AIKitTimeline,
+    AIKitBanner, AIKitAvatar, Skeleton, SkeletonCard, EmptyState,
+    AIKitProductCard, AIKitPagination, AIKitBreadcrumb, AIKitStepper,
+    VideoPlayer, StreamingText, MediaGallery, AgentTimeline,
+    ResponsiveContainer, ReLineChart, Line, ReBarChart, Bar,
+    RePieChart, Pie, Cell, AreaChart, Area, XAxis, YAxis,
+    CartesianGrid, RechartsTooltip, Tooltip, Legend, cn
+  );
+  if (_comp) {
+    ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(_comp));
+  }
 } catch(e) {
   document.getElementById('root').innerHTML = '<div style="padding:20px;text-align:center;color:#6b7280;font-size:12px">Preview</div>';
 }
@@ -289,8 +350,15 @@ function CommunityCard({ entry }: { entry: ShowcaseEntry }) {
   const cat = detectCategory(entry.prompt || entry.title || '')
   const category = SHOWCASE_CATEGORIES.find(c => c.id === cat)
   const title = cleanTitle(entry.title || '')
-  // Use /api/preview which handles code rendering server-side
   const previewUrl = entry.chatId ? `/api/preview/${entry.chatId}` : ''
+
+  // Build srcdoc HTML from generatedCode (self-contained, no server dependency)
+  const previewHtml = useMemo(() => {
+    if (entry.generatedCode && entry.generatedCode.length > 1000) {
+      return buildPreviewHtml(entry.generatedCode)
+    }
+    return null
+  }, [entry.generatedCode])
 
   return (
     <a
@@ -299,9 +367,17 @@ function CommunityCard({ entry }: { entry: ShowcaseEntry }) {
       rel="noopener noreferrer"
       className="group block bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden hover:shadow-lg hover:border-blue-300 dark:hover:border-blue-700 transition-all duration-200"
     >
-      {/* Live preview thumbnail via iframe */}
+      {/* Preview thumbnail — srcdoc for entries with code (works offline), fallback to /api/preview */}
       <div className="aspect-video bg-gray-50 dark:bg-gray-800 relative overflow-hidden">
-        {previewUrl ? (
+        {previewHtml ? (
+          <iframe
+            srcDoc={previewHtml}
+            className="w-[200%] h-[200%] origin-top-left scale-50 pointer-events-none border-0"
+            loading="lazy"
+            sandbox="allow-scripts"
+            title={title}
+          />
+        ) : previewUrl ? (
           <iframe
             src={previewUrl}
             className="w-[200%] h-[200%] origin-top-left scale-50 pointer-events-none border-0"
