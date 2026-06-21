@@ -466,12 +466,14 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
 if (typeof Babel !== 'undefined' && typeof React !== 'undefined') {
   try {
     var _s = document.getElementById('component-source').textContent;
+    console.log('[Preview] Source code length:', _s.length, 'first 80 chars:', _s.substring(0, 80));
     // Prepend window assignment so the component is always globally accessible
-    // Babel converts 'function X()' to 'var X = function X()' which stays in eval scope
-    // Adding 'window.X = ' before the function makes it globally available
     _s = 'window.${detectedComponentName} = ' + _s;
+    console.log('[Preview] After prepend, first 80:', _s.substring(0, 80));
     var _t = Babel.transform(_s, {presets:['react']});
+    console.log('[Preview] Babel transform OK, output length:', _t.code.length);
     eval(_t.code);
+    console.log('[Preview] eval OK, window.${detectedComponentName}:', typeof window['${detectedComponentName}']);
     document.getElementById('loading-indicator').style.display = 'none';
   } catch(e) {
     document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px"><h3 style="color:#dc2626">Error</h3><pre style="background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b">' + String(e.message||e).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px">Retry</button></div>';
