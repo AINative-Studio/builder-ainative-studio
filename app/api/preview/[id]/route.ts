@@ -538,6 +538,7 @@ if (typeof Babel !== 'undefined' && typeof React !== 'undefined') {
     document.getElementById('loading-indicator').style.display = 'none';
   } catch(e) {
     console.error('[Preview] Babel/eval error:', e.message);
+    window.__BABEL_FAILED__ = true;
     document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px"><h3 style="color:#dc2626">Error</h3><pre style="background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b">' + String(e.message||e).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px">Retry</button></div>';
   }
 }
@@ -1047,6 +1048,11 @@ if (typeof Babel !== 'undefined' && typeof React !== 'undefined') {
     ${componentScriptBlock}
     <!-- Component detection and rendering — wait for Babel to process text/babel scripts -->
     <script>
+      // Skip component detection if Babel compilation failed
+      if (window.__BABEL_FAILED__) {
+        console.log('[Preview] Skipping component detection — Babel failed');
+        return;
+      }
       try {
 
         // Find the main page component to render.
