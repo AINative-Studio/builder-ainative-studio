@@ -455,34 +455,13 @@ export async function GET(
     console.log(`Preview still streaming for ID: ${id}, skipping validation`)
   }
 
-  // Build the component script block — client-side Babel transform
-  // Inject detected component name so rendering doesn't have to guess
-  const componentScriptBlock = `<script id="component-source" type="text/plain">
-${componentCode}
-</script>
-<script>${fallbackScript}</script>
-<script>
-window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
-if (typeof Babel !== 'undefined' && typeof React !== 'undefined') {
-  try {
-    // Get JSX source and compile with Babel
-    var _s = document.getElementById('component-source').textContent;
-    _s = 'window.${detectedComponentName} = ' + _s;
-    var _t = Babel.transform(_s, {presets:['react']});
-    // Execute in global scope using script injection
-    // Wrap in try-catch to capture errors
-    var _wrappedCode = 'try {\\n' + _t.code + '\\nconsole.log("[Preview] Script executed OK");\\n} catch(_err) { console.error("[Preview] Script execution error:", _err.message, _err.stack?.substring(0,300)); }';
-    var _script = document.createElement('script');
-    _script.textContent = _wrappedCode;
-    document.head.appendChild(_script);
-    console.log('[Preview] Component compiled + injected, window.${detectedComponentName}:', typeof window['${detectedComponentName}']);
-    document.getElementById('loading-indicator').style.display = 'none';
-  } catch(e) {
-    document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px"><h3 style="color:#dc2626">Error</h3><pre style="background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b">' + String(e.message||e).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px">Retry</button></div>';
-  }
-} else {
-  document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px"><h3>Scripts Loading...</h3><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer">Retry</button></div>';
-}
+  // Build the component script block
+  // Use type="text/babel" — Babel standalone auto-compiles these in the global scope
+  // This avoids all eval/scope issues — the code runs like any normal <script>
+  const componentScriptBlock = `<script>${fallbackScript}</script>
+<script>window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";</script>
+<script type="text/babel" data-type="module">
+window.${detectedComponentName} = ${componentCode}
 </script>`
 
   // Create simple HTML with the component
@@ -987,8 +966,11 @@ if (typeof Babel !== 'undefined' && typeof React !== 'undefined') {
 
     </script>
     ${componentScriptBlock}
-    <!-- Component detection and rendering -->
+    <!-- Component detection and rendering — wait for Babel to process text/babel scripts -->
     <script>
+      // Babel standalone processes text/babel scripts async
+      // Wait briefly then detect + render
+      setTimeout(function() {
       try {
 
         // Find the main page component to render.
@@ -1211,6 +1193,7 @@ if (typeof Babel !== 'undefined' && typeof React !== 'undefined') {
           '<pre>' + _esc(error.message) + '</pre>' +
           '</div>';
       }
+      }, 500); // Wait 500ms for Babel to process text/babel scripts
     </script>
 </body>
 </html>
