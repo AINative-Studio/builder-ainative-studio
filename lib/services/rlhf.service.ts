@@ -92,6 +92,27 @@ export async function logGeneration(data: GenerationData): Promise<string> {
     console.warn('[RLHF] ZeroDB log failed:', err?.message || err)
   })
 
+  // Feed generation outcome into intelligence loop (every generation, not just feedback)
+  const validationScore = data.validationResult?.valid ? 1.0 : 0.0
+  const codeQualityScore = Math.min((data.codeLength || 0) / 10000, 1.0) // 10K chars = 1.0
+  const overallScore = (validationScore * 0.6) + (codeQualityScore * 0.4)
+
+  sendToIntelligenceLoop({
+    agentId: 'builder-component-gen',
+    score: overallScore,
+    context: {
+      type: 'generation',
+      chatId: data.chatId,
+      model: data.model,
+      codeLength: data.codeLength || 0,
+      validationValid: data.validationResult?.valid ?? true,
+      retryAttempted: data.validationResult?.retryAttempted || false,
+      generationTimeMs: data.generationTimeMs,
+      theme: data.theme,
+      status: data.status || 'success',
+    },
+  }).catch(() => {})
+
   return crypto.randomUUID()
 }
 
