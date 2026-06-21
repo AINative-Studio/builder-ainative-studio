@@ -458,10 +458,22 @@ export async function GET(
   // Build the component script block
   // Use type="text/babel" — Babel standalone auto-compiles these in the global scope
   // This avoids all eval/scope issues — the code runs like any normal <script>
+  // Escape the component code for safe embedding in a script tag
+  // Replace </script> sequences that would break the HTML parser
+  const safeComponentCode = componentCode.replace(/<\/script>/gi, '<\\/script>')
+
   const componentScriptBlock = `<script>${fallbackScript}</script>
 <script>window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";</script>
-<script type="text/babel" data-type="module">
-window.${detectedComponentName} = ${componentCode}
+<script type="text/babel">
+${safeComponentCode}
+
+// Expose component to window for the detector
+if (typeof ${detectedComponentName} !== 'undefined') {
+  window.${detectedComponentName} = ${detectedComponentName};
+  console.log('[Preview] ✓ Component exposed to window: ${detectedComponentName}');
+} else {
+  console.error('[Preview] ✗ Component ${detectedComponentName} not defined after Babel transform');
+}
 </script>`
 
   // Create simple HTML with the component
