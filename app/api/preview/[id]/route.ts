@@ -129,15 +129,30 @@ export async function GET(
 
   let componentCode = ''
 
-  // Handle multi-file output: extract only the main App.tsx file
+  // Handle multi-file output: extract the LARGEST file with a component function
   if (content.includes('// --- FILE:')) {
     const files = content.split(/\/\/\s*---\s*FILE:\s*/i)
-    // Find App.tsx or the first .tsx/.jsx file
+
+    // Strategy: find App.tsx first, then the largest file with a function declaration
     let mainFile = files.find(f => /^src\/App\.tsx|^App\.tsx/i.test(f.trim()))
-    if (!mainFile) mainFile = files.find(f => /\.tsx|\.jsx/i.test(f.split('\n')[0]))
-    if (!mainFile) mainFile = files[1] // First file after split
+
+    if (!mainFile) {
+      // Find the largest file that actually contains a component function
+      let bestFile = ''
+      let bestSize = 0
+      for (const f of files) {
+        const fileContent = f.replace(/^.*?---\s*\n?/, '').trim()
+        if (fileContent.length > bestSize && (fileContent.includes('function ') || fileContent.includes('const ')) && fileContent.includes('return')) {
+          bestFile = f
+          bestSize = fileContent.length
+        }
+      }
+      if (bestFile) mainFile = bestFile
+    }
+
+    if (!mainFile && files.length > 1) mainFile = files[1]
+
     if (mainFile) {
-      // Remove the file path line (first line like "src/App.tsx ---")
       componentCode = mainFile.replace(/^.*?---\s*\n?/, '').trim()
       console.log(`[Preview] Extracted main file from multi-file output (${componentCode.length} chars)`)
     }
