@@ -28,15 +28,12 @@ function ShowcaseCard({ entry }: { entry: ShowcaseEntry }) {
     >
       <div className="aspect-video bg-gradient-to-br from-gray-100 to-gray-50 dark:from-gray-800 dark:to-gray-900 relative overflow-hidden">
         {/* Static screenshot — fast, reliable, pre-rendered */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={`/showcase-thumbnails/${entry.slug}.png`}
           alt={`Preview of ${entry.title}`}
           className="w-full h-full object-cover object-top"
           loading="lazy"
-          onError={(e) => {
-            // Hide broken images gracefully
-            (e.target as HTMLImageElement).style.display = 'none'
-          }}
         />
         <div className="absolute inset-0 bg-transparent group-hover:bg-black/5 transition-colors" />
         {entry.featured && (
