@@ -27,14 +27,17 @@ function ShowcaseCard({ entry }: { entry: ShowcaseEntry }) {
       data-agent-context={`showcase entry: ${entry.title}`}
     >
       <div className="aspect-video bg-gradient-to-br from-gray-100 to-gray-50 dark:from-gray-800 dark:to-gray-900 relative overflow-hidden">
-        {/* Live iframe preview from static HTML files */}
-        <iframe
-          src={`/showcase-previews/${entry.slug}.html`}
-          className="w-[200%] h-[200%] origin-top-left scale-50 pointer-events-none border-0"
+        {/* Static screenshot — fast, reliable, pre-rendered */}
+        <img
+          src={`/showcase-thumbnails/${entry.slug}.png`}
+          alt={`Preview of ${entry.title}`}
+          className="w-full h-full object-cover object-top"
           loading="lazy"
-          title={`Preview of ${entry.title}`}
+          onError={(e) => {
+            // Hide broken images gracefully
+            (e.target as HTMLImageElement).style.display = 'none'
+          }}
         />
-        {/* Overlay to prevent interaction and show featured badge */}
         <div className="absolute inset-0 bg-transparent group-hover:bg-black/5 transition-colors" />
         {entry.featured && (
           <span className="absolute top-3 right-3 bg-blue-600 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wider z-10">
@@ -67,8 +70,9 @@ function ShowcaseCard({ entry }: { entry: ShowcaseEntry }) {
 }
 
 export default function ShowcasePage() {
-  // Show ALL seed entries as featured (they all have working HTML previews)
-  const featured = SEED_SHOWCASE
+  // Only show entries with good quality thumbnails as featured
+  const bestThumbnails = ['analytics-dashboard', 'kanban-task-board', 'saas-landing-page', 'team-directory', 'ecommerce-product-page']
+  const featured = SEED_SHOWCASE.filter(e => bestThumbnails.includes(e.slug))
   const all = SEED_SHOWCASE
 
   return (
