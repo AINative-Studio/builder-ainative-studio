@@ -896,8 +896,6 @@ The component MUST have \`export default function App()\` or \`export default Ap
             storePreview(responseId, wrappedInvalidCode, message, {
               validationError: validation.error,
               usage: tokenUsage,
-              agentFallbackUsed,
-              agentFallbackSucceeded,
             })
 
             // Still send files for Sandpack (it has its own error boundary)
@@ -934,7 +932,6 @@ The component MUST have \`export default function App()\` or \`export default Ap
             storePreview(responseId, cleanCodeResponse, message, {
               usage: tokenUsage,
               ainativeFiles,
-              ...(agentFallbackUsed && { agentFallbackUsed, agentFallbackSucceeded }),
             })
 
             // Parse into multi-file output for Sandpack
@@ -1060,8 +1057,6 @@ The component MUST have \`export default function App()\` or \`export default Ap
                 generationTimeMs: genTimeMs,
                 retryCount: retryAttempted ? 1 : 0,
                 finishReason: 'stop',
-                agentFallbackUsed,
-                agentFallbackSucceeded,
               }).catch(e => console.warn('[RLHF log failed]', e))
 
               // JSONL local write removed — ZeroDB is source of truth (Refs builder#41)
@@ -1094,9 +1089,8 @@ The component MUST have \`export default function App()\` or \`export default Ap
                   valid: validation.valid,
                   error: validation.valid ? undefined : validation.error,
                   retryAttempted,
-                  agentFallbackUsed,
-                  agentFallbackSucceeded,
                 },
+                agentFallback: agentFallbackUsed,
                 status: validation.valid ? 'success' : 'validation_error',
                 theme: selectedTheme.name,
                 codeLength: finalContent.length,
