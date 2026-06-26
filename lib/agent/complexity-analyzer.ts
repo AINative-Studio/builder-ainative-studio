@@ -21,6 +21,8 @@ export interface ComplexityScore {
   estimatedTokens: number
   requiresChunking: boolean
   chunkingStrategy?: 'none' | '3-phase' | '4-phase' | '5-phase+'
+  /** True when the request should be routed to the headless agent (Phase 4). */
+  shouldUseAgent: boolean
 }
 
 /**
@@ -55,6 +57,9 @@ export function analyzeComplexity(prdAnalysis: PRDAnalysis, prdText: string): Co
     }
   }
 
+  // Route to the headless agent for complex or token-heavy requests
+  const shouldUseAgent = overallComplexity === 'complex' || estimatedTokens > 5000
+
   return {
     pageCount,
     featureCount,
@@ -63,7 +68,8 @@ export function analyzeComplexity(prdAnalysis: PRDAnalysis, prdText: string): Co
     overallComplexity,
     estimatedTokens,
     requiresChunking,
-    chunkingStrategy
+    chunkingStrategy,
+    shouldUseAgent,
   }
 }
 

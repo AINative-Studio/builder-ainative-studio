@@ -23,6 +23,7 @@ import { storeFiles as storeFilesV2 } from '@/lib/preview-store-v2'
 import { logModelConfiguration } from '@/lib/config/model-validator'
 import { isClaudeAgentEnabled, isClaudeAgentFallbackEnabled, runHeadlessAgent } from '@/lib/agent/claude-agent'
 import { cleanupWorktree } from '@/lib/agent/worktree-manager'
+import { logAgentRun } from '@/lib/services/agent-runs.service'
 
 // Log model configuration on first module load
 logModelConfiguration()
@@ -205,6 +206,11 @@ export async function POST(request: NextRequest) {
           if (isClaudeAgentEnabled()) {
             console.log('\n🤖 CLAUDE AGENT MODE — streaming headless agent')
             let agentFailed = false
+            let agentTurns = 0
+            let agentToolsUsed: string[] = []
+            let agentBuildPassed = false
+            let agentError: string | undefined
+            let agentTokenUsage: { inputTokens: number; outputTokens: number; totalCostUsd?: number } = { inputTokens: 0, outputTokens: 0 }
 
             try {
               const agentGen = runHeadlessAgent(
@@ -218,12 +224,31 @@ export async function POST(request: NextRequest) {
 
               for await (const event of agentGen) {
                 switch (event.type) {
-                  case 'build_step':
+                  case 'build_step': {
+                    // Track tools used for agent_runs logging
+                    const toolMatch = event.step.match(/^(Writing|Editing|Reading|Running|Searching files|Searching content|Tool)/)
+                    if (toolMatch) {
+                      const toolName = event.step.startsWith('Running') ? 'Bash'
+                        : event.step.startsWith('Writing') ? 'Write'
+                        : event.step.startsWith('Editing') ? 'Edit'
+                        : event.step.startsWith('Reading') ? 'Read'
+                        : event.step.startsWith('Searching files') ? 'Glob'
+                        : event.step.startsWith('Searching content') ? 'Grep'
+                        : event.step.replace(/^Tool: /, '').split(' ')[0]
+                      if (!agentToolsUsed.includes(toolName)) {
+                        agentToolsUsed.push(toolName)
+                      }
+                    }
+                    // Check for build failures in step messages
+                    if (event.step.includes('npm run build') && event.step.toLowerCase().includes('fail')) {
+                      agentBuildPassed = false
+                    }
                     safeEnqueue(encoder.encode(`data: ${JSON.stringify({
                       type: 'build_step',
                       step: event.step,
                     })}\n\n`))
                     break
+                  }
 
                   case 'chunk':
                     fullContent += event.content
@@ -281,11 +306,21 @@ export async function POST(request: NextRequest) {
                           estimated_cost: event.tokenUsage.totalCostUsd,
                         }
                       : tokenUsage
+                    // Capture agent metadata for agent_runs tracking
+                    if (event.tokenUsage) {
+                      agentTokenUsage = {
+                        inputTokens: event.tokenUsage.inputTokens,
+                        outputTokens: event.tokenUsage.outputTokens,
+                        totalCostUsd: event.tokenUsage.totalCostUsd,
+                      }
+                    }
+                    agentTurns = (event as any).turns || agentTurns
                     console.log(`✅ Agent completed in ${event.durationMs}ms`)
                     break
 
                   case 'error':
                     console.error(`⚠️ Agent error (fatal=${event.fatal}): ${event.error}`)
+                    agentError = event.error
                     if (event.fatal) {
                       agentFailed = true
                       // Send error to client but do NOT close — we will fall through
@@ -325,13 +360,45 @@ export async function POST(request: NextRequest) {
             // standard model call path entirely. The validation + persistence
             // section below will handle storing the result.
             if (!agentFailed && fullContent.length > 100) {
+              // Build verification: check content validity as a proxy for build pass
+              agentBuildPassed = fullContent.length > 100
+
               // Agent succeeded — skip to validation below
               console.log(`📊 Agent generation complete: ${fullContent.length} chars`)
+
+              // Log primary agent run (fire-and-forget)
+              logAgentRun({
+                chatId: responseId,
+                userId: 'anonymous',
+                model: requestedModel || 'sonnet',
+                turns: agentTurns,
+                toolsUsed: agentToolsUsed,
+                buildPassed: agentBuildPassed,
+                durationMs: Date.now() - generationStartTime,
+                tokenUsage: agentTokenUsage,
+                fallback: false,
+                error: agentError,
+              }).catch(e => console.warn('[AgentRuns] primary log failed:', e?.message || e))
             } else {
               // Agent failed or produced no output — reset and fall through
               // to the existing model call path below
               if (agentFailed) {
                 console.log('🔄 Falling back to standard LLM generation path')
+
+                // Log failed primary agent run (fire-and-forget)
+                logAgentRun({
+                  chatId: responseId,
+                  userId: 'anonymous',
+                  model: requestedModel || 'sonnet',
+                  turns: agentTurns,
+                  toolsUsed: agentToolsUsed,
+                  buildPassed: false,
+                  durationMs: Date.now() - generationStartTime,
+                  tokenUsage: agentTokenUsage,
+                  fallback: false,
+                  error: agentError || 'Agent failed — falling back',
+                }).catch(e => console.warn('[AgentRuns] primary-fail log failed:', e?.message || e))
+
                 fullContent = '' // Reset so the fallback path starts clean
               }
             }
@@ -777,6 +844,20 @@ The component MUST have \`export default function App()\` or \`export default Ap
             }
 
             console.log(`🤖 Agent fallback result: used=${agentFallbackUsed}, succeeded=${agentFallbackSucceeded}`)
+
+            // Log fallback agent run (fire-and-forget)
+            logAgentRun({
+              chatId: responseId,
+              userId: 'anonymous',
+              model: 'sonnet',
+              turns: 0, // fallback is single-shot fix
+              toolsUsed: ['Write'],
+              buildPassed: agentFallbackSucceeded,
+              durationMs: Date.now() - generationStartTime,
+              tokenUsage: { inputTokens: 0, outputTokens: 0 },
+              fallback: true,
+              error: agentFallbackSucceeded ? undefined : 'Agent fallback validation failed',
+            }).catch(e => console.warn('[AgentRuns] fallback log failed:', e?.message || e))
           }
 
           // Final validation check
