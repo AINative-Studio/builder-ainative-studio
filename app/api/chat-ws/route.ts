@@ -200,11 +200,22 @@ export async function POST(request: NextRequest) {
 
           // ============================================================
           // CLAUDE AGENT PATH — headless Claude Code agent via SSE
-          // Gated behind USE_CLAUDE_AGENT=true. Falls back to the
-          // existing model call path on failure.
+          // Activates when:
+          //   1. USE_CLAUDE_AGENT=true (explicit opt-in, all prompts)
+          //   2. complexityScore.shouldUseAgent AND ANTHROPIC_API_KEY
+          //      is set (auto-activate for complex/multi-file prompts)
           // ============================================================
-          if (isClaudeAgentEnabled()) {
-            console.log('\n🤖 CLAUDE AGENT MODE — streaming headless agent')
+          const agentExplicitlyEnabled = isClaudeAgentEnabled()
+          const agentAutoActivated = complexityScore.shouldUseAgent && !!process.env.ANTHROPIC_API_KEY
+          const useAgent = agentExplicitlyEnabled || agentAutoActivated
+
+          // Tier-based maxTurns:
+          //   Explicit (USE_CLAUDE_AGENT=true): 5 turns (all prompts)
+          //   Auto-activated (complex prompts):  3 turns (fallback-safe)
+          const agentMaxTurns = agentExplicitlyEnabled ? 5 : 3
+
+          if (useAgent) {
+            console.log(`\n🤖 CLAUDE AGENT MODE — streaming headless agent (${agentExplicitlyEnabled ? 'explicit' : 'auto-complex'}, maxTurns=${agentMaxTurns})`)
             let agentFailed = false
             let agentTurns = 0
             let agentToolsUsed: string[] = []
@@ -219,6 +230,7 @@ export async function POST(request: NextRequest) {
                 {
                   systemPrompt: enhancedSystemPrompt,
                   abortSignal: request.signal,
+                  maxTurns: agentMaxTurns,
                 },
               )
 
@@ -406,7 +418,7 @@ export async function POST(request: NextRequest) {
 
           // Only run the standard model call path if the agent path was not used
           // or if it failed and we need a fallback
-          if (!isClaudeAgentEnabled() || fullContent.length <= 100) {
+          if (!useAgent || fullContent.length <= 100) {
 
           // CHUNKING SYSTEM: Route to multi-pass generation if complexity requires it
           if (complexityScore.requiresChunking && previousMessages.length === 0) {

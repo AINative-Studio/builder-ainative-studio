@@ -36,6 +36,13 @@ export interface GenerationData {
   status?: 'success' | 'validation_error' | 'failure'
   theme?: string
   codeLength?: number
+  // Agent-powered generation fields (builder#57)
+  agentPowered?: boolean
+  agentTurns?: number
+  agentBuildPassed?: boolean
+  agentToolsUsed?: string[]
+  agentFallback?: boolean
+  agentDurationMs?: number
 }
 
 export interface FeedbackData {
@@ -97,20 +104,32 @@ export async function logGeneration(data: GenerationData): Promise<string> {
   const codeQualityScore = Math.min((data.codeLength || 0) / 10000, 1.0) // 10K chars = 1.0
   const overallScore = (validationScore * 0.6) + (codeQualityScore * 0.4)
 
+  // Build context — include agent-specific fields when generation was agent-powered (builder#57)
+  const loopContext: Record<string, any> = {
+    type: 'generation',
+    chatId: data.chatId,
+    model: data.model,
+    codeLength: data.codeLength || 0,
+    validationValid: data.validationResult?.valid ?? true,
+    retryAttempted: data.validationResult?.retryAttempted || false,
+    generationTimeMs: data.generationTimeMs,
+    theme: data.theme,
+    status: data.status || 'success',
+  }
+
+  if (data.agentPowered) {
+    loopContext.agentPowered = true
+    loopContext.agentTurns = data.agentTurns ?? 0
+    loopContext.buildPassed = data.agentBuildPassed ?? false
+    loopContext.toolsUsed = data.agentToolsUsed ?? []
+    loopContext.agentFallback = data.agentFallback ?? false
+    loopContext.agentDurationMs = data.agentDurationMs ?? 0
+  }
+
   sendToIntelligenceLoop({
-    agentId: 'builder-component-gen',
+    agentId: data.agentPowered ? 'builder-headless-agent' : 'builder-component-gen',
     score: overallScore,
-    context: {
-      type: 'generation',
-      chatId: data.chatId,
-      model: data.model,
-      codeLength: data.codeLength || 0,
-      validationValid: data.validationResult?.valid ?? true,
-      retryAttempted: data.validationResult?.retryAttempted || false,
-      generationTimeMs: data.generationTimeMs,
-      theme: data.theme,
-      status: data.status || 'success',
-    },
+    context: loopContext,
   }).catch(() => {})
 
   return crypto.randomUUID()
@@ -239,13 +258,30 @@ async function sendToIntelligenceLoop(data: {
     const apiKey = process.env.ZERODB_API_KEY || process.env.AINATIVE_API_KEY || ''
     if (!apiKey) return
 
+    // Build memory content — richer description for agent-powered runs (builder#57)
+    const isAgent = data.context.agentPowered === true
+    const contentParts = [`Builder agent ${data.agentId} scored ${data.score.toFixed(2)}`]
+    if (isAgent) {
+      contentParts.push(
+        `[headless-agent] turns=${data.context.agentTurns}`,
+        `buildPassed=${data.context.buildPassed}`,
+        `tools=${(data.context.toolsUsed || []).join(',')}`,
+        `fallback=${data.context.agentFallback}`,
+        `durationMs=${data.context.agentDurationMs}`,
+      )
+    }
+    contentParts.push(JSON.stringify(data.context).slice(0, 200))
+
+    const tags = ['builder', 'rlhf', data.agentId, 'intelligence-loop']
+    if (isAgent) tags.push('headless-agent')
+
     // 1. Store as ZeroMemory for episodic consolidation
     await fetch(`${apiUrl}/api/v1/public/memory/v2/remember`, {
       method: 'POST',
       headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        content: `Builder agent ${data.agentId} scored ${data.score.toFixed(2)}: ${JSON.stringify(data.context).slice(0, 200)}`,
-        tags: ['builder', 'rlhf', data.agentId, 'intelligence-loop'],
+        content: contentParts.join(' | '),
+        tags,
         importance: data.score < 0.5 ? 0.8 : 0.5,
         metadata: { agent: data.agentId, score: data.score, source: 'builder.ainative.studio', ...data.context },
       }),
