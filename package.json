@@ -113,6 +113,7 @@
     "zod": "^4.1.1"
   },
   "devDependencies": {
+    "@anthropic-ai/claude-code": "^2.1.191",
     "@playwright/test": "^1.55.1",
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^6.9.1",
