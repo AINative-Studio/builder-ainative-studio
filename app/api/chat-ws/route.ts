@@ -21,6 +21,8 @@ import { selectTheme, formatThemeForPrompt, applyThemeToPrompt } from '@/lib/the
 import { parseMultiFileOutput } from '@/lib/multi-file-parser'
 import { storeFiles as storeFilesV2 } from '@/lib/preview-store-v2'
 import { logModelConfiguration } from '@/lib/config/model-validator'
+import { isClaudeAgentEnabled, isClaudeAgentFallbackEnabled, runHeadlessAgent } from '@/lib/agent/claude-agent'
+import { cleanupWorktree } from '@/lib/agent/worktree-manager'
 
 // Log model configuration on first module load
 logModelConfiguration()
@@ -194,6 +196,150 @@ export async function POST(request: NextRequest) {
           const memoryContext = formatMemoryForPrompt(responseId)
           const themedPrompt = applyThemeToPrompt(PROFESSIONAL_SYSTEM_PROMPT, selectedTheme)
           const enhancedSystemPrompt = themedPrompt + themePrompt + imagePrompt + memoryContext
+
+          // ============================================================
+          // CLAUDE AGENT PATH — headless Claude Code agent via SSE
+          // Gated behind USE_CLAUDE_AGENT=true. Falls back to the
+          // existing model call path on failure.
+          // ============================================================
+          if (isClaudeAgentEnabled()) {
+            console.log('\n🤖 CLAUDE AGENT MODE — streaming headless agent')
+            let agentFailed = false
+
+            try {
+              const agentGen = runHeadlessAgent(
+                enhancedPrompt,
+                responseId,
+                {
+                  systemPrompt: enhancedSystemPrompt,
+                  abortSignal: request.signal,
+                },
+              )
+
+              for await (const event of agentGen) {
+                switch (event.type) {
+                  case 'build_step':
+                    safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+                      type: 'build_step',
+                      step: event.step,
+                    })}\n\n`))
+                    break
+
+                  case 'chunk':
+                    fullContent += event.content
+                    updatePreviewPartial(responseId, fullContent)
+                    // Throttle refresh events to avoid flooding the client
+                    const now = Date.now()
+                    if (now - lastUpdateTime > 500) {
+                      safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'refresh' })}\n\n`))
+                      lastUpdateTime = now
+                    }
+                    break
+
+                  case 'chunk_progress':
+                    safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+                      type: 'chunk_progress',
+                      phase: event.phase,
+                      totalPhases: event.totalPhases,
+                    })}\n\n`))
+                    break
+
+                  case 'files': {
+                    // Agent produced worktree files — store them
+                    const agentFiles = event.files
+                    console.log(`📦 Agent produced ${Object.keys(agentFiles).length} files`)
+
+                    storeFilesV2(responseId, agentFiles, { usage: tokenUsage })
+
+                    safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+                      type: 'files',
+                      files: agentFiles,
+                    })}\n\n`))
+
+                    // Also update fullContent from App.tsx or the main source file
+                    // so validation and persistence logic below works correctly
+                    const mainFile =
+                      agentFiles['src/App.tsx'] ||
+                      agentFiles['src/App.jsx'] ||
+                      agentFiles['App.tsx'] ||
+                      agentFiles['App.jsx']
+                    if (mainFile) {
+                      fullContent = mainFile
+                      updatePreviewPartial(responseId, fullContent)
+                    }
+                    break
+                  }
+
+                  case 'complete':
+                    tokenUsage = event.tokenUsage
+                      ? {
+                          input_tokens: event.tokenUsage.inputTokens,
+                          output_tokens: event.tokenUsage.outputTokens,
+                          cache_creation_input_tokens: event.tokenUsage.cacheCreationTokens,
+                          cache_read_input_tokens: event.tokenUsage.cacheReadTokens,
+                          total_tokens: event.tokenUsage.inputTokens + event.tokenUsage.outputTokens,
+                          estimated_cost: event.tokenUsage.totalCostUsd,
+                        }
+                      : tokenUsage
+                    console.log(`✅ Agent completed in ${event.durationMs}ms`)
+                    break
+
+                  case 'error':
+                    console.error(`⚠️ Agent error (fatal=${event.fatal}): ${event.error}`)
+                    if (event.fatal) {
+                      agentFailed = true
+                      // Send error to client but do NOT close — we will fall through
+                      // to the existing model call path below
+                      safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+                        type: 'build_step',
+                        step: 'Agent failed — falling back to standard generation',
+                      })}\n\n`))
+                    } else {
+                      // Non-fatal error — stream it as a build step so user sees it
+                      safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+                        type: 'build_step',
+                        step: `Warning: ${event.error}`,
+                      })}\n\n`))
+                    }
+                    break
+                }
+
+                // If a fatal error occurred, break out of the generator loop
+                if (agentFailed) break
+              }
+            } catch (agentErr: any) {
+              console.error('❌ Agent threw unexpectedly:', agentErr?.message || agentErr)
+              agentFailed = true
+              safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+                type: 'build_step',
+                step: 'Agent crashed — falling back to standard generation',
+              })}\n\n`))
+            }
+
+            // Cleanup worktree regardless of success/failure
+            cleanupWorktree(responseId).catch((e) =>
+              console.warn('[Worktree cleanup failed]', e),
+            )
+
+            // If the agent succeeded (produced meaningful content), skip the
+            // standard model call path entirely. The validation + persistence
+            // section below will handle storing the result.
+            if (!agentFailed && fullContent.length > 100) {
+              // Agent succeeded — skip to validation below
+              console.log(`📊 Agent generation complete: ${fullContent.length} chars`)
+            } else {
+              // Agent failed or produced no output — reset and fall through
+              // to the existing model call path below
+              if (agentFailed) {
+                console.log('🔄 Falling back to standard LLM generation path')
+                fullContent = '' // Reset so the fallback path starts clean
+              }
+            }
+          }
+
+          // Only run the standard model call path if the agent path was not used
+          // or if it failed and we need a fallback
+          if (!isClaudeAgentEnabled() || fullContent.length <= 100) {
 
           // CHUNKING SYSTEM: Route to multi-pass generation if complexity requires it
           if (complexityScore.requiresChunking && previousMessages.length === 0) {
@@ -458,6 +604,7 @@ export async function POST(request: NextRequest) {
 
           } // End of provider routing + subagents else
           } // End of chunking else (single-pass)
+          } // End of standard model call path (skipped when agent succeeds)
 
           // NOTE: Gradient stripping removed — gradients add visual richness
           // (hero sections, backgrounds, accent elements) matching Bolt/Lovable quality
@@ -540,23 +687,125 @@ Generate a corrected version of: ${message}`
             }
           }
 
+          // PHASE 2: Claude agent fallback — last resort before sending broken code
+          let agentFallbackUsed = false
+          let agentFallbackSucceeded = false
+
+          if (!validation.valid && isClaudeAgentFallbackEnabled()) {
+            console.log('🤖 Validation still failing — attempting Claude agent fallback...')
+            agentFallbackUsed = true
+
+            try {
+              safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+                type: 'build_step',
+                step: 'Running Claude agent to fix syntax errors...'
+              })}\n\n`))
+
+              const agentFixPrompt = `Fix this React component that has syntax errors. The error is: ${validation.error}
+
+Here is the broken code:
+\`\`\`jsx
+${finalContent.slice(0, 12000)}
+\`\`\`
+
+Fix it and make sure \`npm run build\` passes.
+Return ONLY the fixed code — no explanations. Wrap the code in \`\`\`jsx markers.
+The component MUST have \`export default function App()\` or \`export default App\`.`
+
+              const agentChatId = `fix-${responseId}-${Date.now()}`
+              let agentOutput = ''
+
+              for await (const event of runHeadlessAgent(agentFixPrompt, agentChatId, {
+                model: 'sonnet',
+                maxBudgetUsd: 0.50,
+                systemPrompt: 'You are a React code fixer. Fix syntax errors in the provided component. Output ONLY the corrected code wrapped in ```jsx markers. Do not add explanations.',
+              })) {
+                switch (event.type) {
+                  case 'build_step':
+                    safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+                      type: 'build_step',
+                      step: `Agent: ${event.step}`
+                    })}\n\n`))
+                    break
+                  case 'files': {
+                    // The agent writes files to the worktree — look for App.tsx or similar
+                    const appFile = event.files['src/App.tsx'] || event.files['src/App.jsx'] || event.files['App.tsx'] || event.files['App.jsx']
+                    if (appFile) {
+                      agentOutput = appFile
+                    }
+                    break
+                  }
+                  case 'chunk':
+                    // Accumulate text output in case the agent returns code inline
+                    agentOutput += event.content
+                    break
+                  case 'error':
+                    console.error(`🤖 Agent fallback error: ${event.error}`)
+                    break
+                }
+              }
+
+              // Clean up the agent worktree
+              try {
+                await cleanupWorktree(agentChatId)
+              } catch {
+                // Ignore cleanup errors
+              }
+
+              // Try to extract code from agent output
+              if (agentOutput.length > 200) {
+                // Re-validate the agent's output
+                const agentValidation = validateGeneratedCode(agentOutput)
+
+                if (agentValidation.valid) {
+                  console.log('✅ Claude agent fallback succeeded — validation passed')
+                  finalContent = agentValidation.code
+                  validation = agentValidation
+                  agentFallbackSucceeded = true
+
+                  // Update preview with fixed content
+                  updatePreviewPartial(responseId, finalContent)
+                  safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'refresh' })}\n\n`))
+                } else {
+                  console.error('❌ Claude agent fallback output also failed validation:', agentValidation.error)
+                }
+              } else {
+                console.error('❌ Claude agent fallback produced insufficient output:', agentOutput.length, 'chars')
+              }
+            } catch (agentErr) {
+              console.error('❌ Claude agent fallback threw an error:', agentErr)
+            }
+
+            console.log(`🤖 Agent fallback result: used=${agentFallbackUsed}, succeeded=${agentFallbackSucceeded}`)
+          }
+
           // Final validation check
           if (!validation.valid) {
             // Log validation error
-            console.error('❌ Final validation failed (after retry):', validation.error)
+            console.error('❌ Final validation failed (after retry' + (agentFallbackUsed ? ' + agent fallback' : '') + '):', validation.error)
 
             // Send validation error to client
+            const failureStages = [
+              retryAttempted ? 'auto-retry' : null,
+              agentFallbackUsed ? 'Claude agent fallback' : null,
+            ].filter(Boolean).join(' and ')
+
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({
               type: 'validation_error',
               error: validation.error,
-              message: retryAttempted
-                ? 'The code generation failed validation even after auto-retry. Please try rephrasing your request.'
+              message: failureStages
+                ? `The code generation failed validation even after ${failureStages}. Please try rephrasing your request.`
                 : 'The generated code has syntax errors. Please try regenerating.'
             })}\n\n`))
 
             // Store the invalid code with error marker — wrap in markdown so iframe preview can extract it
             const wrappedInvalidCode = `\`\`\`jsx\n${finalContent}\n\`\`\``
-            storePreview(responseId, wrappedInvalidCode, message, { validationError: validation.error, usage: tokenUsage })
+            storePreview(responseId, wrappedInvalidCode, message, {
+              validationError: validation.error,
+              usage: tokenUsage,
+              agentFallbackUsed,
+              agentFallbackSucceeded,
+            })
 
             // Still send files for Sandpack (it has its own error boundary)
             try {
@@ -589,7 +838,11 @@ Generate a corrected version of: ${message}`
             console.log(`📁 Generated ${Object.keys(ainativeFiles).length} AINative files`)
 
             // Store clean code response + AINative files (legacy preview)
-            storePreview(responseId, cleanCodeResponse, message, { usage: tokenUsage, ainativeFiles })
+            storePreview(responseId, cleanCodeResponse, message, {
+              usage: tokenUsage,
+              ainativeFiles,
+              ...(agentFallbackUsed && { agentFallbackUsed, agentFallbackSucceeded }),
+            })
 
             // Parse into multi-file output for Sandpack
             const parsedFiles = parseMultiFileOutput(finalContent, message)
@@ -668,6 +921,7 @@ Generate a corrected version of: ${message}`
                   code_length: finalContent?.length || 0, theme: selectedTheme?.name,
                   temperature: 0.7, max_tokens: 8192, provider: isLocal ? 'meta' : 'ainative',
                   retry_attempted: retryAttempted, created_at: new Date().toISOString(),
+                  agent_fallback_used: agentFallbackUsed, agent_fallback_succeeded: agentFallbackSucceeded,
                 },
               }) + '\n')
               console.log(`[RLHF] 📝 Training data saved: ${responseId} (${finalContent.length} chars)`)
@@ -713,6 +967,8 @@ Generate a corrected version of: ${message}`
                 generationTimeMs: genTimeMs,
                 retryCount: retryAttempted ? 1 : 0,
                 finishReason: 'stop',
+                agentFallbackUsed,
+                agentFallbackSucceeded,
               }).catch(e => console.warn('[RLHF log failed]', e))
 
               // JSONL local write removed — ZeroDB is source of truth (Refs builder#41)
@@ -745,6 +1001,8 @@ Generate a corrected version of: ${message}`
                   valid: validation.valid,
                   error: validation.valid ? undefined : validation.error,
                   retryAttempted,
+                  agentFallbackUsed,
+                  agentFallbackSucceeded,
                 },
                 status: validation.valid ? 'success' : 'validation_error',
                 theme: selectedTheme.name,

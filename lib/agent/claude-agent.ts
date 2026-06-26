@@ -109,6 +109,17 @@ export function isClaudeAgentEnabled(): boolean {
   return process.env.USE_CLAUDE_AGENT === 'true'
 }
 
+/**
+ * Returns true if the Claude agent fallback (for validation failures) is enabled.
+ * Enabled when either USE_CLAUDE_AGENT_FALLBACK=true or USE_CLAUDE_AGENT=true.
+ */
+export function isClaudeAgentFallbackEnabled(): boolean {
+  return (
+    process.env.USE_CLAUDE_AGENT_FALLBACK === 'true' ||
+    process.env.USE_CLAUDE_AGENT === 'true'
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
