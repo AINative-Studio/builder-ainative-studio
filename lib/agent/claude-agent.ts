@@ -294,8 +294,9 @@ export async function* runHeadlessAgent(
 
       case 'result': {
         // Final result event — log full details for debugging
-        console.log(`[Agent] Result: is_error=${event.is_error}, duration=${event.duration_ms}ms, turns=${event.num_turns}, cost=$${event.total_cost_usd}, reason=${event.terminal_reason || event.stop_reason}`)
-        if (event.result) console.log(`[Agent] Result text: ${String(event.result).slice(0, 300)}`)
+        const ev = event as any
+        console.log(`[Agent] Result: is_error=${ev.is_error}, duration=${ev.duration_ms}ms, turns=${ev.num_turns}, cost=$${ev.total_cost_usd}, reason=${ev.terminal_reason || ev.stop_reason}`)
+        if (ev.result) console.log(`[Agent] Result text: ${String(ev.result).slice(0, 300)}`)
         if (event.is_error) {
           lastError = event.result || 'Agent returned an error'
           yield { type: 'error', error: lastError, fatal: false }
