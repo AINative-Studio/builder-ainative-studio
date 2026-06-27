@@ -58,15 +58,21 @@ const USE_CLAUDE_DIRECT = !!process.env.ANTHROPIC_API_KEY
 const DEFAULT_MODEL = USE_CLAUDE_DIRECT ? 'claude-sonnet-4-20250514' : (process.env.DEFAULT_MODEL || 'ministral-14b')
 const PAID_MODEL = process.env.PAID_MODEL || 'kimi-k2.6'
 
-// Anthropic client for direct Claude calls
+// Anthropic client for direct Claude calls — lazy initialized on first use
 let anthropicClient: any = null
-if (USE_CLAUDE_DIRECT) {
-  import('@anthropic-ai/sdk').then(({ default: Anthropic }) => {
+function getAnthropicClient() {
+  if (anthropicClient) return anthropicClient
+  if (!USE_CLAUDE_DIRECT) return null
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const Anthropic = require('@anthropic-ai/sdk').default || require('@anthropic-ai/sdk')
     anthropicClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-    console.log('✅ Anthropic client initialized for Claude Sonnet 3.5')
-  }).catch(() => {
+    console.log('✅ Anthropic client initialized for Claude Sonnet 4')
+    return anthropicClient
+  } catch (e) {
     console.warn('⚠️ @anthropic-ai/sdk not available, falling back to AINative')
-  })
+    return null
+  }
 }
 
 // Fallback chains (used when Claude is unavailable)
@@ -577,10 +583,11 @@ OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polis
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Generating with ' + (USE_CLAUDE_DIRECT ? 'Claude Sonnet 3.5' : modelId) + '...' })}\n\n`))
 
             // ============ CLAUDE DIRECT PATH — Anthropic SDK ============
-            if (USE_CLAUDE_DIRECT && anthropicClient) {
-              console.log('🧠 Using Claude Sonnet 3.5 directly via Anthropic SDK')
+            const claude = getAnthropicClient()
+            if (claude) {
+              console.log('🧠 Using Claude Sonnet 4 directly via Anthropic SDK')
               try {
-                const claudeResponse = await anthropicClient.messages.create({
+                const claudeResponse = await claude.messages.create({
                   model: 'claude-sonnet-4-20250514',
                   max_tokens: 8192,
                   system: llmSystemPrompt,
