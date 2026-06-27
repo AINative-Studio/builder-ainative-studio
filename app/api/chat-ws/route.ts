@@ -55,7 +55,7 @@ function getLLMClient(): OpenAI {
 // PRIMARY: Claude Sonnet 3.5 via Anthropic SDK (200K context, best code quality)
 // FALLBACK: ministral-14b via AINative (free, fast, limited context)
 const USE_CLAUDE_DIRECT = !!process.env.ANTHROPIC_API_KEY
-const DEFAULT_MODEL = USE_CLAUDE_DIRECT ? 'claude-3-5-sonnet-20241022' : (process.env.DEFAULT_MODEL || 'ministral-14b')
+const DEFAULT_MODEL = USE_CLAUDE_DIRECT ? 'claude-sonnet-4-20250514' : (process.env.DEFAULT_MODEL || 'ministral-14b')
 const PAID_MODEL = process.env.PAID_MODEL || 'kimi-k2.6'
 
 // Anthropic client for direct Claude calls
@@ -581,7 +581,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polis
               console.log('🧠 Using Claude Sonnet 3.5 directly via Anthropic SDK')
               try {
                 const claudeResponse = await anthropicClient.messages.create({
-                  model: 'claude-3-5-sonnet-20241022',
+                  model: 'claude-sonnet-4-20250514',
                   max_tokens: 8192,
                   system: llmSystemPrompt,
                   messages: previousMessages.length > 0
