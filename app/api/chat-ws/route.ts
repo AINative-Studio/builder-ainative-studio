@@ -51,16 +51,25 @@ function getLLMClient(): OpenAI {
   return isLocal ? metaClient : ainativeClient
 }
 
-// Model strategy (benchmarked 2026-06-13):
-// FREE: nous-coder (16s, 9K chars, best theme compliance)
-// PAID: kimi-k2.6 (71s, 23K chars, best quality — via DigitalOcean)
-// ministral-14b: 933+ tokens complete output, no 512-cap
-// llama-4-maverick capped at 512 tokens by AINative proxy — UNUSABLE
-const DEFAULT_MODEL = process.env.DEFAULT_MODEL || 'ministral-14b'
+// Model strategy (updated 2026-06-27):
+// PRIMARY: Claude Sonnet 3.5 via Anthropic SDK (200K context, best code quality)
+// FALLBACK: ministral-14b via AINative (free, fast, limited context)
+const USE_CLAUDE_DIRECT = !!process.env.ANTHROPIC_API_KEY
+const DEFAULT_MODEL = USE_CLAUDE_DIRECT ? 'claude-3-5-sonnet-20241022' : (process.env.DEFAULT_MODEL || 'ministral-14b')
 const PAID_MODEL = process.env.PAID_MODEL || 'kimi-k2.6'
 
-// Fallback chains by tier
-// NEVER use llama-4-maverick — AINative caps it at 512 tokens (ALWAYS truncated)
+// Anthropic client for direct Claude calls
+let anthropicClient: any = null
+if (USE_CLAUDE_DIRECT) {
+  import('@anthropic-ai/sdk').then(({ default: Anthropic }) => {
+    anthropicClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+    console.log('✅ Anthropic client initialized for Claude Sonnet 3.5')
+  }).catch(() => {
+    console.warn('⚠️ @anthropic-ai/sdk not available, falling back to AINative')
+  })
+}
+
+// Fallback chains (used when Claude is unavailable)
 const FREE_FALLBACKS = ['ministral-14b', 'nous-coder', 'gpt-oss-20b']
 const PAID_FALLBACKS = ['kimi-k2.6', 'nous-coder', 'nemotron-70b', 'ministral-14b']
 
@@ -565,10 +574,53 @@ IMPORT RULES:
 
 OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polished with realistic sample data.`
 
-            safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Generating with ' + modelId + '...' })}\n\n`))
+            safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Generating with ' + (USE_CLAUDE_DIRECT ? 'Claude Sonnet 3.5' : modelId) + '...' })}\n\n`))
 
-            // Use non-streaming for AINative (streaming returns empty), streaming for Meta
-            if (provider === 'meta') {
+            // ============ CLAUDE DIRECT PATH — Anthropic SDK ============
+            if (USE_CLAUDE_DIRECT && anthropicClient) {
+              console.log('🧠 Using Claude Sonnet 3.5 directly via Anthropic SDK')
+              try {
+                const claudeResponse = await anthropicClient.messages.create({
+                  model: 'claude-3-5-sonnet-20241022',
+                  max_tokens: 8192,
+                  system: llmSystemPrompt,
+                  messages: previousMessages.length > 0
+                    ? [...previousMessages.map((m: any) => ({ role: m.role, content: m.content })), { role: 'user', content: enhancedPrompt }]
+                    : [{ role: 'user', content: enhancedPrompt }],
+                })
+
+                fullContent = claudeResponse.content
+                  .filter((block: any) => block.type === 'text')
+                  .map((block: any) => block.text)
+                  .join('\n')
+
+                const usage = claudeResponse.usage
+                tokenUsage = {
+                  input_tokens: usage?.input_tokens || 0,
+                  output_tokens: usage?.output_tokens || 0,
+                  cache_creation_input_tokens: 0,
+                  cache_read_input_tokens: 0,
+                  total_tokens: (usage?.input_tokens || 0) + (usage?.output_tokens || 0),
+                  estimated_cost: ((usage?.input_tokens || 0) * 0.000003 + (usage?.output_tokens || 0) * 0.000015),
+                }
+
+                console.log(`📊 Claude Sonnet 3.5: ${fullContent.length} chars (${tokenUsage.input_tokens}+${tokenUsage.output_tokens} tok) cost=$${tokenUsage.estimated_cost.toFixed(4)}`)
+
+                updatePreviewPartial(responseId, fullContent)
+                safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'refresh' })}\n\n`))
+              } catch (claudeErr: any) {
+                console.error('❌ Claude direct call failed:', claudeErr?.message?.slice(0, 100))
+                // Fall through to AINative path below
+                fullContent = ''
+              }
+            }
+
+            // ============ AINATIVE FALLBACK PATH — OpenAI-compatible ============
+            // Only runs if Claude direct path didn't produce output
+            if (fullContent.length > 500) {
+              // Claude succeeded — skip AINative entirely
+              console.log('✅ Claude produced output, skipping AINative fallback')
+            } else if (provider === 'meta') {
               try {
                 const stream = await client.chat.completions.create({
                   model: modelId,
@@ -607,7 +659,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polis
                 })
                 fullContent = fallbackResponse.choices?.[0]?.message?.content || ''
               }
-            } else {
+            } else if (!fullContent || fullContent.length <= 500) {
               // AINative: single-turn generation (system+user only)
               // Multi-turn conversations get capped at 512 tokens by the API
               // Single-turn with system message gets full output (~1500-2500 tokens)
