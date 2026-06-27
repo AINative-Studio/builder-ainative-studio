@@ -54,9 +54,8 @@ function getLLMClient(): OpenAI {
 // Model strategy (updated 2026-06-27):
 // PRIMARY: Claude Sonnet 3.5 via Anthropic SDK (200K context, best code quality)
 // FALLBACK: ministral-14b via AINative (free, fast, limited context)
-// Disabled: ANTHROPIC_API_KEY on Railway returns 404 for all model IDs
-// Re-enable when a funded Anthropic key with model access is configured
-const USE_CLAUDE_DIRECT = false // !!process.env.ANTHROPIC_API_KEY
+// Enable Claude direct when a real Anthropic key is set (sk-ant- prefix)
+const USE_CLAUDE_DIRECT = !!(process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.startsWith('sk-ant-'))
 const DEFAULT_MODEL = USE_CLAUDE_DIRECT ? 'claude-3-5-sonnet-20241022' : (process.env.DEFAULT_MODEL || 'ministral-14b')
 const PAID_MODEL = process.env.PAID_MODEL || 'kimi-k2.6'
 
