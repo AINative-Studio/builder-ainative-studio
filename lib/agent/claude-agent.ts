@@ -97,6 +97,18 @@ interface ClaudeStreamEvent {
 const DEFAULT_ALLOWED_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep']
 const DEFAULT_MAX_BUDGET_USD = 1.0
 const DEFAULT_MODEL = 'sonnet'
+const AGENT_SYSTEM_PROMPT = `You are building a React component in an isolated workspace.
+RULES:
+- Write code to src/App.tsx (main component, default export)
+- Use Tailwind CSS for styling
+- Use lucide-react for icons
+- Use recharts for charts
+- DO NOT run npm install or npm run build — dependencies are pre-installed
+- DO NOT create package.json or modify existing config files
+- Focus on writing clean, complete React/TypeScript code
+- Make the component visually polished and production-ready
+- Use realistic sample data (not lorem ipsum)
+- Ensure all JSX tags are properly closed`
 
 // ---------------------------------------------------------------------------
 // Guard
@@ -186,9 +198,9 @@ export async function* runHeadlessAgent(
     '--allowedTools', ...allowedTools,
   ]
 
-  if (systemPrompt) {
-    args.push('--append-system-prompt', systemPrompt)
-  }
+  // Always inject the agent system prompt (workspace rules)
+  const fullSystemPrompt = AGENT_SYSTEM_PROMPT + (systemPrompt ? '\n\n' + systemPrompt : '')
+  args.push('--append-system-prompt', fullSystemPrompt)
 
   // 3. Spawn the claude process
   yield { type: 'build_step', step: `Starting Claude agent (model: ${model})` }
