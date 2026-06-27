@@ -171,12 +171,16 @@ export async function* runHeadlessAgent(
     abortSignal,
   } = options
 
+  const maxTurns = options.maxTurns || 5
+
   const args: string[] = [
     '--print',
     prompt,
     '--output-format', 'stream-json',
+    '--verbose',  // Required for stream-json output format
     '--permission-mode', 'acceptEdits',
     '--model', model,
+    '--max-turns', String(maxTurns),
     '--max-budget-usd', String(maxBudgetUsd),
     '--bare',
     '--allowedTools', ...allowedTools,
@@ -198,7 +202,7 @@ export async function* runHeadlessAgent(
         // Ensure the agent uses the project's ANTHROPIC_API_KEY
         // ANTHROPIC_BASE_URL is respected automatically by the CLI
       },
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe'],  // Close stdin immediately (no interactive input)
     })
   } catch (err) {
     yield {
