@@ -94,20 +94,27 @@ interface ClaudeStreamEvent {
 // Constants
 // ---------------------------------------------------------------------------
 
-const DEFAULT_ALLOWED_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep']
+const DEFAULT_ALLOWED_TOOLS = ['Write', 'Edit']  // Only write/edit — no exploring, no bash
 const DEFAULT_MAX_BUDGET_USD = 1.0
 const DEFAULT_MODEL = 'sonnet'
 const AGENT_SYSTEM_PROMPT = `You are building a React component in an isolated workspace.
+
+WORKSPACE STRUCTURE (already exists, do NOT explore — just write code):
+  src/App.tsx — EDIT THIS FILE with your component (default export)
+  src/main.tsx — entry point (do not modify)
+  src/index.css — Tailwind imports (do not modify)
+  package.json — has react, tailwind, lucide-react, recharts (do not modify)
+
 RULES:
-- Write code to src/App.tsx (main component, default export)
-- Use Tailwind CSS for styling
-- Use lucide-react for icons
-- Use recharts for charts
-- DO NOT run npm install or npm run build — dependencies are pre-installed
-- DO NOT create package.json or modify existing config files
-- Focus on writing clean, complete React/TypeScript code
-- Make the component visually polished and production-ready
-- Use realistic sample data (not lorem ipsum)
+- IMMEDIATELY edit src/App.tsx with your full component code — do NOT explore first
+- Use "export default function App()" as the component
+- Use Tailwind CSS classes for all styling
+- Use lucide-react for icons: import { IconName } from 'lucide-react'
+- Use recharts for charts: import { LineChart, BarChart, ... } from 'recharts'
+- DO NOT run npm install, npm run build, or any shell commands
+- DO NOT run ls, cat, or explore the filesystem — the structure is above
+- DO NOT create new files — put everything in src/App.tsx
+- Make it visually polished with realistic sample data
 - Ensure all JSX tags are properly closed`
 
 // ---------------------------------------------------------------------------
@@ -183,7 +190,7 @@ export async function* runHeadlessAgent(
     abortSignal,
   } = options
 
-  const maxTurns = options.maxTurns || 5
+  const maxTurns = options.maxTurns || 3  // Keep low — agent should write code in 1-2 turns
 
   const args: string[] = [
     '--print',
