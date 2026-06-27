@@ -412,14 +412,12 @@ export function ShowcaseGalleryClient() {
     fetch('/api/showcase?offset=0&limit=100')
       .then(r => r.json())
       .then(data => {
-        // Only show entries with substantial, valid code that renders
+        // Only show entries with substantial code
         const dynamic = (data.entries || []).filter(
           (e: ShowcaseEntry) => {
             if (!e.chatId || !e.generatedCode) return false
             const code = e.generatedCode
             if (code.length < 2000) return false
-            if (!code.includes('function ') && !code.includes('const ')) return false
-            if (!code.includes('return') || !code.includes('<div')) return false
             // Exclude entries with known rendering issues
             // Multi-file with only stub page.tsx
             const hasFileMarkers = code.includes('// --- FILE:')
