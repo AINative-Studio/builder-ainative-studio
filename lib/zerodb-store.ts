@@ -17,23 +17,53 @@ function getApiKey(): string {
   return process.env.ZERODB_API_KEY || ''
 }
 
-async function zerodbRequest(method: string, path: string, body?: any): Promise<any> {
+async function zerodbRequest(
+  method: string,
+  path: string,
+  body?: any,
+  opts: { timeoutMs?: number; retries?: number } = {},
+): Promise<any> {
   const url = `${ZERODB_API}${path}`
-  const res = await fetch(url, {
-    method,
-    headers: {
-      'X-API-Key': getApiKey(),
-      'Content-Type': 'application/json',
-    },
-    body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(10_000),
-  })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    console.warn(`[ZeroDB] ${method} ${path} failed: ${res.status} ${text.substring(0, 100)}`)
-    return null
+  // ZeroDB list/query responses on the generations table can take 6–19s
+  // (large payloads), so default generously. Reads also retry once to absorb
+  // intermittent 401s / 30s timeouts (tracked in issue #58).
+  const timeoutMs = opts.timeoutMs ?? 12_000
+  const retries = opts.retries ?? 0
+
+  let lastErr: unknown = null
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: {
+          'X-API-Key': getApiKey(),
+          'Content-Type': 'application/json',
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(timeoutMs),
+      })
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        console.warn(
+          `[ZeroDB] ${method} ${path} failed (attempt ${attempt + 1}/${retries + 1}): ${res.status} ${text.substring(0, 100)}`,
+        )
+        // Retry on transient server/auth flakes; give up on client errors that won't change.
+        if (attempt < retries && (res.status === 401 || res.status === 429 || res.status >= 500)) {
+          continue
+        }
+        return null
+      }
+      return await res.json()
+    } catch (e) {
+      lastErr = e
+      console.warn(
+        `[ZeroDB] ${method} ${path} threw (attempt ${attempt + 1}/${retries + 1}): ${(e as Error)?.name || e}`,
+      )
+      // Retry on timeout / network errors.
+    }
   }
-  return res.json()
+  if (lastErr) throw lastErr
+  return null
 }
 
 /**
@@ -127,17 +157,51 @@ export async function listShowcaseEntries(limit = 50): Promise<any[]> {
 }
 
 /**
- * List all generations (for showcase community section)
+ * List all generations (for showcase community section).
+ *
+ * The ZeroDB list endpoint is slow (6–19s) and intermittently fails (issue #58),
+ * which used to blank the showcase ~75% of loads. To stay resilient we:
+ *  - cache the last successful result (per limit) for CACHE_TTL_MS, and
+ *  - serve the last-known-good result if a fresh fetch fails.
+ *
+ * The cache is process-local; a single warm instance keeps the showcase up even
+ * while ZeroDB is flaky. Stale-but-present always beats empty.
  */
+const CACHE_TTL_MS = 60_000
+type GenCacheEntry = { rows: any[]; fetchedAt: number }
+const genCache = new Map<number, GenCacheEntry>()
+
 export async function listGenerations(limit = 50): Promise<any[]> {
+  const cached = genCache.get(limit)
+  const now = Date.now()
+  if (cached && now - cached.fetchedAt < CACHE_TTL_MS) {
+    return cached.rows
+  }
+
   try {
     const result = await zerodbRequest(
       'GET',
-      `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/rows?limit=${limit}`
+      `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/rows?limit=${limit}`,
+      undefined,
+      { timeoutMs: 25_000, retries: 1 },
     )
-    return (result?.data || []).map((r: any) => r.row_data || r)
+    const rows = (result?.data || []).map((r: any) => r.row_data || r)
+    if (rows.length > 0) {
+      genCache.set(limit, { rows, fetchedAt: now })
+      return rows
+    }
+    // Empty/failed fetch — fall back to last-known-good rather than blanking.
+    if (cached) {
+      console.warn('[ZeroDB] List generations empty; serving cached rows')
+      return cached.rows
+    }
+    return rows
   } catch (e) {
-    console.warn('[ZeroDB] List generations failed:', e)
+    console.warn('[ZeroDB] List generations failed:', (e as Error)?.name || e)
+    if (cached) {
+      console.warn('[ZeroDB] Serving stale cached generations after error')
+      return cached.rows
+    }
     return []
   }
 }
