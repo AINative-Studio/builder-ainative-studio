@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Ops Center — Swarm Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script>
+  // Force Babel to use classic JSX runtime (React.createElement, not import)
+  if (typeof Babel !== 'undefined') {
+    Babel.registerPreset('custom-react', {
+      presets: [[Babel.availablePresets['react'], { runtime: 'classic' }]]
+    });
+  }
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<script>
+tailwind.config = {
+  darkMode: 'class',
+  theme: {
+    extend: {
+      fontFamily: {
+        mono: ['JetBrains Mono', 'monospace'],
+        sans: ['Inter', 'system-ui', 'sans-serif'],
+      },
+      colors: {
+        surface: { 50: '#0a0e17', 100: '#0f1420', 200: '#141a2a', 300: '#1a2235', 400: '#222d42' },
+        neon: { green: '#00ff88', blue: '#00aaff', purple: '#8855ff', red: '#ff3355', amber: '#ffaa00', cyan: '#00ffdd' },
+      },
+      keyframes: {
+        'pulse-glow': { '0%, 100%': { opacity: '1' }, '50%': { opacity: '0.5' } },
+        'scan-line': { '0%': { transform: 'translateY(-100%)' }, '100%': { transform: 'translateY(100%)' } },
+        'fade-up': { '0%': { opacity: '0', transform: 'translateY(12px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } },
+      },
+      animation: {
+        'pulse-glow': 'pulse-glow 2s ease-in-out infinite',
+        'scan-line': 'scan-line 3s ease-in-out infinite',
+        'fade-up': 'fade-up 0.5s ease-out forwards',
+      }
+    }
+  }
+}
+</script>
+<style>
+  body { background: #0a0e17; color: #e2e8f0; font-family: 'Inter', system-ui, sans-serif; margin: 0; overflow-x: hidden; }
+  .glow-green { box-shadow: 0 0 20px rgba(0,255,136,0.15), inset 0 1px 0 rgba(0,255,136,0.1); }
+  .glow-blue { box-shadow: 0 0 20px rgba(0,170,255,0.15), inset 0 1px 0 rgba(0,170,255,0.1); }
+  .glow-red { box-shadow: 0 0 20px rgba(255,51,85,0.15), inset 0 1px 0 rgba(255,51,85,0.1); }
+  .glow-amber { box-shadow: 0 0 20px rgba(255,170,0,0.15), inset 0 1px 0 rgba(255,170,0,0.1); }
+  .grid-bg { background-image: radial-gradient(rgba(0,170,255,0.03) 1px, transparent 1px); background-size: 24px 24px; }
+  .card-surface { background: linear-gradient(135deg, rgba(20,26,42,0.9) 0%, rgba(15,20,32,0.95) 100%); border: 1px solid rgba(255,255,255,0.05); backdrop-filter: blur(12px); }
+  .status-pulse { animation: pulse-glow 2s ease-in-out infinite; }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: #0a0e17; }
+  ::-webkit-scrollbar-thumb { background: #222d42; border-radius: 3px; }
+  .timeline-line { background: linear-gradient(to bottom, rgba(0,170,255,0.3), rgba(136,85,255,0.3), rgba(0,255,136,0.1)); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="custom-react">
+const { useState, useEffect, useRef } = React;
+
+// ─── Icons (inline SVG for zero deps) ───────────────────────────
+const Icon = ({ d, size = 18, color = 'currentColor', className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d={d} />
+  </svg>
+);
+
+const icons = {
+  overview: "M3 3h18v18H3zM3 9h18M9 21V9",
+  agents: "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 7a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75",
+  tasks: "M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11",
+  guardrails: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
+  timeline: "M12 8v4l3 3M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z",
+  search: "M21 21l-6-6m2-5a7 7 0 1 1-14 0 7 7 0 0 1 14 0z",
+  activity: "M22 12h-4l-3 9L9 3l-3 9H2",
+  zap: "M13 2L3 14h9l-1 10 10-12h-9l1-10z",
+  cpu: "M18 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zM9 9h6v6H9z",
+  bot: "M12 8V4H8M2 14h2M20 14h2M15 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM9 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM18 18H6a4 4 0 0 1-4-4v-4a8 8 0 0 1 16 0v4a4 4 0 0 1-4 4z",
+  check: "M20 6L9 17l-5-5",
+  x: "M18 6L6 18M6 6l12 12",
+  alert: "M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z",
+  chevron: "M9 18l6-6-6-6",
+  trending: "M23 6l-9.5 9.5-5-5L1 18",
+  down: "M23 18l-9.5-9.5-5 5L1 6",
+  settings: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z",
+};
+
+// ─── Sparkline ──────────────────────────────────────────────────
+function Sparkline({ data, color = '#00ff88', width = 80, height = 28 }) {
+  const max = Math.max(...data);
+  const min = Math.min(...data);
+  const range = max - min || 1;
+  const points = data.map((v, i) =>
+    `${(i / (data.length - 1)) * width},${height - ((v - min) / range) * (height - 4) - 2}`
+  ).join(' ');
+  return (
+    <svg width={width} height={height} className="opacity-70">
+      <polyline fill="none" stroke={color} strokeWidth="1.5" points={points} />
+      <circle cx={(data.length - 1) / (data.length - 1) * width} cy={height - ((data[data.length - 1] - min) / range) * (height - 4) - 2} r="2.5" fill={color} />
+    </svg>
+  );
+}
+
+// ─── Data ────────────────────────────────────────────────────────
+const agents = [
+  { name: 'DataProcessor', role: 'ETL Agent', status: 'active', tasks: 342, model: 'claude-sonnet-4', uptime: '99.2%', tokens: '12.4K', lastAction: '2s ago' },
+  { name: 'ContentAnalyzer', role: 'NLP Agent', status: 'busy', tasks: 128, model: 'claude-sonnet-4', uptime: '97.8%', tokens: '8.7K', lastAction: '1s ago' },
+  { name: 'CodeReviewer', role: 'Code Agent', status: 'active', tasks: 89, model: 'claude-sonnet-4', uptime: '99.9%', tokens: '5.2K', lastAction: '12s ago' },
+  { name: 'SecurityScanner', role: 'Security Agent', status: 'idle', tasks: 0, model: 'claude-haiku-3', uptime: '100%', tokens: '0', lastAction: '4m ago' },
+  { name: 'DeploymentBot', role: 'DevOps Agent', status: 'active', tasks: 56, model: 'claude-sonnet-4', uptime: '98.5%', tokens: '3.1K', lastAction: '8s ago' },
+  { name: 'TestRunner', role: 'QA Agent', status: 'error', tasks: 12, model: 'claude-sonnet-4', uptime: '94.1%', tokens: '1.8K', lastAction: '32s ago' },
+];
+
+const timelineEvents = [
+  { type: 'thinking', agent: 'DataProcessor', message: 'Analyzing schema for batch ETL pipeline', duration: '2.1s', tokens: 1500, time: '14:23:01' },
+  { type: 'tool_call', agent: 'CodeReviewer', message: 'Running static analysis on PR #847', duration: '4.3s', tokens: 2200, time: '14:22:58' },
+  { type: 'response', agent: 'ContentAnalyzer', message: 'Classification complete: 128 documents processed', duration: '12.7s', tokens: 8400, time: '14:22:45' },
+  { type: 'error', agent: 'TestRunner', message: 'Timeout on integration test suite (>30s)', duration: '30.0s', tokens: 450, time: '14:22:32' },
+  { type: 'handoff', agent: 'DataProcessor', message: 'Handoff to DeploymentBot for staging push', duration: '0.3s', tokens: 120, time: '14:22:15' },
+  { type: 'tool_call', agent: 'DeploymentBot', message: 'Executing: railway deploy --service api', duration: '8.2s', tokens: 340, time: '14:22:08' },
+  { type: 'thinking', agent: 'SecurityScanner', message: 'Idle — awaiting next scan schedule (15:00)', duration: '—', tokens: 0, time: '14:21:50' },
+  { type: 'checkpoint', agent: 'ContentAnalyzer', message: 'Memory consolidated: 847 entities, 2.1K relations', duration: '1.8s', tokens: 3200, time: '14:21:30' },
+];
+
+const guardrails = [
+  { name: 'Content Filter', status: 'passed', desc: 'No harmful content detected in outputs' },
+  { name: 'PII Detection', status: 'passed', desc: 'Zero PII exposure across 1,247 tasks' },
+  { name: 'Rate Limiter', status: 'passed', desc: 'All agents within rate limits (< 80%)' },
+  { name: 'Token Budget', status: 'warning', desc: 'DataProcessor at 87% of daily budget' },
+  { name: 'Output Validation', status: 'passed', desc: 'All outputs match expected schemas' },
+  { name: 'Hallucination Check', status: 'failed', desc: 'TestRunner output contained unverified claim' },
+];
+
+const navItems = [
+  { id: 'overview', label: 'Overview', icon: icons.overview },
+  { id: 'agents', label: 'Agents', icon: icons.agents },
+  { id: 'tasks', label: 'Tasks', icon: icons.tasks },
+  { id: 'guardrails', label: 'Guardrails', icon: icons.guardrails },
+  { id: 'timeline', label: 'Timeline', icon: icons.timeline },
+];
+
+// ─── Status helpers ─────────────────────────────────────────────
+const statusColors = {
+  active: { dot: 'bg-neon-green', text: 'text-neon-green', border: 'border-neon-green/20', glow: 'glow-green' },
+  busy: { dot: 'bg-neon-blue', text: 'text-neon-blue', border: 'border-neon-blue/20', glow: 'glow-blue' },
+  idle: { dot: 'bg-gray-500', text: 'text-gray-400', border: 'border-gray-600/20', glow: '' },
+  error: { dot: 'bg-neon-red', text: 'text-neon-red', border: 'border-neon-red/20', glow: 'glow-red' },
+};
+
+const eventColors = {
+  thinking: { bg: 'bg-neon-purple/10', border: 'border-neon-purple/30', dot: 'bg-neon-purple', text: 'text-neon-purple' },
+  tool_call: { bg: 'bg-neon-blue/10', border: 'border-neon-blue/30', dot: 'bg-neon-blue', text: 'text-neon-blue' },
+  response: { bg: 'bg-neon-green/10', border: 'border-neon-green/30', dot: 'bg-neon-green', text: 'text-neon-green' },
+  error: { bg: 'bg-neon-red/10', border: 'border-neon-red/30', dot: 'bg-neon-red', text: 'text-neon-red' },
+  handoff: { bg: 'bg-neon-cyan/10', border: 'border-neon-cyan/30', dot: 'bg-neon-cyan', text: 'text-neon-cyan' },
+  checkpoint: { bg: 'bg-neon-amber/10', border: 'border-neon-amber/30', dot: 'bg-neon-amber', text: 'text-neon-amber' },
+};
+
+const guardColors = { passed: 'text-neon-green', warning: 'text-neon-amber', failed: 'text-neon-red' };
+const guardIcons = { passed: icons.check, warning: icons.alert, failed: icons.x };
+
+// ─── Main Dashboard ─────────────────────────────────────────────
+function App() {
+  const [activeNav, setActiveNav] = useState('overview');
+  const [time, setTime] = useState(new Date());
+
+  useEffect(() => {
+    const t = setInterval(() => setTime(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  return (
+    <div className="flex h-screen overflow-hidden">
+      {/* ── Sidebar ──────────────────────────────── */}
+      <aside className="w-[68px] bg-surface-100 border-r border-white/[0.04] flex flex-col items-center py-5 gap-1 shrink-0">
+        {/* Logo */}
+        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-neon-blue/20 to-neon-purple/20 border border-neon-blue/20 flex items-center justify-center mb-6">
+          <Icon d={icons.zap} size={18} color="#00aaff" />
+        </div>
+
+        {navItems.map(item => (
+          <button
+            key={item.id}
+            onClick={() => setActiveNav(item.id)}
+            className={`w-11 h-11 rounded-xl flex items-center justify-center transition-all duration-200 group relative ${
+              activeNav === item.id
+                ? 'bg-neon-blue/10 text-neon-blue'
+                : 'text-gray-500 hover:text-gray-300 hover:bg-white/[0.03]'
+            }`}
+          >
+            <Icon d={item.icon} size={18} />
+            {activeNav === item.id && (
+              <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-5 bg-neon-blue rounded-r" />
+            )}
+            <span className="absolute left-14 bg-surface-300 text-xs text-gray-300 px-2 py-1 rounded-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap font-mono z-50">
+              {item.label}
+            </span>
+          </button>
+        ))}
+
+        <div className="mt-auto">
+          <button className="w-11 h-11 rounded-xl flex items-center justify-center text-gray-600 hover:text-gray-400 hover:bg-white/[0.03] transition-all">
+            <Icon d={icons.settings} size={18} />
+          </button>
+        </div>
+      </aside>
+
+      {/* ── Main Content ─────────────────────────── */}
+      <main className="flex-1 overflow-y-auto grid-bg">
+        {/* Header */}
+        <header className="sticky top-0 z-40 bg-surface-50/80 backdrop-blur-xl border-b border-white/[0.04] px-6 py-3.5 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <h1 className="text-[15px] font-semibold tracking-tight">Agent Ops Center</h1>
+            <span className="text-[10px] font-mono text-gray-600 bg-surface-300/50 px-2 py-0.5 rounded-full">v2.4.1</span>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="relative">
+              <Icon d={icons.search} size={14} color="#4a5568" className="absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Search agents, tasks..."
+                className="bg-surface-200/60 border border-white/[0.04] rounded-lg pl-9 pr-4 py-1.5 text-xs text-gray-300 placeholder:text-gray-600 w-56 focus:outline-none focus:border-neon-blue/30 font-mono"
+              />
+            </div>
+            <div className="flex items-center gap-2 text-[11px] font-mono">
+              <div className="w-1.5 h-1.5 rounded-full bg-neon-green status-pulse" />
+              <span className="text-gray-400">Connected</span>
+              <span className="text-neon-green">45ms</span>
+            </div>
+            <span className="text-[11px] font-mono text-gray-500">
+              {time.toLocaleTimeString('en-US', { hour12: false })}
+            </span>
+          </div>
+        </header>
+
+        <div className="px-6 py-5 space-y-5">
+          {/* ── Metrics Row ──────────────────────── */}
+          <div className="grid grid-cols-4 gap-4">
+            {[
+              { label: 'Total Tasks', value: '1,247', change: '+12.5%', up: true, spark: [30,45,28,52,38,60,45,72,55,80,62,90], color: '#00ff88' },
+              { label: 'Success Rate', value: '98.7%', change: '-0.3%', up: false, spark: [97,98,99,98,97,99,98,99,98,99,98,97], color: '#00aaff' },
+              { label: 'Avg Latency', value: '1.2s', change: '+5.1%', up: false, spark: [0.8,1.0,0.9,1.1,1.0,1.2,1.1,1.3,1.0,1.2,1.1,1.2], color: '#8855ff' },
+              { label: 'Token Budget', value: '45K', sub: '/ 100K', change: '45%', up: null, spark: [10,15,20,25,28,32,35,38,40,42,44,45], color: '#ffaa00' },
+            ].map((m, i) => (
+              <div key={i} className="card-surface rounded-xl p-4 group hover:border-white/[0.08] transition-all" style={{ animationDelay: `${i * 80}ms` }}>
+                <div className="flex items-start justify-between mb-3">
+                  <span className="text-[11px] font-medium text-gray-500 uppercase tracking-wider">{m.label}</span>
+                  <Sparkline data={m.spark} color={m.color} />
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-2xl font-bold tracking-tight text-white">{m.value}</span>
+                  {m.sub && <span className="text-sm text-gray-600 font-mono">{m.sub}</span>}
+                </div>
+                <div className="flex items-center gap-1 mt-1.5">
+                  {m.up !== null && (
+                    <Icon d={m.up ? icons.trending : icons.down} size={12} color={m.up ? '#00ff88' : '#ff3355'} />
+                  )}
+                  <span className={`text-[11px] font-mono ${m.up === true ? 'text-neon-green' : m.up === false ? 'text-neon-red' : 'text-neon-amber'}`}>
+                    {m.change}
+                  </span>
+                  <span className="text-[10px] text-gray-600 ml-1">vs last hour</span>
+                </div>
+                {m.label === 'Token Budget' && (
+                  <div className="mt-3 h-1.5 bg-surface-400 rounded-full overflow-hidden">
+                    <div className="h-full bg-gradient-to-r from-neon-amber/80 to-neon-amber rounded-full transition-all" style={{ width: '45%' }} />
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-3 gap-5">
+            {/* ── Agent Grid ─────────────────────── */}
+            <div className="col-span-2 space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="text-[13px] font-semibold text-gray-300 flex items-center gap-2">
+                  <Icon d={icons.bot} size={15} color="#00aaff" />
+                  Active Swarm
+                  <span className="text-[10px] font-mono bg-neon-green/10 text-neon-green px-1.5 py-0.5 rounded-full ml-1">6 agents</span>
+                </h2>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                {agents.map((agent, i) => {
+                  const sc = statusColors[agent.status];
+                  return (
+                    <div key={i} className={`card-surface rounded-xl p-4 ${sc.glow} hover:border-white/[0.08] transition-all cursor-pointer group`}>
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex items-center gap-2.5">
+                          <div className={`w-8 h-8 rounded-lg bg-surface-400/50 flex items-center justify-center border ${sc.border}`}>
+                            <Icon d={icons.bot} size={14} color={agent.status === 'error' ? '#ff3355' : agent.status === 'active' ? '#00ff88' : agent.status === 'busy' ? '#00aaff' : '#6b7280'} />
+                          </div>
+                          <div>
+                            <div className="text-[12px] font-semibold text-white font-mono">{agent.name}</div>
+                            <div className="text-[10px] text-gray-500">{agent.role}</div>
+                          </div>
+                        </div>
+                        <div className={`flex items-center gap-1.5 text-[10px] font-mono ${sc.text}`}>
+                          <div className={`w-1.5 h-1.5 rounded-full ${sc.dot} ${agent.status === 'active' || agent.status === 'busy' ? 'status-pulse' : ''}`} />
+                          {agent.status}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-y-2 text-[10px]">
+                        <div><span className="text-gray-600">Tasks</span><div className="font-mono text-white mt-0.5">{agent.tasks}</div></div>
+                        <div><span className="text-gray-600">Uptime</span><div className="font-mono text-white mt-0.5">{agent.uptime}</div></div>
+                        <div><span className="text-gray-600">Model</span><div className="font-mono text-gray-400 mt-0.5 text-[9px]">{agent.model}</div></div>
+                        <div><span className="text-gray-600">Tokens</span><div className="font-mono text-white mt-0.5">{agent.tokens}</div></div>
+                      </div>
+
+                      <div className="mt-3 pt-2.5 border-t border-white/[0.04] flex items-center justify-between text-[10px]">
+                        <span className="text-gray-600">Last action</span>
+                        <span className="font-mono text-gray-400">{agent.lastAction}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* ── Right Column: Guardrails + Timeline ── */}
+            <div className="space-y-4">
+              {/* Guardrails */}
+              <div className="card-surface rounded-xl p-4">
+                <h2 className="text-[13px] font-semibold text-gray-300 mb-3 flex items-center gap-2">
+                  <Icon d={icons.guardrails} size={15} color="#ffaa00" />
+                  Safety Guardrails
+                </h2>
+                <div className="space-y-2">
+                  {guardrails.map((rule, i) => (
+                    <div key={i} className={`flex items-start gap-2.5 p-2.5 rounded-lg ${
+                      rule.status === 'failed' ? 'bg-neon-red/5 border border-neon-red/10' :
+                      rule.status === 'warning' ? 'bg-neon-amber/5 border border-neon-amber/10' :
+                      'bg-white/[0.01] border border-transparent'
+                    }`}>
+                      <div className={`mt-0.5 ${guardColors[rule.status]}`}>
+                        <Icon d={guardIcons[rule.status]} size={13} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-medium text-gray-200">{rule.name}</span>
+                          <span className={`text-[9px] font-mono uppercase tracking-wider ${guardColors[rule.status]}`}>{rule.status}</span>
+                        </div>
+                        <p className="text-[10px] text-gray-500 mt-0.5 leading-relaxed">{rule.desc}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Timeline */}
+              <div className="card-surface rounded-xl p-4">
+                <h2 className="text-[13px] font-semibold text-gray-300 mb-3 flex items-center gap-2">
+                  <Icon d={icons.timeline} size={15} color="#8855ff" />
+                  Execution Log
+                </h2>
+                <div className="relative space-y-0">
+                  <div className="absolute left-[7px] top-2 bottom-2 w-px timeline-line" />
+                  {timelineEvents.map((event, i) => {
+                    const ec = eventColors[event.type] || eventColors.thinking;
+                    return (
+                      <div key={i} className="relative pl-6 py-2 group">
+                        <div className={`absolute left-[3px] top-[14px] w-[9px] h-[9px] rounded-full ${ec.dot} ring-2 ring-surface-50`} />
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className={`text-[10px] font-mono ${ec.text}`}>{event.type}</span>
+                              <span className="text-[9px] text-gray-600">·</span>
+                              <span className="text-[10px] font-mono text-gray-400">{event.agent}</span>
+                            </div>
+                            <p className="text-[10px] text-gray-500 mt-0.5 leading-relaxed truncate">{event.message}</p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <div className="text-[9px] font-mono text-gray-600">{event.time}</div>
+                            <div className="text-[9px] font-mono text-gray-700">{event.duration}</div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

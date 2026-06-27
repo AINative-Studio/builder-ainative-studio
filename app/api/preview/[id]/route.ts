@@ -503,8 +503,9 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
   try {
     var _src = ${JSON.stringify(componentCode)};
     var _compiled = Babel.transform(_src, {presets:[['react', {runtime:'classic'}]]}).code;
+    // Strip any remaining import/export statements that would crash in a script tag
+    _compiled = _compiled.replace(/^import\\s+.*$/gm, '').replace(/^export\\s+(default\\s+)?/gm, '');
     // Inject compiled JS as a new script tag — runs in GLOBAL scope
-    // (same scope as React, shadcn, AIKit, Lucide icons)
     var _s = document.createElement('script');
     _s.textContent = _compiled + ';\\nif(typeof ${detectedComponentName}!=="undefined")window.${detectedComponentName}=${detectedComponentName};';
     document.body.appendChild(_s);

@@ -68,7 +68,7 @@ function ShowcaseCard({ entry }: { entry: ShowcaseEntry }) {
 
 export default function ShowcasePage() {
   // Only show entries with good quality thumbnails as featured
-  const bestThumbnails = ['analytics-dashboard', 'kanban-task-board', 'saas-landing-page', 'team-directory', 'weather-dashboard']
+  const bestThumbnails = ['agent-swarm-dashboard', 'analytics-dashboard', 'kanban-task-board', 'saas-landing-page', 'team-directory']
   const featured = SEED_SHOWCASE.filter(e => bestThumbnails.includes(e.slug))
   const all = SEED_SHOWCASE
 

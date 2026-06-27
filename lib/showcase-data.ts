@@ -33,6 +33,17 @@ export const SHOWCASE_CATEGORIES = [
 // Seed showcase entries — these are always available
 export const SEED_SHOWCASE: ShowcaseEntry[] = [
   {
+    slug: 'agent-swarm-dashboard',
+    title: 'Agent Swarm Ops Center',
+    description: 'A cyberpunk-themed AI agent swarm operations dashboard with 6 agent cards, execution timeline, safety guardrails panel, metric cards with sparklines, and real-time status monitoring. Dark theme with neon accents.',
+    category: 'dashboard',
+    prompt: 'Build an AI Agent Swarm Operations Dashboard with dark sidebar, 4 metric cards, 6 agent cards with status indicators, execution timeline, and safety guardrails panel.',
+    chatId: 'agent-swarm-dashboard',
+    tags: ['dashboard', 'agents', 'swarm', 'dark-theme', 'monitoring', 'ai-ops'],
+    featured: true,
+    createdAt: '2026-06-26',
+  },
+  {
     slug: 'analytics-dashboard',
     title: 'Analytics Dashboard',
     description: 'A professional analytics dashboard with 4 metric cards showing key KPIs, a bar chart for monthly trends, and a recent transactions table. Built with React, Tailwind CSS, Recharts, and Lucide icons.',
