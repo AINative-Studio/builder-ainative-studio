@@ -520,26 +520,50 @@ export async function POST(request: NextRequest) {
             // - Unsplash hero images if available
             // - Memory context from previous generations
             //
-            // The old 35-line hardcoded prompt capped at 60 lines was the #1 quality bottleneck.
-            // Open-source models (ministral-14b, kimi-k2, nous-coder) handle 4K+ system prompts fine.
-            const llmSystemPrompt = enhancedSystemPrompt + `
+            // Condense system prompt for open-source models (ministral-14b context limit ~4K tokens)
+            // The full 580-line prompt overflows the context — use a focused version
+            const llmSystemPrompt = `Generate a complete, production-ready React component. Use this EXACT structure:
 
-## SANDPACK ENVIRONMENT — AVAILABLE IMPORTS (use ONLY these)
+\`\`\`jsx
+import React, { useState } from 'react'
+import { Icon1, Icon2 } from 'lucide-react'
 
-**npm packages (installed):** react, react-dom, lucide-react, recharts@2.15.0, clsx, tailwind-merge
-**shadcn/ui components (from './components/ui/...'):** button, card, badge, input, tabs, label, table, separator, dialog, select, progress, checkbox, accordion, alert, toast, popover, avatar
-**AIKit components (from './components/aikit'):** MetricCard, AIKitPriceCard, AIKitRating, AgentCard, SwarmView, SafetyBadge, GuardrailPanel, ChatBubble, StreamingIndicator, CodeDisplay, TokenUsageBar, ConnectionStatus, AIKitHeader, AIKitSidebar, AIKitTable, AIKitTimeline, AIKitBanner, AIKitAvatar, Skeleton, SkeletonCard, EmptyState, AIKitProductCard, AIKitPagination, AIKitBreadcrumb, AIKitStepper, VideoPlayer, StreamingText, MediaGallery, AgentTimeline
-**Icons (from 'lucide-react'):** Any Lucide icon
+export default function App() {
+  const [state, setState] = useState(initialValue)
+  return (
+    <div className="min-h-screen bg-[${selectedTheme.light}]">
+      {/* Full application UI here */}
+    </div>
+  )
+}
+\`\`\`
 
-**DO NOT import:** framer-motion, @radix-ui/*, date-fns, react-hook-form, zod, @tanstack/*, react-router-dom, axios, react-icons, sonner, next/link, next/image
-**DO NOT import from:** @ainative/*, @/components/*, aikit (npm) — use relative paths only
+DESIGN RULES:
+- Colors: primary bg-[${selectedTheme.primary}], dark bg-[${selectedTheme.dark}], light bg-[${selectedTheme.light}]. NEVER use bg-blue, bg-gray.
+- Use Lucide icons: import { Search, Menu, Users, BarChart3, Settings, Bell, Star, Plus, Edit, Trash2, ArrowRight, TrendingUp, DollarSign, Zap, Shield, Activity } from 'lucide-react'
+- Cards: bg-white rounded-xl shadow-sm border border-slate-200 p-6 hover:shadow-md transition-all
+- Typography: text-4xl font-bold for h1, text-2xl for h2, text-sm text-slate-500 for captions
+- Spacing: py-16 between sections, gap-6 for grids, p-6 for cards
+- ALL buttons: hover: state + transition-colors
+- Use .map() for repeated elements with realistic data (3-5 items)
+- Charts: import { ResponsiveContainer, LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts'
 
-## CRITICAL SYNTAX RULES
-- Write \`function ComponentName() {\` — always include parentheses
-- Keep ALL strings on single lines. Close every quote.
-- Close every JSX tag. Every <div> has </div>.
-- Use "USD" not "$" in string values.
-- export default function App() — always export default.`
+AVAILABLE COMPONENTS (import from './components/ui/button' etc):
+Button, Card, CardHeader, CardTitle, CardContent, CardFooter, Input, Label, Badge, Avatar, AvatarFallback, Table, TableHeader, TableBody, TableRow, TableHead, TableCell, Separator, Tabs, TabsList, TabsTrigger, TabsContent, Progress, Dialog, Select
+
+AIKIT COMPONENTS (import from './components/aikit'):
+MetricCard (title,value,change,changeType,icon,sparklineData), AIKitPriceCard, AIKitRating, AgentCard (name,role,status,tasks), SwarmView (agents[],title), SafetyBadge, GuardrailPanel (rules[]), ChatBubble, StreamingIndicator, CodeDisplay, TokenUsageBar (used,limit,label), ConnectionStatus, AIKitHeader, AIKitSidebar (items[],activeItem,title), AIKitTable (columns[],data[]), AIKitTimeline, AIKitBanner, AIKitAvatar, AgentTimeline (events[])
+
+IMPORT RULES:
+- import React from 'react'
+- import { Button } from './components/ui/button'
+- import { MetricCard } from './components/aikit'
+- import { Search } from 'lucide-react'
+- NEVER import from @ainative/*, @/components/*, or npm aikit
+- NEVER use framer-motion, @radix-ui, or other unlisted packages
+- export default function App() — always export default
+
+OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polished with realistic sample data.`
 
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Generating with ' + modelId + '...' })}\n\n`))
 
