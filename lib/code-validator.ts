@@ -25,12 +25,19 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
   let fixedCode = code
   const fixes: string[] = []
 
-  // Fix TRUNCATION: Close unterminated JSX comments from LLM truncation
+  // Fix TRUNCATION: Close unterminated block comments. The model sometimes
+  // emits `/* ... ` with no closing `*/` (often a trailing NOTE banner). Append
+  // just `*/` — appending `*/}` (the old behavior) left a stray `}` that itself
+  // broke the parse when the comment wasn't inside JSX braces (builder#64).
   const openComments = (fixedCode.match(/\/\*/g) || []).length
   const closeComments = (fixedCode.match(/\*\//g) || []).length
   if (openComments > closeComments) {
-    fixedCode += ' */}'
-    fixes.push('Closed unterminated JSX comment from truncation')
+    // Was the still-open `/*` opened inside a JSX expression (`{/* ... `)?
+    const lastOpen = fixedCode.lastIndexOf('/*')
+    const between = fixedCode.slice(Math.max(0, lastOpen - 40), lastOpen)
+    const insideJsxBraces = /\{\s*$/.test(between)
+    fixedCode += insideJsxBraces ? ' */}' : ' */'
+    fixes.push('Closed unterminated block comment from truncation')
   }
 
   // Fix TRUNCATION: Close unterminated strings and template literals
