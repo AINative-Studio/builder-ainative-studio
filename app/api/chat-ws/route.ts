@@ -810,14 +810,19 @@ OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polis
             updatePreviewPartial(responseId, fullContent)
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'refresh' })}\n\n`))
 
-            tokenUsage = {
-              input_tokens: 0, output_tokens: 0,
-              cache_creation_input_tokens: 0, cache_read_input_tokens: 0,
-              total_tokens: 0,
-              estimated_cost: 0
+            // Only fall back to zeros if NO upstream path captured usage — this
+            // used to unconditionally clobber the real token counts from the
+            // Claude/single-turn/chunking paths, so every RLHF row logged 0 (#61).
+            if (!tokenUsage) {
+              tokenUsage = {
+                input_tokens: 0, output_tokens: 0,
+                cache_creation_input_tokens: 0, cache_read_input_tokens: 0,
+                total_tokens: 0,
+                estimated_cost: 0
+              }
             }
 
-            console.log(`📊 ${modelId} generation complete: ${fullContent.length} chars`)
+            console.log(`📊 ${modelId} generation complete: ${fullContent.length} chars (${tokenUsage.total_tokens} tok)`)
 
           } // End of provider routing + subagents else
           } // End of chunking else (single-pass)
