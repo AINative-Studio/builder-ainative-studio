@@ -115,3 +115,45 @@ describe('code-validator: duplicate declaration handling (#64)', () => {
     expect(findDuplicateTopLevelDeclaration(code)).toBe('UICard')
   })
 })
+
+/**
+ * Same class of defect surfaced by the #64 regression run: a stray semicolon
+ * splitting a ternary (accepted by Babel errorRecovery, fatal in Sandpack →
+ * "Unexpected token, expected ':'"). Must be auto-fixed to strict-valid, or
+ * rejected so the retry path re-generates — never a false 'success' that breaks.
+ */
+describe('code-validator: malformed ternary handling (#64 follow-up)', () => {
+  const strictParses = (code: string) => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      require('@babel/parser').parse(code, { sourceType: 'module', plugins: ['jsx', 'typescript'] })
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  const badCases: Record<string, string> = {
+    'stray ; before the ternary colon': "export default function App(){ const v = c ? 'a'\n : 'b';\n return <div className={v}/>; }",
+    'stray ; after the true branch': "export default function App(){ const v =\n c ? 'x';\n : '';\n return <div className={v}/>; }",
+    'stray ; before the question mark': "export default function App(){ const v = c;\n ? 'a'\n : 'b';\n return <div className={v}/>; }",
+  }
+
+  for (const [name, code] of Object.entries(badCases)) {
+    it(`${name}: never a false success`, () => {
+      const r = validateJavaScriptCode(code)
+      // Either fixed (parses strictly) or explicitly invalid so retry engages.
+      expect(r.valid === false || strictParses(r.code)).toBe(true)
+    })
+  }
+
+  it('valid ternary still passes', () => {
+    const code = "export default function App(){ const v = c ? 'a' : 'b'; return <div className={v}/>; }"
+    expect(validateJavaScriptCode(code).valid).toBe(true)
+  })
+
+  it('JSX-recoverable code is not falsely rejected', () => {
+    const code = "export default function App(){ return (<div><p>Hello & welcome</p></div>); }"
+    expect(validateJavaScriptCode(code).valid).toBe(true)
+  })
+})

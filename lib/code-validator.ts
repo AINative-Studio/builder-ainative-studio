@@ -120,6 +120,17 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
   // Model sometimes generates: const x = condition ; ? 'yes' : 'no'
   fixedCode = fixedCode.replace(/\s*;\s*\?\s/g, ' ? ')
 
+  // Fix TERNARY (stray semicolon splitting a ?: expression): the model emits a
+  // `;` between the condition/true-branch and the following `?` or `:`, which
+  // Babel's errorRecovery parse accepts but Sandpack rejects with
+  // "Unexpected token, expected ':'". Drop a `;` that directly precedes a line
+  // whose first non-space char is `?` or `:` (a dangling ternary continuation).
+  const beforeTernBranchFix = fixedCode
+  fixedCode = fixedCode.replace(/;\s*(\n\s*[?:]\s)/g, '$1')
+  if (fixedCode !== beforeTernBranchFix) {
+    fixes.push('Removed stray semicolon splitting a ternary expression')
+  }
+
   // Fix CONTINUATION DUPLICATION: Remove duplicate jsx markers from continuation stitching
   // e.g. ```jsx appearing mid-code from continuation
   fixedCode = fixedCode.replace(/```jsx?\s*\n/g, (match, offset) => {
@@ -411,6 +422,44 @@ export function validateJavaScriptCode(code: string): ValidationResult {
       allowAwaitOutsideFunction: true,
       allowSuperOutsideMethod: true,
     })
+
+    // The errorRecovery parse passed. Sandpack (the real runtime) uses a STRICT
+    // transform, so run a second strict parse to catch a narrow class of errors
+    // that errorRecovery hides but Sandpack rejects — chiefly malformed ternaries
+    // (stray `;` splitting `?:`) that render as "Something went wrong". Only these
+    // specific errors are rejected, so JSX-recoverable cases still pass (builder#64).
+    try {
+      parse(fixedCode, {
+        sourceType: 'module',
+        plugins: ['jsx', 'typescript'],
+        errorRecovery: false,
+        allowReturnOutsideFunction: true,
+        allowAwaitOutsideFunction: true,
+        allowSuperOutsideMethod: true,
+      })
+    } catch (strictError) {
+      const strictMsg =
+        strictError instanceof Error ? strictError.message.replace(/\(\d+:\d+\)/, '').trim() : ''
+      const s = strictMsg.toLowerCase()
+      // Sandpack-fatal token errors: a ternary/expression expecting ':' or a
+      // definite "unexpected token, expected X" mismatch. Exclude the benign
+      // "missing semicolon" recovery hint (Sandpack tolerates that).
+      const isSandpackFatal =
+        (s.includes('expected ":"') || s.includes("expected ':'")) ||
+        (s.includes('unexpected token, expected') && !s.includes('missing semicolon'))
+      if (isSandpackFatal) {
+        console.error('❌ Code validation failed (strict parse — Sandpack-fatal):', strictMsg)
+        return {
+          valid: false,
+          error: strictMsg,
+          code: fixedCode,
+          autoFixed: fixes.length > 0,
+          fixes: fixes.length > 0 ? fixes : undefined,
+        }
+      }
+      // Any other strict-only error: let it through (browser/Sandpack Babel is
+      // lenient enough), preserving the original permissive behavior.
+    }
 
     // Success - return fixed code
     return {
