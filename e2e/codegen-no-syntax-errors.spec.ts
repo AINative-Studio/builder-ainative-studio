@@ -16,6 +16,8 @@ const PROMPTS = [
   'Build a product page with a Button that has outline and solid variants using conditional className styling.',
   'Build a user profile dashboard with Card components, tabs, and a variant-styled Button group.',
   'Build a revenue analytics dashboard with recharts line and bar charts, MetricCards, and lucide icons throughout.',
+  'Build a kanban task board with columns, task cards, priority badges, and a helper render function for each task.',
+  'Build a landing page with a custom Button component (outline/solid variants), feature cards, and a pricing section.',
 ]
 
 test.describe('codegen produces renderable output (#64)', () => {
@@ -23,9 +25,17 @@ test.describe('codegen produces renderable output (#64)', () => {
     test(`generation ${i + 1} renders without a syntax error`, async ({ page }) => {
       test.setTimeout(300_000)
 
+      // Retry the initial load once — the homepage occasionally hydrates slowly
+      // and the textarea can miss a single 30s window (transient, not a codegen
+      // issue). A reload reliably recovers it.
       await page.goto(BASE, { waitUntil: 'domcontentloaded' })
       const textarea = page.getByPlaceholder('Describe your AINative application...')
-      await expect(textarea).toBeVisible({ timeout: 30_000 })
+      try {
+        await expect(textarea).toBeVisible({ timeout: 30_000 })
+      } catch {
+        await page.reload({ waitUntil: 'domcontentloaded' })
+        await expect(textarea).toBeVisible({ timeout: 30_000 })
+      }
 
       await textarea.click()
       await textarea.pressSequentially(prompt, { delay: 5 })
