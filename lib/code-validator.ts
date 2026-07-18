@@ -1,6 +1,13 @@
 import { parse } from '@babel/parser'
 
 /**
+ * Multi-file output boundary marker — mirrors lib/multi-file-parser.ts.
+ * Used to scope duplicate-declaration checks per file, since the same imports
+ * and top-level names legitimately repeat across files in one blob.
+ */
+const FILE_MARKER = /^\/\/\s*---\s*FILE:\s*(.+?)\s*---\s*$/
+
+/**
  * Code Validation Result
  */
 export interface ValidationResult {
@@ -215,6 +222,75 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
   // BUT DON'T add semicolons after opening braces/brackets!
   fixedCode = fixedCode.replace(/^(\s*(?:const|let|var)\s+[^=]+=\s*[^;\n{[\]]+)$/gm, '$1;')
 
+  // Fix 11: DUPLICATE IMPORTS — the model sometimes imports the same identifier
+  // twice (e.g. `import { Card } from './ui/card'` plus `Card,` inside another
+  // destructured import), which Babel's error-recovery parser silently accepts
+  // but Sandpack/browser rejects with "Identifier 'X' has already been declared".
+  // De-dupe named import specifiers, keeping the first occurrence of each name.
+  {
+    // Collapse multi-line named imports onto a single line first so the
+    // per-line de-dupe below can see the whole specifier list. The model
+    // frequently emits `import {\n  Card,\n  ...\n} from '...'`.
+    fixedCode = fixedCode.replace(
+      /import\s+([^;{]*)\{([^}]*)\}\s*from\s*(['"][^'"]+['"])/g,
+      (_m: string, pre: string, specs: string, source: string) => {
+        const flatSpecs = specs.replace(/\s+/g, ' ').replace(/\s*,\s*/g, ', ').trim().replace(/,\s*$/, '')
+        const flatPre = pre.replace(/\s+/g, ' ').trim()
+        return `import ${flatPre ? flatPre + ' ' : ''}{ ${flatSpecs} } from ${source}`
+      },
+    )
+
+    let seenImportNames = new Set<string>()
+    const importLineRegex = /^\s*import\s+(?:([A-Za-z_$][\w$]*)\s*,?\s*)?(?:\{([^}]*)\})?\s*(?:from\s+)?['"][^'"]+['"];?\s*$/
+    const outLines: string[] = []
+    let removedDupNames: string[] = []
+    for (const rawLine of fixedCode.split('\n')) {
+      // Reset per-file: multi-file output (// --- FILE: x --- markers) legitimately
+      // repeats the same imports in each file — only de-dupe within one file.
+      if (FILE_MARKER.test(rawLine.trim())) { seenImportNames = new Set(); outLines.push(rawLine); continue }
+      const m = rawLine.match(importLineRegex)
+      if (!m) { outLines.push(rawLine); continue }
+      const defaultName = m[1]
+      const named = m[2]
+      // Track/strip a duplicate default import
+      let keepDefault = true
+      if (defaultName) {
+        if (seenImportNames.has(defaultName)) { keepDefault = false; removedDupNames.push(defaultName) }
+        else seenImportNames.add(defaultName)
+      }
+      if (named !== undefined) {
+        const specs = named.split(',').map(s => s.trim()).filter(Boolean)
+        const keptSpecs: string[] = []
+        for (const spec of specs) {
+          // handle `X as Y` — the bound name is Y (or X if no alias)
+          const bound = spec.split(/\s+as\s+/i).pop()!.trim()
+          if (seenImportNames.has(bound)) { removedDupNames.push(bound); continue }
+          seenImportNames.add(bound)
+          keptSpecs.push(spec)
+        }
+        // Rebuild the import line without the duplicate specifiers
+        if (keptSpecs.length === 0 && (!defaultName || !keepDefault)) {
+          // entire import became redundant — drop the line
+          continue
+        }
+        const fromMatch = rawLine.match(/from\s+(['"][^'"]+['"])/)
+        const source = fromMatch ? fromMatch[1] : (rawLine.match(/(['"][^'"]+['"])\s*;?\s*$/)?.[1] || "''")
+        const parts: string[] = []
+        if (defaultName && keepDefault) parts.push(defaultName)
+        if (keptSpecs.length > 0) parts.push(`{ ${keptSpecs.join(', ')} }`)
+        outLines.push(`import ${parts.join(', ')} from ${source};`)
+      } else {
+        // default-only (or side-effect) import
+        if (defaultName && !keepDefault) continue
+        outLines.push(rawLine)
+      }
+    }
+    if (removedDupNames.length > 0) {
+      fixedCode = outLines.join('\n')
+      fixes.push(`Removed duplicate import(s): ${[...new Set(removedDupNames)].join(', ')}`)
+    }
+  }
+
   // Fix 10: AX Standard — Enforce single h1 per page
   // Convert all <h1> after the first one to <h2> (and </h1> to </h2>)
   let h1Count = 0
@@ -239,6 +315,56 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
 }
 
 /**
+ * Detect duplicate top-level identifier declarations that Babel's
+ * error-recovery parser silently accepts but the browser/Sandpack transform
+ * rejects (e.g. "Identifier 'Card' has already been declared").
+ *
+ * Scans module-scope import bindings and top-level const/let/function/class
+ * declarations. Returns the first duplicated name, or null if none.
+ */
+export function findDuplicateTopLevelDeclaration(code: string): string | null {
+  let seen = new Set<string>()
+
+  const add = (name: string): string | null => {
+    const n = name.trim()
+    if (!n) return null
+    if (seen.has(n)) return n
+    seen.add(n)
+    return null
+  }
+
+  for (const raw of code.split('\n')) {
+    const line = raw.trim()
+
+    // Reset scope at each file boundary — multi-file output repeats top-level
+    // names (App, imports) legitimately across files.
+    if (FILE_MARKER.test(line)) { seen = new Set(); continue }
+
+    // import bindings: default + named specifiers
+    const imp = line.match(/^import\s+(?:([A-Za-z_$][\w$]*)\s*,?\s*)?(?:\{([^}]*)\})?\s*(?:from\s+)?['"][^'"]+['"];?$/)
+    if (imp) {
+      if (imp[1]) { const d = add(imp[1]); if (d) return d }
+      if (imp[2] !== undefined) {
+        for (const spec of imp[2].split(',')) {
+          const s = spec.trim()
+          if (!s) continue
+          const bound = s.split(/\s+as\s+/i).pop()!.trim()
+          const d = add(bound); if (d) return d
+        }
+      }
+      continue
+    }
+
+    // top-level declarations (only match at column 0 — real module scope,
+    // not nested block bodies which legitimately reuse names)
+    const decl = raw.match(/^(?:export\s+(?:default\s+)?)?(?:const|let|function|class)\s+([A-Za-z_$][\w$]*)/)
+    if (decl) { const d = add(decl[1]); if (d) return d }
+  }
+
+  return null
+}
+
+/**
  * Validate JavaScript/JSX code using Babel parser
  *
  * This catches syntax errors like unterminated strings, missing brackets,
@@ -248,8 +374,26 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
  * @returns Validation result with valid flag and optional error message
  */
 export function validateJavaScriptCode(code: string): ValidationResult {
-  // First, try to auto-fix common issues
+  // First, try to auto-fix common issues (includes duplicate-import de-dupe)
   const { code: fixedCode, fixes } = autoFixCode(code)
+
+  // Catch duplicate top-level declarations the auto-fix couldn't resolve.
+  // Babel's errorRecovery parser accepts these, but Sandpack rejects them at
+  // runtime with "Identifier 'X' has already been declared". Reject so the
+  // caller's retry path re-generates and RLHF logs this as validation_error
+  // rather than a false 'success' (builder#64).
+  const dupName = findDuplicateTopLevelDeclaration(fixedCode)
+  if (dupName) {
+    const errorMessage = `Identifier '${dupName}' has already been declared`
+    console.error('❌ Code validation failed (duplicate declaration):', errorMessage)
+    return {
+      valid: false,
+      error: errorMessage,
+      code: fixedCode,
+      autoFixed: fixes.length > 0,
+      fixes: fixes.length > 0 ? fixes : undefined,
+    }
+  }
 
   // CRITICAL: Instead of strict validation, just return the auto-fixed code as valid
   // The browser's Babel transformer is more lenient and will handle minor syntax issues
