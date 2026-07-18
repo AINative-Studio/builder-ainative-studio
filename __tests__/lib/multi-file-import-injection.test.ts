@@ -98,4 +98,40 @@ describe('multi-file import injection: no cross-module duplicates (#64)', () => 
     expect(strictParses(app)).toBe(true)
     expect(app).toMatch(/import React, \{ useState \} from 'react'/)
   })
+
+  // The prompt tells the model to use "Re"-prefixed recharts aliases and to
+  // treat lucide icons as globally available — the injector must resolve both
+  // or they render as "X is not defined" (builder#64 — found in live E2E).
+  it('imports a "Re"-prefixed recharts alias (ReLineChart) with an as-alias', () => {
+    const raw = [
+      "import React from 'react'",
+      "import { ResponsiveContainer, Line } from 'recharts'",
+      'export default function App(){ return <ResponsiveContainer><ReLineChart data={[]}><Line/></ReLineChart></ResponsiveContainer>; }',
+    ].join('\n')
+    const app = Object.values(parseMultiFileOutput(raw))[0]
+    expect(/LineChart as ReLineChart/.test(app)).toBe(true)
+    expect(strictParses(app)).toBe(true)
+  })
+
+  it('merges a used-but-unimported lucide icon into the imports', () => {
+    const raw = [
+      "import React from 'react'",
+      "import { Search, Bell } from 'lucide-react'",
+      'export default function App(){ return <div><Search/><Bell/><Check/></div>; }',
+    ].join('\n')
+    const app = Object.values(parseMultiFileOutput(raw))[0]
+    expect(/import\s*\{[^}]*\bCheck\b[^}]*\}\s*from\s*['"]lucide-react['"]/.test(app)).toBe(true)
+    expect(strictParses(app)).toBe(true)
+  })
+
+  it('does not duplicate an already-imported recharts real name', () => {
+    const raw = [
+      "import React from 'react'",
+      "import { LineChart, Line } from 'recharts'",
+      'export default function App(){ return <LineChart><Line/></LineChart>; }',
+    ].join('\n')
+    const app = Object.values(parseMultiFileOutput(raw))[0]
+    expect(strictParses(app)).toBe(true)
+    expect((app.match(/import[^\n]*\bLineChart\b/g) || []).length).toBe(1)
+  })
 })
