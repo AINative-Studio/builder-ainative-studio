@@ -29,17 +29,49 @@ describe('code-validator: duplicate declaration handling (#64)', () => {
     expect(cardBindings.length).toBeGreaterThan(0)
   })
 
-  it('rejects an unfixable duplicate top-level declaration so retry engages', () => {
+  it('auto-fixes an import shadowed by a local declaration (drops the import)', () => {
     const code = [
       "import { Card } from './ui/card'",
-      'const Card = () => <div>shadow</div>;', // conflicts with imported Card
+      'const Card = () => <div>shadow</div>;', // shadows the imported Card
       'export default function App() { return <Card /> }',
     ].join('\n')
 
     const result = validateJavaScriptCode(code)
 
+    // The local const is the real component — the import is dropped, so this is
+    // now fixable rather than a hard reject.
+    expect(result.valid).toBe(true)
+    expect(findDuplicateTopLevelDeclaration(result.code)).toBeNull()
+    expect(/import[^\n]*\bCard\b[^\n]*from/.test(result.code)).toBe(false)
+  })
+
+  it('rejects a genuinely unfixable duplicate (two local const of same name)', () => {
+    const code = [
+      "const Widget = () => <div>a</div>;",
+      "const Widget = () => <div>b</div>;", // two local consts — cannot auto-resolve
+      'export default function App() { return <Widget /> }',
+    ].join('\n')
+
+    const result = validateJavaScriptCode(code)
+
     expect(result.valid).toBe(false)
-    expect(result.error).toMatch(/Card.*already been declared/i)
+    expect(result.error).toMatch(/Widget.*already been declared/i)
+  })
+
+  it('drops an import shadowed by a local function (the prod "Button" case)', () => {
+    const code = [
+      "import React from 'react'",
+      "import { Button } from './components/ui/button'",
+      "function Button({ children, className = '', onClick }) {",
+      '  return <button className={className} onClick={onClick}>{children}</button>;',
+      '}',
+      'export default function App(){ return <Button>Hi</Button>; }',
+    ].join('\n')
+    const result = validateJavaScriptCode(code)
+    expect(result.valid).toBe(true)
+    expect(findDuplicateTopLevelDeclaration(result.code)).toBeNull()
+    expect(/import\s*\{[^}]*\bButton\b[^}]*\}\s*from/.test(result.code)).toBe(false)
+    expect(/function Button\b/.test(result.code)).toBe(true)
   })
 
   it('detects duplicate top-level function declarations', () => {

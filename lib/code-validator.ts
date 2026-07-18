@@ -314,6 +314,43 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
     }
   }
 
+  // Fix LOCAL DECL SHADOWS IMPORT: the model sometimes both imports a name and
+  // re-defines it locally (e.g. `import { Button }` plus `function Button(){}`).
+  // Strict @babel/parser accepts it, but Sandpack's scope analysis rejects it
+  // with `Duplicate declaration "Button"`. The local definition is the real
+  // component, so drop the conflicting named import specifier (builder#64).
+  {
+    const localDecls = new Set<string>()
+    const declRe = /^(?:export\s+(?:default\s+)?)?(?:function|class|const|let)\s+([A-Za-z_$][\w$]*)/gm
+    let dm: RegExpExecArray | null
+    while ((dm = declRe.exec(fixedCode)) !== null) localDecls.add(dm[1])
+
+    if (localDecls.size > 0) {
+      const removedShadowed: string[] = []
+      fixedCode = fixedCode.replace(
+        /^(\s*import\s+)(?:([A-Za-z_$][\w$]*)\s*,?\s*)?\{([^}]*)\}(\s*from\s*['"][^'"]+['"];?)\s*$/gm,
+        (full, pre: string, def: string | undefined, specs: string, tail: string) => {
+          const kept = specs.split(',').map(s => s.trim()).filter(Boolean).filter(spec => {
+            const bound = spec.split(/\s+as\s+/i).pop()!.trim()
+            if (localDecls.has(bound)) { removedShadowed.push(bound); return false }
+            return true
+          })
+          const defShadowed = def && localDecls.has(def)
+          if (defShadowed) removedShadowed.push(def!)
+          const keepDef = def && !defShadowed
+          if (kept.length === 0 && !keepDef) return '' // whole import removed
+          const parts: string[] = []
+          if (keepDef) parts.push(def!)
+          if (kept.length > 0) parts.push(`{ ${kept.join(', ')} }`)
+          return `${pre}${parts.join(', ')}${tail}`
+        },
+      )
+      if (removedShadowed.length > 0) {
+        fixes.push(`Removed import(s) shadowed by local declaration: ${[...new Set(removedShadowed)].join(', ')}`)
+      }
+    }
+  }
+
   // Fix 10: AX Standard — Enforce single h1 per page
   // Convert all <h1> after the first one to <h2> (and </h1> to </h2>)
   let h1Count = 0
