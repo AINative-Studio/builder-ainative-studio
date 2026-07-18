@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server'
+import { getToken } from 'next-auth/jwt'
 import OpenAI from 'openai'
 import { nanoid } from 'nanoid'
 import { verifyAndEnhancePrompt } from '@/lib/component-verifier'
@@ -107,6 +108,21 @@ export async function POST(request: NextRequest) {
 
     if (!message) {
       return Response.json({ error: 'Message is required' }, { status: 400 })
+    }
+
+    // Resolve the authenticated user so RLHF training rows carry real
+    // attribution instead of 'anonymous' (#61). Falls back to 'anonymous'
+    // for true guests / unauthenticated requests.
+    let userId = 'anonymous'
+    try {
+      const token = await getToken({
+        req: request,
+        secret: process.env.AUTH_SECRET,
+        secureCookie: process.env.NODE_ENV === 'production',
+      })
+      if (token?.sub || token?.email) userId = String(token.sub || token.email)
+    } catch (_) {
+      // best-effort — never block generation on auth resolution
     }
 
     // Get previous messages if this is a continuation
@@ -397,7 +413,7 @@ export async function POST(request: NextRequest) {
               // Log primary agent run (fire-and-forget)
               logAgentRun({
                 chatId: responseId,
-                userId: 'anonymous',
+                userId,
                 model: requestedModel || 'sonnet',
                 turns: agentTurns,
                 toolsUsed: agentToolsUsed,
@@ -416,7 +432,7 @@ export async function POST(request: NextRequest) {
                 // Log failed primary agent run (fire-and-forget)
                 logAgentRun({
                   chatId: responseId,
-                  userId: 'anonymous',
+                  userId,
                   model: requestedModel || 'sonnet',
                   turns: agentTurns,
                   toolsUsed: agentToolsUsed,
@@ -639,6 +655,9 @@ OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polis
                   max_tokens: 16000,
                   temperature: 0.7,
                   stream: true,
+                  // Ask the provider to emit a final usage chunk so we can
+                  // record token counts for RLHF training data (#61).
+                  stream_options: { include_usage: true },
                 })
 
                 for await (const chunk of stream) {
@@ -650,6 +669,17 @@ OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polis
                     if (now - lastUpdateTime > 500) {
                       safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'refresh' })}\n\n`))
                       lastUpdateTime = now
+                    }
+                  }
+                  // The usage chunk arrives last with empty choices.
+                  if (chunk.usage) {
+                    const inTok = chunk.usage.prompt_tokens || 0
+                    const outTok = chunk.usage.completion_tokens || 0
+                    tokenUsage = {
+                      input_tokens: inTok,
+                      output_tokens: outTok,
+                      total_tokens: chunk.usage.total_tokens || inTok + outTok,
+                      estimated_cost: (inTok * 0.003 + outTok * 0.015) / 1000,
                     }
                   }
                 }
@@ -666,6 +696,16 @@ OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polis
                   ],
                 })
                 fullContent = fallbackResponse.choices?.[0]?.message?.content || ''
+                if (fallbackResponse.usage) {
+                  const inTok = fallbackResponse.usage.prompt_tokens || 0
+                  const outTok = fallbackResponse.usage.completion_tokens || 0
+                  tokenUsage = {
+                    input_tokens: inTok,
+                    output_tokens: outTok,
+                    total_tokens: fallbackResponse.usage.total_tokens || inTok + outTok,
+                    estimated_cost: (inTok * 0.003 + outTok * 0.015) / 1000,
+                  }
+                }
               }
             } else if (!fullContent || fullContent.length <= 500) {
               // AINative: single-turn generation (system+user only)
@@ -703,6 +743,20 @@ OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polis
                   const tokens = response.usage?.completion_tokens || 0
                   const finish = response.choices?.[0]?.finish_reason
                   console.log(`📊 ${tryModel}: ${fullContent.length} chars (${tokens} tok) finish=${finish}`)
+
+                  // Capture token usage for RLHF training data (#61) — the
+                  // single-turn path returns usage but never recorded it, so
+                  // ~97% of rows had zero tokens.
+                  if (response.usage) {
+                    const inTok = response.usage.prompt_tokens || 0
+                    const outTok = response.usage.completion_tokens || 0
+                    tokenUsage = {
+                      input_tokens: inTok,
+                      output_tokens: outTok,
+                      total_tokens: response.usage.total_tokens || inTok + outTok,
+                      estimated_cost: (inTok * 0.003 + outTok * 0.015) / 1000,
+                    }
+                  }
 
                   // Handle truncation: if finish_reason=length, close the component
                   if (finish === 'length' && fullContent.length > 500) {
@@ -944,7 +998,7 @@ The component MUST have \`export default function App()\` or \`export default Ap
             // Log fallback agent run (fire-and-forget)
             logAgentRun({
               chatId: responseId,
-              userId: 'anonymous',
+              userId,
               model: 'sonnet',
               turns: 0, // fallback is single-shot fix
               toolsUsed: ['Write'],
@@ -1149,7 +1203,7 @@ The component MUST have \`export default function App()\` or \`export default Ap
               console.log('[RLHF] 🔄 Calling logGenToDrizzle for', responseId)
               logGenToDrizzle({
                 chatId: responseId,
-                userId: 'anonymous', // TODO: get from session
+                userId, // resolved from session/JWT above (#61)
                 prompt: message,
                 generatedCode: finalContent,
                 model: usedModel,
@@ -1210,7 +1264,7 @@ The component MUST have \`export default function App()\` or \`export default Ap
           import('@/lib/services/rlhf.service').then(({ logGenerationFailure }) => {
             logGenerationFailure({
               chatId: responseId,
-              userId: 'anonymous',
+              userId,
               prompt: message,
               model: requestedModel || DEFAULT_MODEL,
               error: error instanceof Error ? error.message : String(error),

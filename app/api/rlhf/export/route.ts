@@ -33,46 +33,68 @@ export async function GET(request: NextRequest) {
     const statusFilter = url.searchParams.get('status')
     const limit = Math.min(parseInt(url.searchParams.get('limit') || '1000'), 10000)
 
-    // Query ZeroDB for training data
+    // Query ZeroDB for training data.
+    // NOTE: use the same contract as the write + insights paths
+    // (lib/services/zerodb-rlhf.service.ts) — base api.ainative.studio,
+    // path /api/v1/projects/{id}/database/tables/{table}/rows, x-api-key auth,
+    // response shape data[].row_data. The old api.zerodb.ai/query/Bearer
+    // contract never matched the live API and silently returned empty (#60).
     const apiKey = process.env.ZERODB_API_KEY || process.env.AINATIVE_API_KEY || ''
-    const projectId = process.env.ZERODB_PROJECT_ID || ''
+    const projectId = process.env.ZERODB_PROJECT_ID || '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
 
     if (!apiKey || !projectId) {
       return Response.json({ error: 'ZeroDB not configured' }, { status: 500 })
     }
 
-    const baseUrl = process.env.ZERODB_BASE_URL || 'https://api.zerodb.ai'
+    const baseUrl =
+      process.env.AINATIVE_API_URL || process.env.ZERODB_BASE_URL || 'https://api.ainative.studio'
+    const tablesUrl = `${baseUrl}/api/v1/projects/${projectId}/database/tables`
+    const zeroHeaders = { 'x-api-key': apiKey, 'Content-Type': 'application/json' }
+
     const sinceDate = new Date()
     sinceDate.setDate(sinceDate.getDate() - days)
 
-    // Build query filters
-    const filters: Record<string, any> = {
-      created_at: { $gte: sinceDate.toISOString() },
-    }
-    if (modelFilter) filters.model = modelFilter
-    if (statusFilter) filters.status = statusFilter
-
-    const response = await fetch(`${baseUrl}/v1/tables/${projectId}/rlhf_training_data/query`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        filters,
-        limit,
-        sort: { created_at: 'desc' },
-      }),
+    // Pull training rows (fetch generously, filter client-side to mirror insights path).
+    const fetchLimit = Math.min(Math.max(limit, 500), 10000)
+    const trainingRes = await fetch(
+      `${tablesUrl}/rlhf_training_data/rows?limit=${fetchLimit}`,
+      { method: 'GET', headers: zeroHeaders, signal: AbortSignal.timeout(30_000) },
+    ).catch((e) => {
+      console.warn('[RLHF Export] training fetch threw:', (e as Error)?.name || e)
+      return null
     })
 
-    if (!response.ok) {
-      // Table might not exist yet — return empty
-      console.warn('[RLHF Export] Query failed:', response.status)
+    if (!trainingRes || !trainingRes.ok) {
+      console.warn('[RLHF Export] Query failed:', trainingRes?.status)
       return exportResponse([], format)
     }
 
-    const data = await response.json()
-    const rows = data.rows || data.data || []
+    const data = await trainingRes.json()
+    const allRows = (data?.data || []).map((r: any) => r.row_data || r)
+
+    // Build chat_id -> rating map from the feedback table so min_rating actually filters.
+    const ratingMap = new Map<string, number>()
+    if (minRating !== null) {
+      const fbRes = await fetch(
+        `${tablesUrl}/rlhf_feedback/rows?limit=${fetchLimit}`,
+        { method: 'GET', headers: zeroHeaders, signal: AbortSignal.timeout(30_000) },
+      ).catch(() => null)
+      if (fbRes?.ok) {
+        const fb = await fbRes.json()
+        for (const r of (fb?.data || []).map((x: any) => x.row_data || x)) {
+          if (r.chat_id && typeof r.rating === 'number') ratingMap.set(r.chat_id, r.rating)
+        }
+      }
+    }
+
+    // Apply date + model + status filters client-side.
+    const rows = allRows.filter((r: any) => {
+      const created = r.created_at ? new Date(r.created_at) : null
+      if (!created || created < sinceDate) return false
+      if (modelFilter && r.model !== modelFilter) return false
+      if (statusFilter && (r.status || 'success') !== statusFilter) return false
+      return true
+    })
 
     // Transform to fine-tuning format
     let trainingData = rows.map((row: any) => {
@@ -119,15 +141,18 @@ export async function GET(request: NextRequest) {
           provider: row.provider,
           input_tokens: row.input_tokens,
           output_tokens: row.output_tokens,
+          total_tokens: row.total_tokens,
           created_at: row.created_at,
+          rating: ratingMap.get(row.chat_id) ?? null,
         },
       }
     })
 
-    // Filter by rating if requested (requires feedback correlation)
+    // Filter by rating if requested — real join against the feedback table (#60).
     if (minRating !== null) {
-      // For now, filter by status — rated data requires join with feedback table
-      trainingData = trainingData.filter((d: any) => d.metadata.status === 'success')
+      trainingData = trainingData.filter(
+        (d: any) => d.metadata.rating !== null && d.metadata.rating >= minRating,
+      )
     }
 
     return exportResponse(trainingData, format)
