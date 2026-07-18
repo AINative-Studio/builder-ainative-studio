@@ -137,6 +137,7 @@ describe('code-validator: malformed ternary handling (#64 follow-up)', () => {
     'stray ; before the ternary colon': "export default function App(){ const v = c ? 'a'\n : 'b';\n return <div className={v}/>; }",
     'stray ; after the true branch': "export default function App(){ const v =\n c ? 'x';\n : '';\n return <div className={v}/>; }",
     'stray ; before the question mark': "export default function App(){ const v = c;\n ? 'a'\n : 'b';\n return <div className={v}/>; }",
+    'stray ; after arrow open paren': "export default function App(){ const f = (t) => (;\n <div>{t}</div>\n );\n return <div/>; }",
   }
 
   for (const [name, code] of Object.entries(badCases)) {
@@ -156,4 +157,27 @@ describe('code-validator: malformed ternary handling (#64 follow-up)', () => {
     const code = "export default function App(){ return (<div><p>Hello & welcome</p></div>); }"
     expect(validateJavaScriptCode(code).valid).toBe(true)
   })
+})
+
+/**
+ * Guard: rejecting "unexpected token" (so Sandpack-fatal code retries) must NOT
+ * regress valid modern React/TS/JSX. These all pass strict parse and must stay
+ * valid — this is the safety net for the broadened rejection (#64).
+ */
+describe('code-validator: no false positives on valid code (#64 guard)', () => {
+  const valid: Record<string, string> = {
+    fragment: 'export default function App(){ return <><h1>A</h1><p>B</p></>; }',
+    'nested ternary chain': 'export default function App(){ const x=a?b:c?d:e; return <div>{x}</div>; }',
+    'typescript generics': 'export default function App(){ const [s]=React.useState<string[]>([]); return <div>{s.length}</div>; }',
+    'map arrow returning jsx': "export default function App(){ const items=[1,2]; return <ul>{items.map((i)=>(<li key={i}>{i}</li>))}</ul>; }",
+    'template literal className': "export default function App(){ const a='x'; return <div className={`b ${a}`}/>; }",
+    'optional chaining': 'export default function App(){ const o={a:{b:1}}; return <div>{o?.a?.b}</div>; }',
+    'spread props': 'export default function App(){ const p={id:1}; return <div {...p}/>; }',
+    'multiline import': "import {\n useState,\n useEffect\n} from 'react'\nexport default function App(){ const [n]=useState(0); useEffect(()=>{},[]); return <div>{n}</div>; }",
+  }
+  for (const [name, code] of Object.entries(valid)) {
+    it(`valid: ${name}`, () => {
+      expect(validateJavaScriptCode(code).valid, `${name} was wrongly rejected`).toBe(true)
+    })
+  }
 })

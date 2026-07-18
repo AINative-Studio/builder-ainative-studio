@@ -441,12 +441,14 @@ export function validateJavaScriptCode(code: string): ValidationResult {
       const strictMsg =
         strictError instanceof Error ? strictError.message.replace(/\(\d+:\d+\)/, '').trim() : ''
       const s = strictMsg.toLowerCase()
-      // Sandpack-fatal token errors: a ternary/expression expecting ':' or a
-      // definite "unexpected token, expected X" mismatch. Exclude the benign
-      // "missing semicolon" recovery hint (Sandpack tolerates that).
+      // The errorRecovery parse already passed, so the code is *mostly* well
+      // formed. If the STRICT parse now trips on an "unexpected token", that is
+      // a hard error Sandpack (which parses strictly) will also throw — e.g. a
+      // stray `;` splitting a ternary or after `=> (`. Reject so the retry path
+      // re-generates. "missing semicolon" is a benign recovery hint Sandpack
+      // tolerates, so it's explicitly excluded (builder#64).
       const isSandpackFatal =
-        (s.includes('expected ":"') || s.includes("expected ':'")) ||
-        (s.includes('unexpected token, expected') && !s.includes('missing semicolon'))
+        s.includes('unexpected token') && !s.includes('missing semicolon')
       if (isSandpackFatal) {
         console.error('❌ Code validation failed (strict parse — Sandpack-fatal):', strictMsg)
         return {
@@ -477,16 +479,19 @@ export function validateJavaScriptCode(code: string): ValidationResult {
     // Check if it's a CATASTROPHIC error that will definitely break in browser
     const errorLower = errorMessage.toLowerCase()
 
-    // CRITICAL: Only reject errors that DEFINITELY break in browser
-    // "Unterminated JSX contents" and "unexpected token" are often recoverable
-    // by browser Babel with errorRecovery mode, so we let them through as warnings
+    // The runtime is Sandpack (@babel/standalone, strict) — not the old lenient
+    // browser-Babel path — so a hard parse error here WILL break the preview.
+    // Reject the definite-fatal families so the caller's retry re-generates and
+    // RLHF logs validation_error instead of a false 'success' (builder#64).
     const isCatastrophicError =
       errorLower.includes('unexpected end of file') ||
       errorLower.includes('unexpected eof') ||
       errorLower.includes('unterminated string') ||
-      errorLower.includes('unterminated template')
-      // Removed: 'unterminated jsx contents' — browser Babel handles this
-      // Removed: 'unexpected token' — browser Babel handles this
+      errorLower.includes('unterminated template') ||
+      // "unexpected token" from a full parse failure is Sandpack-fatal (stray
+      // `;` in a ternary, `=> (;`, etc.). The benign "missing semicolon"
+      // recovery hint is a different message and is not matched here.
+      errorLower.includes('unexpected token')
 
     if (isCatastrophicError) {
       // This will definitely fail in browser - report error
