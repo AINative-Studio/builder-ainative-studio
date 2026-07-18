@@ -113,6 +113,22 @@ const RECHARTS_COMPONENTS = [
   'PolarAngleAxis', 'PolarRadiusAxis',
 ]
 
+/**
+ * The system prompt tells the model to use "Re"-prefixed recharts aliases
+ * (ReLineChart, ReBarChart, RePieChart) and RechartsTooltip to avoid colliding
+ * with lucide's LineChart/BarChart/PieChart. The injector must map those JSX
+ * names back to real recharts exports via `as` aliases, or they render as
+ * "ReLineChart is not defined" (builder#64). Key = JSX name used, value = real
+ * recharts export.
+ */
+const RECHARTS_ALIASES: Record<string, string> = {
+  ReLineChart: 'LineChart',
+  ReBarChart: 'BarChart',
+  RePieChart: 'PieChart',
+  ReAreaChart: 'AreaChart',
+  RechartsTooltip: 'Tooltip',
+}
+
 /** Lucide icon names commonly used in generated code */
 const LUCIDE_ICONS = [
   'Search', 'Menu', 'X', 'ChevronDown', 'ChevronRight', 'ChevronLeft', 'ChevronUp',
@@ -193,26 +209,38 @@ function injectMissingImports(code: string): string {
     usedAikit.forEach(c => alreadyImported.add(c))
   }
 
-  // Check for recharts usage
-  const usedRecharts = RECHARTS_COMPONENTS.filter(c =>
-    new RegExp(`<${c}[\\s/>]`).test(code) &&
-    !code.includes(`from 'recharts'`) && !code.includes(`from "recharts"`) &&
-    !alreadyImported.has(c)
-  )
-  if (usedRecharts.length > 0) {
-    imports.push(`import { ${usedRecharts.join(', ')} } from 'recharts'`)
-    usedRecharts.forEach(c => alreadyImported.add(c))
+  // Check for recharts usage — real names AND the "Re"-prefixed aliases the
+  // prompt instructs the model to use (ReLineChart → LineChart as ReLineChart).
+  // Merge missing names as a separate `from 'recharts'` import even if one
+  // already exists (ESM allows it; alreadyImported prevents name collisions),
+  // so a used-but-unimported chart part no longer renders "X is not defined".
+  const rechartsSpecs: string[] = []
+  for (const real of RECHARTS_COMPONENTS) {
+    if (new RegExp(`<${real}[\\s/>]`).test(code) && !alreadyImported.has(real)) {
+      rechartsSpecs.push(real)
+      alreadyImported.add(real)
+    }
+  }
+  for (const [alias, real] of Object.entries(RECHARTS_ALIASES)) {
+    if (new RegExp(`<${alias}[\\s/>]`).test(code) && !alreadyImported.has(alias)) {
+      rechartsSpecs.push(`${real} as ${alias}`)
+      alreadyImported.add(alias)
+    }
+  }
+  if (rechartsSpecs.length > 0) {
+    imports.push(`import { ${rechartsSpecs.join(', ')} } from 'recharts'`)
   }
 
-  // Check for lucide-react usage
-  if (!code.includes(`from 'lucide-react'`) && !code.includes(`from "lucide-react"`)) {
-    const usedIcons = LUCIDE_ICONS.filter(icon =>
-      new RegExp(`<${icon}[\\s/>]`).test(code) && !alreadyImported.has(icon)
-    )
-    if (usedIcons.length > 0) {
-      imports.push(`import { ${usedIcons.join(', ')} } from 'lucide-react'`)
-      usedIcons.forEach(c => alreadyImported.add(c))
-    }
+  // Check for lucide-react usage — merge any missing icons even when a
+  // lucide-react import already exists (the model often imports some icons but
+  // uses more), so a used-but-unimported icon no longer renders "X is not
+  // defined" (builder#64).
+  const usedIcons = LUCIDE_ICONS.filter(icon =>
+    new RegExp(`<${icon}[\\s/>]`).test(code) && !alreadyImported.has(icon)
+  )
+  if (usedIcons.length > 0) {
+    imports.push(`import { ${usedIcons.join(', ')} } from 'lucide-react'`)
+    usedIcons.forEach(c => alreadyImported.add(c))
   }
 
   if (imports.length === 0) return code
