@@ -15,6 +15,7 @@ const PROMPTS = [
   'Build a settings panel using Card, CardHeader, CardTitle and CardContent with form fields.',
   'Build a product page with a Button that has outline and solid variants using conditional className styling.',
   'Build a user profile dashboard with Card components, tabs, and a variant-styled Button group.',
+  'Build a revenue analytics dashboard with recharts line and bar charts, MetricCards, and lucide icons throughout.',
 ]
 
 test.describe('codegen produces renderable output (#64)', () => {

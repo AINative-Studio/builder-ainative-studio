@@ -141,6 +141,7 @@ describe('code-validator: malformed ternary handling (#64 follow-up)', () => {
     'stray ; after useState(': "export default function App(){ const [x,setX] = useState(;\n {a:1}\n ); return <div>{x.a}</div>; }",
     'stray ; after reduce(': "export default function App(){ const t = [1,2].reduce(;\n (s,n)=>s+n, 0\n ); return <div>{t}</div>; }",
     'stray ; after return(': "export default function App(){ return (;\n <div>hi</div>\n ); }",
+    'unterminated trailing block comment': 'export default function App(){ return <div>hi</div>; }\n/* -----\n  NOTE: components are global\n  no imports needed',
   }
 
   for (const [name, code] of Object.entries(badCases)) {
