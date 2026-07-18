@@ -138,6 +138,9 @@ describe('code-validator: malformed ternary handling (#64 follow-up)', () => {
     'stray ; after the true branch': "export default function App(){ const v =\n c ? 'x';\n : '';\n return <div className={v}/>; }",
     'stray ; before the question mark': "export default function App(){ const v = c;\n ? 'a'\n : 'b';\n return <div className={v}/>; }",
     'stray ; after arrow open paren': "export default function App(){ const f = (t) => (;\n <div>{t}</div>\n );\n return <div/>; }",
+    'stray ; after useState(': "export default function App(){ const [x,setX] = useState(;\n {a:1}\n ); return <div>{x.a}</div>; }",
+    'stray ; after reduce(': "export default function App(){ const t = [1,2].reduce(;\n (s,n)=>s+n, 0\n ); return <div>{t}</div>; }",
+    'stray ; after return(': "export default function App(){ return (;\n <div>hi</div>\n ); }",
   }
 
   for (const [name, code] of Object.entries(badCases)) {
@@ -174,6 +177,9 @@ describe('code-validator: no false positives on valid code (#64 guard)', () => {
     'optional chaining': 'export default function App(){ const o={a:{b:1}}; return <div>{o?.a?.b}</div>; }',
     'spread props': 'export default function App(){ const p={id:1}; return <div {...p}/>; }',
     'multiline import': "import {\n useState,\n useEffect\n} from 'react'\nexport default function App(){ const [n]=useState(0); useEffect(()=>{},[]); return <div>{n}</div>; }",
+    'for loop with semicolons': 'export default function App(){ let s=0; for(let i=0;i<3;i++){ s+=i } return <div>{s}</div>; }',
+    'empty call ()': 'export default function App(){ const f=()=>1; return <div>{f()}</div>; }',
+    'normal multiline call': 'export default function App(){ const t=[1,2].reduce(\n (s,n)=>s+n, 0\n ); return <div>{t}</div>; }',
   }
   for (const [name, code] of Object.entries(valid)) {
     it(`valid: ${name}`, () => {

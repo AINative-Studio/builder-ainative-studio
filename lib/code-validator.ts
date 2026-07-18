@@ -327,21 +327,17 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
     })
   }
 
-  // Fix ARROW OPEN-PAREN (run LAST so nothing re-inserts the semicolon): `=> (;`
-  // — the model puts a stray `;` right after the opening paren of an arrow body
-  // returning JSX, e.g. `const f = (x) => (;`. Babel errorRecovery throws →
-  // Sandpack shows "Unexpected token" (builder#64).
-  const beforeArrowParenFix = fixedCode
-  fixedCode = fixedCode.replace(/=>(\s*)\((\s*);/g, '=>$1($2')
-  if (fixedCode !== beforeArrowParenFix) {
-    fixes.push('Removed stray semicolon after arrow open paren (=> (;)')
-  }
-
-  // Fix RETURN OPEN-PAREN: `return (;` — same defect on an explicit return.
-  const beforeReturnParenFix = fixedCode
-  fixedCode = fixedCode.replace(/return(\s*)\((\s*);/g, 'return$1($2')
-  if (fixedCode !== beforeReturnParenFix) {
-    fixes.push('Removed stray semicolon after return open paren (return (;)')
+  // Fix OPEN-PAREN SEMICOLON (run LAST so nothing re-inserts it): the model
+  // emits a stray `;` immediately after an opening `(` with the real content on
+  // the following line(s) — e.g. `=> (;`, `return (;`, `useState(;`,
+  // `.reduce(;`. Babel errorRecovery throws → Sandpack "Unexpected token"
+  // (builder#64). We only match `(` + optional inline spaces + `;` + a NEWLINE,
+  // which a `for(;;)` / `for(;` loop never produces (its `;` is followed by the
+  // loop condition on the same line, not a newline), so loops stay intact.
+  const beforeOpenParenSemi = fixedCode
+  fixedCode = fixedCode.replace(/\(([ \t]*);([ \t]*\r?\n)/g, '($1$2')
+  if (fixedCode !== beforeOpenParenSemi) {
+    fixes.push('Removed stray semicolon after open paren ((;)')
   }
 
   return { code: fixedCode, fixes }
