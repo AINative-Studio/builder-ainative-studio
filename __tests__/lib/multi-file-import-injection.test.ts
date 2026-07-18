@@ -55,4 +55,47 @@ describe('multi-file import injection: no cross-module duplicates (#64)', () => 
     expect(/from ['"]lucide-react['"]/.test(app)).toBe(true)
     expect(strictParses(app)).toBe(true)
   })
+
+  // The rendered per-file code is sanitized after injection, so pre-existing
+  // per-file defects (multi-line duplicate imports, stray-semicolon arrows) are
+  // repaired before reaching Sandpack (builder#64 — found in live 5-run E2E).
+  it('repairs a multi-line duplicate import in the rendered file', () => {
+    const raw = [
+      "import React from 'react'",
+      "import { Button } from './b';",
+      'import {',
+      '  Card,',
+      '  CardHeader,',
+      "} from './c';",
+      "import { Card } from './aikit';", // duplicate Card
+      'export default function App(){ return <Card><CardHeader/><Button/></Card>; }',
+    ].join('\n')
+    const app = Object.values(parseMultiFileOutput(raw))[0]
+    expect(strictParses(app)).toBe(true)
+    // default+named on the react line must remain intact (no line-swallowing)
+    expect(app).toMatch(/import React from 'react'/)
+  })
+
+  it('repairs a stray-semicolon arrow (=> (;) in the rendered file', () => {
+    const raw = [
+      'export default function App(){',
+      '  const badge = (l) => (;',
+      '    <span>{l}</span>',
+      '  );',
+      "  return <div>{badge('x')}</div>;",
+      '}',
+    ].join('\n')
+    const app = Object.values(parseMultiFileOutput(raw))[0]
+    expect(strictParses(app)).toBe(true)
+  })
+
+  it('preserves a default+named import (React, { useState })', () => {
+    const raw = [
+      "import React, { useState } from 'react'",
+      'export default function App(){ const [n]=useState(0); return <div>{n}</div>; }',
+    ].join('\n')
+    const app = Object.values(parseMultiFileOutput(raw))[0]
+    expect(strictParses(app)).toBe(true)
+    expect(app).toMatch(/import React, \{ useState \} from 'react'/)
+  })
 })

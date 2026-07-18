@@ -116,6 +116,7 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
     fixes.push('Removed stray semicolons after arrow function (=>)')
   }
 
+
   // Fix TERNARY: Remove stray semicolons before ? in ternary expressions
   // Model sometimes generates: const x = condition ; ? 'yes' : 'no'
   fixedCode = fixedCode.replace(/\s*;\s*\?\s/g, ' ? ')
@@ -242,9 +243,13 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
     // Collapse multi-line named imports onto a single line first so the
     // per-line de-dupe below can see the whole specifier list. The model
     // frequently emits `import {\n  Card,\n  ...\n} from '...'`.
+    // Only collapse the specifier block itself — the pre-part must not contain
+    // `from` or a newline-crossing `import`, otherwise a preceding
+    // semicolon-less import (e.g. `import React from 'react'`) gets swallowed
+    // onto the same line (builder#64).
     fixedCode = fixedCode.replace(
-      /import\s+([^;{]*)\{([^}]*)\}\s*from\s*(['"][^'"]+['"])/g,
-      (_m: string, pre: string, specs: string, source: string) => {
+      /import\s+((?:[A-Za-z_$][\w$]*\s*,\s*)?)\{([^}]*)\}(\s*)from(\s*)(['"][^'"]+['"])/g,
+      (_m: string, pre: string, specs: string, _s1: string, _s2: string, source: string) => {
         const flatSpecs = specs.replace(/\s+/g, ' ').replace(/\s*,\s*/g, ', ').trim().replace(/,\s*$/, '')
         const flatPre = pre.replace(/\s+/g, ' ').trim()
         return `import ${flatPre ? flatPre + ' ' : ''}{ ${flatSpecs} } from ${source}`
@@ -322,7 +327,36 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
     })
   }
 
+  // Fix ARROW OPEN-PAREN (run LAST so nothing re-inserts the semicolon): `=> (;`
+  // — the model puts a stray `;` right after the opening paren of an arrow body
+  // returning JSX, e.g. `const f = (x) => (;`. Babel errorRecovery throws →
+  // Sandpack shows "Unexpected token" (builder#64).
+  const beforeArrowParenFix = fixedCode
+  fixedCode = fixedCode.replace(/=>(\s*)\((\s*);/g, '=>$1($2')
+  if (fixedCode !== beforeArrowParenFix) {
+    fixes.push('Removed stray semicolon after arrow open paren (=> (;)')
+  }
+
+  // Fix RETURN OPEN-PAREN: `return (;` — same defect on an explicit return.
+  const beforeReturnParenFix = fixedCode
+  fixedCode = fixedCode.replace(/return(\s*)\((\s*);/g, 'return$1($2')
+  if (fixedCode !== beforeReturnParenFix) {
+    fixes.push('Removed stray semicolon after return open paren (return (;)')
+  }
+
   return { code: fixedCode, fixes }
+}
+
+/**
+ * Apply the syntactic auto-fixes (duplicate-import de-dupe, malformed-ternary
+ * repair, arrow/brace fixes, etc.) to a single file's code. The main
+ * validateJavaScriptCode runs on the whole raw LLM output, but the multi-file
+ * pipeline splits + injects imports AFTER that, so each rendered file must be
+ * re-sanitized before it reaches Sandpack or pre-existing per-file defects
+ * survive to the preview (builder#64).
+ */
+export function sanitizeForSandpack(code: string): string {
+  return autoFixCode(code).code
 }
 
 /**

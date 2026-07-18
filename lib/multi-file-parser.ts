@@ -4,6 +4,7 @@
  */
 
 import { generateAINativeFileSet } from './ainative-file-generator'
+import { sanitizeForSandpack } from './code-validator'
 
 const FILE_MARKER = /^\/\/\s*---\s*FILE:\s*(.+?)\s*---\s*$/
 
@@ -47,10 +48,13 @@ export function parseMultiFileOutput(rawOutput: string, userPrompt?: string): Re
     files['/src/App.tsx'] = code.trim()
   }
 
-  // Auto-inject missing imports for recharts components
+  // Auto-inject missing imports, then re-sanitize each file so any pre-existing
+  // duplicate imports / malformed ternaries survive into a clean, Sandpack-safe
+  // file. Validation earlier ran on the whole blob, but per-file split + import
+  // injection happen here — downstream of it (builder#64).
   for (const [path, content] of Object.entries(files)) {
     if (path.endsWith('.tsx') || path.endsWith('.jsx')) {
-      files[path] = injectMissingImports(content)
+      files[path] = sanitizeForSandpack(injectMissingImports(content))
     }
   }
 
