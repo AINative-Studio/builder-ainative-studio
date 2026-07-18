@@ -141,6 +141,29 @@ const AIKIT_COMPONENTS = [
  * Auto-inject missing imports for recharts, lucide-react, and AIKit.
  * Also fixes @/ import aliases to relative paths for Sandpack.
  */
+/**
+ * Collect every identifier already bound by an existing import in the code
+ * (default, named, and aliased). Used to ensure auto-injection never adds a
+ * name that's already imported from another module — which would produce
+ * "Identifier 'X' has already been declared" in Sandpack (builder#64).
+ */
+function collectImportedNames(code: string): Set<string> {
+  const names = new Set<string>()
+  const importRe = /import\s+(?:([A-Za-z_$][\w$]*)\s*,?\s*)?(?:\{([^}]*)\})?\s*from\s*['"][^'"]+['"]/g
+  let m: RegExpExecArray | null
+  while ((m = importRe.exec(code)) !== null) {
+    if (m[1]) names.add(m[1].trim())
+    if (m[2]) {
+      for (const spec of m[2].split(',')) {
+        const s = spec.trim()
+        if (!s) continue
+        names.add(s.split(/\s+as\s+/i).pop()!.trim())
+      }
+    }
+  }
+  return names
+}
+
 function injectMissingImports(code: string): string {
   // Fix @/components/ alias to relative paths (Sandpack doesn't support aliases)
   code = code.replace(/from ['"]@\/components\//g, "from './components/")
@@ -151,30 +174,40 @@ function injectMissingImports(code: string): string {
 
   const imports: string[] = []
 
+  // Names already imported anywhere in the file — never re-inject these, even
+  // from a different module (e.g. LineChart/BarChart/PieChart exist in BOTH
+  // lucide-react and recharts). Re-injecting caused duplicate-declaration
+  // crashes in Sandpack (builder#64).
+  const alreadyImported = collectImportedNames(code)
+
   // Check for AIKit component usage — skip any already imported individually
   const usedAikit = AIKIT_COMPONENTS.filter(c =>
-    new RegExp(`<${c}[\\s/>]`).test(code) &&
-    !new RegExp(`import\\s+.*\\b${c}\\b.*from\\s+`).test(code)
+    new RegExp(`<${c}[\\s/>]`).test(code) && !alreadyImported.has(c)
   )
   if (usedAikit.length > 0) {
     imports.push(`import { ${usedAikit.join(', ')} } from './components/aikit'`)
+    usedAikit.forEach(c => alreadyImported.add(c))
   }
 
   // Check for recharts usage
   const usedRecharts = RECHARTS_COMPONENTS.filter(c =>
-    new RegExp(`<${c}[\\s/>]`).test(code) && !code.includes(`from 'recharts'`) && !code.includes(`from "recharts"`)
+    new RegExp(`<${c}[\\s/>]`).test(code) &&
+    !code.includes(`from 'recharts'`) && !code.includes(`from "recharts"`) &&
+    !alreadyImported.has(c)
   )
   if (usedRecharts.length > 0) {
     imports.push(`import { ${usedRecharts.join(', ')} } from 'recharts'`)
+    usedRecharts.forEach(c => alreadyImported.add(c))
   }
 
   // Check for lucide-react usage
   if (!code.includes(`from 'lucide-react'`) && !code.includes(`from "lucide-react"`)) {
     const usedIcons = LUCIDE_ICONS.filter(icon =>
-      new RegExp(`<${icon}[\\s/>]`).test(code)
+      new RegExp(`<${icon}[\\s/>]`).test(code) && !alreadyImported.has(icon)
     )
     if (usedIcons.length > 0) {
       imports.push(`import { ${usedIcons.join(', ')} } from 'lucide-react'`)
+      usedIcons.forEach(c => alreadyImported.add(c))
     }
   }
 
