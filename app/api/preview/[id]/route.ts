@@ -26,29 +26,11 @@ export async function GET(
 
   let content = getPreview(id)
 
-  // Not in memory — try restoring from DB (survives server restarts)
-  if (!content) {
-    try {
-      const { db } = await import('@/lib/db')
-      const { generations } = await import('@/lib/db/schema')
-      const { eq } = await import('drizzle-orm')
-      const [row] = await db
-        .select({ generated_code: generations.generated_code })
-        .from(generations)
-        .where(eq(generations.chat_id, id))
-        .orderBy(generations.created_at)
-        .limit(1)
-      if (row?.generated_code) {
-        content = row.generated_code as string
-        storePreview(id, content) // repopulate in-memory cache
-        console.log(`[Preview] Restored from DB for ID: ${id}`)
-      }
-    } catch (e) {
-      console.warn('[Preview] DB restore failed:', e)
-    }
-  }
-
-  // Not in PostgreSQL — try ZeroDB (persistent across deploys)
+  // Not in memory — restore from ZeroDB (the durable, serverless store).
+  // NOTE: the old dedicated-Postgres restore path was removed — it was
+  // ECONNRESETing under load and BLOCKING before this ZeroDB fallback, which
+  // showed users "Preview Expired" for generations that WERE persisted (#90/#100).
+  // ZeroDB is the single source of truth per the no-dedicated-DB directive.
   if (!content) {
     try {
       const { loadGeneration } = await import('@/lib/zerodb-store')
