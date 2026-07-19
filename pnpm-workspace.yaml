@@ -1,0 +1,4 @@
+onlyBuiltDependencies:
+  - "@ainative/cody-cli"
+  - "@anthropic-ai/claude-code"
+  - protobufjs

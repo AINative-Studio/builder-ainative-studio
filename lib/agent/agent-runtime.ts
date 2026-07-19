@@ -11,6 +11,9 @@
  * backward compatibility; set `AGENT_RUNTIME=cody` to use the AINative harness.
  */
 
+import { existsSync } from 'fs'
+import { join } from 'path'
+
 export type AgentRuntime = 'cody' | 'claude'
 
 /** Resolve the configured agent runtime from the environment. */
@@ -19,9 +22,18 @@ export function getAgentRuntime(env: NodeJS.ProcessEnv = process.env): AgentRunt
   return raw === 'cody' ? 'cody' : 'claude'
 }
 
-/** The binary name to spawn for the configured runtime. */
+/**
+ * The binary to spawn for the configured runtime. For cody we prefer the locally
+ * installed CLI (node_modules/.bin/cody) so it works on a Railway container
+ * where the binary isn't on the global PATH; falls back to the bare name for
+ * dev machines where it's globally installed. `claude` stays a PATH lookup.
+ */
 export function getAgentBinary(env: NodeJS.ProcessEnv = process.env): string {
-  return getAgentRuntime(env) === 'cody' ? 'cody' : 'claude'
+  if (getAgentRuntime(env) === 'cody') {
+    const localBin = join(process.cwd(), 'node_modules', '.bin', 'cody')
+    return existsSync(localBin) ? localBin : 'cody'
+  }
+  return 'claude'
 }
 
 /**
