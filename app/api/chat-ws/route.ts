@@ -600,6 +600,16 @@ Button, Card, CardHeader, CardTitle, CardContent, CardFooter, Input, Label, Badg
 AIKIT COMPONENTS (import from './components/aikit'):
 MetricCard (title,value,change,changeType,icon,sparklineData), AIKitPriceCard, AIKitRating, AgentCard (name,role,status,tasks), SwarmView (agents[],title), SafetyBadge, GuardrailPanel (rules[]), ChatBubble, StreamingIndicator, CodeDisplay, TokenUsageBar (used,limit,label), ConnectionStatus, AIKitHeader, AIKitSidebar (items[],activeItem,title), AIKitTable (columns[],data[]), AIKitTimeline, AIKitBanner, AIKitAvatar, AgentTimeline (events[])
 
+DATA / PERSISTENCE (AINative ZeroDB — serverless, no setup):
+- If the app should PERSIST data (todos, contacts, notes, messages, items the user adds/saves), use the ZeroDB serverless API — it's same-origin, needs NO auth header, and auto-creates the table:
+  - fetch('/api/db/{table}') → list rows (returns { data: [...] })
+  - fetch('/api/db/{table}', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(row) }) → insert
+  - fetch('/api/db/{table}?id=ID', { method:'PUT'|'DELETE', ... }) → update / delete
+  - Load in useEffect; re-fetch after writes. Example table names: 'todos', 'contacts', 'notes'.
+- When the user asks to "save", "persist", "store", or use "a database", you MUST use /api/db (NOT localStorage, NOT an in-memory array).
+- NEVER use localStorage for persistence, and NEVER write a backend/server or connect a database (no postgres, pg, Prisma, Supabase, Firebase, Mongo).
+- For a purely presentational page (static dashboard, landing page), plain useState with sample data is fine — don't force a data layer.
+
 IMPORT RULES:
 - import React from 'react'
 - import { Button } from './components/ui/button'
