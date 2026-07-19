@@ -1,6 +1,3 @@
-# pnpm 11+ build-script allowlist. Lists every dependency with a build script so
-# `pnpm install --frozen-lockfile` (Railway CI) exits 0 instead of failing on
-# ERR_PNPM_IGNORED_BUILDS. cody-cli's postinstall is optional but must be listed.
 onlyBuiltDependencies:
   - '@ainative/cody-cli'
   - '@anthropic-ai/claude-code'
