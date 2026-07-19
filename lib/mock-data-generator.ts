@@ -464,8 +464,10 @@ export function enhancePromptWithMockData(userPrompt: string): string {
   let mockData = '';
   let contextIcon = getIconForContext(userPrompt);
 
-  // Detect what type of UI is being requested and add appropriate mock data
-  if (promptLower.includes('kanban') || promptLower.includes('task') || promptLower.includes('board')) {
+  // Detect what type of UI is being requested and add appropriate mock data.
+  // NOTE: use a word boundary for "board" so "dashBOARD" doesn't match the
+  // kanban branch (a pre-existing bug that fed Kanban data to dashboards).
+  if (promptLower.includes('kanban') || promptLower.includes('task') || /\bboard\b/.test(promptLower)) {
     mockData += generateMockDataPrompt('kanbanTasks');
   } else if (promptLower.includes('dashboard') || promptLower.includes('metric') || promptLower.includes('analytics')) {
     mockData += generateMockDataPrompt('metrics');
@@ -477,31 +479,43 @@ export function enhancePromptWithMockData(userPrompt: string): string {
   } else if (promptLower.includes('project') || promptLower.includes('portfolio')) {
     mockData += generateMockDataPrompt('projects');
     mockData += generateMockDataPrompt('users');
-  } else {
-    // Default to providing metrics and activities for general dashboards
+  } else if (
+    promptLower.includes('dashboard') || promptLower.includes('admin') ||
+    promptLower.includes('report') || promptLower.includes('stats') ||
+    promptLower.includes('overview') || promptLower.includes('kpi')
+  ) {
+    // Only inject metrics data for prompts that ACTUALLY want a dashboard.
     mockData += generateMockDataPrompt('metrics');
     mockData += generateMockDataPrompt('activities');
   }
+  // For everything else (contact forms, chat, pricing, login, calendar, etc.)
+  // inject NO canned mock data — the old default force-fed a revenue dashboard
+  // ("Total Revenue $45,231…") which the model copied verbatim, producing the
+  // wrong app for ~any non-dashboard prompt (builder blank/wrong-app fix).
 
   // Add icon enhancement to the prompt
   const iconEnhancement = enhancePromptWithIcons(userPrompt);
 
-  return `${userPrompt}
+  // Only include the mock-data instruction when we actually have category-
+  // appropriate data. Otherwise the model was told "use this data" with nothing
+  // (or with dashboard data) and built the wrong app.
+  const mockDataBlock = mockData.trim()
+    ? `\n\nOptional realistic sample data you MAY use where it fits the request (do NOT force a dashboard if the request isn't one):\n${mockData}`
+    : ''
 
-IMPORTANT: Use this realistic mock data in your implementation:
-${mockData}
+  return `${userPrompt}${mockDataBlock}
 
 ${iconEnhancement}
 
-ENHANCED HEADER REQUIREMENTS:
-1. MUST include a professional header with:
-   - App title and subtitle
-   - Search button with text label
-   - Primary action button with text label
-   - Notification indicator
-   - User avatar with initials
+LAYOUT GUIDANCE:
+Build the layout that best fits THIS specific request — do not force a dashboard
+chrome onto every app. A data-heavy app (dashboard, admin, analytics) benefits
+from a top header with title, search, primary action, notifications, and avatar.
+But a focused app (contact form, login, pricing page, single-purpose tool) should
+use a layout appropriate to it — often a centered card or a simple page, NOT a
+dashboard header. Match the structure to what the user actually asked for.
 
-Example header structure (use SOLID COLORS only, NO gradients):
+If a dashboard-style header IS appropriate, here is a good pattern (SOLID COLORS only, NO gradients):
 <div className="bg-slate-900">
   <div className="px-8 py-6">
     <div className="flex items-center justify-between">
