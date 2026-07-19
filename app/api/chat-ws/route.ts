@@ -1101,10 +1101,18 @@ OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polis
             // Store in V2 store
             storeFilesV2(responseId, parsedFiles, { usage: tokenUsage })
 
-            // Persist to ZeroDB NOW (#89) — awaited before 'complete' and before
-            // the later fire-and-forget block, so a slow/cut request still saves
-            // and /preview/<id> can restore it after memory eviction. Bounded so
-            // a slow ZeroDB write can't hang the stream.
+            // Send files to client FIRST so the preview paints immediately — the
+            // ZeroDB persist is awaited just below (before 'complete'), so it must
+            // not delay the user's first paint.
+            safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+              type: 'files',
+              files: parsedFiles
+            })}\n\n`))
+
+            // Persist to ZeroDB (#89) — awaited before 'complete' (but after the
+            // preview is already sent), so a slow/cut request still saves and
+            // /preview/<id> can restore it after memory eviction. Bounded 8s so a
+            // slow ZeroDB write can't hang the stream, and it never blocks paint.
             try {
               const { saveGeneration } = await import('@/lib/zerodb-store')
               const { persistGeneration } = await import('@/lib/generation-persist')
@@ -1116,12 +1124,6 @@ OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polis
             } catch (e: any) {
               console.warn('[PERSIST] success save failed:', e?.message || e)
             }
-
-            // Send files to client for Sandpack preview
-            safeEnqueue(encoder.encode(`data: ${JSON.stringify({
-              type: 'files',
-              files: parsedFiles
-            })}\n\n`))
 
             // Save to conversation memory for context
             addComponentToMemory(responseId, message, finalContent)
