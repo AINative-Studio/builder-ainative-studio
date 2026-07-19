@@ -52,3 +52,5 @@ playwright-report/
 e2e-generation-preview.png
 e2e-showcase.png
 e2e/test-results/
+
+user-preview-*.png
