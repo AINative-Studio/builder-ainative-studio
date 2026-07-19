@@ -57,7 +57,7 @@ function getLLMClient(): OpenAI {
 }
 
 // Model strategy (updated 2026-06-27):
-// PRIMARY: Claude Sonnet 3.5 via Anthropic SDK (200K context, best code quality)
+// PRIMARY: Claude Sonnet 4 via Anthropic SDK (200K context, best code quality)
 // FALLBACK: ministral-14b via AINative (free, fast, limited context)
 // Enable Claude direct when a real Anthropic key is set (sk-ant- prefix)
 const USE_CLAUDE_DIRECT = !!(process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.startsWith('sk-ant-'))
@@ -601,7 +601,7 @@ IMPORT RULES:
 
 OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polished with realistic sample data.`
 
-            safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Generating with ' + (USE_CLAUDE_DIRECT ? 'Claude Sonnet 3.5' : modelId) + '...' })}\n\n`))
+            safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Generating with ' + (USE_CLAUDE_DIRECT ? 'Claude Sonnet 4' : modelId) + '...' })}\n\n`))
 
             // ============ CLAUDE DIRECT PATH — Anthropic SDK ============
             const claude = getAnthropicClient()
@@ -632,7 +632,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polis
                   estimated_cost: ((usage?.input_tokens || 0) * 0.000003 + (usage?.output_tokens || 0) * 0.000015),
                 }
 
-                console.log(`📊 Claude Sonnet 3.5: ${fullContent.length} chars (${tokenUsage.input_tokens}+${tokenUsage.output_tokens} tok) cost=$${tokenUsage.estimated_cost.toFixed(4)}`)
+                console.log(`📊 Claude Sonnet 4: ${fullContent.length} chars (${tokenUsage.input_tokens}+${tokenUsage.output_tokens} tok) cost=$${tokenUsage.estimated_cost.toFixed(4)}`)
 
                 updatePreviewPartial(responseId, fullContent)
                 safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'refresh' })}\n\n`))

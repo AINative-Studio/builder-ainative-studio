@@ -66,18 +66,35 @@ test.describe('reliability sweep (production)', () => {
         )
         .toBe(true)
 
-      await page.waitForTimeout(9_000) // let Sandpack compile+mount
-
+      // Actively wait for Sandpack to finish compiling+mounting — not a fixed
+      // sleep. Poll the preview frame until it has real rendered content OR an
+      // error overlay appears, up to 40s (Sandpack cold-boot can be slow).
       let errorSeen = ''
       let previewEls = 0
-      for (const frame of page.frames()) {
-        const txt = (await frame.locator('body').innerText().catch(() => '')) || ''
-        if (ERROR_RE.test(txt)) { errorSeen = txt.replace(/\s+/g, ' ').slice(0, 140); break }
-        if (/sandpack|codesandbox|\/preview\//i.test(frame.url())) {
-          const c = await frame.locator('button, input, a, h1, h2, h3, li, img, form, table').count().catch(() => 0)
-          previewEls = Math.max(previewEls, c)
-        }
-      }
+      await expect
+        .poll(
+          async () => {
+            for (const frame of page.frames()) {
+              const txt = (await frame.locator('body').innerText().catch(() => '')) || ''
+              if (ERROR_RE.test(txt)) {
+                errorSeen = txt.replace(/\s+/g, ' ').slice(0, 140)
+                return 'error'
+              }
+              // Sandpack shows "[N/N] Starting" / a bundler status while booting.
+              if (/\[\d\/\d\]\s*(Starting|Installing|Building)/i.test(txt)) continue
+              if (/sandpack|codesandbox|\/preview\//i.test(frame.url())) {
+                const c = await frame
+                  .locator('button, input, a, h1, h2, h3, li, img, form, table')
+                  .count()
+                  .catch(() => 0)
+                if (c > 0) { previewEls = Math.max(previewEls, c); return 'rendered' }
+              }
+            }
+            return 'pending'
+          },
+          { timeout: 40_000, intervals: [2_000] },
+        )
+        .not.toBe('pending')
 
       await page.screenshot({ path: `sweep-${String(i + 1).padStart(2, '0')}.png` }).catch(() => {})
       const ok = !errorSeen && previewEls > 0
