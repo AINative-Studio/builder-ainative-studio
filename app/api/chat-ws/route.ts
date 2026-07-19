@@ -61,7 +61,11 @@ function getLLMClient(): OpenAI {
 // FALLBACK: ministral-14b via AINative (free, fast, limited context)
 // Enable Claude direct when a real Anthropic key is set (sk-ant- prefix)
 const USE_CLAUDE_DIRECT = !!(process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.startsWith('sk-ant-'))
-const DEFAULT_MODEL = USE_CLAUDE_DIRECT ? 'claude-sonnet-4-20250514' : (process.env.DEFAULT_MODEL || 'ministral-14b')
+// CRITICAL: the Anthropic key only has Sonnet 4.5 access — the old
+// 'claude-sonnet-4-20250514' ID 404s, silently forcing every generation onto the
+// gpt-oss-20b fallback (mislabeled as claude). Use the working ID, env-overridable.
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-5-20250929'
+const DEFAULT_MODEL = USE_CLAUDE_DIRECT ? CLAUDE_MODEL : (process.env.DEFAULT_MODEL || 'ministral-14b')
 const PAID_MODEL = process.env.PAID_MODEL || 'kimi-k2.6'
 
 // Anthropic client for direct Claude calls — lazy initialized on first use
@@ -242,7 +246,13 @@ export async function POST(request: NextRequest) {
           //      is set (auto-activate for complex/multi-file prompts)
           // ============================================================
           const agentExplicitlyEnabled = isClaudeAgentEnabled()
-          const agentAutoActivated = complexityScore.shouldUseAgent && !!process.env.ANTHROPIC_API_KEY
+          // Auto-activate for complex prompts ONLY when the agent runtime is
+          // actually enabled — a raw ANTHROPIC_API_KEY check let complex prompts
+          // spawn a failing agent even when it was meant to be off (builder#99).
+          const agentAutoActivated =
+            complexityScore.shouldUseAgent &&
+            !!process.env.ANTHROPIC_API_KEY &&
+            isClaudeAgentEnabled()
           const useAgent = agentExplicitlyEnabled || agentAutoActivated
 
           // Tier-based maxTurns:
@@ -609,7 +619,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polis
               console.log('🧠 Using Claude Sonnet 4 directly via Anthropic SDK')
               try {
                 const claudeResponse = await claude.messages.create({
-                  model: 'claude-sonnet-4-20250514',
+                  model: CLAUDE_MODEL,
                   max_tokens: 8192,
                   system: llmSystemPrompt,
                   messages: previousMessages.length > 0
