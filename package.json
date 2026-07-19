@@ -133,5 +133,6 @@
     "ts-jest": "^29.4.4",
     "tw-animate-css": "^1.3.7",
     "typescript": "^5"
-  }
+  },
+  "packageManager": "pnpm@10.15.0"
 }
