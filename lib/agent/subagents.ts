@@ -85,7 +85,7 @@ Provide structured spec:
 
   try {
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: (process.env.CLAUDE_MODEL || 'claude-sonnet-4-5-20250929'),
       max_tokens: 4000, // Must be > thinking budget
       temperature: 1,
       thinking: {
@@ -155,7 +155,7 @@ Use generate_react_component tool for output. Gradients/emoji stripped automatic
 
   try {
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: (process.env.CLAUDE_MODEL || 'claude-sonnet-4-5-20250929'),
       max_tokens: 8000,
       temperature: 1,
       thinking: {
@@ -247,7 +247,7 @@ Report:
 
   try {
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: (process.env.CLAUDE_MODEL || 'claude-sonnet-4-5-20250929'),
       max_tokens: 1500,
       temperature: 0.3,
       messages: [
@@ -309,7 +309,7 @@ export async function runOrchestratorAgent(
   metrics?: any
 }> {
   // Initialize metrics collector
-  const model = 'claude-sonnet-4-20250514'
+  const model = (process.env.CLAUDE_MODEL || 'claude-sonnet-4-5-20250929')
   const metricsCollector = createMetricsCollector(
     sessionId || `session-${Date.now()}`,
     userPrompt,
