@@ -1056,6 +1056,21 @@ OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polis
               console.warn('Failed to send fallback files:', parseErr)
             }
 
+            // Persist to ZeroDB on the degradation path too (#89), awaited before
+            // 'complete' so /preview/<id> can restore it after memory eviction.
+            // Save the code actually being served (the last-good/fallback content).
+            try {
+              const { saveGeneration } = await import('@/lib/zerodb-store')
+              const { persistGeneration } = await import('@/lib/generation-persist')
+              const pr = await persistGeneration(
+                { chatId: responseId, prompt: message, code: finalContent, model: requestedModel || DEFAULT_MODEL, status: 'degraded', valid: false },
+                saveGeneration,
+              )
+              console.log(`[PERSIST] degraded path: ${pr.reason}`)
+            } catch (e: any) {
+              console.warn('[PERSIST] degraded save failed:', e?.message || e)
+            }
+
             // Send completion with error flag
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({
               type: 'complete',
@@ -1085,6 +1100,22 @@ OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polis
 
             // Store in V2 store
             storeFilesV2(responseId, parsedFiles, { usage: tokenUsage })
+
+            // Persist to ZeroDB NOW (#89) — awaited before 'complete' and before
+            // the later fire-and-forget block, so a slow/cut request still saves
+            // and /preview/<id> can restore it after memory eviction. Bounded so
+            // a slow ZeroDB write can't hang the stream.
+            try {
+              const { saveGeneration } = await import('@/lib/zerodb-store')
+              const { persistGeneration } = await import('@/lib/generation-persist')
+              const pr = await persistGeneration(
+                { chatId: responseId, prompt: message, code: finalContent, model: requestedModel || DEFAULT_MODEL, status: 'success', valid: validation.valid },
+                saveGeneration,
+              )
+              console.log(`[PERSIST] success path: ${pr.reason}`)
+            } catch (e: any) {
+              console.warn('[PERSIST] success save failed:', e?.message || e)
+            }
 
             // Send files to client for Sandpack preview
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({
@@ -1166,22 +1197,16 @@ OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polis
 
             console.log('[PERSIST] Starting fire-and-forget block for', responseId)
             try {
-              const { saveGeneration, logGenerationEvent } = await import('@/lib/zerodb-store')
+              const { logGenerationEvent } = await import('@/lib/zerodb-store')
               const { storeSSRPreview } = await import('@/lib/preview-store')
               const { logGeneration: logGenToDrizzle } = await import('@/lib/services/rlhf.service')
               const isShowcase = finalContent.length > 1000
               const usedModel = requestedModel || DEFAULT_MODEL
               const genTimeMs = Date.now() - generationStartTime
 
-              // Save code to ZeroDB
-              saveGeneration({
-                chatId: responseId,
-                prompt: message,
-                generatedCode: finalContent,
-                model: usedModel,
-                codeLength: finalContent.length,
-                isShowcase,
-              }).catch(e => console.warn('[ZeroDB save failed]', e))
+              // NOTE: the ZeroDB saveGeneration now runs (awaited) earlier on the
+              // success path (#89) so it survives slow/cut requests. Not repeated
+              // here to avoid a duplicate row.
 
               // Auto-populate showcase with quality generations (validation passed + substantial code)
               if (validation.valid && finalContent.length > 1500) {
