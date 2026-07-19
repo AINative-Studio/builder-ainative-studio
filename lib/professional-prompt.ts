@@ -235,6 +235,41 @@ Add a skip-to-content link and ensure tab order is logical:
 - Content platforms → VideoPlayer, MediaGallery, AIKitTimeline
 - Any interface → Skeleton for loading, EmptyState for empty views, AIKitBanner for notifications
 
+## DATA LAYER — ZERODB SERVERLESS (MANDATORY when the app persists data)
+
+AINative apps get a real, serverless database for FREE via the ZeroDB proxy — no
+setup, no connection strings, no dedicated database. When the app needs to store
+or load real data (todos, contacts, invoices, messages, settings, any user data),
+use these endpoints. They are same-origin, need NO auth header, and AUTO-CREATE
+the table on first write:
+
+- \`GET  /api/db/{table}\`            → list rows (optional \`?limit=50\`)
+- \`GET  /api/db/{table}?query=...\`  → query rows
+- \`POST /api/db/{table}\`            → insert a row (JSON body = the row)
+- \`PUT  /api/db/{table}?id=xxx\`     → update a row
+- \`DELETE /api/db/{table}?id=xxx\`   → delete a row
+
+Example (a todo list backed by ZeroDB, not local state):
+\`\`\`jsx
+const [todos, setTodos] = useState([]);
+useEffect(() => { fetch('/api/db/todos').then(r => r.json()).then(d => setTodos(d.data || [])); }, []);
+async function addTodo(text) {
+  await fetch('/api/db/todos', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ text, done: false }) });
+  const d = await (await fetch('/api/db/todos')).json();
+  setTodos(d.data || []);
+}
+\`\`\`
+
+**HARD RULES:**
+- For persistent data, use \`/api/db/{table}\` (ZeroDB serverless). This is the
+  AINative data primitive — surface it.
+- NEVER instantiate or connect to a dedicated database (no \`pg\`, \`postgres://\`,
+  \`new Pool\`, Prisma/Drizzle clients, Supabase, Firebase, Mongo, or any
+  server DB). NEVER write a backend server or provision a database instance.
+- If the app is purely presentational (a landing page, a static dashboard with
+  sample data), in-memory \`useState\` with realistic seed data is fine — do NOT
+  force a data layer where none is needed.
+
 ## TECHNICAL RULES
 
 1. Generate COMPLETE, FULL-PAGE applications — production-ready, not snippets
