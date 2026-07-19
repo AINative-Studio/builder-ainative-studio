@@ -10,6 +10,7 @@ import { validateGeneratedCode } from '@/lib/code-validator'
 import { buildValidationFallbackComponent } from '@/lib/validation-fallback'
 import { runValidationRetryLoop, buildRepairPrompt } from '@/lib/generation-retry'
 import { buildVerifyPrompt, buildVerifyAgentOptions } from '@/lib/agent/verify-loop'
+import { GenerationCheckpoint, resolveDegradation } from '@/lib/generation-checkpoint'
 import { stripGradients } from '@/lib/gradient-blocker'
 import { fetchContextualImages, formatImagesForPrompt, getFallbackImages } from '@/lib/services/unsplash.service'
 import { extractComponentCode } from '@/lib/agent/component-generation-tool'
@@ -843,6 +844,11 @@ OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polis
           console.log('[VALIDATION] Result:', validation.valid ? '✅ valid' : '❌ invalid', 'finalContent:', finalContent.length, 'chars')
           let retryAttempted = false
 
+          // Checkpoint the last VALID version across stages so we never render a
+          // regression — worst case we serve an earlier working build (#81).
+          const checkpoint = new GenerationCheckpoint()
+          checkpoint.record('initial', finalContent, validation.valid)
+
           // AUTO-RETRY: If validation fails, automatically retry once with error feedback
           if (!validation.valid) {
             console.error('⚠️ Initial validation failed:', validation.error)
@@ -892,6 +898,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polis
               console.log(`✅ Auto-retry succeeded after ${retryLoop.attempts} attempt(s)`)
               finalContent = retryLoop.code
               validation = retryLoop.validation
+              checkpoint.record('retry', finalContent, validation.valid)
               updatePreviewPartial(responseId, finalContent)
             } else {
               console.error(`❌ Auto-retry exhausted (${retryLoop.attempts} attempts):`, retryLoop.validation.error)
@@ -967,6 +974,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polis
                   finalContent = agentValidation.code
                   validation = agentValidation
                   agentFallbackSucceeded = true
+                  checkpoint.record('agent', finalContent, validation.valid)
 
                   // Update preview with fixed content
                   updatePreviewPartial(responseId, finalContent)
@@ -998,7 +1006,18 @@ OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polis
             }).catch(e => console.warn('[AgentRuns] fallback log failed:', e?.message || e))
           }
 
-          // Final validation check
+          // Final decision — degradation ladder (#81): serve current-if-valid,
+          // else the last checkpointed WORKING version, else a clean fallback.
+          const degradation = resolveDegradation(finalContent, validation.valid, checkpoint)
+
+          if (degradation.kind === 'checkpoint') {
+            // An earlier stage produced valid code that a later stage regressed.
+            // Serve that working version instead of an error (#81).
+            console.log(`♻️ Serving last-good checkpoint from '${degradation.stage}' stage`)
+            finalContent = degradation.code
+            validation = { valid: true, code: degradation.code }
+          }
+
           if (!validation.valid) {
             // Log validation error
             console.error('❌ Final validation failed (after retry' + (agentFallbackUsed ? ' + agent fallback' : '') + '):', validation.error)
@@ -1017,11 +1036,10 @@ OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polis
                 : 'The generated code has syntax errors. Please try regenerating.'
             })}\n\n`))
 
-            // Graceful degradation (#77): do NOT ship the broken code to Sandpack
-            // (that renders the "Something went wrong" crash overlay). Instead
-            // render a clean, intentional fallback component so the preview area
-            // shows a friendly state with a regenerate affordance. The raw invalid
-            // code is still stored (behind "View problematic code") for debugging.
+            // Graceful degradation (#77/#81): with no working checkpoint, do NOT
+            // ship the broken code to Sandpack (that renders the "Something went
+            // wrong" crash overlay). Render a clean, intentional fallback state.
+            // The raw invalid code is still stored behind "View problematic code".
             const safeFallback = buildValidationFallbackComponent(message)
             const wrappedInvalidCode = `\`\`\`jsx\n${finalContent}\n\`\`\``
             storePreview(responseId, wrappedInvalidCode, message, {
