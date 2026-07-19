@@ -15,6 +15,13 @@
 
 import { spawn, type ChildProcess } from 'child_process'
 import { createWorktree, getWorktreeFiles, getWorktreePath } from './worktree-manager'
+import {
+  getAgentBinary,
+  getAgentRuntime,
+  getAgentSpawnEnv,
+  isAgentEnabled,
+  isAgentFallbackEnabled,
+} from './agent-runtime'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -125,18 +132,17 @@ RULES:
  * Returns true if the headless Claude agent is enabled.
  */
 export function isClaudeAgentEnabled(): boolean {
-  return process.env.USE_CLAUDE_AGENT === 'true'
+  // Delegates to the runtime resolver — true for USE_CLAUDE_AGENT=true or the
+  // cody runtime (#79).
+  return isAgentEnabled()
 }
 
 /**
- * Returns true if the Claude agent fallback (for validation failures) is enabled.
- * Enabled when either USE_CLAUDE_AGENT_FALLBACK=true or USE_CLAUDE_AGENT=true.
+ * Returns true if the agent fallback (for validation failures) is enabled.
+ * Enabled by USE_CLAUDE_AGENT_FALLBACK, USE_CLAUDE_AGENT, or the cody runtime.
  */
 export function isClaudeAgentFallbackEnabled(): boolean {
-  return (
-    process.env.USE_CLAUDE_AGENT_FALLBACK === 'true' ||
-    process.env.USE_CLAUDE_AGENT === 'true'
-  )
+  return isAgentFallbackEnabled()
 }
 
 // ---------------------------------------------------------------------------
@@ -156,10 +162,10 @@ export async function* runHeadlessAgent(
   chatId: string,
   options: AgentOptions = {},
 ): AsyncGenerator<AgentEvent> {
-  if (!isClaudeAgentEnabled()) {
+  if (!isAgentEnabled()) {
     yield {
       type: 'error',
-      error: 'Claude agent is not enabled. Set USE_CLAUDE_AGENT=true.',
+      error: 'Agent runtime is not enabled. Set USE_CLAUDE_AGENT=true or AGENT_RUNTIME=cody.',
       fatal: true,
     }
     return
@@ -209,24 +215,28 @@ export async function* runHeadlessAgent(
   const fullSystemPrompt = AGENT_SYSTEM_PROMPT + (systemPrompt ? '\n\n' + systemPrompt : '')
   args.push('--append-system-prompt', fullSystemPrompt)
 
-  // 3. Spawn the claude process
-  yield { type: 'build_step', step: `Starting Claude agent (model: ${model})` }
+  // 3. Spawn the agent process — binary + env resolved by AGENT_RUNTIME (#79).
+  //    Both `claude` and `cody` speak the same stream-json protocol; `cody`
+  //    (AINative's own harness) points at api.ainative.studio and has no
+  //    external Anthropic dependency.
+  const agentBinary = getAgentBinary()
+  const runtime = getAgentRuntime()
+  yield { type: 'build_step', step: `Starting ${runtime} agent (model: ${model})` }
 
   let child: ChildProcess
   try {
-    child = spawn('claude', args, {
+    child = spawn(agentBinary, args, {
       cwd: worktreePath,
       env: {
         ...process.env,
-        // Ensure the agent uses the project's ANTHROPIC_API_KEY
-        // ANTHROPIC_BASE_URL is respected automatically by the CLI
+        ...getAgentSpawnEnv(),
       },
       stdio: ['ignore', 'pipe', 'pipe'],  // Close stdin immediately (no interactive input)
     })
   } catch (err) {
     yield {
       type: 'error',
-      error: `Failed to spawn claude CLI: ${err instanceof Error ? err.message : String(err)}`,
+      error: `Failed to spawn ${agentBinary} CLI: ${err instanceof Error ? err.message : String(err)}`,
       fatal: true,
     }
     return
