@@ -78,10 +78,22 @@ export async function createUser(
 const DEFAULT_WORKSPACE_ID = 'dc17346c-f46c-4cd4-9277-a2efcaadfbb2'
 
 export async function createGuestUser(): Promise<User[]> {
-  try {
-    const guestId = generateUUID()
-    const guestEmail = `guest-${guestId}@example.com`
+  const guestId = generateUUID()
+  const guestEmail = `guest-${guestId}@example.com`
+  const inMemoryGuest = {
+    id: guestId,
+    email: guestEmail,
+    password: null,
+    workspace_id: DEFAULT_WORKSPACE_ID,
+    is_active: true,
+  } as unknown as User
 
+  // If there's no configured DB, don't even try — return an ephemeral guest so
+  // anonymous visitors can use the product (per the ZeroDB-not-dedicated-Postgres
+  // direction). Guest state is session-scoped; no DB row is required.
+  if (!process.env.POSTGRES_URL) return [inMemoryGuest]
+
+  try {
     return await db
       .insert(users)
       .values({
@@ -93,8 +105,10 @@ export async function createGuestUser(): Promise<User[]> {
       })
       .returning()
   } catch (error) {
-    console.error('Failed to create guest user in database:', error)
-    throw error
+    // Postgres is unreachable (e.g. ECONNRESET) — degrade gracefully instead of
+    // throwing, which would break the entire auth callback and lock out guests.
+    console.warn('[auth] guest DB insert failed; using ephemeral guest:', (error as Error)?.message)
+    return [inMemoryGuest]
   }
 }
 
