@@ -246,7 +246,13 @@ export async function POST(request: NextRequest) {
           //      is set (auto-activate for complex/multi-file prompts)
           // ============================================================
           const agentExplicitlyEnabled = isClaudeAgentEnabled()
-          const agentAutoActivated = complexityScore.shouldUseAgent && !!process.env.ANTHROPIC_API_KEY
+          // Auto-activate for complex prompts ONLY when the agent runtime is
+          // actually enabled — a raw ANTHROPIC_API_KEY check let complex prompts
+          // spawn a failing agent even when it was meant to be off (builder#99).
+          const agentAutoActivated =
+            complexityScore.shouldUseAgent &&
+            !!process.env.ANTHROPIC_API_KEY &&
+            isClaudeAgentEnabled()
           const useAgent = agentExplicitlyEnabled || agentAutoActivated
 
           // Tier-based maxTurns:
