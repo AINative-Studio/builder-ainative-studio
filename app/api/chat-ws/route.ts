@@ -9,6 +9,7 @@ import { updatePreviewPartial, storePreview, getChatData } from '@/lib/preview-s
 import { validateGeneratedCode } from '@/lib/code-validator'
 import { buildValidationFallbackComponent } from '@/lib/validation-fallback'
 import { runValidationRetryLoop, buildRepairPrompt } from '@/lib/generation-retry'
+import { buildVerifyPrompt, buildVerifyAgentOptions } from '@/lib/agent/verify-loop'
 import { stripGradients } from '@/lib/gradient-blocker'
 import { fetchContextualImages, formatImagesForPrompt, getFallbackImages } from '@/lib/services/unsplash.service'
 import { extractComponentCode } from '@/lib/agent/component-generation-tool'
@@ -912,25 +913,18 @@ OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polis
                 step: 'Running Claude agent to fix syntax errors...'
               })}\n\n`))
 
-              const agentFixPrompt = `Fix this React component that has syntax errors. The error is: ${validation.error}
-
-Here is the broken code:
-\`\`\`jsx
-${finalContent.slice(0, 12000)}
-\`\`\`
-
-Fix it and make sure \`npm run build\` passes.
-Return ONLY the fixed code — no explanations. Wrap the code in \`\`\`jsx markers.
-The component MUST have \`export default function App()\` or \`export default App\`.`
-
+              // Phase 1 (#80): authoritative verify loop — give the agent Read+Bash
+              // so it can genuinely typecheck/build and self-correct runtime errors
+              // (e.g. "Element type is invalid"), not just re-write blindly.
+              const agentFixPrompt = buildVerifyPrompt(message, validation.error || 'unknown', finalContent)
               const agentChatId = `fix-${responseId}-${Date.now()}`
               let agentOutput = ''
 
-              for await (const event of runHeadlessAgent(agentFixPrompt, agentChatId, {
-                model: 'sonnet',
-                maxBudgetUsd: 0.50,
-                systemPrompt: 'You are a React code fixer. Fix syntax errors in the provided component. Output ONLY the corrected code wrapped in ```jsx markers. Do not add explanations.',
-              })) {
+              for await (const event of runHeadlessAgent(
+                agentFixPrompt,
+                agentChatId,
+                buildVerifyAgentOptions(),
+              )) {
                 switch (event.type) {
                   case 'build_step':
                     safeEnqueue(encoder.encode(`data: ${JSON.stringify({
