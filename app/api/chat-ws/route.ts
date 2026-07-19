@@ -7,6 +7,8 @@ import { PROFESSIONAL_SYSTEM_PROMPT } from '@/lib/professional-prompt'
 import { enhancePromptWithMockData } from '@/lib/mock-data-generator'
 import { updatePreviewPartial, storePreview, getChatData } from '@/lib/preview-store'
 import { validateGeneratedCode } from '@/lib/code-validator'
+import { buildValidationFallbackComponent } from '@/lib/validation-fallback'
+import { runValidationRetryLoop, buildRepairPrompt } from '@/lib/generation-retry'
 import { stripGradients } from '@/lib/gradient-blocker'
 import { fetchContextualImages, formatImagesForPrompt, getFallbackImages } from '@/lib/services/unsplash.service'
 import { extractComponentCode } from '@/lib/agent/component-generation-tool'
@@ -843,69 +845,56 @@ OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polis
           // AUTO-RETRY: If validation fails, automatically retry once with error feedback
           if (!validation.valid) {
             console.error('⚠️ Initial validation failed:', validation.error)
-            console.log('🔄 Auto-retrying with error feedback...')
+            console.log('🔄 Auto-retrying with error feedback (up to 3 attempts)...')
 
-            try {
-              // Build retry prompt with specific error details
-              const retryPrompt = `The previous code generation had a syntax error that needs to be fixed:
+            // Closed retry loop (extracted to lib/generation-retry for testability):
+            // re-generate with the SPECIFIC validation error fed back each attempt,
+            // re-validate, stop as soon as it passes. Cap at 3, rotate models (#77).
+            const retryLoop = await runValidationRetryLoop(validation, {
+              maxRetries: 3,
+              models: [DEFAULT_MODEL, 'gpt-oss-20b', 'ministral-14b'],
+              prompt: message,
+              onAttempt: (attempt, total, model) => {
+                safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+                  type: 'build_step',
+                  step: `Fixing generated code (attempt ${attempt}/${total})...`,
+                })}\n\n`))
+                console.log(`🔁 Repair attempt ${attempt}/${total} with ${model}`)
+              },
+              generate: async (model, error, brokenCode) => {
+                const res = await ainativeClient.chat.completions.create({
+                  model,
+                  max_tokens: 8192,
+                  temperature: 0.5, // lower temp on repair — favor correctness
+                  messages: [
+                    {
+                      role: 'system',
+                      content:
+                        'You fix broken React code. Return ONLY valid, complete React code wrapped in ```jsx markers. ' +
+                        'Every JSX tag closed, every string terminated, every bracket matched, and every component ' +
+                        'used in JSX must be defined here, imported, or a known primitive — never reference an undefined component.',
+                    },
+                    {
+                      role: 'user',
+                      content:
+                        `${buildRepairPrompt(message, error)}\n\nBROKEN CODE:\n\`\`\`jsx\n${(brokenCode || fullContent).slice(0, 8000)}\n\`\`\``,
+                    },
+                  ],
+                })
+                return res.choices?.[0]?.message?.content || ''
+              },
+              validate: (raw) => validateGeneratedCode(raw),
+            })
 
-ERROR: ${validation.error}
-
-INVALID CODE:
-${validation.code}
-
-Please regenerate the component with these requirements:
-1. Fix the syntax error: ${validation.error}
-2. Avoid using invalid JavaScript identifiers (like 1px, 2em as variable names)
-3. Ensure all JSX is valid and properly closed
-4. Make sure the component function is properly defined and exported
-5. Use only valid JavaScript/JSX syntax
-6. Return ONLY the code wrapped in \`\`\`jsx and \`\`\` markers.
-
-Generate a corrected version of: ${message}`
-
-              // Try retry with fallback chain
-              const retryModels = [DEFAULT_MODEL, 'gpt-oss-20b', 'ministral-14b']
-              let retryContent = ''
-              // Keep to 2 messages (system + user) to avoid multi-turn 512-token cap
-              const retryMessages = [
-                { role: 'system' as const, content: 'Fix the syntax errors in the code below. Return ONLY valid, complete React code wrapped in ```jsx markers. Ensure all JSX tags are properly closed, all strings are terminated, and all brackets match.' },
-                { role: 'user' as const, content: `Here is the broken code:\n\`\`\`jsx\n${fullContent.slice(0, 6000)}\n\`\`\`\n\n${retryPrompt}` }
-              ]
-              for (const retryModel of retryModels) {
-                try {
-                  const retryResponse = await ainativeClient.chat.completions.create({
-                    model: retryModel,
-                    max_tokens: 8192,
-                    temperature: 0.7,
-                    messages: retryMessages,
-                  })
-                  retryContent = retryResponse.choices?.[0]?.message?.content || ''
-                  if (retryContent.length > 500) {
-                    console.log(`✅ Retry succeeded with ${retryModel}: ${retryContent.length} chars`)
-                    break
-                  }
-                } catch (retryErr: any) {
-                  console.log(`⚠️ Retry with ${retryModel} failed: ${retryErr?.status || retryErr?.message?.substring(0, 50)}`)
-                }
-              }
-
-              // Validate retry result
-              const retryValidation = validateGeneratedCode(retryContent)
-
-              if (retryValidation.valid) {
-                console.log('✅ Auto-retry succeeded! Validation passed.')
-                finalContent = retryContent
-                validation = retryValidation
-                retryAttempted = true
-
-                // Update preview with fixed content
-                updatePreviewPartial(responseId, finalContent)
-              } else {
-                console.error('❌ Auto-retry failed validation:', retryValidation.error)
-              }
-            } catch (retryError) {
-              console.error('Auto-retry API call failed:', retryError)
+            if (retryLoop.attempts > 0) retryAttempted = true
+            if (retryLoop.recovered) {
+              console.log(`✅ Auto-retry succeeded after ${retryLoop.attempts} attempt(s)`)
+              finalContent = retryLoop.code
+              validation = retryLoop.validation
+              updatePreviewPartial(responseId, finalContent)
+            } else {
+              console.error(`❌ Auto-retry exhausted (${retryLoop.attempts} attempts):`, retryLoop.validation.error)
+              validation = retryLoop.validation
             }
           }
 
@@ -1034,24 +1023,25 @@ The component MUST have \`export default function App()\` or \`export default Ap
                 : 'The generated code has syntax errors. Please try regenerating.'
             })}\n\n`))
 
-            // Store the invalid code with error marker — wrap in markdown so iframe preview can extract it
+            // Graceful degradation (#77): do NOT ship the broken code to Sandpack
+            // (that renders the "Something went wrong" crash overlay). Instead
+            // render a clean, intentional fallback component so the preview area
+            // shows a friendly state with a regenerate affordance. The raw invalid
+            // code is still stored (behind "View problematic code") for debugging.
+            const safeFallback = buildValidationFallbackComponent(message)
             const wrappedInvalidCode = `\`\`\`jsx\n${finalContent}\n\`\`\``
             storePreview(responseId, wrappedInvalidCode, message, {
               validationError: validation.error,
               usage: tokenUsage,
             })
 
-            // Still send files for Sandpack (it has its own error boundary)
             try {
-              const parsedFiles = parseMultiFileOutput(finalContent, message)
-              if (Object.keys(parsedFiles).length > 0) {
-                safeEnqueue(encoder.encode(`data: ${JSON.stringify({
-                  type: 'files',
-                  files: parsedFiles
-                })}\n\n`))
-              }
+              safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+                type: 'files',
+                files: { '/App.tsx': safeFallback },
+              })}\n\n`))
             } catch (parseErr) {
-              console.warn('Failed to parse files for Sandpack on validation error path:', parseErr)
+              console.warn('Failed to send fallback files:', parseErr)
             }
 
             // Send completion with error flag

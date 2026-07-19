@@ -450,6 +450,109 @@ export function findDuplicateTopLevelDeclaration(code: string): string | null {
 }
 
 /**
+ * Components/identifiers that are available to generated apps WITHOUT an explicit
+ * import — React built-ins plus every AIKit / shadcn-UI primitive the system
+ * prompt promises and the preview runtime provides. Used to distinguish a
+ * genuine hallucinated component (e.g. `<Header/>`) from a legitimately-available
+ * one, so we don't false-flag the latter (builder#76).
+ */
+const KNOWN_AVAILABLE_COMPONENTS = new Set<string>([
+  // React built-ins
+  'Fragment', 'Suspense', 'StrictMode', 'Profiler',
+  // shadcn UI set (promised in the system prompt, provided by the preview shim)
+  'Button', 'Card', 'CardHeader', 'CardTitle', 'CardDescription', 'CardContent',
+  'CardFooter', 'Input', 'Label', 'Badge', 'Avatar', 'AvatarImage', 'AvatarFallback',
+  'Table', 'TableHeader', 'TableBody', 'TableRow', 'TableHead', 'TableCell', 'Separator',
+  'Dialog', 'DialogContent', 'DialogHeader', 'DialogTitle', 'DialogDescription', 'DialogFooter',
+  'Select', 'SelectTrigger', 'SelectValue', 'SelectContent', 'SelectItem',
+  'Tabs', 'TabsList', 'TabsTrigger', 'TabsContent', 'Progress', 'Checkbox',
+  'Accordion', 'AccordionItem', 'AccordionTrigger', 'AccordionContent',
+  'Alert', 'AlertTitle', 'AlertDescription', 'Textarea', 'Switch', 'Slider', 'Tooltip',
+  'RadioGroup', 'RadioGroupItem', 'Popover', 'PopoverTrigger', 'PopoverContent',
+  'DropdownMenu', 'DropdownMenuTrigger', 'DropdownMenuContent', 'DropdownMenuItem',
+  'Sheet', 'SheetTrigger', 'SheetContent', 'ScrollArea', 'Toggle', 'Command',
+  // AIKit primitives
+  'MetricCard', 'AIKitPriceCard', 'AIKitRating', 'AgentCard', 'SwarmView', 'SafetyBadge',
+  'GuardrailPanel', 'ChatBubble', 'StreamingIndicator', 'CodeDisplay', 'TokenUsageBar',
+  'ConnectionStatus', 'AIKitHeader', 'AIKitSidebar', 'AIKitTable', 'AIKitTimeline',
+  'AIKitBanner', 'AIKitAvatar', 'Skeleton', 'SkeletonCard', 'EmptyState', 'AIKitProductCard',
+  'AIKitPagination', 'AIKitBreadcrumb', 'AIKitStepper', 'AgentTimeline',
+  // recharts (real names + the "Re"-prefixed aliases the prompt uses) — the
+  // import injector resolves all of these, so they are effectively available.
+  'ResponsiveContainer', 'LineChart', 'Line', 'BarChart', 'Bar', 'PieChart', 'Pie', 'Cell',
+  'AreaChart', 'Area', 'RadarChart', 'Radar', 'RadialBarChart', 'RadialBar', 'ComposedChart',
+  'Scatter', 'ScatterChart', 'Treemap', 'Funnel', 'FunnelChart', 'XAxis', 'YAxis',
+  'CartesianGrid', 'Legend', 'PolarGrid', 'PolarAngleAxis', 'PolarRadiusAxis',
+  'ReLineChart', 'ReBarChart', 'RePieChart', 'ReAreaChart', 'RechartsTooltip',
+  // lucide-react icons (used as JSX, injected on demand)
+  'Search', 'Menu', 'X', 'ChevronDown', 'ChevronRight', 'ChevronLeft', 'ChevronUp',
+  'Home', 'Settings', 'Users', 'BarChart3', 'FileText', 'Bell', 'Mail', 'Star', 'Heart',
+  'ShoppingCart', 'Plus', 'Minus', 'Edit', 'Trash2', 'Eye', 'Check', 'AlertCircle', 'Info',
+  'ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'ExternalLink', 'Download', 'Upload',
+  'Share2', 'Filter', 'Calendar', 'Clock', 'MapPin', 'Phone', 'Globe', 'Lock', 'Shield',
+  'Zap', 'TrendingUp', 'TrendingDown', 'Activity', 'DollarSign', 'CreditCard', 'Package',
+  'Truck', 'Sun', 'Moon', 'Laptop', 'Smartphone', 'Code', 'Terminal', 'GitBranch', 'Send',
+  'MessageSquare', 'Bookmark', 'Tag', 'Copy', 'Save', 'RefreshCw', 'MoreHorizontal',
+  'MoreVertical', 'Layers', 'Layout', 'Grid', 'List', 'Target', 'Award', 'Sparkles',
+  'Rocket', 'Building2', 'Briefcase', 'BookOpen', 'Bot', 'Brain', 'LogOut', 'LogIn',
+  'UserPlus', 'Users2', 'FolderOpen', 'File', 'Box', 'Inbox', 'CircleDot', 'Hexagon',
+  'Wand2', 'Palette', 'Lightbulb', 'Gauge', 'Cpu', 'Wifi', 'Play', 'Pause', 'SkipForward',
+  'Volume2', 'Image', 'Video', 'Music', 'Mic',
+])
+
+/**
+ * Detect capitalized JSX components that are USED but never resolved — not
+ * defined locally, not imported, and not in the known-available set. These are
+ * model hallucinations (e.g. `<Header/>`) that render as
+ * "Element type is invalid: … got: undefined" in Sandpack — a runtime/scope
+ * error the Babel parse cannot catch. Returns the list of unresolved names,
+ * scoped per file so multi-file output isn't cross-contaminated (builder#76).
+ *
+ * Deliberately conservative: only flags PascalCase JSX tags (custom components),
+ * never lowercase HTML tags or dotted members (Foo.Bar), and treats any name
+ * that appears anywhere as defined/imported as resolved.
+ */
+export function findUnresolvedComponents(code: string): string[] {
+  const unresolved = new Set<string>()
+
+  for (const file of code.split(FILE_MARKER)) {
+    // Names available in this file: known globals + local decls + imports.
+    const available = new Set<string>(KNOWN_AVAILABLE_COMPONENTS)
+
+    // local declarations (function/const/let/class Foo)
+    for (const m of file.matchAll(/(?:function|const|let|class)\s+([A-Z][A-Za-z0-9]*)/g)) {
+      available.add(m[1])
+    }
+    // imports: default + named (with aliases)
+    for (const m of file.matchAll(/import\s+(?:([A-Z][A-Za-z0-9]*)\s*,?\s*)?(?:\{([^}]*)\})?/g)) {
+      if (m[1]) available.add(m[1])
+      if (m[2]) {
+        for (const spec of m[2].split(',')) {
+          const bound = spec.trim().split(/\s+as\s+/i).pop()?.trim()
+          if (bound && /^[A-Z]/.test(bound)) available.add(bound)
+        }
+      }
+    }
+    // destructured from something (const { Foo } = ...) — treat as available
+    for (const m of file.matchAll(/(?:const|let|var)\s*\{([^}]*)\}\s*=/g)) {
+      for (const part of m[1].split(',')) {
+        const n = part.trim().split(':').pop()?.trim()
+        if (n && /^[A-Z]/.test(n)) available.add(n)
+      }
+    }
+
+    // components used in JSX: <Foo ...> or <Foo/> — PascalCase only, skip dotted
+    for (const m of file.matchAll(/<([A-Z][A-Za-z0-9]*)(?=[\s/>])/g)) {
+      const name = m[1]
+      // skip dotted member access like <Foo.Bar> (the base Foo is what matters)
+      if (!available.has(name)) unresolved.add(name)
+    }
+  }
+
+  return [...unresolved]
+}
+
+/**
  * Validate JavaScript/JSX code using Babel parser
  *
  * This catches syntax errors like unterminated strings, missing brackets,
@@ -471,6 +574,23 @@ export function validateJavaScriptCode(code: string): ValidationResult {
   if (dupName) {
     const errorMessage = `Identifier '${dupName}' has already been declared`
     console.error('❌ Code validation failed (duplicate declaration):', errorMessage)
+    return {
+      valid: false,
+      error: errorMessage,
+      code: fixedCode,
+      autoFixed: fixes.length > 0,
+      fixes: fixes.length > 0 ? fixes : undefined,
+    }
+  }
+
+  // Catch hallucinated components — used in JSX but never defined, imported, or
+  // in the known-available set. These render as "Element type is invalid:
+  // … got: undefined" at runtime (Sandpack), which the Babel parse cannot see.
+  // Reject so retry re-generates rather than shipping a broken preview (#76).
+  const unresolved = findUnresolvedComponents(fixedCode)
+  if (unresolved.length > 0) {
+    const errorMessage = `Element type is invalid: <${unresolved[0]}> is used but not defined or imported`
+    console.error('❌ Code validation failed (unresolved component):', unresolved.join(', '))
     return {
       valid: false,
       error: errorMessage,
