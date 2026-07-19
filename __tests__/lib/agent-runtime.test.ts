@@ -24,8 +24,12 @@ describe('agent-runtime (#79)', () => {
   })
 
   describe('getAgentBinary', () => {
-    it('maps runtime to binary name', () => {
-      expect(getAgentBinary(env({ AGENT_RUNTIME: 'cody' }))).toBe('cody')
+    it('resolves cody to the local bin path or the bare name', () => {
+      const bin = getAgentBinary(env({ AGENT_RUNTIME: 'cody' }))
+      // Either the resolved node_modules/.bin/cody path or the bare 'cody'
+      expect(bin === 'cody' || bin.endsWith('/.bin/cody')).toBe(true)
+    })
+    it('maps claude to the bare binary name', () => {
       expect(getAgentBinary(env({}))).toBe('claude')
     })
   })
