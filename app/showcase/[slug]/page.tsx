@@ -109,7 +109,7 @@ export default async function ShowcaseDetailPage({ params }: Props) {
               className="w-full border-0"
               style={{ height: '70vh' }}
               title={`Preview of ${entry.title}`}
-              sandbox="allow-scripts allow-same-origin"
+              sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
               loading="lazy"
             />
           </div>

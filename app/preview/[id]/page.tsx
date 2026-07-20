@@ -19,7 +19,7 @@ export default function PreviewPage() {
             src={`/api/preview/${id}`}
             className="w-full h-full border-0"
             title={`Preview ${id}`}
-            sandbox="allow-scripts allow-same-origin"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
           />
         </div>
       </div>
