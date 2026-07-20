@@ -42,9 +42,9 @@ export default async function Image() {
 
         {/* headline */}
         <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <div style={{ fontSize: 76, fontWeight: 800, color: 'white', lineHeight: 1.05, letterSpacing: -2, marginBottom: 20 }}>
-            Build React apps
-            <br />with AI in seconds
+          <div style={{ display: 'flex', flexDirection: 'column', fontSize: 76, fontWeight: 800, color: 'white', lineHeight: 1.05, letterSpacing: -2, marginBottom: 20 }}>
+            <div style={{ display: 'flex' }}>Build React apps</div>
+            <div style={{ display: 'flex' }}>with AI in seconds</div>
           </div>
           <div style={{ fontSize: 30, color: 'rgba(255,255,255,0.9)', lineHeight: 1.3, maxWidth: 900 }}>
             Production-ready, fully-interactive apps from a prompt — persistent
