@@ -18,8 +18,10 @@ export const VERIFY_AGENT_TOOLS = ['Read', 'Write', 'Edit', 'Bash']
 /** A slightly higher budget than a blind write, since verification runs tools. */
 export const VERIFY_AGENT_MAX_BUDGET_USD = 0.75
 
-/** Max verify iterations before falling back to graceful degradation. */
-export const VERIFY_MAX_TURNS = 4
+/** Max verify iterations before falling back to graceful degradation. Kept
+ * above the read→patch→re-verify minimum so the agent doesn't hit --max-turns
+ * mid-tool-call and return an empty result (cody-cli#251). */
+export const VERIFY_MAX_TURNS = 6
 
 /**
  * Build the system prompt for the verify agent. It must fix the code AND confirm
