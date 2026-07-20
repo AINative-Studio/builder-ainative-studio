@@ -38,13 +38,24 @@ export { AgentTimeline } from './AgentTimeline'
   '/src/components/aikit/MetricCard.tsx': `
 import React from 'react'
 interface MetricCardProps { title: string; value: string | number; change?: string; changeType?: 'positive' | 'negative' | 'neutral'; icon?: React.ReactNode; sparklineData?: number[]; className?: string }
+// Render an icon prop safely: apps often pass a component itself (icon={BarChart3})
+// instead of an element (icon={<BarChart3/>}). A bare component (function or a
+// forwardRef object { $$typeof, render }) is NOT a valid React child — rendering
+// it throws "Objects are not valid as a React child". Mount components as
+// elements; pass through valid elements/strings.
+function renderIcon(icon: any) {
+  if (!icon) return null
+  if (typeof icon === 'function') return React.createElement(icon)
+  if (typeof icon === 'object' && icon.\$\$typeof && icon.type === undefined) return React.createElement(icon)
+  return icon
+}
 export function MetricCard({ title, value, change, changeType = 'neutral', icon, sparklineData, className = '' }: MetricCardProps) {
   const changeColor = changeType === 'positive' ? 'text-green-600' : changeType === 'negative' ? 'text-red-600' : 'text-gray-500'
   return (
     <div className={\`bg-white rounded-xl border border-gray-200 p-6 \${className}\`}>
       <div className="flex items-center justify-between mb-2">
         <span className="text-sm text-gray-500">{title}</span>
-        {icon && <span className="text-gray-400">{icon}</span>}
+        {icon && <span className="text-gray-400">{renderIcon(icon)}</span>}
       </div>
       <div className="text-2xl font-bold text-gray-900">{value}</div>
       {change && <span className={\`text-sm \${changeColor}\`}>{change}</span>}
@@ -263,6 +274,12 @@ export function AIKitHeader({ title, logo, nav = [], actions, className = '' }: 
 import React from 'react'
 interface SidebarItem { label: string; icon?: React.ReactNode; active?: boolean; href?: string }
 interface AIKitSidebarProps { items: SidebarItem[]; title?: string; className?: string }
+function renderIcon(icon: any) {
+  if (!icon) return null
+  if (typeof icon === 'function') return React.createElement(icon)
+  if (typeof icon === 'object' && icon.\$\$typeof && icon.type === undefined) return React.createElement(icon)
+  return icon
+}
 export function AIKitSidebar({ items, title, className = '' }: AIKitSidebarProps) {
   return (
     <aside className={\`w-64 border-r border-gray-200 bg-white p-4 \${className}\`}>
@@ -270,7 +287,7 @@ export function AIKitSidebar({ items, title, className = '' }: AIKitSidebarProps
       <nav className="space-y-1">
         {items.map((item, i) => (
           <a key={i} href={item.href || '#'} className={\`flex items-center gap-3 px-3 py-2 rounded-lg text-sm \${item.active ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-50'}\`}>
-            {item.icon}{item.label}
+            {renderIcon(item.icon)}{item.label}
           </a>
         ))}
       </nav>
@@ -361,10 +378,16 @@ export function SkeletonCard({ className = '' }: { className?: string }) {
   '/src/components/aikit/EmptyState.tsx': `
 import React from 'react'
 interface EmptyStateProps { title?: string; description?: string; icon?: React.ReactNode; action?: React.ReactNode; className?: string }
+function renderIcon(icon: any) {
+  if (!icon) return null
+  if (typeof icon === 'function') return React.createElement(icon)
+  if (typeof icon === 'object' && icon.\$\$typeof && icon.type === undefined) return React.createElement(icon)
+  return icon
+}
 export function EmptyState({ title = 'No data', description, icon, action, className = '' }: EmptyStateProps) {
   return (
     <div className={\`flex flex-col items-center justify-center py-12 text-center \${className}\`}>
-      {icon && <div className="mb-4 text-gray-400">{icon}</div>}
+      {icon && <div className="mb-4 text-gray-400">{renderIcon(icon)}</div>}
       <h3 className="text-lg font-medium text-gray-900">{title}</h3>
       {description && <p className="mt-1 text-sm text-gray-500">{description}</p>}
       {action && <div className="mt-4">{action}</div>}
