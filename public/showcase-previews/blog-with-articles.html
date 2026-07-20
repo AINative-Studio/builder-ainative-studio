@@ -9,15 +9,14 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <!-- Core: React 18 -->
-    <!-- Critical: React + Babel from CDN (local copies have compatibility issues) -->
+    <!-- React 18 from CDN -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Non-critical: served locally for speed -->
-    <script src="/vendor/lucide.min.js"></script>
-    <script src="/vendor/prop-types.min.js"></script>
-    <script src="/vendor/recharts.min.js"></script>
-    <script src="/vendor/tailwind.min.js"></script>
+    <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.min.js"></script>
+    <script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.15.0/umd/Recharts.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
         theme: {
@@ -92,22 +91,65 @@
       // This works WITH React instead of fighting it
       const _originalCreateElement = React.createElement;
       let _h1Count = 0;
+      // A bare component OBJECT (forwardRef/memo/lazy — shape { $$typeof, render })
+      // placed in a CHILD position, e.g. {SomeIcon} or {chart} instead of
+      // <SomeIcon/>, makes React throw the fatal "Objects are not valid as a
+      // React child (found: object with keys {$$typeof, render})" crash overlay,
+      // killing the whole preview. This happens for Recharts/forwardRef refs the
+      // model references as values. Detect such a child and render it as an
+      // element (if it's a component) or drop it — turning a hard crash into a
+      // graceful, mostly-correct render.
+      function _sanitizeChild(c) {
+        if (c && typeof c === 'object' && c.$$typeof && c.type === undefined) {
+          // It's a component definition object, not a React element. If it's
+          // renderable (forwardRef/memo/function), mount it; else drop it.
+          try {
+            if (typeof c === 'function' || typeof c.render === 'function' || c.$$typeof) {
+              return _originalCreateElement(c, null);
+            }
+          } catch (e) {}
+          return null;
+        }
+        return c;
+      }
+      function _sanitizeChildren(v) {
+        return Array.isArray(v) ? v.map(_sanitizeChild) : _sanitizeChild(v);
+      }
       React.createElement = function(type) {
+        var args = Array.prototype.slice.call(arguments);
         if (type === 'h1') {
           _h1Count++;
-          if (_h1Count > 1) {
-            // Convert extra h1 to h2 at the React level
-            var args = Array.prototype.slice.call(arguments);
-            args[0] = 'h2';
-            return _originalCreateElement.apply(React, args);
-          }
+          if (_h1Count > 1) args[0] = 'h2'; // Convert extra h1 to h2
         }
-        return _originalCreateElement.apply(React, arguments);
+        // Sanitize positional children (args[2..]) so a stray component object
+        // can't crash the whole preview with "Objects are not valid as a React
+        // child". Handles <div>{Icon}</div> and {list.map(...)} cases.
+        if (args.length > 2) {
+          for (var _i = 2; _i < args.length; _i++) args[_i] = _sanitizeChildren(args[_i]);
+        }
+        // Also sanitize a children PROP (arg[1].children) — components that
+        // receive a component-object via the children prop rather than a
+        // positional arg (e.g. AIKit stubs that spread props).
+        if (args[1] && typeof args[1] === 'object' && 'children' in args[1]) {
+          try { args[1] = Object.assign({}, args[1], { children: _sanitizeChildren(args[1].children) }); } catch (e) {}
+        }
+        return _originalCreateElement.apply(React, args);
       };
 
-      // Make React hooks available
+      // Make React hooks available. CRITICAL: the compiled App runs in a
+      // SEPARATE global-scope <script>, so these must be on window — a plain
+      // const here is script-scoped and the App would throw "useState is not
+      // defined" and render blank (the #1 cause of blank previews).
       const { useState, useEffect, useCallback, useMemo, useRef, useContext, createContext, Fragment } = React;
-      console.log('[Preview] React hooks loaded:', { useState, useEffect, useCallback, useMemo, useRef });
+      window.useState = useState; window.useEffect = useEffect;
+      window.useCallback = useCallback; window.useMemo = useMemo;
+      window.useRef = useRef; window.useContext = useContext;
+      window.createContext = createContext; window.Fragment = Fragment;
+      // Also expose the less-common hooks apps sometimes use.
+      window.useReducer = React.useReducer; window.useLayoutEffect = React.useLayoutEffect;
+      window.useId = React.useId; window.useTransition = React.useTransition;
+      window.useDeferredValue = React.useDeferredValue; window.useImperativeHandle = React.useImperativeHandle;
+      console.log('[Preview] React hooks loaded + exposed on window:', { useState: !!window.useState, useEffect: !!window.useEffect });
 
       // Create React components from Lucide vanilla SVG icon definitions
       // lucide (vanilla) exports icons as ["svg", {svgAttrs}, [[tag, attrs], ...]]
@@ -387,7 +429,31 @@
         Legend, ResponsiveContainer, RadialBarChart, RadialBar,
         Treemap, Funnel, FunnelChart
       } = recharts;
-      console.log('[Preview] Recharts loaded:', !!recharts.LineChart);
+      // CRITICAL: the compiled app runs in a SEPARATE global-scope <script>, so
+      // these block-scoped consts are invisible to it — using <RePieChart>,
+      // <Pie>, <ResponsiveContainer> etc. would throw "Element type is invalid:
+      // ...got undefined". Expose every Recharts component on window so the app
+      // script can resolve them. Do NOT clobber the lucide icon names already on
+      // window (PieChart/LineChart/BarChart are icons); only add the Re* aliases
+      // and the recharts-only names.
+      var _rechartsGlobals = {
+        ReLineChart: ReLineChart, ReBarChart: ReBarChart, RePieChart: RePieChart,
+        Line: Line, Bar: Bar, Pie: Pie, Cell: Cell, Area: Area, AreaChart: AreaChart,
+        RadarChart: RadarChart, Radar: Radar, PolarGrid: PolarGrid,
+        PolarAngleAxis: PolarAngleAxis, PolarRadiusAxis: PolarRadiusAxis,
+        ComposedChart: ComposedChart, Scatter: Scatter, ScatterChart: ScatterChart,
+        XAxis: XAxis, YAxis: YAxis, CartesianGrid: CartesianGrid,
+        RechartsTooltip: RechartsTooltip, Legend: Legend,
+        ResponsiveContainer: ResponsiveContainer, RadialBarChart: RadialBarChart,
+        RadialBar: RadialBar, Treemap: Treemap, Funnel: Funnel, FunnelChart: FunnelChart
+      };
+      Object.keys(_rechartsGlobals).forEach(function(k) {
+        if (_rechartsGlobals[k] && !window[k]) window[k] = _rechartsGlobals[k];
+      });
+      // Tooltip is commonly imported bare from recharts; only set it if a lucide
+      // icon named Tooltip isn't already occupying the slot.
+      if (RechartsTooltip && !window.Tooltip) window.Tooltip = RechartsTooltip;
+      console.log('[Preview] Recharts loaded:', !!recharts.LineChart, '| exposed on window:', Object.keys(_rechartsGlobals).filter(function(k){return !!window[k]}).length);
 
       // Make AIKit / AINative Primitive components available
       const aikit = window.AIKitComponents || {};
@@ -478,451 +544,71 @@
 
         render() {
           if (this.state.hasError) {
+            // Graceful fallback — never dump a raw red React error at the user.
+            // A runtime render crash (e.g. a component object used as a child)
+            // shows a clean "refining" card instead of the scary stack. The raw
+            // error is kept in a collapsed <details> for debugging only.
             return React.createElement('div', {
-              style: { padding: '20px', color: 'red', fontFamily: 'monospace' }
+              style: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f8fafc', fontFamily: 'system-ui, -apple-system, sans-serif', padding: '24px' }
+            }, React.createElement('div', {
+              style: { maxWidth: '440px', textAlign: 'center', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '40px 32px', boxShadow: '0 4px 24px rgba(0,0,0,0.06)' }
             }, [
-              React.createElement('h3', { key: 'title' }, 'React Rendering Error'),
-              React.createElement('pre', { key: 'error', style: { background: '#fee', padding: '10px', borderRadius: '4px' } },
-                this.state.error?.toString() || 'Unknown error'
-              ),
-              React.createElement('details', { key: 'details' }, [
-                React.createElement('summary', { key: 'summary' }, 'Component Stack'),
-                React.createElement('pre', { key: 'stack', style: { fontSize: '11px', overflow: 'auto' } },
-                  this.state.errorInfo?.componentStack || 'No stack trace'
+              React.createElement('div', { key: 'icon', style: { fontSize: '40px', marginBottom: '12px' } }, '🛠️'),
+              React.createElement('h1', { key: 'title', style: { fontSize: '20px', fontWeight: 700, color: '#0f172a', margin: '0 0 8px' } }, 'Refining your app'),
+              React.createElement('p', { key: 'body', style: { fontSize: '14px', color: '#475569', lineHeight: 1.6, margin: '0 0 16px' } }, 'AINative built a first version but it needs another pass to render cleanly. Try regenerating — the next attempt usually gets it.'),
+              React.createElement('details', { key: 'details', style: { textAlign: 'left', marginTop: '8px' } }, [
+                React.createElement('summary', { key: 'summary', style: { fontSize: '12px', color: '#94a3b8', cursor: 'pointer' } }, 'Technical details'),
+                React.createElement('pre', { key: 'stack', style: { fontSize: '11px', color: '#64748b', background: '#f1f5f9', padding: '10px', borderRadius: '8px', overflow: 'auto', marginTop: '8px' } },
+                  (this.state.error?.toString() || 'Unknown error') + '\n\n' + (this.state.errorInfo?.componentStack || '')
                 )
               ])
-            ]);
+            ]));
           }
           return this.props.children;
         }
       }
-      // Fix: expose ErrorBoundary on window so the separate render script can see it (class is script-scoped).
+      // The component-render script runs in a SEPARATE script tag (global
+      // scope) and references ErrorBoundary as a bare identifier — but a class
+      // declaration is script-scoped, not a global. Expose it on window so the
+      // renderer can wrap the app in it (fixes "ErrorBoundary is not defined").
       window.ErrorBoundary = ErrorBoundary;
 
     </script>
-    <!-- Component code: transformed by Babel.transform() synchronously, then eval'd -->
-    <script id="component-source" type="text/plain">
-        // Mock data for articles
-const articles = [
-  {
-    id: 1,
-    title: "The Future of Web Development: Trends to Watch in 2023",
-    excerpt: "Explore the latest trends shaping the future of web development including AI integration, progressive web apps, and new frameworks that are revolutionizing how we build applications.",
-    author: "Alex Johnson",
-    avatar: "AJ",
-    publishDate: "May 15, 2023",
-    readTime: "8 min read",
-    category: "Technology",
-    categoryColor: "bg-blue-100 text-blue-800"
-  },
-  {
-    id: 2,
-    title: "Mastering React Hooks: A Comprehensive Guide",
-    excerpt: "Deep dive into React Hooks with practical examples and best practices for building more efficient and maintainable React applications.",
-    author: "Sarah Williams",
-    avatar: "SW",
-    publishDate: "June 2, 2023",
-    readTime: "12 min read",
-    category: "Programming",
-    categoryColor: "bg-green-100 text-green-800"
-  },
-  {
-    id: 3,
-    title: "The Psychology of User Experience Design",
-    excerpt: "Understanding how cognitive biases and emotional responses influence design decisions and user satisfaction in digital products.",
-    author: "Michael Chen",
-    avatar: "MC",
-    publishDate: "April 28, 2023",
-    readTime: "10 min read",
-    category: "Design",
-    categoryColor: "bg-purple-100 text-purple-800"
-  },
-  {
-    id: 4,
-    title: "Building Scalable APIs with Node.js and Express",
-    excerpt: "Learn advanced techniques for creating robust, scalable APIs that can handle high traffic loads while maintaining performance.",
-    author: "David Rodriguez",
-    avatar: "DR",
-    publishDate: "July 10, 2023",
-    readTime: "15 min read",
-    category: "Backend",
-    categoryColor: "bg-yellow-100 text-yellow-800"
-  },
-  {
-    id: 5,
-    title: "The Rise of AI in Creative Industries",
-    excerpt: "How artificial intelligence is transforming creative workflows and what it means for artists, designers, and content creators.",
-    author: "Emma Thompson",
-    avatar: "ET",
-    publishDate: "March 19, 2023",
-    readTime: "9 min read",
-    category: "AI",
-    categoryColor: "bg-red-100 text-red-800"
-  },
-  {
-    id: 6,
-    title: "Optimizing Database Performance for Modern Applications",
-    excerpt: "Essential strategies for optimizing database queries and structures to improve application performance and reduce latency.",
-    author: "James Wilson",
-    avatar: "JW",
-    publishDate: "August 5, 2023",
-    readTime: "11 min read",
-    category: "Database",
-    categoryColor: "bg-indigo-100 text-indigo-800"
-  }
-];
-
-// Mock data for metrics
-const metrics = [
-  {
-    title: 'Total Revenue',
-    value: '$45,231',
-    change: '+20.1%',
-    trend: 'up',
-    description: 'vs last month',
-    iconLabel: '$',
-    color: 'bg-green-600',
-    sparkline: [30, 40, 35, 50, 45, 60, 55, 70, 65, 75]
-  },
-  {
-    title: 'Active Users',
-    value: '12,543',
-    change: '+12.5%',
-    trend: 'up',
-    description: 'vs last week',
-    iconLabel: 'U',
-    color: 'bg-blue-600',
-    sparkline: [100, 120, 115, 130, 140, 135, 150, 145, 160, 155]
-  },
-  {
-    title: 'Conversion Rate',
-    value: '3.24%',
-    change: '-0.5%',
-    trend: 'down',
-    description: 'vs last period',
-    iconLabel: '%',
-    color: 'bg-purple-600',
-    sparkline: [3.5, 3.4, 3.3, 3.4, 3.2, 3.3, 3.25, 3.24, 3.24, 3.24]
-  },
-  {
-    title: 'Avg Response Time',
-    value: '1.2s',
-    change: '-15.3%',
-    trend: 'up',
-    description: 'improvement',
-    iconLabel: 'T',
-    color: 'bg-orange-600',
-    sparkline: [1.5, 1.4, 1.35, 1.3, 1.28, 1.25, 1.22, 1.2, 1.2, 1.2]
-  }
-];
-
-// Mock data for activities
-const activities = [
-  {
-    id: 1,
-    user: 'John Harrison',
-    initials: 'JH',
-    action: 'pushed to',
-    target: 'main',
-    targetType: 'branch',
-    description: '3 commits with bug fixes',
-    timestamp: '2 minutes ago',
-    iconLabel: 'P',
-    color: 'bg-purple-600'
-  },
-  {
-    id: 2,
-    user: 'Anna Chen',
-    initials: 'AC',
-    action: 'commented on',
-    target: 'Issue #234',
-    targetType: 'issue',
-    description: 'Added design review feedback',
-    timestamp: '15 minutes ago',
-    iconLabel: 'C',
-    color: 'bg-blue-600'
-  },
-  {
-    id: 3,
-    user: 'Marcus Kim',
-    initials: 'MK',
-    action: 'completed',
-    target: 'User Authentication',
-    targetType: 'task',
-    description: 'OAuth integration finished',
-    timestamp: '1 hour ago',
-    iconLabel: '✓',
-    color: 'bg-green-600'
-  },
-  {
-    id: 4,
-    user: 'Victoria Kumar',
-    initials: 'VK',
-    action: 'created',
-    target: 'Project Roadmap',
-    targetType: 'document',
-    description: 'Q2 planning document',
-    timestamp: '3 hours ago',
-    iconLabel: 'D',
-    color: 'bg-orange-600'
-  }
-];
-
-function BlogHomepage() {
-  const [featuredArticle, setFeaturedArticle] = useState(null);
-  const [otherArticles, setOtherArticles] = useState([]);
-
-  useEffect(() => {
-    if (articles.length > 0) {
-      setFeaturedArticle(articles[0]);
-      setOtherArticles(articles.slice(1));
-    }
-  }, []);
-
-  return (
-    <main aria-label="Blog Homepage" className="min-h-screen bg-[#F2F2F2]">
-      {/* Professional Header */}
-      <div className="bg-slate-900">
-        <div className="px-8 py-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white text-2xl font-bold">
-                B
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold text-white">Blog Insights</h1>
-                <p className="text-slate-300 text-sm mt-1">Latest articles and insights</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <button className="bg-slate-700 text-white border border-slate-600 hover:bg-slate-600 px-4 py-2 rounded-lg flex items-center gap-2">
-                <Search className="w-4 h-4" />
-                Search
-              </button>
-              <button className="bg-blue-600 text-white hover:bg-blue-700 px-4 py-2 rounded-lg flex items-center gap-2">
-                <Plus className="w-4 h-4" />
-                New Post
-              </button>
-              <div className="ml-3 flex items-center gap-2">
-                <button className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-white hover:bg-slate-600 relative">
-                  <Bell className="w-4 h-4" />
-                  <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full" />
-                </button>
-                <div className="w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold border-2 border-white">
-                  AJ
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        {/* Featured Article Hero */}
-        {featuredArticle && (
-          <div className="mb-16">
-            <div className="bg-white border border-slate-200 shadow-sm rounded-xl overflow-hidden">
-              <div className="md:flex">
-                <div className="md:w-1/2">
-                  <div className="h-64 md:h-full bg-gradient-to-r from-blue-500 to-purple-600 flex items-center justify-center">
-                    <div className="text-white text-center p-6">
-                      <h2 className="text-4xl font-bold mb-4">Featured Article</h2>
-                      <p className="text-xl opacity-90">The future of web development</p>
-                    </div>
-                  </div>
-                </div>
-                <div className="md:w-1/2 p-8">
-                  <div className="flex items-center gap-2 mb-4">
-                    <span className={"px-3 py-1 rounded-full text-xs font-medium " + featuredArticle.categoryColor}>
-                      {featuredArticle.category}
-                    </span>
-                  </div>
-                  <h2 className="text-3xl font-bold text-gray-900 mb-4">{featuredArticle.title}</h2>
-                  <p className="text-gray-600 mb-6 leading-relaxed">{featuredArticle.excerpt}</p>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-800 font-bold">
-                        {featuredArticle.avatar}
-                      </div>
-                      <div>
-                        <p className="font-medium text-gray-900">{featuredArticle.author}</p>
-                        <div className="flex items-center gap-2 text-sm text-gray-500">
-                          <Calendar className="w-4 h-4" />
-                          <span>{featuredArticle.publishDate}</span>
-                          <Clock className="w-4 h-4 ml-2" />
-                          <span>{featuredArticle.readTime}</span>
-                        </div>
-                      </div>
-                    </div>
-                    <button className="text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1">
-                      Read Full Article
-                      <ArrowRight className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Articles Grid */}
-        <div className="mb-12">
-          <h2 className="text-2xl font-bold text-gray-900 mb-8">Latest Articles</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {otherArticles.map((article) => (
-              <div key={article.id} className="bg-white border border-slate-200 shadow-sm rounded-xl overflow-hidden hover:shadow-md transition-all duration-300">
-                <div className="h-48 bg-gradient-to-r from-green-400 to-teal-500 flex items-center justify-center">
-                  <div className="text-white text-center p-4">
-                    <h3 className="text-xl font-bold">{article.category}</h3>
-                  </div>
-                </div>
-                <div className="p-6">
-                  <div className="flex items-center gap-2 mb-4">
-                    <span className={"px-3 py-1 rounded-full text-xs font-medium " + article.categoryColor}>
-                      {article.category}
-                    </span>
-                  </div>
-                  <h3 className="text-xl font-bold text-gray-900 mb-3">{article.title}</h3>
-                  <p className="text-gray-600 mb-4 line-clamp-3">{article.excerpt}</p>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-800 font-bold text-sm">
-                        {article.avatar}
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium text-gray-900">{article.author}</p>
-                        <div className="flex items-center gap-1 text-xs text-gray-500">
-                          <Calendar className="w-3 h-3" />
-                          <span>{article.publishDate}</span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1 text-sm text-gray-500">
-                      <Clock className="w-4 h-4" />
-                      <span>{article.readTime}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Metrics Section */}
-        <div className="mb-12">
-          <h2 className="text-2xl font-bold text-gray-900 mb-8">Analytics Overview</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {metrics.map((metric, index) => (
-              <div key={index} className="bg-white border border-slate-200 shadow-sm rounded-xl p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div className={"w-10 h-10 rounded-lg flex items-center justify-center " + metric.color}>
-                    <span className="text-white font-bold">{metric.iconLabel}</span>
-                  </div>
-                  <span className={"text-sm font-medium " + metric.trend === 'up' ? 'text-green-600' : 'text-red-600'}>
-                    {metric.change}
-                  </span>
-                </div>
-                <h3 className="text-2xl font-bold text-gray-900 mb-1">{metric.value}</h3>
-                <p className="text-gray-500 text-sm mb-2">{metric.title}</p>
-                <p className="text-gray-400 text-xs">{metric.description}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Recent Activity */}
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900 mb-8">Recent Activity</h2>
-          <div className="bg-white border border-slate-200 shadow-sm rounded-xl overflow-hidden">
-            <div className="divide-y divide-slate-200">
-              {activities.map((activity) => (
-                <div key={activity.id} className="p-6 hover:bg-slate-50 transition-colors">
-                  <div className="flex items-start gap-4">
-                    <div className={"w-10 h-10 rounded-lg flex items-center justify-center " + activity.color}>
-                      <span className="text-white font-bold text-sm">{activity.iconLabel}</span>
-                    </div>
-                    <div className="flex-1">
-                      <p className="font-medium text-gray-900">
-                        <span className="font-bold">{activity.user}</span> {activity.action} 
-                        <span className="font-bold"> {activity.target}</span>
-                        <span className="text-gray-500"> ({activity.targetType})</span>
-                      </p>
-                      <p className="text-gray-600 mt-1">{activity.description}</p>
-                      <p className="text-gray-400 text-sm mt-2">{activity.timestamp}</p>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Footer */}
-      <footer className="bg-slate-900 text-white py-12 mt-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
-            <div>
-              <h3 className="text-xl font-bold mb-4">Blog Insights</h3>
-              <p className="text-slate-300">Sharing knowledge and insights about technology, design, and innovation.</p>
-            </div>
-            <div>
-              <h4 className="font-bold mb-4">Categories</h4>
-              <ul className="space-y-2 text-slate-300">
-                <li><a href="#" className="hover:text-white transition-colors">Technology</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Design</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Programming</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Business</a></li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="font-bold mb-4">Company</h4>
-              <ul className="space-y-2 text-slate-300">
-                <li><a href="#" className="hover:text-white transition-colors">About Us</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">
-);
-}
-
-
-// Expose components to window for preview
-window.BlogHomepage = BlogHomepage;
-    </script>
-    <!-- Fallback components (plain JS, runs before Babel transform) -->
-    <script>if (typeof window.Search === 'undefined') { window.Search = function Search(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Search' }, props && props.children); }; }
-if (typeof window.Plus === 'undefined') { window.Plus = function Plus(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Plus' }, props && props.children); }; }
-if (typeof window.Bell === 'undefined') { window.Bell = function Bell(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Bell' }, props && props.children); }; }
+    <script>if (typeof window.BookOpen === 'undefined') { window.BookOpen = function BookOpen(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'BookOpen' }, props && props.children); }; }
+if (typeof window.Tag === 'undefined') { window.Tag = function Tag(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Tag' }, props && props.children); }; }
 if (typeof window.Calendar === 'undefined') { window.Calendar = function Calendar(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Calendar' }, props && props.children); }; }
 if (typeof window.Clock === 'undefined') { window.Clock = function Clock(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Clock' }, props && props.children); }; }
-if (typeof window.ArrowRight === 'undefined') { window.ArrowRight = function ArrowRight(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'ArrowRight' }, props && props.children); }; }</script>
-    <!-- Transform and render -->
+if (typeof window.Bookmark === 'undefined') { window.Bookmark = function Bookmark(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Bookmark' }, props && props.children); }; }
+if (typeof window.ArrowRight === 'undefined') { window.ArrowRight = function ArrowRight(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'ArrowRight' }, props && props.children); }; }
+if (typeof window.Share2 === 'undefined') { window.Share2 = function Share2(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Share2' }, props && props.children); }; }</script>
+<script>
+window.__DETECTED_COMPONENT_NAME__ = "App";
+(function() {
+  if (typeof Babel === 'undefined' || typeof React === 'undefined') return;
+  try {
+    var _src = "function App() {\n  const [bookmarked, setBookmarked] = useState([])\n\n  const featuredArticle = {\n    id: 1,\n    title: 'The Future of AI-Driven Development: Building Intelligent Applications',\n    excerpt: 'Explore how artificial intelligence is revolutionizing the way we build software, from code generation to intelligent user experiences. Learn the key principles and best practices for integrating AI into your development workflow.',\n    author: 'Sarah Mitchell',\n    authorInitials: 'SM',\n    date: 'March 15, 2024',\n    readTime: '12 min read',\n    category: 'Technology',\n    image: 'https://images.unsplash.com/photo-1677442136019-21780ecad995?w=1200&h=600&fit=crop',\n    tags: ['AI', 'Development', 'Machine Learning']\n  }\n\n  const articles = [\n    {\n      id: 2,\n      title: 'Mastering Modern JavaScript: Advanced Patterns and Techniques',\n      excerpt: 'Deep dive into advanced JavaScript concepts that every developer should know.',\n      author: 'Marcus Chen',\n      authorInitials: 'MC',\n      date: 'March 12, 2024',\n      readTime: '8 min read',\n      category: 'Programming',\n      image: 'https://images.unsplash.com/photo-1627398242454-45a1465c2479?w=600&h=400&fit=crop',\n      tags: ['JavaScript', 'Web Dev']\n    },\n    {\n      id: 3,\n      title: 'Building Scalable Microservices Architecture',\n      excerpt: 'A comprehensive guide to designing and implementing microservices that scale.',\n      author: 'Emily Rodriguez',\n      authorInitials: 'ER',\n      date: 'March 10, 2024',\n      readTime: '15 min read',\n      category: 'Architecture',\n      image: 'https://images.unsplash.com/photo-1558494949-ef010cbdcc31?w=600&h=400&fit=crop',\n      tags: ['Architecture', 'DevOps']\n    },\n    {\n      id: 4,\n      title: 'User Experience Design Principles for Modern Web Apps',\n      excerpt: 'Creating intuitive and delightful user experiences in the age of web applications.',\n      author: 'David Park',\n      authorInitials: 'DP',\n      date: 'March 8, 2024',\n      readTime: '10 min read',\n      category: 'Design',\n      image: 'https://images.unsplash.com/photo-1561070791-2526d30994b5?w=600&h=400&fit=crop',\n      tags: ['UX', 'Design']\n    },\n    {\n      id: 5,\n      title: 'Securing Your Applications: Best Practices for 2024',\n      excerpt: 'Essential security practices every developer needs to implement in their applications.',\n      author: 'Lisa Thompson',\n      authorInitials: 'LT',\n      date: 'March 5, 2024',\n      readTime: '11 min read',\n      category: 'Security',\n      image: 'https://images.unsplash.com/photo-1563986768609-322da13575f3?w=600&h=400&fit=crop',\n      tags: ['Security', 'Best Practices']\n    }\n  ]\n\n  const toggleBookmark = (id) => {\n    setBookmarked(prev => \n      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]\n    )\n  }\n\n  return (\n    <div className=\"min-h-screen bg-[#D9D5C5]\">\n      {/* Header */}\n      <div className=\"bg-slate-900 border-b border-slate-800\">\n        <div className=\"max-w-7xl mx-auto px-8 py-6\">\n          <div className=\"flex items-center justify-between\">\n            <div className=\"flex items-center gap-4\">\n              <div className=\"w-10 h-10 bg-[#79AEF2] rounded-lg flex items-center justify-center text-white text-2xl font-bold\">\n                B\n              </div>\n              <div>\n                <h1 className=\"text-2xl font-bold text-white\">Tech Insights Blog</h1>\n                <p className=\"text-slate-300 text-sm mt-1\">Expert articles on technology and development</p>\n              </div>\n            </div>\n            <div className=\"flex items-center gap-3\">\n              <Button className=\"bg-slate-700 text-white border border-slate-600 hover:bg-slate-600 transition-colors\">\n                <BookOpen className=\"w-4 h-4 mr-2\" />\n                All Articles\n              </Button>\n              <Button className=\"bg-[#79AEF2] text-white hover:bg-blue-600 transition-colors\">\n                Subscribe\n              </Button>\n              <div className=\"ml-3 w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold border-2 border-white\">\n                JD\n              </div>\n            </div>\n          </div>\n        </div>\n      </div>\n\n      {/* Main Content */}\n      <div className=\"max-w-7xl mx-auto px-8 py-16\">\n        {/* Featured Article Hero */}\n        <div className=\"mb-16\">\n          <Card className=\"bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden hover:shadow-xl transition-all\">\n            <div className=\"grid md:grid-cols-2 gap-0\">\n              <div \n                className=\"h-80 md:h-full bg-cover bg-center\"\n                style={{ backgroundImage: `url(${featuredArticle.image})` }}\n              />\n              <div className=\"p-8 md:p-12 flex flex-col justify-between\">\n                <div>\n                  <div className=\"flex items-center gap-3 mb-4\">\n                    <Badge className=\"bg-[#79AEF2] text-white hover:bg-blue-600\">\n                      Featured\n                    </Badge>\n                    <Badge className=\"bg-slate-100 text-slate-700 hover:bg-slate-200\">\n                      {featuredArticle.category}\n                    </Badge>\n                  </div>\n                  <h2 className=\"text-4xl font-bold text-slate-900 mb-4 leading-tight\">\n                    {featuredArticle.title}\n                  </h2>\n                  <p className=\"text-lg text-slate-600 mb-6 leading-relaxed\">\n                    {featuredArticle.excerpt}\n                  </p>\n                  <div className=\"flex flex-wrap gap-2 mb-6\">\n                    {featuredArticle.tags.map((tag) => (\n                      <div key={tag} className=\"flex items-center gap-1 px-3 py-1 bg-slate-100 rounded-full text-sm text-slate-700\">\n                        <Tag className=\"w-3 h-3\" />\n                        {tag}\n                      </div>\n                    ))}\n                  </div>\n                </div>\n                <div>\n                  <div className=\"flex items-center justify-between mb-6 pb-6 border-b border-slate-200\">\n                    <div className=\"flex items-center gap-3\">\n                      <div className=\"w-10 h-10 rounded-full bg-[#79AEF2] flex items-center justify-center text-white font-bold\">\n                        {featuredArticle.authorInitials}\n                      </div>\n                      <div>\n                        <div className=\"font-semibold text-slate-900\">{featuredArticle.author}</div>\n                        <div className=\"flex items-center gap-3 text-sm text-slate-500\">\n                          <span className=\"flex items-center gap-1\">\n                            <Calendar className=\"w-3 h-3\" />\n                            {featuredArticle.date}\n                          </span>\n                          <span className=\"flex items-center gap-1\">\n                            <Clock className=\"w-3 h-3\" />\n                            {featuredArticle.readTime}\n                          </span>\n                        </div>\n                      </div>\n                    </div>\n                    <button \n                      onClick={() => toggleBookmark(featuredArticle.id)}\n                      className=\"p-2 hover:bg-slate-100 rounded-lg transition-colors\"\n                    >\n                      <Bookmark \n                        className={\"w-5 h-5 \" + bookmarked.includes(featuredArticle.id) ? 'fill-[#79AEF2] text-[#79AEF2]' : 'text-slate-400'}\n                      />\n                    </button>\n                  </div>\n                  <div className=\"flex gap-3\">\n                    <Button className=\"bg-[#79AEF2] text-white hover:bg-blue-600 transition-colors flex-1\">\n                      Read Article\n                      <ArrowRight className=\"w-4 h-4 ml-2\" />\n                    </Button>\n                    <Button className=\"bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors\">\n                      <Share2 className=\"w-4 h-4\" />\n                    </Button>\n                  </div>\n                </div>\n              </div>\n            </div>\n          </Card>\n        </div>\n\n        {/* Latest Articles Section */}\n        <div className=\"mb-8\">\n          <div className=\"flex items-center justify-between mb-8\">\n            <div>\n              <h2 className=\"text-2xl font-bold text-slate-900\">Latest Articles</h2>\n              <p className=\"text-slate-600 text-sm mt-1\">Recent insights and expert perspectives</p>\n            </div>\n            <Button className=\"bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 transition-colors\">\n              View All\n              <ArrowRight className=\"w-4 h-4 ml-2\" />\n            </Button>\n          </div>\n\n          {/* Articles Grid */}\n          <div className=\"grid md:grid-cols-2 gap-6\">\n            {articles.map((article) => (\n              <Card key={article.id} className=\"bg-white rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-all overflow-hidden group\">\n                <div \n                  className=\"h-48 bg-cover bg-center relative\"\n                  style={{ backgroundImage: `url(${article.image})` }}\n                >\n                  <div className=\"absolute top-4 right-4\">\n                    <button \n                      onClick={() => toggleBookmark(article.id)}\n                      className=\"p-2 bg-white rounded-lg shadow-md hover:bg-slate-50 transition-colors\"\n                    >\n                      <Bookmark \n                        className={\"w-4 h-4 \" + bookmarked.includes(article.id) ? 'fill-[#79AEF2] text-[#79AEF2]' : 'text-slate-400'}\n                      />\n                    </button>\n                  </div>\n                  <div className=\"absolute top-4 left-4\">\n                    <Badge className=\"bg-white text-slate-700 hover:bg-slate-50\">\n                      {article.category}\n                    </Badge>\n                  </div>\n                </div>\n                <CardContent className=\"p-6\">\n                  <h3 className=\"text-xl font-bold text-slate-900 mb-3 group-hover:text-[#79AEF2] transition-colors line-clamp-2\">\n                    {article.title}\n                  </h3>\n                  <p className=\"text-slate-600 text-sm mb-4 line-clamp-2\">\n                    {article.excerpt}\n                  </p>\n                  <div className=\"flex flex-wrap gap-2 mb-4\">\n                    {article.tags.map((tag) => (\n                      <div key={tag} className=\"flex items-center gap-1 px-2 py-1 bg-slate-100 rounded text-xs text-slate-600\">\n                        <Tag className=\"w-3 h-3\" />\n                        {tag}\n                      </div>\n                    ))}\n                  </div>\n                  <div className=\"flex items-center justify-between pt-4 border-t border-slate-200\">\n                    <div className=\"flex items-center gap-2\">\n                      <div className=\"w-8 h-8 rounded-full bg-[#79AEF2] flex items-center justify-center text-white text-xs font-bold\">\n                        {article.authorInitials}\n                      </div>\n                      <div>\n                        <div className=\"text-sm font-semibold text-slate-900\">{article.author}</div>\n                        <div className=\"flex items-center gap-2 text-xs text-slate-500\">\n                          <span className=\"flex items-center gap-1\">\n                            <Calendar className=\"w-3 h-3\" />\n                            {article.date}\n                          </span>\n                          <span>•</span>\n                          <span className=\"flex items-center gap-1\">\n                            <Clock className=\"w-3 h-3\" />\n                            {article.readTime}\n                          </span>\n                        </div>\n                      </div>\n                    </div>\n                    <Button className=\"bg-[#79AEF2] text-white hover:bg-blue-600 transition-colors text-sm py-2\">\n                      Read\n                      <ArrowRight className=\"w-3 h-3 ml-1\" />\n                    </Button>\n                  </div>\n                </CardContent>\n              </Card>\n            ))}\n          </div>\n        </div>\n\n        {/* Newsletter CTA */}\n        <Card className=\"bg-[#1A2030] rounded-xl shadow-lg border-0 p-8 mt-16\">\n          <div className=\"text-center max-w-2xl mx-auto\">\n            <div className=\"w-16 h-16 bg-[#79AEF2] rounded-full flex items-center justify-center text-white text-3xl font-bold mx-auto mb-6\">\n              N\n            </div>\n            <h2 className=\"text-3xl font-bold text-white mb-4\">Stay Updated</h2>\n            <p className=\"text-slate-300 mb-6\">\n              Get the latest articles and insights delivered to your inbox every week\n            </p>\n            <div className=\"flex gap-3 max-w-md mx-auto\">\n              <input \n                type=\"email\" \n                placeholder=\"Enter your email\"\n                className=\"flex-1 px-4 py-3 rounded-lg bg-white border border-slate-300 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#79AEF2]\"\n              />\n              <Button className=\"bg-[#79AEF2] text-white hover:bg-blue-600 transition-colors px-6\">\n                Subscribe\n              </Button>\n            </div>\n          </div>\n        </Card>\n      </div>\n    </div>\n  )\n}";
+    var _compiled = Babel.transform(_src, {presets:[['react', {runtime:'classic'}]]}).code;
+    // Strip any remaining import/export statements that would crash in a script tag
+    _compiled = _compiled.replace(/^import\s+.*$/gm, '').replace(/^export\s+(default\s+)?/gm, '');
+    // Inject compiled JS as a new script tag — runs in GLOBAL scope
+    var _s = document.createElement('script');
+    _s.textContent = _compiled + ';\nif(typeof App!=="undefined")window.App=App;';
+    document.body.appendChild(_s);
+    console.log('[Preview] ✓ Compiled and injected: App, exists:', typeof window['App']);
+    document.getElementById('loading-indicator').style.display = 'none';
+  } catch(e) {
+    console.error('[Preview] Babel error:', e.message);
+    window.__BABEL_FAILED__ = true;
+    document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px"><h3 style="color:#dc2626">Syntax Error</h3><pre style="background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b;text-align:left">' + String(e.message||e).replace(/</g,'&lt;').substring(0,500) + '</pre></div>';
+  }
+})();
+</script>
+    <!-- Component detection and rendering — wait for Babel to process text/babel scripts -->
     <script>
-      // Use Babel.transform() synchronously — no async waiting needed
-      console.log('[Preview] Checking Babel availability:', typeof Babel);
-      console.log('[Preview] Checking React availability:', typeof React);
-      if (typeof Babel === 'undefined') {
-        console.error('[Preview] Babel not loaded!');
-        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>Babel Not Loaded</h3><p>Scripts still loading. <button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></p></div>';
-      } else if (typeof React === 'undefined') {
-        console.error('[Preview] React not loaded!');
-        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>React Not Loaded</h3><p><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></p></div>';
+      // Skip component detection if Babel compilation failed
+      if (window.__BABEL_FAILED__) {
+        console.log('[Preview] Skipping component detection — Babel failed');
       } else {
-        try {
-          var _src = document.getElementById('component-source').textContent;
-          console.log('[Preview] Transforming ' + _src.length + ' chars...');
-          var _transformed = Babel.transform(_src, { presets: ['react'] });
-          console.log('[Preview] Transform done: ' + _transformed.code.length + ' chars');
-          eval(_transformed.code);
-          console.log('[Preview] Eval done');
-          // Hide loading indicator immediately after eval
-          document.getElementById('loading-indicator').style.display = 'none';
-        } catch(babelErr) {
-          console.error('[Preview] Error:', babelErr);
-          document.getElementById('loading-indicator').innerHTML =
-            '<div style="text-align:center;padding:40px;"><h3 style="color:#dc2626;">Error</h3><pre style="text-align:left;background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b;">' +
-            String(babelErr.message || babelErr).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px;">Retry</button></div>';
-        }
-      }
-
       try {
 
         // Find the main page component to render.
@@ -966,31 +652,42 @@ if (typeof window.ArrowRight === 'undefined') { window.ArrowRight = function Arr
         console.log('[Preview] Searching for page component...');
 
         // Check if a function was created by _getIcon (our Lucide wrapper)
-        // We tag icon functions with a marker property for reliable detection
         function _isIconWrapper(fn) {
           if (!fn) return false;
           if (fn._isLucideIcon) return true;
           var str = fn.toString();
-          // Icon wrappers are small and contain SVG-related code
-          return str.length < 600 && (str.includes('viewBox') || str.includes('UnknownIcon') || str.includes('LucideIcon') || str.includes('_createLucideIcon') || str.includes('0 0 24 24'));
+          return str.length < 600 && (str.includes('viewBox') || str.includes('UnknownIcon') || str.includes('LucideIcon') || str.includes('0 0 24 24'));
         }
 
-        // Build a safe component registry instead of using eval()
-        var _localComponents = {};
-        _pageNames.forEach(function(n) {
-          try { _localComponents[n] = new Function('return typeof ' + n + ' !== "undefined" ? ' + n + ' : undefined')(); } catch(e) {}
-        });
-
-        // First, scan for known page component names via registry
-        for (const name of _pageNames) {
+        // PRIORITY 1: Use the server-detected component name (most reliable)
+        var _detectedName = window.__DETECTED_COMPONENT_NAME__;
+        if (_detectedName) {
           try {
-            const fn = _localComponents[name];
-            if (typeof fn === 'function' && !_isIconWrapper(fn)) {
-              Component = fn;
-              console.log('[Preview] ✓ Found component: ' + name + ' (local scope)');
-              break;
+            var _detected = new Function('return typeof ' + _detectedName + ' !== "undefined" ? ' + _detectedName + ' : undefined')();
+            if (typeof _detected === 'function' && !_isIconWrapper(_detected)) {
+              Component = _detected;
+              console.log('[Preview] ✓ Found component via server detection: ' + _detectedName);
             }
-          } catch (e) {}
+          } catch(e) {}
+        }
+
+        // PRIORITY 2: Build a safe component registry for known names
+        if (!Component) {
+          var _localComponents = {};
+          _pageNames.forEach(function(n) {
+            try { _localComponents[n] = new Function('return typeof ' + n + ' !== "undefined" ? ' + n + ' : undefined')(); } catch(e) {}
+          });
+
+          for (const name of _pageNames) {
+            try {
+              const fn = _localComponents[name];
+              if (typeof fn === 'function' && !_isIconWrapper(fn)) {
+                Component = fn;
+                console.log('[Preview] ✓ Found component: ' + name + ' (local scope)');
+                break;
+              }
+            } catch (e) {}
+          }
         }
 
         // If not found, search window for names ending with page-like suffixes
@@ -1065,8 +762,13 @@ if (typeof window.ArrowRight === 'undefined') { window.ArrowRight = function Arr
           const root = ReactDOM.createRoot(rootElement);
           console.log('[Preview] React root created:', root);
 
-          // Wrap component in ErrorBoundary to catch rendering errors
-          const _EB = (typeof window !== "undefined" && window.ErrorBoundary) ? window.ErrorBoundary : (typeof ErrorBoundary !== "undefined" ? ErrorBoundary : (function(p){ return p.children; }));
+          // Wrap component in ErrorBoundary to catch rendering errors. Resolve
+          // it from window (set in the setup script) with a passthrough fallback
+          // so a scope miss degrades to rendering the app un-wrapped instead of
+          // crashing with "ErrorBoundary is not defined".
+          const _EB = (typeof window !== 'undefined' && window.ErrorBoundary)
+            ? window.ErrorBoundary
+            : (typeof ErrorBoundary !== 'undefined' ? ErrorBoundary : (function(p){ return p.children; }));
           const wrappedElement = React.createElement(_EB, null,
             React.createElement(Component)
           );
@@ -1135,6 +837,7 @@ if (typeof window.ArrowRight === 'undefined') { window.ArrowRight = function Arr
           '<pre>' + _esc(error.message) + '</pre>' +
           '</div>';
       }
+      } // end else !__BABEL_FAILED__
     </script>
 </body>
 </html>

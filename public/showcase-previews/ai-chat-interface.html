@@ -9,15 +9,14 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <!-- Core: React 18 -->
-    <!-- Critical: React + Babel from CDN (local copies have compatibility issues) -->
+    <!-- React 18 from CDN -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Non-critical: served locally for speed -->
-    <script src="/vendor/lucide.min.js"></script>
-    <script src="/vendor/prop-types.min.js"></script>
-    <script src="/vendor/recharts.min.js"></script>
-    <script src="/vendor/tailwind.min.js"></script>
+    <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.min.js"></script>
+    <script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.15.0/umd/Recharts.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
         theme: {
@@ -92,22 +91,65 @@
       // This works WITH React instead of fighting it
       const _originalCreateElement = React.createElement;
       let _h1Count = 0;
+      // A bare component OBJECT (forwardRef/memo/lazy — shape { $$typeof, render })
+      // placed in a CHILD position, e.g. {SomeIcon} or {chart} instead of
+      // <SomeIcon/>, makes React throw the fatal "Objects are not valid as a
+      // React child (found: object with keys {$$typeof, render})" crash overlay,
+      // killing the whole preview. This happens for Recharts/forwardRef refs the
+      // model references as values. Detect such a child and render it as an
+      // element (if it's a component) or drop it — turning a hard crash into a
+      // graceful, mostly-correct render.
+      function _sanitizeChild(c) {
+        if (c && typeof c === 'object' && c.$$typeof && c.type === undefined) {
+          // It's a component definition object, not a React element. If it's
+          // renderable (forwardRef/memo/function), mount it; else drop it.
+          try {
+            if (typeof c === 'function' || typeof c.render === 'function' || c.$$typeof) {
+              return _originalCreateElement(c, null);
+            }
+          } catch (e) {}
+          return null;
+        }
+        return c;
+      }
+      function _sanitizeChildren(v) {
+        return Array.isArray(v) ? v.map(_sanitizeChild) : _sanitizeChild(v);
+      }
       React.createElement = function(type) {
+        var args = Array.prototype.slice.call(arguments);
         if (type === 'h1') {
           _h1Count++;
-          if (_h1Count > 1) {
-            // Convert extra h1 to h2 at the React level
-            var args = Array.prototype.slice.call(arguments);
-            args[0] = 'h2';
-            return _originalCreateElement.apply(React, args);
-          }
+          if (_h1Count > 1) args[0] = 'h2'; // Convert extra h1 to h2
         }
-        return _originalCreateElement.apply(React, arguments);
+        // Sanitize positional children (args[2..]) so a stray component object
+        // can't crash the whole preview with "Objects are not valid as a React
+        // child". Handles <div>{Icon}</div> and {list.map(...)} cases.
+        if (args.length > 2) {
+          for (var _i = 2; _i < args.length; _i++) args[_i] = _sanitizeChildren(args[_i]);
+        }
+        // Also sanitize a children PROP (arg[1].children) — components that
+        // receive a component-object via the children prop rather than a
+        // positional arg (e.g. AIKit stubs that spread props).
+        if (args[1] && typeof args[1] === 'object' && 'children' in args[1]) {
+          try { args[1] = Object.assign({}, args[1], { children: _sanitizeChildren(args[1].children) }); } catch (e) {}
+        }
+        return _originalCreateElement.apply(React, args);
       };
 
-      // Make React hooks available
+      // Make React hooks available. CRITICAL: the compiled App runs in a
+      // SEPARATE global-scope <script>, so these must be on window — a plain
+      // const here is script-scoped and the App would throw "useState is not
+      // defined" and render blank (the #1 cause of blank previews).
       const { useState, useEffect, useCallback, useMemo, useRef, useContext, createContext, Fragment } = React;
-      console.log('[Preview] React hooks loaded:', { useState, useEffect, useCallback, useMemo, useRef });
+      window.useState = useState; window.useEffect = useEffect;
+      window.useCallback = useCallback; window.useMemo = useMemo;
+      window.useRef = useRef; window.useContext = useContext;
+      window.createContext = createContext; window.Fragment = Fragment;
+      // Also expose the less-common hooks apps sometimes use.
+      window.useReducer = React.useReducer; window.useLayoutEffect = React.useLayoutEffect;
+      window.useId = React.useId; window.useTransition = React.useTransition;
+      window.useDeferredValue = React.useDeferredValue; window.useImperativeHandle = React.useImperativeHandle;
+      console.log('[Preview] React hooks loaded + exposed on window:', { useState: !!window.useState, useEffect: !!window.useEffect });
 
       // Create React components from Lucide vanilla SVG icon definitions
       // lucide (vanilla) exports icons as ["svg", {svgAttrs}, [[tag, attrs], ...]]
@@ -387,7 +429,31 @@
         Legend, ResponsiveContainer, RadialBarChart, RadialBar,
         Treemap, Funnel, FunnelChart
       } = recharts;
-      console.log('[Preview] Recharts loaded:', !!recharts.LineChart);
+      // CRITICAL: the compiled app runs in a SEPARATE global-scope <script>, so
+      // these block-scoped consts are invisible to it — using <RePieChart>,
+      // <Pie>, <ResponsiveContainer> etc. would throw "Element type is invalid:
+      // ...got undefined". Expose every Recharts component on window so the app
+      // script can resolve them. Do NOT clobber the lucide icon names already on
+      // window (PieChart/LineChart/BarChart are icons); only add the Re* aliases
+      // and the recharts-only names.
+      var _rechartsGlobals = {
+        ReLineChart: ReLineChart, ReBarChart: ReBarChart, RePieChart: RePieChart,
+        Line: Line, Bar: Bar, Pie: Pie, Cell: Cell, Area: Area, AreaChart: AreaChart,
+        RadarChart: RadarChart, Radar: Radar, PolarGrid: PolarGrid,
+        PolarAngleAxis: PolarAngleAxis, PolarRadiusAxis: PolarRadiusAxis,
+        ComposedChart: ComposedChart, Scatter: Scatter, ScatterChart: ScatterChart,
+        XAxis: XAxis, YAxis: YAxis, CartesianGrid: CartesianGrid,
+        RechartsTooltip: RechartsTooltip, Legend: Legend,
+        ResponsiveContainer: ResponsiveContainer, RadialBarChart: RadialBarChart,
+        RadialBar: RadialBar, Treemap: Treemap, Funnel: Funnel, FunnelChart: FunnelChart
+      };
+      Object.keys(_rechartsGlobals).forEach(function(k) {
+        if (_rechartsGlobals[k] && !window[k]) window[k] = _rechartsGlobals[k];
+      });
+      // Tooltip is commonly imported bare from recharts; only set it if a lucide
+      // icon named Tooltip isn't already occupying the slot.
+      if (RechartsTooltip && !window.Tooltip) window.Tooltip = RechartsTooltip;
+      console.log('[Preview] Recharts loaded:', !!recharts.LineChart, '| exposed on window:', Object.keys(_rechartsGlobals).filter(function(k){return !!window[k]}).length);
 
       // Make AIKit / AINative Primitive components available
       const aikit = window.AIKitComponents || {};
@@ -478,75 +544,70 @@
 
         render() {
           if (this.state.hasError) {
+            // Graceful fallback — never dump a raw red React error at the user.
+            // A runtime render crash (e.g. a component object used as a child)
+            // shows a clean "refining" card instead of the scary stack. The raw
+            // error is kept in a collapsed <details> for debugging only.
             return React.createElement('div', {
-              style: { padding: '20px', color: 'red', fontFamily: 'monospace' }
+              style: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f8fafc', fontFamily: 'system-ui, -apple-system, sans-serif', padding: '24px' }
+            }, React.createElement('div', {
+              style: { maxWidth: '440px', textAlign: 'center', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '40px 32px', boxShadow: '0 4px 24px rgba(0,0,0,0.06)' }
             }, [
-              React.createElement('h3', { key: 'title' }, 'React Rendering Error'),
-              React.createElement('pre', { key: 'error', style: { background: '#fee', padding: '10px', borderRadius: '4px' } },
-                this.state.error?.toString() || 'Unknown error'
-              ),
-              React.createElement('details', { key: 'details' }, [
-                React.createElement('summary', { key: 'summary' }, 'Component Stack'),
-                React.createElement('pre', { key: 'stack', style: { fontSize: '11px', overflow: 'auto' } },
-                  this.state.errorInfo?.componentStack || 'No stack trace'
+              React.createElement('div', { key: 'icon', style: { fontSize: '40px', marginBottom: '12px' } }, '🛠️'),
+              React.createElement('h1', { key: 'title', style: { fontSize: '20px', fontWeight: 700, color: '#0f172a', margin: '0 0 8px' } }, 'Refining your app'),
+              React.createElement('p', { key: 'body', style: { fontSize: '14px', color: '#475569', lineHeight: 1.6, margin: '0 0 16px' } }, 'AINative built a first version but it needs another pass to render cleanly. Try regenerating — the next attempt usually gets it.'),
+              React.createElement('details', { key: 'details', style: { textAlign: 'left', marginTop: '8px' } }, [
+                React.createElement('summary', { key: 'summary', style: { fontSize: '12px', color: '#94a3b8', cursor: 'pointer' } }, 'Technical details'),
+                React.createElement('pre', { key: 'stack', style: { fontSize: '11px', color: '#64748b', background: '#f1f5f9', padding: '10px', borderRadius: '8px', overflow: 'auto', marginTop: '8px' } },
+                  (this.state.error?.toString() || 'Unknown error') + '\n\n' + (this.state.errorInfo?.componentStack || '')
                 )
               ])
-            ]);
+            ]));
           }
           return this.props.children;
         }
       }
-      // Fix: expose ErrorBoundary on window so the separate render script can see it (class is script-scoped).
+      // The component-render script runs in a SEPARATE script tag (global
+      // scope) and references ErrorBoundary as a bare identifier — but a class
+      // declaration is script-scoped, not a global. Expose it on window so the
+      // renderer can wrap the app in it (fixes "ErrorBoundary is not defined").
       window.ErrorBoundary = ErrorBoundary;
 
     </script>
-    <!-- Component code: transformed by Babel.transform() synchronously, then eval'd -->
-    <script id="component-source" type="text/plain">
-        const SEED_CONVERSATIONS = [
-  { id: 1, title: "Project Planning Discussion", lastMessage: "Let's schedule our next meeting...", timestamp: "2 hours ago" },
-  { id: 2, title: "Design System Review", lastMessage: "The new components look great!", timestamp: "1 day ago" },
-  { id: 3, title: "API Integration Help", lastMessage: "I'm having trouble with authentication...", timestamp: "3 days ago" },
-  { id: 4, title: "Team Standup Notes", lastMessage: "All tasks completed for today.", timestamp: "1 week ago" },
-  { id: 5, title: "Performance Optimization", lastMessage: "Let's discuss bottlenecks in our app...", timestamp: "2 weeks ago" }
-];
-
-const MOCK_MESSAGES = [
-  { id: 1, role: 'user', content: "Hello! I need help with my project setup.", timestamp: "10:00 AM" },
-  { id: 2, role: 'assistant', content: "Hi there! I'd be happy to help you with your project setup. What specifically are you having trouble with?", timestamp: "10:01 AM" },
-  { id: 3, role: 'user', content: "I'm trying to integrate the API but getting authentication errors.", timestamp: "10:02 AM" },
-  { id: 4, role: 'assistant', content: "Authentication errors can be tricky. Could you share what error messages you're seeing? Also, what framework are you using for your project?", timestamp: "10:03 AM" },
-    </script>
-    <!-- Fallback components (plain JS, runs before Babel transform) -->
-    <script></script>
-    <!-- Transform and render -->
+    <script>if (typeof window.Bot === 'undefined') { window.Bot = function Bot(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Bot' }, props && props.children); }; }
+if (typeof window.Plus === 'undefined') { window.Plus = function Plus(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Plus' }, props && props.children); }; }
+if (typeof window.MoreVertical === 'undefined') { window.MoreVertical = function MoreVertical(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'MoreVertical' }, props && props.children); }; }
+if (typeof window.Menu === 'undefined') { window.Menu = function Menu(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Menu' }, props && props.children); }; }
+if (typeof window.Sparkles === 'undefined') { window.Sparkles = function Sparkles(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Sparkles' }, props && props.children); }; }
+if (typeof window.Send === 'undefined') { window.Send = function Send(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Send' }, props && props.children); }; }</script>
+<script>
+window.__DETECTED_COMPONENT_NAME__ = "App";
+(function() {
+  if (typeof Babel === 'undefined' || typeof React === 'undefined') return;
+  try {
+    var _src = "function App() {\n  const [conversations, setConversations] = useState([\n    { id: 1, title: 'Marketing Strategy Discussion', lastMessage: 'Can you help me...', timestamp: '2m ago', unread: 2 },\n    { id: 2, title: 'Product Roadmap Q2 2024', lastMessage: 'What features should...', timestamp: '1h ago', unread: 0 },\n    { id: 3, title: 'Customer Support Automation', lastMessage: 'How do I implement...', timestamp: '3h ago', unread: 0 },\n    { id: 4, title: 'Data Analysis Query', lastMessage: 'Show me the trends...', timestamp: '1d ago', unread: 1 },\n    { id: 5, title: 'Code Review Assistant', lastMessage: 'Review this React...', timestamp: '2d ago', unread: 0 }\n  ])\n\n  const [activeConversation, setActiveConversation] = useState(1);\n  const [messages, setMessages] = useState([\n    { id: 1, role: 'user', content: 'Can you help me create a comprehensive marketing strategy for our new AI product launch?', timestamp: '10:23 AM' },\n    { id: 2, role: 'assistant', content: \"I'd be happy to help you develop a marketing strategy for your AI product launch. Let's break this down into key components:\\n\\n1. **Target Audience Identification**: First, we need to define who your ideal customers are. Are you targeting enterprises, SMBs, or individual consumers?\\n\\n2. **Value Proposition**: What makes your AI product unique? What problems does it solve better than competitors?\\n\\n3. **Channel Strategy**: We should consider:\\n   - Content marketing (blog posts, whitepapers)\\n   - Social media campaigns\\n   - Email marketing\\n   - Paid advertising (Google Ads, LinkedIn)\\n\\n4. **Launch Timeline**: A phased approach works best for AI products.\\n\\nCould you provide more details about your product and target market?\", timestamp: '10:24 AM' },\n    { id: 3, role: 'user', content: 'Our target is mid-size B2B companies in the financial services sector. The product automates financial reporting and compliance checks.', timestamp: '10:26 AM' },\n    { id: 4, role: 'assistant', content: \"Perfect! Financial services is a great vertical for AI automation. Here's a tailored strategy:\\n\\n**Phase 1: Pre-Launch (Weeks 1-4)**\\n- Create thought leadership content on compliance automation\\n- Build landing page with ROI calculator\\n- Engage with FinTech communities on LinkedIn\\n- Develop case studies from beta users\\n\\n**Phase 2: Launch (Weeks 5-8)**\\n- Webinar series on \\\"Future of Compliance\\\"\\n- Partner with financial industry influencers\\n- Targeted LinkedIn ads to CFOs and compliance officers\\n- Press release distribution\\n\\n**Phase 3: Post-Launch (Weeks 9-12)**\\n- Customer testimonial videos\\n- Integration partnerships announcements\\n- Industry conference presence\\n\\nWould you like me to elaborate on any specific phase?\", timestamp: '10:27 AM' }\n  ])\n\n  const [inputValue, setInputValue] = useState('');\n  const [isTyping, setIsTyping] = useState(false);\n  const [sidebarOpen, setSidebarOpen] = useState(true);\n  const messagesEndRef = useRef(null);\n\n  const scrollToBottom = () => {\n    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })\n  }\n\n  useEffect(() => {\n    scrollToBottom()\n  }, [messages, isTyping])\n\n  const handleSendMessage = async () => {\n    if (!inputValue.trim()) return\n\n    const newMessage = {\n      id: messages.length + 1,\n      role: 'user',\n      content: inputValue,\n      timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })\n    }\n\n    setMessages([...messages, newMessage])\n    setInputValue('')\n    setIsTyping(true)\n\n    // Simulate AI response\n    setTimeout(() => {\n      const aiResponse = {\n        id: messages.length + 2,\n        role: 'assistant',\n        content: \"That's a great question! Let me help you with that. Based on your requirements, I'd recommend focusing on these key areas for maximum impact...\",\n        timestamp: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })\n      }\n      setMessages(prev => [...prev, aiResponse])\n      setIsTyping(false)\n    }, 2000)\n  }\n\n  const handleKeyPress = (e) => {\n    if (e.key === 'Enter' && !e.shiftKey) {\n      e.preventDefault()\n      handleSendMessage()\n    }\n  }\n\n  return (\n    <div className=\"min-h-screen bg-slate-50 flex\">\n      {/* Sidebar */}\n      <div className={sidebarOpen ? 'w-80' : 'w-0' + \" transition-all duration-300 bg-white border-r border-slate-200 flex flex-col overflow-hidden\"}>\n        <div className=\"p-4 border-b border-slate-200\">\n          <div className=\"flex items-center justify-between mb-4\">\n            <div className=\"flex items-center gap-3\">\n              <div className=\"w-10 h-10 bg-[#A772F2] rounded-lg flex items-center justify-center\">\n                <Bot className=\"w-6 h-6 text-white\" />\n              </div>\n              <div>\n                <h2 className=\"text-lg font-bold text-slate-900\">AI Chat</h2>\n                <p className=\"text-xs text-slate-500\">Powered by AIKit</p>\n              </div>\n            </div>\n            <button onClick={() => setSidebarOpen(false)} className=\"lg:hidden\">\n              <X className=\"w-5 h-5 text-slate-400\" />\n            </button>\n          </div>\n          <Button className=\"w-full bg-[#A772F2] hover:bg-[#9461E1] text-white\">\n            <Plus className=\"w-4 h-4 mr-2\" />\n            New Conversation\n          </Button>\n        </div>\n\n        <div className=\"flex-1 overflow-y-auto p-2\">\n          <div className=\"space-y-1\">\n            {conversations.map((conv) => (\n              <button\n                key={conv.id}\n                onClick={() => setActiveConversation(conv.id)}\n                className={\"w-full text-left p-3 rounded-lg transition-all \" + activeConversation === conv.id ? 'bg-[#F8F0FE] border border-[#A772F2]' : 'hover:bg-slate-50 border border-transparent'}\n              >\n                <div className=\"flex items-start justify-between mb-1\">\n                  <h3 className=\"font-semibold text-sm text-slate-900 line-clamp-1\">\n                    {conv.title}\n                  </h3>\n                  {conv.unread > 0 && (\n                    <Badge className=\"bg-[#A772F2] text-white text-xs ml-2\">\n                      {conv.unread}\n                    </Badge>\n                  )}\n                </div>\n                <p className=\"text-xs text-slate-500 line-clamp-1 mb-1\">\n                  {conv.lastMessage}\n                </p>\n                <span className=\"text-xs text-slate-400\">{conv.timestamp}</span>\n              </button>\n            ))}\n          </div>\n        </div>\n\n        <div className=\"p-4 border-t border-slate-200\">\n          <div className=\"flex items-center gap-3\">\n            <Avatar>\n              <AvatarFallback className=\"bg-orange-500 text-white font-bold\">\n                JH\n              </AvatarFallback>\n            </Avatar>\n            <div className=\"flex-1\">\n              <p className=\"text-sm font-semibold text-slate-900\">John Harrison</p>\n              <p className=\"text-xs text-slate-500\">john@company.com</p>\n            </div>\n            <button className=\"text-slate-400 hover:text-slate-600\">\n              <MoreVertical className=\"w-5 h-5\" />\n            </button>\n          </div>\n        </div>\n      </div>\n\n      {/* Main Chat Area */}\n      <div className=\"flex-1 flex flex-col\">\n        {/* Header */}\n        <div className=\"bg-white border-b border-slate-200 px-6 py-4\">\n          <div className=\"flex items-center justify-between\">\n            <div className=\"flex items-center gap-4\">\n              {!sidebarOpen && (\n                <button onClick={() => setSidebarOpen(true)} className=\"lg:hidden\">\n                  <Menu className=\"w-6 h-6 text-slate-600\" />\n                </button>\n              )}\n              <div className=\"flex items-center gap-3\">\n                <div className=\"w-10 h-10 bg-[#A772F2] rounded-lg flex items-center justify-center\">\n                  <Sparkles className=\"w-5 h-5 text-white\" />\n                </div>\n                <div>\n                  <h1 className=\"text-lg font-bold text-slate-900\">\n                    {conversations.find(c => c.id === activeConversation)?.title}\n                  </h1>\n                  <p className=\"text-sm text-slate-500\">AI Assistant • Online</p>\n                </div>\n              </div>\n            </div>\n            <div className=\"flex items-center gap-2\">\n              <Button variant=\"outline\" className=\"border-slate-200 text-slate-600 hover:bg-slate-50\">\n                Share\n              </Button>\n              <button className=\"text-slate-400 hover:text-slate-600\">\n                <MoreVertical className=\"w-5 h-5\" />\n              </button>\n            </div>\n          </div>\n        </div>\n\n        {/* Messages */}\n        <div className=\"flex-1 overflow-y-auto p-6 space-y-6\">\n          {messages.map((message) => (\n            <div\n              key={message.id}\n              className={\"flex gap-4 \" + message.role === 'user' ? 'justify-end' : 'justify-start'}\n            >\n              {message.role === 'assistant' && (\n                <Avatar className=\"w-8 h-8\">\n                  <AvatarFallback className=\"bg-[#A772F2] text-white\">\n                    <Bot className=\"w-4 h-4\" />\n                  </AvatarFallback>\n                </Avatar>\n              )}\n              <div\n                className={\"max-w-2xl \" + message.role === 'user' ? 'bg-[#A772F2] text-white' : 'bg-white border border-slate-200' + \" rounded-2xl px-5 py-4 shadow-sm\"}\n              >\n                <p className={\"text-sm leading-relaxed whitespace-pre-wrap \" + message.role === 'user' ? 'text-white' : 'text-slate-700'}>\n                  {message.content}\n                </p>\n                <span className={\"text-xs mt-2 block \" + message.role === 'user' ? 'text-purple-200' : 'text-slate-400'}>\n                  {message.timestamp}\n                </span>\n              </div>\n              {message.role === 'user' && (\n                <Avatar className=\"w-8 h-8\">\n                  <AvatarFallback className=\"bg-orange-500 text-white font-bold\">\n                    JH\n                  </AvatarFallback>\n                </Avatar>\n              )}\n            </div>\n          ))}\n\n          {/* Typing Indicator */}\n          {isTyping && (\n            <div className=\"flex gap-4 justify-start\">\n              <Avatar className=\"w-8 h-8\">\n                <AvatarFallback className=\"bg-[#A772F2] text-white\">\n                  <Bot className=\"w-4 h-4\" />\n                </AvatarFallback>\n              </Avatar>\n              <div className=\"bg-white border border-slate-200 rounded-2xl px-5 py-4 shadow-sm\">\n                <div className=\"flex gap-1.5\">\n                  <div className=\"w-2 h-2 bg-slate-400 rounded-full animate-bounce\" style={{ animationDelay: '0ms' }} />\n                  <div className=\"w-2 h-2 bg-slate-400 rounded-full animate-bounce\" style={{ animationDelay: '150ms' }} />\n                  <div className=\"w-2 h-2 bg-slate-400 rounded-full animate-bounce\" style={{ animationDelay: '300ms' }} />\n                </div>\n              </div>\n            </div>\n          )}\n          <div ref={messagesEndRef} />\n        </div>\n\n        {/* Input Area */}\n        <div className=\"bg-white border-t border-slate-200 p-6\">\n          <div className=\"max-w-4xl mx-auto\">\n            <div className=\"flex gap-3 items-end\">\n              <div className=\"flex-1 bg-slate-50 border border-slate-200 rounded-2xl p-4 focus-within:border-[#A772F2] focus-within:ring-2 focus-within:ring-[#A772F2] focus-within:ring-opacity-20 transition-all\">\n                <textarea\n                  value={inputValue}\n                  onChange={(e) => setInputValue(e.target.value)}\n                  onKeyPress={handleKeyPress}\n                  placeholder=\"Type your message here...\"\n                  className=\"w-full bg-transparent border-none outline-none text-slate-900 placeholder-slate-400 resize-none\"\n                  rows=\"1\"\n                  style={{ minHeight: '24px', maxHeight: '120px' }}\n                />\n              </div>\n              <Button\n                onClick={handleSendMessage}\n                disabled={!inputValue.trim()}\n                className=\"bg-[#A772F2] hover:bg-[#9461E1] text-white px-6 py-6 rounded-2xl disabled:opacity-50 disabled:cursor-not-allowed transition-all\"\n              >\n                <Send className=\"w-5 h-5\" />\n              </Button>\n            </div>\n            <p className=\"text-xs text-slate-400 mt-3 text-center\">\n              AI can make mistakes. Consider checking important information.\n            </p>\n          </div>\n        </div>\n      </div>\n    </div>\n  )\n}";
+    var _compiled = Babel.transform(_src, {presets:[['react', {runtime:'classic'}]]}).code;
+    // Strip any remaining import/export statements that would crash in a script tag
+    _compiled = _compiled.replace(/^import\s+.*$/gm, '').replace(/^export\s+(default\s+)?/gm, '');
+    // Inject compiled JS as a new script tag — runs in GLOBAL scope
+    var _s = document.createElement('script');
+    _s.textContent = _compiled + ';\nif(typeof App!=="undefined")window.App=App;';
+    document.body.appendChild(_s);
+    console.log('[Preview] ✓ Compiled and injected: App, exists:', typeof window['App']);
+    document.getElementById('loading-indicator').style.display = 'none';
+  } catch(e) {
+    console.error('[Preview] Babel error:', e.message);
+    window.__BABEL_FAILED__ = true;
+    document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px"><h3 style="color:#dc2626">Syntax Error</h3><pre style="background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b;text-align:left">' + String(e.message||e).replace(/</g,'&lt;').substring(0,500) + '</pre></div>';
+  }
+})();
+</script>
+    <!-- Component detection and rendering — wait for Babel to process text/babel scripts -->
     <script>
-      // Use Babel.transform() synchronously — no async waiting needed
-      console.log('[Preview] Checking Babel availability:', typeof Babel);
-      console.log('[Preview] Checking React availability:', typeof React);
-      if (typeof Babel === 'undefined') {
-        console.error('[Preview] Babel not loaded!');
-        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>Babel Not Loaded</h3><p>Scripts still loading. <button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></p></div>';
-      } else if (typeof React === 'undefined') {
-        console.error('[Preview] React not loaded!');
-        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>React Not Loaded</h3><p><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></p></div>';
+      // Skip component detection if Babel compilation failed
+      if (window.__BABEL_FAILED__) {
+        console.log('[Preview] Skipping component detection — Babel failed');
       } else {
-        try {
-          var _src = document.getElementById('component-source').textContent;
-          console.log('[Preview] Transforming ' + _src.length + ' chars...');
-          var _transformed = Babel.transform(_src, { presets: ['react'] });
-          console.log('[Preview] Transform done: ' + _transformed.code.length + ' chars');
-          eval(_transformed.code);
-          console.log('[Preview] Eval done');
-          // Hide loading indicator immediately after eval
-          document.getElementById('loading-indicator').style.display = 'none';
-        } catch(babelErr) {
-          console.error('[Preview] Error:', babelErr);
-          document.getElementById('loading-indicator').innerHTML =
-            '<div style="text-align:center;padding:40px;"><h3 style="color:#dc2626;">Error</h3><pre style="text-align:left;background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b;">' +
-            String(babelErr.message || babelErr).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px;">Retry</button></div>';
-        }
-      }
-
       try {
 
         // Find the main page component to render.
@@ -590,31 +651,42 @@ const MOCK_MESSAGES = [
         console.log('[Preview] Searching for page component...');
 
         // Check if a function was created by _getIcon (our Lucide wrapper)
-        // We tag icon functions with a marker property for reliable detection
         function _isIconWrapper(fn) {
           if (!fn) return false;
           if (fn._isLucideIcon) return true;
           var str = fn.toString();
-          // Icon wrappers are small and contain SVG-related code
-          return str.length < 600 && (str.includes('viewBox') || str.includes('UnknownIcon') || str.includes('LucideIcon') || str.includes('_createLucideIcon') || str.includes('0 0 24 24'));
+          return str.length < 600 && (str.includes('viewBox') || str.includes('UnknownIcon') || str.includes('LucideIcon') || str.includes('0 0 24 24'));
         }
 
-        // Build a safe component registry instead of using eval()
-        var _localComponents = {};
-        _pageNames.forEach(function(n) {
-          try { _localComponents[n] = new Function('return typeof ' + n + ' !== "undefined" ? ' + n + ' : undefined')(); } catch(e) {}
-        });
-
-        // First, scan for known page component names via registry
-        for (const name of _pageNames) {
+        // PRIORITY 1: Use the server-detected component name (most reliable)
+        var _detectedName = window.__DETECTED_COMPONENT_NAME__;
+        if (_detectedName) {
           try {
-            const fn = _localComponents[name];
-            if (typeof fn === 'function' && !_isIconWrapper(fn)) {
-              Component = fn;
-              console.log('[Preview] ✓ Found component: ' + name + ' (local scope)');
-              break;
+            var _detected = new Function('return typeof ' + _detectedName + ' !== "undefined" ? ' + _detectedName + ' : undefined')();
+            if (typeof _detected === 'function' && !_isIconWrapper(_detected)) {
+              Component = _detected;
+              console.log('[Preview] ✓ Found component via server detection: ' + _detectedName);
             }
-          } catch (e) {}
+          } catch(e) {}
+        }
+
+        // PRIORITY 2: Build a safe component registry for known names
+        if (!Component) {
+          var _localComponents = {};
+          _pageNames.forEach(function(n) {
+            try { _localComponents[n] = new Function('return typeof ' + n + ' !== "undefined" ? ' + n + ' : undefined')(); } catch(e) {}
+          });
+
+          for (const name of _pageNames) {
+            try {
+              const fn = _localComponents[name];
+              if (typeof fn === 'function' && !_isIconWrapper(fn)) {
+                Component = fn;
+                console.log('[Preview] ✓ Found component: ' + name + ' (local scope)');
+                break;
+              }
+            } catch (e) {}
+          }
         }
 
         // If not found, search window for names ending with page-like suffixes
@@ -689,8 +761,13 @@ const MOCK_MESSAGES = [
           const root = ReactDOM.createRoot(rootElement);
           console.log('[Preview] React root created:', root);
 
-          // Wrap component in ErrorBoundary to catch rendering errors
-          const _EB = (typeof window !== "undefined" && window.ErrorBoundary) ? window.ErrorBoundary : (typeof ErrorBoundary !== "undefined" ? ErrorBoundary : (function(p){ return p.children; }));
+          // Wrap component in ErrorBoundary to catch rendering errors. Resolve
+          // it from window (set in the setup script) with a passthrough fallback
+          // so a scope miss degrades to rendering the app un-wrapped instead of
+          // crashing with "ErrorBoundary is not defined".
+          const _EB = (typeof window !== 'undefined' && window.ErrorBoundary)
+            ? window.ErrorBoundary
+            : (typeof ErrorBoundary !== 'undefined' ? ErrorBoundary : (function(p){ return p.children; }));
           const wrappedElement = React.createElement(_EB, null,
             React.createElement(Component)
           );
@@ -759,6 +836,7 @@ const MOCK_MESSAGES = [
           '<pre>' + _esc(error.message) + '</pre>' +
           '</div>';
       }
+      } // end else !__BABEL_FAILED__
     </script>
 </body>
 </html>

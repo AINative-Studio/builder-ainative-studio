@@ -9,15 +9,14 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <!-- Core: React 18 -->
-    <!-- Critical: React + Babel from CDN (local copies have compatibility issues) -->
+    <!-- React 18 from CDN -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Non-critical: served locally for speed -->
-    <script src="/vendor/lucide.min.js"></script>
-    <script src="/vendor/prop-types.min.js"></script>
-    <script src="/vendor/recharts.min.js"></script>
-    <script src="/vendor/tailwind.min.js"></script>
+    <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.min.js"></script>
+    <script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.15.0/umd/Recharts.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
         theme: {
@@ -92,22 +91,65 @@
       // This works WITH React instead of fighting it
       const _originalCreateElement = React.createElement;
       let _h1Count = 0;
+      // A bare component OBJECT (forwardRef/memo/lazy — shape { $$typeof, render })
+      // placed in a CHILD position, e.g. {SomeIcon} or {chart} instead of
+      // <SomeIcon/>, makes React throw the fatal "Objects are not valid as a
+      // React child (found: object with keys {$$typeof, render})" crash overlay,
+      // killing the whole preview. This happens for Recharts/forwardRef refs the
+      // model references as values. Detect such a child and render it as an
+      // element (if it's a component) or drop it — turning a hard crash into a
+      // graceful, mostly-correct render.
+      function _sanitizeChild(c) {
+        if (c && typeof c === 'object' && c.$$typeof && c.type === undefined) {
+          // It's a component definition object, not a React element. If it's
+          // renderable (forwardRef/memo/function), mount it; else drop it.
+          try {
+            if (typeof c === 'function' || typeof c.render === 'function' || c.$$typeof) {
+              return _originalCreateElement(c, null);
+            }
+          } catch (e) {}
+          return null;
+        }
+        return c;
+      }
+      function _sanitizeChildren(v) {
+        return Array.isArray(v) ? v.map(_sanitizeChild) : _sanitizeChild(v);
+      }
       React.createElement = function(type) {
+        var args = Array.prototype.slice.call(arguments);
         if (type === 'h1') {
           _h1Count++;
-          if (_h1Count > 1) {
-            // Convert extra h1 to h2 at the React level
-            var args = Array.prototype.slice.call(arguments);
-            args[0] = 'h2';
-            return _originalCreateElement.apply(React, args);
-          }
+          if (_h1Count > 1) args[0] = 'h2'; // Convert extra h1 to h2
         }
-        return _originalCreateElement.apply(React, arguments);
+        // Sanitize positional children (args[2..]) so a stray component object
+        // can't crash the whole preview with "Objects are not valid as a React
+        // child". Handles <div>{Icon}</div> and {list.map(...)} cases.
+        if (args.length > 2) {
+          for (var _i = 2; _i < args.length; _i++) args[_i] = _sanitizeChildren(args[_i]);
+        }
+        // Also sanitize a children PROP (arg[1].children) — components that
+        // receive a component-object via the children prop rather than a
+        // positional arg (e.g. AIKit stubs that spread props).
+        if (args[1] && typeof args[1] === 'object' && 'children' in args[1]) {
+          try { args[1] = Object.assign({}, args[1], { children: _sanitizeChildren(args[1].children) }); } catch (e) {}
+        }
+        return _originalCreateElement.apply(React, args);
       };
 
-      // Make React hooks available
+      // Make React hooks available. CRITICAL: the compiled App runs in a
+      // SEPARATE global-scope <script>, so these must be on window — a plain
+      // const here is script-scoped and the App would throw "useState is not
+      // defined" and render blank (the #1 cause of blank previews).
       const { useState, useEffect, useCallback, useMemo, useRef, useContext, createContext, Fragment } = React;
-      console.log('[Preview] React hooks loaded:', { useState, useEffect, useCallback, useMemo, useRef });
+      window.useState = useState; window.useEffect = useEffect;
+      window.useCallback = useCallback; window.useMemo = useMemo;
+      window.useRef = useRef; window.useContext = useContext;
+      window.createContext = createContext; window.Fragment = Fragment;
+      // Also expose the less-common hooks apps sometimes use.
+      window.useReducer = React.useReducer; window.useLayoutEffect = React.useLayoutEffect;
+      window.useId = React.useId; window.useTransition = React.useTransition;
+      window.useDeferredValue = React.useDeferredValue; window.useImperativeHandle = React.useImperativeHandle;
+      console.log('[Preview] React hooks loaded + exposed on window:', { useState: !!window.useState, useEffect: !!window.useEffect });
 
       // Create React components from Lucide vanilla SVG icon definitions
       // lucide (vanilla) exports icons as ["svg", {svgAttrs}, [[tag, attrs], ...]]
@@ -387,7 +429,31 @@
         Legend, ResponsiveContainer, RadialBarChart, RadialBar,
         Treemap, Funnel, FunnelChart
       } = recharts;
-      console.log('[Preview] Recharts loaded:', !!recharts.LineChart);
+      // CRITICAL: the compiled app runs in a SEPARATE global-scope <script>, so
+      // these block-scoped consts are invisible to it — using <RePieChart>,
+      // <Pie>, <ResponsiveContainer> etc. would throw "Element type is invalid:
+      // ...got undefined". Expose every Recharts component on window so the app
+      // script can resolve them. Do NOT clobber the lucide icon names already on
+      // window (PieChart/LineChart/BarChart are icons); only add the Re* aliases
+      // and the recharts-only names.
+      var _rechartsGlobals = {
+        ReLineChart: ReLineChart, ReBarChart: ReBarChart, RePieChart: RePieChart,
+        Line: Line, Bar: Bar, Pie: Pie, Cell: Cell, Area: Area, AreaChart: AreaChart,
+        RadarChart: RadarChart, Radar: Radar, PolarGrid: PolarGrid,
+        PolarAngleAxis: PolarAngleAxis, PolarRadiusAxis: PolarRadiusAxis,
+        ComposedChart: ComposedChart, Scatter: Scatter, ScatterChart: ScatterChart,
+        XAxis: XAxis, YAxis: YAxis, CartesianGrid: CartesianGrid,
+        RechartsTooltip: RechartsTooltip, Legend: Legend,
+        ResponsiveContainer: ResponsiveContainer, RadialBarChart: RadialBarChart,
+        RadialBar: RadialBar, Treemap: Treemap, Funnel: Funnel, FunnelChart: FunnelChart
+      };
+      Object.keys(_rechartsGlobals).forEach(function(k) {
+        if (_rechartsGlobals[k] && !window[k]) window[k] = _rechartsGlobals[k];
+      });
+      // Tooltip is commonly imported bare from recharts; only set it if a lucide
+      // icon named Tooltip isn't already occupying the slot.
+      if (RechartsTooltip && !window.Tooltip) window.Tooltip = RechartsTooltip;
+      console.log('[Preview] Recharts loaded:', !!recharts.LineChart, '| exposed on window:', Object.keys(_rechartsGlobals).filter(function(k){return !!window[k]}).length);
 
       // Make AIKit / AINative Primitive components available
       const aikit = window.AIKitComponents || {};
@@ -478,365 +544,71 @@
 
         render() {
           if (this.state.hasError) {
+            // Graceful fallback — never dump a raw red React error at the user.
+            // A runtime render crash (e.g. a component object used as a child)
+            // shows a clean "refining" card instead of the scary stack. The raw
+            // error is kept in a collapsed <details> for debugging only.
             return React.createElement('div', {
-              style: { padding: '20px', color: 'red', fontFamily: 'monospace' }
+              style: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f8fafc', fontFamily: 'system-ui, -apple-system, sans-serif', padding: '24px' }
+            }, React.createElement('div', {
+              style: { maxWidth: '440px', textAlign: 'center', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '40px 32px', boxShadow: '0 4px 24px rgba(0,0,0,0.06)' }
             }, [
-              React.createElement('h3', { key: 'title' }, 'React Rendering Error'),
-              React.createElement('pre', { key: 'error', style: { background: '#fee', padding: '10px', borderRadius: '4px' } },
-                this.state.error?.toString() || 'Unknown error'
-              ),
-              React.createElement('details', { key: 'details' }, [
-                React.createElement('summary', { key: 'summary' }, 'Component Stack'),
-                React.createElement('pre', { key: 'stack', style: { fontSize: '11px', overflow: 'auto' } },
-                  this.state.errorInfo?.componentStack || 'No stack trace'
+              React.createElement('div', { key: 'icon', style: { fontSize: '40px', marginBottom: '12px' } }, '🛠️'),
+              React.createElement('h1', { key: 'title', style: { fontSize: '20px', fontWeight: 700, color: '#0f172a', margin: '0 0 8px' } }, 'Refining your app'),
+              React.createElement('p', { key: 'body', style: { fontSize: '14px', color: '#475569', lineHeight: 1.6, margin: '0 0 16px' } }, 'AINative built a first version but it needs another pass to render cleanly. Try regenerating — the next attempt usually gets it.'),
+              React.createElement('details', { key: 'details', style: { textAlign: 'left', marginTop: '8px' } }, [
+                React.createElement('summary', { key: 'summary', style: { fontSize: '12px', color: '#94a3b8', cursor: 'pointer' } }, 'Technical details'),
+                React.createElement('pre', { key: 'stack', style: { fontSize: '11px', color: '#64748b', background: '#f1f5f9', padding: '10px', borderRadius: '8px', overflow: 'auto', marginTop: '8px' } },
+                  (this.state.error?.toString() || 'Unknown error') + '\n\n' + (this.state.errorInfo?.componentStack || '')
                 )
               ])
-            ]);
+            ]));
           }
           return this.props.children;
         }
       }
-      // Fix: expose ErrorBoundary on window so the separate render script can see it (class is script-scoped).
+      // The component-render script runs in a SEPARATE script tag (global
+      // scope) and references ErrorBoundary as a bare identifier — but a class
+      // declaration is script-scoped, not a global. Expose it on window so the
+      // renderer can wrap the app in it (fixes "ErrorBoundary is not defined").
       window.ErrorBoundary = ErrorBoundary;
 
     </script>
-    <!-- Component code: transformed by Babel.transform() synchronously, then eval'd -->
-    <script id="component-source" type="text/plain">
-        // Mock data for team members
-const teamMembers = [
-  {
-    id: 1,
-    name: "Alex Johnson",
-    jobTitle: "Senior Software Engineer",
-    department: "Engineering",
-    email: "alex.johnson@company.com",
-    phone: "+1 (555) 123-4567",
-    location: "San Francisco, CA",
-    avatar: "AJ"
-  },
-  {
-    id: 2,
-    name: "Maria Garcia",
-    jobTitle: "Product Manager",
-    department: "Product",
-    email: "maria.garcia@company.com",
-    phone: "+1 (555) 234-5678",
-    location: "New York, NY",
-    avatar: "MG"
-  },
-  {
-    id: 3,
-    name: "David Chen",
-    jobTitle: "UX Designer",
-    department: "Design",
-    email: "david.chen@company.com",
-    phone: "+1 (555) 345-6789",
-    location: "Austin, TX",
-    avatar: "DC"
-  },
-  {
-    id: 4,
-    name: "Sarah Williams",
-    jobTitle: "Marketing Director",
-    department: "Marketing",
-    email: "sarah.williams@company.com",
-    phone: "+1 (555) 456-7890",
-    location: "Los Angeles, CA",
-    avatar: "SW"
-  },
-  {
-    id: 5,
-    name: "James Wilson",
-    jobTitle: "Data Scientist",
-    department: "Analytics",
-    email: "james.wilson@company.com",
-    phone: "+1 (555) 567-8901",
-    location: "Chicago, IL",
-    avatar: "JW"
-  },
-  {
-    id: 6,
-    name: "Emma Thompson",
-    jobTitle: "HR Specialist",
-    department: "Human Resources",
-    email: "emma.thompson@company.com",
-    phone: "+1 (555) 678-9012",
-    location: "Seattle, WA",
-    avatar: "ET"
-  }
-];
-
-// Department options for filtering
-const departments = ["All", "Engineering", "Product", "Design", "Marketing", "Analytics", "Human Resources"];
-
-function TeamDirectory() {
-  const [searchTerm, setSearchTerm] = useState("");
-  const [selectedDepartment, setSelectedDepartment] = useState("All");
-  const [filteredMembers, setFilteredMembers] = useState(teamMembers);
-  const [loading, setLoading] = useState(true);
-
-  // Simulate loading data
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setLoading(false);
-    }, 800);
-    return () => clearTimeout(timer);
-  }, []);
-
-  // Filter members based on search term and department
-  useEffect(() => {
-    let result = teamMembers;
-    
-    if (searchTerm) {
-      const term = searchTerm.toLowerCase();
-      result = result.filter(member => 
-        member.name.toLowerCase().includes(term) ||
-        member.jobTitle.toLowerCase().includes(term) ||
-        member.email.toLowerCase().includes(term) ||
-        member.location.toLowerCase().includes(term)
-      );
-    }
-    
-    if (selectedDepartment !== "All") {
-      result = result.filter(member => member.department === selectedDepartment);
-    }
-    
-    setFilteredMembers(result);
-  }, [searchTerm, selectedDepartment]);
-
-  // Get unique departments for tab display
-  const getUniqueDepartments = () => {
-    const deptSet = new Set(teamMembers.map(member => member.department));
-    return ["All", ...Array.from(deptSet)];
-  };
-
-  if (loading) {
-    return (
-      <main aria-label="Team Directory" className="min-h-screen bg-[#B0D1D9]">
-        <div className="bg-slate-900">
-          <div className="px-8 py-6">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white text-2xl font-bold">
-                  T
-                </div>
-                <div>
-                  <h1 className="text-2xl font-bold text-white">Team Directory</h1>
-                  <p className="text-slate-300 text-sm mt-1">Browse our team members</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <button className="bg-slate-700 text-white border border-slate-600 hover:bg-slate-600 px-4 py-2 rounded-lg flex items-center gap-2">
-                  <Search className="w-4 h-4" />
-                  <span>Search</span>
-                </button>
-                <button className="bg-blue-600 text-white hover:bg-blue-700 px-4 py-2 rounded-lg">
-                  Add Member
-                </button>
-                <div className="ml-3 flex items-center gap-2">
-                  <button className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-white hover:bg-slate-600">
-                    •
-                  </button>
-                  <div className="w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold border-2 border-white">
-                    AJ
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <div className="max-w-7xl mx-auto px-4 py-8">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {[...Array(6)].map((_, index) => (
-              <div key={index} className="bg-white border border-slate-200 shadow-sm rounded-xl p-6">
-                <div className="animate-pulse">
-                  <div className="flex items-start gap-4">
-                    <div className="w-16 h-16 rounded-full bg-slate-200" />
-                    <div className="flex-1 space-y-3">
-                      <div className="h-5 bg-slate-200 rounded w-3/4" />
-                      <div className="h-4 bg-slate-200 rounded w-1/2" />
-                      <div className="h-4 bg-slate-200 rounded w-full" />
-                      <div className="h-4 bg-slate-200 rounded w-5/6" />
-                      <div className="h-4 bg-slate-200 rounded w-2/3" />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </main>
-    );
-  }
-
-  return (
-    <main aria-label="Team Directory" className="min-h-screen bg-[#B0D1D9]">
-      {/* Professional Header */}
-      <div className="bg-slate-900">
-        <div className="px-8 py-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white text-2xl font-bold">
-                T
-              </div>
-              <div>
-                <h2 className="text-2xl font-bold text-white">Team Directory</h2>
-                <p className="text-slate-300 text-sm mt-1">Browse our team members</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <button className="bg-slate-700 text-white border border-slate-600 hover:bg-slate-600 px-4 py-2 rounded-lg flex items-center gap-2">
-                <Search className="w-4 h-4" />
-                <span>Search</span>
-              </button>
-              <button className="bg-blue-600 text-white hover:bg-blue-700 px-4 py-2 rounded-lg">
-                Add Member
-              </button>
-              <div className="ml-3 flex items-center gap-2">
-                <button className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-white hover:bg-slate-600">
-                  •
-                </button>
-                <div className="w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold border-2 border-white">
-                  AJ
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-4 py-8">
-        {/* Search and Filter Section */}
-        <div className="mb-8">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-            <div className="relative flex-1">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <Search className="h-5 w-5 text-slate-400" />
-              </div>
-              <input
-                type="text"
-                placeholder="Search team members..."
-                className="block w-full pl-10 pr-3 py-3 border border-slate-300 rounded-lg bg-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
-            
-            <div className="flex items-center gap-2">
-              <Filter className="h-5 w-5 text-slate-500" />
-              <div className="inline-flex rounded-md shadow-sm" role="group">
-                {getUniqueDepartments().map((dept) => (
-                  <button
-                    key={dept}
-                    type="button"
-                    onClick={() => setSelectedDepartment(dept)}
-                    className={"px-4 py-2 text-sm font-medium rounded-md " + selectedDepartment === dept ? 'bg-blue-600 text-white' : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-300'}
-                  >
-                    {dept}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Team Members Grid */}
-        {filteredMembers.length === 0 ? (
-          <div className="text-center py-12">
-            <Users className="mx-auto h-12 w-12 text-slate-400" />
-            <h3 className="mt-2 text-sm font-medium text-slate-900">No team members found</h3>
-            <p className="mt-1 text-sm text-slate-500">Try adjusting your search or filter criteria</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredMembers.map((member) => (
-              <div 
-                key={member.id} 
-                className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 hover:shadow-md transition-all duration-200"
-                data-agent-role="content"
-                data-agent-context={`team-member-${member.id}`}
-              >
-                <div className="flex items-start gap-4">
-                  <div className="flex-shrink-0">
-                    <div className="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center text-blue-800 font-bold text-xl">
-                      {member.avatar}
-                    </div>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-lg font-semibold text-slate-900 truncate">{member.name}</h3>
-                      <Badge className="bg-blue-100 text-blue-800 text-xs font-medium">
-                        {member.department}
-                      </Badge>
-                    </div>
-                    <p className="text-slate-600 text-sm mt-1">{member.jobTitle}</p>
-                    
-                    <div className="mt-4 space-y-2">
-                      <div className="flex items-center text-slate-600 text-sm">
-                        <Mail className="h-4 w-4 mr-2 text-slate-400" />
-                        {member.email}
-                      </div>
-                      <div className="flex items-center text-slate-600 text-sm">
-                        <Phone className="h-4 w-4 mr-2 text-slate-400" />
-                        {member.phone}
-                      </div>
-                      <div className="flex items-center text-slate-600 text-sm">
-                        <MapPin className="h-4 w-4 mr-2 text-slate-400" />
-                        {member.location}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </main>
-  );
-}
-
-// Expose components to window for preview
-window.TeamDirectory = TeamDirectory;
-    </script>
-    <!-- Fallback components (plain JS, runs before Babel transform) -->
-    <script>if (typeof window.Search === 'undefined') { window.Search = function Search(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Search' }, props && props.children); }; }
+    <script>if (typeof window.Users === 'undefined') { window.Users = function Users(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Users' }, props && props.children); }; }
+if (typeof window.Search === 'undefined') { window.Search = function Search(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Search' }, props && props.children); }; }
 if (typeof window.Filter === 'undefined') { window.Filter = function Filter(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Filter' }, props && props.children); }; }
-if (typeof window.Users === 'undefined') { window.Users = function Users(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Users' }, props && props.children); }; }
+if (typeof window.Briefcase === 'undefined') { window.Briefcase = function Briefcase(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Briefcase' }, props && props.children); }; }
+if (typeof window.MapPin === 'undefined') { window.MapPin = function MapPin(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'MapPin' }, props && props.children); }; }
 if (typeof window.Mail === 'undefined') { window.Mail = function Mail(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Mail' }, props && props.children); }; }
-if (typeof window.Phone === 'undefined') { window.Phone = function Phone(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Phone' }, props && props.children); }; }
-if (typeof window.MapPin === 'undefined') { window.MapPin = function MapPin(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'MapPin' }, props && props.children); }; }</script>
-    <!-- Transform and render -->
+if (typeof window.Phone === 'undefined') { window.Phone = function Phone(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Phone' }, props && props.children); }; }</script>
+<script>
+window.__DETECTED_COMPONENT_NAME__ = "App";
+(function() {
+  if (typeof Babel === 'undefined' || typeof React === 'undefined') return;
+  try {
+    var _src = "function App() {\n  const [searchQuery, setSearchQuery] = useState('');\n  const [selectedDepartment, setSelectedDepartment] = useState('all');\n\n  const teamMembers = [\n    {\n      id: 1,\n      name: 'Sarah Anderson',\n      initials: 'SA',\n      role: 'Engineering Lead',\n      department: 'Engineering',\n      location: 'San Francisco, CA',\n      email: 'sarah.anderson@company.com',\n      phone: '+1 (555) 123-4567',\n      projects: 12,\n      avatarColor: 'bg-purple-500'\n    },\n    {\n      id: 2,\n      name: 'Michael Chen',\n      initials: 'MC',\n      role: 'Senior Designer',\n      department: 'Design',\n      location: 'New York, NY',\n      email: 'michael.chen@company.com',\n      phone: '+1 (555) 234-5678',\n      projects: 8,\n      avatarColor: 'bg-blue-500'\n    },\n    {\n      id: 3,\n      name: 'Emily Rodriguez',\n      initials: 'ER',\n      role: 'Product Manager',\n      department: 'Product',\n      location: 'Austin, TX',\n      email: 'emily.rodriguez@company.com',\n      phone: '+1 (555) 345-6789',\n      projects: 15,\n      avatarColor: 'bg-green-500'\n    },\n    {\n      id: 4,\n      name: 'David Kim',\n      initials: 'DK',\n      role: 'Marketing Director',\n      department: 'Marketing',\n      location: 'Los Angeles, CA',\n      email: 'david.kim@company.com',\n      phone: '+1 (555) 456-7890',\n      projects: 10,\n      avatarColor: 'bg-orange-500'\n    },\n    {\n      id: 5,\n      name: 'Jessica Taylor',\n      initials: 'JT',\n      role: 'Sales Manager',\n      department: 'Sales',\n      location: 'Chicago, IL',\n      email: 'jessica.taylor@company.com',\n      phone: '+1 (555) 567-8901',\n      projects: 18,\n      avatarColor: 'bg-pink-500'\n    },\n    {\n      id: 6,\n      name: 'Robert Martinez',\n      initials: 'RM',\n      role: 'Operations Lead',\n      department: 'Operations',\n      location: 'Seattle, WA',\n      email: 'robert.martinez@company.com',\n      phone: '+1 (555) 678-9012',\n      projects: 14,\n      avatarColor: 'bg-cyan-500'\n    }\n  ]\n\n  const departments = ['all', 'Engineering', 'Design', 'Product', 'Marketing', 'Sales', 'Operations']\n\n  const filteredMembers = teamMembers.filter(member => {\n    const matchesSearch = member.name.toLowerCase().includes(searchQuery.toLowerCase()) ||\n                         member.role.toLowerCase().includes(searchQuery.toLowerCase()) ||\n                         member.department.toLowerCase().includes(searchQuery.toLowerCase())\n    const matchesDepartment = selectedDepartment === 'all' || member.department === selectedDepartment;\n    return matchesSearch && matchesDepartment\n  })\n\n  return (\n    <div className=\"min-h-screen bg-[#B5BFAE]\">\n      {/* Header */}\n      <div className=\"bg-[#1F4016]\">\n        <div className=\"px-8 py-6\">\n          <div className=\"flex items-center justify-between\">\n            <div className=\"flex items-center gap-4\">\n              <div className=\"w-12 h-12 bg-[#BF247A] rounded-xl flex items-center justify-center text-white text-2xl font-bold\">\n                T\n              </div>\n              <div>\n                <h1 className=\"text-3xl font-bold text-white\">Team Directory</h1>\n                <p className=\"text-slate-300 text-sm mt-1\">Connect with your colleagues across all departments</p>\n              </div>\n            </div>\n            <div className=\"flex items-center gap-3\">\n              <Button className=\"bg-slate-700 text-white border border-slate-600 hover:bg-slate-600 transition-colors\">\n                <Users className=\"w-4 h-4 mr-2\" />\n                Invite Member\n              </Button>\n              <div className=\"ml-3 flex items-center gap-3\">\n                <button className=\"w-9 h-9 rounded-full bg-slate-700 flex items-center justify-center text-white hover:bg-slate-600 transition-colors\">\n                  <span className=\"text-lg\">•</span>\n                </button>\n                <div className=\"w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold border-2 border-white\">\n                  JH\n                </div>\n              </div>\n            </div>\n          </div>\n        </div>\n      </div>\n\n      {/* Main Content */}\n      <div className=\"px-8 py-12\">\n        {/* Search and Filter Section */}\n        <div className=\"bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-8\">\n          <div className=\"flex flex-col md:flex-row gap-4\">\n            <div className=\"flex-1 relative\">\n              <Search className=\"absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 w-5 h-5\" />\n              <Input\n                placeholder=\"Search by name, role, or department...\"\n                value={searchQuery}\n                onChange={(e) => setSearchQuery(e.target.value)}\n                className=\"pl-10 h-12 text-base border-slate-200 focus:border-[#BF247A] focus:ring-[#BF247A]\"\n              />\n            </div>\n            <div className=\"flex items-center gap-3\">\n              <Filter className=\"text-slate-500 w-5 h-5\" />\n              <div className=\"flex gap-2 flex-wrap\">\n                {departments.map((dept) => (\n                  <Badge\n                    key={dept}\n                    onClick={() => setSelectedDepartment(dept)}\n                    className={\"cursor-pointer px-4 py-2 transition-colors \" + selectedDepartment === dept ? 'bg-[#BF247A] text-white hover:bg-[#9f1e65]' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}\n                  >\n                    {dept === 'all' ? 'All Departments' : dept}\n                  </Badge>\n                ))}\n              </div>\n            </div>\n          </div>\n          <div className=\"mt-4 text-sm text-slate-500\">\n            Showing {filteredMembers.length} of {teamMembers.length} team members\n          </div>\n        </div>\n\n        {/* Team Grid */}\n        <div className=\"grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6\">\n          {filteredMembers.map((member) => (\n            <Card key={member.id} className=\"bg-white rounded-xl shadow-sm border border-slate-200 hover:shadow-lg transition-all duration-300 overflow-hidden\">\n              <CardHeader className=\"bg-slate-50 border-b border-slate-100 pb-4\">\n                <div className=\"flex items-start justify-between\">\n                  <div className=\"flex items-center gap-4\">\n                    <Avatar className=\"w-16 h-16\">\n                      <AvatarFallback className={member.avatarColor + \" text-white text-xl font-bold\"}>\n                        {member.initials}\n                      </AvatarFallback>\n                    </Avatar>\n                    <div>\n                      <h3 className=\"text-lg font-bold text-slate-900\">{member.name}</h3>\n                      <p className=\"text-sm text-slate-600 mt-1\">{member.role}</p>\n                    </div>\n                  </div>\n                </div>\n              </CardHeader>\n              \n              <CardContent className=\"p-6\">\n                <div className=\"space-y-4\">\n                  {/* Department Badge */}\n                  <div className=\"flex items-center gap-2\">\n                    <Briefcase className=\"w-4 h-4 text-slate-400\" />\n                    <Badge className=\"bg-[#1F4016] text-white hover:bg-[#152e0f]\">\n                      {member.department}\n                    </Badge>\n                  </div>\n\n                  {/* Location */}\n                  <div className=\"flex items-center gap-2 text-sm text-slate-600\">\n                    <MapPin className=\"w-4 h-4 text-slate-400\" />\n                    <span>{member.location}</span>\n                  </div>\n\n                  {/* Email */}\n                  <div className=\"flex items-center gap-2 text-sm text-slate-600\">\n                    <Mail className=\"w-4 h-4 text-slate-400\" />\n                    <span className=\"truncate\">{member.email}</span>\n                  </div>\n\n                  {/* Phone */}\n                  <div className=\"flex items-center gap-2 text-sm text-slate-600\">\n                    <Phone className=\"w-4 h-4 text-slate-400\" />\n                    <span>{member.phone}</span>\n                  </div>\n\n                  {/* Projects Count */}\n                  <div className=\"pt-3 border-t border-slate-100\">\n                    <div className=\"flex items-center justify-between\">\n                      <span className=\"text-sm text-slate-500\">Active Projects</span>\n                      <span className=\"text-lg font-bold text-[#BF247A]\">{member.projects}</span>\n                    </div>\n                  </div>\n\n                  {/* Action Buttons */}\n                  <div className=\"flex gap-2 pt-2\">\n                    <Button className=\"flex-1 bg-[#BF247A] text-white hover:bg-[#9f1e65] transition-colors\">\n                      <Mail className=\"w-4 h-4 mr-2\" />\n                      Email\n                    </Button>\n                    <Button className=\"flex-1 bg-[#1F4016] text-white hover:bg-[#152e0f] transition-colors\">\n                      <Phone className=\"w-4 h-4 mr-2\" />\n                      Call\n                    </Button>\n                  </div>\n                </div>\n              </CardContent>\n            </Card>\n          ))}\n        </div>\n\n        {/* Empty State */}\n        {filteredMembers.length === 0 && (\n          <div className=\"bg-white rounded-xl shadow-sm border border-slate-200 p-12 text-center\">\n            <Users className=\"w-16 h-16 text-slate-300 mx-auto mb-4\" />\n            <h3 className=\"text-xl font-bold text-slate-900 mb-2\">No team members found</h3>\n            <p className=\"text-slate-600 mb-6\">\n              Try adjusting your search or filter criteria\n            </p>\n            <Button \n              onClick={() => {\n                setSearchQuery('')\n                setSelectedDepartment('all')\n              }}\n              className=\"bg-[#BF247A] text-white hover:bg-[#9f1e65] transition-colors\"\n            >\n              Clear Filters\n            </Button>\n          </div>\n        )}\n      </div>\n\n      {/* Stats Footer */}\n      <div className=\"px-8 pb-12\">\n        <div className=\"bg-white rounded-xl shadow-sm border border-slate-200 p-6\">\n          <div className=\"grid grid-cols-1 md:grid-cols-4 gap-6\">\n            <div className=\"text-center\">\n              <div className=\"text-3xl font-bold text-[#BF247A] mb-1\">{teamMembers.length}</div>\n              <div className=\"text-sm text-slate-600\">Total Members</div>\n            </div>\n            <div className=\"text-center\">\n              <div className=\"text-3xl font-bold text-[#1F4016] mb-1\">6</div>\n              <div className=\"text-sm text-slate-600\">Departments</div>\n            </div>\n            <div className=\"text-center\">\n              <div className=\"text-3xl font-bold text-[#BF247A] mb-1\">77</div>\n              <div className=\"text-sm text-slate-600\">Active Projects</div>\n            </div>\n            <div className=\"text-center\">\n              <div className=\"text-3xl font-bold text-[#1F4016] mb-1\">5</div>\n              <div className=\"text-sm text-slate-600\">Locations</div>\n            </div>\n          </div>\n        </div>\n      </div>\n    </div>\n  )\n}";
+    var _compiled = Babel.transform(_src, {presets:[['react', {runtime:'classic'}]]}).code;
+    // Strip any remaining import/export statements that would crash in a script tag
+    _compiled = _compiled.replace(/^import\s+.*$/gm, '').replace(/^export\s+(default\s+)?/gm, '');
+    // Inject compiled JS as a new script tag — runs in GLOBAL scope
+    var _s = document.createElement('script');
+    _s.textContent = _compiled + ';\nif(typeof App!=="undefined")window.App=App;';
+    document.body.appendChild(_s);
+    console.log('[Preview] ✓ Compiled and injected: App, exists:', typeof window['App']);
+    document.getElementById('loading-indicator').style.display = 'none';
+  } catch(e) {
+    console.error('[Preview] Babel error:', e.message);
+    window.__BABEL_FAILED__ = true;
+    document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px"><h3 style="color:#dc2626">Syntax Error</h3><pre style="background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b;text-align:left">' + String(e.message||e).replace(/</g,'&lt;').substring(0,500) + '</pre></div>';
+  }
+})();
+</script>
+    <!-- Component detection and rendering — wait for Babel to process text/babel scripts -->
     <script>
-      // Use Babel.transform() synchronously — no async waiting needed
-      console.log('[Preview] Checking Babel availability:', typeof Babel);
-      console.log('[Preview] Checking React availability:', typeof React);
-      if (typeof Babel === 'undefined') {
-        console.error('[Preview] Babel not loaded!');
-        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>Babel Not Loaded</h3><p>Scripts still loading. <button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></p></div>';
-      } else if (typeof React === 'undefined') {
-        console.error('[Preview] React not loaded!');
-        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>React Not Loaded</h3><p><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></p></div>';
+      // Skip component detection if Babel compilation failed
+      if (window.__BABEL_FAILED__) {
+        console.log('[Preview] Skipping component detection — Babel failed');
       } else {
-        try {
-          var _src = document.getElementById('component-source').textContent;
-          console.log('[Preview] Transforming ' + _src.length + ' chars...');
-          var _transformed = Babel.transform(_src, { presets: ['react'] });
-          console.log('[Preview] Transform done: ' + _transformed.code.length + ' chars');
-          eval(_transformed.code);
-          console.log('[Preview] Eval done');
-          // Hide loading indicator immediately after eval
-          document.getElementById('loading-indicator').style.display = 'none';
-        } catch(babelErr) {
-          console.error('[Preview] Error:', babelErr);
-          document.getElementById('loading-indicator').innerHTML =
-            '<div style="text-align:center;padding:40px;"><h3 style="color:#dc2626;">Error</h3><pre style="text-align:left;background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b;">' +
-            String(babelErr.message || babelErr).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px;">Retry</button></div>';
-        }
-      }
-
       try {
 
         // Find the main page component to render.
@@ -880,31 +652,42 @@ if (typeof window.MapPin === 'undefined') { window.MapPin = function MapPin(prop
         console.log('[Preview] Searching for page component...');
 
         // Check if a function was created by _getIcon (our Lucide wrapper)
-        // We tag icon functions with a marker property for reliable detection
         function _isIconWrapper(fn) {
           if (!fn) return false;
           if (fn._isLucideIcon) return true;
           var str = fn.toString();
-          // Icon wrappers are small and contain SVG-related code
-          return str.length < 600 && (str.includes('viewBox') || str.includes('UnknownIcon') || str.includes('LucideIcon') || str.includes('_createLucideIcon') || str.includes('0 0 24 24'));
+          return str.length < 600 && (str.includes('viewBox') || str.includes('UnknownIcon') || str.includes('LucideIcon') || str.includes('0 0 24 24'));
         }
 
-        // Build a safe component registry instead of using eval()
-        var _localComponents = {};
-        _pageNames.forEach(function(n) {
-          try { _localComponents[n] = new Function('return typeof ' + n + ' !== "undefined" ? ' + n + ' : undefined')(); } catch(e) {}
-        });
-
-        // First, scan for known page component names via registry
-        for (const name of _pageNames) {
+        // PRIORITY 1: Use the server-detected component name (most reliable)
+        var _detectedName = window.__DETECTED_COMPONENT_NAME__;
+        if (_detectedName) {
           try {
-            const fn = _localComponents[name];
-            if (typeof fn === 'function' && !_isIconWrapper(fn)) {
-              Component = fn;
-              console.log('[Preview] ✓ Found component: ' + name + ' (local scope)');
-              break;
+            var _detected = new Function('return typeof ' + _detectedName + ' !== "undefined" ? ' + _detectedName + ' : undefined')();
+            if (typeof _detected === 'function' && !_isIconWrapper(_detected)) {
+              Component = _detected;
+              console.log('[Preview] ✓ Found component via server detection: ' + _detectedName);
             }
-          } catch (e) {}
+          } catch(e) {}
+        }
+
+        // PRIORITY 2: Build a safe component registry for known names
+        if (!Component) {
+          var _localComponents = {};
+          _pageNames.forEach(function(n) {
+            try { _localComponents[n] = new Function('return typeof ' + n + ' !== "undefined" ? ' + n + ' : undefined')(); } catch(e) {}
+          });
+
+          for (const name of _pageNames) {
+            try {
+              const fn = _localComponents[name];
+              if (typeof fn === 'function' && !_isIconWrapper(fn)) {
+                Component = fn;
+                console.log('[Preview] ✓ Found component: ' + name + ' (local scope)');
+                break;
+              }
+            } catch (e) {}
+          }
         }
 
         // If not found, search window for names ending with page-like suffixes
@@ -979,8 +762,13 @@ if (typeof window.MapPin === 'undefined') { window.MapPin = function MapPin(prop
           const root = ReactDOM.createRoot(rootElement);
           console.log('[Preview] React root created:', root);
 
-          // Wrap component in ErrorBoundary to catch rendering errors
-          const _EB = (typeof window !== "undefined" && window.ErrorBoundary) ? window.ErrorBoundary : (typeof ErrorBoundary !== "undefined" ? ErrorBoundary : (function(p){ return p.children; }));
+          // Wrap component in ErrorBoundary to catch rendering errors. Resolve
+          // it from window (set in the setup script) with a passthrough fallback
+          // so a scope miss degrades to rendering the app un-wrapped instead of
+          // crashing with "ErrorBoundary is not defined".
+          const _EB = (typeof window !== 'undefined' && window.ErrorBoundary)
+            ? window.ErrorBoundary
+            : (typeof ErrorBoundary !== 'undefined' ? ErrorBoundary : (function(p){ return p.children; }));
           const wrappedElement = React.createElement(_EB, null,
             React.createElement(Component)
           );
@@ -1049,6 +837,7 @@ if (typeof window.MapPin === 'undefined') { window.MapPin = function MapPin(prop
           '<pre>' + _esc(error.message) + '</pre>' +
           '</div>';
       }
+      } // end else !__BABEL_FAILED__
     </script>
 </body>
 </html>
