@@ -95,4 +95,22 @@ describe('findUnresolvedComponents (#76)', () => {
     ].join('\n')
     expect(validateJavaScriptCode(code).valid).toBe(true)
   })
+
+  // #91: the /preview/[id] Babel renderer strips imports and injects components
+  // as globals. On that path every component looks "unresolved" — the #76 check
+  // must NOT run when there are no imports, or it wrongly rejects valid apps.
+  it('does NOT flag components in import-stripped code (globals-injection context)', () => {
+    const code = [
+      'function App(){ return <div><ThumbsUp/><BarChart/><Badge>x</Badge><CustomWidget/></div>; }',
+      'export default App;',
+    ].join('\n')
+    expect(validateJavaScriptCode(code).valid).toBe(true)
+  })
+
+  it('STILL flags hallucinated components when imports are present', () => {
+    const code = "import React from 'react'\nexport default function App(){ return <div><Header/></div>; }"
+    const r = validateJavaScriptCode(code)
+    expect(r.valid).toBe(false)
+    expect(r.error).toMatch(/Header/)
+  })
 })

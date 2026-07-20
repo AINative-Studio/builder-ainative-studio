@@ -584,10 +584,13 @@ export function validateJavaScriptCode(code: string): ValidationResult {
   }
 
   // Catch hallucinated components — used in JSX but never defined, imported, or
-  // in the known-available set. These render as "Element type is invalid:
-  // … got: undefined" at runtime (Sandpack), which the Babel parse cannot see.
-  // Reject so retry re-generates rather than shipping a broken preview (#76).
-  const unresolved = findUnresolvedComponents(fixedCode)
+  // in the known-available set (#76). ONLY when the code has imports: the
+  // /preview/[id] Babel renderer STRIPS all imports and injects components as
+  // globals, so on that path every component would look "unresolved" — a false
+  // positive that wrongly rejected valid apps (#91). If there are no imports,
+  // assume a globals-injection context and skip this check.
+  const hasImports = /^\s*import\s/m.test(fixedCode)
+  const unresolved = hasImports ? findUnresolvedComponents(fixedCode) : []
   if (unresolved.length > 0) {
     const errorMessage = `Element type is invalid: <${unresolved[0]}> is used but not defined or imported`
     console.error('❌ Code validation failed (unresolved component):', unresolved.join(', '))
