@@ -599,17 +599,44 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
       // This works WITH React instead of fighting it
       const _originalCreateElement = React.createElement;
       let _h1Count = 0;
+      // A bare component OBJECT (forwardRef/memo/lazy — shape { $$typeof, render })
+      // placed in a CHILD position, e.g. {SomeIcon} or {chart} instead of
+      // <SomeIcon/>, makes React throw the fatal "Objects are not valid as a
+      // React child (found: object with keys {$$typeof, render})" crash overlay,
+      // killing the whole preview. This happens for Recharts/forwardRef refs the
+      // model references as values. Detect such a child and render it as an
+      // element (if it's a component) or drop it — turning a hard crash into a
+      // graceful, mostly-correct render.
+      function _sanitizeChild(c) {
+        if (c && typeof c === 'object' && c.$$typeof && c.type === undefined) {
+          // It's a component definition object, not a React element. If it's
+          // renderable (forwardRef/memo/function), mount it; else drop it.
+          try {
+            if (typeof c === 'function' || typeof c.render === 'function' || c.$$typeof) {
+              return _originalCreateElement(c, null);
+            }
+          } catch (e) {}
+          return null;
+        }
+        return c;
+      }
       React.createElement = function(type) {
+        var args = Array.prototype.slice.call(arguments);
         if (type === 'h1') {
           _h1Count++;
-          if (_h1Count > 1) {
-            // Convert extra h1 to h2 at the React level
-            var args = Array.prototype.slice.call(arguments);
-            args[0] = 'h2';
-            return _originalCreateElement.apply(React, args);
+          if (_h1Count > 1) args[0] = 'h2'; // Convert extra h1 to h2
+        }
+        // Sanitize children (args[2..]) so a stray component object can't crash.
+        if (args.length > 2) {
+          for (var _i = 2; _i < args.length; _i++) {
+            if (Array.isArray(args[_i])) {
+              args[_i] = args[_i].map(_sanitizeChild);
+            } else {
+              args[_i] = _sanitizeChild(args[_i]);
+            }
           }
         }
-        return _originalCreateElement.apply(React, arguments);
+        return _originalCreateElement.apply(React, args);
       };
 
       // Make React hooks available
