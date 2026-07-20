@@ -255,10 +255,13 @@ export async function POST(request: NextRequest) {
             isClaudeAgentEnabled()
           const useAgent = agentExplicitlyEnabled || agentAutoActivated
 
-          // Tier-based maxTurns:
-          //   Explicit (USE_CLAUDE_AGENT=true): 5 turns (all prompts)
-          //   Auto-activated (complex prompts):  3 turns (fallback-safe)
-          const agentMaxTurns = agentExplicitlyEnabled ? 5 : 3
+          // Tier-based maxTurns. A codegen task is read→write→verify→fix, not
+          // 1-2 turns: with the old values (5/3) the agent hit --max-turns
+          // mid-tool-call and returned an empty error (cody-cli#251 / builder#99).
+          //   Explicit (cody/USE_CLAUDE_AGENT):  12 turns (full loop)
+          //   Auto-activated (complex prompts):   8 turns (bounded but enough)
+          // The agent stops early on its own when the task is done.
+          const agentMaxTurns = agentExplicitlyEnabled ? 12 : 8
 
           if (useAgent) {
             console.log(`\n🤖 CLAUDE AGENT MODE — streaming headless agent (${agentExplicitlyEnabled ? 'explicit' : 'auto-complex'}, maxTurns=${agentMaxTurns})`)
