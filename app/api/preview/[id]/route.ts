@@ -1067,7 +1067,7 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
               React.createElement('details', { key: 'details', style: { textAlign: 'left', marginTop: '8px' } }, [
                 React.createElement('summary', { key: 'summary', style: { fontSize: '12px', color: '#94a3b8', cursor: 'pointer' } }, 'Technical details'),
                 React.createElement('pre', { key: 'stack', style: { fontSize: '11px', color: '#64748b', background: '#f1f5f9', padding: '10px', borderRadius: '8px', overflow: 'auto', marginTop: '8px' } },
-                  (this.state.error?.toString() || 'Unknown error') + '\n\n' + (this.state.errorInfo?.componentStack || '')
+                  (this.state.error?.toString() || 'Unknown error') + '\\n\\n' + (this.state.errorInfo?.componentStack || '')
                 )
               ])
             ]));
