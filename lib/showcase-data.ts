@@ -171,3 +171,51 @@ export function generateSlug(title: string): string {
 export function generateDescription(prompt: string, title: string): string {
   return `${title} — AI-generated React component built with AINative Builder. ${prompt.substring(0, 120)}. Built with React, Tailwind CSS, and modern web technologies.`
 }
+
+/** Normalize a prompt so re-runs of the same request collapse to one key. */
+export function normalizePromptKey(prompt: string): string {
+  return (prompt || '')
+    .toLowerCase()
+    .replace(/^build\s+(a|an)\s+/i, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+/**
+ * Combine seed + dynamic showcase entries and deduplicate.
+ *
+ * Repeated runs of the SAME prompt each get a fresh chatId, so a chatId-only
+ * dedupe leaves the gallery full of near-identical entries. This dedupes by
+ * BOTH chatId and a normalized prompt key, keeping the NEWEST generation per
+ * distinct prompt. Seed entries are always kept (curated) and are not subject
+ * to prompt-dedupe. Result is sorted featured-first, then newest-first.
+ */
+export function combineAndDedupeShowcase(
+  seed: ShowcaseEntry[],
+  dynamic: ShowcaseEntry[],
+): ShowcaseEntry[] {
+  const byDateDesc = (a: ShowcaseEntry, b: ShowcaseEntry) =>
+    new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+
+  // Sort newest-first BEFORE de-duping so the kept entry per prompt is newest.
+  const dynamicSorted = [...dynamic].sort(byDateDesc)
+  const seenChat = new Set<string>()
+  const seenPrompt = new Set<string>()
+  const out: ShowcaseEntry[] = [...seed]
+  for (const entry of dynamicSorted) {
+    const chatKey = entry.chatId || entry.slug
+    if (seenChat.has(chatKey)) continue
+    const promptKey = normalizePromptKey(entry.prompt)
+    if (promptKey && seenPrompt.has(promptKey)) continue // collapse repeats
+    seenChat.add(chatKey)
+    if (promptKey) seenPrompt.add(promptKey)
+    out.push(entry)
+  }
+
+  out.sort((a, b) => {
+    if (a.featured && !b.featured) return -1
+    if (!a.featured && b.featured) return 1
+    return byDateDesc(a, b)
+  })
+  return out
+}

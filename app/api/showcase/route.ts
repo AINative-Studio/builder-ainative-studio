@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { SEED_SHOWCASE, type ShowcaseEntry, generateSlug, generateDescription } from '@/lib/showcase-data'
+import { SEED_SHOWCASE, type ShowcaseEntry, generateSlug, generateDescription, combineAndDedupeShowcase } from '@/lib/showcase-data'
 import { getDynamicShowcase, addToShowcase } from '@/lib/showcase-store'
 import { listGenerations } from '@/lib/zerodb-store'
 
@@ -9,15 +9,19 @@ import { listGenerations } from '@/lib/zerodb-store'
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const category = searchParams.get('category')
-  const limit = parseInt(searchParams.get('limit') || '50')
+  // Default page size raised so the gallery surfaces far more than the old 50;
+  // callers can still page with offset/limit. Hard-capped to avoid huge payloads.
+  const limit = Math.min(parseInt(searchParams.get('limit') || '200'), 500)
   const offset = parseInt(searchParams.get('offset') || '0')
 
-  // Load persisted entries from ZeroDB
+  // Load persisted entries from ZeroDB. Read a large window (not just the most
+  // recent 100) so older quality apps keep surfacing as the gallery grows —
+  // listGenerations caches the result, so the bigger read is paid once.
   let zerodbEntries: ShowcaseEntry[] = []
   try {
-    const rows = await listGenerations(100)
+    const rows = await listGenerations(1000)
     zerodbEntries = rows
-      .filter((r: any) => r.code_length > 1500)
+      .filter((r: any) => (r.code_length ?? (r.generated_code || '').length) > 1500)
       .map((r: any) => {
         const title = r.title || r.prompt?.replace(/^Build\s+(a|an)\s+/i, '').split(/[.!]/)[0]?.trim()?.split(' ').slice(0, 6).map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') || 'Untitled'
         return {
@@ -37,29 +41,16 @@ export async function GET(request: NextRequest) {
     console.warn('[Showcase] ZeroDB load failed:', e)
   }
 
-  // Combine seed + in-memory + ZeroDB (deduplicate by chatId)
+  // Combine seed + in-memory + ZeroDB, dedupe by chatId AND normalized prompt
+  // (so repeated runs of the same prompt collapse to the newest), sorted
+  // featured-first then newest-first. See combineAndDedupeShowcase.
   const inMemory = getDynamicShowcase()
-  const seen = new Set<string>()
-  let all: ShowcaseEntry[] = [...SEED_SHOWCASE]
-  for (const entry of [...inMemory, ...zerodbEntries]) {
-    const key = entry.chatId || entry.slug
-    if (!seen.has(key)) {
-      seen.add(key)
-      all.push(entry)
-    }
-  }
+  let all = combineAndDedupeShowcase(SEED_SHOWCASE, [...inMemory, ...zerodbEntries])
 
   // Filter by category
   if (category) {
     all = all.filter(e => e.category === category)
   }
-
-  // Sort: featured first, then by date
-  all.sort((a, b) => {
-    if (a.featured && !b.featured) return -1
-    if (!a.featured && b.featured) return 1
-    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  })
 
   const total = all.length
   const entries = all.slice(offset, offset + limit)
