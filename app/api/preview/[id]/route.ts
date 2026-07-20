@@ -35,8 +35,17 @@ export async function GET(
     try {
       const { loadGeneration } = await import('@/lib/zerodb-store')
       const gen = await loadGeneration(id)
-      if (gen?.ssrHtml) {
-        console.log(`[Preview] Serving SSR HTML from ZeroDB for ID: ${id}`)
+      // Prefer RE-RENDERING from the durable generatedCode over serving a frozen
+      // ssrHtml snapshot: an ssrHtml frozen before a renderer fix (e.g. the
+      // hooks-on-window / newline fixes) serves the OLD broken HTML forever, so
+      // old previews render blank even though the renderer is now fixed. Only
+      // fall back to ssrHtml if there is no code to re-render.
+      if (gen?.generatedCode) {
+        content = gen.generatedCode
+        storePreview(id, content) // repopulate in-memory cache
+        console.log(`[Preview] Restored code from ZeroDB for ID: ${id} (re-rendering with current template)`)
+      } else if (gen?.ssrHtml) {
+        console.log(`[Preview] No code — serving SSR HTML from ZeroDB for ID: ${id}`)
         return new Response(gen.ssrHtml, {
           headers: {
             'Content-Type': 'text/html; charset=utf-8',
@@ -45,11 +54,6 @@ export async function GET(
             'Cache-Control': 'public, max-age=3600',
           },
         })
-      }
-      if (gen?.generatedCode) {
-        content = gen.generatedCode
-        storePreview(id, content) // repopulate in-memory cache
-        console.log(`[Preview] Restored code from ZeroDB for ID: ${id}`)
       }
     } catch (e) {
       console.warn('[Preview] ZeroDB restore failed:', e)
@@ -487,7 +491,12 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
   if (typeof Babel === 'undefined' || typeof React === 'undefined') return;
   try {
     var _src = ${JSON.stringify(componentCode)};
-    var _compiled = Babel.transform(_src, {presets:[['react', {runtime:'classic'}]]}).code;
+    // errorRecovery: match the server-side validator's leniency. Without it, the
+    // browser Babel is STRICTER than validateGeneratedCode (which parses with
+    // errorRecovery) — so code the validator PASSED (e.g. an array-literal const
+    // missing a trailing semicolon) throws "Missing semicolon" here and renders
+    // blank. errorRecovery recovers from these and compiles the app anyway.
+    var _compiled = Babel.transform(_src, {presets:[['react', {runtime:'classic'}]], parserOpts:{errorRecovery:true}}).code;
     // Strip any remaining import/export statements that would crash in a script tag
     _compiled = _compiled.replace(/^import\\s+.*$/gm, '').replace(/^export\\s+(default\\s+)?/gm, '');
     // Inject compiled JS as a new script tag — runs in GLOBAL scope
