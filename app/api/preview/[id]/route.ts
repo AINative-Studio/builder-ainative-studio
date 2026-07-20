@@ -66,6 +66,30 @@ export async function GET(
     }
   }
 
+  // Still generating: the preview pane requests /api/preview/[id] while the app
+  // is streaming, BEFORE any code is stored. Don't show the scary "Preview
+  // Expired" page in that window — show a friendly auto-refreshing "generating"
+  // state so the user isn't flashed an error mid-generation (they reported this
+  // when clicking a homepage preset).
+  if (!content && isPreviewStreaming(id)) {
+    const generatingHtml = `<!DOCTYPE html>
+      <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <script src="https://cdn.tailwindcss.com"></script>
+      <meta http-equiv="refresh" content="2"></head>
+      <body class="bg-gray-50 dark:bg-gray-900">
+        <div class="min-h-screen flex items-center justify-center p-4">
+          <div class="text-center">
+            <div class="w-12 h-12 mx-auto mb-4 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-1">Generating your app…</h2>
+            <p class="text-sm text-gray-500 dark:text-gray-400">The preview will appear here in a moment.</p>
+          </div>
+        </div>
+      </body></html>`
+    return new NextResponse(generatingHtml, {
+      headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache, no-store, must-revalidate' },
+    })
+  }
+
   if (!content) {
     // Return a helpful error page for expired previews
     const errorHtml = `
