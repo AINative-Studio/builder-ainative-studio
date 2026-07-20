@@ -112,7 +112,7 @@
     "ws": "^8.18.3",
     "zod": "^4.1.1",
     "@anthropic-ai/claude-code": "^2.1.191",
-    "@ainative/cody-cli": "^0.12.1"
+    "@ainative/cody-cli": "^0.12.2"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.1",

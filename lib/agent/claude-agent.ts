@@ -196,7 +196,11 @@ export async function* runHeadlessAgent(
     abortSignal,
   } = options
 
-  const maxTurns = options.maxTurns || 3  // Keep low — agent should write code in 1-2 turns
+  // A real codegen task is read → write → verify → fix, not 1-2 turns. With
+  // maxTurns=3 the run hit --max-turns mid-tool-call and cody returned an empty
+  // error result (cody-cli#251 / builder#99). 12 gives room for a full
+  // read→edit→verify→retry loop; cody stops early on its own when done.
+  const maxTurns = options.maxTurns || 12
 
   const args: string[] = [
     '--print',

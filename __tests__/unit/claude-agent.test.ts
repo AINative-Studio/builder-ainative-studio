@@ -1099,7 +1099,8 @@ describe('claude-agent (extended coverage)', () => {
   // -------------------------------------------------------------------------
 
   describe('systemPrompt option', () => {
-    it('passes --append-system-prompt arg when systemPrompt is provided', async () => {
+    it('passes --append-system-prompt with combined prompt when systemPrompt is provided', async () => {
+      const extraPrompt = 'You are a senior engineer'
       const proc = new EventEmitter() as any
       proc.stdin = { end: vi.fn() }
       proc.exitCode = null
@@ -1114,21 +1115,21 @@ describe('claude-agent (extended coverage)', () => {
       mockSpawn.mockReturnValue(proc)
 
       await (async () => {
-        const events: AgentEvent[] = []
-        for await (const e of runHeadlessAgent('test', 'test-chat', {
-          systemPrompt: 'You are a senior engineer',
-        })) {
-          events.push(e)
-        }
+        for await (const _e of runHeadlessAgent('test', 'test-chat', {
+          systemPrompt: extraPrompt,
+        })) { /* drain */ }
       })()
 
       const args = mockSpawn.mock.calls[0][1] as string[]
       const idx = args.indexOf('--append-system-prompt')
       expect(idx).toBeGreaterThan(-1)
-      expect(args[idx + 1]).toBe('You are a senior engineer')
+      const promptValue = args[idx + 1]
+      expect(promptValue).toContain(extraPrompt)
+      // Combined prompt should start with the base AGENT_SYSTEM_PROMPT
+      expect(promptValue).toContain('You are building a React component')
     })
 
-    it('does not pass --append-system-prompt when systemPrompt is absent', async () => {
+    it('passes --append-system-prompt with base AGENT_SYSTEM_PROMPT when systemPrompt is absent', async () => {
       const proc = new EventEmitter() as any
       proc.stdin = { end: vi.fn() }
       proc.exitCode = null
@@ -1142,11 +1143,13 @@ describe('claude-agent (extended coverage)', () => {
       setTimeout(() => { proc.exitCode = 0; proc.emit('exit', 0) }, 10)
       mockSpawn.mockReturnValue(proc)
 
-      const events: AgentEvent[] = []
-      for await (const e of runHeadlessAgent('test', 'test-chat')) events.push(e)
+      for await (const _e of runHeadlessAgent('test', 'test-chat')) { /* drain */ }
 
       const args = mockSpawn.mock.calls[0][1] as string[]
-      expect(args.includes('--append-system-prompt')).toBe(false)
+      const idx = args.indexOf('--append-system-prompt')
+      expect(idx).toBeGreaterThan(-1)
+      // Should contain the default AGENT_SYSTEM_PROMPT content
+      expect(args[idx + 1]).toContain('You are building a React component')
     })
   })
 
