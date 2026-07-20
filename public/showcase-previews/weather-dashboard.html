@@ -9,15 +9,14 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <!-- Core: React 18 -->
-    <!-- Critical: React + Babel from CDN (local copies have compatibility issues) -->
+    <!-- React 18 from CDN -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Non-critical: served locally for speed -->
-    <script src="/vendor/lucide.min.js"></script>
-    <script src="/vendor/prop-types.min.js"></script>
-    <script src="/vendor/recharts.min.js"></script>
-    <script src="/vendor/tailwind.min.js"></script>
+    <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.min.js"></script>
+    <script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.15.0/umd/Recharts.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
         theme: {
@@ -92,22 +91,65 @@
       // This works WITH React instead of fighting it
       const _originalCreateElement = React.createElement;
       let _h1Count = 0;
+      // A bare component OBJECT (forwardRef/memo/lazy — shape { $$typeof, render })
+      // placed in a CHILD position, e.g. {SomeIcon} or {chart} instead of
+      // <SomeIcon/>, makes React throw the fatal "Objects are not valid as a
+      // React child (found: object with keys {$$typeof, render})" crash overlay,
+      // killing the whole preview. This happens for Recharts/forwardRef refs the
+      // model references as values. Detect such a child and render it as an
+      // element (if it's a component) or drop it — turning a hard crash into a
+      // graceful, mostly-correct render.
+      function _sanitizeChild(c) {
+        if (c && typeof c === 'object' && c.$$typeof && c.type === undefined) {
+          // It's a component definition object, not a React element. If it's
+          // renderable (forwardRef/memo/function), mount it; else drop it.
+          try {
+            if (typeof c === 'function' || typeof c.render === 'function' || c.$$typeof) {
+              return _originalCreateElement(c, null);
+            }
+          } catch (e) {}
+          return null;
+        }
+        return c;
+      }
+      function _sanitizeChildren(v) {
+        return Array.isArray(v) ? v.map(_sanitizeChild) : _sanitizeChild(v);
+      }
       React.createElement = function(type) {
+        var args = Array.prototype.slice.call(arguments);
         if (type === 'h1') {
           _h1Count++;
-          if (_h1Count > 1) {
-            // Convert extra h1 to h2 at the React level
-            var args = Array.prototype.slice.call(arguments);
-            args[0] = 'h2';
-            return _originalCreateElement.apply(React, args);
-          }
+          if (_h1Count > 1) args[0] = 'h2'; // Convert extra h1 to h2
         }
-        return _originalCreateElement.apply(React, arguments);
+        // Sanitize positional children (args[2..]) so a stray component object
+        // can't crash the whole preview with "Objects are not valid as a React
+        // child". Handles <div>{Icon}</div> and {list.map(...)} cases.
+        if (args.length > 2) {
+          for (var _i = 2; _i < args.length; _i++) args[_i] = _sanitizeChildren(args[_i]);
+        }
+        // Also sanitize a children PROP (arg[1].children) — components that
+        // receive a component-object via the children prop rather than a
+        // positional arg (e.g. AIKit stubs that spread props).
+        if (args[1] && typeof args[1] === 'object' && 'children' in args[1]) {
+          try { args[1] = Object.assign({}, args[1], { children: _sanitizeChildren(args[1].children) }); } catch (e) {}
+        }
+        return _originalCreateElement.apply(React, args);
       };
 
-      // Make React hooks available
+      // Make React hooks available. CRITICAL: the compiled App runs in a
+      // SEPARATE global-scope <script>, so these must be on window — a plain
+      // const here is script-scoped and the App would throw "useState is not
+      // defined" and render blank (the #1 cause of blank previews).
       const { useState, useEffect, useCallback, useMemo, useRef, useContext, createContext, Fragment } = React;
-      console.log('[Preview] React hooks loaded:', { useState, useEffect, useCallback, useMemo, useRef });
+      window.useState = useState; window.useEffect = useEffect;
+      window.useCallback = useCallback; window.useMemo = useMemo;
+      window.useRef = useRef; window.useContext = useContext;
+      window.createContext = createContext; window.Fragment = Fragment;
+      // Also expose the less-common hooks apps sometimes use.
+      window.useReducer = React.useReducer; window.useLayoutEffect = React.useLayoutEffect;
+      window.useId = React.useId; window.useTransition = React.useTransition;
+      window.useDeferredValue = React.useDeferredValue; window.useImperativeHandle = React.useImperativeHandle;
+      console.log('[Preview] React hooks loaded + exposed on window:', { useState: !!window.useState, useEffect: !!window.useEffect });
 
       // Create React components from Lucide vanilla SVG icon definitions
       // lucide (vanilla) exports icons as ["svg", {svgAttrs}, [[tag, attrs], ...]]
@@ -387,7 +429,31 @@
         Legend, ResponsiveContainer, RadialBarChart, RadialBar,
         Treemap, Funnel, FunnelChart
       } = recharts;
-      console.log('[Preview] Recharts loaded:', !!recharts.LineChart);
+      // CRITICAL: the compiled app runs in a SEPARATE global-scope <script>, so
+      // these block-scoped consts are invisible to it — using <RePieChart>,
+      // <Pie>, <ResponsiveContainer> etc. would throw "Element type is invalid:
+      // ...got undefined". Expose every Recharts component on window so the app
+      // script can resolve them. Do NOT clobber the lucide icon names already on
+      // window (PieChart/LineChart/BarChart are icons); only add the Re* aliases
+      // and the recharts-only names.
+      var _rechartsGlobals = {
+        ReLineChart: ReLineChart, ReBarChart: ReBarChart, RePieChart: RePieChart,
+        Line: Line, Bar: Bar, Pie: Pie, Cell: Cell, Area: Area, AreaChart: AreaChart,
+        RadarChart: RadarChart, Radar: Radar, PolarGrid: PolarGrid,
+        PolarAngleAxis: PolarAngleAxis, PolarRadiusAxis: PolarRadiusAxis,
+        ComposedChart: ComposedChart, Scatter: Scatter, ScatterChart: ScatterChart,
+        XAxis: XAxis, YAxis: YAxis, CartesianGrid: CartesianGrid,
+        RechartsTooltip: RechartsTooltip, Legend: Legend,
+        ResponsiveContainer: ResponsiveContainer, RadialBarChart: RadialBarChart,
+        RadialBar: RadialBar, Treemap: Treemap, Funnel: Funnel, FunnelChart: FunnelChart
+      };
+      Object.keys(_rechartsGlobals).forEach(function(k) {
+        if (_rechartsGlobals[k] && !window[k]) window[k] = _rechartsGlobals[k];
+      });
+      // Tooltip is commonly imported bare from recharts; only set it if a lucide
+      // icon named Tooltip isn't already occupying the slot.
+      if (RechartsTooltip && !window.Tooltip) window.Tooltip = RechartsTooltip;
+      console.log('[Preview] Recharts loaded:', !!recharts.LineChart, '| exposed on window:', Object.keys(_rechartsGlobals).filter(function(k){return !!window[k]}).length);
 
       // Make AIKit / AINative Primitive components available
       const aikit = window.AIKitComponents || {};
@@ -478,293 +544,76 @@
 
         render() {
           if (this.state.hasError) {
+            // Graceful fallback — never dump a raw red React error at the user.
+            // A runtime render crash (e.g. a component object used as a child)
+            // shows a clean "refining" card instead of the scary stack. The raw
+            // error is kept in a collapsed <details> for debugging only.
             return React.createElement('div', {
-              style: { padding: '20px', color: 'red', fontFamily: 'monospace' }
+              style: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f8fafc', fontFamily: 'system-ui, -apple-system, sans-serif', padding: '24px' }
+            }, React.createElement('div', {
+              style: { maxWidth: '440px', textAlign: 'center', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '40px 32px', boxShadow: '0 4px 24px rgba(0,0,0,0.06)' }
             }, [
-              React.createElement('h3', { key: 'title' }, 'React Rendering Error'),
-              React.createElement('pre', { key: 'error', style: { background: '#fee', padding: '10px', borderRadius: '4px' } },
-                this.state.error?.toString() || 'Unknown error'
-              ),
-              React.createElement('details', { key: 'details' }, [
-                React.createElement('summary', { key: 'summary' }, 'Component Stack'),
-                React.createElement('pre', { key: 'stack', style: { fontSize: '11px', overflow: 'auto' } },
-                  this.state.errorInfo?.componentStack || 'No stack trace'
+              React.createElement('div', { key: 'icon', style: { fontSize: '40px', marginBottom: '12px' } }, '🛠️'),
+              React.createElement('h1', { key: 'title', style: { fontSize: '20px', fontWeight: 700, color: '#0f172a', margin: '0 0 8px' } }, 'Refining your app'),
+              React.createElement('p', { key: 'body', style: { fontSize: '14px', color: '#475569', lineHeight: 1.6, margin: '0 0 16px' } }, 'AINative built a first version but it needs another pass to render cleanly. Try regenerating — the next attempt usually gets it.'),
+              React.createElement('details', { key: 'details', style: { textAlign: 'left', marginTop: '8px' } }, [
+                React.createElement('summary', { key: 'summary', style: { fontSize: '12px', color: '#94a3b8', cursor: 'pointer' } }, 'Technical details'),
+                React.createElement('pre', { key: 'stack', style: { fontSize: '11px', color: '#64748b', background: '#f1f5f9', padding: '10px', borderRadius: '8px', overflow: 'auto', marginTop: '8px' } },
+                  (this.state.error?.toString() || 'Unknown error') + '\n\n' + (this.state.errorInfo?.componentStack || '')
                 )
               ])
-            ]);
+            ]));
           }
           return this.props.children;
         }
       }
-      // Fix: expose ErrorBoundary on window so the separate render script can see it (class is script-scoped).
+      // The component-render script runs in a SEPARATE script tag (global
+      // scope) and references ErrorBoundary as a bare identifier — but a class
+      // declaration is script-scoped, not a global. Expose it on window so the
+      // renderer can wrap the app in it (fixes "ErrorBoundary is not defined").
       window.ErrorBoundary = ErrorBoundary;
 
     </script>
-    <!-- Component code: transformed by Babel.transform() synchronously, then eval'd -->
-    <script id="component-source" type="text/plain">
-        const WeatherDashboard = () => {
-  const [currentTime, setCurrentTime] = useState(new Date());
-  
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTime(new Date());
-    }, 60000);
-    
-    return () => clearInterval(timer);
-  }, []);
-
-  // Mock data for weather dashboard
-  const currentWeather = {
-    location: "San Francisco, CA",
-    temperature: 72,
-    condition: "Partly Cloudy",
-    humidity: 65,
-    windSpeed: 12,
-    uvIndex: 6,
-    visibility: 10,
-    pressure: 30.15,
-    feelsLike: 75
-  };
-
-  const hourlyForecast = [
-    { time: "Now", temp: 72, condition: "partly-cloudy" },
-    { time: "1 PM", temp: 74, condition: "sunny" },
-    { time: "2 PM", temp: 75, condition: "sunny" },
-    { time: "3 PM", temp: 76, condition: "partly-cloudy" },
-    { time: "4 PM", temp: 75, condition: "cloudy" },
-    { time: "5 PM", temp: 74, condition: "cloudy" },
-    { time: "6 PM", temp: 72, condition: "partly-cloudy" },
-    { time: "7 PM", temp: 70, condition: "partly-cloudy" },
-    { time: "8 PM", temp: 68, condition: "clear" },
-    { time: "9 PM", temp: 67, condition: "clear" },
-    { time: "10 PM", temp: 66, condition: "clear" },
-    { time: "11 PM", temp: 65, condition: "clear" }
-  ];
-
-  const fiveDayForecast = [
-    { day: "Today", high: 76, low: 65, condition: "partly-cloudy" },
-    { day: "Wed", high: 78, low: 67, condition: "sunny" },
-    { day: "Thu", high: 74, low: 63, condition: "rainy" },
-    { day: "Fri", high: 72, low: 61, condition: "cloudy" },
-    { day: "Sat", high: 75, low: 64, condition: "partly-cloudy" }
-  ];
-
-  const getConditionIcon = (condition) => {
-    switch(condition) {
-      case "sunny":
-        return <Sun className="w-6 h-6 text-yellow-500" />;
-      case "partly-cloudy":
-        return <Sun className="w-6 h-6 text-yellow-500" />;
-      case "cloudy":
-        return <Cloud className="w-6 h-6 text-gray-500" />;
-      case "rainy":
-        return <CloudRain className="w-6 h-6 text-blue-500" />;
-      default:
-        return <Sun className="w-6 h-6 text-yellow-500" />;
-    }
-  };
-
-  // Custom components for weather icons
-  const Cloud = () => (;
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>
-    </svg>
-  );
-
-  const CloudRain = () => (;
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>
-      <line x1="8" y1="19" x2="8" y2="23"/>
-      <line x1="12" y1="19" x2="12" y2="23"/>
-      <line x1="16" y1="19" x2="16" y2="23"/>
-    </svg>
-  );
-
-  return (
-    <div className="min-h-screen bg-[#F5F8F0]">
-      {/* Professional Header */}
-      <div className="bg-slate-900">
-        <div className="px-8 py-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white text-2xl font-bold">
-                W
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold text-white">Weather Dashboard</h1>
-                <p className="text-slate-300 text-sm mt-1">Current conditions and forecasts</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <button className="bg-slate-700 text-white border border-slate-600 hover:bg-slate-600 px-4 py-2 rounded-lg flex items-center gap-2">
-                <Search className="w-4 h-4" />
-                Search
-              </button>
-              <button className="bg-blue-600 text-white hover:bg-blue-700 px-4 py-2 rounded-lg flex items-center gap-2">
-                <MapPin className="w-4 h-4" />
-                Add Location
-              </button>
-              <div className="ml-3 flex items-center gap-2">
-                <button className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-white hover:bg-slate-600">
-                  <span className="w-2 h-2 bg-red-500 rounded-full" />
-                </button>
-                <div className="w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold border-2 border-white">
-                  JD
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <main className="max-w-7xl mx-auto px-4 py-8">
-        {/* Current Weather Card */}
-        <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 mb-8">
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-            <div>
-              <div className="flex items-center gap-2 mb-2">
-                <MapPin className="w-5 h-5 text-slate-500" />
-                <h2 className="text-xl font-semibold text-slate-900">{currentWeather.location}</h2>
-                <span className="text-slate-500 text-sm">{currentTime.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</span>
-              </div>
-              <div className="flex items-end gap-4">
-                <div className="text-7xl font-bold text-slate-900">{currentWeather.temperature}°</div>
-                <div className="mb-1">
-                  <div className="text-xl font-medium text-slate-900">{currentWeather.condition}</div>
-                  <div className="text-slate-500">Feels like {currentWeather.feelsLike}°</div>
-                </div>
-              </div>
-            </div>
-            
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              <div className="flex items-center gap-2">
-                <Droplets className="w-5 h-5 text-blue-500" />
-                <div>
-                  <div className="text-sm text-slate-500">Humidity</div>
-                  <div className="font-medium">{currentWeather.humidity}%</div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Wind className="w-5 h-5 text-slate-500" />
-                <div>
-                  <div className="text-sm text-slate-500">Wind</div>
-                  <div className="font-medium">{currentWeather.windSpeed} mph</div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Eye className="w-5 h-5 text-slate-500" />
-                <div>
-                  <div className="text-sm text-slate-500">UV Index</div>
-                  <div className="font-medium">{currentWeather.uvIndex}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Hourly Forecast */}
-        <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 mb-8">
-          <div className="flex items-center gap-2 mb-4">
-            <Clock className="w-5 h-5 text-slate-500" />
-            <h3 className="text-lg font-semibold text-slate-900">Hourly Forecast</h3>
-          </div>
-          
-          <div className="flex overflow-x-auto pb-4 space-x-6">
-            {hourlyForecast.map((hour, index) => (
-              <div key={index} className="flex-shrink-0 text-center min-w-[80px]">
-                <div className="text-slate-500 text-sm mb-2">{hour.time}</div>
-                <div className="flex justify-center mb-2">
-                  {getConditionIcon(hour.condition)}
-                </div>
-                <div className="font-medium text-slate-900">{hour.temp}°</div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* 5-Day Forecast */}
-        <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Calendar className="w-5 h-5 text-slate-500" />
-            <h3 className="text-lg font-semibold text-slate-900">5-Day Forecast</h3>
-          </div>
-          
-          <div className="space-y-4">
-            {fiveDayForecast.map((day, index) => (
-              <div key={index} className="flex items-center justify-between py-3 border-b border-slate-100 last:border-0">
-                <div className="flex items-center gap-4">
-                  <div className="w-20 font-medium text-slate-900">{day.day}</div>
-                  <div className="flex items-center gap-2">
-                    {getConditionIcon(day.condition)}
-                    <span className="text-slate-700 capitalize">{day.condition.replace('-', ' ')}</span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-4">
-                  <span className="text-slate-500">{day.low}°</span>
-                  <div className="w-24 h-2 bg-slate-200 rounded-full overflow-hidden">
-                    <div 
-                      className="h-full bg-gradient-to-r from-blue-400 to-orange-400"
-                      style={{ width: `${(day.high - day.low) * 10}%` }}
-                     />
-                  </div>
-                  <span className="font-medium text-slate-900">{day.high}°</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </main>
-    </div>
-  );
-};
-
-WeatherDashboard;
-
-// Expose components to window for preview
-window.WeatherDashboard = WeatherDashboard;
-window.Cloud = Cloud;
-window.CloudRain = CloudRain;
-    </script>
-    <!-- Fallback components (plain JS, runs before Babel transform) -->
     <script>if (typeof window.Sun === 'undefined') { window.Sun = function Sun(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Sun' }, props && props.children); }; }
 if (typeof window.Cloud === 'undefined') { window.Cloud = function Cloud(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Cloud' }, props && props.children); }; }
 if (typeof window.CloudRain === 'undefined') { window.CloudRain = function CloudRain(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'CloudRain' }, props && props.children); }; }
+if (typeof window.CloudSnow === 'undefined') { window.CloudSnow = function CloudSnow(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'CloudSnow' }, props && props.children); }; }
 if (typeof window.Search === 'undefined') { window.Search = function Search(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Search' }, props && props.children); }; }
 if (typeof window.MapPin === 'undefined') { window.MapPin = function MapPin(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'MapPin' }, props && props.children); }; }
 if (typeof window.Droplets === 'undefined') { window.Droplets = function Droplets(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Droplets' }, props && props.children); }; }
 if (typeof window.Wind === 'undefined') { window.Wind = function Wind(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Wind' }, props && props.children); }; }
 if (typeof window.Eye === 'undefined') { window.Eye = function Eye(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Eye' }, props && props.children); }; }
-if (typeof window.Clock === 'undefined') { window.Clock = function Clock(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Clock' }, props && props.children); }; }
-if (typeof window.Calendar === 'undefined') { window.Calendar = function Calendar(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Calendar' }, props && props.children); }; }</script>
-    <!-- Transform and render -->
+if (typeof window.Gauge === 'undefined') { window.Gauge = function Gauge(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Gauge' }, props && props.children); }; }
+if (typeof window.LineChart === 'undefined') { window.LineChart = function LineChart(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'LineChart' }, props && props.children); }; }
+if (typeof window.Tooltip === 'undefined') { window.Tooltip = function Tooltip(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Tooltip' }, props && props.children); }; }</script>
+<script>
+window.__DETECTED_COMPONENT_NAME__ = "App";
+(function() {
+  if (typeof Babel === 'undefined' || typeof React === 'undefined') return;
+  try {
+    var _src = "function App() {\n  const [selectedCity, setSelectedCity] = useState('San Francisco');\n  const [searchQuery, setSearchQuery] = useState('');\n\n  const currentWeather = {\n    temp: 72,\n    condition: 'Partly Cloudy',\n    humidity: 65,\n    wind: 12,\n    visibility: 10,\n    pressure: 1013,\n    feelsLike: 70,\n    uvIndex: 6,\n    location: 'San Francisco, CA',\n    lastUpdated: '2:30 PM'\n  }\n\n  const forecast = [\n    {\n      day: 'Monday',\n      shortDay: 'Mon',\n      date: 'Jan 15',\n      high: 75,\n      low: 58,\n      condition: 'Sunny',\n      icon: 'sun',\n      precipitation: 0,\n      humidity: 55\n    },\n    {\n      day: 'Tuesday',\n      shortDay: 'Tue',\n      date: 'Jan 16',\n      high: 73,\n      low: 60,\n      condition: 'Partly Cloudy',\n      icon: 'cloud',\n      precipitation: 10,\n      humidity: 62\n    },\n    {\n      day: 'Wednesday',\n      shortDay: 'Wed',\n      date: 'Jan 17',\n      high: 68,\n      low: 56,\n      condition: 'Cloudy',\n      icon: 'cloud',\n      precipitation: 20,\n      humidity: 70\n    },\n    {\n      day: 'Thursday',\n      shortDay: 'Thu',\n      date: 'Jan 18',\n      high: 65,\n      low: 54,\n      condition: 'Rainy',\n      icon: 'rain',\n      precipitation: 80,\n      humidity: 85\n    },\n    {\n      day: 'Friday',\n      shortDay: 'Fri',\n      date: 'Jan 19',\n      high: 70,\n      low: 57,\n      condition: 'Partly Cloudy',\n      icon: 'cloud',\n      precipitation: 15,\n      humidity: 68\n    }\n  ]\n\n  const hourlyData = [\n    { time: '12 AM', temp: 62 },\n    { time: '3 AM', temp: 59 },\n    { time: '6 AM', temp: 57 },\n    { time: '9 AM', temp: 64 },\n    { time: '12 PM', temp: 70 },\n    { time: '3 PM', temp: 72 },\n    { time: '6 PM', temp: 68 },\n    { time: '9 PM', temp: 64 }\n  ]\n\n  const recentCities = ['San Francisco', 'New York', 'Los Angeles', 'Chicago']\n\n  const getWeatherIcon = (condition) => {\n    switch (condition.toLowerCase()) {\n      case 'sunny':\n        return <Sun className=\"w-full h-full\" />\n      case 'partly cloudy':\n        return <Cloud className=\"w-full h-full\" />\n      case 'cloudy':\n        return <Cloud className=\"w-full h-full\" />\n      case 'rainy':\n        return <CloudRain className=\"w-full h-full\" />\n      case 'snowy':\n        return <CloudSnow className=\"w-full h-full\" />\n      default:\n        return <Sun className=\"w-full h-full\" />\n    }\n  }\n\n  const getConditionColor = (condition) => {\n    switch (condition.toLowerCase()) {\n      case 'sunny':\n        return 'text-yellow-500'\n      case 'partly cloudy':\n        return 'text-slate-400'\n      case 'cloudy':\n        return 'text-slate-500'\n      case 'rainy':\n        return 'text-blue-500'\n      case 'snowy':\n        return 'text-blue-300'\n      default:\n        return 'text-slate-400'\n    }\n  }\n\n  return (\n    <div className=\"min-h-screen bg-[#C5D0D9]\">\n      {/* Header */}\n      <div className=\"bg-slate-900\">\n        <div className=\"px-8 py-6\">\n          <div className=\"flex items-center justify-between\">\n            <div className=\"flex items-center gap-4\">\n              <div className=\"w-12 h-12 bg-blue-600 rounded-lg flex items-center justify-center text-white\">\n                <Cloud className=\"w-7 h-7\" />\n              </div>\n              <div>\n                <h1 className=\"text-2xl font-bold text-white\">Weather Dashboard</h1>\n                <p className=\"text-slate-300 text-sm mt-1\">Real-time weather conditions and forecasts</p>\n              </div>\n            </div>\n            <div className=\"flex items-center gap-3\">\n              <div className=\"relative\">\n                <Search className=\"absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400\" />\n                <Input\n                  placeholder=\"Search city...\"\n                  value={searchQuery}\n                  onChange={(e) => setSearchQuery(e.target.value)}\n                  className=\"pl-10 w-64 bg-slate-800 border-slate-700 text-white placeholder:text-slate-400\"\n                />\n              </div>\n              <Button className=\"bg-blue-600 text-white hover:bg-blue-700\">\n                Add Location\n              </Button>\n            </div>\n          </div>\n        </div>\n      </div>\n\n      {/* Main Content */}\n      <div className=\"max-w-7xl mx-auto px-8 py-8\">\n        {/* Location Bar */}\n        <div className=\"flex items-center gap-4 mb-8\">\n          <div className=\"flex items-center gap-2 text-slate-700\">\n            <MapPin className=\"w-5 h-5\" />\n            <span className=\"text-lg font-semibold\">{currentWeather.location}</span>\n          </div>\n          <div className=\"flex gap-2\">\n            {recentCities.map((city) => (\n              <Badge\n                key={city}\n                className={\"cursor-pointer transition-colors \" + selectedCity === city ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-white text-slate-700 hover:bg-slate-100'}\n                onClick={() => setSelectedCity(city)}\n              >\n                {city}\n              </Badge>\n            ))}\n          </div>\n        </div>\n\n        {/* Current Weather Hero Card */}\n        <Card className=\"bg-white rounded-xl shadow-lg border border-slate-200 mb-8 overflow-hidden\">\n          <div className=\"bg-blue-600 px-8 py-12\">\n            <div className=\"flex items-center justify-between\">\n              <div>\n                <div className=\"flex items-baseline gap-2 mb-4\">\n                  <span className=\"text-8xl font-bold text-white\">{currentWeather.temp}°</span>\n                  <span className=\"text-3xl text-blue-100\">F</span>\n                </div>\n                <div className=\"flex items-center gap-3 mb-2\">\n                  <div className={\"w-8 h-8 \" + getConditionColor('partly cloudy') + \" text-white\"}>\n                    {getWeatherIcon(currentWeather.condition)}\n                  </div>\n                  <span className=\"text-2xl text-white font-medium\">{currentWeather.condition}</span>\n                </div>\n                <p className=\"text-blue-100 text-sm\">Feels like {currentWeather.feelsLike}°F</p>\n                <p className=\"text-blue-200 text-xs mt-2\">Last updated: {currentWeather.lastUpdated}</p>\n              </div>\n              <div className=\"w-48 h-48 text-white opacity-20\">\n                {getWeatherIcon(currentWeather.condition)}\n              </div>\n            </div>\n          </div>\n\n          <CardContent className=\"p-8\">\n            <div className=\"grid grid-cols-4 gap-6\">\n              <div className=\"flex items-center gap-4\">\n                <div className=\"w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center\">\n                  <Droplets className=\"w-6 h-6 text-blue-600\" />\n                </div>\n                <div>\n                  <p className=\"text-sm text-slate-500\">Humidity</p>\n                  <p className=\"text-2xl font-bold text-slate-900\">{currentWeather.humidity}%</p>\n                </div>\n              </div>\n              <div className=\"flex items-center gap-4\">\n                <div className=\"w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center\">\n                  <Wind className=\"w-6 h-6 text-green-600\" />\n                </div>\n                <div>\n                  <p className=\"text-sm text-slate-500\">Wind Speed</p>\n                  <p className=\"text-2xl font-bold text-slate-900\">{currentWeather.wind} mph</p>\n                </div>\n              </div>\n              <div className=\"flex items-center gap-4\">\n                <div className=\"w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center\">\n                  <Eye className=\"w-6 h-6 text-purple-600\" />\n                </div>\n                <div>\n                  <p className=\"text-sm text-slate-500\">Visibility</p>\n                  <p className=\"text-2xl font-bold text-slate-900\">{currentWeather.visibility} mi</p>\n                </div>\n              </div>\n              <div className=\"flex items-center gap-4\">\n                <div className=\"w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center\">\n                  <Gauge className=\"w-6 h-6 text-orange-600\" />\n                </div>\n                <div>\n                  <p className=\"text-sm text-slate-500\">Pressure</p>\n                  <p className=\"text-2xl font-bold text-slate-900\">{currentWeather.pressure} mb</p>\n                </div>\n              </div>\n            </div>\n          </CardContent>\n        </Card>\n\n        {/* Hourly Temperature Chart */}\n        <Card className=\"bg-white rounded-xl shadow-sm border border-slate-200 mb-8\">\n          <CardHeader>\n            <CardTitle className=\"text-xl font-bold text-slate-900\">24-Hour Temperature</CardTitle>\n          </CardHeader>\n          <CardContent>\n            <ResponsiveContainer width=\"100%\" height={200}>\n              <LineChart data={hourlyData}>\n                <CartesianGrid strokeDasharray=\"3 3\" stroke=\"#e2e8f0\" />\n                <XAxis dataKey=\"time\" stroke=\"#64748b\" fontSize={12} />\n                <YAxis stroke=\"#64748b\" fontSize={12} />\n                <Tooltip\n                  contentStyle={{\n                    backgroundColor: '#1e293b',\n                    border: 'none',\n                    borderRadius: '8px',\n                    color: '#fff'\n                  }}\n                />\n                <Line\n                  type=\"monotone\"\n                  dataKey=\"temp\"\n                  stroke=\"#3b82f6\"\n                  strokeWidth={3}\n                  dot={{ fill: '#3b82f6', r: 4 }}\n                  activeDot={{ r: 6 }}\n                />\n              </LineChart>\n            </ResponsiveContainer>\n          </CardContent>\n        </Card>\n\n        {/* 5-Day Forecast */}\n        <div>\n          <h2 className=\"text-2xl font-bold text-slate-900 mb-6\">5-Day Forecast</h2>\n          <div className=\"grid grid-cols-5 gap-6\">\n            {forecast.map((day) => (\n              <Card\n                key={day.day}\n                className=\"bg-white rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-all cursor-pointer\"\n              >\n                <CardContent className=\"p-6\">\n                  <div className=\"text-center\">\n                    <h3 className=\"text-lg font-bold text-slate-900 mb-1\">{day.shortDay}</h3>\n                    <p className=\"text-sm text-slate-500 mb-4\">{day.date}</p>\n                    <div className={\"w-16 h-16 mx-auto mb-4 \" + getConditionColor(day.condition)}>\n                      {getWeatherIcon(day.condition)}\n                    </div>\n                    <div className=\"flex items-center justify-center gap-2 mb-2\">\n                      <span className=\"text-2xl font-bold text-slate-900\">{day.high}°</span>\n                      <span className=\"text-xl text-slate-400\">{day.low}°</span>\n                    </div>\n                    <p className=\"text-sm text-slate-600 font-medium mb-3\">{day.condition}</p>\n                    <div className=\"space-y-2\">\n                      <div className=\"flex items-center justify-between text-xs\">\n                        <span className=\"text-slate-500\">Rain</span>\n                        <span className=\"text-slate-700 font-medium\">{day.precipitation}%</span>\n                      </div>\n                      <div className=\"flex items-center justify-between text-xs\">\n                        <span className=\"text-slate-500\">Humidity</span>\n                        <span className=\"text-slate-700 font-medium\">{day.humidity}%</span>\n                      </div>\n                    </div>\n                  </div>\n                </CardContent>\n              </Card>\n            ))}\n          </div>\n        </div>\n\n        {/* Additional Info Cards */}\n        <div className=\"grid grid-cols-2 gap-6 mt-8\">\n          <Card className=\"bg-white rounded-xl shadow-sm border border-slate-200\">\n            <CardHeader>\n              <CardTitle className=\"text-lg font-bold text-slate-900\">UV Index</CardTitle>\n            </CardHeader>\n            <CardContent>\n              <div className=\"flex items-center gap-4\">\n                <div className=\"w-20 h-20 bg-orange-100 rounded-full flex items-center justify-center\">\n                  <Sun className=\"w-10 h-10 text-orange-600\" />\n                </div>\n                <div>\n                  <p className=\"text-4xl font-bold text-slate-900\">{currentWeather.uvIndex}</p>\n                  <p className=\"text-sm text-slate-500 mt-1\">High - Use sun protection</p>\n                </div>\n              </div>\n            </CardContent>\n          </Card>\n\n          <Card className=\"bg-white rounded-xl shadow-sm border border-slate-200\">\n            <CardHeader>\n              <CardTitle className=\"text-lg font-bold text-slate-900\">Air Quality</CardTitle>\n            </CardHeader>\n            <CardContent>\n              <div className=\"flex items-center gap-4\">\n                <div className=\"w-20 h-20 bg-green-100 rounded-full flex items-center justify-center\">\n                  <Wind className=\"w-10 h-10 text-green-600\" />\n                </div>\n                <div>\n                  <p className=\"text-4xl font-bold text-slate-900\">42</p>\n                  <p className=\"text-sm text-slate-500 mt-1\">Good - Air quality is satisfactory</p>\n                </div>\n              </div>\n            </CardContent>\n          </Card>\n        </div>\n      </div>\n    </div>\n  )\n}";
+    var _compiled = Babel.transform(_src, {presets:[['react', {runtime:'classic'}]]}).code;
+    // Strip any remaining import/export statements that would crash in a script tag
+    _compiled = _compiled.replace(/^import\s+.*$/gm, '').replace(/^export\s+(default\s+)?/gm, '');
+    // Inject compiled JS as a new script tag — runs in GLOBAL scope
+    var _s = document.createElement('script');
+    _s.textContent = _compiled + ';\nif(typeof App!=="undefined")window.App=App;';
+    document.body.appendChild(_s);
+    console.log('[Preview] ✓ Compiled and injected: App, exists:', typeof window['App']);
+    document.getElementById('loading-indicator').style.display = 'none';
+  } catch(e) {
+    console.error('[Preview] Babel error:', e.message);
+    window.__BABEL_FAILED__ = true;
+    document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px"><h3 style="color:#dc2626">Syntax Error</h3><pre style="background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b;text-align:left">' + String(e.message||e).replace(/</g,'&lt;').substring(0,500) + '</pre></div>';
+  }
+})();
+</script>
+    <!-- Component detection and rendering — wait for Babel to process text/babel scripts -->
     <script>
-      // Use Babel.transform() synchronously — no async waiting needed
-      console.log('[Preview] Checking Babel availability:', typeof Babel);
-      console.log('[Preview] Checking React availability:', typeof React);
-      if (typeof Babel === 'undefined') {
-        console.error('[Preview] Babel not loaded!');
-        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>Babel Not Loaded</h3><p>Scripts still loading. <button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></p></div>';
-      } else if (typeof React === 'undefined') {
-        console.error('[Preview] React not loaded!');
-        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>React Not Loaded</h3><p><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></p></div>';
+      // Skip component detection if Babel compilation failed
+      if (window.__BABEL_FAILED__) {
+        console.log('[Preview] Skipping component detection — Babel failed');
       } else {
-        try {
-          var _src = document.getElementById('component-source').textContent;
-          console.log('[Preview] Transforming ' + _src.length + ' chars...');
-          var _transformed = Babel.transform(_src, { presets: ['react'] });
-          console.log('[Preview] Transform done: ' + _transformed.code.length + ' chars');
-          eval(_transformed.code);
-          console.log('[Preview] Eval done');
-          // Hide loading indicator immediately after eval
-          document.getElementById('loading-indicator').style.display = 'none';
-        } catch(babelErr) {
-          console.error('[Preview] Error:', babelErr);
-          document.getElementById('loading-indicator').innerHTML =
-            '<div style="text-align:center;padding:40px;"><h3 style="color:#dc2626;">Error</h3><pre style="text-align:left;background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b;">' +
-            String(babelErr.message || babelErr).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px;">Retry</button></div>';
-        }
-      }
-
       try {
 
         // Find the main page component to render.
@@ -808,31 +657,42 @@ if (typeof window.Calendar === 'undefined') { window.Calendar = function Calenda
         console.log('[Preview] Searching for page component...');
 
         // Check if a function was created by _getIcon (our Lucide wrapper)
-        // We tag icon functions with a marker property for reliable detection
         function _isIconWrapper(fn) {
           if (!fn) return false;
           if (fn._isLucideIcon) return true;
           var str = fn.toString();
-          // Icon wrappers are small and contain SVG-related code
-          return str.length < 600 && (str.includes('viewBox') || str.includes('UnknownIcon') || str.includes('LucideIcon') || str.includes('_createLucideIcon') || str.includes('0 0 24 24'));
+          return str.length < 600 && (str.includes('viewBox') || str.includes('UnknownIcon') || str.includes('LucideIcon') || str.includes('0 0 24 24'));
         }
 
-        // Build a safe component registry instead of using eval()
-        var _localComponents = {};
-        _pageNames.forEach(function(n) {
-          try { _localComponents[n] = new Function('return typeof ' + n + ' !== "undefined" ? ' + n + ' : undefined')(); } catch(e) {}
-        });
-
-        // First, scan for known page component names via registry
-        for (const name of _pageNames) {
+        // PRIORITY 1: Use the server-detected component name (most reliable)
+        var _detectedName = window.__DETECTED_COMPONENT_NAME__;
+        if (_detectedName) {
           try {
-            const fn = _localComponents[name];
-            if (typeof fn === 'function' && !_isIconWrapper(fn)) {
-              Component = fn;
-              console.log('[Preview] ✓ Found component: ' + name + ' (local scope)');
-              break;
+            var _detected = new Function('return typeof ' + _detectedName + ' !== "undefined" ? ' + _detectedName + ' : undefined')();
+            if (typeof _detected === 'function' && !_isIconWrapper(_detected)) {
+              Component = _detected;
+              console.log('[Preview] ✓ Found component via server detection: ' + _detectedName);
             }
-          } catch (e) {}
+          } catch(e) {}
+        }
+
+        // PRIORITY 2: Build a safe component registry for known names
+        if (!Component) {
+          var _localComponents = {};
+          _pageNames.forEach(function(n) {
+            try { _localComponents[n] = new Function('return typeof ' + n + ' !== "undefined" ? ' + n + ' : undefined')(); } catch(e) {}
+          });
+
+          for (const name of _pageNames) {
+            try {
+              const fn = _localComponents[name];
+              if (typeof fn === 'function' && !_isIconWrapper(fn)) {
+                Component = fn;
+                console.log('[Preview] ✓ Found component: ' + name + ' (local scope)');
+                break;
+              }
+            } catch (e) {}
+          }
         }
 
         // If not found, search window for names ending with page-like suffixes
@@ -907,8 +767,13 @@ if (typeof window.Calendar === 'undefined') { window.Calendar = function Calenda
           const root = ReactDOM.createRoot(rootElement);
           console.log('[Preview] React root created:', root);
 
-          // Wrap component in ErrorBoundary to catch rendering errors
-          const _EB = (typeof window !== "undefined" && window.ErrorBoundary) ? window.ErrorBoundary : (typeof ErrorBoundary !== "undefined" ? ErrorBoundary : (function(p){ return p.children; }));
+          // Wrap component in ErrorBoundary to catch rendering errors. Resolve
+          // it from window (set in the setup script) with a passthrough fallback
+          // so a scope miss degrades to rendering the app un-wrapped instead of
+          // crashing with "ErrorBoundary is not defined".
+          const _EB = (typeof window !== 'undefined' && window.ErrorBoundary)
+            ? window.ErrorBoundary
+            : (typeof ErrorBoundary !== 'undefined' ? ErrorBoundary : (function(p){ return p.children; }));
           const wrappedElement = React.createElement(_EB, null,
             React.createElement(Component)
           );
@@ -977,6 +842,7 @@ if (typeof window.Calendar === 'undefined') { window.Calendar = function Calenda
           '<pre>' + _esc(error.message) + '</pre>' +
           '</div>';
       }
+      } // end else !__BABEL_FAILED__
     </script>
 </body>
 </html>

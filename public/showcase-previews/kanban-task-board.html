@@ -9,15 +9,14 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <!-- Core: React 18 -->
-    <!-- Critical: React + Babel from CDN (local copies have compatibility issues) -->
+    <!-- React 18 from CDN -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Non-critical: served locally for speed -->
-    <script src="/vendor/lucide.min.js"></script>
-    <script src="/vendor/prop-types.min.js"></script>
-    <script src="/vendor/recharts.min.js"></script>
-    <script src="/vendor/tailwind.min.js"></script>
+    <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.min.js"></script>
+    <script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.15.0/umd/Recharts.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
         theme: {
@@ -92,22 +91,65 @@
       // This works WITH React instead of fighting it
       const _originalCreateElement = React.createElement;
       let _h1Count = 0;
+      // A bare component OBJECT (forwardRef/memo/lazy — shape { $$typeof, render })
+      // placed in a CHILD position, e.g. {SomeIcon} or {chart} instead of
+      // <SomeIcon/>, makes React throw the fatal "Objects are not valid as a
+      // React child (found: object with keys {$$typeof, render})" crash overlay,
+      // killing the whole preview. This happens for Recharts/forwardRef refs the
+      // model references as values. Detect such a child and render it as an
+      // element (if it's a component) or drop it — turning a hard crash into a
+      // graceful, mostly-correct render.
+      function _sanitizeChild(c) {
+        if (c && typeof c === 'object' && c.$$typeof && c.type === undefined) {
+          // It's a component definition object, not a React element. If it's
+          // renderable (forwardRef/memo/function), mount it; else drop it.
+          try {
+            if (typeof c === 'function' || typeof c.render === 'function' || c.$$typeof) {
+              return _originalCreateElement(c, null);
+            }
+          } catch (e) {}
+          return null;
+        }
+        return c;
+      }
+      function _sanitizeChildren(v) {
+        return Array.isArray(v) ? v.map(_sanitizeChild) : _sanitizeChild(v);
+      }
       React.createElement = function(type) {
+        var args = Array.prototype.slice.call(arguments);
         if (type === 'h1') {
           _h1Count++;
-          if (_h1Count > 1) {
-            // Convert extra h1 to h2 at the React level
-            var args = Array.prototype.slice.call(arguments);
-            args[0] = 'h2';
-            return _originalCreateElement.apply(React, args);
-          }
+          if (_h1Count > 1) args[0] = 'h2'; // Convert extra h1 to h2
         }
-        return _originalCreateElement.apply(React, arguments);
+        // Sanitize positional children (args[2..]) so a stray component object
+        // can't crash the whole preview with "Objects are not valid as a React
+        // child". Handles <div>{Icon}</div> and {list.map(...)} cases.
+        if (args.length > 2) {
+          for (var _i = 2; _i < args.length; _i++) args[_i] = _sanitizeChildren(args[_i]);
+        }
+        // Also sanitize a children PROP (arg[1].children) — components that
+        // receive a component-object via the children prop rather than a
+        // positional arg (e.g. AIKit stubs that spread props).
+        if (args[1] && typeof args[1] === 'object' && 'children' in args[1]) {
+          try { args[1] = Object.assign({}, args[1], { children: _sanitizeChildren(args[1].children) }); } catch (e) {}
+        }
+        return _originalCreateElement.apply(React, args);
       };
 
-      // Make React hooks available
+      // Make React hooks available. CRITICAL: the compiled App runs in a
+      // SEPARATE global-scope <script>, so these must be on window — a plain
+      // const here is script-scoped and the App would throw "useState is not
+      // defined" and render blank (the #1 cause of blank previews).
       const { useState, useEffect, useCallback, useMemo, useRef, useContext, createContext, Fragment } = React;
-      console.log('[Preview] React hooks loaded:', { useState, useEffect, useCallback, useMemo, useRef });
+      window.useState = useState; window.useEffect = useEffect;
+      window.useCallback = useCallback; window.useMemo = useMemo;
+      window.useRef = useRef; window.useContext = useContext;
+      window.createContext = createContext; window.Fragment = Fragment;
+      // Also expose the less-common hooks apps sometimes use.
+      window.useReducer = React.useReducer; window.useLayoutEffect = React.useLayoutEffect;
+      window.useId = React.useId; window.useTransition = React.useTransition;
+      window.useDeferredValue = React.useDeferredValue; window.useImperativeHandle = React.useImperativeHandle;
+      console.log('[Preview] React hooks loaded + exposed on window:', { useState: !!window.useState, useEffect: !!window.useEffect });
 
       // Create React components from Lucide vanilla SVG icon definitions
       // lucide (vanilla) exports icons as ["svg", {svgAttrs}, [[tag, attrs], ...]]
@@ -387,7 +429,31 @@
         Legend, ResponsiveContainer, RadialBarChart, RadialBar,
         Treemap, Funnel, FunnelChart
       } = recharts;
-      console.log('[Preview] Recharts loaded:', !!recharts.LineChart);
+      // CRITICAL: the compiled app runs in a SEPARATE global-scope <script>, so
+      // these block-scoped consts are invisible to it — using <RePieChart>,
+      // <Pie>, <ResponsiveContainer> etc. would throw "Element type is invalid:
+      // ...got undefined". Expose every Recharts component on window so the app
+      // script can resolve them. Do NOT clobber the lucide icon names already on
+      // window (PieChart/LineChart/BarChart are icons); only add the Re* aliases
+      // and the recharts-only names.
+      var _rechartsGlobals = {
+        ReLineChart: ReLineChart, ReBarChart: ReBarChart, RePieChart: RePieChart,
+        Line: Line, Bar: Bar, Pie: Pie, Cell: Cell, Area: Area, AreaChart: AreaChart,
+        RadarChart: RadarChart, Radar: Radar, PolarGrid: PolarGrid,
+        PolarAngleAxis: PolarAngleAxis, PolarRadiusAxis: PolarRadiusAxis,
+        ComposedChart: ComposedChart, Scatter: Scatter, ScatterChart: ScatterChart,
+        XAxis: XAxis, YAxis: YAxis, CartesianGrid: CartesianGrid,
+        RechartsTooltip: RechartsTooltip, Legend: Legend,
+        ResponsiveContainer: ResponsiveContainer, RadialBarChart: RadialBarChart,
+        RadialBar: RadialBar, Treemap: Treemap, Funnel: Funnel, FunnelChart: FunnelChart
+      };
+      Object.keys(_rechartsGlobals).forEach(function(k) {
+        if (_rechartsGlobals[k] && !window[k]) window[k] = _rechartsGlobals[k];
+      });
+      // Tooltip is commonly imported bare from recharts; only set it if a lucide
+      // icon named Tooltip isn't already occupying the slot.
+      if (RechartsTooltip && !window.Tooltip) window.Tooltip = RechartsTooltip;
+      console.log('[Preview] Recharts loaded:', !!recharts.LineChart, '| exposed on window:', Object.keys(_rechartsGlobals).filter(function(k){return !!window[k]}).length);
 
       // Make AIKit / AINative Primitive components available
       const aikit = window.AIKitComponents || {};
@@ -478,426 +544,69 @@
 
         render() {
           if (this.state.hasError) {
+            // Graceful fallback — never dump a raw red React error at the user.
+            // A runtime render crash (e.g. a component object used as a child)
+            // shows a clean "refining" card instead of the scary stack. The raw
+            // error is kept in a collapsed <details> for debugging only.
             return React.createElement('div', {
-              style: { padding: '20px', color: 'red', fontFamily: 'monospace' }
+              style: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f8fafc', fontFamily: 'system-ui, -apple-system, sans-serif', padding: '24px' }
+            }, React.createElement('div', {
+              style: { maxWidth: '440px', textAlign: 'center', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '40px 32px', boxShadow: '0 4px 24px rgba(0,0,0,0.06)' }
             }, [
-              React.createElement('h3', { key: 'title' }, 'React Rendering Error'),
-              React.createElement('pre', { key: 'error', style: { background: '#fee', padding: '10px', borderRadius: '4px' } },
-                this.state.error?.toString() || 'Unknown error'
-              ),
-              React.createElement('details', { key: 'details' }, [
-                React.createElement('summary', { key: 'summary' }, 'Component Stack'),
-                React.createElement('pre', { key: 'stack', style: { fontSize: '11px', overflow: 'auto' } },
-                  this.state.errorInfo?.componentStack || 'No stack trace'
+              React.createElement('div', { key: 'icon', style: { fontSize: '40px', marginBottom: '12px' } }, '🛠️'),
+              React.createElement('h1', { key: 'title', style: { fontSize: '20px', fontWeight: 700, color: '#0f172a', margin: '0 0 8px' } }, 'Refining your app'),
+              React.createElement('p', { key: 'body', style: { fontSize: '14px', color: '#475569', lineHeight: 1.6, margin: '0 0 16px' } }, 'AINative built a first version but it needs another pass to render cleanly. Try regenerating — the next attempt usually gets it.'),
+              React.createElement('details', { key: 'details', style: { textAlign: 'left', marginTop: '8px' } }, [
+                React.createElement('summary', { key: 'summary', style: { fontSize: '12px', color: '#94a3b8', cursor: 'pointer' } }, 'Technical details'),
+                React.createElement('pre', { key: 'stack', style: { fontSize: '11px', color: '#64748b', background: '#f1f5f9', padding: '10px', borderRadius: '8px', overflow: 'auto', marginTop: '8px' } },
+                  (this.state.error?.toString() || 'Unknown error') + '\n\n' + (this.state.errorInfo?.componentStack || '')
                 )
               ])
-            ]);
+            ]));
           }
           return this.props.children;
         }
       }
-      // Fix: expose ErrorBoundary on window so the separate render script can see it (class is script-scoped).
+      // The component-render script runs in a SEPARATE script tag (global
+      // scope) and references ErrorBoundary as a bare identifier — but a class
+      // declaration is script-scoped, not a global. Expose it on window so the
+      // renderer can wrap the app in it (fixes "ErrorBoundary is not defined").
       window.ErrorBoundary = ErrorBoundary;
 
     </script>
-    <!-- Component code: transformed by Babel.transform() synchronously, then eval'd -->
-    <script id="component-source" type="text/plain">
-        const kanbanTasks = {
-  todo: {
-    title: 'To Do',
-    count: 12,
-    color: 'bg-gray-50',
-    items: [
-      {
-        id: 1,
-        title: 'Implement user authentication flow',
-        category: 'BACKEND',
-        categoryColor: 'bg-green-100 text-green-700',
-        description: 'Set up OAuth 2.0 with Google and GitHub providers, implement JWT tokens',
-        priority: 'high',
-        assignees: [
-          { name: 'JH', color: 'bg-[#5867EF]' },
-          { name: 'DB', color: 'bg-slate-700' }
-        ],
-        comments: 8,
-        attachments: 3,
-        labels: ['security', 'auth'],
-        estimatedHours: 16,
-        createdAt: '2024-01-15'
-      },
-      {
-        id: 2,
-        title: 'Design responsive navigation menu',
-        category: 'UI/UX',
-        categoryColor: 'bg-purple-100 text-purple-700',
-        description: 'Create mobile-first navigation with hamburger menu and smooth transitions',
-        priority: 'medium',
-        assignees: [
-          { name: 'AC', color: 'bg-[#338585]' }
-        ],
-        comments: 5,
-        attachments: 2,
-        labels: ['design', 'mobile'],
-        estimatedHours: 8,
-        createdAt: '2024-01-16'
-      },
-      {
-        id: 3,
-        title: 'Optimize database queries',
-        category: 'PERFORMANCE',
-        categoryColor: 'bg-orange-100 text-orange-700',
-        description: 'Index frequently queried columns and implement caching strategy',
-        priority: 'low',
-        assignees: [
-          { name: 'DB', color: 'bg-slate-700' }
-        ],
-        comments: 3,
-        attachments: 1,
-        labels: ['optimization', 'database'],
-        estimatedHours: 12,
-        createdAt: '2024-01-17'
-      }
-    ]
-  },
-  inProgress: {
-    title: 'In Progress',
-    count: 5,
-    color: 'bg-yellow-50',
-    items: [
-      {
-        id: 4,
-        title: 'Build admin dashboard',
-        category: 'FEATURE',
-        categoryColor: 'bg-blue-100 text-blue-700',
-        description: 'Create comprehensive admin panel with user management and analytics',
-        priority: 'high',
-        progress: 65,
-        assignees: [
-          { name: 'VK', color: 'bg-rose-500' },
-          { name: 'JH', color: 'bg-[#5867EF]' }
-        ],
-        comments: 12,
-        attachments: 5,
-        labels: ['admin', 'dashboard'],
-        estimatedHours: 24,
-        actualHours: 15.5,
-        createdAt: '2024-01-10',
-        startedAt: '2024-01-18'
-      },
-      {
-        id: 5,
-        title: 'Implement real-time notifications',
-        category: 'FEATURE',
-        categoryColor: 'bg-blue-100 text-blue-700',
-        description: 'Add WebSocket support for live updates and push notifications',
-        priority: 'medium',
-        progress: 40,
-        assignees: [
-          { name: 'MK', color: 'bg-[#FCAE39]' }
-        ],
-        comments: 6,
-        attachments: 2,
-        labels: ['realtime', 'websocket'],
-        estimatedHours: 20,
-        actualHours: 8,
-        createdAt: '2024-01-12',
-        startedAt: '2024-01-19'
-      }
-    ]
-  },
-  review: {
-    title: 'In Review',
-    count: 3,
-    color: 'bg-purple-50',
-    items: [
-      {
-        id: 6,
-        title: 'Update API documentation',
-        category: 'DOCS',
-        categoryColor: 'bg-gray-100 text-gray-700',
-        description: 'Document all new endpoints with examples and response schemas',
-        priority: 'medium',
-        assignees: [
-          { name: 'AC', color: 'bg-[#338585]' },
-          { name: 'MK', color: 'bg-[#FCAE39]' }
-        ],
-        comments: 4,
-        attachments: 3,
-        labels: ['documentation', 'api'],
-        estimatedHours: 6,
-        actualHours: 5,
-        createdAt: '2024-01-08',
-        startedAt: '2024-01-15',
-        reviewRequestedAt: '2024-01-20'
-      }
-    ]
-  },
-  completed: {
-    title: 'Completed',
-    count: 24,
-    color: 'bg-green-50',
-    items: [
-      {
-        id: 7,
-        title: 'Set up CI/CD pipeline',
-        category: 'DEVOPS',
-        categoryColor: 'bg-indigo-100 text-indigo-700',
-        description: 'Configure GitHub Actions for automated testing and deployment',
-        priority: 'low',
-        assignees: [
-          { name: 'DB', color: 'bg-slate-700' }
-        ],
-        comments: 8,
-        attachments: 4,
-        labels: ['automation', 'deployment'],
-        estimatedHours: 10,
-        actualHours: 9,
-        createdAt: '2024-01-05',
-        startedAt: '2024-01-10',
-        completedAt: '2024-01-14'
-      },
-      {
-        id: 8,
-        title: 'Migrate to PostgreSQL',
-        category: 'BACKEND',
-        categoryColor: 'bg-green-100 text-green-700',
-        description: 'Successfully migrated from MySQL to PostgreSQL with zero downtime',
-        priority: 'high',
-        assignees: [
-          { name: 'JH', color: 'bg-[#5867EF]' },
-          { name: 'DB', color: 'bg-slate-700' }
-        ],
-        comments: 15,
-        attachments: 6,
-        labels: ['database', 'migration'],
-        estimatedHours: 20,
-        actualHours: 18,
-        createdAt: '2024-01-01',
-        startedAt: '2024-01-02',
-        completedAt: '2024-01-12'
-      }
-    ]
-  }
-};
-
-function KanbanBoard() {
-  const [columns] = useState(kanbanTasks);
-  const [draggedTask, setDraggedTask] = useState(null);
-  const [draggedOver, setDraggedOver] = useState(null);
-
-  const handleDragStart = (e, task, columnId) => {
-    setDraggedTask({ task, sourceColumn: columnId });
-    e.dataTransfer.effectAllowed = 'move';
-  };
-
-  const handleDragOver = (e, columnId) => {
-    e.preventDefault();
-    setDraggedOver(columnId);
-  };
-
-  const handleDragLeave = () => {
-    setDraggedOver(null);
-  };
-
-  const handleDrop = (e, targetColumnId) => {
-    e.preventDefault();
-    setDraggedOver(null);
-    
-    if (draggedTask && draggedTask.sourceColumn !== targetColumnId) {
-      // In a real app, you would update the backend here
-      console.log(`Moved task ${draggedTask.task.id} from ${draggedTask.sourceColumn} to ${targetColumnId}`);
-    }
-    
-    setDraggedTask(null);
-  };
-
-  const getPriorityColor = (priority) => {
-    switch (priority) {
-      case 'high': return 'bg-red-100 text-red-700';
-      case 'medium': return 'bg-yellow-100 text-yellow-700';
-      case 'low': return 'bg-green-100 text-green-700';
-      default: return 'bg-gray-100 text-gray-700';
-    }
-  };
-
-  const formatDate = (dateString) => {
-    if (!dateString) return '';
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  };
-
-  return (
-    <main aria-label="Kanban Board" className="min-h-screen bg-[#DFE9F2]">
-      {/* Professional Header */}
-      <div className="bg-slate-900">
-        <div className="px-8 py-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white text-2xl font-bold">
-                K
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold text-white">Project Dashboard</h1>
-                <p className="text-slate-300 text-sm mt-1">Manage your team efficiently</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <button className="bg-slate-700 text-white border border-slate-600 hover:bg-slate-600 px-4 py-2 rounded-lg flex items-center gap-2">
-                <Search className="w-4 h-4" />
-                Search
-              </button>
-              <button className="bg-blue-600 text-white hover:bg-blue-700 px-4 py-2 rounded-lg flex items-center gap-2">
-                <Plus className="w-4 h-4" />
-                New Task
-              </button>
-              <div className="ml-3 flex items-center gap-2">
-                <button className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-white hover:bg-slate-600">
-                  •
-                </button>
-                <div className="w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold border-2 border-white">
-                  JH
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Kanban Board */}
-      <div className="container mx-auto px-6 py-8">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {Object.entries(columns).map(([columnId, column]) => (
-            <div 
-              key={columnId}
-              className={"rounded-xl p-4 " + column.color + " border border-slate-200"}
-              onDragOver={(e) => handleDragOver(e, columnId)}
-              onDragLeave={handleDragLeave}
-              onDrop={(e) => handleDrop(e, columnId)}
-            >
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="font-semibold text-slate-800">{column.title}</h2>
-                <span className="bg-slate-200 text-slate-700 text-xs font-medium px-2.5 py-0.5 rounded-full">
-                  {column.items.length}
-                </span>
-              </div>
-              
-              <div className="space-y-4">
-                {column.items.map((task) => (
-                  <div 
-                    key={task.id}
-                    draggable
-                    onDragStart={(e) => handleDragStart(e, task, columnId)}
-                    className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm hover:shadow-md transition-all cursor-move"
-                  >
-                    <div className="flex justify-between items-start mb-2">
-                      <h3 className="font-medium text-slate-800 text-sm leading-tight">{task.title}</h3>
-                      <button className="text-slate-400 hover:text-slate-600">
-                        <MoreHorizontal className="w-4 h-4" />
-                      </button>
-                    </div>
-                    
-                    <p className="text-xs text-slate-600 mb-3 line-clamp-2">{task.description}</p>
-                    
-                    <div className="flex items-center justify-between mb-3">
-                      <span className={"text-xs font-medium px-2 py-1 rounded " + task.categoryColor}>
-                        {task.category}
-                      </span>
-                      <span className={"text-xs font-medium px-2 py-1 rounded " + getPriorityColor(task.priority)}>
-                        {task.priority.charAt(0).toUpperCase() + task.priority.slice(1)}
-                      </span>
-                    </div>
-                    
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        {task.assignees.map((assignee, index) => (
-                          <div 
-                            key={index} 
-                            className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium text-white"
-                            style={{ backgroundColor: assignee.color }}
-                            title={assignee.name}
-                          >
-                            {assignee.name}
-                          </div>
-                        ))}
-                      </div>
-                      
-                      <div className="flex items-center gap-1 text-xs text-slate-500">
-                        <Calendar className="w-3 h-3" />
-                        <span>{formatDate(task.createdAt)}</span>
-                      </div>
-                    </div>
-                    
-                    {task.progress && (
-                      <div className="mt-3">
-                        <div className="flex justify-between text-xs text-slate-600 mb-1">
-                          <span>Progress</span>
-                          <span>{task.progress}%</span>
-                        </div>
-                        <div className="w-full bg-slate-200 rounded-full h-1.5">
-                          <div 
-                            className="bg-blue-600 h-1.5 rounded-full" 
-                            style={{ width: `${task.progress}%` }}
-                           />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-      
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ 
-        __html: JSON.stringify({
-          "@context": "https://schema.org",
-          "@type": "WebApplication",
-          "name": "Kanban Board",
-          "description": "Project management kanban board with To Do, In Progress, and Done columns"
-        }) 
-      }} />
-    </main>
-  );
-}
-
-// Expose components to window for preview
-window.KanbanBoard = KanbanBoard;
-    </script>
-    <!-- Fallback components (plain JS, runs before Babel transform) -->
     <script>if (typeof window.Search === 'undefined') { window.Search = function Search(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Search' }, props && props.children); }; }
+if (typeof window.Filter === 'undefined') { window.Filter = function Filter(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Filter' }, props && props.children); }; }
 if (typeof window.Plus === 'undefined') { window.Plus = function Plus(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Plus' }, props && props.children); }; }
-if (typeof window.MoreHorizontal === 'undefined') { window.MoreHorizontal = function MoreHorizontal(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'MoreHorizontal' }, props && props.children); }; }
+if (typeof window.MoreVertical === 'undefined') { window.MoreVertical = function MoreVertical(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'MoreVertical' }, props && props.children); }; }
 if (typeof window.Calendar === 'undefined') { window.Calendar = function Calendar(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Calendar' }, props && props.children); }; }</script>
-    <!-- Transform and render -->
+<script>
+window.__DETECTED_COMPONENT_NAME__ = "App";
+(function() {
+  if (typeof Babel === 'undefined' || typeof React === 'undefined') return;
+  try {
+    var _src = "function App() {\n  const [tasks, setTasks] = useState({\n    todo: [\n      {\n        id: 1,\n        title: 'Implement user authentication flow',\n        assignee: 'John Harris',\n        assigneeInitials: 'JH',\n        priority: 'High',\n        dueDate: '2024-02-15',\n        description: 'Set up OAuth 2.0 with Google and GitHub providers',\n        tags: ['Backend', 'Security']\n      },\n      {\n        id: 2,\n        title: 'Design responsive navigation menu',\n        assignee: 'Alice Chen',\n        assigneeInitials: 'AC',\n        priority: 'Medium',\n        dueDate: '2024-02-18',\n        description: 'Create mobile-first navigation with hamburger menu',\n        tags: ['UI/UX', 'Mobile']\n      },\n      {\n        id: 3,\n        title: 'Optimize database queries',\n        assignee: 'David Brown',\n        assigneeInitials: 'DB',\n        priority: 'Low',\n        dueDate: '2024-02-22',\n        description: 'Index frequently queried columns and implement caching',\n        tags: ['Performance', 'Database']\n      },\n      {\n        id: 4,\n        title: 'Write API documentation',\n        assignee: 'Sarah Martinez',\n        assigneeInitials: 'SM',\n        priority: 'Medium',\n        dueDate: '2024-02-20',\n        description: 'Document all endpoints with examples and schemas',\n        tags: ['Documentation']\n      }\n    ],\n    inProgress: [\n      {\n        id: 5,\n        title: 'Build admin dashboard',\n        assignee: 'Victoria Kim',\n        assigneeInitials: 'VK',\n        priority: 'High',\n        dueDate: '2024-02-12',\n        description: 'Create comprehensive admin panel with analytics',\n        tags: ['Feature', 'Dashboard']\n      },\n      {\n        id: 6,\n        title: 'Implement real-time notifications',\n        assignee: 'Michael Kumar',\n        assigneeInitials: 'MK',\n        priority: 'High',\n        dueDate: '2024-02-14',\n        description: 'Add WebSocket support for live updates',\n        tags: ['Feature', 'Realtime']\n      },\n      {\n        id: 7,\n        title: 'Create user onboarding flow',\n        assignee: 'Emma Wilson',\n        assigneeInitials: 'EW',\n        priority: 'Medium',\n        dueDate: '2024-02-16',\n        description: 'Design multi-step onboarding with progress tracking',\n        tags: ['UI/UX', 'Feature']\n      }\n    ],\n    done: [\n      {\n        id: 8,\n        title: 'Set up CI/CD pipeline',\n        assignee: 'David Brown',\n        assigneeInitials: 'DB',\n        priority: 'Medium',\n        dueDate: '2024-02-08',\n        description: 'Configure GitHub Actions for automated deployment',\n        tags: ['DevOps', 'Automation']\n      },\n      {\n        id: 9,\n        title: 'Migrate to PostgreSQL',\n        assignee: 'John Harris',\n        assigneeInitials: 'JH',\n        priority: 'High',\n        dueDate: '2024-02-10',\n        description: 'Successfully migrated from MySQL with zero downtime',\n        tags: ['Backend', 'Database']\n      },\n      {\n        id: 10,\n        title: 'Implement error tracking',\n        assignee: 'Alice Chen',\n        assigneeInitials: 'AC',\n        priority: 'Low',\n        dueDate: '2024-02-09',\n        description: 'Integrated Sentry for error monitoring',\n        tags: ['Monitoring']\n      }\n    ]\n  })\n\n  const getPriorityColor = (priority) => {\n    switch(priority) {\n      case 'High': return 'bg-red-100 text-red-700 border-red-200'\n      case 'Medium': return 'bg-yellow-100 text-yellow-700 border-yellow-200'\n      case 'Low': return 'bg-green-100 text-green-700 border-green-200'\n      default: return 'bg-slate-100 text-slate-700 border-slate-200'\n    }\n  }\n\n  const getAvatarColor = (initials) => {\n    const colors = {\n      'JH': 'bg-[#5867EF]',\n      'AC': 'bg-[#338585]',\n      'DB': 'bg-slate-700',\n      'SM': 'bg-purple-500',\n      'VK': 'bg-rose-500',\n      'MK': 'bg-[#FCAE39]',\n      'EW': 'bg-pink-500'\n    }\n    return colors[initials] || 'bg-blue-600'\n  }\n\n  const getColumnColor = (column) => {\n    switch(column) {\n      case 'todo': return 'bg-slate-100'\n      case 'inProgress': return 'bg-blue-50'\n      case 'done': return 'bg-green-50'\n      default: return 'bg-slate-100'\n    }\n  }\n\n  const columns = [\n    { key: 'todo', title: 'To Do', count: tasks.todo.length },\n    { key: 'inProgress', title: 'In Progress', count: tasks.inProgress.length },\n    { key: 'done', title: 'Done', count: tasks.done.length }\n  ]\n\n  return (\n    <div className=\"min-h-screen bg-[#F0F2F8]\">\n      {/* Header */}\n      <div className=\"bg-slate-900\">\n        <div className=\"px-8 py-6\">\n          <div className=\"flex items-center justify-between\">\n            <div className=\"flex items-center gap-4\">\n              <div className=\"w-10 h-10 bg-[#2E4CA6] rounded-lg flex items-center justify-center text-white text-xl font-bold\">\n                T\n              </div>\n              <div>\n                <h1 className=\"text-2xl font-bold text-white\">Task Board</h1>\n                <p className=\"text-slate-300 text-sm mt-1\">Manage your team's workflow efficiently</p>\n              </div>\n            </div>\n            <div className=\"flex items-center gap-3\">\n              <button className=\"flex items-center gap-2 px-4 py-2 bg-slate-700 text-white rounded-lg border border-slate-600 hover:bg-slate-600 transition-colors\">\n                <Search className=\"w-4 h-4\" />\n                <span className=\"text-sm\">Search</span>\n              </button>\n              <button className=\"flex items-center gap-2 px-4 py-2 bg-slate-700 text-white rounded-lg border border-slate-600 hover:bg-slate-600 transition-colors\">\n                <Filter className=\"w-4 h-4\" />\n                <span className=\"text-sm\">Filter</span>\n              </button>\n              <button className=\"flex items-center gap-2 px-4 py-2 bg-[#2E4CA6] text-white rounded-lg hover:bg-[#243a85] transition-colors\">\n                <Plus className=\"w-4 h-4\" />\n                <span className=\"text-sm\">New Task</span>\n              </button>\n              <div className=\"ml-3 flex items-center gap-2\">\n                <button className=\"w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-white hover:bg-slate-600 transition-colors\">\n                  <span className=\"text-lg\">•</span>\n                </button>\n                <div className=\"w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold border-2 border-white\">\n                  JH\n                </div>\n              </div>\n            </div>\n          </div>\n        </div>\n      </div>\n\n      {/* Main Content */}\n      <div className=\"p-8\">\n        {/* Stats Bar */}\n        <div className=\"grid grid-cols-3 gap-6 mb-8\">\n          <div className=\"bg-white rounded-xl shadow-sm border border-slate-200 p-6\">\n            <div className=\"flex items-center justify-between\">\n              <div>\n                <p className=\"text-sm text-slate-500 font-medium\">Total Tasks</p>\n                <p className=\"text-3xl font-bold text-slate-900 mt-1\">\n                  {tasks.todo.length + tasks.inProgress.length + tasks.done.length}\n                </p>\n              </div>\n              <div className=\"w-12 h-12 bg-slate-100 rounded-lg flex items-center justify-center\">\n                <div className=\"w-6 h-6 bg-slate-400 rounded\" />\n              </div>\n            </div>\n          </div>\n          <div className=\"bg-white rounded-xl shadow-sm border border-slate-200 p-6\">\n            <div className=\"flex items-center justify-between\">\n              <div>\n                <p className=\"text-sm text-slate-500 font-medium\">In Progress</p>\n                <p className=\"text-3xl font-bold text-blue-600 mt-1\">{tasks.inProgress.length}</p>\n              </div>\n              <div className=\"w-12 h-12 bg-blue-50 rounded-lg flex items-center justify-center\">\n                <div className=\"w-6 h-6 bg-blue-400 rounded\" />\n              </div>\n            </div>\n          </div>\n          <div className=\"bg-white rounded-xl shadow-sm border border-slate-200 p-6\">\n            <div className=\"flex items-center justify-between\">\n              <div>\n                <p className=\"text-sm text-slate-500 font-medium\">Completed</p>\n                <p className=\"text-3xl font-bold text-green-600 mt-1\">{tasks.done.length}</p>\n              </div>\n              <div className=\"w-12 h-12 bg-green-50 rounded-lg flex items-center justify-center\">\n                <div className=\"w-6 h-6 bg-green-400 rounded\" />\n              </div>\n            </div>\n          </div>\n        </div>\n\n        {/* Task Board */}\n        <div className=\"grid grid-cols-3 gap-6\">\n          {columns.map((column) => (\n            <div key={column.key} className=\"flex flex-col\">\n              {/* Column Header */}\n              <div className={getColumnColor(column.key) + \" rounded-t-xl p-4 border-b-2 \" + column.key === 'todo' ? 'border-slate-300' : column.key === 'inProgress' ? 'border-blue-300' : 'border-green-300'}>\n                <div className=\"flex items-center justify-between\">\n                  <div className=\"flex items-center gap-2\">\n                    <h3 className=\"text-lg font-bold text-slate-900\">{column.title}</h3>\n                    <span className=\"px-2 py-1 bg-white rounded-full text-xs font-semibold text-slate-600\">\n                      {column.count}\n                    </span>\n                  </div>\n                  <button className=\"p-1 hover:bg-white rounded transition-colors\">\n                    <Plus className=\"w-5 h-5 text-slate-600\" />\n                  </button>\n                </div>\n              </div>\n\n              {/* Task Cards */}\n              <div className=\"flex-1 bg-slate-50 rounded-b-xl p-4 space-y-4 min-h-[600px]\">\n                {tasks[column.key].map((task) => (\n                  <div \n                    key={task.id}\n                    className=\"bg-white rounded-xl shadow-sm border border-slate-200 p-5 hover:shadow-md transition-all cursor-pointer\"\n                  >\n                    {/* Task Header */}\n                    <div className=\"flex items-start justify-between mb-3\">\n                      <h4 className=\"text-base font-bold text-slate-900 flex-1 pr-2 leading-snug\">\n                        {task.title}\n                      </h4>\n                      <button className=\"p-1 hover:bg-slate-100 rounded transition-colors\">\n                        <MoreVertical className=\"w-4 h-4 text-slate-400\" />\n                      </button>\n                    </div>\n\n                    {/* Description */}\n                    <p className=\"text-sm text-slate-500 mb-4 line-clamp-2\">\n                      {task.description}\n                    </p>\n\n                    {/* Tags */}\n                    <div className=\"flex flex-wrap gap-2 mb-4\">\n                      {task.tags.map((tag, idx) => (\n                        <span \n                          key={idx}\n                          className=\"px-2 py-1 bg-slate-100 text-slate-600 rounded text-xs font-medium\"\n                        >\n                          {tag}\n                        </span>\n                      ))}\n                    </div>\n\n                    {/* Priority Badge */}\n                    <div className=\"mb-4\">\n                      <span className={\"inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border \" + getPriorityColor(task.priority)}>\n                        {task.priority} Priority\n                      </span>\n                    </div>\n\n                    {/* Footer */}\n                    <div className=\"flex items-center justify-between pt-4 border-t border-slate-100\">\n                      {/* Assignee */}\n                      <div className=\"flex items-center gap-2\">\n                        <div className={\"w-8 h-8 rounded-full \" + getAvatarColor(task.assigneeInitials) + \" flex items-center justify-center text-white text-xs font-bold\"}>\n                          {task.assigneeInitials}\n                        </div>\n                        <span className=\"text-sm text-slate-600 font-medium\">{task.assignee}</span>\n                      </div>\n\n                      {/* Due Date */}\n                      <div className=\"flex items-center gap-1 text-slate-500\">\n                        <Calendar className=\"w-4 h-4\" />\n                        <span className=\"text-xs font-medium\">\n                          {new Date(task.dueDate).toLocaleDateString('en-US', { \n                            month: 'short', \n                            day: 'numeric' \n                          })}\n                        </span>\n                      </div>\n                    </div>\n                  </div>\n                ))}\n              </div>\n            </div>\n          ))}\n        </div>\n      </div>\n    </div>\n  )\n}";
+    var _compiled = Babel.transform(_src, {presets:[['react', {runtime:'classic'}]]}).code;
+    // Strip any remaining import/export statements that would crash in a script tag
+    _compiled = _compiled.replace(/^import\s+.*$/gm, '').replace(/^export\s+(default\s+)?/gm, '');
+    // Inject compiled JS as a new script tag — runs in GLOBAL scope
+    var _s = document.createElement('script');
+    _s.textContent = _compiled + ';\nif(typeof App!=="undefined")window.App=App;';
+    document.body.appendChild(_s);
+    console.log('[Preview] ✓ Compiled and injected: App, exists:', typeof window['App']);
+    document.getElementById('loading-indicator').style.display = 'none';
+  } catch(e) {
+    console.error('[Preview] Babel error:', e.message);
+    window.__BABEL_FAILED__ = true;
+    document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px"><h3 style="color:#dc2626">Syntax Error</h3><pre style="background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b;text-align:left">' + String(e.message||e).replace(/</g,'&lt;').substring(0,500) + '</pre></div>';
+  }
+})();
+</script>
+    <!-- Component detection and rendering — wait for Babel to process text/babel scripts -->
     <script>
-      // Use Babel.transform() synchronously — no async waiting needed
-      console.log('[Preview] Checking Babel availability:', typeof Babel);
-      console.log('[Preview] Checking React availability:', typeof React);
-      if (typeof Babel === 'undefined') {
-        console.error('[Preview] Babel not loaded!');
-        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>Babel Not Loaded</h3><p>Scripts still loading. <button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></p></div>';
-      } else if (typeof React === 'undefined') {
-        console.error('[Preview] React not loaded!');
-        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>React Not Loaded</h3><p><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></p></div>';
+      // Skip component detection if Babel compilation failed
+      if (window.__BABEL_FAILED__) {
+        console.log('[Preview] Skipping component detection — Babel failed');
       } else {
-        try {
-          var _src = document.getElementById('component-source').textContent;
-          console.log('[Preview] Transforming ' + _src.length + ' chars...');
-          var _transformed = Babel.transform(_src, { presets: ['react'] });
-          console.log('[Preview] Transform done: ' + _transformed.code.length + ' chars');
-          eval(_transformed.code);
-          console.log('[Preview] Eval done');
-          // Hide loading indicator immediately after eval
-          document.getElementById('loading-indicator').style.display = 'none';
-        } catch(babelErr) {
-          console.error('[Preview] Error:', babelErr);
-          document.getElementById('loading-indicator').innerHTML =
-            '<div style="text-align:center;padding:40px;"><h3 style="color:#dc2626;">Error</h3><pre style="text-align:left;background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b;">' +
-            String(babelErr.message || babelErr).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px;">Retry</button></div>';
-        }
-      }
-
       try {
 
         // Find the main page component to render.
@@ -941,31 +650,42 @@ if (typeof window.Calendar === 'undefined') { window.Calendar = function Calenda
         console.log('[Preview] Searching for page component...');
 
         // Check if a function was created by _getIcon (our Lucide wrapper)
-        // We tag icon functions with a marker property for reliable detection
         function _isIconWrapper(fn) {
           if (!fn) return false;
           if (fn._isLucideIcon) return true;
           var str = fn.toString();
-          // Icon wrappers are small and contain SVG-related code
-          return str.length < 600 && (str.includes('viewBox') || str.includes('UnknownIcon') || str.includes('LucideIcon') || str.includes('_createLucideIcon') || str.includes('0 0 24 24'));
+          return str.length < 600 && (str.includes('viewBox') || str.includes('UnknownIcon') || str.includes('LucideIcon') || str.includes('0 0 24 24'));
         }
 
-        // Build a safe component registry instead of using eval()
-        var _localComponents = {};
-        _pageNames.forEach(function(n) {
-          try { _localComponents[n] = new Function('return typeof ' + n + ' !== "undefined" ? ' + n + ' : undefined')(); } catch(e) {}
-        });
-
-        // First, scan for known page component names via registry
-        for (const name of _pageNames) {
+        // PRIORITY 1: Use the server-detected component name (most reliable)
+        var _detectedName = window.__DETECTED_COMPONENT_NAME__;
+        if (_detectedName) {
           try {
-            const fn = _localComponents[name];
-            if (typeof fn === 'function' && !_isIconWrapper(fn)) {
-              Component = fn;
-              console.log('[Preview] ✓ Found component: ' + name + ' (local scope)');
-              break;
+            var _detected = new Function('return typeof ' + _detectedName + ' !== "undefined" ? ' + _detectedName + ' : undefined')();
+            if (typeof _detected === 'function' && !_isIconWrapper(_detected)) {
+              Component = _detected;
+              console.log('[Preview] ✓ Found component via server detection: ' + _detectedName);
             }
-          } catch (e) {}
+          } catch(e) {}
+        }
+
+        // PRIORITY 2: Build a safe component registry for known names
+        if (!Component) {
+          var _localComponents = {};
+          _pageNames.forEach(function(n) {
+            try { _localComponents[n] = new Function('return typeof ' + n + ' !== "undefined" ? ' + n + ' : undefined')(); } catch(e) {}
+          });
+
+          for (const name of _pageNames) {
+            try {
+              const fn = _localComponents[name];
+              if (typeof fn === 'function' && !_isIconWrapper(fn)) {
+                Component = fn;
+                console.log('[Preview] ✓ Found component: ' + name + ' (local scope)');
+                break;
+              }
+            } catch (e) {}
+          }
         }
 
         // If not found, search window for names ending with page-like suffixes
@@ -1040,8 +760,13 @@ if (typeof window.Calendar === 'undefined') { window.Calendar = function Calenda
           const root = ReactDOM.createRoot(rootElement);
           console.log('[Preview] React root created:', root);
 
-          // Wrap component in ErrorBoundary to catch rendering errors
-          const _EB = (typeof window !== "undefined" && window.ErrorBoundary) ? window.ErrorBoundary : (typeof ErrorBoundary !== "undefined" ? ErrorBoundary : (function(p){ return p.children; }));
+          // Wrap component in ErrorBoundary to catch rendering errors. Resolve
+          // it from window (set in the setup script) with a passthrough fallback
+          // so a scope miss degrades to rendering the app un-wrapped instead of
+          // crashing with "ErrorBoundary is not defined".
+          const _EB = (typeof window !== 'undefined' && window.ErrorBoundary)
+            ? window.ErrorBoundary
+            : (typeof ErrorBoundary !== 'undefined' ? ErrorBoundary : (function(p){ return p.children; }));
           const wrappedElement = React.createElement(_EB, null,
             React.createElement(Component)
           );
@@ -1110,6 +835,7 @@ if (typeof window.Calendar === 'undefined') { window.Calendar = function Calenda
           '<pre>' + _esc(error.message) + '</pre>' +
           '</div>';
       }
+      } // end else !__BABEL_FAILED__
     </script>
 </body>
 </html>

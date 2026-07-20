@@ -9,15 +9,14 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <!-- Core: React 18 -->
-    <!-- Critical: React + Babel from CDN (local copies have compatibility issues) -->
+    <!-- React 18 from CDN -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Non-critical: served locally for speed -->
-    <script src="/vendor/lucide.min.js"></script>
-    <script src="/vendor/prop-types.min.js"></script>
-    <script src="/vendor/recharts.min.js"></script>
-    <script src="/vendor/tailwind.min.js"></script>
+    <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.min.js"></script>
+    <script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.15.0/umd/Recharts.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
         theme: {
@@ -92,22 +91,65 @@
       // This works WITH React instead of fighting it
       const _originalCreateElement = React.createElement;
       let _h1Count = 0;
+      // A bare component OBJECT (forwardRef/memo/lazy — shape { $$typeof, render })
+      // placed in a CHILD position, e.g. {SomeIcon} or {chart} instead of
+      // <SomeIcon/>, makes React throw the fatal "Objects are not valid as a
+      // React child (found: object with keys {$$typeof, render})" crash overlay,
+      // killing the whole preview. This happens for Recharts/forwardRef refs the
+      // model references as values. Detect such a child and render it as an
+      // element (if it's a component) or drop it — turning a hard crash into a
+      // graceful, mostly-correct render.
+      function _sanitizeChild(c) {
+        if (c && typeof c === 'object' && c.$$typeof && c.type === undefined) {
+          // It's a component definition object, not a React element. If it's
+          // renderable (forwardRef/memo/function), mount it; else drop it.
+          try {
+            if (typeof c === 'function' || typeof c.render === 'function' || c.$$typeof) {
+              return _originalCreateElement(c, null);
+            }
+          } catch (e) {}
+          return null;
+        }
+        return c;
+      }
+      function _sanitizeChildren(v) {
+        return Array.isArray(v) ? v.map(_sanitizeChild) : _sanitizeChild(v);
+      }
       React.createElement = function(type) {
+        var args = Array.prototype.slice.call(arguments);
         if (type === 'h1') {
           _h1Count++;
-          if (_h1Count > 1) {
-            // Convert extra h1 to h2 at the React level
-            var args = Array.prototype.slice.call(arguments);
-            args[0] = 'h2';
-            return _originalCreateElement.apply(React, args);
-          }
+          if (_h1Count > 1) args[0] = 'h2'; // Convert extra h1 to h2
         }
-        return _originalCreateElement.apply(React, arguments);
+        // Sanitize positional children (args[2..]) so a stray component object
+        // can't crash the whole preview with "Objects are not valid as a React
+        // child". Handles <div>{Icon}</div> and {list.map(...)} cases.
+        if (args.length > 2) {
+          for (var _i = 2; _i < args.length; _i++) args[_i] = _sanitizeChildren(args[_i]);
+        }
+        // Also sanitize a children PROP (arg[1].children) — components that
+        // receive a component-object via the children prop rather than a
+        // positional arg (e.g. AIKit stubs that spread props).
+        if (args[1] && typeof args[1] === 'object' && 'children' in args[1]) {
+          try { args[1] = Object.assign({}, args[1], { children: _sanitizeChildren(args[1].children) }); } catch (e) {}
+        }
+        return _originalCreateElement.apply(React, args);
       };
 
-      // Make React hooks available
+      // Make React hooks available. CRITICAL: the compiled App runs in a
+      // SEPARATE global-scope <script>, so these must be on window — a plain
+      // const here is script-scoped and the App would throw "useState is not
+      // defined" and render blank (the #1 cause of blank previews).
       const { useState, useEffect, useCallback, useMemo, useRef, useContext, createContext, Fragment } = React;
-      console.log('[Preview] React hooks loaded:', { useState, useEffect, useCallback, useMemo, useRef });
+      window.useState = useState; window.useEffect = useEffect;
+      window.useCallback = useCallback; window.useMemo = useMemo;
+      window.useRef = useRef; window.useContext = useContext;
+      window.createContext = createContext; window.Fragment = Fragment;
+      // Also expose the less-common hooks apps sometimes use.
+      window.useReducer = React.useReducer; window.useLayoutEffect = React.useLayoutEffect;
+      window.useId = React.useId; window.useTransition = React.useTransition;
+      window.useDeferredValue = React.useDeferredValue; window.useImperativeHandle = React.useImperativeHandle;
+      console.log('[Preview] React hooks loaded + exposed on window:', { useState: !!window.useState, useEffect: !!window.useEffect });
 
       // Create React components from Lucide vanilla SVG icon definitions
       // lucide (vanilla) exports icons as ["svg", {svgAttrs}, [[tag, attrs], ...]]
@@ -387,7 +429,31 @@
         Legend, ResponsiveContainer, RadialBarChart, RadialBar,
         Treemap, Funnel, FunnelChart
       } = recharts;
-      console.log('[Preview] Recharts loaded:', !!recharts.LineChart);
+      // CRITICAL: the compiled app runs in a SEPARATE global-scope <script>, so
+      // these block-scoped consts are invisible to it — using <RePieChart>,
+      // <Pie>, <ResponsiveContainer> etc. would throw "Element type is invalid:
+      // ...got undefined". Expose every Recharts component on window so the app
+      // script can resolve them. Do NOT clobber the lucide icon names already on
+      // window (PieChart/LineChart/BarChart are icons); only add the Re* aliases
+      // and the recharts-only names.
+      var _rechartsGlobals = {
+        ReLineChart: ReLineChart, ReBarChart: ReBarChart, RePieChart: RePieChart,
+        Line: Line, Bar: Bar, Pie: Pie, Cell: Cell, Area: Area, AreaChart: AreaChart,
+        RadarChart: RadarChart, Radar: Radar, PolarGrid: PolarGrid,
+        PolarAngleAxis: PolarAngleAxis, PolarRadiusAxis: PolarRadiusAxis,
+        ComposedChart: ComposedChart, Scatter: Scatter, ScatterChart: ScatterChart,
+        XAxis: XAxis, YAxis: YAxis, CartesianGrid: CartesianGrid,
+        RechartsTooltip: RechartsTooltip, Legend: Legend,
+        ResponsiveContainer: ResponsiveContainer, RadialBarChart: RadialBarChart,
+        RadialBar: RadialBar, Treemap: Treemap, Funnel: Funnel, FunnelChart: FunnelChart
+      };
+      Object.keys(_rechartsGlobals).forEach(function(k) {
+        if (_rechartsGlobals[k] && !window[k]) window[k] = _rechartsGlobals[k];
+      });
+      // Tooltip is commonly imported bare from recharts; only set it if a lucide
+      // icon named Tooltip isn't already occupying the slot.
+      if (RechartsTooltip && !window.Tooltip) window.Tooltip = RechartsTooltip;
+      console.log('[Preview] Recharts loaded:', !!recharts.LineChart, '| exposed on window:', Object.keys(_rechartsGlobals).filter(function(k){return !!window[k]}).length);
 
       // Make AIKit / AINative Primitive components available
       const aikit = window.AIKitComponents || {};
@@ -478,435 +544,75 @@
 
         render() {
           if (this.state.hasError) {
+            // Graceful fallback — never dump a raw red React error at the user.
+            // A runtime render crash (e.g. a component object used as a child)
+            // shows a clean "refining" card instead of the scary stack. The raw
+            // error is kept in a collapsed <details> for debugging only.
             return React.createElement('div', {
-              style: { padding: '20px', color: 'red', fontFamily: 'monospace' }
+              style: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f8fafc', fontFamily: 'system-ui, -apple-system, sans-serif', padding: '24px' }
+            }, React.createElement('div', {
+              style: { maxWidth: '440px', textAlign: 'center', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '40px 32px', boxShadow: '0 4px 24px rgba(0,0,0,0.06)' }
             }, [
-              React.createElement('h3', { key: 'title' }, 'React Rendering Error'),
-              React.createElement('pre', { key: 'error', style: { background: '#fee', padding: '10px', borderRadius: '4px' } },
-                this.state.error?.toString() || 'Unknown error'
-              ),
-              React.createElement('details', { key: 'details' }, [
-                React.createElement('summary', { key: 'summary' }, 'Component Stack'),
-                React.createElement('pre', { key: 'stack', style: { fontSize: '11px', overflow: 'auto' } },
-                  this.state.errorInfo?.componentStack || 'No stack trace'
+              React.createElement('div', { key: 'icon', style: { fontSize: '40px', marginBottom: '12px' } }, '🛠️'),
+              React.createElement('h1', { key: 'title', style: { fontSize: '20px', fontWeight: 700, color: '#0f172a', margin: '0 0 8px' } }, 'Refining your app'),
+              React.createElement('p', { key: 'body', style: { fontSize: '14px', color: '#475569', lineHeight: 1.6, margin: '0 0 16px' } }, 'AINative built a first version but it needs another pass to render cleanly. Try regenerating — the next attempt usually gets it.'),
+              React.createElement('details', { key: 'details', style: { textAlign: 'left', marginTop: '8px' } }, [
+                React.createElement('summary', { key: 'summary', style: { fontSize: '12px', color: '#94a3b8', cursor: 'pointer' } }, 'Technical details'),
+                React.createElement('pre', { key: 'stack', style: { fontSize: '11px', color: '#64748b', background: '#f1f5f9', padding: '10px', borderRadius: '8px', overflow: 'auto', marginTop: '8px' } },
+                  (this.state.error?.toString() || 'Unknown error') + '\n\n' + (this.state.errorInfo?.componentStack || '')
                 )
               ])
-            ]);
+            ]));
           }
           return this.props.children;
         }
       }
-      // Fix: expose ErrorBoundary on window so the separate render script can see it (class is script-scoped).
+      // The component-render script runs in a SEPARATE script tag (global
+      // scope) and references ErrorBoundary as a bare identifier — but a class
+      // declaration is script-scoped, not a global. Expose it on window so the
+      // renderer can wrap the app in it (fixes "ErrorBoundary is not defined").
       window.ErrorBoundary = ErrorBoundary;
 
     </script>
-    <!-- Component code: transformed by Babel.transform() synchronously, then eval'd -->
-    <script id="component-source" type="text/plain">
-        // Mock data for revenue trends
-const revenueData = [
-  { month: 'Jan', revenue: 4000 },
-  { month: 'Feb', revenue: 3000 },
-  { month: 'Mar', revenue: 2000 },
-  { month: 'Apr', revenue: 2780 },
-  { month: 'May', revenue: 1890 },
-  { month: 'Jun', revenue: 2390 },
-  { month: 'Jul', revenue: 3490 },
-];
-
-// Mock transaction data
-const transactions = [
-  { id: 1, customer: 'Alex Johnson', amount: '$245.00', status: 'Completed' },
-  { id: 2, customer: 'Maria Garcia', amount: '$120.50', status: 'Pending' },
-  { id: 3, customer: 'David Smith', amount: '$890.75', status: 'Completed' },
-  { id: 4, customer: 'Sarah Williams', amount: '$56.25', status: 'Failed' },
-  { id: 5, customer: 'Robert Brown', amount: '$342.00', status: 'Completed' },
-];
-
-// Status badge component
-const StatusBadge = ({ status }) => {
-  let bgColor = 'bg-gray-100 text-gray-800';
-  let textColor = 'text-gray-800';
-  
-  switch (status) {
-    case 'Completed':
-      bgColor = 'bg-green-100 text-green-800';
-      textColor = 'text-green-800';
-      break;
-    case 'Pending':
-      bgColor = 'bg-yellow-100 text-yellow-800';
-      textColor = 'text-yellow-800';
-      break;
-    case 'Failed':
-      bgColor = 'bg-red-100 text-red-800';
-      textColor = 'text-red-800';
-      break;
-    default:
-      bgColor = 'bg-gray-100 text-gray-800';
-      textColor = 'text-gray-800';
-  }
-  
-  return (
-    <span className={"px-2 py-1 rounded-full text-xs font-medium " + bgColor + " " + textColor}>
-      {status}
-    </span>
-  );
-};
-
-// Metric card component
-const MetricCard = ({ title, value, change, changeType, sparklineData, icon }) => {
-  return (
-    <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 hover:shadow-md transition-all">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm font-medium text-slate-500">{title}</p>
-          <h3 className="text-2xl font-bold text-slate-900 mt-1">{value}</h3>
-          <div className="flex items-center mt-2">
-            <span className={"text-sm font-medium " + changeType === 'positive' ? 'text-green-600' : 'text-red-600'}>
-              {change}
-            </span>
-            <span className="ml-1 text-sm text-slate-500">from last month</span>
-          </div>
-        </div>
-        <div className="w-12 h-12 rounded-xl bg-[#83A66A]/10 flex items-center justify-center">
-          {icon}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Bar chart component
-const RevenueChart = () => {
-  const maxValue = Math.max(...revenueData.map(d => d.revenue));
-  
-  return (
-    <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6">
-      <div className="flex items-center justify-between mb-6">
-        <h3 className="text-lg font-semibold text-slate-900">Monthly Revenue</h3>
-        <button className="text-sm text-slate-500 hover:text-slate-700">
-          View Report
-        </button>
-      </div>
-      
-      <div className="flex items-end h-64 gap-2 mt-8">
-        {revenueData.map((data, index) => (
-          <div key={index} className="flex flex-col items-center flex-1">
-            <div className="text-xs text-slate-500 mb-2">{data.month}</div>
-            <div 
-              className="w-full bg-[#83A66A]/20 rounded-t-md transition-all duration-500 ease-in-out"
-              style={{ height: `${(data.revenue / maxValue) * 100}%` }}
-            />
-            <div className="text-xs text-slate-500 mt-2">{data.revenue}</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
-// Transaction table component
-const TransactionTable = () => {
-  return (
-    <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6">
-      <div className="flex items-center justify-between mb-6">
-        <h3 className="text-lg font-semibold text-slate-900">Recent Transactions</h3>
-        <button className="text-sm text-slate-500 hover:text-slate-700 flex items-center">
-          <Plus className="w-4 h-4 mr-1" />
-          Add Transaction
-        </button>
-      </div>
-      
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-slate-200">
-              <th className="pb-3 text-left text-sm font-medium text-slate-500">Customer</th>
-              <th className="pb-3 text-left text-sm font-medium text-slate-500">Amount</th>
-              <th className="pb-3 text-left text-sm font-medium text-slate-500">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {transactions.map((transaction) => (
-              <tr key={transaction.id} className="border-b border-slate-100 hover:bg-slate-50">
-                <td className="py-4">
-                  <div className="font-medium text-slate-900">{transaction.customer}</div>
-                </td>
-                <td className="py-4">
-                  <div className="text-slate-900 font-medium">{transaction.amount}</div>
-                </td>
-                <td className="py-4">
-                  <StatusBadge status={transaction.status} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-};
-
-function AnalyticsDashboard() {
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    // Simulate loading
-    setTimeout(() => {
-      setLoading(false);
-    }, 800);
-  }, []);
-
-  if (loading) {
-    return (
-      <main aria-label="Analytics Dashboard" className="min-h-screen bg-[#F2F2F2]">
-        <div className="bg-slate-900">
-          <div className="px-8 py-6">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white text-2xl font-bold">
-                  A
-                </div>
-                <div>
-                  <h1 className="text-2xl font-bold text-white">Analytics Dashboard</h1>
-                  <p className="text-slate-300 text-sm mt-1">Monitor your business metrics</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <button className="bg-slate-700 text-white border border-slate-600 hover:bg-slate-600 px-4 py-2 rounded-lg text-sm">
-                  Search
-                </button>
-                <button className="bg-blue-600 text-white hover:bg-blue-700 px-4 py-2 rounded-lg text-sm">
-                  New Report
-                </button>
-                <div className="ml-3 flex items-center gap-2">
-                  <button className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-white hover:bg-slate-600">
-                    •
-                  </button>
-                  <div className="w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold border-2 border-white">
-                    AJ
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <div className="container mx-auto px-6 py-8">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            {[1, 2, 3, 4].map((i) => (
-              <div key={i} className="bg-white border border-slate-200 shadow-sm rounded-xl p-6">
-                <div className="animate-pulse">
-                  <div className="h-4 bg-slate-200 rounded w-1/3 mb-4" />
-                  <div className="h-8 bg-slate-200 rounded w-1/2 mb-2" />
-                  <div className="h-4 bg-slate-200 rounded w-1/4" />
-                </div>
-              </div>
-            ))}
-          </div>
-          
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-            <div className="lg:col-span-2 bg-white border border-slate-200 shadow-sm rounded-xl p-6">
-              <div className="animate-pulse h-64" />
-            </div>
-            <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6">
-              <div className="animate-pulse h-64" />
-            </div>
-          </div>
-          
-          <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6">
-            <div className="animate-pulse h-64" />
-          </div>
-        </div>
-      </main>
-    );
-  }
-
-  return (
-    <main aria-label="Analytics Dashboard" className="min-h-screen bg-[#F2F2F2]">
-      <div className="bg-slate-900">
-        <div className="px-8 py-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white text-2xl font-bold">
-                A
-              </div>
-              <div>
-                <h2 className="text-2xl font-bold text-white">Analytics Dashboard</h2>
-                <p className="text-slate-300 text-sm mt-1">Monitor your business metrics</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <button className="bg-slate-700 text-white border border-slate-600 hover:bg-slate-600 px-4 py-2 rounded-lg text-sm flex items-center">
-                <Search className="w-4 h-4 mr-2" />
-                Search
-              </button>
-              <button className="bg-blue-600 text-white hover:bg-blue-700 px-4 py-2 rounded-lg text-sm flex items-center">
-                <Plus className="w-4 h-4 mr-2" />
-                New Report
-              </button>
-              <div className="ml-3 flex items-center gap-2">
-                <button className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-white hover:bg-slate-600">
-                  <Bell className="w-4 h-4" />
-                </button>
-                <div className="w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold border-2 border-white">
-                  AJ
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      
-      <div className="container mx-auto px-6 py-8">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <MetricCard 
-            title="Users" 
-            value="2,543" 
-            change="+12.5%" 
-            changeType="positive" 
-            icon={<Users className="w-6 h-6 text-[#83A66A]" />}
-          />
-          <MetricCard 
-            title="Revenue" 
-            value="USD 45,678" 
-            change="+8.2%" 
-            changeType="positive" 
-            icon={<DollarSign className="w-6 h-6 text-[#83A66A]" />}
-          />
-          <MetricCard 
-            title="Sessions" 
-            value="342" 
-            change="+3.1%" 
-            changeType="positive" 
-            icon={<Activity className="w-6 h-6 text-[#83A66A]" />}
-          />
-          <MetricCard 
-            title="Growth Rate" 
-            value="12.5%" 
-            change="+2.3%" 
-            changeType="positive" 
-            icon={<TrendingUp className="w-6 h-6 text-[#83A66A]" />}
-          />
-        </div>
-        
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-          <div className="lg:col-span-2">
-            <RevenueChart />
-          </div>
-          <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg font-semibold text-slate-900">Performance Metrics</h3>
-              <button className="text-sm text-slate-500 hover:text-slate-700">
-                View All
-              </button>
-            </div>
-            
-            <div className="space-y-4">
-              <div>
-                <div className="flex justify-between mb-1">
-                  <span className="text-sm font-medium text-slate-700">Conversion Rate</span>
-                  <span className="text-sm font-medium text-slate-700">8.2%</span>
-                </div>
-                <div className="w-full bg-slate-200 rounded-full h-2">
-                  <div className="bg-[#83A66A] h-2 rounded-full" style={{ width: '82%' }} />
-                </div>
-              </div>
-              
-              <div>
-                <div className="flex justify-between mb-1">
-                  <span className="text-sm font-medium text-slate-700">Engagement</span>
-                  <span className="text-sm font-medium text-slate-700">67%</span>
-                </div>
-                <div className="w-full bg-slate-200 rounded-full h-2">
-                  <div className="bg-[#83A66A]/70 h-2 rounded-full" style={{ width: '67%' }} />
-                </div>
-              </div>
-              
-              <div>
-                <div className="flex justify-between mb-1">
-                  <span className="text-sm font-medium text-slate-700">Retention</span>
-                  <span className="text-sm font-medium text-slate-700">42%</span>
-                </div>
-                <div className="w-full bg-slate-200 rounded-full h-2">
-                  <div className="bg-[#83A66A]/50 h-2 rounded-full" style={{ width: '42%' }} />
-                </div>
-              </div>
-              
-              <div>
-                <div className="flex justify-between mb-1">
-                  <span className="text-sm font-medium text-slate-700">Avg. Session</span>
-                  <span className="text-sm font-medium text-slate-700">4m 23s</span>
-                </div>
-                <div className="w-full bg-slate-200 rounded-full h-2">
-                  <div className="bg-[#83A66A]/30 h-2 rounded-full" style={{ width: '35%' }} />
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <TransactionTable />
-      </div>
-      
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ 
-        __html: JSON.stringify({
-          "@context": "https://schema.org",
-          "@type": "WebApplication",
-          "name": "Analytics Dashboard",
-          "description": "Professional analytics dashboard with metrics, charts and transaction data"
-        }) 
-      }} />
-    </main>
-  );
-}
-
-// Expose components to window for preview
-window.StatusBadge = StatusBadge;
-window.MetricCard = MetricCard;
-window.RevenueChart = RevenueChart;
-window.TransactionTable = TransactionTable;
-window.AnalyticsDashboard = AnalyticsDashboard;
-    </script>
-    <!-- Fallback components (plain JS, runs before Babel transform) -->
-    <script>if (typeof window.Plus === 'undefined') { window.Plus = function Plus(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Plus' }, props && props.children); }; }
-if (typeof window.StatusBadge === 'undefined') { window.StatusBadge = function StatusBadge(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'StatusBadge' }, props && props.children); }; }
-if (typeof window.Search === 'undefined') { window.Search = function Search(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Search' }, props && props.children); }; }
+    <script>if (typeof window.Search === 'undefined') { window.Search = function Search(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Search' }, props && props.children); }; }
+if (typeof window.Download === 'undefined') { window.Download = function Download(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Download' }, props && props.children); }; }
 if (typeof window.Bell === 'undefined') { window.Bell = function Bell(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Bell' }, props && props.children); }; }
-if (typeof window.Users === 'undefined') { window.Users = function Users(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Users' }, props && props.children); }; }
-if (typeof window.DollarSign === 'undefined') { window.DollarSign = function DollarSign(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'DollarSign' }, props && props.children); }; }
+if (typeof window.Icon === 'undefined') { window.Icon = function Icon(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Icon' }, props && props.children); }; }
+if (typeof window.MoreVertical === 'undefined') { window.MoreVertical = function MoreVertical(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'MoreVertical' }, props && props.children); }; }
+if (typeof window.BarChart === 'undefined') { window.BarChart = function BarChart(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'BarChart' }, props && props.children); }; }
+if (typeof window.Tooltip === 'undefined') { window.Tooltip = function Tooltip(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Tooltip' }, props && props.children); }; }
 if (typeof window.Activity === 'undefined') { window.Activity = function Activity(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Activity' }, props && props.children); }; }
 if (typeof window.TrendingUp === 'undefined') { window.TrendingUp = function TrendingUp(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'TrendingUp' }, props && props.children); }; }
-if (typeof window.RevenueChart === 'undefined') { window.RevenueChart = function RevenueChart(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'RevenueChart' }, props && props.children); }; }
-if (typeof window.TransactionTable === 'undefined') { window.TransactionTable = function TransactionTable(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'TransactionTable' }, props && props.children); }; }</script>
-    <!-- Transform and render -->
+if (typeof window.Users === 'undefined') { window.Users = function Users(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'Users' }, props && props.children); }; }
+if (typeof window.DollarSign === 'undefined') { window.DollarSign = function DollarSign(props) { return React.createElement('div', { className: (props && props.className) || 'p-4 rounded-xl border border-slate-200 bg-white', 'data-component': 'DollarSign' }, props && props.children); }; }</script>
+<script>
+window.__DETECTED_COMPONENT_NAME__ = "App";
+(function() {
+  if (typeof Babel === 'undefined' || typeof React === 'undefined') return;
+  try {
+    var _src = "function App() {\n  const [timeRange, setTimeRange] = useState('30d');\n\n  const metrics = [\n    {\n      title: 'Total Users',\n      value: '2,543',\n      change: '+12.5%',\n      changeType: 'positive',\n      icon: Users,\n      color: 'bg-blue-600',\n      sparklineData: [1800, 1950, 2100, 2200, 2350, 2450, 2543]\n    },\n    {\n      title: 'Total Revenue',\n      value: '$45,678',\n      change: '+18.2%',\n      changeType: 'positive',\n      icon: DollarSign,\n      color: 'bg-green-600',\n      sparklineData: [32000, 35000, 38000, 40000, 42000, 44000, 45678]\n    },\n    {\n      title: 'Active Sessions',\n      value: '342',\n      change: '+8.1%',\n      changeType: 'positive',\n      icon: Activity,\n      color: 'bg-purple-600',\n      sparklineData: [280, 290, 305, 315, 325, 335, 342]\n    },\n    {\n      title: 'Growth Rate',\n      value: '12.5%',\n      change: '+2.3%',\n      changeType: 'positive',\n      icon: TrendingUp,\n      color: 'bg-orange-600',\n      sparklineData: [8.2, 9.1, 9.8, 10.5, 11.2, 11.8, 12.5]\n    }\n  ]\n\n  const monthlyData = [\n    { month: 'Jan', revenue: 32500, users: 1850, sessions: 245 },\n    { month: 'Feb', revenue: 35200, users: 1920, sessions: 268 },\n    { month: 'Mar', revenue: 38100, users: 2050, sessions: 285 },\n    { month: 'Apr', revenue: 40300, users: 2180, sessions: 302 },\n    { month: 'May', revenue: 42800, users: 2320, sessions: 318 },\n    { month: 'Jun', revenue: 45678, users: 2543, sessions: 342 }\n  ]\n\n  const transactions = [\n    {\n      id: 'TXN-001',\n      customer: 'Sarah Johnson',\n      email: 'sarah.j@example.com',\n      amount: '$1,245.00',\n      status: 'completed',\n      date: '2024-01-15',\n      type: 'Subscription'\n    },\n    {\n      id: 'TXN-002',\n      customer: 'Michael Chen',\n      email: 'mchen@example.com',\n      amount: '$890.50',\n      status: 'completed',\n      date: '2024-01-15',\n      type: 'One-time'\n    },\n    {\n      id: 'TXN-003',\n      customer: 'Emily Rodriguez',\n      email: 'emily.r@example.com',\n      amount: '$2,150.00',\n      status: 'pending',\n      date: '2024-01-14',\n      type: 'Subscription'\n    },\n    {\n      id: 'TXN-004',\n      customer: 'David Park',\n      email: 'dpark@example.com',\n      amount: '$675.25',\n      status: 'completed',\n      date: '2024-01-14',\n      type: 'One-time'\n    },\n    {\n      id: 'TXN-005',\n      customer: 'Lisa Anderson',\n      email: 'l.anderson@example.com',\n      amount: '$3,200.00',\n      status: 'failed',\n      date: '2024-01-13',\n      type: 'Subscription'\n    }\n  ]\n\n  return (\n    <div className=\"min-h-screen bg-[#F5F8F0]\">\n      {/* Header */}\n      <div className=\"bg-[#0D0D0D]\">\n        <div className=\"px-8 py-6\">\n          <div className=\"flex items-center justify-between\">\n            <div className=\"flex items-center gap-4\">\n              <div className=\"w-10 h-10 bg-[#BAF241] rounded-lg flex items-center justify-center text-[#0D0D0D] text-2xl font-bold\">\n                D\n              </div>\n              <div>\n                <h1 className=\"text-2xl font-bold text-white\">Analytics Dashboard</h1>\n                <p className=\"text-slate-300 text-sm mt-1\">Monitor your business metrics in real-time</p>\n              </div>\n            </div>\n            <div className=\"flex items-center gap-3\">\n              <Button className=\"bg-slate-700 text-white border border-slate-600 hover:bg-slate-600 transition-colors\">\n                <Search className=\"w-4 h-4 mr-2\" />\n                Search\n              </Button>\n              <Button className=\"bg-[#BAF241] text-[#0D0D0D] hover:bg-[#a8e030] transition-colors font-medium\">\n                <Download className=\"w-4 h-4 mr-2\" />\n                Export Report\n              </Button>\n              <div className=\"ml-3 flex items-center gap-2\">\n                <button className=\"w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-white hover:bg-slate-600 transition-colors relative\">\n                  <Bell className=\"w-4 h-4\" />\n                  <span className=\"absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-[#0D0D0D]\" />\n                </button>\n                <div className=\"w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center text-white font-bold border-2 border-white\">\n                  JD\n                </div>\n              </div>\n            </div>\n          </div>\n        </div>\n      </div>\n\n      {/* Main Content */}\n      <div className=\"px-8 py-8\">\n        {/* Time Range Selector */}\n        <div className=\"mb-6 flex items-center justify-between\">\n          <div>\n            <h2 className=\"text-2xl font-bold text-slate-900\">Overview</h2>\n            <p className=\"text-sm text-slate-500 mt-1\">Track your key performance indicators</p>\n          </div>\n          <div className=\"flex gap-2\">\n            {['7d', '30d', '90d', '1y'].map((range) => (\n              <button\n                key={range}\n                onClick={() => setTimeRange(range)}\n                className={\"px-4 py-2 rounded-lg text-sm font-medium transition-colors \" + timeRange === range ? 'bg-[#0D0D0D] text-white' : 'bg-white text-slate-600 hover:bg-slate-100'}\n              >\n                {range === '7d' ? 'Last 7 days' : range === '30d' ? 'Last 30 days' : range === '90d' ? 'Last 90 days' : 'Last year'}\n              </button>\n            ))}\n          </div>\n        </div>\n\n        {/* Metric Cards */}\n        <div className=\"grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8\">\n          {metrics.map((metric, index) => {\n            const Icon = metric.icon;\n            return (\n              <div\n                key={index}\n                className=\"bg-white rounded-xl shadow-sm border border-slate-200 p-6 hover:shadow-md transition-all\"\n              >\n                <div className=\"flex items-start justify-between mb-4\">\n                  <div className={\"w-12 h-12 \" + metric.color + \" rounded-lg flex items-center justify-center\"}>\n                    <Icon className=\"w-6 h-6 text-white\" />\n                  </div>\n                  <Badge className={metric.changeType === 'positive' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700' + \" font-medium\"}>\n                    {metric.change}\n                  </Badge>\n                </div>\n                <h3 className=\"text-sm text-slate-500 font-medium mb-1\">{metric.title}</h3>\n                <p className=\"text-3xl font-bold text-slate-900 mb-3\">{metric.value}</p>\n                <div className=\"h-12 flex items-end gap-1\">\n                  {metric.sparklineData.map((value, idx) => (\n                    <div\n                      key={idx}\n                      className={\"flex-1 \" + metric.color + \" opacity-70 rounded-t\"}\n                      style={{ height: `${(value / Math.max(...metric.sparklineData)) * 100}%` }}\n                     />\n                  ))}\n                </div>\n              </div>\n            )\n          })}\n        </div>\n\n        {/* Charts Row */}\n        <div className=\"grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8\">\n          {/* Bar Chart */}\n          <div className=\"lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 p-6\">\n            <div className=\"flex items-center justify-between mb-6\">\n              <div>\n                <h3 className=\"text-xl font-bold text-slate-900\">Monthly Performance</h3>\n                <p className=\"text-sm text-slate-500 mt-1\">Revenue and user growth over time</p>\n              </div>\n              <button className=\"text-slate-400 hover:text-slate-600 transition-colors\">\n                <MoreVertical className=\"w-5 h-5\" />\n              </button>\n            </div>\n            <ResponsiveContainer width=\"100%\" height={300}>\n              <BarChart data={monthlyData}>\n                <CartesianGrid strokeDasharray=\"3 3\" stroke=\"#e2e8f0\" />\n                <XAxis dataKey=\"month\" stroke=\"#64748b\" style={{ fontSize: '12px' }} />\n                <YAxis stroke=\"#64748b\" style={{ fontSize: '12px' }} />\n                <Tooltip\n                  contentStyle={{\n                    backgroundColor: 'white',\n                    border: '1px solid #e2e8f0',\n                    borderRadius: '8px',\n                    boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'\n                  }}\n                />\n                <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '20px' }} />\n                <Bar dataKey=\"revenue\" fill=\"#10b981\" radius={[4, 4, 0, 0]} />\n                <Bar dataKey=\"users\" fill=\"#3b82f6\" radius={[4, 4, 0, 0]} />\n              </BarChart>\n            </ResponsiveContainer>\n          </div>\n\n          {/* Quick Stats */}\n          <div className=\"bg-white rounded-xl shadow-sm border border-slate-200 p-6\">\n            <h3 className=\"text-xl font-bold text-slate-900 mb-6\">Quick Stats</h3>\n            <div className=\"space-y-4\">\n              <div className=\"flex items-center justify-between pb-4 border-b border-slate-200\">\n                <div>\n                  <p className=\"text-sm text-slate-500\">Avg. Session Duration</p>\n                  <p className=\"text-2xl font-bold text-slate-900 mt-1\">4m 32s</p>\n                </div>\n                <div className=\"w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center\">\n                  <Activity className=\"w-6 h-6 text-blue-600\" />\n                </div>\n              </div>\n              <div className=\"flex items-center justify-between pb-4 border-b border-slate-200\">\n                <div>\n                  <p className=\"text-sm text-slate-500\">Conversion Rate</p>\n                  <p className=\"text-2xl font-bold text-slate-900 mt-1\">3.24%</p>\n                </div>\n                <div className=\"w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center\">\n                  <TrendingUp className=\"w-6 h-6 text-purple-600\" />\n                </div>\n              </div>\n              <div className=\"flex items-center justify-between pb-4 border-b border-slate-200\">\n                <div>\n                  <p className=\"text-sm text-slate-500\">New Signups</p>\n                  <p className=\"text-2xl font-bold text-slate-900 mt-1\">156</p>\n                </div>\n                <div className=\"w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center\">\n                  <Users className=\"w-6 h-6 text-green-600\" />\n                </div>\n              </div>\n              <div className=\"flex items-center justify-between\">\n                <div>\n                  <p className=\"text-sm text-slate-500\">Total Transactions</p>\n                  <p className=\"text-2xl font-bold text-slate-900 mt-1\">1,247</p>\n                </div>\n                <div className=\"w-12 h-12 bg-orange-100 rounded-lg flex items-center justify-center\">\n                  <DollarSign className=\"w-6 h-6 text-orange-600\" />\n                </div>\n              </div>\n            </div>\n          </div>\n        </div>\n\n        {/* Recent Transactions Table */}\n        <div className=\"bg-white rounded-xl shadow-sm border border-slate-200 p-6\">\n          <div className=\"flex items-center justify-between mb-6\">\n            <div>\n              <h3 className=\"text-xl font-bold text-slate-900\">Recent Transactions</h3>\n              <p className=\"text-sm text-slate-500 mt-1\">Latest payment activities</p>\n            </div>\n            <Button className=\"bg-[#0D0D0D] text-white hover:bg-slate-800 transition-colors\">\n              View All\n            </Button>\n          </div>\n          <div className=\"overflow-x-auto\">\n            <Table>\n              <TableHeader>\n                <TableRow>\n                  <TableHead className=\"font-semibold\">Transaction ID</TableHead>\n                  <TableHead className=\"font-semibold\">Customer</TableHead>\n                  <TableHead className=\"font-semibold\">Type</TableHead>\n                  <TableHead className=\"font-semibold\">Amount</TableHead>\n                  <TableHead className=\"font-semibold\">Status</TableHead>\n                  <TableHead className=\"font-semibold\">Date</TableHead>\n                  <TableHead className=\"font-semibold text-right\">Actions</TableHead>\n                </TableRow>\n              </TableHeader>\n              <TableBody>\n                {transactions.map((transaction) => (\n                  <TableRow key={transaction.id} className=\"hover:bg-slate-50 transition-colors\">\n                    <TableCell className=\"font-mono text-sm\">{transaction.id}</TableCell>\n                    <TableCell>\n                      <div>\n                        <p className=\"font-medium text-slate-900\">{transaction.customer}</p>\n                        <p className=\"text-sm text-slate-500\">{transaction.email}</p>\n                      </div>\n                    </TableCell>\n                    <TableCell>\n                      <Badge className={transaction.type === 'Subscription' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}>\n                        {transaction.type}\n                      </Badge>\n                    </TableCell>\n                    <TableCell className=\"font-semibold text-slate-900\">{transaction.amount}</TableCell>\n                    <TableCell>\n                      <Badge\n                        className={transaction.status === 'completed' ? 'bg-green-100 text-green-700' : transaction.status === 'pending' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}\n                      >\n                        {transaction.status.charAt(0).toUpperCase() + transaction.status.slice(1)}\n                      </Badge>\n                    </TableCell>\n                    <TableCell className=\"text-slate-600\">{transaction.date}</TableCell>\n                    <TableCell className=\"text-right\">\n                      <button className=\"text-slate-400 hover:text-slate-600 transition-colors\">\n                        <MoreVertical className=\"w-5 h-5\" />\n                      </button>\n                    </TableCell>\n                  </TableRow>\n                ))}\n              </TableBody>\n            </Table>\n          </div>\n        </div>\n      </div>\n    </div>\n  )\n}";
+    var _compiled = Babel.transform(_src, {presets:[['react', {runtime:'classic'}]]}).code;
+    // Strip any remaining import/export statements that would crash in a script tag
+    _compiled = _compiled.replace(/^import\s+.*$/gm, '').replace(/^export\s+(default\s+)?/gm, '');
+    // Inject compiled JS as a new script tag — runs in GLOBAL scope
+    var _s = document.createElement('script');
+    _s.textContent = _compiled + ';\nif(typeof App!=="undefined")window.App=App;';
+    document.body.appendChild(_s);
+    console.log('[Preview] ✓ Compiled and injected: App, exists:', typeof window['App']);
+    document.getElementById('loading-indicator').style.display = 'none';
+  } catch(e) {
+    console.error('[Preview] Babel error:', e.message);
+    window.__BABEL_FAILED__ = true;
+    document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px"><h3 style="color:#dc2626">Syntax Error</h3><pre style="background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b;text-align:left">' + String(e.message||e).replace(/</g,'&lt;').substring(0,500) + '</pre></div>';
+  }
+})();
+</script>
+    <!-- Component detection and rendering — wait for Babel to process text/babel scripts -->
     <script>
-      // Use Babel.transform() synchronously — no async waiting needed
-      console.log('[Preview] Checking Babel availability:', typeof Babel);
-      console.log('[Preview] Checking React availability:', typeof React);
-      if (typeof Babel === 'undefined') {
-        console.error('[Preview] Babel not loaded!');
-        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>Babel Not Loaded</h3><p>Scripts still loading. <button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></p></div>';
-      } else if (typeof React === 'undefined') {
-        console.error('[Preview] React not loaded!');
-        document.getElementById('loading-indicator').innerHTML = '<div style="text-align:center;padding:40px;"><h3>React Not Loaded</h3><p><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;">Retry</button></p></div>';
+      // Skip component detection if Babel compilation failed
+      if (window.__BABEL_FAILED__) {
+        console.log('[Preview] Skipping component detection — Babel failed');
       } else {
-        try {
-          var _src = document.getElementById('component-source').textContent;
-          console.log('[Preview] Transforming ' + _src.length + ' chars...');
-          var _transformed = Babel.transform(_src, { presets: ['react'] });
-          console.log('[Preview] Transform done: ' + _transformed.code.length + ' chars');
-          eval(_transformed.code);
-          console.log('[Preview] Eval done');
-          // Hide loading indicator immediately after eval
-          document.getElementById('loading-indicator').style.display = 'none';
-        } catch(babelErr) {
-          console.error('[Preview] Error:', babelErr);
-          document.getElementById('loading-indicator').innerHTML =
-            '<div style="text-align:center;padding:40px;"><h3 style="color:#dc2626;">Error</h3><pre style="text-align:left;background:#fef2f2;padding:16px;border-radius:8px;max-width:600px;margin:12px auto;overflow:auto;font-size:12px;color:#991b1b;">' +
-            String(babelErr.message || babelErr).replace(/</g,'&lt;').substring(0,500) + '</pre><button onclick="location.reload()" style="background:#3b82f6;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;margin-top:12px;">Retry</button></div>';
-        }
-      }
-
       try {
 
         // Find the main page component to render.
@@ -950,31 +656,42 @@ if (typeof window.TransactionTable === 'undefined') { window.TransactionTable = 
         console.log('[Preview] Searching for page component...');
 
         // Check if a function was created by _getIcon (our Lucide wrapper)
-        // We tag icon functions with a marker property for reliable detection
         function _isIconWrapper(fn) {
           if (!fn) return false;
           if (fn._isLucideIcon) return true;
           var str = fn.toString();
-          // Icon wrappers are small and contain SVG-related code
-          return str.length < 600 && (str.includes('viewBox') || str.includes('UnknownIcon') || str.includes('LucideIcon') || str.includes('_createLucideIcon') || str.includes('0 0 24 24'));
+          return str.length < 600 && (str.includes('viewBox') || str.includes('UnknownIcon') || str.includes('LucideIcon') || str.includes('0 0 24 24'));
         }
 
-        // Build a safe component registry instead of using eval()
-        var _localComponents = {};
-        _pageNames.forEach(function(n) {
-          try { _localComponents[n] = new Function('return typeof ' + n + ' !== "undefined" ? ' + n + ' : undefined')(); } catch(e) {}
-        });
-
-        // First, scan for known page component names via registry
-        for (const name of _pageNames) {
+        // PRIORITY 1: Use the server-detected component name (most reliable)
+        var _detectedName = window.__DETECTED_COMPONENT_NAME__;
+        if (_detectedName) {
           try {
-            const fn = _localComponents[name];
-            if (typeof fn === 'function' && !_isIconWrapper(fn)) {
-              Component = fn;
-              console.log('[Preview] ✓ Found component: ' + name + ' (local scope)');
-              break;
+            var _detected = new Function('return typeof ' + _detectedName + ' !== "undefined" ? ' + _detectedName + ' : undefined')();
+            if (typeof _detected === 'function' && !_isIconWrapper(_detected)) {
+              Component = _detected;
+              console.log('[Preview] ✓ Found component via server detection: ' + _detectedName);
             }
-          } catch (e) {}
+          } catch(e) {}
+        }
+
+        // PRIORITY 2: Build a safe component registry for known names
+        if (!Component) {
+          var _localComponents = {};
+          _pageNames.forEach(function(n) {
+            try { _localComponents[n] = new Function('return typeof ' + n + ' !== "undefined" ? ' + n + ' : undefined')(); } catch(e) {}
+          });
+
+          for (const name of _pageNames) {
+            try {
+              const fn = _localComponents[name];
+              if (typeof fn === 'function' && !_isIconWrapper(fn)) {
+                Component = fn;
+                console.log('[Preview] ✓ Found component: ' + name + ' (local scope)');
+                break;
+              }
+            } catch (e) {}
+          }
         }
 
         // If not found, search window for names ending with page-like suffixes
@@ -1049,8 +766,13 @@ if (typeof window.TransactionTable === 'undefined') { window.TransactionTable = 
           const root = ReactDOM.createRoot(rootElement);
           console.log('[Preview] React root created:', root);
 
-          // Wrap component in ErrorBoundary to catch rendering errors
-          const _EB = (typeof window !== "undefined" && window.ErrorBoundary) ? window.ErrorBoundary : (typeof ErrorBoundary !== "undefined" ? ErrorBoundary : (function(p){ return p.children; }));
+          // Wrap component in ErrorBoundary to catch rendering errors. Resolve
+          // it from window (set in the setup script) with a passthrough fallback
+          // so a scope miss degrades to rendering the app un-wrapped instead of
+          // crashing with "ErrorBoundary is not defined".
+          const _EB = (typeof window !== 'undefined' && window.ErrorBoundary)
+            ? window.ErrorBoundary
+            : (typeof ErrorBoundary !== 'undefined' ? ErrorBoundary : (function(p){ return p.children; }));
           const wrappedElement = React.createElement(_EB, null,
             React.createElement(Component)
           );
@@ -1119,6 +841,7 @@ if (typeof window.TransactionTable === 'undefined') { window.TransactionTable = 
           '<pre>' + _esc(error.message) + '</pre>' +
           '</div>';
       }
+      } // end else !__BABEL_FAILED__
     </script>
 </body>
 </html>
