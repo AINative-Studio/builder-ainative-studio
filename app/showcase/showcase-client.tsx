@@ -409,7 +409,9 @@ export function ShowcaseGalleryClient() {
   const [filter, setFilter] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch('/api/showcase?offset=0&limit=100')
+    // Request a large window — the API dedupes repeated prompts server-side, so
+    // this is up to 500 DISTINCT apps, newest-first.
+    fetch('/api/showcase?offset=0&limit=500')
       .then(r => r.json())
       .then(data => {
         // Only show entries with substantial code
