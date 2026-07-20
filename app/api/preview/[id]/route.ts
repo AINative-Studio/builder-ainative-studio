@@ -926,7 +926,31 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
         Legend, ResponsiveContainer, RadialBarChart, RadialBar,
         Treemap, Funnel, FunnelChart
       } = recharts;
-      console.log('[Preview] Recharts loaded:', !!recharts.LineChart);
+      // CRITICAL: the compiled app runs in a SEPARATE global-scope <script>, so
+      // these block-scoped consts are invisible to it — using <RePieChart>,
+      // <Pie>, <ResponsiveContainer> etc. would throw "Element type is invalid:
+      // ...got undefined". Expose every Recharts component on window so the app
+      // script can resolve them. Do NOT clobber the lucide icon names already on
+      // window (PieChart/LineChart/BarChart are icons); only add the Re* aliases
+      // and the recharts-only names.
+      var _rechartsGlobals = {
+        ReLineChart: ReLineChart, ReBarChart: ReBarChart, RePieChart: RePieChart,
+        Line: Line, Bar: Bar, Pie: Pie, Cell: Cell, Area: Area, AreaChart: AreaChart,
+        RadarChart: RadarChart, Radar: Radar, PolarGrid: PolarGrid,
+        PolarAngleAxis: PolarAngleAxis, PolarRadiusAxis: PolarRadiusAxis,
+        ComposedChart: ComposedChart, Scatter: Scatter, ScatterChart: ScatterChart,
+        XAxis: XAxis, YAxis: YAxis, CartesianGrid: CartesianGrid,
+        RechartsTooltip: RechartsTooltip, Legend: Legend,
+        ResponsiveContainer: ResponsiveContainer, RadialBarChart: RadialBarChart,
+        RadialBar: RadialBar, Treemap: Treemap, Funnel: Funnel, FunnelChart: FunnelChart
+      };
+      Object.keys(_rechartsGlobals).forEach(function(k) {
+        if (_rechartsGlobals[k] && !window[k]) window[k] = _rechartsGlobals[k];
+      });
+      // Tooltip is commonly imported bare from recharts; only set it if a lucide
+      // icon named Tooltip isn't already occupying the slot.
+      if (RechartsTooltip && !window.Tooltip) window.Tooltip = RechartsTooltip;
+      console.log('[Preview] Recharts loaded:', !!recharts.LineChart, '| exposed on window:', Object.keys(_rechartsGlobals).filter(function(k){return !!window[k]}).length);
 
       // Make AIKit / AINative Primitive components available
       const aikit = window.AIKitComponents || {};
