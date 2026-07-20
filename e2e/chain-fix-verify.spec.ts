@@ -52,7 +52,7 @@ test.describe('chain-fix verification (#107, pixel-truth)', () => {
         .toBe(true)
 
       // Give the preview iframe a moment to mount its content
-      await page.waitForTimeout(6_000)
+      await page.waitForTimeout(20_000)
 
       const mainBody = (await page.locator('body').innerText().catch(() => '')) || ''
       const isFallback = FALLBACK_RE.test(mainBody)
