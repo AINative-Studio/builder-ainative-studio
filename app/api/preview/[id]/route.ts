@@ -10,21 +10,27 @@ export async function GET(
 ) {
   const { id } = await params
 
-  // FASTEST: Check for SSR-rendered HTML (instant, no CDN scripts needed)
-  const ssrHtml = getSSRPreview(id)
-  if (ssrHtml) {
-    console.log(`[Preview] Serving SSR HTML for ${id} (${ssrHtml.length}b)`)
-    return new Response(ssrHtml, {
-      headers: {
-        'Content-Type': 'text/html; charset=utf-8',
-        'X-Frame-Options': 'SAMEORIGIN',
-        'X-Preview-Source': 'ssr',
-        'Cache-Control': 'public, max-age=300',
-      },
-    })
-  }
-
   let content = getPreview(id)
+
+  // Prefer RE-RENDERING from live code over any frozen SSR HTML. A frozen SSR
+  // snapshot (from getSSRPreview) captured before a renderer fix serves the OLD
+  // broken HTML forever — the #1 reason old previews stayed blank after the
+  // hooks/newline/errorRecovery fixes. Only serve the frozen SSR HTML when
+  // there is NO code to re-render (below and in the ZeroDB restore).
+  if (!content) {
+    const ssrHtml = getSSRPreview(id)
+    if (ssrHtml) {
+      console.log(`[Preview] No live code — serving frozen SSR HTML for ${id} (${ssrHtml.length}b)`)
+      return new Response(ssrHtml, {
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'X-Frame-Options': 'SAMEORIGIN',
+          'X-Preview-Source': 'ssr',
+          'Cache-Control': 'public, max-age=300',
+        },
+      })
+    }
+  }
 
   // Not in memory — restore from ZeroDB (the durable, serverless store).
   // NOTE: the old dedicated-Postgres restore path was removed — it was
