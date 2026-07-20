@@ -14,6 +14,12 @@ export function fixJsxErrors(code: string): string {
   // Fix 0b: Rewrite barrel imports that Sandpack can't resolve
   fixed = rewriteBarrelImports(fixed)
 
+  // Fix 0b2: Route shadcn components imported from the WRONG ui/* file to the
+  // correct one. The model routinely does `import { Card, Badge, Progress } from
+  // './components/ui/button'` — but button.tsx only exports Button, so Card etc.
+  // are undefined → "Element type is invalid" / Sandpack "Something went wrong".
+  fixed = fixWrongShadcnSubpaths(fixed)
+
   // Fix 0c: Rewrite hallucinated package names to known equivalents
   fixed = rewriteHallucinatedPackages(fixed)
 
@@ -31,6 +37,65 @@ export function fixJsxErrors(code: string): string {
   fixed = fixCommonSyntax(fixed)
 
   return fixed
+}
+
+/**
+ * Map each shadcn component to the ui/* file that actually exports it, so a
+ * component imported from the wrong subpath can be re-routed.
+ */
+const SHADCN_COMPONENT_FILE: Record<string, string> = {
+  Button: 'button',
+  Card: 'card', CardHeader: 'card', CardContent: 'card', CardTitle: 'card', CardDescription: 'card', CardFooter: 'card',
+  Badge: 'badge',
+  Avatar: 'avatar', AvatarImage: 'avatar', AvatarFallback: 'avatar',
+  Tabs: 'tabs', TabsList: 'tabs', TabsTrigger: 'tabs', TabsContent: 'tabs',
+  Label: 'label',
+  Table: 'table', TableHeader: 'table', TableBody: 'table', TableRow: 'table', TableHead: 'table', TableCell: 'table',
+  Separator: 'separator',
+  Dialog: 'dialog', DialogOverlay: 'dialog', DialogContent: 'dialog', DialogHeader: 'dialog', DialogTitle: 'dialog', DialogDescription: 'dialog', DialogFooter: 'dialog',
+  Select: 'select', SelectTrigger: 'select', SelectValue: 'select', SelectContent: 'select', SelectItem: 'select',
+  Progress: 'progress', CircularProgress: 'progress',
+  Checkbox: 'checkbox', RadioGroup: 'checkbox', RadioGroupItem: 'checkbox',
+  Accordion: 'accordion', AccordionItem: 'accordion', AccordionTrigger: 'accordion', AccordionContent: 'accordion',
+  Alert: 'alert', AlertTitle: 'alert', AlertDescription: 'alert',
+  Popover: 'popover', PopoverTrigger: 'popover', PopoverContent: 'popover',
+  Switch: 'switch', Textarea: 'textarea', Slider: 'slider',
+  Tooltip: 'tooltip', TooltipProvider: 'tooltip', TooltipTrigger: 'tooltip', TooltipContent: 'tooltip',
+  Skeleton: 'skeleton',
+}
+
+/**
+ * Re-route shadcn components imported from the wrong ./components/ui/<file>.
+ * Splits a mis-targeted import into per-file imports so every component resolves.
+ * Only touches names we know are shadcn; anything else stays on the original path.
+ */
+function fixWrongShadcnSubpaths(code: string): string {
+  return code.replace(
+    /import\s+\{([^}]+)\}\s+from\s+['"](\.\.?\/components\/ui)\/([a-z-]+)['"]\s*;?/g,
+    (match, names: string, base: string, file: string) => {
+      const parts = names.split(',').map((n) => n.trim()).filter(Boolean)
+      // Group each imported name by the file that actually exports it.
+      const byFile: Record<string, string[]> = {}
+      const keepOnOriginal: string[] = []
+      for (const raw of parts) {
+        const name = raw.split(/\s+as\s+/)[0].trim()
+        const correct = SHADCN_COMPONENT_FILE[name]
+        if (correct) (byFile[correct] ||= []).push(raw)
+        else keepOnOriginal.push(raw) // unknown — leave where it was
+      }
+      // If everything already targets the correct file, no change.
+      const files = Object.keys(byFile)
+      if (files.length === 0 || (files.length === 1 && files[0] === file && keepOnOriginal.length === 0)) {
+        return match
+      }
+      const lines: string[] = []
+      for (const f of files) lines.push(`import { ${byFile[f].join(', ')} } from '${base}/${f}';`)
+      if (keepOnOriginal.length > 0) lines.push(`import { ${keepOnOriginal.join(', ')} } from '${base}/${file}';`)
+      // Trailing newline so an adjacent import on the next source line doesn't
+      // concatenate onto ours (which would be a parse error).
+      return lines.join('\n') + '\n'
+    },
+  )
 }
 
 /**
