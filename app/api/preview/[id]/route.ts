@@ -620,21 +620,26 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
         }
         return c;
       }
+      function _sanitizeChildren(v) {
+        return Array.isArray(v) ? v.map(_sanitizeChild) : _sanitizeChild(v);
+      }
       React.createElement = function(type) {
         var args = Array.prototype.slice.call(arguments);
         if (type === 'h1') {
           _h1Count++;
           if (_h1Count > 1) args[0] = 'h2'; // Convert extra h1 to h2
         }
-        // Sanitize children (args[2..]) so a stray component object can't crash.
+        // Sanitize positional children (args[2..]) so a stray component object
+        // can't crash the whole preview with "Objects are not valid as a React
+        // child". Handles <div>{Icon}</div> and {list.map(...)} cases.
         if (args.length > 2) {
-          for (var _i = 2; _i < args.length; _i++) {
-            if (Array.isArray(args[_i])) {
-              args[_i] = args[_i].map(_sanitizeChild);
-            } else {
-              args[_i] = _sanitizeChild(args[_i]);
-            }
-          }
+          for (var _i = 2; _i < args.length; _i++) args[_i] = _sanitizeChildren(args[_i]);
+        }
+        // Also sanitize a children PROP (arg[1].children) — components that
+        // receive a component-object via the children prop rather than a
+        // positional arg (e.g. AIKit stubs that spread props).
+        if (args[1] && typeof args[1] === 'object' && 'children' in args[1]) {
+          try { args[1] = Object.assign({}, args[1], { children: _sanitizeChildren(args[1].children) }); } catch (e) {}
         }
         return _originalCreateElement.apply(React, args);
       };
@@ -1012,20 +1017,25 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
 
         render() {
           if (this.state.hasError) {
+            // Graceful fallback — never dump a raw red React error at the user.
+            // A runtime render crash (e.g. a component object used as a child)
+            // shows a clean "refining" card instead of the scary stack. The raw
+            // error is kept in a collapsed <details> for debugging only.
             return React.createElement('div', {
-              style: { padding: '20px', color: 'red', fontFamily: 'monospace' }
+              style: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f8fafc', fontFamily: 'system-ui, -apple-system, sans-serif', padding: '24px' }
+            }, React.createElement('div', {
+              style: { maxWidth: '440px', textAlign: 'center', background: '#fff', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '40px 32px', boxShadow: '0 4px 24px rgba(0,0,0,0.06)' }
             }, [
-              React.createElement('h3', { key: 'title' }, 'React Rendering Error'),
-              React.createElement('pre', { key: 'error', style: { background: '#fee', padding: '10px', borderRadius: '4px' } },
-                this.state.error?.toString() || 'Unknown error'
-              ),
-              React.createElement('details', { key: 'details' }, [
-                React.createElement('summary', { key: 'summary' }, 'Component Stack'),
-                React.createElement('pre', { key: 'stack', style: { fontSize: '11px', overflow: 'auto' } },
-                  this.state.errorInfo?.componentStack || 'No stack trace'
+              React.createElement('div', { key: 'icon', style: { fontSize: '40px', marginBottom: '12px' } }, '🛠️'),
+              React.createElement('h1', { key: 'title', style: { fontSize: '20px', fontWeight: 700, color: '#0f172a', margin: '0 0 8px' } }, 'Refining your app'),
+              React.createElement('p', { key: 'body', style: { fontSize: '14px', color: '#475569', lineHeight: 1.6, margin: '0 0 16px' } }, 'AINative built a first version but it needs another pass to render cleanly. Try regenerating — the next attempt usually gets it.'),
+              React.createElement('details', { key: 'details', style: { textAlign: 'left', marginTop: '8px' } }, [
+                React.createElement('summary', { key: 'summary', style: { fontSize: '12px', color: '#94a3b8', cursor: 'pointer' } }, 'Technical details'),
+                React.createElement('pre', { key: 'stack', style: { fontSize: '11px', color: '#64748b', background: '#f1f5f9', padding: '10px', borderRadius: '8px', overflow: 'auto', marginTop: '8px' } },
+                  (this.state.error?.toString() || 'Unknown error') + '\n\n' + (this.state.errorInfo?.componentStack || '')
                 )
               ])
-            ]);
+            ]));
           }
           return this.props.children;
         }
