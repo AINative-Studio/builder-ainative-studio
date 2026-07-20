@@ -55,7 +55,7 @@ export default function App() {
           Refining your app
         </h1>
         <p style={{ fontSize: '14px', color: '#475569', lineHeight: 1.6, margin: '0 0 20px' }}>
-          Cody generated a first version of "{'${safePrompt}'}" but it needs another
+          AINative generated a first version of "{'${safePrompt}'}" but it needs another
           pass to render cleanly. Try regenerating — the next attempt usually gets it.
         </p>
         <div style={{

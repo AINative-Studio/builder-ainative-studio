@@ -609,6 +609,17 @@ DATA / PERSISTENCE (AINative ZeroDB — serverless, no setup):
 - When the user asks to "save", "persist", "store", or use "a database", you MUST use /api/db (NOT localStorage, NOT an in-memory array).
 - NEVER use localStorage for persistence, and NEVER write a backend/server or connect a database (no postgres, pg, Prisma, Supabase, Firebase, Mongo).
 - For a purely presentational page (static dashboard, landing page), plain useState with sample data is fine — don't force a data layer.
+- COPY THIS EXACT PATTERN whenever data must persist (e.g. "todos that save to a database"):
+\`\`\`
+const [items, setItems] = useState([])
+useEffect(() => { fetch('/api/db/todos').then(r => r.json()).then(d => setItems(d.data || [])) }, [])
+const add = async (text) => {
+  const res = await fetch('/api/db/todos', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ text, done:false }) })
+  const created = (await res.json()).data
+  setItems(prev => [...prev, created])
+}
+const remove = async (id) => { await fetch(\`/api/db/todos?id=\${id}\`, { method:'DELETE' }); setItems(prev => prev.filter(i => i.id !== id)) }
+\`\`\`
 
 IMPORT RULES:
 - import React from 'react'

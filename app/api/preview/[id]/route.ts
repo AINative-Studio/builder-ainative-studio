@@ -443,7 +443,10 @@ export async function GET(
   const streaming = isPreviewStreaming(id)
   if (!streaming) {
     // Only validate when streaming is complete
-    const validation = validateJavaScriptCode(componentCode)
+    // Imports were stripped above (globals-injection renderer), so skip the
+    // #76 unresolved-component check here — every component looks unresolved
+    // once imports are gone. #91.
+    const validation = validateJavaScriptCode(componentCode, { importsStripped: true })
     if (!validation.valid) {
       console.error('Preview validation failed for ID:', id, 'Error:', validation.error)
       const errorHtml = `
