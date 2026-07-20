@@ -97,20 +97,28 @@ describe('findUnresolvedComponents (#76)', () => {
   })
 
   // #91: the /preview/[id] Babel renderer strips imports and injects components
-  // as globals. On that path every component looks "unresolved" — the #76 check
-  // must NOT run when there are no imports, or it wrongly rejects valid apps.
-  it('does NOT flag components in import-stripped code (globals-injection context)', () => {
+  // as globals. On that path every component looks "unresolved" — that caller
+  // passes importsStripped:true so the #76 check is skipped and valid apps are
+  // not wrongly rejected.
+  it('does NOT flag components when importsStripped:true (globals-injection context)', () => {
     const code = [
       'function App(){ return <div><ThumbsUp/><BarChart/><Badge>x</Badge><CustomWidget/></div>; }',
       'export default App;',
     ].join('\n')
-    expect(validateJavaScriptCode(code).valid).toBe(true)
+    expect(validateJavaScriptCode(code, { importsStripped: true }).valid).toBe(true)
   })
 
-  it('STILL flags hallucinated components when imports are present', () => {
-    const code = "import React from 'react'\nexport default function App(){ return <div><Header/></div>; }"
-    const r = validateJavaScriptCode(code)
-    expect(r.valid).toBe(false)
-    expect(r.error).toMatch(/Header/)
+  // The generation path does NOT strip imports, so #76 still catches a
+  // hallucinated component even when the snippet happens to have no import line.
+  it('STILL flags a hallucinated component on the default (non-stripped) path', () => {
+    const noImport = 'export default function App(){ return <div><Header/></div>; }'
+    const r1 = validateJavaScriptCode(noImport)
+    expect(r1.valid).toBe(false)
+    expect(r1.error).toMatch(/Header/)
+
+    const withImport = "import React from 'react'\nexport default function App(){ return <div><Header/></div>; }"
+    const r2 = validateJavaScriptCode(withImport)
+    expect(r2.valid).toBe(false)
+    expect(r2.error).toMatch(/Header/)
   })
 })

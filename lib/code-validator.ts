@@ -561,7 +561,10 @@ export function findUnresolvedComponents(code: string): string[] {
  * @param code - The JavaScript/JSX code to validate
  * @returns Validation result with valid flag and optional error message
  */
-export function validateJavaScriptCode(code: string): ValidationResult {
+export function validateJavaScriptCode(
+  code: string,
+  opts: { importsStripped?: boolean } = {},
+): ValidationResult {
   // First, try to auto-fix common issues (includes duplicate-import de-dupe)
   const { code: fixedCode, fixes } = autoFixCode(code)
 
@@ -584,13 +587,14 @@ export function validateJavaScriptCode(code: string): ValidationResult {
   }
 
   // Catch hallucinated components — used in JSX but never defined, imported, or
-  // in the known-available set (#76). ONLY when the code has imports: the
-  // /preview/[id] Babel renderer STRIPS all imports and injects components as
-  // globals, so on that path every component would look "unresolved" — a false
-  // positive that wrongly rejected valid apps (#91). If there are no imports,
-  // assume a globals-injection context and skip this check.
-  const hasImports = /^\s*import\s/m.test(fixedCode)
-  const unresolved = hasImports ? findUnresolvedComponents(fixedCode) : []
+  // in the known-available set (#76). The /preview/[id] Babel renderer STRIPS
+  // all imports and injects components as globals, so on THAT path every
+  // component would look "unresolved" — a false positive that wrongly rejected
+  // valid apps (#91). That caller passes importsStripped:true to skip the check.
+  // The generation path (validateGeneratedCode) does NOT strip, so it keeps full
+  // #76 coverage — a hallucinated component in import-less generated code is
+  // still flagged.
+  const unresolved = opts.importsStripped ? [] : findUnresolvedComponents(fixedCode)
   if (unresolved.length > 0) {
     const errorMessage = `Element type is invalid: <${unresolved[0]}> is used but not defined or imported`
     console.error('❌ Code validation failed (unresolved component):', unresolved.join(', '))
