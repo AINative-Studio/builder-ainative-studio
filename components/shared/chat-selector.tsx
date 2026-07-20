@@ -271,11 +271,6 @@ export function ChatSelector() {
     ? chats.find((c) => c.id === currentChatId)
     : null
 
-  // Debug logging
-  console.log('[ChatSelector] Rendering with chats:', chats.length, chats)
-  console.log('[ChatSelector] Current chat ID:', currentChatId)
-  console.log('[ChatSelector] Session:', session?.user?.id)
-
   // Don't show if no chats available
   if (chats.length === 0 && !isLoading) return null
 

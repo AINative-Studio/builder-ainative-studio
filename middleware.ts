@@ -150,8 +150,11 @@ export const config = {
      * Match all request paths except for the ones starting with:
      * - _next/static (static files)
      * - _next/image (image optimization files)
-     * - favicon.ico, sitemap.xml, robots.txt (metadata files)
+     * - favicon.ico, sitemap.xml, robots.txt, manifest.json (metadata files)
+     * - static asset extensions (.png/.svg/.ico/.json/.webmanifest/.txt/.xml)
+     * Without these, /manifest.json got auth-redirected to /login and the
+     * browser parsed HTML as JSON → "Manifest: Line 1 Syntax error" in console.
      */
-    '/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt).*)',
+    '/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|manifest.json|.*\\.(?:png|jpg|jpeg|svg|gif|ico|webmanifest|txt|xml|json|css|js|woff2?)$).*)',
   ],
 }
