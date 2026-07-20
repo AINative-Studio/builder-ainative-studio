@@ -607,7 +607,7 @@ export function findUnresolvedComponents(code: string): string[] {
  */
 export function validateJavaScriptCode(
   code: string,
-  opts: { importsStripped?: boolean } = {},
+  opts: { importsStripped?: boolean; lenient?: boolean } = {},
 ): ValidationResult {
   // First, try to auto-fix common issues (includes duplicate-import de-dupe)
   const { code: fixedCode, fixes } = autoFixCode(code)
@@ -694,7 +694,11 @@ export function validateJavaScriptCode(
       // tolerates, so it's explicitly excluded (builder#64).
       const isSandpackFatal =
         s.includes('unexpected token') && !s.includes('missing semicolon')
-      if (isSandpackFatal) {
+      // lenient: the /preview/[id] Babel renderer now parses with errorRecovery,
+      // so it can render code that only trips the STRICT (Sandpack) parse. Don't
+      // reject those on the preview path — the errorRecovery parse already
+      // passed, so the renderer will handle it. (Sandpack path stays strict.)
+      if (isSandpackFatal && !opts.lenient) {
         console.error('❌ Code validation failed (strict parse — Sandpack-fatal):', strictMsg)
         return {
           valid: false,
