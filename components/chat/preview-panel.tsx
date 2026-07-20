@@ -50,24 +50,12 @@ export function PreviewPanel({
   const useSandpack = !!sandpackFiles && Object.keys(sandpackFiles).length > 0
 
 
-  // Debug: Log currentChat changes
-  React.useEffect(() => {
-    console.log('[PreviewPanel DEBUG] currentChat changed:', {
-      hasChat: !!currentChat,
-      chatId: currentChat?.id,
-      demoUrl: currentChat?.demo,
-      hasDemoUrl: !!currentChat?.demo
-    })
-  }, [currentChat])
-
   // Simulate progress based on build steps
   React.useEffect(() => {
-    console.log('[PreviewPanel] isGenerating changed:', isGenerating, 'buildSteps:', buildSteps.length)
     if (isGenerating && buildSteps.length > 0) {
       const progressPerStep = 100 / buildSteps.length
       setProgress(Math.min((buildSteps.length * progressPerStep), 95))
     } else if (!isGenerating) {
-      console.log('[PreviewPanel] Generation complete, setting progress to 100%')
       setProgress(100)
       // Reset progress after a short delay
       setTimeout(() => setProgress(0), 1000)

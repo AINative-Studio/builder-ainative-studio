@@ -177,7 +177,6 @@ export function HomeClient() {
 
   const handleSendMessage = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    console.log('handleSendMessage called with message:', message)
     if (!message.trim() || isLoading) return
 
     // Ensure user is authenticated (auto-create guest session if needed)
@@ -282,17 +281,11 @@ export function HomeClient() {
                     // Initialize chat ID and set preview URL immediately
                     chatId = data.chatId
                     setCurrentChatId(data.chatId)
-                    console.log('[DEBUG] Init event received:', {
-                      chatId: data.chatId,
-                      demo: data.demo,
-                      hasDemoUrl: !!data.demo
-                    })
 
                     setCurrentChat({
                       id: data.chatId,
                       demo: data.demo
                     })
-                    console.log('[DEBUG] Init: chatId + demo set')
                     break
 
                   case 'build_step':
@@ -343,18 +336,12 @@ export function HomeClient() {
                     })
 
                     // Set chat data with demo URL
-                    console.log('[DEBUG] Complete event received:', {
-                      chatId: data.chatId,
-                      demo: data.demo,
-                      hasDemoUrl: !!data.demo
-                    })
                     setCurrentChat({
                       id: data.chatId,
                       demo: data.demo  // Always set demo — preview panel handles priority
                     })
                     setCurrentChatId(data.chatId)
                     setIsLoading(false)
-                    console.log('[DEBUG] isLoading state updated to FALSE, preview URL:', data.demo)
 
                     // Force refresh the preview iframe now that content is ready
                     setRefreshKey((prev) => prev + 1)
@@ -368,7 +355,6 @@ export function HomeClient() {
 
                   case 'files':
                     // Sandpack file map from multi-file generation
-                    console.log('[DEBUG] Files event received:', Object.keys(data.files).length, 'files')
                     setSandpackFiles(data.files)
                     break
 
