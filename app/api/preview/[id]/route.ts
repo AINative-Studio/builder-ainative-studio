@@ -456,7 +456,11 @@ export async function GET(
     // Imports were stripped above (globals-injection renderer), so skip the
     // #76 unresolved-component check here — every component looks unresolved
     // once imports are gone. #91.
-    const validation = validateJavaScriptCode(componentCode, { importsStripped: true })
+    // lenient: this renderer's Babel uses errorRecovery, so it can render code
+    // that only fails the STRICT (Sandpack) parse. Don't hard-reject those here
+    // (which showed a "Code Validation Error" page for otherwise-renderable old
+    // previews) — let the errorRecovery renderer handle them.
+    const validation = validateJavaScriptCode(componentCode, { importsStripped: true, lenient: true })
     if (!validation.valid) {
       console.error('Preview validation failed for ID:', id, 'Error:', validation.error)
       const errorHtml = `
