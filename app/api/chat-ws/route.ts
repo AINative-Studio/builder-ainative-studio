@@ -633,7 +633,22 @@ IMPORT RULES:
 - NEVER use framer-motion, @radix-ui, or other unlisted packages
 - export default function App() — always export default
 
-OUTPUT: Generate 150-300 lines of COMPLETE, working code. Make it visually polished with realistic sample data.`
+INTERACTIVITY (MANDATORY — the app must WORK, not just look good):
+- This is a real working app, NOT a static mockup. EVERY interactive control must do something.
+- Every actionable button needs an onClick that changes state: useState + a handler. A button that renders but does nothing is a bug.
+- "Add / New / Create" MUST implement the full flow: an input (controlled: value + onChange), and a handler that appends to a useState list and clears the input. Example:
+  const [items, setItems] = useState(initial)
+  const [draft, setDraft] = useState('')
+  const add = () => { if (!draft.trim()) return; setItems(prev => [...prev, { id: Date.now(), text: draft }]); setDraft('') }
+  // <input value={draft} onChange={e => setDraft(e.target.value)} /> <button onClick={add}>Add</button>
+- Search / filter inputs MUST be controlled (value + onChange) and MUST actually filter the rendered list:
+  const [q, setQ] = useState(''); const shown = items.filter(i => i.text.toLowerCase().includes(q.toLowerCase()))
+- Tabs / toggles / status changes MUST switch state (setActiveTab, toggle done, move kanban card between columns, etc.).
+- Delete/remove buttons MUST remove from the list. Like/save/complete MUST toggle and reflect visually.
+- If the app persists data (todos, invoices, contacts, notes, anything the user adds/saves) it MUST use /api/db (see DATA/PERSISTENCE) — NOT just in-memory. In-memory state is only acceptable for a purely presentational page.
+- Self-check before finishing: does every button have an onClick? does every input have onChange? can the user actually add/edit/filter/delete? If not, wire it up.
+
+OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually polished with realistic sample data, and every control functional.`
 
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Generating with ' + (USE_CLAUDE_DIRECT ? 'Claude Sonnet 4' : modelId) + '...' })}\n\n`))
 
