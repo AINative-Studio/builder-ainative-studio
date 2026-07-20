@@ -80,15 +80,24 @@ describe('combineAndDedupeShowcase', () => {
     expect(combineAndDedupeShowcase([], dynamic)).toHaveLength(2)
   })
 
-  it('sorts featured first, then newest-first', () => {
+  it('sorts NEWEST-first so fresh generations surface (featured is NOT sticky over date)', () => {
+    // A featured seed dated in the past must NOT bury newer generations — that
+    // was the "latest designs not surfacing" bug.
     const seed = [entry({ slug: 'feat', prompt: 'x', featured: true, createdAt: '2026-01-01' })]
     const dynamic = [
       entry({ chatId: 'old', prompt: 'Build a old thing', createdAt: '2026-07-01' }),
       entry({ chatId: 'new', prompt: 'Build a new thing', createdAt: '2026-07-19' }),
     ]
     const out = combineAndDedupeShowcase(seed, dynamic)
-    expect(out[0].slug).toBe('feat') // featured first despite old date
-    expect(out[1].chatId).toBe('new') // then newest dynamic
-    expect(out[2].chatId).toBe('old')
+    expect(out[0].chatId).toBe('new') // newest first, NOT the old featured seed
+    expect(out[1].chatId).toBe('old')
+    expect(out[2].slug).toBe('feat') // the Jan featured seed sinks to the bottom by date
+  })
+
+  it('featured wins only as a SAME-DATE tiebreaker', () => {
+    const seed = [entry({ slug: 'feat', prompt: 'x', featured: true, createdAt: '2026-07-20' })]
+    const dynamic = [entry({ chatId: 'plain', prompt: 'Build a thing', createdAt: '2026-07-20' })]
+    const out = combineAndDedupeShowcase(seed, dynamic)
+    expect(out[0].slug).toBe('feat') // same date → featured first
   })
 })

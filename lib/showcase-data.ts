@@ -212,10 +212,16 @@ export function combineAndDedupeShowcase(
     out.push(entry)
   }
 
+  // Newest-first so freshly-generated apps SURFACE at the top. featured is only
+  // a tiebreaker within the same day — previously featured sorted before date,
+  // so the June-dated curated seeds (featured:true) buried every new generation
+  // and "latest designs weren't surfacing".
   out.sort((a, b) => {
+    const d = byDateDesc(a, b)
+    if (d !== 0) return d
     if (a.featured && !b.featured) return -1
     if (!a.featured && b.featured) return 1
-    return byDateDesc(a, b)
+    return 0
   })
   return out
 }
