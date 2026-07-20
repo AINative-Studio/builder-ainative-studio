@@ -496,6 +496,8 @@
           return this.props.children;
         }
       }
+      // Fix: expose ErrorBoundary on window so the separate render script can see it (class is script-scoped).
+      window.ErrorBoundary = ErrorBoundary;
 
     </script>
     <!-- Component code: transformed by Babel.transform() synchronously, then eval'd -->
@@ -1039,7 +1041,8 @@ if (typeof window.Calendar === 'undefined') { window.Calendar = function Calenda
           console.log('[Preview] React root created:', root);
 
           // Wrap component in ErrorBoundary to catch rendering errors
-          const wrappedElement = React.createElement(ErrorBoundary, null,
+          const _EB = (typeof window !== "undefined" && window.ErrorBoundary) ? window.ErrorBoundary : (typeof ErrorBoundary !== "undefined" ? ErrorBoundary : (function(p){ return p.children; }));
+          const wrappedElement = React.createElement(_EB, null,
             React.createElement(Component)
           );
           console.log('[Preview] React element created (wrapped in ErrorBoundary)');
