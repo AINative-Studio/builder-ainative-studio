@@ -1064,6 +1064,11 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
           return this.props.children;
         }
       }
+      // The component-render script runs in a SEPARATE script tag (global
+      // scope) and references ErrorBoundary as a bare identifier — but a class
+      // declaration is script-scoped, not a global. Expose it on window so the
+      // renderer can wrap the app in it (fixes "ErrorBoundary is not defined").
+      window.ErrorBoundary = ErrorBoundary;
 
     </script>
     ${componentScriptBlock}
@@ -1226,8 +1231,14 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
           const root = ReactDOM.createRoot(rootElement);
           console.log('[Preview] React root created:', root);
 
-          // Wrap component in ErrorBoundary to catch rendering errors
-          const wrappedElement = React.createElement(ErrorBoundary, null,
+          // Wrap component in ErrorBoundary to catch rendering errors. Resolve
+          // it from window (set in the setup script) with a passthrough fallback
+          // so a scope miss degrades to rendering the app un-wrapped instead of
+          // crashing with "ErrorBoundary is not defined".
+          const _EB = (typeof window !== 'undefined' && window.ErrorBoundary)
+            ? window.ErrorBoundary
+            : (typeof ErrorBoundary !== 'undefined' ? ErrorBoundary : (function(p){ return p.children; }));
+          const wrappedElement = React.createElement(_EB, null,
             React.createElement(Component)
           );
           console.log('[Preview] React element created (wrapped in ErrorBoundary)');
