@@ -139,6 +139,21 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
     fixes.push('Removed stray semicolon splitting a ternary expression')
   }
 
+  // Fix METHOD-CHAIN SPLIT: a stray `;` directly before a line that begins with
+  // `.` breaks a multi-line method chain, e.g.
+  //   const filtered = items;
+  //     .filter(...).map(...)
+  // Babel's errorRecovery accepts it but Sandpack rejects with "Unexpected
+  // token", which drops the whole app to the validation-fallback screen. Drop a
+  // `;` that immediately precedes a continuation line starting with a member
+  // access. (builder: multi-line-chain corruption — the #1 cause of complex-app
+  // fallbacks: filter/map/reduce chains are everywhere.)
+  const beforeChainFix = fixedCode
+  fixedCode = fixedCode.replace(/;[ \t]*(\r?\n\s*\.)/g, '$1')
+  if (fixedCode !== beforeChainFix) {
+    fixes.push('Removed stray semicolon splitting a method chain')
+  }
+
   // Fix CONTINUATION DUPLICATION: Remove duplicate jsx markers from continuation stitching
   // e.g. ```jsx appearing mid-code from continuation
   fixedCode = fixedCode.replace(/```jsx?\s*\n/g, (match, offset) => {
@@ -237,9 +252,38 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
   )
 
   // Fix 9: Ensure all statements end with semicolon or newline (helps Babel parser)
-  // Add semicolons after const/let/var declarations if missing
-  // BUT DON'T add semicolons after opening braces/brackets!
-  fixedCode = fixedCode.replace(/^(\s*(?:const|let|var)\s+[^=]+=\s*[^;\n{[\]]+)$/gm, '$1;')
+  // Add semicolons after const/let/var declarations if missing.
+  // BUT DON'T add a semicolon when the declaration's value CONTINUES on the next
+  // line — a multi-line method chain (`const x = items\n  .filter(...)`) or an
+  // unbalanced/open expression (`const m = arr.filter(node =>` … on the next
+  // line). Appending `;` there splits the expression and produces "Unexpected
+  // token" — which then fails validation and drops the whole app to the
+  // fallback screen. (builder: multi-line-chain corruption.)
+  {
+    const declRe = /^(\s*(?:const|let|var)\s+[^=]+=\s*[^;\n{[\]]+)$/
+    // Tokens that, at the START of the following line, mean the expression is
+    // still going: member access, ternary/label, closers, binary operators,
+    // template/comma continuation, or an opening paren (call continuation).
+    const continuationRe = /^\s*[.?:)\]}&|+\-*/=,`(]/
+    const dfLines = fixedCode.split('\n')
+    for (let i = 0; i < dfLines.length; i++) {
+      const m = dfLines[i].match(declRe)
+      if (!m) continue
+      // Balance check: if this line has more opens than closes, the expression
+      // spills onto later lines — never terminate it here.
+      const opens = (dfLines[i].match(/[([{]/g) || []).length
+      const closes = (dfLines[i].match(/[)\]}]/g) || []).length
+      if (opens > closes) continue
+      // Trailing binary/arrow operator also means "to be continued".
+      if (/(=>|[+\-*/%&|<>=?:.,])\s*$/.test(dfLines[i])) continue
+      // Peek at the next non-blank line; if it continues the expression, skip.
+      let j = i + 1
+      while (j < dfLines.length && dfLines[j].trim() === '') j++
+      if (j < dfLines.length && continuationRe.test(dfLines[j])) continue
+      dfLines[i] = m[1] + ';'
+    }
+    fixedCode = dfLines.join('\n')
+  }
 
   // Fix 11: DUPLICATE IMPORTS — the model sometimes imports the same identifier
   // twice (e.g. `import { Card } from './ui/card'` plus `Card,` inside another
