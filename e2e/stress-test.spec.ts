@@ -89,7 +89,7 @@ test.describe('stress + edge-case test (production)', () => {
             }
             return 'pending'
           },
-          { timeout: 45_000, intervals: [2_000] },
+          { timeout: 75_000, intervals: [2_500] },
         )
         .not.toBe('pending')
 

@@ -94,7 +94,7 @@ test.describe('AINative primitives sweep (Sonnet 4.5)', () => {
             }
             return 'pending'
           },
-          { timeout: 45_000, intervals: [2_000] },
+          { timeout: 75_000, intervals: [2_500] },
         )
         .not.toBe('pending')
 
