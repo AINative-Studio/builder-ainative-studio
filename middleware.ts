@@ -151,10 +151,12 @@ export const config = {
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.ico, sitemap.xml, robots.txt, manifest.json (metadata files)
+     * - Next metadata image routes: opengraph-image, twitter-image, icon,
+     *   apple-icon (these have NO extension, so the ext-list below misses them —
+     *   without this, /opengraph-image was auth-redirected to /login and social
+     *   crawlers got "/login" instead of the OG image → black default preview).
      * - static asset extensions (.png/.svg/.ico/.json/.webmanifest/.txt/.xml)
-     * Without these, /manifest.json got auth-redirected to /login and the
-     * browser parsed HTML as JSON → "Manifest: Line 1 Syntax error" in console.
      */
-    '/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|manifest.json|.*\\.(?:png|jpg|jpeg|svg|gif|ico|webmanifest|txt|xml|json|css|js|woff2?)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|manifest.json|opengraph-image|twitter-image|icon|apple-icon|.*\\.(?:png|jpg|jpeg|svg|gif|ico|webmanifest|txt|xml|json|css|js|woff2?)$).*)',
   ],
 }
