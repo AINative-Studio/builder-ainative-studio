@@ -804,16 +804,19 @@ export function HomeClient() {
                         title="Select AI model"
                       >
                         {/* Only models verified live on api.ainative.studio for React
-                            generation (2026-07-20). ministral-14b/qwen-coder-32b/gemma-9b/
-                            nouscoder-14b were 504/503ing and kimi-k2 silently served
-                            deepseek-4-flash — removed until fixed (cody-builder #41/#42/#43). */}
+                            generation. kimi-k2 + qwen-coder-32b restored 2026-07-20 after
+                            core #5443 (kimi now serves real Kimi via DigitalOcean, not
+                            deepseek; qwen-coder-32b repointed to a working upstream).
+                            Still excluded: ministral-14b/gemma-9b/nouscoder-14b (no upstream). */}
                         <optgroup label="Recommended (Fast + Reliable)">
                           <option value="deepseek-4-flash">DeepSeek 4 Flash (Default)</option>
                           <option value="qwen3-coder-flash">Qwen3 Coder Flash</option>
+                          <option value="qwen-coder-32b">Qwen Coder 32B</option>
                         </optgroup>
                         <optgroup label="High Quality (Slower)">
                           <option value="llama-3.3-70b">Llama 3.3 70B</option>
                           <option value="llama-4-maverick">Llama 4 Maverick</option>
+                          <option value="kimi-k2">Kimi K2</option>
                           <option value="deepseek-r1-distill-qwen-7b">DeepSeek R1 Qwen 7B</option>
                         </optgroup>
                       </select>
