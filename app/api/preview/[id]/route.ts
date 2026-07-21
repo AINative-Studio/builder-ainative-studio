@@ -1080,7 +1080,7 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
       class ErrorBoundary extends React.Component {
         constructor(props) {
           super(props);
-          this.state = { hasError: false, error: null, errorInfo: null };
+          this.state = { hasError: false, error: null, errorInfo: null, retries: 0 };
         }
 
         static getDerivedStateFromError(error) {
@@ -1090,7 +1090,19 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
         componentDidCatch(error, errorInfo) {
           console.error('[Preview] React Error Boundary caught error:', error);
           console.error('[Preview] Error info:', errorInfo);
-          this.setState({ error, errorInfo });
+          // Retry once before showing the "Refining" fallback. A transient mount
+          // error (e.g. a race where an async ZeroDB fetch resolves mid-render)
+          // often renders fine on a second attempt — showing "Refining" on an
+          // app that actually works looks broken to users (#145). Re-mount the
+          // subtree by clearing hasError; only give up after 1 retry.
+          if (this.state.retries < 1) {
+            console.log('[Preview] ErrorBoundary retry ' + (this.state.retries + 1) + ' before fallback');
+            setTimeout(() => {
+              this.setState(function(s) { return { hasError: false, error: null, errorInfo: null, retries: s.retries + 1 }; });
+            }, 150);
+            return;
+          }
+          this.setState({ error: error, errorInfo: errorInfo });
         }
 
         render() {
