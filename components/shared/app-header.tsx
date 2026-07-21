@@ -7,6 +7,7 @@ import { ChatSelector } from './chat-selector'
 import { MobileMenu } from './mobile-menu'
 import { useSession } from 'next-auth/react'
 import { UserNavClient } from '@/components/user-nav-client'
+import { WorkspaceSwitcher } from '@/components/workspace-switcher'
 import { Button } from '@/components/ui/button'
 import { DEPLOY_URL, APP_NAME } from '@/lib/constants'
 import { LayoutTemplate, Rocket, Settings } from 'lucide-react'
@@ -90,6 +91,10 @@ export function AppHeader({ className = '' }: AppHeaderProps) {
             {/* Hide ChatSelector on mobile */}
             <div className="hidden lg:block">
               <ChatSelector />
+            </div>
+            {/* Workspace switcher (AINative sessions only) */}
+            <div className="hidden lg:block">
+              <WorkspaceSwitcher />
             </div>
           </div>
 
