@@ -58,6 +58,11 @@ async function authenticateWithAINative(email: string, password: string) {
           accessToken: data.access_token,
           refreshToken: data.refresh_token,
           expiresIn: data.expires_in,
+          // Every AINative user has a permanent default workspace (an
+          // Organization); /v1/auth/me returns the primary one. Capture it so
+          // the builder always has a workspace context, matching core.
+          workspaceId: profile.organization_uuid || null,
+          workspaceName: profile.organization_name || null,
         }
       }
     }
@@ -91,7 +96,11 @@ declare module 'next-auth/jwt' {
     id: string
     type: UserType
     accessToken?: string
+    refreshToken?: string
+    expiresAt?: number
     expiresIn?: number
+    workspaceId?: string
+    workspaceName?: string
   }
 }
 
@@ -161,6 +170,11 @@ export const {
             ? Date.now() + (user as any).expiresIn * 1000
             : undefined
         }
+        // Default workspace (Organization) captured at sign-in.
+        if ((user as any).workspaceId) {
+          token.workspaceId = (user as any).workspaceId
+          token.workspaceName = (user as any).workspaceName
+        }
       }
 
       // Auto-refresh AINative token if close to expiry
@@ -190,6 +204,11 @@ export const {
         // Pass access token to session for API calls
         if (token.accessToken) {
           (session as any).accessToken = token.accessToken
+        }
+        // Expose the user's default workspace on the session.
+        if (token.workspaceId) {
+          (session as any).workspaceId = token.workspaceId
+          ;(session as any).workspaceName = token.workspaceName
         }
       }
 
