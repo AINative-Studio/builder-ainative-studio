@@ -155,6 +155,28 @@ export const {
         return { ...guestUser, type: 'guest' }
       },
     }),
+    // "Sign in with AINative" — completes the OAuth2.1/PKCE flow. The
+    // authorization-code exchange + userinfo lookup happen in
+    // app/api/auth/ainative/callback; this provider just adopts the already
+    // verified tokens into the NextAuth session (same shape as password login).
+    Credentials({
+      id: 'ainative-oauth',
+      credentials: {},
+      async authorize(creds: any) {
+        if (!creds?.accessToken || !creds?.sub) return null
+        return {
+          id: String(creds.sub),
+          email: creds.email || null,
+          name: creds.name || (creds.email ? String(creds.email).split('@')[0] : 'AINative User'),
+          type: 'ainative' as const,
+          accessToken: creds.accessToken,
+          refreshToken: creds.refreshToken || undefined,
+          expiresIn: creds.expiresIn ? Number(creds.expiresIn) : undefined,
+          workspaceId: creds.workspaceId || null,
+          workspaceName: creds.workspaceName || null,
+        }
+      },
+    }),
   ],
   callbacks: {
     async jwt({ token, user }) {
