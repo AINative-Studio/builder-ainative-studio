@@ -609,6 +609,7 @@ DATA / PERSISTENCE (AINative ZeroDB — serverless, no setup):
   - fetch('/api/db/{table}', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(row) }) → insert
   - fetch('/api/db/{table}?id=ID', { method:'PUT'|'DELETE', ... }) → update / delete
   - Load in useEffect; re-fetch after writes. Example table names: 'todos', 'contacts', 'notes'.
+- DEFENSIVE ACCESS (required): rows loaded from /api/db may be missing fields or have unexpected shapes (tables are schema-flexible). NEVER call a method on a possibly-missing field — a single bad row crashes the whole list with "Cannot read properties of undefined". Always guard: use (row.name || '').toLowerCase(), row.items?.length ?? 0, optional chaining, and default values in filters/maps. e.g. items.filter(i => (i.name || '').toLowerCase().includes(q.toLowerCase())).
 - When the user asks to "save", "persist", "store", or use "a database", you MUST use /api/db (NOT localStorage, NOT an in-memory array).
 - NEVER use localStorage for persistence, and NEVER write a backend/server or connect a database (no postgres, pg, Prisma, Supabase, Firebase, Mongo).
 - For a purely presentational page (static dashboard, landing page), plain useState with sample data is fine — don't force a data layer.
