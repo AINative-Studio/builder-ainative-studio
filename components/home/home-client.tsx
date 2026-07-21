@@ -58,7 +58,8 @@ export function HomeClient() {
   const [isLoading, setIsLoading] = useState(false)
   const [showChatInterface, setShowChatInterface] = useState(false)
   const [attachments, setAttachments] = useState<ImageAttachment[]>([])
-  const [selectedModel, setSelectedModel] = useState('ministral-14b')
+  // Default to a live-verified fast model — ministral-14b was 504ing (cody-builder #43)
+  const [selectedModel, setSelectedModel] = useState('deepseek-4-flash')
   const [isDragOver, setIsDragOver] = useState(false)
   const [chatHistory, setChatHistory] = useState<
     Array<{
@@ -802,20 +803,17 @@ export function HomeClient() {
                         className="appearance-none h-8 pl-2 pr-7 text-xs font-medium bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-[#5867EF]/20"
                         title="Select AI model"
                       >
+                        {/* Only models verified live on api.ainative.studio for React
+                            generation (2026-07-20). ministral-14b/qwen-coder-32b/gemma-9b/
+                            nouscoder-14b were 504/503ing and kimi-k2 silently served
+                            deepseek-4-flash — removed until fixed (cody-builder #41/#42/#43). */}
                         <optgroup label="Recommended (Fast + Reliable)">
-                          <option value="ministral-14b">Ministral 14B (Default)</option>
-                          <option value="llama-4-maverick">Llama 4 Maverick</option>
-                          <option value="llama-3.3-70b">Llama 3.3 70B</option>
-                        </optgroup>
-                        <optgroup label="High Quality (Slower)">
-                          <option value="deepseek-4-flash">DeepSeek 4 Flash</option>
-                          <option value="kimi-k2">Kimi K2</option>
+                          <option value="deepseek-4-flash">DeepSeek 4 Flash (Default)</option>
                           <option value="qwen3-coder-flash">Qwen3 Coder Flash</option>
                         </optgroup>
-                        <optgroup label="Other">
-                          <option value="qwen-coder-32b">Qwen Coder 32B</option>
-                          <option value="nouscoder-14b">NousCoder 14B</option>
-                          <option value="gemma-9b">Gemma 9B</option>
+                        <optgroup label="High Quality (Slower)">
+                          <option value="llama-3.3-70b">Llama 3.3 70B</option>
+                          <option value="llama-4-maverick">Llama 4 Maverick</option>
                           <option value="deepseek-r1-distill-qwen-7b">DeepSeek R1 Qwen 7B</option>
                         </optgroup>
                       </select>

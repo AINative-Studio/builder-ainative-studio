@@ -50,51 +50,54 @@ export const Suggestions = ({
     }
   }, [children])
 
+  const scrollBy = (delta: number) => {
+    const viewport = scrollAreaRef.current?.querySelector(
+      '[data-radix-scroll-area-viewport]',
+    ) as HTMLElement
+    if (viewport) viewport.scrollBy({ left: delta, behavior: 'smooth' })
+  }
+
   return (
-    <div className="relative">
-      {/* Left fade overlay with arrow indicator */}
-      {canScrollLeft && (
-        <>
-          <div className="absolute -left-px -top-px z-10 h-[calc(100%+1px)] w-16 bg-gradient-to-r from-gray-50 dark:from-black to-transparent pointer-events-none" />
-          <div className="absolute left-2 top-1/2 -translate-y-1/2 z-20 pointer-events-none">
-            <div className="w-6 h-6 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center shadow-md">
-              <span className="text-gray-600 dark:text-gray-300 text-xs">←</span>
-            </div>
-          </div>
-        </>
-      )}
+    // Flex row: the scroller takes the available width, the scroll button lives
+    // in its own column OUTSIDE the scroll area so it never overlaps the chips.
+    <div className="flex items-center gap-2">
+      <div className="relative min-w-0 flex-1">
+        {/* Left edge: soft fade only (no floating button — keeps chips readable) */}
+        {canScrollLeft && (
+          <div className="absolute left-0 top-0 z-10 h-full w-8 bg-gradient-to-r from-gray-50 dark:from-black to-transparent pointer-events-none" />
+        )}
+        {/* Right edge: soft fade to hint there's more, no button on top of chips */}
+        {canScrollRight && (
+          <div className="absolute right-0 top-0 z-10 h-full w-8 bg-gradient-to-l from-gray-50 dark:from-black to-transparent pointer-events-none" />
+        )}
 
-      {/* Right fade overlay with clickable arrow */}
-      {canScrollRight && (
-        <>
-          <div className="absolute -right-px -top-px z-10 h-[calc(100%+1px)] w-20 bg-gradient-to-l from-gray-50 dark:from-black to-transparent pointer-events-none" />
-          <button
-            className="absolute right-1 top-1/2 -translate-y-1/2 z-20 cursor-pointer"
-            onClick={() => {
-              const viewport = scrollAreaRef.current?.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement
-              if (viewport) viewport.scrollBy({ left: 200, behavior: 'smooth' })
-            }}
-            aria-label="Scroll right for more suggestions"
-          >
-            <div className="w-7 h-7 rounded-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 flex items-center justify-center shadow-md hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-              <span className="text-gray-600 dark:text-gray-300 text-xs">→</span>
-            </div>
-          </button>
-        </>
-      )}
-
-      <ScrollArea
-        ref={scrollAreaRef}
-        className="w-full overflow-x-auto whitespace-nowrap"
-        {...props}
-      >
-        <div
-          className={cn('flex w-max flex-nowrap items-center gap-2 pr-10', className)}
+        <ScrollArea
+          ref={scrollAreaRef}
+          className="w-full overflow-x-auto whitespace-nowrap"
+          {...props}
         >
-          {children}
-        </div>
-        <ScrollBar className="hidden" orientation="horizontal" />
-      </ScrollArea>
+          <div
+            className={cn('flex w-max flex-nowrap items-center gap-2', className)}
+          >
+            {children}
+          </div>
+          <ScrollBar className="hidden" orientation="horizontal" />
+        </ScrollArea>
+      </div>
+
+      {/* Scroll-right control — outside the chip row, on the far right, no overlap */}
+      {canScrollRight && (
+        <button
+          type="button"
+          onClick={() => scrollBy(220)}
+          aria-label="Scroll right for more suggestions"
+          className="shrink-0 cursor-pointer"
+        >
+          <div className="w-8 h-8 rounded-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 flex items-center justify-center shadow-sm hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+            <span className="text-gray-600 dark:text-gray-300 text-sm leading-none">→</span>
+          </div>
+        </button>
+      )}
     </div>
   )
 }
