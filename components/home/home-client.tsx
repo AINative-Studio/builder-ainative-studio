@@ -31,6 +31,7 @@ import { PreviewPanel } from '@/components/chat/preview-panel'
 import { ResizableLayout } from '@/components/shared/resizable-layout'
 import { BottomToolbar } from '@/components/shared/bottom-toolbar'
 import { FeedbackDialog } from '@/components/feedback-dialog'
+import { createProjectForApp } from '@/lib/ainative/link-project'
 
 // Component that uses useSearchParams - needs to be wrapped in Suspense
 function SearchParamsHandler({ onReset }: { onReset: () => void }) {
@@ -238,6 +239,9 @@ export function HomeClient() {
 
     const userMessage = message.trim()
     const currentAttachments = [...attachments]
+    // A generated app maps 1:1 to a core Project. Only the first message of a
+    // new chat creates the project; follow-ups refine the same app.
+    const isNewChat = !currentChatId
 
     // Clear sessionStorage immediately upon submission
     clearPromptFromStorage()
@@ -394,6 +398,25 @@ export function HomeClient() {
                     })
                     setCurrentChatId(data.chatId)
                     setIsLoading(false)
+
+                    // Persist this generated app as a core Project under the
+                    // active workspace (first message of a new chat only).
+                    // Fire-and-forget: never block or break the generation UX.
+                    if (isNewChat) {
+                      createProjectForApp({ prompt: userMessage, chatId: data.chatId })
+                        .then((result) => {
+                          if (result.upgradeRequired) {
+                            setChatHistory((prev) => [
+                              ...prev,
+                              {
+                                type: 'assistant',
+                                content: `You've reached the free-tier limit of ${result.max ?? 3} apps. Upgrade to build unlimited full-stack apps with AINative primitives.`,
+                              },
+                            ])
+                          }
+                        })
+                        .catch((e) => console.error('[project link] failed:', e))
+                    }
 
                     // Force refresh the preview iframe now that content is ready
                     setRefreshKey((prev) => prev + 1)
