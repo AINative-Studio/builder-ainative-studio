@@ -52,6 +52,21 @@ function SearchParamsHandler({ onReset }: { onReset: () => void }) {
   return null
 }
 
+// The AINative API base for the (public) verified coding-model catalog.
+const AINATIVE_API_BASE =
+  process.env.NEXT_PUBLIC_AINATIVE_API_URL || 'https://api.ainative.studio'
+
+// Static fallback — used only if GET /models/catalog/coding is unreachable, so
+// the dropdown never goes empty. Keep in sync with the backend's verified set.
+const BUILDER_MODEL_FALLBACK: Array<{
+  id: string; label: string; group: string; default?: boolean
+}> = [
+  { id: 'deepseek-4-flash', label: 'DeepSeek 4 Flash', group: 'Recommended (Fast + Reliable)', default: true },
+  { id: 'qwen3-coder-flash', label: 'Qwen3 Coder Flash', group: 'Recommended (Fast + Reliable)' },
+  { id: 'qwen-coder-32b', label: 'Qwen Coder 32B', group: 'Recommended (Fast + Reliable)' },
+  { id: 'kimi-k2', label: 'Kimi K2', group: 'High Quality (Slower)' },
+]
+
 export function HomeClient() {
   const { status: sessionStatus } = useSession()
   const [message, setMessage] = useState('')
@@ -60,6 +75,13 @@ export function HomeClient() {
   const [attachments, setAttachments] = useState<ImageAttachment[]>([])
   // Default to a live-verified fast model — ministral-14b was 504ing (cody-builder #43)
   const [selectedModel, setSelectedModel] = useState('deepseek-4-flash')
+  // Model dropdown is driven by the backend's verified coding-model catalog
+  // (GET /api/v1/models/catalog/coding) so it can never drift into offering
+  // models that 504/503 or silently substitute. Refs #141 / core #5443.
+  // BUILDER_MODEL_FALLBACK below is used only if that fetch fails.
+  const [codingModels, setCodingModels] = useState<
+    Array<{ id: string; label: string; group: string; default?: boolean }>
+  >(BUILDER_MODEL_FALLBACK)
   const [isDragOver, setIsDragOver] = useState(false)
   const [chatHistory, setChatHistory] = useState<
     Array<{
@@ -127,6 +149,35 @@ export function HomeClient() {
         setAttachments(restoredAttachments)
       }
     }
+  }, [])
+
+  // Load the verified coding-model catalog from the backend (single source of
+  // truth) so the dropdown can't drift. Falls back to BUILDER_MODEL_FALLBACK on
+  // any error. Refs #141 / core #5443.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch(`${AINATIVE_API_BASE}/api/v1/models/catalog/coding`)
+        if (!res.ok) return
+        const data = await res.json()
+        const models = Array.isArray(data?.models) ? data.models : []
+        if (cancelled || models.length === 0) return
+        setCodingModels(models)
+        // If the current selection isn't offered, snap to the backend default.
+        const ids = new Set(models.map((m: { id: string }) => m.id))
+        if (!ids.has(selectedModel)) {
+          const def = models.find((m: { default?: boolean }) => m.default) || models[0]
+          setSelectedModel(def.id)
+        }
+      } catch {
+        // keep the static fallback
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Save prompt data to sessionStorage whenever message or attachments change
@@ -803,22 +854,24 @@ export function HomeClient() {
                         className="appearance-none h-8 pl-2 pr-7 text-xs font-medium bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-[#5867EF]/20"
                         title="Select AI model"
                       >
-                        {/* Only models verified live on api.ainative.studio for React
-                            generation. kimi-k2 + qwen-coder-32b restored 2026-07-20 after
-                            core #5443 (kimi now serves real Kimi via DigitalOcean, not
-                            deepseek; qwen-coder-32b repointed to a working upstream).
-                            Still excluded: ministral-14b/gemma-9b/nouscoder-14b (no upstream). */}
-                        <optgroup label="Recommended (Fast + Reliable)">
-                          <option value="deepseek-4-flash">DeepSeek 4 Flash (Default)</option>
-                          <option value="qwen3-coder-flash">Qwen3 Coder Flash</option>
-                          <option value="qwen-coder-32b">Qwen Coder 32B</option>
-                        </optgroup>
-                        <optgroup label="High Quality (Slower)">
-                          <option value="llama-3.3-70b">Llama 3.3 70B</option>
-                          <option value="llama-4-maverick">Llama 4 Maverick</option>
-                          <option value="kimi-k2">Kimi K2</option>
-                          <option value="deepseek-r1-distill-qwen-7b">DeepSeek R1 Qwen 7B</option>
-                        </optgroup>
+                        {/* Options are driven by the backend's verified coding-model
+                            catalog (GET /api/v1/models/catalog/coding) so this dropdown
+                            can never drift into offering models that 504/503 or silently
+                            substitute. Refs #141 / core #5443. Grouped by optgroup. */}
+                        {Array.from(
+                          new Set(codingModels.map((m) => m.group)),
+                        ).map((group) => (
+                          <optgroup key={group} label={group}>
+                            {codingModels
+                              .filter((m) => m.group === group)
+                              .map((m) => (
+                                <option key={m.id} value={m.id}>
+                                  {m.label}
+                                  {m.default ? ' (Default)' : ''}
+                                </option>
+                              ))}
+                          </optgroup>
+                        ))}
                       </select>
                       <svg className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
                     </div>
