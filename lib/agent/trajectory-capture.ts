@@ -91,7 +91,9 @@ export class TrajectoryCapture {
         }
       }
     } else if (event.type === 'result') {
-      this.numTurns = event.num_turns ?? this.turn
+      // Prefer the reported turn count, but fall back to the observed number of
+      // assistant turns (the result event can report 0 on early termination).
+      this.numTurns = event.num_turns || this.turn
       this.cost = typeof event.total_cost_usd === 'number' ? event.total_cost_usd : null
       this.isError = Boolean(event.is_error)
     }
@@ -107,7 +109,7 @@ export class TrajectoryCapture {
       model: this.model,
       steps: this.steps,
       file_tree: fileTree,
-      num_turns: this.numTurns,
+      num_turns: this.numTurns || this.turn,
       total_cost_usd: this.cost,
       duration_ms: Date.now() - startTime,
       is_error: this.isError,
