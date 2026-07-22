@@ -21,6 +21,39 @@ if (!process.env.AUTH_SECRET) {
   console.warn('[auth] AUTH_SECRET not set — using derived fallback. Set AUTH_SECRET for production security.')
 }
 
+/**
+ * Resolve the user's DEFAULT workspace authoritatively.
+ *
+ * `/v1/auth/me` returns organization_uuid via a non-deterministic
+ * `LEFT JOIN user_organizations ... LIMIT 1` (no ORDER BY), so for multi-org
+ * users it can return the wrong org or NULL. `/api/v1/workspaces` is ordered
+ * (is_default DESC, created_at ASC), so it's the source of truth for "default".
+ * Falls back to the /me fields if the workspaces call is unavailable.
+ */
+async function resolveDefaultWorkspace(
+  accessToken: string,
+  fallback: { id: string | null; name: string | null },
+): Promise<{ id: string | null; name: string | null }> {
+  try {
+    const res = await fetch(
+      `${process.env.AINATIVE_API_BASE_URL}/api/v1/workspaces`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    )
+    if (res.ok) {
+      const data = await res.json()
+      const workspaces: any[] = data?.workspaces ?? []
+      if (workspaces.length > 0) {
+        const chosen =
+          workspaces.find((w) => w.is_default) ?? workspaces[0]
+        return { id: chosen.id ?? null, name: chosen.name ?? null }
+      }
+    }
+  } catch (err) {
+    console.error('[AINative Auth] workspace resolution failed:', err)
+  }
+  return fallback
+}
+
 // AINative Authentication Helper
 async function authenticateWithAINative(email: string, password: string) {
   try {
@@ -50,6 +83,13 @@ async function authenticateWithAINative(email: string, password: string) {
       if (profileResponse.ok) {
         const profile = await profileResponse.json()
         console.log('[AINative Auth] Successfully authenticated:', profile.email)
+        // Every AINative user has a permanent default workspace. Resolve it
+        // authoritatively via /api/v1/workspaces (ordered), not the /me org
+        // fields which can be null/wrong for multi-org users.
+        const workspace = await resolveDefaultWorkspace(data.access_token, {
+          id: profile.organization_uuid || null,
+          name: profile.organization_name || null,
+        })
         return {
           id: profile.id,
           email: profile.email,
@@ -58,6 +98,8 @@ async function authenticateWithAINative(email: string, password: string) {
           accessToken: data.access_token,
           refreshToken: data.refresh_token,
           expiresIn: data.expires_in,
+          workspaceId: workspace.id,
+          workspaceName: workspace.name,
         }
       }
     }
@@ -91,7 +133,11 @@ declare module 'next-auth/jwt' {
     id: string
     type: UserType
     accessToken?: string
+    refreshToken?: string
+    expiresAt?: number
     expiresIn?: number
+    workspaceId?: string
+    workspaceName?: string
   }
 }
 
@@ -146,6 +192,34 @@ export const {
         return { ...guestUser, type: 'guest' }
       },
     }),
+    // "Sign in with AINative" — completes the OAuth2.1/PKCE flow. The
+    // authorization-code exchange + userinfo lookup happen in
+    // app/api/auth/ainative/callback; this provider just adopts the already
+    // verified tokens into the NextAuth session (same shape as password login).
+    Credentials({
+      id: 'ainative-oauth',
+      credentials: {},
+      async authorize(creds: any) {
+        if (!creds?.accessToken || !creds?.sub) return null
+        // Resolve the default workspace authoritatively (userinfo only carries
+        // the primary org), matching the password path.
+        const workspace = await resolveDefaultWorkspace(creds.accessToken, {
+          id: creds.workspaceId || null,
+          name: creds.workspaceName || null,
+        })
+        return {
+          id: String(creds.sub),
+          email: creds.email || null,
+          name: creds.name || (creds.email ? String(creds.email).split('@')[0] : 'AINative User'),
+          type: 'ainative' as const,
+          accessToken: creds.accessToken,
+          refreshToken: creds.refreshToken || undefined,
+          expiresIn: creds.expiresIn ? Number(creds.expiresIn) : undefined,
+          workspaceId: workspace.id,
+          workspaceName: workspace.name,
+        }
+      },
+    }),
   ],
   callbacks: {
     async jwt({ token, user }) {
@@ -160,6 +234,11 @@ export const {
           token.expiresAt = (user as any).expiresIn
             ? Date.now() + (user as any).expiresIn * 1000
             : undefined
+        }
+        // Default workspace (Organization) captured at sign-in.
+        if ((user as any).workspaceId) {
+          token.workspaceId = (user as any).workspaceId
+          token.workspaceName = (user as any).workspaceName
         }
       }
 
@@ -190,6 +269,11 @@ export const {
         // Pass access token to session for API calls
         if (token.accessToken) {
           (session as any).accessToken = token.accessToken
+        }
+        // Expose the user's default workspace on the session.
+        if (token.workspaceId) {
+          (session as any).workspaceId = token.workspaceId
+          ;(session as any).workspaceName = token.workspaceName
         }
       }
 
