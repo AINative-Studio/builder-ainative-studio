@@ -14,6 +14,8 @@
  */
 
 import { spawn, type ChildProcess } from 'child_process'
+import { TrajectoryCapture } from './trajectory-capture'
+import { storeTrajectory } from './trajectory-store'
 import { createWorktree, getWorktreeFiles, getWorktreePath } from './worktree-manager'
 import {
   getAgentBinary,
@@ -260,6 +262,13 @@ export async function* runHeadlessAgent(
   let lastError: string | null = null
   let buffer = ''
 
+  // Fine-tuning trajectory capture (opt-in via CAPTURE_TRAJECTORIES=true).
+  // Taps the raw event stream; finalized + auto-verified after the run.
+  const captureEnabled = process.env.CAPTURE_TRAJECTORIES === 'true'
+  const trajectory = captureEnabled
+    ? new TrajectoryCapture(chatId, prompt, model)
+    : null
+
   const processLine = function* (line: string): Generator<AgentEvent> {
     const trimmed = line.trim()
     if (!trimmed) return
@@ -271,6 +280,9 @@ export async function* runHeadlessAgent(
       // Not valid JSON — skip
       return
     }
+
+    // Tap the raw event for fine-tuning trajectory capture (no-op if disabled).
+    trajectory?.observe(event)
 
     // Map Claude Code stream events to our SSE envelope
     yield* translateEvent(event)
@@ -424,6 +436,18 @@ export async function* runHeadlessAgent(
   })
 
   const durationMs = Date.now() - startTime
+
+  // Finalize + auto-verify + persist the trajectory for fine-tuning. Runs
+  // regardless of exit code (failed runs are valuable negative-reward signal).
+  // Fully detached: awaited errors are swallowed so capture never affects the
+  // generation result. The npm install/build in autoVerify is slow, so we do
+  // NOT block the generator on it — fire it and let it complete in background.
+  if (trajectory) {
+    void trajectory
+      .finalize(worktreePath, startTime)
+      .then((record) => storeTrajectory(record))
+      .catch((err) => console.warn('[Trajectory] capture failed:', err))
+  }
 
   if (exitCode !== 0 && !abortSignal?.aborted) {
     const errorMsg = lastError || stderr.trim() || `Agent exited with code ${exitCode}`
