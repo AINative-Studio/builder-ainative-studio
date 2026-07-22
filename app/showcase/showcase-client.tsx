@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
-import { SHOWCASE_CATEGORIES, type ShowcaseEntry } from '@/lib/showcase-data'
+import { SEED_SHOWCASE, SHOWCASE_CATEGORIES, type ShowcaseEntry } from '@/lib/showcase-data'
 
 // Build a self-contained HTML page that renders React code using CDN scripts
 function buildPreviewHtml(code: string): string {
@@ -346,17 +346,22 @@ function cleanDescription(prompt: string, title: string): string {
   return desc
 }
 
-function CommunityCard({ entry }: { entry: ShowcaseEntry }) {
+function CommunityCard({ entry, isSeed = false }: { entry: ShowcaseEntry; isSeed?: boolean }) {
   const cat = detectCategory(entry.prompt || entry.title || '')
   const category = SHOWCASE_CATEGORIES.find(c => c.id === cat)
   const title = cleanTitle(entry.title || '')
-  const previewUrl = entry.chatId ? `/api/preview/${entry.chatId}` : ''
+  // Curated seed demos link to their reliable static-preview wrapper page
+  // (/showcase/{slug} -> /showcase-previews/{slug}.html, build-time, can't fail).
+  // Dynamic community apps link to the runtime preview by chatId.
+  const previewUrl = isSeed
+    ? `/showcase/${entry.slug}`
+    : (entry.chatId ? `/api/preview/${entry.chatId}` : '')
 
   return (
     <a
       href={previewUrl || '/'}
-      target="_blank"
-      rel="noopener noreferrer"
+      target={isSeed ? undefined : '_blank'}
+      rel={isSeed ? undefined : 'noopener noreferrer'}
       className="group block bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden hover:shadow-lg hover:border-blue-300 dark:hover:border-blue-700 transition-all duration-200"
     >
       {/* Thumbnail — stylish gradient with app icon, loads instantly */}
@@ -404,75 +409,55 @@ function CommunityCard({ entry }: { entry: ShowcaseEntry }) {
 }
 
 export function ShowcaseGalleryClient() {
-  const [entries, setEntries] = useState<ShowcaseEntry[]>([])
-  const [loading, setLoading] = useState(true)
+  // Seed-first architecture: the curated SEED_SHOWCASE demos are ALWAYS rendered
+  // (they're static, build-time, and each links to its reliable
+  // /showcase/{slug} -> /showcase-previews/{slug}.html page). Dynamic community
+  // apps are fetched as an ENHANCEMENT and appended below — so a slow/empty/
+  // failed /api/showcase read can never blank the gallery. This is the fix for
+  // the recurring "showcase not working" (blank gallery) regressions.
+  const seedSlugs = useMemo(() => new Set(SEED_SHOWCASE.map(e => e.slug)), [])
+  const [dynamicEntries, setDynamicEntries] = useState<ShowcaseEntry[]>([])
   const [filter, setFilter] = useState<string | null>(null)
 
   useEffect(() => {
-    // Request a large window — the API dedupes repeated prompts server-side, so
-    // this is up to 500 DISTINCT apps, newest-first.
+    let cancelled = false
+    // Enhancement only — never blocks or blanks the curated grid.
     fetch('/api/showcase?offset=0&limit=500')
-      .then(r => r.json())
+      .then(r => (r.ok ? r.json() : { entries: [] }))
       .then(data => {
-        // Only show entries with substantial code
-        const dynamic = (data.entries || []).filter(
-          (e: ShowcaseEntry) => {
-            if (!e.chatId || !e.generatedCode) return false
-            const code = e.generatedCode
-            if (code.length < 2000) return false
-            // Exclude entries with known rendering issues
-            // Multi-file with only stub page.tsx
-            const hasFileMarkers = code.includes('// --- FILE:')
-            if (hasFileMarkers) {
-              // Check if the largest file section has actual component code
-              const sections = code.split(/\/\/\s*---\s*FILE:\s*/i)
-              const mainSection = sections.reduce((a, b) => a.length > b.length ? a : b, '')
-              if (!mainSection.includes('function ') && !mainSection.includes('const ')) return false
-            }
-            return true
+        if (cancelled) return
+        const dynamic = (data.entries || []).filter((e: ShowcaseEntry) => {
+          if (!e.chatId || !e.generatedCode) return false
+          if (seedSlugs.has(e.slug)) return false // don't duplicate curated seeds
+          const code = e.generatedCode
+          if (code.length < 2000) return false
+          const hasFileMarkers = code.includes('// --- FILE:')
+          if (hasFileMarkers) {
+            const sections = code.split(/\/\/\s*---\s*FILE:\s*/i)
+            const mainSection = sections.reduce((a, b) => (a.length > b.length ? a : b), '')
+            if (!mainSection.includes('function ') && !mainSection.includes('const ')) return false
           }
-        )
-        setEntries(dynamic)
+          return true
+        })
+        setDynamicEntries(dynamic)
       })
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [])
+      .catch(() => {
+        // Swallow: the curated seed grid still renders. Never blank.
+      })
+    return () => { cancelled = true }
+  }, [seedSlugs])
 
-  if (loading) {
-    return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-        {[1, 2, 3, 4, 5, 6, 7, 8].map(i => (
-          <div key={i} className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden animate-pulse">
-            <div className="aspect-video bg-gray-200 dark:bg-gray-700" />
-            <div className="p-4">
-              <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-1/4 mb-2" />
-              <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4 mb-1" />
-              <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-full" />
-            </div>
-          </div>
-        ))}
-      </div>
-    )
-  }
+  // Curated seeds first, then dynamic community apps. Always >= SEED_SHOWCASE.
+  const all: Array<ShowcaseEntry & { __seed?: boolean }> = [
+    ...SEED_SHOWCASE.map(e => ({ ...e, __seed: true })),
+    ...dynamicEntries,
+  ]
 
-  if (entries.length === 0) {
-    return (
-      <div className="text-center py-12 bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800">
-        <p className="text-gray-500 dark:text-gray-400 mb-3">No community creations yet</p>
-        <Link href="/" className="text-sm font-medium text-blue-600 hover:text-blue-700">
-          Be the first to create one
-        </Link>
-      </div>
-    )
-  }
-
-  // Apply category filter
   const filtered = filter
-    ? entries.filter(e => detectCategory(e.prompt || e.title || '') === filter)
-    : entries
+    ? all.filter(e => detectCategory(e.prompt || e.title || '') === filter)
+    : all
 
-  // Get unique categories from entries
-  const cats = [...new Set(entries.map(e => detectCategory(e.prompt || e.title || '')))]
+  const cats = [...new Set(all.map(e => detectCategory(e.prompt || e.title || '')))]
 
   return (
     <div>
@@ -486,11 +471,11 @@ export function ShowcaseGalleryClient() {
               : 'bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:border-blue-300'
           }`}
         >
-          All ({entries.length})
+          All ({all.length})
         </button>
         {cats.map(cat => {
           const label = SHOWCASE_CATEGORIES.find(c => c.id === cat)?.label || cat
-          const count = entries.filter(e => detectCategory(e.prompt || e.title || '') === cat).length
+          const count = all.filter(e => detectCategory(e.prompt || e.title || '') === cat).length
           return (
             <button
               key={cat}
@@ -507,10 +492,14 @@ export function ShowcaseGalleryClient() {
         })}
       </div>
 
-      {/* Grid of cards with live previews */}
+      {/* Grid of cards — curated seeds link to static previews, community apps to runtime preview */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
         {filtered.map(entry => (
-          <CommunityCard key={entry.chatId || entry.slug} entry={entry} />
+          <CommunityCard
+            key={entry.__seed ? `seed-${entry.slug}` : (entry.chatId || entry.slug)}
+            entry={entry}
+            isSeed={entry.__seed}
+          />
         ))}
       </div>
     </div>
