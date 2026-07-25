@@ -154,7 +154,11 @@ function safeFileTree(root: string): string[] {
 async function autoVerify(worktreePath: string): Promise<VerifyResult> {
   const hasPkg = fs.existsSync(path.join(worktreePath, 'package.json'))
   if (!hasPkg) {
-    return { installed: null, built: null, ran: null, httpOk: null, reward: 0, detail: 'no package.json' }
+    // No package.json doesn't mean failure — a static web app (index.html + JS/
+    // CSS, no build step) is a perfectly valid, runnable output. Verify it as a
+    // static app instead of scoring it reward=0, so frontend-only generations
+    // aren't systematically undervalued in the fine-tuning data.
+    return verifyStaticApp(worktreePath)
   }
 
   const installed = await run('npm', ['install', '--no-audit', '--no-fund', '--loglevel=error'], worktreePath, 180_000)
@@ -183,6 +187,66 @@ async function autoVerify(worktreePath: string): Promise<VerifyResult> {
     reward,
     detail: reward ? 'install' + (built ? '+build ok' : ' ok') : 'build failed',
   }
+}
+
+/**
+ * Verify a static web app (no package.json): a runnable frontend is one with an
+ * HTML entry point that has real content and wires up its own JS/CSS. This is
+ * the execution-based analogue of "install+build ok" for static apps — no npm,
+ * no build, but still an objective signal that the output is a real app and not
+ * an empty stub. reward=1 when a substantive index.html is present.
+ */
+function verifyStaticApp(worktreePath: string): VerifyResult {
+  // Find an HTML entry point (prefer index.html, else any .html at shallow depth).
+  const htmlFiles = findHtml(worktreePath)
+  const entry =
+    htmlFiles.find((f) => path.basename(f).toLowerCase() === 'index.html') || htmlFiles[0]
+
+  if (!entry) {
+    return { installed: null, built: null, ran: null, httpOk: null, reward: 0, detail: 'no package.json and no html entry' }
+  }
+
+  let html = ''
+  try { html = fs.readFileSync(entry, 'utf8') } catch {
+    return { installed: null, built: null, ran: null, httpOk: null, reward: 0, detail: 'html unreadable' }
+  }
+
+  // Substantive: has a <body>, non-trivial length, and references script/style
+  // (inline or external) — i.e. an actual app, not a blank placeholder.
+  const hasBody = /<body[\s>]/i.test(html)
+  const hasLogic = /<script[\s>]/i.test(html) || /<style[\s>]/i.test(html) || /<link[^>]+stylesheet/i.test(html)
+  const substantive = html.length >= 200 && hasBody && hasLogic
+
+  const rel = path.relative(worktreePath, entry)
+  const reward: 0 | 1 = substantive ? 1 : 0
+  return {
+    installed: null,
+    built: null,
+    ran: null,
+    httpOk: null,
+    reward,
+    detail: reward
+      ? `static app ok (${rel})`
+      : `static app incomplete (${rel}: ${html.length}b body=${hasBody} logic=${hasLogic})`,
+  }
+}
+
+/** Shallow scan for .html files (excludes node_modules/.git/.next), capped. */
+function findHtml(root: string): string[] {
+  const out: string[] = []
+  const walk = (dir: string, depth: number) => {
+    if (depth > 3 || out.length > 40) return
+    let entries: fs.Dirent[]
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const e of entries) {
+      if (e.name === 'node_modules' || e.name === '.git' || e.name === '.next') continue
+      const full = path.join(dir, e.name)
+      if (e.isDirectory()) walk(full, depth + 1)
+      else if (e.name.toLowerCase().endsWith('.html')) out.push(full)
+    }
+  }
+  walk(root, 0)
+  return out
 }
 
 function readJson(p: string): any {
