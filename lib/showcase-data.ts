@@ -13,6 +13,9 @@ export interface ShowcaseEntry {
   prompt: string
   chatId?: string
   generatedCode?: string
+  /** Set by /api/showcase when generatedCode is stripped from the list payload
+   *  (#58) — signals the entry has real code without shipping it. */
+  hasCode?: boolean
   thumbnail?: string
   tags: string[]
   featured: boolean
