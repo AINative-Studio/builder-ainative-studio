@@ -23,6 +23,7 @@ import {
   getAgentSpawnEnv,
   isAgentEnabled,
   isAgentFallbackEnabled,
+  resolveAgentModel,
 } from './agent-runtime'
 
 // ---------------------------------------------------------------------------
@@ -191,12 +192,18 @@ export async function* runHeadlessAgent(
 
   // 2. Build CLI arguments
   const {
-    model = DEFAULT_MODEL,
+    model: requestedModel = DEFAULT_MODEL,
     maxBudgetUsd = DEFAULT_MAX_BUDGET_USD,
     systemPrompt,
     allowedTools = DEFAULT_ALLOWED_TOOLS,
     abortSignal,
   } = options
+
+  // Map the model to one the active runtime can actually serve. For cody this
+  // rewrites Anthropic shorthands (sonnet/opus) — which the AINative tier 403s
+  // on, causing a fallback and lost capture — to an AINative coding model.
+  // Refs builder#99.
+  const model = resolveAgentModel(requestedModel)
 
   // A real codegen task is read → write → verify → fix, not 1-2 turns. With
   // maxTurns=3 the run hit --max-turns mid-tool-call and cody returned an empty

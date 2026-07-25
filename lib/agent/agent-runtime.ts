@@ -57,6 +57,35 @@ export function getAgentSpawnEnv(env: NodeJS.ProcessEnv = process.env): Record<s
 }
 
 /**
+ * Resolve the model name to pass to the agent CLI for the active runtime.
+ *
+ * The builder defaults the agent model to Claude-Code shorthands like `sonnet`
+ * / `opus`. Those work for the `claude` binary, but Cody routes to the AINative
+ * proxy, whose enterprise tier rejects `sonnet` (403 permission_error) — every
+ * such run then falls back to standard generation and NO Cody trajectory is
+ * captured. For the cody runtime we map Anthropic-family shorthands to an
+ * AINative-valid coding model (default `kimi-k2`, override via CODY_MODEL).
+ * Models already valid on AINative (e.g. `kimi-k2`, `qwen3-coder-flash`) pass
+ * through unchanged. The `claude` runtime is untouched.
+ */
+const _ANTHROPIC_SHORTHANDS = new Set([
+  'sonnet', 'opus', 'haiku',
+  'claude-sonnet', 'claude-opus', 'claude-haiku', 'claude-opus-latest',
+])
+
+export function resolveAgentModel(
+  model: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  if (getAgentRuntime(env) !== 'cody') return model
+  const codyDefault = (env.CODY_MODEL || 'kimi-k2').trim()
+  // Only remap the Anthropic-family shorthands the AINative tier can't serve;
+  // an explicit AINative model name (kimi-k2, qwen3-coder-flash, …) is honored.
+  if (_ANTHROPIC_SHORTHANDS.has(model.trim().toLowerCase())) return codyDefault
+  return model
+}
+
+/**
  * Whether the headless agent path is enabled at all. Enabled when either an
  * explicit flag is set (`USE_CLAUDE_AGENT`), or the runtime is `cody` (the
  * AINative harness is safe to use by default since it has no external cost/

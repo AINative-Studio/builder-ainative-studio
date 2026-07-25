@@ -5,6 +5,7 @@ import {
   getAgentSpawnEnv,
   isAgentEnabled,
   isAgentFallbackEnabled,
+  resolveAgentModel,
 } from '@/lib/agent/agent-runtime'
 
 const env = (o: Record<string, string | undefined>) => o as NodeJS.ProcessEnv
@@ -85,5 +86,37 @@ describe('agent-runtime (#79)', () => {
     it('false by default', () => {
       expect(isAgentFallbackEnabled(env({}))).toBe(false)
     })
+  })
+})
+
+describe('resolveAgentModel (builder#99 — cody model mapping)', () => {
+  it('leaves the model unchanged for the claude runtime', () => {
+    expect(resolveAgentModel('sonnet', env({}))).toBe('sonnet')
+    expect(resolveAgentModel('sonnet', env({ AGENT_RUNTIME: 'claude' }))).toBe('sonnet')
+  })
+
+  it('maps anthropic shorthands to the cody default (kimi-k2) under the cody runtime', () => {
+    const e = env({ AGENT_RUNTIME: 'cody' })
+    expect(resolveAgentModel('sonnet', e)).toBe('kimi-k2')
+    expect(resolveAgentModel('opus', e)).toBe('kimi-k2')
+    expect(resolveAgentModel('claude-sonnet', e)).toBe('kimi-k2')
+  })
+
+  it('honors CODY_MODEL override', () => {
+    const e = env({ AGENT_RUNTIME: 'cody', CODY_MODEL: 'qwen3-coder-flash' })
+    expect(resolveAgentModel('sonnet', e)).toBe('qwen3-coder-flash')
+  })
+
+  it('passes through an explicit AINative model unchanged under cody', () => {
+    const e = env({ AGENT_RUNTIME: 'cody' })
+    expect(resolveAgentModel('kimi-k2', e)).toBe('kimi-k2')
+    expect(resolveAgentModel('qwen3-coder-flash', e)).toBe('qwen3-coder-flash')
+    expect(resolveAgentModel('deepseek-4-flash', e)).toBe('deepseek-4-flash')
+  })
+
+  it('is case-insensitive on the shorthand match', () => {
+    const e = env({ AGENT_RUNTIME: 'cody' })
+    expect(resolveAgentModel('Sonnet', e)).toBe('kimi-k2')
+    expect(resolveAgentModel(' OPUS ', e)).toBe('kimi-k2')
   })
 })
