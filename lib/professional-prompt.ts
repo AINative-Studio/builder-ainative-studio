@@ -283,6 +283,46 @@ async function addTodo(text) {
 9. Use Lucide icons, NEVER emoji/emoticons
 10. EXACTLY ONE \`<h1>\` per page — section headings use \`<h2>\`, never \`<h1>\`
 
+## CODE CORRECTNESS — THESE CAUSE CRASHES, FOLLOW EXACTLY
+
+**C1. Never split a statement with a stray semicolon (method chains).** A value that continues on the next line must NOT be terminated early. This breaks the parser and the whole app drops to a fallback screen.
+\`\`\`js
+// ❌ WRONG — the ";" after invoices ends the statement; the chain is now orphaned
+const outstanding = invoices;
+  .filter(inv => inv.status !== 'paid')
+  .reduce((s, inv) => s + inv.total, 0)
+// ✅ CORRECT — keep the chain attached (no semicolon until the end)
+const outstanding = invoices
+  .filter(inv => inv.status !== 'paid')
+  .reduce((s, inv) => s + inv.total, 0);
+\`\`\`
+
+**C2. Never place a component or icon reference in a child position.** Render components/icons as JSX ELEMENTS, never as bare \`{Identifier}\` children — a component object used as a child crashes React.
+\`\`\`jsx
+// ❌ WRONG:  <span>{Search}</span>   ...  {ChartComponent}   ...  <div>{Icon}</div>
+// ✅ CORRECT: <span><Search/></span> ...  <ChartComponent/>   ...  <div><Icon/></div>
+\`\`\`
+Recharts and all chart components render ONLY as JSX elements (\`<LineChart>...</LineChart>\`), never referenced bare.
+
+**C3. Defensive access on all loaded/dynamic data.** Rows from \`/api/db/{table}\` or any fetch may be missing fields — a missing field crashes the render (\`row.name.toLowerCase()\` throws when \`name\` is undefined). ALWAYS guard:
+\`\`\`js
+// ❌ WRONG: contacts.filter(c => c.name.toLowerCase().includes(q))
+// ✅ CORRECT: contacts.filter(c => (c.name || '').toLowerCase().includes(q))
+// use (x.field || '') for strings, (x.list || []) for arrays, x?.nested?.value for depth
+\`\`\`
+
+## INTERACTIVITY — APPS MUST WORK, NOT JUST LOOK GOOD (CRITICAL)
+
+A beautiful UI with dead buttons is a FAILURE. Every interactive control you render MUST do something real. This is not optional polish — it is the core requirement.
+
+- **Every \`<button>\` has a working \`onClick\`** that changes state, opens a modal, submits a form, filters/sorts data, or calls the data layer. NO decorative buttons.
+- **Every form input is controlled** (\`value\` + \`onChange\` wired to \`useState\`) and the form's submit actually adds/updates data.
+- **"Add / New / Create" buttons open a real form or add a real item** to state (and persist via \`/api/db\` when the app has a data layer). The single most important control must never be a no-op.
+- **Search/filter inputs actually filter** the rendered list; **tabs actually switch** content; **toggles actually toggle** state.
+- Prefer wiring a control to real behavior over adding another static section. If you show a control, make it functional.
+
+Before finishing, mentally click every button and type in every input — if nothing changes, wire it up.
+
 ## IMPORT RULES — CRITICAL (follow exactly)
 
 Every file you generate must start with these imports (only include what you actually use):
