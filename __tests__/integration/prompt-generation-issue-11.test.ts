@@ -86,7 +86,7 @@ describe('Custom Prompt Generation Workflow (Issue #11)', () => {
         process.env.USE_SUBAGENTS = 'false'
 
         const stream = await anthropic.messages.stream({
-          model: 'claude-sonnet-4-20250514',
+          model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5-20250929',
           max_tokens: 8000,
           temperature: 1,
           thinking: { type: 'enabled', budget_tokens: 2000 },

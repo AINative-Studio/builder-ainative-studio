@@ -96,7 +96,7 @@ npm run test:watch
 Required environment variables (set in `.env`):
 ```bash
 ANTHROPIC_API_KEY=<your-api-key>
-ANTHROPIC_MODEL=claude-sonnet-4-20250514
+ANTHROPIC_MODEL=claude-sonnet-4-5-20250929
 REDIS_URL=redis://localhost:6379
 ```
 

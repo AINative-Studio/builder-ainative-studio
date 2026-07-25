@@ -135,7 +135,7 @@ describe('Custom Prompt Generation Workflow (Issue #11)', () => {
         try {
           // Use standard streaming with Tool Use API
           const stream = await anthropic.messages.stream({
-            model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514',
+            model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5-20250929',
             max_tokens: 8000,
             temperature: 1,
             thinking: {
