@@ -426,17 +426,14 @@ export function ShowcaseGalleryClient() {
       .then(r => (r.ok ? r.json() : { entries: [] }))
       .then(data => {
         if (cancelled) return
-        const dynamic = (data.entries || []).filter((e: ShowcaseEntry) => {
-          if (!e.chatId || !e.generatedCode) return false
+        const dynamic = (data.entries || []).filter((e: ShowcaseEntry & { hasCode?: boolean }) => {
+          // The server now applies the code quality gate and strips
+          // generatedCode from the list payload (#58), exposing `hasCode`
+          // instead. Fall back to the legacy generatedCode check for any
+          // response that still carries it (backwards compatible).
+          const qualifies = e.hasCode ?? Boolean(e.generatedCode && e.generatedCode.length >= 2000)
+          if (!e.chatId || !qualifies) return false
           if (seedSlugs.has(e.slug)) return false // don't duplicate curated seeds
-          const code = e.generatedCode
-          if (code.length < 2000) return false
-          const hasFileMarkers = code.includes('// --- FILE:')
-          if (hasFileMarkers) {
-            const sections = code.split(/\/\/\s*---\s*FILE:\s*/i)
-            const mainSection = sections.reduce((a, b) => (a.length > b.length ? a : b), '')
-            if (!mainSection.includes('function ') && !mainSection.includes('const ')) return false
-          }
           return true
         })
         setDynamicEntries(dynamic)

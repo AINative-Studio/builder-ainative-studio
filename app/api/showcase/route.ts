@@ -4,6 +4,24 @@ import { getDynamicShowcase, addToShowcase } from '@/lib/showcase-store'
 import { listGenerations } from '@/lib/zerodb-store'
 
 /**
+ * Server-side quality gate for a generated app (formerly done client-side over
+ * the shipped generated_code, #58). An entry qualifies when it has a chatId and
+ * substantive, real-looking code: length >= 2000, and if it uses FILE markers,
+ * its largest section defines a function/const. Keeping this on the server lets
+ * us strip generated_code from the list payload entirely.
+ */
+export function isQualityApp(code: string, chatId: string | undefined): boolean {
+  if (!chatId || !code) return false
+  if (code.length < 2000) return false
+  if (code.includes('// --- FILE:')) {
+    const sections = code.split(/\/\/\s*---\s*FILE:\s*/i)
+    const mainSection = sections.reduce((a, b) => (a.length > b.length ? a : b), '')
+    if (!mainSection.includes('function ') && !mainSection.includes('const ')) return false
+  }
+  return true
+}
+
+/**
  * GET /api/showcase — List all showcase entries (seed + in-memory + ZeroDB)
  */
 export async function GET(request: NextRequest) {
@@ -21,7 +39,10 @@ export async function GET(request: NextRequest) {
   try {
     const rows = await listGenerations(1000)
     zerodbEntries = rows
-      .filter((r: any) => (r.code_length ?? (r.generated_code || '').length) > 1500)
+      // Quality gate, done server-side while the code is already in hand so we
+      // don't have to ship generated_code to every client. A gallery entry must
+      // have a chatId and substantive, real-looking code. (#58)
+      .filter((r: any) => isQualityApp(r.generated_code || '', r.chat_id))
       .map((r: any) => {
         const title = r.title || r.prompt?.replace(/^Build\s+(a|an)\s+/i, '').split(/[.!]/)[0]?.trim()?.split(' ').slice(0, 6).map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') || 'Untitled'
         return {
@@ -31,7 +52,11 @@ export async function GET(request: NextRequest) {
           category: r.category || 'creative',
           prompt: r.prompt || '',
           chatId: r.chat_id,
-          generatedCode: r.generated_code || undefined,
+          // NOTE: generatedCode is intentionally OMITTED from the list payload
+          // (was ~9KB/entry → ~900KB/response). The grid renders metadata only
+          // and loads code on demand via /api/preview/{chatId}. `hasCode` lets
+          // the client keep its "real app" filter without the code. (#58)
+          hasCode: true,
           tags: ['ai-generated', 'react'],
           featured: false,
           createdAt: r.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
