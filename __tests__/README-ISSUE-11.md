@@ -43,7 +43,7 @@ npm run test:coverage -- __tests__/integration/prompt-generation-issue-11.test.t
 
 ```env
 ANTHROPIC_API_KEY=<your-key>
-ANTHROPIC_MODEL=claude-sonnet-4-20250514
+ANTHROPIC_MODEL=claude-sonnet-4-5-20250929
 ```
 
 ## Test Output
