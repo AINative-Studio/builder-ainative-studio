@@ -9,7 +9,23 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { logAgentRun, type AgentRunData } from '../../lib/services/agent-runs.service'
+import {
+  logAgentRun,
+  __resetTableEnsuredForTests,
+  type AgentRunData,
+} from '../../lib/services/agent-runs.service'
+
+/**
+ * logAgentRun now makes up to TWO fetch calls: first an idempotent
+ * create-table (ensureAgentRunsTable, builder#101), then the row insert to
+ * `/rows`. These helpers pick out the row-write call regardless of ordering so
+ * assertions stay stable.
+ */
+function rowWriteCall(fetchMock: ReturnType<typeof vi.fn>): [string, any] {
+  const call = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/rows'))
+  if (!call) throw new Error('no /rows write call recorded')
+  return call as [string, any]
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -70,6 +86,7 @@ describe('logAgentRun', () => {
     consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     originalFetch = global.fetch
+    __resetTableEnsuredForTests()
   })
 
   afterEach(() => {
@@ -103,9 +120,9 @@ describe('logAgentRun', () => {
 
       await logAgentRun(BASE_DATA)
 
-      expect(global.fetch).toHaveBeenCalledOnce()
-      const [, options] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
-      expect(options.headers['x-api-key']).toBe('ainative-key-fallback')
+      expect(global.fetch).toHaveBeenCalledTimes(2)
+      const [, options] = rowWriteCall(global.fetch as ReturnType<typeof vi.fn>)
+      expect(options.headers['Authorization']).toBe('Bearer ainative-key-fallback')
     })
 
     it('prefers ZERODB_API_KEY over AINATIVE_API_KEY', async () => {
@@ -115,8 +132,8 @@ describe('logAgentRun', () => {
 
       await logAgentRun(BASE_DATA)
 
-      const [, options] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
-      expect(options.headers['x-api-key']).toBe('zerodb-key')
+      const [, options] = rowWriteCall(global.fetch as ReturnType<typeof vi.fn>)
+      expect(options.headers['Authorization']).toBe('Bearer zerodb-key')
     })
   })
 
@@ -132,7 +149,7 @@ describe('logAgentRun', () => {
 
       await logAgentRun(BASE_DATA)
 
-      const [url] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
+      const [url] = rowWriteCall(global.fetch as ReturnType<typeof vi.fn>)
       expect(url).toContain('proj-999')
       expect(url).toContain('agent_runs')
       expect(url).toContain('custom.ainative.studio')
@@ -143,7 +160,7 @@ describe('logAgentRun', () => {
 
       await logAgentRun(BASE_DATA)
 
-      const [, options] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
+      const [, options] = rowWriteCall(global.fetch as ReturnType<typeof vi.fn>)
       expect(options.method).toBe('POST')
       expect(options.headers['Content-Type']).toBe('application/json')
 
@@ -167,7 +184,7 @@ describe('logAgentRun', () => {
 
       await logAgentRun({ ...BASE_DATA, toolsUsed: ['Read', 'Write'] })
 
-      const [, options] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
+      const [, options] = rowWriteCall(global.fetch as ReturnType<typeof vi.fn>)
       const body = JSON.parse(options.body)
       expect(body.row_data.tools_used).toBe('["Read","Write"]')
     })
@@ -177,7 +194,7 @@ describe('logAgentRun', () => {
 
       await logAgentRun({ ...BASE_DATA, error: undefined })
 
-      const [, options] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
+      const [, options] = rowWriteCall(global.fetch as ReturnType<typeof vi.fn>)
       const body = JSON.parse(options.body)
       expect(body.row_data.error).toBeNull()
     })
@@ -188,7 +205,7 @@ describe('logAgentRun', () => {
 
       await logAgentRun({ ...BASE_DATA, error: longError })
 
-      const [, options] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
+      const [, options] = rowWriteCall(global.fetch as ReturnType<typeof vi.fn>)
       const body = JSON.parse(options.body)
       expect(body.row_data.error.length).toBe(2000)
     })
@@ -198,7 +215,7 @@ describe('logAgentRun', () => {
 
       await logAgentRun({ ...BASE_DATA, error: 'short error' })
 
-      const [, options] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
+      const [, options] = rowWriteCall(global.fetch as ReturnType<typeof vi.fn>)
       const body = JSON.parse(options.body)
       expect(body.row_data.error).toBe('short error')
     })
@@ -211,7 +228,7 @@ describe('logAgentRun', () => {
         tokenUsage: { inputTokens: 100, outputTokens: 50 },
       })
 
-      const [, options] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
+      const [, options] = rowWriteCall(global.fetch as ReturnType<typeof vi.fn>)
       const body = JSON.parse(options.body)
       expect(body.row_data.total_cost_usd).toBe(0)
     })
@@ -251,7 +268,7 @@ describe('logAgentRun', () => {
 
       await logAgentRun(BASE_DATA)
 
-      const [, options] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
+      const [, options] = rowWriteCall(global.fetch as ReturnType<typeof vi.fn>)
       expect(options.signal).toBeDefined()
     })
 
@@ -261,7 +278,7 @@ describe('logAgentRun', () => {
 
       await logAgentRun(BASE_DATA)
 
-      const [url] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
+      const [url] = rowWriteCall(global.fetch as ReturnType<typeof vi.fn>)
       // The default project ID from source
       expect(url).toContain('5dfbc60c-7463-4e21-ac68-9bbe536f9adf')
     })
@@ -273,7 +290,7 @@ describe('logAgentRun', () => {
 
       await logAgentRun(BASE_DATA)
 
-      const [url] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
+      const [url] = rowWriteCall(global.fetch as ReturnType<typeof vi.fn>)
       expect(url).toContain('api.ainative.studio')
     })
 
@@ -284,7 +301,7 @@ describe('logAgentRun', () => {
 
       await logAgentRun(BASE_DATA)
 
-      const [url] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
+      const [url] = rowWriteCall(global.fetch as ReturnType<typeof vi.fn>)
       expect(url).toContain('zerodb.ainative.studio')
     })
 
@@ -295,10 +312,53 @@ describe('logAgentRun', () => {
       await logAgentRun(BASE_DATA)
       const after = new Date().toISOString()
 
-      const [, options] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
+      const [, options] = rowWriteCall(global.fetch as ReturnType<typeof vi.fn>)
       const body = JSON.parse(options.body)
       expect(body.row_data.created_at >= before).toBe(true)
       expect(body.row_data.created_at <= after).toBe(true)
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // Table creation (builder#101 — 404 was "table not found")
+  // -------------------------------------------------------------------------
+
+  describe('table creation (builder#101)', () => {
+    it('creates the agent_runs table before writing the row', async () => {
+      global.fetch = mockFetchOk(200)
+
+      await logAgentRun(BASE_DATA)
+
+      const calls = (global.fetch as ReturnType<typeof vi.fn>).mock.calls
+      // first call creates the table (…/database/tables), then the row write
+      const [createUrl, createOpts] = calls[0]
+      expect(String(createUrl)).toMatch(/\/database\/tables$/)
+      expect(JSON.parse(createOpts.body).table_name).toBe('agent_runs')
+      expect(calls.some(([u]) => String(u).endsWith('/rows'))).toBe(true)
+    })
+
+    it('only creates the table once across multiple logs (memoized)', async () => {
+      global.fetch = mockFetchOk(200)
+
+      await logAgentRun(BASE_DATA)
+      await logAgentRun(BASE_DATA)
+
+      const createCalls = (global.fetch as ReturnType<typeof vi.fn>).mock.calls
+        .filter(([u]) => String(u).endsWith('/database/tables'))
+      expect(createCalls).toHaveLength(1)
+    })
+
+    it('still attempts the row write if table creation throws', async () => {
+      // create rejects, write resolves ok — logAgentRun should not blow up and
+      // should still issue the /rows write.
+      const fetchMock = vi.fn()
+        .mockRejectedValueOnce(new Error('create failed'))
+        .mockResolvedValueOnce({ ok: true, status: 200 } as Response)
+      global.fetch = fetchMock
+
+      await logAgentRun(BASE_DATA)
+
+      expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith('/rows'))).toBe(true)
     })
   })
 

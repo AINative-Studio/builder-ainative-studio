@@ -24,6 +24,41 @@ export interface AgentRunData {
   error?: string
 }
 
+/** Whether we've ensured the table exists this process (avoid a create call per write). */
+let _tableEnsured = false
+
+/** Test-only: reset the table-ensured cache so each test starts fresh. */
+export function __resetTableEnsuredForTests(): void {
+  _tableEnsured = false
+}
+
+/**
+ * Ensure the `agent_runs` table exists. A ZeroDB table must be created before
+ * rows can be inserted, otherwise the row POST 404s — which was the cause of
+ * the "[AgentRuns] ZeroDB responded 404" on every run (builder#101). Idempotent
+ * and best-effort: a create for an existing table is a harmless no-op.
+ */
+async function ensureAgentRunsTable(baseUrl: string, projectId: string, apiKey: string): Promise<void> {
+  if (_tableEnsured) return
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 5_000)
+    await fetch(`${baseUrl}/api/v1/projects/${projectId}/database/tables`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        table_name: 'agent_runs',
+        description: 'Headless agent run telemetry (builder#53): model, turns, tools, cost, build result',
+      }),
+      signal: controller.signal,
+    })
+    clearTimeout(timer)
+    _tableEnsured = true
+  } catch {
+    // best-effort — if create fails we still try the write (table may already exist)
+  }
+}
+
 /**
  * Logs an agent run to ZeroDB table `agent_runs`.
  *
@@ -41,6 +76,9 @@ export async function logAgentRun(data: AgentRunData): Promise<void> {
     process.env.AINATIVE_API_URL ||
     process.env.ZERODB_BASE_URL ||
     'https://api.ainative.studio'
+
+  // Create the table on first use so the row insert doesn't 404 (builder#101).
+  await ensureAgentRunsTable(baseUrl, projectId, apiKey)
 
   const row = {
     chat_id: data.chatId,
@@ -67,7 +105,7 @@ export async function logAgentRun(data: AgentRunData): Promise<void> {
       {
         method: 'POST',
         headers: {
-          'x-api-key': apiKey,
+          Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ row_data: row }),
