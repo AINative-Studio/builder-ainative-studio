@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getPreview, isPreviewStreaming, storePreview, getSSRPreview } from '@/lib/preview-store'
-import { validateJavaScriptCode } from '@/lib/code-validator'
+import { validateJavaScriptCode, sanitizeForSandpack } from '@/lib/code-validator'
 // Sucrase removed — builds were failing. Using client-side Babel.
 // The key fix is using models that produce COMPLETE code (not maverick 512-tok)
 
@@ -195,6 +195,16 @@ export async function GET(
     return new NextResponse(`<!DOCTYPE html><html><body style="font-family:sans-serif;padding:20px;text-align:center"><h2>No renderable code found</h2><p>Content length: ${content.length}</p></body></html>`, {
       headers: { 'Content-Type': 'text/html' },
     })
+  }
+
+  // Apply the SAME source auto-fixes the Sandpack path uses (method-chain
+  // semicolon repair, etc.) so a codegen fix benefits BOTH renderers instead of
+  // only Sandpack. Previously this hand-rolled fallback diverged and re-broke on
+  // defects the validator already fixes elsewhere. Refs #91, #107.
+  try {
+    componentCode = sanitizeForSandpack(componentCode)
+  } catch (e) {
+    console.warn('[Preview] sanitizeForSandpack failed, using raw code:', e)
   }
 
   // CRITICAL: Detect the main component name BEFORE stripping exports
