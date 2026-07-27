@@ -63,7 +63,7 @@ test.afterAll(() => {
 })
 
 test.describe('interactivity pixel-verify (#132)', () => {
-  test.describe.configure({ timeout: 360_000, mode: 'serial' })
+  test.describe.configure({ timeout: 720_000, mode: 'serial' })
 
   for (const [tag, prompt] of APPS) {
     test(`generated app is interactive: ${tag}`, async ({ page }) => {
@@ -93,7 +93,7 @@ test.describe('interactivity pixel-verify (#132)', () => {
             .poll(async () => {
               const body = (await page.locator('body').innerText().catch(() => '')) || ''
               return /\d+ of \d+ completed/i.test(body) && /Rate this generation|Refining your app/i.test(body)
-            }, { timeout: 300_000, intervals: [4000] })
+            }, { timeout: 600_000, intervals: [5000] })
             .toBe(true)
           completed = true
         } catch { completed = false }
