@@ -265,6 +265,14 @@ export function SandpackPreview({ files, theme = 'light', className }: SandpackP
       }
     }
 
+    // FINAL de-dupe pass — runs AFTER fixJsxErrors and all the React/AIKit/
+    // shadcn/lucide import injection above. A model-emitted duplicate import
+    // (`import React, { useState }` + `import { useState }`) survives the
+    // injection guards and crashes Sandpack with "already been declared" (#161).
+    // Doing this last guarantees the code Sandpack actually receives is de-duped,
+    // regardless of what earlier steps produced.
+    try { fixed = sanitizeForSandpack(fixed) } catch { /* keep fixed as-is */ }
+
     sandpackFiles[path] = fixed
     if (path === '/App.tsx') {
       console.log('[SandpackPreview] POST-FIX App.tsx:', fixed.length, 'chars,', fixed.split('\n').length, 'lines')
