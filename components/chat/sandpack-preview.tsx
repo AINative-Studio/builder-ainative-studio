@@ -9,6 +9,7 @@ import {
 import { cn } from '@/lib/utils'
 import { fixJsxErrors } from '@/lib/sandpack/jsx-fixer'
 import { getBuiltinFiles } from '@/lib/sandpack/setup'
+import { sanitizeForSandpack } from '@/lib/code-validator'
 
 class SandpackErrorBoundary extends React.Component<
   { children: React.ReactNode; className?: string },
@@ -56,10 +57,19 @@ export function SandpackPreview({ files, theme = 'light', className }: SandpackP
   // Overlay generated files on top, normalizing paths for Sandpack.
   // Sandpack's entry point is /App.tsx at the root, so we flatten /src/ paths
   // and duplicate files at multiple paths so relative imports resolve correctly.
-  for (const [path, content] of Object.entries(files)) {
+  for (const [rawPath, rawContent] of Object.entries(files)) {
+    const path = rawPath
     // Skip non-code files (robots.txt, sitemap.xml, etc.)
     if (path.endsWith('.txt') || path.endsWith('.xml') || (path.endsWith('.json') && path.includes('well-known'))) {
       continue
+    }
+    // Apply the shared source auto-fixes (duplicate-import de-dupe, method-chain
+    // repair, etc.) so the primary Sandpack path gets the SAME fixes as the
+    // /api/preview fallback (#160). A duplicate `import { useState }` otherwise
+    // crashes Sandpack with "already been declared" before render (#161).
+    let content = rawContent
+    if (/\.(t|j)sx?$/.test(path)) {
+      try { content = sanitizeForSandpack(rawContent) } catch { content = rawContent }
     }
     sandpackFiles[path] = content
 
