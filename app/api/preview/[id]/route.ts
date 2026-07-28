@@ -91,7 +91,45 @@ export async function GET(
   }
 
   if (!content) {
-    // Return a helpful error page for expired previews
+    // No in-memory content AND no ZeroDB record. This is USUALLY not a real
+    // expiry — it's a valid preview that isn't ready on THIS request yet:
+    //  - the (slow) cody generation hasn't finished saveGeneration() to ZeroDB,
+    //  - or the request hit a different replica than the one holding the
+    //    in-memory copy / the isStreaming flag (both are per-process).
+    // Showing "Preview Expired" here is what users hit on working apps (#163).
+    //
+    // Instead, auto-refresh a bounded number of times: each refresh re-runs the
+    // getPreview → ZeroDB loadGeneration path above, so as soon as the
+    // generation persists (or routing lands on the right replica) the real app
+    // renders. Only after the retries are exhausted do we show a true "not
+    // found" page. The retry count rides in a ?_r= query param.
+    const retry = parseInt(new URL(request.url).searchParams.get('_r') || '0', 10) || 0
+    const MAX_RETRIES = 20 // ~20 × 3s ≈ 60s — covers a slow cody generation
+
+    if (retry < MAX_RETRIES) {
+      const next = retry + 1
+      const url = new URL(request.url)
+      url.searchParams.set('_r', String(next))
+      const waitingHtml = `<!DOCTYPE html>
+        <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <script src="https://cdn.tailwindcss.com"></script>
+        <meta http-equiv="refresh" content="3;url=${url.pathname}${url.search}"></head>
+        <body class="bg-gray-50 dark:bg-gray-900">
+          <div class="min-h-screen flex items-center justify-center p-4">
+            <div class="text-center">
+              <div class="w-12 h-12 mx-auto mb-4 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-1">Preparing your preview…</h2>
+              <p class="text-sm text-gray-500 dark:text-gray-400">Finishing up — this appears automatically.</p>
+            </div>
+          </div>
+        </body></html>`
+      return new NextResponse(waitingHtml, {
+        headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache, no-store, must-revalidate' },
+      })
+    }
+
+    // Retries exhausted — the preview genuinely isn't available (very old /
+    // truly cleared). Show a recoverable "not found" page.
     const errorHtml = `
       <!DOCTYPE html>
       <html>
@@ -108,9 +146,9 @@ export async function GET(
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
               </svg>
             </div>
-            <h2 class="text-2xl font-semibold text-gray-900 dark:text-white mb-2">Preview Expired</h2>
+            <h2 class="text-2xl font-semibold text-gray-900 dark:text-white mb-2">Preview Unavailable</h2>
             <p class="text-gray-600 dark:text-gray-300 mb-4">
-              This preview has been cleared from memory. Previews are stored temporarily and expire after 1 hour or when the server restarts.
+              We couldn't load this preview. It may be very old, or generation didn't finish. Try regenerating — the code is safe.
             </p>
             <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">
               Chat ID: <code class="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">${id}</code>
@@ -123,10 +161,10 @@ export async function GET(
                 Start New Chat
               </button>
               <button
-                onclick="window.parent.location.reload()"
+                onclick="window.parent.location.href = window.parent.location.pathname"
                 class="w-full bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-900 dark:text-white font-medium py-2 px-4 rounded-lg transition-colors"
               >
-                Refresh Page
+                Try Again
               </button>
             </div>
           </div>
