@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
-import { Check, ChevronsUpDown, Building2 } from 'lucide-react'
+import { Check, ChevronsUpDown, Building2, Plus, Lock } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,6 +18,12 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
+
+interface PlanStatus {
+  tier: string
+  workspaces: { used: number; max: number; remaining: number; unlimited: boolean }
+  projects: { used: number; max: number; remaining: number; unlimited: boolean }
+}
 
 export interface Workspace {
   id: string
@@ -42,11 +48,12 @@ export function WorkspaceSwitcher() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [plan, setPlan] = useState<PlanStatus | null>(null)
+  const [creating, setCreating] = useState(false)
 
   const isAINative = (session as any)?.accessToken != null
 
-  useEffect(() => {
-    if (!isAINative) return
+  const loadWorkspaces = useCallback(() => {
     let cancelled = false
     setLoading(true)
     fetch('/api/workspaces')
@@ -66,10 +73,19 @@ export function WorkspaceSwitcher() {
       })
       .catch(() => {})
       .finally(() => !cancelled && setLoading(false))
-    return () => {
-      cancelled = true
-    }
-  }, [isAINative])
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (!isAINative) return
+    const cleanup = loadWorkspaces()
+    // Plan status drives the workspace-limit UX (free = 1 workspace).
+    fetch('/api/plan').then((r) => (r.ok ? r.json() : null)).then((p) => p && setPlan(p)).catch(() => {})
+    return cleanup
+  }, [isAINative, loadWorkspaces])
+
+  const atWorkspaceLimit =
+    plan != null && !plan.workspaces.unlimited && plan.workspaces.remaining <= 0
 
   const select = useCallback((id: string) => {
     setActiveId(id)
@@ -78,6 +94,38 @@ export function WorkspaceSwitcher() {
       new CustomEvent(WORKSPACE_CHANGED_EVENT, { detail: { workspaceId: id } }),
     )
   }, [])
+
+  const createWorkspace = useCallback(async () => {
+    if (atWorkspaceLimit) {
+      window.open('https://ainative.studio/#pricing', '_blank')
+      return
+    }
+    const name = window.prompt('New workspace name')?.trim()
+    if (!name) return
+    setCreating(true)
+    try {
+      const res = await fetch('/api/workspaces', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (res.ok && body.workspace?.id) {
+        loadWorkspaces()
+        select(body.workspace.id)
+      } else if (body.upgradeRequired || res.status === 403) {
+        window.alert(
+          `Your ${plan?.tier ?? 'free'} plan allows ${plan?.workspaces.max ?? 1} workspace. Upgrade to add more.`,
+        )
+        window.open('https://ainative.studio/#pricing', '_blank')
+      } else {
+        window.alert(body.error || 'Could not create workspace')
+      }
+    } finally {
+      setCreating(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [atWorkspaceLimit, plan, loadWorkspaces, select])
 
   if (!isAINative) return null
 
@@ -120,6 +168,41 @@ export function WorkspaceSwitcher() {
             </span>
           </DropdownMenuItem>
         ))}
+
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onClick={createWorkspace}
+          disabled={creating}
+          className="flex items-center gap-2"
+        >
+          {atWorkspaceLimit ? (
+            <>
+              <Lock className="w-4 h-4 opacity-70" />
+              <span>Upgrade to add workspaces</span>
+            </>
+          ) : (
+            <>
+              <Plus className="w-4 h-4" />
+              <span>{creating ? 'Creating…' : 'New workspace'}</span>
+            </>
+          )}
+        </DropdownMenuItem>
+
+        {plan && (
+          <>
+            <DropdownMenuSeparator />
+            <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
+              <span className="capitalize">{plan.tier}</span> plan ·{' '}
+              {plan.workspaces.unlimited
+                ? 'unlimited workspaces'
+                : `${plan.workspaces.used}/${plan.workspaces.max} workspace${plan.workspaces.max === 1 ? '' : 's'}`}
+              {' · '}
+              {plan.projects.unlimited
+                ? 'unlimited apps'
+                : `${plan.projects.used}/${plan.projects.max} apps`}
+            </div>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   )

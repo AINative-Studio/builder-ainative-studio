@@ -142,9 +142,14 @@ export function ProjectsClient({ isAINative }: { isAINative: boolean }) {
             <span className="flex flex-wrap items-center gap-2">
               <Sparkles className="h-4 w-4 text-fuchsia-500" />
               You've used all {freeTier.max} free apps.
-              <Link href="/pricing" className="font-medium underline">
+              <a
+                href="https://ainative.studio/#pricing"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium underline"
+              >
                 Upgrade for unlimited full-stack apps →
-              </Link>
+              </a>
             </span>
           ) : (
             <span>

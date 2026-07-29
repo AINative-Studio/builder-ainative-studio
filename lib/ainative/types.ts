@@ -78,8 +78,12 @@ export interface ProjectCreateInput {
   organization_id?: string
 }
 
-/** Free-tier project cap enforced by core (get_tier_limits: free => 3). */
+/** Free-tier caps enforced platform-wide by core get_tier_limits (hobbyist:
+ *  max_workspaces=1, max_projects=3). The builder subdomain mirrors these so a
+ *  free user gets the SAME limits as on ainative.studio. Core is the hard
+ *  gate (403 on create); the builder surfaces them as upgrade prompts. */
 export const FREE_TIER_MAX_PROJECTS = 3
+export const FREE_TIER_MAX_WORKSPACES = 1
 
 export class AINativeApiError extends Error {
   constructor(
