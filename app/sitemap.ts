@@ -13,6 +13,15 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: entry.featured ? 0.9 : 0.8,
   }))
 
+  // Competitor-comparison SEO pages ("<X> alternative") — high-intent search.
+  // Keep in sync with COMPETITORS in app/compare/[competitor]/page.tsx.
+  const compareEntries: MetadataRoute.Sitemap = ['v0', 'lovable', 'bolt', 'base44'].map(slug => ({
+    url: `${baseUrl}/compare/${slug}`,
+    lastModified: now,
+    changeFrequency: 'weekly' as const,
+    priority: 0.85,
+  }))
+
   return [
     {
       url: baseUrl,
@@ -27,6 +36,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.95,
     },
     ...showcaseEntries,
+    ...compareEntries,
     {
       url: `${baseUrl}/templates`,
       lastModified: now,

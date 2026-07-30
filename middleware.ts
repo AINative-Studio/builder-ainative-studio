@@ -88,6 +88,14 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next()
     }
 
+    // Allow the competitor-comparison SEO pages for anonymous users — these are
+    // public marketing/landing pages ("<X> alternative") that MUST be crawlable
+    // by search engines and viewable without an account. They were 307→/login,
+    // which blocked indexing entirely.
+    if (pathname.startsWith('/compare')) {
+      return NextResponse.next()
+    }
+
     // Allow preview routes for anonymous users
     if (pathname.startsWith('/preview/')) {
       return NextResponse.next()
