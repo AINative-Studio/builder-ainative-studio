@@ -281,7 +281,7 @@ export function HomeClient() {
           throw new Error('You\'ve reached your generation limit. Upgrade to Pro for 100x more tokens and Claude Sonnet 4.')
         }
         if (response.status === 403 || response.status === 401) {
-          throw new Error('Please create a free account to generate apps. It only takes 10 seconds!')
+          throw new Error('Please sign up to generate apps — it only takes 10 seconds and starts your 7-day trial.')
         }
         let errorMessage = 'Sorry, there was an error processing your message. Please try again.'
         try {

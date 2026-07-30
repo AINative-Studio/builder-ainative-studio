@@ -178,7 +178,7 @@ export default async function CompetitorPage({ params }: PageProps) {
         name: `Is AINative Builder a good ${data.displayName} alternative?`,
         acceptedAnswer: {
           '@type': 'Answer',
-          text: `Yes. AINative Builder is a strong alternative to ${data.displayName} for developers who need multi-model flexibility, agent-optimized output, automatic SEO, and open-source access. It offers a free tier and professional plans starting at $49/mo.`,
+          text: `Yes. AINative Builder is a strong alternative to ${data.displayName} for developers who need multi-model flexibility, agent-optimized output, automatic SEO, and open-source access. It starts with a 7-day trial on the Hobbyist plan, with professional plans from $49/mo.`,
         },
       },
       {
@@ -289,7 +289,7 @@ export default async function CompetitorPage({ params }: PageProps) {
               Switch from {data.displayName} today
             </h2>
             <p className="text-muted-foreground mb-8">
-              Get started for free — no credit card required. Build production-ready React apps
+              Start your 7-day trial on the Hobbyist plan. Build production-ready React apps
               with multi-model AI and AX optimization.
             </p>
             <Button asChild size="lg">
