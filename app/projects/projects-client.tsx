@@ -19,14 +19,14 @@ interface Project {
   created_at: string
 }
 
-interface FreeTier {
+interface TierUsage {
   max: number
   remaining: number
 }
 
 export function ProjectsClient({ isAINative }: { isAINative: boolean }) {
   const [projects, setProjects] = useState<Project[]>([])
-  const [freeTier, setFreeTier] = useState<FreeTier | null>(null)
+  const [tierUsage, setTierUsage] = useState<TierUsage | null>(null)
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -44,7 +44,7 @@ export function ProjectsClient({ isAINative }: { isAINative: boolean }) {
       }
       const data = await res.json()
       setProjects(data.projects ?? [])
-      setFreeTier(data.freeTier ?? null)
+      setTierUsage(data.tierUsage ?? data.freeTier ?? null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load projects')
     } finally {
@@ -85,7 +85,7 @@ export function ProjectsClient({ isAINative }: { isAINative: boolean }) {
       if (!res.ok) {
         if (body.upgradeRequired) {
           setError(
-            `You've reached the free-tier limit of ${body.max} apps. Upgrade to build unlimited full-stack apps.`,
+            `You've reached your plan limit of ${body.max} apps. Upgrade to build unlimited full-stack apps.`,
           )
           return
         }
@@ -115,7 +115,7 @@ export function ProjectsClient({ isAINative }: { isAINative: boolean }) {
     )
   }
 
-  const atLimit = freeTier != null && freeTier.remaining <= 0
+  const atLimit = tierUsage != null && tierUsage.remaining <= 0
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-10">
@@ -136,12 +136,12 @@ export function ProjectsClient({ isAINative }: { isAINative: boolean }) {
         </Button>
       </div>
 
-      {freeTier && (
+      {tierUsage && (
         <div className="mb-6 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm">
           {atLimit ? (
             <span className="flex flex-wrap items-center gap-2">
               <Sparkles className="h-4 w-4 text-fuchsia-500" />
-              You've used all {freeTier.max} free apps.
+              You've used all {tierUsage.max} apps on your plan.
               <a
                 href="https://ainative.studio/#pricing"
                 target="_blank"
@@ -153,8 +153,8 @@ export function ProjectsClient({ isAINative }: { isAINative: boolean }) {
             </span>
           ) : (
             <span>
-              Free tier: <strong>{freeTier.remaining}</strong> of{' '}
-              <strong>{freeTier.max}</strong> apps remaining.
+              Hobbyist plan: <strong>{tierUsage.remaining}</strong> of{' '}
+              <strong>{tierUsage.max}</strong> apps remaining.
             </span>
           )}
         </div>

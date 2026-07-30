@@ -11,9 +11,11 @@
 
 export type WorkspaceRole = 'MEMBER' | 'OWNER' | 'ADMIN'
 export type WorkspaceType = 'personal' | 'client' | 'team'
-export type WorkspaceTier = 'free' | 'pro' | 'team' | 'enterprise'
+// Tiers per core (#128: Hobbyist $5/7-day-trial replaced free). 'free' kept only
+// as a legacy inbound value that normalizes to hobbyist — never customer-facing.
+export type WorkspaceTier = 'hobbyist' | 'pro' | 'team' | 'enterprise' | 'free'
 
-export type ProjectTier = 'free' | 'pro' | 'scale' | 'enterprise'
+export type ProjectTier = 'hobbyist' | 'pro' | 'scale' | 'enterprise' | 'free'
 export type ProjectStatus = 'ACTIVE' | 'SUSPENDED' | 'DELETED'
 
 /** Mirrors WorkspaceItem in app/api/v1/consolidated/workspaces.py */
@@ -78,12 +80,16 @@ export interface ProjectCreateInput {
   organization_id?: string
 }
 
-/** Free-tier caps enforced platform-wide by core get_tier_limits (hobbyist:
- *  max_workspaces=1, max_projects=3). The builder subdomain mirrors these so a
- *  free user gets the SAME limits as on ainative.studio. Core is the hard
- *  gate (403 on create); the builder surfaces them as upgrade prompts. */
-export const FREE_TIER_MAX_PROJECTS = 3
-export const FREE_TIER_MAX_WORKSPACES = 1
+/** Hobbyist (entry tier, $5/7-day trial — replaced "free") caps enforced
+ *  platform-wide by core get_tier_limits: max_workspaces=1, max_projects=3. The
+ *  builder mirrors these so a Hobbyist user gets the SAME limits as on
+ *  ainative.studio. Core is the hard gate (403 on create); the builder surfaces
+ *  them as upgrade prompts. */
+export const HOBBYIST_MAX_PROJECTS = 3
+export const HOBBYIST_MAX_WORKSPACES = 1
+/** @deprecated legacy names — use HOBBYIST_MAX_*. Kept so existing imports don't break. */
+export const FREE_TIER_MAX_PROJECTS = HOBBYIST_MAX_PROJECTS
+export const FREE_TIER_MAX_WORKSPACES = HOBBYIST_MAX_WORKSPACES
 
 export class AINativeApiError extends Error {
   constructor(

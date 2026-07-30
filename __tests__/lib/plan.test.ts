@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normalizeTier, TIER_LIMITS } from '@/lib/ainative/plan'
+import { normalizeTier, TIER_LIMITS, tierLabel } from '@/lib/ainative/plan'
 
 /**
  * Plan-tier normalization + limits must mirror core get_tier_limits so the
@@ -30,7 +30,10 @@ describe('plan tier limits (mirror of core get_tier_limits)', () => {
 
   it('hobbyist limits match core: 1 workspace, 3 projects', () => {
     expect(TIER_LIMITS.hobbyist).toEqual({ maxWorkspaces: 1, maxProjects: 3 })
-    expect(TIER_LIMITS.free).toEqual({ maxWorkspaces: 1, maxProjects: 3 })
+    // 'free' is retired — there is no TIER_LIMITS.free; legacy 'free' normalizes
+    // to hobbyist on the way in.
+    expect(TIER_LIMITS.free).toBeUndefined()
+    expect(normalizeTier('free')).toBe('hobbyist')
   })
 
   it('pro has 5 workspaces + unlimited projects (-1)', () => {
@@ -39,5 +42,13 @@ describe('plan tier limits (mirror of core get_tier_limits)', () => {
 
   it('enterprise is unlimited (-1)', () => {
     expect(TIER_LIMITS.enterprise).toEqual({ maxWorkspaces: -1, maxProjects: -1 })
+  })
+
+  it('tierLabel is customer-facing (Hobbyist, not free)', () => {
+    expect(tierLabel('hobbyist')).toBe('Hobbyist')
+    expect(tierLabel('pro')).toBe('Pro')
+    expect(tierLabel('enterprise')).toBe('Enterprise')
+    // unknown/legacy → Hobbyist, never 'free'
+    expect(tierLabel('free')).toBe('Hobbyist')
   })
 })

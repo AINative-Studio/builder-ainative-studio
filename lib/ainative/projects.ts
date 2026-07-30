@@ -8,7 +8,7 @@
  */
 import { ainativeFetch } from './client'
 import {
-  FREE_TIER_MAX_PROJECTS,
+  HOBBYIST_MAX_PROJECTS,
   type Project,
   type ProjectCreateInput,
 } from './types'
@@ -66,10 +66,12 @@ export async function deleteProject(
 }
 
 /**
- * Whether a free-tier user can create another project. Core caps free tier at
- * 3 projects — surfacing this in the UI turns the limit into an upgrade prompt
- * for the paid full-stack tier rather than a silent 4xx on create.
+ * How many more projects a Hobbyist user can create. Core caps the Hobbyist
+ * (entry, $5/7-day-trial) tier at 3 projects — surfacing this in the UI turns
+ * the limit into an upgrade prompt rather than a silent 4xx on create.
  */
-export function freeTierProjectsRemaining(projectCount: number): number {
-  return Math.max(0, FREE_TIER_MAX_PROJECTS - projectCount)
+export function hobbyistProjectsRemaining(projectCount: number): number {
+  return Math.max(0, HOBBYIST_MAX_PROJECTS - projectCount)
 }
+/** @deprecated legacy name — use hobbyistProjectsRemaining. */
+export const freeTierProjectsRemaining = hobbyistProjectsRemaining

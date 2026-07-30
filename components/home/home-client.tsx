@@ -410,7 +410,7 @@ export function HomeClient() {
                               ...prev,
                               {
                                 type: 'assistant',
-                                content: `You've reached the free-tier limit of ${result.max ?? 3} apps. Upgrade to build unlimited full-stack apps with AINative primitives.`,
+                                content: `You've reached your plan limit of ${result.max ?? 3} apps. Upgrade to build unlimited full-stack apps with AINative primitives.`,
                               },
                             ])
                           }
