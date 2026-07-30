@@ -21,6 +21,9 @@ import { Button } from '@/components/ui/button'
 
 interface PlanStatus {
   tier: string
+  tierLabel: string
+  status: 'trialing' | 'active' | 'none'
+  trial: { active: boolean; endsAt: string | null; daysLeft: number | null }
   workspaces: { used: number; max: number; remaining: number; unlimited: boolean }
   projects: { used: number; max: number; remaining: number; unlimited: boolean }
 }
@@ -115,7 +118,7 @@ export function WorkspaceSwitcher() {
         select(body.workspace.id)
       } else if (body.upgradeRequired || res.status === 403) {
         window.alert(
-          `Your ${plan?.tier ?? 'free'} plan allows ${plan?.workspaces.max ?? 1} workspace. Upgrade to add more.`,
+          `Your ${plan?.tierLabel ?? 'Hobbyist'} plan includes ${plan?.workspaces.max ?? 1} workspace. Upgrade to add more.`,
         )
         window.open('https://ainative.studio/#pricing', '_blank')
       } else {
@@ -192,14 +195,21 @@ export function WorkspaceSwitcher() {
           <>
             <DropdownMenuSeparator />
             <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
-              <span className="capitalize">{plan.tier}</span> plan ·{' '}
-              {plan.workspaces.unlimited
-                ? 'unlimited workspaces'
-                : `${plan.workspaces.used}/${plan.workspaces.max} workspace${plan.workspaces.max === 1 ? '' : 's'}`}
-              {' · '}
-              {plan.projects.unlimited
-                ? 'unlimited apps'
-                : `${plan.projects.used}/${plan.projects.max} apps`}
+              <span className="font-medium text-foreground">{plan.tierLabel}</span>
+              {plan.trial.active && (
+                <span className="ml-1 text-amber-600 dark:text-amber-400">
+                  · Trial{plan.trial.daysLeft != null ? ` · ${plan.trial.daysLeft}d left` : ''}
+                </span>
+              )}
+              <div className="mt-0.5">
+                {plan.workspaces.unlimited
+                  ? 'unlimited workspaces'
+                  : `${plan.workspaces.used}/${plan.workspaces.max} workspace${plan.workspaces.max === 1 ? '' : 's'}`}
+                {' · '}
+                {plan.projects.unlimited
+                  ? 'unlimited apps'
+                  : `${plan.projects.used}/${plan.projects.max} apps`}
+              </div>
             </div>
           </>
         )}

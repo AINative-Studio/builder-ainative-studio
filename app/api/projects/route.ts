@@ -6,7 +6,7 @@ import {
   listProjects,
   listProjectsForWorkspace,
 } from '@/lib/ainative/projects'
-import { AINativeApiError, FREE_TIER_MAX_PROJECTS } from '@/lib/ainative/types'
+import { AINativeApiError, HOBBYIST_MAX_PROJECTS } from '@/lib/ainative/types'
 
 export const runtime = 'nodejs'
 
@@ -25,13 +25,13 @@ export async function GET(request: Request) {
     const projects = workspaceId
       ? await listProjectsForWorkspace(accessToken, workspaceId)
       : await listProjects(accessToken)
-    return NextResponse.json({
-      projects,
-      freeTier: {
-        max: FREE_TIER_MAX_PROJECTS,
-        remaining: freeTierProjectsRemaining(projects.length),
-      },
-    })
+    const tierUsage = {
+      max: HOBBYIST_MAX_PROJECTS,
+      remaining: freeTierProjectsRemaining(projects.length),
+    }
+    // `tierUsage` is the current field; `freeTier` retained temporarily for
+    // backward compatibility with any client still reading the old key.
+    return NextResponse.json({ projects, tierUsage, freeTier: tierUsage })
   } catch (err) {
     return errorResponse(err)
   }
@@ -63,14 +63,14 @@ export async function POST(request: Request) {
     })
     return NextResponse.json({ project }, { status: 201 })
   } catch (err) {
-    // Surface the free-tier cap as an upgrade signal rather than a raw 4xx.
+    // Surface the Hobbyist project cap as an upgrade signal rather than a raw 4xx.
     if (err instanceof AINativeApiError && err.status === 403) {
       return NextResponse.json(
         {
           error: err.message,
           upgradeRequired: true,
-          reason: 'free_tier_project_limit',
-          max: FREE_TIER_MAX_PROJECTS,
+          reason: 'project_limit_reached',
+          max: HOBBYIST_MAX_PROJECTS,
         },
         { status: 403 },
       )

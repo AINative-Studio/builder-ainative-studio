@@ -26,11 +26,11 @@ export function UpgradeBanner({ type, tokensUsed, tokenLimit, onDismiss }: Upgra
           </div>
         </div>
         <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-          Free Plan Limit Reached
+          Plan Limit Reached
         </h3>
         <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-          You've used all your free tokens this month. Upgrade to Pro for 1M tokens/month
-          and access to Claude Sonnet 4 — the most capable AI model for code generation.
+          You've used all your tokens this month on the Hobbyist plan. Upgrade to Pro for 1M
+          tokens/month and access to Claude Sonnet 4 — the most capable AI model for code generation.
         </p>
         <div className="flex items-center justify-center gap-3">
           <Button
@@ -61,7 +61,7 @@ export function UpgradeBanner({ type, tokensUsed, tokenLimit, onDismiss }: Upgra
           <Zap className="h-4 w-4 text-amber-500 flex-shrink-0" />
           <div>
             <p className="text-sm text-gray-700 dark:text-gray-300">
-              <span className="font-medium">{usagePercent}% of free tokens used</span>
+              <span className="font-medium">{usagePercent}% of your monthly tokens used</span>
               {' '}({tokensUsed?.toLocaleString()}/{tokenLimit?.toLocaleString()})
             </p>
           </div>

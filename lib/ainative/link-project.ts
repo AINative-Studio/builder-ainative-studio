@@ -5,7 +5,7 @@
  *
  * Fire-and-forget by design — a project-linking failure must never break the
  * generation UX. Returns the created project id, or a structured result when
- * the free-tier cap is hit so the caller can prompt an upgrade.
+ * the Hobbyist project cap is hit so the caller can prompt an upgrade.
  */
 import { getActiveWorkspaceId } from '@/components/workspace-switcher'
 
