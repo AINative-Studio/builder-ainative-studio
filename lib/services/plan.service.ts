@@ -7,7 +7,7 @@
 import { AINATIVE_API_BASE_URL } from '@/lib/constants'
 
 export interface UserPlan {
-  tier: 'free' | 'pro' | 'team' | 'enterprise'
+  tier: 'hobbyist' | 'pro' | 'team' | 'enterprise'
   monthlyTokenLimit: number
   tokensUsed: number
   tokensRemaining: number
@@ -16,10 +16,12 @@ export interface UserPlan {
   defaultModel: string
 }
 
-// Aligned with ainative.studio pricing: Starter, Pro $49, Business $149, Enterprise $699
+// Aligned with ainative.studio pricing. Hobbyist ($5, 7-day trial) is the entry
+// tier that replaced "free"; Pro $49, Business $149, Enterprise $699. Legacy
+// billing values of "free" normalize to hobbyist below.
 const PLAN_CONFIGS: Record<string, Omit<UserPlan, 'tokensUsed' | 'tokensRemaining'>> = {
-  free: {
-    tier: 'free',
+  hobbyist: {
+    tier: 'hobbyist',
     monthlyTokenLimit: 10_000,    // 10K LLM tokens
     maxTokensPerRequest: 4_000,
     models: ['qwen-coder-7b', 'gemma-2b', 'gemma-9b'],
@@ -63,11 +65,13 @@ export async function getUserPlan(accessToken: string): Promise<UserPlan> {
       }),
     ])
 
-    // Determine tier from billing response
-    let tier = 'free'
+    // Determine tier from billing response. Default hobbyist (entry tier that
+    // replaced free); legacy "free"/"starter"/"basic" values normalize to it.
+    let tier = 'hobbyist'
     if (billingRes.status === 'fulfilled' && billingRes.value.ok) {
       const billing = await billingRes.value.json()
-      tier = billing?.data?.plan?.tier || billing?.plan || billing?.tier || 'free'
+      const raw = String(billing?.data?.plan?.tier || billing?.plan || billing?.tier || 'hobbyist').toLowerCase()
+      tier = ['free', 'basic', 'starter', 'trial', 'hobbyist'].includes(raw) ? 'hobbyist' : raw
     }
 
     // Get usage from managed API
@@ -77,7 +81,7 @@ export async function getUserPlan(accessToken: string): Promise<UserPlan> {
       tokensUsed = usage?.total_tokens || usage?.tokens_used || 0
     }
 
-    const planConfig = PLAN_CONFIGS[tier] || PLAN_CONFIGS.free
+    const planConfig = PLAN_CONFIGS[tier] || PLAN_CONFIGS.hobbyist
     return {
       ...planConfig,
       tokensUsed,
@@ -85,11 +89,11 @@ export async function getUserPlan(accessToken: string): Promise<UserPlan> {
     }
   } catch (error) {
     console.error('[Plan Service] Error fetching plan:', error)
-    // Default to free plan on error
+    // Default to the Hobbyist (entry) plan on error — never over-grant.
     return {
-      ...PLAN_CONFIGS.free,
+      ...PLAN_CONFIGS.hobbyist,
       tokensUsed: 0,
-      tokensRemaining: PLAN_CONFIGS.free.monthlyTokenLimit,
+      tokensRemaining: PLAN_CONFIGS.hobbyist.monthlyTokenLimit,
     }
   }
 }
@@ -100,7 +104,7 @@ export async function getUserPlan(accessToken: string): Promise<UserPlan> {
 export function getDefaultPlan(userType: string): UserPlan {
   if (userType === 'guest') {
     return {
-      tier: 'free',
+      tier: 'hobbyist',
       monthlyTokenLimit: 10_000,
       tokensUsed: 0,
       tokensRemaining: 10_000,
