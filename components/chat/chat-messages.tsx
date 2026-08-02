@@ -11,7 +11,7 @@ import { sharedComponents } from '@/components/shared-components'
 import { BuildProgress, BuildTask } from '@/components/chat/build-progress'
 import { FileTree, FileGroup } from '@/components/chat/file-tree'
 import { createFileTree, simulateFileProgress, createFileTreeFromFiles } from '@/lib/file-parser'
-import { StreamingMessage } from '@/components/aikit/StreamingMessage'
+import { StreamingMessage } from '@ainative/ai-kit'
 
 interface ChatMessage {
   type: 'user' | 'assistant'

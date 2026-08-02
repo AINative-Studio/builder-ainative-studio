@@ -37,6 +37,8 @@
   "dependencies": {
     "@ai-sdk/openai": "^2.0.0",
     "@ai-sdk/react": "^2.0.22",
+    "@ainative/ai-kit": "0.2.0",
+    "@ainative/ai-kit-core": "0.2.0",
     "@anthropic-ai/sdk": "^0.65.0",
     "@babel/core": "^7.29.0",
     "@babel/parser": "^7.28.4",
@@ -134,5 +136,10 @@
     "tw-animate-css": "^1.3.7",
     "typescript": "^5"
   },
-  "packageManager": "pnpm@10.15.0"
+  "packageManager": "pnpm@10.15.0",
+  "pnpm": {
+    "overrides": {
+      "@ainative/ai-kit>@ainative/ai-kit-core": "0.2.0"
+    }
+  }
 }
