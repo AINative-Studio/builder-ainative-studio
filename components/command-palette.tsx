@@ -15,7 +15,7 @@
  */
 
 import * as React from 'react'
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState } from 'react'
 import {
   CommandDialog,
   CommandEmpty,
@@ -41,7 +41,7 @@ import {
   Heart
 } from 'lucide-react'
 import { AgentCommand, CommandSearchQuery } from '@/lib/types/agent-commands'
-import { getCommandService } from '@/lib/services/agent-command.service'
+import * as commandClient from '@/lib/client/command-client'
 import { cn } from '@/lib/utils'
 import { VariablePromptDialog } from './command-variable-prompt'
 import { CommandProgressTracker } from './command-progress-tracker'
@@ -76,8 +76,6 @@ export function CommandPalette({
   const [showVariablePrompt, setShowVariablePrompt] = useState(false)
   const [showProgress, setShowProgress] = useState(false)
 
-  const commandService = useMemo(() => getCommandService(), [])
-
   // Load recent commands on mount
   useEffect(() => {
     if (open && userId) {
@@ -94,7 +92,7 @@ export function CommandPalette({
 
   const loadRecentCommands = async () => {
     try {
-      const recent = await commandService.getRecentCommands(userId, 5)
+      const recent = await commandClient.getRecentCommands(5)
       setRecentCommands(recent)
     } catch (error) {
       console.error('Failed to load recent commands:', error)
@@ -110,7 +108,7 @@ export function CommandPalette({
         limit: 20,
       }
 
-      const result = await commandService.searchCommands(userId, query)
+      const result = await commandClient.searchCommands(query)
       setCommands(result.commands)
     } catch (error) {
       console.error('Failed to search commands:', error)
@@ -147,13 +145,12 @@ export function CommandPalette({
       // Show progress tracker
       setShowProgress(true)
 
-      // Execute the command
-      const state = await commandService.executeCommand(command, {
-        command,
+      // Execute the command via the API
+      const state = await commandClient.executeCommand(
+        command.metadata.id,
         variableValues,
-        userId,
-        chatId,
-      })
+        { chatId }
+      )
 
       // Command execution complete
       console.log('Command executed:', state)
@@ -165,7 +162,7 @@ export function CommandPalette({
   const toggleFavorite = async (command: AgentCommand, e: React.MouseEvent) => {
     e.stopPropagation()
     try {
-      const isFavorite = await commandService.toggleFavorite(command.metadata.id, userId)
+      const isFavorite = await commandClient.toggleFavorite(command.metadata.id)
 
       // Update local state
       setCommands(prevCommands =>

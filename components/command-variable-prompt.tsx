@@ -38,7 +38,7 @@ import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { AlertCircle } from 'lucide-react'
 import { AgentCommand, CommandVariable } from '@/lib/types/agent-commands'
-import { getCommandService } from '@/lib/services/agent-command.service'
+import { validateVariables } from '@/lib/validation/command-variables'
 
 interface VariablePromptDialogProps {
   open: boolean
@@ -60,8 +60,6 @@ export function VariablePromptDialog({
   const [values, setValues] = useState<Record<string, any>>(initialValues)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
-
-  const commandService = getCommandService()
 
   // Initialize with default values
   useEffect(() => {
@@ -91,7 +89,7 @@ export function VariablePromptDialog({
     setIsSubmitting(true)
 
     // Validate
-    const validation = commandService.validateVariables(command.variables, values)
+    const validation = validateVariables(command.variables, values)
 
     if (!validation.valid) {
       setErrors(validation.errors)

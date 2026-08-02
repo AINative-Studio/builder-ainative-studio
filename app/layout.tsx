@@ -5,6 +5,7 @@ import { StreamingProvider } from '@/contexts/streaming-context'
 import { SWRProvider } from '@/components/providers/swr-provider'
 import { SessionProvider } from '@/components/providers/session-provider'
 import { Toaster } from '@/components/ui/toaster'
+import { CommandPaletteProvider } from '@/components/providers/command-palette-provider'
 import GoogleAnalytics from '@/components/analytics/google-analytics'
 
 const poppins = Poppins({
@@ -198,6 +199,7 @@ export default function RootLayout({
                 {children}
               </div>
               <Toaster />
+              <CommandPaletteProvider />
             </StreamingProvider>
           </SWRProvider>
         </SessionProvider>
