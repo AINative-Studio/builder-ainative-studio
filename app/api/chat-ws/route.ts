@@ -16,6 +16,7 @@ import { fetchContextualImages, formatImagesForPrompt, getFallbackImages } from 
 import { extractComponentCode } from '@/lib/agent/component-generation-tool'
 import { addComponentToMemory, formatMemoryForPrompt } from '@/lib/services/memory.service'
 import { runOrchestratorAgent } from '@/lib/agent/subagents'
+import { useSubagents as resolveUseSubagents } from '@/lib/agent/generation-mode'
 import { parsePRDForBuildSteps } from '@/lib/prd-parser'
 import { analyzeComplexity, getComplexityReport } from '@/lib/agent/complexity-analyzer'
 import { createChunkPlan, getChunkPlanSummary } from '@/lib/agent/chunk-planner'
@@ -533,8 +534,8 @@ export async function POST(request: NextRequest) {
             // Use single-pass generation for simple applications or continuations
             console.log('\n✅ Simple application - Using single-pass generation')
 
-            // Check if subagents mode is enabled
-            const useSubagents = process.env.USE_SUBAGENTS === 'true'
+            // Check if subagents mode is enabled (Issue #11: shared selector)
+            const useSubagents = resolveUseSubagents()
 
           if (useSubagents) {
             // Use Subagents orchestrator for complex multi-step generation
