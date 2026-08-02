@@ -1,8 +1,35 @@
 import type { NextConfig } from 'next'
+import path from 'path'
 import { withSentryConfig } from '@sentry/nextjs'
+
+// `@ainative/ai-kit@0.2.0` statically imports `AIStream` from the Node-only
+// `@ainative/ai-kit-core` package. The builder only uses ai-kit's presentational
+// components (never `useAIStream`), so we alias the core package to a
+// browser-safe stub to keep it out of client bundles (issue #6).
+//
+// Turbopack resolves string alias values relative to the project root when they
+// begin with `./`, while webpack requires an absolute path.
+const aiKitCoreStubAbs = path.resolve(
+  __dirname,
+  'lib/aikit/ai-kit-core-browser-stub.ts',
+)
+const aiKitCoreStubRel = './lib/aikit/ai-kit-core-browser-stub.ts'
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  turbopack: {
+    resolveAlias: {
+      '@ainative/ai-kit-core': aiKitCoreStubRel,
+    },
+  },
+  webpack: (config) => {
+    config.resolve = config.resolve || {}
+    config.resolve.alias = {
+      ...(config.resolve.alias || {}),
+      '@ainative/ai-kit-core': aiKitCoreStubAbs,
+    }
+    return config
+  },
   images: {
     dangerouslyAllowSVG: true,
     contentDispositionType: 'attachment',
