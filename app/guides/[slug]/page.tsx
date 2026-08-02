@@ -1,0 +1,262 @@
+import { notFound } from 'next/navigation'
+import type { Metadata } from 'next'
+import Link from 'next/link'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { AppHeader } from '@/components/shared/app-header'
+import { GUIDES, GUIDE_SLUGS, getGuideBySlug } from '@/lib/data/seo-guides'
+
+interface PageProps {
+  params: Promise<{ slug: string }>
+}
+
+const BASE_URL = 'https://builder.ainative.studio'
+
+// Statically pre-render one page per guide so every article is crawlable and
+// indexable without hitting the database at request time.
+export function generateStaticParams() {
+  return GUIDE_SLUGS.map((slug) => ({ slug }))
+}
+
+export const dynamicParams = false
+
+export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+  const { slug } = await params
+  const guide = getGuideBySlug(slug)
+
+  if (!guide) {
+    return { title: 'Guide Not Found | AINative Builder' }
+  }
+
+  const title = `${guide.title} | AINative Builder`
+
+  return {
+    title,
+    description: guide.excerpt,
+    keywords: [...guide.keywords, ...guide.tags, 'AINative Builder'],
+    authors: [{ name: 'AINative' }],
+    openGraph: {
+      title,
+      description: guide.excerpt,
+      type: 'article',
+      url: `${BASE_URL}/guides/${slug}`,
+      publishedTime: guide.datePublished,
+      modifiedTime: guide.dateModified,
+      tags: guide.tags,
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title,
+      description: guide.excerpt,
+    },
+    alternates: {
+      canonical: `${BASE_URL}/guides/${slug}`,
+    },
+  }
+}
+
+export default async function GuidePage({ params }: PageProps) {
+  const { slug } = await params
+  const guide = getGuideBySlug(slug)
+
+  if (!guide) {
+    notFound()
+  }
+
+  // Related guides: same tags first, then any others.
+  const related = GUIDES.filter(
+    (g) => g.slug !== guide.slug && g.tags.some((t) => guide.tags.includes(t))
+  )
+  const relatedGuides = (
+    related.length > 0 ? related : GUIDES.filter((g) => g.slug !== guide.slug)
+  ).slice(0, 3)
+
+  const articleJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'Article',
+    headline: guide.title,
+    description: guide.excerpt,
+    articleSection: guide.category,
+    keywords: guide.keywords.join(', '),
+    datePublished: guide.datePublished,
+    dateModified: guide.dateModified,
+    author: { '@type': 'Organization', name: 'AINative' },
+    publisher: {
+      '@type': 'Organization',
+      name: 'AINative Builder',
+      url: BASE_URL,
+    },
+    mainEntityOfPage: {
+      '@type': 'WebPage',
+      '@id': `${BASE_URL}/guides/${slug}`,
+    },
+  }
+
+  const faqJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: guide.faqs.map((faq) => ({
+      '@type': 'Question',
+      name: faq.question,
+      acceptedAnswer: { '@type': 'Answer', text: faq.answer },
+    })),
+  }
+
+  const breadcrumbJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Guides', item: `${BASE_URL}/guides` },
+      {
+        '@type': 'ListItem',
+        position: 2,
+        name: guide.title,
+        item: `${BASE_URL}/guides/${slug}`,
+      },
+    ],
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(articleJsonLd) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
+      />
+      <AppHeader />
+
+      <main className="container mx-auto px-4 py-12 max-w-3xl">
+        {/* Breadcrumb */}
+        <nav className="text-sm text-muted-foreground mb-8" aria-label="Breadcrumb">
+          <Link href="/guides" className="hover:text-foreground transition-colors">
+            Guides
+          </Link>
+          <span className="mx-2">/</span>
+          <span className="text-foreground">{guide.title}</span>
+        </nav>
+
+        {/* Header */}
+        <article>
+          <header className="mb-8">
+            <div className="flex flex-wrap items-center gap-3 mb-4">
+              <Badge variant="secondary">{guide.category}</Badge>
+              <span className="text-sm text-muted-foreground">
+                {guide.readTimeMinutes} min read
+              </span>
+              <span className="text-sm text-muted-foreground">·</span>
+              <time
+                className="text-sm text-muted-foreground"
+                dateTime={guide.dateModified}
+              >
+                Updated{' '}
+                {new Date(guide.dateModified).toLocaleDateString('en-US', {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                })}
+              </time>
+            </div>
+            <h1 className="text-4xl font-bold mb-4 leading-tight">{guide.title}</h1>
+            <p className="text-lg text-muted-foreground leading-relaxed">
+              {guide.intro}
+            </p>
+          </header>
+
+          {/* Body sections */}
+          <div className="space-y-10">
+            {guide.sections.map((section) => (
+              <section key={section.heading}>
+                <h2 className="text-2xl font-bold mb-4">{section.heading}</h2>
+                <div className="space-y-4">
+                  {section.paragraphs.map((para, i) => (
+                    <p
+                      key={i}
+                      className="text-muted-foreground leading-relaxed"
+                    >
+                      {para}
+                    </p>
+                  ))}
+                </div>
+                {section.bullets && section.bullets.length > 0 && (
+                  <ul className="mt-4 space-y-2">
+                    {section.bullets.map((bullet) => (
+                      <li key={bullet} className="flex gap-3">
+                        <span
+                          aria-hidden
+                          className="mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-xs"
+                        >
+                          ✓
+                        </span>
+                        <span className="text-muted-foreground">{bullet}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            ))}
+          </div>
+
+          {/* CTA */}
+          <div className="border-t mt-12 pt-10 text-center">
+            <h2 className="text-2xl font-bold mb-3">Start building with AI</h2>
+            <p className="text-muted-foreground mb-6">
+              Turn a prompt into a production-ready app in seconds with AINative
+              Builder.
+            </p>
+            <Button asChild size="lg">
+              <Link href="/">Try AINative Builder Free</Link>
+            </Button>
+          </div>
+
+          {/* FAQ */}
+          {guide.faqs.length > 0 && (
+            <section className="border-t mt-12 pt-10">
+              <h2 className="text-2xl font-bold mb-6">Frequently asked questions</h2>
+              <div className="space-y-6">
+                {guide.faqs.map((faq) => (
+                  <div key={faq.question} className="border rounded-lg p-6">
+                    <h3 className="font-semibold text-lg mb-3">{faq.question}</h3>
+                    <p className="text-muted-foreground leading-relaxed">
+                      {faq.answer}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+        </article>
+
+        {/* Related guides — internal linking for SEO */}
+        {relatedGuides.length > 0 && (
+          <section className="border-t mt-12 pt-10">
+            <h2 className="text-xl font-bold mb-6">Related guides</h2>
+            <div className="grid gap-4 sm:grid-cols-3">
+              {relatedGuides.map((rel) => (
+                <Link
+                  key={rel.slug}
+                  href={`/guides/${rel.slug}`}
+                  className="rounded-lg border p-4 hover:border-primary hover:shadow-sm transition-all"
+                >
+                  <Badge variant="secondary" className="mb-2 text-xs">
+                    {rel.category}
+                  </Badge>
+                  <h3 className="font-semibold mb-1">{rel.title}</h3>
+                  <p className="text-sm text-muted-foreground line-clamp-2">
+                    {rel.excerpt}
+                  </p>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
+      </main>
+    </div>
+  )
+}

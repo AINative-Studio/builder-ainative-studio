@@ -1,6 +1,7 @@
 import { MetadataRoute } from 'next'
 import { SEED_SHOWCASE } from '@/lib/showcase-data'
 import { TEMPLATE_SLUGS } from '@/lib/data/seo-templates'
+import { GUIDE_SLUGS } from '@/lib/data/seo-guides'
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const baseUrl = 'https://builder.ainative.studio'
@@ -32,6 +33,16 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: 0.8,
   }))
 
+  // Blog/guides articles targeting long-tail keywords ("how to build a SaaS with
+  // AI", "v0 vs Lovable vs AINative", "what is AX optimization"). One URL per
+  // article; keep in sync with lib/data/seo-guides.ts.
+  const guideEntries: MetadataRoute.Sitemap = GUIDE_SLUGS.map(slug => ({
+    url: `${baseUrl}/guides/${slug}`,
+    lastModified: now,
+    changeFrequency: 'monthly' as const,
+    priority: 0.8,
+  }))
+
   return [
     {
       url: baseUrl,
@@ -54,6 +65,13 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.9,
     },
     ...templateEntries,
+    {
+      url: `${baseUrl}/guides`,
+      lastModified: now,
+      changeFrequency: 'weekly',
+      priority: 0.85,
+    },
+    ...guideEntries,
     {
       url: `${baseUrl}/login`,
       lastModified: now,
