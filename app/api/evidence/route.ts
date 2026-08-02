@@ -12,18 +12,33 @@ import { eq, and, desc, sql, or, like } from 'drizzle-orm'
 import { getEvidenceCollectorService } from '@/lib/services/evidence-collector.service'
 import type { EvidenceType, EvidenceStatus } from '@/lib/types/evidence'
 
+// Coerce empty/null query params to `undefined` so Zod `.default()` applies.
+// `URLSearchParams.get()` returns `null` for absent params, and
+// `z.coerce.number()` would turn `null` into `0` (failing `.min(1)`), so we
+// normalise nullish values before validation.
+const nullableString = z.preprocess(
+  (v) => (v == null || v === '' ? undefined : v),
+  z.string().optional()
+)
+
+const optionalCount = (schema: z.ZodNumber, fallback: number) =>
+  z.preprocess(
+    (v) => (v == null || v === '' ? fallback : Number(v)),
+    schema
+  )
+
 // Validation schema for evidence listing
 const evidenceListSchema = z.object({
-  type: z.string().nullable().optional(),
-  status: z.string().nullable().optional(),
-  project_id: z.string().nullable().optional(),
-  git_branch: z.string().nullable().optional(),
-  git_commit: z.string().nullable().optional(),
-  date_from: z.string().nullable().optional(),
-  date_to: z.string().nullable().optional(),
-  search: z.string().nullable().optional(),
-  limit: z.coerce.number().min(1).max(100).default(20),
-  offset: z.coerce.number().min(0).default(0),
+  type: nullableString,
+  status: nullableString,
+  project_id: nullableString,
+  git_branch: nullableString,
+  git_commit: nullableString,
+  date_from: nullableString,
+  date_to: nullableString,
+  search: nullableString,
+  limit: optionalCount(z.number().min(1).max(100), 20),
+  offset: optionalCount(z.number().min(0), 0),
 })
 
 // Validation schema for evidence capture

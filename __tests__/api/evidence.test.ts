@@ -8,89 +8,143 @@
  * - GET /api/evidence/[id]/artifacts - List artifacts
  */
 
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { NextRequest } from 'next/server'
 import { GET as getEvidence, POST as captureEvidence } from '@/app/api/evidence/route'
 import { GET as getEvidenceDetail } from '@/app/api/evidence/[id]/route'
 import { GET as getArtifacts } from '@/app/api/evidence/[id]/artifacts/route'
+import { db } from '@/lib/db'
+
+const evidenceRows = [
+  {
+    id: 'evidence-1',
+    user_id: 'user-1',
+    type: 'test-run',
+    status: 'success',
+    title: 'Test Run Success',
+    description: 'All tests passed',
+    command: 'npm test',
+    metadata: {
+      testsPassed: 10,
+      testsFailed: 0,
+      totalTests: 10,
+      coveragePercent: 85.5,
+    },
+    created_at: new Date('2024-01-15T10:00:00Z'),
+    updated_at: new Date('2024-01-15T10:00:00Z'),
+  },
+  {
+    id: 'evidence-2',
+    user_id: 'user-1',
+    type: 'build',
+    status: 'failure',
+    title: 'Build Failed',
+    description: 'Build failed with errors',
+    command: 'npm run build',
+    metadata: {
+      buildSuccess: false,
+      buildErrors: 3,
+    },
+    created_at: new Date('2024-01-15T09:00:00Z'),
+    updated_at: new Date('2024-01-15T09:00:00Z'),
+  },
+]
 
 // Mock database
-vi.mock('@/lib/db', () => ({
-  db: {
-    select: vi.fn(() => ({
-      from: vi.fn(() => ({
-        where: vi.fn(() => ({
-          orderBy: vi.fn(() => ({
-            limit: vi.fn(() => ({
-              offset: vi.fn(() => Promise.resolve([
-                {
-                  id: 'evidence-1',
-                  user_id: 'user-1',
-                  type: 'test-run',
-                  status: 'success',
-                  title: 'Test Run Success',
-                  description: 'All tests passed',
-                  command: 'npm test',
-                  metadata: {
-                    testsPassed: 10,
-                    testsFailed: 0,
-                    totalTests: 10,
-                    coveragePercent: 85.5,
-                  },
-                  created_at: new Date('2024-01-15T10:00:00Z'),
-                  updated_at: new Date('2024-01-15T10:00:00Z'),
-                },
-                {
-                  id: 'evidence-2',
-                  user_id: 'user-1',
-                  type: 'build',
-                  status: 'failure',
-                  title: 'Build Failed',
-                  description: 'Build failed with errors',
-                  command: 'npm run build',
-                  metadata: {
-                    buildSuccess: false,
-                    buildErrors: 3,
-                  },
-                  created_at: new Date('2024-01-15T09:00:00Z'),
-                  updated_at: new Date('2024-01-15T09:00:00Z'),
-                },
-              ])),
-            })),
-          })),
-          limit: vi.fn(() => Promise.resolve([
-            {
-              id: 'evidence-1',
-              user_id: 'user-1',
-              type: 'test-run',
-              status: 'success',
-              title: 'Test Run Success',
-              metadata: {},
-              created_at: new Date(),
-              updated_at: new Date(),
-            },
-          ])),
+vi.mock('@/lib/db', () => {
+  const rows = [
+    {
+      id: 'evidence-1',
+      user_id: 'user-1',
+      type: 'test-run',
+      status: 'success',
+      title: 'Test Run Success',
+      description: 'All tests passed',
+      command: 'npm test',
+      metadata: {
+        testsPassed: 10,
+        testsFailed: 0,
+        totalTests: 10,
+        coveragePercent: 85.5,
+      },
+      created_at: new Date('2024-01-15T10:00:00Z'),
+      updated_at: new Date('2024-01-15T10:00:00Z'),
+    },
+    {
+      id: 'evidence-2',
+      user_id: 'user-1',
+      type: 'build',
+      status: 'failure',
+      title: 'Build Failed',
+      description: 'Build failed with errors',
+      command: 'npm run build',
+      metadata: {
+        buildSuccess: false,
+        buildErrors: 3,
+      },
+      created_at: new Date('2024-01-15T09:00:00Z'),
+      updated_at: new Date('2024-01-15T09:00:00Z'),
+    },
+  ]
+
+  // `where()` returns an object that is BOTH:
+  //  - thenable, resolving to `rows` for the list query and `[{count}]` for
+  //    the count query. To satisfy both, its `then` resolves to `rows`, and the
+  //    count query destructures `[{ count }]` — so `rows[0]` must expose a
+  //    numeric `count`. We therefore resolve to a specially shaped array whose
+  //    first element carries `count` while still being iterable for the list.
+  const listResult: any = [...rows]
+  ;(listResult as any).__isList = true
+
+  const whereResult = () => {
+    const result: any = Promise.resolve(rows)
+    result.orderBy = vi.fn(() => ({
+      limit: vi.fn(() => ({
+        offset: vi.fn(() => Promise.resolve(rows)),
+      })),
+    }))
+    result.limit = vi.fn(() => Promise.resolve(rows.slice(0, 1)))
+    return result
+  }
+
+  const selectImpl = (projection?: any) => ({
+    from: vi.fn(() => {
+      // Count query uses a projection like `{ count: sql\`count(*)\` }`.
+      if (projection && 'count' in projection) {
+        return {
+          where: vi.fn(() => Promise.resolve([{ count: rows.length }])),
+        }
+      }
+      return {
+        where: vi.fn(() => whereResult()),
+      }
+    }),
+  })
+
+  return {
+    db: {
+      select: vi.fn(selectImpl),
+      insert: vi.fn(() => ({
+        values: vi.fn(() => ({
+          returning: vi.fn(() =>
+            Promise.resolve([
+              {
+                id: 'new-evidence-1',
+                user_id: 'user-1',
+                type: 'test-run',
+                status: 'success',
+                title: 'Test Run',
+                metadata: {},
+                created_at: new Date(),
+                updated_at: new Date(),
+              },
+            ])
+          ),
         })),
       })),
-    })),
-    insert: vi.fn(() => ({
-      values: vi.fn(() => ({
-        returning: vi.fn(() => Promise.resolve([
-          {
-            id: 'new-evidence-1',
-            user_id: 'user-1',
-            type: 'test-run',
-            status: 'success',
-            title: 'Test Run',
-            metadata: {},
-            created_at: new Date(),
-            updated_at: new Date(),
-          },
-        ])),
-      })),
-    })),
-  },
-}))
+    },
+  }
+})
 
 // Mock evidence collector service
 vi.mock('@/lib/services/evidence-collector.service', () => ({
@@ -180,7 +234,7 @@ describe('Evidence API Endpoints', () => {
       const request = new NextRequest('http://localhost:3000/api/evidence/capture', {
         method: 'POST',
         body: JSON.stringify({
-          user_id: 'user-1',
+          user_id: '550e8400-e29b-41d4-a716-446655440000',
           type: 'test-run',
           command: 'npm test',
         }),
@@ -261,7 +315,7 @@ describe('Evidence API Endpoints', () => {
   describe('GET /api/evidence/[id]', () => {
     it('should return evidence details', async () => {
       const request = new NextRequest('http://localhost:3000/api/evidence/evidence-1')
-      const response = await getEvidenceDetail(request, { params: { id: 'evidence-1' } })
+      const response = await getEvidenceDetail(request, { params: Promise.resolve({ id: 'evidence-1' }) })
       const data = await response.json()
 
       expect(response.status).toBe(200)
@@ -270,16 +324,16 @@ describe('Evidence API Endpoints', () => {
     })
 
     it('should return 404 for non-existent evidence', async () => {
-      vi.mocked(require('@/lib/db').db.select).mockReturnValueOnce({
+      vi.mocked(db.select).mockReturnValueOnce({
         from: vi.fn(() => ({
           where: vi.fn(() => ({
             limit: vi.fn(() => Promise.resolve([])),
           })),
         })),
-      })
+      } as any)
 
       const request = new NextRequest('http://localhost:3000/api/evidence/non-existent')
-      const response = await getEvidenceDetail(request, { params: { id: 'non-existent' } })
+      const response = await getEvidenceDetail(request, { params: Promise.resolve({ id: 'non-existent' }) })
 
       expect(response.status).toBe(404)
     })
@@ -287,7 +341,7 @@ describe('Evidence API Endpoints', () => {
 
   describe('GET /api/evidence/[id]/artifacts', () => {
     it('should return artifacts for evidence', async () => {
-      vi.mocked(require('@/lib/db').db.select).mockReturnValueOnce({
+      vi.mocked(db.select).mockReturnValueOnce({
         from: vi.fn(() => ({
           where: vi.fn(() => Promise.resolve([
             {
@@ -302,10 +356,10 @@ describe('Evidence API Endpoints', () => {
             },
           ])),
         })),
-      })
+      } as any)
 
       const request = new NextRequest('http://localhost:3000/api/evidence/evidence-1/artifacts')
-      const response = await getArtifacts(request, { params: { id: 'evidence-1' } })
+      const response = await getArtifacts(request, { params: Promise.resolve({ id: 'evidence-1' }) })
       const data = await response.json()
 
       expect(response.status).toBe(200)
@@ -314,14 +368,14 @@ describe('Evidence API Endpoints', () => {
     })
 
     it('should return empty array for evidence with no artifacts', async () => {
-      vi.mocked(require('@/lib/db').db.select).mockReturnValueOnce({
+      vi.mocked(db.select).mockReturnValueOnce({
         from: vi.fn(() => ({
           where: vi.fn(() => Promise.resolve([])),
         })),
-      })
+      } as any)
 
       const request = new NextRequest('http://localhost:3000/api/evidence/evidence-1/artifacts')
-      const response = await getArtifacts(request, { params: { id: 'evidence-1' } })
+      const response = await getArtifacts(request, { params: Promise.resolve({ id: 'evidence-1' }) })
       const data = await response.json()
 
       expect(response.status).toBe(200)
