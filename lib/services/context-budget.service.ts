@@ -22,6 +22,15 @@ import {
 import { eq, and, desc, sql } from 'drizzle-orm';
 import { estimateTokens } from './token-counter.service';
 import { logger } from '../logger';
+import {
+  PRIORITY_SCORES,
+  calculatePriorityScore as calcPriorityScore,
+  calculateAllocations as calcAllocations,
+  mapTypeToCategory as mapTypeToCategoryPure,
+  findUnloadCandidates as findUnloadCandidatesPure,
+  generateOptimizationSuggestions as generateOptimizationSuggestionsPure,
+  type BudgetItemInput,
+} from './context-budget-logic';
 import type {
   ContextBudget,
   ContextItem,
@@ -78,16 +87,6 @@ const DEFAULT_BUDGET_CONFIG: BudgetConfig = {
     history: { maxPercentage: 20, priority: 60 },
     other: { maxPercentage: 10, priority: 50 },
   },
-};
-
-/**
- * Priority scores for loading decisions
- */
-const PRIORITY_SCORES: Record<ContextItemPriority, number> = {
-  critical: 100,
-  high: 75,
-  medium: 50,
-  low: 25,
 };
 
 export class ContextBudgetService {
@@ -344,8 +343,6 @@ export class ContextBudgetService {
     userId: string,
     aggressiveness: 'conservative' | 'moderate' | 'aggressive' = 'moderate'
   ): Promise<OptimizationSuggestion[]> {
-    const suggestions: OptimizationSuggestion[] = [];
-
     // Get loaded items
     const items = await db.query.context_items.findMany({
       where: and(
@@ -354,111 +351,17 @@ export class ContextBudgetService {
       ),
     });
 
-    const budget = await this.getBudget(sessionId, userId);
     const config = await this.getUserConfig(userId);
 
-    // Suggestion 1: Unload low-access items
-    const lowAccessThreshold = aggressiveness === 'conservative' ? 0 : aggressiveness === 'moderate' ? 1 : 2;
-    const lowAccessItems = items.filter(
-      (item) =>
-        (item.access_count || 0) <= lowAccessThreshold &&
-        item.priority !== 'critical'
+    // Delegate to the pure, unit-tested logic module.
+    return generateOptimizationSuggestionsPure(
+      items.map((i: any) => this.dbItemToBudgetInput(i)),
+      {
+        aggressiveness,
+        compressionEnabled: config.compression.enabled,
+        compressionThreshold: config.compression.compressionThreshold,
+      }
     );
-
-    if (lowAccessItems.length > 0) {
-      suggestions.push({
-        type: 'unload',
-        priority: 'high',
-        description: `Unload ${lowAccessItems.length} rarely accessed items`,
-        affectedItems: lowAccessItems.map(this.mapDbItemToContextItem),
-        estimatedSavings: lowAccessItems.reduce((sum, item) => sum + item.token_cost, 0),
-        confidence: 0.9,
-        autoApplicable: aggressiveness === 'aggressive',
-        reasoning: `These items have been accessed ${lowAccessThreshold} or fewer times`,
-      });
-    }
-
-    // Suggestion 2: Compress large files
-    if (config.compression.enabled) {
-      const largeFiles = items.filter(
-        (item) =>
-          item.type === 'file' &&
-          item.token_cost >= config.compression.compressionThreshold &&
-          !item.metadata?.compressed
-      );
-
-      if (largeFiles.length > 0) {
-        suggestions.push({
-          type: 'compress',
-          priority: 'medium',
-          description: `Compress ${largeFiles.length} large files`,
-          affectedItems: largeFiles.map(this.mapDbItemToContextItem),
-          estimatedSavings: Math.round(
-            largeFiles.reduce((sum, item) => sum + item.token_cost, 0) * 0.6
-          ),
-          confidence: 0.75,
-          autoApplicable: config.compression.autoCompress,
-          reasoning: `Files over ${config.compression.compressionThreshold} tokens can be compressed`,
-        });
-      }
-    }
-
-    // Suggestion 3: Summarize old messages
-    const oldMessages = items.filter(
-      (item) =>
-        item.type === 'message' &&
-        item.last_accessed_at &&
-        Date.now() - item.last_accessed_at.getTime() > 600000 // 10 minutes
-    );
-
-    if (oldMessages.length > 2) {
-      suggestions.push({
-        type: 'summarize',
-        priority: 'medium',
-        description: `Summarize ${oldMessages.length} old messages`,
-        affectedItems: oldMessages.map(this.mapDbItemToContextItem),
-        estimatedSavings: Math.round(
-          oldMessages.reduce((sum, item) => sum + item.token_cost, 0) * 0.7
-        ),
-        confidence: 0.8,
-        autoApplicable: false,
-        reasoning: 'Old messages can be summarized to save tokens while preserving context',
-      });
-    }
-
-    // Suggestion 4: Consolidate skills
-    const skills = items.filter((item) => item.type === 'skill');
-    const skillsByCategory = new Map<string, typeof items>();
-
-    skills.forEach((skill) => {
-      const category = skill.metadata?.summary || 'general';
-      if (!skillsByCategory.has(category)) {
-        skillsByCategory.set(category, []);
-      }
-      skillsByCategory.get(category)!.push(skill);
-    });
-
-    for (const [category, categorySkills] of skillsByCategory) {
-      if (categorySkills.length > 3) {
-        suggestions.push({
-          type: 'consolidate',
-          priority: 'low',
-          description: `Consolidate ${categorySkills.length} ${category} skills`,
-          affectedItems: categorySkills.map(this.mapDbItemToContextItem),
-          estimatedSavings: Math.round(
-            categorySkills.reduce((sum, item) => sum + item.token_cost, 0) * 0.3
-          ),
-          confidence: 0.6,
-          autoApplicable: false,
-          reasoning: 'Multiple similar skills can potentially be consolidated',
-        });
-      }
-    }
-
-    return suggestions.sort((a, b) => {
-      const priorityOrder = { high: 0, medium: 1, low: 2 };
-      return priorityOrder[a.priority] - priorityOrder[b.priority];
-    });
   }
 
   /**
@@ -582,47 +485,33 @@ export class ContextBudgetService {
     tokensNeeded: number,
     config: BudgetConfig
   ): any[] {
-    const candidates: any[] = [];
-    let freedTokens = 0;
-    const now = Date.now();
-
-    // Sort by priority (low first) and last access time
-    const sorted = [...items].sort((a, b) => {
-      const aPriority = PRIORITY_SCORES[a.priority as ContextItemPriority] || 0;
-      const bPriority = PRIORITY_SCORES[b.priority as ContextItemPriority] || 0;
-
-      if (aPriority !== bPriority) {
-        return aPriority - bPriority; // Lower priority first
-      }
-
-      const aTime = a.last_accessed_at?.getTime() || 0;
-      const bTime = b.last_accessed_at?.getTime() || 0;
-      return aTime - bTime; // Older first
+    // Delegate to the pure logic, preserving the original DB rows so callers
+    // can continue to read snake_case fields (id, token_cost) on the result.
+    const inputs = items.map((i) => ({ ...this.dbItemToBudgetInput(i), __row: i }));
+    const chosen = findUnloadCandidatesPure(inputs as any, tokensNeeded, {
+      eligiblePriorities: config.autoUnload.priorities,
+      minAccessCount: config.autoUnload.minAccessCount,
+      minTimeSinceAccess: config.autoUnload.minTimeSinceAccess,
     });
+    return chosen.map((c: any) => c.__row);
+  }
 
-    for (const item of sorted) {
-      // Skip critical items
-      if (item.priority === 'critical') continue;
-
-      // Check if eligible for auto-unload
-      const timeSinceAccess = item.last_accessed_at
-        ? now - item.last_accessed_at.getTime()
-        : Infinity;
-
-      const isEligible =
-        config.autoUnload.priorities.includes(item.priority) &&
-        (item.access_count || 0) >= config.autoUnload.minAccessCount &&
-        timeSinceAccess >= config.autoUnload.minTimeSinceAccess;
-
-      if (!isEligible) continue;
-
-      candidates.push(item);
-      freedTokens += item.token_cost;
-
-      if (freedTokens >= tokensNeeded) break;
-    }
-
-    return candidates;
+  /**
+   * Normalize a Drizzle context_items row to the DB-agnostic BudgetItemInput
+   * consumed by the pure logic module.
+   */
+  private dbItemToBudgetInput(row: any): BudgetItemInput {
+    return {
+      id: row.id,
+      type: row.type,
+      name: row.name,
+      tokenCost: row.token_cost,
+      priority: row.priority,
+      status: row.status,
+      accessCount: row.access_count,
+      lastAccessedAt: row.last_accessed_at,
+      metadata: row.metadata,
+    };
   }
 
   /**
@@ -632,33 +521,7 @@ export class ContextBudgetService {
     item: Omit<ContextItem, 'id' | 'status' | 'loadedAt'>,
     budget: ContextBudget
   ): number {
-    let score = PRIORITY_SCORES[item.priority] || 0;
-
-    // Adjust for budget state
-    if (budget.isCritical) {
-      score *= 0.5; // Penalize loading in critical state
-    } else if (budget.isWarning) {
-      score *= 0.75; // Penalize loading in warning state
-    }
-
-    // Adjust for type importance
-    const typeBonus: Record<ContextItemType, number> = {
-      baseline: 20,
-      skill: 15,
-      tool: 10,
-      file: 5,
-      message: 3,
-      history: 1,
-    };
-
-    score += typeBonus[item.type] || 0;
-
-    // Penalize expensive items
-    if (item.tokenCost > 5000) {
-      score -= 10;
-    }
-
-    return score;
+    return calcPriorityScore(item, budget);
   }
 
   /**
@@ -668,59 +531,17 @@ export class ContextBudgetService {
     items: any[],
     totalBudget: number
   ): BudgetAllocation[] {
-    const categories: Map<BudgetCategory, { tokens: number; count: number }> = new Map();
-
-    // Initialize all categories
-    const allCategories: BudgetCategory[] = [
-      'baseline',
-      'skills',
-      'files',
-      'history',
-      'tools',
-      'other',
-    ];
-
-    allCategories.forEach((cat) => {
-      categories.set(cat, { tokens: 0, count: 0 });
-    });
-
-    // Aggregate by category
-    items.forEach((item) => {
-      const category = this.mapTypeToCategory(item.type);
-      const current = categories.get(category)!;
-      current.tokens += item.token_cost;
-      current.count += 1;
-    });
-
-    // Build allocations
-    return Array.from(categories.entries()).map(([category, data]) => ({
-      category,
-      tokens: data.tokens,
-      percentage: totalBudget > 0 ? Math.round((data.tokens / totalBudget) * 100) : 0,
-      itemCount: data.count,
-      isOverBudget: (() => {
-        const pref = DEFAULT_BUDGET_CONFIG.categoryPreferences[category];
-        if (!pref) return false;
-        const percentage = totalBudget > 0 ? Math.round((data.tokens / totalBudget) * 100) : 0;
-        return percentage > pref.maxPercentage;
-      })(),
-    }));
+    return calcAllocations(
+      items.map((i) => this.dbItemToBudgetInput(i)),
+      totalBudget
+    );
   }
 
   /**
    * Map item type to budget category
    */
   private mapTypeToCategory(type: string): BudgetCategory {
-    const mapping: Record<string, BudgetCategory> = {
-      skill: 'skills',
-      file: 'files',
-      message: 'history',
-      history: 'history',
-      tool: 'tools',
-      baseline: 'baseline',
-    };
-
-    return mapping[type] || 'other';
+    return mapTypeToCategoryPure(type);
   }
 
   /**

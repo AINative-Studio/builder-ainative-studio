@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { contextBudgetService } from '@/lib/services/context-budget.service';
 import { logger } from '@/lib/logger';
 import { db } from '@/lib/db';
-import { context_items } from '@/lib/db/schema';
+import { context_items, budget_events } from '@/lib/db/schema';
 import { and, eq } from 'drizzle-orm';
 
 export async function GET(request: NextRequest) {
@@ -74,7 +74,7 @@ export async function GET(request: NextRequest) {
     // Include history if requested
     if (includeHistory) {
       const events = await db.query.budget_events.findMany({
-        where: eq(context_items.session_id, sessionId),
+        where: eq(budget_events.session_id, sessionId),
         orderBy: (events: any, { desc }: any) => [desc(events.created_at)],
         limit: 50,
       });
