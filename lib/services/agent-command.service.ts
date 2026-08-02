@@ -39,6 +39,10 @@ import {
 } from '@/lib/types/agent-commands';
 import { eq, and, or, desc, asc, sql, inArray } from 'drizzle-orm';
 import { getSkillService } from './agent-skill.service';
+import {
+  substituteVariables as substituteVariablesPure,
+  validateVariables as validateVariablesPure,
+} from '@/lib/validation/command-variables';
 
 /**
  * Fuzzy search scoring algorithm
@@ -373,14 +377,7 @@ export class AgentCommandService {
    * Substitute variables in template
    */
   substituteVariables(template: string, values: Record<string, any>): string {
-    let result = template;
-
-    for (const [key, value] of Object.entries(values)) {
-      const regex = new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`, 'g');
-      result = result.replace(regex, String(value));
-    }
-
-    return result;
+    return substituteVariablesPure(template, values);
   }
 
   /**
@@ -390,70 +387,7 @@ export class AgentCommandService {
     variables: CommandVariable[],
     values: Record<string, any>
   ): { valid: boolean; errors: Record<string, string> } {
-    const errors: Record<string, string> = {};
-
-    for (const variable of variables) {
-      const value = values[variable.name];
-
-      // Check required
-      if (variable.required && (value === undefined || value === null || value === '')) {
-        errors[variable.name] = `${variable.label} is required`;
-        continue;
-      }
-
-      // Skip validation if not provided and not required
-      if (value === undefined || value === null) continue;
-
-      // Type validation
-      switch (variable.type) {
-        case 'number':
-          if (isNaN(Number(value))) {
-            errors[variable.name] = `${variable.label} must be a number`;
-          }
-          break;
-        case 'boolean':
-          if (typeof value !== 'boolean') {
-            errors[variable.name] = `${variable.label} must be true or false`;
-          }
-          break;
-        case 'select':
-          if (variable.options && !variable.options.some((opt) => opt.value === value)) {
-            errors[variable.name] = `${variable.label} must be one of the available options`;
-          }
-          break;
-        case 'multiselect':
-          if (!Array.isArray(value)) {
-            errors[variable.name] = `${variable.label} must be an array`;
-          } else if (variable.options) {
-            const validValues = variable.options.map((opt) => opt.value);
-            const invalidValues = value.filter((v) => !validValues.includes(v));
-            if (invalidValues.length > 0) {
-              errors[variable.name] = `${variable.label} contains invalid values`;
-            }
-          }
-          break;
-        case 'url':
-          try {
-            new URL(String(value));
-          } catch {
-            errors[variable.name] = `${variable.label} must be a valid URL`;
-          }
-          break;
-      }
-
-      // Custom regex validation
-      if (variable.validation && typeof value === 'string') {
-        const regex = new RegExp(variable.validation);
-        if (!regex.test(value)) {
-          errors[variable.name] = variable.validationMessage || `${variable.label} is invalid`;
-        }
-      }
-    }
-
-    return {
-      valid: Object.keys(errors).length === 0,
-      errors,
-    };
+    return validateVariablesPure(variables, values);
   }
 
   /**
