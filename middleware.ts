@@ -109,6 +109,15 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next()
     }
 
+    // Allow the blog/guides articles for anonymous users — the /guides index and
+    // each /guides/[slug] article target long-tail keywords ("how to build a
+    // SaaS with AI", "v0 vs Lovable vs AINative", "what is AX optimization") and
+    // MUST be crawlable/indexable without an account. Without this they
+    // 307→/login, which blocks indexing entirely.
+    if (pathname === '/guides' || pathname.startsWith('/guides/')) {
+      return NextResponse.next()
+    }
+
     // Allow preview routes for anonymous users
     if (pathname.startsWith('/preview/')) {
       return NextResponse.next()
