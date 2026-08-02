@@ -60,18 +60,51 @@ export class RuleEnforcementService {
   }
 
   /**
-   * Auto-fix all fixable violations
+   * Auto-fix all fixable violations.
+   *
+   * Returns a NEW action with fixes applied. The input action is never mutated.
+   *
+   * Fixes are applied deterministically by looking up the registered rule for
+   * each violation and invoking its rule-level `autoFix(action)`. This works
+   * for reconstructed violations coming over HTTP (which have no live closures),
+   * unlike relying on the per-violation `autoFix()` closure.
    */
   async autoFixViolations(
     action: AgentAction,
     violations: RuleViolation[]
   ): Promise<AgentAction> {
-    let fixedAction = { ...action };
+    // Ensure built-in rules are available even if initialize() was skipped.
+    if (this.rules.size === 0) {
+      await this.loadBuiltInRules();
+    }
 
+    // Deep-copy so callers' input is never mutated.
+    let fixedAction: AgentAction = {
+      ...action,
+      data: { ...action.data },
+    };
+
+    // De-duplicate by ruleId — one autoFix pass per rule is sufficient.
+    const ruleIds = new Set<string>();
     for (const violation of violations) {
-      if (violation.autoFixable && violation.autoFix) {
-        await violation.autoFix();
-        // TODO: Track that this violation was auto-fixed
+      if (violation.autoFixable) {
+        ruleIds.add(violation.ruleId);
+      }
+    }
+
+    for (const ruleId of ruleIds) {
+      const rule = this.rules.get(ruleId);
+      if (rule?.autoFix) {
+        fixedAction = await rule.autoFix(fixedAction);
+      } else {
+        // Fall back to a live per-violation closure if a rule-level fixer
+        // is unavailable (e.g. custom in-memory violations).
+        const violation = violations.find(
+          (v) => v.ruleId === ruleId && v.autoFix
+        );
+        if (violation?.autoFix) {
+          await violation.autoFix();
+        }
       }
     }
 

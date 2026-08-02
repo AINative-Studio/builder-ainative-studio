@@ -96,6 +96,48 @@ export const NO_AI_ATTRIBUTION_RULE: EnforcementRule = {
       duration: Date.now() - startTime,
     };
   },
+  autoFix: async (action: AgentAction): Promise<AgentAction> => {
+    // Ordered so multi-word terms (e.g. "Co-Authored-By: Claude",
+    // "Generated with Claude") are stripped before their single-word parts.
+    const replacements: { term: string; replacement: string }[] = [
+      { term: 'Co-Authored-By: Claude', replacement: '' },
+      { term: 'Co-Authored-By: ChatGPT', replacement: '' },
+      { term: 'Co-Authored-By: Copilot', replacement: '' },
+      { term: 'Generated with Claude', replacement: 'Built by AINative' },
+      { term: 'Generated with ChatGPT', replacement: 'Built by AINative' },
+      { term: 'Powered by Claude', replacement: 'Powered by AINative Cloud' },
+      { term: 'GitHub Copilot', replacement: 'AINative' },
+      { term: 'claude.com', replacement: 'ainative.com' },
+      { term: 'Claude', replacement: 'AINative' },
+      { term: 'Anthropic', replacement: 'AINative' },
+      { term: 'ChatGPT', replacement: 'AINative' },
+      { term: 'OpenAI', replacement: 'AINative' },
+      { term: 'Copilot', replacement: 'AINative' },
+    ];
+
+    const escapeRegExp = (s: string) =>
+      s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    const strip = (input?: string): string | undefined => {
+      if (!input) return input;
+      let out = input;
+      for (const { term, replacement } of replacements) {
+        out = out.replace(new RegExp(escapeRegExp(term), 'gi'), replacement);
+      }
+      // Collapse any blank lines left behind by removed trailer lines.
+      return out.replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n');
+    };
+
+    return {
+      ...action,
+      data: {
+        ...action.data,
+        commitMessage: strip(action.data.commitMessage),
+        prDescription: strip(action.data.prDescription),
+        prTitle: strip(action.data.prTitle),
+      },
+    };
+  },
   examples: [
     {
       invalid: 'Add user authentication\n\nGenerated with Claude Code',
@@ -864,6 +906,18 @@ logger.info({ userId }, 'User logged in');`,
       passed: violations.length === 0,
       violations,
       duration: Date.now() - startTime,
+    };
+  },
+  autoFix: async (action: AgentAction): Promise<AgentAction> => {
+    return {
+      ...action,
+      data: {
+        ...action.data,
+        fileContent: action.data.fileContent?.replace(
+          /console\.log\(/g,
+          'logger.info('
+        ),
+      },
     };
   },
   examples: [
