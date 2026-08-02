@@ -96,6 +96,19 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next()
     }
 
+    // Allow the template landing pages for anonymous users — each
+    // /templates/[slug] targets an "AI <category> template" search and MUST be
+    // crawlable/indexable without an account. Without this they 307→/login,
+    // which blocks indexing entirely. Submit/analytics stay gated below.
+    if (
+      pathname === '/templates' ||
+      (pathname.startsWith('/templates/') &&
+        pathname !== '/templates/submit' &&
+        pathname !== '/templates/analytics')
+    ) {
+      return NextResponse.next()
+    }
+
     // Allow preview routes for anonymous users
     if (pathname.startsWith('/preview/')) {
       return NextResponse.next()

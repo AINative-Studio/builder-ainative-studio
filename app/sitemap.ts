@@ -1,5 +1,6 @@
 import { MetadataRoute } from 'next'
 import { SEED_SHOWCASE } from '@/lib/showcase-data'
+import { TEMPLATE_SLUGS } from '@/lib/data/seo-templates'
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const baseUrl = 'https://builder.ainative.studio'
@@ -20,6 +21,15 @@ export default function sitemap(): MetadataRoute.Sitemap {
     lastModified: now,
     changeFrequency: 'weekly' as const,
     priority: 0.85,
+  }))
+
+  // Individual template landing pages ("AI <category> template") — high-intent
+  // search. One URL per template; keep in sync with lib/data/seo-templates.ts.
+  const templateEntries: MetadataRoute.Sitemap = TEMPLATE_SLUGS.map(slug => ({
+    url: `${baseUrl}/templates/${slug}`,
+    lastModified: now,
+    changeFrequency: 'weekly' as const,
+    priority: 0.8,
   }))
 
   return [
@@ -43,6 +53,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: 'weekly',
       priority: 0.9,
     },
+    ...templateEntries,
     {
       url: `${baseUrl}/login`,
       lastModified: now,
