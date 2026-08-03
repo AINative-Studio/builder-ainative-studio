@@ -30,6 +30,7 @@ import { logModelConfiguration } from '@/lib/config/model-validator'
 import { isClaudeAgentEnabled, isClaudeAgentFallbackEnabled, runHeadlessAgent } from '@/lib/agent/claude-agent'
 import { cleanupWorktree } from '@/lib/agent/worktree-manager'
 import { logAgentRun } from '@/lib/services/agent-runs.service'
+import { isQuotaError, QUOTA_USER_MESSAGE } from '@/lib/quota-error'
 
 // Log model configuration on first module load
 logModelConfiguration()
@@ -173,6 +174,12 @@ export async function POST(request: NextRequest) {
 
         try {
           let fullContent = ''
+          // Set when the primary agent failed specifically because the account is
+          // out of monthly tokens (HTTP 402). The standard fallback would bill the
+          // SAME exhausted account and just burn more tokens, so when this is set we
+          // skip the fallback and fail fast with an actionable message. Declared in
+          // the outer generation scope so the quota short-circuit below can read it.
+          let agentQuotaExhausted = false
           let lastUpdateTime = Date.now()
           const generationStartTime = Date.now()
           let tokenUsage: any = undefined
@@ -385,12 +392,24 @@ export async function POST(request: NextRequest) {
                     agentError = event.error
                     if (event.fatal) {
                       agentFailed = true
-                      // Send error to client but do NOT close — we will fall through
-                      // to the existing model call path below
-                      safeEnqueue(encoder.encode(`data: ${JSON.stringify({
-                        type: 'build_step',
-                        step: 'Agent failed — falling back to standard generation',
-                      })}\n\n`))
+                      // If the fatal error is a quota/billing exhaustion, the
+                      // standard fallback path bills the same empty account and
+                      // will just fail again — so don't offer it, and flag it so
+                      // we short-circuit below instead of double-burning tokens.
+                      if (isQuotaError(event.error)) {
+                        agentQuotaExhausted = true
+                        safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+                          type: 'build_step',
+                          step: QUOTA_USER_MESSAGE,
+                        })}\n\n`))
+                      } else {
+                        // Send error to client but do NOT close — we will fall through
+                        // to the existing model call path below
+                        safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+                          type: 'build_step',
+                          step: 'Agent failed — falling back to standard generation',
+                        })}\n\n`))
+                      }
                     } else {
                       // Non-fatal error — stream it as a build step so user sees it
                       safeEnqueue(encoder.encode(`data: ${JSON.stringify({
@@ -464,6 +483,35 @@ export async function POST(request: NextRequest) {
                 fullContent = '' // Reset so the fallback path starts clean
               }
             }
+          }
+
+          // Quota short-circuit: if the primary agent failed because the account
+          // is out of monthly tokens, the standard fallback path would bill the
+          // SAME exhausted account — burning more tokens on a request that cannot
+          // succeed (a doom loop that accelerates burn exactly when the account is
+          // empty). Emit a clear terminal error and stop instead of falling through.
+          if (agentQuotaExhausted && fullContent.length <= 100) {
+            console.warn('⛔ Quota exhausted (402) — skipping fallback to avoid double-billing an empty account')
+            import('@/lib/services/rlhf.service').then(({ logGenerationFailure }) => {
+              logGenerationFailure({
+                chatId: responseId,
+                userId,
+                prompt: message,
+                model: requestedModel || DEFAULT_MODEL,
+                error: 'monthly_token_limit_exceeded',
+                systemPrompt: '',
+                generationTimeMs: Date.now() - generationStartTime,
+              }).catch(() => {})
+            }).catch(() => {})
+            safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+              type: 'error',
+              error: QUOTA_USER_MESSAGE,
+              code: 'quota_exhausted',
+            })}\n\n`))
+            keepaliveActive = false
+            clearInterval(keepaliveInterval)
+            try { controller.close() } catch (_) { /* already closed */ }
+            return
           }
 
           // Only run the standard model call path if the agent path was not used
