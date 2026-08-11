@@ -18,8 +18,10 @@ const dynamicEntries = globalStore.__showcaseDynamic
  * Add a generation to the showcase
  */
 export function addToShowcase(prompt: string, chatId: string, codeLength: number, generatedCode?: string): boolean {
-  // Quality gate — 1500+ chars = meaningful component (was 3000, lowered for open-source model output)
-  if (codeLength < 1500) return false
+  // Sanity floor only — surface every application. Reject empty/trivial output
+  // (a bare scaffold with no real component is < ~200 chars) but keep small
+  // valid apps (counters, notes) that the old 1500-char gate silently dropped.
+  if (codeLength < 200) return false
 
   // Generate title from prompt
   const title = prompt

@@ -66,8 +66,10 @@ export async function persistGeneration(
     model: input.model,
     codeLength: input.code.length,
     category: 'general',
-    // Only surface valid, substantial builds to the showcase.
-    isShowcase: input.status === 'success' && input.valid && input.code.length > 1500,
+    // Surface every successful generation to the showcase (all applications,
+    // regardless of size or validation outcome). Only non-success (degraded/
+    // errored) builds are held back.
+    isShowcase: input.status === 'success',
   }).then(
     (ok): PersistResult => ({ saved: ok, reason: ok ? 'saved' : 'error' }),
     (): PersistResult => ({ saved: false, reason: 'error' }),

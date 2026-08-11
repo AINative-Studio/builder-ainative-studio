@@ -831,11 +831,21 @@ export function HomeClient() {
           <section className="text-center mb-8 md:mb-12" aria-label="Hero" data-agent-role="hero" data-agent-context="value-proposition">
             <p className="text-sm font-semibold text-[#5867EF] tracking-wide uppercase mb-3">AI App Builder — Best v0, Lovable & Bolt Alternative</p>
             <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900 dark:text-white mb-3">
-              Build React Apps with AI in Seconds
+              Build Production React Apps with Claude Sonnet 4.6
             </h1>
             <p className="text-base text-gray-500 dark:text-gray-400 max-w-xl mx-auto">
-              Generate production-ready React components from prompts. Every app is agent-optimized with AX, SEO, and structured data built in.
+              Generate production-ready React apps from a prompt, powered by frontier Claude models on AWS Bedrock. Every app is agent-optimized with AX, SEO, and structured data built in.
             </p>
+            <div className="mt-4 flex justify-center">
+              <a
+                href="/showcase"
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-[#5867EF] hover:underline"
+                data-agent-role="cta"
+                data-agent-context="showcase"
+              >
+                See what people are building →
+              </a>
+            </div>
           </section>
 
           {/* Prompt Input */}

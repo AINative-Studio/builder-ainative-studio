@@ -1309,8 +1309,10 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               // success path (#89) so it survives slow/cut requests. Not repeated
               // here to avoid a duplicate row.
 
-              // Auto-populate showcase with quality generations (validation passed + substantial code)
-              if (validation.valid && finalContent.length > 1500) {
+              // Auto-populate showcase with every successful generation (all
+              // applications surface, regardless of size/validation). This is the
+              // success-completion path, so reaching here means the build succeeded.
+              if (finalContent.length > 0) {
                 import('@/lib/showcase-store').then(({ addToShowcase }) => {
                   const added = addToShowcase(message, responseId, finalContent.length, finalContent)
                   if (added) console.log(`🏆 Added to showcase: ${responseId} (${finalContent.length} chars)`)
