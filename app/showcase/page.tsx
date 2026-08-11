@@ -26,16 +26,24 @@ function ShowcaseCard({ entry }: { entry: ShowcaseEntry }) {
       data-agent-role="content"
       data-agent-context={`showcase entry: ${entry.title}`}
     >
-      <div className="aspect-video bg-gradient-to-br from-gray-100 to-gray-50 dark:from-gray-800 dark:to-gray-900 relative overflow-hidden">
-        {/* Static screenshot — fast, reliable, pre-rendered */}
+      <div className="aspect-video bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-800 dark:to-gray-900 relative overflow-hidden">
+        {/* Branded placeholder sits BEHIND the image, so a missing/404 thumbnail
+            (dynamic apps have no pre-rendered PNG) shows a clean gradient tile
+            with the title initial instead of a broken-image icon. */}
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="text-5xl font-bold text-blue-300/60 dark:text-gray-700 select-none">
+            {(entry.title || '?').charAt(0).toUpperCase()}
+          </span>
+        </div>
+        {/* Static screenshot — fast, reliable, pre-rendered (seeds only) */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={`/showcase-thumbnails/${entry.slug}.png`}
           alt={`Preview of ${entry.title}`}
-          className="w-full h-full object-cover object-top"
+          className="w-full h-full object-cover object-top relative z-[1]"
           loading="lazy"
         />
-        <div className="absolute inset-0 bg-transparent group-hover:bg-black/5 transition-colors" />
+        <div className="absolute inset-0 bg-transparent group-hover:bg-black/5 transition-colors z-[2]" />
         {entry.featured && (
           <span className="absolute top-3 right-3 bg-blue-600 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wider z-10">
             Featured
@@ -66,10 +74,31 @@ function ShowcaseCard({ entry }: { entry: ShowcaseEntry }) {
   )
 }
 
-export default function ShowcasePage() {
-  // Only show entries with good quality thumbnails as featured
+async function getRecentApps(): Promise<ShowcaseEntry[]> {
+  // Fetch the newest real generations server-side so the "Featured" strip
+  // reflects what people are actually building, not a static seed list.
+  try {
+    const base = process.env.NEXT_PUBLIC_SITE_URL || 'https://builder.ainative.studio'
+    const res = await fetch(`${base}/api/showcase?offset=0&limit=12`, {
+      next: { revalidate: 60 },
+    })
+    if (!res.ok) return []
+    const data = await res.json()
+    return (data.entries || []).filter((e: ShowcaseEntry & { hasCode?: boolean; generatedCode?: string }) =>
+      Boolean(e.chatId) && (e.hasCode ?? Boolean(e.generatedCode && e.generatedCode.length >= 2000)),
+    )
+  } catch {
+    return []
+  }
+}
+
+export default async function ShowcasePage() {
+  // Featured = the most recent real builds (falls back to curated seeds if the
+  // live read is empty/slow, so the strip never blanks).
+  const recent = await getRecentApps()
   const bestThumbnails = ['agent-swarm-dashboard', 'analytics-dashboard', 'kanban-task-board', 'saas-landing-page', 'team-directory']
-  const featured = SEED_SHOWCASE.filter(e => bestThumbnails.includes(e.slug))
+  const seedFeatured = SEED_SHOWCASE.filter(e => bestThumbnails.includes(e.slug))
+  const featured = (recent.length >= 3 ? recent.slice(0, 6) : seedFeatured)
   const all = SEED_SHOWCASE
 
   return (
