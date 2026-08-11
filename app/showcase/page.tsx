@@ -27,22 +27,37 @@ function ShowcaseCard({ entry }: { entry: ShowcaseEntry }) {
       data-agent-context={`showcase entry: ${entry.title}`}
     >
       <div className="aspect-video bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-800 dark:to-gray-900 relative overflow-hidden">
-        {/* Branded placeholder sits BEHIND the image, so a missing/404 thumbnail
-            (dynamic apps have no pre-rendered PNG) shows a clean gradient tile
-            with the title initial instead of a broken-image icon. */}
+        {/* Branded placeholder sits BEHIND everything, so it shows through while
+            the live preview loads (and if it fails). */}
         <div className="absolute inset-0 flex items-center justify-center">
           <span className="text-5xl font-bold text-blue-300/60 dark:text-gray-700 select-none">
             {(entry.title || '?').charAt(0).toUpperCase()}
           </span>
         </div>
-        {/* Static screenshot — fast, reliable, pre-rendered (seeds only) */}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={`/showcase-thumbnails/${entry.slug}.png`}
-          alt={`Preview of ${entry.title}`}
-          className="w-full h-full object-cover object-top relative z-[1]"
-          loading="lazy"
-        />
+        {entry.chatId ? (
+          // Dynamic app: render the ACTUAL generated app as a live, non-interactive
+          // thumbnail. Scaled to 1/2.5 and pinned so the full app fits the card.
+          <div className="absolute inset-0 z-[1] pointer-events-none overflow-hidden">
+            <iframe
+              src={`/api/preview/${entry.chatId}`}
+              title={`Live preview of ${entry.title}`}
+              loading="lazy"
+              tabIndex={-1}
+              aria-hidden="true"
+              className="origin-top-left border-0"
+              style={{ width: '250%', height: '250%', transform: 'scale(0.4)' }}
+            />
+          </div>
+        ) : (
+          // Seed: fast pre-rendered PNG screenshot.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={`/showcase-thumbnails/${entry.slug}.png`}
+            alt={`Preview of ${entry.title}`}
+            className="w-full h-full object-cover object-top relative z-[1]"
+            loading="lazy"
+          />
+        )}
         <div className="absolute inset-0 bg-transparent group-hover:bg-black/5 transition-colors z-[2]" />
         {entry.featured && (
           <span className="absolute top-3 right-3 bg-blue-600 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wider z-10">
