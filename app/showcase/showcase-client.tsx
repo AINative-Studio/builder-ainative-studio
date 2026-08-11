@@ -444,10 +444,13 @@ export function ShowcaseGalleryClient() {
     return () => { cancelled = true }
   }, [seedSlugs])
 
-  // Curated seeds first, then dynamic community apps. Always >= SEED_SHOWCASE.
+  // Freshly-generated community apps first (newest builds are the whole point of
+  // the showcase), then the curated seed demos. Seeds still ALWAYS render, so a
+  // slow/empty/failed /api/showcase read can never blank the grid. Dynamic
+  // entries are deduped against seeds in the fetch above, so no overlap here.
   const all: Array<ShowcaseEntry & { __seed?: boolean }> = [
-    ...SEED_SHOWCASE.map(e => ({ ...e, __seed: true })),
     ...dynamicEntries,
+    ...SEED_SHOWCASE.map(e => ({ ...e, __seed: true })),
   ]
 
   const filtered = filter
