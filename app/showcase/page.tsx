@@ -18,10 +18,16 @@ export const metadata: Metadata = {
 
 function ShowcaseCard({ entry }: { entry: ShowcaseEntry }) {
   const category = SHOWCASE_CATEGORIES.find(c => c.id === entry.category)
+  // Seeds have a pre-built /showcase/{slug} detail page; dynamic apps do NOT
+  // (that route 404s for them). Dynamic apps open their live preview instead.
+  const isDynamic = Boolean(entry.chatId)
+  const href = isDynamic ? `/api/preview/${entry.chatId}` : `/showcase/${entry.slug}`
 
   return (
     <Link
-      href={`/showcase/${entry.slug}`}
+      href={href}
+      target={isDynamic ? '_blank' : undefined}
+      rel={isDynamic ? 'noopener noreferrer' : undefined}
       className="group block bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden hover:shadow-lg hover:border-blue-300 dark:hover:border-blue-700 transition-all duration-200"
       data-agent-role="content"
       data-agent-context={`showcase entry: ${entry.title}`}
