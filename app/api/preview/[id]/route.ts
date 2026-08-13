@@ -579,10 +579,11 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
     // missing a trailing semicolon) throws "Missing semicolon" here and renders
     // blank. errorRecovery recovers from these and compiles the app anyway.
     // Cody emits real TSX (type annotations like useState<number[]>, : string,
-    // interfaces). @babel/standalone bundles the typescript preset — include it
-    // so those strip out instead of throwing "Unexpected token" and rendering
-    // blank. isTSX+allExtensions makes it treat the source as .tsx.
-    var _compiled = Babel.transform(_src, {presets:[['react', {runtime:'classic'}],['typescript', {isTSX:true, allExtensions:true, onlyRemoveTypeImports:true}]], parserOpts:{errorRecovery:true}}).code;
+    // interfaces). @babel/standalone (v8 on unpkg) bundles the typescript preset
+    // — include it with NO isTSX/allExtensions opts (v8's preset-typescript
+    // rejects those; JSX is handled by the react preset). This strips types so
+    // they don't throw "Unexpected token" and render a blank Syntax Error.
+    var _compiled = Babel.transform(_src, {presets:[['react', {runtime:'classic'}], 'typescript'], parserOpts:{errorRecovery:true}}).code;
     // Strip any remaining import/export statements that would crash in a script tag
     _compiled = _compiled.replace(/^import\\s+.*$/gm, '').replace(/^export\\s+(default\\s+)?/gm, '');
     // Inject compiled JS as a new script tag — runs in GLOBAL scope
