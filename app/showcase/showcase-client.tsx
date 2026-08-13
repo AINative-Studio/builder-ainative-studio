@@ -240,7 +240,7 @@ const cn = (...args) => args.filter(Boolean).join(' ');
 try {
   // Compile JSX with Babel, then execute with all globals available
   var _src = ${JSON.stringify(cleanCode)};
-  var _compiled = Babel.transform(_src, {presets:[['react',{runtime:'classic'}],['typescript',{isTSX:true, allExtensions:true, onlyRemoveTypeImports:true}]], parserOpts:{errorRecovery:true}}).code;
+  var _compiled = Babel.transform(_src, {presets:[['react',{runtime:'classic'}], 'typescript'], parserOpts:{errorRecovery:true}}).code;
   // Execute in a function scope with all component globals
   var _fn = new Function(
     'React','useState','useEffect','useCallback','useMemo','useRef','Fragment',
