@@ -428,6 +428,29 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
     fixes.push('Removed stray semicolon after open paren ((;)')
   }
 
+  // Fix UNGUARDED PROPERTY ACCESS: the #1 runtime crash class in generated apps
+  // is calling a string/number method on a possibly-undefined field — e.g.
+  // `row.name.toLowerCase()` where a row loaded from /api/db is missing `name`,
+  // throwing "Cannot read properties of undefined (reading 'toLowerCase')" and
+  // killing the whole list. Guard the common string/number coercions so a single
+  // bad row can't crash the render. Only rewrites the specific unsafe shape
+  // `<ident>.<prop>.<method>(` — optional-chained (`?.`) and already-guarded
+  // (`|| ''`) accesses are left untouched.
+  const beforeGuards = fixedCode
+  // String methods → default to '' :  a.b.toLowerCase()  ->  (a.b || '').toLowerCase()
+  fixedCode = fixedCode.replace(
+    /(?<![.\w?])([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\.(toLowerCase|toUpperCase|trim|includes|startsWith|endsWith|split|charAt|slice|replace|match|padStart|padEnd)\(/g,
+    (m, obj, prop, method) => `(${obj}.${prop} || '').${method}(`,
+  )
+  // Number methods → default to 0 :  a.b.toFixed(2)  ->  (a.b || 0).toFixed(2)
+  fixedCode = fixedCode.replace(
+    /(?<![.\w?])([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\.(toFixed|toLocaleString|toPrecision)\(/g,
+    (m, obj, prop, method) => `(${obj}.${prop} || 0).${method}(`,
+  )
+  if (fixedCode !== beforeGuards) {
+    fixes.push('Guarded unsafe property access (|| default) to prevent undefined-method crashes')
+  }
+
   return { code: fixedCode, fixes }
 }
 
@@ -597,6 +620,73 @@ export function findUnresolvedComponents(code: string): string[] {
 }
 
 /**
+ * Detect the "Objects are not valid as a React child" crash class (#184): a bare
+ * `{identifier}` used as a JSX child where the identifier is very likely a plain
+ * object, so React throws at render time with e.g.
+ *   "Objects are not valid as a React child (found: object with keys {...})".
+ *
+ * This is a RUNTIME error the Babel parse cannot catch, so — like
+ * findUnresolvedComponents (#76) — we FLAG it (validation gate → retry) rather
+ * than trying to rewrite it, because a wrong rewrite (dropping the real field a
+ * child should show) is worse than a caught error.
+ *
+ * DELIBERATELY CONSERVATIVE — far better to miss cases than to false-flag valid
+ * code. We only flag `{x}` as a child when BOTH hold:
+ *   1. `x` is a bare identifier (no `.prop`, no `(...)` call, no operators,
+ *      no `&&`/`?:`/template — those are handled/rendered fine), AND
+ *   2. `x` is bound in this file to a PLAIN OBJECT LITERAL (`const x = { ... }`)
+ *      and is NOT also bound to an array or a `.map(...)`/`.filter(...)` result
+ *      (those render fine / are arrays of elements).
+ * A child that is a `.map()` return, `item.name`, `count`, a function call, or a
+ * conditional is never flagged. Returns the first offending identifier, or null.
+ */
+export function findObjectRenderedAsChild(code: string): string | null {
+  for (const file of code.split(FILE_MARKER)) {
+    // Identifiers bound to a plain object literal at declaration:
+    //   const x = { ... }   /   let x = {   (multi-line object opener)
+    // The char after `=` `{` must NOT be `}` on the same token in a way that
+    // makes it a destructure — we already require `=` BEFORE `{`, so this is an
+    // object literal value, not a `const { a } = obj` destructure.
+    const objectVars = new Set<string>()
+    // Allow the declaration to follow line-start, newline, `{`, or `;` so
+    // inline/minified forms like `function App(){const x={...}` are caught too
+    // (not just newline-formatted code). The `\b` keeps it a word boundary.
+    for (const m of file.matchAll(
+      /(?:^|[\n{;])\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\{/g,
+    )) {
+      objectVars.add(m[1])
+    }
+
+    if (objectVars.size === 0) continue
+
+    // Remove any identifier that is ALSO (re)bound to an array literal, a call
+    // result, or a map/filter chain anywhere in the file — then it's ambiguous
+    // and we must NOT flag it (safety first). Also drop names reassigned to a
+    // non-object so we don't false-flag shadowed/reused names.
+    for (const name of [...objectVars]) {
+      const reArrayOrCall = new RegExp(
+        `\\b${name}\\s*=\\s*(?:\\[|[A-Za-z_$][\\w$.]*\\s*\\(|[A-Za-z_$][\\w$.]*\\.(?:map|filter|reduce|slice|concat)\\b)`,
+      )
+      if (reArrayOrCall.test(file)) objectVars.delete(name)
+    }
+
+    if (objectVars.size === 0) continue
+
+    // JSX child slot: `>` then optional whitespace, then `{ ident }` (a BARE
+    // identifier only — no dot, call, operator, or whitespace-separated tokens),
+    // then optional whitespace and `<`. This is the exact "render an object"
+    // shape. `{item.name}`, `{items.map(...)}`, `{a && b}`, `{cond ? x : y}`,
+    // `{count}` (a number) all fail the "bound to an object literal" test above,
+    // and anything with a `.`/`(`/operator fails this regex's bare-ident group.
+    for (const m of file.matchAll(/>\s*\{\s*([A-Za-z_$][\w$]*)\s*\}\s*</g)) {
+      if (objectVars.has(m[1])) return m[1]
+    }
+  }
+
+  return null
+}
+
+/**
  * Validate JavaScript/JSX code using Babel parser
  *
  * This catches syntax errors like unterminated strings, missing brackets,
@@ -642,6 +732,25 @@ export function validateJavaScriptCode(
   if (unresolved.length > 0) {
     const errorMessage = `Element type is invalid: <${unresolved[0]}> is used but not defined or imported`
     console.error('❌ Code validation failed (unresolved component):', unresolved.join(', '))
+    return {
+      valid: false,
+      error: errorMessage,
+      code: fixedCode,
+      autoFixed: fixes.length > 0,
+      fixes: fixes.length > 0 ? fixes : undefined,
+    }
+  }
+
+  // Catch "Objects are not valid as a React child" (#184) — a bare `{obj}` used
+  // as a JSX child where `obj` is a plain object literal. React throws this at
+  // render time ("Objects are not valid as a React child …"), a runtime crash
+  // the Babel parse can't catch. We FLAG rather than rewrite (a wrong rewrite —
+  // dropping the field the child should show — is worse than a caught error);
+  // the caller's retry path re-generates and RLHF logs it as a validation error.
+  const objChild = findObjectRenderedAsChild(fixedCode)
+  if (objChild) {
+    const errorMessage = `Objects are not valid as a React child (found: object rendered directly as '{${objChild}}'). Render its fields instead (e.g. {${objChild}.name}).`
+    console.error('❌ Code validation failed (object rendered as React child):', objChild)
     return {
       valid: false,
       error: errorMessage,
