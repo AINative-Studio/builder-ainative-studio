@@ -687,6 +687,215 @@ export function findObjectRenderedAsChild(code: string): string | null {
 }
 
 /**
+ * JavaScript/DOM/preview globals that are ALWAYS in scope in the preview runtime
+ * but are NOT React/AIKit/shadcn components — so they'd be missed by
+ * KNOWN_AVAILABLE_COMPONENTS (which is PascalCase-only). These are the standard
+ * built-ins plus the React hooks and a few browser globals the preview injects
+ * (see app/api/preview/[id]/route.ts). Used ONLY by findUndefinedReferences so a
+ * legitimate `useState(...)`, `Math.round(...)`, `JSON.parse(...)`, `console.log`
+ * etc. is never flagged as an undefined variable (builder#191).
+ */
+const KNOWN_RUNTIME_GLOBALS = new Set<string>([
+  // Core JS globals / built-ins
+  'React', 'Math', 'JSON', 'Object', 'Array', 'String', 'Number', 'Boolean',
+  'Date', 'RegExp', 'Map', 'Set', 'WeakMap', 'WeakSet', 'Promise', 'Symbol',
+  'Proxy', 'Reflect', 'Error', 'TypeError', 'RangeError', 'BigInt',
+  'parseInt', 'parseFloat', 'isNaN', 'isFinite', 'encodeURIComponent',
+  'decodeURIComponent', 'encodeURI', 'decodeURI', 'structuredClone',
+  'Intl', 'NaN', 'Infinity', 'undefined', 'globalThis', 'JSX',
+  // Browser globals injected/available in the preview iframe
+  'window', 'document', 'console', 'navigator', 'location', 'history',
+  'localStorage', 'sessionStorage', 'fetch', 'URL', 'URLSearchParams',
+  'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval',
+  'requestAnimationFrame', 'cancelAnimationFrame', 'alert', 'confirm', 'prompt',
+  'FormData', 'Blob', 'File', 'FileReader', 'Image', 'Audio', 'atob', 'btoa',
+  'CustomEvent', 'Event', 'AbortController', 'IntersectionObserver',
+  'ResizeObserver', 'MutationObserver', 'crypto', 'performance', 'process',
+  'module', 'exports', 'require', 'globalReactErrorHandler',
+  // React hooks (exposed on window in the preview; imported in Sandpack)
+  'useState', 'useEffect', 'useCallback', 'useMemo', 'useRef', 'useContext',
+  'createContext', 'useReducer', 'useLayoutEffect', 'useId', 'useTransition',
+  'useDeferredValue', 'useImperativeHandle', 'useSyncExternalStore',
+  'createElement', 'cloneElement', 'createRef', 'forwardRef', 'memo', 'lazy',
+  // shadcn util the preview exposes
+  'cn',
+])
+
+/**
+ * Detect references to identifiers that are USED but NEVER declared anywhere in
+ * the file — the "ReferenceError: X is not defined" crash class (#191), e.g. the
+ * model renders `{sensorData}` / `{kanbanTasks.map(...)}` or calls
+ * `getDealsByStageData()` without ever declaring the variable/function. This is a
+ * RUNTIME crash the Babel parse can't catch, so — like findUnresolvedComponents
+ * (#76) and findObjectRenderedAsChild (#184) — we FLAG it (validation gate →
+ * retry) rather than rewrite it. Returns the first offending name, or null.
+ *
+ * Uses Babel's real scope analysis (path.scope.hasBinding) rather than regex, so
+ * function params, destructuring, catch clauses, closures, hoisted functions and
+ * imports are all correctly treated as "declared" — the hard cases a regex would
+ * get wrong. A reference is flagged ONLY when Babel finds no binding in ANY
+ * enclosing scope AND the name is not a known runtime global / injected component.
+ *
+ * DELIBERATELY CONSERVATIVE — a false positive rejects a valid app. To stay safe:
+ *   - Only camelCase/lower-initial data identifiers are flagged (the real crash
+ *     shape: sensorData, kanbanTasks, getDealsByStageData). PascalCase names are
+ *     NEVER flagged here — they're components/icons covered by #76, and the
+ *     preview exposes the entire lucide icon set on window (hundreds of names we
+ *     can't fully enumerate), so flagging a PascalCase name risks breaking valid
+ *     icon usage.
+ *   - If the code can't be parsed to an AST at all, we return null (no flag) and
+ *     let the existing syntax-error path handle it.
+ *   - Multi-file blobs are analyzed per file (bindings don't cross FILE markers).
+ */
+export function findUndefinedReferences(code: string): string | null {
+  // Uses ONLY @babel/parser (a direct, bundleable dep already imported above).
+  // NOT @babel/core (Node-only `fs`, unbundleable) and NOT @babel/traverse/types
+  // (not direct deps — unresolvable in the Next build). We build the AST with
+  // parse() and do a manual two-pass walk: (1) collect every DECLARED name
+  // (const/let/var/function/class/params/destructure/import/catch), (2) collect
+  // every referenced lower-initial identifier; flag a reference that is neither
+  // declared nor a known runtime global/component. Fail-open on any error.
+  for (const file of code.split(FILE_MARKER)) {
+    if (!file.trim()) continue
+
+    let ast: any
+    try {
+      ast = parse(file, {
+        sourceType: 'module',
+        plugins: ['jsx', 'typescript'],
+        errorRecovery: true,
+        allowReturnOutsideFunction: true,
+        allowAwaitOutsideFunction: true,
+        allowSuperOutsideMethod: true,
+      })
+    } catch {
+      // Unparseable — leave it to the syntax-error path, don't false-flag.
+      continue
+    }
+
+    const declared = new Set<string>()
+    const referenced = new Set<string>()
+
+    // Recursively collect declared binding names from any node/pattern.
+    const collectPattern = (node: any) => {
+      if (!node || typeof node !== 'object') return
+      switch (node.type) {
+        case 'Identifier':
+          declared.add(node.name)
+          break
+        case 'ObjectPattern':
+          for (const p of node.properties || []) {
+            if (p.type === 'RestElement') collectPattern(p.argument)
+            else collectPattern(p.value || p.argument)
+          }
+          break
+        case 'ArrayPattern':
+          for (const el of node.elements || []) collectPattern(el)
+          break
+        case 'AssignmentPattern':
+          collectPattern(node.left)
+          break
+        case 'RestElement':
+          collectPattern(node.argument)
+          break
+      }
+    }
+
+    // Walk the whole tree once, gathering declarations AND references. We track
+    // whether we're in a "reference position" vs skip positions (member .prop,
+    // object keys, JSX attribute/element names, type annotations, declarations).
+    const visit = (node: any, parent: any, key: string) => {
+      if (!node || typeof node !== 'object') return
+      if (Array.isArray(node)) {
+        for (const c of node) visit(c, parent, key)
+        return
+      }
+      if (typeof node.type !== 'string') return
+
+      // --- collect DECLARED names ---
+      switch (node.type) {
+        case 'VariableDeclarator':
+          collectPattern(node.id)
+          break
+        case 'FunctionDeclaration':
+        case 'FunctionExpression':
+        case 'ArrowFunctionExpression':
+          if (node.id) declared.add(node.id.name)
+          for (const p of node.params || []) collectPattern(p)
+          break
+        case 'ClassDeclaration':
+        case 'ClassExpression':
+          if (node.id) declared.add(node.id.name)
+          break
+        case 'CatchClause':
+          if (node.param) collectPattern(node.param)
+          break
+        case 'ImportDefaultSpecifier':
+        case 'ImportNamespaceSpecifier':
+        case 'ImportSpecifier':
+          if (node.local) declared.add(node.local.name)
+          break
+      }
+
+      // --- collect a REFERENCE (value-position identifier) ---
+      if (node.type === 'Identifier' && parent) {
+        const inSkipPosition =
+          // member access `.prop` (but obj in obj.prop IS a reference)
+          (parent.type === 'MemberExpression' && key === 'property' && !parent.computed) ||
+          (parent.type === 'OptionalMemberExpression' && key === 'property' && !parent.computed) ||
+          // object literal key (non-computed)
+          (parent.type === 'ObjectProperty' && key === 'key' && !parent.computed) ||
+          (parent.type === 'ObjectMethod' && key === 'key' && !parent.computed) ||
+          // any declaration id / param handled above
+          (parent.type === 'VariableDeclarator' && key === 'id') ||
+          (parent.type === 'FunctionDeclaration' && key === 'id') ||
+          (parent.type === 'ClassDeclaration' && key === 'id') ||
+          ((parent.type === 'FunctionDeclaration' || parent.type === 'FunctionExpression' || parent.type === 'ArrowFunctionExpression') && key === 'params') ||
+          // JSX names (elements & attributes) — components handled by #76 check
+          parent.type === 'JSXAttribute' ||
+          parent.type === 'JSXOpeningElement' ||
+          parent.type === 'JSXClosingElement' ||
+          (parent.type === 'JSXMemberExpression') ||
+          // labels
+          parent.type === 'LabeledStatement' ||
+          parent.type === 'BreakStatement' ||
+          parent.type === 'ContinueStatement' ||
+          // TS type positions
+          (typeof parent.type === 'string' && parent.type.startsWith('TS'))
+        if (!inSkipPosition) referenced.add(node.name)
+      }
+
+      // recurse into children
+      for (const k of Object.keys(node)) {
+        if (k === 'loc' || k === 'start' || k === 'end' || k === 'range' || k === 'leadingComments' || k === 'trailingComments') continue
+        const child = (node as any)[k]
+        if (child && typeof child === 'object') visit(child, node, k)
+      }
+    }
+
+    try {
+      visit(ast.program, null, 'program')
+    } catch {
+      continue // exotic tree — fail open
+    }
+
+    // Flag the first referenced-but-undeclared lower-initial data identifier.
+    for (const name of referenced) {
+      if (declared.has(name)) continue
+      if (KNOWN_RUNTIME_GLOBALS.has(name)) continue
+      if (KNOWN_AVAILABLE_COMPONENTS.has(name)) continue
+      // CONSERVATIVE: only flag lower-initial data idents (the #191 shape).
+      // PascalCase components/icons are covered by findUnresolvedComponents (#76).
+      if (!/^[a-z_$][\w$]*$/.test(name)) continue
+      if (name.length < 2) continue
+      return name
+    }
+  }
+
+  return null
+}
+
+/**
  * Validate JavaScript/JSX code using Babel parser
  *
  * This catches syntax errors like unterminated strings, missing brackets,
@@ -751,6 +960,29 @@ export function validateJavaScriptCode(
   if (objChild) {
     const errorMessage = `Objects are not valid as a React child (found: object rendered directly as '{${objChild}}'). Render its fields instead (e.g. {${objChild}.name}).`
     console.error('❌ Code validation failed (object rendered as React child):', objChild)
+    return {
+      valid: false,
+      error: errorMessage,
+      code: fixedCode,
+      autoFixed: fixes.length > 0,
+      fixes: fixes.length > 0 ? fixes : undefined,
+    }
+  }
+
+  // Catch "ReferenceError: X is not defined" (#191) — the model references a
+  // variable/function it never declared (e.g. renders `{sensorData}` or calls
+  // `getDealsByStageData()` with no matching declaration). This is a runtime
+  // crash the Babel parse can't catch. We FLAG rather than rewrite (there's no
+  // safe automatic value to substitute); the caller's retry path re-generates
+  // and RLHF logs it as a validation error. The check uses Babel scope analysis
+  // and is deliberately conservative (lower-initial data idents only), so valid
+  // hooks/components/icons/locals are never flagged. It runs on BOTH paths —
+  // an undefined data reference crashes regardless of whether imports are
+  // stripped, so importsStripped does NOT suppress it (unlike the #76 check).
+  const undefRef = findUndefinedReferences(fixedCode)
+  if (undefRef) {
+    const errorMessage = `Reference to undefined variable '${undefRef}' — declare it or remove the reference.`
+    console.error('❌ Code validation failed (undefined reference):', undefRef)
     return {
       valid: false,
       error: errorMessage,
