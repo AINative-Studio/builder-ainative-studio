@@ -66,10 +66,12 @@ export async function persistGeneration(
     model: input.model,
     codeLength: input.code.length,
     category: 'general',
-    // Surface every successful generation to the showcase (all applications,
-    // regardless of size or validation outcome). Only non-success (degraded/
-    // errored) builds are held back.
-    isShowcase: input.status === 'success',
+    // Surface every successful generation that PASSES validation to the showcase
+    // (all applications, regardless of size — but not broken ones). Requiring
+    // `valid` keeps apps that crash at render (undefined refs, syntax errors,
+    // object-as-child, etc.) out of the public gallery, while still surfacing
+    // small valid apps. Degraded/errored builds are held back too. (builder#191)
+    isShowcase: input.status === 'success' && input.valid,
   }).then(
     (ok): PersistResult => ({ saved: ok, reason: ok ? 'saved' : 'error' }),
     (): PersistResult => ({ saved: false, reason: 'error' }),

@@ -171,6 +171,21 @@ Add a skip-to-content link and ensure tab order is logical:
 9. [ ] ARIA roles on complex widgets (tables, charts, tabs, status)
 10. [ ] Skip navigation link + logical tab order
 
+## RESPONSIVE DESIGN — MANDATORY ON EVERY APP (NO EXCEPTIONS)
+
+**This applies to EVERY app you generate — counters, forms, todo lists, small dashboards, AND landing pages. A layout that only works on desktop is a FAILING score.** Build mobile-first: assume a 375px-wide phone viewport FIRST, then add \`sm:\`/\`md:\`/\`lg:\` breakpoints to scale UP. Simpler apps are NOT exempt — a counter or a form MUST still fit and look good on mobile.
+
+**HARD RULES — apply these to every layout:**
+- **Containers**: full-width with a max cap and responsive padding — \`w-full max-w-* mx-auto px-4 sm:px-6 lg:px-8\`. Never a bare fixed-width container.
+- **Horizontal stacks**: use \`flex flex-col md:flex-row\` (stack on mobile, row on larger screens). NEVER a fixed \`flex-row\` that forces content off-screen on a phone.
+- **Grids**: always start single-column and scale up — \`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3\` (or \`xl:grid-cols-4\`). NEVER a fixed multi-column grid with no breakpoints.
+- **Headings/text**: use responsive sizes — headings \`text-2xl sm:text-3xl lg:text-4xl\` (hero h1 \`text-4xl sm:text-5xl lg:text-6xl\`), body \`text-sm sm:text-base\`.
+- **Spacing**: scale section padding with breakpoints — \`py-12 sm:py-16 lg:py-24\`, \`gap-4 sm:gap-6 lg:gap-8\`.
+- **Widths**: NEVER a fixed pixel width that exceeds a 375px mobile viewport (e.g. \`w-[600px]\`). Use \`w-full\` with \`max-w-*\`, or make the fixed width responsive (\`w-full max-w-[600px]\`). Fixed sidebars must collapse or stack on mobile.
+- **Images/media**: \`w-full h-auto\` — never fixed pixel dimensions that overflow.
+
+Before finishing, mentally shrink the app to a 375px phone: does anything overflow horizontally, get clipped, or force a sideways scroll? If yes, add the breakpoint classes above. Every app must be usable on mobile, tablet, and desktop.
+
 ## AVAILABLE LIBRARIES (all loaded globally — NO imports needed)
 
 **React Hooks**: useState, useEffect, useCallback, useMemo, useRef

@@ -637,6 +637,7 @@ export default function App() {
 \`\`\`
 
 DESIGN RULES:
+- RESPONSIVE (MANDATORY — applies to EVERY app, even a counter or a form, not just landing pages): build mobile-first for a 375px phone, then scale up with sm:/md:/lg: breakpoints. Containers: w-full max-w-* mx-auto px-4 sm:px-6 lg:px-8. Stacks: flex flex-col md:flex-row (never a fixed flex-row that overflows mobile). Grids: grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 (always start single-column). Headings: text-2xl sm:text-3xl lg:text-4xl. NEVER a fixed pixel width that exceeds 375px (no w-[600px]) — use w-full max-w-[600px]. Nothing may overflow horizontally on a phone.
 - Colors: primary bg-[${selectedTheme.primary}], dark bg-[${selectedTheme.dark}], light bg-[${selectedTheme.light}]. NEVER use bg-blue, bg-gray.
 - Use Lucide icons: import { Search, Menu, Users, BarChart3, Settings, Bell, Star, Plus, Edit, Trash2, ArrowRight, TrendingUp, DollarSign, Zap, Shield, Activity } from 'lucide-react'
 - Cards: bg-white rounded-xl shadow-sm border border-slate-200 p-6 hover:shadow-md transition-all
