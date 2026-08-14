@@ -185,7 +185,16 @@ export async function listGenerations(limit = 50): Promise<any[]> {
       undefined,
       { timeoutMs: 25_000, retries: 1 },
     )
-    const rows = (result?.data || []).map((r: any) => r.row_data || r)
+    // Filter to showcase-flagged rows CLIENT-SIDE. The ZeroDB
+    // `filter_is_showcase=true` query param is not honored by the API (returns
+    // all rows), so without this the gallery showed EVERY generation regardless
+    // of is_showcase — apps flagged is_showcase=false (validation failures,
+    // crashing apps) still appeared, and the persist-time `isShowcase` gate had
+    // no visible effect. `is_showcase === false` is excluded; legacy rows with
+    // the field absent are kept (backwards-compatible). (builder#191)
+    const rows = (result?.data || [])
+      .map((r: any) => r.row_data || r)
+      .filter((rd: any) => rd?.is_showcase !== false)
     if (rows.length > 0) {
       genCache.set(limit, { rows, fetchedAt: now })
       return rows
