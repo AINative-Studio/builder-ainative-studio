@@ -900,9 +900,13 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
       const Layout = _getIcon("Layout");
       const Grid = _getIcon("Grid3x3");
       const List = _getIcon("List");
-      const PieChart = _getIcon("PieChart");
-      const LineChart = _getIcon("LineChart");
-      const BarChart = _getIcon("BarChart");
+      // NOTE: BarChart / LineChart / PieChart are intentionally NOT bound to
+      // lucide icons here — they collide with the Recharts chart component names
+      // that generated apps use for real charts (144 chart-uses vs 7 icon-uses
+      // across generations). Binding them to icons made a chart element resolve
+      // to a 24x24 icon and render an empty panel. They are assigned to the
+      // Recharts components in the recharts setup below. Apps needing the ICON
+      // use the 3-suffixed variant (BarChart3 etc.). (#197)
       const Target = _getIcon("Target");
       const Award = _getIcon("Award");
       const Sparkles = _getIcon("Sparkles");
@@ -1033,6 +1037,11 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
         Legend, ResponsiveContainer, RadialBarChart, RadialBar,
         Treemap, Funnel, FunnelChart
       } = recharts;
+      // Bind the BARE chart names to the Recharts components (the icon consts for
+      // these 3 were intentionally NOT declared above, so there is no collision).
+      // Generated apps use <BarChart>/<LineChart>/<PieChart> for real charts;
+      // these consts are what the compiled app resolves in global scope. (#197)
+      const BarChart = ReBarChart, LineChart = ReLineChart, PieChart = RePieChart;
       // CRITICAL: the compiled app runs in a SEPARATE global-scope <script>, so
       // these block-scoped consts are invisible to it — using <RePieChart>,
       // <Pie>, <ResponsiveContainer> etc. would throw "Element type is invalid:
