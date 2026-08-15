@@ -525,6 +525,29 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
     fixes.push('Dropped oversized min-width on mobile (min-w-0 md:min-w-*) to prevent mobile overflow')
   }
 
+  // Fix MOBILE TABLE OVERFLOW: a multi-column <table> (even `w-full`) is wider
+  // than a 375px phone whenever its columns + padding don't fit, pushing the
+  // WHOLE PAGE wide (horizontal scroll). The standard fix is to wrap the table in
+  // an `overflow-x-auto` container so it scrolls WITHIN its box instead. Wrap any
+  // bare `<table ...>` that is NOT already immediately preceded by an element
+  // whose className contains `overflow-x`/`overflow-auto`. Conservative: only
+  // wraps `<table` opening tags, matches the corresponding `</table>` for that
+  // opener via a simple non-nested assumption (generated tables aren't nested),
+  // and skips ones already inside an overflow wrapper. (builder#196)
+  const beforeTableFix = fixedCode
+  fixedCode = fixedCode.replace(
+    /(<table\b[^>]*>)([\s\S]*?<\/table>)/g,
+    (full, open, rest, offset, str) => {
+      // Skip if the ~80 chars before this <table> already set up horizontal scroll.
+      const before = str.slice(Math.max(0, offset - 90), offset)
+      if (/overflow-x|overflow-auto|overflow-scroll/.test(before)) return full
+      return `<div className="overflow-x-auto">${open}${rest}</div>`
+    },
+  )
+  if (fixedCode !== beforeTableFix) {
+    fixes.push('Wrapped table(s) in overflow-x-auto to prevent mobile page overflow')
+  }
+
   // NOTE: inline `style={{ width: NNN }}` fixed widths are intentionally NOT
   // auto-fixed — inline-style shapes are too varied to rewrite safely with regex
   // (percentages, calc(), computed values, non-px units) and a wrong rewrite would
