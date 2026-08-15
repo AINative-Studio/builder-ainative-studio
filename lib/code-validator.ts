@@ -451,6 +451,21 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
     fixes.push('Guarded unsafe property access (|| default) to prevent undefined-method crashes')
   }
 
+  // Fix MOBILE OVERFLOW: fixed pixel widths larger than a phone viewport are the
+  // #1 UX defect — they force horizontal scroll on mobile (builder#196). Rewrite
+  // Tailwind arbitrary fixed widths `w-[NNNpx]` where NNN > 375 into a responsive
+  // `w-full max-w-[NNNpx]` (full width on mobile, capped on desktop). This is
+  // safe: it never makes a layout wider, only lets it shrink on small screens.
+  // Skip min-w-/max-w- (already constraints) and values <= 375 (fit on mobile).
+  const beforeWidthFix = fixedCode
+  fixedCode = fixedCode.replace(
+    /(?<![-\w])w-\[(\d+)px\]/g,
+    (m, px) => (parseInt(px, 10) > 375 ? `w-full max-w-[${px}px]` : m),
+  )
+  if (fixedCode !== beforeWidthFix) {
+    fixes.push('Made fixed pixel widths responsive (w-full max-w-*) to prevent mobile overflow')
+  }
+
   return { code: fixedCode, fixes }
 }
 

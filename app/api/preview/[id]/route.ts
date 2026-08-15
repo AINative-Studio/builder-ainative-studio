@@ -1368,6 +1368,22 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
           var loader = document.getElementById('loading-indicator');
           if (loader) loader.style.display = 'none';
 
+          // Recharts <ResponsiveContainer> measures its parent via ResizeObserver
+          // at mount; in this dynamically-injected iframe the measure can fire
+          // before layout settles, yielding a 0x0 (blank) chart. Dispatching a
+          // window resize AFTER layout forces every ResponsiveContainer to
+          // re-measure and paint. Fire a few times across frames to cover the
+          // race regardless of when React + fonts finish. (builder#197)
+          var _forceChartResize = function() {
+            try { window.dispatchEvent(new Event('resize')); } catch (e) {}
+          };
+          if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(function() { requestAnimationFrame(_forceChartResize); });
+          }
+          setTimeout(_forceChartResize, 120);
+          setTimeout(_forceChartResize, 400);
+          setTimeout(_forceChartResize, 900);
+
           // Add a small delay to check if render actually worked + enforce AX standards
           setTimeout(() => {
             const content = document.getElementById('root').innerHTML;
