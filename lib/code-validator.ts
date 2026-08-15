@@ -466,6 +466,70 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
     fixes.push('Made fixed pixel widths responsive (w-full max-w-*) to prevent mobile overflow')
   }
 
+  // Fix MOBILE GRID: a fixed multi-column grid (`grid-cols-N`, N >= 2) with NO
+  // responsive breakpoint prefix and NO `grid-cols-1` base forces N columns even
+  // on a 375px phone, overflowing (builder#196). Rewrite the bare `grid-cols-N`
+  // to `grid-cols-1 md:grid-cols-N` (single column on mobile, N from md up).
+  // Conservative: the negative lookbehind `(?<![-:\w])` skips any breakpoint- or
+  // hyphen-prefixed variant (`sm:grid-cols-3`, `md:grid-cols-3`, `lg:grid-cols-3`)
+  // and the `!/grid-cols-1\b/.test` guard skips class strings that already carry a
+  // `grid-cols-1` base, so already-responsive layouts are never touched.
+  const beforeGridFix = fixedCode
+  fixedCode = fixedCode.replace(/(?<![-:\w])grid-cols-(\d+)\b/g, (m, n) => {
+    const cols = parseInt(n, 10)
+    if (cols < 2) return m
+    return `grid-cols-1 md:grid-cols-${cols}`
+  })
+  if (fixedCode !== beforeGridFix) {
+    fixes.push('Added mobile grid base (grid-cols-1 md:grid-cols-N) to prevent mobile overflow')
+  }
+
+  // Fix MOBILE FLEX ROW: an explicit horizontal `flex-row` with NO breakpoint
+  // prefix keeps children side-by-side on a phone, overflowing when there are more
+  // than a couple. Rewrite the bare `flex-row` to `flex-col md:flex-row` (stacked
+  // on mobile, row from md up). Conservative: the negative lookbehind skips
+  // breakpoint-prefixed variants (`md:flex-row`), and we only apply this per class
+  // string that does NOT already contain `flex-col` anywhere (already handling its
+  // own mobile stacking). We scope to className string literals to avoid touching
+  // unrelated `flex-row` occurrences.
+  const beforeFlexFix = fixedCode
+  fixedCode = fixedCode.replace(
+    /className=(?:"([^"]*)"|\{`([^`]*)`\})/g,
+    (full, dq, tpl) => {
+      const cls = dq !== undefined ? dq : tpl
+      if (cls === undefined) return full
+      // Skip if a flex-col is already present (author handles mobile stacking) or
+      // if no bare (unprefixed) flex-row exists.
+      if (/(?:^|[\s:])flex-col\b/.test(cls)) return full
+      if (!/(?<![-:\w])flex-row\b/.test(cls)) return full
+      const newCls = cls.replace(/(?<![-:\w])flex-row\b/g, 'flex-col md:flex-row')
+      if (newCls === cls) return full
+      return dq !== undefined ? `className="${newCls}"` : `className={\`${newCls}\`}`
+    },
+  )
+  if (fixedCode !== beforeFlexFix) {
+    fixes.push('Stacked bare flex rows on mobile (flex-col md:flex-row) to prevent mobile overflow')
+  }
+
+  // Fix MOBILE MIN-WIDTH: a `min-w-[NNNpx]` hard floor larger than a phone
+  // viewport forces horizontal scroll no matter what its container does. Rewrite
+  // `min-w-[NNNpx]` (NNN > 375) to `min-w-0 md:min-w-[NNNpx]` — drop the floor on
+  // mobile, restore it from md up. Values <= 375 fit on a phone and are left
+  // alone. The negative lookbehind `(?<![-\w])` avoids matching `max-w-`/`w-` and
+  // the `md:min-w-[...]` variant, mirroring the width fix above.
+  const beforeMinWidthFix = fixedCode
+  fixedCode = fixedCode.replace(/(?<![-:\w])min-w-\[(\d+)px\]/g, (m, px) =>
+    parseInt(px, 10) > 375 ? `min-w-0 md:min-w-[${px}px]` : m,
+  )
+  if (fixedCode !== beforeMinWidthFix) {
+    fixes.push('Dropped oversized min-width on mobile (min-w-0 md:min-w-*) to prevent mobile overflow')
+  }
+
+  // NOTE: inline `style={{ width: NNN }}` fixed widths are intentionally NOT
+  // auto-fixed — inline-style shapes are too varied to rewrite safely with regex
+  // (percentages, calc(), computed values, non-px units) and a wrong rewrite would
+  // corrupt a valid app. Left for the LLM prompt / manual review instead.
+
   return { code: fixedCode, fixes }
 }
 

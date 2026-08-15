@@ -1054,6 +1054,18 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
       Object.keys(_rechartsGlobals).forEach(function(k) {
         if (_rechartsGlobals[k] && !window[k]) window[k] = _rechartsGlobals[k];
       });
+      // NAME COLLISION FIX (builder#197): the bare names BarChart / LineChart /
+      // PieChart are ALSO lucide icon names, and the icons were assigned to
+      // window first, so a generated chart element using those bare names
+      // resolved to the tiny static ICON, not the Recharts chart, silently
+      // rendering an empty panel. Generated apps overwhelmingly use these names
+      // for CHARTS (with data and Bar/Line/Pie children), so the Recharts
+      // component must win for the bare name. The icon stays reachable via its
+      // 3-suffixed variant (BarChart3 etc., already exposed) for the rare icon
+      // use. Only override when Recharts actually provides the chart.
+      if (ReBarChart) window.BarChart = ReBarChart;
+      if (ReLineChart) window.LineChart = ReLineChart;
+      if (RePieChart) window.PieChart = RePieChart;
       // Tooltip is commonly imported bare from recharts; only set it if a lucide
       // icon named Tooltip isn't already occupying the slot.
       if (RechartsTooltip && !window.Tooltip) window.Tooltip = RechartsTooltip;
