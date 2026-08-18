@@ -31,6 +31,7 @@ import { isClaudeAgentEnabled, isClaudeAgentFallbackEnabled, runHeadlessAgent } 
 import { cleanupWorktree } from '@/lib/agent/worktree-manager'
 import { logAgentRun } from '@/lib/services/agent-runs.service'
 import { isQuotaError, QUOTA_USER_MESSAGE } from '@/lib/quota-error'
+import { getBedrockClient, isBedrockEnabled } from '@/lib/bedrock-client'
 
 // Log model configuration on first module load
 logModelConfiguration()
@@ -58,11 +59,14 @@ function getLLMClient(): OpenAI {
   return isLocal ? metaClient : ainativeClient
 }
 
-// Model strategy (updated 2026-06-27):
-// PRIMARY: Claude Sonnet 4 via Anthropic SDK (200K context, best code quality)
+// Model strategy (updated 2026-08-18 — Config C: Amazon Bedrock primary):
+// PRIMARY: Claude Sonnet 4.5 via Amazon Bedrock (CODY_USE_BEDROCK=1 + bearer token)
+// SECONDARY: Claude Sonnet 4.5 via direct Anthropic API (sk-ant- key)
 // FALLBACK: ministral-14b via AINative (free, fast, limited context)
-// Enable Claude direct when a real Anthropic key is set (sk-ant- prefix)
-const USE_CLAUDE_DIRECT = !!(process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.startsWith('sk-ant-'))
+const USE_BEDROCK = isBedrockEnabled()
+// "Claude direct" is available when Bedrock is on OR a real Anthropic key is set.
+// Both expose a Claude-family .messages.create() client (see getPrimaryClaudeClient).
+const USE_CLAUDE_DIRECT = USE_BEDROCK || !!(process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.startsWith('sk-ant-'))
 // CRITICAL: the Anthropic key only has Sonnet 4.5 access — the old
 // 'claude-sonnet-4-20250514' ID 404s, silently forcing every generation onto the
 // gpt-oss-20b fallback (mislabeled as claude). Use the working ID, env-overridable.
@@ -70,21 +74,40 @@ const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-5-20250929'
 const DEFAULT_MODEL = USE_CLAUDE_DIRECT ? CLAUDE_MODEL : (process.env.DEFAULT_MODEL || 'ministral-14b')
 const PAID_MODEL = process.env.PAID_MODEL || 'kimi-k2.6'
 
-// Anthropic client for direct Claude calls — lazy initialized on first use
+// Direct Anthropic-API client — lazy initialized on first use.
 let anthropicClient: any = null
-function getAnthropicClient() {
+function getAnthropicDirectClient() {
   if (anthropicClient) return anthropicClient
-  if (!USE_CLAUDE_DIRECT) return null
+  if (!(process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.startsWith('sk-ant-'))) return null
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const Anthropic = require('@anthropic-ai/sdk').default || require('@anthropic-ai/sdk')
     anthropicClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-    console.log('✅ Anthropic client initialized for Claude Sonnet 4')
+    console.log('✅ Anthropic (direct API) client initialized for Claude Sonnet 4.5')
     return anthropicClient
   } catch (e) {
     console.warn('⚠️ @anthropic-ai/sdk not available, falling back to AINative')
     return null
   }
+}
+
+/**
+ * Resolve the primary Claude-family client. When Config C is on
+ * (CODY_USE_BEDROCK=1 + bearer token) this is the Amazon Bedrock client;
+ * otherwise it's the direct Anthropic API client. Both expose the same
+ * `.messages.create()` surface, so the call site is provider-agnostic.
+ * Returns { client, provider, model } or null when no Claude path is available.
+ */
+function getPrimaryClaudeClient(): { client: any; provider: 'bedrock' | 'anthropic'; model: string } | null {
+  const bedrock = getBedrockClient()
+  if (bedrock) {
+    return { client: bedrock, provider: 'bedrock', model: bedrock.modelId }
+  }
+  const direct = getAnthropicDirectClient()
+  if (direct) {
+    return { client: direct, provider: 'anthropic', model: CLAUDE_MODEL }
+  }
+  return null
 }
 
 // Fallback chains (used when Claude is unavailable)
@@ -701,15 +724,19 @@ INTERACTIVITY (MANDATORY — the app must WORK, not just look good):
 
 OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually polished with realistic sample data, and every control functional.`
 
-            safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Generating with ' + (USE_CLAUDE_DIRECT ? 'Claude Sonnet 4' : modelId) + '...' })}\n\n`))
+            const _primaryClaude = getPrimaryClaudeClient()
+            const _claudeLabel = _primaryClaude?.provider === 'bedrock'
+              ? 'Claude Sonnet 4.5 (Amazon Bedrock)'
+              : (USE_CLAUDE_DIRECT ? 'Claude Sonnet 4.5' : modelId)
+            safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Generating with ' + _claudeLabel + '...' })}\n\n`))
 
-            // ============ CLAUDE DIRECT PATH — Anthropic SDK ============
-            const claude = getAnthropicClient()
+            // ============ PRIMARY CLAUDE PATH — Bedrock (Config C) or direct Anthropic ============
+            const claude = _primaryClaude?.client || null
             if (claude) {
-              console.log('🧠 Using Claude Sonnet 4 directly via Anthropic SDK')
+              console.log(`🧠 Using ${_claudeLabel} via ${_primaryClaude!.provider}`)
               try {
                 const claudeResponse = await claude.messages.create({
-                  model: CLAUDE_MODEL,
+                  model: _primaryClaude!.model,
                   max_tokens: 8192,
                   system: llmSystemPrompt,
                   messages: previousMessages.length > 0
