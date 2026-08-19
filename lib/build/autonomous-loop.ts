@@ -58,50 +58,24 @@ async function getBriefing(input: NightlyRunInput): Promise<string | null> {
  * OpenClaw swarm claims and executes. We register lazily + cache the agent key.
  * Errors are surfaced in `detail` (not swallowed) for diagnosability.
  */
-let _agentKey: string | null = null
-
-async function ensureAgentKey(): Promise<{ key: string | null; detail: string }> {
-  if (_agentKey) return { key: _agentKey, detail: 'cached' }
-  try {
-    const res = await fetch(`${AINATIVE_API}/api/v1/public/agents/register`, {
-      method: 'POST',
-      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        agent_name: 'builder-nightly-loop',
-        description: 'Builder nightly autonomous loop — improves enrolled companies',
-        callback_url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio'}/api/build/nightly-loop`,
-        capabilities: ['build', 'improve', 'operate'],
-      }),
-      signal: AbortSignal.timeout(30000),
-    })
-    if (!res.ok) {
-      const txt = await res.text().catch(() => '')
-      return { key: null, detail: `agent register → HTTP ${res.status} ${txt.slice(0, 120)}` }
-    }
-    const data = await res.json().catch(() => null)
-    _agentKey = data?.api_key ?? data?.agent_api_key ?? data?.key ?? null
-    return { key: _agentKey, detail: _agentKey ? 'registered' : 'register ok but no key in response' }
-  } catch (e) {
-    return { key: null, detail: `agent register → ${(e as Error).message}` }
-  }
-}
-
 async function dispatchSwarmTask(
   input: NightlyRunInput,
   briefing: string | null,
 ): Promise<{ taskId: string | null; detail: string }> {
-  const { key, detail: regDetail } = await ensureAgentKey()
-  if (!key) return { taskId: null, detail: regDetail }
-
   const description = buildTaskDescription(input, briefing)
+  // Submit to the Agent Swarm public task API — POST /api/v1/public/agent-swarm/tasks
+  // (public router mounts under /api/v1/public; get_current_user_flexible: the
+  // builder's API key authenticates; requires an enterprise plan). Returns task_id.
   try {
-    const res = await fetch(`${AINATIVE_API}/api/v1/public/agents/tasks`, {
+    const res = await fetch(`${AINATIVE_API}/api/v1/public/agent-swarm/tasks`, {
       method: 'POST',
-      headers: { 'X-Agent-API-Key': key, 'Content-Type': 'application/json' },
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify({
         description,
-        priority: 5,
-        metadata: { company: input.companyName, track: input.track, source: 'builder-nightly-loop' },
+        agent_types: input.track === 'company'
+          ? ['architect', 'data', 'docs']
+          : ['architect', 'backend', 'qa'],
+        config: { company: input.companyName, track: input.track, source: 'builder-nightly-loop' },
       }),
       signal: AbortSignal.timeout(30000),
     })
