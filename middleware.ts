@@ -22,6 +22,12 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
+  // /build is the new public front door (the pivot UX) — anonymous users must be
+  // able to Fork → Intake → watch Cody build before any auth wall.
+  if (pathname.startsWith('/build')) {
+    return NextResponse.next()
+  }
+
   if (pathname.startsWith('/api/auth')) {
     return NextResponse.next()
   }
