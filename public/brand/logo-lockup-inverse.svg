@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 40" width="240" height="40" role="img" aria-label="AINative Builder">
+  <g transform="translate(0,4)">
+    <rect x="0" y="21" width="11" height="11" fill="#f3f2f2"></rect>
+    <rect x="10.5" y="10.5" width="11" height="11" fill="#f3f2f2"></rect>
+    <rect x="21" y="0" width="11" height="11" fill="#ec3013"></rect>
+  </g>
+  <text x="48" y="15" font-family="Archivo, Helvetica, Arial, sans-serif" font-size="9" font-weight="600" letter-spacing="1.6" fill="#bfbcbc">AINATIVE</text>
+  <text x="48" y="34" font-family="Archivo, Helvetica, Arial, sans-serif" font-size="24" font-weight="800" letter-spacing="-0.6" fill="#f3f2f2">Builder</text>
+</svg>

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 118 20" width="118" height="20" role="img" aria-label="Builder">
+  <g transform="translate(0,2) scale(0.5)">
+    <rect x="0" y="21" width="11" height="11" fill="#201e1d"></rect>
+    <rect x="10.5" y="10.5" width="11" height="11" fill="#201e1d"></rect>
+    <rect x="21" y="0" width="11" height="11" fill="#ec3013"></rect>
+  </g>
+  <text x="24" y="16" font-family="Archivo, Helvetica, Arial, sans-serif" font-size="16" font-weight="800" letter-spacing="-0.4" fill="#201e1d">Builder</text>
+</svg>
