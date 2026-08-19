@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Builder">
+  <rect width="64" height="64" fill="#ec3013"></rect>
+  <g transform="translate(16,16)">
+    <rect x="0" y="21" width="11" height="11" fill="#f3f2f2"></rect>
+    <rect x="10.5" y="10.5" width="11" height="11" fill="#f3f2f2"></rect>
+    <rect x="21" y="0" width="11" height="11" fill="#f3f2f2"></rect>
+  </g>
+</svg>

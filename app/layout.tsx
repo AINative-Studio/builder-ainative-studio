@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
-import { Geist, Geist_Mono, Poppins } from 'next/font/google'
+import { Geist, Geist_Mono, Poppins, Archivo, Newsreader, IBM_Plex_Mono } from 'next/font/google'
 import './globals.css'
+import './modernist.css'
 import { StreamingProvider } from '@/contexts/streaming-context'
 import { SWRProvider } from '@/components/providers/swr-provider'
 import { SessionProvider } from '@/components/providers/session-provider'
@@ -21,6 +22,27 @@ const geistSans = Geist({
 
 const geistMono = Geist_Mono({
   variable: '--font-geist-mono',
+  subsets: ['latin'],
+})
+
+// Modernist design-system fonts (builder chrome only — see docs/AINATIVE_PRIMITIVES.md pivot).
+// Archivo = UI chrome, Newsreader = Cody's generated "artifact" prose, IBM Plex Mono = machine text.
+const archivo = Archivo({
+  weight: ['400', '500', '600', '700', '800'],
+  variable: '--font-archivo',
+  subsets: ['latin'],
+})
+
+const newsreader = Newsreader({
+  weight: ['400', '500', '600'],
+  style: ['normal', 'italic'],
+  variable: '--font-newsreader',
+  subsets: ['latin'],
+})
+
+const plexMono = IBM_Plex_Mono({
+  weight: ['400', '500', '600'],
+  variable: '--font-plex-mono',
   subsets: ['latin'],
 })
 
@@ -187,7 +209,7 @@ export default function RootLayout({
         />
       </head>
       <body
-        className={`${poppins.variable} ${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${poppins.variable} ${geistSans.variable} ${geistMono.variable} ${archivo.variable} ${newsreader.variable} ${plexMono.variable} antialiased`}
       >
         <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:bg-white focus:px-4 focus:py-2 focus:rounded focus:shadow-lg focus:text-black">
           Skip to main content

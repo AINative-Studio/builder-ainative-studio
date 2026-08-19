@@ -1,0 +1,153 @@
+/* ============================================================================
+   AINative Builder — Modernist design tokens (builder-pivot CHROME only)
+   Ported from design_handoff_builder/tokens.css + 02-DESIGN-SYSTEM.md.
+
+   SCOPING RULE: these variables live under `.modernist`. Wrap the builder's
+   pivot UI (Fork/Intake/Workspace/Live/etc.) in a .modernist root so the
+   Modernist system applies to CHROME only. Generated user apps keep their own
+   selectedTheme (lib/theme-system.ts) + Lucide icons — never inherit these.
+
+   Flat, editorial, rule-based: 0 radius, no decorative shadow/gradient,
+   2px dividers do the organizing. No icon library — typographic glyphs only.
+   ============================================================================ */
+
+.modernist {
+  /* ---- typography ---- */
+  --font-mono: var(--font-plex-mono), 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+  --font-artifact: var(--font-newsreader), 'Newsreader', Georgia, 'Times New Roman', serif;
+  --font-heading: var(--font-archivo), Archivo, Helvetica, Arial, sans-serif;
+  --font-body: var(--font-archivo), Archivo, Helvetica, Arial, sans-serif;
+
+  /* ---- ground / ink ---- */
+  --color-bg: #f3f2f2;
+  --color-surface: #e9e7e7;
+  --color-divider: #d7d3d3;
+  --color-text: #201e1d;
+  --ink: #151312;
+
+  /* ---- universal accent (Modernist red) ---- */
+  --color-accent: #ec3013;
+  --color-accent-100: #ffe0d9;
+  --color-accent-600: #d42a10;
+  --color-accent-700: #b8250e;
+
+  /* ---- App Track accent (teal, "product") ---- */
+  --app: #2f6d86;
+  --app-100: #e8f0f2;
+  --app-700: #1f4a5c;
+
+  /* ---- Company Track accent (amber, "business") ---- */
+  --co: #a9702a;
+  --co-100: #f6ecdc;
+  --co-700: #734910;
+
+  /* ---- system accents ---- */
+  --attn: #5f5aa6;       /* needs-input purple */
+  --attn-100: #ecebf6;
+  --alert: #ec3013;      /* true conflicts/errors only (same hex as accent, reserved) */
+  --alert-100: #ffe0d9;
+  --success: #2f7d4f;
+
+  /* ---- neutrals ---- */
+  --text-muted: #7d7979;
+  --text-faint: #9b9797;
+  --text-body-70: #444141;
+  --text-body-85: #2d2b2b;
+  --neutral-line: #bab6b6;
+
+  /* ---- radius / shadow ---- */
+  --radius: 0px;
+  --shadow-sm: 0 1px 3px rgba(20, 18, 17, 0.08);
+  --shadow-md: 0 4px 14px rgba(20, 18, 17, 0.10);
+  --shadow-lg: 0 12px 32px rgba(20, 18, 17, 0.16);
+
+  /* track-accent alias: components read --track / --track-100 / --track-700,
+     set per-track on the workspace root (.modernist[data-track="app"|"company"]). */
+  --track: var(--color-accent);
+  --track-100: var(--color-accent-100);
+  --track-700: var(--color-accent-700);
+
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+}
+
+.modernist[data-track='app'] {
+  --track: var(--app);
+  --track-100: var(--app-100);
+  --track-700: var(--app-700);
+}
+.modernist[data-track='company'] {
+  --track: var(--co);
+  --track-100: var(--co-100);
+  --track-700: var(--co-700);
+}
+
+/* ---- shared primitives (0 radius, flush-left labels, mono meta) ---- */
+.modernist * { border-radius: 0 !important; }
+
+.modernist .m-mono { font-family: var(--font-mono); }
+.modernist .m-artifact { font-family: var(--font-artifact); }
+
+/* status pill (.st) — mono, uppercase, glyph via ::before, no fill */
+.modernist .st {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--text-muted);
+}
+.modernist .st::before {
+  content: ''; width: 7px; height: 7px; border-radius: 50% !important;
+  border: 1.5px solid currentColor; display: inline-block;
+}
+.modernist .st.is-running { color: var(--track); }
+.modernist .st.is-running::before { background: var(--track); border-color: var(--track); animation: m-pulse 1.1s ease-in-out infinite; }
+.modernist .st.is-needs { color: var(--attn); }
+.modernist .st.is-needs::before { border-radius: 0 !important; background: var(--attn); border-color: var(--attn); }
+.modernist .st.is-done { color: var(--success); }
+.modernist .st.is-done::before { content: '✓'; border: 0; width: auto; height: auto; font-size: 11px; }
+
+/* buttons — flush-left labels */
+.modernist .btn-primary {
+  display: inline-flex; align-items: center; gap: 8px; justify-content: flex-start;
+  background: var(--color-accent); color: #fff; border: 0; padding: 10px 16px;
+  font-family: var(--font-heading); font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.modernist .btn-primary:hover { background: var(--color-accent-600); }
+.modernist .btn-secondary {
+  display: inline-flex; align-items: center; gap: 8px; justify-content: flex-start;
+  background: transparent; color: var(--color-text); border: 1.5px solid var(--ink);
+  padding: 9px 16px; font-family: var(--font-heading); font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.modernist .btn-ghost {
+  background: transparent; border: 0; color: var(--text-muted);
+  font-family: var(--font-heading); font-size: 13px; cursor: pointer;
+}
+
+/* divider-grid "seams" */
+.modernist .m-seams { display: grid; gap: 1.5px; background: var(--color-divider); }
+.modernist .m-seams > * { background: var(--color-bg); }
+
+/* chip */
+.modernist .m-chip {
+  display: inline-flex; align-items: center; font-family: var(--font-mono);
+  font-size: 10.5px; padding: 3px 8px; background: var(--color-surface); color: var(--text-body-70);
+}
+
+/* ---- motion ---- */
+@keyframes m-pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.55; transform: scale(0.82); } }
+@keyframes m-shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+@keyframes m-formIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes m-lineIn { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
+.modernist .m-shimmer {
+  background: linear-gradient(90deg, var(--color-surface) 25%, #f0eeee 50%, var(--color-surface) 75%);
+  background-size: 200% 100%; animation: m-shimmer 1.2s linear infinite;
+}
+.modernist .m-formin { animation: m-formIn 0.4s ease both; }
+.modernist .m-linein { animation: m-lineIn 0.3s ease both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .modernist .st.is-running::before,
+  .modernist .m-shimmer,
+  .modernist .m-formin,
+  .modernist .m-linein { animation: none !important; }
+}
