@@ -553,6 +553,63 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
   // (percentages, calc(), computed values, non-px units) and a wrong rewrite would
   // corrupt a valid app. Left for the LLM prompt / manual review instead.
 
+  // RESPONSIVE FLOOR (builder#188): simpler prompts ("build a counter app") often
+  // come back with ZERO breakpoint classes — a fixed layout identical at 375px and
+  // 1440px. The prompt asks for mobile-first but the model applies it
+  // inconsistently. Guarantee a baseline deterministically: if the app has real
+  // layout structure (a grid or a horizontal flex) yet uses NO sm:/md:/lg:
+  // breakpoint anywhere, rewrite the highest-leverage layout classes to be
+  // mobile-first. Skipped entirely for apps that already use any breakpoint (they
+  // opted into their own responsive design — never second-guess that).
+  const hasBreakpoints = /(?:^|[\s"'`])(?:sm|md|lg|xl):/.test(fixedCode)
+  if (!hasBreakpoints) {
+    let floored = fixedCode
+    const flooredFixes: string[] = []
+
+    // 1) Multi-column grids -> single column on mobile, N from md up.
+    floored = floored.replace(/(?<![-:\w])grid-cols-(\d+)\b/g, (m, n) => {
+      const cols = parseInt(n, 10)
+      if (cols < 2) return m
+      flooredFixes.push('grid')
+      return `grid-cols-1 md:grid-cols-${cols}`
+    })
+
+    // 2) Bare horizontal flex containers -> stack on mobile, row from md up.
+    //    Only class strings that have flex-row (or flex without a direction is left
+    //    alone — default row is usually fine for small nav bars).
+    floored = floored.replace(/className\s*=\s*(["'`])((?:(?!\1).)*)\1/g, (full, q, cls) => {
+      if (/(?<![-:\w])flex-row\b/.test(cls) && !/flex-col\b/.test(cls)) {
+        flooredFixes.push('flex')
+        return full.replace(/(?<![-:\w])flex-row\b/, 'flex-col md:flex-row')
+      }
+      return full
+    })
+
+    // 3) Oversized fixed heading text (text-4xl/5xl/6xl/7xl with no breakpoint)
+    //    -> scale up from a mobile-friendly base.
+    const headScale: Record<string, string> = {
+      'text-7xl': 'text-4xl sm:text-5xl lg:text-7xl',
+      'text-6xl': 'text-4xl sm:text-5xl lg:text-6xl',
+      'text-5xl': 'text-3xl sm:text-4xl lg:text-5xl',
+      'text-4xl': 'text-2xl sm:text-3xl lg:text-4xl',
+    }
+    floored = floored.replace(/(?<![-:\w])text-([4567])xl\b/g, (m) => {
+      const repl = headScale[m]
+      if (repl) { flooredFixes.push('text'); return repl }
+      return m
+    })
+
+    // Only accept the rewrite if it actually introduced responsiveness AND the app
+    // had enough structure to warrant it (avoid touching trivial single-widget UIs
+    // where it makes no difference but adds churn).
+    const hadStructure =
+      /grid\b/.test(fixedCode) || /flex-row\b/.test(fixedCode) || /(?<![-:\w])text-[4567]xl\b/.test(fixedCode)
+    if (flooredFixes.length > 0 && hadStructure) {
+      fixedCode = floored
+      fixes.push('Added mobile-first responsive classes (grid/flex/heading breakpoints) to a layout that had none (#188)')
+    }
+  }
+
   return { code: fixedCode, fixes }
 }
 
@@ -784,6 +841,20 @@ export function findObjectRenderedAsChild(code: string): string | null {
       if (objectVars.has(m[1])) return m[1]
     }
   }
+
+  // HIGH-CONFIDENCE SHAPE 2 (builder#195): a `.find(...)` / `.findLast(...)` result
+  // rendered directly as a JSX child. `.find` returns a SINGLE array element — for
+  // the data these apps generate that element is almost always an OBJECT, so
+  // `>{items.find(i => i.id === x)}<` renders an object and throws "Objects are not
+  // valid as a React child". This is distinct from `.map(...)` (returns an array of
+  // elements, renders fine). We match the whole expression as the offending child.
+  // Conservative: requires the child to be EXACTLY a `.find(...)` call with nothing
+  // else after it (no `?.name`, no `&&`, no `?:` — those access a field or guard and
+  // render fine). Scans the raw code (find-chains don't cross FILE_MARKER).
+  const findChild = code.match(
+    />\s*\{\s*([A-Za-z_$][\w$.]*\.(?:find|findLast)\s*\([^{}]*\))\s*\}\s*</,
+  )
+  if (findChild) return findChild[1]
 
   return null
 }
