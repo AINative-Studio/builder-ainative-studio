@@ -330,3 +330,44 @@
 .m-wedge-confirm { font-family: var(--font-artifact); font-size: 18px; line-height: 1.6; color: var(--text-body-85); }
 .m-wedge-confirm .m-glyph { color: var(--color-accent); }
 .m-wedge-confirm button { margin-top: 20px; }
+
+/* ---- Pipeline / Kanban (#225) ---- */
+.m-pipe-agents { display: flex; gap: 12px; margin: 16px 0 20px; }
+.m-pipe-agents .m-agent { flex: 1; }
+.m-kanban { grid-template-columns: repeat(4, 1fr); }
+.m-kan-col { background: var(--color-bg); padding: 0 0 10px; }
+.m-kan-head { background: var(--color-surface); padding: 8px 10px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-body-70); }
+.m-deal { border: 1px solid var(--color-divider); margin: 8px; padding: 10px; }
+.m-deal.is-won { border-color: var(--success); }
+.m-deal-top { display: flex; justify-content: space-between; align-items: baseline; }
+.m-deal-co { font-family: var(--font-heading); font-weight: 600; font-size: 13px; }
+.m-deal-v { font-size: 12px; color: var(--text-muted); }
+.m-deal-next { font-size: 12px; color: var(--text-body-70); margin: 6px 0; line-height: 1.4; }
+.m-deal-agent { font-size: 10px; color: var(--co-700); background: var(--co-100); padding: 2px 6px; display: inline-block; }
+
+/* ---- Conflict (#225) ---- */
+.m-alert-banner { border: 1.5px solid var(--alert); background: var(--alert-100); padding: 16px; margin-bottom: 18px; }
+.m-alert-tag { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--alert); }
+.m-alert-banner p { margin: 8px 0 14px; font-size: 14px; color: var(--text-body-85); }
+.m-alert-actions { display: flex; gap: 10px; }
+.m-btn-alert { background: var(--alert); color: #fff; border: 0; padding: 9px 16px; font-family: var(--font-heading); font-size: 14px; font-weight: 600; cursor: pointer; }
+.m-impact-list { display: flex; flex-direction: column; gap: 1px; background: var(--color-divider); }
+.m-impact-row { display: grid; grid-template-columns: 110px 1fr auto; gap: 12px; align-items: center; background: var(--color-bg); padding: 10px 12px; }
+.m-impact-kind { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.06em; padding: 2px 6px; }
+.m-impact-row.is-breaking .m-impact-kind { color: var(--alert); background: var(--alert-100); }
+.m-impact-row.is-needs-update .m-impact-kind { color: var(--co-700); background: var(--co-100); }
+.m-impact-row.is-minor .m-impact-kind { color: var(--text-muted); background: var(--color-surface); }
+.m-impact-name { font-size: 14px; }
+.m-impact-name em { display: block; font-style: normal; font-size: 12px; color: var(--text-muted); }
+.m-impact-row.is-propagating { animation: m-travel 0.5s ease both; }
+@keyframes m-travel { 0% { background: var(--track-100); } 100% { background: var(--color-bg); } }
+.m-conflict-done { font-family: var(--font-artifact); font-size: 18px; line-height: 1.6; }
+.m-conflict-done button { margin-top: 18px; }
+
+/* ---- Artifact graph (#225) ---- */
+.m-graph-canvas { position: relative; background-image: radial-gradient(var(--neutral-line) 1px, transparent 1px); background-size: 18px 18px; margin-top: 16px; overflow-x: auto; }
+.m-graph-edges { position: absolute; top: 0; left: 0; pointer-events: none; }
+.m-graph-edge { fill: none; stroke: var(--neutral-line); stroke-width: 1.5; }
+.m-graph-node { position: absolute; background: var(--color-bg); border: 1.5px solid var(--ink); padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.m-graph-node-name { font-family: var(--font-heading); font-weight: 600; font-size: 14px; }
+.m-graph-node-cat { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
