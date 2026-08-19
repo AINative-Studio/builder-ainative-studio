@@ -27,8 +27,26 @@ export function Live() {
   const { state } = useBuild()
   const proof = useLiveProof()
   const [msg, setMsg] = useState('')
+  const [enrolled, setEnrolled] = useState(false)
   const company = state.companyName || 'Your Company'
   const url = `${state.appSub || 'your-app'}.ainative.studio`
+
+  const subscribe = async () => {
+    // Enroll this company in the real nightly autonomous loop (Option B).
+    setEnrolled(true) // optimistic
+    try {
+      await fetch('/api/build/enroll', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          companyId: state.appSub || company.toLowerCase().replace(/\s+/g, '-'),
+          companyName: company,
+          track: state.track,
+          goal: state.answers?.privacy,
+        }),
+      })
+    } catch { /* optimistic UI already set */ }
+  }
 
   return (
     <div className="modernist m-live" data-track="company">
@@ -59,8 +77,14 @@ export function Live() {
           </div>
           <div className="m-live-card m-upsell">
             <div className="m-mono m-live-card-h">Hire the swarm</div>
-            <p className="m-live-card-body">Works while you sleep · $49/mo</p>
-            <button className="btn-primary">Subscribe</button>
+            <p className="m-live-card-body">
+              {enrolled
+                ? 'Enrolled. Cody runs the nightly loop on your company.'
+                : 'Works while you sleep · $49/mo'}
+            </p>
+            <button className="btn-primary" disabled={enrolled} onClick={subscribe}>
+              {enrolled ? '✓ On watch' : 'Subscribe'}
+            </button>
           </div>
         </div>
 
