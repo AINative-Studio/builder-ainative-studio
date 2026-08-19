@@ -1,0 +1,30 @@
+name: Nightly Autonomous Loop
+
+# Fires the Builder autonomous loop nightly: for each enrolled company, Cody pulls
+# an agent-intelligence briefing and dispatches the highest-leverage task to the
+# AINative agent swarm. (Option B of the pivot — #207 / #228.)
+
+on:
+  schedule:
+    # 07:00 UTC daily (~overnight for US timezones — the "while you sleep" run).
+    - cron: '0 7 * * *'
+  workflow_dispatch: {} # allow manual trigger
+
+jobs:
+  run-loop:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger nightly autonomous loop
+        run: |
+          echo "Triggering nightly autonomous loop…"
+          code=$(curl -sS -o /tmp/resp.json -w "%{http_code}" \
+            -X POST "https://builder.ainative.studio/api/build/nightly-loop" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            --max-time 300)
+          echo "HTTP $code"
+          cat /tmp/resp.json
+          echo
+          if [ "$code" != "200" ]; then
+            echo "::error::Nightly loop returned HTTP $code"
+            exit 1
+          fi
