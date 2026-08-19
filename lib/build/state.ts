@@ -150,7 +150,7 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
     case 'MVP_DONE':
       return { ...state, builtMVP: true, building: false }
     case 'COMPANY_DONE':
-      return { ...state, builtCompany: true, building: false }
+      return { ...state, builtCompany: true, building: false, screen: 'live' }
     case 'PICK_PLAN':
       return { ...state, plan: action.plan }
     case 'SET_PROPAGATING':
