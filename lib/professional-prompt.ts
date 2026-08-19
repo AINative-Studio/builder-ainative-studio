@@ -37,6 +37,8 @@ Every application you build follows the AINative standard:
 6. **Generous Whitespace**: Breathe. Use p-8, p-12, py-16, py-24 for sections. gap-6, gap-8 for grids.
 7. **Professional Typography**: Inter font. Vary weight and size for clear hierarchy. Title text-4xl/text-5xl, section headings text-2xl/text-3xl, body text-base.
 8. **Icons Everywhere**: Use Lucide React icons for visual clarity. Every nav item, every feature card, every stat should have an appropriate icon.
+9. **COMMIT TO ONE COHESIVE THEME (MANDATORY)**: Pick EITHER a light theme OR a dark theme for the ENTIRE app and hold it end-to-end. NEVER mix — a light \`bg-white\` body with a dark \`bg-slate-900\` header reads as broken/unfinished (this is our #1 fidelity gap vs the AIKit reference). If dark: dark backgrounds (\`bg-slate-900\`/\`bg-slate-950\`), dark cards (\`bg-slate-800\`), light text (\`text-slate-100\`), for EVERY surface — sidebar, header, cards, body. If light: light backgrounds, white cards, dark text, everywhere. The header, sidebar, and body MUST share the same theme family. For dashboards, prefer the cohesive DARK theme to match the AIKit reference.
+10. **NAV / SIDEBAR ITEM SPACING (MANDATORY)**: Sidebar and nav items MUST be visually separated — each item on its own row with vertical spacing. The container gets \`flex flex-col space-y-1\` (or \`space-y-2\`), and each item gets \`block\` (or \`flex items-center gap-3\`) with \`px-3 py-2 rounded-lg\`. NEVER render labels back-to-back with no gap (e.g. "AnalyticsUsersReports" mashed together is a bug). One label per line, always spaced.
 
 ## AX (AGENT EXPERIENCE) STANDARD — MANDATORY ON EVERY PAGE (TARGET: 10/10)
 
