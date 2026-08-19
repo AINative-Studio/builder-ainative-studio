@@ -15,6 +15,13 @@ export async function middleware(request: NextRequest) {
     return new Response('pong', { status: 200 })
   }
 
+  // Liveness probe (Railway healthcheck path is /health/live). Must bypass auth
+  // and rate limiting entirely — otherwise it 307-redirects to /login and the
+  // deploy never passes healthcheck, so new instances never swap in.
+  if (pathname.startsWith('/health')) {
+    return NextResponse.next()
+  }
+
   if (pathname.startsWith('/api/auth')) {
     return NextResponse.next()
   }
