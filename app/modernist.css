@@ -151,3 +151,98 @@
   .modernist .m-formin,
   .modernist .m-linein { animation: none !important; }
 }
+
+/* ============================================================================
+   Workspace shell (#220)
+   ============================================================================ */
+.m-ws { min-height: 100vh; display: flex; flex-direction: column; }
+.m-topbar {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 24px; background: var(--color-surface);
+  border-bottom: 2px solid var(--color-divider);
+}
+.m-brand { font-family: var(--font-heading); font-weight: 800; letter-spacing: -0.01em; font-size: 16px; }
+.m-trackpill { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; padding: 3px 8px; color: #fff; background: var(--track); }
+.m-topbar-artifact { margin-left: auto; font-size: 15px; color: var(--text-body-85); }
+
+.m-actbar { display: flex; align-items: center; padding: 8px 24px; border-bottom: 1px solid var(--color-divider); gap: 16px; }
+.m-acts { display: flex; gap: 4px; list-style: none; margin: 0; padding: 0; align-items: center; }
+.m-act { display: flex; align-items: center; gap: 7px; padding: 0 10px; }
+.m-act-badge {
+  width: 20px; height: 20px; border-radius: 50% !important; display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono); font-size: 11px; border: 1.5px solid var(--neutral-line); color: var(--text-muted);
+}
+.m-act.is-done .m-act-badge { background: var(--ink); color: #fff; border-color: var(--ink); }
+.m-act.is-current .m-act-badge { background: var(--track); color: #fff; border-color: var(--track); }
+.m-act-label { font-family: var(--font-heading); font-size: 12px; color: var(--text-muted); }
+.m-act.is-current .m-act-label { color: var(--color-text); font-weight: 600; }
+.m-actbar-right { margin-left: auto; }
+.m-woven { font-size: 11px; color: var(--track-700); text-transform: uppercase; letter-spacing: 0.06em; }
+
+.m-breadcrumb { display: flex; gap: 1.5px; overflow-x: auto; padding: 6px 24px; background: var(--color-divider); border-bottom: 1px solid var(--color-divider); }
+.m-crumb { flex: 0 0 auto; font-size: 10.5px; text-transform: lowercase; padding: 4px 10px; border: 0; background: var(--color-bg); color: var(--text-faint); cursor: default; }
+.m-crumb.is-done { background: var(--track-100); color: var(--track-700); cursor: pointer; }
+.m-crumb.is-current { background: var(--track); color: #fff; }
+
+.m-ws-body { flex: 1; display: grid; grid-template-columns: 34% 1fr auto; min-height: 0; }
+.m-ws-body.is-tablet { grid-template-columns: 1fr; }
+.m-feed { border-right: 2px solid var(--color-divider); padding: 18px; overflow-y: auto; background: var(--color-bg); }
+.m-center { padding: 44px 56px; overflow-y: auto; max-width: 940px; }
+.m-rail { border-left: 2px solid var(--color-divider); background: var(--color-surface); }
+
+/* ============================================================================
+   Fork + Intake (#222)
+   ============================================================================ */
+.m-fork, .m-intake { min-height: 100vh; padding: 64px 44px; max-width: 1040px; margin: 0 auto; }
+.m-eyebrow { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.16em; color: var(--color-accent); }
+.m-h1 { font-family: var(--font-artifact); font-weight: 500; font-size: clamp(38px, 6vw, 66px); line-height: 1.02; margin: 14px 0 10px; color: var(--color-text); }
+.m-sub { font-size: 17px; color: var(--text-body-70); max-width: 60ch; line-height: 1.5; }
+.m-cody-line { font-family: var(--font-mono); font-size: 13px; color: var(--text-body-70); margin: 20px 0; }
+.m-cody-line .m-glyph { color: var(--color-accent); }
+
+.m-fork-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; background: var(--color-divider); margin-top: 40px; }
+.m-fork-card { background: var(--color-bg); padding: 34px 28px; border-top: 5px solid var(--track); cursor: pointer; transition: box-shadow 0.15s; }
+.m-fork-card[data-track='app'] { --track: var(--app); --track-100: var(--app-100); --track-700: var(--app-700); }
+.m-fork-card[data-track='company'] { --track: var(--co); --track-100: var(--co-100); --track-700: var(--co-700); }
+.m-fork-card:hover { box-shadow: var(--shadow-md); }
+.m-fork-card h2 { font-family: var(--font-artifact); font-weight: 600; font-size: 26px; margin: 0 0 8px; }
+.m-fork-card p { font-size: 15px; color: var(--text-body-70); margin: 0 0 18px; }
+.m-chip-trail { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 22px; }
+.m-chip-trail .m-chip { background: var(--track-100); color: var(--track-700); }
+
+.m-intake-field { width: 100%; min-height: 160px; margin-top: 22px; padding: 16px; font-family: var(--font-body); font-size: 16px; background: var(--color-surface); border: 1.5px solid var(--neutral-line); color: var(--color-text); resize: vertical; }
+.m-helper { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); margin: 12px 0 22px; }
+.m-back { font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); background: none; border: 0; cursor: pointer; }
+
+/* live proof strip (social proof from /intelligence — woven into the funnel) */
+.m-proof { display: flex; gap: 22px; flex-wrap: wrap; margin-top: 30px; padding-top: 20px; border-top: 1px solid var(--color-divider); }
+.m-proof-stat { font-family: var(--font-mono); }
+.m-proof-num { font-size: 22px; color: var(--color-text); font-weight: 600; }
+.m-proof-num .m-live-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50% !important; background: var(--success); margin-right: 6px; animation: m-pulse 1.1s ease-in-out infinite; vertical-align: middle; }
+.m-proof-label { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-faint); display: block; margin-top: 2px; }
+.m-proof-tag { font-size: 12px; color: var(--text-body-70); max-width: 46ch; line-height: 1.5; }
+
+/* ---- Cody feed + nudge (#221) ---- */
+.m-cody-feed { font-size: 14px; }
+.m-cody-header { font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-body-85); margin-bottom: 14px; }
+.m-cody-header .m-glyph, .m-glyph { color: var(--color-accent); }
+.m-feed-line { color: var(--text-body-70); margin: 8px 0; line-height: 1.5; }
+.m-nudge-done { color: var(--success); font-size: 13px; }
+.m-nudge { border: 1.5px solid var(--co); background: var(--co-100); padding: 14px; margin-top: 16px; }
+.m-nudge-head { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--co-700); margin-bottom: 8px; }
+.m-nudge-body { font-size: 14px; color: var(--text-body-85); line-height: 1.5; margin: 0 0 12px; }
+.m-nudge-foot { display: flex; align-items: center; gap: 12px; }
+.m-nudge-accept { background: var(--co); color: #fff; border: 0; padding: 8px 14px; font-family: var(--font-heading); font-size: 13px; font-weight: 600; cursor: pointer; }
+
+/* ---- Powering this (#221) ---- */
+.m-powering { display: flex; align-items: center; gap: 12px; padding: 8px 0 16px; border-bottom: 1px solid var(--color-divider); margin-bottom: 24px; flex-wrap: wrap; }
+.m-powering-label { font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--text-faint); }
+.m-powering-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* ---- Artifact frame (#220) ---- */
+.m-artifact-frame { max-width: 62ch; }
+.m-artifact-status { margin-bottom: 10px; }
+.m-artifact-h1 { font-weight: 500; font-size: 44px; line-height: 1.05; margin: 0 0 8px; }
+.m-artifact-meta { font-size: 11px; color: var(--text-muted); margin: 0 0 24px; }
+.m-artifact-body { font-family: var(--font-artifact); font-size: 16px; line-height: 1.6; color: var(--text-body-85); }
+.m-artifact-nav { display: flex; gap: 12px; margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--color-divider); }
