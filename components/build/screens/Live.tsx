@@ -7,19 +7,10 @@
  * Cody's nightly-run status is our real recursive loop pointed at the user's co.
  */
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useBuild } from '@/contexts/build-context'
 import { useLiveProof } from '@/lib/build/useLiveProof'
-
-// Business systems provisioned for a freshly-shipped company. Stats start at the
-// honest zero-state (a brand-new company has no deals/invoices yet) — the swarm
-// fills them as it runs. Primitives are the real AINative products behind each.
-const SYSTEMS = [
-  { name: 'Pipeline', stat: 'Ready · Scout sourcing', prim: 'ZeroPipeline' },
-  { name: 'Invoices', stat: 'Ready · $0 collected', prim: 'ZeroInvoice' },
-  { name: 'Helpdesk', stat: 'Ready · 0 tickets', prim: 'ServiceOS' },
-  { name: 'Voice & SMS', stat: 'Ready · 0 calls', prim: 'ZeroVoice' },
-]
+import { buildSystems, type BusinessSystem } from '@/lib/build/business-systems'
 
 interface ChatLine { role: 'user' | 'cody'; text: string }
 
@@ -30,8 +21,21 @@ export function Live() {
   const [enrolled, setEnrolled] = useState(false)
   const [chat, setChat] = useState<ChatLine[]>([])
   const [asking, setAsking] = useState(false)
+  const [systems, setSystems] = useState<BusinessSystem[]>(buildSystems())
   const company = state.companyName || 'Your Company'
   const url = `${state.appSub || 'your-app'}.ainative.studio`
+  const companyId = state.appSub || company.toLowerCase().replace(/\s+/g, '-')
+
+  // Real business-systems state for this company (honest zero-state for a fresh
+  // company; real counts when its ZeroDB has data). Never fabricated.
+  useEffect(() => {
+    let alive = true
+    fetch(`/api/build/systems?companyId=${encodeURIComponent(companyId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (alive && d?.systems) setSystems(d.systems) })
+      .catch(() => { /* keep the zero-state default */ })
+    return () => { alive = false }
+  }, [companyId])
 
   // Tonight's tasks — real platform-loop signal woven in so it's not fiction.
   const tonight = [
@@ -141,12 +145,12 @@ export function Live() {
           <div className="m-live-card">
             <div className="m-mono m-live-card-h">Business systems</div>
             <div className="m-systems m-seams">
-              {SYSTEMS.map((s) => (
-                <button key={s.name} className="m-system">
+              {systems.map((s) => (
+                <a key={s.key} className="m-system" href={s.url} target="_blank" rel="noreferrer">
                   <span className="m-system-name">{s.name}</span>
                   <span className="m-system-stat m-mono">{s.stat}</span>
-                  <span className="m-chip m-system-prim">{s.prim}</span>
-                </button>
+                  <span className="m-chip m-system-prim">{s.primitive}</span>
+                </a>
               ))}
             </div>
           </div>
