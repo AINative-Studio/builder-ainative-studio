@@ -60,7 +60,17 @@ export interface BuildState {
   idea: string             // the founder's raw idea (from intake) — drives all generation
   generated: Record<string, unknown>  // view -> generated artifact content (from /api/build/artifact)
   genError: Record<string, string>     // view -> error message when generation failed
+  overlay: Overlay         // full-bleed build overlay currently showing (Act-2 "watch Cody build")
+  ribbon: string[]         // terminal-ribbon lines (infra-level narration), newest last
+  askedPrivacy: boolean    // has the one App-track decision modal (privacy posture) been shown yet
 }
+
+/** Full-bleed build overlays that can cover the workspace during autoplay (04-SCREENS §3). */
+export type Overlay =
+  | { kind: 'none' }
+  | { kind: 'forming'; view: string }        // an artifact is being written
+  | { kind: 'swarm' }                        // the swarm is building the MVP
+  | { kind: 'provisioning' }                 // infra is being provisioned
 
 export const initialBuildState: BuildState = {
   screen: 'fork',
@@ -85,6 +95,9 @@ export const initialBuildState: BuildState = {
   idea: '',
   generated: {},
   genError: {},
+  overlay: { kind: 'none' },
+  ribbon: [],
+  askedPrivacy: false,
 }
 
 export type BuildAction =
@@ -108,6 +121,9 @@ export type BuildAction =
   | { type: 'SET_PROPAGATING'; propagating: boolean }
   | { type: 'RESOLVE_CONFLICT' }
   | { type: 'SET_TABLET'; tablet: boolean }
+  | { type: 'SET_OVERLAY'; overlay: Overlay }
+  | { type: 'RIBBON'; line: string }
+  | { type: 'ASK_PRIVACY' }
 
 export function buildReducer(state: BuildState, action: BuildAction): BuildState {
   switch (action.type) {
@@ -185,6 +201,25 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
       return { ...state, propagating: false, conflictResolved: true }
     case 'SET_TABLET':
       return { ...state, tablet: action.tablet }
+    case 'SET_OVERLAY':
+      return { ...state, overlay: action.overlay }
+    case 'RIBBON':
+      // keep the last ~40 lines so the ribbon scrolls without unbounded growth
+      return { ...state, ribbon: [...state.ribbon, action.line].slice(-40) }
+    case 'ASK_PRIVACY':
+      return {
+        ...state,
+        paused: true,
+        askedPrivacy: true,
+        pendingQ: {
+          q: 'How should your data be stored?',
+          sub: 'This changes the Data Model and Memory Policy — a real product decision, so I want your call before I commit it.',
+          opts: [
+            { v: 'raw', t: 'Store raw content — richest answers, your data stays in your ZeroDB project.' },
+            { v: 'embeddings-only', t: 'Embeddings only — store vectors, never raw text. Maximum privacy.' },
+          ],
+        },
+      }
     default:
       return state
   }

@@ -17,6 +17,7 @@ import { Wedge } from '@/components/build/artifacts/Wedge'
 import { Pipeline } from '@/components/build/artifacts/Pipeline'
 import { Conflict } from '@/components/build/artifacts/Conflict'
 import { Graph } from '@/components/build/artifacts/Graph'
+import { ARTIFACT_TITLES } from '@/lib/build/titles'
 
 const SPECIAL_BODIES: Record<string, () => React.ReactNode> = {
   swarm: Swarm,
@@ -27,19 +28,9 @@ const SPECIAL_BODIES: Record<string, () => React.ReactNode> = {
   graph: Graph,
 }
 
-const TITLES: Record<string, string> = {
-  brief: 'Product Brief', prd: 'Product Requirements', comp: 'AINative Composition Plan',
-  dataModel: 'Data Model', memoryPolicy: 'Memory Policy', agentDef: 'Agent Definition',
-  apiSpec: 'Integrations', backlog: 'Build Backlog', swarm: 'The swarm',
-  infra: 'Infrastructure', preview: 'Running Preview',
-  thesis: 'Venture Thesis', wedge: 'Initial Wedge', businessModel: 'Business Model',
-  positioning: 'Positioning', landing: 'Landing Page', plan30: '30-Day Plan',
-  pipeline: 'Sales Pipeline', conflict: 'Dependency Conflict', graph: 'The artifact graph',
-}
-
 export function ArtifactRouter({ view }: { view: string }) {
   const { state } = useBuild()
-  const title = TITLES[view] ?? view
+  const title = ARTIFACT_TITLES[view] ?? view
   const status = state.done[view] ?? (state.building ? 'building' : 'queued')
   const Body = SPECIAL_BODIES[view] ?? APP_ARTIFACT_BODIES[view] ?? COMPANY_ARTIFACT_BODIES[view]
   return (

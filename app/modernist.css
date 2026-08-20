@@ -232,6 +232,48 @@
 .m-chip-trail { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 22px; }
 .m-chip-trail .m-chip { background: var(--track-100); color: var(--track-700); }
 
+/* ============================================================================
+   Act-2 "watch Cody build": overlays, terminal ribbon, decision modal (#207)
+   ============================================================================ */
+/* Terminal ribbon — dark scrolling infra narration, sits under the breadcrumb */
+.m-ribbon {
+  background: var(--ink); color: #cfc9c4; font-size: 12px; line-height: 1.7;
+  padding: 10px 44px; max-height: 118px; overflow: hidden; border-bottom: 2px solid var(--color-divider);
+}
+.m-ribbon-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-ribbon-caret { color: var(--color-accent); }
+
+/* Full-bleed build overlay in the center panel */
+.m-overlay { padding: 44px 56px; }
+.m-overlay-pill {
+  display: inline-block; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--track, var(--color-accent)); border: 1.5px solid var(--track, var(--color-accent));
+  padding: 4px 10px;
+}
+.m-overlay-pulse { font-size: 12px; color: var(--text-body-70); margin: 14px 0 4px; }
+.m-overlay-h { font-size: clamp(28px, 4vw, 44px); font-weight: 500; margin: 6px 0 22px; }
+.m-overlay-lines { display: flex; flex-direction: column; gap: 14px; max-width: 640px; }
+
+/* Decision modal — Cody pauses for a real product call */
+.m-modal-scrim {
+  position: fixed; inset: 0; z-index: 60; display: grid; place-items: center;
+  background: rgba(21, 19, 18, 0.55); padding: 24px;
+}
+.m-modal {
+  background: var(--color-bg); border: 2px solid var(--ink); max-width: 560px; width: 100%;
+  padding: 34px 36px; box-shadow: var(--shadow-lg);
+}
+.m-modal-eyebrow { font-size: 12px; color: var(--color-accent); }
+.m-modal-eyebrow .m-glyph { color: var(--color-accent); }
+.m-modal-h { font-size: 26px; font-weight: 600; margin: 10px 0 8px; }
+.m-modal-opts { display: flex; flex-direction: column; gap: 1.5px; background: var(--color-divider); margin: 22px 0 16px; }
+.m-modal-opt {
+  background: var(--color-surface); border: 0; text-align: left; padding: 16px 18px; cursor: pointer;
+  font-family: var(--font-body); font-size: 15px; color: var(--color-text); transition: background 0.12s;
+}
+.m-modal-opt:hover { background: var(--color-accent-100); }
+.m-modal-foot { font-size: 11px; color: var(--text-faint); }
+
 /* Generation pending / error states for wired artifacts (#207) */
 .m-gen-pending { margin-top: 8px; }
 .m-gen-line { height: 13px; margin: 12px 0; background: var(--color-surface); }

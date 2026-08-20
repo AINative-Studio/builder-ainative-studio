@@ -8,6 +8,9 @@
 
 import { useBuild } from '@/contexts/build-context'
 import { ACT_LABELS } from '@/lib/build/acts'
+import { BuildOverlays } from '@/components/build/BuildOverlays'
+import { TerminalRibbon } from '@/components/build/TerminalRibbon'
+import { DecisionModal } from '@/components/build/DecisionModal'
 import type { ReactNode } from 'react'
 
 function ActBar() {
@@ -81,11 +84,15 @@ export function WorkspaceShell({
       </header>
       <ActBar />
       <PathBreadcrumb />
+      <TerminalRibbon />
       <div className={`m-ws-body ${state.tablet ? 'is-tablet' : ''}`}>
         {feed && !state.tablet && <aside className="m-feed">{feed}</aside>}
-        <main className="m-center">{children}</main>
+        <main className="m-center">
+          {state.overlay.kind !== 'none' ? <BuildOverlays /> : children}
+        </main>
         {rail && <aside className="m-rail">{rail}</aside>}
       </div>
+      <DecisionModal />
     </div>
   )
 }
