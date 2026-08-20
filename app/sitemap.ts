@@ -17,7 +17,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
 
   // Competitor-comparison SEO pages ("<X> alternative") — high-intent search.
   // Keep in sync with COMPETITORS in app/compare/[competitor]/page.tsx.
-  const compareEntries: MetadataRoute.Sitemap = ['v0', 'lovable', 'bolt', 'base44'].map(slug => ({
+  const compareEntries: MetadataRoute.Sitemap = ['v0', 'lovable', 'bolt', 'base44', 'polsia'].map(slug => ({
     url: `${baseUrl}/compare/${slug}`,
     lastModified: now,
     changeFrequency: 'weekly' as const,
@@ -49,6 +49,20 @@ export default function sitemap(): MetadataRoute.Sitemap {
       lastModified: now,
       changeFrequency: 'daily',
       priority: 1,
+    },
+    {
+      // The pivot front door — highest-priority conversion page.
+      url: `${baseUrl}/build`,
+      lastModified: now,
+      changeFrequency: 'daily',
+      priority: 1,
+    },
+    {
+      // Category landing ("AI that runs your company") — non-branded demand.
+      url: `${baseUrl}/ai-company`,
+      lastModified: now,
+      changeFrequency: 'weekly',
+      priority: 0.9,
     },
     {
       url: `${baseUrl}/showcase`,

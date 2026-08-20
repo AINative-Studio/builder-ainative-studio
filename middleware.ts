@@ -110,6 +110,12 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next()
     }
 
+    // Category landing page ("AI that runs your company") — non-branded SEO/AEO
+    // target Polsia is weak on. MUST be crawlable + viewable without an account.
+    if (pathname.startsWith('/ai-company')) {
+      return NextResponse.next()
+    }
+
     // Allow the template landing pages for anonymous users — each
     // /templates/[slug] targets an "AI <category> template" search and MUST be
     // crawlable/indexable without an account. Without this they 307→/login,
