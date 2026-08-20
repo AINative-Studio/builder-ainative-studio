@@ -11,6 +11,8 @@ import { useState, useEffect } from 'react'
 import { useBuild } from '@/contexts/build-context'
 import { useLiveProof } from '@/lib/build/useLiveProof'
 import { buildSystems, type BusinessSystem } from '@/lib/build/business-systems'
+import { DomainModal } from '@/components/build/DomainModal'
+import { useSession } from 'next-auth/react'
 
 interface ChatLine { role: 'user' | 'cody'; text: string }
 
@@ -24,8 +26,14 @@ export function Live() {
   const [systems, setSystems] = useState<BusinessSystem[]>(buildSystems())
   const [nightshift, setNightshift] = useState<{ hasRun: boolean; summary?: string; lastRunAt?: string } | null>(null)
   const company = state.companyName || 'Your Company'
-  const url = `${state.appSub || 'your-app'}.ainative.studio`
   const companyId = state.appSub || company.toLowerCase().replace(/\s+/g, '-')
+  // Real, working subdirectory URL — no dead subdomain. (FIX-2)
+  const appPath = `/build/${state.appSub || companyId}`
+  const url = `builder.ainative.studio${appPath}`
+  const [appReady, setAppReady] = useState<boolean>(!!state.appChatId)
+  const [domainOpen, setDomainOpen] = useState(false)
+  const { status: sessionStatus } = useSession()
+  const signedIn = sessionStatus === 'authenticated'
 
   // Real business-systems state for this company (honest zero-state for a fresh
   // company; real counts when its ZeroDB has data). Never fabricated.
@@ -35,6 +43,20 @@ export function Live() {
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => { if (alive && d?.systems) setSystems(d.systems) })
       .catch(() => { /* keep the zero-state default */ })
+    // Company track has no /preview app — generate a REAL landing-page app for it
+    // once, so the prod URL /build/{slug} actually shows something. Register it.
+    if (!state.appChatId && state.idea && state.appSub) {
+      fetch('/api/build/company-app', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          idea: state.idea, slug: state.appSub, name: company,
+          tagline: state.brandTagline, color: state.brandColor,
+        }),
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => { if (alive && d?.chatId) { setAppReady(true); dispatch({ type: 'SET_APP_CHATID', chatId: d.chatId }) } })
+        .catch(() => {})
+    }
     // The visible nightshift — the real last nightly run + morning summary.
     fetch(`/api/build/nightshift?companyId=${encodeURIComponent(companyId)}&idea=${encodeURIComponent(state.idea)}&companyName=${encodeURIComponent(company)}`)
       .then((r) => (r.ok ? r.json() : null))
@@ -85,7 +107,13 @@ export function Live() {
   }
 
   const subscribe = async () => {
-    // Enroll this company in the real nightly autonomous loop (Option B).
+    // FIX-4: the conversion funnel. To have Cody keep building/running this
+    // company for real, the founder must have an account. Anonymous → sign up
+    // (the Auth screen returns to Live), then enroll. Signed-in → enroll now.
+    if (!signedIn) {
+      dispatch({ type: 'GOTO_SCREEN', screen: 'signup' })
+      return
+    }
     setEnrolled(true) // optimistic
     try {
       await fetch('/api/build/enroll', {
@@ -101,16 +129,37 @@ export function Live() {
     } catch { /* optimistic UI already set */ }
   }
 
+  // FIX-5: per-project brand color so every company's dashboard looks distinct,
+  // not identical. Falls back to the track accent.
+  const brandStyle = state.brandColor && /^#[0-9a-fA-F]{6}$/.test(state.brandColor)
+    ? ({ ['--m-brand' as string]: state.brandColor } as React.CSSProperties)
+    : undefined
+
   return (
-    <div className="modernist m-live" data-track="company">
-      <header className="m-live-masthead">
+    <div className="modernist m-live" data-track="company" style={brandStyle}>
+      <header className="m-live-masthead" style={brandStyle ? { background: 'var(--m-brand)' } : undefined}>
         <span className="m-mono m-live-tag">Company Track · shipped</span>
         <h1 className="m-artifact m-live-h">{company} is live.</h1>
         <div className="m-live-masthead-right">
           <span className="m-mono m-live-watch"><span className="m-live-dot" /> Cody is on watch</span>
-          <a className="m-mono m-live-url" href={`https://${url}`} target="_blank" rel="noreferrer">{url} ↗</a>
+          <a className="m-mono m-live-url" href={appPath} target="_blank" rel="noreferrer">
+            {appReady ? `${url} ↗` : 'building your site…'}
+          </a>
         </div>
       </header>
+
+      {/* FIX-4: signup funnel — the conversion CTA for anonymous founders. */}
+      {!signedIn && (
+        <div className="m-live-funnel">
+          <span>
+            <strong>{company} is yours.</strong> Create an account to keep it — Cody keeps building and running it 24/7, and you own 100%.
+          </span>
+          <div className="m-live-funnel-cta">
+            <button className="btn-primary" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'signup' })}>Claim {company} free →</button>
+            <button className="btn-ghost" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'login' })}>Log in</button>
+          </div>
+        </div>
+      )}
 
       <div className={`m-live-grid ${state.tablet ? 'is-tablet' : ''}`}>
         {/* LEFT — Cody status + metrics + upsell */}
@@ -175,9 +224,14 @@ export function Live() {
           </div>
           <div className="m-live-card">
             <div className="m-mono m-live-card-h">Website & infrastructure</div>
-            <p className="m-mono m-infra-urls">prod: {url}<br />staging: staging.{url}</p>
+            <p className="m-mono m-infra-urls">
+              prod: {url}<br />
+              staging: staging.builder.ainative.studio{appPath}
+            </p>
             <div className="m-infra-btns">
-              {['Manage domain', 'Versions', 'Redeploy', 'Secrets'].map((b) => <button key={b} className="btn-secondary">{b}</button>)}
+              <a className="btn-secondary" href={appPath} target="_blank" rel="noreferrer">View site ↗</a>
+              <button className="btn-secondary" onClick={() => setDomainOpen(true)}>Get a custom domain</button>
+              <button className="btn-secondary" disabled title="Coming soon">Redeploy</button>
             </div>
           </div>
         </div>
@@ -215,6 +269,8 @@ export function Live() {
           {proof.agentsActive} AINative agents working platform-wide right now — the same infrastructure running {company}.
         </p>
       )}
+
+      <DomainModal brand={state.appSub || companyId} open={domainOpen} onClose={() => setDomainOpen(false)} />
     </div>
   )
 }

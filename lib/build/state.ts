@@ -59,6 +59,9 @@ export interface BuildState {
   appSub: string           // staging subdomain, e.g. {appSub}.ainative.studio
   tablet: boolean
   idea: string             // the founder's raw idea (from intake) — drives all generation
+  brandTagline: string     // generated brand tagline (FIX-1)
+  brandColor: string       // generated brand accent color hex (FIX-1)
+  appChatId: string        // the generated running app's chatId (served at /build/{slug}) (FIX-2)
   generated: Record<string, unknown>  // view -> generated artifact content (from /api/build/artifact)
   genError: Record<string, string>     // view -> error message when generation failed
   overlay: Overlay         // full-bleed build overlay currently showing (Act-2 "watch Cody build")
@@ -97,6 +100,9 @@ export const initialBuildState: BuildState = {
   appSub: '',
   tablet: false,
   idea: '',
+  brandTagline: '',
+  brandColor: '#2f6d86',
+  appChatId: '',
   generated: {},
   genError: {},
   overlay: { kind: 'none' },
@@ -109,7 +115,7 @@ export const initialBuildState: BuildState = {
 export type BuildAction =
   | { type: 'GOTO_SCREEN'; screen: Screen }
   | { type: 'PICK_TRACK'; track: Track }
-  | { type: 'START_BUILD'; idea: string; appSub: string; companyName?: string }
+  | { type: 'START_BUILD'; idea: string; appSub: string; companyName?: string; brandTagline?: string; brandColor?: string }
   | { type: 'GEN_DONE'; view: string; content: unknown }
   | { type: 'GEN_FAIL'; view: string; error: string }
   | { type: 'GOTO_VIEW'; view: ArtifactView }
@@ -133,6 +139,7 @@ export type BuildAction =
   | { type: 'TRIGGER_CONFLICT'; changedView: string }
   | { type: 'TOGGLE_RAIL' }
   | { type: 'TOGGLE_INDEX' }
+  | { type: 'SET_APP_CHATID'; chatId: string }
 
 export function buildReducer(state: BuildState, action: BuildAction): BuildState {
   switch (action.type) {
@@ -152,6 +159,8 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
         idea: action.idea,
         appSub: action.appSub,
         companyName: action.companyName ?? state.companyName,
+        brandTagline: action.brandTagline ?? state.brandTagline,
+        brandColor: action.brandColor ?? state.brandColor,
         building: true,
         auto: true,
         // fresh run: clear any prior generation
@@ -227,6 +236,8 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
       return { ...state, railOpen: !state.railOpen, indexOpen: false }
     case 'TOGGLE_INDEX':
       return { ...state, indexOpen: !state.indexOpen, railOpen: false }
+    case 'SET_APP_CHATID':
+      return { ...state, appChatId: action.chatId }
     case 'SET_OVERLAY':
       return { ...state, overlay: action.overlay }
     case 'RIBBON':

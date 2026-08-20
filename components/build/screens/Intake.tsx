@@ -5,18 +5,31 @@
 import { useState } from 'react'
 import { useBuild } from '@/contexts/build-context'
 
-function slugify(s: string): string {
-  return (s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24)) || 'app'
-}
-
 export function Intake() {
   const { state, dispatch } = useBuild()
   const [idea, setIdea] = useState('')
-  const appSub = idea ? slugify(idea) : 'your-app'
+  const [naming, setNaming] = useState(false)
 
-  const start = () => {
-    if (!idea.trim()) return
-    dispatch({ type: 'START_BUILD', idea, appSub: slugify(idea), companyName: deriveName(idea) })
+  const start = async () => {
+    if (!idea.trim() || naming) return
+    setNaming(true)
+    // Generate a REAL brand (name/slug/tagline/color) from the idea — not the
+    // first 3 words of the sentence. (FIX-1)
+    let brand = { name: '', slug: 'app', tagline: '', color: '#2f6d86' }
+    try {
+      const res = await fetch('/api/build/brand', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idea, track: state.track }),
+      })
+      const d = await res.json()
+      if (d?.slug) brand = { name: d.name || '', slug: d.slug, tagline: d.tagline || '', color: d.color || '#2f6d86' }
+    } catch { /* fall back below */ }
+    if (!brand.name) brand.name = fallbackName(idea)
+    dispatch({
+      type: 'START_BUILD', idea,
+      appSub: brand.slug, companyName: brand.name,
+      brandTagline: brand.tagline, brandColor: brand.color,
+    })
   }
 
   return (
@@ -36,14 +49,19 @@ export function Intake() {
         autoFocus
       />
       <p className="m-helper">
-        You&apos;ll answer ~2 quick questions while I build · staging goes live at {appSub}.ainative.studio
+        You&apos;ll answer ~2 quick questions while I build · I&apos;ll name your company and give it a live preview URL.
       </p>
-      <button className="btn-primary" onClick={start} disabled={!idea.trim()}>Let Cody build it →</button>
+      <button className="btn-primary" onClick={start} disabled={!idea.trim() || naming}>
+        {naming ? 'Naming your company…' : 'Let Cody build it →'}
+      </button>
     </div>
   )
 }
 
-function deriveName(idea: string): string {
-  const words = idea.trim().split(/\s+/).slice(0, 3)
-  return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') || 'Your Company'
+// Fallback name only when brand generation fails — strip the "I want to build a"
+// preamble and take the first meaningful word, so we never show "I Want To".
+function fallbackName(idea: string): string {
+  const cleaned = idea.trim().replace(/^(i\s+want\s+to\s+build|i\s+want\s+to|build|create|make|a|an|the)\s+/gi, '')
+  const w = cleaned.split(/\s+/)[0] || 'Cody'
+  return w.charAt(0).toUpperCase() + w.slice(1)
 }

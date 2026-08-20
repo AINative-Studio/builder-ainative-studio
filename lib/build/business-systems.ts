@@ -22,11 +22,13 @@ export interface BusinessSystem {
   value?: number
 }
 
+// Only real, resolving product URLs (verified). ZeroVoice has no live standalone
+// site yet, so it points at the platform rather than a 404 dead link. (FIX-5)
 const PRODUCT_URLS: Record<BusinessSystem['key'], string> = {
   pipeline: 'https://zeropipeline.ainative.studio',
   invoices: 'https://zeroinvoice.ainative.studio',
   helpdesk: 'https://helpdesk.ainative.studio',
-  voice: 'https://ainative.studio/products/zerovoice',
+  voice: 'https://ainative.studio',
 }
 
 /**

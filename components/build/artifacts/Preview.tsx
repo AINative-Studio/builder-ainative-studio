@@ -10,7 +10,7 @@
  * graceful message if generation fails. The Make-it-real banner is preserved.
  */
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useBuild } from '@/contexts/build-context'
 import { useRealPreview } from '@/lib/build/useRealPreview'
 
@@ -20,11 +20,23 @@ export function Preview() {
   const { previewUrl, status, chatId } = useRealPreview(state.idea, state.view === 'preview' && !!state.idea)
   const [copied, setCopied] = useState(false)
 
-  // Persistent, shareable URL for the generated app. /api/preview/{id} is backed
-  // by ZeroDB (durable), so this link survives restarts/redeploys — a real
-  // shareable app, not an ephemeral sandbox. (#236)
-  const shareUrl = chatId && status === 'ready'
-    ? (typeof window !== 'undefined' ? `${window.location.origin}/preview/${chatId}` : `/preview/${chatId}`)
+  // Once the app is ready, register slug → chatId so /build/{slug} resolves to it,
+  // and store the chatId in state so the Live dashboard can link the real app. (FIX-2)
+  useEffect(() => {
+    if (status !== 'ready' || !chatId || !state.appSub) return
+    dispatch({ type: 'SET_APP_CHATID', chatId })
+    fetch('/api/build/register-app', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        slug: state.appSub, chatId, name: state.companyName,
+        tagline: state.brandTagline, color: state.brandColor, track: state.track,
+      }),
+    }).catch(() => {})
+  }, [status, chatId, state.appSub])
+
+  // The real, shareable subdirectory URL (no DNS, works immediately). (FIX-2)
+  const shareUrl = chatId && status === 'ready' && state.appSub
+    ? (typeof window !== 'undefined' ? `${window.location.origin}/build/${state.appSub}` : `/build/${state.appSub}`)
     : null
 
   const copyShare = () => {
