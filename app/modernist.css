@@ -319,6 +319,11 @@
 .m-share-url:hover { text-decoration: underline; }
 .m-share-copy { padding: 4px 12px; font-size: 12px; }
 
+/* Swarm real-vs-preview honesty badge (#232) */
+.m-swarm-badge { font-size: 11px; }
+.m-swarm-badge.is-real { color: var(--success); }
+.m-swarm-badge.is-preview { color: var(--text-faint); }
+
 /* Generation pending / error states for wired artifacts (#207) */
 .m-gen-pending { margin-top: 8px; }
 .m-gen-line { height: 13px; margin: 12px 0; background: var(--color-surface); }
