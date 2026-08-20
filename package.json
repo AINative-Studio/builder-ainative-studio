@@ -39,6 +39,8 @@
     "@ai-sdk/react": "^2.0.22",
     "@ainative/ai-kit": "0.2.0",
     "@ainative/ai-kit-core": "0.2.0",
+    "@ainative/cody-cli": "^0.12.61",
+    "@anthropic-ai/claude-code": "^2.1.191",
     "@anthropic-ai/sdk": "^0.65.0",
     "@babel/core": "^7.29.0",
     "@babel/parser": "^7.28.4",
@@ -112,9 +114,7 @@
     "use-stick-to-bottom": "^1.1.1",
     "vitest": "^3.2.4",
     "ws": "^8.18.3",
-    "zod": "^4.1.1",
-    "@anthropic-ai/claude-code": "^2.1.191",
-    "@ainative/cody-cli": "^0.12.31"
+    "zod": "^4.1.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.1",
