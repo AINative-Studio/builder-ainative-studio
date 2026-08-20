@@ -205,7 +205,17 @@
 /* ============================================================================
    Fork + Intake (#222)
    ============================================================================ */
-.m-fork, .m-intake { min-height: 100vh; padding: 64px clamp(44px, 6vw, 120px); max-width: 1240px; margin: 0 auto; }
+/* Full-bleed grey ground; the CONTENT is centered to 1240px via symmetric
+   auto side-padding, so the grey never stops (no white gutters at any width)
+   while the reading column stays editorial-narrow. max() keeps the fixed 44px
+   floor on small screens and grows the gutter as the viewport widens past
+   ~1240px content. */
+.m-fork, .m-intake {
+  min-height: 100vh;
+  width: 100%;
+  padding-block: 64px;
+  padding-inline: max(44px, calc((100% - 1240px) / 2 + 44px));
+}
 .m-eyebrow { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.16em; color: var(--color-accent); }
 .m-h1 { font-family: var(--font-artifact); font-weight: 500; font-size: clamp(38px, 6vw, 66px); line-height: 1.02; margin: 14px 0 10px; color: var(--color-text); }
 .m-sub { font-size: 17px; color: var(--text-body-70); max-width: 60ch; line-height: 1.5; }
