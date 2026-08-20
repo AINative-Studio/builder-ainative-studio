@@ -9,7 +9,7 @@ interface PageProps {
   params: Promise<{ competitor: string }>
 }
 
-const COMPETITORS = ['v0', 'lovable', 'bolt', 'base44'] as const
+const COMPETITORS = ['v0', 'lovable', 'bolt', 'base44', 'polsia'] as const
 type CompetitorSlug = (typeof COMPETITORS)[number]
 
 interface CompetitorData {
@@ -20,6 +20,13 @@ interface CompetitorData {
   pricing: string
   opensource: string
   streaming: string
+  // "company" competitors (Polsia) get the build-AND-run framing instead of the
+  // code-generator framing.
+  kind?: 'builder' | 'company'
+  buildsApp?: string
+  runsCompany?: string
+  realPrimitives?: string
+  agentFiles?: string
 }
 
 const COMPETITOR_DATA: Record<CompetitorSlug, CompetitorData> = {
@@ -59,15 +66,33 @@ const COMPETITOR_DATA: Record<CompetitorSlug, CompetitorData> = {
     opensource: 'No',
     streaming: 'No',
   },
+  polsia: {
+    displayName: 'Polsia',
+    kind: 'company',
+    models: 'Proprietary agents',
+    ax: 'No — pure CSR, no llms.txt/agents.txt',
+    seo: 'Client-rendered (invisible to crawlers/LLMs)',
+    pricing: 'Subscription',
+    opensource: 'No',
+    streaming: 'Yes (demo)',
+    buildsApp: 'Runs your company, but you bring the product',
+    runsCompany: 'Yes — autonomous agents',
+    realPrimitives: 'Proprietary, closed',
+    agentFiles: 'None (no llms.txt / agents.txt / robots.txt)',
+  },
 }
 
 const AINATIVE_DATA = {
-  models: 'Claude, Qwen, Gemma, DeepSeek (multi-model)',
-  ax: 'Yes — built-in AX scoring',
-  seo: 'Automatic JSON-LD, sitemap',
+  models: 'Claude Sonnet/Haiku/Opus 4.5 (Bedrock), tiered',
+  ax: 'Yes — llms.txt, agents.txt, JSON-LD, semantic HTML',
+  seo: 'Automatic JSON-LD, sitemap, crawlable pages',
   pricing: 'Free + $49/mo',
   opensource: 'Yes',
   streaming: 'Yes',
+  buildsApp: 'Yes — real, production-ready app on a shareable URL',
+  runsCompany: 'Yes — nightly autonomous loop',
+  realPrimitives: 'ZeroDB, ZeroPipeline, ZeroInvoice, ServiceOS, ZeroVoice, Agent Cloud',
+  agentFiles: 'llms.txt + agents.txt + robots.txt (agent-native)',
 }
 
 interface FeatureRow {
@@ -76,6 +101,34 @@ interface FeatureRow {
   competitor: (data: CompetitorData) => string
   ainativeWins: boolean
 }
+
+// Rows shown ONLY for "company" competitors (Polsia) — the build-AND-run framing.
+const COMPANY_ROWS: FeatureRow[] = [
+  {
+    feature: 'Builds the product for you',
+    ainative: AINATIVE_DATA.buildsApp,
+    competitor: (d) => d.buildsApp ?? '—',
+    ainativeWins: true,
+  },
+  {
+    feature: 'Runs the company (autonomous)',
+    ainative: AINATIVE_DATA.runsCompany,
+    competitor: (d) => d.runsCompany ?? '—',
+    ainativeWins: false,
+  },
+  {
+    feature: 'Built on real, open primitives you own',
+    ainative: AINATIVE_DATA.realPrimitives,
+    competitor: (d) => d.realPrimitives ?? '—',
+    ainativeWins: true,
+  },
+  {
+    feature: 'Agent-native (llms.txt / agents.txt)',
+    ainative: AINATIVE_DATA.agentFiles,
+    competitor: (d) => d.agentFiles ?? '—',
+    ainativeWins: true,
+  },
+]
 
 const FEATURE_ROWS: FeatureRow[] = [
   {
@@ -160,36 +213,65 @@ export default async function CompetitorPage({ params }: PageProps) {
   }
 
   const data = COMPETITOR_DATA[competitor as CompetitorSlug]
+  // Company competitors (Polsia) lead with the build-AND-run rows.
+  const rows = data.kind === 'company' ? [...COMPANY_ROWS, ...FEATURE_ROWS] : FEATURE_ROWS
 
+  const companyFaq = [
+    {
+      '@type': 'Question',
+      name: `What is the difference between AINative Builder and ${data.displayName}?`,
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: `${data.displayName} runs your company autonomously, but you have to bring the product. AINative Builder BUILDS the company first — a real, production-ready app on a shareable URL plus the operating business systems (CRM via ZeroPipeline, billing via ZeroInvoice, helpdesk via ServiceOS, voice via ZeroVoice) — and THEN runs it on a nightly autonomous loop. You watch every artifact get composed live and you own 100% of what is built.`,
+      },
+    },
+    {
+      '@type': 'Question',
+      name: `Is AINative Builder a good ${data.displayName} alternative?`,
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: `Yes. If you want an AI that both builds AND runs your company on real, open primitives you own — not a closed, proprietary agent — AINative Builder is the stronger choice. It's agent-native (llms.txt, agents.txt, crawlable pages), whereas ${data.displayName} is a client-rendered app with no agent files, invisible to LLMs and crawlers.`,
+      },
+    },
+    {
+      '@type': 'Question',
+      name: `Does ${data.displayName} build real production-ready apps?`,
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: `${data.displayName} focuses on operating a company with autonomous agents. AINative Builder generates a real, idea-specific app deployed to a durable, shareable URL, plus real business systems backed by AINative products — not mockups.`,
+      },
+    },
+  ]
+  const builderFaq = [
+    {
+      '@type': 'Question',
+      name: `What is the difference between AINative Builder and ${data.displayName}?`,
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: `AINative Builder supports multiple AI models including Claude, Qwen, Gemma, and DeepSeek, while ${data.displayName} uses ${data.models}. AINative also includes built-in AX (Agent Experience) optimization and automatic SEO with structured data — features not available in ${data.displayName}.`,
+      },
+    },
+    {
+      '@type': 'Question',
+      name: `Is AINative Builder a good ${data.displayName} alternative?`,
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: `Yes. AINative Builder is a strong alternative to ${data.displayName} for developers who need multi-model flexibility, agent-optimized output, automatic SEO, and open-source access. It starts with a 7-day trial on the Hobbyist plan, with professional plans from $49/mo.`,
+      },
+    },
+    {
+      '@type': 'Question',
+      name: `Does AINative Builder support the same features as ${data.displayName}?`,
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: `AINative Builder supports all core features of ${data.displayName} such as real-time streaming and React component generation, and adds unique capabilities: multi-model AI selection, AX scoring for agent accessibility, automatic JSON-LD structured data, and an open-source codebase.`,
+      },
+    },
+  ]
   const faqJsonLd = {
     '@context': 'https://schema.org',
     '@type': 'FAQPage',
-    mainEntity: [
-      {
-        '@type': 'Question',
-        name: `What is the difference between AINative Builder and ${data.displayName}?`,
-        acceptedAnswer: {
-          '@type': 'Answer',
-          text: `AINative Builder supports multiple AI models including Claude, Qwen, Gemma, and DeepSeek, while ${data.displayName} uses ${data.models}. AINative also includes built-in AX (Agent Experience) optimization and automatic SEO with structured data — features not available in ${data.displayName}.`,
-        },
-      },
-      {
-        '@type': 'Question',
-        name: `Is AINative Builder a good ${data.displayName} alternative?`,
-        acceptedAnswer: {
-          '@type': 'Answer',
-          text: `Yes. AINative Builder is a strong alternative to ${data.displayName} for developers who need multi-model flexibility, agent-optimized output, automatic SEO, and open-source access. It starts with a 7-day trial on the Hobbyist plan, with professional plans from $49/mo.`,
-        },
-      },
-      {
-        '@type': 'Question',
-        name: `Does AINative Builder support the same features as ${data.displayName}?`,
-        acceptedAnswer: {
-          '@type': 'Answer',
-          text: `AINative Builder supports all core features of ${data.displayName} such as real-time streaming and React component generation, and adds unique capabilities: multi-model AI selection, AX scoring for agent accessibility, automatic JSON-LD structured data, and an open-source codebase.`,
-        },
-      },
-    ],
+    mainEntity: data.kind === 'company' ? companyFaq : builderFaq,
   }
 
   return (
@@ -235,7 +317,7 @@ export default async function CompetitorPage({ params }: PageProps) {
                 </tr>
               </thead>
               <tbody>
-                {FEATURE_ROWS.map((row, i) => {
+                {rows.map((row, i) => {
                   const competitorValue = row.competitor(data)
                   return (
                     <tr
