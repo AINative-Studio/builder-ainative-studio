@@ -364,8 +364,13 @@
 .m-browser-chrome { display: flex; align-items: center; gap: 10px; background: var(--color-surface); padding: 8px 12px; border-bottom: 1.5px solid var(--ink); font-size: 12px; }
 .m-browser-dots i { display: inline-block; width: 8px; height: 8px; border-radius: 50% !important; background: var(--neutral-line); margin-right: 4px; }
 .m-browser-url { color: var(--text-muted); }
-.m-browser-body { padding: 28px; background: #fff; }
-.m-preview-search { display: flex; gap: 8px; }
+.m-browser-body { padding: 0; background: #fff; }
+/* real generated app renders here (B1) */
+.m-preview-frame { width: 100%; height: 520px; border: 0; display: block; background: #fff; }
+.m-preview-fallback { padding: 40px 28px; min-height: 320px; }
+.m-preview-fallback .m-live-dot { background: var(--attn); }
+.m-preview-skel { display: flex; flex-direction: column; gap: 14px; margin-top: 22px; max-width: 560px; }
+.m-preview-search { display: flex; gap: 8px; padding: 28px; }
 .m-preview-input { flex: 1; padding: 10px 12px; border: 1.5px solid var(--neutral-line); font-family: var(--font-body); font-size: 14px; }
 .m-preview-answer { margin-top: 18px; font-family: var(--font-artifact); font-size: 15px; color: var(--text-body-85); }
 .m-cite-chips { display: flex; gap: 6px; margin-top: 10px; }
