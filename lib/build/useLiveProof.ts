@@ -19,8 +19,10 @@ export interface LiveProof {
   companiesBuilt: number | null
 }
 
-const AINATIVE_API =
-  process.env.NEXT_PUBLIC_AINATIVE_API_URL || 'https://api.ainative.studio'
+// Same-origin proxy — the upstream api.ainative.studio endpoint sends NO CORS
+// headers, so a direct browser fetch is blocked. /api/build/intelligence proxies
+// it server-side so the real numbers actually reach the client (#207 CRUSH-2).
+const INTELLIGENCE_URL = '/api/build/intelligence'
 
 export function useLiveProof(): LiveProof {
   const [proof, setProof] = useState<LiveProof>({
@@ -31,7 +33,7 @@ export function useLiveProof(): LiveProof {
     let alive = true
     const ac = new AbortController()
     const load = () => {
-      fetch(`${AINATIVE_API}/api/v1/public/platform/intelligence`, { signal: ac.signal })
+      fetch(INTELLIGENCE_URL, { signal: ac.signal })
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
           if (!alive || !d) return
