@@ -30,7 +30,8 @@ An item is **Done** only when its acceptance criterion passes **on production** 
 | B-10 | R13 | Real Live business-systems — wire Pipeline/Invoices/Helpdesk/Voice to primitives | enroll | Pending | #233 |
 | B-11 | R16 | Missing workspace chrome — artifact rail, Index, account chip, artifact IDs/cross-links | B-01 | Pending | #235 |
 | B-12 | R14 | Persistent live deploy — sandbox Preview → real shareable URL | #213 | Pending | #236 |
-| B-13 | R18 | Production verification pass — re-verify B-01..B-06 on builder.ainative.studio | B-01..B-06 | Pending | #238 |
+| B-13 | R18 | Production verification pass — re-verify B-01..B-06 on builder.ainative.studio | B-01..B-06 | In progress | #238 |
+| B-14 | R8/R9 | Bug: cody-agent primary 400s on every codegen (masked by Bedrock fallback) — found by #238 | — | Pending | #239 |
 
 ## Traceability summary
 
