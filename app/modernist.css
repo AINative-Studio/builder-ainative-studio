@@ -274,6 +274,8 @@
 .m-modal-opt:hover { background: var(--color-accent-100); }
 .m-modal-foot { font-size: 11px; color: var(--text-faint); }
 
+.m-metric-note { font-size: 10px; color: var(--text-faint); margin-top: 10px; }
+
 /* Generation pending / error states for wired artifacts (#207) */
 .m-gen-pending { margin-top: 8px; }
 .m-gen-line { height: 13px; margin: 12px 0; background: var(--color-surface); }

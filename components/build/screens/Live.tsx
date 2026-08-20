@@ -11,25 +11,57 @@ import { useState } from 'react'
 import { useBuild } from '@/contexts/build-context'
 import { useLiveProof } from '@/lib/build/useLiveProof'
 
+// Business systems provisioned for a freshly-shipped company. Stats start at the
+// honest zero-state (a brand-new company has no deals/invoices yet) — the swarm
+// fills them as it runs. Primitives are the real AINative products behind each.
 const SYSTEMS = [
-  { name: 'Pipeline', stat: '5 open · $86k · 1 won', prim: 'ZeroPipeline' },
-  { name: 'Invoices', stat: '$4.2k collected', prim: 'ZeroInvoice' },
-  { name: 'Helpdesk', stat: '2 open tickets', prim: 'ServiceOS' },
-  { name: 'Voice & SMS', stat: '18 calls · 40 texts', prim: 'ZeroVoice' },
+  { name: 'Pipeline', stat: 'Ready · Scout sourcing', prim: 'ZeroPipeline' },
+  { name: 'Invoices', stat: 'Ready · $0 collected', prim: 'ZeroInvoice' },
+  { name: 'Helpdesk', stat: 'Ready · 0 tickets', prim: 'ServiceOS' },
+  { name: 'Voice & SMS', stat: 'Ready · 0 calls', prim: 'ZeroVoice' },
 ]
-const TONIGHT = [
-  'Re-rank retrieval on this week’s real queries',
-  'Draft 3 outbound emails for Qualified deals',
-  'Ship the citation-hover fix from user feedback',
-]
+
+interface ChatLine { role: 'user' | 'cody'; text: string }
 
 export function Live() {
   const { state } = useBuild()
   const proof = useLiveProof()
   const [msg, setMsg] = useState('')
   const [enrolled, setEnrolled] = useState(false)
+  const [chat, setChat] = useState<ChatLine[]>([])
+  const [asking, setAsking] = useState(false)
   const company = state.companyName || 'Your Company'
   const url = `${state.appSub || 'your-app'}.ainative.studio`
+
+  // Tonight's tasks — real platform-loop signal woven in so it's not fiction.
+  const tonight = [
+    `Evaluate ${company} and pick the highest-leverage next task`,
+    proof.tasksToday != null
+      ? `Join the ${proof.tasksToday} agent tasks the platform ran today`
+      : 'Run the nightly improvement pass',
+    'Summarize outcomes and score them into the RLHF loop',
+  ]
+
+  const ask = async () => {
+    const q = msg.trim()
+    if (!q || asking) return
+    setChat((c) => [...c, { role: 'user', text: q }])
+    setMsg('')
+    setAsking(true)
+    try {
+      const res = await fetch('/api/build/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: q, idea: state.idea, companyName: company, track: state.track }),
+      })
+      const data = await res.json().catch(() => null)
+      setChat((c) => [...c, { role: 'cody', text: data?.answer || "I couldn't reach my brain just now — try again in a moment." }])
+    } catch {
+      setChat((c) => [...c, { role: 'cody', text: 'Connection hiccup — ask me again.' }])
+    } finally {
+      setAsking(false)
+    }
+  }
 
   const subscribe = async () => {
     // Enroll this company in the real nightly autonomous loop (Option B).
@@ -70,10 +102,12 @@ export function Live() {
           <div className="m-live-card">
             <div className="m-mono m-live-card-h">Business metrics</div>
             <div className="m-metric-rows">
-              <div className="m-metric"><span className="m-metric-v m-artifact">1,204</span><span className="m-metric-l m-mono">visitors</span></div>
-              <div className="m-metric"><span className="m-metric-v m-artifact">312</span><span className="m-metric-l m-mono">waitlist</span></div>
-              <div className="m-metric"><span className="m-metric-v m-artifact">$4.2k</span><span className="m-metric-l m-mono">revenue</span></div>
+              {/* Honest zero-state for a just-shipped company — the swarm fills these. */}
+              <div className="m-metric"><span className="m-metric-v m-artifact">0</span><span className="m-metric-l m-mono">visitors</span></div>
+              <div className="m-metric"><span className="m-metric-v m-artifact">0</span><span className="m-metric-l m-mono">waitlist</span></div>
+              <div className="m-metric"><span className="m-metric-v m-artifact">$0</span><span className="m-metric-l m-mono">revenue</span></div>
             </div>
+            <p className="m-mono m-metric-note">Live from day one — Cody grows these nightly.</p>
           </div>
           <div className="m-live-card m-upsell">
             <div className="m-mono m-live-card-h">Hire the swarm</div>
@@ -104,7 +138,7 @@ export function Live() {
           </div>
           <div className="m-live-card">
             <div className="m-mono m-live-card-h">The swarm · tonight&apos;s tasks</div>
-            <ul className="m-list m-tonight">{TONIGHT.map((t) => <li key={t}><span className="st is-running" /> {t}</li>)}</ul>
+            <ul className="m-list m-tonight">{tonight.map((t) => <li key={t}><span className="st is-running" /> {t}</li>)}</ul>
           </div>
           <div className="m-live-card">
             <div className="m-mono m-live-card-h">Website & infrastructure</div>
@@ -120,12 +154,24 @@ export function Live() {
           <div className="m-live-card m-chat">
             <div className="m-mono m-live-card-h"><span className="m-glyph">◇</span> Ask Cody anything</div>
             <div className="m-chat-log">
-              <p className="m-chat-user">How did we do this week?</p>
-              <p className="m-chat-cody"><span className="m-glyph">◇</span> Waitlist up 22%, one deal closed ($0k auto-billed), and I shipped the citation fix. Biggest lever next: turn 3 Qualified deals into calls — want me to have Closer dial them?</p>
+              {chat.length === 0 && (
+                <p className="m-chat-cody"><span className="m-glyph">◇</span> {company} is live and on watch. Ask me anything — what to build next, how the wedge is holding up, or what I&apos;ll run tonight.</p>
+              )}
+              {chat.map((line, i) =>
+                line.role === 'user'
+                  ? <p key={i} className="m-chat-user">{line.text}</p>
+                  : <p key={i} className="m-chat-cody"><span className="m-glyph">◇</span> {line.text}</p>
+              )}
+              {asking && <p className="m-chat-cody m-mono"><span className="m-glyph">◇</span> thinking…</p>}
             </div>
             <div className="m-chat-input">
-              <input value={msg} onChange={(e) => setMsg(e.target.value)} placeholder="Message Cody…" />
-              <button className="btn-primary">Send</button>
+              <input
+                value={msg}
+                onChange={(e) => setMsg(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && ask()}
+                placeholder="Message Cody…"
+              />
+              <button className="btn-primary" onClick={ask} disabled={asking}>Send</button>
             </div>
           </div>
         </div>
