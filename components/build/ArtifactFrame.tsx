@@ -9,6 +9,14 @@
 import { useBuild } from '@/contexts/build-context'
 import type { ReactNode } from 'react'
 
+/** Stable artifact IDs per 04-SCREENS (PB-01, PRD-01, …). */
+const ARTIFACT_ID: Record<string, string> = {
+  brief: 'PB-01', prd: 'PRD-01', comp: 'CP-01', dataModel: 'DM-01', memoryPolicy: 'MP-01',
+  agentDef: 'AD-01', apiSpec: 'API-01', backlog: 'BL-01', swarm: 'SW-01', infra: 'IN-01', preview: 'PV-01',
+  thesis: 'VT-01', wedge: 'WD-01', businessModel: 'BM-01', positioning: 'POS-01', landing: 'LP-01', plan30: 'OP-01',
+  pipeline: 'SP-01', conflict: 'CF-01', graph: 'GR-01',
+}
+
 function statusClass(status: string): string {
   if (/build|run|generat|accret/i.test(status)) return 'is-running'
   if (/need|input/i.test(status)) return 'is-needs'
@@ -30,10 +38,13 @@ export function ArtifactFrame({
   const next = idx >= 0 && idx < views.length - 1 ? views[idx + 1] : null
   const prev = idx > 0 ? views[idx - 1] : null
 
+  const artifactId = ARTIFACT_ID[view]
+
   return (
     <article className="m-artifact-frame">
       <div className="m-artifact-status">
         <span className={`st ${statusClass(status)}`}>{status}</span>
+        {artifactId && <span className="m-artifact-id m-mono">{artifactId}</span>}
       </div>
       <h1 className="m-artifact m-artifact-h1">{title}</h1>
       {meta && <p className="m-artifact-meta m-mono">{meta}</p>}

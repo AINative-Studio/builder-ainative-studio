@@ -11,12 +11,15 @@ import { ACT_LABELS } from '@/lib/build/acts'
 import { BuildOverlays } from '@/components/build/BuildOverlays'
 import { TerminalRibbon } from '@/components/build/TerminalRibbon'
 import { DecisionModal } from '@/components/build/DecisionModal'
+import { ArtifactRail } from '@/components/build/ArtifactRail'
 import type { ReactNode } from 'react'
 
 function ActBar() {
-  const { state, woven, totalPrimitives } = useBuild()
+  const { state, dispatch, woven, totalPrimitives } = useBuild()
   // Map current screen/view to one of the 5 acts for the tracker.
   const actIndex = currentActIndex(state)
+  const doneCount = Object.keys(state.done).length
+  const initials = (state.companyName || 'You').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()
   return (
     <div className="m-actbar" role="navigation" aria-label="Build progress">
       <ol className="m-acts">
@@ -34,6 +37,45 @@ function ActBar() {
         <span className="m-woven m-mono" title="AINative primitives woven into this build">
           {woven}/{totalPrimitives} woven
         </span>
+        <button className="m-actbar-btn m-mono" onClick={() => dispatch({ type: 'TOGGLE_INDEX' })} title="Jump to any screen">
+          Index
+        </button>
+        <button className={`m-actbar-btn m-mono ${state.railOpen ? 'is-active' : ''}`} onClick={() => dispatch({ type: 'TOGGLE_RAIL' })} title="Artifacts">
+          Artifacts · {doneCount}
+        </button>
+        <button className="m-account-chip m-mono" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'account' })} title="Account">
+          <span className="m-account-initials">{initials}</span>
+          <span className="m-token-meter" aria-hidden><span style={{ width: '38%' }} /></span>
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** Index (jump-to-any-screen) panel — quick nav to any generated artifact. */
+function IndexPanel() {
+  const { state, views, dispatch, goView } = useBuild()
+  if (!state.indexOpen) return null
+  return (
+    <div className="m-index-panel" role="dialog" aria-label="Jump to a screen">
+      <div className="m-index-head m-mono">
+        <span>Jump to</span>
+        <button className="m-rail-close" onClick={() => dispatch({ type: 'TOGGLE_INDEX' })} aria-label="Close">✕</button>
+      </div>
+      <div className="m-index-grid">
+        {views.map((v) => {
+          const done = Boolean(state.done[v])
+          return (
+            <button
+              key={v}
+              className={`m-index-item m-mono ${done ? 'is-done' : 'is-upcoming'} ${state.view === v ? 'is-current' : ''}`}
+              disabled={!done}
+              onClick={() => { goView(v as never); dispatch({ type: 'TOGGLE_INDEX' }) }}
+            >
+              {v}
+            </button>
+          )
+        })}
       </div>
     </div>
   )
@@ -83,6 +125,7 @@ export function WorkspaceShell({
         <span className="m-topbar-artifact m-artifact">{state.companyName || 'Untitled'}</span>
       </header>
       <ActBar />
+      <IndexPanel />
       <PathBreadcrumb />
       <TerminalRibbon />
       <div className={`m-ws-body ${state.tablet ? 'is-tablet' : ''}`}>
@@ -91,6 +134,7 @@ export function WorkspaceShell({
           {state.overlay.kind !== 'none' ? <BuildOverlays /> : children}
         </main>
         {rail && <aside className="m-rail">{rail}</aside>}
+        <ArtifactRail />
       </div>
       <DecisionModal />
     </div>

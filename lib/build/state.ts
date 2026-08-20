@@ -64,6 +64,8 @@ export interface BuildState {
   overlay: Overlay         // full-bleed build overlay currently showing (Act-2 "watch Cody build")
   ribbon: string[]         // terminal-ribbon lines (infra-level narration), newest last
   askedPrivacy: boolean    // has the one App-track decision modal (privacy posture) been shown yet
+  railOpen: boolean        // the Artifacts rail drawer is open
+  indexOpen: boolean       // the Index (jump-to-any-screen) panel is open
 }
 
 /** Full-bleed build overlays that can cover the workspace during autoplay (04-SCREENS §3). */
@@ -100,6 +102,8 @@ export const initialBuildState: BuildState = {
   overlay: { kind: 'none' },
   ribbon: [],
   askedPrivacy: false,
+  railOpen: false,
+  indexOpen: false,
 }
 
 export type BuildAction =
@@ -127,6 +131,8 @@ export type BuildAction =
   | { type: 'RIBBON'; line: string }
   | { type: 'ASK_PRIVACY' }
   | { type: 'TRIGGER_CONFLICT'; changedView: string }
+  | { type: 'TOGGLE_RAIL' }
+  | { type: 'TOGGLE_INDEX' }
 
 export function buildReducer(state: BuildState, action: BuildAction): BuildState {
   switch (action.type) {
@@ -217,6 +223,10 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
       }
     case 'SET_TABLET':
       return { ...state, tablet: action.tablet }
+    case 'TOGGLE_RAIL':
+      return { ...state, railOpen: !state.railOpen, indexOpen: false }
+    case 'TOGGLE_INDEX':
+      return { ...state, indexOpen: !state.indexOpen, railOpen: false }
     case 'SET_OVERLAY':
       return { ...state, overlay: action.overlay }
     case 'RIBBON':
