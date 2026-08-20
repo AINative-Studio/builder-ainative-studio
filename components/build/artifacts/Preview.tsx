@@ -10,13 +10,30 @@
  * graceful message if generation fails. The Make-it-real banner is preserved.
  */
 
+import { useState } from 'react'
 import { useBuild } from '@/contexts/build-context'
 import { useRealPreview } from '@/lib/build/useRealPreview'
 
 export function Preview() {
   const { state, dispatch } = useBuild()
   // Kick real generation once the user reaches the preview view with an idea.
-  const { previewUrl, status } = useRealPreview(state.idea, state.view === 'preview' && !!state.idea)
+  const { previewUrl, status, chatId } = useRealPreview(state.idea, state.view === 'preview' && !!state.idea)
+  const [copied, setCopied] = useState(false)
+
+  // Persistent, shareable URL for the generated app. /api/preview/{id} is backed
+  // by ZeroDB (durable), so this link survives restarts/redeploys — a real
+  // shareable app, not an ephemeral sandbox. (#236)
+  const shareUrl = chatId && status === 'ready'
+    ? (typeof window !== 'undefined' ? `${window.location.origin}/preview/${chatId}` : `/preview/${chatId}`)
+    : null
+
+  const copyShare = () => {
+    if (!shareUrl) return
+    navigator.clipboard?.writeText(shareUrl).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1800)
+    }).catch(() => {})
+  }
 
   const liveLabel =
     status === 'ready' ? 'Live in production'
@@ -28,6 +45,14 @@ export function Preview() {
       <div className="m-live-chip m-mono">
         <span className="m-live-dot" /> {liveLabel}
       </div>
+
+      {shareUrl && (
+        <div className="m-share-bar">
+          <span className="m-mono m-share-label">Shareable link</span>
+          <a className="m-mono m-share-url" href={shareUrl} target="_blank" rel="noreferrer">{shareUrl}</a>
+          <button className="btn-secondary m-share-copy" onClick={copyShare}>{copied ? '✓ Copied' : 'Copy'}</button>
+        </div>
+      )}
 
       {state.builtMVP && (
         <div className="m-cody-banner">

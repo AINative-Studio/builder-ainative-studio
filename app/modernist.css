@@ -312,6 +312,13 @@
 .m-index-item:hover:not(:disabled) { background: rgba(255,255,255,0.16); }
 .m-artifact-id { margin-left: 10px; font-size: 10px; color: var(--text-faint); letter-spacing: 0.08em; }
 
+/* Shareable persistent app link (#236) */
+.m-share-bar { display: flex; align-items: center; gap: 12px; margin: 12px 0 6px; padding: 10px 14px; background: var(--color-surface); border: 1.5px solid var(--neutral-line); }
+.m-share-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-faint); }
+.m-share-url { font-size: 12px; color: var(--track, var(--color-accent)); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.m-share-url:hover { text-decoration: underline; }
+.m-share-copy { padding: 4px 12px; font-size: 12px; }
+
 /* Generation pending / error states for wired artifacts (#207) */
 .m-gen-pending { margin-top: 8px; }
 .m-gen-line { height: 13px; margin: 12px 0; background: var(--color-surface); }
