@@ -24,7 +24,7 @@ const SYSTEMS = [
 interface ChatLine { role: 'user' | 'cody'; text: string }
 
 export function Live() {
-  const { state } = useBuild()
+  const { state, dispatch } = useBuild()
   const proof = useLiveProof()
   const [msg, setMsg] = useState('')
   const [enrolled, setEnrolled] = useState(false)
@@ -41,6 +41,17 @@ export function Live() {
       : 'Run the nightly improvement pass',
     'Summarize outcomes and score them into the RLHF loop',
   ]
+
+  // Reach the real artifact graph from Live (returns to the workspace on the graph view).
+  const openGraph = () => {
+    dispatch({ type: 'GOTO_VIEW', view: 'graph' })
+    dispatch({ type: 'GOTO_SCREEN', screen: 'ws' })
+  }
+  // Re-scoping the wedge is a real upstream edit with downstream impact → fire the
+  // blocking Dependency Conflict gate (traced from the real composition graph).
+  const rescopeWedge = () => {
+    dispatch({ type: 'TRIGGER_CONFLICT', changedView: state.track === 'company' ? 'wedge' : 'prd' })
+  }
 
   const ask = async () => {
     const q = msg.trim()
@@ -97,7 +108,10 @@ export function Live() {
           <div className="m-live-card">
             <div className="m-mono m-live-card-h"><span className="m-glyph">◇</span> Cody · nightly run <span className="st is-done">shipped</span></div>
             <p className="m-live-card-body">Nightly, I evaluate the company, pick the highest-leverage task, and run it. You&apos;ll get a morning summary.</p>
-            <button className="btn-ghost">Open the artifact graph →</button>
+            <div className="m-live-card-actions">
+              <button className="btn-ghost" onClick={openGraph}>Open the artifact graph →</button>
+              <button className="btn-ghost" onClick={rescopeWedge}>Re-scope the wedge ⚠</button>
+            </div>
           </div>
           <div className="m-live-card">
             <div className="m-mono m-live-card-h">Business metrics</div>

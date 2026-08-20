@@ -53,6 +53,7 @@ export interface BuildState {
   builtCompany: boolean
   propagating: boolean
   conflictResolved: boolean
+  conflictView: string     // the upstream artifact whose edit triggered the conflict ('' = none)
   answers: { privacy?: PrivacyAnswer; [k: string]: string | undefined }
   companyName: string
   appSub: string           // staging subdomain, e.g. {appSub}.ainative.studio
@@ -88,6 +89,7 @@ export const initialBuildState: BuildState = {
   builtCompany: false,
   propagating: false,
   conflictResolved: false,
+  conflictView: '',
   answers: {},
   companyName: '',
   appSub: '',
@@ -124,6 +126,7 @@ export type BuildAction =
   | { type: 'SET_OVERLAY'; overlay: Overlay }
   | { type: 'RIBBON'; line: string }
   | { type: 'ASK_PRIVACY' }
+  | { type: 'TRIGGER_CONFLICT'; changedView: string }
 
 export function buildReducer(state: BuildState, action: BuildAction): BuildState {
   switch (action.type) {
@@ -199,6 +202,19 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
       return { ...state, propagating: action.propagating }
     case 'RESOLVE_CONFLICT':
       return { ...state, propagating: false, conflictResolved: true }
+    case 'TRIGGER_CONFLICT':
+      // An upstream edit with downstream impact routes to the blocking conflict
+      // gate. auto=false so the user must resolve it before anything else runs.
+      return {
+        ...state,
+        screen: 'ws',
+        view: 'conflict' as ArtifactView,
+        conflictView: action.changedView,
+        conflictResolved: false,
+        propagating: false,
+        auto: false,
+        overlay: { kind: 'none' },
+      }
     case 'SET_TABLET':
       return { ...state, tablet: action.tablet }
     case 'SET_OVERLAY':

@@ -275,6 +275,7 @@
 .m-modal-foot { font-size: 11px; color: var(--text-faint); }
 
 .m-metric-note { font-size: 10px; color: var(--text-faint); margin-top: 10px; }
+.m-live-card-actions { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
 
 /* Generation pending / error states for wired artifacts (#207) */
 .m-gen-pending { margin-top: 8px; }
