@@ -31,6 +31,7 @@ export function useRealPreview(idea: string, enabled: boolean) {
     setStatus('generating')
 
     const ac = new AbortController()
+    let gotChatId: string | null = null
 
     ;(async () => {
       try {
@@ -62,18 +63,33 @@ export function useRealPreview(idea: string, enabled: boolean) {
             let payload: any
             try { payload = JSON.parse(line.slice(5).trim()) } catch { continue }
             if (payload.type === 'init' && payload.chatId) {
+              gotChatId = payload.chatId
               setChatId(payload.chatId)
             } else if (payload.type === 'refresh' || payload.type === 'files') {
-              setStatus('ready')
+              // don't flip to "ready" yet — a refresh can fire on partial/empty
+              // content. We confirm renderable content after the stream ends.
               setRefreshKey((k) => k + 1)
             } else if (payload.type === 'error') {
               setStatus('error')
             }
           }
         }
-        // stream ended — if we got a chatId, the app is in the store
-        setStatus((s) => (s === 'error' ? s : 'ready'))
-        setRefreshKey((k) => k + 1)
+
+        // Stream ended. Confirm the preview actually has RENDERABLE content
+        // before showing it — the pipeline can occasionally return an empty/too-
+        // short body (e.g. a failed primary model), which /api/preview renders as
+        // "No renderable code found". Verify, and if empty, do NOT show it.
+        if (gotChatId) {
+          const ok = await previewHasContent(gotChatId, ac.signal)
+          if (ok) {
+            setStatus('ready')
+            setRefreshKey((k) => k + 1)
+          } else if (!ac.signal.aborted) {
+            setStatus('error')
+          }
+        } else if (!ac.signal.aborted) {
+          setStatus('error')
+        }
       } catch (e) {
         if (!ac.signal.aborted) setStatus('error')
       }
@@ -82,6 +98,24 @@ export function useRealPreview(idea: string, enabled: boolean) {
     return () => ac.abort()
   }, [enabled, idea])
 
-  const previewUrl = chatId ? `/api/preview/${chatId}?r=${refreshKey}` : null
+  const previewUrl = chatId && status === 'ready' ? `/api/preview/${chatId}?r=${refreshKey}` : null
   return { previewUrl, status, chatId }
+}
+
+/**
+ * Does /api/preview/{id} have real renderable content? The route returns a
+ * "No renderable code found" stub (small body) when generation produced nothing
+ * usable. We treat that stub — and any suspiciously tiny body — as "not ready"
+ * so the Preview shows a building/retry state instead of a broken frame.
+ */
+async function previewHasContent(id: string, signal: AbortSignal): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/preview/${id}`, { signal })
+    if (!res.ok) return false
+    const html = await res.text()
+    if (/No renderable code found/i.test(html)) return false
+    return html.length > 800
+  } catch {
+    return false
+  }
 }

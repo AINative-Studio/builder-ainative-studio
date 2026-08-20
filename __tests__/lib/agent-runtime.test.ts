@@ -95,11 +95,15 @@ describe('resolveAgentModel (builder#99 — cody model mapping)', () => {
     expect(resolveAgentModel('sonnet', env({ AGENT_RUNTIME: 'claude' }))).toBe('sonnet')
   })
 
-  it('maps anthropic shorthands to the cody default (kimi-k2) under the cody runtime', () => {
+  // The default MUST be a model identifier the AINative proxy actually accepts.
+  // `kimi-k2` (no minor) returns HTTP 400 "model identifier is invalid" in prod,
+  // which forced a failed primary agent call on every generation. The valid
+  // identifier is `kimi-k2.6` (see PAID_MODEL in chat-ws + model registry).
+  it('maps anthropic shorthands to the cody default (kimi-k2.6) under the cody runtime', () => {
     const e = env({ AGENT_RUNTIME: 'cody' })
-    expect(resolveAgentModel('sonnet', e)).toBe('kimi-k2')
-    expect(resolveAgentModel('opus', e)).toBe('kimi-k2')
-    expect(resolveAgentModel('claude-sonnet', e)).toBe('kimi-k2')
+    expect(resolveAgentModel('sonnet', e)).toBe('kimi-k2.6')
+    expect(resolveAgentModel('opus', e)).toBe('kimi-k2.6')
+    expect(resolveAgentModel('claude-sonnet', e)).toBe('kimi-k2.6')
   })
 
   it('honors CODY_MODEL override', () => {
@@ -109,14 +113,14 @@ describe('resolveAgentModel (builder#99 — cody model mapping)', () => {
 
   it('passes through an explicit AINative model unchanged under cody', () => {
     const e = env({ AGENT_RUNTIME: 'cody' })
-    expect(resolveAgentModel('kimi-k2', e)).toBe('kimi-k2')
+    expect(resolveAgentModel('kimi-k2.6', e)).toBe('kimi-k2.6')
     expect(resolveAgentModel('qwen3-coder-flash', e)).toBe('qwen3-coder-flash')
     expect(resolveAgentModel('deepseek-4-flash', e)).toBe('deepseek-4-flash')
   })
 
   it('is case-insensitive on the shorthand match', () => {
     const e = env({ AGENT_RUNTIME: 'cody' })
-    expect(resolveAgentModel('Sonnet', e)).toBe('kimi-k2')
-    expect(resolveAgentModel(' OPUS ', e)).toBe('kimi-k2')
+    expect(resolveAgentModel('Sonnet', e)).toBe('kimi-k2.6')
+    expect(resolveAgentModel(' OPUS ', e)).toBe('kimi-k2.6')
   })
 })

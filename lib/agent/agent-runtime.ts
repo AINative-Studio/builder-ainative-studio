@@ -64,8 +64,12 @@ export function getAgentSpawnEnv(env: NodeJS.ProcessEnv = process.env): Record<s
  * proxy, whose enterprise tier rejects `sonnet` (403 permission_error) — every
  * such run then falls back to standard generation and NO Cody trajectory is
  * captured. For the cody runtime we map Anthropic-family shorthands to an
- * AINative-valid coding model (default `kimi-k2`, override via CODY_MODEL).
- * Models already valid on AINative (e.g. `kimi-k2`, `qwen3-coder-flash`) pass
+ * AINative-valid coding model (default `kimi-k2.6`, override via CODY_MODEL).
+ * NOTE: `kimi-k2` (no minor) is REJECTED by the AINative proxy with HTTP 400
+ * "model identifier is invalid" — using it forced a failed primary agent call on
+ * every generation (only saved by the Bedrock fallback, adding latency + a
+ * flaky-failure window). The valid identifier is `kimi-k2.6`.
+ * Models already valid on AINative (e.g. `kimi-k2.6`, `qwen3-coder-flash`) pass
  * through unchanged. The `claude` runtime is untouched.
  */
 const _ANTHROPIC_SHORTHANDS = new Set([
@@ -78,9 +82,9 @@ export function resolveAgentModel(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   if (getAgentRuntime(env) !== 'cody') return model
-  const codyDefault = (env.CODY_MODEL || 'kimi-k2').trim()
+  const codyDefault = (env.CODY_MODEL || 'kimi-k2.6').trim()
   // Only remap the Anthropic-family shorthands the AINative tier can't serve;
-  // an explicit AINative model name (kimi-k2, qwen3-coder-flash, …) is honored.
+  // an explicit AINative model name (kimi-k2.6, qwen3-coder-flash, …) is honored.
   if (_ANTHROPIC_SHORTHANDS.has(model.trim().toLowerCase())) return codyDefault
   return model
 }
