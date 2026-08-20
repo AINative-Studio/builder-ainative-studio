@@ -25,12 +25,12 @@ An item is **Done** only when its acceptance criterion passes **on production** 
 | B-05 | R9 | Real Preview — actual generated app in the browser frame (sandbox) | B-04 | Done (local only) | #237 |
 | B-06 | R10, R11 | Real "Ask Cody" chat + honest Live dashboard metrics + real /intelligence data | B-04 | Done (local only) | #237 |
 | B-07 | R17 | Full-bleed Modernist ground — no white gutters | — | Done (verified prod) | #237 |
-| B-08 | R7 | Wire Dependency Conflict + Artifact Graph into the flow (built but orphaned) | B-01 | Pending | #234 |
-| B-09 | R12 | Real Swarm — live agent-swarm run (paid), not overlay | core#6422 | Pending | #232 |
-| B-10 | R13 | Real Live business-systems — wire Pipeline/Invoices/Helpdesk/Voice to primitives | enroll | Pending | #233 |
-| B-11 | R16 | Missing workspace chrome — artifact rail, Index, account chip, artifact IDs/cross-links | B-01 | Pending | #235 |
-| B-12 | R14 | Persistent live deploy — sandbox Preview → real shareable URL | #213 | Pending | #236 |
-| B-13 | R18 | Production verification pass — re-verify B-01..B-06 on builder.ainative.studio | B-01..B-06 | In progress | #238 |
+| B-08 | R7 | Wire Dependency Conflict + Artifact Graph into the flow (built but orphaned) | B-01 | **Done (verified prod)** | #234 ✓ |
+| B-09 | R12 | Real Swarm — live agent-swarm run (paid), not overlay | core#6422 | Done (honest degrade; real path live on core#6422 fix) | #232 |
+| B-10 | R13 | Real Live business-systems — wire Pipeline/Invoices/Helpdesk/Voice to primitives | enroll | **Done (verified prod)** | #233 ✓ |
+| B-11 | R16 | Missing workspace chrome — artifact rail, Index, account chip, artifact IDs/cross-links | B-01 | **Done (verified prod)** | #235 ✓ |
+| B-12 | R14 | Persistent live deploy — sandbox Preview → real shareable URL | #213 | Done (verifying prod) | #236 |
+| B-13 | R18 | Production verification pass — re-verify B-01..B-06 on builder.ainative.studio | B-01..B-06 | **Done (verified prod)** | #238 ✓ |
 | B-14 | R8/R9 | Bug: cody-agent primary 400s on every codegen (masked by Bedrock fallback) — found by #238 | — | Pending | #239 |
 
 ## Traceability summary
