@@ -19,6 +19,9 @@ import { NextRequest } from 'next/server'
 import OpenAI from 'openai'
 import { ARTIFACT_PROMPTS, type ArtifactContext } from '@/lib/build/artifact-prompts'
 import { getClaudeCompletion } from '@/lib/build/claude-completion'
+import { auth } from '@/app/(auth)/auth'
+import { getPlanStatus } from '@/lib/ainative/plan'
+import { modelsForTier } from '@/lib/build/tier-models'
 
 export const runtime = 'nodejs'
 
@@ -26,8 +29,24 @@ const ainative = new OpenAI({
   apiKey: process.env.AINATIVE_API_KEY || process.env.API_Key || process.env.ZERODB_API_KEY || '',
   baseURL: (process.env.AINATIVE_API_URL || 'https://api.ainative.studio') + '/v1',
 })
-const AINATIVE_CLAUDE = process.env.BUILD_ARTIFACT_MODEL || 'claude-sonnet-4.5'
 const AINATIVE_FALLBACK = 'nous-coder'
+
+/**
+ * Resolve the caller's plan tier from their session, so generation uses the
+ * tier-appropriate Claude model (Haiku 4.5 / Sonnet 4.5 / Opus 4.5). Anonymous
+ * or errored callers get the entry tier (hobbyist → Haiku) — fast + free.
+ */
+async function resolveTier(): Promise<string> {
+  try {
+    const session = await auth()
+    const accessToken = (session as any)?.accessToken
+    if (!accessToken) return 'hobbyist'
+    const status = await getPlanStatus(accessToken)
+    return status.tier || 'hobbyist'
+  } catch {
+    return 'hobbyist'
+  }
+}
 
 /** Pull the first balanced JSON object out of a model response (handles ```json fences, stray prose). */
 function parseJson(raw: string): unknown | null {
@@ -70,12 +89,21 @@ export async function POST(request: NextRequest) {
   const system = spec.system + `\nRequired JSON schema: ${spec.schemaHint}`
   const user = spec.user(ctx)
 
-  // 1) Primary: Bedrock / direct Anthropic (provider-agnostic .messages.create)
+  // Tier → model: Hobbyist=Haiku 4.5, Pro/Scale=Sonnet 4.5, Enterprise=Opus 4.5.
+  // An explicit BUILD_ARTIFACT_MODEL env still overrides (ops escape hatch).
+  const tierModels = modelsForTier(await resolveTier())
+  const bedrockModel = process.env.BUILD_ARTIFACT_MODEL || tierModels.bedrockModel
+
+  // 1) Primary: Bedrock / direct Anthropic (provider-agnostic .messages.create).
+  // Bedrock accepts a per-call model override, so we invoke the TIER's model, not
+  // the client default. (Direct Anthropic ignores the Bedrock profile id and uses
+  // its own configured Claude model — still a Claude, just not tier-specific.)
   const claude = getClaudeCompletion()
   if (claude) {
+    const model = claude.provider === 'bedrock' ? bedrockModel : claude.model
     try {
       const res = await claude.client.messages.create({
-        model: claude.model,
+        model,
         max_tokens: 1600,
         temperature: 0.55,
         system,
@@ -87,16 +115,16 @@ export async function POST(request: NextRequest) {
         .join('\n')
       const content = parseJson(text)
       if (content) {
-        return Response.json({ view, content, provider: claude.provider, model: claude.model })
+        return Response.json({ view, content, provider: claude.provider, model, tier: tierModels.tier })
       }
       console.warn(`[build/artifact] ${view}: ${claude.provider} returned unparseable JSON, falling back`)
     } catch (e: any) {
-      console.warn(`[build/artifact] ${view}: ${claude.provider} failed (${e?.message?.slice(0, 80)}), falling back`)
+      console.warn(`[build/artifact] ${view}: ${claude.provider} ${model} failed (${e?.message?.slice(0, 80)}), falling back`)
     }
   }
 
-  // 2) Fallback: AINative chat-completions (claude-sonnet-4.5, then a free model)
-  for (const model of [AINATIVE_CLAUDE, AINATIVE_FALLBACK]) {
+  // 2) Fallback: AINative chat-completions (tier's Claude model, then a free model)
+  for (const model of [tierModels.ainativeModel, AINATIVE_FALLBACK]) {
     try {
       const res = await ainative.chat.completions.create({
         model,
@@ -110,7 +138,7 @@ export async function POST(request: NextRequest) {
       const text = res.choices?.[0]?.message?.content || ''
       const content = parseJson(text)
       if (content) {
-        return Response.json({ view, content, provider: 'ainative', model })
+        return Response.json({ view, content, provider: 'ainative', model, tier: tierModels.tier })
       }
     } catch (e: any) {
       console.warn(`[build/artifact] ${view}: ainative ${model} failed (${e?.message?.slice(0, 80)})`)
