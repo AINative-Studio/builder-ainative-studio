@@ -284,7 +284,15 @@ export async function POST(request: NextRequest) {
             complexityScore.shouldUseAgent &&
             !!process.env.ANTHROPIC_API_KEY &&
             isClaudeAgentEnabled()
-          const useAgent = agentExplicitlyEnabled || agentAutoActivated
+          // Config C makes Bedrock the intended PRIMARY codegen path. The cody-cli
+          // agent currently 400s deterministically ("model identifier is invalid")
+          // and only ever falls through to Bedrock — so running it first wastes a
+          // failed call + latency on every generation (builder#239). When Bedrock
+          // is available, skip the agent's failing first attempt and let Bedrock
+          // be primary. Re-enable the agent (for RLHF trajectory capture) by
+          // setting CODY_AGENT_PRIMARY=1 once cody-cli#239 is fixed.
+          const bedrockPrimary = USE_BEDROCK && process.env.CODY_AGENT_PRIMARY !== '1'
+          const useAgent = (agentExplicitlyEnabled || agentAutoActivated) && !bedrockPrimary
 
           // Tier-based maxTurns. A codegen task is read→write→verify→fix, not
           // 1-2 turns: with the old values (5/3) the agent hit --max-turns
