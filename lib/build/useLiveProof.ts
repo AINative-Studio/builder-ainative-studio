@@ -30,20 +30,26 @@ export function useLiveProof(): LiveProof {
   useEffect(() => {
     let alive = true
     const ac = new AbortController()
-    fetch(`${AINATIVE_API}/api/v1/public/platform/intelligence`, { signal: ac.signal })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (!alive || !d) return
-        const s = d.stats || {}
-        setProof({
-          agentsActive: num(s.agents_active),
-          tasksToday: num(s.tasks_completed_24h ?? s.tasks_completed_today),
-          apiRequestsToday: s.api_requests_today ?? null,
-          companiesBuilt: num(s.total_companies ?? s.companies),
+    const load = () => {
+      fetch(`${AINATIVE_API}/api/v1/public/platform/intelligence`, { signal: ac.signal })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (!alive || !d) return
+          const s = d.stats || {}
+          setProof({
+            agentsActive: num(s.agents_active),
+            tasksToday: num(s.tasks_completed_24h ?? s.tasks_completed_today),
+            apiRequestsToday: s.api_requests_today ?? null,
+            companiesBuilt: num(s.total_companies ?? s.companies),
+          })
         })
-      })
-      .catch(() => { /* strip hides on failure */ })
-    return () => { alive = false; ac.abort() }
+        .catch(() => { /* strip hides on failure */ })
+    }
+    load()
+    // Live spectacle: refresh every 15s so the numbers visibly move — the real
+    // recursive loop working, not a static badge (the Polsia-style "watch it live").
+    const id = setInterval(load, 15_000)
+    return () => { alive = false; ac.abort(); clearInterval(id) }
   }, [])
 
   return proof

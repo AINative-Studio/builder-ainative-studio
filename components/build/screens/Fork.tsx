@@ -4,12 +4,14 @@
 
 import { useBuild } from '@/contexts/build-context'
 import { LiveProof } from '@/components/build/LiveProof'
+import { LiveTicker } from '@/components/build/LiveTicker'
 import { APP_VIEWS, COMPANY_VIEWS } from '@/lib/build/state'
 
 export function Fork() {
   const { pickTrack } = useBuild()
   return (
     <div className="modernist m-fork">
+      <LiveTicker />
       <span className="m-eyebrow">AINATIVE BUILDER</span>
       <h1 className="m-h1">Don&apos;t build from scratch.</h1>
       <p className="m-sub">Compose AINative artifacts into intelligent products and AI-native companies.</p>
