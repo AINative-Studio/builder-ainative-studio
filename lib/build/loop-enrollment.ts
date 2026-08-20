@@ -82,3 +82,34 @@ export async function listEnrolled(): Promise<LoopEnrollment[]> {
     return []
   }
 }
+
+export interface CompanyRun {
+  companyId: string
+  lastTaskId?: string | null
+  lastStatus?: string
+  lastRunAt?: string
+}
+
+/**
+ * The most recent nightly run for a company (from the recorded run-event rows).
+ * Returns null when the company isn't enrolled / has never run — the dashboard
+ * then shows the honest "enroll to start the nightshift" state. Never fabricated.
+ */
+export async function getLastRun(companyId: string): Promise<CompanyRun | null> {
+  if (!configured() || !companyId) return null
+  try {
+    const res = await fetch(`${rowsUrl()}?limit=500`, { headers: headers(), signal: AbortSignal.timeout(20000) })
+    if (!res.ok) return null
+    const data = JSON.parse(await res.text())
+    const rows = Array.isArray(data) ? data : data.data || data.rows || []
+    const runs = rows
+      .map((r: { row_data?: CompanyRun & { kind?: string } }) => r.row_data)
+      .filter((rd: (CompanyRun & { kind?: string }) | undefined): rd is CompanyRun =>
+        rd?.kind === 'run' && rd?.companyId === companyId)
+    if (!runs.length) return null
+    runs.sort((a: CompanyRun, b: CompanyRun) => (b.lastRunAt || '').localeCompare(a.lastRunAt || ''))
+    return runs[0]
+  } catch {
+    return null
+  }
+}

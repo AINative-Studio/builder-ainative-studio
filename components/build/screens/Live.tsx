@@ -22,6 +22,7 @@ export function Live() {
   const [chat, setChat] = useState<ChatLine[]>([])
   const [asking, setAsking] = useState(false)
   const [systems, setSystems] = useState<BusinessSystem[]>(buildSystems())
+  const [nightshift, setNightshift] = useState<{ hasRun: boolean; summary?: string; lastRunAt?: string } | null>(null)
   const company = state.companyName || 'Your Company'
   const url = `${state.appSub || 'your-app'}.ainative.studio`
   const companyId = state.appSub || company.toLowerCase().replace(/\s+/g, '-')
@@ -34,6 +35,11 @@ export function Live() {
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => { if (alive && d?.systems) setSystems(d.systems) })
       .catch(() => { /* keep the zero-state default */ })
+    // The visible nightshift — the real last nightly run + morning summary.
+    fetch(`/api/build/nightshift?companyId=${encodeURIComponent(companyId)}&idea=${encodeURIComponent(state.idea)}&companyName=${encodeURIComponent(company)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (alive && d) setNightshift(d) })
+      .catch(() => { /* honest: no card if unavailable */ })
     return () => { alive = false }
   }, [companyId])
 
@@ -110,8 +116,17 @@ export function Live() {
         {/* LEFT — Cody status + metrics + upsell */}
         <div className="m-live-col">
           <div className="m-live-card">
-            <div className="m-mono m-live-card-h"><span className="m-glyph">◇</span> Cody · nightly run <span className="st is-done">shipped</span></div>
-            <p className="m-live-card-body">Nightly, I evaluate the company, pick the highest-leverage task, and run it. You&apos;ll get a morning summary.</p>
+            <div className="m-mono m-live-card-h">
+              <span className="m-glyph">◇</span> Cody · nightly run{' '}
+              <span className={`st ${nightshift?.hasRun ? 'is-done' : 'is-running'}`}>
+                {nightshift?.hasRun ? 'ran overnight' : enrolled ? 'scheduled tonight' : 'ready'}
+              </span>
+            </div>
+            {nightshift?.hasRun && nightshift.summary ? (
+              <p className="m-live-card-body"><strong>This morning:</strong> {nightshift.summary}</p>
+            ) : (
+              <p className="m-live-card-body">Nightly, I evaluate the company, pick the highest-leverage task, and run it. You&apos;ll get a morning summary.</p>
+            )}
             <div className="m-live-card-actions">
               <button className="btn-ghost" onClick={openGraph}>Open the artifact graph →</button>
               <button className="btn-ghost" onClick={rescopeWedge}>Re-scope the wedge ⚠</button>
