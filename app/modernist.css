@@ -222,6 +222,11 @@
 .m-chip-trail { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 22px; }
 .m-chip-trail .m-chip { background: var(--track-100); color: var(--track-700); }
 
+/* Generation pending / error states for wired artifacts (#207) */
+.m-gen-pending { margin-top: 8px; }
+.m-gen-line { height: 13px; margin: 12px 0; background: var(--color-surface); }
+.m-artifact-meta.is-error { color: var(--alert); }
+
 .m-intake-field { width: 100%; min-height: 160px; margin-top: 22px; padding: 16px; font-family: var(--font-body); font-size: 16px; background: var(--color-surface); border: 1.5px solid var(--neutral-line); color: var(--color-text); resize: vertical; }
 .m-helper { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); margin: 12px 0 22px; }
 .m-back { font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); background: none; border: 0; cursor: pointer; }

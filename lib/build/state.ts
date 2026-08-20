@@ -57,6 +57,9 @@ export interface BuildState {
   companyName: string
   appSub: string           // staging subdomain, e.g. {appSub}.ainative.studio
   tablet: boolean
+  idea: string             // the founder's raw idea (from intake) — drives all generation
+  generated: Record<string, unknown>  // view -> generated artifact content (from /api/build/artifact)
+  genError: Record<string, string>     // view -> error message when generation failed
 }
 
 export const initialBuildState: BuildState = {
@@ -79,12 +82,17 @@ export const initialBuildState: BuildState = {
   companyName: '',
   appSub: '',
   tablet: false,
+  idea: '',
+  generated: {},
+  genError: {},
 }
 
 export type BuildAction =
   | { type: 'GOTO_SCREEN'; screen: Screen }
   | { type: 'PICK_TRACK'; track: Track }
   | { type: 'START_BUILD'; idea: string; appSub: string; companyName?: string }
+  | { type: 'GEN_DONE'; view: string; content: unknown }
+  | { type: 'GEN_FAIL'; view: string; error: string }
   | { type: 'GOTO_VIEW'; view: ArtifactView }
   | { type: 'SET_BUILDING'; building: boolean }
   | { type: 'COMPLETE_ARTIFACT'; view: string; status?: string }
@@ -116,10 +124,28 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
       return {
         ...state,
         screen: 'ws',
+        idea: action.idea,
         appSub: action.appSub,
         companyName: action.companyName ?? state.companyName,
         building: true,
         auto: true,
+        // fresh run: clear any prior generation
+        generated: {},
+        genError: {},
+        done: {},
+        view: state.track === 'app' ? 'brief' : 'thesis',
+      }
+    case 'GEN_DONE':
+      return {
+        ...state,
+        generated: { ...state.generated, [action.view]: action.content },
+        genError: { ...state.genError, [action.view]: '' },
+        done: { ...state.done, [action.view]: 'done' },
+      }
+    case 'GEN_FAIL':
+      return {
+        ...state,
+        genError: { ...state.genError, [action.view]: action.error },
       }
     case 'GOTO_VIEW':
       return { ...state, view: action.view }

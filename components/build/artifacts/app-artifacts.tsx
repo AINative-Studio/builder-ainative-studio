@@ -1,128 +1,195 @@
 'use client'
 
 /**
- * App Track artifact bodies (#223). Each renders inside ArtifactFrame's chrome
- * via the registry below. Copy + structure from 04-SCREENS §4–14. Kept as data-
- * driven sections so they stay terse and consistent with the Modernist system.
+ * App Track artifact bodies (#223, wired #207).
+ *
+ * Each renders REAL generated content from state.generated[view] (produced by
+ * /api/build/artifact from the founder's idea), with a shimmer while pending and
+ * a static example on failure so the shell never looks broken. Structure/classes
+ * from 04-SCREENS §4–14.
  */
 
 import type { ReactNode } from 'react'
+import { Section, Tag, Generating, GenError, useGen } from '@/components/build/artifacts/gen-helpers'
 
-function Section({ h, children }: { h: string; children: ReactNode }) {
+export const Brief = () => {
+  const { data, error } = useGen<{ summary: string; goals: string[]; nonGoals: string[]; users: string[] }>('brief')
+  if (!data && !error) return <Generating lines={5} />
+  const d = data ?? {
+    summary: 'A private answer engine that replies from a team\'s own tools — with citations.',
+    goals: ['Cited answers from connected sources', '<2s median response'],
+    nonGoals: ['Public web search', 'Document editing'],
+    users: ['Ops teams', 'Support teams', 'Engineering teams'],
+  }
   return (
-    <section className="m-sec">
-      <h2 className="m-artifact m-sec-h">{h}</h2>
-      <div className="m-sec-body">{children}</div>
-    </section>
+    <>
+      {error && <GenError error={error} />}
+      <Section h="Overview">{d.summary}</Section>
+      <Section h="Goals"><ul className="m-list">{(d.goals || []).map((g, i) => <li key={i}>{g}</li>)}</ul></Section>
+      <Section h="Non-goals"><ul className="m-list">{(d.nonGoals || []).map((g, i) => <li key={i}>{g}</li>)}</ul></Section>
+      <Section h="Who it serves">
+        <ul className="m-list">{(d.users || []).map((u, i) => <li key={i}>{u}</li>)}</ul>
+        <Tag kind="assumption">ASSUMPTION · sizing TBD</Tag>
+      </Section>
+    </>
   )
 }
 
-function Tag({ kind, children }: { kind: 'assumption' | 'evidence'; children: ReactNode }) {
-  return <span className={`m-inline-tag is-${kind} m-mono`}>{children}</span>
+export const Prd = () => {
+  const { data, error } = useGen<{ overview: string; features: Array<{ name: string; desc: string; priority: string }>; acceptance: string[] }>('prd')
+  if (!data && !error) return <Generating lines={6} />
+  const d = data ?? {
+    overview: 'A cited answer engine over a team\'s connected tools.',
+    features: [
+      { name: 'Cited answers', desc: 'Every answer shows its sources', priority: 'P0' },
+      { name: 'Source controls', desc: 'Admins choose searchable sources', priority: 'P1' },
+    ],
+    acceptance: ['Every answer shows at least one source citation', 'Abstains when confidence is low'],
+  }
+  return (
+    <>
+      {error && <GenError error={error} />}
+      <Section h="Overview">{d.overview}</Section>
+      <Section h="Features">
+        <table className="m-table">
+          <thead><tr><th>Feature</th><th>Description</th><th>Priority</th></tr></thead>
+          <tbody>
+            {(d.features || []).map((f, i) => (
+              <tr key={i}><td>{f.name}</td><td>{f.desc}</td><td><span className="m-chip">{f.priority}</span></td></tr>
+            ))}
+          </tbody>
+        </table>
+      </Section>
+      <Section h="Acceptance criteria"><ul className="m-list m-checks">{(d.acceptance || []).map((a, i) => <li key={i}>{a}</li>)}</ul></Section>
+    </>
+  )
 }
 
-export const Brief = () => (
-  <>
-    <Section h="Overview">
-      A private answer engine that replies from a team&apos;s own tools — with citations — so no one
-      re-hunts for knowledge that already exists.
-    </Section>
-    <Section h="The problem">
-      Teams drown in their own documents; answers exist but aren&apos;t findable. <Tag kind="assumption">ASSUMPTION · not yet validated</Tag>
-    </Section>
-    <Section h="Who it serves">
-      Ops, support, and engineering teams at 50–500-person companies. <Tag kind="evidence">EVIDENCE · 3 interviews · draws from Customer Profile</Tag>
-    </Section>
-    <Section h="Core capabilities">
-      <ul className="m-list"><li>Ask in natural language, get a cited answer</li><li>Pulls from connected tools (Drive, Slack, Jira)</li><li>Answers only from your data — never guesses</li></ul>
-    </Section>
-  </>
-)
+export const Comp = () => {
+  const { data, error } = useGen<{ summary: string; primitives: Array<{ name: string; use: string }> }>('comp')
+  if (!data && !error) return <Generating lines={4} />
+  const d = data ?? {
+    summary: 'Each requirement maps to an AINative primitive.',
+    primitives: [
+      { name: 'ZeroDB · Vectors', use: 'Cited retrieval over your data' },
+      { name: 'ZeroMemory', use: 'Remember context per user' },
+      { name: 'Agent Cloud', use: 'Run the answer agent' },
+      { name: 'MCP', use: 'Tool access to connected apps' },
+    ],
+  }
+  return (
+    <>
+      {error && <GenError error={error} />}
+      <p className="m-sub">{d.summary}</p>
+      <table className="m-table">
+        <thead><tr><th>AINative primitive</th><th>How this app uses it</th></tr></thead>
+        <tbody>
+          {(d.primitives || []).map((p, i) => (
+            <tr key={i}><td><span className="m-chip">{p.name}</span></td><td>{p.use}</td></tr>
+          ))}
+        </tbody>
+      </table>
+    </>
+  )
+}
 
-export const Prd = () => (
-  <>
-    <Section h="Goals & non-goals">
-      <div className="m-two-col">
-        <div><strong>Goals</strong><ul className="m-list"><li>Cited answers from connected sources</li><li>&lt;2s median response</li></ul></div>
-        <div><strong>Non-goals</strong><ul className="m-list"><li>Public web search</li><li>Document editing</li></ul></div>
-      </div>
-    </Section>
-    <Section h="User stories"><ul className="m-list"><li>As a support rep, I can ask a question and get a cited answer.</li><li>As an admin, I can control which sources are searchable.</li></ul></Section>
-    <Section h="Acceptance criteria"><ul className="m-list m-checks"><li>Every answer shows at least one source citation</li><li>Abstains when confidence is low</li></ul></Section>
-  </>
-)
-
-export const Comp = () => (
-  <>
-    <p className="m-sub">Each product requirement maps to an AINative primitive, and each primitive generates a real artifact you can open.</p>
-    <table className="m-table">
-      <thead><tr><th>Requirement</th><th>AINative primitive</th><th>Artifact</th></tr></thead>
-      <tbody>
-        <tr><td>Cited answers</td><td><span className="m-chip">ZeroDB · Vectors</span></td><td>Data Model</td></tr>
-        <tr><td>Remember context</td><td><span className="m-chip">ZeroMemory</span></td><td>Memory Policy</td></tr>
-        <tr><td>Answer engine</td><td><span className="m-chip">Agent Cloud</span></td><td>Agent Definition</td></tr>
-        <tr><td>Tool access</td><td><span className="m-chip">MCP</span></td><td>Integrations</td></tr>
-      </tbody>
-    </table>
-  </>
-)
-
-export const DataModel = () => (
-  <>
-    <p className="m-artifact-meta m-mono">ZeroDB · Vectors + Tables + managed embeddings</p>
-    <div className="m-entity-grid">
-      {[['Document', ['id · uuid', 'title · text', 'body · text', 'embedding · vector']],
-        ['Person', ['id · uuid', 'name · text', 'role · text']],
-        ['Query', ['id · uuid', 'text · text', 'answer · text', 'sources · uuid[]']]].map(([name, fields]) => (
-        <div key={name as string} className="m-entity">
-          <div className="m-entity-h m-mono">{name}</div>
-          <ul className="m-entity-fields m-mono">{(fields as string[]).map((f) => <li key={f}>{f}</li>)}</ul>
-        </div>
-      ))}
-    </div>
-  </>
-)
-
-export const MemoryPolicy = () => (
-  <table className="m-table">
-    <thead><tr><th>What we remember</th><th>Retention</th><th>Scope</th><th>Who sees it</th></tr></thead>
-    <tbody>
-      <tr><td>Query history</td><td>90 days</td><td>Per user</td><td>The asker</td></tr>
-      <tr><td>Source index</td><td>Until source removed</td><td>Workspace</td><td>Members</td></tr>
-    </tbody>
-  </table>
-)
-
-export const AgentDef = () => (
-  <>
-    <Section h="Role">A retrieval agent that answers strictly from connected sources, with citations.</Section>
-    <Section h="Tools"><ul className="m-list m-mono"><li>ZeroDB.vectors.search(query, k) → GraphRAG passages</li><li>ZeroMemory.recall(userId) → prior context</li></ul></Section>
-    <Section h="Guardrails"><ul className="m-list"><li>Cite or abstain — never guess.</li><li>Never expose sources the asker can&apos;t access.</li></ul></Section>
-  </>
-)
-
-export const ApiSpec = () => (
-  <>
-    <p className="m-artifact-meta m-mono">Wired through MCP servers · external-tool calling</p>
-    <Section h="Connectors"><ul className="m-list">{['Slack', 'Jira', 'Salesforce', 'Google Drive'].map((c) => <li key={c}>{c} <span className="st is-done">Wired</span></li>)}</ul></Section>
-    <Section h="Endpoints"><ul className="m-list m-mono"><li>POST /ask — ask a question, get a cited answer</li><li>GET /sources/:id — fetch a cited source</li></ul></Section>
-  </>
-)
-
-export const Backlog = () => (
-  <>
-    <p className="m-sub">Cody broke the PRD into shippable issues and assigned each to a swarm agent.</p>
-    <table className="m-table">
-      <thead><tr><th>Status</th><th>Issue</th><th>Agent</th></tr></thead>
-      <tbody>
-        {[['assigned', 'Vector search endpoint', 'Backend'], ['assigned', 'Citation renderer', 'Frontend'], ['assigned', 'Source-access guard', 'Security']].map(([s, t, a]) => (
-          <tr key={t}><td><span className="st is-done">{s}</span></td><td>{t}</td><td className="m-mono">◇ {a}</td></tr>
+export const DataModel = () => {
+  const { data, error } = useGen<{ summary: string; entities: Array<{ name: string; fields: string[] }> }>('dataModel')
+  if (!data && !error) return <Generating lines={5} />
+  const d = data ?? {
+    summary: 'ZeroDB · Vectors + Tables + managed embeddings',
+    entities: [
+      { name: 'Document', fields: ['id · uuid', 'title · text', 'body · text', 'embedding · vector'] },
+      { name: 'Person', fields: ['id · uuid', 'name · text', 'role · text'] },
+      { name: 'Query', fields: ['id · uuid', 'text · text', 'answer · text', 'sources · uuid[]'] },
+    ],
+  }
+  return (
+    <>
+      {error && <GenError error={error} />}
+      <p className="m-artifact-meta m-mono">{d.summary}</p>
+      <div className="m-entity-grid">
+        {(d.entities || []).map((e, i) => (
+          <div key={i} className="m-entity">
+            <div className="m-entity-h m-mono">{e.name}</div>
+            <ul className="m-entity-fields m-mono">{(e.fields || []).map((f, j) => <li key={j}>{f}</li>)}</ul>
+          </div>
         ))}
-      </tbody>
-    </table>
-  </>
-)
+      </div>
+    </>
+  )
+}
 
+export const MemoryPolicy = () => {
+  const { data, error } = useGen<{ summary: string; rules: string[] }>('memoryPolicy')
+  if (!data && !error) return <Generating lines={4} />
+  const d = data ?? { summary: 'What the agent remembers via ZeroMemory.', rules: ['Query history · 90 days · per user', 'Source index · until removed · workspace'] }
+  return (
+    <>
+      {error && <GenError error={error} />}
+      <p className="m-artifact-meta m-mono">{d.summary}</p>
+      <ul className="m-list">{(d.rules || []).map((r, i) => <li key={i}>{r}</li>)}</ul>
+    </>
+  )
+}
+
+export const AgentDef = () => {
+  const { data, error } = useGen<{ summary: string; agents: Array<{ name: string; role: string }> }>('agentDef')
+  if (!data && !error) return <Generating lines={4} />
+  const d = data ?? {
+    summary: 'The agents that run this product.',
+    agents: [{ name: 'Answer agent', role: 'Answers strictly from connected sources, with citations' }],
+  }
+  return (
+    <>
+      {error && <GenError error={error} />}
+      <Section h="Summary">{d.summary}</Section>
+      <Section h="Agents"><ul className="m-list">{(d.agents || []).map((a, i) => <li key={i}><strong>{a.name}</strong> — {a.role}</li>)}</ul></Section>
+    </>
+  )
+}
+
+export const ApiSpec = () => {
+  const { data, error } = useGen<{ summary: string; integrations: Array<{ name: string; why: string }> }>('apiSpec')
+  if (!data && !error) return <Generating lines={4} />
+  const d = data ?? {
+    summary: 'Wired through MCP servers · external-tool calling',
+    integrations: [{ name: 'Slack', why: 'Read team knowledge' }, { name: 'Google Drive', why: 'Index documents' }],
+  }
+  return (
+    <>
+      {error && <GenError error={error} />}
+      <p className="m-artifact-meta m-mono">{d.summary}</p>
+      <ul className="m-list">{(d.integrations || []).map((c, i) => <li key={i}>{c.name} — {c.why} <span className="st is-done">Wired</span></li>)}</ul>
+    </>
+  )
+}
+
+export const Backlog = () => {
+  const { data, error } = useGen<{ summary: string; items: Array<{ title: string; size: string }> }>('backlog')
+  if (!data && !error) return <Generating lines={6} />
+  const d = data ?? {
+    summary: 'Cody broke the PRD into shippable issues.',
+    items: [{ title: 'Vector search endpoint', size: 'M' }, { title: 'Citation renderer', size: 'S' }, { title: 'Source-access guard', size: 'M' }],
+  }
+  const agents = ['Backend', 'Frontend', 'Security', 'Data', 'QA']
+  return (
+    <>
+      {error && <GenError error={error} />}
+      <p className="m-sub">{d.summary}</p>
+      <table className="m-table">
+        <thead><tr><th>Status</th><th>Issue</th><th>Size</th><th>Agent</th></tr></thead>
+        <tbody>
+          {(d.items || []).map((it, i) => (
+            <tr key={i}><td><span className="st is-done">assigned</span></td><td>{it.title}</td><td><span className="m-chip">{it.size}</span></td><td className="m-mono">◇ {agents[i % agents.length]}</td></tr>
+          ))}
+        </tbody>
+      </table>
+    </>
+  )
+}
+
+// Infra stays a static "provisioning" checklist — it's not idea-specific prose.
 export const Infra = () => (
   <>
     <p className="m-artifact-meta m-mono">Real AINative primitives · provision everything, ask nothing</p>
@@ -134,7 +201,6 @@ export const Infra = () => (
   </>
 )
 
-/** Registry consumed by ArtifactRouter. */
 export const APP_ARTIFACT_BODIES: Record<string, () => ReactNode> = {
   brief: Brief, prd: Prd, comp: Comp, dataModel: DataModel, memoryPolicy: MemoryPolicy,
   agentDef: AgentDef, apiSpec: ApiSpec, backlog: Backlog, infra: Infra,
