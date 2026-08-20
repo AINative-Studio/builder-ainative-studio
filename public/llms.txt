@@ -1,35 +1,45 @@
 # AINative Builder
-> AI-powered React component builder with Agent Experience (AX) optimization
+> AI that builds AND runs your company. Describe an idea; Cody (your AI co-founder) composes a real, running product or an operating AI-native company from real AINative primitives, then runs it 24/7.
 
-## About
-AINative Builder is a production-grade AI application builder that generates beautiful, agent-optimized React components and full web applications from natural language prompts. Every generated application includes AX (Agent Experience) optimization, SEO, structured data, and semantic HTML.
+## What it is
+AINative Builder turns a one-line idea into an operating, AI-run company. You describe what you want; Cody builds the artifacts (product brief, PRD, data model, agent definitions, business model, positioning, landing page, 30-day plan), builds a real working app you can share, provisions the infrastructure on real AINative primitives, and then keeps running the company on a nightly autonomous loop. Unlike a code generator, Builder composes real, production-ready software and business systems from existing AINative products — not throwaway demos.
 
-## Capabilities
-- Generate React/Next.js components from text prompts
-- Multi-model support: Claude Sonnet 4, Qwen Coder, Gemma, DeepSeek
-- Real-time streaming preview with Sandpack
-- AX Standard: 10-point agent accessibility scoring
-- Automatic SEO: robots.txt, sitemap.xml, JSON-LD, OpenGraph
-- Agent-optimized output with data-agent-* attributes
-- Template gallery with 12+ pre-built templates
-- Multi-file generation with component splitting
-- Design token system for brand customization
-- One-click deploy to Vercel, Netlify, Railway
+## How it beats the alternatives
+- Not just "AI that runs your company while you sleep" (Polsia) — Builder BUILDS the company AND runs it, on real primitives you own.
+- Not a UI/code generator (v0, Lovable, Bolt) — Builder produces a running product PLUS the operating company around it (CRM, invoicing, helpdesk, voice), each backed by a real AINative product.
+- Real, production-ready output: apps are built and deployed to a durable, shareable URL; business systems are real ZeroPipeline / ZeroInvoice / ServiceOS / ZeroVoice, not mockups.
+- Agent-native and fully transparent: watch every artifact get composed live; every artifact shows the exact AINative primitives powering it.
 
-## URLs
-- Homepage: https://builder.ainative.studio
-- Templates: https://builder.ainative.studio/templates
-- Documentation: https://builder.ainative.studio/docs/components
+## Two tracks
+- App Track: idea → Product Brief → PRD → Composition Plan → Data Model → Memory Policy → Agent Definition → Integrations → Build Backlog → Swarm → Infrastructure → Running Preview (a real app).
+- Company Track: idea → Venture Thesis → Wedge → Business Model → Positioning → Landing Page → 30-Day Plan → Live operating dashboard.
 
-## API
-- Chat Generation: POST /api/chat-ws
-- Templates: GET /api/templates
-- Preview: GET /api/preview/{id}
+## Real AINative primitives it composes from
+ZeroDB (vectors + tables + managed embeddings), ZeroMemory (agent memory), GraphRAG, Agent Cloud (agent swarm), ZeroPipeline (CRM), ZeroInvoice (billing), ServiceOS (helpdesk), ZeroVoice (voice + SMS), AI Kit (UI + safety), MCP (tool access), OAuth 2.1. See https://docs.ainative.studio.
+
+## The autonomous loop (runs while you sleep)
+Every enrolled company gets a nightly run: Cody evaluates the company, picks the highest-leverage task, runs it on the AINative agent swarm, and delivers a morning summary. This is the same recursive self-improvement loop that builds AINative itself, surfaced live at https://ainative.studio/intelligence.
+
+## Model
+Primary generation is Claude (Sonnet 4.5 / Haiku 4.5 / Opus 4.5) via Amazon Bedrock, tiered by plan. Artifacts and the running app are generated from YOUR idea — every build is idea-specific, never a template.
+
+## Start here
+- Build: https://builder.ainative.studio/build
+- Docs (all AINative primitives): https://docs.ainative.studio
+- Live loop / social proof: https://ainative.studio/intelligence
+
+## API (agent-callable)
+- Generate an app from an idea: POST /api/chat-ws  { "message": "<idea>" }
+- Generate a build artifact: POST /api/build/artifact  { "view": "thesis|prd|dataModel|...", "idea": "<idea>", "track": "app|company" }
+- Ask Cody about a company: POST /api/build/ask  { "question": "<q>", "idea": "<idea>", "companyName": "<name>" }
+- Live business systems: GET /api/build/systems?companyId=<id>
+- Running preview of a generated app: GET /api/preview/{id}
+- Enroll a company in the nightly loop: POST /api/build/enroll
 - Health: GET /api/health
 
 ## Keywords
-AI app builder, AI UI generator, React component generator, text to UI, prompt to website, AI frontend builder, agent-optimized, AX optimization, SEO builder, shadcn AI, Next.js generator, AI code generator, lovable alternative, v0 alternative, bolt alternative
+AI that runs your company, AI co-founder, autonomous AI company, AI that builds a startup, Polsia alternative, AI business builder, agent-run company, build a company with AI, AI startup generator, AI-native company, nightly AI operations, agent swarm, ZeroDB, AINative, build an app with AI, real production apps from AI.
 
 ## Contact
-- Website: https://ainative.studio
+- Platform: https://ainative.studio
 - Builder: https://builder.ainative.studio

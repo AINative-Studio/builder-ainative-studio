@@ -42,3 +42,7 @@ User-agent: cohere-ai
 Allow: /
 
 Sitemap: https://builder.ainative.studio/sitemap.xml
+
+# Agent-facing manifests (Builder is agent-native)
+# LLM summary:    https://builder.ainative.studio/llms.txt
+# Agent manifest: https://builder.ainative.studio/agents.txt
