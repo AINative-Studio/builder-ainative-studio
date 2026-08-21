@@ -339,6 +339,7 @@
 .m-domain-badge { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
 .m-domain-badge.is-free { color: var(--success); }
 .m-domain-badge.is-taken { color: var(--text-faint); }
+.m-domain-price { color: var(--track, var(--color-accent)); font-size: 13px; }
 .m-domain-status { font-size: 12px; color: var(--text-body-70); margin: 6px 0; }
 
 /* Live activity ticker — the "watch it build live" spectacle (CRUSH-2) */

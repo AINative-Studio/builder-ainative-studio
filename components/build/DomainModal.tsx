@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from 'react'
 
-interface Suggestion { domain: string; available: boolean }
+interface Suggestion { domain: string; available: boolean; price?: number }
 
 export function DomainModal({ brand, open, onClose }: { brand: string; open: boolean; onClose: () => void }) {
   const [loading, setLoading] = useState(false)
@@ -63,20 +63,22 @@ export function DomainModal({ brand, open, onClose }: { brand: string; open: boo
         ) : (
           <>
             <div className="m-domain-list">
+              {/* Only AVAILABLE (purchasable) domains are returned — no dead options. */}
               {suggestions.map((s) => (
                 <button
                   key={s.domain}
                   className={`m-domain-opt ${picked === s.domain ? 'is-picked' : ''}`}
-                  disabled={!s.available}
                   onClick={() => setPicked(s.domain)}
                 >
                   <span className="m-domain-name">{s.domain}</span>
-                  <span className={`m-domain-badge ${s.available ? 'is-free' : 'is-taken'}`}>
-                    {s.available ? 'available' : 'taken'}
+                  <span className="m-domain-price m-mono">
+                    {typeof s.price === 'number' ? `$${s.price % 1 === 0 ? s.price : s.price.toFixed(2)}/yr` : 'available'}
                   </span>
                 </button>
               ))}
-              {suggestions.length === 0 && <p className="m-sub">No suggestions — try a different brand.</p>}
+              {suggestions.length === 0 && (
+                <p className="m-sub">No available domains for {brand} — try a different brand name.</p>
+              )}
             </div>
             {status && <p className="m-mono m-domain-status">{status}</p>}
             <div className="m-modal-opts" style={{ marginTop: 8 }}>
