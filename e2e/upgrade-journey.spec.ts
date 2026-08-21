@@ -70,6 +70,31 @@ test.describe('Upgrade journey', () => {
     expect(checkoutUrl, `checkout must return a real Stripe URL, got: ${checkoutUrl}`).toContain('checkout.stripe.com')
   })
 
+  test('A3. Post-payment return runs the verify+unlock handler (not a dead-end)', async ({ page }) => {
+    // Simulate Stripe's success_url return. A real card can't be automated, so we
+    // assert the RETURN PATH is wired: landing on the flow's Live screen with
+    // ?upgraded=1&session_id=… must trigger a POST to /api/build/subscription/verify
+    // (which then calls core). This is the link that was previously broken
+    // (success_url pointed at the app iframe, so nothing fired).
+    let verifyCalled = false
+    let verifyStatus: number | null = null
+    page.on('response', (r) => {
+      if (r.url().includes('/api/build/subscription/verify')) { verifyCalled = true; verifyStatus = r.status() }
+    })
+    await page.goto(
+      `${BASE}/build?screen=live&company=riff&upgraded=1&session_id=cs_test_fake_for_return_path`,
+      { waitUntil: 'domcontentloaded' },
+    )
+    // The Live dashboard renders and the verify handler fires.
+    await expect(page.locator('.m-live, .m-live-masthead').first()).toBeVisible({ timeout: 20000 })
+    await expect.poll(() => verifyCalled, { timeout: 20000 }).toBe(true)
+    // The handler reached the server (200 with a not-verified result for a fake
+    // session, or a 4xx) — either way the RETURN PATH is wired, not a dead-end.
+    expect(verifyStatus, 'verify endpoint must respond').not.toBeNull()
+    // The activating/status message appears (the user gets feedback, not silence).
+    await expect(page.locator('.m-domain-status')).toBeVisible({ timeout: 15000 })
+  })
+
   test('B. Front door: /build starts the journey (Fork tracks + idea input)', async ({ page }) => {
     await page.goto(`${BASE}/build`, { waitUntil: 'domcontentloaded' })
     // The two tracks are the entry to building an app or a company.
