@@ -527,6 +527,19 @@
    ============================================================================ */
 .m-pricing { min-height: 100vh; padding: 56px 44px; max-width: 1040px; margin: 0 auto; }
 .m-reassure { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; margin: 10px 0 30px; }
+
+/* billing-period toggle (#258) */
+.m-billing-toggle { display: inline-flex; align-items: center; gap: 10px; margin: 6px 0 26px; }
+.m-billing-switch { display: inline-flex; background: var(--color-surface); padding: 3px; }
+.m-billing-switch button {
+  font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+  padding: 7px 16px; border: 0; background: transparent; color: var(--text-body-70); cursor: pointer;
+}
+.m-billing-switch button.is-active { background: var(--color-bg); color: var(--ink); font-weight: 500; }
+.m-billing-toggle .m-chip { background: var(--track-100); color: var(--track-700); text-transform: uppercase; letter-spacing: 0.06em; }
+.m-tier-save { font-size: 11px; color: var(--track-700); font-family: var(--font-mono); margin: -2px 0 12px; min-height: 14px; }
+.m-billing-note { font-size: 11px; color: var(--text-muted); font-style: italic; margin: 6px 0 22px; }
+
 .m-tiers { grid-template-columns: repeat(3, 1fr); }
 .m-tier { background: var(--color-bg); padding: 28px 22px; position: relative; display: flex; flex-direction: column; }
 .m-tier-stripe { position: absolute; top: 0; left: 0; right: 0; height: 5px; background: var(--neutral-line); }
