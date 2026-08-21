@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { guestRegex, isDevelopmentEnvironment } from './lib/constants'
 import { applyRateLimit } from './lib/middleware/rate-limit'
+import { wildcardSlugFromHost } from './lib/build/deploy'
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
@@ -19,6 +20,25 @@ export async function middleware(request: NextRequest) {
   // and rate limiting entirely — otherwise it 307-redirects to /login and the
   // deploy never passes healthcheck, so new instances never swap in.
   if (pathname.startsWith('/health')) {
+    return NextResponse.next()
+  }
+
+  // Wildcard company host (#243): a request to {slug}.ainative.app is served as
+  // the company's app by rewriting the host onto the existing /build/{slug} route.
+  // This gives each company a real, dedicated, CNAME-pointable host (so #240 can
+  // CNAME a custom domain → {slug}.ainative.app) without provisioning a service.
+  // Only active when AINATIVE_WILDCARD_HOST is set; the apex + www are NOT rewritten.
+  const wildcardSlug = wildcardSlugFromHost(
+    request.headers.get('host'),
+    process.env.AINATIVE_WILDCARD_HOST,
+  )
+  if (wildcardSlug) {
+    // Already under /build (asset/subpath) → leave as-is; else map to the app root.
+    if (!pathname.startsWith('/build/')) {
+      const target = request.nextUrl.clone()
+      target.pathname = `/build/${wildcardSlug}${pathname === '/' ? '' : pathname}`
+      return NextResponse.rewrite(target)
+    }
     return NextResponse.next()
   }
 
