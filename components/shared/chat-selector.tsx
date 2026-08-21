@@ -111,8 +111,12 @@ export function ChatSelector() {
     ? pathname.split('/')[2]
     : null
 
-  // Fetch user's chats (works for both authenticated and anonymous users)
+  // Fetch the user's chats — ONLY when signed in. /api/chats 401s for anonymous
+  // users, which polluted the console on public marketing pages (/, /compare,
+  // /ai-company) where this selector renders in the shared header. Gate on the
+  // session so anonymous marketing traffic never triggers the 401.
   useEffect(() => {
+    if (!session) { setChats([]); setIsLoading(false); return }
     const fetchChats = async () => {
       setIsLoading(true)
       try {
@@ -133,7 +137,7 @@ export function ChatSelector() {
     // Refresh chats every 30 seconds to pick up new generations
     const interval = setInterval(fetchChats, 30000)
     return () => clearInterval(interval)
-  }, [])
+  }, [session])
 
   const handleValueChange = (chatId: string) => {
     router.push(`/chats/${chatId}`)
