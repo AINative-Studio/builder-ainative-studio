@@ -826,20 +826,29 @@ export function HomeClient() {
       <AppHeader />
 
       {/* Main Content */}
-      <main className="flex-1 flex items-center justify-center px-4 sm:px-6 lg:px-8" aria-label="AI Application Builder">
+      <main className="flex-1 flex items-center justify-center px-4 sm:px-6 lg:px-8" aria-label="AI that builds and runs your company">
         <div className="max-w-4xl w-full">
           <section className="text-center mb-8 md:mb-12" aria-label="Hero" data-agent-role="hero" data-agent-context="value-proposition">
-            <p className="text-sm font-semibold text-[#5867EF] tracking-wide uppercase mb-3">AI App Builder — Best v0, Lovable & Bolt Alternative</p>
+            <p className="text-sm font-semibold text-[#5867EF] tracking-wide uppercase mb-3">Your AI co-founder — builds, launches, and runs it 24/7</p>
             <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900 dark:text-white mb-3">
-              Build Production React Apps with Claude Sonnet 4.6
+              Your first employee. Ships product, runs growth, never sleeps.
             </h1>
             <p className="text-base text-gray-500 dark:text-gray-400 max-w-xl mx-auto">
-              Generate production-ready React apps from a prompt, powered by frontier Claude models on AWS Bedrock. Every app is agent-optimized with AX, SEO, and structured data built in.
+              Describe your company. Cody builds the product and the business systems around it —
+              then launches it and runs it 24/7 on real AINative primitives you own.
             </p>
-            <div className="mt-4 flex justify-center">
+            <div className="mt-4 flex items-center justify-center gap-5">
+              <Link
+                href="/ai-company"
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-[#5867EF] hover:underline"
+                data-agent-role="cta"
+                data-agent-context="ai-company"
+              >
+                See how Cody runs your company →
+              </Link>
               <a
                 href="/showcase"
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-[#5867EF] hover:underline"
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-gray-500 dark:text-gray-400 hover:underline"
                 data-agent-role="cta"
                 data-agent-context="showcase"
               >
@@ -867,7 +876,7 @@ export function HomeClient() {
                 ref={textareaRef}
                 onChange={(e) => setMessage(e.target.value)}
                 value={message}
-                placeholder="Describe your AINative application..."
+                placeholder="Describe your company — Cody builds it, launches it, and runs it..."
                 className="min-h-[80px] text-base"
                 disabled={isLoading}
               />
@@ -960,6 +969,31 @@ export function HomeClient() {
               ))}
             </Suggestions>
           </div>
+
+          {/* SEO-safe secondary section — DEMOTED below the company-outcome hero.
+              Preserves the existing "AI app builder / v0-Lovable-Bolt alternative"
+              ranked keywords (#208) without leading the page with them. Crawlable
+              prose, not a redirect, so existing organic terms stay reachable. */}
+          <section
+            className="mt-16 max-w-2xl mx-auto text-center border-t border-gray-100 dark:border-gray-800 pt-10"
+            aria-label="AI app builder"
+            data-agent-role="secondary"
+            data-agent-context="app-builder-seo"
+          >
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+              Also the best AI app builder — a real v0, Lovable, and Bolt alternative
+            </h2>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Under the hood, Cody is a production-grade AI app builder: it generates
+              production-ready React and Next.js apps from a prompt on frontier models,
+              every one agent-optimized with AX, SEO, and structured data built in.
+              The difference is where it stops — most AI app builders hand you code;
+              Cody keeps going and runs the company. Explore what teams ship on the{' '}
+              <a href="/showcase" className="text-[#5867EF] hover:underline">showcase</a>{' '}
+              or read how it{' '}
+              <Link href="/ai-company" className="text-[#5867EF] hover:underline">builds and runs your company</Link>.
+            </p>
+          </section>
 
         </div>
       </main>
