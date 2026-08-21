@@ -32,6 +32,15 @@ describe('wildcardSlugFromHost', () => {
     expect(wildcardSlugFromHost('app.ainative.studio', HOST)).toBeNull()
   })
 
+  it('ignores EXISTING sibling apps synced from the live DNS zone', () => {
+    // These are real *.ainative.studio apps — must never be rewritten to /build/*.
+    for (const sub of ['zerodb', 'chat', 'live', 'aikit', 'agentflow', 'ocean',
+                       'community', 'dothack', 'wwmaa', 'zeroinvoice', 'pipeline',
+                       'zeropipeline', 'memory', 'agency', 'pillsense', 'boardlens']) {
+      expect(wildcardSlugFromHost(`${sub}.ainative.studio`, HOST)).toBeNull()
+    }
+  })
+
   it('ignores multi-label subdomains (not a single company slug)', () => {
     expect(wildcardSlugFromHost('a.b.ainative.studio', HOST)).toBeNull()
   })

@@ -37,14 +37,32 @@ export function wildcardUrl(slug: string): string | null {
 
 /**
  * Reserved subdomains that are NEVER company slugs — our own hosts + common infra
- * labels. Since companies live on the apex ({slug}.ainative.studio), we must not
- * let a request to builder./api./docs./www. get rewritten to /build/{that}.
- * Keep in sync with any new *.ainative.studio hosts we stand up.
+ * labels. Since companies live on the apex ({slug}.ainative.studio) behind a
+ * wildcard, and the *.ainative.studio wildcard routes to the Builder service, we
+ * must NEVER rewrite a request for an EXISTING sibling app (zerodb./docs./chat./…)
+ * into /build/{that}. Explicit DNS records already take precedence over the
+ * wildcard, so those apps keep resolving to their own services — this set is the
+ * defense-in-depth guard in case any such Host ever reaches the Builder.
+ *
+ * The bulk of this list is SYNCED from the real ainative.studio Netlify DNS zone
+ * (every first-label subdomain with an explicit A/CNAME/ALIAS/NETLIFY record as of
+ * 2026-08-21), plus common infra labels. When you stand up a new *.ainative.studio
+ * host, add its label here too. To re-sync: list the zone's records and take every
+ * single-label host record name.
  */
 export const RESERVED_SUBDOMAINS = new Set([
-  'www', 'builder', 'api', 'docs', 'app', 'apps', 'admin', 'staging', 'dev',
-  'test', 'mail', 'email', 'blog', 'status', 'cdn', 'assets', 'static', 'auth',
-  'login', 'dashboard', 'pipeline', 'zerocommerce', 'zerodb', 'memory', 'agents',
+  // Generic infra / common labels (not necessarily in DNS, but must never be slugs).
+  'www', 'app', 'apps', 'admin', 'staging', 'test', 'mail', 'email', 'blog',
+  'status', 'cdn', 'assets', 'static', 'auth', 'login', 'dashboard', 'agents',
+  'zerocommerce', 'zeromemory', 'zerovoice',
+  // Synced from the live ainative.studio Netlify DNS zone (existing apps — 2026-08-21).
+  'acquireos', 'agency', 'agent402', 'agentflow', 'aikit', 'api', 'blaq',
+  'boardlens', 'build', 'builder', 'buildos', 'chat', 'community', 'dealer',
+  'dealership-api', 'dev', 'docs', 'dothack', 'draftline', 'foundersapi', 'hack',
+  'helpdesk', 'insurance-agent', 'live', 'memory', 'mif', 'ngo', 'ocean',
+  'oceanapi', 'pillsense', 'pipeline', 'properstack', 'publicfounders', 'qnn',
+  'qui', 'sc-builders', 'specbook', 'surgeonmatch', 'winning-careers', 'wwmaa',
+  'zerodb', 'zeroinvoice', 'zeropipeline', 'zerowarranty',
 ])
 
 /**
