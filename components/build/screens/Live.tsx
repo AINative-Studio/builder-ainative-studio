@@ -177,6 +177,11 @@ export function Live() {
   const liveHref = customDomain ? `https://${customDomain}` : appPath
   const liveLabel = customDomain || url
 
+  // Masthead status (#259): "Cody is on watch" is only true once the company is
+  // actually claimed/enrolled or on a plan — otherwise it contradicts the funnel's
+  // "Claim {company} free". Unclaimed companies get a neutral "Preview" status.
+  const onWatch = signedIn && (enrolled || !!activePlan)
+
   // Tonight's tasks — real platform-loop signal woven in so it's not fiction.
   const tonight = [
     `Evaluate ${company} and pick the highest-leverage next task`,
@@ -283,7 +288,9 @@ export function Live() {
         <span className="m-mono m-live-tag">Company Track · shipped</span>
         <h1 className="m-artifact m-live-h">{company} is live.</h1>
         <div className="m-live-masthead-right">
-          <span className="m-mono m-live-watch"><span className="m-live-dot" /> Cody is on watch</span>
+          <span className={`m-mono m-live-watch ${onWatch ? '' : 'is-preview'}`}>
+            <span className="m-live-dot" /> {onWatch ? 'Cody is on watch' : 'Preview mode'}
+          </span>
           <a className="m-mono m-live-url" href={liveHref} target="_blank" rel="noreferrer">
             {appReady ? `${customDomain ? 'Live at ' : ''}${liveLabel} ↗` : 'building your site…'}
           </a>
@@ -411,8 +418,7 @@ export function Live() {
               {customDomain && (
                 <><strong>live at: <a href={liveHref} target="_blank" rel="noreferrer">{customDomain}</a></strong><br /></>
               )}
-              prod: {url}<br />
-              staging: staging.builder.ainative.studio{appPath}
+              prod: {url}
             </p>
             <div className="m-infra-btns">
               <a className="btn-secondary" href={liveHref} target="_blank" rel="noreferrer">View site ↗</a>
@@ -428,7 +434,8 @@ export function Live() {
               >
                 {provision.provisioned ? '✓ Cloud provisioned' : provision.busy ? 'Provisioning…' : 'Provision cloud'}
               </button>
-              <button className="btn-secondary" disabled title="Coming soon">Redeploy</button>
+              {/* Not wired yet (#256): disabled + labeled so a customer never clicks a dead button. */}
+              <button className="btn-secondary is-soon" disabled title="Coming soon">Redeploy · soon</button>
             </div>
             {provision.provisioned && (
               <p className="m-mono m-metric-note">Own ZeroDB project · Pipeline & Invoices read live data. Helpdesk & Voice still simulated.</p>

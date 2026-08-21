@@ -546,19 +546,29 @@
 .m-live-tag { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.85; }
 .m-live-h { font-weight: 500; font-size: 34px; margin: 0; flex: 0 0 auto; }
 .m-live-masthead-right { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
-.m-live-watch { font-size: 12px; }
+.m-live-watch { font-size: 12px; display: inline-flex; align-items: center; }
 .m-live-watch .m-live-dot { background: #fff; }
+/* Neutral preview state (#259): dimmer, non-pulsing dot when the company is not
+   yet claimed — so the masthead never claims "on watch" before it's true. */
+.m-live-watch.is-preview { opacity: 0.85; }
+.m-live-watch.is-preview .m-live-dot { background: rgba(255, 255, 255, 0.5); animation: none; }
 .m-live-url { font-size: 12px; color: #fff; text-decoration: underline; opacity: 0.9; }
 
-.m-live-grid { display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: 2px; background: var(--color-divider); padding: 2px; }
+.m-live-grid { display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: 2px; background: var(--color-divider); padding: 2px; align-items: stretch; }
 .m-live-grid.is-tablet { grid-template-columns: 1fr; }
 .m-live-col { display: flex; flex-direction: column; gap: 2px; }
+/* Let the last card in each column absorb the extra height so the grid reads full
+   and intentional on desktop — no empty white quadrants (#257). */
+.m-live-col > .m-live-card:last-child { flex: 1; }
 .m-live-card { background: var(--color-bg); padding: 18px; }
 .m-live-card-h { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-body-70); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
 .m-live-card-body { font-size: 14px; color: var(--text-body-70); line-height: 1.5; margin: 0 0 12px; }
-.m-upsell { background: var(--ink); color: #f3f2f2; }
+.m-upsell { background: var(--ink); color: #f3f2f2; display: flex; flex-direction: column; }
 .m-upsell .m-live-card-h { color: #cfcaca; }
 .m-upsell .m-live-card-body { color: #cfcaca; }
+/* When the upsell stretches to fill the column, pin the CTA to the bottom so the
+   card reads deliberate rather than half-empty (#257). */
+.m-upsell .btn-primary { margin-top: auto; }
 
 .m-metric-rows { display: flex; gap: 20px; }
 .m-metric { display: flex; flex-direction: column; }
@@ -575,6 +585,9 @@
 .m-infra-urls { font-size: 12px; color: var(--text-muted); line-height: 1.7; margin: 0 0 12px; }
 .m-infra-btns { display: flex; flex-wrap: wrap; gap: 6px; }
 .m-infra-btns button { font-size: 12px; padding: 6px 10px; }
+/* Not-yet-wired affordance (#256): visibly inert so it never looks clickable. */
+.m-infra-btns button:disabled { cursor: default; opacity: 0.5; }
+.m-infra-btns button.is-soon { border-style: dashed; color: var(--text-muted); border-color: var(--neutral-line); }
 
 .m-chat { display: flex; flex-direction: column; min-height: 320px; }
 .m-chat-log { flex: 1; display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px; }
