@@ -44,24 +44,29 @@ const PRODUCT_URLS: Record<BusinessSystem['key'], string> = {
  */
 export function buildSystems(
   counts: Partial<Record<BusinessSystem['key'], { count?: number; value?: number }>> = {},
-  opts: { provisioned?: boolean } = {},
+  opts: { provisioned?: boolean; pipelineProvisioned?: boolean } = {},
 ): BusinessSystem[] {
   const c = (k: BusinessSystem['key']) => counts[k]?.count ?? 0
   const v = (k: BusinessSystem['key']) => counts[k]?.value ?? 0
-  // Pipeline + Invoices read from the company's real provisioned ZeroDB project
-  // (#243) once it's provisioned. Helpdesk + Voice have no per-company data source
-  // wired yet, so they stay simulated regardless — marked honestly for the UI.
-  const prov = Boolean(opts.provisioned)
+  // Per-primitive honesty (#243):
+  //  - Pipeline is 'provisioned' only when the company's REAL ZeroPipeline pipeline
+  //    was created (founder JWT) — its counts read from the company's own ZeroDB
+  //    `deals` table. Falls back to the general `provisioned` (ZeroDB) flag.
+  //  - Invoices reads from the company's ZeroDB `invoices` table once the per-company
+  //    ZeroDB project is provisioned.
+  //  - Helpdesk + Voice have no per-company data source wired yet → always simulated.
+  const zdb = Boolean(opts.provisioned)
+  const pipelineLive = Boolean(opts.pipelineProvisioned) || zdb
 
   return [
     {
       key: 'pipeline', name: 'Pipeline', primitive: 'ZeroPipeline', url: PRODUCT_URLS.pipeline,
-      count: c('pipeline'), value: v('pipeline'), provisioned: prov,
+      count: c('pipeline'), value: v('pipeline'), provisioned: pipelineLive,
       stat: c('pipeline') > 0 ? `${c('pipeline')} open · $${(v('pipeline') / 1000).toFixed(0)}k` : 'Ready · Scout sourcing',
     },
     {
       key: 'invoices', name: 'Invoices', primitive: 'ZeroInvoice', url: PRODUCT_URLS.invoices,
-      count: c('invoices'), value: v('invoices'), provisioned: prov,
+      count: c('invoices'), value: v('invoices'), provisioned: zdb,
       stat: v('invoices') > 0 ? `$${(v('invoices') / 1000).toFixed(1)}k collected` : 'Ready · $0 collected',
     },
     {

@@ -25,9 +25,11 @@ export async function GET(request: NextRequest) {
   // back to the shared /api/db proxy tables. Failures / no-data → zero-state.
   let counts: Counts = {}
   let provisioned = false
+  let pipelineProvisioned = false
   if (companyId) {
     const entry = await resolveApp(companyId).catch(() => null)
     const projectId = entry?.zerodbProjectId
+    pipelineProvisioned = Boolean(entry?.pipelineProvisioned)
     if (projectId) {
       provisioned = true
       try {
@@ -45,9 +47,10 @@ export async function GET(request: NextRequest) {
   }
 
   return Response.json({
-    systems: buildSystems(counts, { provisioned }),
+    systems: buildSystems(counts, { provisioned, pipelineProvisioned }),
     companyId,
     provisioned,
+    pipelineProvisioned,
     zeroState: Object.keys(counts).length === 0,
   })
 }

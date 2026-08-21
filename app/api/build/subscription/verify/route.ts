@@ -1,5 +1,5 @@
 /**
- * POST /api/build/subscription/verify (#241) — post-checkout subscription
+ * POST /api/build/subscription/verify (#241 + #243) — post-checkout subscription
  * fulfillment for the Builder. After Stripe returns to
  * /build/{slug}?upgraded=1&session_id=… (see app/api/build/checkout/route.ts
  * success_url), the Live dashboard calls this to CONFIRM the session is real +
@@ -7,15 +7,21 @@
  * can read it back and gate features. Presence of a session_id in the URL is
  * never trusted on its own — verification happens against core → Stripe.
  *
+ * #243 hook: once payment is verified, if the company was provisioned anonymously
+ * (keyKind === 'tmp'), we claim its Instant DB project onto the now-paying founder's
+ * account (tmp_ → PERMANENT) so it stops being a 72h throwaway. This is best-effort
+ * and never fails the checkout confirmation.
+ *
  * Body: { session_id, slug? }
- * Returns: { ok, paid, plan, planName, enrolled } | { error }
+ * Returns: { ok, paid, plan, planName, enrolled, claimed? } | { error }
  *
  * Return-URL verification is the MVP path; a hardened Stripe webhook is deferred
  * (see #241 residual). It's safe to call on page load with the returned id.
  */
 
 import { NextRequest } from 'next/server'
-import { setAppPlan } from '@/lib/build/app-registry'
+import { auth } from '@/app/(auth)/auth'
+import { setAppPlan, claimCompanyProject } from '@/lib/build/app-registry'
 
 export const runtime = 'nodejs'
 
@@ -54,7 +60,20 @@ export async function POST(request: NextRequest) {
     if (slug) {
       setAppPlan(slug, plan).catch(() => {})
     }
-    return Response.json({ ok: true, paid: true, plan, planName, enrolled })
+
+    // #243: upgrade a tmp_ Instant DB project → permanent now that the founder has
+    // paid + has an account. Best-effort; never blocks checkout confirmation.
+    let claimed: boolean | undefined
+    if (slug) {
+      const session = await auth().catch(() => null)
+      const jwt = (session as any)?.accessToken as string | undefined
+      if (jwt) {
+        const r = await claimCompanyProject(slug, jwt).catch(() => null)
+        if (r?.ok) claimed = r.claimed
+      }
+    }
+
+    return Response.json({ ok: true, paid: true, plan, planName, enrolled, claimed })
   } catch (e: any) {
     return Response.json({ ok: false, error: String(e?.message || e).slice(0, 100) }, { status: 502 })
   }
