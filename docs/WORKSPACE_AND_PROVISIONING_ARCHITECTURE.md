@@ -40,33 +40,44 @@ live under the single **AINative Builder** workspace.*
   `admin@ainative.studio` identity — unified auth across all primitives).
 - **Instant DB** (`POST /api/v1/public/instant-db`, body `{agree_terms:true}`) is
   how a per-company project is created. See `lib/build/instant-db.ts`.
-  - **Signed-in founder** (next-auth session carries an AINative JWT) → the call is
-    authenticated → **permanent `sk_` key** + a project **auto-assigned to the
-    caller's *default* workspace**.
-  - **Anonymous** → **`tmp_` key** (72h) + a `claim_token`; upgraded to permanent on
-    payment via `POST /api/v1/public/instant-db/claim` (see
-    `claimCompanyProject()` in `lib/build/app-registry.ts`, hooked from
-    `app/api/build/subscription/verify/route.ts`).
+
+#### Key policy: PERMANENT keys require PAYMENT (#207)
+Provisioning (`POST /api/build/provision`) is **paid-gated**. The plan is read
+from the company's **registry entry** (set only by the server-verified
+post-checkout flow — never trusted from the request body):
+  - **Paid subscriber** → provision **authenticated** (JWT sent) → **permanent
+    `sk_` key**. `keyKind='permanent'`.
+  - **Not paid** (anonymous OR signed-in-but-unpaid) → `POST /api/build/provision`
+    returns **402 `upgrade`** — no project is created. If a company was ever
+    provisioned as `tmp_` (72h) it is upgraded to permanent on payment via
+    `POST /api/v1/public/instant-db/claim` (`claimCompanyProject()` in
+    `lib/build/app-registry.ts`, hooked from `subscription/verify/route.ts`).
+  - We deliberately do **NOT** send the JWT for a non-permanent provision — an
+    authenticated Instant DB call would otherwise mint a permanent key for an
+    unpaid user. `provisionInstantDb(jwt, permanent)` only attaches the JWT when
+    `permanent` is true.
 - So **each company gets a UNIQUE `project_id`** (and its own key), but **NOT a unique
   workspace**. Projects all land in whatever the key's default workspace is.
 
-### ⚠️ Current gap (important for the workspace migration)
+### ⚠️ Current gap: getting company projects INTO the Builder workspace (issue #250)
 - Instant DB today accepts **only** `{agree_terms}` — it does **not** take a
-  `workspace_id`/`organization_id`, so it always drops the project into the
-  **default** workspace of the identity. As of 2026-08-21 the Builder key's default
-  is still **"AINative Studio"**, where **71 of 80 projects** already piled up.
+  `workspace_id`/`organization_id`, so it drops the project into the **default**
+  workspace of the identity, which for the Builder key is still **"AINative Studio"**.
+- **Nothing to migrate today.** As of 2026-08-21 the `builder_app_registry` shows
+  **0 companies with a provisioned `zerodbProjectId`** — the paid provisioning path
+  hasn't created any real company project yet. The ~71 projects in "AINative Studio"
+  are **NOT** Builder companies (ZeroBooks, hackerdojo, test/experiment projects) and
+  must **not** be swept into the Builder workspace. So there is no back-migration to do.
 - The full **project-create** API (`POST /api/v1/projects`) **does** accept
   `organization_id` (verified — the Platform project was created straight into the
-  Builder workspace this way). So there are two ways to get new company projects into
-  the Builder workspace:
-  1. **Core change (preferred):** have Instant DB accept an optional
-     `workspace_id`/`organization_id` and pass the Builder workspace. Tracked as a
-     follow-up (see below).
-  2. **Interim:** set the Builder key's **default workspace** to *AINative Builder* so
-     Instant-DB auto-assignment lands there. (Moves the default for that identity —
-     coordinate, since the identity is shared with other tooling.)
-- Existing 71 projects can be **migrated** by re-parenting `organization_id` (the
-  workspace-delete flow already migrates projects, proving re-parenting is supported).
+  Builder workspace this way). The fix so NEW companies land in the Builder workspace
+  from the start:
+  1. **Core (preferred):** Instant DB accepts an optional `workspace_id`; Builder
+     passes the AINative Builder workspace id. Then no migration is ever needed.
+  2. **Interim:** set the Builder key's **default workspace** to *AINative Builder*
+     (moves the default for a shared identity — coordinate first).
+- If real company projects ever do land in the wrong workspace, they can be
+  re-parented via `organization_id` (workspace-delete already migrates projects).
 
 ---
 

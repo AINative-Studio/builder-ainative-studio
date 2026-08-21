@@ -45,12 +45,23 @@ export function parseClaimToken(claimUrl?: string): string | undefined {
 }
 
 /**
- * Provision a REAL Instant DB project. Pass the founder's JWT to get a permanent
- * sk_ key immediately; omit it (anonymous) to get a tmp_ key + claim token.
+ * Provision a REAL Instant DB project.
+ *
+ * Policy (#207): a PERMANENT (sk_) key requires a PAID subscription. Pass
+ * `permanent: true` (only when the founder has paid) together with their JWT to
+ * mint a permanent sk_ key immediately. Otherwise — anonymous OR signed-in-but-
+ * unpaid — we provision UNAUTHENTICATED to get a tmp_ key (72h) + a claim token,
+ * which the post-payment flow upgrades to permanent. We deliberately do NOT send
+ * the JWT for a non-permanent provision, since an authenticated Instant DB call
+ * would otherwise return a permanent key to an unpaid user.
  */
-export async function provisionInstantDb(jwt?: string): Promise<InstantDbResult> {
+export async function provisionInstantDb(
+  jwt?: string,
+  permanent = false,
+): Promise<InstantDbResult> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (jwt) headers.Authorization = `Bearer ${jwt}`
+  // Only attach the JWT when we intend a permanent key (paid). Unpaid → tmp_.
+  if (jwt && permanent) headers.Authorization = `Bearer ${jwt}`
   try {
     const res = await fetch(`${AINATIVE_API}/api/v1/public/instant-db`, {
       method: 'POST',
@@ -69,7 +80,9 @@ export async function provisionInstantDb(jwt?: string): Promise<InstantDbResult>
       }
     }
     const apiKey = String(data.api_key || '')
-    const isPermanent = apiKey.startsWith('sk_') || Boolean(jwt)
+    // Permanent iff core actually returned an sk_ key (we only request that when
+    // `permanent` is set for a paid user). A tmp_ key is never treated as permanent.
+    const isPermanent = apiKey.startsWith('sk_')
     return {
       ok: true,
       projectId: String(data.project_id),

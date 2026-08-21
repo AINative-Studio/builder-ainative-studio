@@ -35,8 +35,8 @@ import { provisionPipeline } from '@/lib/build/zeropipeline'
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
-// Plans that unlock persistent provisioning (#241). Empty/missing is allowed in
-// the MVP so the path is testable; tighten to require a paid plan later.
+// Plans that unlock a PERMANENT project + real provisioning (#207/#241). A
+// permanent (sk_) key requires one of these — provisioning is PAID-gated.
 const PAID_PLANS = new Set(['launch', 'company', 'pro', 'business', 'enterprise', 'cody_vcto'])
 
 export async function POST(request: NextRequest) {
@@ -44,11 +44,10 @@ export async function POST(request: NextRequest) {
   const slug = String(b?.slug || '').replace(/[^a-z0-9_-]/gi, '').slice(0, 40)
   if (!slug) return Response.json({ ok: false, reason: 'slug required' }, { status: 400 })
 
-  const plan = String(b?.plan || '')
-  // Gate: if a plan is set it must be a paid one; unset is allowed (MVP seam).
-  if (plan && !PAID_PLANS.has(plan)) {
-    return Response.json({ ok: false, reason: 'upgrade', plan }, { status: 402 })
-  }
+  // Trust the plan from the company's registry entry (set by the verified
+  // post-checkout flow), NOT a client-supplied body value — the body can't grant
+  // itself a paid plan. Fall back to the body only as a hint for the response.
+  const requestedPlan = String(b?.plan || '')
 
   // Resolve the company so we can attach provisioning to its registry entry and
   // hand the deploy seam its chatId. Must be registered first (built app exists).
@@ -57,8 +56,21 @@ export async function POST(request: NextRequest) {
     return Response.json({ ok: false, reason: 'not_registered' }, { status: 404 })
   }
 
-  // A signed-in founder gets a PERMANENT key straight away; anonymous gets a tmp_
-  // key that #241's payment flow later claims. Either way we can provision.
+  // PAID gate (#207): a permanent project requires a paid subscription. The plan
+  // is read from the registry entry, which is only set by the server-verified
+  // post-checkout flow (setAppPlan after /pricing/verify). No paid plan → the
+  // caller must upgrade first.
+  const plan = String(existing.plan || '')
+  const isPaid = PAID_PLANS.has(plan)
+  if (!isPaid) {
+    return Response.json(
+      { ok: false, reason: 'upgrade', plan: plan || null, requestedPlan: requestedPlan || null,
+        note: 'A paid subscription is required to provision a permanent company project.' },
+      { status: 402 },
+    )
+  }
+
+  // Founder's JWT (used ONLY for a permanent, paid provision + ZeroPipeline).
   const session = await auth()
   const jwt = (session as any)?.accessToken as string | undefined
 
@@ -77,9 +89,10 @@ export async function POST(request: NextRequest) {
     })
   }
 
-  // Provision a REAL Instant DB project. Authenticated → permanent sk_; anonymous
-  // → tmp_ + claim token.
-  const prov = await provisionInstantDb(jwt)
+  // Provision a REAL Instant DB project. Paid + JWT → permanent sk_ immediately.
+  // (Gate above already guarantees isPaid here; passing permanent=isPaid keeps the
+  // intent explicit and future-proof if the gate is ever relaxed.)
+  const prov = await provisionInstantDb(jwt, isPaid)
   if (!prov.ok || !prov.projectId) {
     return Response.json(
       { ok: false, reason: 'provision_failed', detail: prov.reason, status: prov.status },
