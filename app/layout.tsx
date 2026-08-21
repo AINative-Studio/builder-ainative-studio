@@ -52,7 +52,7 @@ export const metadata: Metadata = {
     template: '%s | AINative Builder',
   },
   description:
-    'Describe your company. Cody, your AI co-founder, builds the product and the business systems around it, launches it, and runs it 24/7 on real AINative primitives you own. Also a production-grade AI app builder and v0, Lovable, and Bolt alternative.',
+    'Describe your company or your app. Cody, your AI co-founder, builds it, launches it, and runs it 24/7 on real AINative primitives you own — the AI that builds AND runs your company.',
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio'),
   icons: {
     icon: [
@@ -89,7 +89,7 @@ export const metadata: Metadata = {
   ],
   openGraph: {
     title: 'AINative Builder - AI That Builds AND Runs Your Company',
-    description: 'Describe your company. Cody, your AI co-founder, builds it, launches it, and runs it 24/7 on real AINative primitives you own. Also a production-grade AI app builder.',
+    description: 'Describe your company or app. Cody, your AI co-founder, builds it, launches it, and runs it 24/7 on real AINative primitives you own.',
     siteName: 'AINative Builder',
     type: 'website',
     locale: 'en_US',
@@ -119,7 +119,7 @@ const jsonLd = {
       '@type': 'WebApplication',
       name: 'AINative Builder',
       url: 'https://builder.ainative.studio',
-      description: 'An AI co-founder that builds AND runs your company: describe an idea and Cody composes a real running product plus the business systems around it, launches it, and operates it 24/7 on real AINative primitives you own. Also a production-grade AI app builder that generates production-ready React and Next.js apps from a prompt with AX optimization, SEO, and structured data.',
+      description: 'An AI co-founder that builds AND runs your company: describe an idea and Cody composes a real running product plus the business systems around it, launches it, and operates it 24/7 on real AINative primitives you own. Build a company or an app — from a prompt to a real, running, AX-optimized product.',
       applicationCategory: 'DeveloperApplication',
       operatingSystem: 'Web',
       offers: {
