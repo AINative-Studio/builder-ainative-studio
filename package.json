@@ -6,6 +6,7 @@
     "dev": "next dev --turbopack",
     "build": "NEXT_PUBLIC_BUILD_SHA=\"${NEXT_PUBLIC_BUILD_SHA:-${RAILWAY_GIT_COMMIT_SHA:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}\" next build --turbopack",
     "start": "next start -p ${PORT:-3000}",
+    "deploy": "railway variables --service builder-ainative-studio --set \"NEXT_PUBLIC_BUILD_SHA=$(git rev-parse HEAD)\" --skip-deploys && railway up --service builder-ainative-studio --ci --detach",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "npx tsx lib/db/migrate.ts",
     "db:studio": "drizzle-kit studio",
