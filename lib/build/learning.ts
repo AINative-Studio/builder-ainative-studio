@@ -97,7 +97,8 @@ export async function markConverted(slug: string, plan: string): Promise<boolean
 export async function readLearningRows(): Promise<LearningRow[]> {
   if (!configured()) return []
   try {
-    const res = await fetch(`${rowsUrl()}?limit=2000`, { headers: headers(), signal: AbortSignal.timeout(20000) })
+    // ZeroDB rows API caps limit at 1000 (1001+ → 422). Matches app-registry.
+    const res = await fetch(`${rowsUrl()}?limit=1000`, { headers: headers(), signal: AbortSignal.timeout(20000) })
     if (!res.ok) return []
     const data = JSON.parse(await res.text())
     const rows = Array.isArray(data) ? data : data.data || data.rows || []
