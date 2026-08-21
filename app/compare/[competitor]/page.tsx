@@ -86,7 +86,7 @@ const AINATIVE_DATA = {
   models: 'Claude Sonnet/Haiku/Opus 4.5 (Bedrock), tiered',
   ax: 'Yes — llms.txt, agents.txt, JSON-LD, semantic HTML',
   seo: 'Automatic JSON-LD, sitemap, crawlable pages',
-  pricing: 'Free + $49/mo',
+  pricing: '72h trial, then $49/mo',
   opensource: 'Yes',
   streaming: 'Yes',
   buildsApp: 'Yes — real, production-ready app on a shareable URL',

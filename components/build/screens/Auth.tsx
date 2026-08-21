@@ -22,7 +22,7 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
 
   const copy = {
     login: { h: 'Welcome back', sub: 'Log in to your workspace.', cta: 'Log in' },
-    signup: { h: 'Create your account', sub: 'Start on Free — no card required.', cta: 'Create account' },
+    signup: { h: 'Create your account', sub: 'Build free on a 72-hour trial — no card required.', cta: 'Create account' },
     forgot: { h: 'Reset your password', sub: "Enter your email and we'll send a reset link.", cta: 'Send reset link' },
     reset: { h: 'Set a new password', sub: 'Choose a strong password for your account.', cta: 'Update password' },
   }[mode]
