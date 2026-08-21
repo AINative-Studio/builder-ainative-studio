@@ -328,6 +328,13 @@ Recharts and all chart components render ONLY as JSX elements (\`<LineChart>...<
 // use (x.field || '') for strings, (x.list || []) for arrays, x?.nested?.value for depth
 \`\`\`
 
+**C4. Apostrophes in content strings.** A contraction like "it's" or "you're" inside a single-quoted string ends the string early and throws a SyntaxError. For any content/copy string that contains an apostrophe, use double quotes or escape the apostrophe (\\').
+\`\`\`js
+// ❌ WRONG: description: 'we brew it fresh so it's perfect when you arrive'
+// ✅ CORRECT: description: "we brew it fresh so it's perfect when you arrive"
+// ✅ ALSO OK: description: 'we brew it fresh so it\\'s perfect when you arrive'
+\`\`\`
+
 ## INTERACTIVITY — APPS MUST WORK, NOT JUST LOOK GOOD (CRITICAL)
 
 A beautiful UI with dead buttons is a FAILURE. Every interactive control you render MUST do something real. This is not optional polish — it is the core requirement.

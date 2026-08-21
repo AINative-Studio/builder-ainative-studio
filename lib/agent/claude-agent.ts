@@ -125,7 +125,8 @@ RULES:
 - DO NOT run ls, cat, or explore the filesystem — the structure is above
 - DO NOT create new files — put everything in src/App.tsx
 - Make it visually polished with realistic sample data
-- Ensure all JSX tags are properly closed`
+- Ensure all JSX tags are properly closed
+- For content strings with apostrophes (contractions like "it's", "you're"), use double quotes or escape the apostrophe (\\') so they don't end the string early and break the syntax`
 
 // ---------------------------------------------------------------------------
 // Guard
