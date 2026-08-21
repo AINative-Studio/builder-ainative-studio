@@ -41,6 +41,10 @@ export function Live() {
   // Purchased custom domain (#240), read from the app-registry entry. When set,
   // the masthead + infra section show "Live at {domain}" instead of the subdir URL.
   const [customDomain, setCustomDomain] = useState<string | null>(null)
+  // Persistent-cloud provisioning (#243): once a company is provisioned it has
+  // its own real ZeroDB project + persistent deploy target, and the systems grid
+  // reads real per-company data.
+  const [provision, setProvision] = useState<{ provisioned: boolean; busy: boolean; projectId?: string }>({ provisioned: false, busy: false })
   const { status: sessionStatus } = useSession()
   const signedIn = sessionStatus === 'authenticated'
   const [planStatus, setPlanStatus] = useState<string | null>(null)
@@ -87,6 +91,11 @@ export function Live() {
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => { if (alive && d?.systems) setSystems(d.systems) })
       .catch(() => { /* keep the zero-state default */ })
+    // Provisioning status — does this company have a real per-company ZeroDB project yet? (#243)
+    fetch(`/api/build/provision?slug=${encodeURIComponent(companyId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (alive && d) setProvision((p) => ({ ...p, provisioned: !!d.provisioned, projectId: d.zerodbProjectId || undefined })) })
+      .catch(() => {})
     // Company track has no /preview app — generate a REAL landing-page app for it
     // once, so the prod URL /build/{slug} actually shows something. Register it.
     if (!state.appChatId && state.idea && state.appSub) {
@@ -201,6 +210,34 @@ export function Live() {
     } catch { /* optimistic UI already set */ }
   }
 
+  // Provision the persistent cloud for this company (#243): a real per-company
+  // ZeroDB project + persistent deploy target. Requires an account (the project
+  // is owned by the founder). Refreshes the systems grid to read real data after.
+  const provisionCompany = async () => {
+    if (provision.busy || provision.provisioned) return
+    if (!signedIn) { dispatch({ type: 'GOTO_SCREEN', screen: 'signup' }); return }
+    setProvision((p) => ({ ...p, busy: true }))
+    try {
+      const res = await fetch('/api/build/provision', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug: companyId, name: company, plan: state.plan }),
+      })
+      const d = await res.json().catch(() => null)
+      if (d?.ok) {
+        setProvision({ provisioned: true, busy: false, projectId: d.zerodbProjectId })
+        // Re-read systems now that they point at the real provisioned project.
+        fetch(`/api/build/systems?companyId=${encodeURIComponent(companyId)}`)
+          .then((r) => (r.ok ? r.json() : null))
+          .then((s) => { if (s?.systems) setSystems(s.systems) })
+          .catch(() => {})
+      } else {
+        setProvision((p) => ({ ...p, busy: false }))
+      }
+    } catch {
+      setProvision((p) => ({ ...p, busy: false }))
+    }
+  }
+
   // FIX-5: per-project brand color so every company's dashboard looks distinct,
   // not identical. Falls back to the track accent.
   const brandStyle = state.brandColor && /^#[0-9a-fA-F]{6}$/.test(state.brandColor)
@@ -304,6 +341,10 @@ export function Live() {
                   <span className="m-system-name">{s.name}</span>
                   <span className="m-system-stat m-mono">{s.stat}</span>
                   <span className="m-chip m-system-prim">{s.primitive}</span>
+                  {/* Honest marker: real provisioned data vs still-simulated (#243). */}
+                  <span className="m-mono m-system-src" title={s.provisioned ? 'Live from your provisioned ZeroDB project' : 'Simulated — no per-company data source wired yet'}>
+                    {s.provisioned ? '● live' : '○ sim'}
+                  </span>
                 </a>
               ))}
             </div>
@@ -326,8 +367,20 @@ export function Live() {
               <button className="btn-secondary" onClick={() => setDomainOpen(true)}>
                 {customDomain ? 'Add another domain' : 'Get a custom domain'}
               </button>
+              {/* Provision the real per-company cloud (#243): own ZeroDB project + persistent host. */}
+              <button
+                className="btn-secondary"
+                onClick={provisionCompany}
+                disabled={provision.busy || provision.provisioned}
+                title={provision.provisioned ? 'This company has its own ZeroDB project' : 'Create a real per-company ZeroDB project + persistent deploy'}
+              >
+                {provision.provisioned ? '✓ Cloud provisioned' : provision.busy ? 'Provisioning…' : 'Provision cloud'}
+              </button>
               <button className="btn-secondary" disabled title="Coming soon">Redeploy</button>
             </div>
+            {provision.provisioned && (
+              <p className="m-mono m-metric-note">Own ZeroDB project · Pipeline & Invoices read live data. Helpdesk & Voice still simulated.</p>
+            )}
           </div>
         </div>
 

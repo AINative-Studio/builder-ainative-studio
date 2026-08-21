@@ -30,6 +30,13 @@ export interface AppEntry {
   domain?: string  // custom domain purchased for this company (#240), if any
   plan?: string    // active subscription plan id (pro|business|enterprise) after checkout (#241)
   enrolled?: boolean  // Business+ auto-enrolled into the nightly loop (#241; cron itself is #243)
+  // Persistent cloud provisioning (#243) — the REAL per-company ZeroDB project
+  // created via core's /api/v1/zerodb/projects/ensure. Present once provisioned.
+  zerodbProjectId?: string
+  provisionedAt?: string
+  // The persistent hosting target for the company app (#243). Today this is the
+  // durable preview URL; the deploy seam swaps in a real Railway/*.ainative.app host.
+  deployUrl?: string
   createdAt: string
 }
 
@@ -73,6 +80,25 @@ export async function setAppPlan(slug: string, plan: string): Promise<boolean> {
   // Business and Enterprise auto-enroll into the nightly improvement loop.
   const enrolled = plan === 'business' || plan === 'enterprise' || plan === 'cody_vcto'
   return registerApp({ ...existing, plan, enrolled })
+}
+
+/**
+ * Attach persistent-cloud provisioning to a company (#243). Appends an updated
+ * row carrying the existing chatId + brand plus the provisioned ZeroDB project id
+ * (and optional deploy URL), so resolveApp() (latest-wins) surfaces it. No-op
+ * (returns false) if the slug isn't registered.
+ */
+export async function setAppProvisioned(
+  slug: string,
+  fields: { zerodbProjectId?: string; deployUrl?: string; provisionedAt?: string },
+): Promise<boolean> {
+  const existing = await resolveApp(slug)
+  if (!existing) return false
+  return registerApp({
+    ...existing,
+    ...fields,
+    provisionedAt: fields.provisionedAt || new Date().toISOString(),
+  })
 }
 
 /** Resolve a slug to its most recent app entry (chatId + brand), or null. */
