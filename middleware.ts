@@ -23,10 +23,10 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  // Wildcard company host (#243): a request to {slug}.ainative.app is served as
+  // Wildcard company host (#243): a request to {slug}.ainative.studio is served as
   // the company's app by rewriting the host onto the existing /build/{slug} route.
   // This gives each company a real, dedicated, CNAME-pointable host (so #240 can
-  // CNAME a custom domain → {slug}.ainative.app) without provisioning a service.
+  // CNAME a custom domain → {slug}.ainative.studio) without provisioning a service.
   // Only active when AINATIVE_WILDCARD_HOST is set; the apex + www are NOT rewritten.
   const wildcardSlug = wildcardSlugFromHost(
     request.headers.get('host'),

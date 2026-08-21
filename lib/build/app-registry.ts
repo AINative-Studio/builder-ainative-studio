@@ -50,7 +50,7 @@ export interface AppEntry {
   pipelineProvisioned?: boolean
   pipelineId?: string
   // The persistent hosting target for the company app (#243). Today this is the
-  // durable preview URL; the deploy seam swaps in a real Railway/*.ainative.app host.
+  // durable preview URL; the deploy seam swaps in a real Railway/*.ainative.studio host.
   deployUrl?: string
   createdAt: string
 }

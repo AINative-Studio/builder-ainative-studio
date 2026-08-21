@@ -2,7 +2,7 @@
 
 Status: **Provisioning + wildcard host shipped.** Real per-company primitive
 provisioning (Instant DB, temp→permanent claim on payment, ZeroPipeline) plus the
-Option B shared `*.ainative.app` wildcard host (real dedicated, CNAME-pointable
+Option B shared `*.ainative.studio` wildcard host (real dedicated, CNAME-pointable
 per-company address). Only Option A (a dedicated Railway service per company)
 remains a documented seam. This documents what is REAL and how to switch the
 wildcard on.
@@ -89,30 +89,41 @@ durable and shareable, but:
 `lib/build/deploy.ts :: deployPersistent(chatId, slug)` now returns a **real
 dedicated host** when the shared wildcard is configured:
 
-- **`AINATIVE_WILDCARD_HOST` set** (e.g. `ainative.app`) → returns
-  `https://{slug}.ainative.app` with `kind: 'wildcard'`, **`dnsPointable: true`**.
+- **`AINATIVE_WILDCARD_HOST` set** (e.g. `ainative.studio`) → returns
+  `https://{slug}.ainative.studio` with `kind: 'wildcard'`, **`dnsPointable: true`**.
   The Builder itself serves that host: `middleware.ts` rewrites
-  `Host: {slug}.ainative.app/*` → the internal `/build/{slug}` render via
+  `Host: {slug}.ainative.studio/*` → the internal `/build/{slug}` render via
   `wildcardSlugFromHost()` (apex + `www` are excluded; unit-tested in
   `__tests__/lib/wildcard-host.test.ts`). No per-company service is provisioned.
 - **env unset** (current prod default) → falls back to the durable preview URL
   (`{APP}/build/{slug}`, `kind: 'preview'`, `dnsPointable: false`), unchanged.
 
-So flipping this on is a single env var + a wildcard DNS/cert for `*.ainative.app`
-on the Builder service — no code change and no per-company infra.
+So flipping this on is a wildcard DNS record for `*.ainative.studio` + a single env
+var — no code change and no per-company infra.
+
+> **DNS providers — two different zones.** Be clear which zone each record lives in:
+> - **`ainative.studio` DNS is managed at Netlify.** The `*.ainative.studio` wildcard
+>   record (so `{slug}.ainative.studio` resolves to the Builder host) is created **at
+>   Netlify**, along with the wildcard TLS cert. This is a one-time setup.
+> - **The customer's purchased domain** (e.g. `riffmusic.com`) is registered at
+>   **Namecheap**, so ITS records are set there — that's what `point_domain_at_app()`
+>   writes (see below). These are separate: Netlify holds our wildcard; Namecheap holds
+>   the bought domain's CNAME that targets our wildcard.
 
 ### How #240's DNS follows automatically
-`namecheap_service.point_domain_at_app()` (core) now branches on the same env:
-- **`AINATIVE_WILDCARD_HOST` set** → `www` gets a **CNAME → `{slug}.ainative.app`**
-  and the apex (`@`) URL301-forwards to `https://www.{domain}` (apex can't hold a
-  CNAME per DNS rules). Returns `mode: 'cname'`.
+`namecheap_service.point_domain_at_app()` (core) writes records for the **customer's
+bought domain at Namecheap** (its registrar), and branches on the same env:
+- **`AINATIVE_WILDCARD_HOST` set** → `www` gets a **CNAME → `{slug}.ainative.studio`**
+  (which resolves via our Netlify-managed wildcard) and the apex (`@`) URL301-forwards
+  to `https://www.{domain}` (apex can't hold a CNAME per DNS rules). Returns `mode: 'cname'`.
 - **unset** → the prior apex+www URL301 redirect straight to `/build/{slug}`
   (`mode: 'redirect'`).
 
-To go live end-to-end: (1) point `*.ainative.app` DNS + wildcard TLS at the Builder
-Railway service, (2) set `AINATIVE_WILDCARD_HOST=ainative.app` on both Builder and
-core, (3) add each purchased custom domain to the Builder service's custom-domain
-list so its cert covers it (the CNAME then resolves with TLS).
+To go live end-to-end: (1) at **Netlify**, add the `*.ainative.studio` wildcard DNS
+record + wildcard TLS pointing at the Builder host; (2) set
+`AINATIVE_WILDCARD_HOST=ainative.studio` on both Builder and core; (3) ensure each
+purchased custom domain's TLS is covered (Builder custom-domain list / cert) so the
+Namecheap CNAME resolves with TLS.
 
 ## Still a seam — Option A (per-company Railway service)
 
@@ -126,13 +137,13 @@ risking real charges / infra state). `deployPersistent` keeps a documented branc
 - `lib/build/instant-db.ts` — Instant DB client (`provisionInstantDb`, `parseClaimToken`) (NEW).
 - `lib/build/zeropipeline.ts` — ZeroPipeline pipeline provisioner (`provisionPipeline`) (NEW).
 - `lib/build/app-registry.ts` — `zerodbProjectId` / `keyKind` / `claimToken` / `pipelineProvisioned` / `deployUrl` fields + `setAppProvisioned()` + `claimCompanyProject()` + `setAppPlan()` (superset of #241).
-- `lib/build/deploy.ts` — `deployPersistent()` returns a real `{slug}.ainative.app`
+- `lib/build/deploy.ts` — `deployPersistent()` returns a real `{slug}.ainative.studio`
   wildcard host when `AINATIVE_WILDCARD_HOST` is set; `wildcardUrl()` +
   `wildcardSlugFromHost()` helpers.
-- `middleware.ts` — rewrites `{slug}.ainative.app/*` → `/build/{slug}` (host→slug).
+- `middleware.ts` — rewrites `{slug}.ainative.studio/*` → `/build/{slug}` (host→slug).
 - `__tests__/lib/wildcard-host.test.ts` — unit tests for the host→slug logic (NEW).
 - `services/namecheap_service.py` (core) — `point_domain_at_app()` CNAMEs www →
-  `{slug}.ainative.app` when the wildcard host is set, else the URL301 fallback.
+  `{slug}.ainative.studio` when the wildcard host is set, else the URL301 fallback.
 - `app/api/build/provision/route.ts` — real Instant DB + ZeroPipeline provisioning.
 - `app/api/build/subscription/verify/route.ts` — #241 verify + #243 claim-on-payment hook (superset).
 - `lib/build/business-systems.ts` — per-primitive `provisioned` flags; `buildSystems(counts, { provisioned, pipelineProvisioned })`.
