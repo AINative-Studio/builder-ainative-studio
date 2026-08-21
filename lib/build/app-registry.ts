@@ -28,6 +28,8 @@ export interface AppEntry {
   color?: string
   track?: string
   domain?: string  // custom domain purchased for this company (#240), if any
+  plan?: string    // active subscription plan id (pro|business|enterprise) after checkout (#241)
+  enrolled?: boolean  // Business+ auto-enrolled into the nightly loop (#241; cron itself is #243)
   createdAt: string
 }
 
@@ -56,6 +58,21 @@ export async function setAppDomain(slug: string, domain: string): Promise<boolea
   const existing = await resolveApp(slug)
   if (!existing) return false
   return registerApp({ ...existing, domain })
+}
+
+/**
+ * Persist the active subscription plan on a company (#241), mirroring
+ * setAppDomain. Appends an updated row carrying the existing chatId + brand
+ * (and any domain) plus the new plan, so resolveApp() (latest-wins) surfaces it.
+ * `enrolled` is set for Business+ tiers — auto-enrollment intent into the nightly
+ * loop (the cron itself is #243). No-op (false) if the slug isn't registered.
+ */
+export async function setAppPlan(slug: string, plan: string): Promise<boolean> {
+  const existing = await resolveApp(slug)
+  if (!existing) return false
+  // Business and Enterprise auto-enroll into the nightly improvement loop.
+  const enrolled = plan === 'business' || plan === 'enterprise' || plan === 'cody_vcto'
+  return registerApp({ ...existing, plan, enrolled })
 }
 
 /** Resolve a slug to its most recent app entry (chatId + brand), or null. */

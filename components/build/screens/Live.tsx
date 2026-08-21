@@ -12,7 +12,13 @@ import { useBuild } from '@/contexts/build-context'
 import { useLiveProof } from '@/lib/build/useLiveProof'
 import { buildSystems, type BusinessSystem } from '@/lib/build/business-systems'
 import { DomainModal } from '@/components/build/DomainModal'
+import { planUnlocks, type ActivePlan } from '@/lib/build/state'
 import { useSession } from 'next-auth/react'
+
+/** Display label for an active paid tier (#241). */
+const PLAN_LABEL: Record<ActivePlan, string> = {
+  '': '', pro: 'Pro', business: 'Business', enterprise: 'Enterprise', cody_vcto: 'Cody · Virtual CTO',
+}
 
 interface ChatLine { role: 'user' | 'cody'; text: string }
 
@@ -37,6 +43,41 @@ export function Live() {
   const [customDomain, setCustomDomain] = useState<string | null>(null)
   const { status: sessionStatus } = useSession()
   const signedIn = sessionStatus === 'authenticated'
+  const [planStatus, setPlanStatus] = useState<string | null>(null)
+  // Active PAID subscription tier (#241) — drives the "On {plan}" banner + gates.
+  const activePlan = state.activePlan
+  const gates = planUnlocks(activePlan)
+
+  // Post-checkout subscription fulfillment (#241): Stripe returns to
+  // /build/{slug}?upgraded=1&session_id=…; verify it server-side (never trust the
+  // URL alone), then unlock the plan. Runs once; strips the params so a refresh
+  // doesn't re-verify.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('upgraded') !== '1') return
+    const sess = params.get('session_id')
+    const clean = new URL(window.location.href)
+    clean.searchParams.delete('upgraded'); clean.searchParams.delete('session_id'); clean.searchParams.delete('plan')
+    window.history.replaceState({}, '', clean.toString())
+    if (!sess) return
+    setPlanStatus('Activating your plan…')
+    fetch('/api/build/subscription/verify', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sess, slug: companyId }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d?.ok && d?.plan) {
+          dispatch({ type: 'SET_ACTIVE_PLAN', plan: d.plan as ActivePlan, enrolled: d.enrolled })
+          if (d.enrolled) setEnrolled(true)
+          setPlanStatus(`✓ You're on ${d.planName || d.plan}. Cody just unlocked it.`)
+        } else {
+          setPlanStatus(d?.error === 'not verified' ? 'Payment is still processing — refresh in a moment.' : (d?.error || 'Could not confirm your plan yet.'))
+        }
+      })
+      .catch(() => setPlanStatus('Payment received — finishing plan setup shortly.'))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Real business-systems state for this company (honest zero-state for a fresh
   // company; real counts when its ZeroDB has data). Never fabricated.
@@ -179,8 +220,23 @@ export function Live() {
         </div>
       </header>
 
-      {/* FIX-4: signup funnel — the conversion CTA for anonymous founders. */}
-      {!signedIn && (
+      {/* #241: once a paid plan is verified, the funnel becomes an active-plan
+          state ("On {plan}"). Otherwise anonymous founders see the signup CTA. */}
+      {activePlan ? (
+        <div className="m-live-funnel is-plan">
+          <span>
+            <strong>On {PLAN_LABEL[activePlan] || activePlan}.</strong>{' '}
+            {gates.swarm
+              ? 'The full agent swarm is running your company.'
+              : gates.nightlyLoop
+                ? 'Cody runs the nightly loop on your company — enrolled.'
+                : 'Cody is building and running your company. Custom domains unlocked.'}
+          </span>
+          <div className="m-live-funnel-cta">
+            <span className="m-chip">✓ {PLAN_LABEL[activePlan] || activePlan}</span>
+          </div>
+        </div>
+      ) : (!signedIn && (
         <div className="m-live-funnel">
           <span>
             <strong>{company} is yours.</strong> Create an account to keep it — Cody keeps building and running it 24/7, and you own 100%.
@@ -190,7 +246,8 @@ export function Live() {
             <button className="btn-ghost" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'login' })}>Log in</button>
           </div>
         </div>
-      )}
+      ))}
+      {planStatus && <p className="m-mono m-domain-status" style={{ padding: '0 var(--m-pad, 24px)' }}>{planStatus}</p>}
 
       <div className={`m-live-grid ${state.tablet ? 'is-tablet' : ''}`}>
         {/* LEFT — Cody status + metrics + upsell */}
@@ -225,12 +282,14 @@ export function Live() {
           <div className="m-live-card m-upsell">
             <div className="m-mono m-live-card-h">Hire the swarm</div>
             <p className="m-live-card-body">
-              {enrolled
-                ? 'Enrolled. Cody runs the nightly loop on your company.'
-                : 'Works while you sleep · $49/mo'}
+              {activePlan
+                ? `On ${PLAN_LABEL[activePlan] || activePlan}. ${gates.nightlyLoop ? 'Cody runs the nightly loop on your company.' : 'Cody is building and running your company.'}`
+                : enrolled
+                  ? 'Enrolled. Cody runs the nightly loop on your company.'
+                  : 'Works while you sleep · $49/mo'}
             </p>
-            <button className="btn-primary" disabled={enrolled} onClick={subscribe}>
-              {enrolled ? '✓ On watch' : 'Subscribe'}
+            <button className="btn-primary" disabled={!!activePlan || enrolled} onClick={subscribe}>
+              {activePlan ? `✓ On ${PLAN_LABEL[activePlan] || activePlan}` : enrolled ? '✓ On watch' : 'Subscribe'}
             </button>
           </div>
         </div>

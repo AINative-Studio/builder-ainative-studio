@@ -13,6 +13,14 @@ export type Screen =
 export type Track = 'app' | 'company'
 export type Plan = '' | 'launch' | 'company'
 
+/**
+ * Active PAID subscription tier (#241), distinct from `Plan` (the in-flow
+ * pricing-picker choice). Set after Stripe checkout is verified server-side;
+ * screens gate unlocks off it (Pro → custom domain, Business → nightly-loop
+ * enrollment, Enterprise → swarm). '' = no active subscription.
+ */
+export type ActivePlan = '' | 'pro' | 'business' | 'enterprise' | 'cody_vcto'
+
 /** Artifact ids (the `view` values), in composition order per track. */
 export const APP_VIEWS = [
   'brief', 'prd', 'comp', 'dataModel', 'memoryPolicy',
@@ -69,6 +77,8 @@ export interface BuildState {
   askedPrivacy: boolean    // has the one App-track decision modal (privacy posture) been shown yet
   railOpen: boolean        // the Artifacts rail drawer is open
   indexOpen: boolean       // the Index (jump-to-any-screen) panel is open
+  activePlan: ActivePlan   // verified PAID subscription tier (#241); '' = none. Drives feature gates.
+  enrolled: boolean        // Business+ auto-enrolled into the nightly loop (#241; cron is #243)
 }
 
 /** Full-bleed build overlays that can cover the workspace during autoplay (04-SCREENS §3). */
@@ -110,6 +120,8 @@ export const initialBuildState: BuildState = {
   askedPrivacy: false,
   railOpen: false,
   indexOpen: false,
+  activePlan: '',
+  enrolled: false,
 }
 
 export type BuildAction =
@@ -140,6 +152,7 @@ export type BuildAction =
   | { type: 'TOGGLE_RAIL' }
   | { type: 'TOGGLE_INDEX' }
   | { type: 'SET_APP_CHATID'; chatId: string }
+  | { type: 'SET_ACTIVE_PLAN'; plan: ActivePlan; enrolled?: boolean }
 
 export function buildReducer(state: BuildState, action: BuildAction): BuildState {
   switch (action.type) {
@@ -238,6 +251,14 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
       return { ...state, indexOpen: !state.indexOpen, railOpen: false }
     case 'SET_APP_CHATID':
       return { ...state, appChatId: action.chatId }
+    case 'SET_ACTIVE_PLAN':
+      return {
+        ...state,
+        activePlan: action.plan,
+        // Business+ auto-enroll into the nightly loop; default from the tier when
+        // the caller doesn't pass an explicit flag (#241; cron itself is #243).
+        enrolled: action.enrolled ?? (action.plan === 'business' || action.plan === 'enterprise' || action.plan === 'cody_vcto'),
+      }
     case 'SET_OVERLAY':
       return { ...state, overlay: action.overlay }
     case 'RIBBON':
@@ -265,6 +286,30 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
 /** Ordered artifact sequence for the active track (drives breadcrumb + act-bar). */
 export function trackViews(track: Track): readonly string[] {
   return track === 'app' ? APP_VIEWS : COMPANY_VIEWS
+}
+
+/**
+ * Plan-gated feature unlocks (#241). Screens read these off `state.activePlan`
+ * to decide what a paid tier unlocks. Tiers are cumulative:
+ *   Pro        → custom-domain eligibility
+ *   Business   → nightly-loop enrollment (+ everything Pro)
+ *   Enterprise → the agent swarm (+ everything Business)
+ * cody_vcto is treated as the top tier (all unlocks). '' = no subscription.
+ */
+export function planUnlocks(plan: ActivePlan): {
+  customDomain: boolean
+  nightlyLoop: boolean
+  swarm: boolean
+} {
+  const rank: Record<ActivePlan, number> = {
+    '': 0, pro: 1, business: 2, enterprise: 3, cody_vcto: 4,
+  }
+  const r = rank[plan] ?? 0
+  return {
+    customDomain: r >= 1,   // Pro+
+    nightlyLoop: r >= 2,    // Business+
+    swarm: r >= 3,          // Enterprise+
+  }
 }
 
 /**
