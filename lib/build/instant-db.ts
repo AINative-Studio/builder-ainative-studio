@@ -16,6 +16,15 @@
 
 const AINATIVE_API = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 
+/**
+ * Trial window for an UNPAID (tmp_) Instant DB project, in milliseconds (72h).
+ * Kept here as the single source of truth: Instant DB normally returns an
+ * `expires_at`, but when it's missing/empty the provision route falls back to
+ * `now + TRIAL_WINDOW_MS` so the Live "Free trial: Xh left" countdown always has
+ * a real value (#260).
+ */
+export const TRIAL_WINDOW_MS = 72 * 60 * 60 * 1000
+
 export interface InstantDbResult {
   ok: boolean
   projectId?: string
