@@ -29,9 +29,12 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({
         plan_id: plan,
         stripe_price_id: priceId,
-        // return to the Builder company/live page after checkout
-        success_url: `${APP}/build${companyId ? `/${companyId}` : ''}?upgraded=1&session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${APP}/build`,
+        // Return to the Builder FLOW's Live screen (not /build/{slug}, which is the
+        // generated-app iframe page) so the ?upgraded=1 handler in Live.tsx runs the
+        // server-side verify + unlock. The ?screen=live&company= deep-link lands us
+        // on that company's Live dashboard with the plan unlocked.
+        success_url: `${APP}/build?screen=live${companyId ? `&company=${encodeURIComponent(companyId)}` : ''}&upgraded=1&session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${APP}/build${companyId ? `?screen=live&company=${encodeURIComponent(companyId)}` : ''}`,
       }),
       signal: AbortSignal.timeout(25000),
     })
