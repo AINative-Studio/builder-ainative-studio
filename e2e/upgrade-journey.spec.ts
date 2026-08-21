@@ -40,38 +40,34 @@ test.describe('Upgrade journey', () => {
   })
 
   test('A2. Pricing screen offers tiers and starts a REAL Stripe checkout', async ({ page }) => {
+    // Intercept the checkout API at the route layer: fetch the real response,
+    // record the cs_live URL, then fulfill with the URL BLANKED so the app can't
+    // navigate the test browser off to Stripe (which would invalidate the body).
+    // This asserts the real endpoint returns a live Stripe checkout URL.
+    let checkoutUrl: string | null = null
+    let checkoutStatus: number | null = null
+    await page.route('**/api/build/checkout', async (route) => {
+      const resp = await route.fetch()
+      checkoutStatus = resp.status()
+      const body = await resp.json().catch(() => null)
+      checkoutUrl = String(body?.url || '')
+      // Blank the url so choose() doesn't redirect; keep the rest of the payload.
+      await route.fulfill({ response: resp, json: { ...(body || {}), url: '' } })
+    })
+
     await page.goto(`${BASE}/build?screen=pricing&company=riff`, { waitUntil: 'domcontentloaded' })
 
-    // Pricing rendered with the three tiers.
-    await expect(page.getByTestId('pricing-tiers')).toBeVisible({ timeout: 20000 })
-    await expect(page.getByTestId('tier-pro')).toBeVisible()
+    // Wait for the tiers to hydrate (deep-link + client render), then assert them.
+    await expect(page.getByTestId('choose-pro')).toBeVisible({ timeout: 30000 })
     await expect(page.getByTestId('tier-business')).toBeVisible()
     await expect(page.getByTestId('tier-enterprise')).toBeVisible()
 
     // Choosing a tier must reach a REAL Stripe checkout (cs_live), not dead-end.
-    // Click Pro and wait for either the Stripe redirect OR the checkout API call.
-    const checkoutResp = page.waitForResponse(
-      (r) => r.url().includes('/api/build/checkout') && r.request().method() === 'POST',
-      { timeout: 25000 },
-    ).catch(() => null)
-
     await page.getByTestId('choose-pro').click()
 
-    const resp = await checkoutResp
-    if (resp) {
-      const body = await resp.json().catch(() => null)
-      // The checkout endpoint returns a real Stripe URL (or a clear reason).
-      const url = body?.url || ''
-      expect(
-        url.includes('checkout.stripe.com') || body?.error || body?.reason,
-        `checkout response should carry a Stripe URL or an explicit reason, got: ${JSON.stringify(body)}`,
-      ).toBeTruthy()
-      if (url) expect(url).toContain('stripe.com')
-    } else {
-      // If no API call was captured, we may have already navigated to Stripe.
-      await page.waitForTimeout(3000)
-      expect(page.url()).toMatch(/stripe\.com|\/build/)
-    }
+    // Poll until the listener has recorded the checkout response.
+    await expect.poll(() => checkoutStatus, { timeout: 30000 }).toBe(200)
+    expect(checkoutUrl, `checkout must return a real Stripe URL, got: ${checkoutUrl}`).toContain('checkout.stripe.com')
   })
 
   test('B. Front door: /build starts the journey (Fork tracks + idea input)', async ({ page }) => {
@@ -80,8 +76,17 @@ test.describe('Upgrade journey', () => {
     await expect(page.locator('[data-track="app"]')).toBeVisible({ timeout: 20000 })
     await expect(page.locator('[data-track="company"]')).toBeVisible()
 
-    // Picking a track leads to the idea intake (where Cody starts).
+    // Picking a track leads to the idea intake (where Cody starts). The whole
+    // card is the click target (onClick is on the card div). Let hydration settle
+    // so React has attached the handler, then click; retry once if the screen
+    // didn't advance (guards against a click landing before hydration).
+    const idea = page.getByPlaceholder(/describe your idea/i)
+    await page.waitForTimeout(1500)
     await page.locator('[data-track="company"]').click()
-    await expect(page.getByPlaceholder(/describe your idea/i)).toBeVisible({ timeout: 15000 })
+    if (!(await idea.isVisible().catch(() => false))) {
+      await page.waitForTimeout(1500)
+      await page.locator('[data-track="company"]').click()
+    }
+    await expect(idea).toBeVisible({ timeout: 15000 })
   })
 })

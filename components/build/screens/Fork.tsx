@@ -28,7 +28,7 @@ export function Fork() {
             {APP_VIEWS.slice(0, 6).map((v) => <span key={v} className="m-chip">{v}</span>)}
             <span className="m-chip">…</span>
           </div>
-          <button className="btn-primary">Build an App →</button>
+          <button className="btn-primary" onClick={(e) => { e.stopPropagation(); pickTrack('app') }}>Build an App →</button>
         </div>
 
         <div className="m-fork-card" data-track="company" role="button" tabIndex={0}
@@ -38,7 +38,7 @@ export function Fork() {
           <div className="m-chip-trail">
             {COMPANY_VIEWS.map((v) => <span key={v} className="m-chip">{v}</span>)}
           </div>
-          <button className="btn-primary">Build a Company →</button>
+          <button className="btn-primary" onClick={(e) => { e.stopPropagation(); pickTrack('company') }}>Build a Company →</button>
         </div>
       </div>
 
