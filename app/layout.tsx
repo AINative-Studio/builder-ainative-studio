@@ -48,11 +48,11 @@ const plexMono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: 'AINative Builder - AI App Builder | Generate React Apps with AI',
+    default: 'AINative Builder - AI That Builds AND Runs Your Company',
     template: '%s | AINative Builder',
   },
   description:
-    'Build production-ready React apps and components with AI. The best alternative to v0, Lovable, and Bolt. Agent-optimized with AX scoring, SEO, structured data, and multi-model support including Claude Sonnet 4.',
+    'Describe your company. Cody, your AI co-founder, builds the product and the business systems around it, launches it, and runs it 24/7 on real AINative primitives you own. Also a production-grade AI app builder and v0, Lovable, and Bolt alternative.',
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio'),
   icons: {
     icon: [
@@ -63,7 +63,11 @@ export const metadata: Metadata = {
   },
   manifest: '/manifest.json',
   keywords: [
-    // Primary - exact match targets
+    // Primary - company-outcome positioning (#207/#208)
+    'AI that runs your company', 'AI that builds your company', 'AI co-founder',
+    'autonomous AI company', 'AI business builder', 'build a company with AI',
+    'agent-run company', 'AI startup generator', 'AI-native company', 'Polsia alternative',
+    // Secondary - app-builder intent (demoted, kept for existing ranked keywords)
     'AI app builder', 'AI UI generator', 'AI web app builder', 'AI frontend builder',
     'React component generator', 'Next.js generator', 'AI code generator',
     'text to UI', 'prompt to website', 'build app with AI',
@@ -84,16 +88,16 @@ export const metadata: Metadata = {
     'open source AI builder', 'AINative Studio builder', 'ZeroDB AI builder',
   ],
   openGraph: {
-    title: 'AINative Builder - Build React Apps with AI',
-    description: 'AI-powered React component builder. Generate production-ready apps from prompts with AX optimization, SEO, and structured data. Best v0 & Lovable alternative.',
+    title: 'AINative Builder - AI That Builds AND Runs Your Company',
+    description: 'Describe your company. Cody, your AI co-founder, builds it, launches it, and runs it 24/7 on real AINative primitives you own. Also a production-grade AI app builder.',
     siteName: 'AINative Builder',
     type: 'website',
     locale: 'en_US',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'AINative Builder - Build React Apps with AI',
-    description: 'AI-powered React component builder. Generate production-ready apps from prompts with AX optimization and SEO built in.',
+    title: 'AINative Builder - AI That Builds AND Runs Your Company',
+    description: 'Your first employee. Ships product, runs growth, never sleeps. Cody builds your company, launches it, and runs it 24/7 on real primitives you own.',
     creator: '@AINativeStudio',
   },
   robots: {
@@ -115,7 +119,7 @@ const jsonLd = {
       '@type': 'WebApplication',
       name: 'AINative Builder',
       url: 'https://builder.ainative.studio',
-      description: 'AI-powered React component builder that generates production-ready web applications from natural language prompts with AX optimization, SEO, and structured data.',
+      description: 'An AI co-founder that builds AND runs your company: describe an idea and Cody composes a real running product plus the business systems around it, launches it, and operates it 24/7 on real AINative primitives you own. Also a production-grade AI app builder that generates production-ready React and Next.js apps from a prompt with AX optimization, SEO, and structured data.',
       applicationCategory: 'DeveloperApplication',
       operatingSystem: 'Web',
       offers: {
