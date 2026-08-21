@@ -21,10 +21,16 @@ const KEY = process.env.AINATIVE_API_KEY || process.env.ZERODB_API_KEY || ''
 const APP = process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio'
 
 export async function GET(request: NextRequest) {
-  const brand = new URL(request.url).searchParams.get('brand') || ''
+  const url = new URL(request.url)
+  const brand = url.searchParams.get('brand') || ''
+  // Company context (idea/industry) so core can generate ON-BRAND alternatives
+  // when the bare word is taken (embercoffee, drinkember, ember.shop…) instead of
+  // dead-ending. Optional — degrades to generic variants when absent.
+  const keywords = url.searchParams.get('keywords') || ''
   if (!brand) return Response.json({ error: 'brand required' }, { status: 400 })
+  const qs = `brand=${encodeURIComponent(brand)}${keywords ? `&keywords=${encodeURIComponent(keywords.slice(0, 200))}` : ''}`
   try {
-    const res = await fetch(`${CORE}/api/v1/public/domains/suggest?brand=${encodeURIComponent(brand)}`, {
+    const res = await fetch(`${CORE}/api/v1/public/domains/suggest?${qs}`, {
       headers: { Authorization: `Bearer ${KEY}`, 'X-API-Key': KEY },
       signal: AbortSignal.timeout(20000),
     })

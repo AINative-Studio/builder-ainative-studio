@@ -11,7 +11,7 @@ import { useEffect, useState } from 'react'
 
 interface Suggestion { domain: string; available: boolean; price?: number }
 
-export function DomainModal({ brand, slug, open, onClose }: { brand: string; slug?: string; open: boolean; onClose: () => void }) {
+export function DomainModal({ brand, slug, keywords, open, onClose }: { brand: string; slug?: string; keywords?: string; open: boolean; onClose: () => void }) {
   const [loading, setLoading] = useState(false)
   const [configured, setConfigured] = useState(true)
   const [suggestions, setSuggestions] = useState<Suggestion[]>([])
@@ -21,7 +21,10 @@ export function DomainModal({ brand, slug, open, onClose }: { brand: string; slu
   useEffect(() => {
     if (!open || !brand) return
     setLoading(true); setStatus(null); setPicked(null)
-    fetch(`/api/build/domains?brand=${encodeURIComponent(brand)}`)
+    // Pass the company context so a taken bare word still surfaces on-brand
+    // alternatives (embercoffee, drinkember, ember.shop…), not a dead end.
+    const kw = keywords ? `&keywords=${encodeURIComponent(keywords)}` : ''
+    fetch(`/api/build/domains?brand=${encodeURIComponent(brand)}${kw}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         setConfigured(d?.configured !== false)
@@ -29,7 +32,7 @@ export function DomainModal({ brand, slug, open, onClose }: { brand: string; slu
       })
       .catch(() => setConfigured(false))
       .finally(() => setLoading(false))
-  }, [open, brand])
+  }, [open, brand, keywords])
 
   // Fulfillment: after Stripe redirects back with ?domain_session=…, verify the
   // payment and register + point DNS. Runs once regardless of modal open state.
@@ -100,7 +103,7 @@ export function DomainModal({ brand, slug, open, onClose }: { brand: string; slu
                 </button>
               ))}
               {suggestions.length === 0 && (
-                <p className="m-sub">No available domains for {brand} — try a different brand name.</p>
+                <p className="m-sub">Every {brand} variation is taken right now. Tweak the name a touch (or ask Cody for another) and I&apos;ll find you a great available address.</p>
               )}
             </div>
             {status && <p className="m-mono m-domain-status">{status}</p>}

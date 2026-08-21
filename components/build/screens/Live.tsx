@@ -477,7 +477,7 @@ export function Live() {
         </p>
       )}
 
-      <DomainModal brand={state.appSub || companyId} slug={companyId} open={domainOpen} onClose={() => setDomainOpen(false)} />
+      <DomainModal brand={state.appSub || companyId} slug={companyId} keywords={[state.idea, state.brandTagline].filter(Boolean).join(' ')} open={domainOpen} onClose={() => setDomainOpen(false)} />
     </div>
   )
 }
