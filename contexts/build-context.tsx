@@ -38,6 +38,24 @@ export function BuildProvider({ children }: { children: ReactNode }) {
     return () => mq.removeEventListener('change', on)
   }, [])
 
+  // Deep-link hook (?screen=&company=) — lets Playwright/QA jump straight to a
+  // screen (e.g. the Live upgrade path) without driving a full codegen build.
+  // Harmless in normal use; only a known screen is honored.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search)
+    const scr = q.get('screen')
+    const known = ['fork', 'intake', 'ws', 'pricing', 'live', 'login', 'signup', 'account']
+    if (scr && known.includes(scr)) {
+      const company = q.get('company')
+      if (company) {
+        dispatch({ type: 'PICK_TRACK', track: 'company' })
+        dispatch({ type: 'START_BUILD', idea: company, appSub: company, companyName: company })
+      }
+      dispatch({ type: 'GOTO_SCREEN', screen: scr as any })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const views = useMemo(() => trackViews(state.track), [state.track])
   const woven = useMemo(() => countWoven(state, PRIMITIVE_MAP), [state])
 
