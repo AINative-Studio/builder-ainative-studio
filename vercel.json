@@ -46,6 +46,10 @@
     {
       "source": "/healthz",
       "destination": "/api/health"
+    },
+    {
+      "source": "/version",
+      "destination": "/api/version"
     }
   ],
   "redirects": [
