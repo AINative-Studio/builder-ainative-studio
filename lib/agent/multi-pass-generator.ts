@@ -188,6 +188,7 @@ DEPENDENCIES: ${phase.dependencies.join(', ')}
 - Ensure keyboard navigation works
 - Use descriptive variable names (camelCase)
 - Handle errors gracefully with try/catch
+- For content strings with apostrophes (contractions like "it's", "you're"), use double quotes or escape the apostrophe (\\') so they don't end the string early and break the syntax
 - Return ONLY the code wrapped in \`\`\`jsx and \`\`\` markers.
 `
 

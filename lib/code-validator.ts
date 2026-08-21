@@ -19,11 +19,220 @@ export interface ValidationResult {
 }
 
 /**
+ * Fix single-quoted string LITERALS that contain an unescaped interior
+ * apostrophe (a contraction like "it's" / "you're"), which ends the string
+ * early and produces `SyntaxError: Unexpected token, expected ","` (builder#271).
+ *
+ * Safe by construction: a single char-by-char scanner tracks string/template/
+ * comment/regex state, so we ONLY touch genuine single-quoted literals. For each
+ * such literal we look at what follows its "natural" close quote — if the next
+ * significant char is one that legally continues an expression/statement
+ * (`,` `)` `]` `}` `;` `:` `.` `?` `>` `=` `&` `|` `+` operators, newline, EOF),
+ * the quote is a real terminator and the literal is well-formed → leave it. If
+ * instead more string-like text follows (letters, spaces, etc.), the quote was a
+ * stray interior apostrophe → repair the whole run up to the true terminator.
+ *
+ * Repair strategy (per builder#271): if the literal body contains no `"`, swap
+ * the delimiters to double quotes (cleanest). Otherwise escape each interior
+ * `'` as `\'`.
+ *
+ * Does NOT touch: template literals (backticks), double-quoted strings, already
+ * escaped `\'`, JSX text, comments, regex literals, or single-quoted JSX
+ * ATTRIBUTE values (`<img alt='...'/>`) — inside a JSX opening tag the boundary
+ * between a stray-apostrophe run and the next attribute is ambiguous, so we
+ * leave those untouched rather than risk corrupting valid multi-attribute tags.
+ */
+function fixUnescapedApostrophesInSingleQuotes(code: string): { code: string; changed: boolean } {
+  let changed = false
+  let out = ''
+  let i = 0
+  const n = code.length
+  // True while scanning inside a JSX opening/self-closing tag (`<div ... >`),
+  // where single-quoted attribute values live and must be left as-is.
+  let inJsxTag = false
+
+  // Characters that, when they follow a single-quote, mean the quote is a
+  // legitimate string terminator (so the literal before it was well-formed).
+  const isTerminatorContext = (idx: number): boolean => {
+    // Skip horizontal whitespace to the next significant char.
+    let j = idx
+    while (j < n && (code[j] === ' ' || code[j] === '\t')) j++
+    if (j >= n) return true // EOF — string closes cleanly
+    const c = code[j]
+    // Newline/CR → statement or line ended; treat as clean close.
+    if (c === '\n' || c === '\r') return true
+    // Operators / punctuation that continue an expression after a string value.
+    return ',)]};:.?>=&|+*/%!<'.includes(c)
+  }
+
+  // Brace depth of `{...}` expression containers opened INSIDE a JSX tag, so a
+  // `>` within `attr={a > b}` does not prematurely end the tag.
+  let jsxBraceDepth = 0
+
+  while (i < n) {
+    const ch = code[i]
+    const next = i + 1 < n ? code[i + 1] : ''
+
+    // --- JSX opening-tag boundary tracking (only when not already in a tag) ---
+    if (!inJsxTag && ch === '<') {
+      // A JSX tag opens on `<Letter`, `</`, or `<>`. A `<` used as a comparison
+      // operator is normally `a < b` (space/operand) — treat only the JSX forms.
+      const c2 = next
+      if (/[A-Za-z]/.test(c2) || c2 === '/' || c2 === '>') {
+        inJsxTag = true
+        jsxBraceDepth = 0
+        out += ch
+        i++
+        continue
+      }
+    }
+    if (inJsxTag) {
+      if (ch === '{') { jsxBraceDepth++; out += ch; i++; continue }
+      if (ch === '}') { if (jsxBraceDepth > 0) jsxBraceDepth--; out += ch; i++; continue }
+      if (ch === '>' && jsxBraceDepth === 0) { inJsxTag = false; out += ch; i++; continue }
+    }
+
+    // Line comment — copy verbatim to end of line.
+    if (ch === '/' && next === '/') {
+      const eol = code.indexOf('\n', i)
+      const end = eol === -1 ? n : eol
+      out += code.slice(i, end)
+      i = end
+      continue
+    }
+    // Block comment — copy verbatim to closing */.
+    if (ch === '/' && next === '*') {
+      const close = code.indexOf('*/', i + 2)
+      const end = close === -1 ? n : close + 2
+      out += code.slice(i, end)
+      i = end
+      continue
+    }
+    // Template literal — copy verbatim to matching backtick (respecting escapes).
+    // (We don't need to fully parse ${} interpolations; interior single quotes
+    // inside a template are already safe, and any nested strings there are not
+    // our target.)
+    if (ch === '`') {
+      out += ch
+      i++
+      while (i < n) {
+        if (code[i] === '\\') { out += code.slice(i, i + 2); i += 2; continue }
+        out += code[i]
+        if (code[i] === '`') { i++; break }
+        i++
+      }
+      continue
+    }
+    // Double-quoted string — copy verbatim to matching quote (respecting escapes).
+    if (ch === '"') {
+      out += ch
+      i++
+      while (i < n) {
+        if (code[i] === '\\') { out += code.slice(i, i + 2); i += 2; continue }
+        out += code[i]
+        if (code[i] === '"') { i++; break }
+        i++
+      }
+      continue
+    }
+    // Single-quoted JSX attribute value — copy verbatim (never repair; the
+    // stray-apostrophe vs. next-attribute boundary is ambiguous inside a tag).
+    if (ch === "'" && inJsxTag) {
+      out += ch
+      i++
+      while (i < n) {
+        if (code[i] === '\\') { out += code.slice(i, i + 2); i += 2; continue }
+        if (code[i] === '\n' || code[i] === '\r') break // unterminated — bail
+        out += code[i]
+        if (code[i] === "'") { i++; break }
+        i++
+      }
+      continue
+    }
+    // Single-quoted string — this is the case we inspect.
+    if (ch === "'") {
+      const start = i
+      i++ // move past opening quote
+      let body = ''
+      let hadInteriorApostrophe = false
+      let bodyHasDoubleQuote = false
+      let closed = false
+
+      while (i < n) {
+        const c = code[i]
+        if (c === '\\') {
+          // Preserve escape sequences (including already-escaped \').
+          body += code.slice(i, i + 2)
+          i += 2
+          continue
+        }
+        if (c === '\n' || c === '\r') {
+          // Unterminated single-quoted literal on this line — bail out and let
+          // the truncation/quote-balancing logic handle it. Emit verbatim.
+          break
+        }
+        if (c === '"') bodyHasDoubleQuote = true
+        if (c === "'") {
+          // Candidate close. If the following context is a legit terminator,
+          // this is the true end of the string.
+          if (isTerminatorContext(i + 1)) {
+            closed = true
+            i++ // consume closing quote
+            break
+          }
+          // Otherwise it's an interior apostrophe that would have ended the
+          // string early — record it and keep scanning for the real close.
+          hadInteriorApostrophe = true
+          body += c
+          i++
+          continue
+        }
+        body += c
+        i++
+      }
+
+      if (closed && hadInteriorApostrophe) {
+        changed = true
+        if (!bodyHasDoubleQuote) {
+          // Cleanest: convert delimiters to double quotes.
+          out += '"' + body + '"'
+        } else {
+          // Escape every unescaped interior apostrophe.
+          out += "'" + body.replace(/(?<!\\)'/g, "\\'") + "'"
+        }
+      } else {
+        // Well-formed literal, unterminated line, or EOF — emit exactly as read.
+        out += code.slice(start, i)
+      }
+      continue
+    }
+
+    out += ch
+    i++
+  }
+
+  return { code: out, changed }
+}
+
+/**
  * Auto-fix common code issues
  */
 function autoFixCode(code: string): { code: string; fixes: string[] } {
   let fixedCode = code
   const fixes: string[] = []
+
+  // Fix APOSTROPHE-IN-SINGLE-QUOTE (builder#271): a contraction inside a
+  // single-quoted content string (e.g. `'it's perfect'`) closes the string
+  // early and throws `Unexpected token, expected ","`. Repair BEFORE the
+  // quote-counting truncation logic below, since balancing this changes the
+  // single-quote parity those heuristics rely on.
+  {
+    const apos = fixUnescapedApostrophesInSingleQuotes(fixedCode)
+    if (apos.changed) {
+      fixedCode = apos.code
+      fixes.push('Fixed unescaped apostrophe inside single-quoted string literal')
+    }
+  }
 
   // Fix TRUNCATION: Close unterminated block comments. The model sometimes
   // emits `/* ... ` with no closing `*/` (often a trailing NOTE banner). Append
