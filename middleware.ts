@@ -58,6 +58,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/api/preview') ||
     pathname.startsWith('/api/auth') ||
     pathname === '/api/health' ||
+    pathname === '/api/version' ||
     pathname === '/api/debug-auth'
 
   if (pathname.startsWith('/api/') && !isRateLimitExempt) {
@@ -90,6 +91,7 @@ export async function middleware(request: NextRequest) {
     const isPublicApiRoute =
       pathname.startsWith('/api/auth/') ||
       pathname === '/api/health' ||
+      pathname === '/api/version' ||
       pathname === '/api/debug-auth' ||
       pathname.startsWith('/api/preview/') ||
       pathname === '/api/showcase' ||
