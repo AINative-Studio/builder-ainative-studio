@@ -4,21 +4,37 @@
 
 import { useBuild } from '@/contexts/build-context'
 
+// Builder subscription tiers — the canonical AINative plan line (config/pricing.ts).
+// Skip Starter/$5 ('Hobbyist'): its 100K tokens can't build+run a real company.
+// The free sandbox preview at /build/{slug} is the no-card entry; the real
+// Builder subscription starts at $49. Stripe price IDs are the live AINative ones.
 const TIERS = [
-  { id: 'free', name: 'Free', price: '$0', tagline: 'Prototype in the sandbox.', plan: '' as const,
-    features: ['Sandbox staging URL', 'One project', 'Community support'] },
-  { id: 'pro', name: 'Pro', price: '$49', tagline: 'Put it in front of real users.', plan: 'launch' as const, featured: true,
-    features: ['Custom domain + production deploy', 'The nightly agent loop', 'ZeroDB + ZeroMemory included', 'Email support'] },
-  { id: 'business', name: 'Business', price: '$199', tagline: 'Run the whole company.', plan: 'company' as const,
-    features: ['Everything in Pro', 'Sales pipeline + auto-invoicing', 'Voice & SMS + helpdesk', 'Priority support'] },
+  { id: 'pro', name: 'Pro', price: '$49', tagline: 'Build it for real.', plan: 'launch' as const, featured: true,
+    priceId: 'price_1TGUVdDP3OaRv4TyMwk7nnp1',
+    features: ['Cody builds your app + company', '1M tokens · 50K API · 10GB', 'Real generation (Claude Sonnet 4.5)', 'Custom domain available'] },
+  { id: 'business', name: 'Business', price: '$149', tagline: 'Cody runs it 24/7.', plan: 'company' as const,
+    priceId: 'price_1TGUVeDP3OaRv4TyaqQG6lVT',
+    features: ['Everything in Pro', 'The nightly autonomous loop', 'Sales pipeline · invoicing · helpdesk · voice', '5M tokens · 150K API · 50GB'] },
+  { id: 'enterprise', name: 'Enterprise', price: '$999', tagline: 'Full agent-swarm autonomy.', plan: 'company' as const,
+    priceId: 'price_1Ti31LDP3OaRv4TytcjLbFPh',
+    features: ['Everything in Business', 'Real agent swarm executes builds', '20M tokens · 200GB · SSO', 'Priority support'] },
 ]
 
 export function Pricing() {
   const { state, dispatch } = useBuild()
-  const choose = (plan: '' | 'launch' | 'company') => {
-    dispatch({ type: 'PICK_PLAN', plan })
-    if (plan === '') { dispatch({ type: 'GOTO_SCREEN', screen: 'ws' }); return }
-    // paid → continue into Company Track build-out (or straight to Live if company already built)
+  const choose = async (tier: (typeof TIERS)[number]) => {
+    dispatch({ type: 'PICK_PLAN', plan: tier.plan })
+    // Start a real Stripe checkout for the chosen tier. On success Stripe redirects
+    // back; if checkout can't start (anon/unconfigured), fall through into the
+    // build-out so the demo flow never dead-ends.
+    try {
+      const res = await fetch('/api/build/checkout', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ priceId: tier.priceId, plan: tier.id, companyId: state.appSub }),
+      })
+      const d = await res.json()
+      if (d?.url) { window.location.href = d.url; return }
+    } catch { /* fall through */ }
     dispatch({ type: 'PICK_TRACK', track: 'company' })
   }
   return (
@@ -26,8 +42,8 @@ export function Pricing() {
       <p className="m-cody-line"><span className="m-glyph">◇</span> Cody · your technical co-founder</p>
       <h1 className="m-h1">Your prototype works. Let&apos;s make it real.</h1>
       <p className="m-sub">
-        I built the MVP for free in a sandbox at {state.appSub || 'your-app'}.ainative.studio. To put it in
-        front of real users — and to build the company around it — pick how far we go. I keep working either way.
+        I built {state.companyName || 'it'} for free — live at builder.ainative.studio/build/{state.appSub || 'your-app'}.
+        To put it in front of real users and let me run the company around it, pick how far we go. You own 100%.
       </p>
       <p className="m-reassure m-mono">You own 100% of everything I build. Cancel anytime.</p>
       <div className="m-tiers m-seams">
@@ -38,8 +54,8 @@ export function Pricing() {
             <div className="m-tier-price m-artifact">{t.price}<span>/mo</span></div>
             <p className="m-tier-tag">{t.tagline}</p>
             <ul className="m-list m-checks m-tier-features">{t.features.map((f) => <li key={f}>{f}</li>)}</ul>
-            <button className={t.featured ? 'btn-primary' : 'btn-secondary'} onClick={() => choose(t.plan)}>
-              {t.id === 'free' ? 'Stay on Free' : `Choose ${t.name}`}
+            <button className={t.featured ? 'btn-primary' : 'btn-secondary'} onClick={() => choose(t)}>
+              Choose {t.name}
             </button>
           </div>
         ))}
