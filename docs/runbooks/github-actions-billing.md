@@ -2,7 +2,7 @@
 
 **Owner action required — this is an ops/billing issue, not a code bug.** An
 agent cannot fix a failed payment; a GitHub org owner (or billing manager) must
-update the payment method. Tracking issue: [#244](https://github.com/AINative-Studio/opencapstack/issues/244)
+update the payment method. Tracking issue: [#244](https://github.com/AINative-Studio/builder-ainative-studio/issues/244)
 (part of EPIC #207).
 
 ---
