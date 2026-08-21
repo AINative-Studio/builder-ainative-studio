@@ -20,6 +20,12 @@ export interface BusinessSystem {
   /** numeric counters — real per-company values (0 for a fresh company) */
   count: number
   value?: number
+  /**
+   * True when this system's counts come from the company's REAL provisioned
+   * ZeroDB project (#243). False = still simulated / no per-company data source
+   * wired yet, so the UI can mark it honestly instead of implying live data.
+   */
+  provisioned?: boolean
 }
 
 // Only real, resolving product URLs (verified). ZeroVoice has no live standalone
@@ -36,29 +42,41 @@ const PRODUCT_URLS: Record<BusinessSystem['key'], string> = {
  * counts render the honest ready/zero-state. `counts` comes from the company's
  * real primitive data (via /api/build/systems); defaults to all-zero.
  */
-export function buildSystems(counts: Partial<Record<BusinessSystem['key'], { count?: number; value?: number }>> = {}): BusinessSystem[] {
+export function buildSystems(
+  counts: Partial<Record<BusinessSystem['key'], { count?: number; value?: number }>> = {},
+  opts: { provisioned?: boolean; pipelineProvisioned?: boolean } = {},
+): BusinessSystem[] {
   const c = (k: BusinessSystem['key']) => counts[k]?.count ?? 0
   const v = (k: BusinessSystem['key']) => counts[k]?.value ?? 0
+  // Per-primitive honesty (#243):
+  //  - Pipeline is 'provisioned' only when the company's REAL ZeroPipeline pipeline
+  //    was created (founder JWT) — its counts read from the company's own ZeroDB
+  //    `deals` table. Falls back to the general `provisioned` (ZeroDB) flag.
+  //  - Invoices reads from the company's ZeroDB `invoices` table once the per-company
+  //    ZeroDB project is provisioned.
+  //  - Helpdesk + Voice have no per-company data source wired yet → always simulated.
+  const zdb = Boolean(opts.provisioned)
+  const pipelineLive = Boolean(opts.pipelineProvisioned) || zdb
 
   return [
     {
       key: 'pipeline', name: 'Pipeline', primitive: 'ZeroPipeline', url: PRODUCT_URLS.pipeline,
-      count: c('pipeline'), value: v('pipeline'),
+      count: c('pipeline'), value: v('pipeline'), provisioned: pipelineLive,
       stat: c('pipeline') > 0 ? `${c('pipeline')} open · $${(v('pipeline') / 1000).toFixed(0)}k` : 'Ready · Scout sourcing',
     },
     {
       key: 'invoices', name: 'Invoices', primitive: 'ZeroInvoice', url: PRODUCT_URLS.invoices,
-      count: c('invoices'), value: v('invoices'),
+      count: c('invoices'), value: v('invoices'), provisioned: zdb,
       stat: v('invoices') > 0 ? `$${(v('invoices') / 1000).toFixed(1)}k collected` : 'Ready · $0 collected',
     },
     {
       key: 'helpdesk', name: 'Helpdesk', primitive: 'ServiceOS', url: PRODUCT_URLS.helpdesk,
-      count: c('helpdesk'),
+      count: c('helpdesk'), provisioned: false,
       stat: c('helpdesk') > 0 ? `${c('helpdesk')} open tickets` : 'Ready · 0 tickets',
     },
     {
       key: 'voice', name: 'Voice & SMS', primitive: 'ZeroVoice', url: PRODUCT_URLS.voice,
-      count: c('voice'),
+      count: c('voice'), provisioned: false,
       stat: c('voice') > 0 ? `${c('voice')} calls` : 'Ready · 0 calls',
     },
   ]
