@@ -32,6 +32,9 @@ export function Live() {
   const url = `builder.ainative.studio${appPath}`
   const [appReady, setAppReady] = useState<boolean>(!!state.appChatId)
   const [domainOpen, setDomainOpen] = useState(false)
+  // Purchased custom domain (#240), read from the app-registry entry. When set,
+  // the masthead + infra section show "Live at {domain}" instead of the subdir URL.
+  const [customDomain, setCustomDomain] = useState<string | null>(null)
   const { status: sessionStatus } = useSession()
   const signedIn = sessionStatus === 'authenticated'
 
@@ -64,6 +67,34 @@ export function Live() {
       .catch(() => { /* honest: no card if unavailable */ })
     return () => { alive = false }
   }, [companyId])
+
+  // Custom domain (#240): read the purchased domain off the app-registry entry so
+  // the dashboard shows "Live at {domain}". If a fulfillment just completed
+  // (?domain_session in the URL → DomainModal PUT persists it), re-check shortly
+  // after so the new domain surfaces without a manual reload.
+  useEffect(() => {
+    let alive = true
+    const readDomain = () =>
+      fetch(`/api/build/register-app?slug=${encodeURIComponent(companyId)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => { if (alive && d?.entry?.domain) setCustomDomain(String(d.entry.domain)) })
+        .catch(() => { /* honest: no custom-domain line if unavailable */ })
+    readDomain()
+    // A fulfillment redirect just landed — the PUT that persists the domain races
+    // with this read, so poll a few times to pick it up once it lands.
+    const justFulfilled = typeof window !== 'undefined' &&
+      new URLSearchParams(window.location.search).has('domain_session')
+    const timers: ReturnType<typeof setTimeout>[] = []
+    if (justFulfilled) {
+      for (const delay of [4000, 10000, 20000]) timers.push(setTimeout(readDomain, delay))
+    }
+    return () => { alive = false; timers.forEach(clearTimeout) }
+  }, [companyId])
+
+  // The address the company is live at: the purchased domain if any, else the
+  // real working subdirectory URL.
+  const liveHref = customDomain ? `https://${customDomain}` : appPath
+  const liveLabel = customDomain || url
 
   // Tonight's tasks — real platform-loop signal woven in so it's not fiction.
   const tonight = [
@@ -142,8 +173,8 @@ export function Live() {
         <h1 className="m-artifact m-live-h">{company} is live.</h1>
         <div className="m-live-masthead-right">
           <span className="m-mono m-live-watch"><span className="m-live-dot" /> Cody is on watch</span>
-          <a className="m-mono m-live-url" href={appPath} target="_blank" rel="noreferrer">
-            {appReady ? `${url} ↗` : 'building your site…'}
+          <a className="m-mono m-live-url" href={liveHref} target="_blank" rel="noreferrer">
+            {appReady ? `${customDomain ? 'Live at ' : ''}${liveLabel} ↗` : 'building your site…'}
           </a>
         </div>
       </header>
@@ -225,12 +256,17 @@ export function Live() {
           <div className="m-live-card">
             <div className="m-mono m-live-card-h">Website & infrastructure</div>
             <p className="m-mono m-infra-urls">
+              {customDomain && (
+                <><strong>live at: <a href={liveHref} target="_blank" rel="noreferrer">{customDomain}</a></strong><br /></>
+              )}
               prod: {url}<br />
               staging: staging.builder.ainative.studio{appPath}
             </p>
             <div className="m-infra-btns">
-              <a className="btn-secondary" href={appPath} target="_blank" rel="noreferrer">View site ↗</a>
-              <button className="btn-secondary" onClick={() => setDomainOpen(true)}>Get a custom domain</button>
+              <a className="btn-secondary" href={liveHref} target="_blank" rel="noreferrer">View site ↗</a>
+              <button className="btn-secondary" onClick={() => setDomainOpen(true)}>
+                {customDomain ? 'Add another domain' : 'Get a custom domain'}
+              </button>
               <button className="btn-secondary" disabled title="Coming soon">Redeploy</button>
             </div>
           </div>
