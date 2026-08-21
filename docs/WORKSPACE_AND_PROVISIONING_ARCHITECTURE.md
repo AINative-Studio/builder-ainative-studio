@@ -41,21 +41,25 @@ live under the single **AINative Builder** workspace.*
 - **Instant DB** (`POST /api/v1/public/instant-db`, body `{agree_terms:true}`) is
   how a per-company project is created. See `lib/build/instant-db.ts`.
 
-#### Key policy: PERMANENT keys require PAYMENT (#207)
-Provisioning (`POST /api/build/provision`) is **paid-gated**. The plan is read
-from the company's **registry entry** (set only by the server-verified
-post-checkout flow — never trusted from the request body):
+#### Key policy: 72h trial for unpaid, PERMANENT on payment (#207)
+Provisioning (`POST /api/build/provision`) gives everyone a **real** project; the
+key *type* is what payment gates. The plan is read from the company's **registry
+entry** (set only by the server-verified post-checkout flow — never trusted from
+the request body):
   - **Paid subscriber** → provision **authenticated** (JWT sent) → **permanent
-    `sk_` key**. `keyKind='permanent'`.
-  - **Not paid** (anonymous OR signed-in-but-unpaid) → `POST /api/build/provision`
-    returns **402 `upgrade`** — no project is created. If a company was ever
-    provisioned as `tmp_` (72h) it is upgraded to permanent on payment via
+    `sk_` key**. `keyKind='permanent'`, no expiry.
+  - **Unpaid** (anonymous OR signed-in-but-unpaid) → **`tmp_` key, 72h trial**
+    (`keyKind='tmp'`, `trialExpiresAt` persisted). This is the **conversion hook** —
+    the founder gets a real running backend for 72h; the UI shows the countdown +
+    upgrade prompt. On payment, the tmp_ project is **claimed → permanent** via
     `POST /api/v1/public/instant-db/claim` (`claimCompanyProject()` in
-    `lib/build/app-registry.ts`, hooked from `subscription/verify/route.ts`).
-  - We deliberately do **NOT** send the JWT for a non-permanent provision — an
+    `lib/build/app-registry.ts`, hooked from `subscription/verify/route.ts`), so
+    their work survives. If the trial lapses unpaid, the `tmp_` key expires at
+    AINative's side; `GET /api/build/provision?slug=` reports `trialExpired:true`.
+  - We deliberately do **NOT** send the JWT for a trial provision — an
     authenticated Instant DB call would otherwise mint a permanent key for an
     unpaid user. `provisionInstantDb(jwt, permanent)` only attaches the JWT when
-    `permanent` is true.
+    `permanent` (paid) is true.
 - So **each company gets a UNIQUE `project_id`** (and its own key), but **NOT a unique
   workspace**. Projects all land in whatever the key's default workspace is.
 

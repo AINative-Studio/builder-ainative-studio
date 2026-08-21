@@ -44,11 +44,6 @@ export async function POST(request: NextRequest) {
   const slug = String(b?.slug || '').replace(/[^a-z0-9_-]/gi, '').slice(0, 40)
   if (!slug) return Response.json({ ok: false, reason: 'slug required' }, { status: 400 })
 
-  // Trust the plan from the company's registry entry (set by the verified
-  // post-checkout flow), NOT a client-supplied body value — the body can't grant
-  // itself a paid plan. Fall back to the body only as a hint for the response.
-  const requestedPlan = String(b?.plan || '')
-
   // Resolve the company so we can attach provisioning to its registry entry and
   // hand the deploy seam its chatId. Must be registered first (built app exists).
   const existing = await resolveApp(slug).catch(() => null)
@@ -56,21 +51,17 @@ export async function POST(request: NextRequest) {
     return Response.json({ ok: false, reason: 'not_registered' }, { status: 404 })
   }
 
-  // PAID gate (#207): a permanent project requires a paid subscription. The plan
-  // is read from the registry entry, which is only set by the server-verified
-  // post-checkout flow (setAppPlan after /pricing/verify). No paid plan → the
-  // caller must upgrade first.
+  // Provisioning policy (#207): PERMANENT (sk_) requires a PAID subscription; an
+  // UNPAID user gets a REAL 72h `tmp_` trial project (no hard paywall). The trial
+  // is the conversion hook — after they pay, the tmp_ project is claimed →
+  // permanent (claimCompanyProject, from subscription/verify), so their work
+  // survives. The plan is read from the server-verified registry entry, NEVER the
+  // request body.
   const plan = String(existing.plan || '')
   const isPaid = PAID_PLANS.has(plan)
-  if (!isPaid) {
-    return Response.json(
-      { ok: false, reason: 'upgrade', plan: plan || null, requestedPlan: requestedPlan || null,
-        note: 'A paid subscription is required to provision a permanent company project.' },
-      { status: 402 },
-    )
-  }
 
-  // Founder's JWT (used ONLY for a permanent, paid provision + ZeroPipeline).
+  // Founder's JWT (used ONLY for a permanent, paid provision + ZeroPipeline —
+  // NEVER for a tmp_ trial, so an unpaid signed-in user can't mint a permanent key).
   const session = await auth()
   const jwt = (session as any)?.accessToken as string | undefined
 
@@ -121,6 +112,8 @@ export async function POST(request: NextRequest) {
     zerodbProjectId: prov.projectId,
     keyKind: prov.keyKind,
     claimToken: prov.claimToken,
+    // Trial expiry only for tmp_ (unpaid) projects — used for the countdown/upgrade UI.
+    trialExpiresAt: prov.keyKind === 'tmp' ? (prov.expiresAt || undefined) : undefined,
     deployUrl: target.url,
     provisionedAt,
     pipelineProvisioned: pipeline.provisioned,
@@ -131,9 +124,12 @@ export async function POST(request: NextRequest) {
     ok: true,
     zerodbProjectId: prov.projectId,
     keyKind: prov.keyKind,
-    // A tmp_ project must be claimed on payment to become permanent (72h expiry).
+    // trial = unpaid 72h tmp_ project (the conversion hook). Claim on payment to
+    // keep it (tmp_ → permanent). Paid users get a permanent project outright.
+    trial: prov.keyKind === 'tmp',
     claimable: prov.keyKind === 'tmp',
     expiresAt: prov.expiresAt || null,
+    plan: plan || null,
     created: true,
     pipelineProvisioned: pipeline.provisioned,
     deployUrl: target.url,
@@ -148,11 +144,17 @@ export async function GET(request: NextRequest) {
   const slug = new URL(request.url).searchParams.get('slug') || ''
   const entry = await resolveApp(slug).catch(() => null)
   if (!entry) return Response.json({ provisioned: false })
+  const isTrial = entry.keyKind === 'tmp'
+  const expired = Boolean(isTrial && entry.trialExpiresAt && new Date(entry.trialExpiresAt).getTime() < Date.now())
   return Response.json({
     provisioned: Boolean(entry.zerodbProjectId),
     zerodbProjectId: entry.zerodbProjectId || null,
     keyKind: entry.keyKind || null,
-    claimable: entry.keyKind === 'tmp',
+    trial: isTrial,
+    claimable: isTrial,
+    trialExpiresAt: entry.trialExpiresAt || null,
+    trialExpired: expired,
+    plan: entry.plan || null,
     deployUrl: entry.deployUrl || null,
     provisionedAt: entry.provisionedAt || null,
   })

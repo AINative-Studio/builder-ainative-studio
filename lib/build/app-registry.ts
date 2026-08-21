@@ -34,9 +34,12 @@ export interface AppEntry {
   // via AINative Instant DB (POST /api/v1/public/instant-db). Present once provisioned.
   zerodbProjectId?: string
   provisionedAt?: string
+  // When a tmp_ trial project expires (72h ISO from Instant DB). Undefined for
+  // permanent projects. Drives the "trial expires in X — upgrade to keep it" UI (#207).
+  trialExpiresAt?: string
   // Which kind of Instant DB key backs this project (#243, per user directive):
-  //  'tmp'       — anonymous provision → tmp_ key, 72h expiry, must be claimed on payment.
-  //  'permanent' — signed-in provision (sk_ key) OR a tmp_ project already claimed.
+  //  'tmp'       — UNPAID provision → tmp_ key, 72h trial, must be claimed on payment.
+  //  'permanent' — PAID provision (sk_ key) OR a tmp_ project already claimed.
   keyKind?: 'tmp' | 'permanent'
   // Claim token for a tmp_ project, needed to upgrade tmp_ → permanent on payment
   // via /api/v1/public/instant-db/claim (#243). Only set while keyKind === 'tmp'.
@@ -116,6 +119,7 @@ export async function setAppProvisioned(
     zerodbProjectId?: string
     deployUrl?: string
     provisionedAt?: string
+    trialExpiresAt?: string
     keyKind?: 'tmp' | 'permanent'
     claimToken?: string
     pipelineProvisioned?: boolean
