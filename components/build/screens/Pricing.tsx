@@ -46,20 +46,21 @@ export function Pricing() {
         To put it in front of real users and let me run the company around it, pick how far we go. You own 100%.
       </p>
       <p className="m-reassure m-mono">You own 100% of everything I build. Cancel anytime.</p>
-      <div className="m-tiers m-seams">
+      <div className="m-tiers m-seams" data-testid="pricing-tiers">
         {TIERS.map((t) => (
-          <div key={t.id} className={`m-tier ${t.featured ? 'is-featured' : ''}`}>
+          <div key={t.id} className={`m-tier ${t.featured ? 'is-featured' : ''}`} data-testid={`tier-${t.id}`}>
             <div className="m-tier-stripe" />
             <div className="m-tier-name m-mono">{t.name}</div>
             <div className="m-tier-price m-artifact">{t.price}<span>/mo</span></div>
             <p className="m-tier-tag">{t.tagline}</p>
             <ul className="m-list m-checks m-tier-features">{t.features.map((f) => <li key={f}>{f}</li>)}</ul>
-            <button className={t.featured ? 'btn-primary' : 'btn-secondary'} onClick={() => choose(t)}>
+            <button className={t.featured ? 'btn-primary' : 'btn-secondary'} data-testid={`choose-${t.id}`} onClick={() => choose(t)}>
               Choose {t.name}
             </button>
           </div>
         ))}
       </div>
+      <p className="m-reassure m-mono">Real domain · real database · you own 100% · no revenue share.</p>
     </div>
   )
 }

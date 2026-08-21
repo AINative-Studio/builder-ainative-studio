@@ -51,6 +51,37 @@ export function Live() {
   // Active PAID subscription tier (#241) — drives the "On {plan}" banner + gates.
   const activePlan = state.activePlan
   const gates = planUnlocks(activePlan)
+  // Existing-subscriber recognition (#251): if the signed-in user ALREADY has an
+  // AINative paid plan, hydrate activePlan from it so we never ask them to pay
+  // again. Runs once when signed in and no plan is set yet.
+  useEffect(() => {
+    if (!signedIn || activePlan) return
+    fetch('/api/build/subscription/status')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d?.plan) dispatch({ type: 'SET_ACTIVE_PLAN', plan: d.plan }) })
+      .catch(() => {})
+  }, [signedIn, activePlan, dispatch])
+
+  // Trial state (#207): an unpaid company runs on a 72h tmp_ project. We surface a
+  // countdown + upgrade CTA so the founder has an obvious, intuitive path to pay.
+  const [trial, setTrial] = useState<{ trial: boolean; trialExpiresAt?: string | null; trialExpired?: boolean } | null>(null)
+  useEffect(() => {
+    if (activePlan) return // already paid — no trial banner
+    fetch(`/api/build/provision?slug=${encodeURIComponent(companyId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d) setTrial({ trial: !!d.trial, trialExpiresAt: d.trialExpiresAt, trialExpired: !!d.trialExpired }) })
+      .catch(() => {})
+  }, [companyId, activePlan])
+  // Hours left in the trial (null if not a trial / no expiry).
+  const trialHoursLeft = trial?.trialExpiresAt
+    ? Math.max(0, Math.round((new Date(trial.trialExpiresAt).getTime() - Date.now()) / 3.6e6))
+    : null
+  // The upgrade path: go to the Pricing screen (real Stripe checkout). Anonymous
+  // users sign up first (they return to Live), then upgrade.
+  const goUpgrade = () => {
+    if (!signedIn) { dispatch({ type: 'GOTO_SCREEN', screen: 'signup' }); return }
+    dispatch({ type: 'GOTO_SCREEN', screen: 'pricing' })
+  }
 
   // Post-checkout subscription fulfillment (#241): Stripe returns to
   // /build/{slug}?upgraded=1&session_id=…; verify it server-side (never trust the
@@ -187,14 +218,11 @@ export function Live() {
     }
   }
 
-  const subscribe = async () => {
-    // FIX-4: the conversion funnel. To have Cody keep building/running this
-    // company for real, the founder must have an account. Anonymous → sign up
-    // (the Auth screen returns to Live), then enroll. Signed-in → enroll now.
-    if (!signedIn) {
-      dispatch({ type: 'GOTO_SCREEN', screen: 'signup' })
-      return
-    }
+  // Enroll the company into Cody's nightly loop (a paid capability). Called
+  // automatically once a plan is active; not a standalone CTA anymore (the upgrade
+  // path is goUpgrade → Pricing → Stripe).
+  const enrollNightly = async () => {
+    if (!signedIn || enrolled) return
     setEnrolled(true) // optimistic
     try {
       await fetch('/api/build/enroll', {
@@ -209,6 +237,11 @@ export function Live() {
       })
     } catch { /* optimistic UI already set */ }
   }
+  // Auto-enroll into the nightly loop once on a plan that includes it.
+  useEffect(() => {
+    if (activePlan && gates.nightlyLoop && !enrolled) enrollNightly()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePlan])
 
   // Provision the persistent cloud for this company (#243): a real per-company
   // ZeroDB project + persistent deploy target. Requires an account (the project
@@ -257,8 +290,11 @@ export function Live() {
         </div>
       </header>
 
-      {/* #241: once a paid plan is verified, the funnel becomes an active-plan
-          state ("On {plan}"). Otherwise anonymous founders see the signup CTA. */}
+      {/* Upgrade path (#207 · #252). Three states, always giving an OBVIOUS next
+          step to paid — the gap the founder hit ("couldn't figure out how to pay"):
+            1. On a paid plan → "On {plan}" + Manage plan.
+            2. Signed in, unpaid → trial countdown + a real Upgrade button → Pricing (Stripe).
+            3. Anonymous → claim/sign-up (then they return here and can upgrade). */}
       {activePlan ? (
         <div className="m-live-funnel is-plan">
           <span>
@@ -271,19 +307,35 @@ export function Live() {
           </span>
           <div className="m-live-funnel-cta">
             <span className="m-chip">✓ {PLAN_LABEL[activePlan] || activePlan}</span>
+            <a className="btn-ghost" href="/settings/billing" target="_blank" rel="noreferrer">Manage plan ↗</a>
           </div>
         </div>
-      ) : (!signedIn && (
-        <div className="m-live-funnel">
+      ) : signedIn ? (
+        <div className="m-live-funnel is-trial" data-testid="upgrade-banner">
+          <span>
+            {trial?.trialExpired ? (
+              <><strong>Your free trial ended.</strong> Upgrade to bring {company} back online — you own 100%: real domain, real database, no revenue share.</>
+            ) : trialHoursLeft != null ? (
+              <><strong>Free trial: {trialHoursLeft}h left.</strong> Upgrade to keep {company} running for real — real domain, real database, you own 100% (no revenue share).</>
+            ) : (
+              <><strong>{company} is yours.</strong> Make it real — Cody runs it 24/7, on your own domain + database. You own 100%, no revenue share.</>
+            )}
+          </span>
+          <div className="m-live-funnel-cta">
+            <button className="btn-primary" data-testid="upgrade-cta" onClick={goUpgrade}>Upgrade {company} →</button>
+          </div>
+        </div>
+      ) : (
+        <div className="m-live-funnel" data-testid="signup-banner">
           <span>
             <strong>{company} is yours.</strong> Create an account to keep it — Cody keeps building and running it 24/7, and you own 100%.
           </span>
           <div className="m-live-funnel-cta">
-            <button className="btn-primary" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'signup' })}>Claim {company} free →</button>
+            <button className="btn-primary" data-testid="claim-cta" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'signup' })}>Claim {company} free →</button>
             <button className="btn-ghost" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'login' })}>Log in</button>
           </div>
         </div>
-      ))}
+      )}
       {planStatus && <p className="m-mono m-domain-status" style={{ padding: '0 var(--m-pad, 24px)' }}>{planStatus}</p>}
 
       <div className={`m-live-grid ${state.tablet ? 'is-tablet' : ''}`}>
@@ -325,8 +377,8 @@ export function Live() {
                   ? 'Enrolled. Cody runs the nightly loop on your company.'
                   : 'Works while you sleep · $49/mo'}
             </p>
-            <button className="btn-primary" disabled={!!activePlan || enrolled} onClick={subscribe}>
-              {activePlan ? `✓ On ${PLAN_LABEL[activePlan] || activePlan}` : enrolled ? '✓ On watch' : 'Subscribe'}
+            <button className="btn-primary" data-testid="swarm-upgrade" disabled={!!activePlan} onClick={goUpgrade}>
+              {activePlan ? `✓ On ${PLAN_LABEL[activePlan] || activePlan}` : 'Upgrade to hire the swarm →'}
             </button>
           </div>
         </div>
