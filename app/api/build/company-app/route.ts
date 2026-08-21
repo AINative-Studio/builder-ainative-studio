@@ -14,6 +14,7 @@
 
 import { NextRequest } from 'next/server'
 import { registerApp, resolveApp } from '@/lib/build/app-registry'
+import { logBuildOutcome } from '@/lib/build/learning'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -73,8 +74,18 @@ export async function POST(request: NextRequest) {
     if (!chatId) return Response.json({ error: 'no chatId' }, { status: 502 })
 
     await registerApp({ slug, chatId, name, tagline, color, track: 'company' })
+    // #270: capture the IDEA → generated app for the recursive learning loop, with
+    // converted:false initially. subscription/verify flips it converted on payment.
+    // Fire-and-forget — must never slow or fail the build request path.
+    logBuildOutcome({
+      slug, idea, brand: name, track: 'company', chatId,
+      codeStatus: sawRefresh ? 'success' : 'partial', converted: false,
+    }).catch(() => {})
     return Response.json({ chatId })
   } catch (e: any) {
+    // Record the failed build too — the non-converting/broken ideas are exactly
+    // what Cody must learn from. Best-effort, never rethrows.
+    logBuildOutcome({ slug, idea, brand: name, track: 'company', codeStatus: 'failure', converted: false }).catch(() => {})
     return Response.json({ error: 'generation_failed', detail: String(e?.message || e).slice(0, 120) }, { status: 502 })
   }
 }

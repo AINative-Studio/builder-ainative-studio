@@ -22,6 +22,7 @@
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { setAppPlan, claimCompanyProject } from '@/lib/build/app-registry'
+import { markConverted } from '@/lib/build/learning'
 
 export const runtime = 'nodejs'
 
@@ -59,6 +60,9 @@ export async function POST(request: NextRequest) {
     // Persist the plan on the company so Live can reflect it going forward.
     if (slug) {
       setAppPlan(slug, plan).catch(() => {})
+      // #270: mark this company's build CONVERTED (+ plan) in the recursive learning
+      // loop. Fire-and-forget — must never block or fail checkout confirmation.
+      markConverted(slug, plan).catch(() => {})
     }
 
     // #243: upgrade a tmp_ Instant DB project → permanent now that the founder has
