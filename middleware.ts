@@ -42,14 +42,6 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  // Front door (#207): the root IS the /build company+app builder (one page, two
-  // experiences). Redirect `/` → `/build` at the edge so the legacy app-builder
-  // landing never surfaces and static caching can't serve it. Runs before auth.
-  // (Wildcard company hosts are handled above and never reach this.)
-  if (pathname === '/') {
-    return NextResponse.redirect(new URL('/build', request.url))
-  }
-
   // /build is the new public front door (the pivot UX) — anonymous users must be
   // able to Fork → Intake → watch Cody build before any auth wall.
   if (pathname.startsWith('/build')) {
