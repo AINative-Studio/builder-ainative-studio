@@ -11,7 +11,7 @@ import { useEffect, useState } from 'react'
 
 interface Suggestion { domain: string; available: boolean; price?: number }
 
-export function DomainModal({ brand, open, onClose }: { brand: string; open: boolean; onClose: () => void }) {
+export function DomainModal({ brand, slug, open, onClose }: { brand: string; slug?: string; open: boolean; onClose: () => void }) {
   const [loading, setLoading] = useState(false)
   const [configured, setConfigured] = useState(true)
   const [suggestions, setSuggestions] = useState<Suggestion[]>([])
@@ -31,20 +31,43 @@ export function DomainModal({ brand, open, onClose }: { brand: string; open: boo
       .finally(() => setLoading(false))
   }, [open, brand])
 
+  // Fulfillment: after Stripe redirects back with ?domain_session=…, verify the
+  // payment and register + point DNS. Runs once regardless of modal open state.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const sess = params.get('domain_session')
+    if (!sess) return
+    // strip the param so a refresh doesn't re-fulfill
+    const clean = new URL(window.location.href); clean.searchParams.delete('domain_session')
+    window.history.replaceState({}, '', clean.toString())
+    setStatus('Finishing your domain purchase…')
+    fetch('/api/build/domains', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sess }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d?.ok) setStatus('✓ ' + (d.domain || 'Your domain') + ' is live — it now points at your site (DNS may take a few minutes).')
+        else if (d?.registered) setStatus('✓ ' + (d.domain || 'Domain') + ' registered — DNS is propagating.')
+        else setStatus(d?.detail || d?.error || 'Payment received — finishing setup.')
+      })
+      .catch(() => setStatus('Payment received — finishing domain setup shortly.'))
+  }, [])
+
   if (!open) return null
 
   const claim = async () => {
     if (!picked) return
-    setStatus('Reserving ' + picked + '…')
+    setStatus('Taking you to secure checkout for ' + picked + '…')
     try {
       const res = await fetch('/api/build/domains', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ domain: picked }),
+        body: JSON.stringify({ domain: picked, slug: slug || brand }),
       })
       const d = await res.json()
-      if (d?.ok) setStatus('✓ ' + picked + ' is yours — Cody will point it at your site.')
-      else if (d?.reason === 'not_confirmed' || d?.reason === 'signin') setStatus('Sign in to complete the purchase of ' + picked + '.')
-      else setStatus(d?.error ? 'Could not claim ' + picked + ': ' + d.error : 'Could not claim ' + picked + '.')
+      if (d?.url) { window.location.href = d.url; return }  // → Stripe Checkout
+      if (d?.reason === 'signin') setStatus('Sign in to purchase ' + picked + ' →')
+      else setStatus(d?.error || d?.detail ? 'Could not start checkout: ' + (d.error || d.detail) : 'Could not start checkout for ' + picked + '.')
     } catch {
       setStatus('Network error — try again.')
     }
@@ -83,7 +106,7 @@ export function DomainModal({ brand, open, onClose }: { brand: string; open: boo
             {status && <p className="m-mono m-domain-status">{status}</p>}
             <div className="m-modal-opts" style={{ marginTop: 8 }}>
               <button className="btn-primary" disabled={!picked} onClick={claim}>
-                {picked ? `Claim ${picked} →` : 'Pick a domain'}
+                {picked ? `Buy ${picked} →` : 'Pick a domain'}
               </button>
             </div>
           </>

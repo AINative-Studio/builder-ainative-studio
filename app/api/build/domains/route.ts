@@ -1,8 +1,13 @@
 /**
- * /api/build/domains (#207 · FIX-3) — same-origin proxy to core's Namecheap
- * domains API for the Builder custom-domain modal.
- *   GET  ?brand=<slug>  → availability suggestions
- *   POST { domain }     → purchase (requires signed-in user; core gates on auth+confirm)
+ * /api/build/domains (#207 · FIX-3 / #240) — same-origin proxy to core's
+ * Namecheap domains API for the Builder custom-domain modal.
+ *   GET  ?brand=<slug>            → availability suggestions
+ *   POST { domain, slug }         → start Stripe checkout to BUY the domain
+ *   PUT  { session_id }           → fulfill after payment (register + point DNS)
+ *
+ * The purchase is charge-first: POST returns a Stripe Checkout URL; after the
+ * user pays, Stripe redirects back to Live with ?domain_session=…, and the modal
+ * calls PUT to register the domain + point DNS at the company's app.
  */
 
 import { NextRequest } from 'next/server'
@@ -12,6 +17,7 @@ export const runtime = 'nodejs'
 
 const CORE = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 const KEY = process.env.AINATIVE_API_KEY || process.env.ZERODB_API_KEY || ''
+const APP = process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio'
 
 export async function GET(request: NextRequest) {
   const brand = new URL(request.url).searchParams.get('brand') || ''
@@ -30,20 +36,51 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null)
-  if (!body?.domain) return Response.json({ error: 'domain required' }, { status: 400 })
+  const domain = String(body?.domain || '')
+  const slug = String(body?.slug || '')
+  if (!domain || !slug) return Response.json({ error: 'domain and slug required' }, { status: 400 })
 
-  // Purchase requires a signed-in user (core also gates on confirm). If anonymous,
-  // return a signin prompt so the modal drives them into the funnel.
+  // Buying a domain requires a signed-in user (it's a real charge + a durable
+  // asset tied to their account). Anonymous → drive them into the funnel first.
   const session = await auth()
   const token = (session as any)?.accessToken
+  const email = (session as any)?.user?.email
   if (!token) return Response.json({ ok: false, reason: 'signin' })
 
   try {
-    const res = await fetch(`${CORE}/api/v1/public/domains/register`, {
+    const res = await fetch(`${CORE}/api/v1/public/domains/purchase`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ domain: body.domain, years: 1, confirm: body.confirm === true }),
+      body: JSON.stringify({
+        domain,
+        slug,
+        email,
+        // Return to the company's Live page; the modal fulfills on ?domain_session.
+        success_url: `${APP}/build/${slug}?domain_session={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${APP}/build/${slug}?domain_cancelled=1`,
+      }),
       signal: AbortSignal.timeout(30000),
+    })
+    const data = await res.json().catch(() => ({ ok: false, error: 'bad response' }))
+    return Response.json(data, { status: res.ok ? 200 : res.status })
+  } catch (e: any) {
+    return Response.json({ ok: false, error: String(e?.message || e).slice(0, 100) }, { status: 502 })
+  }
+}
+
+// Fulfill: after Stripe redirects back with a session id, verify payment and
+// register + point DNS. Safe to call on page load with the returned session id.
+export async function PUT(request: NextRequest) {
+  const body = await request.json().catch(() => null)
+  const sessionId = String(body?.session_id || '')
+  if (!sessionId) return Response.json({ error: 'session_id required' }, { status: 400 })
+
+  try {
+    const res = await fetch(`${CORE}/api/v1/public/domains/fulfill`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${KEY}`, 'X-API-Key': KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId }),
+      signal: AbortSignal.timeout(40000),
     })
     const data = await res.json().catch(() => ({ ok: false, error: 'bad response' }))
     return Response.json(data, { status: res.ok ? 200 : res.status })
