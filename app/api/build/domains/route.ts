@@ -12,6 +12,7 @@
 
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
+import { setAppDomain } from '@/lib/build/app-registry'
 
 export const runtime = 'nodejs'
 
@@ -68,6 +69,8 @@ export async function POST(request: NextRequest) {
   }
 }
 
+// (used by PUT below — see fulfillment)
+
 // Fulfill: after Stripe redirects back with a session id, verify payment and
 // register + point DNS. Safe to call on page load with the returned session id.
 export async function PUT(request: NextRequest) {
@@ -83,6 +86,10 @@ export async function PUT(request: NextRequest) {
       signal: AbortSignal.timeout(40000),
     })
     const data = await res.json().catch(() => ({ ok: false, error: 'bad response' }))
+    // Persist the domain on the company so Live can show it going forward.
+    if (data?.domain && data?.slug && (data?.ok || data?.registered)) {
+      setAppDomain(String(data.slug), String(data.domain)).catch(() => {})
+    }
     return Response.json(data, { status: res.ok ? 200 : res.status })
   } catch (e: any) {
     return Response.json({ ok: false, error: String(e?.message || e).slice(0, 100) }, { status: 502 })

@@ -27,6 +27,7 @@ export interface AppEntry {
   tagline?: string
   color?: string
   track?: string
+  domain?: string  // custom domain purchased for this company (#240), if any
   createdAt: string
 }
 
@@ -44,6 +45,17 @@ export async function registerApp(e: Omit<AppEntry, 'createdAt'>): Promise<boole
   } catch {
     return false
   }
+}
+
+/**
+ * Attach a purchased custom domain to a company (#240). Appends an updated row
+ * carrying the existing chatId + brand plus the new domain, so resolveApp()
+ * (latest-wins) surfaces it. No-op (returns false) if the slug isn't registered.
+ */
+export async function setAppDomain(slug: string, domain: string): Promise<boolean> {
+  const existing = await resolveApp(slug)
+  if (!existing) return false
+  return registerApp({ ...existing, domain })
 }
 
 /** Resolve a slug to its most recent app entry (chatId + brand), or null. */
