@@ -1,10 +1,14 @@
 /**
- * POST /api/build/ask (#207 · B2) — the "Ask Cody anything" chat on the Live
- * dashboard, made real. Cody answers questions about the founder's specific
- * company using the same Claude completion stack (tiered by plan), grounded in
- * the idea + company name. No fake canned exchange.
+ * POST /api/build/ask (#207 · B2, #287, #288) — the "Ask Cody anything" chat on
+ * the Live dashboard.
  *
- * Body: { question, idea, companyName?, track? }
+ * Improvements:
+ *  #288 — system prompt now uses the company's ACTUAL selected primitives from
+ *          the catalog (via catalogPromptBlock) instead of a hardcoded list.
+ *  #287 — Cody knows what's live vs queued, can explain the conversion gate, and
+ *          names 3-5 concrete backlog items for THIS company — not invented ones.
+ *
+ * Body: { question, idea, companyName?, track?, companyId? }
  * Returns: { answer, model, provider }
  */
 
@@ -14,6 +18,7 @@ import { getClaudeCompletion } from '@/lib/build/claude-completion'
 import { auth } from '@/app/(auth)/auth'
 import { getPlanStatus } from '@/lib/ainative/plan'
 import { modelsForTier } from '@/lib/build/tier-models'
+import { selectPrimitives, catalogPromptBlock } from '@/lib/build/primitive-catalog'
 
 export const runtime = 'nodejs'
 
@@ -33,6 +38,33 @@ async function resolveTier(): Promise<string> {
   }
 }
 
+/** Fetch a compact backlog summary for this company to ground Cody's answers. */
+async function fetchBacklogSummary(companyId: string, idea: string, companyName: string, track: string): Promise<string> {
+  try {
+    const base = process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio'
+    const url = new URL('/api/build/backlog', base)
+    url.searchParams.set('companyId', companyId)
+    url.searchParams.set('idea', idea)
+    url.searchParams.set('companyName', companyName)
+    url.searchParams.set('track', track)
+    const r = await fetch(url.toString(), { signal: AbortSignal.timeout(4000) })
+    if (!r.ok) return ''
+    const d = await r.json().catch(() => null)
+    if (!d) return ''
+
+    const builtNames = d.built?.map((b: any) => b.title).join('; ') || ''
+    const queuedNames = (d.queued || []).slice(0, 5).map((q: any) => q.title).join('; ')
+    return (
+      `COMPANY BACKLOG:\n` +
+      `Built & live now: ${builtNames}\n` +
+      `Queued (requires plan/domain): ${queuedNames}\n` +
+      `Conversion gate: ${d.gate || ''}`
+    )
+  } catch {
+    return ''
+  }
+}
+
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null)
   const question = String(body?.question || '').trim()
@@ -41,15 +73,38 @@ export async function POST(request: NextRequest) {
   const idea = String(body?.idea || '').slice(0, 3000)
   const companyName = String(body?.companyName || 'the company').slice(0, 120)
   const track = body?.track === 'app' ? 'app' : 'company'
+  const companyId = String(body?.companyId || '').slice(0, 80)
+
+  // Get the actual primitives selected for this company's idea
+  const { names: primitiveNames } = selectPrimitives(idea, track)
+  const primList = primitiveNames.join(', ')
+
+  // Fetch backlog so Cody can cite real items (not invented ones)
+  const backlogBlock = companyId
+    ? await fetchBacklogSummary(companyId, idea, companyName, track)
+    : ''
+
+  // Build the catalog block for context
+  const catalogBlock = catalogPromptBlock(idea, track)
 
   const system =
     `You are Cody, the AI co-founder who just built and now operates "${companyName}", ` +
-    `an AI-native ${track === 'app' ? 'product' : 'company'} built on AINative primitives ` +
-    `(ZeroDB, ZeroMemory, Agent Cloud, ZeroPipeline, ZeroInvoice, etc). ` +
-    `The founder's idea: "${idea}". You run it 24/7 via a nightly autonomous loop. ` +
-    `Answer the founder's question directly, concretely, and in first person as Cody. ` +
-    `Be specific to THIS company. Keep it to 2-4 sentences. If they ask what's next, ` +
-    `recommend the single highest-leverage move. No fluff, no disclaimers.`
+    `an AI-native ${track === 'app' ? 'product' : 'company'} built on AINative primitives.\n\n` +
+    `The founder's idea: "${idea}".\n\n` +
+    `This company's selected primitives (what is actually wired for this idea, not a generic list): ${primList}.\n\n` +
+    `${catalogBlock}\n\n` +
+    (backlogBlock ? `${backlogBlock}\n\n` : '') +
+    `INSTRUCTIONS:\n` +
+    `- Answer the founder's question directly, concretely, and in first person as Cody.\n` +
+    `- Be specific to THIS company and THIS idea — not generic AI advice.\n` +
+    `- If they ask about status, what's next, or why things aren't working yet:\n` +
+    `  (a) Say what IS live now (the frontend preview + foundational primitives above).\n` +
+    `  (b) Frame the conversion gate clearly: "Once you buy a domain + start a subscription, ` +
+    `I build the real backend and wire [specific primitives from the backlog] for real."\n` +
+    `  (c) Name 3-5 CONCRETE backlog items from the company backlog above — use the actual titles.\n` +
+    `  (d) Do NOT promise free future feature work. The queued items are real but gated on a plan.\n` +
+    `- Keep it to 2-4 sentences for simple questions; up to 6 sentences for status/next-steps questions.\n` +
+    `- No fluff, no disclaimers. Run it 24/7 via the nightly autonomous loop.`
 
   const tier = modelsForTier(await resolveTier())
 
@@ -58,7 +113,7 @@ export async function POST(request: NextRequest) {
     const model = claude.provider === 'bedrock' ? tier.bedrockModel : claude.model
     try {
       const res = await claude.client.messages.create({
-        model, max_tokens: 400, temperature: 0.7, system,
+        model, max_tokens: 600, temperature: 0.7, system,
         messages: [{ role: 'user', content: question }],
       })
       const answer = (res.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n').trim()
@@ -71,7 +126,7 @@ export async function POST(request: NextRequest) {
   // Fallback: AINative chat-completions
   try {
     const res = await ainative.chat.completions.create({
-      model: tier.ainativeModel, max_tokens: 400, temperature: 0.7,
+      model: tier.ainativeModel, max_tokens: 600, temperature: 0.7,
       messages: [{ role: 'system', content: system }, { role: 'user', content: question }],
     })
     const answer = res.choices?.[0]?.message?.content?.trim()

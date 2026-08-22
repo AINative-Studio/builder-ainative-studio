@@ -141,9 +141,10 @@ export function Live() {
 
   // Real business-systems state for this company (honest zero-state for a fresh
   // company; real counts when its ZeroDB has data). Never fabricated.
+  // idea is passed so the systems route can select primitives for this specific company (#288).
   useEffect(() => {
     let alive = true
-    fetch(`/api/build/systems?companyId=${encodeURIComponent(companyId)}`)
+    fetch(`/api/build/systems?companyId=${encodeURIComponent(companyId)}&idea=${encodeURIComponent(state.idea || '')}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => { if (alive && d?.systems) setSystems(d.systems) })
       .catch(() => { /* keep the zero-state default */ })
@@ -237,7 +238,7 @@ export function Live() {
       const res = await fetch('/api/build/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: q, idea: state.idea, companyName: company, track: state.track }),
+        body: JSON.stringify({ question: q, idea: state.idea, companyName: company, track: state.track, companyId }),
       })
       const data = await res.json().catch(() => null)
       setChat((c) => [...c, { role: 'cody', text: data?.answer || "I couldn't reach my brain just now — try again in a moment." }])
@@ -289,7 +290,7 @@ export function Live() {
       if (d?.ok) {
         setProvision({ provisioned: true, busy: false, projectId: d.zerodbProjectId })
         // Re-read systems now that they point at the real provisioned project.
-        fetch(`/api/build/systems?companyId=${encodeURIComponent(companyId)}`)
+        fetch(`/api/build/systems?companyId=${encodeURIComponent(companyId)}&idea=${encodeURIComponent(state.idea || '')}`)
           .then((r) => (r.ok ? r.json() : null))
           .then((s) => { if (s?.systems) setSystems(s.systems) })
           .catch(() => {})
@@ -437,17 +438,30 @@ export function Live() {
           <div className="m-live-card">
             <div className="m-mono m-live-card-h">Business systems</div>
             <div className="m-systems m-seams">
-              {systems.map((s) => (
-                <a key={s.key} className="m-system" href={s.url} target="_blank" rel="noreferrer">
-                  <span className="m-system-name">{s.name}</span>
-                  <span className="m-system-stat m-mono">{s.stat}</span>
-                  <span className="m-chip m-system-prim">{s.primitive}</span>
-                  {/* Honest marker: real provisioned data vs still-simulated (#243). */}
-                  <span className="m-mono m-system-src" title={s.provisioned ? 'Live from your provisioned ZeroDB project' : 'Simulated — no per-company data source wired yet'}>
-                    {s.provisioned ? '● live' : '○ sim'}
-                  </span>
-                </a>
-              ))}
+              {systems.map((s) =>
+                // #278: only link when the company has its own provisioned instance URL.
+                // Never dump the founder on a primitive marketing site.
+                s.url ? (
+                  <a key={s.key} className="m-system" href={s.url} target="_blank" rel="noreferrer">
+                    <span className="m-system-name">{s.name}</span>
+                    <span className="m-system-stat m-mono">{s.stat}</span>
+                    <span className="m-chip m-system-prim">{s.primitive}</span>
+                    <span className="m-mono m-system-src" title="Live from your provisioned instance">● live</span>
+                  </a>
+                ) : (
+                  <div key={s.key} className="m-system">
+                    <span className="m-system-name">{s.name}</span>
+                    <span className="m-system-stat m-mono">{s.stat}</span>
+                    <span className="m-chip m-system-prim">{s.primitive}</span>
+                    {/* Honest marker: real provisioned data vs still-simulated (#243). */}
+                    <span className="m-mono m-system-src" title={s.provisioned ? 'Live from your provisioned ZeroDB project' : 'Simulated — no per-company data source wired yet'}>
+                      {s.provisioned ? '● live' : '○ sim'}
+                    </span>
+                    {/* "learn more" as a secondary affordance only, not the primary action (#278) */}
+                    <a className="m-system-learn m-mono" href={s.docUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>docs ↗</a>
+                  </div>
+                )
+              )}
             </div>
           </div>
           <div className="m-live-card">
@@ -519,7 +533,7 @@ export function Live() {
         </p>
       )}
 
-      <DomainModal brand={state.appSub || companyId} slug={companyId} keywords={[state.idea, state.brandTagline].filter(Boolean).join(' ')} open={domainOpen} onClose={() => setDomainOpen(false)} />
+      <DomainModal brand={state.appSub || companyId} slug={companyId} keywords={[state.idea, state.brandTagline].filter(Boolean).join(' ')} open={domainOpen} onClose={() => setDomainOpen(false)} onRequireAuth={() => { setDomainOpen(false); dispatch({ type: 'GOTO_SCREEN', screen: 'signup' }) }} />
     </div>
   )
 }
