@@ -65,6 +65,22 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.9,
     },
     {
+      // Category landing ("autonomous company builder", "build a SaaS with AI
+      // overnight") — non-branded buyer-intent demand (#216).
+      url: `${baseUrl}/autonomous-company-builder`,
+      lastModified: now,
+      changeFrequency: 'weekly',
+      priority: 0.9,
+    },
+    {
+      // Category landing ("AI co-founder", "AI employee") — non-branded
+      // buyer-intent demand (#216).
+      url: `${baseUrl}/ai-cofounder`,
+      lastModified: now,
+      changeFrequency: 'weekly',
+      priority: 0.9,
+    },
+    {
       url: `${baseUrl}/showcase`,
       lastModified: now,
       changeFrequency: 'daily',
