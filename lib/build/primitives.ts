@@ -1,9 +1,14 @@
 /**
- * Primitive-context map (#218/#220) — the single data source driving both the
- * "Powering this" chip strip and Cody's contextual nudges. From
+ * Primitive-context map (#218/#220, #288) — the single data source driving both
+ * the "Powering this" chip strip and Cody's contextual nudges. From
  * 06-IMPLEMENTATION-NOTES.md, reconciled against docs/AINATIVE_PRIMITIVES.md so
  * the surfaced names match real AINative primitives.
+ *
+ * The "/N woven" denominator is now CATALOG_SIZE (real count) not a hardcoded 34.
  */
+
+export { CATALOG_SIZE, CATALOG, selectPrimitives } from '@/lib/build/primitive-catalog'
+import { CATALOG_SIZE as _CATALOG_SIZE } from '@/lib/build/primitive-catalog'
 
 export interface PrimitiveNudge {
   prim: string   // primitive to weave in
@@ -69,8 +74,7 @@ export const PRIMITIVE_MAP: Record<string, PrimitiveEntry> = {
 }
 
 /**
- * "/34" denominator — the real distinct-primitive count Builder composes from
- * (docs/AINATIVE_PRIMITIVES.md). Kept as a named const so it's one source of
- * truth for the "N/TOTAL woven" counter in the act-bar.
+ * @deprecated Use CATALOG_SIZE from '@/lib/build/primitive-catalog' instead.
+ * Kept for backward compat — points at the real catalog count, not the old hardcoded 34.
  */
-export const TOTAL_PRIMITIVES = 34
+export const TOTAL_PRIMITIVES = _CATALOG_SIZE
