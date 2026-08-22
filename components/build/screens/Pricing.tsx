@@ -66,8 +66,22 @@ export function Pricing() {
     dispatch({ type: 'PICK_TRACK', track: 'company' })
   }
 
+  // Back to the Live dashboard — no dead-end (#282).
+  const backToLive = () => dispatch({ type: 'GOTO_SCREEN', screen: 'live' })
+  const backLabel = state.companyName ? `‹ Back to ${state.companyName}` : '‹ Back'
+
   return (
     <div className="modernist m-pricing" data-track={state.track}>
+      {/* Escape hatch — the Pricing screen must never trap the user (#282). */}
+      <button
+        type="button"
+        className="btn-ghost m-pricing-back"
+        onClick={backToLive}
+        aria-label="Return to company dashboard"
+        data-testid="pricing-back"
+      >
+        {backLabel}
+      </button>
       <p className="m-cody-line"><span className="m-glyph">◇</span> Cody · your technical co-founder</p>
       <h1 className="m-h1">Your prototype works. Let&apos;s make it real.</h1>
       <p className="m-sub">
