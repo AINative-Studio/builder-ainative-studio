@@ -46,13 +46,18 @@ export async function POST(request: NextRequest) {
         // here. signup_source='builder' is the keyless bypass core honors for this.
         signup_source: 'builder',
         // Ad attribution goes in `ext` (core's UserCreate contract, Refs #4712) —
-        // promoted to users.gclid on registration so the Stripe webhook can
-        // attribute the eventual paid conversion back to the Google Ads click.
+        // promoted to users.gclid/utm_* on registration so the Stripe webhook can
+        // attribute the eventual paid conversion back to the Google Ads click AND
+        // to the campaign. Core reads gclid flat off ext, but utm from a NESTED
+        // ext.utm dict (auth.py: _ext.get("utm")) — so nest the utm keys or the
+        // campaign is silently dropped.
         ext: {
           gclid: gclid || undefined,
-          utm_source: utm.utm_source || (gclid ? 'google' : undefined),
-          utm_medium: utm.utm_medium || (gclid ? 'cpc' : undefined),
-          utm_campaign: utm.utm_campaign || undefined,
+          utm: {
+            utm_source: utm.utm_source || (gclid ? 'google' : undefined),
+            utm_medium: utm.utm_medium || (gclid ? 'cpc' : undefined),
+            utm_campaign: utm.utm_campaign || undefined,
+          },
         },
       }),
       signal: AbortSignal.timeout(25000),
