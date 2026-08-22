@@ -10,6 +10,7 @@ import { Pricing } from '@/components/build/screens/Pricing'
 import { Live } from '@/components/build/screens/Live'
 import { Auth } from '@/components/build/screens/Auth'
 import { Account } from '@/components/build/screens/Account'
+import { MyCompanies } from '@/components/build/screens/MyCompanies'
 
 function ScreenRouter() {
   const { state } = useBuild()
@@ -21,6 +22,7 @@ function ScreenRouter() {
     case 'live': return <Live />
     case 'login': case 'signup': case 'forgot': case 'reset': return <Auth mode={state.screen} />
     case 'account': return <Account />
+    case 'companies': return <MyCompanies />
     default: return <Fork />
   }
 }
