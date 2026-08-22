@@ -329,6 +329,12 @@
 .m-live-funnel strong { color: #fff; }
 .m-live-funnel-cta { display: flex; gap: 10px; align-items: center; }
 .m-live-funnel-cta .btn-ghost { color: #cfc9c4; }
+.m-lead-email {
+  height: 38px; padding: 0 12px; min-width: 200px;
+  border: 1px solid rgba(255,255,255,0.35); border-radius: 8px;
+  font-size: 14px; background: #fff; color: #111;
+}
+.m-lead-email:focus { outline: none; border-color: var(--m-brand, #e5451f); }
 
 /* Custom-domain modal (FIX-3) */
 .m-domain-list { display: flex; flex-direction: column; gap: 1.5px; background: var(--color-divider); margin: 18px 0 10px; }

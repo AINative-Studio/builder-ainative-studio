@@ -4,6 +4,7 @@
 
 import { useState } from 'react'
 import { useBuild } from '@/contexts/build-context'
+import { trackEvent } from '@/components/analytics/google-analytics'
 
 export function Intake() {
   const { state, dispatch } = useBuild()
@@ -13,6 +14,8 @@ export function Intake() {
   const start = async () => {
     if (!idea.trim() || naming) return
     setNaming(true)
+    // GA4 funnel step 1 — the founder submitted their idea. `track` = app|company.
+    trackEvent('idea_submitted', 'funnel', state.track, undefined)
     // Generate a REAL brand (name/slug/tagline/color) from the idea — not the
     // first 3 words of the sentence. (FIX-1)
     let brand = { name: '', slug: 'app', tagline: '', color: '#2f6d86' }
