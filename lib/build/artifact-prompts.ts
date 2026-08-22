@@ -12,6 +12,8 @@
  * visitor (the swarm path is enterprise-gated — see core#6422).
  */
 
+import { catalogPromptBlock } from './primitive-catalog'
+
 export interface ArtifactSpec {
   /** system prompt: the role/format contract */
   system: string
@@ -123,10 +125,15 @@ export const ARTIFACT_PROMPTS: Record<string, ArtifactSpec> = {
     schemaHint: '{"summary":"str","primitives":[{"name":"str","use":"str"}]}',
     user: (ctx) =>
       ctxPreamble(ctx) +
-      'Write the AINATIVE COMPOSITION PLAN — which AINative primitives this app composes from ' +
-      '(ZeroDB, ZeroMemory, GraphRAG, Agent Cloud, ZeroPipeline, ZeroInvoice, ZeroCommerce, AI Kit, etc). JSON: ' +
-      'summary (one line), primitives (array of 3-6 {name, use:"how this idea uses it"}). ' +
-      'Schema: {"summary","primitives":[{"name","use"}]}',
+      // Inject the FULL machine-readable catalog + the idea-matched candidates
+      // (#288) so the model chooses primitives THIS idea needs instead of
+      // anchoring on a hardcoded shortlist (which collapsed every build onto the
+      // same ~6). Source of truth: docs/AINATIVE_PRIMITIVES.md.
+      catalogPromptBlock(ctx.idea, ctx.track) + '\n\n' +
+      'Write the AINATIVE COMPOSITION PLAN — which of the above primitives this ' +
+      (ctx.track === 'app' ? 'app' : 'company') + ' composes from. JSON: ' +
+      'summary (one line), primitives (array of 3-6 {name, use:"how THIS idea uses it"}). ' +
+      'Only include primitives the idea actually needs. Schema: {"summary","primitives":[{"name","use"}]}',
   },
   dataModel: {
     system: BASE_SYSTEM,
