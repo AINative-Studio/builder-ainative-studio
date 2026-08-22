@@ -132,9 +132,15 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next()
     }
 
-    // Category landing page ("AI that runs your company") — non-branded SEO/AEO
-    // target Polsia is weak on. MUST be crawlable + viewable without an account.
-    if (pathname.startsWith('/ai-company')) {
+    // Category landing pages (non-branded SEO/AEO targets Polsia is weak on) —
+    // "AI that runs your company", "autonomous company builder", "AI co-founder".
+    // MUST be crawlable + viewable without an account, else they 307→/login and
+    // never index (#216).
+    if (
+      pathname.startsWith('/ai-company') ||
+      pathname.startsWith('/autonomous-company-builder') ||
+      pathname.startsWith('/ai-cofounder')
+    ) {
       return NextResponse.next()
     }
 
