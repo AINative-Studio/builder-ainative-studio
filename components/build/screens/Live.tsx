@@ -96,6 +96,21 @@ export function Live() {
     dispatch({ type: 'GOTO_SCREEN', screen: 'pricing' })
   }
 
+  // Manage plan/billing (#251 · #253): open the real Stripe customer portal so a
+  // paying founder can see/change/cancel their plan — not a dead /settings route.
+  // Falls back to the my-companies index if the portal can't be opened.
+  const manageBilling = async () => {
+    try {
+      const r = await fetch('/api/build/subscription/portal', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ returnUrl: window.location.href }),
+      })
+      const d = await r.json().catch(() => null)
+      if (d?.url) { window.location.href = d.url; return }
+    } catch { /* fall through */ }
+    dispatch({ type: 'GOTO_SCREEN', screen: 'companies' })
+  }
+
   // Early email capture — save/share the company by email (no account needed) so an
   // anonymous non-converter becomes a reachable lead. Fires a GA4 lead event.
   const saveByEmail = async () => {
@@ -377,7 +392,7 @@ export function Live() {
           </span>
           <div className="m-live-funnel-cta">
             <span className="m-chip">✓ {PLAN_LABEL[activePlan] || activePlan}</span>
-            <a className="btn-ghost" href="/settings/billing" target="_blank" rel="noreferrer">Manage plan ↗</a>
+            <button className="btn-ghost" data-testid="manage-plan" onClick={manageBilling}>Manage plan ↗</button>
           </div>
         </div>
       ) : signedIn ? (
