@@ -23,6 +23,10 @@ import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { setAppPlan, claimCompanyProject } from '@/lib/build/app-registry'
 import { markConverted } from '@/lib/build/learning'
+import { reportConversion, gclidFromRequest } from '@/lib/build/conversions'
+
+// Monthly $ value per plan — the conversion value sent to Google Ads.
+const PLAN_VALUE: Record<string, number> = { pro: 49, launch: 49, business: 149, company: 149, enterprise: 999, cody_vcto: 4999 }
 
 export const runtime = 'nodejs'
 
@@ -64,6 +68,16 @@ export async function POST(request: NextRequest) {
       // loop. Fire-and-forget — must never block or fail checkout confirmation.
       markConverted(slug, plan).catch(() => {})
     }
+
+    // #207: report the PAID conversion to Google Ads (via core), keyed by the gclid
+    // captured on ad landing — this is what makes Ads optimize toward subscribers.
+    // Best-effort; no-op for organic (no gclid). Fire-and-forget.
+    reportConversion({
+      eventType: 'subscribed', eventName: 'Builder — Subscribed (paid)',
+      sessionId: `builder-${slug || 'anon'}`,
+      gclid: gclidFromRequest(request),
+      value: PLAN_VALUE[plan] ?? 49, currency: 'USD', slug, plan,
+    }).catch(() => {})
 
     // #243: upgrade a tmp_ Instant DB project → permanent now that the founder has
     // paid + has an account. Best-effort; never blocks checkout confirmation.
