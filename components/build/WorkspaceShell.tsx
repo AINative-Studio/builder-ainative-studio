@@ -77,6 +77,15 @@ function IndexPanel() {
           )
         })}
       </div>
+      {/* #253: quick nav to the founder's companies index + account. */}
+      <div className="m-index-foot m-mono">
+        <button className="m-index-item m-mono" onClick={() => { dispatch({ type: 'GOTO_SCREEN', screen: 'companies' }); dispatch({ type: 'TOGGLE_INDEX' }) }}>
+          My companies
+        </button>
+        <button className="m-index-item m-mono" onClick={() => { dispatch({ type: 'GOTO_SCREEN', screen: 'account' }); dispatch({ type: 'TOGGLE_INDEX' }) }}>
+          Account
+        </button>
+      </div>
     </div>
   )
 }

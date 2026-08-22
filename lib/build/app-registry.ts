@@ -27,6 +27,11 @@ export interface AppEntry {
   tagline?: string
   color?: string
   track?: string
+  // Owner association (#253) — the AINative account email that built/claimed this
+  // company. Set from the signed-in session at registration/plan/provision time.
+  // Enables the "my companies" index (listAppsForOwner) so a founder can find their
+  // built companies again. Absent for companies built anonymously (never signed in).
+  ownerEmail?: string
   domain?: string  // custom domain purchased for this company (#240), if any
   plan?: string    // active subscription plan id (pro|business|enterprise) after checkout (#241)
   enrolled?: boolean  // Business+ auto-enrolled into the nightly loop (#241; cron itself is #243)
@@ -83,6 +88,54 @@ export async function setAppDomain(slug: string, domain: string): Promise<boolea
   const existing = await resolveApp(slug)
   if (!existing) return false
   return registerApp({ ...existing, domain })
+}
+
+/**
+ * Associate a company with its owner's AINative account email (#253). Appends an
+ * updated row carrying the existing entry plus ownerEmail, so resolveApp()
+ * (latest-wins) surfaces it and listAppsForOwner() can find it. Idempotent no-op
+ * (returns true) when the owner is already set to the same email. No-op (false)
+ * if the slug isn't registered or no email is given.
+ */
+export async function setAppOwner(slug: string, ownerEmail: string): Promise<boolean> {
+  const email = (ownerEmail || '').trim().toLowerCase()
+  if (!email) return false
+  const existing = await resolveApp(slug)
+  if (!existing) return false
+  if ((existing.ownerEmail || '').toLowerCase() === email) return true
+  return registerApp({ ...existing, ownerEmail: email })
+}
+
+/**
+ * List the companies owned by a given AINative account email (#253) — the data
+ * behind the "my companies" index. Reads all registry rows, keeps only the
+ * latest row per slug (latest-wins, matching resolveApp), then filters to those
+ * whose ownerEmail matches. Returns most-recently-created first. Empty on any
+ * error or when unconfigured, so the surface degrades gracefully.
+ */
+export async function listAppsForOwner(ownerEmail: string): Promise<AppEntry[]> {
+  const email = (ownerEmail || '').trim().toLowerCase()
+  if (!configured() || !email) return []
+  try {
+    const res = await fetch(`${rowsUrl()}?limit=1000`, { headers: headers(), signal: AbortSignal.timeout(20000) })
+    if (!res.ok) return []
+    const data = JSON.parse(await res.text())
+    const rows = Array.isArray(data) ? data : data.data || data.rows || []
+    const entries: AppEntry[] = rows
+      .map((r: { row_data?: AppEntry }) => r.row_data)
+      .filter((rd: AppEntry | undefined): rd is AppEntry => !!rd?.slug && !!rd?.chatId)
+    // Collapse to the latest row per slug (latest createdAt wins).
+    const latest = new Map<string, AppEntry>()
+    for (const e of entries) {
+      const prev = latest.get(e.slug)
+      if (!prev || (e.createdAt || '').localeCompare(prev.createdAt || '') > 0) latest.set(e.slug, e)
+    }
+    return Array.from(latest.values())
+      .filter((e) => (e.ownerEmail || '').toLowerCase() === email)
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+  } catch {
+    return []
+  }
 }
 
 /**
