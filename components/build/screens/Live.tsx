@@ -41,6 +41,12 @@ export function Live() {
   // Real, working subdirectory URL — no dead subdomain. (FIX-2)
   const appPath = `/build/${state.appSub || companyId}`
   const url = `builder.ainative.studio${appPath}`
+  // Persisted deploy URL for this company (#279): when AINATIVE_WILDCARD_HOST is
+  // set, provisioning persists a REAL dedicated host at https://{slug}.ainative.studio
+  // (deployPersistent → kind 'wildcard'). Absent that, provision persists the durable
+  // preview subdirectory. We read it from the provision status and prefer it over the
+  // hardcoded /build/{slug} path so a wildcarded company shows its own subdomain.
+  const [deployUrl, setDeployUrl] = useState<string | null>(null)
   const [appReady, setAppReady] = useState<boolean>(!!state.appChatId)
   const [domainOpen, setDomainOpen] = useState(false)
   // Purchased custom domain (#240), read from the app-registry entry. When set,
@@ -149,9 +155,15 @@ export function Live() {
       .then((d) => { if (alive && d?.systems) setSystems(d.systems) })
       .catch(() => { /* keep the zero-state default */ })
     // Provisioning status — does this company have a real per-company ZeroDB project yet? (#243)
+    // Also carries the persisted deploy URL (#279): a real {slug}.ainative.studio host
+    // when the wildcard is configured, else the durable preview subdir.
     fetch(`/api/build/provision?slug=${encodeURIComponent(companyId)}`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (alive && d) setProvision((p) => ({ ...p, provisioned: !!d.provisioned, projectId: d.zerodbProjectId || undefined })) })
+      .then((d) => {
+        if (!alive || !d) return
+        setProvision((p) => ({ ...p, provisioned: !!d.provisioned, projectId: d.zerodbProjectId || undefined }))
+        if (d.deployUrl) setDeployUrl(String(d.deployUrl))
+      })
       .catch(() => {})
     // Company track has no /preview app — generate a REAL landing-page app for it
     // once, so the prod URL /build/{slug} actually shows something. Register it.
@@ -198,10 +210,33 @@ export function Live() {
     return () => { alive = false; timers.forEach(clearTimeout) }
   }, [companyId])
 
-  // The address the company is live at: the purchased domain if any, else the
-  // real working subdirectory URL.
-  const liveHref = customDomain ? `https://${customDomain}` : appPath
-  const liveLabel = customDomain || url
+  // The persisted deploy URL is a REAL dedicated host (#279) only when it's a full
+  // https:// URL that is NOT the durable preview subdirectory (…/build/{slug}). When
+  // AINATIVE_WILDCARD_HOST is set, that's https://{slug}.ainative.studio; absent the
+  // env, provision persists the preview subdir instead, which we must NOT surface as
+  // a standalone host (it isn't CNAME-pointable and is the same as /build/{slug}).
+  const wildcardHost =
+    deployUrl && /^https?:\/\//i.test(deployUrl) && !/\/build\//.test(deployUrl)
+      ? deployUrl.replace(/\/+$/, '')
+      : null
+
+  // The address the company is live at, in priority order (#279):
+  //  1. purchased custom domain (#240) — always wins.
+  //  2. a real {slug}.ainative.studio wildcard host, when provisioned.
+  //  3. the durable /build/{slug} subdirectory fallback.
+  const liveHref = customDomain
+    ? `https://${customDomain}`
+    : wildcardHost || appPath
+  const liveLabel = customDomain
+    ? customDomain
+    : wildcardHost
+      ? wildcardHost.replace(/^https?:\/\//i, '')
+      : url
+  // The AINative-hosted prod address label, independent of any purchased custom
+  // domain (#279): the {slug}.ainative.studio wildcard host when provisioned, else
+  // the durable /build/{slug} subdir. Shown on the infra "prod:" line so it's always
+  // the real platform host (a custom domain, if any, gets its own "live at:" line).
+  const prodLabel = wildcardHost ? wildcardHost.replace(/^https?:\/\//i, '') : url
 
   // Masthead status (#259): "Cody is on watch" is only true once the company is
   // actually claimed/enrolled or on a plan — otherwise it contradicts the funnel's
@@ -474,7 +509,7 @@ export function Live() {
               {customDomain && (
                 <><strong>live at: <a href={liveHref} target="_blank" rel="noreferrer">{customDomain}</a></strong><br /></>
               )}
-              prod: {url}
+              prod: {prodLabel}
             </p>
             <div className="m-infra-btns">
               <a className="btn-secondary" href={liveHref} target="_blank" rel="noreferrer">View site ↗</a>
