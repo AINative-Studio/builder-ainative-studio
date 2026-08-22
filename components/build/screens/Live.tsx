@@ -257,10 +257,12 @@ export function Live() {
     dispatch({ type: 'GOTO_VIEW', view: 'graph' })
     dispatch({ type: 'GOTO_SCREEN', screen: 'ws' })
   }
-  // Re-scoping the wedge is a real upstream edit with downstream impact → fire the
-  // blocking Dependency Conflict gate (traced from the real composition graph).
+  // Re-scoping the wedge is a real upstream edit with downstream impact → show
+  // an intent-setting lead-in first (#286) so the founder understands what will
+  // change before seeing the dependency conflict gate.
   const rescopeWedge = () => {
-    dispatch({ type: 'TRIGGER_CONFLICT', changedView: state.track === 'company' ? 'wedge' : 'prd' })
+    dispatch({ type: 'TRIGGER_CONFLICT', changedView: state.track === 'company' ? 'wedge' : 'prd', fromRescopeIntent: true })
+    dispatch({ type: 'GOTO_SCREEN', screen: 'ws' })
   }
 
   const ask = async () => {

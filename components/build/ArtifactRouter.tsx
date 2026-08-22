@@ -17,6 +17,7 @@ import { Wedge } from '@/components/build/artifacts/Wedge'
 import { Pipeline } from '@/components/build/artifacts/Pipeline'
 import { Conflict } from '@/components/build/artifacts/Conflict'
 import { Graph } from '@/components/build/artifacts/Graph'
+import { RescopeIntent } from '@/components/build/artifacts/RescopeIntent'
 import { ARTIFACT_TITLES } from '@/lib/build/titles'
 
 const SPECIAL_BODIES: Record<string, () => React.ReactNode> = {
@@ -24,6 +25,7 @@ const SPECIAL_BODIES: Record<string, () => React.ReactNode> = {
   preview: Preview,
   wedge: Wedge,
   pipeline: Pipeline,
+  'rescope-intent': RescopeIntent,
   conflict: Conflict,
   graph: Graph,
 }

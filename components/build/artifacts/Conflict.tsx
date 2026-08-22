@@ -6,6 +6,13 @@
  * TRIGGER_CONFLICT routes here; the impact list is computed from the real
  * composition graph (traceImpact), not hardcoded. Approving propagates and
  * unblocks; then the user can open the real artifact graph.
+ *
+ * #283: This view is a SHARED_LATE_VIEW — its navigation is handled by
+ * ArtifactFrame's explicit CTA layer, not the generic pager. Back-to-{company}
+ * and "See the graph" are always reachable; no user can get trapped here.
+ *
+ * #286: Framing is "here's what changes if you re-scope" rather than an error
+ * state — the blocker is a coordination gate, not a failure.
  */
 
 import { useBuild } from '@/contexts/build-context'
@@ -17,12 +24,23 @@ export function Conflict() {
   const changed = state.conflictView || (state.track === 'company' ? 'wedge' : 'prd')
   const impact = traceImpact(state.track, changed)
   const changedLabel = ARTIFACT_TITLES[changed] ?? changed
+  const companyLabel = state.companyName || 'your company'
 
   if (state.conflictResolved) {
     return (
       <div className="m-conflict-done">
-        <p><span className="m-glyph">◇</span> Coordinated update applied. {impact.length} artifacts re-connected — no orphans left behind.</p>
-        <button className="btn-secondary" onClick={() => dispatch({ type: 'GOTO_VIEW', view: 'graph' })}>Continue · see the graph ›</button>
+        <p>
+          <span className="m-glyph">◇</span> Coordinated update applied.{' '}
+          {impact.length} artifact{impact.length === 1 ? '' : 's'} re-connected — no orphans left behind.
+        </p>
+        <div className="m-artifact-nav">
+          <button className="btn-ghost" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'live' })}>
+            ‹ Back to {companyLabel}
+          </button>
+          <button className="btn-secondary" onClick={() => dispatch({ type: 'GOTO_VIEW', view: 'graph' })}>
+            See the artifact graph →
+          </button>
+        </div>
       </div>
     )
   }
@@ -34,10 +52,19 @@ export function Conflict() {
 
   return (
     <>
-      <div className="m-alert-banner">
-        <span className="m-mono m-alert-tag">Conflict · blocking</span>
-        <p>Changing <strong>{changedLabel}</strong> affects <strong>{impact.length} artifact{impact.length === 1 ? '' : 's'}</strong>, including your pricing model and landing page. Review the proposed updates?</p>
+      <div className="m-alert-banner is-coordination">
+        <span className="m-mono m-alert-tag">Coordination required</span>
+        <p>
+          Changing <strong>{changedLabel}</strong> affects{' '}
+          <strong>{impact.length} artifact{impact.length === 1 ? '' : 's'}</strong> that were
+          built on top of it — including your pricing model and landing page. Here&apos;s what
+          Cody will update if you approve. Review the proposed changes below, then approve
+          to let Cody reconnect everything cleanly.
+        </p>
         <div className="m-alert-actions">
+          <button className="btn-ghost" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'live' })}>
+            ‹ Back to {companyLabel}
+          </button>
           <button className="btn-secondary" onClick={approve}>Review updates</button>
           <button className="m-btn-alert" onClick={approve}>Approve coordinated update</button>
         </div>
@@ -51,7 +78,7 @@ export function Conflict() {
           >
             <span className="m-impact-kind m-mono">{it.kind}</span>
             <span className="m-impact-name">{it.label}<em>{it.why}</em></span>
-            <span className={`st ${state.propagating ? 'is-done' : ''}`}>{state.propagating ? 'reconnected' : 'affected'}</span>
+            <span className={`st ${state.propagating ? 'is-done' : ''}`}>{state.propagating ? 'reconnected' : 'will update'}</span>
           </div>
         ))}
       </div>
