@@ -29,7 +29,12 @@ import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { resolveApp, setAppProvisioned } from '@/lib/build/app-registry'
 import { deployPersistent } from '@/lib/build/deploy'
-import { provisionInstantDb, TRIAL_WINDOW_MS } from '@/lib/build/instant-db'
+import {
+  provisionInstantDb,
+  fileProjectUnderBuilderWorkspace,
+  BUILDER_WORKSPACE_ID,
+  TRIAL_WINDOW_MS,
+} from '@/lib/build/instant-db'
 import { provisionPipeline } from '@/lib/build/zeropipeline'
 
 export const runtime = 'nodejs'
@@ -112,6 +117,22 @@ export async function POST(request: NextRequest) {
     pipeline = { provisioned: zp.ok, pipelineId: zp.pipelineId, reason: zp.ok ? undefined : zp.reason }
   }
 
+  // #250: file this company's project under the AINative Builder workspace, so all
+  // generated companies live under one workspace instead of the Builder key's default
+  // "AINative Studio". Instant DB doesn't honor the workspace_id we send on create yet
+  // (core PR #6460), so we best-effort re-parent via PATCH here. This only sticks for
+  // admin-owned (permanent/paid) projects; tmp_ trials aren't admin-owned and get
+  // filed later (on claim, or once core honors workspace_id). Never fails provisioning.
+  const filed = await fileProjectUnderBuilderWorkspace(prov.projectId).catch(
+    () => ({ filed: false, reason: 'exception' } as Awaited<ReturnType<typeof fileProjectUnderBuilderWorkspace>>),
+  )
+  if (!filed.filed) {
+    console.warn(
+      `[provision] project ${prov.projectId} not filed under Builder workspace (${BUILDER_WORKSPACE_ID}):`,
+      filed.reason || filed.status,
+    )
+  }
+
   // Resolve the persistent hosting target (durable preview today; real host later).
   const target = await deployPersistent(existing.chatId, slug)
   const provisionedAt = new Date().toISOString()
@@ -137,6 +158,9 @@ export async function POST(request: NextRequest) {
     provisionedAt,
     pipelineProvisioned: pipeline.provisioned,
     pipelineId: pipeline.pipelineId,
+    // #250: record the intended Builder workspace + whether the re-parent stuck.
+    workspaceId: BUILDER_WORKSPACE_ID,
+    workspaceFiled: filed.filed,
   })
 
   return Response.json({

@@ -34,6 +34,12 @@ export interface AppEntry {
   // via AINative Instant DB (POST /api/v1/public/instant-db). Present once provisioned.
   zerodbProjectId?: string
   provisionedAt?: string
+  // The AINative Builder workspace (core Organization) this company's project is
+  // filed under (#250). Set once the project has been (or was requested to be)
+  // parented to the Builder workspace. `workspaceFiled` records whether the
+  // re-parent actually stuck (admin-owned projects) vs is still pending core support.
+  workspaceId?: string
+  workspaceFiled?: boolean
   // When a tmp_ trial project expires (72h ISO from Instant DB). Undefined for
   // permanent projects. Drives the "trial expires in X — upgrade to keep it" UI (#207).
   trialExpiresAt?: string
@@ -124,6 +130,8 @@ export async function setAppProvisioned(
     claimToken?: string
     pipelineProvisioned?: boolean
     pipelineId?: string
+    workspaceId?: string
+    workspaceFiled?: boolean
   },
 ): Promise<boolean> {
   const existing = await resolveApp(slug)
@@ -174,12 +182,27 @@ export async function claimCompanyProject(
     if (!res.ok && !alreadyClaimed) {
       return { ok: false, claimed: false, reason: String(data?.detail || res.status).slice(0, 120) }
     }
+    // #250: now that the project is claimed (associated to a real account and
+    // permanent), re-attempt filing it under the Builder workspace. Best-effort —
+    // must never fail the claim. Dynamic import avoids a static import cycle
+    // (instant-db.ts is otherwise only imported by the provision route).
+    let workspaceFiled = existing.workspaceFiled
+    try {
+      const { fileProjectUnderBuilderWorkspace, BUILDER_WORKSPACE_ID } = await import('./instant-db')
+      const filed = await fileProjectUnderBuilderWorkspace(existing.zerodbProjectId)
+      workspaceFiled = filed.filed
+      // Persist the intended workspace even if the re-parent is still blocked, so a
+      // migration sweep can find it.
+      ;(existing as AppEntry).workspaceId = existing.workspaceId || BUILDER_WORKSPACE_ID
+    } catch { /* best-effort */ }
+
     // Flip to permanent; drop the now-spent claim token.
     await registerApp({
       ...existing,
       keyKind: 'permanent',
       claimToken: undefined,
       claimedAt: new Date().toISOString(),
+      workspaceFiled,
     })
     return { ok: true, claimed: !alreadyClaimed }
   } catch (e: any) {

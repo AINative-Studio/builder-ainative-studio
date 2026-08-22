@@ -16,6 +16,21 @@
 
 const AINATIVE_API = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 
+/** The Builder server's own AINative key (admin@ainative.studio identity). Owns the
+ *  AINative Builder workspace, so it's the identity that can re-parent an
+ *  admin-owned project into that workspace. */
+const BUILDER_API_KEY = process.env.AINATIVE_API_KEY || process.env.ZERODB_API_KEY || ''
+
+/**
+ * The AINative Builder workspace (core Organization) id — the single home for every
+ * generated company/app project (#250). Defaults to the live Builder workspace
+ * created 2026-08-21 (see docs/WORKSPACE_AND_PROVISIONING_ARCHITECTURE.md) so the
+ * filing works even if the env var isn't set on a given deploy; override via
+ * AINATIVE_BUILDER_WORKSPACE_ID.
+ */
+export const BUILDER_WORKSPACE_ID =
+  process.env.AINATIVE_BUILDER_WORKSPACE_ID || '5d2376e1-d4f0-4193-9a7f-84e4543a8f9a'
+
 /**
  * Trial window for an UNPAID (tmp_) Instant DB project, in milliseconds (72h).
  * Kept here as the single source of truth: Instant DB normally returns an
@@ -77,7 +92,13 @@ export async function provisionInstantDb(
       headers,
       // agree_terms is required by core (Issue #1227) — the founder accepts AINative
       // terms as part of shipping their company from /build.
-      body: JSON.stringify({ agree_terms: true }),
+      //
+      // workspace_id (#250): ask core to file the new project directly under the
+      // AINative Builder workspace. Core doesn't honor this field YET (tracked in
+      // core PR #6460 / core#6395); it's forward-compatible — once core reads it,
+      // no re-parent step is needed. Until then, the provision route best-effort
+      // re-parents via fileProjectUnderBuilderWorkspace() (admin-owned projects).
+      body: JSON.stringify({ agree_terms: true, workspace_id: BUILDER_WORKSPACE_ID }),
       signal: AbortSignal.timeout(30000),
     })
     const data = await res.json().catch(() => null)
@@ -104,5 +125,83 @@ export async function provisionInstantDb(
     }
   } catch (e: any) {
     return { ok: false, reason: String(e?.message || e).slice(0, 160) }
+  }
+}
+
+export interface FileWorkspaceResult {
+  /** true iff the project's organization_id now equals the Builder workspace. */
+  filed: boolean
+  /** true iff it was already under the Builder workspace (idempotent no-op). */
+  alreadyFiled?: boolean
+  status?: number
+  reason?: string
+}
+
+/**
+ * File an already-provisioned ZeroDB project under the AINative Builder workspace (#250).
+ *
+ * Instant DB currently drops a new project into the *creating identity's* default
+ * workspace (for the Builder key that's "AINative Studio", not "AINative Builder"),
+ * and does not yet honor the `workspace_id` we send on create. Until core honors it
+ * (core PR #6460), this re-parents the project via `PATCH /api/v1/projects/{id}`
+ * with `organization_id = BUILDER_WORKSPACE_ID`.
+ *
+ * Auth: uses the Builder's own admin key (BUILDER_API_KEY). This only succeeds for
+ * projects OWNED by that identity — i.e. PERMANENT (paid) provisions minted with the
+ * Builder key. tmp_ trial projects (anonymous provision) are NOT admin-owned, so this
+ * is a best-effort no-op for them (they get re-parented after being claimed, when the
+ * project is associated to the paying account, or once core honors workspace_id).
+ *
+ * Best-effort + non-throwing: the caller must never fail provisioning because filing
+ * didn't stick. Returns a structured result so the route can log the outcome.
+ *
+ * NOTE (2026-08-22): core's project PATCH currently 500s on an unrelated
+ * `audit_logs.organization_id` UndefinedColumn schema bug; this helper surfaces that
+ * as `{ filed:false, status:500 }` rather than throwing. Once the core schema/instant-db
+ * fix lands, filing succeeds with no Builder change.
+ */
+export async function fileProjectUnderBuilderWorkspace(
+  projectId: string,
+  opts: { workspaceId?: string; apiKey?: string } = {},
+): Promise<FileWorkspaceResult> {
+  const workspaceId = opts.workspaceId || BUILDER_WORKSPACE_ID
+  const apiKey = opts.apiKey || BUILDER_API_KEY
+  if (!projectId) return { filed: false, reason: 'no_project_id' }
+  if (!apiKey) return { filed: false, reason: 'no_api_key' }
+  if (!workspaceId) return { filed: false, reason: 'no_workspace_id' }
+
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${apiKey}`,
+    'X-API-Key': apiKey,
+    'Content-Type': 'application/json',
+  }
+  try {
+    // Skip the PATCH if it's already home (idempotent, and avoids the audit_logs
+    // write path on a no-op).
+    const cur = await fetch(`${AINATIVE_API}/api/v1/projects/${projectId}`, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(15000),
+    })
+    if (cur.ok) {
+      const p = await cur.json().catch(() => null)
+      if (p?.organization_id === workspaceId) {
+        return { filed: true, alreadyFiled: true, status: cur.status }
+      }
+    }
+
+    const res = await fetch(`${AINATIVE_API}/api/v1/projects/${projectId}`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ organization_id: workspaceId }),
+      signal: AbortSignal.timeout(20000),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => null)
+      return { filed: false, status: res.status, reason: String(data?.detail || res.status).slice(0, 200) }
+    }
+    return { filed: true, status: res.status }
+  } catch (e: any) {
+    return { filed: false, reason: String(e?.message || e).slice(0, 160) }
   }
 }
