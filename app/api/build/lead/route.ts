@@ -16,6 +16,7 @@
  */
 
 import { NextRequest } from 'next/server'
+import { reportConversion, gclidFromRequest } from '@/lib/build/conversions'
 
 export const runtime = 'nodejs'
 
@@ -64,6 +65,14 @@ export async function POST(request: NextRequest) {
         .then(({ logBuildOutcome }) => logBuildOutcome({ slug: row.slug!, email, converted: false }))
         .catch(() => {})
     }
+    // #207: report the LEAD conversion to Google Ads (via core) keyed by gclid, so a
+    // lead from an ad click is attributed. Best-effort; no-op for organic (no gclid).
+    reportConversion({
+      eventType: 'lead_captured', eventName: 'Builder — Lead Captured (email)',
+      sessionId: `builder-${row.slug || 'anon'}`,
+      gclid: gclidFromRequest(request),
+      value: 5, currency: 'USD', slug: row.slug || undefined, email,
+    }).catch(() => {})
     return Response.json({ ok: res.ok, stored: res.ok })
   } catch (e: any) {
     return Response.json({ ok: false, reason: String(e?.message || e).slice(0, 100) }, { status: 502 })

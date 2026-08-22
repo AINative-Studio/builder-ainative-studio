@@ -14,6 +14,7 @@ import {
 import { PRIMITIVE_MAP, TOTAL_PRIMITIVES } from '@/lib/build/primitives'
 import { useAutoplay } from '@/lib/build/useAutoplay'
 import { trackEvent } from '@/components/analytics/google-analytics'
+import { captureAttribution } from '@/lib/build/attribution'
 
 interface BuildContextValue {
   state: BuildState
@@ -41,6 +42,10 @@ export function BuildProvider({ children }: { children: ReactNode }) {
 
   // Deep-link hook (?screen=&company=) — lets Playwright/QA jump straight to a
   // screen (e.g. the Live upgrade path) without driving a full codegen build.
+  // Capture the ad-click gclid + utm on landing (#207) so a conversion can be tied
+  // back to the Google Ads click that drove it. Runs once, first thing.
+  useEffect(() => { captureAttribution() }, [])
+
   // Harmless in normal use; only a known screen is honored.
   useEffect(() => {
     const q = new URLSearchParams(window.location.search)
