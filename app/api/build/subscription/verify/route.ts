@@ -21,7 +21,7 @@
 
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
-import { setAppPlan, claimCompanyProject } from '@/lib/build/app-registry'
+import { setAppPlan, claimCompanyProject, setAppOwner } from '@/lib/build/app-registry'
 import { markConverted } from '@/lib/build/learning'
 import { reportConversion, gclidFromRequest } from '@/lib/build/conversions'
 
@@ -85,6 +85,10 @@ export async function POST(request: NextRequest) {
     if (slug) {
       const session = await auth().catch(() => null)
       const jwt = (session as any)?.accessToken as string | undefined
+      // #253: stamp the paying founder as the owner so this company appears in
+      // their "my companies" index. Best-effort — never blocks confirmation.
+      const email = (session as any)?.user?.email as string | undefined
+      if (email) setAppOwner(slug, email).catch(() => {})
       if (jwt) {
         const r = await claimCompanyProject(slug, jwt).catch(() => null)
         if (r?.ok) claimed = r.claimed

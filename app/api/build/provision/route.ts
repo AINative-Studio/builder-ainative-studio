@@ -27,7 +27,7 @@
 
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
-import { resolveApp, setAppProvisioned } from '@/lib/build/app-registry'
+import { resolveApp, setAppProvisioned, setAppOwner } from '@/lib/build/app-registry'
 import { deployPersistent } from '@/lib/build/deploy'
 import { provisionInstantDb, TRIAL_WINDOW_MS } from '@/lib/build/instant-db'
 import { provisionPipeline } from '@/lib/build/zeropipeline'
@@ -64,6 +64,10 @@ export async function POST(request: NextRequest) {
   // NEVER for a tmp_ trial, so an unpaid signed-in user can't mint a permanent key).
   const session = await auth()
   const jwt = (session as any)?.accessToken as string | undefined
+  // #253: stamp the signed-in founder as this company's owner so it appears in
+  // their "my companies" index (best-effort; independent of paid/trial state).
+  const ownerEmail = (session as any)?.user?.email as string | undefined
+  if (ownerEmail) setAppOwner(slug, ownerEmail).catch(() => {})
 
   // Already provisioned? Return the persisted project id (idempotent).
   if (existing.zerodbProjectId) {
