@@ -19,9 +19,14 @@ export function Preview() {
   // Kick real generation once the user reaches the preview view with an idea.
   const { previewUrl, status, chatId } = useRealPreview(state.idea, state.view === 'preview' && !!state.idea)
   const [copied, setCopied] = useState(false)
+  // #213: the durable live URL returned by register-app (deployPersistent) — a real
+  // {slug}.ainative.studio wildcard host when configured, else the /build/{slug}
+  // preview. Auto-deploying the app-track app to a real shareable URL is the goal.
+  const [deployUrl, setDeployUrl] = useState<string | null>(null)
 
   // Once the app is ready, register slug → chatId so /build/{slug} resolves to it,
   // and store the chatId in state so the Live dashboard can link the real app. (FIX-2)
+  // register-app also resolves + persists the durable live URL (#213) and returns it.
   useEffect(() => {
     if (status !== 'ready' || !chatId || !state.appSub) return
     dispatch({ type: 'SET_APP_CHATID', chatId })
@@ -31,12 +36,26 @@ export function Preview() {
         slug: state.appSub, chatId, name: state.companyName,
         tagline: state.brandTagline, color: state.brandColor, track: state.track,
       }),
-    }).catch(() => {})
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d?.deployUrl) setDeployUrl(String(d.deployUrl)) })
+      .catch(() => {})
   }, [status, chatId, state.appSub])
 
-  // The real, shareable subdirectory URL (no DNS, works immediately). (FIX-2)
+  // A real dedicated host (#213) only when deployUrl is a full https:// URL that is
+  // NOT the durable /build/{slug} subdir — i.e. the {slug}.ainative.studio wildcard
+  // host. Mirrors Live.tsx so the app track surfaces the same real URL as the company
+  // track when the wildcard is configured.
+  const wildcardUrl =
+    deployUrl && /^https?:\/\//i.test(deployUrl) && !/\/build\//.test(deployUrl)
+      ? deployUrl.replace(/\/+$/, '')
+      : null
+
+  // The real, shareable URL: the dedicated wildcard host when we have one, else the
+  // durable /build/{slug} subdirectory (works immediately, no DNS). (FIX-2 / #213)
   const shareUrl = chatId && status === 'ready' && state.appSub
-    ? (typeof window !== 'undefined' ? `${window.location.origin}/build/${state.appSub}` : `/build/${state.appSub}`)
+    ? (wildcardUrl
+        || (typeof window !== 'undefined' ? `${window.location.origin}/build/${state.appSub}` : `/build/${state.appSub}`))
     : null
 
   const copyShare = () => {
@@ -76,7 +95,7 @@ export function Preview() {
       <div className="m-browser">
         <div className="m-browser-chrome m-mono">
           <span className="m-browser-dots"><i /><i /><i /></span>
-          <span className="m-browser-url">{state.appSub || 'your-app'}.ainative.studio</span>
+          <span className="m-browser-url">{wildcardUrl ? wildcardUrl.replace(/^https?:\/\//i, '') : `${state.appSub || 'your-app'}.ainative.studio`}</span>
         </div>
         <div className="m-browser-body">
           {previewUrl ? (
