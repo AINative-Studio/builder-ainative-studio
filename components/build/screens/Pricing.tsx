@@ -4,6 +4,7 @@
 
 import { useState } from 'react'
 import { useBuild } from '@/contexts/build-context'
+import { trackEvent } from '@/components/analytics/google-analytics'
 
 // Builder subscription tiers — the canonical AINative plan line (config/pricing.ts).
 // Skip Starter/$5 ('Hobbyist'): its 100K tokens can't build+run a real company.
@@ -45,6 +46,9 @@ export function Pricing() {
 
   const choose = async (tier: (typeof TIERS)[number]) => {
     dispatch({ type: 'PICK_PLAN', plan: tier.plan })
+    // GA4 funnel step 5 — checkout started (tier chosen → heading to Stripe). Value
+    // is the monthly price so GA4/Ads can weight begin_checkout by plan.
+    trackEvent('checkout_started', 'funnel', `${tier.id}_${isYearly ? 'yearly' : 'monthly'}`, isYearly ? tier.monthly * 10 : tier.monthly)
     // Use the yearly price ID only when one actually exists; otherwise fall back to the
     // monthly ID so we never send a fake/unset price to Stripe (checkout would 400).
     const priceId = isYearly && tier.priceIdYearly ? tier.priceIdYearly : tier.priceId

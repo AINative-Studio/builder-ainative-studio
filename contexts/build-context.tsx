@@ -13,6 +13,7 @@ import {
 } from '@/lib/build/state'
 import { PRIMITIVE_MAP, TOTAL_PRIMITIVES } from '@/lib/build/primitives'
 import { useAutoplay } from '@/lib/build/useAutoplay'
+import { trackEvent } from '@/components/analytics/google-analytics'
 
 interface BuildContextValue {
   state: BuildState
@@ -55,6 +56,21 @@ export function BuildProvider({ children }: { children: ReactNode }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // GA4 funnel steps 2 & 3 — build_started (entered the workspace/build) and
+  // build_completed (landed on Live). Keyed on the transition so each fires once.
+  useEffect(() => {
+    if (state.screen === 'ws' && state.building) {
+      trackEvent('build_started', 'funnel', state.track)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.screen === 'ws' && state.building])
+  useEffect(() => {
+    if (state.builtCompany) {
+      trackEvent('build_completed', 'funnel', state.track)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.builtCompany])
 
   const views = useMemo(() => trackViews(state.track), [state.track])
   const woven = useMemo(() => countWoven(state, PRIMITIVE_MAP), [state])

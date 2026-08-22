@@ -9,6 +9,7 @@
 
 import { useState, useEffect } from 'react'
 import { useBuild } from '@/contexts/build-context'
+import { trackEvent } from '@/components/analytics/google-analytics'
 import { useLiveProof } from '@/lib/build/useLiveProof'
 import { buildSystems, type BusinessSystem } from '@/lib/build/business-systems'
 import { DomainModal } from '@/components/build/DomainModal'
@@ -31,6 +32,10 @@ export function Live() {
   const [asking, setAsking] = useState(false)
   const [systems, setSystems] = useState<BusinessSystem[]>(buildSystems())
   const [nightshift, setNightshift] = useState<{ hasRun: boolean; summary?: string; lastRunAt?: string } | null>(null)
+  // Early email capture (#207): an anonymous founder can save/share their company
+  // by email BEFORE the upgrade wall — turning non-converters into a reachable lead.
+  const [leadEmail, setLeadEmail] = useState('')
+  const [leadSaved, setLeadSaved] = useState(false)
   const company = state.companyName || 'Your Company'
   const companyId = state.appSub || company.toLowerCase().replace(/\s+/g, '-')
   // Real, working subdirectory URL — no dead subdomain. (FIX-2)
@@ -79,8 +84,25 @@ export function Live() {
   // The upgrade path: go to the Pricing screen (real Stripe checkout). Anonymous
   // users sign up first (they return to Live), then upgrade.
   const goUpgrade = () => {
+    // GA4 funnel step 4 — the founder clicked upgrade (intent to pay).
+    trackEvent('upgrade_clicked', 'funnel', signedIn ? 'signed_in' : 'anonymous')
     if (!signedIn) { dispatch({ type: 'GOTO_SCREEN', screen: 'signup' }); return }
     dispatch({ type: 'GOTO_SCREEN', screen: 'pricing' })
+  }
+
+  // Early email capture — save/share the company by email (no account needed) so an
+  // anonymous non-converter becomes a reachable lead. Fires a GA4 lead event.
+  const saveByEmail = async () => {
+    const email = leadEmail.trim()
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || leadSaved) return
+    setLeadSaved(true) // optimistic
+    trackEvent('lead_captured', 'funnel', state.track)
+    try {
+      await fetch('/api/build/lead', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, slug: companyId, idea: state.idea, brand: company, track: state.track }),
+      })
+    } catch { /* optimistic UI already set */ }
   }
 
   // Post-checkout subscription fulfillment (#241): Stripe returns to
@@ -106,6 +128,9 @@ export function Live() {
           dispatch({ type: 'SET_ACTIVE_PLAN', plan: d.plan as ActivePlan, enrolled: d.enrolled })
           if (d.enrolled) setEnrolled(true)
           setPlanStatus(`✓ You're on ${d.planName || d.plan}. Cody just unlocked it.`)
+          // GA4 funnel step 6 — CONVERSION: subscription verified + unlocked. This
+          // is the primary conversion event to import as a Google Ads conversion.
+          trackEvent('subscribed', 'conversion', String(d.plan))
         } else {
           setPlanStatus(d?.error === 'not verified' ? 'Payment is still processing — refresh in a moment.' : (d?.error || 'Could not confirm your plan yet.'))
         }
@@ -335,10 +360,27 @@ export function Live() {
       ) : (
         <div className="m-live-funnel" data-testid="signup-banner">
           <span>
-            <strong>{company} is yours.</strong> Create an account to keep it — Cody keeps building and running it 24/7, and you own 100%.
+            <strong>{company} is yours.</strong> {leadSaved ? "Saved — we'll email you a link to pick it back up." : 'Save it — get a link to your company and keep building. Cody runs it 24/7, and you own 100%.'}
           </span>
           <div className="m-live-funnel-cta">
-            <button className="btn-primary" data-testid="claim-cta" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'signup' })}>Claim {company} free →</button>
+            {leadSaved ? (
+              <button className="btn-primary" data-testid="claim-cta" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'signup' })}>Claim {company} free →</button>
+            ) : (
+              <>
+                {/* Early email capture — save/share before the upgrade wall (#207). */}
+                <input
+                  className="m-lead-email"
+                  type="email"
+                  data-testid="lead-email"
+                  placeholder="you@company.com"
+                  value={leadEmail}
+                  onChange={(e) => setLeadEmail(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && saveByEmail()}
+                  aria-label="Email to save your company"
+                />
+                <button className="btn-primary" data-testid="save-email" disabled={!leadEmail.trim()} onClick={saveByEmail}>Save {company} →</button>
+              </>
+            )}
             <button className="btn-ghost" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'login' })}>Log in</button>
           </div>
         </div>

@@ -42,6 +42,10 @@ export interface LearningOutcome {
   plan?: string         // active subscription plan id once converted
   keyKind?: 'tmp' | 'permanent'
   converted: boolean    // paid plan attached (true) vs tmp_/no plan (false)
+  // Email captured early in the flow (#207) — so a NON-converter is still a
+  // reachable lead. Only present when the founder gave it (save/share prompt or
+  // signup); never fabricated.
+  email?: string
 }
 
 export interface LearningRow extends LearningOutcome {
