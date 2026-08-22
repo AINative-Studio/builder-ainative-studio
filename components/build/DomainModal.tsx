@@ -5,22 +5,56 @@
  * Searches real Namecheap availability for the brand across TLDs and lets the
  * user pick one. Purchase is gated server-side (auth + confirm). When Namecheap
  * isn't configured, it honestly says so rather than faking availability.
+ *
+ * #280 — the founder can also type an EXACT domain to check (search box) and pull
+ *   more suggestions beyond the first batch ("More options →").
+ * #281 — signed-out purchase no longer dead-ends: ONE primary CTA per auth state.
+ *   Signed out → "Sign in to buy X" that actually routes into auth (via the
+ *   optional onRequireAuth callback from Live); the picked domain+slug is stashed
+ *   in sessionStorage so the purchase RESUMES to Stripe checkout after sign-in.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
+import { useSession } from 'next-auth/react'
 
 interface Suggestion { domain: string; available: boolean; price?: number }
 
-export function DomainModal({ brand, slug, keywords, open, onClose }: { brand: string; slug?: string; keywords?: string; open: boolean; onClose: () => void }) {
+// sessionStorage key holding the domain a signed-out founder chose to buy, so the
+// purchase resumes to Stripe checkout after they authenticate and land back on Live.
+const RESUME_KEY = 'ainative:domain-purchase-resume'
+
+export function DomainModal({ brand, slug, keywords, open, onClose, onRequireAuth }: {
+  brand: string; slug?: string; keywords?: string; open: boolean; onClose: () => void
+  // Optional so Live compiles without wiring it. When provided, a signed-out Buy
+  // routes into auth (e.g. dispatch GOTO_SCREEN 'signup'); when absent we fall back
+  // to next-auth's hosted sign-in page. Either way the pick is persisted to resume.
+  onRequireAuth?: () => void
+}) {
+  const { status: sessionStatus } = useSession()
+  const signedIn = sessionStatus === 'authenticated'
+
   const [loading, setLoading] = useState(false)
   const [configured, setConfigured] = useState(true)
   const [suggestions, setSuggestions] = useState<Suggestion[]>([])
   const [picked, setPicked] = useState<string | null>(null)
   const [status, setStatus] = useState<string | null>(null)
+  const [offset, setOffset] = useState(0)
+  const [moreLoading, setMoreLoading] = useState(false)
+  const [moreExhausted, setMoreExhausted] = useState(false)
+  const [query, setQuery] = useState('')
+  const [searching, setSearching] = useState(false)
 
+  // Merge helper — de-dup by domain so search results / more-options never double up.
+  const mergeSuggestions = useCallback((prev: Suggestion[], next: Suggestion[]) => {
+    const seen = new Set(prev.map((s) => s.domain))
+    return [...prev, ...next.filter((s) => !seen.has(s.domain))]
+  }, [])
+
+  // Initial suggestions when the modal opens.
   useEffect(() => {
     if (!open || !brand) return
     setLoading(true); setStatus(null); setPicked(null)
+    setOffset(0); setMoreExhausted(false); setQuery('')
     // Pass the company context so a taken bare word still surfaces on-brand
     // alternatives (embercoffee, drinkember, ember.shop…), not a dead end.
     const kw = keywords ? `&keywords=${encodeURIComponent(keywords)}` : ''
@@ -28,11 +62,104 @@ export function DomainModal({ brand, slug, keywords, open, onClose }: { brand: s
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         setConfigured(d?.configured !== false)
-        setSuggestions(d?.suggestions || [])
+        const s: Suggestion[] = d?.suggestions || []
+        setSuggestions(s)
+        setOffset(s.length)
+        if (s.length === 0) setMoreExhausted(true)
       })
       .catch(() => setConfigured(false))
       .finally(() => setLoading(false))
   }, [open, brand, keywords])
+
+  // "More options →" — pull the next batch of ranked suggestions (#280).
+  const loadMore = useCallback(() => {
+    if (moreLoading || moreExhausted || !brand) return
+    setMoreLoading(true); setStatus(null)
+    const kw = keywords ? `&keywords=${encodeURIComponent(keywords)}` : ''
+    fetch(`/api/build/domains?brand=${encodeURIComponent(brand)}${kw}&offset=${offset}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        const next: Suggestion[] = d?.suggestions || []
+        if (next.length === 0) { setMoreExhausted(true); return }
+        setSuggestions((prev) => mergeSuggestions(prev, next))
+        setOffset((o) => o + next.length)
+      })
+      .catch(() => setMoreExhausted(true))
+      .finally(() => setMoreLoading(false))
+  }, [brand, keywords, offset, moreLoading, moreExhausted, mergeSuggestions])
+
+  // Exact-domain search (#280) — check what the founder actually typed.
+  const runSearch = useCallback((e?: React.FormEvent) => {
+    e?.preventDefault()
+    const q = query.trim()
+    if (!q || searching) return
+    setSearching(true); setStatus(null)
+    fetch(`/api/build/domains?check=${encodeURIComponent(q)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        setConfigured(d?.configured !== false)
+        const results: Suggestion[] = d?.suggestions || []
+        if (results.length === 0) {
+          setStatus(d?.note || `Couldn't check ${q} — try a different spelling.`)
+          return
+        }
+        // Surface the exact match's status, then merge available options to the top.
+        const exact = results[0]
+        if (exact && !exact.available) {
+          setStatus(`${exact.domain} is taken — here are close available options.`)
+        }
+        const avail = results.filter((s) => s.available)
+        if (avail.length === 0) {
+          setStatus(`${q} and its close variants are all taken — try another name.`)
+          return
+        }
+        // Put the fresh available results first so the founder sees them immediately.
+        setSuggestions((prev) => mergeSuggestions(avail, prev))
+        setPicked(avail[0].domain)
+      })
+      .catch(() => setStatus('Network error — try your search again.'))
+      .finally(() => setSearching(false))
+  }, [query, searching, mergeSuggestions])
+
+  // Kick off checkout for `picked`. Extracted so it can run on mount (auth resume)
+  // and from the Buy button. Returns nothing; drives status + redirect.
+  const startCheckout = useCallback(async (domain: string) => {
+    setStatus('Taking you to secure checkout for ' + domain + '…')
+    try {
+      const res = await fetch('/api/build/domains', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ domain, slug: slug || brand }),
+      })
+      const d = await res.json()
+      if (d?.url) { window.location.href = d.url; return }  // → Stripe Checkout
+      if (d?.reason === 'signin') {
+        // Shouldn't happen on the signed-in path, but degrade gracefully: re-arm resume.
+        try { sessionStorage.setItem(RESUME_KEY, JSON.stringify({ domain, slug: slug || brand })) } catch {}
+        setStatus('Please sign in to finish buying ' + domain + '.')
+        return
+      }
+      setStatus(d?.error || d?.detail ? 'Could not start checkout: ' + (d.error || d.detail) : 'Could not start checkout for ' + domain + '.')
+    } catch {
+      setStatus('Network error — try again.')
+    }
+  }, [slug, brand])
+
+  // Resume after auth (#281): if the founder picked a domain while signed out, we
+  // stashed it; once they're authenticated and back on Live, pick up where we left
+  // off and go straight to Stripe checkout for the SAME domain.
+  useEffect(() => {
+    if (!signedIn) return
+    let pending: { domain?: string; slug?: string } | null = null
+    try {
+      const raw = sessionStorage.getItem(RESUME_KEY)
+      if (raw) pending = JSON.parse(raw)
+    } catch { pending = null }
+    if (pending?.domain) {
+      try { sessionStorage.removeItem(RESUME_KEY) } catch {}
+      setPicked(pending.domain)
+      startCheckout(pending.domain)
+    }
+  }, [signedIn, startCheckout])
 
   // Fulfillment: after Stripe redirects back with ?domain_session=…, verify the
   // payment and register + point DNS. Runs once regardless of modal open state.
@@ -59,22 +186,25 @@ export function DomainModal({ brand, slug, keywords, open, onClose }: { brand: s
 
   if (!open) return null
 
-  const claim = async () => {
+  // The single Buy action. Signed in → checkout. Signed out → persist the pick and
+  // route into auth (onRequireAuth if wired, else next-auth's hosted sign-in), so the
+  // purchase RESUMES on return. No dead text + no looping enabled button (#281).
+  const onBuy = () => {
     if (!picked) return
-    setStatus('Taking you to secure checkout for ' + picked + '…')
-    try {
-      const res = await fetch('/api/build/domains', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ domain: picked, slug: slug || brand }),
-      })
-      const d = await res.json()
-      if (d?.url) { window.location.href = d.url; return }  // → Stripe Checkout
-      if (d?.reason === 'signin') setStatus('Sign in to purchase ' + picked + ' →')
-      else setStatus(d?.error || d?.detail ? 'Could not start checkout: ' + (d.error || d.detail) : 'Could not start checkout for ' + picked + '.')
-    } catch {
-      setStatus('Network error — try again.')
-    }
+    if (signedIn) { startCheckout(picked); return }
+    try { sessionStorage.setItem(RESUME_KEY, JSON.stringify({ domain: picked, slug: slug || brand })) } catch {}
+    if (onRequireAuth) { onRequireAuth(); return }
+    // Fallback when Live didn't pass a handler: next-auth hosted sign-in, returning
+    // to this company's Live page where the resume effect completes the purchase.
+    const back = `/build/${encodeURIComponent(slug || brand)}`
+    window.location.href = `/api/auth/signin?callbackUrl=${encodeURIComponent(back)}`
   }
+
+  const buyLabel = !picked
+    ? 'Pick a domain'
+    : signedIn
+      ? `Buy ${picked} →`
+      : `Sign in to buy ${picked} →`
 
   return (
     <div className="m-modal-scrim" role="dialog" aria-modal="true" aria-label="Get a custom domain">
@@ -88,6 +218,21 @@ export function DomainModal({ brand, slug, keywords, open, onClose }: { brand: s
           <p className="m-sub">Checking what&apos;s available for <strong>{brand}</strong>…</p>
         ) : (
           <>
+            {/* Search a SPECIFIC domain the founder wants (#280). */}
+            <form className="m-domain-search" onSubmit={runSearch} style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+              <input
+                className="m-input"
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search a domain you want (e.g. myname.com)…"
+                aria-label="Search for a specific domain"
+                style={{ flex: 1 }}
+              />
+              <button type="submit" className="btn-secondary" disabled={!query.trim() || searching}>
+                {searching ? 'Checking…' : 'Check'}
+              </button>
+            </form>
             <div className="m-domain-list">
               {/* Only AVAILABLE (purchasable) domains are returned — no dead options. */}
               {suggestions.map((s) => (
@@ -103,13 +248,19 @@ export function DomainModal({ brand, slug, keywords, open, onClose }: { brand: s
                 </button>
               ))}
               {suggestions.length === 0 && (
-                <p className="m-sub">Every {brand} variation is taken right now. Tweak the name a touch (or ask Cody for another) and I&apos;ll find you a great available address.</p>
+                <p className="m-sub">Every {brand} variation is taken right now. Search a specific domain above (or ask Cody for another) and I&apos;ll find you a great available address.</p>
               )}
             </div>
+            {/* More options → pulls the next ranked batch (#280). */}
+            {suggestions.length > 0 && !moreExhausted && (
+              <button className="m-back" onClick={loadMore} disabled={moreLoading} style={{ marginTop: 6 }}>
+                {moreLoading ? 'Finding more…' : 'More options →'}
+              </button>
+            )}
             {status && <p className="m-mono m-domain-status">{status}</p>}
             <div className="m-modal-opts" style={{ marginTop: 8 }}>
-              <button className="btn-primary" disabled={!picked} onClick={claim}>
-                {picked ? `Buy ${picked} →` : 'Pick a domain'}
+              <button className="btn-primary" disabled={!picked} onClick={onBuy}>
+                {buyLabel}
               </button>
             </div>
           </>

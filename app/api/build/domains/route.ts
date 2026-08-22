@@ -1,7 +1,8 @@
 /**
  * /api/build/domains (#207 · FIX-3 / #240) — same-origin proxy to core's
  * Namecheap domains API for the Builder custom-domain modal.
- *   GET  ?brand=<slug>            → availability suggestions
+ *   GET  ?brand=<slug>[&offset=N] → availability suggestions (offset → "More options")
+ *   GET  ?check=<domain>          → availability + price for an EXACT typed domain (#280)
  *   POST { domain, slug }         → start Stripe checkout to BUY the domain
  *   PUT  { session_id }           → fulfill after payment (register + point DNS)
  *
@@ -22,13 +23,33 @@ const APP = process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio'
 
 export async function GET(request: NextRequest) {
   const url = new URL(request.url)
+
+  // Exact-domain search (#280): ?check=<domain> → core /domains/check. The founder
+  // types a specific domain; we return availability + price (+ close TLD variants).
+  const check = (url.searchParams.get('check') || '').trim().slice(0, 63)
+  if (check) {
+    try {
+      const res = await fetch(`${CORE}/api/v1/public/domains/check?domain=${encodeURIComponent(check)}`, {
+        headers: { Authorization: `Bearer ${KEY}`, 'X-API-Key': KEY },
+        signal: AbortSignal.timeout(20000),
+      })
+      const data = await res.json().catch(() => ({ configured: false, suggestions: [] }))
+      return Response.json(data)
+    } catch {
+      return Response.json({ configured: false, suggestions: [] })
+    }
+  }
+
   const brand = url.searchParams.get('brand') || ''
   // Company context (idea/industry) so core can generate ON-BRAND alternatives
   // when the bare word is taken (embercoffee, drinkember, ember.shop…) instead of
   // dead-ending. Optional — degrades to generic variants when absent.
   const keywords = url.searchParams.get('keywords') || ''
+  // Pagination for "More options →" (#280): skip the first N available options.
+  const offsetRaw = parseInt(url.searchParams.get('offset') || '0', 10)
+  const offset = Number.isFinite(offsetRaw) ? Math.min(Math.max(offsetRaw, 0), 60) : 0
   if (!brand) return Response.json({ error: 'brand required' }, { status: 400 })
-  const qs = `brand=${encodeURIComponent(brand)}${keywords ? `&keywords=${encodeURIComponent(keywords.slice(0, 200))}` : ''}`
+  const qs = `brand=${encodeURIComponent(brand)}${keywords ? `&keywords=${encodeURIComponent(keywords.slice(0, 200))}` : ''}${offset ? `&offset=${offset}` : ''}`
   try {
     const res = await fetch(`${CORE}/api/v1/public/domains/suggest?${qs}`, {
       headers: { Authorization: `Bearer ${KEY}`, 'X-API-Key': KEY },
