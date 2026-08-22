@@ -41,12 +41,19 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({
         email,
         password,
-        // Ad attribution — carried to the user record so the Stripe webhook can
+        // Card-free at signup by design — the Builder captures the card LATER, on
+        // the Live page's Upgrade / custom-domain step (after Cody builds), never
+        // here. signup_source='builder' is the keyless bypass core honors for this.
+        signup_source: 'builder',
+        // Ad attribution goes in `ext` (core's UserCreate contract, Refs #4712) —
+        // promoted to users.gclid on registration so the Stripe webhook can
         // attribute the eventual paid conversion back to the Google Ads click.
-        gclid: gclid || undefined,
-        utm_source: utm.utm_source || (gclid ? 'google' : undefined),
-        utm_medium: utm.utm_medium || (gclid ? 'cpc' : undefined),
-        utm_campaign: utm.utm_campaign || undefined,
+        ext: {
+          gclid: gclid || undefined,
+          utm_source: utm.utm_source || (gclid ? 'google' : undefined),
+          utm_medium: utm.utm_medium || (gclid ? 'cpc' : undefined),
+          utm_campaign: utm.utm_campaign || undefined,
+        },
       }),
       signal: AbortSignal.timeout(25000),
     })
