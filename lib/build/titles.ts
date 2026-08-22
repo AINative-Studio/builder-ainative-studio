@@ -6,5 +6,5 @@ export const ARTIFACT_TITLES: Record<string, string> = {
   infra: 'Infrastructure', preview: 'Running Preview',
   thesis: 'Venture Thesis', wedge: 'Initial Wedge', businessModel: 'Business Model',
   positioning: 'Positioning', landing: 'Landing Page', plan30: '30-Day Plan',
-  pipeline: 'Sales Pipeline', conflict: 'Dependency Conflict', graph: 'The artifact graph',
+  pipeline: 'Sales Pipeline', 'rescope-intent': 'Re-scope the wedge', conflict: 'Dependency Conflict', graph: 'The artifact graph',
 }

@@ -29,7 +29,7 @@ export const APP_VIEWS = [
 export const COMPANY_VIEWS = [
   'thesis', 'wedge', 'businessModel', 'positioning', 'landing', 'plan30',
 ] as const
-export const SHARED_LATE_VIEWS = ['pipeline', 'conflict', 'graph'] as const
+export const SHARED_LATE_VIEWS = ['pipeline', 'rescope-intent', 'conflict', 'graph'] as const
 
 export type ArtifactView =
   | (typeof APP_VIEWS)[number]
@@ -148,7 +148,9 @@ export type BuildAction =
   | { type: 'SET_OVERLAY'; overlay: Overlay }
   | { type: 'RIBBON'; line: string }
   | { type: 'ASK_PRIVACY' }
-  | { type: 'TRIGGER_CONFLICT'; changedView: string }
+  | { type: 'TRIGGER_CONFLICT'; changedView: string; fromRescopeIntent?: boolean }
+  /** Restore persisted build state from localStorage without clearing artifacts (#284). */
+  | { type: 'RESTORE_BUILD'; partial: Partial<Pick<BuildState, 'generated' | 'done' | 'genError' | 'builtCompany' | 'builtMVP' | 'wedgePicked' | 'answers' | 'companyName' | 'idea' | 'appSub' | 'brandTagline' | 'brandColor' | 'appChatId' | 'activePlan' | 'enrolled' | 'track'>> }
   | { type: 'TOGGLE_RAIL' }
   | { type: 'TOGGLE_INDEX' }
   | { type: 'SET_APP_CHATID'; chatId: string }
@@ -165,7 +167,10 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
         view: action.track === 'app' ? 'brief' : 'thesis',
         screen: 'intake',
       }
-    case 'START_BUILD':
+    case 'START_BUILD': {
+      // Only wipe generated/done when this is genuinely a NEW build (different slug).
+      // Re-entering an existing company (same appSub) must NOT reset artifacts (#284).
+      const isNewBuild = action.appSub !== state.appSub || !state.appSub
       return {
         ...state,
         screen: 'ws',
@@ -176,12 +181,13 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
         brandColor: action.brandColor ?? state.brandColor,
         building: true,
         auto: true,
-        // fresh run: clear any prior generation
-        generated: {},
-        genError: {},
-        done: {},
+        // Only clear prior generation on a genuinely new build (#284).
+        generated: isNewBuild ? {} : state.generated,
+        genError: isNewBuild ? {} : state.genError,
+        done: isNewBuild ? {} : state.done,
         view: state.track === 'app' ? 'brief' : 'thesis',
       }
+    }
     case 'GEN_DONE':
       return {
         ...state,
@@ -233,16 +239,21 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
     case 'TRIGGER_CONFLICT':
       // An upstream edit with downstream impact routes to the blocking conflict
       // gate. auto=false so the user must resolve it before anything else runs.
+      // When fromRescopeIntent=true, route to 'rescope-intent' first (#286) so
+      // the user gets context before seeing the dependency graph.
       return {
         ...state,
         screen: 'ws',
-        view: 'conflict' as ArtifactView,
+        view: (action.fromRescopeIntent ? 'rescope-intent' : 'conflict') as ArtifactView,
         conflictView: action.changedView,
         conflictResolved: false,
         propagating: false,
         auto: false,
         overlay: { kind: 'none' },
       }
+    case 'RESTORE_BUILD':
+      // Hydrate persisted fields without disturbing live UI state (#284).
+      return { ...state, ...action.partial }
     case 'SET_TABLET':
       return { ...state, tablet: action.tablet }
     case 'TOGGLE_RAIL':
