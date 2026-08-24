@@ -45,6 +45,7 @@ next-env.d.ts
 .claude
 .mcp.json
 e2e/screenshots/
+e2e/ux-shots/
 e2e/test-results/
 playwright-report/
 
@@ -70,3 +71,10 @@ chainfix-*.png
 authsweep-*.png
 
 codyab-*.png
+
+# Root-level verification/audit screenshots + throwaway debug scripts (never commit)
+/*.png
+/_*.cjs
+/*_tmp.cjs
+/retest.cjs
+/reverify.cjs
