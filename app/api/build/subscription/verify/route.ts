@@ -21,9 +21,16 @@
 
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
-import { setAppPlan, claimCompanyProject, setAppOwner } from '@/lib/build/app-registry'
+import {
+  setAppPlan,
+  claimCompanyProject,
+  setAppOwner,
+  setAppRailwayService,
+  resolveApp,
+} from '@/lib/build/app-registry'
 import { markConverted } from '@/lib/build/learning'
 import { reportConversion, gclidFromRequest } from '@/lib/build/conversions'
+import { deployRailwayService, railwayDeployEnabled } from '@/lib/build/deploy'
 
 // Monthly $ value per plan — the conversion value sent to Google Ads.
 const PLAN_VALUE: Record<string, number> = { pro: 49, launch: 49, business: 149, company: 149, enterprise: 999, cody_vcto: 4999 }
@@ -95,7 +102,45 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return Response.json({ ok: true, paid: true, plan, planName, enrolled, claimed })
+    // #243: provision the company's DEDICATED per-company Railway service (its own
+    // real backend/host, custom-domain-bindable via #240). THIS IS THE PAID-ONLY
+    // TRIGGER — we are past the `paid && plan` gate above, so this branch is only
+    // ever reached for a VERIFIED PAID subscription, never a free/anonymous build.
+    //
+    // Cost-safe + idempotent:
+    //  - Inert unless RAILWAY_DEPLOY_ENABLED (+ token + source) is configured
+    //    (railwayDeployEnabled()); otherwise deployRailwayService() returns 'skipped'
+    //    with no Railway API call.
+    //  - We read the registry FIRST and pass any persisted railwayServiceId, so a
+    //    re-run of verify for an already-deployed company returns 'existing' WITHOUT
+    //    creating a second billable service.
+    // Best-effort: a deploy failure must never fail checkout confirmation.
+    let deployed: boolean | undefined
+    if (slug && railwayDeployEnabled()) {
+      try {
+        const entry = await resolveApp(slug).catch(() => null)
+        if (entry?.chatId) {
+          const dep = await deployRailwayService({
+            slug,
+            zerodbProjectId: entry.zerodbProjectId,
+            existingServiceId: entry.railwayServiceId,
+            existingUrl: entry.deployUrl,
+          })
+          if (dep.status === 'created' && dep.serviceId) {
+            await setAppRailwayService(slug, {
+              railwayServiceId: dep.serviceId,
+              deployUrl: dep.url,
+              domain: dep.domain,
+            }).catch(() => {})
+            deployed = true
+          } else if (dep.status === 'existing') {
+            deployed = true
+          }
+        }
+      } catch { /* best-effort — never block confirmation on deploy */ }
+    }
+
+    return Response.json({ ok: true, paid: true, plan, planName, enrolled, claimed, deployed })
   } catch (e: any) {
     return Response.json({ ok: false, error: String(e?.message || e).slice(0, 100) }, { status: 502 })
   }
