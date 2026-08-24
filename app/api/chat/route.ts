@@ -5,6 +5,7 @@ import { nanoid } from 'nanoid'
 import { storePreview } from '@/lib/preview-store'
 import { verifyAndEnhancePrompt } from '@/lib/component-verifier'
 import { PROFESSIONAL_SYSTEM_PROMPT } from '@/lib/professional-prompt'
+import { codegenCompositionBlock } from '@/lib/build/primitive-catalog'
 import { enhancePromptWithMockData } from '@/lib/mock-data-generator'
 import { logGeneration, getActivePromptVersion } from '@/lib/services/rlhf.service'
 import { buildEnhancedPrompt } from '@/lib/services/prompt-builder.service'
@@ -169,7 +170,11 @@ export async function POST(request: NextRequest) {
 
     // Use enhanced prompt and system prompt
     const enhancedPrompt = promptEnhancement.enhancedPrompt
-    const enhancedSystemPrompt = promptEnhancement.systemPrompt
+    // #218: compose real AINative primitives in codegen (matches chat-ws path).
+    // Wires ZeroCommerce/ZeroInvoice/ZeroPipeline/etc. real endpoints so the
+    // generated app calls them instead of hand-rolling business logic.
+    const enhancedSystemPrompt =
+      promptEnhancement.systemPrompt + '\n\n' + codegenCompositionBlock(message, 'company')
 
     console.log('LLAMA API request:', {
       originalMessage: message,

@@ -4,6 +4,7 @@ import OpenAI from 'openai'
 import { nanoid } from 'nanoid'
 import { verifyAndEnhancePrompt } from '@/lib/component-verifier'
 import { PROFESSIONAL_SYSTEM_PROMPT } from '@/lib/professional-prompt'
+import { codegenCompositionBlock } from '@/lib/build/primitive-catalog'
 import { enhancePromptWithMockData } from '@/lib/mock-data-generator'
 import { updatePreviewPartial, storePreview, getChatData } from '@/lib/preview-store'
 import { validateGeneratedCode } from '@/lib/code-validator'
@@ -267,7 +268,12 @@ export async function POST(request: NextRequest) {
           // so all code examples in the prompt use the actual selected theme colors
           const memoryContext = formatMemoryForPrompt(responseId)
           const themedPrompt = applyThemeToPrompt(PROFESSIONAL_SYSTEM_PROMPT, selectedTheme)
-          const enhancedSystemPrompt = themedPrompt + themePrompt + imagePrompt + memoryContext
+          // #218: inject real AINative-primitive wiring into the CODEGEN prompt so
+          // generated apps COMPOSE real endpoints (ZeroCommerce/ZeroInvoice/etc.)
+          // instead of regenerating business logic. #288 shipped the selection
+          // half; this is the codegen half. Selection is idea-driven off `message`.
+          const compositionBlock = '\n\n' + codegenCompositionBlock(message, 'company')
+          const enhancedSystemPrompt = themedPrompt + themePrompt + imagePrompt + memoryContext + compositionBlock
 
           // ============================================================
           // CLAUDE AGENT PATH — headless Claude Code agent via SSE
