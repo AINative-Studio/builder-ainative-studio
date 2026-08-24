@@ -66,6 +66,13 @@ export interface AppEntry {
   // The persistent hosting target for the company app (#243). Today this is the
   // durable preview URL; the deploy seam swaps in a real Railway/*.ainative.studio host.
   deployUrl?: string
+  // Dedicated per-company Railway service (#243, heavy PAID-only option). Set once a
+  // verified-paid company gets its OWN Railway service provisioned (its own backend,
+  // custom-domain-bindable via #240). Presence makes the deploy idempotent: the verify
+  // trigger skips creation when this is already set, so a re-run never creates a second
+  // billable service. `railwayDeployedAt` records when it was first provisioned.
+  railwayServiceId?: string
+  railwayDeployedAt?: string
   createdAt: string
 }
 
@@ -185,6 +192,8 @@ export async function setAppProvisioned(
     pipelineId?: string
     workspaceId?: string
     workspaceFiled?: boolean
+    railwayServiceId?: string
+    railwayDeployedAt?: string
   },
 ): Promise<boolean> {
   const existing = await resolveApp(slug)
@@ -193,6 +202,36 @@ export async function setAppProvisioned(
     ...existing,
     ...fields,
     provisionedAt: fields.provisionedAt || new Date().toISOString(),
+  })
+}
+
+/**
+ * Persist a company's dedicated per-company Railway service (#243) after a
+ * verified-paid deploy. Appends an updated row carrying the existing entry plus the
+ * new railwayServiceId (+ the real deploy URL, which supersedes the durable preview
+ * URL) so resolveApp() (latest-wins) and Live surface the real host.
+ *
+ * IDEMPOTENCY: no-op success (returns true) when the same railwayServiceId is already
+ * stored — the verify trigger checks the registry before creating, but this guards the
+ * write path too, so a re-run never appends a churn row. No-op (false) if the slug
+ * isn't registered.
+ */
+export async function setAppRailwayService(
+  slug: string,
+  fields: { railwayServiceId: string; deployUrl?: string; domain?: string },
+): Promise<boolean> {
+  if (!fields.railwayServiceId) return false
+  const existing = await resolveApp(slug)
+  if (!existing) return false
+  // Already recorded this exact service → nothing to write.
+  if (existing.railwayServiceId === fields.railwayServiceId) return true
+  return registerApp({
+    ...existing,
+    railwayServiceId: fields.railwayServiceId,
+    railwayDeployedAt: existing.railwayDeployedAt || new Date().toISOString(),
+    // A real Railway host supersedes the durable-preview deployUrl.
+    deployUrl: fields.deployUrl || existing.deployUrl,
+    domain: fields.domain || existing.domain,
   })
 }
 

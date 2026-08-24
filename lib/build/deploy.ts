@@ -15,11 +15,25 @@
  * instead of a 301 redirect. Absent that env, it falls back to the durable preview
  * URL (still real + shareable, just not CNAME-pointable).
  *
- * A per-company Railway service remains a second, heavier option (own backend),
- * left as a documented seam below since headless service-create isn't safe here.
+ * A per-company Railway service is the second, heavier option (own backend). It is
+ * now implemented in lib/build/railway-deploy.ts and driven from deployRailwayService()
+ * below — but it fires ONLY on a VERIFIED PAID subscription (the verify route calls
+ * it), and ONLY when RAILWAY_DEPLOY_ENABLED + a source + token are configured, because
+ * a dedicated service is real, billable hosting. It is idempotent: it never creates a
+ * second service for a company that already has a railwayServiceId.
  *
  * See docs/PERSISTENT_DEPLOY_ARCHITECTURE.md for the target architecture.
  */
+
+import {
+  ensureCompanyService,
+  railwayDeployEnabled,
+  type CompanyServiceResult,
+} from './railway-deploy'
+
+// Re-export so callers (e.g. the verify route) can gate on the cost switch without
+// importing railway-deploy directly — deploy.ts stays the single deploy entrypoint.
+export { railwayDeployEnabled }
 
 const APP = process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio'
 
@@ -129,16 +143,84 @@ export async function deployPersistent(
     return { url: wc, kind: 'wildcard', dnsPointable: true }
   }
 
-  // --- Heavier future option: per-company Railway service ----------------
-  // if (process.env.RAILWAY_DEPLOY_ENABLED === 'true') {
-  //   const svc = await ensureRailwayService(safeSlug, chatId)  // TODO: headless provisioner
-  //   return { url: svc.url, kind: 'railway', dnsPointable: true }
-  // }
+  // NOTE: the per-company Railway service (kind:'railway') is a SEPARATE, PAID-only
+  // path — deployRailwayService() below — NOT resolved here. deployPersistent() is
+  // called on free/anonymous paths too (register-app, provision), so it must never
+  // create billable hosting. The Railway service is created ONLY by the verify route
+  // after payment is confirmed.
 
   // --- Fallback durable target: durable preview subdirectory -------------
   return {
     url: `${APP}/build/${safeSlug}`,
     kind: 'preview',
     dnsPointable: false,
+  }
+}
+
+/** What the caller must already know about a company to (idempotently) deploy it. */
+export interface RailwayDeployInput {
+  slug: string
+  /** The company's Instant DB project id — injected into the service as a variable. */
+  zerodbProjectId?: string
+  /** Persisted Railway service id, if this company was already deployed. Presence of
+   *  this SKIPS creation (idempotency): we never create a second billable service. */
+  existingServiceId?: string
+  /** The company's already-known deploy URL (e.g. from a prior Railway deploy). */
+  existingUrl?: string
+}
+
+export interface RailwayDeployResult {
+  /** 'created' = a new service was provisioned; 'existing' = reused the persisted one;
+   *  'skipped' = disabled/not-configured (no cost); 'error' = provisioning failed. */
+  status: 'created' | 'existing' | 'skipped' | 'error'
+  serviceId?: string
+  url?: string
+  domain?: string
+  reason?: string
+}
+
+/**
+ * Provision a dedicated per-company Railway service (#243) — the heavy, PAID-only
+ * persistent host with its own backend, bindable to a custom domain (#240).
+ *
+ * TRIGGER CONTRACT: call this ONLY after a subscription payment has been verified
+ * server-side (the verify route does exactly this). It is NOT called from the free /
+ * anonymous provision or register-app paths — those use deployPersistent() (durable
+ * preview / wildcard), which never incurs hosting cost.
+ *
+ * IDEMPOTENCY: if `existingServiceId` is set, this returns { status:'existing' }
+ * WITHOUT any Railway API call, so re-running verify for an already-deployed company
+ * never creates a second (billable) service. The registry is the source of truth for
+ * existingServiceId; a name-based backstop inside ensureCompanyService() catches the
+ * rare case where a create succeeded but the registry write was lost.
+ *
+ * COST SAFETY: if Railway deploy isn't enabled+configured (railwayDeployEnabled()),
+ * this is inert and returns { status:'skipped' } with no API call.
+ */
+export async function deployRailwayService(
+  input: RailwayDeployInput,
+): Promise<RailwayDeployResult> {
+  const slug = String(input.slug || '').replace(/[^a-z0-9_-]/gi, '').slice(0, 40).toLowerCase()
+  if (!slug) return { status: 'error', reason: 'bad_slug' }
+
+  // Idempotency: already has a dedicated service → reuse, no API call, no new cost.
+  if (input.existingServiceId) {
+    return { status: 'existing', serviceId: input.existingServiceId, url: input.existingUrl }
+  }
+
+  // Cost guard: only ever hit Railway when explicitly enabled + configured.
+  if (!railwayDeployEnabled()) {
+    return { status: 'skipped', reason: 'disabled' }
+  }
+
+  const res: CompanyServiceResult = await ensureCompanyService(slug, input.zerodbProjectId)
+  if (!res.ok || !res.serviceId) {
+    return { status: 'error', reason: res.reason || 'ensure_failed' }
+  }
+  return {
+    status: 'created',
+    serviceId: res.serviceId,
+    url: res.url,
+    domain: res.domain,
   }
 }
