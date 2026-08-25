@@ -28,6 +28,11 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // #74 — when the account exists but email isn't verified, we switch the form
+  // into a "check your email" state with a resend action instead of silently
+  // dead-ending the founder. `verifyEmail` holds the address the resend targets.
+  const [verifyEmail, setVerifyEmail] = useState<string | null>(null)
+  const [resendNote, setResendNote] = useState<string | null>(null)
 
   const copy = {
     login: { h: 'Welcome back', sub: 'Log in to your workspace.', cta: 'Log in' },
@@ -40,8 +45,40 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
   // back on what they were building — now signed in.
   const afterAuth = () => go(state.appSub ? 'live' : 'fork')
 
-  const submit = async () => {
+  // #74 — enter the "verify your email" state: stop treating the user as logged
+  // in and surface a resend action. Called after register signals
+  // verificationRequired, or after a login is rejected with
+  // AUTH_EMAIL_NOT_VERIFIED (a silent dead-end before this change).
+  const enterVerifyState = (addr: string) => {
+    setVerifyEmail(addr)
+    setResendNote(null)
     setError(null)
+    setBusy(false)
+  }
+
+  // #74 — resend the verification link via the builder register route
+  // (action:'resend' → core POST /api/v1/auth/resend-verification). Core replies
+  // with a neutral message whether or not an unverified account exists, so we
+  // show the same reassuring confirmation regardless.
+  const resendVerification = async () => {
+    if (!verifyEmail) return
+    setBusy(true); setResendNote(null); setError(null)
+    try {
+      const res = await fetch('/api/build/register', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'resend', email: verifyEmail }),
+      })
+      const d = await res.json().catch(() => null)
+      setResendNote(d?.ok ? 'Verification email sent — check your inbox.' : (d?.error || 'Could not resend — try again.'))
+    } catch {
+      setResendNote('Network error — try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const submit = async () => {
+    setError(null); setResendNote(null)
     if (mode === 'forgot' || mode === 'reset') { setError('Password reset is coming soon — contact support.'); return }
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { setError('Enter a valid email.'); return }
     if (password.length < 8) { setError('Password must be at least 8 characters.'); return }
@@ -64,10 +101,28 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
         // Meta Pixel CompleteRegistration (mirrors GA4 sign_up). No-op if the pixel
         // isn't configured. No server CAPI twin for signup, so no shared event_id.
         trackMeta('CompleteRegistration', { content_name: state.track })
+        // #74 — if core says email verification is still required, don't pretend
+        // the founder is logged in: show the verify-email + resend state instead
+        // of auto-signing-in (which would 403 at login and dead-end silently).
+        if (d.verificationRequired) { enterVerifyState(email); return }
       }
       // Sign in (both signup + login) via the core-backed next-auth credentials provider.
       const result = await signIn('credentials', { email, password, redirect: false })
-      if (result?.error) { setError('Wrong email or password.'); setBusy(false); return }
+      if (result?.error) {
+        // #74 — signIn collapses core's error_code into a generic string, so we
+        // ask the register route to classify the failure. AUTH_EMAIL_NOT_VERIFIED
+        // means the account exists but isn't verified → offer resend, don't show
+        // "wrong password". Any other failure is a genuine credential error.
+        try {
+          const chk = await fetch('/api/build/register', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'login-check', email, password }),
+          })
+          const cd = await chk.json().catch(() => null)
+          if (cd?.errorCode === 'AUTH_EMAIL_NOT_VERIFIED') { enterVerifyState(email); return }
+        } catch { /* fall through to the generic message */ }
+        setError('Wrong email or password.'); setBusy(false); return
+      }
       // Guest → real migration (#49): re-key any in-progress guest company built
       // before this sign-in to the now-authenticated account so no work is lost.
       // Best-effort — never blocks landing the founder back on their build.
@@ -85,6 +140,36 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
   // (not fetch) is required so the browser follows the redirect chain and the
   // cookies are set on the top-level document.
   const oauth = () => { window.location.href = '/api/auth/ainative/authorize' }
+
+  // #74 — verification-required state. Reached after signup (when core requires
+  // verification) or after a login rejected with AUTH_EMAIL_NOT_VERIFIED. Gives
+  // the founder a clear next step + resend, instead of a silent signup→login
+  // dead-end. Preserves the guest→account migration story: nothing is signed in
+  // or lost here — once verified, the founder logs in and #49 migration runs.
+  if (verifyEmail) {
+    return (
+      <div className="modernist m-auth">
+        <BrandPanel />
+        <main className="m-auth-form" data-testid="auth-verify-panel">
+          <p className="m-auth-chip m-mono">✓ Account created</p>
+          <h1 className="m-artifact m-auth-h">Check your email to verify</h1>
+          <p className="m-sub">
+            We sent a verification link to <strong data-testid="auth-verify-email">{verifyEmail}</strong>. Click it to
+            activate your account, then come back and log in.
+          </p>
+          {resendNote && <p className="m-mono" data-testid="auth-resend-note" style={{ color: '#1f7a3d' }}>{resendNote}</p>}
+          <button className="btn-primary" data-testid="auth-resend" onClick={resendVerification} disabled={busy}>
+            {busy ? 'Sending…' : 'Resend verification email →'}
+          </button>
+          <div className="m-auth-links m-mono">
+            <button className="btn-ghost" data-testid="auth-verify-back" onClick={() => { setVerifyEmail(null); setResendNote(null); go('login') }}>
+              ← Back to log in
+            </button>
+          </div>
+        </main>
+      </div>
+    )
+  }
 
   return (
     <div className="modernist m-auth">
