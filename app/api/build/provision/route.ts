@@ -36,6 +36,7 @@ import {
   TRIAL_WINDOW_MS,
 } from '@/lib/build/instant-db'
 import { provisionPipeline } from '@/lib/build/zeropipeline'
+import { provisionZeroDbViaMcp, isMcpProvisionEnabled } from '@/lib/build/mcp-provision'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -98,6 +99,48 @@ export async function POST(request: NextRequest) {
       dnsPointable: target.dnsPointable,
       cached: true,
     })
+  }
+
+  // #73 build-time MCP wedge: when ENABLE_MCP_PROVISION is set (and MCP creds are
+  // configured), Cody OPERATES the ZeroDB MCP (69 tools) to create the REAL project
+  // agentically — the strategic differentiator over code-gen-only competitors.
+  // Inert + safe by default: with the flag off (or no creds / any failure) this is a
+  // no-op and we fall through to the existing Instant-DB REST path below. Only a
+  // successful MCP provision short-circuits; a preview then reads a real
+  // MCP-provisioned ZeroDB, not a mock.
+  if (isMcpProvisionEnabled()) {
+    const mcp = await provisionZeroDbViaMcp({
+      slug,
+      name: String(existing.name || b?.name || slug),
+    })
+    if (mcp.ok && mcp.projectId) {
+      const target = await deployPersistent(existing.chatId, slug)
+      const provisionedAt = new Date().toISOString()
+      const persisted = await setAppProvisioned(slug, {
+        zerodbProjectId: mcp.projectId,
+        keyKind: 'permanent',
+        provisionedAt,
+        deployUrl: target.url,
+        workspaceId: BUILDER_WORKSPACE_ID,
+      })
+      return Response.json({
+        ok: true,
+        zerodbProjectId: mcp.projectId,
+        keyKind: 'permanent',
+        trial: false,
+        claimable: false,
+        expiresAt: null,
+        plan: plan || null,
+        created: true,
+        provisionedVia: 'mcp',
+        tablesCreated: mcp.tablesCreated || [],
+        deployUrl: target.url,
+        dnsPointable: target.dnsPointable,
+        persisted,
+        provisionedAt,
+      })
+    }
+    // Not ok / skipped → fall through to Instant DB (unchanged behavior).
   }
 
   // Provision a REAL Instant DB project. Paid + JWT → permanent sk_ immediately.
