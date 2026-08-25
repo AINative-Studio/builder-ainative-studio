@@ -159,14 +159,20 @@ export interface DeployTarget {
 export async function deployPersistent(
   chatId: string,
   slug: string,
+  // #80: the wildcard subdomain URL must only be surfaced when the company is
+  // PAID + has CLAIMED the subdomain (same gate #78 enforces in middleware).
+  // Without the entry (or when not paid+claimed), return the /build/{slug} path —
+  // otherwise we'd hand back a {slug}.ainative.studio URL that #78 just 301s away.
+  entry?: { plan?: string; subdomainClaimed?: boolean } | null,
 ): Promise<DeployTarget> {
   const safeSlug = String(slug || '').replace(/[^a-z0-9_-]/gi, '').slice(0, 40)
 
   // --- Real persistent host: shared *.ainative.studio wildcard --------------
   // Served by middleware host→slug rewrite — a real dedicated host per company
   // with no provisioning step, and CNAME-pointable for custom domains (#240).
+  // GATED (#78/#80): only when the company is paid + has claimed the subdomain.
   const wc = wildcardUrl(safeSlug)
-  if (wc) {
+  if (wc && subdomainServable(entry)) {
     return { url: wc, kind: 'wildcard', dnsPointable: true }
   }
 

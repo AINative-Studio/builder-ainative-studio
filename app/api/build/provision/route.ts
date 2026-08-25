@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
 
   // Already provisioned? Return the persisted project id (idempotent).
   if (existing.zerodbProjectId) {
-    const target = await deployPersistent(existing.chatId, slug)
+    const target = await deployPersistent(existing.chatId, slug, existing)
     // Backfill: a tmp_ trial provisioned before #260 may have no trialExpiresAt
     // (blank countdown). Anchor it to provisionedAt + 72h (or now + 72h) and
     // persist so the value is stable across reads. Permanent projects never expire.
@@ -114,7 +114,7 @@ export async function POST(request: NextRequest) {
       name: String(existing.name || b?.name || slug),
     })
     if (mcp.ok && mcp.projectId) {
-      const target = await deployPersistent(existing.chatId, slug)
+      const target = await deployPersistent(existing.chatId, slug, existing)
       const provisionedAt = new Date().toISOString()
       const persisted = await setAppProvisioned(slug, {
         zerodbProjectId: mcp.projectId,
@@ -181,7 +181,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Resolve the persistent hosting target (durable preview today; real host later).
-  const target = await deployPersistent(existing.chatId, slug)
+  const target = await deployPersistent(existing.chatId, slug, existing)
   const provisionedAt = new Date().toISOString()
 
   // Trial expiry only for tmp_ (unpaid) projects — drives the Live "Free trial:
