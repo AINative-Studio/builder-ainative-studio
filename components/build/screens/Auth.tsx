@@ -9,6 +9,7 @@ import type { Screen } from '@/lib/build/state'
 import { trackEvent } from '@/components/analytics/google-analytics'
 import { trackMeta } from '@/components/analytics/meta-pixel'
 import { migrateGuestWork } from '@/lib/build/guest-migration'
+import { getRefCode } from '@/lib/build/attribution'
 
 function BrandPanel() {
   return (
@@ -127,6 +128,19 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
       // before this sign-in to the now-authenticated account so no work is lost.
       // Best-effort — never blocks landing the founder back on their build.
       await migrateGuestWork(state.appSub).catch(() => {})
+      // Refer & Earn (#59): if this user landed via a shared referral link, attribute
+      // their now-authenticated signup to the referrer (creates a PENDING referral;
+      // the referrer is credited later when this user subscribes). Best-effort —
+      // never blocks landing the founder back on their build. The server derives the
+      // referred identity from the session, so we only pass the captured code.
+      const refCode = getRefCode()
+      if (refCode) {
+        fetch('/api/build/referral', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: refCode }),
+        }).catch(() => {})
+      }
       afterAuth()
     } catch {
       setError('Network error — try again.')

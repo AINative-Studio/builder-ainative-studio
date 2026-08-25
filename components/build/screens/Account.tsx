@@ -134,6 +134,10 @@ export function Account() {
               <span>Pricing</span>
               <button className="btn-ghost" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'pricing' })}>See plans →</button>
             </div>
+            <div className="m-sec-row">
+              <span>Refer &amp; Earn</span>
+              <button className="btn-ghost" data-testid="account-refer-earn" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'refer' })}>Learn more →</button>
+            </div>
           </div>
         </section>
       </div>
@@ -187,6 +191,10 @@ export function Account() {
           <div className="m-sec-row">
             <span>My companies</span>
             <button className="btn-ghost" data-testid="account-my-companies" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'companies' })}>View all →</button>
+          </div>
+          <div className="m-sec-row">
+            <span>Refer &amp; Earn</span>
+            <button className="btn-ghost" data-testid="account-refer-earn" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'refer' })}>Get your link →</button>
           </div>
           <div className="m-sec-row">
             <span>Billing</span>

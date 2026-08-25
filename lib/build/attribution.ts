@@ -11,6 +11,10 @@
 
 const GCLID_COOKIE = 'ax_gclid'
 const UTM_COOKIE = 'ax_utm'
+// Refer & Earn (#59) — the referral code carried on a shared link (?ref=CODE),
+// persisted like the gclid so it survives the whole signup flow to the point where
+// the now-authenticated user's signup is attributed to the referrer.
+const REF_COOKIE = 'ax_ref'
 // Meta click id, stored in Meta's canonical `_fbc` cookie format so the Pixel and
 // the Conversions API (CAPI) dedup/attribute against the same value (#207 · Meta).
 const FBC_COOKIE = '_fbc'
@@ -38,6 +42,11 @@ export function captureAttribution() {
   const q = new URLSearchParams(window.location.search)
   const gclid = q.get('gclid') || q.get('gbraid') || q.get('wbraid')
   if (gclid) setCookie(GCLID_COOKIE, gclid)
+  // #59: capture the referral code from a shared link (?ref=CODE). Only write when
+  // one isn't already stored (first shared link wins, no clobber) — same last/first
+  // -wins discipline as the ad-click ids above.
+  const ref = q.get('ref')
+  if (ref && !readCookie(REF_COOKIE)) setCookie(REF_COOKIE, ref)
   // Meta click id → `_fbc` in Meta's required `fb.1.<ts>.<fbclid>` format, so the
   // Pixel (browser) and CAPI (server) share one identifier for dedup/attribution.
   // Only write when we don't already have one (last ad click wins, no clobber).
@@ -61,6 +70,11 @@ export function getGclid(): string | undefined {
 /** The persisted utm params, or {}. */
 export function getUtm(): Record<string, string> {
   try { return JSON.parse(readCookie(UTM_COOKIE) || '{}') } catch { return {} }
+}
+
+/** The persisted referral code (from a shared ?ref= link), or undefined (#59). */
+export function getRefCode(): string | undefined {
+  return readCookie(REF_COOKIE)
 }
 
 /** The persisted Meta `_fbc` click id (fb.1.<ts>.<fbclid>), or undefined. */
