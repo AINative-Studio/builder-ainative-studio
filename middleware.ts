@@ -132,6 +132,13 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next()
     }
 
+    // "Best <category>" list pages (/best/ai-app-builder, /best/vibe-coding-tools)
+    // — public AEO/SEO landing pages that MUST be crawlable + ad-landable without
+    // an account, else they 307→/login and block indexing + burn paid clicks (#44).
+    if (pathname.startsWith('/best')) {
+      return NextResponse.next()
+    }
+
     // Category landing pages (non-branded SEO/AEO targets Polsia is weak on) —
     // "AI that runs your company", "autonomous company builder", "AI co-founder".
     // MUST be crawlable + viewable without an account, else they 307→/login and
