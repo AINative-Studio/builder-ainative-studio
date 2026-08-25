@@ -1,10 +1,12 @@
 'use client'
 
-/** Fork screen (#222) — pick App Track vs Company Track. Copy verbatim from 04-SCREENS §1. */
+/** Fork screen (#222 / #65) — pick App Track vs Company Track. Sharpened value prop. */
 
 import { useBuild } from '@/contexts/build-context'
 import { LiveProof } from '@/components/build/LiveProof'
 import { LiveTicker } from '@/components/build/LiveTicker'
+import { ValueStrip } from '@/components/build/ValueStrip'
+import { FRONT_DOOR_VALUE_LINE } from '@/lib/build/front-door-value'
 import { APP_VIEWS, COMPANY_VIEWS } from '@/lib/build/state'
 
 export function Fork() {
@@ -14,7 +16,8 @@ export function Fork() {
       <LiveTicker />
       <span className="m-eyebrow">AINATIVE BUILDER</span>
       <h1 className="m-h1">Don&apos;t build from scratch.</h1>
-      <p className="m-sub">Compose AINative artifacts into intelligent products and AI-native companies.</p>
+      {/* Value prop (#65): one plain line the target persona gets instantly — before any auth. */}
+      <p className="m-value-line" data-testid="front-door-value-line">{FRONT_DOOR_VALUE_LINE}</p>
       <p className="m-cody-line">
         <span className="m-glyph">◇</span> Meet Cody — your technical co-founder. You bring the idea; Cody builds and runs it.
       </p>
@@ -41,6 +44,9 @@ export function Fork() {
           <button className="btn-primary" onClick={(e) => { e.stopPropagation(); pickTrack('company') }}>Build a Company →</button>
         </div>
       </div>
+
+      {/* 3-step "what this does" strip (#65) — visible before auth, after the cards. */}
+      <ValueStrip />
 
       <LiveProof />
     </div>
