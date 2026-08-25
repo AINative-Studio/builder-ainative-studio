@@ -23,6 +23,7 @@ import { TasksPanel } from '@/components/build/TasksPanel'
 import { VersionsPanel } from '@/components/build/VersionsPanel'
 import { OnboardingVideo } from '@/components/build/OnboardingVideo'
 import { DocumentsPanel } from '@/components/build/DocumentsPanel'
+import { MediaPanel } from '@/components/build/MediaPanel'
 
 /** Display label for an active paid tier (#241). */
 const PLAN_LABEL: Record<ActivePlan, string> = {
@@ -684,6 +685,19 @@ export function Live() {
             brandColor={state.brandColor}
             canExportDeck={activePlan !== ''}
             onExportUpgrade={goUpgrade}
+          />
+          {/* Auto-generated ON-BRAND media (#54) — Auto Image + Auto Video, each with
+              a Once/Daily/Weekly/Monthly schedule, run on OWNED core Multimodal /
+              Content-Workflow primitives with assets stored in the company's own
+              ZeroDB. Shows last-generated + next run; inert + honest when media creds
+              aren't set. A new, distinct section — does not touch #67 systems / #52
+              chat / #55 Tasks / #62 Versions / #64 Documents / #65 masthead / #51 video. */}
+          <MediaPanel
+            companyId={companyId}
+            companyName={company}
+            brandTagline={state.brandTagline}
+            brandColor={state.brandColor}
+            idea={state.idea}
           />
         </div>
 

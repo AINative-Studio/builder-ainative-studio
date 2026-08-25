@@ -11,6 +11,7 @@ import { runNightlyLoop } from '@/lib/build/autonomous-loop'
 import { chatScopeKey } from '@/lib/build/chat-store'
 import { createDocument } from '@/lib/build/document-store'
 import { buildDailyReport, dailyReportTitle } from '@/lib/build/document-prompts'
+import { runMediaRoutines } from '@/lib/build/media-routine'
 import { logger } from '@/lib/logger'
 
 export const dynamic = 'force-dynamic'
@@ -30,6 +31,7 @@ export async function GET(request: NextRequest) {
 
     const results = []
     let reportsWritten = 0
+    let mediaGenerated = 0
     for (const e of enrolled) {
       const r = await runNightlyLoop({
         companyId: e.companyId, companyName: e.companyName, track: e.track, goal: e.goal,
@@ -64,12 +66,26 @@ export async function GET(request: NextRequest) {
         }
       }
 
+      // Media routine (#54): alongside the swarm dispatch, run any DUE on-brand
+      // media routines for this company and persist the assets to its own storage.
+      // Best-effort + fully gated: inert (no-op) when media generation isn't
+      // configured, and a hiccup here must never break the nightly loop.
+      if (e.ownerKey) {
+        try {
+          const scopeKey = chatScopeKey(e.ownerKey, e.companyId)
+          const m = await runMediaRoutines(scopeKey, { companyName: e.companyName })
+          mediaGenerated += m.generated
+        } catch (err) {
+          logger.warn('Media routine run failed', { companyId: e.companyId, err: (err as Error)?.message })
+        }
+      }
+
       results.push(r)
     }
 
     const dispatched = results.filter((r) => r.status === 'dispatched').length
-    logger.info('Nightly autonomous loop complete', { dispatched, total: results.length, reportsWritten })
-    return NextResponse.json({ ok: true, enrolled: enrolled.length, dispatched, reportsWritten, results })
+    logger.info('Nightly autonomous loop complete', { dispatched, total: results.length, reportsWritten, mediaGenerated })
+    return NextResponse.json({ ok: true, enrolled: enrolled.length, dispatched, reportsWritten, mediaGenerated, results })
   } catch (error) {
     logger.error('Nightly autonomous loop failed', error as Error)
     return NextResponse.json({ error: 'Nightly loop failed' }, { status: 500 })
