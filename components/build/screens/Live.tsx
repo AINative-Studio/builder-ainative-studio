@@ -675,7 +675,16 @@ export function Live() {
               {owner, company}; VIEW renders structured markdown. A new, distinct
               section — does not touch #67 systems / #52 chat / #55 Tasks / #62
               Versions / #65 masthead. */}
-          <DocumentsPanel companyId={companyId} idea={state.idea} companyName={company} track={state.track} />
+          <DocumentsPanel
+            companyId={companyId}
+            idea={state.idea}
+            companyName={company}
+            track={state.track}
+            brandTagline={state.brandTagline}
+            brandColor={state.brandColor}
+            canExportDeck={activePlan !== ''}
+            onExportUpgrade={goUpgrade}
+          />
         </div>
 
         {/* RIGHT — Ask Cody anything */}
