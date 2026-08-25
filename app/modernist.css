@@ -407,10 +407,59 @@
 .m-nudge-foot { display: flex; align-items: center; gap: 12px; }
 .m-nudge-accept { background: var(--co); color: #fff; border: 0; padding: 8px 14px; font-family: var(--font-heading); font-size: 13px; font-weight: 600; cursor: pointer; }
 
-/* ---- Powering this (#221) ---- */
+/* ---- Powering this (#221, #66) ---- */
 .m-powering { display: flex; align-items: center; gap: 12px; padding: 8px 0 16px; border-bottom: 1px solid var(--color-divider); margin-bottom: 24px; flex-wrap: wrap; }
 .m-powering-label { font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--text-faint); }
 .m-powering-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* Chip tooltip (#66): shows primitive description on hover/focus. */
+.m-chip-wrap { position: relative; display: inline-flex; }
+.m-chip-hastooltip { cursor: default; outline-offset: 2px; }
+.m-chip-hastooltip:focus-visible { outline: 1.5px solid var(--color-accent); border-radius: 1px; }
+.m-chip-tooltip {
+  pointer-events: none;
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: var(--color-text);
+  color: var(--color-bg);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.45;
+  padding: 4px 8px;
+  border-radius: 2px;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease, visibility 0.15s ease;
+  z-index: 100;
+  white-space: normal;
+  max-width: 220px;
+  text-align: center;
+}
+/* Arrow */
+.m-chip-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 4px solid transparent;
+  border-top-color: var(--color-text);
+}
+/* Show on hover and keyboard focus */
+.m-chip-wrap:hover .m-chip-tooltip,
+.m-chip-wrap:focus-within .m-chip-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+@media (prefers-reduced-motion: reduce) {
+  .m-chip-tooltip { transition: none; }
+}
 
 /* ---- Artifact frame (#220) ---- */
 .m-artifact-frame { max-width: 62ch; }
