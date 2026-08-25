@@ -72,7 +72,10 @@ export function ProposalGate({ plan }: ProposalGateProps) {
     : appSub
       ? `/build/${appSub}`
       : null
-  const appUrlLabel = `${appSub || 'your-app'}.ainative.studio`
+  // #78: the {slug}.ainative.studio subdomain does NOT resolve until the company is
+  // paid + has claimed it. This is the PRE-PAID proposal surface, so show the durable
+  // /build/{slug} PATH form (which resolves for anyone), never the subdomain.
+  const appUrlLabel = `builder.ainative.studio/build/${appSub || 'your-app'}`
 
   return (
     <section className="modernist m-proposal" data-testid="proposal-gate" data-track={state.track}>

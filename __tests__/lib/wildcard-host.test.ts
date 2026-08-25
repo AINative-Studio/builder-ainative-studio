@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { wildcardSlugFromHost, wildcardUrl } from '@/lib/build/deploy'
+import { wildcardSlugFromHost, wildcardUrl, isPaidPlan, subdomainServable } from '@/lib/build/deploy'
 
 // #243 wildcard host → slug routing. wildcardHost is passed explicitly so the
 // tests don't depend on process.env at import time.
@@ -64,5 +64,50 @@ describe('wildcardUrl', () => {
   it('returns null when no wildcard host is configured', () => {
     // WILDCARD_HOST defaults to '' in test env (no AINATIVE_WILDCARD_HOST set).
     expect(wildcardUrl('riff')).toBeNull()
+  })
+})
+
+// #78 — the subdomain paid+claimed gate. Pure functions the edge middleware consults
+// after extracting a slug: a company's {slug}.ainative.studio host may ONLY resolve
+// when it is on a PAID plan AND has explicitly claimed the subdomain.
+describe('isPaidPlan (#78)', () => {
+  it('is true for every paid tier (case-insensitive)', () => {
+    for (const p of ['pro', 'business', 'enterprise', 'cody_vcto', 'PRO', 'Business']) {
+      expect(isPaidPlan(p)).toBe(true)
+    }
+  })
+
+  it('is false for unpaid / empty / unknown plans', () => {
+    for (const p of ['', 'free', 'hobbyist', 'trial', undefined, null]) {
+      expect(isPaidPlan(p as string | null | undefined)).toBe(false)
+    }
+  })
+})
+
+describe('subdomainServable (#78)', () => {
+  it('serves ONLY when paid AND claimed', () => {
+    expect(subdomainServable({ plan: 'pro', subdomainClaimed: true })).toBe(true)
+    expect(subdomainServable({ plan: 'enterprise', subdomainClaimed: true })).toBe(true)
+  })
+
+  it('does NOT serve a paid-but-unclaimed company', () => {
+    expect(subdomainServable({ plan: 'pro', subdomainClaimed: false })).toBe(false)
+    expect(subdomainServable({ plan: 'business' })).toBe(false)
+  })
+
+  it('does NOT serve a claimed-but-unpaid company (claim without pay is impossible, but fail closed)', () => {
+    expect(subdomainServable({ plan: '', subdomainClaimed: true })).toBe(false)
+    expect(subdomainServable({ plan: 'free', subdomainClaimed: true })).toBe(false)
+    expect(subdomainServable({ subdomainClaimed: true })).toBe(false)
+  })
+
+  it('fail-safe: a null/undefined entry (unregistered or lookup error) is NOT servable', () => {
+    expect(subdomainServable(null)).toBe(false)
+    expect(subdomainServable(undefined)).toBe(false)
+  })
+
+  it('treats a truthy-but-non-true claimed value as NOT claimed (strict === true)', () => {
+    // Defensive: only an explicit boolean true claims the subdomain.
+    expect(subdomainServable({ plan: 'pro', subdomainClaimed: 1 as unknown as boolean })).toBe(false)
   })
 })

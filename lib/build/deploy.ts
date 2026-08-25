@@ -99,6 +99,33 @@ export function wildcardSlugFromHost(host: string | null, wildcardHost = WILDCAR
   return sub
 }
 
+/**
+ * Paid subscription plan ids (#78) — a company must be on one of these before its
+ * subdomain may resolve. Mirrors the ActivePlan paid tiers used across the build UI
+ * (pro|business|enterprise|cody_vcto); the empty string / undefined is unpaid.
+ */
+export const PAID_PLANS = new Set(['pro', 'business', 'enterprise', 'cody_vcto'])
+
+/** True when a plan id is a real paid subscription tier (#78). */
+export function isPaidPlan(plan: string | null | undefined): boolean {
+  return !!plan && PAID_PLANS.has(String(plan).toLowerCase())
+}
+
+/**
+ * Product rule (#78): a company's {slug}.ainative.studio subdomain must NOT resolve
+ * until the company is on a PAID plan AND has explicitly CLAIMED the subdomain. This
+ * is the single, pure gate the edge middleware consults after extracting a slug — it
+ * takes the minimal shape of the resolved AppEntry (plan + subdomainClaimed) and
+ * returns true ONLY when both conditions hold. A null entry (unregistered / lookup
+ * failed upstream) is NOT servable — fail-safe: the caller redirects to /build/{slug}.
+ */
+export function subdomainServable(
+  entry: { plan?: string | null; subdomainClaimed?: boolean } | null | undefined,
+): boolean {
+  if (!entry) return false
+  return isPaidPlan(entry.plan) && entry.subdomainClaimed === true
+}
+
 export interface DeployTarget {
   /** The public URL the company app is served at right now. */
   url: string

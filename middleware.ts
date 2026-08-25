@@ -2,7 +2,8 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { guestRegex, isDevelopmentEnvironment } from './lib/constants'
 import { applyRateLimit } from './lib/middleware/rate-limit'
-import { wildcardSlugFromHost } from './lib/build/deploy'
+import { wildcardSlugFromHost, subdomainServable } from './lib/build/deploy'
+import { resolveApp } from './lib/build/app-registry'
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
@@ -33,10 +34,33 @@ export async function middleware(request: NextRequest) {
     process.env.AINATIVE_WILDCARD_HOST,
   )
   if (wildcardSlug) {
+    // Product rule (#78): the subdomain must NOT resolve until the company is on a
+    // PAID plan AND has explicitly CLAIMED the subdomain. Until then the shareable
+    // preview is the PATH form /build/{slug}. Resolve the company and gate the serve.
+    // FAIL-SAFE: any lookup error (or an unpaid/unclaimed company) → 301 to the path
+    // form on the Builder origin; we never serve a broken or ungated subdomain.
+    const buildPath = `/build/${wildcardSlug}${pathname === '/' ? '' : pathname}`
+    const redirectToPath = () => {
+      const appOrigin =
+        process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio'
+      return NextResponse.redirect(new URL(buildPath, appOrigin), 301)
+    }
+    let servable = false
+    try {
+      const entry = await resolveApp(wildcardSlug)
+      servable = subdomainServable(entry)
+    } catch (error) {
+      console.error('[middleware] subdomain gate lookup failed', error)
+      servable = false // fail-safe → path redirect
+    }
+    if (!servable) {
+      return redirectToPath()
+    }
+    // Paid + claimed → serve the company app on its subdomain.
     // Already under /build (asset/subpath) → leave as-is; else map to the app root.
     if (!pathname.startsWith('/build/')) {
       const target = request.nextUrl.clone()
-      target.pathname = `/build/${wildcardSlug}${pathname === '/' ? '' : pathname}`
+      target.pathname = buildPath
       return NextResponse.rewrite(target)
     }
     return NextResponse.next()

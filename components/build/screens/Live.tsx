@@ -69,6 +69,11 @@ export function Live() {
   // Purchased custom domain (#240), read from the app-registry entry. When set,
   // the masthead + infra section show "Live at {domain}" instead of the subdir URL.
   const [customDomain, setCustomDomain] = useState<string | null>(null)
+  // Subdomain claim (#78): the {slug}.ainative.studio host must NOT surface until the
+  // company is on a PAID plan AND has explicitly claimed it. Read from the registry
+  // entry; drives whether we show the subdomain vs the /build/{slug} path everywhere.
+  const [subdomainClaimed, setSubdomainClaimed] = useState(false)
+  const [claiming, setClaiming] = useState(false)
   // Persistent-cloud provisioning (#243): once a company is provisioned it has
   // its own real ZeroDB project + persistent deploy target, and the systems grid
   // reads real per-company data.
@@ -126,6 +131,25 @@ export function Live() {
       if (d?.url) { window.location.href = d.url; return }
     } catch { /* fall through */ }
     dispatch({ type: 'GOTO_SCREEN', screen: 'companies' })
+  }
+
+  // Claim the {slug}.ainative.studio subdomain (#78) — paid-gated. Sends the claim,
+  // and on success flips the UI so links begin using the real subdomain. Not-paid →
+  // route the founder to upgrade (the claim is server-gated on the persisted plan).
+  const claimSubdomainAction = async () => {
+    if (claiming || subdomainClaimed) return
+    if (!activePlan) { goUpgrade(); return }
+    setClaiming(true)
+    try {
+      const r = await fetch('/api/build/claim-subdomain', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug: companyId }),
+      })
+      if (r.ok) { setSubdomainClaimed(true); return }
+      const d = await r.json().catch(() => null)
+      if (d?.reason === 'not_paid') goUpgrade()
+    } catch { /* leave state unchanged; button stays available to retry */ }
+    finally { setClaiming(false) }
   }
 
   // Early email capture — save/share the company by email (no account needed) so an
@@ -238,7 +262,11 @@ export function Live() {
     const readDomain = () =>
       fetch(`/api/build/register-app?slug=${encodeURIComponent(companyId)}`)
         .then((r) => (r.ok ? r.json() : null))
-        .then((d) => { if (alive && d?.entry?.domain) setCustomDomain(String(d.entry.domain)) })
+        .then((d) => {
+          if (!alive || !d?.entry) return
+          if (d.entry.domain) setCustomDomain(String(d.entry.domain))
+          setSubdomainClaimed(d.entry.subdomainClaimed === true)
+        })
         .catch(() => { /* honest: no custom-domain line if unavailable */ })
     readDomain()
     // A fulfillment redirect just landed — the PUT that persists the domain races
@@ -257,8 +285,15 @@ export function Live() {
   // AINATIVE_WILDCARD_HOST is set, that's https://{slug}.ainative.studio; absent the
   // env, provision persists the preview subdir instead, which we must NOT surface as
   // a standalone host (it isn't CNAME-pointable and is the same as /build/{slug}).
+  //
+  // Product rule (#78): the {slug}.ainative.studio subdomain must NOT surface (and
+  // does NOT resolve — the middleware 301s it to the path) until the company is on a
+  // PAID plan AND has explicitly CLAIMED the subdomain. Until then we keep every link
+  // on the /build/{slug} path form. A purchased custom domain (#240) is unaffected —
+  // it has its own resolution path and still wins below.
+  const subdomainReady = !!activePlan && subdomainClaimed
   const wildcardHost =
-    deployUrl && /^https?:\/\//i.test(deployUrl) && !/\/build\//.test(deployUrl)
+    subdomainReady && deployUrl && /^https?:\/\//i.test(deployUrl) && !/\/build\//.test(deployUrl)
       ? deployUrl.replace(/\/+$/, '')
       : null
 
@@ -596,6 +631,22 @@ export function Live() {
               <button className="btn-secondary" onClick={() => setDomainOpen(true)}>
                 {customDomain ? 'Add another domain' : 'Get a custom domain'}
               </button>
+              {/* Claim the free {slug}.ainative.studio subdomain (#78) — paid-gated.
+                  Until claimed the site is shared via the /build/{slug} path only, and
+                  the subdomain does not resolve. Once claimed, links use the subdomain. */}
+              {!subdomainClaimed && (
+                <button
+                  className="btn-secondary"
+                  onClick={claimSubdomainAction}
+                  disabled={claiming}
+                  data-testid="claim-subdomain-cta"
+                  title={activePlan
+                    ? `Claim ${companyId}.ainative.studio for this company`
+                    : 'Upgrade to a paid plan to claim your subdomain'}
+                >
+                  {claiming ? 'Claiming…' : activePlan ? 'Claim subdomain' : 'Claim subdomain (upgrade)'}
+                </button>
+              )}
               {/* Provision the real per-company cloud (#243): own ZeroDB project + persistent host. */}
               <button
                 className="btn-secondary"
