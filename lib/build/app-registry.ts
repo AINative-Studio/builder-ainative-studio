@@ -82,6 +82,13 @@ export interface AppEntry {
   // billable service. `railwayDeployedAt` records when it was first provisioned.
   railwayServiceId?: string
   railwayDeployedAt?: string
+  // Company lifecycle (#57, Danger Zone). Absent/'active' = the company is live and
+  // its app is served. 'offline' = the founder took the app offline (kept, but not
+  // served). 'deleted' = the founder deleted the company (soft delete — the row is
+  // retained for audit; resolveApp() treats it as gone). The nightly loop is paused
+  // separately via loop-enrollment (setLoopEnabled), which is orthogonal to this.
+  lifecycleStatus?: 'active' | 'offline' | 'deleted'
+  lifecycleAt?: string
   createdAt: string
 }
 
@@ -110,6 +117,24 @@ export async function setAppDomain(slug: string, domain: string): Promise<boolea
   const existing = await resolveApp(slug)
   if (!existing) return false
   return registerApp({ ...existing, domain })
+}
+
+/**
+ * Set a company's lifecycle state (#57, Danger Zone) — 'offline' (take the app
+ * out of service, keep the company) or 'deleted' (soft-delete the company).
+ * Appends an updated row carrying the existing chatId + brand plus the new
+ * lifecycle status, so resolveApp() (latest-wins) reflects it. No-op (returns
+ * false) if the slug isn't registered / already gone. Idempotent: re-setting the
+ * same status is a successful no-op (no churn row).
+ */
+export async function setAppLifecycle(
+  slug: string,
+  status: 'active' | 'offline' | 'deleted',
+): Promise<boolean> {
+  const existing = await resolveApp(slug)
+  if (!existing) return false
+  if ((existing.lifecycleStatus || 'active') === status) return true
+  return registerApp({ ...existing, lifecycleStatus: status, lifecycleAt: new Date().toISOString() })
 }
 
 /**
@@ -411,7 +436,11 @@ export async function resolveApp(slug: string): Promise<AppEntry | null> {
       .filter((rd: AppEntry | undefined): rd is AppEntry => rd?.slug === slug && !!rd?.chatId)
     if (!matches.length) return null
     matches.sort((a: AppEntry, b: AppEntry) => (b.createdAt || '').localeCompare(a.createdAt || ''))
-    return matches[0]
+    const latest = matches[0]
+    // A soft-deleted company (#57 Danger Zone) is treated as gone — the /build/{slug}
+    // route then 404s honestly instead of serving a deleted app.
+    if (latest.lifecycleStatus === 'deleted') return null
+    return latest
   } catch {
     return null
   }

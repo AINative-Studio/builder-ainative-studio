@@ -14,6 +14,7 @@
 import { NextRequest } from 'next/server'
 import { getLastRun } from '@/lib/build/loop-enrollment'
 import { getClaudeCompletion } from '@/lib/build/claude-completion'
+import { languageInstruction, normalizeLanguage } from '@/lib/build/content-language'
 
 export const runtime = 'nodejs'
 
@@ -22,6 +23,8 @@ export async function GET(request: NextRequest) {
   const companyId = url.searchParams.get('companyId') || ''
   const idea = (url.searchParams.get('idea') || '').slice(0, 2000)
   const companyName = (url.searchParams.get('companyName') || 'the company').slice(0, 120)
+  // Founder's content language (#57) — the morning summary is written in it.
+  const contentLanguage = normalizeLanguage(url.searchParams.get('lang'))
 
   const run = companyId ? await getLastRun(companyId) : null
 
@@ -43,7 +46,8 @@ export async function GET(request: NextRequest) {
           `You are Cody, the AI co-founder operating "${companyName}" (idea: "${idea}"). ` +
           `You ran the nightly autonomous loop overnight (status: ${run.lastStatus}). Write a 2-3 sentence ` +
           `morning summary for the founder: what you evaluated, the single highest-leverage task you ran, ` +
-          `and the recommended next move. Be specific to this company, first person, no fluff.`,
+          `and the recommended next move. Be specific to this company, first person, no fluff.` +
+          (languageInstruction(contentLanguage) ? ` ${languageInstruction(contentLanguage)}` : ''),
         messages: [{ role: 'user', content: 'Give me the morning summary.' }],
       })
       summary = (res.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n').trim()
