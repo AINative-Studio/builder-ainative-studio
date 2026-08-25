@@ -588,7 +588,22 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
     _compiled = _compiled.replace(/^import\\s+.*$/gm, '').replace(/^export\\s+(default\\s+)?/gm, '');
     // Inject compiled JS as a new script tag — runs in GLOBAL scope
     var _s = document.createElement('script');
-    _s.textContent = _compiled + ';\\nif(typeof ${detectedComponentName}!=="undefined")window.${detectedComponentName}=${detectedComponentName};';
+    // ErrorBoundary bare-identifier fix (builder#79): the ErrorBoundary CLASS is
+    // declared in a DIFFERENT <script> block. A class declaration is script-scoped
+    // and, unlike function/var, is NOT hoisted onto window — so window.ErrorBoundary
+    // exists but a BARE 'ErrorBoundary' does not resolve inside THIS compiled-app
+    // script. If codegen emits '<ErrorBoundary>' (or any bare reference), the app
+    // throws "ErrorBoundary is not defined" (tangle / bH0a0UpzRuKBVpy4TPngr). Prefix
+    // the compiled app with a real global 'var ErrorBoundary' bound to the class on
+    // window (passthrough fallback if missing) so the bare identifier resolves in the
+    // same script scope React/ReactDOM do. 'var' (not let/const) keeps it a benign
+    // global and avoids a TDZ/redeclare crash if the app also declares its own.
+    // Only add the alias if the app doesn't declare its own ErrorBoundary — a
+    // 'var' before an app-level 'class/function/const ErrorBoundary' in the same
+    // script would be a redeclare SyntaxError.
+    var _appDeclaresEB = /\\b(?:class|function|const|let|var)\\s+ErrorBoundary\\b/.test(_compiled);
+    var _ebPrefix = _appDeclaresEB ? '' : 'var ErrorBoundary = (typeof window !== "undefined" && window.ErrorBoundary) ? window.ErrorBoundary : function(p){ return p.children; };\\n';
+    _s.textContent = _ebPrefix + _compiled + ';\\nif(typeof ${detectedComponentName}!=="undefined")window.${detectedComponentName}=${detectedComponentName};';
     document.body.appendChild(_s);
     console.log('[Preview] ✓ Compiled and injected: ${detectedComponentName}, exists:', typeof window['${detectedComponentName}']);
     document.getElementById('loading-indicator').style.display = 'none';

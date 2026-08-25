@@ -894,6 +894,12 @@ export function findDuplicateTopLevelDeclaration(code: string): string | null {
 const KNOWN_AVAILABLE_COMPONENTS = new Set<string>([
   // React built-ins
   'Fragment', 'Suspense', 'StrictMode', 'Profiler',
+  // ErrorBoundary — the preview runtime declares the class AND binds it as a
+  // bare-resolvable global (`var ErrorBoundary = window.ErrorBoundary`) in the
+  // compiled-app script (app/api/preview/[id]/route.ts, builder#79). A generated
+  // app that references <ErrorBoundary> is therefore runtime-available and must
+  // NOT be flagged as an unresolved/hallucinated component.
+  'ErrorBoundary',
   // shadcn UI set (promised in the system prompt, provided by the preview shim)
   'Button', 'Card', 'CardHeader', 'CardTitle', 'CardDescription', 'CardContent',
   'CardFooter', 'Input', 'Label', 'Badge', 'Avatar', 'AvatarImage', 'AvatarFallback',
@@ -1476,6 +1482,19 @@ export function validateJavaScriptCode(
       errorLower.includes('unexpected eof') ||
       errorLower.includes('unterminated string') ||
       errorLower.includes('unterminated template') ||
+      // Truncated / incomplete generated code (builder#79): a code stream that was
+      // cut off mid-render leaves JSX open and dangling closers (e.g. tangle ended
+      // with "<div>\n));\n}\n}"). Babel reports these as "Unterminated JSX
+      // contents" / "Unexpected closing tag" / "Expected corresponding JSX closing
+      // tag". errorRecovery does NOT recover them (verified) — the real Babel
+      // runtime throws the same, blanking the preview or firing the ErrorBoundary
+      // ("ErrorBoundary is not defined" surfaced downstream). Reject so the retry
+      // path re-generates instead of shipping a truncated app.
+      errorLower.includes('unterminated jsx') ||
+      errorLower.includes('unexpected closing tag') ||
+      errorLower.includes('expected corresponding jsx closing tag') ||
+      errorLower.includes('unterminated comment') ||
+      errorLower.includes('unterminated regexp') ||
       // "unexpected token" from a full parse failure is Sandpack-fatal (stray
       // `;` in a ternary, `=> (;`, etc.). The benign "missing semicolon"
       // recovery hint is a different message and is not matched here.
