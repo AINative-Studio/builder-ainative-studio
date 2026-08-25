@@ -17,12 +17,24 @@
  *   Search input and Buy CTA stay pinned outside the scrollable area so they
  *   remain reachable regardless of result count. "Show more" sits at the bottom
  *   of the scrollable list so fetching the next batch is one scroll away.
+ * #53  — bring your own domain: a second tab lets a founder CONNECT a domain they
+ *   already own (from any registrar) instead of buying a new one. It shows the exact
+ *   DNS records to add (CNAME → the app's host, + a verify TXT), then verifies
+ *   propagation and TLS honestly — pending → verifying → live — never declaring
+ *   "done" while the cert is still issuing. Idempotent: re-opening shows the current
+ *   status of an already-connected domain. The #48 buy-flow scroll containment above
+ *   is untouched; the BYO panel is an alternate tab, not a replacement.
  */
 
 import { useEffect, useState, useCallback } from 'react'
 import { useSession } from 'next-auth/react'
 
 interface Suggestion { domain: string; available: boolean; price?: number }
+
+// A DNS record the founder must add at their registrar to connect a domain (#53).
+interface DnsRecord { type: string; name: string; value: string; status?: string }
+// Honest lifecycle of a bring-your-own connected domain (#53).
+type ByoStatus = 'idle' | 'pending' | 'verifying' | 'live' | 'error' | 'needs_provision'
 
 // sessionStorage key holding the domain a signed-out founder chose to buy, so the
 // purchase resumes to Stripe checkout after they authenticate and land back on Live.
@@ -48,6 +60,16 @@ export function DomainModal({ brand, slug, keywords, open, onClose, onRequireAut
   const [moreExhausted, setMoreExhausted] = useState(false)
   const [query, setQuery] = useState('')
   const [searching, setSearching] = useState(false)
+
+  // --- Bring your own domain (#53) -----------------------------------------
+  const [tab, setTab] = useState<'buy' | 'byo'>('buy')
+  const [byoInput, setByoInput] = useState('')
+  const [byoDomain, setByoDomain] = useState<string | null>(null)
+  const [byoStatus, setByoStatus] = useState<ByoStatus>('idle')
+  const [byoRecords, setByoRecords] = useState<DnsRecord[]>([])
+  const [byoMsg, setByoMsg] = useState<string | null>(null)
+  const [byoBusy, setByoBusy] = useState(false)
+  const [copied, setCopied] = useState<string | null>(null)
 
   // Merge helper — de-dup by domain so search results / more-options never double up.
   const mergeSuggestions = useCallback((prev: Suggestion[], next: Suggestion[]) => {
@@ -190,6 +212,94 @@ export function DomainModal({ brand, slug, keywords, open, onClose, onRequireAut
       .catch(() => setStatus('Payment received — finishing domain setup shortly.'))
   }, [])
 
+  // --- BYO: idempotent re-open — surface the status of an already-connected domain.
+  // On open, ask the API whether this company already has a connected domain and,
+  // if so, hydrate the BYO panel with its current status so re-opening shows it (#53).
+  useEffect(() => {
+    if (!open) return
+    const sl = slug || brand
+    if (!sl) return
+    let cancelled = false
+    fetch(`/api/build/connect-domain?slug=${encodeURIComponent(sl)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelled || !d?.connected || !d?.domain) return
+        setByoDomain(d.domain)
+        setByoInput(d.domain)
+        setByoStatus((d.status as ByoStatus) || 'pending')
+        if (Array.isArray(d.dnsRecords)) setByoRecords(d.dnsRecords)
+        setTab('byo')  // jump to the BYO tab so the founder sees their in-progress connect
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [open, slug, brand])
+
+  // Poll the connect status while a BYO domain is pending/verifying. TLS issues
+  // asynchronously (minutes → ~1h), so we keep polling and only flip to 'live' when
+  // Railway confirms the cert — never on DNS resolution alone (#53 / ainative-dns).
+  useEffect(() => {
+    if (!open || tab !== 'byo' || !byoDomain) return
+    if (byoStatus !== 'pending' && byoStatus !== 'verifying') return
+    const sl = slug || brand
+    let stop = false
+    const poll = async () => {
+      try {
+        const r = await fetch(
+          `/api/build/connect-domain?slug=${encodeURIComponent(sl)}&domain=${encodeURIComponent(byoDomain)}`,
+        )
+        const d = await r.json()
+        if (stop) return
+        if (d?.status) setByoStatus(d.status as ByoStatus)
+        if (Array.isArray(d.dnsRecords) && d.dnsRecords.length) setByoRecords(d.dnsRecords)
+      } catch { /* keep polling */ }
+    }
+    const id = setInterval(poll, 15000)
+    return () => { stop = true; clearInterval(id) }
+  }, [open, tab, byoDomain, byoStatus, slug, brand])
+
+  // Kick off connecting a domain the founder already owns (#53).
+  const connectByo = useCallback(async () => {
+    const d = byoInput.trim()
+    if (!d || byoBusy) return
+    setByoBusy(true); setByoMsg(null)
+    try {
+      const res = await fetch('/api/build/connect-domain', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug: slug || brand, domain: d }),
+      })
+      const data = await res.json()
+      if (data?.needs_provision) {
+        setByoStatus('needs_provision')
+        setByoMsg(data.detail || 'Provision this company first, then connect your domain.')
+        return
+      }
+      if (data?.reason === 'signin') {
+        setByoMsg('Please sign in to connect a domain you own.')
+        return
+      }
+      if (!data?.ok) {
+        setByoMsg(data?.error || data?.detail || 'Could not connect that domain — check it and try again.')
+        return
+      }
+      setByoDomain(data.domain || d)
+      setByoStatus((data.status as ByoStatus) || 'pending')
+      setByoRecords(Array.isArray(data.dnsRecords) ? data.dnsRecords : [])
+    } catch {
+      setByoMsg('Network error — try connecting again.')
+    } finally {
+      setByoBusy(false)
+    }
+  }, [byoInput, byoBusy, slug, brand])
+
+  // Copy a DNS record value to the clipboard (#53) — one-click for the registrar.
+  const copyValue = useCallback(async (value: string, key: string) => {
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopied(key)
+      setTimeout(() => setCopied((c) => (c === key ? null : c)), 1500)
+    } catch { /* clipboard unavailable — user can select manually */ }
+  }, [])
+
   if (!open) return null
 
   // The single Buy action. Signed in → checkout. Signed out → persist the pick and
@@ -217,7 +327,110 @@ export function DomainModal({ brand, slug, keywords, open, onClose, onRequireAut
       <div className="m-modal m-formin">
         <p className="m-mono m-modal-eyebrow"><span className="m-glyph">◇</span> Cody · custom domain</p>
         <h2 className="m-artifact m-modal-h">Give {brand} a real address</h2>
-        {!configured ? (
+
+        {/* Tabs (#53): buy a new domain OR connect one the founder already owns.
+            Alongside the default {slug}.ainative.studio subdomain, this gives the
+            founder the third path (BYO) without disturbing the #48 buy flow below. */}
+        <div className="m-domain-tabs" role="tablist" aria-label="Domain options">
+          <button
+            role="tab"
+            aria-selected={tab === 'buy'}
+            className={`m-domain-tab ${tab === 'buy' ? 'is-active' : ''}`}
+            onClick={() => setTab('buy')}
+            data-testid="domain-tab-buy"
+          >
+            Buy a domain
+          </button>
+          <button
+            role="tab"
+            aria-selected={tab === 'byo'}
+            className={`m-domain-tab ${tab === 'byo' ? 'is-active' : ''}`}
+            onClick={() => setTab('byo')}
+            data-testid="domain-tab-byo"
+          >
+            Connect a domain you own
+          </button>
+        </div>
+
+        {tab === 'byo' ? (
+          /* ---- Bring your own domain (#53) ---- */
+          <div className="m-byo" role="tabpanel" aria-label="Connect a domain you own" data-testid="domain-byo-panel">
+            <p className="m-sub">
+              Already own a domain (Namecheap, GoDaddy, Cloudflare…)? Enter it and we&apos;ll show you the
+              exact DNS records to add, then verify it and issue a free TLS certificate.
+            </p>
+            <form
+              className="m-domain-search"
+              onSubmit={(e) => { e.preventDefault(); connectByo() }}
+              style={{ display: 'flex', gap: 6, marginBottom: 8 }}
+            >
+              <input
+                className="m-input"
+                type="text"
+                value={byoInput}
+                onChange={(e) => setByoInput(e.target.value)}
+                placeholder="Your domain (e.g. myco.com)"
+                aria-label="Domain you already own"
+                data-testid="byo-domain-input"
+                style={{ flex: 1 }}
+                disabled={byoBusy}
+              />
+              <button type="submit" className="btn-secondary" disabled={!byoInput.trim() || byoBusy} data-testid="byo-connect-cta">
+                {byoBusy ? 'Connecting…' : byoDomain ? 'Re-check' : 'Connect'}
+              </button>
+            </form>
+
+            {byoMsg && <p className="m-mono m-domain-status" role="status" data-testid="byo-message">{byoMsg}</p>}
+
+            {byoStatus === 'needs_provision' && (
+              <p className="m-sub" data-testid="byo-needs-provision">
+                To connect a domain you own, {brand} needs its own dedicated host. Upgrade to provision it,
+                then come back and connect your domain here.
+              </p>
+            )}
+
+            {byoDomain && byoStatus !== 'needs_provision' && (
+              <>
+                {/* Honest live status: pending → verifying → live (TLS). */}
+                <div className="m-byo-status" data-testid="byo-status" data-status={byoStatus}>
+                  <span className={`m-byo-dot is-${byoStatus}`} aria-hidden="true" />
+                  <span className="m-mono">
+                    {byoStatus === 'pending' && `Waiting for DNS records for ${byoDomain}…`}
+                    {byoStatus === 'verifying' && `DNS found — issuing TLS certificate for ${byoDomain} (this can take a few minutes)…`}
+                    {byoStatus === 'live' && `✓ ${byoDomain} is live with HTTPS.`}
+                    {byoStatus === 'error' && `Something went wrong verifying ${byoDomain}. Double-check the records below.`}
+                  </span>
+                </div>
+
+                {byoStatus !== 'live' && byoRecords.length > 0 && (
+                  <div className="m-byo-records" data-testid="byo-dns-records">
+                    <p className="m-mono m-byo-records-title">Add these records at your registrar:</p>
+                    {byoRecords.map((rec, i) => (
+                      <div className="m-byo-record" key={`${rec.type}-${rec.name}-${i}`}>
+                        <span className="m-byo-rec-type m-mono">{rec.type}</span>
+                        <span className="m-byo-rec-name m-mono">{rec.name}</span>
+                        <span className="m-byo-rec-value m-mono" title={rec.value}>{rec.value}</span>
+                        <button
+                          type="button"
+                          className="m-back m-byo-copy"
+                          onClick={() => copyValue(rec.value, `${i}`)}
+                          aria-label={`Copy ${rec.type} record value`}
+                          data-testid={`byo-copy-${i}`}
+                        >
+                          {copied === `${i}` ? 'Copied ✓' : 'Copy'}
+                        </button>
+                      </div>
+                    ))}
+                    <p className="m-sub m-byo-hint">
+                      DNS can take a few minutes to propagate. We&apos;ll keep checking and turn this green once
+                      your certificate is live — you don&apos;t need to keep this open.
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        ) : !configured ? (
           <p className="m-sub">Custom-domain purchasing isn&apos;t enabled yet. Your site is already live at
             builder.ainative.studio/build/{brand} — you can add a domain later.</p>
         ) : loading ? (
