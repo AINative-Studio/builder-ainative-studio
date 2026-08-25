@@ -156,13 +156,13 @@ export async function GET(
             </p>
             <div class="space-y-2">
               <button
-                onclick="window.parent.location.href = '/'"
+                onclick="window.parent.postMessage({ type: 'ainative-preview-nav', action: 'home' }, '*')"
                 class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
               >
                 Start New Chat
               </button>
               <button
-                onclick="window.parent.location.href = window.parent.location.pathname"
+                onclick="window.parent.postMessage({ type: 'ainative-preview-nav', action: 'retry' }, '*')"
                 class="w-full bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-900 dark:text-white font-medium py-2 px-4 rounded-lg transition-colors"
               >
                 Try Again
@@ -1488,7 +1488,7 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
             '<p style="font-size: 14px; color: #374151; margin-bottom: 8px; font-weight: 500;">Expected component names:</p>' +
             '<code style="display: block; font-size: 13px; color: #6b7280; line-height: 1.6;">Dashboard, ProjectDashboard, App, Counter, TodoList, ProductList, LandingPage, etc.</code>' +
             '</div>' +
-            '<button onclick="window.parent.location.reload()" style="background: rgb(59, 130, 246); color: white; border: none; padding: 10px 24px; border-radius: 6px; font-weight: 500; cursor: pointer;">Try Regenerating</button>' +
+            '<button onclick="window.parent.postMessage({ type: \'ainative-preview-nav\', action: \'reload\' }, \'*\')" style="background: rgb(59, 130, 246); color: white; border: none; padding: 10px 24px; border-radius: 6px; font-weight: 500; cursor: pointer;">Try Regenerating</button>' +
             '</div>';
         }
       } catch (error) {
@@ -1510,9 +1510,17 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
     headers: {
       'Content-Type': 'text/html',
       'Cache-Control': 'no-cache, no-store, must-revalidate',
-      // Allow iframe embedding and external resources
+      // CSP (#10): the app is served into an iframe sandboxed WITHOUT
+      // allow-same-origin, so it already runs on a null origin (can't touch our
+      // cookies/DOM/same-origin APIs). This CSP is defense-in-depth: 'unsafe-eval'
+      // + 'unsafe-inline' are required by Babel-standalone (it compiles the JSX at
+      // runtime) and CDN Tailwind, so we scope those to the specific trusted CDNs
+      // rather than the whole web. frame-ancestors 'self' keeps the preview
+      // embeddable only by our own /build shell. connect-src is left open (https:)
+      // because generated apps legitimately fetch their own APIs; the null-origin
+      // sandbox is what contains them, not connect-src.
       'Content-Security-Policy': "default-src 'self' 'unsafe-inline' 'unsafe-eval'; script-src 'unsafe-eval' 'unsafe-inline' 'self' https://cdn.tailwindcss.com https://unpkg.com https://cdn.jsdelivr.net; style-src 'unsafe-inline' 'self' https://cdn.tailwindcss.com https://fonts.googleapis.com; img-src 'self' data: https: http:; font-src 'self' data: https: https://fonts.gstatic.com; connect-src 'self' https:; frame-ancestors 'self';",
-      // Allow SAMEORIGIN so iframe can load within our app
+      // Only our own /build shell may frame this preview.
       'X-Frame-Options': 'SAMEORIGIN',
       'X-Content-Type-Options': 'nosniff',
       'X-XSS-Protection': '1; mode=block',

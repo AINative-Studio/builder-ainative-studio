@@ -51,6 +51,28 @@ export function Preview() {
   // persisted deployUrl (which may be a wildcard host) is intentionally not used here.
   void deployUrl
 
+  // Security: the preview iframe is sandboxed WITHOUT allow-same-origin, so the
+  // generated (LLM-authored) app runs on a null origin and cannot script this
+  // parent, read our cookies, or reach same-origin APIs. The scaffold error
+  // pages inside the frame therefore can't call window.parent.location directly
+  // anymore — they postMessage a nav request instead, which we honor here after
+  // validating the origin is null (a sandboxed frame) and the payload shape.
+  useEffect(() => {
+    function onPreviewMessage(e: MessageEvent) {
+      // A sandboxed (no allow-same-origin) iframe posts with origin "null".
+      if (e.origin !== 'null') return
+      const data = e.data as { type?: string; action?: string } | null
+      if (!data || data.type !== 'ainative-preview-nav') return
+      if (data.action === 'home') {
+        window.location.href = '/'
+      } else if (data.action === 'retry' || data.action === 'reload') {
+        window.location.reload()
+      }
+    }
+    window.addEventListener('message', onPreviewMessage)
+    return () => window.removeEventListener('message', onPreviewMessage)
+  }, [])
+
   // The real, shareable URL: the durable /build/{slug} subdirectory (works
   // immediately, no DNS, resolves for anyone). (FIX-2 / #213 / #78)
   const shareUrl = chatId && status === 'ready' && state.appSub
@@ -103,7 +125,11 @@ export function Preview() {
               src={previewUrl}
               className="m-preview-frame"
               title="Your generated app"
-              sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
+              // Security (#9/#10): NO allow-same-origin — the generated LLM-authored
+              // app runs on a null origin, isolated from our cookies/DOM/APIs. It can
+              // still run scripts, submit forms, open modals/popups. Nav requests from
+              // the scaffold error pages arrive via postMessage (see onPreviewMessage).
+              sandbox="allow-scripts allow-forms allow-modals allow-popups"
             />
           ) : status === 'error' ? (
             <div className="m-preview-fallback">
