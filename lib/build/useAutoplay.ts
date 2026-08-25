@@ -149,29 +149,63 @@ export function useAutoplay(state: BuildState, dispatch: Dispatch) {
       for (const v of seq) if (state.generated[v]) prior[v] = state.generated[v]
 
       schedule(() => {
-        fetch('/api/build/artifact', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: ac.signal,
-          body: JSON.stringify({
-            view: next, idea: state.idea, track: state.track,
-            companyName: state.companyName || undefined, prior,
-          }),
-        })
-          .then(async (r) => {
-            const data = await r.json().catch(() => null)
-            if (!r.ok || !data?.content) throw new Error(data?.error || `HTTP ${r.status}`)
+        // Artifact generation can hit a TRANSIENT provider blip: /api/build/artifact
+        // returns 503 'generation_unavailable' only when EVERY provider (Bedrock/
+        // Anthropic + both AINative fallbacks) fails at once. A single blip used to
+        // fail the artifact permanently and stall the whole build with no recovery
+        // (this is what left coastal/nXl2rNA1f6FuavVJ_X0kF half-built). Retry such
+        // transient failures with backoff before giving up; only a genuine, repeated
+        // failure surfaces GEN_FAIL. 4xx (bad request) is NOT retried — it won't heal.
+        const MAX_ATTEMPTS = 3
+        const isTransient = (status: number, error?: string) =>
+          status === 503 || status === 502 || status === 429 || status === 0 ||
+          error === 'generation_unavailable'
+
+        const backoff = (n: number) =>
+          new Promise((res) => setTimeout(res, 800 * Math.pow(2, n - 1))) // 0.8s, 1.6s
+
+        const attempt = async (n: number): Promise<void> => {
+          let response: Response
+          try {
+            response = await fetch('/api/build/artifact', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              signal: ac.signal,
+              body: JSON.stringify({
+                view: next, idea: state.idea, track: state.track,
+                companyName: state.companyName || undefined, prior,
+              }),
+            })
+          } catch (e: unknown) {
+            // Network-level reject (offline, connection reset, aborted). Aborts are
+            // terminal; other network errors are transient → retry with backoff.
+            if (ac.signal.aborted) return
+            if (n < MAX_ATTEMPTS) { await backoff(n); if (ac.signal.aborted) return; return attempt(n + 1) }
+            dispatch({ type: 'GEN_FAIL', view: next, error: e instanceof Error ? e.message : String(e) })
+            return
+          }
+          const data = await response.json().catch(() => null)
+          if (response.ok && data?.content) {
             dispatch({ type: 'GEN_DONE', view: next, content: data.content })
-          })
-          .catch((err) => {
-            if (!ac.signal.aborted) dispatch({ type: 'GEN_FAIL', view: next, error: String(err?.message || err) })
-          })
-          .finally(() => {
-            schedule(() => {
-              dispatch({ type: 'SET_OVERLAY', overlay: { kind: 'none' } })
-              done()
-            }, HANDOFF_MS)
-          })
+            return
+          }
+          const err = data?.error || `HTTP ${response.status}`
+          // Retry only TRANSIENT failures (503/502/429/generation_unavailable).
+          // A 4xx is a bad request that won't heal — fail it immediately.
+          if (n < MAX_ATTEMPTS && isTransient(response.status, data?.error)) {
+            await backoff(n)
+            if (ac.signal.aborted) return
+            return attempt(n + 1)
+          }
+          if (!ac.signal.aborted) dispatch({ type: 'GEN_FAIL', view: next, error: err })
+        }
+
+        attempt(1).finally(() => {
+          schedule(() => {
+            dispatch({ type: 'SET_OVERLAY', overlay: { kind: 'none' } })
+            done()
+          }, HANDOFF_MS)
+        })
       }, FORMING_MS)
       return
     }
