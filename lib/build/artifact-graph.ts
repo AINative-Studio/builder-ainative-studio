@@ -19,7 +19,8 @@ export const ARTIFACT_CATEGORY: Record<string, ArtifactCategory> = {
   // App
   brief: 'Product', prd: 'Product', comp: 'Product',
   dataModel: 'Delivery', memoryPolicy: 'Delivery', agentDef: 'Delivery',
-  apiSpec: 'Delivery', backlog: 'Delivery', swarm: 'Delivery', infra: 'Delivery', preview: 'Delivery',
+  codingStandards: 'Delivery', apiSpec: 'Delivery', backlog: 'Delivery',
+  sprintPlan: 'Delivery', swarm: 'Delivery', infra: 'Delivery', preview: 'Delivery',
   // Company
   thesis: 'Thesis', wedge: 'Thesis',
   businessModel: 'Operations', plan30: 'Operations',
@@ -54,8 +55,10 @@ export interface ArtifactGraph {
 const COMPOSITION_EDGES: Array<[string, string]> = [
   // App track
   ['brief', 'prd'], ['prd', 'comp'], ['comp', 'dataModel'], ['comp', 'agentDef'],
-  ['dataModel', 'memoryPolicy'], ['agentDef', 'apiSpec'], ['prd', 'backlog'],
-  ['backlog', 'swarm'], ['dataModel', 'infra'], ['agentDef', 'infra'],
+  ['dataModel', 'memoryPolicy'], ['agentDef', 'codingStandards'], ['agentDef', 'apiSpec'],
+  ['prd', 'backlog'], ['backlog', 'sprintPlan'],
+  ['sprintPlan', 'swarm'], ['codingStandards', 'swarm'],
+  ['dataModel', 'infra'], ['agentDef', 'infra'],
   ['swarm', 'preview'], ['infra', 'preview'],
   // Company track
   ['thesis', 'wedge'], ['wedge', 'businessModel'], ['wedge', 'positioning'],

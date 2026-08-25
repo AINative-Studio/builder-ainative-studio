@@ -40,8 +40,10 @@ export const PRIMITIVE_MAP: Record<string, PrimitiveEntry> = {
     powered: ['Agent Cloud', 'Model Catalog', 'AI Kit Safety'],
     nudge: { prim: 'Agent Observability', text: "Let me wire traces + cost tracking so you see exactly what every agent run costs and does.", cta: 'Add Observability' },
   },
+  codingStandards: { powered: ['Sequential Thinking'], nudge: null },
   apiSpec: { powered: ['MCP', 'Tools'], nudge: null },
   backlog: { powered: ['Sequential Thinking'], nudge: null },
+  sprintPlan: { powered: ['Sequential Thinking'], nudge: null },
   swarm: { powered: ['Agent Cloud', 'Agent Swarm'], nudge: null },
   infra: { powered: ['ZeroDB', 'ZeroDB Files', 'OAuth 2.1'], nudge: null },
   preview: {

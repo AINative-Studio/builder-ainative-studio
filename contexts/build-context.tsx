@@ -10,7 +10,7 @@ import { createContext, useContext, useReducer, useEffect, useCallback, useMemo,
 import {
   buildReducer, initialBuildState, trackViews, countWoven,
   type BuildState, type BuildAction, type ArtifactView, type Track,
-  SHARED_LATE_VIEWS,
+  APP_VIEWS, COMPANY_VIEWS, SHARED_LATE_VIEWS,
 } from '@/lib/build/state'
 import { PRIMITIVE_MAP, TOTAL_PRIMITIVES } from '@/lib/build/primitives'
 import { useAutoplay } from '@/lib/build/useAutoplay'
@@ -81,11 +81,10 @@ function saveBuildState(slug: string, state: BuildState) {
 }
 
 /** Valid view values that can be encoded in the URL (#285). */
+// Derived from the canonical track constants so new artifacts (e.g. #71's
+// codingStandards + sprintPlan) are deep-linkable without a second edit here.
 const VALID_VIEWS = new Set<string>([
-  'brief', 'prd', 'comp', 'dataModel', 'memoryPolicy',
-  'agentDef', 'apiSpec', 'backlog', 'swarm', 'infra', 'preview',
-  'thesis', 'wedge', 'businessModel', 'positioning', 'landing', 'plan30',
-  'pipeline', 'rescope-intent', 'conflict', 'graph',
+  ...APP_VIEWS, ...COMPANY_VIEWS, ...SHARED_LATE_VIEWS,
 ])
 
 export function BuildProvider({ children }: { children: ReactNode }) {
@@ -122,12 +121,18 @@ export function BuildProvider({ children }: { children: ReactNode }) {
         if (saved) {
           dispatch({ type: 'RESTORE_BUILD', partial: saved })
         }
-        dispatch({ type: 'PICK_TRACK', track: 'company' })
+        // Track defaults to company (back-compat); ?track=app lets QA jump into
+        // App-track artifacts (e.g. #71's codingStandards / sprintPlan).
+        const track: Track = q.get('track') === 'app' ? 'app' : 'company'
+        dispatch({ type: 'PICK_TRACK', track })
         dispatch({ type: 'START_BUILD', idea: company, appSub: company, companyName: company })
 
         // Restore view position within workspace if one was encoded (#285).
         const viewParam = q.get('view')
         if (scr === 'ws' && viewParam && VALID_VIEWS.has(viewParam)) {
+          // Suspend autoplay so the requested view isn't immediately overridden
+          // by the build driver — QA/E2E lands exactly on the encoded artifact.
+          dispatch({ type: 'TAKE_THE_WHEEL' })
           dispatch({ type: 'GOTO_VIEW', view: viewParam as ArtifactView })
         }
       }
