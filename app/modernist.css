@@ -875,6 +875,24 @@
 .m-sec-rows { display: flex; flex-direction: column; gap: 10px; }
 .m-sec-row { display: flex; align-items: center; justify-content: space-between; font-size: 14px; }
 
+/* Editable profile settings + Danger Zone (#57). */
+.m-settings-form { display: flex; flex-direction: column; gap: 16px; max-width: 440px; }
+.m-select { padding: 10px 12px; border: 1.5px solid var(--neutral-line); font-family: var(--font-body); font-size: 14px; background: var(--color-surface); }
+.m-field-hint { font-size: 11px; }
+.m-field-err { font-size: 11px; color: #b42318; }
+.m-settings-actions { display: flex; align-items: center; gap: 14px; margin-top: 4px; }
+.m-settings-status { font-size: 12px; }
+.m-settings-status.is-done { color: var(--color-accent-700); }
+.m-settings-status.is-err { color: #b42318; }
+.modernist .btn-danger { background: #b42318; color: #fff; border: 1.5px solid #b42318; padding: 8px 16px; font-size: 13px; cursor: pointer; }
+.modernist .btn-danger:hover:not(:disabled) { background: #912018; }
+.modernist .btn-danger:disabled { opacity: 0.5; cursor: not-allowed; }
+.m-danger { border-top: 2px solid #f0c2bc; }
+.m-danger-h { color: #b42318; }
+.m-danger-confirm { display: flex; flex-direction: column; gap: 8px; padding: 14px; border: 1.5px solid #f0c2bc; background: #fef3f2; margin-top: 6px; }
+.m-danger-confirm input { padding: 10px 12px; border: 1.5px solid var(--neutral-line); font-family: var(--font-body); font-size: 14px; background: var(--color-surface); }
+.is-err { color: #b42318; }
+
 /* "or" divider between password submit and the OAuth (Continue with AINative) button (#49). */
 .m-auth-or { display: flex; align-items: center; gap: 12px; margin: 16px 0; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); }
 

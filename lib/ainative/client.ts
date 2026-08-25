@@ -8,7 +8,7 @@ import { AINATIVE_API_BASE_URL } from '@/lib/constants'
 import { AINativeApiError } from './types'
 
 interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   body?: unknown
   /** AbortSignal timeout in ms (default 20s). */
   timeoutMs?: number

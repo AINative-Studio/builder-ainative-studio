@@ -21,6 +21,8 @@ import { useBuild } from '@/contexts/build-context'
 import { useSession, signOut } from 'next-auth/react'
 import { planUnlocks, type ActivePlan } from '@/lib/build/state'
 import { isGuestSession, getDisplayName, getDisplayEmail } from '@/lib/build/account-session'
+import { SettingsForm } from '@/components/build/SettingsForm'
+import { DangerZone } from '@/components/build/DangerZone'
 
 const PLAN_LABEL: Record<ActivePlan, string> = {
   '': 'Free', pro: 'Pro', business: 'Business', enterprise: 'Enterprise', cody_vcto: 'Cody · Virtual CTO',
@@ -162,6 +164,10 @@ export function Account() {
         <span className="m-chip m-profile-plan" data-testid="account-plan">{PLAN_LABEL[activePlan]}</span>
       </section>
 
+      {/* Editable profile settings (#57) — name / email / social / content language,
+          persisted to the real AINative account. Authenticated users only. */}
+      <SettingsForm fallbackName={displayName} fallbackEmail={displayEmail || ''} />
+
       {/* Plan + management (#251/#253) — real plan, real self-serve billing. */}
       <section className="m-account-sec">
         <h2 className="m-mono m-account-sec-h">Plan &amp; billing</h2>
@@ -220,6 +226,15 @@ export function Account() {
           </div>
         </div>
       </section>
+
+      {/* Danger Zone (#57) — pause the loop, take the app offline, or delete the
+          company, with confirmation. Acts on the current company in build state. */}
+      <DangerZone
+        companyId={state.appSub}
+        companyName={state.companyName}
+        slug={state.appSub}
+        track={state.track}
+      />
     </div>
   )
 }

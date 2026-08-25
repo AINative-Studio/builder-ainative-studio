@@ -22,6 +22,8 @@ import { getClaudeCompletion } from '@/lib/build/claude-completion'
 import { auth } from '@/app/(auth)/auth'
 import { getPlanStatus } from '@/lib/ainative/plan'
 import { modelsForTier } from '@/lib/build/tier-models'
+import { loadCoreProfile } from '@/lib/build/profile'
+import { languageInstruction, normalizeLanguage, DEFAULT_CONTENT_LANGUAGE } from '@/lib/build/content-language'
 
 export const runtime = 'nodejs'
 
@@ -45,6 +47,27 @@ async function resolveTier(): Promise<string> {
     return status.tier || 'hobbyist'
   } catch {
     return 'hobbyist'
+  }
+}
+
+/**
+ * Resolve the founder's content language (#57). Prefers an explicit body override
+ * (the client already knows the setting → no round-trip) and otherwise reads it
+ * from the signed-in user's real account. Anonymous/errored callers → English.
+ */
+async function resolveContentLanguage(bodyLanguage: unknown): Promise<string> {
+  if (typeof bodyLanguage === 'string' && bodyLanguage.trim()) {
+    return normalizeLanguage(bodyLanguage)
+  }
+  try {
+    const session = await auth()
+    const accessToken = (session as any)?.accessToken
+    const type = (session as any)?.user?.type
+    if (!accessToken || type === 'guest') return DEFAULT_CONTENT_LANGUAGE
+    const profile = await loadCoreProfile(accessToken)
+    return profile.contentLanguage || DEFAULT_CONTENT_LANGUAGE
+  } catch {
+    return DEFAULT_CONTENT_LANGUAGE
   }
 }
 
@@ -80,13 +103,20 @@ export async function POST(request: NextRequest) {
   }
 
   const spec = ARTIFACT_PROMPTS[view]
+  // Founder's content language (#57) — drives the OUTPUT language of the artifact.
+  const contentLanguage = await resolveContentLanguage(body?.contentLanguage)
   const ctx: ArtifactContext = {
     idea: idea.trim().slice(0, 4000),
     track: track === 'company' ? 'company' : 'app',
     companyName: typeof companyName === 'string' ? companyName.slice(0, 120) : undefined,
     prior: prior && typeof prior === 'object' ? prior : {},
+    contentLanguage,
   }
-  const system = spec.system + `\nRequired JSON schema: ${spec.schemaHint}`
+  // Append the language instruction (empty for English) so generated string VALUES
+  // are written in the founder's language while the JSON schema stays parseable.
+  const langInstr = languageInstruction(contentLanguage)
+  const system =
+    spec.system + `\nRequired JSON schema: ${spec.schemaHint}` + (langInstr ? `\n${langInstr}` : '')
   const user = spec.user(ctx)
 
   // Tier → model: Hobbyist=Haiku 4.5, Pro/Scale=Sonnet 4.5, Enterprise=Opus 4.5.

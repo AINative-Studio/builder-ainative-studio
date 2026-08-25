@@ -55,6 +55,36 @@ export async function enrollCompany(e: Omit<LoopEnrollment, 'enrolledAt' | 'enab
   }
 }
 
+/**
+ * Enable/disable the nightly loop for a company (#57, Danger Zone → "pause the
+ * company"). Disabling appends an enrollment row with enabled=false so listEnrolled
+ * (which requires enabled=true) stops iterating this company — the cron then skips
+ * it. Re-enabling re-enrolls it. Requires the companyName so the paused/resumed
+ * row is self-describing for the dashboard. Returns false when the store is
+ * unconfigured or the write fails.
+ */
+export async function setLoopEnabled(
+  companyId: string,
+  companyName: string,
+  track: 'app' | 'company',
+  enabled: boolean,
+): Promise<boolean> {
+  if (!configured() || !companyId) return false
+  try {
+    const res = await fetch(rowsUrl(), {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({
+        row_data: { companyId, companyName, track, enabled, enrolledAt: new Date().toISOString() },
+      }),
+      signal: AbortSignal.timeout(20000),
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
 /** Record the outcome of a nightly run (appended as an event row for the dashboard). */
 export async function recordRun(companyId: string, taskId: string | null, status: string): Promise<void> {
   if (!configured()) return

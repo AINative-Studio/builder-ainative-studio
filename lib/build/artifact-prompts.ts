@@ -30,6 +30,13 @@ export interface ArtifactContext {
   companyName?: string
   /** previously generated artifacts, keyed by view — lets later artifacts build on earlier ones */
   prior: Record<string, unknown>
+  /**
+   * The founder's content-language code (#57), e.g. 'es', 'pt-BR'. When set (and
+   * non-English) the artifact route appends a languageInstruction to the system
+   * prompt so the human-readable VALUES are generated in this language while JSON
+   * keys / structure stay English (parseable). Absent → English (default).
+   */
+  contentLanguage?: string
 }
 
 const BASE_SYSTEM =
