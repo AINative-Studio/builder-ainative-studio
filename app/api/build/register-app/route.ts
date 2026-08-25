@@ -12,6 +12,7 @@
 import { NextRequest } from 'next/server'
 import { registerApp, resolveApp } from '@/lib/build/app-registry'
 import { deployPersistent } from '@/lib/build/deploy'
+import { checkAppReady } from '@/lib/build/ready-gate'
 
 export const runtime = 'nodejs'
 
@@ -20,6 +21,28 @@ export async function POST(request: NextRequest) {
   if (!b?.slug || !b?.chatId) return Response.json({ error: 'slug and chatId required' }, { status: 400 })
   const slug = String(b.slug).slice(0, 40)
   const chatId = String(b.chatId).slice(0, 64)
+
+  // PRE-DEPLOY PARSE GATE (builder#77): before this slug is registered as ready +
+  // deployed to its shareable URL, verify the generated app actually parses /
+  // renders. A broken app (syntax error, hallucinated component, undefined ref)
+  // must NOT be marked ready — the quad college-social-app shipped a Syntax-Error
+  // page because there was no gate here. Fail-open only when the code can't be
+  // found (store miss); BLOCK when we can prove it's broken, returning an honest
+  // "generation failed, retrying" state so the client re-generates instead of
+  // deploying a broken preview.
+  const ready = await checkAppReady(chatId).catch(() => ({ checked: false, ok: true } as const))
+  if (ready.checked && !ready.ok) {
+    return Response.json(
+      {
+        ok: false,
+        status: 'generation_failed',
+        reason: ready.reason,
+        error: ready.error,
+        retry: true,
+      },
+      { status: 422 },
+    )
+  }
 
   // #213: resolve the durable live URL via the shared persistent-deploy seam and
   // persist it, so every generated app has a real shareable URL from registration.

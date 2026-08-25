@@ -919,20 +919,36 @@ const KNOWN_AVAILABLE_COMPONENTS = new Set<string>([
   'Scatter', 'ScatterChart', 'Treemap', 'Funnel', 'FunnelChart', 'XAxis', 'YAxis',
   'CartesianGrid', 'Legend', 'PolarGrid', 'PolarAngleAxis', 'PolarRadiusAxis',
   'ReLineChart', 'ReBarChart', 'RePieChart', 'ReAreaChart', 'RechartsTooltip',
-  // lucide-react icons (used as JSX, injected on demand)
-  'Search', 'Menu', 'X', 'ChevronDown', 'ChevronRight', 'ChevronLeft', 'ChevronUp',
-  'Home', 'Settings', 'Users', 'BarChart3', 'FileText', 'Bell', 'Mail', 'Star', 'Heart',
-  'ShoppingCart', 'Plus', 'Minus', 'Edit', 'Trash2', 'Eye', 'Check', 'AlertCircle', 'Info',
-  'ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'ExternalLink', 'Download', 'Upload',
-  'Share2', 'Filter', 'Calendar', 'Clock', 'MapPin', 'Phone', 'Globe', 'Lock', 'Shield',
-  'Zap', 'TrendingUp', 'TrendingDown', 'Activity', 'DollarSign', 'CreditCard', 'Package',
-  'Truck', 'Sun', 'Moon', 'Laptop', 'Smartphone', 'Code', 'Terminal', 'GitBranch', 'Send',
-  'MessageSquare', 'Bookmark', 'Tag', 'Copy', 'Save', 'RefreshCw', 'MoreHorizontal',
-  'MoreVertical', 'Layers', 'Layout', 'Grid', 'List', 'Target', 'Award', 'Sparkles',
-  'Rocket', 'Building2', 'Briefcase', 'BookOpen', 'Bot', 'Brain', 'LogOut', 'LogIn',
-  'UserPlus', 'Users2', 'FolderOpen', 'File', 'Box', 'Inbox', 'CircleDot', 'Hexagon',
-  'Wand2', 'Palette', 'Lightbulb', 'Gauge', 'Cpu', 'Wifi', 'Play', 'Pause', 'SkipForward',
-  'Volume2', 'Image', 'Video', 'Music', 'Mic',
+  // lucide-react icons (used as JSX, injected on demand). MUST stay in sync with
+  // the icon constants the preview runtime declares in app/api/preview/[id]/route.ts
+  // (`const X = _getIcon("X")`) — a name the runtime provides but this set omits is
+  // a FALSE POSITIVE that rejects a valid app (the quad "MessageCircle" defect,
+  // builder#77: MessageCircle was runtime-available but missing here, so a working
+  // college-social app was flagged "unresolved component" and shipped broken).
+  'Activity', 'AlertCircle', 'AlertTriangle', 'Archive', 'ArrowDown', 'ArrowDownRight',
+  'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowUpRight', 'AtSign', 'Award', 'BarChart3',
+  'Bell', 'BookOpen', 'Bookmark', 'Bot', 'Box', 'Boxes', 'Brain', 'Briefcase', 'Brush',
+  'Building2', 'Calendar', 'Camera', 'Check', 'CheckCircle', 'CheckCircle2', 'ChevronDown',
+  'ChevronFirst', 'ChevronLast', 'ChevronLeft', 'ChevronRight', 'ChevronUp', 'Circle',
+  'CircleDot', 'CircuitBoard', 'Clipboard', 'Clock', 'Cloud', 'Code', 'Cog', 'Compass',
+  'Copy', 'Cpu', 'CreditCard', 'Crosshair', 'Database', 'DollarSign', 'Download', 'Edit',
+  'Edit2', 'ExternalLink', 'Eye', 'EyeOff', 'Facebook', 'File', 'FileCheck', 'FilePlus',
+  'FileText', 'FileX', 'Filter', 'Fingerprint', 'Flag', 'Flame', 'FolderClosed',
+  'FolderOpen', 'Gauge', 'Gear', 'Gift', 'GitBranch', 'Github', 'Globe', 'GraduationCap',
+  'Grid', 'Grip', 'HardDrive', 'Hash', 'Headphones', 'Heart', 'HelpCircle', 'Hexagon',
+  'Home', 'Image', 'Inbox', 'Info', 'Instagram', 'Laptop', 'Layers', 'Layout', 'Lightbulb',
+  'Link', 'Linkedin', 'List', 'Lock', 'LogIn', 'LogOut', 'Mail', 'MapPin', 'Maximize',
+  'Maximize2', 'Menu', 'MessageCircle', 'MessageSquare', 'Mic', 'MicOff', 'Minimize',
+  'Minimize2', 'Minus', 'MinusCircle', 'Monitor', 'Moon', 'MoreHorizontal', 'MoreVertical',
+  'MousePointer', 'Move', 'Music', 'Navigation', 'Network', 'Newspaper', 'Octagon',
+  'Package', 'Palette', 'Paperclip', 'Pause', 'Pen', 'Pencil', 'Pentagon', 'Phone', 'Play',
+  'Plus', 'PlusCircle', 'Printer', 'QrCode', 'RefreshCw', 'Repeat', 'Rocket', 'RotateCcw',
+  'Route', 'Save', 'ScanLine', 'Search', 'Send', 'Server', 'Settings', 'Share2', 'Shield',
+  'ShoppingCart', 'Shuffle', 'SkipBack', 'SkipForward', 'SlidersHorizontal', 'Smartphone',
+  'Sparkles', 'Square', 'Star', 'Sun', 'Table2', 'Tag', 'Target', 'Terminal', 'Trash2',
+  'TrendingDown', 'TrendingUp', 'Triangle', 'Trophy', 'Truck', 'Twitter', 'Unlock',
+  'Upload', 'UserCheck', 'UserMinus', 'UserPlus', 'Users', 'Users2', 'Video', 'Volume2',
+  'VolumeX', 'Wand2', 'Wifi', 'Workflow', 'X', 'XCircle', 'Youtube', 'Zap',
 ])
 
 /**
@@ -1531,4 +1547,126 @@ export function validateGeneratedCode(rawContent: string): ValidationResult {
 
   // Validate the extracted code
   return validateJavaScriptCode(code)
+}
+
+/**
+ * Result of the pre-deploy PARSE GATE (builder#77).
+ */
+export interface ParseGateResult {
+  /** True when the app is renderable and safe to mark ready / deploy. */
+  ok: boolean
+  /** Machine-readable reason when ok === false (for honest UI + RLHF logging). */
+  reason?:
+    | 'empty'
+    | 'no_renderable_code'
+    | 'syntax_error'
+    | 'duplicate_declaration'
+    | 'unresolved_component'
+    | 'object_as_child'
+    | 'undefined_reference'
+  /** Human-readable error (the validator's message), when ok === false. */
+  error?: string
+}
+
+/**
+ * PRE-SAVE / PRE-DEPLOY PARSE GATE (builder#77).
+ *
+ * The single, authoritative "is this generated app safe to mark ready / register /
+ * deploy?" check. Before the "quad" fix, a slug could be registered + deployed to
+ * its wildcard host with code that fails to parse (or references a hallucinated
+ * component) — users then saw a Syntax-Error panel or an empty frame instead of a
+ * working app. This gate is the hard stop: run it at the "mark ready" seam
+ * (register-app / deploy) and, if it fails, DO NOT mark the app ready — surface an
+ * honest "generation failed, retrying" state instead of shipping a broken app.
+ *
+ * It reuses the exact same static analysis the generation path uses
+ * (validateJavaScriptCode with imports NOT stripped and NOT lenient — the strict,
+ * Sandpack-fatal configuration), so the gate rejects precisely the class of defect
+ * that breaks the real preview runtime:
+ *   - hard syntax errors (Unexpected token / unterminated string / EOF)
+ *   - duplicate top-level declarations
+ *   - hallucinated components used-but-not-defined (the quad "MessageCircle"/#76 class)
+ *   - objects rendered as React children (#184)
+ *   - undefined variable references (#191)
+ *
+ * The input is the RAW stored preview content (markdown / multi-file blob / raw
+ * code) — it extracts the renderable code the same way the preview renderer does,
+ * so the gate's verdict matches what the browser will actually try to run.
+ *
+ * DELIBERATELY MIRRORS the preview renderer's extraction so a false "ok:false"
+ * (which would wrongly block a valid app) is avoided: empty/non-code content is
+ * reported as no_renderable_code (its own honest state), never as a syntax error.
+ */
+export function isRenderable(rawContent: string): ParseGateResult {
+  const content = (rawContent || '').trim()
+  if (!content) return { ok: false, reason: 'empty', error: 'No generated content' }
+
+  // Extract the renderable code exactly as the preview renderer does: prefer a
+  // multi-file main file, then a markdown code block, else the raw content.
+  const code = extractRenderableCode(content)
+
+  // Must contain actual code (matches the /api/preview "No renderable code found"
+  // guard) — otherwise there is nothing to parse and it's not a syntax failure.
+  if (!/function\s|const\s|return\b/.test(code)) {
+    return { ok: false, reason: 'no_renderable_code', error: 'No renderable code found' }
+  }
+
+  // Run the FULL strict validation (imports NOT stripped → keeps #76 unresolved-
+  // component coverage; NOT lenient → keeps Sandpack-fatal syntax coverage).
+  const result = validateJavaScriptCode(code, { importsStripped: false, lenient: false })
+  if (result.valid) return { ok: true }
+
+  // Map the validator's error message to a machine-readable reason.
+  const msg = result.error || 'Validation failed'
+  const lower = msg.toLowerCase()
+  let reason: ParseGateResult['reason'] = 'syntax_error'
+  if (lower.includes('has already been declared')) reason = 'duplicate_declaration'
+  else if (lower.includes('element type is invalid')) reason = 'unresolved_component'
+  else if (lower.includes('not valid as a react child')) reason = 'object_as_child'
+  else if (lower.includes('undefined variable')) reason = 'undefined_reference'
+
+  return { ok: false, reason, error: msg }
+}
+
+/**
+ * Extract the renderable component code from raw stored preview content, mirroring
+ * the extraction in app/api/preview/[id]/route.ts so the parse gate parses the SAME
+ * code the preview renderer will run. Handles multi-file blobs (// --- FILE: ---),
+ * markdown code fences, and raw code. Exported so the gate and any caller stay in
+ * lockstep with the renderer.
+ */
+export function extractRenderableCode(content: string): string {
+  // Multi-file output — pick App.tsx, else the largest file with a component.
+  if (content.includes('// --- FILE:')) {
+    const files = content.split(/\/\/\s*---\s*FILE:\s*/i)
+    let mainFile = files.find((f) => /^src\/App\.tsx|^App\.tsx/i.test(f.trim()))
+    if (!mainFile) {
+      let bestFile = ''
+      let bestSize = 0
+      for (const f of files) {
+        const fileContent = f.replace(/^.*?---\s*\n?/, '').trim()
+        if (
+          fileContent.length > bestSize &&
+          (fileContent.includes('function ') || fileContent.includes('const ')) &&
+          fileContent.includes('return')
+        ) {
+          bestFile = f
+          bestSize = fileContent.length
+        }
+      }
+      if (bestFile) mainFile = bestFile
+    }
+    if (!mainFile && files.length > 1) mainFile = files[1]
+    if (mainFile) return mainFile.replace(/^.*?---\s*\n?/, '').trim()
+  }
+
+  // Markdown code block.
+  const codeBlockMatch = content.match(/```(?:tsx?|jsx?|javascript|typescript)?\s*\n([\s\S]*?)```/)
+  if (codeBlockMatch) return codeBlockMatch[1].trim()
+
+  // Raw content — strip stray quote/backtick wrappers.
+  return content
+    .replace(/^[\s\n\r]*["'`]{1,10}(?:jsx|javascript|tsx|ts|js|react)?[\s\n\r]*/gi, '')
+    .replace(/[\s\n\r]*["'`]{1,10}[\s\n\r]*$/gi, '')
+    .trim()
 }
