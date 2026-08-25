@@ -42,20 +42,19 @@ export function Preview() {
       .catch(() => {})
   }, [status, chatId, state.appSub])
 
-  // A real dedicated host (#213) only when deployUrl is a full https:// URL that is
-  // NOT the durable /build/{slug} subdir — i.e. the {slug}.ainative.studio wildcard
-  // host. Mirrors Live.tsx so the app track surfaces the same real URL as the company
-  // track when the wildcard is configured.
-  const wildcardUrl =
-    deployUrl && /^https?:\/\//i.test(deployUrl) && !/\/build\//.test(deployUrl)
-      ? deployUrl.replace(/\/+$/, '')
-      : null
+  // Product rule (#78): the {slug}.ainative.studio subdomain must NOT be surfaced
+  // until the company is on a PAID plan AND has explicitly CLAIMED the subdomain — and
+  // it does NOT resolve until then (the middleware 301s it to the path). This
+  // artifact preview is the PRE-PAID surface (shown before any upgrade/claim), so it
+  // must always share and display the durable /build/{slug} PATH form, never the
+  // subdomain. The claimed subdomain is surfaced on Live once paid+claimed. The
+  // persisted deployUrl (which may be a wildcard host) is intentionally not used here.
+  void deployUrl
 
-  // The real, shareable URL: the dedicated wildcard host when we have one, else the
-  // durable /build/{slug} subdirectory (works immediately, no DNS). (FIX-2 / #213)
+  // The real, shareable URL: the durable /build/{slug} subdirectory (works
+  // immediately, no DNS, resolves for anyone). (FIX-2 / #213 / #78)
   const shareUrl = chatId && status === 'ready' && state.appSub
-    ? (wildcardUrl
-        || (typeof window !== 'undefined' ? `${window.location.origin}/build/${state.appSub}` : `/build/${state.appSub}`))
+    ? (typeof window !== 'undefined' ? `${window.location.origin}/build/${state.appSub}` : `/build/${state.appSub}`)
     : null
 
   const copyShare = () => {
@@ -95,7 +94,7 @@ export function Preview() {
       <div className="m-browser">
         <div className="m-browser-chrome m-mono">
           <span className="m-browser-dots"><i /><i /><i /></span>
-          <span className="m-browser-url">{wildcardUrl ? wildcardUrl.replace(/^https?:\/\//i, '') : `${state.appSub || 'your-app'}.ainative.studio`}</span>
+          <span className="m-browser-url">{`builder.ainative.studio/build/${state.appSub || 'your-app'}`}</span>
         </div>
         <div className="m-browser-body">
           {previewUrl ? (

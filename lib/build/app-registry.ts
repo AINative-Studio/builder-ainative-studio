@@ -43,6 +43,13 @@ export interface AppEntry {
   byoDomainStatus?: 'pending' | 'verifying' | 'live' | 'error'
   byoDomainConnectedAt?: string
   plan?: string    // active subscription plan id (pro|business|enterprise) after checkout (#241)
+  // Explicit subdomain claim (#78). The company's {slug}.ainative.studio host must NOT
+  // resolve until the founder is on a PAID plan AND has explicitly claimed it (mirrors
+  // how custom-domain / BYO-domain #53/#240 are paid-gated). Default false/undefined →
+  // the subdomain does not resolve; the shareable preview stays the /build/{slug} path.
+  // Set true only via claimSubdomain() after a paid-plan check.
+  subdomainClaimed?: boolean
+  subdomainClaimedAt?: string
   enrolled?: boolean  // Business+ auto-enrolled into the nightly loop (#241; cron itself is #243)
   // Persistent cloud provisioning (#243) — the REAL per-company data layer, created
   // via AINative Instant DB (POST /api/v1/public/instant-db). Present once provisioned.
@@ -285,6 +292,36 @@ export async function setAppPlan(slug: string, plan: string): Promise<boolean> {
   // Business and Enterprise auto-enroll into the nightly improvement loop.
   const enrolled = plan === 'business' || plan === 'enterprise' || plan === 'cody_vcto'
   return registerApp({ ...existing, plan, enrolled })
+}
+
+/**
+ * Claim a company's {slug}.ainative.studio subdomain (#78) — the paid-gated action
+ * behind the "claim your subdomain" button on Live. Sets subdomainClaimed=true so the
+ * edge middleware (subdomainServable) begins serving the host. PAID-ONLY: mirrors how
+ * custom-domain / BYO-domain (#53/#240) are gated — the claim is refused unless the
+ * company is on a paid plan. The plan is re-read from the registry entry (the source of
+ * truth persisted by setAppPlan) rather than trusted from the client.
+ *
+ * Idempotent: no-op success (true) when already claimed. Returns { ok, claimed, reason }
+ * so the caller can surface an honest message (not_registered / not_paid) without throwing.
+ */
+export async function claimSubdomain(
+  slug: string,
+): Promise<{ ok: boolean; claimed: boolean; reason?: string }> {
+  const existing = await resolveApp(slug)
+  if (!existing) return { ok: false, claimed: false, reason: 'not_registered' }
+  // Paid gate — a subdomain can only be claimed on a paid plan (#78).
+  const plan = String(existing.plan || '').toLowerCase()
+  const paid = plan === 'pro' || plan === 'business' || plan === 'enterprise' || plan === 'cody_vcto'
+  if (!paid) return { ok: false, claimed: false, reason: 'not_paid' }
+  // Already claimed → idempotent success, no churn row.
+  if (existing.subdomainClaimed === true) return { ok: true, claimed: true }
+  const ok = await registerApp({
+    ...existing,
+    subdomainClaimed: true,
+    subdomainClaimedAt: existing.subdomainClaimedAt || new Date().toISOString(),
+  })
+  return { ok, claimed: ok, reason: ok ? undefined : 'write_failed' }
 }
 
 /**
