@@ -11,6 +11,9 @@
 
 const GCLID_COOKIE = 'ax_gclid'
 const UTM_COOKIE = 'ax_utm'
+// Meta click id, stored in Meta's canonical `_fbc` cookie format so the Pixel and
+// the Conversions API (CAPI) dedup/attribute against the same value (#207 · Meta).
+const FBC_COOKIE = '_fbc'
 const MAX_AGE = 90 * 24 * 60 * 60 // 90 days
 
 function setCookie(name: string, value: string) {
@@ -35,6 +38,13 @@ export function captureAttribution() {
   const q = new URLSearchParams(window.location.search)
   const gclid = q.get('gclid') || q.get('gbraid') || q.get('wbraid')
   if (gclid) setCookie(GCLID_COOKIE, gclid)
+  // Meta click id → `_fbc` in Meta's required `fb.1.<ts>.<fbclid>` format, so the
+  // Pixel (browser) and CAPI (server) share one identifier for dedup/attribution.
+  // Only write when we don't already have one (last ad click wins, no clobber).
+  const fbclid = q.get('fbclid')
+  if (fbclid && !readCookie(FBC_COOKIE)) {
+    setCookie(FBC_COOKIE, `fb.1.${Date.now()}.${fbclid}`)
+  }
   const utm: Record<string, string> = {}
   for (const k of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content']) {
     const v = q.get(k)
@@ -51,4 +61,14 @@ export function getGclid(): string | undefined {
 /** The persisted utm params, or {}. */
 export function getUtm(): Record<string, string> {
   try { return JSON.parse(readCookie(UTM_COOKIE) || '{}') } catch { return {} }
+}
+
+/** The persisted Meta `_fbc` click id (fb.1.<ts>.<fbclid>), or undefined. */
+export function getFbc(): string | undefined {
+  return readCookie(FBC_COOKIE)
+}
+
+/** The Meta browser pixel id (`_fbp`), set by fbq itself, or undefined. */
+export function getFbp(): string | undefined {
+  return readCookie('_fbp')
 }

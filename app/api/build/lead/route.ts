@@ -17,6 +17,7 @@
 
 import { NextRequest } from 'next/server'
 import { reportConversion, gclidFromRequest } from '@/lib/build/conversions'
+import { reportMetaConversion, fbcFromRequest, fbpFromRequest } from '@/lib/build/meta-capi'
 
 export const runtime = 'nodejs'
 
@@ -72,6 +73,21 @@ export async function POST(request: NextRequest) {
       sessionId: `builder-${row.slug || 'anon'}`,
       gclid: gclidFromRequest(request),
       value: 5, currency: 'USD', slug: row.slug || undefined, email,
+    }).catch(() => {})
+    // #207 · Meta: report the LEAD conversion via CAPI server-side (survives
+    // ad-blockers/ITP). Best-effort; full no-op unless Meta CAPI is configured.
+    // event_id lets the browser Pixel Lead event dedup against this one.
+    reportMetaConversion({
+      eventName: 'Lead',
+      // Deterministic id (slug-keyed, no timestamp) so it MATCHES the browser Pixel
+      // Lead event_id in Live.tsx → Meta dedups the browser/server pair.
+      eventId: `lead-${row.slug || 'anon'}`,
+      email,
+      value: 5, currency: 'USD',
+      fbc: fbcFromRequest(request), fbp: fbpFromRequest(request),
+      clientIp: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || undefined,
+      userAgent: request.headers.get('user-agent') || undefined,
+      custom: { slug: row.slug || undefined, source: 'builder' },
     }).catch(() => {})
     return Response.json({ ok: res.ok, stored: res.ok })
   } catch (e: any) {

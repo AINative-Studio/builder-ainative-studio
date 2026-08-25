@@ -10,6 +10,7 @@
 import { useState, useEffect } from 'react'
 import { useBuild } from '@/contexts/build-context'
 import { trackEvent } from '@/components/analytics/google-analytics'
+import { trackMeta } from '@/components/analytics/meta-pixel'
 import { useLiveProof } from '@/lib/build/useLiveProof'
 import { buildSystems, type BusinessSystem } from '@/lib/build/business-systems'
 import { DomainModal } from '@/components/build/DomainModal'
@@ -19,6 +20,12 @@ import { useSession } from 'next-auth/react'
 /** Display label for an active paid tier (#241). */
 const PLAN_LABEL: Record<ActivePlan, string> = {
   '': '', pro: 'Pro', business: 'Business', enterprise: 'Enterprise', cody_vcto: 'Cody · Virtual CTO',
+}
+
+// Monthly $ value per plan for the Meta Pixel Purchase event — mirrors PLAN_VALUE
+// in app/api/build/subscription/verify/route.ts so browser and CAPI agree.
+const PLAN_META_VALUE: Record<string, number> = {
+  pro: 49, launch: 49, business: 149, company: 149, enterprise: 999, cody_vcto: 4999,
 }
 
 interface ChatLine { role: 'user' | 'cody'; text: string }
@@ -118,6 +125,9 @@ export function Live() {
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || leadSaved) return
     setLeadSaved(true) // optimistic
     trackEvent('lead_captured', 'funnel', state.track)
+    // Meta Pixel Lead (mirrors GA4). event_id matches the server CAPI Lead so Meta
+    // dedups the browser/server pair. No-op if the pixel isn't configured.
+    trackMeta('Lead', { value: 5, currency: 'USD', content_name: companyId }, `lead-${companyId || 'anon'}`)
     try {
       await fetch('/api/build/lead', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -152,6 +162,13 @@ export function Live() {
           // GA4 funnel step 6 — CONVERSION: subscription verified + unlocked. This
           // is the primary conversion event to import as a Google Ads conversion.
           trackEvent('subscribed', 'conversion', String(d.plan))
+          // Meta Pixel Purchase (mirrors GA4). event_id matches the server CAPI
+          // Purchase (`purchase-<slug>-<sessionId>`) so Meta dedups the pair.
+          trackMeta(
+            'Purchase',
+            { value: PLAN_META_VALUE[String(d.plan)] ?? 49, currency: 'USD', content_name: String(d.plan) },
+            `purchase-${companyId || 'anon'}-${sess}`,
+          )
         } else {
           setPlanStatus(d?.error === 'not verified' ? 'Payment is still processing — refresh in a moment.' : (d?.error || 'Could not confirm your plan yet.'))
         }

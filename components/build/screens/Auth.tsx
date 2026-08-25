@@ -7,6 +7,7 @@ import { signIn } from 'next-auth/react'
 import { useBuild } from '@/contexts/build-context'
 import type { Screen } from '@/lib/build/state'
 import { trackEvent } from '@/components/analytics/google-analytics'
+import { trackMeta } from '@/components/analytics/meta-pixel'
 
 function BrandPanel() {
   return (
@@ -59,6 +60,9 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
           setBusy(false); return
         }
         trackEvent('sign_up', 'funnel', state.track)
+        // Meta Pixel CompleteRegistration (mirrors GA4 sign_up). No-op if the pixel
+        // isn't configured. No server CAPI twin for signup, so no shared event_id.
+        trackMeta('CompleteRegistration', { content_name: state.track })
       }
       // Sign in (both signup + login) via the core-backed next-auth credentials provider.
       const result = await signIn('credentials', { email, password, redirect: false })
