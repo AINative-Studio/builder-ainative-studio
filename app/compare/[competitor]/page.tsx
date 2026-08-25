@@ -27,6 +27,12 @@ interface CompetitorData {
   runsCompany?: string
   realPrimitives?: string
   agentFiles?: string
+  // Answer-shaped hero copy for AEO — direct one-sentence answer to the buyer query
+  heroAnswer: string
+  // Pricing detail for FAQ
+  pricingDetail: string
+  // Review / reputation context for FAQ
+  reviewContext: string
 }
 
 const COMPETITOR_DATA: Record<CompetitorSlug, CompetitorData> = {
@@ -38,6 +44,12 @@ const COMPETITOR_DATA: Record<CompetitorSlug, CompetitorData> = {
     pricing: 'Free + $20/mo',
     opensource: 'No',
     streaming: 'Yes',
+    heroAnswer:
+      'AINative Builder is the best v0 alternative for teams who need multi-model AI (Claude, Qwen, DeepSeek), built-in agent optimization (AX), automatic JSON-LD SEO, and open-source code — none of which v0 provides.',
+    pricingDetail:
+      'v0 offers a free tier with limited credits and a $20/month Pro plan. AINative Builder offers a 72-hour trial, then $49/month, which includes multi-model AI, AX scoring, SEO automation, and open-source code export.',
+    reviewContext:
+      'v0 is well-reviewed for quickly generating Vercel-hosted UI prototypes, but users consistently report it is locked to GPT-4o and Vercel infrastructure with no AX or SEO tooling.',
   },
   lovable: {
     displayName: 'Lovable',
@@ -47,6 +59,12 @@ const COMPETITOR_DATA: Record<CompetitorSlug, CompetitorData> = {
     pricing: 'Free + $25/mo',
     opensource: 'No',
     streaming: 'Yes',
+    heroAnswer:
+      'AINative Builder is the best Lovable alternative for founders who want multi-model AI, agent-optimized output, automatic SEO, and code they actually own — Lovable locks you into GPT-4o with no AX or structured-data tooling.',
+    pricingDetail:
+      'Lovable costs $25/month on the Pro plan, with a limited free tier. AINative Builder starts with a 72-hour trial, then $49/month, covering multi-model AI selection, AX optimization, SEO JSON-LD, and open-source export.',
+    reviewContext:
+      'Lovable is praised for its polish and speed of prototyping React apps, but reviews note it is GPT-4o-only, output is not AX-optimized, and there is no structured-data or SEO tooling built in.',
   },
   bolt: {
     displayName: 'Bolt.new',
@@ -56,6 +74,12 @@ const COMPETITOR_DATA: Record<CompetitorSlug, CompetitorData> = {
     pricing: 'Free + $20/mo',
     opensource: 'No',
     streaming: 'Yes',
+    heroAnswer:
+      'AINative Builder is the best Bolt.new alternative if you need AX/agent optimization, automatic SEO with JSON-LD, open-source code, and a broader model choice — Bolt supports Claude but adds no agent-native or SEO tooling.',
+    pricingDetail:
+      'Bolt.new offers a free plan with token limits and a $20/month Pro plan. AINative Builder offers a 72-hour trial, then $49/month, with multi-model AI, AX scoring, SEO automation, and exportable open-source code.',
+    reviewContext:
+      'Bolt.new is well-regarded for full-stack code generation with Claude, but reviewers note it has no AX scoring, no structured-data SEO output, and no open-source codebase.',
   },
   base44: {
     displayName: 'Base44',
@@ -65,6 +89,12 @@ const COMPETITOR_DATA: Record<CompetitorSlug, CompetitorData> = {
     pricing: '$49/mo',
     opensource: 'No',
     streaming: 'No',
+    heroAnswer:
+      'AINative Builder is the best Base44 alternative: same $49/month price point, but with multi-model AI, real-time streaming, AX optimization, automatic SEO, and open-source code — Base44 has none of those.',
+    pricingDetail:
+      'Base44 costs $49/month with no free trial and no real-time streaming. AINative Builder is also $49/month but includes a 72-hour trial, real-time streaming, multi-model AI, AX optimization, and SEO-ready output.',
+    reviewContext:
+      'Base44 is valued for business-app generation, but at $49/month users expect streaming and open-source output — both missing. Reviews flag the GPT-4o lock-in and lack of agent or SEO tooling as key weaknesses.',
   },
   polsia: {
     displayName: 'Polsia',
@@ -79,6 +109,12 @@ const COMPETITOR_DATA: Record<CompetitorSlug, CompetitorData> = {
     runsCompany: 'Yes — autonomous agents',
     realPrimitives: 'Proprietary, closed',
     agentFiles: 'None (no llms.txt / agents.txt / robots.txt)',
+    heroAnswer:
+      'AINative Builder is the best Polsia alternative: Builder first BUILDS a real, production app on primitives you own, then runs it autonomously — Polsia only operates a closed CSR black box that you cannot inspect, extend, or own.',
+    pricingDetail:
+      'Polsia pricing is subscription-based and not publicly listed. AINative Builder starts with a 72-hour trial, then $49/month — you get a built app, autonomous operations, and full access to the underlying open primitives (ZeroDB, ZeroPipeline, ZeroInvoice, ServiceOS, ZeroVoice).',
+    reviewContext:
+      'Polsia ($12.56M ARR) is recognised for autonomous company operations, but reviews note it is a client-rendered black box with no agent files, no llms.txt, and no way to inspect or extend the underlying system. Users do not own primitives.',
   },
 }
 
@@ -181,19 +217,41 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   }
 
   const data = COMPETITOR_DATA[competitor as CompetitorSlug]
-  const title = `AINative Builder vs ${data.displayName} - Best Alternative 2026`
-  const description = `Compare AINative Builder vs ${data.displayName}. AINative offers multi-model AI (Claude, Qwen, Gemma, DeepSeek), built-in AX optimization, automatic SEO, and open-source code — features ${data.displayName} doesn't provide.`
+
+  const isPolsia = competitor === 'polsia'
+  const title = isPolsia
+    ? `AINative Builder vs Polsia — Best Polsia Alternative 2026`
+    : `AINative Builder vs ${data.displayName} - Best Alternative 2026`
+  const description = isPolsia
+    ? `Is Polsia legit? See Polsia pricing, reviews, and why AINative Builder is the best Polsia alternative. Builder builds a real app first, then runs it autonomously on primitives you own.`
+    : `Compare AINative Builder vs ${data.displayName}. AINative offers multi-model AI (Claude, Qwen, Gemma, DeepSeek), built-in AX optimization, automatic SEO, and open-source code — features ${data.displayName} doesn't provide.`
+
+  const keywords = isPolsia
+    ? [
+        'polsia alternative',
+        'is polsia legit',
+        'polsia pricing',
+        'polsia cost',
+        'polsia ai reviews',
+        'polsia competitor',
+        'AINative vs Polsia',
+        'best polsia alternative 2026',
+      ]
+    : [
+        `${competitor} alternative`,
+        `${data.displayName} alternative`,
+        `is ${competitor} worth it`,
+        `${competitor} pricing`,
+        `${competitor} reviews`,
+        `AINative vs ${data.displayName}`,
+        'best AI app builder 2026',
+        'AI UI generator alternative',
+      ]
 
   return {
     title,
     description,
-    keywords: [
-      `${competitor} alternative`,
-      `${data.displayName} alternative`,
-      `AINative vs ${data.displayName}`,
-      'best AI app builder 2026',
-      'AI UI generator alternative',
-    ],
+    keywords,
     openGraph: {
       title,
       description,
@@ -219,30 +277,79 @@ export default async function CompetitorPage({ params }: PageProps) {
   const companyFaq = [
     {
       '@type': 'Question',
-      name: `What is the difference between AINative Builder and ${data.displayName}?`,
+      name: `Is Polsia legit?`,
       acceptedAnswer: {
         '@type': 'Answer',
-        text: `${data.displayName} runs your company autonomously, but you have to bring the product. AINative Builder BUILDS the company first — a real, production-ready app on a shareable URL plus the operating business systems (CRM via ZeroPipeline, billing via ZeroInvoice, helpdesk via ServiceOS, voice via ZeroVoice) — and THEN runs it on a nightly autonomous loop. You watch every artifact get composed live and you own 100% of what is built.`,
+        text: `Yes, Polsia is a real company with reported $12.56M ARR and ~19,900 paying customers. It provides autonomous AI agents that operate business workflows. However, Polsia is a closed, client-rendered black box: no llms.txt, no agents.txt, no way to inspect or own the underlying system. If you need AI that both BUILDS your product and RUNS it on open primitives you own, AINative Builder is the stronger choice.`,
       },
     },
     {
       '@type': 'Question',
-      name: `Is AINative Builder a good ${data.displayName} alternative?`,
+      name: `What is Polsia pricing / how much does Polsia cost?`,
       acceptedAnswer: {
         '@type': 'Answer',
-        text: `Yes. If you want an AI that both builds AND runs your company on real, open primitives you own — not a closed, proprietary agent — AINative Builder is the stronger choice. It's agent-native (llms.txt, agents.txt, crawlable pages), whereas ${data.displayName} is a client-rendered app with no agent files, invisible to LLMs and crawlers.`,
+        text: `Polsia's pricing is subscription-based but not publicly listed on their website. AINative Builder costs $49/month (72-hour trial available) and covers building a real production app plus autonomous company operations — ZeroDB, ZeroPipeline, ZeroInvoice, ServiceOS, and ZeroVoice — all on primitives you own and can inspect.`,
       },
     },
     {
       '@type': 'Question',
-      name: `Does ${data.displayName} build real production-ready apps?`,
+      name: `What do Polsia AI reviews say?`,
       acceptedAnswer: {
         '@type': 'Answer',
-        text: `${data.displayName} focuses on operating a company with autonomous agents. AINative Builder generates a real, idea-specific app deployed to a durable, shareable URL, plus real business systems backed by AINative products — not mockups.`,
+        text: `Polsia is recognised for running autonomous company operations, but reviews consistently note it is a client-rendered SPA with no agent files (no llms.txt/agents.txt/robots.txt), making it invisible to LLMs and crawlers. Users do not own the underlying primitives and cannot extend or audit the system. AINative Builder is agent-native from the start: SSR pages, llms.txt, agents.txt, and JSON-LD structured data.`,
+      },
+    },
+    {
+      '@type': 'Question',
+      name: `What is the best Polsia alternative?`,
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: `AINative Builder is the best Polsia alternative for founders who want AI that both builds AND runs their company. Builder generates a real, idea-specific production app on a shareable URL first, then operates it nightly via autonomous agents — using ZeroDB, ZeroPipeline, ZeroInvoice, ServiceOS, and ZeroVoice. Unlike Polsia's closed CSR black box, every artifact is visible, owned by you, and built on open primitives.`,
+      },
+    },
+    {
+      '@type': 'Question',
+      name: `What is the difference between AINative Builder and Polsia?`,
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: `Polsia runs your company autonomously, but you have to bring the product. AINative Builder BUILDS the company first — a real, production-ready app on a shareable URL plus business systems (CRM via ZeroPipeline, billing via ZeroInvoice, helpdesk via ServiceOS, voice via ZeroVoice) — and THEN runs it on a nightly autonomous loop. You watch every artifact get composed live and you own 100% of what is built.`,
       },
     },
   ]
+
   const builderFaq = [
+    {
+      '@type': 'Question',
+      name: `Is ${data.displayName} worth it?`,
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: `${data.displayName} is worth it for rapid UI prototyping, but it is limited to ${data.models} with no AX optimization, no automatic SEO with structured data, and no open-source code export. If you need multi-model flexibility, agent-optimized output, and crawlable SEO-ready pages, AINative Builder is a better value at $49/month.`,
+      },
+    },
+    {
+      '@type': 'Question',
+      name: `What is ${data.displayName} pricing?`,
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: `${data.pricingDetail}`,
+      },
+    },
+    {
+      '@type': 'Question',
+      name: `What do ${data.displayName} reviews say?`,
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: `${data.reviewContext} AINative Builder addresses all these gaps: multi-model AI, AX scoring for agent accessibility, automatic JSON-LD structured data, and open-source codebase.`,
+      },
+    },
+    {
+      '@type': 'Question',
+      name: `What is the best ${data.displayName} alternative?`,
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: `AINative Builder is the best ${data.displayName} alternative for developers who need multi-model flexibility (Claude, Qwen, DeepSeek, Gemma), agent-optimized output (AX scoring), automatic SEO with JSON-LD structured data, and open-source code. It starts with a 72-hour trial, then $49/month.`,
+      },
+    },
     {
       '@type': 'Question',
       name: `What is the difference between AINative Builder and ${data.displayName}?`,
@@ -251,27 +358,36 @@ export default async function CompetitorPage({ params }: PageProps) {
         text: `AINative Builder supports multiple AI models including Claude, Qwen, Gemma, and DeepSeek, while ${data.displayName} uses ${data.models}. AINative also includes built-in AX (Agent Experience) optimization and automatic SEO with structured data — features not available in ${data.displayName}.`,
       },
     },
-    {
-      '@type': 'Question',
-      name: `Is AINative Builder a good ${data.displayName} alternative?`,
-      acceptedAnswer: {
-        '@type': 'Answer',
-        text: `Yes. AINative Builder is a strong alternative to ${data.displayName} for developers who need multi-model flexibility, agent-optimized output, automatic SEO, and open-source access. It starts with a 7-day trial on the Hobbyist plan, with professional plans from $49/mo.`,
-      },
-    },
-    {
-      '@type': 'Question',
-      name: `Does AINative Builder support the same features as ${data.displayName}?`,
-      acceptedAnswer: {
-        '@type': 'Answer',
-        text: `AINative Builder supports all core features of ${data.displayName} such as real-time streaming and React component generation, and adds unique capabilities: multi-model AI selection, AX scoring for agent accessibility, automatic JSON-LD structured data, and an open-source codebase.`,
-      },
-    },
   ]
+
+  const faqItems = data.kind === 'company' ? companyFaq : builderFaq
+
   const faqJsonLd = {
     '@context': 'https://schema.org',
     '@type': 'FAQPage',
-    mainEntity: data.kind === 'company' ? companyFaq : builderFaq,
+    mainEntity: faqItems,
+  }
+
+  const softwareJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: 'AINative Builder',
+    applicationCategory: 'DeveloperApplication',
+    operatingSystem: 'Web',
+    url: 'https://builder.ainative.studio',
+    description:
+      'AI-powered app builder with multi-model AI, AX optimization, automatic SEO, and open-source code. Build and run a real company from an idea.',
+    offers: {
+      '@type': 'Offer',
+      price: '49',
+      priceCurrency: 'USD',
+      priceSpecification: {
+        '@type': 'UnitPriceSpecification',
+        price: '49',
+        priceCurrency: 'USD',
+        unitText: 'MONTH',
+      },
+    },
   }
 
   return (
@@ -280,23 +396,31 @@ export default async function CompetitorPage({ params }: PageProps) {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }}
       />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(softwareJsonLd) }}
+      />
       <AppHeader />
 
       <main>
-        {/* Hero */}
+        {/* Hero — answer-shaped, direct answer at the top for AEO */}
         <section className="container mx-auto px-4 py-16 text-center max-w-4xl">
           <Badge variant="secondary" className="mb-4">
             Comparison
           </Badge>
           <h1 className="text-4xl md:text-5xl font-bold mb-6 leading-tight">
-            AINative Builder vs {data.displayName}: Why developers are switching
+            AINative Builder vs {data.displayName}
           </h1>
+          {/* Direct answer — one sentence, above the fold, for featured-snippet capture */}
+          <p className="text-lg font-medium text-foreground mb-4 max-w-3xl mx-auto border-l-4 border-primary pl-4 text-left">
+            {data.heroAnswer}
+          </p>
           <p className="text-xl text-muted-foreground mb-8 max-w-2xl mx-auto">
             Multi-model AI, built-in agent optimization, automatic SEO, and open-source code.
             See how AINative Builder compares to {data.displayName}.
           </p>
           <Button asChild size="lg">
-            <Link href="/">Try AINative Builder Free</Link>
+            <Link href="/build">Try AINative Builder Free</Link>
           </Button>
         </section>
 
@@ -347,13 +471,13 @@ export default async function CompetitorPage({ params }: PageProps) {
           </div>
         </section>
 
-        {/* FAQ Section */}
+        {/* FAQ Section — structured for FAQPage JSON-LD and featured-snippet capture */}
         <section className="container mx-auto px-4 pb-16 max-w-3xl">
           <h2 className="text-2xl font-bold mb-8 text-center">
             Frequently Asked Questions
           </h2>
           <div className="space-y-6">
-            {(faqJsonLd.mainEntity as Array<{ '@type': string; name: string; acceptedAnswer: { '@type': string; text: string } }>).map((item) => (
+            {(faqItems as Array<{ '@type': string; name: string; acceptedAnswer: { '@type': string; text: string } }>).map((item) => (
               <div key={item.name} className="border rounded-lg p-6">
                 <h3 className="font-semibold text-lg mb-3">{item.name}</h3>
                 <p className="text-muted-foreground leading-relaxed">
@@ -371,11 +495,11 @@ export default async function CompetitorPage({ params }: PageProps) {
               Switch from {data.displayName} today
             </h2>
             <p className="text-muted-foreground mb-8">
-              Start your 7-day trial on the Hobbyist plan. Build production-ready React apps
-              with multi-model AI and AX optimization.
+              Start your 72-hour trial. Build a production-ready app and business system
+              from a single idea — with multi-model AI and AX optimization.
             </p>
             <Button asChild size="lg">
-              <Link href="/">Try AINative Builder Free</Link>
+              <Link href="/build">Start Building Free</Link>
             </Button>
           </div>
         </section>
