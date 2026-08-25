@@ -8,6 +8,7 @@ import { useBuild } from '@/contexts/build-context'
 import type { Screen } from '@/lib/build/state'
 import { trackEvent } from '@/components/analytics/google-analytics'
 import { trackMeta } from '@/components/analytics/meta-pixel'
+import { migrateGuestWork } from '@/lib/build/guest-migration'
 
 function BrandPanel() {
   return (
@@ -67,12 +68,23 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
       // Sign in (both signup + login) via the core-backed next-auth credentials provider.
       const result = await signIn('credentials', { email, password, redirect: false })
       if (result?.error) { setError('Wrong email or password.'); setBusy(false); return }
+      // Guest → real migration (#49): re-key any in-progress guest company built
+      // before this sign-in to the now-authenticated account so no work is lost.
+      // Best-effort — never blocks landing the founder back on their build.
+      await migrateGuestWork(state.appSub).catch(() => {})
       afterAuth()
     } catch {
       setError('Network error — try again.')
       setBusy(false)
     }
   }
+
+  // "Sign in with AINative" (#49) — starts the OAuth2.1/PKCE flow. The route
+  // mints PKCE + state, stashes them in httpOnly cookies, and 302s to core's
+  // /oauth/authorize; the callback establishes the session. A full navigation
+  // (not fetch) is required so the browser follows the redirect chain and the
+  // cookies are set on the top-level document.
+  const oauth = () => { window.location.href = '/api/auth/ainative/authorize' }
 
   return (
     <div className="modernist m-auth">
@@ -97,6 +109,14 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
         <button className="btn-primary" data-testid="auth-submit" onClick={submit} disabled={busy}>
           {busy ? 'Working…' : `${copy.cta} →`}
         </button>
+        {(mode === 'login' || mode === 'signup') && (
+          <>
+            <div className="m-auth-or m-mono"><span>or</span></div>
+            <button className="btn-secondary" data-testid="auth-oauth-ainative" onClick={oauth} disabled={busy}>
+              Continue with AINative
+            </button>
+          </>
+        )}
         <div className="m-auth-links m-mono">
           {mode === 'login' && <><button className="btn-ghost" onClick={() => go('forgot')}>Forgot password?</button><button className="btn-ghost" onClick={() => go('signup')}>Create account</button></>}
           {mode === 'signup' && <button className="btn-ghost" onClick={() => go('login')}>Already have an account? Log in</button>}
