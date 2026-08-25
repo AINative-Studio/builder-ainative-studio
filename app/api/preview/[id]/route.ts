@@ -598,21 +598,34 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
     _compiled = _compiled.replace(/^import\\s+.*$/gm, '').replace(/^export\\s+(default\\s+)?/gm, '');
     // Inject compiled JS as a new script tag — runs in GLOBAL scope
     var _s = document.createElement('script');
-    // ErrorBoundary bare-identifier fix (builder#79): the ErrorBoundary CLASS is
-    // declared in a DIFFERENT <script> block. A class declaration is script-scoped
-    // and, unlike function/var, is NOT hoisted onto window — so window.ErrorBoundary
-    // exists but a BARE 'ErrorBoundary' does not resolve inside THIS compiled-app
-    // script. If codegen emits '<ErrorBoundary>' (or any bare reference), the app
-    // throws "ErrorBoundary is not defined" (tangle / bH0a0UpzRuKBVpy4TPngr). Prefix
-    // the compiled app with a real global 'var ErrorBoundary' bound to the class on
-    // window (passthrough fallback if missing) so the bare identifier resolves in the
-    // same script scope React/ReactDOM do. 'var' (not let/const) keeps it a benign
-    // global and avoids a TDZ/redeclare crash if the app also declares its own.
-    // Only add the alias if the app doesn't declare its own ErrorBoundary — a
-    // 'var' before an app-level 'class/function/const ErrorBoundary' in the same
-    // script would be a redeclare SyntaxError.
+    // ErrorBoundary resolution (builder#79 + huddle/MbPLU9LmafdtRTQzsOn0R fix):
+    // The scaffold declares 'class ErrorBoundary' in its OWN text/babel block, which
+    // Babel-standalone compiles into the SAME shared global scope — so ErrorBoundary
+    // is ALREADY a top-level binding by the time this app script runs.
+    //
+    // The app is injected at TOP LEVEL (not wrapped) on purpose: the mount step later
+    // resolves the component by BARE identifier via new Function('return App'), which
+    // only sees top-level/global bindings — wrapping the app in an IIFE would hide its
+    // 'function App()' from that lookup. Keeping it top-level preserves that contract.
+    //
+    // Because we stay top-level, we must NEVER emit our own 'var/let/const/class
+    // ErrorBoundary': a second top-level declaration of a name the scaffold already
+    // declared is a fatal "Identifier 'ErrorBoundary' has already been declared"
+    // SyntaxError that blanks the ENTIRE preview. That is exactly what broke huddle —
+    // the app declares NO ErrorBoundary, so the old code injected 'var ErrorBoundary'
+    // which collided with the scaffold's class.
+    //
+    // Fix: only when the app REFERENCES a bare <ErrorBoundary> but does NOT declare
+    // one, alias it via a NON-declaring assignment to the global (globalThis.
+    // ErrorBoundary = globalThis.ErrorBoundary). Since the scaffold's class is already
+    // global, this is a harmless self-assign that guarantees the bare identifier
+    // resolves, with zero redeclaration risk. If the app declares its own, we inject
+    // nothing.
     var _appDeclaresEB = /\\b(?:class|function|const|let|var)\\s+ErrorBoundary\\b/.test(_compiled);
-    var _ebPrefix = _appDeclaresEB ? '' : 'var ErrorBoundary = (typeof window !== "undefined" && window.ErrorBoundary) ? window.ErrorBoundary : function(p){ return p.children; };\\n';
+    var _usesEB = /<ErrorBoundary[\\s/>]/.test(_compiled) || /\\bErrorBoundary\\b/.test(_compiled);
+    var _ebPrefix = (!_appDeclaresEB && _usesEB)
+      ? 'if (typeof globalThis !== "undefined" && typeof globalThis.ErrorBoundary === "undefined") { globalThis.ErrorBoundary = function(p){ return p.children; }; }\\n'
+      : '';
     _s.textContent = _ebPrefix + _compiled + ';\\nif(typeof ${detectedComponentName}!=="undefined")window.${detectedComponentName}=${detectedComponentName};';
     document.body.appendChild(_s);
     console.log('[Preview] ✓ Compiled and injected: ${detectedComponentName}, exists:', typeof window['${detectedComponentName}']);
