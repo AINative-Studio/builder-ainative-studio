@@ -1,7 +1,13 @@
 'use client'
 
 /**
- * Account (#227 · #251 · #253) — profile, plan, and management surface.
+ * Account (#227 · #251 · #253 · #50) — profile, plan, and management surface.
+ *
+ * #50: Honest guest vs authenticated states.
+ *   GUEST — shows a clear "temporary session" prompt with a "Sign up / Log in"
+ *   primary CTA; hides Sign out, Sign out all, 2FA, and security sections that
+ *   don't apply to an anonymous session.
+ *   AUTHENTICATED — shows real identity (name/email) and a working Sign out.
  *
  * Reads the signed-in founder's real identity + active plan (no hardcoded mock),
  * links to the "my companies" index and the real Stripe billing portal, so an
@@ -14,6 +20,7 @@ import { useState } from 'react'
 import { useBuild } from '@/contexts/build-context'
 import { useSession, signOut } from 'next-auth/react'
 import { planUnlocks, type ActivePlan } from '@/lib/build/state'
+import { isGuestSession, getDisplayName, getDisplayEmail } from '@/lib/build/account-session'
 
 const PLAN_LABEL: Record<ActivePlan, string> = {
   '': 'Free', pro: 'Pro', business: 'Business', enterprise: 'Enterprise', cody_vcto: 'Cody · Virtual CTO',
@@ -29,11 +36,11 @@ const METERS = [
 
 export function Account() {
   const { state, dispatch } = useBuild()
-  const { data: session, status } = useSession()
-  const signedIn = status === 'authenticated'
-  const email = (session?.user?.email as string | undefined) || ''
-  const name = (session?.user?.name as string | undefined) || (email ? email.split('@')[0] : 'Guest')
-  const initials = (name || email || 'GU').slice(0, 2).toUpperCase()
+  const { data: session } = useSession()
+  const isGuest = isGuestSession(session)
+  const displayName = getDisplayName(session)
+  const displayEmail = getDisplayEmail(session)
+  const initials = isGuest ? 'GU' : (displayName || displayEmail || 'GU').slice(0, 2).toUpperCase()
   const activePlan = state.activePlan
   const gates = planUnlocks(activePlan)
   const [portalBusy, setPortalBusy] = useState(false)
@@ -53,21 +60,104 @@ export function Account() {
     setPortalBusy(false)
   }
 
+  // ── GUEST STATE ───────────────────────────────────────────────────────────
+  if (isGuest) {
+    return (
+      <div className="modernist m-account">
+        <header className="m-account-head">
+          <button className="m-back" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'ws' })}>← Back to app</button>
+          <h1 className="m-artifact m-account-h">Account</h1>
+          <button
+            className="btn-primary"
+            data-testid="account-guest-signup-cta"
+            onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'signup' })}
+          >
+            Sign up / Log in
+          </button>
+        </header>
+
+        <section className="m-account-profile">
+          <div className="m-avatar m-mono">{initials}</div>
+          <div>
+            <div className="m-profile-name">Guest Session</div>
+            <div className="m-mono m-profile-email" data-testid="account-guest-email-line">Temporary — not saved</div>
+          </div>
+          <span className="m-chip m-profile-plan" data-testid="account-plan">Free</span>
+        </section>
+
+        {/* Guest prompt — explain value of creating an account. */}
+        <section className="m-account-sec" data-testid="account-guest-prompt">
+          <h2 className="m-mono m-account-sec-h">You're in a temporary guest session</h2>
+          <p className="m-mono m-muted" style={{ padding: '0 0 0.75rem' }}>
+            Your companies, custom domain, and nightly loop don't persist yet.
+            Create a free account to keep everything — no card required.
+          </p>
+          <div className="m-sec-rows">
+            <div className="m-sec-row">
+              <span>Save your work</span>
+              <button
+                className="btn-primary"
+                data-testid="account-guest-create-account"
+                onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'signup' })}
+              >
+                Create account →
+              </button>
+            </div>
+            <div className="m-sec-row">
+              <span>Already have an account?</span>
+              <button
+                className="btn-secondary"
+                data-testid="account-guest-login"
+                onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'login' })}
+              >
+                Log in →
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {/* Plan info — show upgrade path but not billing management. */}
+        <section className="m-account-sec">
+          <h2 className="m-mono m-account-sec-h">Plans</h2>
+          <div className="m-sec-rows">
+            <div className="m-sec-row">
+              <span>Current</span>
+              <span className="m-chip">Free (guest)</span>
+            </div>
+            <div className="m-sec-row">
+              <span>Unlock</span>
+              <span className="m-mono m-muted">Custom domain, nightly loop &amp; swarm on paid plans.</span>
+            </div>
+            <div className="m-sec-row">
+              <span>Pricing</span>
+              <button className="btn-ghost" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'pricing' })}>See plans →</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    )
+  }
+
+  // ── AUTHENTICATED STATE ───────────────────────────────────────────────────
   return (
     <div className="modernist m-account">
       <header className="m-account-head">
         <button className="m-back" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'ws' })}>← Back to app</button>
         <h1 className="m-artifact m-account-h">Account</h1>
-        {signedIn
-          ? <button className="btn-ghost" onClick={() => signOut()}>Sign out</button>
-          : <button className="btn-ghost" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'login' })}>Log in</button>}
+        <button
+          className="btn-ghost"
+          data-testid="account-sign-out"
+          onClick={() => signOut()}
+        >
+          Sign out
+        </button>
       </header>
 
       <section className="m-account-profile">
         <div className="m-avatar m-mono">{initials}</div>
         <div>
-          <div className="m-profile-name">{name}</div>
-          <div className="m-mono m-profile-email">{email || 'Not signed in'}</div>
+          <div className="m-profile-name" data-testid="account-display-name">{displayName}</div>
+          <div className="m-mono m-profile-email" data-testid="account-display-email">{displayEmail || 'No email on record'}</div>
         </div>
         <span className="m-chip m-profile-plan" data-testid="account-plan">{PLAN_LABEL[activePlan]}</span>
       </section>
@@ -114,11 +204,20 @@ export function Account() {
         <p className="m-mono m-meter-reset">Resets in 12 days</p>
       </section>
 
-      <section className="m-account-sec">
+      <section className="m-account-sec" data-testid="account-security-section">
         <h2 className="m-mono m-account-sec-h">Security</h2>
         <div className="m-sec-rows">
           <div className="m-sec-row"><span>Two-factor authentication</span><span className="st is-done">Enabled</span></div>
-          <div className="m-sec-row"><span>Active sessions</span><button className="btn-ghost" onClick={() => signOut()}>Sign out all</button></div>
+          <div className="m-sec-row">
+            <span>Active sessions</span>
+            <button
+              className="btn-ghost"
+              data-testid="account-sign-out-all"
+              onClick={() => signOut()}
+            >
+              Sign out all
+            </button>
+          </div>
         </div>
       </section>
     </div>
