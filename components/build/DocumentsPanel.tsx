@@ -77,11 +77,23 @@ export function DocumentsPanel({
   idea,
   companyName,
   track,
+  brandTagline,
+  brandColor,
+  canExportDeck = false,
+  onExportUpgrade,
 }: {
   companyId: string
   idea?: string
   companyName?: string
   track?: 'app' | 'company'
+  /** Company brand tagline (#69) — themes the exported pitch deck's cover. */
+  brandTagline?: string
+  /** Company brand color as #RRGGBB (#69) — themes the exported pitch deck. */
+  brandColor?: string
+  /** True when the company is on a PAID plan, so the pitch-deck export is unlocked (#69). */
+  canExportDeck?: boolean
+  /** Called when a non-paid founder clicks Export — the parent opens the upgrade flow (#69). */
+  onExportUpgrade?: () => void
 }) {
   const [tab, setTab] = useState<Tab>('all')
   const [docs, setDocs] = useState<DocumentSummary[]>([])
@@ -91,6 +103,9 @@ export function DocumentsPanel({
   const [viewLoading, setViewLoading] = useState(false)
   const [generating, setGenerating] = useState<string | null>(null)
   const [genError, setGenError] = useState<string | null>(null)
+  // Pitch-deck export (#69) — a PAID deliverable generated from the company's artifacts.
+  const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
 
   const load = useCallback(() => {
     let alive = true
@@ -149,6 +164,58 @@ export function DocumentsPanel({
     }
   }
 
+  // Export the founder pitch deck (#69) — POST the company + brand, receive a real
+  // .pptx file, and trigger a browser download. Paid-gated: a non-paid founder is
+  // routed to the upgrade flow instead (the server also enforces the gate → 402).
+  const exportDeck = async () => {
+    if (!canExportDeck) {
+      onExportUpgrade?.()
+      return
+    }
+    setExportError(null)
+    setExporting(true)
+    try {
+      const res = await fetch('/api/build/deck', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          companyId,
+          idea,
+          companyName,
+          tagline: brandTagline,
+          color: brandColor,
+          track,
+          format: 'pptx',
+        }),
+      })
+      if (res.status === 402) {
+        setExportError('Pitch-deck export is a paid deliverable.')
+        onExportUpgrade?.()
+        return
+      }
+      if (!res.ok) {
+        setExportError('Could not export the deck right now — try again shortly.')
+        return
+      }
+      const blob = await res.blob()
+      const cd = res.headers.get('Content-Disposition') || ''
+      const nameMatch = cd.match(/filename="([^"]+)"/)
+      const fileName = nameMatch?.[1] || 'pitch-deck.pptx'
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = fileName
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch {
+      setExportError('Connection hiccup — try exporting again.')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   // Which starter docs have not been generated yet (by type), for the empty/build state.
   const existingTypes = new Set(docs.map((d) => d.type))
   const missingStarters = STARTER_DOCS.filter((s) => !existingTypes.has(s.type))
@@ -166,6 +233,33 @@ export function DocumentsPanel({
       <div className="m-mono m-live-card-h">
         <span className="m-glyph">◇</span> Documents
       </div>
+
+      {/* Export founder pitch deck (#69) — a PAID deliverable composed from the
+          company's artifacts (thesis, roadmap, mission, market) into a standard-VC,
+          on-brand .pptx. Non-paid founders see an "Upgrade to export" affordance. */}
+      <div className="m-infra-btns" data-testid="deck-export">
+        <button
+          className="btn-secondary"
+          data-testid="deck-export-btn"
+          disabled={exporting}
+          aria-label={canExportDeck ? 'Export pitch deck' : 'Upgrade to export pitch deck'}
+          onClick={exportDeck}
+        >
+          {exporting
+            ? 'Building deck…'
+            : canExportDeck
+              ? 'Export pitch deck'
+              : 'Export pitch deck (paid)'}
+        </button>
+        {!canExportDeck && (
+          <span className="m-mono m-task-meta" data-testid="deck-export-locked">
+            Paid — a slick VC deck from your company.
+          </span>
+        )}
+      </div>
+      {exportError && (
+        <p className="m-mono m-ver-status is-error" data-testid="deck-export-error">{exportError}</p>
+      )}
 
       {/* Documents vs Reports tabs (#64 req 2). */}
       <div className="m-doc-tabs" data-testid="documents-tabs" role="tablist">
