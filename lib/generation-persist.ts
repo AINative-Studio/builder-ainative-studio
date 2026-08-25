@@ -66,12 +66,12 @@ export async function persistGeneration(
     model: input.model,
     codeLength: input.code.length,
     category: 'general',
-    // Surface every successful generation that PASSES validation to the showcase
-    // (all applications, regardless of size — but not broken ones). Requiring
-    // `valid` keeps apps that crash at render (undefined refs, syntax errors,
-    // object-as-child, etc.) out of the public gallery, while still surfacing
-    // small valid apps. Degraded/errored builds are held back too. (builder#191)
-    isShowcase: input.status === 'success' && input.valid,
+    // Surface only successful, validated, substantial generations to the showcase.
+    // The showcase quality gate (isQualityApp) also requires >= 2000 chars, so
+    // flagging short code as isShowcase here is misleading — it would still be
+    // filtered out. Aligning both thresholds keeps the intent consistent.
+    // Degraded/errored builds are held back regardless of size. (builder#89/#58)
+    isShowcase: input.status === 'success' && input.valid && input.code.length >= 2000,
   }).then(
     (ok): PersistResult => ({ saved: ok, reason: ok ? 'saved' : 'error' }),
     (): PersistResult => ({ saved: false, reason: 'error' }),

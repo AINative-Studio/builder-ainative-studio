@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isQualityApp } from '@/app/api/showcase/route'
+import { isQualityApp } from '@/lib/showcase-quality'
 
 /**
  * The showcase list quality gate moved server-side so generatedCode can be

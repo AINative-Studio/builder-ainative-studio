@@ -4,6 +4,78 @@
  */
 
 import { describe, it, expect, beforeAll, vi } from 'vitest'
+
+// ---------------------------------------------------------------------------
+// Mock the Anthropic SDK so these unit tests do NOT make real API calls.
+// The error-handling tests temporarily set ANTHROPIC_API_KEY = 'invalid-key';
+// the mock reads the env var and throws accordingly to preserve that behaviour.
+//
+// Ensure a placeholder key exists so the beforeAll guard passes even in CI
+// environments where no real key is configured.
+// ---------------------------------------------------------------------------
+vi.hoisted(() => {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    process.env.ANTHROPIC_API_KEY = 'sk-test-mock-key-for-unit-tests'
+  }
+})
+const fakeDesignText = 'Component Type: Button\nLayout: Single button\nColor Scheme: Blue solid\nFeatures: Click handler\nData: None required'
+const fakeCodeText = 'export default function Button() {\n  return <button className="bg-blue-500 text-white px-4 py-2 rounded">Click Me</button>\n}'
+const fakeValidationText = 'STATUS: PASS\nThe component passes all quality checks. Solid colors used. Accessibility attributes present.'
+
+vi.mock('@anthropic-ai/sdk', () => {
+  const createFn = vi.fn(async (opts: any) => {
+    const apiKey = process.env.ANTHROPIC_API_KEY || ''
+    if (!apiKey || apiKey === 'invalid-key') {
+      const err: any = new Error('400 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}')
+      err.status = 400
+      throw err
+    }
+
+    // Decide which text to return based on the prompt/tool presence.
+    const hasTools = opts.tools && opts.tools.length > 0
+    let outputText = fakeDesignText
+
+    // Validation prompts typically mention "validate" or "quality".
+    const userContent = (opts.messages || [])
+      .map((m: any) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)))
+      .join(' ')
+      .toLowerCase()
+
+    if (userContent.includes('validate') || userContent.includes('quality check')) {
+      outputText = fakeValidationText
+    } else if (hasTools) {
+      outputText = fakeCodeText
+    }
+
+    const content: any[] = hasTools
+      ? [{ type: 'tool_use', id: 'tool-1', name: 'generate_react_component', input: { code: fakeCodeText } }]
+      : [{ type: 'text', text: outputText }]
+
+    return {
+      id: 'msg_mock',
+      type: 'message',
+      role: 'assistant',
+      content,
+      model: opts.model || 'claude-mock',
+      stop_reason: 'end_turn',
+      stop_sequence: null,
+      usage: { input_tokens: 500, output_tokens: 150, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+    }
+  })
+
+  const MockAnthropic = vi.fn(() => ({
+    messages: { create: createFn },
+  }))
+
+  return { default: MockAnthropic }
+})
+
+// Mock zeromemory so tests do not fire external network calls.
+vi.mock('@/lib/agent/zeromemory', () => ({
+  recallPastPerformance: vi.fn(async () => ''),
+  storeGenerationMemory: vi.fn(async () => {}),
+}))
+
 import { runDesignSubagent, runCodeSubagent, runValidationSubagent, runOrchestratorAgent } from '@/lib/agent/subagents'
 import { PROFESSIONAL_SYSTEM_PROMPT } from '@/lib/professional-prompt'
 
