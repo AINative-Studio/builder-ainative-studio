@@ -8,7 +8,7 @@
  *  - JSON-LD shapes match schema.org spec for FAQPage + Product/Offer
  */
 
-import { PRICING_TIERS } from '@/app/pricing/page'
+import { PRICING_TIERS } from '@/lib/build/pricing-tiers'
 
 describe('PRICING_TIERS', () => {
   it('contains exactly three tiers: free, pro, business', () => {
