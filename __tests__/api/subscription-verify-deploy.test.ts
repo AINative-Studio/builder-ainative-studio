@@ -39,12 +39,26 @@ vi.mock('@/lib/build/conversions', () => ({
   reportConversion: vi.fn(async () => {}),
   gclidFromRequest: vi.fn(() => null),
 }))
+vi.mock('@/lib/build/meta-capi', () => ({
+  reportMetaConversion: vi.fn(async () => {}),
+  fbcFromRequest: vi.fn(() => undefined),
+  fbpFromRequest: vi.fn(() => undefined),
+}))
+vi.mock('@/lib/build/chat-store', () => ({
+  deriveOwnerKey: vi.fn(() => 'guest:anon'),
+}))
+vi.mock('@/lib/build/referral', () => ({
+  creditReferrerOnSubscribe: vi.fn(async () => 0),
+}))
 vi.mock('@/app/(auth)/auth', () => ({ auth: vi.fn(async () => null) }))
 
 import { POST } from '@/app/api/build/subscription/verify/route'
 
 function req(body: unknown) {
-  return { json: async () => body } as any
+  return {
+    json: async () => body,
+    headers: { get: (_: string) => null },
+  } as any
 }
 
 // The route calls core's pricing/verify via global fetch. Control paid vs not here.

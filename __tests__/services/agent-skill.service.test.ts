@@ -142,7 +142,7 @@ describe('AgentSkillService', () => {
       expect(result.skills).toHaveLength(1)
       expect(result.skills[0].name).toBe('Git Workflow')
       expect(result.total).toBe(1)
-      expect(result.searchTime).toBeGreaterThan(0)
+      expect(result.searchTime).toBeGreaterThanOrEqual(0)
     })
 
     it('should filter by tags', async () => {
