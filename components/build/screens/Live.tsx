@@ -25,6 +25,7 @@ import { OnboardingVideo } from '@/components/build/OnboardingVideo'
 import { DocumentsPanel } from '@/components/build/DocumentsPanel'
 import { MediaPanel } from '@/components/build/MediaPanel'
 import { AutoModePanel } from '@/components/build/AutoModePanel'
+import { WebsitePanel } from '@/components/build/WebsitePanel'
 
 /** Display label for an active paid tier (#241). */
 const PLAN_LABEL: Record<ActivePlan, string> = {
@@ -658,8 +659,9 @@ export function Live() {
               >
                 {provision.provisioned ? '✓ Cloud provisioned' : provision.busy ? 'Provisioning…' : 'Provision cloud'}
               </button>
-              {/* Not wired yet (#256): disabled + labeled so a customer never clicks a dead button. */}
-              <button className="btn-secondary is-soon" disabled title="Coming soon">Redeploy · soon</button>
+              {/* Redeploy moved into the Website & app panel (#63) — the disabled
+                  "Redeploy · soon" placeholder is now a real, health-checked redeploy
+                  of the current version. See <WebsitePanel /> below. */}
             </div>
             {provision.provisioned && (
               <p className="m-mono m-metric-note">Own ZeroDB project · Pipeline & Invoices read live data. Helpdesk & Voice still simulated.</p>
@@ -671,6 +673,20 @@ export function Live() {
               confirmation + honest rolling-back → validating → live status. A new,
               distinct section — does not touch #67 systems / #55 Tasks / #52 chat. */}
           <VersionsPanel companyId={companyId} />
+          {/* Website / App management (#63) — Redeploy the current version
+              (health-checked "redeploying → validating → live", finishing the old
+              disabled "Redeploy · soon" placeholder), runtime Secrets (view/add/
+              edit/delete masked env vars, owner-only), and Database Download (export
+              the company's OWN ZeroDB data as JSON/CSV — "you own 100%"). Owner-only
+              ops are gated on a paid plan. A NEW, distinct section — does not touch
+              #67 systems / #52 chat / #55 Tasks / #62 Versions / #64 Documents / #65
+              masthead / #51 video / #54 media / #58 auto-mode. Manage Domain (#53),
+              Versions (#62) and Tasks (#55) keep their own panels — linked, not duplicated. */}
+          <WebsitePanel
+            companyId={companyId}
+            canManage={signedIn && !!activePlan}
+            onRequireUpgrade={goUpgrade}
+          />
           {/* Persistent Documents library (#64) — the company's durable Documents
               (Research / Product Roadmap / Mission / Market Research) + time-series
               Reports (the daily/nightly operational report). Persisted per

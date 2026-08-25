@@ -798,3 +798,252 @@ export async function createServiceDomain(
     return {}
   }
 }
+
+// ---------------------------------------------------------------------------
+// Redeploy the CURRENT version (#63.A) — rebuild/re-run the live service so a
+// change takes effect. Distinct from the #62 rollback (which redeploys a PRIOR
+// deployment): here we redeploy the deployment that is CURRENTLY live, i.e. a
+// no-arg "push the button, run it again" on the current version.
+//
+// Implementation: read the service's live deployment (the newest SUCCESS via
+// listDeployments+markCurrentDeployment) and deploymentRedeploy IT. This reuses
+// the exact same, already-live-tested Railway mutation as the rollback path, so
+// the "redeploying → validating → live" health-checked lifecycle is identical.
+//
+// Cost/safety: a redeploy re-runs an EXISTING service — it does NOT create a new
+// billable service. Still inert (reason:'disabled') when Railway isn't configured.
+// ---------------------------------------------------------------------------
+
+export interface RedeployCurrentResult {
+  ok: boolean
+  /** The (re)deployment id Railway returned. */
+  deploymentId?: string
+  /** The deployment id that was live and got redeployed. */
+  fromDeploymentId?: string
+  reason?: string
+}
+
+/**
+ * Redeploy the current live version of a company's Railway service (#63.A).
+ *
+ * Finds the currently-serving deployment (newest SUCCESS) and triggers a redeploy
+ * of it. Best-effort + cost-safe: inert when disabled; structured result otherwise.
+ * The caller (/api/build/redeploy) owns the confirmation + health-checked
+ * "redeploying → validating → live" status via checkDeployHealth on the served URL.
+ *
+ * @param serviceId     the company's dedicated Railway service id.
+ * @param environmentId the environment to read/redeploy in (defaults to configured).
+ */
+export async function redeployCurrent(
+  serviceId: string,
+  environmentId?: string,
+): Promise<RedeployCurrentResult> {
+  if (!railwayDeployEnabled()) return { ok: false, reason: 'disabled' }
+  if (!serviceId) return { ok: false, reason: 'no_service' }
+
+  const list = await listDeployments(serviceId, environmentId).catch(
+    () => ({ ok: false } as DeploymentsResult),
+  )
+  if (!list.ok || !Array.isArray(list.deployments) || list.deployments.length === 0) {
+    return { ok: false, reason: list.reason || 'no_deployments' }
+  }
+  // The live one is the deployment markCurrentDeployment flagged current; fall
+  // back to the newest completed one if none is flagged (defensive).
+  const live =
+    list.deployments.find((d) => d.current) ||
+    list.deployments.find((d) => d.status === 'live' || d.status === 'success')
+  if (!live?.id) return { ok: false, reason: 'no_live_deployment' }
+
+  const redeploy = await redeployDeployment(live.id)
+  if (!redeploy.ok) return { ok: false, reason: redeploy.reason || 'redeploy_failed' }
+  return {
+    ok: true,
+    deploymentId: redeploy.deploymentId || live.id,
+    fromDeploymentId: live.id,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Runtime secrets / service variables (#63.B) — view/add/edit/delete the env
+// vars the company's deployed app reads at runtime, persisted as Railway service
+// variables on the per-company service.
+//
+// Railway GraphQL surface:
+//   - variables(projectId, environmentId, serviceId) → { KEY: value, … }
+//   - variableUpsert(input:{ projectId, environmentId, serviceId, name, value })
+//   - variableDelete(input:{ projectId, environmentId, serviceId, name })
+//
+// SECURITY: values are secrets. This module NEVER logs a value; callers must mask
+// values before returning them to the browser (see maskSecretValue / maskSecrets).
+// Reserved platform variables (COMPANY_SLUG / ZERODB_PROJECT_ID, injected by
+// ensureCompanyService) are protected from edit/delete via isReservedSecretName.
+// ---------------------------------------------------------------------------
+
+/** Platform-managed variables the founder must NOT edit/delete via the UI. */
+const RESERVED_SECRET_NAMES = new Set(['COMPANY_SLUG', 'ZERODB_PROJECT_ID'])
+
+/** Is a variable name platform-reserved (injected by provisioning, not user-editable)? Pure. */
+export function isReservedSecretName(name: string): boolean {
+  return RESERVED_SECRET_NAMES.has(String(name || '').trim().toUpperCase())
+}
+
+/**
+ * Validate a secret/env-var NAME. Railway (and POSIX) env var names must be a
+ * letter/underscore followed by letters/digits/underscores. We also cap length.
+ * Pure — no network. Reserved names are still "valid" names; the route decides
+ * whether an edit of a reserved name is allowed (it is not).
+ */
+export function isValidSecretName(name: string): boolean {
+  const n = String(name || '').trim()
+  if (!n || n.length > 128) return false
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(n)
+}
+
+/**
+ * Mask a secret VALUE for display: reveal only the last few chars behind a fixed
+ * bullet run so the UI can show "•••••••• 1a2b" without ever shipping the secret.
+ * Short/empty values are fully masked. Pure — safe to log the RESULT (not the input).
+ */
+export function maskSecretValue(value: string, reveal = 4): string {
+  const v = String(value ?? '')
+  if (!v) return ''
+  const tail = v.length > reveal + 2 ? v.slice(-reveal) : ''
+  return tail ? `•••••••• ${tail}` : '••••••••'
+}
+
+/** A single runtime secret as surfaced to the UI — VALUE IS ALWAYS MASKED. */
+export interface MaskedSecret {
+  name: string
+  /** Masked value (never the plaintext). */
+  masked: string
+  /** True for platform-managed variables the UI must render read-only. */
+  reserved: boolean
+}
+
+/**
+ * Turn a raw { name: value } variable map into a masked, sorted list for the UI.
+ * NEVER returns plaintext values. Pure. Reserved variables are flagged so the UI
+ * can render them read-only rather than hiding the fact they exist.
+ */
+export function maskSecrets(vars: Record<string, string> | null | undefined): MaskedSecret[] {
+  const out: MaskedSecret[] = []
+  for (const [name, value] of Object.entries(vars || {})) {
+    out.push({ name, masked: maskSecretValue(String(value ?? '')), reserved: isReservedSecretName(name) })
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+export interface SecretsListResult {
+  ok: boolean
+  /** RAW variable map { name: value } — callers MUST mask before returning to a client. */
+  variables?: Record<string, string>
+  reason?: string
+}
+
+/**
+ * List a service's runtime variables (#63.B). Returns the RAW map; the caller is
+ * responsible for masking (maskSecrets) before it ever leaves the server. Inert
+ * (reason:'disabled') when Railway isn't configured.
+ */
+export async function listServiceVariables(
+  serviceId: string,
+  environmentId?: string,
+): Promise<SecretsListResult> {
+  if (!railwayDeployEnabled()) return { ok: false, reason: 'disabled' }
+  if (!serviceId) return { ok: false, reason: 'no_service' }
+  const envId = environmentId || companyEnvironmentId()
+  if (!envId) return { ok: false, reason: 'no_environment' }
+  try {
+    const data = await railwayQuery(
+      `query Variables($projectId: String!, $environmentId: String!, $serviceId: String!) {
+        variables(projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId)
+      }`,
+      { projectId: companyProjectId(), environmentId: envId, serviceId },
+      15000,
+    )
+    const vars = (data?.variables && typeof data.variables === 'object') ? data.variables : {}
+    return { ok: true, variables: vars as Record<string, string> }
+  } catch (e: any) {
+    return { ok: false, reason: String(e?.message || e).slice(0, 200) }
+  }
+}
+
+export interface SecretMutationResult {
+  ok: boolean
+  reason?: string
+}
+
+/**
+ * Add or update a runtime variable on a service (#63.B). Validates the name and
+ * refuses platform-reserved names. NEVER logs the value. Inert when disabled.
+ *
+ * @param name   the variable name (validated + reserved-checked here).
+ * @param value  the secret value (not logged, not returned).
+ */
+export async function upsertServiceVariable(
+  serviceId: string,
+  name: string,
+  value: string,
+  environmentId?: string,
+): Promise<SecretMutationResult> {
+  if (!railwayDeployEnabled()) return { ok: false, reason: 'disabled' }
+  if (!serviceId) return { ok: false, reason: 'no_service' }
+  if (!isValidSecretName(name)) return { ok: false, reason: 'bad_name' }
+  if (isReservedSecretName(name)) return { ok: false, reason: 'reserved' }
+  const envId = environmentId || companyEnvironmentId()
+  if (!envId) return { ok: false, reason: 'no_environment' }
+  try {
+    await railwayQuery(
+      `mutation VariableUpsert($input: VariableUpsertInput!) {
+        variableUpsert(input: $input)
+      }`,
+      {
+        input: {
+          projectId: companyProjectId(),
+          environmentId: envId,
+          serviceId,
+          name: String(name).trim(),
+          value: String(value ?? ''),
+        },
+      },
+    )
+    return { ok: true }
+  } catch (e: any) {
+    return { ok: false, reason: String(e?.message || e).slice(0, 200) }
+  }
+}
+
+/**
+ * Delete a runtime variable from a service (#63.B). Refuses platform-reserved
+ * names so provisioning-injected variables can't be removed. Inert when disabled.
+ */
+export async function deleteServiceVariable(
+  serviceId: string,
+  name: string,
+  environmentId?: string,
+): Promise<SecretMutationResult> {
+  if (!railwayDeployEnabled()) return { ok: false, reason: 'disabled' }
+  if (!serviceId) return { ok: false, reason: 'no_service' }
+  if (!isValidSecretName(name)) return { ok: false, reason: 'bad_name' }
+  if (isReservedSecretName(name)) return { ok: false, reason: 'reserved' }
+  const envId = environmentId || companyEnvironmentId()
+  if (!envId) return { ok: false, reason: 'no_environment' }
+  try {
+    await railwayQuery(
+      `mutation VariableDelete($input: VariableDeleteInput!) {
+        variableDelete(input: $input)
+      }`,
+      {
+        input: {
+          projectId: companyProjectId(),
+          environmentId: envId,
+          serviceId,
+          name: String(name).trim(),
+        },
+      },
+    )
+    return { ok: true }
+  } catch (e: any) {
+    return { ok: false, reason: String(e?.message || e).slice(0, 200) }
+  }
+}
