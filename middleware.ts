@@ -192,6 +192,17 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next()
     }
 
+    // SPA-internal screens reached via GOTO_SCREEN — thin redirect routes catch
+    // direct/deep links so they don't 404 or 307→login (#83). /account, /settings,
+    // /profile → account screen; /refer → Refer & Earn (#59). Allow anonymously so
+    // the redirect runs before the auth gate at /build.
+    if (
+      pathname === '/account' || pathname === '/settings' ||
+      pathname === '/profile' || pathname === '/refer'
+    ) {
+      return NextResponse.next()
+    }
+
     // Category landing pages (non-branded SEO/AEO targets Polsia is weak on) —
     // "AI that runs your company", "autonomous company builder", "AI co-founder".
     // MUST be crawlable + viewable without an account, else they 307→/login and
