@@ -32,6 +32,7 @@
     "test:sprint7": "vitest run __tests__/lib/mcp/zerodb-client.test.ts __tests__/services/crud-intent-detector.test.ts __tests__/services/schema.test.ts __tests__/services/schema-prompt-enhancer.test.ts __tests__/api/zerodb",
     "test:sprint7-coverage": "vitest run --coverage __tests__/lib/mcp/zerodb-client.test.ts __tests__/services/crud-intent-detector.test.ts __tests__/services/schema.test.ts __tests__/services/schema-prompt-enhancer.test.ts __tests__/api/zerodb",
     "validate:env": "npx tsx scripts/validate-env.ts",
+    "mentions": "npx tsx scripts/llm-mention-tracker.ts",
     "deploy:preview": "vercel",
     "deploy:production": "./scripts/deploy-production.sh"
   },
