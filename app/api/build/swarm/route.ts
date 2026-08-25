@@ -18,20 +18,22 @@
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { getPlanStatus } from '@/lib/ainative/plan'
+import { deriveOwnerKey, chatScopeKey } from '@/lib/build/chat-store'
+import { createTask, stageFromSwarmStatus } from '@/lib/build/task-store'
 
 export const runtime = 'nodejs'
 
 const SWARM_BASE = (process.env.AINATIVE_API_URL || 'https://api.ainative.studio') + '/api/v1/public/agent-swarm'
 
-async function resolveTierAndToken(): Promise<{ tier: string; token: string | null }> {
+async function resolveTierAndToken(): Promise<{ tier: string; token: string | null; session: any }> {
   try {
     const session = await auth()
     const token = (session as any)?.accessToken || null
-    if (!token) return { tier: 'hobbyist', token: null }
+    if (!token) return { tier: 'hobbyist', token: null, session }
     const status = await getPlanStatus(token)
-    return { tier: status.tier || 'hobbyist', token }
+    return { tier: status.tier || 'hobbyist', token, session }
   } catch {
-    return { tier: 'hobbyist', token: null }
+    return { tier: 'hobbyist', token: null, session: null }
   }
 }
 
@@ -42,7 +44,9 @@ export async function POST(request: NextRequest) {
     ? body.agentTypes
     : ['architect', 'backend', 'frontend', 'qa', 'security']
 
-  const { tier, token } = await resolveTierAndToken()
+  const companyId = String(body?.companyId || body?.chatId || '').slice(0, 80)
+  const taskTitle = String(body?.taskTitle || description || 'Swarm task').slice(0, 400)
+  const { tier, token, session } = await resolveTierAndToken()
 
   // Only paid tiers get the real swarm; free/anon see the representative overlay.
   const paid = tier === 'pro' || tier === 'scale' || tier === 'enterprise'
@@ -68,11 +72,28 @@ export async function POST(request: NextRequest) {
       return Response.json({ real: false, reason: `platform_${res.status}`, tier })
     }
     const data = await res.json().catch(() => null)
+    const taskId = data?.task_id || data?.id || null
+    const status = data?.status || 'queued'
+
+    // Surface the REAL dispatched task on the company's backlog (#55) so the
+    // Live Tasks panel shows it and tracks its stage. Best-effort — a persistence
+    // hiccup must not fail the swarm dispatch itself.
+    if (companyId) {
+      const scopeKey = chatScopeKey(deriveOwnerKey(session as any), companyId)
+      void createTask(scopeKey, {
+        title: taskTitle,
+        detail: description,
+        stage: stageFromSwarmStatus(status),
+        source: 'swarm',
+        taskId,
+      }).catch(() => {})
+    }
+
     return Response.json({
       real: true,
       tier,
-      taskId: data?.task_id || data?.id || null,
-      status: data?.status || 'queued',
+      taskId,
+      status,
       agents: agentTypes,
     })
   } catch (e: any) {
