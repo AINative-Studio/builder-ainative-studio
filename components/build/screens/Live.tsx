@@ -16,6 +16,8 @@ import { buildSystems, type BusinessSystem } from '@/lib/build/business-systems'
 import { DomainModal } from '@/components/build/DomainModal'
 import { planUnlocks, type ActivePlan } from '@/lib/build/state'
 import { useSession } from 'next-auth/react'
+import { SystemStatusBadge } from '@/components/build/SystemStatusBadge'
+import { countSystemStatuses, planFramingLine } from '@/lib/build/live-vs-planned'
 
 /** Display label for an active paid tier (#241). */
 const PLAN_LABEL: Record<ActivePlan, string> = {
@@ -506,7 +508,20 @@ export function Live() {
         <div className="m-live-col">
           <div className="m-live-card">
             <div className="m-mono m-live-card-h">Business systems</div>
-            <div className="m-systems m-seams">
+            {/* Honest framing line (#67): one sentence on what's real now vs built on upgrade. */}
+            {(() => {
+              const counts = countSystemStatuses(systems)
+              return (
+                <p
+                  className="m-mono m-system-framing"
+                  data-testid="systems-framing-line"
+                  style={{ fontSize: 11, color: 'var(--text-body-70)', marginBottom: 10, marginTop: 0 }}
+                >
+                  {planFramingLine(counts.live, counts.total)}
+                </p>
+              )
+            })()}
+            <div className="m-systems m-seams" data-testid="systems-grid">
               {systems.map((s) =>
                 // #278: only link when the company has its own provisioned instance URL.
                 // Never dump the founder on a primitive marketing site.
@@ -515,17 +530,16 @@ export function Live() {
                     <span className="m-system-name">{s.name}</span>
                     <span className="m-system-stat m-mono">{s.stat}</span>
                     <span className="m-chip m-system-prim">{s.primitive}</span>
-                    <span className="m-mono m-system-src" title="Live from your provisioned instance">● live</span>
+                    {/* Live/Planned badge (#67): unambiguous status for every system. */}
+                    <SystemStatusBadge url={s.url} provisioned={s.provisioned} />
                   </a>
                 ) : (
                   <div key={s.key} className="m-system">
                     <span className="m-system-name">{s.name}</span>
                     <span className="m-system-stat m-mono">{s.stat}</span>
                     <span className="m-chip m-system-prim">{s.primitive}</span>
-                    {/* Honest marker: real provisioned data vs still-simulated (#243). */}
-                    <span className="m-mono m-system-src" title={s.provisioned ? 'Live from your provisioned ZeroDB project' : 'Simulated — no per-company data source wired yet'}>
-                      {s.provisioned ? '● live' : '○ sim'}
-                    </span>
+                    {/* Live/Planned badge (#67): replaces ● live / ○ sim text markers. */}
+                    <SystemStatusBadge provisioned={s.provisioned} />
                     {/* "learn more" as a secondary affordance only, not the primary action (#278) */}
                     <a className="m-system-learn m-mono" href={s.docUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>docs ↗</a>
                   </div>
