@@ -13,6 +13,7 @@ import { Live } from '@/components/build/screens/Live'
 import { Auth } from '@/components/build/screens/Auth'
 import { Account } from '@/components/build/screens/Account'
 import { MyCompanies } from '@/components/build/screens/MyCompanies'
+import { ReferEarn } from '@/components/build/screens/ReferEarn'
 
 function ScreenRouter() {
   const { state } = useBuild()
@@ -25,6 +26,7 @@ function ScreenRouter() {
     case 'login': case 'signup': case 'forgot': case 'reset': return <Auth mode={state.screen} />
     case 'account': return <Account />
     case 'companies': return <MyCompanies />
+    case 'refer': return <ReferEarn />
     default: return <Fork />
   }
 }

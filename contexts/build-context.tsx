@@ -111,7 +111,7 @@ export function BuildProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const q = new URLSearchParams(window.location.search)
     const scr = q.get('screen')
-    const known = ['fork', 'intake', 'ws', 'pricing', 'live', 'login', 'signup', 'account', 'companies']
+    const known = ['fork', 'intake', 'ws', 'pricing', 'live', 'login', 'signup', 'account', 'companies', 'refer']
     if (scr && known.includes(scr)) {
       const company = q.get('company')
       if (company) {

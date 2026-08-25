@@ -10,6 +10,7 @@ export type Screen =
   | 'fork' | 'intake' | 'ws' | 'pricing' | 'live'
   | 'login' | 'signup' | 'forgot' | 'reset' | 'account'
   | 'companies'   // "my companies" index (#253) — a founder's built companies
+  | 'refer'       // Refer & Earn (#59) — referral link, copy, and stats
 
 export type Track = 'app' | 'company'
 export type Plan = '' | 'launch' | 'company'

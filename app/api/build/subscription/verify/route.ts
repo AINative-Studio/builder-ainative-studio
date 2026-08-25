@@ -32,6 +32,8 @@ import { markConverted } from '@/lib/build/learning'
 import { reportConversion, gclidFromRequest } from '@/lib/build/conversions'
 import { reportMetaConversion, fbcFromRequest, fbpFromRequest } from '@/lib/build/meta-capi'
 import { deployRailwayService, railwayDeployEnabled } from '@/lib/build/deploy'
+import { deriveOwnerKey } from '@/lib/build/chat-store'
+import { creditReferrerOnSubscribe } from '@/lib/build/referral'
 
 // Monthly $ value per plan — the conversion value sent to Google Ads.
 const PLAN_VALUE: Record<string, number> = { pro: 49, launch: 49, business: 149, company: 149, enterprise: 999, cody_vcto: 4999 }
@@ -156,7 +158,22 @@ export async function POST(request: NextRequest) {
       } catch { /* best-effort — never block confirmation on deploy */ }
     }
 
-    return Response.json({ ok: true, paid: true, plan, planName, enrolled, claimed, deployed })
+    // #59 Refer & Earn: if THIS subscriber was referred by someone, credit the
+    // referrer now (the reward moment is SUBSCRIBE, mirroring Polsia). Keyed by
+    // the subscriber's durable owner key (= the referred_key on their pending
+    // referral row). Uncapped, instant, idempotent (a re-run won't double-pay).
+    // Best-effort + additive: it must NEVER disturb the conversion reporting
+    // above or fail checkout confirmation.
+    let referralCredited: number | undefined
+    try {
+      const referredKey = deriveOwnerKey((await auth().catch(() => null)) as any)
+      if (referredKey && !referredKey.startsWith('guest:')) {
+        const awarded = await creditReferrerOnSubscribe(referredKey, plan).catch(() => 0)
+        if (awarded > 0) referralCredited = awarded
+      }
+    } catch { /* best-effort — never block confirmation on referral credit */ }
+
+    return Response.json({ ok: true, paid: true, plan, planName, enrolled, claimed, deployed, referralCredited })
   } catch (e: any) {
     return Response.json({ ok: false, error: String(e?.message || e).slice(0, 100) }, { status: 502 })
   }
