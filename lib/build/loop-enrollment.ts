@@ -27,6 +27,15 @@ export interface LoopEnrollment {
   lastRunAt?: string
   lastTaskId?: string
   lastStatus?: string
+  /**
+   * Auto Mode (#58) — a user-initiated BOUNDED run has a duration + expiry, unlike
+   * the open-ended nightly enrollment. Optional + additive: a plain nightly
+   * enrollment leaves these unset and behaves exactly as before. When present,
+   * `autoExpiresAt` is the ISO instant the bounded run ends (null ⇒ continuous).
+   * See lib/build/auto-mode.ts for the run store + duration math.
+   */
+  autoDuration?: string
+  autoExpiresAt?: string | null
 }
 
 function rowsUrl(): string {

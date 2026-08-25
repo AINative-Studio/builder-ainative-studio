@@ -24,6 +24,7 @@ import { VersionsPanel } from '@/components/build/VersionsPanel'
 import { OnboardingVideo } from '@/components/build/OnboardingVideo'
 import { DocumentsPanel } from '@/components/build/DocumentsPanel'
 import { MediaPanel } from '@/components/build/MediaPanel'
+import { AutoModePanel } from '@/components/build/AutoModePanel'
 
 /** Display label for an active paid tier (#241). */
 const PLAN_LABEL: Record<ActivePlan, string> = {
@@ -698,6 +699,22 @@ export function Live() {
             brandTagline={state.brandTagline}
             brandColor={state.brandColor}
             idea={state.idea}
+          />
+          {/* Auto Mode (#58) — user-set autonomous run duration ("Cody works
+              nonstop. You choose how long."). Duration selector + START/STOP wired
+              to the REAL loop (/api/build/auto-mode → bounded swarm dispatch over the
+              window), with live progress (time remaining / tasks dispatched / current
+              activity). Paid-gated (Business+, same unlock as the nightly loop) with a
+              transparent credit cost, agent-triggerable, and inert+honest when the loop
+              isn't configured. A NEW, distinct section — does not touch #67 systems /
+              #52 chat / #55 Tasks / #62 Versions / #64 Documents / #65 masthead / #51
+              video / #54 media. */}
+          <AutoModePanel
+            companyId={companyId}
+            companyName={company}
+            track={state.track}
+            unlocked={gates.nightlyLoop}
+            onUpgrade={goUpgrade}
           />
         </div>
 
