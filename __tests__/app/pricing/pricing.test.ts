@@ -11,15 +11,22 @@
 import { PRICING_TIERS } from '@/lib/build/pricing-tiers'
 
 describe('PRICING_TIERS', () => {
-  it('contains exactly three tiers: free, pro, business', () => {
+  it('contains four tiers: free, starter, pro, business', () => {
     const ids = PRICING_TIERS.map((t) => t.id)
-    expect(ids).toEqual(['free', 'pro', 'business'])
+    expect(ids).toEqual(['free', 'starter', 'pro', 'business'])
   })
 
   it('Free tier has price 0', () => {
     const free = PRICING_TIERS.find((t) => t.id === 'free')
     expect(free).toBeDefined()
     expect(free!.monthly).toBe(0)
+  })
+
+  it('Starter tier is the paid entry at $20 (Haiku, ~80 builds)', () => {
+    const starter = PRICING_TIERS.find((t) => t.id === 'starter')
+    expect(starter).toBeDefined()
+    expect(starter!.monthly).toBe(20)
+    expect(starter!.featured).toBe(false)
   })
 
   it('Pro tier has price 49 and is featured', () => {

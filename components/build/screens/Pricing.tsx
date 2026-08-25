@@ -9,9 +9,14 @@ import { trackMeta } from '@/components/analytics/meta-pixel'
 import { ProposalGate } from '@/components/build/ProposalGate'
 
 // Builder subscription tiers — the canonical AINative plan line (config/pricing.ts).
-// Skip Starter/$5 ('Hobbyist'): its 100K tokens can't build+run a real company.
-// The free sandbox preview at /build/{slug} is the no-card entry; the real
-// Builder subscription starts at $49. Stripe price IDs are the live AINative ones.
+// The free sandbox preview at /build/{slug} is the no-card entry (3 builds; see
+// build-credits.ts). Starter ($20) is the price-sensitive entry ABOVE free: enough
+// Haiku builds (1000 requests ≈ ~80 idea→prototype builds) to iterate before Pro's
+// real Sonnet generation at $49. Stripe price IDs are the live AINative ones.
+//
+// NOTE on the name: "Hobbyist" is the INTERNAL name of the free/entry tier
+// (lib/ainative/plan.ts normalizeTier maps free/basic/starter→hobbyist→Haiku), so
+// the new paid entry is customer-named "Starter" to avoid colliding with it.
 //
 // Yearly billing (#258): annual price = 10× monthly (2 months free), matching the
 // Polsia parity gap. The live Stripe *monthly* price IDs are set; yearly price IDs
@@ -19,6 +24,10 @@ import { ProposalGate } from '@/components/build/ProposalGate'
 // are created, the Yearly toggle shows the annual price but checkout stays on the
 // monthly price ID (billed monthly, note shown) rather than inventing a fake ID.
 const TIERS = [
+  { id: 'starter', name: 'Starter', monthly: 20, tagline: 'Iterate on your idea.', plan: 'launch' as const,
+    priceId: '', // TODO: create Stripe $20/mo Starter price and set its price_… here (checkout falls back to upgrade prompt until then)
+    priceIdYearly: '', // TODO(#258): create Stripe yearly price ($200/yr) and set its price_… here
+    features: ['~80 builds/mo (1000 requests)', 'Fast generation (Claude Haiku 4.5)', 'Shareable live URL', 'AINative primitives included'] },
   { id: 'pro', name: 'Pro', monthly: 49, tagline: 'Build it for real.', plan: 'launch' as const, featured: true,
     priceId: 'price_1TGUVdDP3OaRv4TyMwk7nnp1',
     priceIdYearly: '', // TODO(#258): create Stripe yearly price ($490/yr) and set its price_… here

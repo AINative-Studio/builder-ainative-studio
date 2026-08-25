@@ -42,9 +42,33 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
     reset: { h: 'Set a new password', sub: 'Choose a strong password for your account.', cta: 'Update password' },
   }[mode]
 
-  // After auth, return to the company's Live screen (or fork) so the founder lands
-  // back on what they were building — now signed in.
-  const afterAuth = () => go(state.appSub ? 'live' : 'fork')
+  // After auth, resume whatever the founder was doing:
+  // - If they hit the auth wall by submitting an idea (#dashboard-ux), a
+  //   pendingBuild is stashed — fire the deferred START_BUILD now so generation
+  //   begins on their newly-registered account and they land on the workspace
+  //   watching Cody build (then the Live dashboard + clickable prototype).
+  // - Otherwise return to the company's Live screen (or fork) as before.
+  const afterAuth = async () => {
+    if (state.pendingBuild) {
+      const pb = state.pendingBuild
+      // Freemium enforcement (#dashboard-ux): count this newly-registered founder's
+      // first build; if somehow already at their limit, route to pricing. Fails OPEN.
+      try {
+        const res = await fetch('/api/build/credits', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slug: pb.appSub }),
+        })
+        if (res.status === 402) { go('pricing'); return }
+      } catch { /* fail open */ }
+      dispatch({
+        type: 'START_BUILD',
+        idea: pb.idea, appSub: pb.appSub, companyName: pb.companyName,
+        brandTagline: pb.brandTagline, brandColor: pb.brandColor,
+      })
+      return
+    }
+    go(state.appSub ? 'live' : 'fork')
+  }
 
   // #74 — enter the "verify your email" state: stop treating the user as logged
   // in and surface a resend action. Called after register signals
@@ -190,6 +214,14 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
       <BrandPanel />
       <main className="m-auth-form">
         {mode === 'reset' && <p className="m-auth-chip m-mono">✓ Link sent to your email</p>}
+        {/* Auth wall (#dashboard-ux): when the founder was gated here by submitting
+            an idea, greet them with the named company so registration reads as the
+            next step toward their build — not an interruption. */}
+        {mode === 'signup' && state.pendingBuild?.companyName && (
+          <p className="m-auth-chip m-mono" data-testid="auth-pending-company">
+            ◇ {state.pendingBuild.companyName} is ready to build — create your account to start.
+          </p>
+        )}
         <h1 className="m-artifact m-auth-h">{copy.h}</h1>
         <p className="m-sub">{copy.sub}</p>
         <div className="m-auth-fields">

@@ -37,6 +37,49 @@ export interface BusinessSystem {
    * wired yet, so the UI can mark it honestly instead of implying live data.
    */
   provisioned?: boolean
+  /**
+   * Savings comparison (#dashboard-ux): what the founder would pay for a
+   * comparable stand-alone SaaS to replace this AINative primitive. Included so
+   * the card can communicate "you'd pay $X/mo for <provider>, included here."
+   * Undefined when we don't have a credible comparable to quote (never invent one).
+   */
+  vsProvider?: string
+  /** Entry monthly price (USD) of that comparable provider, for the savings line. */
+  savedMonthly?: number
+}
+
+/**
+ * Comparable stand-alone SaaS per primitive (#dashboard-ux). Each entry is the
+ * provider a founder would otherwise sign up + pay for, and that provider's
+ * credible ENTRY monthly price (USD). With Builder, every AINative primitive is
+ * included on usage-based billing, so these are the per-system costs the founder
+ * AVOIDS. Prices are entry-tier list prices (kept conservative/defensible); update
+ * as providers change. Only primitives with a credible comparable are listed —
+ * anything absent renders without a savings line rather than a made-up number.
+ */
+export const SAVINGS_BY_PRIMITIVE: Record<string, { vsProvider: string; monthly: number }> = {
+  // CRM / sales pipeline → Salesforce Sales Cloud (Pro), per-seat entry.
+  ZeroPipeline: { vsProvider: 'Salesforce', monthly: 25 },
+  // Invoicing / billing → QuickBooks / Stripe Billing entry.
+  ZeroInvoice: { vsProvider: 'QuickBooks', monthly: 30 },
+  // Storefront / commerce → Shopify Basic.
+  ZeroCommerce: { vsProvider: 'Shopify', monthly: 29 },
+  // Helpdesk / support → Zendesk Suite (per-agent entry).
+  ServiceOS: { vsProvider: 'Zendesk', monthly: 55 },
+  // Voice / telephony → Twilio Voice baseline.
+  ZeroVoice: { vsProvider: 'Twilio', monthly: 15 },
+  // Cap table → Carta (entry).
+  OpenCapStack: { vsProvider: 'Carta', monthly: 40 },
+  // Knowledge graph → Neo4j AuraDB (entry managed instance).
+  'Context Graph': { vsProvider: 'Neo4j AuraDB', monthly: 65 },
+  // Social graph / relationships → also a managed graph DB (Neo4j-class).
+  'Social Graph': { vsProvider: 'Neo4j AuraDB', monthly: 65 },
+  // Community / groups / feeds → a community platform (Circle entry).
+  Community: { vsProvider: 'Circle', monthly: 49 },
+  // Unified + semantic search → Algolia (entry) / a hosted vector DB.
+  'Search & Discovery': { vsProvider: 'Algolia', monthly: 50 },
+  // App database / backend → Supabase Pro.
+  ZeroDB: { vsProvider: 'Supabase', monthly: 25 },
 }
 
 /** Per-primitive stat config (used to build the stat line and counts). */
@@ -244,6 +287,8 @@ export function buildSystems(
       ? (stat?.statFn(rawCount, rawValue) ?? `${rawCount} ${stat?.unit ?? 'items'}`)
       : (stat?.zeroStat ?? 'Ready')
 
+    const saving = SAVINGS_BY_PRIMITIVE[prim.name]
+
     return {
       key: prim.name.toLowerCase().replace(/[^a-z0-9]/g, '-'),
       name: prim.name,
@@ -254,6 +299,8 @@ export function buildSystems(
       count: rawCount,
       value: rawValue > 0 ? rawValue : undefined,
       provisioned: isProvisioned,
+      vsProvider: saving?.vsProvider,
+      savedMonthly: saving?.monthly,
     }
   })
 }

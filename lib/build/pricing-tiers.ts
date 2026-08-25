@@ -5,13 +5,26 @@ export const PRICING_TIERS = [
     id: 'free',
     name: 'Free',
     monthly: 0,
-    tagline: 'Try Cody. Build your first app.',
+    tagline: 'Try Cody. Build 3 apps.',
     featured: false,
     features: [
       'Cody builds a preview app from your idea',
+      '3 free builds',
       'Shareable live URL',
       'No credit card required',
-      'AINative open primitives (read)',
+    ],
+  },
+  {
+    id: 'starter',
+    name: 'Starter',
+    monthly: 20,
+    tagline: 'Iterate on your idea.',
+    featured: false,
+    features: [
+      '~80 builds/mo (1000 requests)',
+      'Fast generation (Claude Haiku 4.5)',
+      'Shareable live URL',
+      'AINative primitives included',
     ],
   },
   {

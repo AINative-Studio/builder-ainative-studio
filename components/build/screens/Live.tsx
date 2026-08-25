@@ -17,6 +17,7 @@ import { DomainModal } from '@/components/build/DomainModal'
 import { planUnlocks, type ActivePlan } from '@/lib/build/state'
 import { useSession } from 'next-auth/react'
 import { SystemStatusBadge } from '@/components/build/SystemStatusBadge'
+import { SystemSaving } from '@/components/build/SystemSaving'
 import { countSystemStatuses, planFramingLine } from '@/lib/build/live-vs-planned'
 import { liveStatusLine } from '@/lib/build/front-door-value'
 import { TasksPanel } from '@/components/build/TasksPanel'
@@ -578,6 +579,18 @@ export function Live() {
         <div className="m-live-col">
           <div className="m-live-card">
             <div className="m-mono m-live-card-h">Business systems</div>
+            {/* Total savings vs stand-alone SaaS (#dashboard-ux): sum the comparable
+                monthly cost of every system shown, so the founder sees what they'd
+                pay to assemble this stack from separate providers — included here. */}
+            {(() => {
+              const total = systems.reduce((sum, s) => sum + (s.savedMonthly || 0), 0)
+              if (total <= 0) return null
+              return (
+                <p className="m-system-savings-total" data-testid="systems-savings-total">
+                  ≈ <strong>${total}/mo</strong> of stand-alone SaaS — <span className="m-mono">included, usage-based</span>
+                </p>
+              )
+            })()}
             {/* Honest framing line (#67): one sentence on what's real now vs built on upgrade. */}
             {(() => {
               const counts = countSystemStatuses(systems)
@@ -602,6 +615,7 @@ export function Live() {
                     <span className="m-chip m-system-prim">{s.primitive}</span>
                     {/* Live/Planned badge (#67): unambiguous status for every system. */}
                     <SystemStatusBadge url={s.url} provisioned={s.provisioned} />
+                    <SystemSaving vsProvider={s.vsProvider} savedMonthly={s.savedMonthly} />
                   </a>
                 ) : (
                   <div key={s.key} className="m-system">
@@ -610,6 +624,7 @@ export function Live() {
                     <span className="m-chip m-system-prim">{s.primitive}</span>
                     {/* Live/Planned badge (#67): replaces ● live / ○ sim text markers. */}
                     <SystemStatusBadge provisioned={s.provisioned} />
+                    <SystemSaving vsProvider={s.vsProvider} savedMonthly={s.savedMonthly} />
                     {/* "learn more" as a secondary affordance only, not the primary action (#278) */}
                     <a className="m-system-learn m-mono" href={s.docUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>docs ↗</a>
                   </div>
@@ -734,8 +749,10 @@ export function Live() {
           />
         </div>
 
-        {/* RIGHT — Ask Cody anything */}
-        <div className="m-live-col">
+        {/* RIGHT — Ask Cody anything. Sticky rail (m-live-col-chat) so the chat —
+            the primary way to talk to Cody — stays above the fold as the founder
+            scrolls the tall middle column, and moves to the top on tablet. */}
+        <div className="m-live-col m-live-col-chat">
           <div className="m-live-card m-chat">
             <div className="m-mono m-live-card-h"><span className="m-glyph">◇</span> Ask Cody anything</div>
             <div className="m-chat-log" data-testid="chat-log">

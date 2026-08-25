@@ -16,6 +16,7 @@ import { PRIMITIVE_MAP, TOTAL_PRIMITIVES } from '@/lib/build/primitives'
 import { useAutoplay } from '@/lib/build/useAutoplay'
 import { trackEvent } from '@/components/analytics/google-analytics'
 import { captureAttribution } from '@/lib/build/attribution'
+import { savePendingBuild, loadPendingBuild, clearPendingBuild } from '@/lib/build/pending-build'
 
 interface BuildContextValue {
   state: BuildState
@@ -140,6 +141,22 @@ export function BuildProvider({ children }: { children: ReactNode }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Auth wall (#dashboard-ux): restore a deferred build stashed before the founder
+  // left to verify their email, so logging back in still fires it. Runs once on
+  // mount, only when there's no in-memory pending build already (a fresh load).
+  useEffect(() => {
+    if (state.pendingBuild) return
+    const pb = loadPendingBuild()
+    if (pb) dispatch({ type: 'RESTORE_PENDING_BUILD', ...pb })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Persist / clear the pending build so it survives the email-verify round-trip.
+  useEffect(() => {
+    if (state.pendingBuild) savePendingBuild(state.pendingBuild)
+    else clearPendingBuild()
+  }, [state.pendingBuild])
 
   // Persist build state to localStorage whenever meaningful fields change (#284).
   // Guard: only write when there's an actual company slug to key on.

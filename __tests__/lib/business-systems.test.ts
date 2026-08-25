@@ -1,5 +1,37 @@
 import { describe, it, expect } from 'vitest'
-import { buildSystems } from '@/lib/build/business-systems'
+import { buildSystems, SAVINGS_BY_PRIMITIVE } from '@/lib/build/business-systems'
+
+describe('business-systems savings (#dashboard-ux)', () => {
+  it('attaches vsProvider + savedMonthly for primitives with a comparable', () => {
+    // A CRM idea surfaces ZeroPipeline, which maps to Salesforce.
+    const s = buildSystems('B2B SaaS sales pipeline CRM for enterprise deals')
+    const crm = s.find((x) => x.primitive === 'ZeroPipeline')
+    expect(crm).toBeDefined()
+    expect(crm?.vsProvider).toBe('Salesforce')
+    expect(crm?.savedMonthly).toBeGreaterThan(0)
+  })
+
+  it('every SAVINGS_BY_PRIMITIVE entry has a provider name and a positive price', () => {
+    for (const [prim, v] of Object.entries(SAVINGS_BY_PRIMITIVE)) {
+      expect(v.vsProvider, prim).toBeTruthy()
+      expect(v.monthly, prim).toBeGreaterThan(0)
+    }
+  })
+
+  it('systems without a comparable have undefined savings (never a fake number)', () => {
+    const s = buildSystems('a social app for teens with groups and feeds')
+    for (const x of s) {
+      const known = SAVINGS_BY_PRIMITIVE[x.primitive]
+      if (known) {
+        expect(x.savedMonthly).toBe(known.monthly)
+        expect(x.vsProvider).toBe(known.vsProvider)
+      } else {
+        expect(x.savedMonthly).toBeUndefined()
+        expect(x.vsProvider).toBeUndefined()
+      }
+    }
+  })
+})
 
 describe('business-systems (#233, #288, #278)', () => {
   it('returns systems with real primitive names — idea-driven selection', () => {

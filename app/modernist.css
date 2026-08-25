@@ -786,12 +786,25 @@
 .m-live-watch.is-preview .m-live-dot { background: rgba(255, 255, 255, 0.5); animation: none; }
 .m-live-url { font-size: 12px; color: #fff; text-decoration: underline; opacity: 0.9; }
 
-.m-live-grid { display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: 2px; background: var(--color-divider); padding: 2px; align-items: stretch; }
+.m-live-grid { display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: 2px; background: var(--color-divider); padding: 2px; align-items: start; }
 .m-live-grid.is-tablet { grid-template-columns: 1fr; }
 .m-live-col { display: flex; flex-direction: column; gap: 2px; }
 /* Let the last card in each column absorb the extra height so the grid reads full
    and intentional on desktop — no empty white quadrants (#257). */
 .m-live-col > .m-live-card:last-child { flex: 1; }
+
+/* Chat is the PRIMARY interaction with Cody — keep it above the fold (#dashboard-ux).
+   The middle column is very tall (systems/tasks/infra/versions/website/docs/media/
+   auto-mode); with align-items:start the right column no longer stretches to match
+   it, and this sticky rail pins the chat near the top of the viewport as the founder
+   scrolls the middle column. Sits below the sticky masthead. Disabled on tablet
+   (single column) so the chat just flows to the top of the stack. */
+.m-live-col.m-live-col-chat { position: sticky; top: 12px; align-self: start; max-height: calc(100vh - 24px); }
+.m-live-col.m-live-col-chat > .m-chat { min-height: 0; max-height: calc(100vh - 24px); }
+.m-live-grid.is-tablet .m-live-col-chat { position: static; max-height: none; }
+/* On tablet, order the chat rail FIRST so the founder can talk to Cody immediately
+   instead of scrolling past the whole systems stack. */
+.m-live-grid.is-tablet .m-live-col-chat { order: -1; }
 .m-live-card { background: var(--color-bg); padding: 18px; }
 .m-live-card-h { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-body-70); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
 .m-live-card-body { font-size: 14px; color: var(--text-body-70); line-height: 1.5; margin: 0 0 12px; }
@@ -813,12 +826,37 @@
 .m-system-name { font-family: var(--font-heading); font-weight: 600; font-size: 14px; }
 .m-system-stat { font-size: 11px; color: var(--text-muted); }
 .m-system-prim { align-self: flex-start; margin-top: 4px; }
+/* Per-card savings line (#dashboard-ux): what a comparable stand-alone SaaS costs,
+   included here. Small, green-tinted, secondary to the system name/stat. */
+.m-system-saving {
+  font-size: 10px; color: var(--color-accent, #1f7a3d); margin-top: 4px;
+  letter-spacing: 0.01em;
+}
+/* Total-savings line above the systems grid — the headline "you'd pay $X/mo". */
+.m-system-savings-total {
+  font-size: 12px; color: var(--text-body-85); margin: 0 0 8px;
+}
+.m-system-savings-total strong { color: var(--color-accent, #1f7a3d); }
 .m-tonight li { list-style: none; margin-left: -20px; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-body-70); padding: 3px 0; }
 
 /* Onboarding video player (#51): left-column slot, placeholder + real-video states. */
 .m-onboarding-video-wrap {
   position: relative; width: 100%; aspect-ratio: 16/9;
   background: var(--ink); border-radius: 2px; overflow: hidden;
+}
+/* When there's no real video yet, DON'T reserve a full 16:9 black rectangle — it
+   reads as dead space/a broken player in the prime left column (#dashboard-ux).
+   Collapse the placeholder to a slim, clearly-"coming soon" strip instead. Once
+   NEXT_PUBLIC_ONBOARDING_VIDEO_SRC is set, the real player gets its full 16:9 frame. */
+.m-onboarding-video-wrap[data-placeholder='true'] {
+  aspect-ratio: auto; min-height: 0;
+}
+.m-onboarding-video-wrap[data-placeholder='true'] .m-onboarding-video-placeholder {
+  position: static; flex-direction: row; justify-content: flex-start;
+  gap: 10px; padding: 12px 14px;
+}
+.m-onboarding-video-wrap[data-placeholder='true'] .m-onboarding-video-play-icon {
+  font-size: 16px;
 }
 .m-onboarding-video-placeholder {
   position: absolute; inset: 0; display: flex; flex-direction: column;

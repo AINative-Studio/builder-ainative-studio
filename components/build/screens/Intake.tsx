@@ -3,11 +3,13 @@
 /** Intake screen (#222) — capture the idea in one field. Copy verbatim from 04-SCREENS §2. */
 
 import { useState } from 'react'
+import { useSession } from 'next-auth/react'
 import { useBuild } from '@/contexts/build-context'
 import { trackEvent } from '@/components/analytics/google-analytics'
 
 export function Intake() {
   const { state, dispatch } = useBuild()
+  const { status: sessionStatus } = useSession()
   const [idea, setIdea] = useState('')
   const [naming, setNaming] = useState(false)
 
@@ -28,6 +30,38 @@ export function Intake() {
       if (d?.slug) brand = { name: d.name || '', slug: d.slug, tagline: d.tagline || '', color: d.color || '#2f6d86' }
     } catch { /* fall back below */ }
     if (!brand.name) brand.name = fallbackName(idea)
+
+    // Auth wall (#dashboard-ux): an anonymous founder must register BEFORE any
+    // generation runs — we never spend LLM tokens on an un-registered visitor.
+    // Stash the idea/brand and route to signup; after they register + verify and
+    // land back, the deferred build fires (see build-context). Naming already
+    // happened above (cheap brand call) so the signup screen can greet the company.
+    if (sessionStatus !== 'authenticated') {
+      trackEvent('idea_gated_signup', 'funnel', state.track, undefined)
+      dispatch({
+        type: 'DEFER_BUILD', idea,
+        appSub: brand.slug, companyName: brand.name,
+        brandTagline: brand.tagline, brandColor: brand.color,
+      })
+      return
+    }
+
+    // Freemium enforcement (#dashboard-ux): record a build against the founder's
+    // allowance. If the free/starter limit is exhausted, route to pricing instead
+    // of starting a build. Fails OPEN on any error (metering never hard-blocks).
+    try {
+      const res = await fetch('/api/build/credits', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug: brand.slug }),
+      })
+      if (res.status === 402) {
+        trackEvent('build_limit_reached', 'funnel', state.track, undefined)
+        dispatch({ type: 'GOTO_SCREEN', screen: 'pricing' })
+        setNaming(false)
+        return
+      }
+    } catch { /* fail open — proceed with the build */ }
+
     dispatch({
       type: 'START_BUILD', idea,
       appSub: brand.slug, companyName: brand.name,

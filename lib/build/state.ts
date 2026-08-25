@@ -82,6 +82,11 @@ export interface BuildState {
   indexOpen: boolean       // the Index (jump-to-any-screen) panel is open
   activePlan: ActivePlan   // verified PAID subscription tier (#241); '' = none. Drives feature gates.
   enrolled: boolean        // Business+ auto-enrolled into the nightly loop (#241; cron is #243)
+  // Auth wall (#dashboard-ux): when an anonymous founder submits an idea we stash the
+  // generated idea/brand here and route them to signup FIRST (no tokens spent on an
+  // un-registered visitor). After they register + verify + land back, the deferred
+  // build fires. Null = no pending build.
+  pendingBuild: { idea: string; appSub: string; companyName: string; brandTagline: string; brandColor: string } | null
 }
 
 /** Full-bleed build overlays that can cover the workspace during autoplay (04-SCREENS §3). */
@@ -125,12 +130,20 @@ export const initialBuildState: BuildState = {
   indexOpen: false,
   activePlan: '',
   enrolled: false,
+  pendingBuild: null,
 }
 
 export type BuildAction =
   | { type: 'GOTO_SCREEN'; screen: Screen }
   | { type: 'PICK_TRACK'; track: Track }
   | { type: 'START_BUILD'; idea: string; appSub: string; companyName?: string; brandTagline?: string; brandColor?: string }
+  // Auth wall (#dashboard-ux): stash the idea/brand and route to signup instead of
+  // building — used when an anonymous founder submits an idea.
+  | { type: 'DEFER_BUILD'; idea: string; appSub: string; companyName: string; brandTagline: string; brandColor: string }
+  // Restore a persisted pending build on a fresh load WITHOUT changing the screen
+  // (the founder returns via the email-verify link and should land on login).
+  | { type: 'RESTORE_PENDING_BUILD'; idea: string; appSub: string; companyName: string; brandTagline: string; brandColor: string }
+  | { type: 'CLEAR_PENDING_BUILD' }
   | { type: 'GEN_DONE'; view: string; content: unknown }
   | { type: 'GEN_FAIL'; view: string; error: string }
   | { type: 'GOTO_VIEW'; view: ArtifactView }
@@ -189,8 +202,39 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
         genError: isNewBuild ? {} : state.genError,
         done: isNewBuild ? {} : state.done,
         view: state.track === 'app' ? 'brief' : 'thesis',
+        // Consuming a pending build clears it (START_BUILD is the resume path).
+        pendingBuild: null,
       }
     }
+    case 'DEFER_BUILD':
+      // Stash the generated idea/brand and send the founder to signup. NO build
+      // starts and NO tokens are spent until they register + verify (#dashboard-ux).
+      return {
+        ...state,
+        pendingBuild: {
+          idea: action.idea,
+          appSub: action.appSub,
+          companyName: action.companyName,
+          brandTagline: action.brandTagline,
+          brandColor: action.brandColor,
+        },
+        screen: 'signup',
+      }
+    case 'RESTORE_PENDING_BUILD':
+      // Data-only restore (no screen change) — used on a fresh load after the
+      // founder returns from verifying their email.
+      return {
+        ...state,
+        pendingBuild: {
+          idea: action.idea,
+          appSub: action.appSub,
+          companyName: action.companyName,
+          brandTagline: action.brandTagline,
+          brandColor: action.brandColor,
+        },
+      }
+    case 'CLEAR_PENDING_BUILD':
+      return { ...state, pendingBuild: null }
     case 'GEN_DONE':
       return {
         ...state,

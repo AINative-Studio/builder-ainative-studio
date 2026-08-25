@@ -103,6 +103,45 @@ describe('buildReducer — state transitions', () => {
     expect(s.done['brief']).toBeUndefined()
   })
 
+  // Auth wall (#dashboard-ux) — an anonymous idea submit must stash the build and
+  // route to signup, spending NO tokens until the founder registers.
+  it('DEFER_BUILD stashes the idea/brand and routes to signup (no build starts)', () => {
+    const s = buildReducer(initialBuildState, {
+      type: 'DEFER_BUILD', idea: 'a running app', appSub: 'stride',
+      companyName: 'Stride', brandTagline: 'run further', brandColor: '#111',
+    })
+    expect(s.screen).toBe('signup')
+    expect(s.building).toBe(false) // NOT building — no tokens spent yet
+    expect(s.pendingBuild).toEqual({
+      idea: 'a running app', appSub: 'stride', companyName: 'Stride',
+      brandTagline: 'run further', brandColor: '#111',
+    })
+  })
+
+  it('RESTORE_PENDING_BUILD restores the stash WITHOUT changing screen', () => {
+    const s = buildReducer(
+      { ...initialBuildState, screen: 'login' },
+      { type: 'RESTORE_PENDING_BUILD', idea: 'x', appSub: 'y', companyName: 'Y', brandTagline: '', brandColor: '#2f6d86' },
+    )
+    expect(s.screen).toBe('login') // untouched — founder returns via email link to log in
+    expect(s.pendingBuild?.appSub).toBe('y')
+  })
+
+  it('START_BUILD consumes (clears) a pending build', () => {
+    const deferred = buildReducer(initialBuildState, {
+      type: 'DEFER_BUILD', idea: 'i', appSub: 's', companyName: 'S', brandTagline: '', brandColor: '#000',
+    })
+    expect(deferred.pendingBuild).not.toBeNull()
+    const built = buildReducer(deferred, { type: 'START_BUILD', idea: 'i', appSub: 's', companyName: 'S' })
+    expect(built.pendingBuild).toBeNull()
+    expect(built.building).toBe(true)
+    expect(built.screen).toBe('ws')
+  })
+
+  it('initialBuildState has no pending build', () => {
+    expect(initialBuildState.pendingBuild).toBeNull()
+  })
+
   it('MVP_DONE sets builtMVP=true and building=false', () => {
     const s = buildReducer(wsState({ building: true }), { type: 'MVP_DONE' })
     expect(s.builtMVP).toBe(true)
