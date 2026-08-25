@@ -10,7 +10,7 @@
  * non-navigating status card (no href dump onto a marketing domain).
  */
 
-import { selectPrimitives, CATALOG, type CatalogPrimitive } from '@/lib/build/primitive-catalog'
+import { scorePrimitives, CATALOG, type CatalogPrimitive } from '@/lib/build/primitive-catalog'
 
 export interface BusinessSystem {
   /** Stable key for this system (slug of primitive name) */
@@ -112,9 +112,46 @@ const PRIM_STATS: Record<string, PrimitiveStat> = {
     statFn: (n) => `${n} jobs run`,
     zeroStat: 'Ready · monitoring',
   },
+  // Social / community + data primitives can now surface for non-business-ops
+  // ideas (a social app should show these, not ZeroInvoice). (#72)
+  'Social Graph': {
+    countKey: 'connections',
+    unit: 'connections',
+    statFn: (n) => `${n} connections`,
+    zeroStat: 'Ready · 0 connections',
+  },
+  Community: {
+    countKey: 'members',
+    unit: 'members',
+    statFn: (n) => `${n} members`,
+    zeroStat: 'Ready · 0 members',
+  },
+  'Context Graph': {
+    countKey: 'entities',
+    unit: 'entities',
+    statFn: (n) => `${n} entities`,
+    zeroStat: 'Ready · graph empty',
+  },
+  'Search & Discovery': {
+    countKey: 'documents',
+    unit: 'indexed',
+    statFn: (n) => `${n} indexed`,
+    zeroStat: 'Ready · index empty',
+  },
+  ZeroDB: {
+    countKey: 'posts',
+    unit: 'records',
+    statFn: (n) => `${n} records`,
+    zeroStat: 'Ready · 0 records',
+  },
 }
 
-/** The subset of catalog primitives eligible to appear as business-system cards. */
+/**
+ * The "run a company" business-ops primitives. Used ONLY as last-resort defaults
+ * when an idea matches too few real primitives to fill the grid (#72). A social
+ * app must NOT be defaulted into ZeroInvoice/ZeroCommerce, so these are appended
+ * behind the idea-matched set, never ahead of it.
+ */
 const BUSINESS_OP_NAMES = new Set([
   'ZeroPipeline', 'ZeroInvoice', 'ZeroCommerce', 'ZeroVoice',
   'OpenCapStack', 'ServiceOS', 'Content Workflow', 'Live Streaming',
@@ -122,12 +159,31 @@ const BUSINESS_OP_NAMES = new Set([
 ])
 
 /**
+ * Every primitive eligible to render as a system card. Superset of business-ops
+ * plus the social/community + data primitives a non-business-ops idea needs
+ * (Social Graph, Community, Context Graph, Search & Discovery, ZeroDB). (#72)
+ *
+ * Foundational substrate that isn't itself a "system" the founder reasons about
+ * (Instant DB, ZeroMemory, AI Kit, Agent Cloud) is intentionally excluded so the
+ * grid shows product-shaped systems, not plumbing.
+ */
+const SYSTEM_CARD_NAMES = new Set<string>([
+  ...BUSINESS_OP_NAMES,
+  'Social Graph', 'Community', 'Context Graph', 'Search & Discovery', 'ZeroDB',
+])
+
+/**
  * Build the systems list for a company from its idea + real counts.
  *
- * The list is IDEA-DRIVEN: `selectPrimitives(idea, 'company')` picks the most
- * relevant business-ops primitives for this specific company. Missing/zero counts
- * render the honest zero-state. `counts` comes from the company's real primitive
- * data (via /api/build/systems); defaults to all-zero.
+ * The list is IDEA-DRIVEN: primitives are ranked by idea relevance
+ * (`scorePrimitives`) and the top matches that can render as a system card are
+ * surfaced — business-ops OR social/community/data (#72). A social app shows
+ * Social Graph / Community / Context Graph / Search & Discovery, a coffee brand
+ * shows ZeroCommerce, a fundraising company shows OpenCapStack. Business-ops
+ * defaults only backfill the grid when the idea matched too few real primitives —
+ * they never displace a strong idea match. Missing/zero counts render the honest
+ * zero-state. `counts` comes from the company's real primitive data
+ * (via /api/build/systems); defaults to all-zero.
  *
  * @param idea      The founder's original idea string (drives primitive selection)
  * @param counts    Real per-primitive counts from the company's ZeroDB project
@@ -140,14 +196,22 @@ export function buildSystems(
   opts: { provisioned?: boolean; pipelineProvisioned?: boolean; instanceUrls?: Record<string, string> } = {},
   maxCards = 4,
 ): BusinessSystem[] {
-  const { selected, foundational } = selectPrimitives(idea, 'company', 8)
+  // (#72) Rank ALL primitives (foundational included) by idea relevance, then
+  // keep the ones that (a) render as a system card and (b) actually matched the
+  // idea. This lets a social app surface Social Graph / Community / Context Graph
+  // / Search & Discovery, and a note-taking app surface ZeroDB (a matched
+  // foundational primitive) — instead of a forced business-ops set. Foundational
+  // primitives only qualify when they genuinely matched (matched.length > 0), so
+  // ZeroDB shows for "posts/feed" ideas but not for every build.
+  const ranked = scorePrimitives(idea, 'company')
+  let candidates = ranked
+    .filter((s) => s.matched.length > 0 && SYSTEM_CARD_NAMES.has(s.primitive.name))
+    .map((s) => s.primitive)
 
-  // Filter to business-op primitives from the idea-selected set
-  let candidates = selected.filter((p) => BUSINESS_OP_NAMES.has(p.name))
-
-  // If the idea doesn't match enough business-op primitives, fill from the
-  // catalog's business-ops layer ordered by category score — prefer ZeroPipeline
-  // and ZeroInvoice as generally-useful defaults.
+  // Only if the idea genuinely didn't match enough real primitives to fill the
+  // grid do we top up with business-ops defaults (ZeroPipeline/ZeroInvoice etc.).
+  // These are appended BEHIND the idea-matched set, so a strong social/data match
+  // is never displaced by a generic default.
   if (candidates.length < maxCards) {
     const defaults = CATALOG.filter(
       (p) => BUSINESS_OP_NAMES.has(p.name) && !candidates.find((c) => c.name === p.name),
