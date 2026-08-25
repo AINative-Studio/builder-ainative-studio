@@ -178,6 +178,20 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next()
     }
 
+    // Pricing page — public ad-landing + SEO/AEO asset; MUST be crawlable and
+    // reachable without an account, else it 307→/login and burns paid ad clicks
+    // and blocks search indexing (#76).
+    if (pathname.startsWith('/pricing')) {
+      return NextResponse.next()
+    }
+
+    // /billing is an SPA-internal screen; the route catches direct navigation
+    // and redirects to /build?screen=account. Allow anonymously so the redirect
+    // works before the auth gate at /build (#76).
+    if (pathname.startsWith('/billing')) {
+      return NextResponse.next()
+    }
+
     // Category landing pages (non-branded SEO/AEO targets Polsia is weak on) —
     // "AI that runs your company", "autonomous company builder", "AI co-founder".
     // MUST be crawlable + viewable without an account, else they 307→/login and

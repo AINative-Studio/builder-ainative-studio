@@ -10,7 +10,7 @@ import { UserNavClient } from '@/components/user-nav-client'
 import { WorkspaceSwitcher } from '@/components/workspace-switcher'
 import { Button } from '@/components/ui/button'
 import { DEPLOY_URL, APP_NAME } from '@/lib/constants'
-import { BookOpen, HelpCircle, Info, LayoutTemplate, Rocket, Settings } from 'lucide-react'
+import { BookOpen, HelpCircle, Info, LayoutTemplate, Rocket, Settings, Tag } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -118,6 +118,13 @@ export function AppHeader({ className = '' }: AppHeaderProps) {
               <Link href="/help">
                 <HelpCircle className="w-4 h-4 mr-1" />
                 Help
+              </Link>
+            </Button>
+            {/* Pricing — public marketing/ad-landing page (#76) */}
+            <Button variant="ghost" size="sm" asChild>
+              <Link href="/pricing">
+                <Tag className="w-4 h-4 mr-1" />
+                Pricing
               </Link>
             </Button>
             {session && (

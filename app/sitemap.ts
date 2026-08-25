@@ -81,6 +81,13 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.8,
     },
     {
+      // Pricing page — ad-landing + SEO/AEO asset; high-intent buyer traffic (#76).
+      url: `${baseUrl}/pricing`,
+      lastModified: now,
+      changeFrequency: 'weekly',
+      priority: 0.9,
+    },
+    {
       // Category landing ("AI that runs your company") — non-branded demand.
       url: `${baseUrl}/ai-company`,
       lastModified: now,
