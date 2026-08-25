@@ -36,7 +36,17 @@ function configured(): boolean {
   return Boolean(API_KEY && PROJECT_ID)
 }
 
-/** Per-tier build allowance. -1 = unlimited. Unknown tiers → free allowance (never over-grant). */
+/**
+ * Per-tier build allowance. -1 = unlimited. Unknown tiers → free allowance (never
+ * over-grant).
+ *
+ * NOTE (core#6615): 'starter' only lands here once core emits a DISTINCT plan id
+ * for the paid $20 Starter tier. Until then core's `starter` string is a legacy
+ * alias for the free/hobbyist entry tier, so a paid Starter resolves to `hobbyist`
+ * and gets the free 3-build limit. Model tier is unaffected (both use Haiku); this
+ * is purely an entitlement miscount, and build-credits fails open so it never
+ * hard-blocks. Once core#6615 lands, paid Starter → `starter` → STARTER_BUILD_LIMIT.
+ */
 export function buildLimitForTier(tier: string): number {
   switch (tier) {
     case 'pro':
