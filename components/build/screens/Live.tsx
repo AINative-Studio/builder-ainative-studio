@@ -20,6 +20,7 @@ import { SystemStatusBadge } from '@/components/build/SystemStatusBadge'
 import { countSystemStatuses, planFramingLine } from '@/lib/build/live-vs-planned'
 import { liveStatusLine } from '@/lib/build/front-door-value'
 import { TasksPanel } from '@/components/build/TasksPanel'
+import { VersionsPanel } from '@/components/build/VersionsPanel'
 
 /** Display label for an active paid tier (#241). */
 const PLAN_LABEL: Record<ActivePlan, string> = {
@@ -605,6 +606,12 @@ export function Live() {
               <p className="m-mono m-metric-note">Own ZeroDB project · Pipeline & Invoices read live data. Helpdesk & Voice still simulated.</p>
             )}
           </div>
+          {/* Deploy version history + one-click rollback (#62) — each deploy of the
+              company app is a version (message + SHA + timestamp, CURRENT badge on
+              the live one); REVERT rolls the live site back via Railway with a
+              confirmation + honest rolling-back → validating → live status. A new,
+              distinct section — does not touch #67 systems / #55 Tasks / #52 chat. */}
+          <VersionsPanel companyId={companyId} />
         </div>
 
         {/* RIGHT — Ask Cody anything */}
