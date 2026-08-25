@@ -13,6 +13,7 @@
  */
 
 import { catalogPromptBlock } from './primitive-catalog'
+import { codingStandardsContextBlock } from './coding-standards'
 
 export interface ArtifactSpec {
   /** system prompt: the role/format contract */
@@ -159,6 +160,22 @@ export const ARTIFACT_PROMPTS: Record<string, ArtifactSpec> = {
       'Write the AGENT DEFINITION — the agents that run this product. JSON: summary (one line), ' +
       'agents (array of 2-4 {name, role}). Schema: {"summary","agents":[{"name","role"}]}',
   },
+  codingStandards: {
+    system: BASE_SYSTEM,
+    schemaHint: '{"summary":"str","standards":[{"title":"str","rule":"str","applies":"str"}]}',
+    user: (ctx) =>
+      ctxPreamble(ctx) +
+      // Ground the standards in the CANONICAL AINative set (mirrored from the
+      // skills) so they are consistent across every idea, NOT hallucinated. The
+      // model must keep the same rules; it only tailors `applies` to THIS app.
+      'These are the AINative engineering standards Cody was trained to follow. Do NOT invent new ones or ' +
+      'drop any — restate each one and add how it applies to THIS app.\n\n' +
+      codingStandardsContextBlock() + '\n\n' +
+      'Write the ENGINEERING STANDARDS / DEFINITION OF DONE for this app. JSON: summary (one line stating Cody ' +
+      'builds this app to the AINative standards), standards (array with ONE entry per standard above, in the ' +
+      'same order — {title (the standard), rule (the commitment), applies (one concrete sentence on how it applies ' +
+      'to THIS app)}). Schema: {"summary","standards":[{"title","rule","applies"}]}',
+  },
   apiSpec: {
     system: BASE_SYSTEM,
     schemaHint: '{"summary":"str","integrations":[{"name":"str","why":"str"}]}',
@@ -174,6 +191,19 @@ export const ARTIFACT_PROMPTS: Record<string, ArtifactSpec> = {
       ctxPreamble(ctx) +
       'Write the BUILD BACKLOG. JSON: summary (one line), items (array of 5-8 {title, size:"S"|"M"|"L"}) ' +
       'in build order. Schema: {"summary","items":[{"title","size"}]}',
+  },
+  sprintPlan: {
+    system: BASE_SYSTEM,
+    schemaHint: '{"summary":"str","epics":[{"name":"str","goal":"str","issues":["str"]}],"firstSprint":["str"]}',
+    user: (ctx) =>
+      ctxPreamble(ctx) +
+      // Turns the issues-only backlog into a real plan with EXPLICIT epics
+      // (backlog has none today). Mirrors the company-track plan30 shape.
+      'Write the SPRINT PLAN — organize the build into explicit EPICS, each with its issues, then scope the first ' +
+      'sprint. JSON: summary (one line), epics (array of 2-4 {name (the epic), goal (what shipping it achieves), ' +
+      'issues (2-4 concrete issue titles under this epic)}), firstSprint (array of 3-5 issue titles pulled from the ' +
+      'epics that make up the first shippable sprint). Make everything specific to this app. ' +
+      'Schema: {"summary","epics":[{"name","goal","issues":[...]}],"firstSprint":[...]}',
   },
 }
 

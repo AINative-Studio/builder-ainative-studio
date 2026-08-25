@@ -20,6 +20,7 @@ import { auth } from '@/app/(auth)/auth'
 import { getPlanStatus } from '@/lib/ainative/plan'
 import { deriveOwnerKey, chatScopeKey } from '@/lib/build/chat-store'
 import { createTask, stageFromSwarmStatus } from '@/lib/build/task-store'
+import { codingStandardsContextBlock } from '@/lib/build/coding-standards'
 
 export const runtime = 'nodejs'
 
@@ -37,15 +38,32 @@ async function resolveTierAndToken(): Promise<{ tier: string; token: string | nu
   }
 }
 
+/**
+ * Prepend the canonical AINative engineering standards to the build task the
+ * swarm agents receive, so Cody's build agents actually BUILD to them (#71) —
+ * the integrity piece. These are the SAME standards surfaced in the
+ * `codingStandards` artifact, mirrored from the AINative skills. Kept idempotent
+ * so a description already carrying the block isn't double-injected.
+ */
+function withCodingStandards(description: string): string {
+  const block = codingStandardsContextBlock()
+  if (description.includes('AINATIVE ENGINEERING STANDARDS')) return description
+  return `${block}\n\n---\n\nTASK:\n${description}`
+}
+
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}))
-  const description = String(body?.description || '').slice(0, 4000)
+  const rawDescription = String(body?.description || '').slice(0, 4000)
+  // Inject standards into the codegen context (not display-only).
+  const description = withCodingStandards(rawDescription)
   const agentTypes: string[] = Array.isArray(body?.agentTypes)
     ? body.agentTypes
     : ['architect', 'backend', 'frontend', 'qa', 'security']
 
   const companyId = String(body?.companyId || body?.chatId || '').slice(0, 80)
-  const taskTitle = String(body?.taskTitle || description || 'Swarm task').slice(0, 400)
+  // Title/detail for the UI task record use the RAW description — the standards
+  // block is context for the build agents, not user-facing task copy.
+  const taskTitle = String(body?.taskTitle || rawDescription || 'Swarm task').slice(0, 400)
   const { tier, token, session } = await resolveTierAndToken()
 
   // Only paid tiers get the real swarm; free/anon see the representative overlay.
@@ -82,7 +100,7 @@ export async function POST(request: NextRequest) {
       const scopeKey = chatScopeKey(deriveOwnerKey(session as any), companyId)
       void createTask(scopeKey, {
         title: taskTitle,
-        detail: description,
+        detail: rawDescription,
         stage: stageFromSwarmStatus(status),
         source: 'swarm',
         taskId,

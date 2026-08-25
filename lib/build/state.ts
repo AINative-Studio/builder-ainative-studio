@@ -25,7 +25,8 @@ export type ActivePlan = '' | 'pro' | 'business' | 'enterprise' | 'cody_vcto'
 /** Artifact ids (the `view` values), in composition order per track. */
 export const APP_VIEWS = [
   'brief', 'prd', 'comp', 'dataModel', 'memoryPolicy',
-  'agentDef', 'apiSpec', 'backlog', 'swarm', 'infra', 'preview',
+  'agentDef', 'codingStandards', 'apiSpec', 'backlog', 'sprintPlan',
+  'swarm', 'infra', 'preview',
 ] as const
 export const COMPANY_VIEWS = [
   'thesis', 'wedge', 'businessModel', 'positioning', 'landing', 'plan30',

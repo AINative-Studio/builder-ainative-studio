@@ -11,6 +11,7 @@
 
 import type { ReactNode } from 'react'
 import { Section, Tag, Generating, GenError, useGen } from '@/components/build/artifacts/gen-helpers'
+import { CODING_STANDARDS } from '@/lib/build/coding-standards'
 
 export const Brief = () => {
   const { data, error } = useGen<{ summary: string; goals: string[]; nonGoals: string[]; users: string[] }>('brief')
@@ -149,6 +150,64 @@ export const AgentDef = () => {
   )
 }
 
+export const CodingStandards = () => {
+  const { data, error } = useGen<{ summary: string; standards: Array<{ title: string; rule: string; applies?: string }> }>('codingStandards')
+  if (!data && !error) return <Generating lines={6} />
+  // Fallback mirrors the CANONICAL standards so the artifact is grounded even
+  // when generation is unavailable — the standards are never invented per-idea.
+  const d: { summary: string; standards: Array<{ title: string; rule: string; applies?: string }> } = data ?? {
+    summary: 'Cody builds this app to the AINative engineering standards — the same Definition of Done he was trained on.',
+    standards: CODING_STANDARDS.map((s) => ({ title: s.title, rule: s.rule })),
+  }
+  return (
+    <>
+      {error && <GenError error={error} />}
+      <p className="m-sub">{d.summary}</p>
+      <ul className="m-list m-checks">
+        {(d.standards || []).map((s, i) => (
+          <li key={i}>
+            <strong>{s.title}</strong> — {s.rule}
+            {s.applies && <> <Tag kind="evidence">{s.applies}</Tag></>}
+          </li>
+        ))}
+      </ul>
+    </>
+  )
+}
+
+export const SprintPlan = () => {
+  const { data, error } = useGen<{ summary: string; epics: Array<{ name: string; goal: string; issues: string[] }>; firstSprint: string[] }>('sprintPlan')
+  if (!data && !error) return <Generating lines={6} />
+  const d = data ?? {
+    summary: 'Cody grouped the backlog into epics and scoped the first sprint.',
+    epics: [
+      { name: 'Retrieval core', goal: 'Cited answers over connected data', issues: ['Vector search endpoint', 'Citation renderer'] },
+      { name: 'Access control', goal: 'Only authorized sources are searchable', issues: ['Source-access guard', 'Admin source controls'] },
+    ],
+    firstSprint: ['Vector search endpoint', 'Citation renderer', 'Source-access guard'],
+  }
+  return (
+    <>
+      {error && <GenError error={error} />}
+      <p className="m-sub">{d.summary}</p>
+      <Section h="Epics">
+        <div className="m-entity-grid">
+          {(d.epics || []).map((e, i) => (
+            <div key={i} className="m-entity">
+              <div className="m-entity-h m-mono">{e.name}</div>
+              <p className="m-artifact-meta">{e.goal}</p>
+              <ul className="m-entity-fields">{(e.issues || []).map((iss, j) => <li key={j}>{iss}</li>)}</ul>
+            </div>
+          ))}
+        </div>
+      </Section>
+      <Section h="First sprint">
+        <ul className="m-list m-checks">{(d.firstSprint || []).map((iss, i) => <li key={i}>{iss}</li>)}</ul>
+      </Section>
+    </>
+  )
+}
+
 export const ApiSpec = () => {
   const { data, error } = useGen<{ summary: string; integrations: Array<{ name: string; why: string }> }>('apiSpec')
   if (!data && !error) return <Generating lines={4} />
@@ -203,5 +262,6 @@ export const Infra = () => (
 
 export const APP_ARTIFACT_BODIES: Record<string, () => ReactNode> = {
   brief: Brief, prd: Prd, comp: Comp, dataModel: DataModel, memoryPolicy: MemoryPolicy,
-  agentDef: AgentDef, apiSpec: ApiSpec, backlog: Backlog, infra: Infra,
+  agentDef: AgentDef, codingStandards: CodingStandards, apiSpec: ApiSpec,
+  backlog: Backlog, sprintPlan: SprintPlan, infra: Infra,
 }

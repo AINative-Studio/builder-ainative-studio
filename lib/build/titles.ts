@@ -2,7 +2,8 @@
 export const ARTIFACT_TITLES: Record<string, string> = {
   brief: 'Product Brief', prd: 'Product Requirements', comp: 'AINative Composition Plan',
   dataModel: 'Data Model', memoryPolicy: 'Memory Policy', agentDef: 'Agent Definition',
-  apiSpec: 'Integrations', backlog: 'Build Backlog', swarm: 'The swarm',
+  codingStandards: 'Engineering Standards', apiSpec: 'Integrations',
+  backlog: 'Build Backlog', sprintPlan: 'Sprint Plan', swarm: 'The swarm',
   infra: 'Infrastructure', preview: 'Running Preview',
   thesis: 'Venture Thesis', wedge: 'Initial Wedge', businessModel: 'Business Model',
   positioning: 'Positioning', landing: 'Landing Page', plan30: '30-Day Plan',
