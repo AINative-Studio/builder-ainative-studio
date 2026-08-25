@@ -829,13 +829,13 @@ export function HomeClient() {
       <main className="flex-1 flex items-center justify-center px-4 sm:px-6 lg:px-8" aria-label="AI that builds and runs your company">
         <div className="max-w-4xl w-full">
           <section className="text-center mb-8 md:mb-12" aria-label="Hero" data-agent-role="hero" data-agent-context="value-proposition">
-            <p className="text-sm font-semibold text-[#5867EF] tracking-wide uppercase mb-3">Your AI co-founder — builds, launches, and runs it 24/7</p>
-            <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900 dark:text-white mb-3">
-              Your first employee. Ships product, runs growth, never sleeps.
+            <p className="text-sm font-semibold text-[#5867EF] tracking-wide uppercase mb-3">AINative Builder</p>
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900 dark:text-white mb-3" data-testid="homepage-hero-headline">
+              Tell Cody your idea. Get a real app you own — built and run for you.
             </h1>
-            <p className="text-base text-gray-500 dark:text-gray-400 max-w-xl mx-auto">
-              Describe your company. Cody builds the product and the business systems around it —
-              then launches it and runs it 24/7 on real AINative primitives you own.
+            <p className="text-base text-gray-500 dark:text-gray-400 max-w-xl mx-auto" data-testid="homepage-hero-sub">
+              No code. Cody builds a working app, gives it a live URL, and keeps running it 24/7 —
+              on real infrastructure you own, no lock-in.
             </p>
             <div className="mt-4 flex items-center justify-center gap-5">
               <Link

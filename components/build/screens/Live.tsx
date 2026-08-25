@@ -18,6 +18,7 @@ import { planUnlocks, type ActivePlan } from '@/lib/build/state'
 import { useSession } from 'next-auth/react'
 import { SystemStatusBadge } from '@/components/build/SystemStatusBadge'
 import { countSystemStatuses, planFramingLine } from '@/lib/build/live-vs-planned'
+import { liveStatusLine } from '@/lib/build/front-door-value'
 
 /** Display label for an active paid tier (#241). */
 const PLAN_LABEL: Record<ActivePlan, string> = {
@@ -412,6 +413,10 @@ export function Live() {
       <header className="m-live-masthead" style={brandStyle ? { background: 'var(--m-brand)' } : undefined}>
         <span className="m-mono m-live-tag">Company Track · shipped</span>
         <h1 className="m-artifact m-live-h">{company} is live.</h1>
+        {/* One-line status (#65): plain "what you have / what's happening" so the view is not opaque. */}
+        <p className="m-live-status-line" data-testid="live-status-line">
+          {liveStatusLine(company, onWatch)}
+        </p>
         <div className="m-live-masthead-right">
           <span className={`m-mono m-live-watch ${onWatch ? '' : 'is-preview'}`}>
             <span className="m-live-dot" /> {onWatch ? 'Cody is on watch' : 'Preview mode'}
