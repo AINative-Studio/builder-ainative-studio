@@ -6,20 +6,31 @@
  * · artifact rail. Re-themed per track via the .modernist[data-track] root.
  */
 
+import { useState } from 'react'
 import { useBuild } from '@/contexts/build-context'
+import { useSession } from 'next-auth/react'
 import { ACT_LABELS } from '@/lib/build/acts'
+import type { Screen } from '@/lib/build/state'
 import { BuildOverlays } from '@/components/build/BuildOverlays'
 import { TerminalRibbon } from '@/components/build/TerminalRibbon'
 import { DecisionModal } from '@/components/build/DecisionModal'
 import { ArtifactRail } from '@/components/build/ArtifactRail'
+import { AccountMenu } from '@/components/build/AccountMenu'
 import type { ReactNode } from 'react'
 
 function ActBar() {
   const { state, dispatch, woven, totalPrimitives } = useBuild()
+  const { data: session } = useSession()
+  const [menuOpen, setMenuOpen] = useState(false)
+
   // Map current screen/view to one of the 5 acts for the tracker.
   const actIndex = currentActIndex(state)
   const doneCount = Object.keys(state.done).length
-  const initials = (state.companyName || 'You').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()
+
+  const handleScreen = (screen: string) => {
+    dispatch({ type: 'GOTO_SCREEN', screen: screen as Screen })
+  }
+
   return (
     <div className="m-actbar" role="navigation" aria-label="Build progress">
       <ol className="m-acts">
@@ -43,10 +54,13 @@ function ActBar() {
         <button className={`m-actbar-btn m-mono ${state.railOpen ? 'is-active' : ''}`} onClick={() => dispatch({ type: 'TOGGLE_RAIL' })} title="Artifacts">
           Artifacts · {doneCount}
         </button>
-        <button className="m-account-chip m-mono" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'account' })} title="Account">
-          <span className="m-account-initials">{initials}</span>
-          <span className="m-token-meter" aria-hidden><span style={{ width: '38%' }} /></span>
-        </button>
+        {/* Unified account nav dropdown (#56) — replaces bare chip. */}
+        <AccountMenu
+          session={session}
+          open={menuOpen}
+          onOpenChange={setMenuOpen}
+          onScreen={handleScreen}
+        />
       </div>
     </div>
   )
