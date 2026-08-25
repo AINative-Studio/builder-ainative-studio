@@ -38,6 +38,9 @@ export function Live() {
   const [msg, setMsg] = useState('')
   const [enrolled, setEnrolled] = useState(false)
   const [chat, setChat] = useState<ChatLine[]>([])
+  // Whether the persisted conversation has been loaded yet (#52) — gates the
+  // honest empty state so we don't flash "ask me anything" before hydration.
+  const [chatLoaded, setChatLoaded] = useState(false)
   const [asking, setAsking] = useState(false)
   const [systems, setSystems] = useState<BusinessSystem[]>(buildSystems())
   const [nightshift, setNightshift] = useState<{ hasRun: boolean; summary?: string; lastRunAt?: string } | null>(null)
@@ -298,6 +301,31 @@ export function Live() {
     dispatch({ type: 'TRIGGER_CONFLICT', changedView: state.track === 'company' ? 'wedge' : 'prd', fromRescopeIntent: true })
     dispatch({ type: 'GOTO_SCREEN', screen: 'ws' })
   }
+
+  // Hydrate the persisted Cody conversation on mount (#52) so reload/re-login
+  // restores the thread exactly where the founder left off — not an empty box.
+  // The GET scopes by the SERVER session (owner) + companyId; an honest empty
+  // thread is returned for a brand-new company. Re-runs if the company changes.
+  useEffect(() => {
+    let alive = true
+    setChatLoaded(false)
+    fetch(`/api/build/ask?companyId=${encodeURIComponent(companyId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!alive) return
+        const turns: { role: string; text: string }[] = Array.isArray(d?.turns) ? d.turns : []
+        if (turns.length) {
+          setChat(
+            turns
+              .filter((t) => t && (t.role === 'user' || t.role === 'assistant') && t.text)
+              .map((t) => ({ role: t.role === 'user' ? 'user' : 'cody', text: String(t.text) })),
+          )
+        }
+        setChatLoaded(true)
+      })
+      .catch(() => { if (alive) setChatLoaded(true) })
+    return () => { alive = false }
+  }, [companyId])
 
   const ask = async () => {
     const q = msg.trim()
@@ -586,8 +614,10 @@ export function Live() {
         <div className="m-live-col">
           <div className="m-live-card m-chat">
             <div className="m-mono m-live-card-h"><span className="m-glyph">◇</span> Ask Cody anything</div>
-            <div className="m-chat-log">
-              {chat.length === 0 && (
+            <div className="m-chat-log" data-testid="chat-log">
+              {/* Honest empty state (#52): shown only once the persisted thread has
+                  loaded and is genuinely empty — a brand-new company, no fake history. */}
+              {chatLoaded && chat.length === 0 && (
                 <p className="m-chat-cody"><span className="m-glyph">◇</span> {company} is live and on watch. Ask me anything — what to build next, how the wedge is holding up, or what I&apos;ll run tonight.</p>
               )}
               {chat.map((line, i) =>
