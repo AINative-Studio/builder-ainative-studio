@@ -15,8 +15,9 @@ import { ProposalGate } from '@/components/build/ProposalGate'
 // real Sonnet generation at $49. Stripe price IDs are the live AINative ones.
 //
 // NOTE on the name: "Hobbyist" is the INTERNAL name of the free/entry tier
-// (lib/ainative/plan.ts normalizeTier maps free/basic/starter→hobbyist→Haiku), so
-// the new paid entry is customer-named "Starter" to avoid colliding with it.
+// (lib/ainative/plan.ts normalizeTier maps free/basic→hobbyist). "starter" is now a
+// DISTINCT $20 tier end-to-end: core PR #6617 (merged) split it from Hobbyist across
+// the billing stack, and Builder's normalizeTier maps starter→starter to match.
 //
 // Yearly billing (#258): annual price = 10× monthly (2 months free), matching the
 // Polsia parity gap. The live Stripe *monthly* price IDs are set; yearly price IDs
@@ -25,7 +26,7 @@ import { ProposalGate } from '@/components/build/ProposalGate'
 // monthly price ID (billed monthly, note shown) rather than inventing a fake ID.
 const TIERS = [
   { id: 'starter', name: 'Starter', monthly: 20, tagline: 'Iterate on your idea.', plan: 'launch' as const,
-    priceId: '', // TODO: create Stripe $20/mo Starter price and set its price_… here (checkout falls back to upgrade prompt until then)
+    priceId: 'price_1U8TOwDP3OaRv4TyeJfzIRd4', // live $20/mo AINative Starter (core#6615 / core PR #6617)
     priceIdYearly: '', // TODO(#258): create Stripe yearly price ($200/yr) and set its price_… here
     features: ['~80 builds/mo (1000 requests)', 'Fast generation (Claude Haiku 4.5)', 'Shareable live URL', 'AINative primitives included'] },
   { id: 'pro', name: 'Pro', monthly: 49, tagline: 'Build it for real.', plan: 'launch' as const, featured: true,

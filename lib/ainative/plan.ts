@@ -17,6 +17,8 @@ import { listWorkspaces } from '@/lib/ainative/workspaces'
  *  -1 means unlimited. */
 export const TIER_LIMITS: Record<string, { maxWorkspaces: number; maxProjects: number }> = {
   hobbyist: { maxWorkspaces: 1, maxProjects: 3 },
+  // Starter $20 (core#6615 / core PR #6617) — between Hobbyist and Pro.
+  starter: { maxWorkspaces: 2, maxProjects: 10 },
   pro: { maxWorkspaces: 5, maxProjects: -1 },
   scale: { maxWorkspaces: 50, maxProjects: 50 },
   enterprise: { maxWorkspaces: -1, maxProjects: -1 },
@@ -26,6 +28,7 @@ export const TIER_LIMITS: Record<string, { maxWorkspaces: number; maxProjects: n
 export function tierLabel(tier: string): string {
   const map: Record<string, string> = {
     hobbyist: 'Hobbyist',
+    starter: 'Starter',
     pro: 'Pro',
     scale: 'Scale',
     enterprise: 'Enterprise',
@@ -33,11 +36,14 @@ export function tierLabel(tier: string): string {
   return map[tier] ?? 'Hobbyist'
 }
 
-/** Normalize a core plan_name to a limits key. Legacy free/basic/starter/trial
- *  all resolve to hobbyist (the entry tier that replaced free). */
+/** Normalize a core plan_name to a limits key. Legacy free/basic/trial resolve to
+ *  hobbyist (the entry tier that replaced free). "starter" is now the DISTINCT $20
+ *  Builder tier (core#6615 / core PR #6617) — no longer aliased to hobbyist, so a
+ *  paying Starter gets its own limits + build allowance, matching core. */
 export function normalizeTier(planName: string | undefined | null): string {
   const k = (planName || '').toLowerCase().trim()
-  if (['free', 'basic', 'starter', 'trial', 'free tier', 'hobbyist'].includes(k)) return 'hobbyist'
+  if (k === 'starter') return 'starter'
+  if (['free', 'basic', 'trial', 'free tier', 'hobbyist'].includes(k)) return 'hobbyist'
   if (k in TIER_LIMITS) return k
   return 'hobbyist'
 }

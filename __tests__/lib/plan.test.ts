@@ -7,10 +7,17 @@ import { normalizeTier, TIER_LIMITS, tierLabel } from '@/lib/ainative/plan'
  * projects) as ainative.studio.
  */
 describe('plan tier limits (mirror of core get_tier_limits)', () => {
-  it('free/basic/starter/trial all resolve to hobbyist', () => {
-    for (const p of ['free', 'basic', 'starter', 'trial', 'Free Tier', 'HOBBYIST', '']) {
+  it('free/basic/trial all resolve to hobbyist', () => {
+    for (const p of ['free', 'basic', 'trial', 'Free Tier', 'HOBBYIST', '']) {
       expect(normalizeTier(p)).toBe('hobbyist')
     }
+  })
+
+  it('starter is a DISTINCT $20 tier (core#6615), not hobbyist', () => {
+    expect(normalizeTier('starter')).toBe('starter')
+    expect(normalizeTier('STARTER')).toBe('starter')
+    expect(TIER_LIMITS.starter).toEqual({ maxWorkspaces: 2, maxProjects: 10 })
+    expect(tierLabel('starter')).toBe('Starter')
   })
 
   it('null/undefined default to hobbyist (never over-grant)', () => {
@@ -19,6 +26,7 @@ describe('plan tier limits (mirror of core get_tier_limits)', () => {
   })
 
   it('known paid tiers pass through', () => {
+    expect(normalizeTier('starter')).toBe('starter')
     expect(normalizeTier('pro')).toBe('pro')
     expect(normalizeTier('scale')).toBe('scale')
     expect(normalizeTier('enterprise')).toBe('enterprise')
