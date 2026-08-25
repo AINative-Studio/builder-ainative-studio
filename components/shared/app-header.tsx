@@ -10,7 +10,7 @@ import { UserNavClient } from '@/components/user-nav-client'
 import { WorkspaceSwitcher } from '@/components/workspace-switcher'
 import { Button } from '@/components/ui/button'
 import { DEPLOY_URL, APP_NAME } from '@/lib/constants'
-import { BookOpen, Info, LayoutTemplate, Rocket, Settings } from 'lucide-react'
+import { BookOpen, HelpCircle, Info, LayoutTemplate, Rocket, Settings } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -111,6 +111,13 @@ export function AppHeader({ className = '' }: AppHeaderProps) {
               <Link href="/about">
                 <Info className="w-4 h-4 mr-1" />
                 About
+              </Link>
+            </Button>
+            {/* Help & Docs — self-serve AI help center (#60), public for everyone */}
+            <Button variant="ghost" size="sm" asChild>
+              <Link href="/help">
+                <HelpCircle className="w-4 h-4 mr-1" />
+                Help
               </Link>
             </Button>
             {session && (
