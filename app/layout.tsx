@@ -8,6 +8,7 @@ import { SessionProvider } from '@/components/providers/session-provider'
 import { Toaster } from '@/components/ui/toaster'
 import { CommandPaletteProvider } from '@/components/providers/command-palette-provider'
 import GoogleAnalytics from '@/components/analytics/google-analytics'
+import MetaPixel from '@/components/analytics/meta-pixel'
 
 const poppins = Poppins({
   weight: ['300', '400', '500', '600', '700'],
@@ -230,6 +231,7 @@ export default function RootLayout({
           </SWRProvider>
         </SessionProvider>
         <GoogleAnalytics />
+        <MetaPixel />
       </body>
     </html>
   )

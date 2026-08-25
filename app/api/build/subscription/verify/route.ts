@@ -30,6 +30,7 @@ import {
 } from '@/lib/build/app-registry'
 import { markConverted } from '@/lib/build/learning'
 import { reportConversion, gclidFromRequest } from '@/lib/build/conversions'
+import { reportMetaConversion, fbcFromRequest, fbpFromRequest } from '@/lib/build/meta-capi'
 import { deployRailwayService, railwayDeployEnabled } from '@/lib/build/deploy'
 
 // Monthly $ value per plan — the conversion value sent to Google Ads.
@@ -84,6 +85,21 @@ export async function POST(request: NextRequest) {
       sessionId: `builder-${slug || 'anon'}`,
       gclid: gclidFromRequest(request),
       value: PLAN_VALUE[plan] ?? 49, currency: 'USD', slug, plan,
+    }).catch(() => {})
+
+    // #207 · Meta: report the PAID conversion via CAPI as a Purchase (server-side,
+    // survives ad-blockers/ITP). Best-effort; full no-op unless Meta CAPI is
+    // configured. event_id lets the browser Pixel Purchase event dedup against this.
+    const purchaseEmail = (await auth().catch(() => null) as any)?.user?.email as string | undefined
+    reportMetaConversion({
+      eventName: 'Purchase',
+      eventId: `purchase-${slug || 'anon'}-${sessionId}`,
+      email: purchaseEmail,
+      value: PLAN_VALUE[plan] ?? 49, currency: 'USD',
+      fbc: fbcFromRequest(request), fbp: fbpFromRequest(request),
+      clientIp: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || undefined,
+      userAgent: request.headers.get('user-agent') || undefined,
+      custom: { slug: slug || undefined, plan, source: 'builder' },
     }).catch(() => {})
 
     // #243: upgrade a tmp_ Instant DB project → permanent now that the founder has

@@ -43,6 +43,15 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: 0.8,
   }))
 
+  // "Best" list pages targeting low-difficulty buyer-intent keywords.
+  // Keep in sync with CATEGORIES in app/best/[category]/page.tsx.
+  const bestEntries: MetadataRoute.Sitemap = ['ai-app-builder', 'vibe-coding-tools'].map(slug => ({
+    url: `${baseUrl}/best/${slug}`,
+    lastModified: now,
+    changeFrequency: 'weekly' as const,
+    priority: 0.85,
+  }))
+
   return [
     {
       url: baseUrl,
@@ -88,6 +97,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     },
     ...showcaseEntries,
     ...compareEntries,
+    ...bestEntries,
     {
       url: `${baseUrl}/templates`,
       lastModified: now,

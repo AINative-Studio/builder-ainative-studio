@@ -2,7 +2,9 @@
 
 /** Top-level pivot router (#220) — switches screens off the state machine. */
 
+import { useEffect } from 'react'
 import { BuildProvider, useBuild } from '@/contexts/build-context'
+import { captureAttribution } from '@/lib/build/attribution'
 import { Fork } from '@/components/build/screens/Fork'
 import { Intake } from '@/components/build/screens/Intake'
 import { Workspace } from '@/components/build/screens/Workspace'
@@ -28,6 +30,15 @@ function ScreenRouter() {
 }
 
 export function BuildApp() {
+  // Capture the ad-click gclid/fbclid + utm on landing (#207) as soon as the entry
+  // page mounts, independent of provider/screen mount order. Idempotent (last ad
+  // click wins, never clobbers a captured id), so double-firing with the copy in
+  // BuildProvider is harmless — this is the guaranteed hook on the /build + homepage
+  // entry points the ads land on.
+  useEffect(() => {
+    captureAttribution()
+  }, [])
+
   return (
     <BuildProvider>
       <ScreenRouter />
