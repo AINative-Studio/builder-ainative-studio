@@ -1,0 +1,285 @@
+'use client'
+
+/**
+ * DocumentsPanel (#64) — the company's persistent Documents library on the Live
+ * dashboard.
+ *
+ * A listable library of the company's generated docs with Documents vs Reports
+ * tabs:
+ *   - Documents = durable artifacts (Research / Product Roadmap / Mission / Market
+ *     Research), each with title, type chip, date and a VIEW action.
+ *   - Reports   = time-series operational outputs (the daily/nightly report — what
+ *     the swarm did, metrics, next actions), appended by the nightly loop.
+ *
+ * Data comes from /api/build/documents:
+ *   GET ?companyId=…&tab=…   → { documents: DocumentSummary[], counts, kinds }
+ *   GET ?companyId=…&id=…    → { document }   (VIEW loads full markdown content)
+ *   POST { companyId, generate, type, idea, companyName, track }  → { document }
+ *
+ * VIEW renders the structured markdown (Executive Summary → Key Findings → Sources)
+ * with react-markdown + remark-gfm. Chrome: reuses the `.modernist` `.m-live-card`,
+ * `.st` pills, `.m-chip`, `.m-task-*` classes already used by the Tasks (#55) and
+ * Versions (#62) panels, so it matches the #67 systems grid without a new visual
+ * language. Honest empty state: a brand-new company shows a clear "no documents yet"
+ * message with a way to generate the starter set — never fabricated entries.
+ *
+ * This is a NEW, distinct section — it does NOT touch the #67 systems grid, #52 chat,
+ * #55 Tasks, #62 Versions or #65 masthead sections.
+ */
+
+import { useCallback, useEffect, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+
+/** A library entry as returned by /api/build/documents (mirrors DocumentSummary). */
+interface DocumentSummary {
+  id: string
+  kind: 'document' | 'report'
+  type: string
+  typeLabel: string
+  title: string
+  createdAt: string
+}
+
+/** A full document (with content) as returned by GET ?id=. */
+interface FullDocument extends DocumentSummary {
+  content: string
+}
+
+type Tab = 'all' | 'document' | 'report'
+
+/** The four durable starter documents a new company can generate on demand. */
+const STARTER_DOCS: { type: string; label: string }[] = [
+  { type: 'research', label: 'Research' },
+  { type: 'roadmap', label: 'Product Roadmap' },
+  { type: 'mission', label: 'Mission' },
+  { type: 'market', label: 'Market Research' },
+]
+
+/** Compact "x ago" / date for the card meta. */
+function fmtDate(iso?: string): string {
+  if (!iso) return ''
+  const t = new Date(iso).getTime()
+  if (!Number.isFinite(t)) return ''
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000))
+  if (s < 60) return 'just now'
+  const m = Math.round(s / 60)
+  if (m < 60) return `${m}m ago`
+  const h = Math.round(m / 60)
+  if (h < 24) return `${h}h ago`
+  const d = Math.round(h / 24)
+  if (d < 30) return `${d}d ago`
+  return new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+}
+
+export function DocumentsPanel({
+  companyId,
+  idea,
+  companyName,
+  track,
+}: {
+  companyId: string
+  idea?: string
+  companyName?: string
+  track?: 'app' | 'company'
+}) {
+  const [tab, setTab] = useState<Tab>('all')
+  const [docs, setDocs] = useState<DocumentSummary[]>([])
+  const [counts, setCounts] = useState<Record<Tab, number>>({ all: 0, document: 0, report: 0 })
+  const [loaded, setLoaded] = useState(false)
+  const [viewing, setViewing] = useState<FullDocument | null>(null)
+  const [viewLoading, setViewLoading] = useState(false)
+  const [generating, setGenerating] = useState<string | null>(null)
+  const [genError, setGenError] = useState<string | null>(null)
+
+  const load = useCallback(() => {
+    let alive = true
+    fetch(`/api/build/documents?companyId=${encodeURIComponent(companyId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!alive) return
+        setDocs(Array.isArray(d?.documents) ? d.documents : [])
+        if (d?.counts) setCounts({ all: d.counts.all || 0, document: d.counts.document || 0, report: d.counts.report || 0 })
+        setLoaded(true)
+      })
+      .catch(() => { if (alive) setLoaded(true) })
+    return () => { alive = false }
+  }, [companyId])
+
+  // Hydrate on mount / company change — an honest empty library for a brand-new
+  // company, the real accumulated docs otherwise. Never fabricated.
+  useEffect(() => load(), [load])
+
+  // VIEW — load the full document content on demand.
+  const view = async (id: string) => {
+    setViewLoading(true)
+    setViewing(null)
+    try {
+      const res = await fetch(`/api/build/documents?companyId=${encodeURIComponent(companyId)}&id=${encodeURIComponent(id)}`)
+      const d = await res.json().catch(() => null)
+      if (res.ok && d?.document) setViewing(d.document as FullDocument)
+    } finally {
+      setViewLoading(false)
+    }
+  }
+
+  // Generate one durable starter document from the company idea (quality-bar
+  // structured markdown), then refresh the library.
+  const generate = async (type: string) => {
+    setGenError(null)
+    setGenerating(type)
+    try {
+      const res = await fetch('/api/build/documents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companyId, generate: true, type, idea, companyName, track }),
+      })
+      const d = await res.json().catch(() => null)
+      if (!res.ok || !d?.document) {
+        setGenError(d?.error === 'generation_unavailable'
+          ? 'Generation is unavailable right now — try again shortly.'
+          : d?.error || 'Could not generate that document.')
+        return
+      }
+      load()
+    } catch {
+      setGenError('Connection hiccup — try generating again.')
+    } finally {
+      setGenerating(null)
+    }
+  }
+
+  // Which starter docs have not been generated yet (by type), for the empty/build state.
+  const existingTypes = new Set(docs.map((d) => d.type))
+  const missingStarters = STARTER_DOCS.filter((s) => !existingTypes.has(s.type))
+
+  const visible = tab === 'all' ? docs : docs.filter((d) => d.kind === tab)
+
+  const TABS: { key: Tab; label: string }[] = [
+    { key: 'all', label: 'All' },
+    { key: 'document', label: 'Documents' },
+    { key: 'report', label: 'Reports' },
+  ]
+
+  return (
+    <div className="m-live-card" data-testid="documents-panel">
+      <div className="m-mono m-live-card-h">
+        <span className="m-glyph">◇</span> Documents
+      </div>
+
+      {/* Documents vs Reports tabs (#64 req 2). */}
+      <div className="m-doc-tabs" data-testid="documents-tabs" role="tablist">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            role="tab"
+            aria-selected={tab === t.key}
+            className={`m-chip m-doc-tab${tab === t.key ? ' is-active' : ''}`}
+            data-testid={`documents-tab-${t.key}`}
+            onClick={() => setTab(t.key)}
+          >
+            {t.label} <span className="m-doc-tab-count">{counts[t.key] ?? 0}</span>
+          </button>
+        ))}
+      </div>
+
+      {genError && (
+        <p className="m-mono m-ver-status is-error" data-testid="documents-gen-error">{genError}</p>
+      )}
+
+      {/* Body: loading → honest empty / list. */}
+      {!loaded ? (
+        <p className="m-mono m-task-empty" data-testid="documents-loading">loading documents…</p>
+      ) : visible.length === 0 ? (
+        <div data-testid="documents-empty">
+          <p className="m-mono m-task-empty">
+            {tab === 'report'
+              ? `No reports yet. Each night Cody appends a dated operational report for ${companyName || 'your company'} — what the swarm did, metrics, and next actions.`
+              : `No documents yet. As ${companyName || 'your company'} evolves, Cody builds a library — Research, Product Roadmap, Mission and Market Research — each grounded in your idea.`}
+          </p>
+          {/* Offer to generate the durable starter docs (never auto-faked). */}
+          {tab !== 'report' && missingStarters.length > 0 && idea && (
+            <div className="m-infra-btns" data-testid="documents-generate">
+              {missingStarters.map((s) => (
+                <button
+                  key={s.type}
+                  className="btn-secondary"
+                  data-testid={`documents-generate-${s.type}`}
+                  disabled={generating != null}
+                  onClick={() => generate(s.type)}
+                >
+                  {generating === s.type ? 'Generating…' : `Generate ${s.label}`}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <>
+          <ul className="m-task-list" data-testid="documents-list">
+            {visible.map((d) => (
+              <li key={d.id} className="m-task-card" data-testid="document-card" data-kind={d.kind} data-type={d.type}>
+                <div className="m-task-card-top">
+                  <span className={`st ${d.kind === 'report' ? 'is-running' : 'is-done'}`} data-testid="document-kind-badge">
+                    {d.kind === 'report' ? 'REPORT' : 'DOC'}
+                  </span>
+                  <span className="m-chip m-doc-type" data-testid="document-type">{d.typeLabel}</span>
+                </div>
+                <p className="m-task-title" data-testid="document-title">{d.title}</p>
+                <div className="m-task-card-foot m-mono">
+                  <span className="m-task-meta" data-testid="document-date">{fmtDate(d.createdAt)}</span>
+                  <button
+                    className="btn-ghost m-task-view"
+                    data-testid="document-view"
+                    onClick={() => view(d.id)}
+                  >
+                    VIEW →
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+          {/* Generate any still-missing starter docs from below the list too. */}
+          {tab !== 'report' && missingStarters.length > 0 && idea && (
+            <div className="m-infra-btns" data-testid="documents-generate-more">
+              {missingStarters.map((s) => (
+                <button
+                  key={s.type}
+                  className="btn-secondary"
+                  data-testid={`documents-generate-${s.type}`}
+                  disabled={generating != null}
+                  onClick={() => generate(s.type)}
+                >
+                  {generating === s.type ? 'Generating…' : `Generate ${s.label}`}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* VIEW — full structured markdown, rendered in-app (#64 req 5). */}
+      {(viewing || viewLoading) && (
+        <div className="m-task-detail" role="dialog" aria-label="Document" data-testid="document-detail">
+          <div className="m-task-detail-head">
+            <span className="st is-done">{viewing?.typeLabel || 'Document'}</span>
+            <button
+              className="btn-ghost m-task-detail-close"
+              data-testid="document-detail-close"
+              onClick={() => setViewing(null)}
+            >
+              close ✕
+            </button>
+          </div>
+          {viewLoading ? (
+            <p className="m-mono m-task-empty">loading…</p>
+          ) : viewing ? (
+            <div className="m-doc-body" data-testid="document-content">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{viewing.content}</ReactMarkdown>
+            </div>
+          ) : null}
+        </div>
+      )}
+    </div>
+  )
+}

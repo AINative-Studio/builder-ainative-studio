@@ -21,6 +21,7 @@ import { countSystemStatuses, planFramingLine } from '@/lib/build/live-vs-planne
 import { liveStatusLine } from '@/lib/build/front-door-value'
 import { TasksPanel } from '@/components/build/TasksPanel'
 import { VersionsPanel } from '@/components/build/VersionsPanel'
+import { DocumentsPanel } from '@/components/build/DocumentsPanel'
 
 /** Display label for an active paid tier (#241). */
 const PLAN_LABEL: Record<ActivePlan, string> = {
@@ -612,6 +613,13 @@ export function Live() {
               confirmation + honest rolling-back → validating → live status. A new,
               distinct section — does not touch #67 systems / #55 Tasks / #52 chat. */}
           <VersionsPanel companyId={companyId} />
+          {/* Persistent Documents library (#64) — the company's durable Documents
+              (Research / Product Roadmap / Mission / Market Research) + time-series
+              Reports (the daily/nightly operational report). Persisted per
+              {owner, company}; VIEW renders structured markdown. A new, distinct
+              section — does not touch #67 systems / #52 chat / #55 Tasks / #62
+              Versions / #65 masthead. */}
+          <DocumentsPanel companyId={companyId} idea={state.idea} companyName={company} track={state.track} />
         </div>
 
         {/* RIGHT — Ask Cody anything */}

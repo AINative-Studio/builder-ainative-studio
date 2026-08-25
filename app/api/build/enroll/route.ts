@@ -5,6 +5,8 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { enrollCompany } from '@/lib/build/loop-enrollment'
+import { auth } from '@/app/(auth)/auth'
+import { deriveOwnerKey } from '@/lib/build/chat-store'
 import { logger } from '@/lib/logger'
 
 export const dynamic = 'force-dynamic'
@@ -17,7 +19,11 @@ export async function POST(request: NextRequest) {
     if (!companyId || !companyName || !track) {
       return NextResponse.json({ error: 'companyId, companyName, and track are required' }, { status: 400 })
     }
-    const ok = await enrollCompany({ companyId, companyName, track, goal })
+    // Capture the owner key from the SERVER session so the nightly loop can append
+    // the daily operational report (#64) to the same {owner, company} document scope.
+    const session = await auth().catch(() => null)
+    const ownerKey = deriveOwnerKey(session as any)
+    const ok = await enrollCompany({ companyId, companyName, track, goal, ownerKey })
     if (!ok) {
       return NextResponse.json({ ok: false, detail: 'enrollment store not configured or write failed' }, { status: 200 })
     }
