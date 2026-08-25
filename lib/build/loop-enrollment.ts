@@ -15,6 +15,13 @@ export interface LoopEnrollment {
   companyName: string
   track: 'app' | 'company'
   goal?: string
+  /**
+   * The owner key ({@link deriveOwnerKey}) captured at enrollment, so the nightly
+   * loop can append the daily operational report (#64) to the SAME per-{owner,
+   * company} scope the Documents library reads. Optional for backward-compat with
+   * pre-#64 enrollments (their reports simply key by companyId alone).
+   */
+  ownerKey?: string
   enabled: boolean
   enrolledAt: string
   lastRunAt?: string

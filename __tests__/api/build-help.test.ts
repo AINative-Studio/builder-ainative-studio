@@ -32,7 +32,8 @@ vi.mock('openai', () => ({
   },
 }))
 
-import { POST, buildHelpSystemPrompt } from '@/app/api/build/help/route'
+import { POST } from '@/app/api/build/help/route'
+import { buildHelpSystemPrompt } from '@/lib/build/help-faq'
 
 function req(body: unknown) {
   return { json: async () => body } as any
