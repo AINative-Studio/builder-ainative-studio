@@ -113,3 +113,24 @@ export async function getLastRun(companyId: string): Promise<CompanyRun | null> 
     return null
   }
 }
+
+/**
+ * Whether a company is enrolled in the nightly autonomous loop (#55). Used by the
+ * Tasks panel to decide if the synthetic "Recurring" task should appear. Returns
+ * false on any failure so the backlog degrades to no-recurring-row honestly.
+ */
+export async function isEnrolled(companyId: string): Promise<boolean> {
+  if (!configured() || !companyId) return false
+  try {
+    const res = await fetch(`${rowsUrl()}?limit=500`, { headers: headers(), signal: AbortSignal.timeout(20000) })
+    if (!res.ok) return false
+    const data = JSON.parse(await res.text())
+    const rows = Array.isArray(data) ? data : data.data || data.rows || []
+    return rows
+      .map((r: { row_data?: LoopEnrollment & { kind?: string } }) => r.row_data)
+      .some((rd: (LoopEnrollment & { kind?: string }) | undefined) =>
+        Boolean(rd?.enabled) && rd?.kind !== 'run' && rd?.companyId === companyId)
+  } catch {
+    return false
+  }
+}

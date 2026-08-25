@@ -19,6 +19,7 @@ import { useSession } from 'next-auth/react'
 import { SystemStatusBadge } from '@/components/build/SystemStatusBadge'
 import { countSystemStatuses, planFramingLine } from '@/lib/build/live-vs-planned'
 import { liveStatusLine } from '@/lib/build/front-door-value'
+import { TasksPanel } from '@/components/build/TasksPanel'
 
 /** Display label for an active paid tier (#241). */
 const PLAN_LABEL: Record<ActivePlan, string> = {
@@ -280,15 +281,6 @@ export function Live() {
   // actually claimed/enrolled or on a plan — otherwise it contradicts the funnel's
   // "Claim {company} free". Unclaimed companies get a neutral "Preview" status.
   const onWatch = signedIn && (enrolled || !!activePlan)
-
-  // Tonight's tasks — real platform-loop signal woven in so it's not fiction.
-  const tonight = [
-    `Evaluate ${company} and pick the highest-leverage next task`,
-    proof.tasksToday != null
-      ? `Join the ${proof.tasksToday} agent tasks the platform ran today`
-      : 'Run the nightly improvement pass',
-    'Summarize outcomes and score them into the RLHF loop',
-  ]
 
   // Reach the real artifact graph from Live (returns to the workspace on the graph view).
   const openGraph = () => {
@@ -580,10 +572,10 @@ export function Live() {
               )}
             </div>
           </div>
-          <div className="m-live-card">
-            <div className="m-mono m-live-card-h">The swarm · tonight&apos;s tasks</div>
-            <ul className="m-list m-tonight">{tonight.map((t) => <li key={t}><span className="st is-running" /> {t}</li>)}</ul>
-          </div>
+          {/* Real, stateful Tasks/Backlog (#55) — replaces the hardcoded tonight
+              array. Persisted per {owner, company}; surfaces real swarm task_ids
+              and the nightly loop's Recurring task. */}
+          <TasksPanel companyId={companyId} />
           <div className="m-live-card">
             <div className="m-mono m-live-card-h">Website & infrastructure</div>
             <p className="m-mono m-infra-urls">

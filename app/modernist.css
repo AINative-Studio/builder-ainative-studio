@@ -747,6 +747,39 @@
 .m-system-stat { font-size: 11px; color: var(--text-muted); }
 .m-system-prim { align-self: flex-start; margin-top: 4px; }
 .m-tonight li { list-style: none; margin-left: -20px; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-body-70); padding: 3px 0; }
+
+/* Tasks / backlog panel (#55): stage tabs + task cards + VIEW detail. Reuses the
+   .st status pills and .m-chip so it matches the systems grid chrome (#67). */
+.m-task-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+.m-task-tab {
+  font-family: var(--font-mono, monospace); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em;
+  padding: 4px 8px; border: 1px solid var(--neutral-line); background: transparent; color: var(--text-body-70);
+  cursor: pointer; display: inline-flex; align-items: center; gap: 5px;
+}
+.m-task-tab:hover { background: var(--color-surface); }
+.m-task-tab.is-active { background: var(--ink); color: #fff; border-color: var(--ink); }
+.m-task-tab-n { opacity: 0.7; font-variant-numeric: tabular-nums; }
+.m-task-empty { font-size: 12px; color: var(--text-muted); line-height: 1.6; margin: 8px 0 0; }
+.m-task-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.m-task-card { background: var(--color-bg); padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+.m-task-card:hover { background: var(--color-surface); }
+.m-task-card-top { display: flex; align-items: center; gap: 8px; }
+.m-task-source { align-self: auto; margin: 0; }
+.m-task-title { font-family: var(--font-heading); font-weight: 600; font-size: 13.5px; margin: 0; line-height: 1.35; }
+.m-task-card-foot { display: flex; align-items: center; justify-content: space-between; font-size: 10.5px; color: var(--text-muted); }
+.m-task-view { font-size: 10.5px; padding: 2px 4px; }
+/* VIEW detail — inline panel, no overlay so it stays inside the dashboard column. */
+.m-task-detail { margin-top: 12px; padding: 12px; border: 1px solid var(--neutral-line); background: var(--color-bg); }
+.m-task-detail-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.m-task-detail-close { font-size: 10.5px; padding: 2px 4px; }
+.m-task-detail-title { font-family: var(--font-heading); font-weight: 600; font-size: 14px; margin: 0 0 8px; }
+.m-task-detail-body { font-size: 12.5px; color: var(--text-body-70); line-height: 1.5; margin: 0 0 10px; }
+.m-task-detail-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; font-size: 10.5px; margin: 0 0 10px; }
+.m-task-detail-meta div { display: flex; gap: 6px; }
+.m-task-detail-meta dt { color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.05em; margin: 0; }
+.m-task-detail-meta dd { color: var(--text-body-70); margin: 0; word-break: break-all; }
+.m-task-detail-output { font-size: 11px; background: var(--color-surface); padding: 8px; margin: 0; white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; }
+.m-task-detail-noout { font-size: 11px; color: var(--text-muted); margin: 0; }
 .m-infra-urls { font-size: 12px; color: var(--text-muted); line-height: 1.7; margin: 0 0 12px; }
 .m-infra-btns { display: flex; flex-wrap: wrap; gap: 6px; }
 .m-infra-btns button { font-size: 12px; padding: 6px 10px; }
