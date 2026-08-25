@@ -244,6 +244,280 @@ export async function ensureCompanyService(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Bring-your-own custom domain (#53) — connect a domain the founder already owns.
+//
+// Flow (only ever reached for a PROVISIONED per-company Railway service, whose
+// *.up.railway.app service domain is CNAME-pointable per #240):
+//   1. customDomainCreate — register the founder's domain on the service. Railway
+//      returns the exact DNS records to add at THEIR registrar: a CNAME → the
+//      service's *.up.railway.app host, plus a `_railway-verify` TXT for cert
+//      ownership. The customDomain has a `status` we surface honestly.
+//   2. The founder adds those records at their registrar.
+//   3. We poll: DNS propagation first (DoH), then Railway's cert status. TLS is
+//      issued asynchronously (minutes → ~1h). We NEVER report "live" until Railway
+//      says the cert is active — a resolving CNAME with no cert yet is `verifying`,
+//      not done (see the ainative-dns skill: HTTPS `000` = cert still issuing).
+//
+// All functions are best-effort + cost-safe: they return structured results and
+// never throw into the caller, and are inert (reason:'disabled') when Railway
+// provisioning isn't enabled+configured.
+// ---------------------------------------------------------------------------
+
+/** A DNS record the founder must add at their registrar to wire a custom domain. */
+export interface CustomDomainDnsRecord {
+  /** 'CNAME' | 'TXT' | 'A' | 'ALIAS' — the record type to create. */
+  type: string
+  /** The record host/name, e.g. 'app' or '@' or '_railway-verify.app'. */
+  name: string
+  /** The value the record must point at (the *.up.railway.app host, or verify token). */
+  value: string
+  /** Railway's per-record status when known (e.g. 'PROPAGATED' / 'WAITING'). */
+  status?: string
+}
+
+/** Honest lifecycle of a bring-your-own custom domain. Never jump to 'live' early. */
+export type CustomDomainStatus = 'pending' | 'verifying' | 'live' | 'error'
+
+export interface CustomDomainResult {
+  ok: boolean
+  /** The Railway customDomain id (persist to make status polls / re-opens idempotent). */
+  id?: string
+  /** The founder's domain (host only), e.g. 'myco.com'. */
+  domain?: string
+  /** Honest status: pending (records not detected) → verifying (DNS seen, cert issuing) → live (TLS active). */
+  status?: CustomDomainStatus
+  /** Exact DNS records the founder must add at their registrar. */
+  dnsRecords?: CustomDomainDnsRecord[]
+  /** The CNAME target host (the service's *.up.railway.app) for convenience. */
+  cnameTarget?: string
+  reason?: string
+}
+
+/** Normalise a user-typed domain to a bare host: strip scheme, path, port, trailing dot, lowercase. */
+export function normalizeDomain(input: string): string {
+  let d = String(input || '').trim().toLowerCase()
+  d = d.replace(/^https?:\/\//, '')            // strip scheme
+  d = d.replace(/\/.*$/, '')                    // strip path
+  d = d.replace(/:\d+$/, '')                    // strip port
+  d = d.replace(/\.$/, '')                      // strip trailing dot
+  return d
+}
+
+/**
+ * Validate a bring-your-own domain host. Accepts registrable domains and
+ * subdomains (2+ labels, valid label charset, a TLD of ≥2 letters). Rejects
+ * bare words, spaces, and obviously invalid input so we never send junk to Railway.
+ */
+export function isValidCustomDomain(input: string): boolean {
+  const d = normalizeDomain(input)
+  if (!d || d.length > 253) return false
+  if (!d.includes('.')) return false
+  const labels = d.split('.')
+  if (labels.length < 2) return false
+  const tld = labels[labels.length - 1]
+  if (!/^[a-z]{2,}$/.test(tld)) return false
+  return labels.every((l) => /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(l))
+}
+
+/**
+ * Map a Railway customDomain `status` (and cert state) to our honest lifecycle.
+ * Railway's status strings vary by API version; we treat anything cert-active as
+ * 'live', a seen-but-not-certed domain as 'verifying', and an unseen domain as
+ * 'pending'. Defensive: unknown → 'verifying' (never a false 'live').
+ */
+export function mapCustomDomainStatus(raw: {
+  status?: string | null
+  certificateStatus?: string | null
+  cdnProviderStatus?: string | null
+  dnsRecords?: Array<{ status?: string | null }>
+}): CustomDomainStatus {
+  const s = String(raw?.status || '').toUpperCase()
+  const cert = String(raw?.certificateStatus || '').toUpperCase()
+  // Cert active anywhere → live.
+  if (cert === 'ISSUED' || cert === 'ACTIVE' || s === 'ACTIVE' || s === 'LIVE') return 'live'
+  if (s === 'ERROR' || s === 'FAILED' || cert === 'ERROR' || cert === 'FAILED') return 'error'
+  // DNS records all propagated but cert not yet issued → verifying.
+  const recs = raw?.dnsRecords || []
+  const allSeen = recs.length > 0 && recs.every((r) => {
+    const rs = String(r?.status || '').toUpperCase()
+    return rs === 'PROPAGATED' || rs === 'VALID' || rs === 'RESOLVED'
+  })
+  if (allSeen || s === 'WAITING_CERTIFICATE' || cert === 'ISSUING' || cert === 'PENDING') return 'verifying'
+  // Records not yet detected → pending.
+  return 'pending'
+}
+
+/** Shape Railway's returned dnsRecords into our founder-facing record list. */
+function shapeDnsRecords(
+  raw: Array<Record<string, any>> | undefined,
+  fallbackCname?: string,
+  domain?: string,
+): CustomDomainDnsRecord[] {
+  const out: CustomDomainDnsRecord[] = []
+  for (const r of raw || []) {
+    const type = String(r?.recordType || r?.type || '').toUpperCase()
+    const name = String(r?.hostlabel ?? r?.fqdn ?? r?.name ?? domain ?? '')
+    const value = String(r?.requiredValue ?? r?.value ?? '')
+    if (!type || !value) continue
+    out.push({ type, name, value, status: r?.status ? String(r.status) : undefined })
+  }
+  // Defensive fallback: if Railway returned no records but we know the service
+  // host, still tell the founder the CNAME to add (better than a blank panel).
+  if (out.length === 0 && fallbackCname && domain) {
+    out.push({ type: 'CNAME', name: domain, value: fallbackCname })
+  }
+  return out
+}
+
+/**
+ * Register a founder's own domain on a provisioned company's Railway service (#53),
+ * returning the exact DNS records they must add + the initial status. Idempotent:
+ * if the domain is already attached Railway returns the existing record — we surface
+ * its current status rather than erroring.
+ *
+ * @param serviceId    the company's dedicated Railway service id (must exist — BYO is
+ *                     only offered for provisioned companies, which are CNAME-pointable).
+ * @param domain       the founder's domain (e.g. 'myco.com'); normalised + validated here.
+ * @param cnameTarget  the service's *.up.railway.app host, used as the CNAME fallback.
+ */
+export async function createCustomDomain(
+  serviceId: string,
+  domain: string,
+  environmentId?: string,
+  cnameTarget?: string,
+): Promise<CustomDomainResult> {
+  if (!railwayDeployEnabled()) return { ok: false, reason: 'disabled' }
+  if (!serviceId) return { ok: false, reason: 'no_service' }
+  const host = normalizeDomain(domain)
+  if (!isValidCustomDomain(host)) return { ok: false, reason: 'bad_domain' }
+  const envId = environmentId || companyEnvironmentId()
+  if (!envId) return { ok: false, reason: 'no_environment' }
+
+  try {
+    const created = await railwayQuery(
+      `mutation CustomDomainCreate($input: CustomDomainCreateInput!) {
+        customDomainCreate(input: $input) {
+          id
+          domain
+          status
+          certificateStatus
+          dnsRecords { hostlabel fqdn recordType requiredValue currentValue status zone }
+        }
+      }`,
+      { input: { serviceId, environmentId: envId, domain: host } },
+    )
+    const cd = created?.customDomainCreate
+    if (!cd?.id) return { ok: false, reason: 'create_no_id' }
+    return {
+      ok: true,
+      id: cd.id,
+      domain: cd.domain || host,
+      status: mapCustomDomainStatus(cd),
+      dnsRecords: shapeDnsRecords(cd.dnsRecords, cnameTarget, host),
+      cnameTarget,
+    }
+  } catch (e: any) {
+    const msg = String(e?.message || e)
+    // A domain already registered on the service is not a failure — fall through to
+    // a status read so re-connecting an already-connected domain is idempotent (#53).
+    if (/already|exists|duplicate/i.test(msg)) {
+      const status = await getCustomDomainStatus(serviceId, host, envId, cnameTarget)
+      if (status.ok) return status
+    }
+    return { ok: false, reason: msg.slice(0, 200) }
+  }
+}
+
+/**
+ * Read the current status of a founder's custom domain on a service (#53). Used to
+ * poll DNS/cert progress and to make re-opening the modal show an already-connected
+ * domain's live status. Returns { ok:false, reason:'not_found' } if the domain isn't
+ * attached (so the caller can offer to (re)connect it).
+ */
+export async function getCustomDomainStatus(
+  serviceId: string,
+  domain: string,
+  environmentId?: string,
+  cnameTarget?: string,
+): Promise<CustomDomainResult> {
+  if (!railwayDeployEnabled()) return { ok: false, reason: 'disabled' }
+  if (!serviceId) return { ok: false, reason: 'no_service' }
+  const host = normalizeDomain(domain)
+  const envId = environmentId || companyEnvironmentId()
+  if (!envId) return { ok: false, reason: 'no_environment' }
+
+  try {
+    const data = await railwayQuery(
+      `query Domains($serviceId: String!, $environmentId: String!) {
+        domains(serviceId: $serviceId, environmentId: $environmentId) {
+          customDomains {
+            id
+            domain
+            status
+            certificateStatus
+            dnsRecords { hostlabel fqdn recordType requiredValue currentValue status zone }
+          }
+        }
+      }`,
+      { serviceId, environmentId: envId },
+      15000,
+    )
+    const list: any[] = data?.domains?.customDomains || []
+    const cd = list.find((c) => normalizeDomain(String(c?.domain || '')) === host)
+    if (!cd) return { ok: false, reason: 'not_found' }
+    return {
+      ok: true,
+      id: cd.id,
+      domain: cd.domain || host,
+      status: mapCustomDomainStatus(cd),
+      dnsRecords: shapeDnsRecords(cd.dnsRecords, cnameTarget, host),
+      cnameTarget,
+    }
+  } catch (e: any) {
+    return { ok: false, reason: String(e?.message || e).slice(0, 200) }
+  }
+}
+
+/**
+ * Best-effort DNS check via DNS-over-HTTPS (Google DoH) — has the founder's CNAME
+ * (or A) started resolving toward the expected target? Used as a fast pre-check so
+ * the UI can move from 'pending' → 'verifying' the moment DNS is seen, without
+ * waiting on Railway. Returns false on any error (treat as "not yet"). Pure network,
+ * no Railway token needed — safe to call even when Railway deploy is disabled.
+ *
+ * @param domain          the founder's domain to look up.
+ * @param expectedTarget  substring the answer must contain (e.g. 'up.railway.app'
+ *                        or the specific service host). Case-insensitive.
+ */
+export async function checkDnsRecord(
+  domain: string,
+  expectedTarget?: string,
+): Promise<boolean> {
+  const host = normalizeDomain(domain)
+  if (!host) return false
+  const dohBase = process.env.DNS_DOH_URL || 'https://dns.google/resolve'
+  try {
+    // Try CNAME first, then A — either resolving toward the target counts.
+    for (const type of ['CNAME', 'A']) {
+      const res = await fetch(`${dohBase}?name=${encodeURIComponent(host)}&type=${type}`, {
+        headers: { accept: 'application/dns-json' },
+        signal: AbortSignal.timeout(8000),
+      }).catch(() => null)
+      if (!res || !res.ok) continue
+      const json: any = await res.json().catch(() => null)
+      const answers: any[] = json?.Answer || []
+      if (answers.length === 0) continue
+      if (!expectedTarget) return true
+      const want = expectedTarget.toLowerCase()
+      if (answers.some((a) => String(a?.data || '').toLowerCase().includes(want))) return true
+    }
+    return false
+  } catch {
+    return false
+  }
+}
+
 /**
  * Create (or reuse) a *.up.railway.app domain for a service. Idempotent-ish: if the
  * service already has a service domain we return it rather than minting another.

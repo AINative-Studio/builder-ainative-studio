@@ -33,6 +33,15 @@ export interface AppEntry {
   // built companies again. Absent for companies built anonymously (never signed in).
   ownerEmail?: string
   domain?: string  // custom domain purchased for this company (#240), if any
+  // Bring-your-own connected domain (#53) — a domain the founder ALREADY owns and
+  // wired to their provisioned Railway service via customDomainCreate. `byoDomain`
+  // is the host; `byoDomainId` is the Railway customDomain id (for idempotent status
+  // polls + re-opens); `byoDomainStatus` is the last-observed honest lifecycle state
+  // (pending → verifying → live). Distinct from `domain` (a PURCHASED domain, #240).
+  byoDomain?: string
+  byoDomainId?: string
+  byoDomainStatus?: 'pending' | 'verifying' | 'live' | 'error'
+  byoDomainConnectedAt?: string
   plan?: string    // active subscription plan id (pro|business|enterprise) after checkout (#241)
   enrolled?: boolean  // Business+ auto-enrolled into the nightly loop (#241; cron itself is #243)
   // Persistent cloud provisioning (#243) — the REAL per-company data layer, created
@@ -101,6 +110,40 @@ export async function setAppDomain(slug: string, domain: string): Promise<boolea
   const existing = await resolveApp(slug)
   if (!existing) return false
   return registerApp({ ...existing, domain })
+}
+
+/**
+ * Persist a bring-your-own connected domain on a company (#53). Appends an updated
+ * row carrying the existing entry plus the founder's connected domain, the Railway
+ * customDomain id, and the last-observed status, so resolveApp() (latest-wins)
+ * surfaces the connection and re-opening the modal shows current status (idempotent).
+ *
+ * Idempotent no-op success (true) when the same domain + status is already stored, so
+ * repeated status polls never append churn rows. No-op (false) if slug isn't registered.
+ */
+export async function setAppByoDomain(
+  slug: string,
+  fields: { domain: string; byoDomainId?: string; status?: 'pending' | 'verifying' | 'live' | 'error' },
+): Promise<boolean> {
+  const host = (fields.domain || '').trim().toLowerCase()
+  if (!host) return false
+  const existing = await resolveApp(slug)
+  if (!existing) return false
+  // Nothing changed → skip the write (avoid churn on repeat polls).
+  if (
+    (existing.byoDomain || '').toLowerCase() === host &&
+    existing.byoDomainId === fields.byoDomainId &&
+    existing.byoDomainStatus === fields.status
+  ) {
+    return true
+  }
+  return registerApp({
+    ...existing,
+    byoDomain: host,
+    byoDomainId: fields.byoDomainId ?? existing.byoDomainId,
+    byoDomainStatus: fields.status ?? existing.byoDomainStatus,
+    byoDomainConnectedAt: existing.byoDomainConnectedAt || new Date().toISOString(),
+  })
 }
 
 /**
