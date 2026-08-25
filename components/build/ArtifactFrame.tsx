@@ -101,7 +101,15 @@ export function ArtifactFrame({
       ) : !state.auto ? (
         <div className="m-artifact-nav">
           <button className="btn-ghost" disabled={!prev} onClick={() => prev && goView(prev as never)}>‹ Back</button>
-          <button className="btn-secondary" disabled={!next} onClick={() => next && goView(next as never)}>Next ›</button>
+          {/* On the LAST artifact (e.g. preview) there is no next artifact, so the
+              pager 'Next' used to be a disabled dead-end — users clicked it and
+              nothing happened. Instead, advance to the pricing/pay-gate (the real
+              forward path, same as the 'Make it real →' CTA) so Next is never dead. */}
+          {next ? (
+            <button className="btn-secondary" onClick={() => goView(next as never)}>Next ›</button>
+          ) : (
+            <button className="btn-secondary" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'pricing' })}>Next ›</button>
+          )}
         </div>
       ) : (
         <div className="m-artifact-nav">
