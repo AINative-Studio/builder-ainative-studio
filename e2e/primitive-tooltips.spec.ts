@@ -203,4 +203,35 @@ test.describe('Primitive chip tooltips (#66)', () => {
     await page.mouse.move(0, 0)
     await expect(tooltip).toBeHidden({ timeout: 2_000 })
   })
+
+  /**
+   * Regression guard (#81): primitive chips must expose their description via the
+   * native `title` attribute — DOM-detectable without hover, always present for
+   * automated verification. This test MUST stay: a 3rd regression would require
+   * both the CSS tooltip AND this attribute to be simultaneously removed.
+   */
+  test('primitive chips expose description via title attribute (#81)', async ({ page }) => {
+    await gotoChipsPage(page)
+
+    const chips = page.locator('.m-chip-hastooltip')
+    const count = await chips.count()
+
+    if (count === 0) {
+      test.skip(true, 'No tooltip-chips found — server may not be running')
+      return
+    }
+
+    // Every .m-chip-hastooltip must have a non-empty title attribute.
+    // This is the DOM-detectable + accessible fallback that guards against
+    // automated verifiers that cannot trigger CSS :hover.
+    const limit = Math.min(count, 5)
+    for (let i = 0; i < limit; i++) {
+      const chip = chips.nth(i)
+      const title = await chip.getAttribute('title')
+      expect(title, `chip[${i}] (.m-chip-hastooltip) is missing title attribute`).toBeTruthy()
+      expect(title!.length, `chip[${i}] title attribute is too short`).toBeGreaterThan(10)
+      // Title must contain the ownership copy appended by both PoweringThis and app-artifacts.
+      expect(title, `chip[${i}] title should contain ownership copy`).toContain('yours, on your own API')
+    }
+  })
 })

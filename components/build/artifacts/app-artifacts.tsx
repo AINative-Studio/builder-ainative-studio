@@ -12,6 +12,7 @@
 import type { ReactNode } from 'react'
 import { Section, Tag, Generating, GenError, useGen } from '@/components/build/artifacts/gen-helpers'
 import { CODING_STANDARDS } from '@/lib/build/coding-standards'
+import { getPrimitiveTooltip } from '@/lib/build/primitive-catalog'
 
 export const Brief = () => {
   const { data, error } = useGen<{ summary: string; goals: string[]; nonGoals: string[]; users: string[] }>('brief')
@@ -85,9 +86,22 @@ export const Comp = () => {
       <table className="m-table">
         <thead><tr><th>AINative primitive</th><th>How this app uses it</th></tr></thead>
         <tbody>
-          {(d.primitives || []).map((p, i) => (
-            <tr key={i}><td><span className="m-chip">{p.name}</span></td><td>{p.use}</td></tr>
-          ))}
+          {(d.primitives || []).map((p, i) => {
+            const tip = getPrimitiveTooltip(p.name)
+            return (
+              <tr key={i}>
+                <td>
+                  <span
+                    className={tip ? 'm-chip m-chip-hastooltip' : 'm-chip'}
+                    title={tip ? `${tip} — yours, on your own API.` : undefined}
+                  >
+                    {p.name}
+                  </span>
+                </td>
+                <td>{p.use}</td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </>

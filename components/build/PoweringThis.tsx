@@ -50,6 +50,7 @@ function PrimitiveChip({ label }: { label: string }) {
         aria-describedby={tooltipId}
         tabIndex={0}
         role="button"
+        title={`${tooltip} — yours, on your own API.`}
       >
         {label}
       </span>
