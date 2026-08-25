@@ -780,6 +780,15 @@
 .m-task-detail-meta dd { color: var(--text-body-70); margin: 0; word-break: break-all; }
 .m-task-detail-output { font-size: 11px; background: var(--color-surface); padding: 8px; margin: 0; white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; }
 .m-task-detail-noout { font-size: 11px; color: var(--text-muted); margin: 0; }
+
+/* Versions & rollback panel (#62) — reuses the task-card chrome; a few extras. */
+.m-ver-status { font-size: 11px; margin: 0 0 10px; padding: 6px 8px; background: var(--color-surface); }
+.m-ver-status.is-running { color: var(--track); }
+.m-ver-status.is-live { color: var(--success); }
+.m-ver-status.is-error { color: var(--attn); }
+.m-ver-sha { align-self: auto; margin: 0; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+.m-ver-live-tag { font-size: 10.5px; color: var(--success); }
+
 .m-infra-urls { font-size: 12px; color: var(--text-muted); line-height: 1.7; margin: 0 0 12px; }
 .m-infra-btns { display: flex; flex-wrap: wrap; gap: 6px; }
 .m-infra-btns button { font-size: 12px; padding: 6px 10px; }

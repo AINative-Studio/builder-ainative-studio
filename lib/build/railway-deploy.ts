@@ -518,6 +518,245 @@ export async function checkDnsRecord(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Deployment history + one-click rollback (#62) — per-service version history.
+//
+// Railway keeps a per-service deployment history: every push/redeploy is a
+// `deployment` with an id, a status (SUCCESS/FAILED/BUILDING/…), a createdAt, and
+// (for GitHub-sourced services) the git meta (commit SHA + message). We query
+// that history to render a Versions list, and trigger `deploymentRedeploy` to
+// roll a company's live site back to a chosen prior deployment.
+//
+// All functions here are best-effort + cost-safe: inert (reason:'disabled') when
+// Railway provisioning isn't enabled+configured, and they return structured
+// results rather than throwing into the caller.
+// ---------------------------------------------------------------------------
+
+/**
+ * Honest lifecycle of a Railway deployment as it maps to our Versions UI:
+ *  - live:      the currently-serving deployment (SUCCESS + newest active).
+ *  - success:   a completed prior deployment (rollback target).
+ *  - building:  build/deploy in flight (a fresh deploy or an in-progress rollback).
+ *  - failed:    the deploy did not complete.
+ *  - removed:   the deployment was removed/crashed and is not a valid target.
+ */
+export type DeploymentStatus = 'live' | 'success' | 'building' | 'failed' | 'removed'
+
+/** A single Railway deployment, shaped for the Versions list. */
+export interface RailwayDeployment {
+  /** Railway deployment id — the rollback target (deploymentRedeploy(id)). */
+  id: string
+  /** Our normalized status. */
+  status: DeploymentStatus
+  /** Raw Railway status string (e.g. 'SUCCESS'), for debugging. */
+  rawStatus?: string
+  /** ISO created timestamp. */
+  createdAt?: string
+  /** Git commit SHA (short) when the service is GitHub-sourced. */
+  commitSha?: string
+  /** Commit / deploy message (Cody's summary of what changed). */
+  message?: string
+  /** True for the deployment currently serving the live site. */
+  current?: boolean
+}
+
+/**
+ * Map a raw Railway deployment status to our normalized lifecycle. Railway's
+ * status enum: BUILDING, DEPLOYING, SUCCESS, FAILED, CRASHED, REMOVED, REMOVING,
+ * INITIALIZING, QUEUED, SKIPPED, WAITING, NEEDS_APPROVAL. Defensive: unknown →
+ * 'building' (never a false 'live'). Pure.
+ */
+export function mapDeploymentStatus(raw: string | null | undefined): DeploymentStatus {
+  const s = String(raw || '').toUpperCase()
+  if (s === 'SUCCESS') return 'success'
+  if (s === 'FAILED' || s === 'CRASHED' || s === 'SKIPPED') return 'failed'
+  if (s === 'REMOVED' || s === 'REMOVING') return 'removed'
+  // BUILDING / DEPLOYING / INITIALIZING / QUEUED / WAITING / NEEDS_APPROVAL / …
+  return 'building'
+}
+
+/**
+ * Shape a raw Railway deployment node into our RailwayDeployment. The `current`
+ * flag is NOT set here (it depends on the whole list — the newest SUCCESS is the
+ * live one); callers use markCurrentDeployment() for that. Pure. Returns null for
+ * a node with no id.
+ */
+export function shapeDeployment(node: any): RailwayDeployment | null {
+  if (!node?.id) return null
+  const meta = node.meta || node.deploymentMeta || {}
+  // Railway exposes git meta under a few shapes across API versions.
+  const sha = String(
+    node.commitSha ?? meta.commitSha ?? meta.commit_sha ?? meta.commitHash ?? '',
+  ).slice(0, 40)
+  const message = String(
+    node.commitMessage ?? meta.commitMessage ?? meta.commit_message ?? meta.message ?? '',
+  ).slice(0, 300)
+  return {
+    id: String(node.id),
+    status: mapDeploymentStatus(node.status),
+    rawStatus: node.status ? String(node.status) : undefined,
+    createdAt: node.createdAt ? String(node.createdAt) : undefined,
+    commitSha: sha ? sha.slice(0, 12) : undefined,
+    message: message || undefined,
+  }
+}
+
+/**
+ * Given deployments sorted newest-first, mark the live one: the FIRST (newest)
+ * deployment whose status is 'success' is the one currently serving. Sets
+ * `current:true` on exactly that entry (or none, if there is no successful
+ * deploy yet). Non-mutating. Pure.
+ */
+export function markCurrentDeployment(deployments: RailwayDeployment[]): RailwayDeployment[] {
+  const list = Array.isArray(deployments) ? deployments : []
+  let marked = false
+  return list.map((d) => {
+    if (!marked && d.status === 'success') {
+      marked = true
+      return { ...d, status: 'live' as DeploymentStatus, current: true }
+    }
+    return { ...d, current: false }
+  })
+}
+
+/**
+ * Sort deployments newest-first by createdAt (ISO strings sort lexically). Pure &
+ * non-mutating. Deployments with no createdAt sink to the bottom.
+ */
+export function sortDeploymentsNewestFirst(deployments: RailwayDeployment[]): RailwayDeployment[] {
+  return [...(Array.isArray(deployments) ? deployments : [])].sort((a, b) =>
+    (b.createdAt || '').localeCompare(a.createdAt || ''),
+  )
+}
+
+/**
+ * Is a deployment a valid rollback target? Only completed (success/live) prior
+ * deployments can be rolled back to — never a failed/removed/building one, and
+ * never the one already live. Pure.
+ */
+export function isRollbackTarget(d: RailwayDeployment | null | undefined): boolean {
+  if (!d?.id) return false
+  if (d.current) return false
+  return d.status === 'success' || d.status === 'live'
+}
+
+export interface DeploymentsResult {
+  ok: boolean
+  deployments?: RailwayDeployment[]
+  reason?: string
+}
+
+/**
+ * List a service's Railway deployment history (#62), newest-first with the live
+ * one flagged. Best-effort: returns { ok:false, reason:'disabled' } and NO fetch
+ * when Railway isn't enabled+configured; { ok:false, reason } on any error. The
+ * caller joins these with the persisted per-company version index (messages/SHAs).
+ *
+ * @param serviceId      the company's dedicated Railway service id.
+ * @param environmentId  the environment to read deployments from (defaults to the
+ *                       configured company environment).
+ * @param limit          max deployments to return (defends payload size).
+ */
+export async function listDeployments(
+  serviceId: string,
+  environmentId?: string,
+  limit = 20,
+): Promise<DeploymentsResult> {
+  if (!railwayDeployEnabled()) return { ok: false, reason: 'disabled' }
+  if (!serviceId) return { ok: false, reason: 'no_service' }
+  const envId = environmentId || companyEnvironmentId()
+  const cap = Math.min(Math.max(1, limit), 50)
+  try {
+    const data = await railwayQuery(
+      `query Deployments($serviceId: String!, $environmentId: String, $first: Int) {
+        deployments(
+          first: $first
+          input: { serviceId: $serviceId, environmentId: $environmentId }
+        ) {
+          edges {
+            node {
+              id
+              status
+              createdAt
+              meta
+            }
+          }
+        }
+      }`,
+      { serviceId, environmentId: envId || null, first: cap },
+      20000,
+    )
+    const edges: any[] = data?.deployments?.edges || []
+    const shaped = edges
+      .map((e) => shapeDeployment(e?.node))
+      .filter((d): d is RailwayDeployment => d !== null)
+    const sorted = sortDeploymentsNewestFirst(shaped)
+    return { ok: true, deployments: markCurrentDeployment(sorted) }
+  } catch (e: any) {
+    return { ok: false, reason: String(e?.message || e).slice(0, 200) }
+  }
+}
+
+export interface RedeployResult {
+  ok: boolean
+  /** The new/redeployed deployment id, when Railway returns one. */
+  deploymentId?: string
+  reason?: string
+}
+
+/**
+ * Trigger a rollback (#62): redeploy a prior Railway deployment so it becomes the
+ * live one again. Best-effort + cost-safe: inert when disabled, structured result
+ * otherwise. The caller (the /api/build/versions POST) is responsible for the
+ * confirmation + status polling (rolling back → validating → live via a health
+ * check on the served URL).
+ *
+ * @param deploymentId  the id of the PRIOR deployment to redeploy (a valid
+ *                      rollback target — see isRollbackTarget()).
+ */
+export async function redeployDeployment(deploymentId: string): Promise<RedeployResult> {
+  if (!railwayDeployEnabled()) return { ok: false, reason: 'disabled' }
+  if (!deploymentId) return { ok: false, reason: 'no_deployment' }
+  try {
+    const data = await railwayQuery(
+      `mutation DeploymentRedeploy($id: String!) {
+        deploymentRedeploy(id: $id) { id status }
+      }`,
+      { id: deploymentId },
+      30000,
+    )
+    const redeployed = data?.deploymentRedeploy
+    // Railway returns the (re)deployment; some API versions echo the same id,
+    // others mint a new one. Either way, ok if the mutation returned a node.
+    if (!redeployed?.id) return { ok: false, reason: 'redeploy_no_id' }
+    return { ok: true, deploymentId: String(redeployed.id) }
+  } catch (e: any) {
+    return { ok: false, reason: String(e?.message || e).slice(0, 200) }
+  }
+}
+
+/**
+ * Health-check a URL after a rollback: is the rolled-back site actually serving
+ * (HTTP 2xx/3xx)? Used by the versions route to not declare "live" until the
+ * redeployed site responds. Best-effort — returns false on any error/timeout.
+ * Pure network, no Railway token needed.
+ */
+export async function checkDeployHealth(url: string, timeoutMs = 8000): Promise<boolean> {
+  const u = String(url || '').trim()
+  if (!/^https?:\/\//i.test(u)) return false
+  try {
+    const res = await fetch(u, {
+      method: 'GET',
+      redirect: 'follow',
+      signal: AbortSignal.timeout(timeoutMs),
+    }).catch(() => null)
+    if (!res) return false
+    return res.status >= 200 && res.status < 400
+  } catch {
+    return false
+  }
+}
+
 /**
  * Create (or reuse) a *.up.railway.app domain for a service. Idempotent-ish: if the
  * service already has a service domain we return it rather than minting another.
