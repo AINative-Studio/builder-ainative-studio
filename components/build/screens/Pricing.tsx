@@ -6,6 +6,7 @@ import { useState } from 'react'
 import { useBuild } from '@/contexts/build-context'
 import { trackEvent } from '@/components/analytics/google-analytics'
 import { trackMeta } from '@/components/analytics/meta-pixel'
+import { ProposalGate } from '@/components/build/ProposalGate'
 
 // Builder subscription tiers — the canonical AINative plan line (config/pricing.ts).
 // Skip Starter/$5 ('Hobbyist'): its 100K tokens can't build+run a real company.
@@ -44,6 +45,9 @@ export function Pricing() {
   const { state, dispatch } = useBuild()
   const [period, setPeriod] = useState<'monthly' | 'yearly'>('monthly')
   const isYearly = period === 'yearly'
+  // The tier the proposal cost line points at (#68) — the featured/recommended
+  // plan, falling back to the first tier so the proposal always has a price.
+  const featuredTier = TIERS.find((t) => t.featured) ?? TIERS[0]
 
   const choose = async (tier: (typeof TIERS)[number]) => {
     dispatch({ type: 'PICK_PLAN', plan: tier.plan })
@@ -97,6 +101,14 @@ export function Pricing() {
         To put it in front of real users and let me run the company around it, pick how far we go. You own 100%.
       </p>
       <p className="m-reassure m-mono">You own 100% of everything I build. Cancel anytime.</p>
+
+      {/* Designed proposal (#68) — the #1 conversion lever: the real app preview +
+          the business systems Cody wires (each with "what it does" + click-to-preview)
+          + a clear cost line, presented BEFORE the tiers so the founder experiences
+          the plan (mid-journey) rather than being cold-sold. Spotlights the featured
+          tier for the cost line; the tiers below own checkout. */}
+      <ProposalGate plan={{ id: featuredTier.id, name: featuredTier.name, monthly: featuredTier.monthly }} />
+
       <div className="m-billing-toggle" data-testid="billing-toggle">
         <div className="m-billing-switch" role="group" aria-label="Billing period">
           <button

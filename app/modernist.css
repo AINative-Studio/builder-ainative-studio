@@ -629,6 +629,46 @@
 .m-tier button { margin-top: 18px; width: 100%; justify-content: center; }
 
 /* ============================================================================
+   Pay-gate proposal (#68) — the designed "here's what Cody builds + what it
+   costs + click-to-preview" surface, shown above the tiers on the Launch gate.
+   ============================================================================ */
+.m-proposal { margin: 8px 0 34px; }
+.m-h2 { font-family: var(--font-heading); font-size: 26px; font-weight: 500; line-height: 1.15; margin: 4px 0 8px; color: var(--ink); }
+.m-proposal-headline { max-width: 720px; }
+.m-proposal-subline { max-width: 720px; margin-bottom: 22px; }
+.m-proposal-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: 8px; }
+
+.m-proposal-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 24px; align-items: start; }
+@media (max-width: 860px) { .m-proposal-grid { grid-template-columns: 1fr; } }
+
+.m-proposal-app .m-preview-frame { height: 340px; }
+
+.m-proposal-syslist { border: 1.5px solid var(--ink); }
+.m-proposal-sysrow {
+  background: var(--color-bg); border: 0; text-align: left; cursor: pointer;
+  display: flex; flex-direction: column; gap: 5px; padding: 14px 16px; width: 100%;
+}
+.m-proposal-sysrow:hover { background: var(--color-surface); }
+.m-proposal-sysrow.is-open { background: var(--color-surface); box-shadow: inset 3px 0 0 var(--color-accent); }
+.m-proposal-sysrow-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.m-proposal-sys-does { font-size: 12px; color: var(--text-body-70); line-height: 1.4; }
+.m-proposal-sys-cta { font-size: 11px; color: var(--color-accent-700); text-transform: uppercase; letter-spacing: 0.06em; }
+
+.m-proposal-preview { margin-top: 20px; }
+.m-proposal-preview-body { padding: 20px 22px; }
+.m-proposal-preview-sub { font-size: 13px; color: var(--text-body-70); margin: 0 0 14px; }
+.m-proposal-preview-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.m-proposal-preview-table th {
+  text-align: left; font-family: var(--font-mono); font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--text-muted); padding: 6px 10px; border-bottom: 1.5px solid var(--ink);
+}
+.m-proposal-preview-table td { padding: 9px 10px; border-bottom: 1px solid var(--color-divider); color: var(--text-body-85); }
+.m-proposal-preview-table tr:last-child td { border-bottom: 0; }
+.m-proposal-preview-note { font-size: 10px; color: var(--text-muted); margin: 12px 0 0; font-style: italic; }
+
+.m-proposal-cost { font-size: 12px; color: var(--track-700); margin: 22px 0 4px; letter-spacing: 0.02em; }
+
+/* ============================================================================
    Live dashboard (#226)
    ============================================================================ */
 .m-live { min-height: 100vh; }
