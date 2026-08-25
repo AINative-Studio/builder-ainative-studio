@@ -12,6 +12,11 @@
  *   Signed out → "Sign in to buy X" that actually routes into auth (via the
  *   optional onRequireAuth callback from Live); the picked domain+slug is stashed
  *   in sessionStorage so the purchase RESUMES to Stripe checkout after sign-in.
+ * #48  — scroll containment: suggestion list is constrained to a fixed
+ *   max-height with overflow-y:auto so the modal never grows past the viewport.
+ *   Search input and Buy CTA stay pinned outside the scrollable area so they
+ *   remain reachable regardless of result count. "Show more" sits at the bottom
+ *   of the scrollable list so fetching the next batch is one scroll away.
  */
 
 import { useEffect, useState, useCallback } from 'react'
@@ -71,7 +76,8 @@ export function DomainModal({ brand, slug, keywords, open, onClose, onRequireAut
       .finally(() => setLoading(false))
   }, [open, brand, keywords])
 
-  // "More options →" — pull the next batch of ranked suggestions (#280).
+  // "Show more domains" — pull the next batch of ranked suggestions (#280 / #48).
+  // Sits inside the scrollable list so it's always reachable after scrolling down.
   const loadMore = useCallback(() => {
     if (moreLoading || moreExhausted || !brand) return
     setMoreLoading(true); setStatus(null)
@@ -218,7 +224,7 @@ export function DomainModal({ brand, slug, keywords, open, onClose, onRequireAut
           <p className="m-sub">Checking what&apos;s available for <strong>{brand}</strong>…</p>
         ) : (
           <>
-            {/* Search a SPECIFIC domain the founder wants (#280). */}
+            {/* Search input — pinned above the scrollable list so it's always visible (#48). */}
             <form className="m-domain-search" onSubmit={runSearch} style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
               <input
                 className="m-input"
@@ -233,33 +239,65 @@ export function DomainModal({ brand, slug, keywords, open, onClose, onRequireAut
                 {searching ? 'Checking…' : 'Check'}
               </button>
             </form>
-            <div className="m-domain-list">
-              {/* Only AVAILABLE (purchasable) domains are returned — no dead options. */}
-              {suggestions.map((s) => (
-                <button
-                  key={s.domain}
-                  className={`m-domain-opt ${picked === s.domain ? 'is-picked' : ''}`}
-                  onClick={() => setPicked(s.domain)}
-                >
-                  <span className="m-domain-name">{s.domain}</span>
-                  <span className="m-domain-price m-mono">
-                    {typeof s.price === 'number' ? `$${s.price % 1 === 0 ? s.price : s.price.toFixed(2)}/yr` : 'available'}
-                  </span>
-                </button>
-              ))}
-              {suggestions.length === 0 && (
-                <p className="m-sub">Every {brand} variation is taken right now. Search a specific domain above (or ask Cody for another) and I&apos;ll find you a great available address.</p>
+
+            {/*
+             * Scroll-contained body (#48): the list + show-more button live inside
+             * this fixed-height, overflow-y:auto wrapper. The search form above and
+             * the Buy CTA below remain outside so they're always on-screen.
+             */}
+            <div
+              className="m-domain-scroll-body"
+              role="listbox"
+              aria-label="Available domains"
+              data-testid="domain-scroll-body"
+            >
+              <div className="m-domain-list">
+                {suggestions.map((s) => (
+                  <button
+                    key={s.domain}
+                    className={`m-domain-opt ${picked === s.domain ? 'is-picked' : ''}`}
+                    onClick={() => setPicked(s.domain)}
+                    role="option"
+                    aria-selected={picked === s.domain}
+                  >
+                    <span className="m-domain-name">{s.domain}</span>
+                    <span className="m-domain-price m-mono">
+                      {typeof s.price === 'number' ? `$${s.price % 1 === 0 ? s.price : s.price.toFixed(2)}/yr` : 'available'}
+                    </span>
+                  </button>
+                ))}
+                {suggestions.length === 0 && (
+                  <p className="m-sub">Every {brand} variation is taken right now. Search a specific domain above (or ask Cody for another) and I&apos;ll find you a great available address.</p>
+                )}
+              </div>
+
+              {/* Show more — inside the scroll body so it's reachable after scrolling (#48). */}
+              {suggestions.length > 0 && !moreExhausted && (
+                <div className="m-domain-more-row">
+                  <button
+                    className="m-back"
+                    onClick={loadMore}
+                    disabled={moreLoading}
+                    aria-label="Show more domain suggestions"
+                    data-testid="show-more-domains"
+                  >
+                    {moreLoading ? 'Finding more…' : 'Show more domains'}
+                  </button>
+                </div>
               )}
             </div>
-            {/* More options → pulls the next ranked batch (#280). */}
-            {suggestions.length > 0 && !moreExhausted && (
-              <button className="m-back" onClick={loadMore} disabled={moreLoading} style={{ marginTop: 6 }}>
-                {moreLoading ? 'Finding more…' : 'More options →'}
-              </button>
-            )}
-            {status && <p className="m-mono m-domain-status">{status}</p>}
+
+            {/* Status message — below scroll body, above CTA */}
+            {status && <p className="m-mono m-domain-status" role="status">{status}</p>}
+
+            {/* Buy CTA — pinned outside the scroll body, always reachable (#48 / #281). */}
             <div className="m-modal-opts" style={{ marginTop: 8 }}>
-              <button className="btn-primary" disabled={!picked} onClick={onBuy}>
+              <button
+                className="btn-primary"
+                disabled={!picked}
+                onClick={onBuy}
+                data-testid="domain-buy-cta"
+              >
                 {buyLabel}
               </button>
             </div>

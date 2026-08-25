@@ -102,12 +102,13 @@ Wire to the existing gclid→paid-conversion pipeline (`signup_source:builder`, 
 
 | # | Task | Owner | Blocker | Status |
 |---|---|---|---|---|
-| 1 | Ship KD 6–21 SEO/AEO pages (comparison + best) | eng+growth | none | 🔄 agent building |
-| 2 | FAQPage JSON-LD + answer-shaped copy on each | eng | rides #1 | 🔄 agent building |
+| 1 | Ship KD 6–21 SEO/AEO pages (comparison + best) | eng+growth | none | ✅ built+committed (9d43848), deploying |
+| 2 | FAQPage JSON-LD + answer-shaped copy on each | eng | rides #1 | ✅ verified in rendered HTML |
 | 3 | Draft Google "Builder — App Builder" campaign (PAUSED) | growth | none | ✅ done (camp 24170486322) |
 | 4 | Draft Meta campaign (PAUSED) | growth | none (to draft) | ✅ done (camp 120250720408120749) |
-| 3b | **P0: fix dead gclid/UTM attribution (`captureAttribution` never called)** | eng | none | 🔄 agent fixing |
-| 3c | Add Meta pixel + CAPI (absent) | eng | rides #3b | 🔄 agent building |
+| 3b | gclid/UTM attribution | eng | none | ✅ NOT broken (audit was wrong; verified at build-context.tsx:109) |
+| 3c | Add Meta pixel + CAPI (absent) | eng | rides #3b | ✅ built (gated no-op until env set) |
+| 3d | fix /best/* middleware allowlist (was 307→/login) | eng | none | ✅ fixed (a02038a), deploying |
 | 5 | **Attach payment method to Meta ad account** | **Toby** | — | ⬜ |
 | 6 | **Create + assign FB Page to system user** (unblocks Meta creative) | **Toby** | — | ⬜ |
 | 7 | Regenerate Meta token (it was exposed in chat) | Toby | — | ⬜ |

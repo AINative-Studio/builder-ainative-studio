@@ -1,0 +1,198 @@
+zero voice okay so zero voices this is the voice module or the voice
+zero means like no effort that's what yeah that brandy wise yes I just think
+you should kind of brand those things a little bit and be like zero pipeline bin
+you know like there's almost like little you know where you're like oh cool I'm
+using zero pipeline I don't even like and then as you hover over it it might
+just say this does so it's just completely and totally 100% like yeah
+the same radio button was to what to do a simulation of what it would be that's
+what the point of that radio button yeah yeah yeah yeah well no this this takes
+you to the primitive the whole yeah yeah right now these are not like separate
+links it's just one link per per box all of this just means simulating none of this
+has been built oh right so so right now it just gave you a plan and it's simulating
+what it would build yeah okay right and now but this is actually built so the UI it
+does the like landing page part right yeah but to actually spin up a swarm and
+start agents writing a code I want people to commit right so how do I so that's where I
+need feedback from all of you guys like how what would make you what what do you need to
+see on this screen to get to that pay button and and it's just gone through yeah okay keep
+talking I think it's the design I paid like when I see a good design and I'm like you know where I'm
+like oh that looks cool the design and what it's proposing yeah like this is what I'm planning on this
+is what I think would be cool and this is what it would cost a bill and and if you click on maybe
+these things here's what it would look like if you had right no invoice something and the idea here is
+this is like a tutorial video that'll land here and just kind of start telling you about the
+platform it's not implemented yet but that was the idea what do you think about that yeah I love that
+okay it's the people who just click the button of build an app or build a company
+the building so somebody who would use a lovable or somebody that would use replet or something like
+that yeah so I know for me like why I pay is because I've already started down that path and I'm
+getting really excited and then all of a sudden it's like sorry you're out of you're out of credit
+okay so we're like where's that moment for you like is it is seeing this being generated enough
+right or you get what I'm saying like or is it I'm very highly suspect of paying for anything
+and so I want to see something more like what is this what is this going to do for me when I sign up
+for it and like whether it's like a design or whether it's like a visual of all the components
+coming together or what have you like I need a little bit more like experience it and then you'll
+pay what was that you experience it and then you'll pay yeah well it's like yeah see that's hard because
+I'm not gonna pay for somebody that design yeah I see that hero between screen you know just the
+hero or where that is you know that works while you sleep and it starts to do like
+taps okay here let me show you another like tell me this hold on hold on now look at this
+a lot of these apps are marketed where it's like it's not really you know the one where you like
+take a picture okay look at this tell me I don't know you tell me I'm showing you what's your
+inspiration yeah exactly okay got it I mean this is are they doing well with this okay so this is
+them fucking crushing it with this shit 13 million ARR bro wow okay and I'm you're you're making this
+13 million ARR no these guys are doing 13 million ARR with this bullshit and my platform blows this away
+this is really shitty is what he says the craigslist style hold on I'm listening keep going turn around
+this way Wayne and say what you like I want to I do like the fact that it's telling me it's telling me
+what it's doing so you sort of get oh my team is doing shit and it's geeky it kind of looks dorky so
+like this might be cool or might be good that's my first reaction as I'm looking at this there's ads
+Twitter it's got some social media it's got a past but see this is what I'm saying I need to hear
+like because these dudes are doing 13 million right first of all they don't look like an AI thing right
+and I think that's part of the charm here is that you're like okay this isn't an AI thing it's
+shockingly readable you know what I mean like um I would never design a product that looked like this
+but as you move across I mean it's like it's very very readable I would say
+it has all it's it's this weird so simple dash it's the craigslist of this whoever said craigslist
+it's like a craigslist of vibe coding you know where it's just like but I guess when I look at
+this I don't know what it does either I mean you know what I mean so it's like hire your AI employee
+to do I mean that's that's just words to build your I yeah I don't I don't know you know I mean
+are you logged in on this Toby is this the like market yeah yeah so you are logged in on this I'm
+logged in but it looks it looks like this when you're not logged in really yeah but what's like
+the logged out version it says what it is that it does yeah oh see that's nice or whatever at least
+oh that's pretty clever I mean it's uh empty cubes it's very uh funny it's a little dystopian
+well and newer kids don't remember what we sat in those cubes but yeah see now this now now like
+I get it right like yeah this this makes a little more this tells me what the thing is so yeah what
+their vibe is everybody's doing the uh so we're just get started yeah yeah go to get started
+oh yeah sure yeah you know company grow my company all right so this is the page that I started you
+guys on right yeah but by the way the way they do this okay keep going oh yeah but it's like two
+choices oh yeah here I want to yeah hold on yeah you had two things I remember that
+now this is yours or theirs this is mine so I'm just that's this is ours here's the right
+right and what you what I don't have that I didn't show you is a landing page yet for here so I have
+not done this yet right yeah I would say that's definitely helpful where oh right here yeah this is
+like think of it as the terminal terminal we have the same thing on ours you see right here right
+right a little terminal so it's like showing you what the ages are doing yeah now ours that's actually
+real it's interesting so if you're gonna start a company you're gonna get the s corp and all that
+stuff right I mean right look sure pay me and I will give you an api right now no it doesn't it
+doesn't do any of that right now so it's more of let me do the venture thesis the um your um product
+roadmap roadmap like the planning side of if you wanted to build a company along with the product
+right so I was just pointing the other one for whatever it was that's right yes create a new
+company well that's easier said than done with all the uh bureaucracy and all that so it is you're
+right that that is an interesting feature um that was allowed to have a thing where they were trying to
+make it make it so like you can buy code a thing and while you're buying code and then incorporate
+and do all of those things and that is a good thing well zen business does that or whatever that's
+like zen business is no it's not they're basically no money for it it's about 500 bucks yeah it's about
+300 to incorporate 300 to 500 but if you just stick with delaware i could do it for 300
+but i think and even to educate people why you want to do delaware versus california or yeah but see
+like for me like i don't want to get into all that that's i mean i hear you right but like do i want
+like that's maybe content that you put on the blog right to drive seo to discover and then
+yeah it's it's i think it's more founder um builder that don't that are not technical okay so it's the
+same target persona but coming i think coming at it from a different angle whereas all these other
+vibe coding things have been like oh we need you to do this thing like a developer okay and this is
+like tell us what you want to do and our agents will do it for you maybe the way to do it is to
+organize it into different startup sizes like we recommend this is a three-person startup you're gonna
+need three agents that do these things you know what i mean like or we recommend while it's a bigger
+project we recommend starting with a two agent thing to get it running and once we are in a
+place where we like it then let's bring on more agents you know to make this like so that's kind of
+like how i imagine it with um with this i'll show you what about some kind of founder deck like pitch
+deck right so look so if you like like if you can hit the button and then that's your that's where
+you pay it's like okay cool you've made your company now you want to go pitch it to bc that's good hey
+and then i'll export you a slick deck that you can go pitch to people that that's good yep for sure that would
+be i mean i'm a big fan of the freemium model and the freemium model seems to be going away
+only because of tokens yeah well no i mean just just in general i mean no no like only because of
+tokens like any other thing i could do freemium no problem yeah i think but the moment you add
+any sort of ai to it you're burning the tokens and so it just what if what if what if was it was
+upwork for agents where you hired agents to build your company so tell us about the company right and
+then okay uh we think here's some design agents that have different personalities vibes whatever hire
+that other agents and then yeah and then you're like okay you're gonna need a developer right so
+that agent's gonna be a little you know here are those agents this one specialized in this
+which is really good for e-commerce right you know what i mean and then you're like okay so then you
+build your team all right so like that's i mean i hear you but then that still requires somebody
+being like i know that i need an e-commerce person like right what that's not so weird though but
+i dude you'd be surprised how many people don't go to upwork and they're intimidated when they get
+to upwork they don't know how to use upwork i hear it all the time yeah but this is like a check
+box on an ai agent that does i'm saying hire not people hire no no no a series of agents that you're
+like oh i can hire oh i can hire my team to build my startup and then you're like okay well your product
+manager is gonna you're gonna spend a lot of time first with your product manager figuring it out and
+and i did this i did this but it was the trick was to be very clear and this could be your value add
+about the workflow so what is the product manager deliverable gate feedback uh what is another correct
+or enough to get to the next into the scrum manager and to the 20 different steps or whatever but
+that's full on but it's kind of cool because you could you can say i want to hire or i want to include
+well right what if you had like you started with a thousand dollars right here's your and then you
+want to hire the different agents so your coder guy your coder agent cost 500 your marketing agent
+cost 20 or whatever and then so you can kind of kind of move these agents around to build your
+company and then you know once you're ready to pull the trigger then you then you pay or so or
+something like that it's a different way of looking at it because right now yep it's all like kind of
+you're my idea and fill it up and so there's 18 different flavors of that but which
+is a totally great business by the way so like obviously we're at the very beginning of this and
+like nothing has been uh done yet but it is an interesting idea to be like okay that's a really
+cool idea you know what i mean and and like maybe your coach coach is free right i want to help you
+figure out you know you know yeah exactly coach is free um but you know the the design agent the
+product manager the so coach is like you know what at this point you need a product manager right and it
+takes them through that process where and they're like okay now your product's really defined or less
+let's let's get a design agent in here to give some feedback and look at so that's above lovable
+or replica it's more organized and structured yeah it's cool but you have you you have a dedicated
+but like that's what i'm saying but when do you pay yeah right i hear all of this i could build it
+all right you want to see it i have it tomorrow you pay after coach yeah well you know what i mean
+yeah yeah that's right yeah no i mean that's what this is right so so what i'm hearing you say is
+there's a advisor agent that advises you on whether it's an app or a company or is that the company path
+start with start with start with ideas right and then turn it into a company but it's well so the path
+i have to say like you know it's it's this right it's like build an app build a company are you saying
+what's your idea like i'm saying bill what kind of you know what i mean you know it's interesting
+because i was talking to jeremy neuner you guys know a lot of you guys know works for google and
+works in the developer group and they're struggling because they're like like like for us right like
+i'm the gdg person or whatever i can't organize an event unless people are hands on the keyboard
+doing something technical okay and so i'm like well what do you like who are the new people right
+they're the ones that you should hold the wood for ai to come right exactly yeah i'm sitting there
+like what do i like i'm working on two projects but no but you know what i mean so like unlocking
+it and and lovable has done an amazing job rep has done an amazing job but ultimately you know
+rep will kill it because they're gonna have uh corporate accounts you know lovable will too but
+differently and uh they're gonna make it in sats that you know they're gonna they're not gonna make
+it as the my space of uh new sites right like so this is a this is a fresh take i think which is
+interesting right which we're saying like hey let's boil it down boil it down boil it down again i mean it's
+it's what we've been doing just in all these pieces right right meaning like oh you need our ide you
+need our cli now you need our data services apis and our mcp and so what i've done is extracted all
+that away and just the agents do it all you tell them what you want they do all the work and deliver
+what's the feedback so what's the well this is this is ground zero this is it right here
+real users does it only use the only people i've shown this to so far so so uh does it only use your
+tool to yeah so so maybe that's the thing it's like this is free and then what it does is it actually
+sets you up to use all your paid tools that's what he did okay yes there you go
+so tomorrow come over to next space and hang out for a few hours no for real great because i wanted
+i want you i want to i want to let you because you're the target customer like literally right
+right the person that doesn't know how to code but but you still were a developer product right so you
+understand who i'm targeting and trying to get in the pain right i mean i'll buy you lunch tomorrow
+just come over the magic is how much do you give him for free to show the value that's right that's
+what i need to get to cut off of pay yep yep yep and i know i already have it because you already know
+like we were giving people tokens in our free account right right it's just i need to know how
+many tokens am i going to need to trigger to get to value where people are like i'll pay
+where do you do a community on top of it where like like we are right no where it's like where
+it's like i'm gonna i want to build this thing but it's not just coach it's also other people who
+are like looking you know so look this is what i built for community so far but i'm i would love to
+you know go deeper right like right no no this is v1 right but everybody that signs up that uses
+a github account right i pull their profile and give them this profile and and so it's already
+been building up that you know i'm with you i just i wonder if there's a world in which you just uh
+you find people like it's not just agents it's also people like you build a little community around
+it so that people feel a certain sense of like for instance with my buddy perry who like has been
+building an app by doing apps he's texting me constantly like what do you think of this what
+about that what how did you solve this problem blah blah blah right so he really wants to build
+but you know he gets stuck a lot and so i wonder if there's a world in which people help other people
+get on stuff oh yeah i think there is i mean i think that you could yeah so so you could use this
+as the experiment yeah like literally you could use this group with our tool and run this experiment
+yeah i think i think i think there is something to that we've been looking for the community part of
+this forever and remember this is all api driven so nothing that sits on ai native has to sit there it
+can sit on builder dot uh you know whatever community site we come up with so i i've trained
+models i'm using the open source ones i've got 25k in um free credits from amazon i need to burn through
+so i'm just that's why right now is a perfect time because i have these credits and i can experiment
+without me spending 500 a day you know on anthropic crafts so let's go like literally get on that
+thing and start how much you paying 100 a month the max oh yes the max yep yep a couple months ago
+oh yeah i mean i paid 200 i have a 200 a 100 i have with anthropic we probably spend 600 a month right
+right now yeah on top of another probably 2000 in data center so but like i would love to give you
+know i'm i'm wasting credits a month meaning like i'm not burning through all the ones like i had facebook
+free for the last year and a half and i was trying to get everybody a key like i'm telling you use this
+stuff because they cut it away and at least when you use it you can learn yeah that's the learning
+so right now i know we didn't get to it but and my wife we got to go but the next thing that i want
+to do well i know that you i don't want to code you guys here so you're okay all right all right
+i know you want to leave no no i'm come on man you know i'm here until eight o'clock dude this is
+but i wanted the next thing look our our server i got the memory i got the drive so like
+next week let's put that on the top to figure out you know what i'll bring the servers in and we could
+just pop them open and you know also get it yeah chris uh chris right chris necklinson uh very into
+partnering on the local ai so so if we could if we could try to get that like um if we could try to get
+that like going like yeah you know because the servers just because i got to get them out of
+carson's house the victoria yeah it's gonna burn down and they're too big to take to my house like
+my little work area or i'll put them in your office yeah either one either way but all right well thanks
+for bringing that yep and you're in the wet tap group right wayne thanks i don't think so okay because
+yeah let me um give you that

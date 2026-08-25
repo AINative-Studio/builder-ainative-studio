@@ -10,7 +10,7 @@ import { UserNavClient } from '@/components/user-nav-client'
 import { WorkspaceSwitcher } from '@/components/workspace-switcher'
 import { Button } from '@/components/ui/button'
 import { DEPLOY_URL, APP_NAME } from '@/lib/constants'
-import { BookOpen, LayoutTemplate, Rocket, Settings } from 'lucide-react'
+import { BookOpen, Info, LayoutTemplate, Rocket, Settings } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -100,11 +100,17 @@ export function AppHeader({ className = '' }: AppHeaderProps) {
 
           {/* Desktop right side - Navigation + User */}
           <div className="hidden lg:flex items-center gap-4">
-            {/* Public SEO link — visible to everyone, including crawlers */}
+            {/* Public SEO links — visible to everyone, including crawlers */}
             <Button variant="ghost" size="sm" asChild>
               <Link href="/guides">
                 <BookOpen className="w-4 h-4 mr-1" />
                 Guides
+              </Link>
+            </Button>
+            <Button variant="ghost" size="sm" asChild>
+              <Link href="/about">
+                <Info className="w-4 h-4 mr-1" />
+                About
               </Link>
             </Button>
             {session && (

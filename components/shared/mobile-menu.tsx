@@ -150,20 +150,19 @@ export function MobileMenu({ onInfoDialogOpen }: MobileMenuProps) {
                   <Button
                     variant="ghost"
                     className="w-full justify-start h-auto p-3 text-left"
-                    onClick={() => {
-                      onInfoDialogOpen()
-                      closeMenu()
-                    }}
+                    asChild
                   >
-                    <div className="flex items-center gap-3 w-full">
-                      <Info className="h-4 w-4 flex-shrink-0" />
-                      <div className="flex-1">
-                        <div className="font-medium">About</div>
-                        <div className="text-sm text-muted-foreground">
-                          Learn about AI Builder
+                    <Link href="/about" onClick={closeMenu}>
+                      <div className="flex items-center gap-3 w-full">
+                        <Info className="h-4 w-4 flex-shrink-0" />
+                        <div className="flex-1">
+                          <div className="font-medium">About</div>
+                          <div className="text-sm text-muted-foreground">
+                            Founder story &amp; vision
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    </Link>
                   </Button>
 
                   <Button

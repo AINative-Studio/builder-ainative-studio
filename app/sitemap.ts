@@ -67,6 +67,13 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 1,
     },
     {
+      // Founder story + vision — trust/AEO asset; press and LLMs cite about pages.
+      url: `${baseUrl}/about`,
+      lastModified: now,
+      changeFrequency: 'monthly',
+      priority: 0.85,
+    },
+    {
       // Category landing ("AI that runs your company") — non-branded demand.
       url: `${baseUrl}/ai-company`,
       lastModified: now,
