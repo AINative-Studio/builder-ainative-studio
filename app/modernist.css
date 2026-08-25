@@ -748,6 +748,37 @@
 .m-system-prim { align-self: flex-start; margin-top: 4px; }
 .m-tonight li { list-style: none; margin-left: -20px; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-body-70); padding: 3px 0; }
 
+/* Onboarding video player (#51): left-column slot, placeholder + real-video states. */
+.m-onboarding-video-wrap {
+  position: relative; width: 100%; aspect-ratio: 16/9;
+  background: var(--ink); border-radius: 2px; overflow: hidden;
+}
+.m-onboarding-video-placeholder {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 10px;
+  background: linear-gradient(135deg, #1a1917 0%, #2d2b2b 100%);
+}
+.m-onboarding-video-play-icon {
+  font-size: 28px; color: rgba(255,255,255,0.35); line-height: 1;
+}
+.m-onboarding-video-label {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: rgba(255,255,255,0.4); margin: 0;
+}
+.m-onboarding-video-el {
+  position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+}
+.m-onboarding-video-play-btn {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  background: rgba(0,0,0,0.32); border: 0; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s;
+}
+.m-onboarding-video-play-btn:hover { background: rgba(0,0,0,0.18); }
+.m-onboarding-video-play-btn .m-onboarding-video-play-icon {
+  color: rgba(255,255,255,0.85); font-size: 36px;
+}
+
 /* Tasks / backlog panel (#55): stage tabs + task cards + VIEW detail. Reuses the
    .st status pills and .m-chip so it matches the systems grid chrome (#67). */
 .m-task-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }

@@ -21,6 +21,7 @@ import { countSystemStatuses, planFramingLine } from '@/lib/build/live-vs-planne
 import { liveStatusLine } from '@/lib/build/front-door-value'
 import { TasksPanel } from '@/components/build/TasksPanel'
 import { VersionsPanel } from '@/components/build/VersionsPanel'
+import { OnboardingVideo } from '@/components/build/OnboardingVideo'
 
 /** Display label for an active paid tier (#241). */
 const PLAN_LABEL: Record<ActivePlan, string> = {
@@ -515,6 +516,10 @@ export function Live() {
             </div>
             <p className="m-mono m-metric-note">Live from day one — Cody grows these nightly.</p>
           </div>
+          {/* Onboarding tutorial video (#51): replaces the raw black-box placeholder.
+              Video source is configurable via NEXT_PUBLIC_ONBOARDING_VIDEO_SRC so
+              swapping in the real clip is a one-line env change. */}
+          <OnboardingVideo />
           <div className="m-live-card m-upsell">
             <div className="m-mono m-live-card-h">Hire the swarm</div>
             <p className="m-live-card-body">
