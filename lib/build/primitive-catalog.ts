@@ -53,9 +53,41 @@ export interface CatalogPrimitive {
    * Agent Cloud). These are always included; `triggers` still lets them rank.
    */
   foundational?: boolean
+  /**
+   * MCP server endpoint for this primitive (#73). When present, this primitive
+   * is not just callable via REST — Cody can OPERATE it agentically as a set of
+   * MCP tools (tool_use), both at build-time (provision/seed real resources) and
+   * at run-time (the running company's ops ARE MCP calls). This is the strategic
+   * moat: competitors only GENERATE code that calls APIs; Cody drives the
+   * primitives through their MCP servers.
+   *
+   * Sourced from docs/AINATIVE_PRIMITIVES.md §6 (7+ published MCP servers).
+   * Purely additive — does NOT affect triggers/scoring (#72) or the tooltip
+   * resolver (#66). May be a full HTTPS Streamable-HTTP endpoint or a doc URL
+   * pointer for servers whose transport is stdio/npx (e.g. `@ainative/gtm-mcp`).
+   */
+  mcpUrl?: string
+  /**
+   * Number of tools the primitive's MCP server exposes (from §6). Undefined when
+   * the count isn't published. Feeds the "operated via MCP — your agent can drive
+   * this too" surfacing (#66 owns the actual chips) and lets Cody know how rich
+   * the agentic surface is before connecting.
+   */
+  mcpTools?: number
 }
 
 const DOCS = 'https://docs.ainative.studio/docs'
+
+/**
+ * Base host for AINative's published Streamable-HTTP MCP servers (#73). Override
+ * with AINATIVE_MCP_BASE_URL for a self-hosted / staging fleet. The per-primitive
+ * `mcpUrl` fields below are built from this so a single env var can retarget the
+ * whole fleet. Servers whose transport is stdio/npx (e.g. `@ainative/gtm-mcp`)
+ * carry a doc-URL pointer instead of an HTTP endpoint.
+ */
+const MCP_BASE =
+  (typeof process !== 'undefined' && process.env?.AINATIVE_MCP_BASE_URL) ||
+  'https://mcp.ainative.studio'
 
 /**
  * The catalog. Ordering is intentional: foundational first, then the
@@ -68,6 +100,11 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     purpose: 'Persistent knowledge layer: vector search, tables, files, events, functions, per-project Postgres — also the store for social posts/feed/comments/likes/messages',
     url: `${DOCS}/zerodb/overview`,
     apiBase: 'https://api.ainative.studio/api/v1',
+    // Full ZeroDB MCP (69+ tools, whole data layer) — docs/AINATIVE_PRIMITIVES.md §6.
+    // This is the phase-1 build-time wedge: Cody CALLS this MCP to create a real
+    // project/tables at preview instead of a mock.
+    mcpUrl: `${MCP_BASE}/zerodb`,
+    mcpTools: 69,
     triggers: ['data', 'database', 'persist', 'store', 'save', 'records', 'search', 'vectors', 'rag', 'files',
       'posts', 'post', 'feed', 'comments', 'comment', 'likes', 'like', 'timeline', 'messages', 'messaging', 'dm', 'content'] },
   { name: 'Instant DB', category: 'data-memory', foundational: true,
@@ -79,6 +116,9 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     purpose: 'Cognitive memory (working/episodic/semantic), consolidation, decision traces, RDF/SPARQL KG',
     url: `${DOCS}/zeromemory/overview`,
     apiBase: 'https://api.ainative.studio/api/v1',
+    // Memory MCP (18 tools) — docs/AINATIVE_PRIMITIVES.md §6.
+    mcpUrl: `${MCP_BASE}/memory`,
+    mcpTools: 18,
     triggers: ['memory', 'remember', 'personalization', 'personalize', 'context', 'history', 'preferences'] },
   { name: 'AI Kit', category: 'ui', foundational: true,
     purpose: 'UI component framework (React/Vue/Svelte/Next streaming chat, Safety, A2UI)',
@@ -111,11 +151,18 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     purpose: 'Programmable telephony (Twilio): calls, SMS, IVR, recording + transcription, DNC/TCPA',
     url: `${DOCS}/zerovoice/overview`,
     apiBase: 'https://api.ainative.studio/api/v1',
+    // ZeroVoice MCP (25 tools) — docs/AINATIVE_PRIMITIVES.md §6. Lets the running
+    // company make/receive real calls + SMS as agentic MCP tool calls (run-time ops).
+    mcpUrl: `${MCP_BASE}/zerovoice`,
+    mcpTools: 25,
     triggers: ['call', 'calls', 'phone', 'sms', 'text', 'voice', 'telephony', 'ivr', 'dial', 'cold call', 'appointment reminder'] },
   { name: 'OpenCapStack', category: 'business-ops',
     purpose: 'Cap table + equity (OCTA): stakeholders, SAFEs, grants, vesting, waterfall, investor portals',
     url: `${DOCS}/opencapstack/overview`,
     apiBase: 'https://api.opencapstack.com/api/v1',
+    // OpenCapStack MCP — docs/AINATIVE_PRIMITIVES.md §4 (JWT bearer + MCP). Tool
+    // count not published in §6; left undefined.
+    mcpUrl: `${MCP_BASE}/opencapstack`,
     triggers: ['equity', 'cap table', 'captable', 'fundraising', 'fundraise', 'safe', 'investors', 'shares', 'vesting', 'valuation', 'dilution', 'startup equity'] },
   { name: 'ServiceOS', category: 'business-ops',
     purpose: 'Helpdesk / customer-service operations: tickets, queues, agent workflows',
@@ -126,6 +173,10 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     purpose: 'AI content + distribution: personas, scheduled posts, auto-captions, avatar videos, auto-publish',
     url: `${DOCS}/api/content-workflow`,
     apiBase: 'https://api.ainative.studio/api/v1/public',
+    // Strapi MCP (21 tools) — docs/AINATIVE_PRIMITIVES.md §6. Stands up / operates a
+    // real CMS for content-driven apps agentically.
+    mcpUrl: `${MCP_BASE}/strapi`,
+    mcpTools: 21,
     triggers: ['content', 'marketing', 'social', 'social media', 'posts', 'blog', 'creator', 'captions', 'newsletter', 'campaigns', 'seo', 'brand awareness'] },
   { name: 'Live Streaming', category: 'business-ops',
     purpose: 'Streams (RTMPS in / HLS out), real-time chat, VOD, audience analytics, WebRTC',
@@ -141,6 +192,9 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     purpose: 'Web data extraction + browser automation (MCP)',
     url: `${DOCS}/business-ops/browser-agent`,
     sdk: '@ainative/browser-mcp',
+    // Browser Agent ships as an MCP server via `npx @ainative/browser-mcp` (stdio) —
+    // docs/AINATIVE_PRIMITIVES.md §3. Carry the doc pointer; transport is stdio, not HTTP.
+    mcpUrl: `${DOCS}/business-ops/browser-agent`,
     triggers: ['scrape', 'scraping', 'extract', 'crawl', 'browser automation', 'web data', 'monitor prices', 'aggregat'] },
 
   // ---- Data / AI supporting primitives (idea-gated) ----
@@ -206,6 +260,67 @@ export const CATALOG_SIZE = CATALOG.length
 
 export function getPrimitive(name: string): CatalogPrimitive | undefined {
   return CATALOG_BY_NAME.get(name)
+}
+
+/**
+ * MCP-server metadata (#73). Descriptor for an AINative MCP server the agent can
+ * connect to. Catalog primitives carry `mcpUrl`/`mcpTools`; some published servers
+ * (PRD Generator, Sequential Thinking, Design System, GTM) are build/ops tools
+ * that don't map 1:1 to a composable catalog primitive — they live in
+ * MCP_SERVERS below so the multi-server client can still discover them.
+ */
+export interface McpServerRef {
+  /** Stable id used to select the server (e.g. 'zerodb'). */
+  id: string
+  /** Human label. */
+  label: string
+  /** Streamable-HTTP endpoint, or a doc pointer for stdio/npx servers. */
+  url: string
+  /** Published tool count from docs/AINATIVE_PRIMITIVES.md §6 (undefined if not published). */
+  tools?: number
+  /** Catalog primitive this server operates, when there is one. */
+  primitive?: string
+  /** Transport kind — HTTP servers are directly connectable; stdio servers are npx-launched. */
+  transport: 'http' | 'stdio'
+}
+
+/**
+ * The published AINative MCP fleet (docs/AINATIVE_PRIMITIVES.md §6). Single source
+ * of truth for WHICH servers the multi-server client can connect to. HTTP servers
+ * are keyed off MCP_BASE so one env var retargets the fleet.
+ */
+export const MCP_SERVERS: McpServerRef[] = [
+  { id: 'zerodb', label: 'Full ZeroDB MCP', url: `${MCP_BASE}/zerodb`, tools: 69, primitive: 'ZeroDB', transport: 'http' },
+  { id: 'memory', label: 'Memory MCP', url: `${MCP_BASE}/memory`, tools: 18, primitive: 'ZeroMemory', transport: 'http' },
+  { id: 'prd-generator', label: 'PRD Generator MCP', url: `${MCP_BASE}/prd-generator`, tools: 18, transport: 'http' },
+  { id: 'sequential-thinking', label: 'Sequential Thinking MCP', url: `${MCP_BASE}/sequential-thinking`, transport: 'http' },
+  { id: 'design-system', label: 'Design System MCP', url: `${MCP_BASE}/design-system`, tools: 3, transport: 'http' },
+  { id: 'strapi', label: 'Strapi MCP', url: `${MCP_BASE}/strapi`, tools: 21, primitive: 'Content Workflow', transport: 'http' },
+  { id: 'zerovoice', label: 'ZeroVoice MCP', url: `${MCP_BASE}/zerovoice`, tools: 25, primitive: 'ZeroVoice', transport: 'http' },
+  // GTM ships via `@ainative/gtm-mcp` (stdio) — carry the doc overview as its pointer.
+  { id: 'gtm', label: 'GTM MCP', url: `${DOCS}/mcp/gtm-server`, primitive: 'Content Workflow', transport: 'stdio' },
+]
+
+const MCP_SERVERS_BY_ID = new Map(MCP_SERVERS.map((s) => [s.id, s]))
+
+/** Look up a published MCP server descriptor by id. */
+export function getMcpServer(id: string): McpServerRef | undefined {
+  return MCP_SERVERS_BY_ID.get(id)
+}
+
+/**
+ * Catalog primitives that are MCP-operable (carry an `mcpUrl`). Feeds the
+ * "operated via MCP — your agent can drive this too" surfacing (#66 owns the
+ * chips) and lets the build path know which primitives Cody can provision/operate
+ * agentically rather than only emit REST calls for.
+ */
+export function getMcpOperablePrimitives(): CatalogPrimitive[] {
+  return CATALOG.filter((p) => !!p.mcpUrl)
+}
+
+/** True if a primitive (by name) is operable via an MCP server. */
+export function isMcpOperable(name: string): boolean {
+  return !!CATALOG_BY_NAME.get(name)?.mcpUrl
 }
 
 /**
