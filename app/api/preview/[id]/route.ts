@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getPreview, isPreviewStreaming, storePreview, getSSRPreview } from '@/lib/preview-store'
 import { validateJavaScriptCode, sanitizeForSandpack } from '@/lib/code-validator'
+import { detectRootComponent } from '@/lib/component-detector'
 // Sucrase removed — builds were failing. Using client-side Babel.
 // The key fix is using models that produce COMPLETE code (not maverick 512-tok)
 
@@ -245,13 +246,22 @@ export async function GET(
     console.warn('[Preview] sanitizeForSandpack failed, using raw code:', e)
   }
 
-  // CRITICAL: Detect the main component name BEFORE stripping exports
-  // This is the most reliable way — don't rely on scanning window later
-  const exportDefaultMatch = componentCode.match(/export\s+default\s+function\s+([A-Z]\w+)/)
-  const exportDefaultConstMatch = componentCode.match(/export\s+default\s+([A-Z]\w+)/)
-  const standaloneFunction = componentCode.match(/^function\s+([A-Z]\w+)\s*\(/m)
-  const detectedComponentName = exportDefaultMatch?.[1] || exportDefaultConstMatch?.[1] || standaloneFunction?.[1] || 'App'
-  console.log(`[Preview] Detected component name: ${detectedComponentName}`)
+  // CRITICAL: Detect the main component name BEFORE stripping exports (builder#82).
+  // Robust priority order (see lib/component-detector.ts): identified default
+  // export → anonymous default export (with rewrite) → PascalCase JSX-returning
+  // top-level component → known-name tiebreaker. This replaces the old narrow
+  // regexes that defaulted to the literal 'App' and produced "Component Not Found"
+  // whenever a generated app used a custom root name or an anonymous default export.
+  const detection = detectRootComponent(componentCode)
+  // Anonymous default exports (`export default function() {}`, `export default () =>`,
+  // `export default class {}`) have no name to bind AND the blanket `export default`
+  // strip below would leave an anonymous *statement* (a syntax error). Apply the
+  // detector's rewrite here to give the component a stable, bindable name FIRST.
+  if (detection.rewrite && componentCode.includes(detection.rewrite.find)) {
+    componentCode = componentCode.replace(detection.rewrite.find, detection.rewrite.replace)
+  }
+  const detectedComponentName = detection.name || 'App'
+  console.log(`[Preview] Detected component name: ${detectedComponentName} (via ${detection.source})`)
 
   // CRITICAL: Clean up malformed markdown wrappers that might be in the extracted code
   // This aggressively removes any combination of quotes/backticks at start and end
@@ -1312,6 +1322,19 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
               }
             } catch (e) {}
           }
+        }
+
+        // Client-side PascalCase fallback (builder#82): the server binds the
+        // synthetic name for anonymous default exports — resolve it directly here
+        // in case the server-detection path above missed it (e.g. name shadowed).
+        if (!Component) {
+          try {
+            var _anon = new Function('return typeof __PreviewDefault !== "undefined" ? __PreviewDefault : undefined')();
+            if (typeof _anon === 'function' && !_isIconWrapper(_anon)) {
+              Component = _anon;
+              console.log('[Preview] ✓ Found component via synthetic default name');
+            }
+          } catch(e) {}
         }
 
         // If not found, search window for names ending with page-like suffixes

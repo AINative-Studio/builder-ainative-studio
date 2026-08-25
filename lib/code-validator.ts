@@ -1,4 +1,5 @@
 import { parse } from '@babel/parser'
+import { detectRootComponent } from './component-detector'
 
 /**
  * Multi-file output boundary marker — mirrors lib/multi-file-parser.ts.
@@ -1578,6 +1579,7 @@ export interface ParseGateResult {
   reason?:
     | 'empty'
     | 'no_renderable_code'
+    | 'no_renderable_component'
     | 'syntax_error'
     | 'duplicate_declaration'
     | 'unresolved_component'
@@ -1628,6 +1630,20 @@ export function isRenderable(rawContent: string): ParseGateResult {
   // guard) — otherwise there is nothing to parse and it's not a syntax failure.
   if (!/function\s|const\s|return\b/.test(code)) {
     return { ok: false, reason: 'no_renderable_code', error: 'No renderable code found' }
+  }
+
+  // builder#82: the code parses as *code*, but does it contain a renderable ROOT
+  // component the preview runtime can identify? A truncated / component-less app
+  // (e.g. only helper functions, or a default export that got cut off) would slip
+  // past the code check above and then show "Component Not Found" at preview time.
+  // Reject it here — the same robust detection the renderer uses — so the caller
+  // regenerates instead of shipping an app that can't render.
+  if (detectRootComponent(code).name === null) {
+    return {
+      ok: false,
+      reason: 'no_renderable_component',
+      error: 'No renderable default export or component found',
+    }
   }
 
   // Run the FULL strict validation (imports NOT stripped → keeps #76 unresolved-
