@@ -74,6 +74,13 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.85,
     },
     {
+      // AI Help Center — self-serve support + crawlable FAQ (AEO/AX asset, #60).
+      url: `${baseUrl}/help`,
+      lastModified: now,
+      changeFrequency: 'weekly',
+      priority: 0.8,
+    },
+    {
       // Category landing ("AI that runs your company") — non-branded demand.
       url: `${baseUrl}/ai-company`,
       lastModified: now,

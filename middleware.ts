@@ -146,6 +146,14 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next()
     }
 
+    // AI Help Center — public self-serve support hub (AEO/AX asset, #60). Same
+    // crawlability requirement as /about, /compare, /best: it MUST render for
+    // anonymous visitors, else it 307→/login and the FAQ/answers never index and
+    // the "ask anything" box is unreachable. This bug already bit /best + /about.
+    if (pathname.startsWith('/help')) {
+      return NextResponse.next()
+    }
+
     // Category landing pages (non-branded SEO/AEO targets Polsia is weak on) —
     // "AI that runs your company", "autonomous company builder", "AI co-founder".
     // MUST be crawlable + viewable without an account, else they 307→/login and
