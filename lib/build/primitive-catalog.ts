@@ -191,6 +191,51 @@ export function getPrimitive(name: string): CatalogPrimitive | undefined {
   return CATALOG_BY_NAME.get(name)
 }
 
+/**
+ * Resolve a chip label to its one-line purpose string for the hover tooltip
+ * (#66). Chip labels in PRIMITIVE_MAP can be decorated (e.g. "ZeroDB · Vectors",
+ * "AI Kit Safety") — so we try an exact hit first, then a prefix/stem match
+ * against the catalog name, so every chip gets a description pulled from the
+ * catalog rather than hardcoded per component.
+ *
+ * Returns undefined only when no catalog entry can be matched (e.g. internal
+ * entries like "GraphRAG", "Sequential Thinking" that aren't public primitives).
+ */
+export function getPrimitiveTooltip(chipLabel: string): string | undefined {
+  // 1. Exact match (fast path).
+  const exact = CATALOG_BY_NAME.get(chipLabel)
+  if (exact) return exact.purpose
+
+  // 2. Decorated-name match: "ZeroDB · Vectors" → try "ZeroDB".
+  //    Strip anything after " · " or " - " to get the stem.
+  const stem = chipLabel.split(/\s[·\-]\s/)[0].trim()
+  if (stem !== chipLabel) {
+    const byStem = CATALOG_BY_NAME.get(stem)
+    if (byStem) return byStem.purpose
+  }
+
+  // 3. Longest-prefix match: "AI Kit Safety" → "AI Kit" (walk the catalog,
+  //    keep the longest catalog name that is a prefix of the chip label).
+  let bestMatch: CatalogPrimitive | undefined
+  let bestLen = 0
+  for (const [catalogName, primitive] of CATALOG_BY_NAME) {
+    if (chipLabel.startsWith(catalogName) && catalogName.length > bestLen) {
+      bestMatch = primitive
+      bestLen = catalogName.length
+    }
+  }
+  if (bestMatch) return bestMatch.purpose
+
+  // 4. Substring: chip label contains a catalog name (case-insensitive).
+  for (const [catalogName, primitive] of CATALOG_BY_NAME) {
+    if (chipLabel.toLowerCase().includes(catalogName.toLowerCase())) {
+      return primitive.purpose
+    }
+  }
+
+  return undefined
+}
+
 export interface PrimitiveScore {
   primitive: CatalogPrimitive
   score: number

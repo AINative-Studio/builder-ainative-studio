@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * "Powering this" strip (#221, #288) — shows which AINative primitives are live
+ * "Powering this" strip (#221, #288, #66) — shows which AINative primitives are live
  * in the current artifact view, blended with the company's idea-selected set.
  *
  * Two sources are merged, deduped, and shown as chips:
@@ -10,11 +10,15 @@
  *     ZeroCommerce; a fundraising co sees OpenCapStack — not always the same 5)
  *
  * The /N counter uses CATALOG_SIZE (real distinct catalog count) not a hardcoded 34.
+ *
+ * #66: Each chip now shows a one-line tooltip on hover/focus explaining what the
+ * primitive does and that it's yours, on your own API. Copy is sourced from
+ * getPrimitiveTooltip() in primitive-catalog.ts — not hardcoded here.
  */
 
-import { useMemo } from 'react'
+import { useMemo, useId } from 'react'
 import { PRIMITIVE_MAP, CATALOG_SIZE } from '@/lib/build/primitives'
-import { selectPrimitives } from '@/lib/build/primitive-catalog'
+import { selectPrimitives, getPrimitiveTooltip } from '@/lib/build/primitive-catalog'
 
 interface PoweringThisProps {
   view: string
@@ -23,6 +27,41 @@ interface PoweringThisProps {
   idea?: string
   /** Show the /N woven counter (used in the act-bar). Default false. */
   showCounter?: boolean
+}
+
+/**
+ * Individual chip with an accessible tooltip on hover/focus (#66).
+ * The tooltip copy comes from getPrimitiveTooltip() — pulled from the
+ * primitive catalog, never hardcoded here.
+ */
+function PrimitiveChip({ label }: { label: string }) {
+  const tooltipId = useId()
+  const tooltip = getPrimitiveTooltip(label)
+
+  if (!tooltip) {
+    // No catalog entry for this internal chip (e.g. "GraphRAG") — render plain.
+    return <span className="m-chip">{label}</span>
+  }
+
+  return (
+    <span className="m-chip-wrap">
+      <span
+        className="m-chip m-chip-hastooltip"
+        aria-describedby={tooltipId}
+        tabIndex={0}
+        role="button"
+      >
+        {label}
+      </span>
+      <span
+        id={tooltipId}
+        role="tooltip"
+        className="m-chip-tooltip"
+      >
+        {tooltip} — yours, on your own API.
+      </span>
+    </span>
+  )
 }
 
 export function PoweringThis({ view, idea, showCounter }: PoweringThisProps) {
@@ -50,7 +89,7 @@ export function PoweringThis({ view, idea, showCounter }: PoweringThisProps) {
     <div className="m-powering">
       <span className="m-powering-label m-mono">Powering this</span>
       <div className="m-powering-chips">
-        {chips.map((p) => <span key={p} className="m-chip">{p}</span>)}
+        {chips.map((p) => <PrimitiveChip key={p} label={p} />)}
         {showCounter && (
           <span className="m-chip m-chip-counter m-mono" title={`${CATALOG_SIZE} primitives in the catalog`}>
             {chips.length}/{CATALOG_SIZE} woven
