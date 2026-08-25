@@ -1,5 +1,5 @@
 /**
- * POST /api/build/ask (#207 · B2, #287, #288) — the "Ask Cody anything" chat on
+ * /api/build/ask (#207 · B2, #287, #288, #52) — the "Ask Cody anything" chat on
  * the Live dashboard.
  *
  * Improvements:
@@ -7,9 +7,15 @@
  *          the catalog (via catalogPromptBlock) instead of a hardcoded list.
  *  #287 — Cody knows what's live vs queued, can explain the conversion gate, and
  *          names 3-5 concrete backlog items for THIS company — not invented ones.
+ *  #52  — the conversation is now PERSISTENT and Cody has MEMORY. Each turn
+ *          (user + Cody) is written to ZeroDB, scoped per {owner, company}, and
+ *          the last N turns are fed to Claude so follow-ups have context. A GET
+ *          on this route rehydrates the thread on mount, so reload/re-login
+ *          restores exactly where the founder left off.
  *
- * Body: { question, idea, companyName?, track?, companyId? }
- * Returns: { answer, model, provider }
+ * POST body: { question, idea, companyName?, track?, companyId?, chatId? }
+ * POST returns: { answer, model, provider }
+ * GET  ?companyId=…&chatId=…  returns: { turns: [{ role, text, createdAt }] }
  */
 
 import { NextRequest } from 'next/server'
@@ -19,6 +25,13 @@ import { auth } from '@/app/(auth)/auth'
 import { getPlanStatus } from '@/lib/ainative/plan'
 import { modelsForTier } from '@/lib/build/tier-models'
 import { selectPrimitives, catalogPromptBlock } from '@/lib/build/primitive-catalog'
+import {
+  deriveOwnerKey,
+  chatScopeKey,
+  loadChat,
+  saveExchange,
+  buildMessagesWithHistory,
+} from '@/lib/build/chat-store'
 
 export const runtime = 'nodejs'
 
@@ -36,6 +49,21 @@ async function resolveTier(): Promise<string> {
   } catch {
     return 'hobbyist'
   }
+}
+
+/**
+ * Resolve the durable conversation scope key for THIS request from the server
+ * session (owner) + the company/chat identifier (never trusted from the body
+ * for the owner half). Authenticated users key by email; guests key by their
+ * stable guest session so the thread survives reload. Returns '' when there is
+ * no company identifier to scope by (persistence/load are then skipped).
+ */
+async function resolveScopeKey(companyId: string): Promise<string> {
+  const slug = String(companyId || '').trim()
+  if (!slug) return ''
+  const session = await auth().catch(() => null)
+  const ownerKey = deriveOwnerKey(session as any)
+  return chatScopeKey(ownerKey, slug)
 }
 
 /** Fetch a compact backlog summary for this company to ground Cody's answers. */
@@ -73,7 +101,14 @@ export async function POST(request: NextRequest) {
   const idea = String(body?.idea || '').slice(0, 3000)
   const companyName = String(body?.companyName || 'the company').slice(0, 120)
   const track = body?.track === 'app' ? 'app' : 'company'
-  const companyId = String(body?.companyId || '').slice(0, 80)
+  // chatId wins over companyId as the scope identifier when present (#52) so a
+  // company with multiple build threads keeps them distinct; falls back to slug.
+  const companyId = String(body?.chatId || body?.companyId || '').slice(0, 80)
+
+  // Resolve the persistent conversation scope (owner from session + company) and
+  // load recent history so Cody has memory of the last few turns (#52).
+  const scopeKey = await resolveScopeKey(companyId)
+  const history = scopeKey ? await loadChat(scopeKey).catch(() => []) : []
 
   // Get the actual primitives selected for this company's idea
   const { names: primitiveNames } = selectPrimitives(idea, track)
@@ -108,16 +143,25 @@ export async function POST(request: NextRequest) {
 
   const tier = modelsForTier(await resolveTier())
 
+  // Conversation window: prior turns + the current question, so follow-ups
+  // ("make it cheaper", "and add auth") resolve against real context (#52).
+  const messages = buildMessagesWithHistory(history, question)
+
+  /** Persist the completed exchange (best-effort; never blocks the response). */
+  const persist = (answer: string) => {
+    if (scopeKey && answer) void saveExchange(scopeKey, question, answer)
+  }
+
   const claude = getClaudeCompletion()
   if (claude) {
     const model = claude.provider === 'bedrock' ? tier.bedrockModel : claude.model
     try {
       const res = await claude.client.messages.create({
         model, max_tokens: 600, temperature: 0.7, system,
-        messages: [{ role: 'user', content: question }],
+        messages,
       })
       const answer = (res.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n').trim()
-      if (answer) return Response.json({ answer, provider: claude.provider, model })
+      if (answer) { persist(answer); return Response.json({ answer, provider: claude.provider, model }) }
     } catch (e: any) {
       console.warn(`[build/ask] ${claude.provider} failed: ${e?.message?.slice(0, 80)}`)
     }
@@ -127,13 +171,28 @@ export async function POST(request: NextRequest) {
   try {
     const res = await ainative.chat.completions.create({
       model: tier.ainativeModel, max_tokens: 600, temperature: 0.7,
-      messages: [{ role: 'system', content: system }, { role: 'user', content: question }],
+      messages: [{ role: 'system', content: system }, ...messages],
     })
     const answer = res.choices?.[0]?.message?.content?.trim()
-    if (answer) return Response.json({ answer, provider: 'ainative', model: tier.ainativeModel })
+    if (answer) { persist(answer); return Response.json({ answer, provider: 'ainative', model: tier.ainativeModel }) }
   } catch (e: any) {
     console.warn(`[build/ask] ainative failed: ${e?.message?.slice(0, 80)}`)
   }
 
   return Response.json({ error: 'unavailable' }, { status: 503 })
+}
+
+/**
+ * GET /api/build/ask?companyId=…&chatId=… (#52) — rehydrate the persisted Cody
+ * conversation for the current owner + company, oldest-first. Returns an honest
+ * empty list for a brand-new company (no fabricated history). Never 500s: on any
+ * failure it yields an empty thread so the dashboard still renders.
+ */
+export async function GET(request: NextRequest) {
+  const params = request.nextUrl.searchParams
+  const companyId = String(params.get('chatId') || params.get('companyId') || '').slice(0, 80)
+  const scopeKey = await resolveScopeKey(companyId)
+  if (!scopeKey) return Response.json({ turns: [] })
+  const turns = await loadChat(scopeKey).catch(() => [])
+  return Response.json({ turns })
 }
