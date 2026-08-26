@@ -39,14 +39,37 @@ export async function GET(_request: NextRequest) {
     })
     if (!res.ok) return Response.json({ plan: null, signedIn: true })
     const me = await res.json().catch(() => null)
-    const raw = String(me?.plan || me?.data?.plan || '').toLowerCase()
+    const inner = me?.data || me || {}
+
+    // SUPER-ADMIN / STAFF BYPASS (#309): AINative admins must have full Builder
+    // access regardless of their subscription row. core /auth/me returns `role`
+    // (ADMIN | SUPERUSER | USER). Without this, an admin whose plan is empty — or
+    // absent from /me entirely — was shown "Upgrade to hire the swarm" (the reported
+    // bug). Treat admins as enterprise.
+    const role = String(inner.role || me?.role || '').toUpperCase()
+    const isAdmin = role === 'ADMIN' || role === 'SUPERUSER' ||
+      inner.is_superuser === true || inner.is_admin === true
+    if (isAdmin) {
+      return Response.json({
+        plan: 'enterprise', rawPlan: 'admin', signedIn: true, admin: true,
+        email: inner.email || me?.email || null, trialExpiresAt: null,
+      })
+    }
+
+    // #309: /auth/me's UserInfoResponse does NOT include `plan`, so `me.plan` was
+    // ALWAYS undefined → every non-admin user gated too. Read the tier from every
+    // field core might expose it under.
+    const raw = String(
+      inner.plan || inner.subscription_tier || inner.tier ||
+      inner.subscription?.tier || me?.plan || ''
+    ).toLowerCase()
     const plan = PLAN_MAP[raw] || null
     return Response.json({
       plan,                                   // Builder ActivePlan or null
       rawPlan: raw || null,                   // the underlying core plan id
       signedIn: true,
-      email: me?.email || me?.data?.email || null,
-      trialExpiresAt: me?.trial_expires_at || null,
+      email: inner.email || me?.email || null,
+      trialExpiresAt: inner.trial_expires_at || me?.trial_expires_at || null,
     })
   } catch {
     return Response.json({ plan: null, signedIn: true })
