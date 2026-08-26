@@ -45,8 +45,13 @@ export function useRealPreview(idea: string, enabled: boolean) {
           headers: { 'Content-Type': 'application/json' },
           signal: ac.signal,
           body: JSON.stringify({
+            // Neutral framing (#291): don't force "single-page" — that biased every
+            // idea toward a single-file blob and defeated the multi-file/Sandpack
+            // path. The server's complexity analyzer decides scope: a simple idea
+            // still yields one lean file (Babel), a complex one is split into
+            // components (multi-file → Sandpack). See chat-ws multi-file emphasis.
             message:
-              `Build a polished, working single-page web app for this idea: ${idea}. ` +
+              `Build a polished, working web app for this idea: ${idea}. ` +
               `Make it interactive and visually complete with realistic sample data.`,
           }),
         })

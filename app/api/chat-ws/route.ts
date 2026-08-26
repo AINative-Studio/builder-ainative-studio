@@ -5,6 +5,7 @@ import { nanoid } from 'nanoid'
 import { verifyAndEnhancePrompt } from '@/lib/component-verifier'
 import { PROFESSIONAL_SYSTEM_PROMPT } from '@/lib/professional-prompt'
 import { codegenCompositionBlock } from '@/lib/build/primitive-catalog'
+import { multiFileEmphasis } from '@/lib/build/multifile-emphasis'
 import { enhancePromptWithMockData } from '@/lib/mock-data-generator'
 import { updatePreviewPartial, storePreview, getChatData } from '@/lib/preview-store'
 import { validateGeneratedCode } from '@/lib/code-validator'
@@ -273,7 +274,11 @@ export async function POST(request: NextRequest) {
           // instead of regenerating business logic. #288 shipped the selection
           // half; this is the codegen half. Selection is idea-driven off `message`.
           const compositionBlock = '\n\n' + codegenCompositionBlock(message, 'company')
-          const enhancedSystemPrompt = themedPrompt + themePrompt + imagePrompt + memoryContext + compositionBlock
+          // Multi-file emphasis (#291): complexity-gate the file structure so complex
+          // ideas split into components (→ Sandpack), simple ideas stay single-file
+          // (→ fast Babel path). Uses the complexityScore already computed above.
+          const fileStructureBlock = '\n\n' + multiFileEmphasis(complexityScore.overallComplexity)
+          const enhancedSystemPrompt = themedPrompt + themePrompt + imagePrompt + memoryContext + compositionBlock + fileStructureBlock
 
           // ============================================================
           // CLAUDE AGENT PATH — headless Claude Code agent via SSE
