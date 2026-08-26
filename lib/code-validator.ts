@@ -981,6 +981,14 @@ export function findUnresolvedComponents(code: string): string[] {
     for (const m of file.matchAll(/(?:function|const|let|class)\s+([A-Z][A-Za-z0-9]*)/g)) {
       available.add(m[1])
     }
+    // TypeScript type/interface declarations (interface Foo, type Foo = …). These
+    // are NOT components, but they DO appear in generic positions (useState<Contact>,
+    // forwardRef<HTMLButtonElement, ButtonProps>) that the JSX regex below matches —
+    // register them as available so idiomatic multi-file TS isn't false-flagged as
+    // an "unresolved component" (builder#293: decomposed apps kept getting rejected).
+    for (const m of file.matchAll(/(?:interface|type)\s+([A-Z][A-Za-z0-9]*)/g)) {
+      available.add(m[1])
+    }
     // imports: default + named (with aliases)
     for (const m of file.matchAll(/import\s+(?:([A-Z][A-Za-z0-9]*)\s*,?\s*)?(?:\{([^}]*)\})?/g)) {
       if (m[1]) available.add(m[1])
@@ -1002,6 +1010,19 @@ export function findUnresolvedComponents(code: string): string[] {
     // components used in JSX: <Foo ...> or <Foo/> — PascalCase only, skip dotted
     for (const m of file.matchAll(/<([A-Z][A-Za-z0-9]*)(?=[\s/>])/g)) {
       const name = m[1]
+      // Skip TypeScript GENERIC type arguments, not JSX. A `<Foo` that is a generic
+      // (useState<Contact>, useRef<HTMLDivElement>, forwardRef<HTMLButtonElement,
+      // ButtonProps>) is preceded by an identifier/`)`/`,` — real JSX `<Foo>` is
+      // preceded by `(`, `{`, `>`, `return`, `&&`, `?`, `:`, whitespace, or start.
+      const before = file.slice(Math.max(0, m.index! - 24), m.index!)
+      // Generic type-arg position = preceded by an identifier/`)`/`]`/`,` — BUT not
+      // when that "identifier" is a JS keyword that introduces JSX (return/yield/etc.),
+      // which would otherwise mask a real unresolved component like `return <Foo/>`.
+      const isGeneric = /[A-Za-z0-9_)\],]\s*$/.test(before) &&
+        !/\b(return|yield|default|typeof|in|of|do|else|case)\s*$/.test(before)
+      // Also skip DOM/native TS types that are never components.
+      const isDomType = /^HTML[A-Z]|Element$|EventTarget$/.test(name)
+      if (isGeneric || isDomType) continue
       // skip dotted member access like <Foo.Bar> (the base Foo is what matters)
       if (!available.has(name)) unresolved.add(name)
     }
