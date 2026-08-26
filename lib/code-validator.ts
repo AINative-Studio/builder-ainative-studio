@@ -1532,6 +1532,20 @@ export function validateJavaScriptCode(
  * Also handles malformed wrappers like ""`jsx, ```jsx", etc.
  */
 export function extractCodeFromMarkdown(content: string): string {
+  // MULTI-FILE (#296): when the model emits `// --- FILE: … ---` markers (a real
+  // multi-file app), the whole thing may be split across MANY ```jsx fences. The
+  // single-fence regex below would return only the FIRST file (a ~1KB App.tsx
+  // shell), silently discarding 95% of a complex app — the #1 cause of shallow,
+  // non-interactive complex builds. When markers are present, return the full
+  // content with the fences stripped so validation/preview see the ENTIRE app.
+  if (/\/\/\s*---\s*FILE:/.test(content)) {
+    return content
+      // strip opening ```lang fences and closing ``` fences, keep the code
+      .replace(/```(?:jsx|javascript|tsx|js|ts|react|typescript)?\s*\n?/gi, '')
+      .replace(/\n?```/g, '')
+      .trim()
+  }
+
   // Try proper markdown code blocks first
   const codeBlockRegex = /```(?:jsx|javascript|tsx|js|ts|react)?\s*\n([\s\S]*?)```/
   const match = content.match(codeBlockRegex)
