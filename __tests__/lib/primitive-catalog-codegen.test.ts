@@ -41,9 +41,18 @@ describe('primitive-catalog codegen composition (#218)', () => {
     expect(block).toContain('https://zerocommerce.ainative.studio/api/v1')
     // Explicit instruction not to hand-roll checkout/cart
     expect(block).toMatch(/checkout/i)
-    // Bearer auth from env, never hardcoded
-    expect(block).toContain('AINATIVE_API_KEY')
-    expect(block).toMatch(/NEVER hardcode/i)
+    // #298: never hardcode a secret; the app runs client-side so it uses the
+    // same-origin /api/db proxy, NOT a Bearer key (those endpoints are server-side).
+    expect(block).toMatch(/NEVER put a Bearer key or secret/i)
+    expect(block).toContain('/api/db/')
+  })
+
+  it('every app gets the foundational ZeroDB + auth wiring by default (#298)', () => {
+    // Even a non-matching idea must get the /api/db data layer + auth pattern.
+    const block = codegenCompositionBlock('a personal habit tracker', 'app')
+    expect(block).toMatch(/FOUNDATION — ALWAYS WIRE THESE/i)
+    expect(block).toContain('/api/db/{table}')
+    expect(block).toMatch(/localStorage/i) // the lightweight auth pattern
   })
 
   it('B2B SaaS idea wires ZeroPipeline (CRM) real endpoint', () => {
