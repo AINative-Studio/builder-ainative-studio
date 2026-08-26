@@ -18,11 +18,18 @@
 
 export type Complexity = 'simple' | 'medium' | 'complex'
 
-/** Quality-first defaults (retune from the benchmark; env overrides win). */
+/**
+ * Quality-first defaults as Bedrock INFERENCE-PROFILE IDs (the builder calls AWS
+ * Bedrock directly via lib/bedrock-client.ts, so the gen call needs the profile ID,
+ * not an API alias). All three verified entitled (HTTP 200) on the builder bearer
+ * 2026-08-26. Cost-saving is the point: a simple counter app must NOT pay Opus
+ * prices — only complex multi-file apps get Opus. Retune from the benchmark; env
+ * overrides win (set CODY_MODEL_SIMPLE/MEDIUM/COMPLEX to a profile ID).
+ */
 const DEFAULTS: Record<Complexity, string> = {
-  simple: 'claude-sonnet-4.5',   // fast + cheap; simple apps don't need more
-  medium: 'claude-sonnet-4.6',   // newer Sonnet — better adherence at Sonnet cost
-  complex: 'claude-opus-4.6',    // strongest available for complex multi-file apps
+  simple: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0', // cheapest; simple apps don't need more
+  medium: 'us.anthropic.claude-sonnet-4-6',               // newer Sonnet, same Sonnet cost tier
+  complex: 'us.anthropic.claude-opus-4-6-v1',             // Opus ONLY for complex multi-file apps
 }
 
 /** Which env var overrides each tier. */
@@ -40,7 +47,7 @@ const ENV_KEY: Record<Complexity, string> = {
  */
 export function selectModelForComplexity(
   complexity: Complexity,
-  opts: { wantsMultiFile?: boolean; env?: NodeJS.ProcessEnv } = {},
+  opts: { wantsMultiFile?: boolean; env?: Record<string, string | undefined> } = {},
 ): string {
   const env = opts.env || process.env
   const tier: Complexity =
