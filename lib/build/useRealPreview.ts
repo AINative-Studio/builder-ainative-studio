@@ -23,6 +23,11 @@ export function useRealPreview(idea: string, enabled: boolean) {
   const [chatId, setChatId] = useState<string | null>(null)
   const [status, setStatus] = useState<Status>('idle')
   const [refreshKey, setRefreshKey] = useState(0)
+  // Multi-file payload from the SSE `files` event (#291). Captured directly off the
+  // stream from the SAME generating instance — no cross-instance store fetch — so
+  // it's stable on multi-instance Railway. Preview.tsx routes this to Sandpack when
+  // the app is genuinely multi-file, else keeps the Babel iframe.
+  const [files, setFiles] = useState<Record<string, string> | null>(null)
   const started = useRef(false)
 
   useEffect(() => {
@@ -65,7 +70,15 @@ export function useRealPreview(idea: string, enabled: boolean) {
             if (payload.type === 'init' && payload.chatId) {
               gotChatId = payload.chatId
               setChatId(payload.chatId)
-            } else if (payload.type === 'refresh' || payload.type === 'files') {
+            } else if (payload.type === 'files') {
+              // Capture the multi-file payload for the Sandpack route (#291), then
+              // trigger a refresh. Keep the latest non-empty map (a later event can
+              // supersede an earlier partial one).
+              if (payload.files && typeof payload.files === 'object' && Object.keys(payload.files).length > 0) {
+                setFiles(payload.files as Record<string, string>)
+              }
+              setRefreshKey((k) => k + 1)
+            } else if (payload.type === 'refresh') {
               // don't flip to "ready" yet — a refresh can fire on partial/empty
               // content. We confirm renderable content after the stream ends.
               setRefreshKey((k) => k + 1)
@@ -99,7 +112,8 @@ export function useRealPreview(idea: string, enabled: boolean) {
   }, [enabled, idea])
 
   const previewUrl = chatId && status === 'ready' ? `/api/preview/${chatId}?r=${refreshKey}` : null
-  return { previewUrl, status, chatId }
+  // `files` is exposed so Preview.tsx can route a multi-file app to Sandpack (#291).
+  return { previewUrl, status, chatId, files }
 }
 
 /**

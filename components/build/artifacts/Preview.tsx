@@ -13,11 +13,29 @@
 import { useState, useEffect } from 'react'
 import { useBuild } from '@/contexts/build-context'
 import { useRealPreview } from '@/lib/build/useRealPreview'
+import { shouldUseSandpack } from '@/lib/build/preview-engine'
+import dynamic from 'next/dynamic'
+
+// Sandpack is a heavy client-only bundle (esbuild worker). Load it lazily so it's
+// code-split out of the common single-file path (Babel iframe) — only pulled when a
+// genuinely multi-file app actually needs it (#291).
+const SandpackPreview = dynamic(
+  () => import('@/components/chat/sandpack-preview').then((m) => m.SandpackPreview),
+  { ssr: false, loading: () => (
+    <div className="m-preview-fallback">
+      <p className="m-mono"><span className="m-live-dot" /> Loading multi-file preview…</p>
+    </div>
+  ) },
+)
 
 export function Preview() {
   const { state, dispatch } = useBuild()
   // Kick real generation once the user reaches the preview view with an idea.
-  const { previewUrl, status, chatId } = useRealPreview(state.idea, state.view === 'preview' && !!state.idea)
+  const { previewUrl, status, chatId, files } = useRealPreview(state.idea, state.view === 'preview' && !!state.idea)
+  // Engine routing (#291): a genuinely multi-file app renders via Sandpack (real
+  // bundler, resolves cross-file imports); single-file apps keep the hardened Babel
+  // iframe. Only route to Sandpack once the app is READY and the payload qualifies.
+  const useSandpack = status === 'ready' && shouldUseSandpack(files)
   const [copied, setCopied] = useState(false)
   // #213: the durable live URL returned by register-app (deployPersistent) — a real
   // {slug}.ainative.studio wildcard host when configured, else the /build/{slug}
@@ -119,7 +137,14 @@ export function Preview() {
           <span className="m-browser-url">{`builder.ainative.studio/build/${state.appSub || 'your-app'}`}</span>
         </div>
         <div className="m-browser-body">
-          {previewUrl ? (
+          {useSandpack && files ? (
+            // Multi-file app → Sandpack (real bundler + cross-file import resolution).
+            // Sandpack runs in its own CodeSandbox sandbox origin (isolated by
+            // construction), so it doesn't need our iframe sandbox attrs. (#291)
+            <div className="m-preview-frame" style={{ height: '100%' }} data-testid="sandpack-preview-mount">
+              <SandpackPreview files={files} />
+            </div>
+          ) : previewUrl ? (
             <iframe
               key={previewUrl}
               src={previewUrl}
