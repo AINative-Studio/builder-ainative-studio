@@ -17,6 +17,52 @@
 
 export type IdeaComplexity = 'simple' | 'medium' | 'complex'
 
+/**
+ * Whether an idea warrants MULTI-FILE output (#291) — a purpose-built signal, NOT
+ * the analyzeComplexity() score (that under-counts raw ideas: a full CRM/dashboard
+ * still scores "simple" because its PRD parser finds ~0 features). Instead we count
+ * how many DISTINCT app "surfaces" the idea names. An app with several sections
+ * (sidebar + table + kanban + charts + settings) is exactly the multi-file case;
+ * a counter or a single landing page is not.
+ *
+ * Returns true when the idea references >= 3 distinct surfaces, or explicitly asks
+ * for multiple pages/sections. Deliberately conservative — false → the fast
+ * single-file Babel path, which is never a regression.
+ */
+const SURFACE_TERMS = [
+  'sidebar', 'navbar', 'nav bar', 'navigation',
+  'dashboard', 'kanban', 'board',
+  'table', 'grid', 'list view', 'data table',
+  'chart', 'graph', 'analytics', 'report',
+  'feed', 'timeline', 'activity',
+  'settings', 'profile', 'account',
+  'calendar', 'schedule',
+  'form', 'checkout', 'cart',
+  'panel', 'modal', 'drawer',
+  'pipeline', 'inbox', 'messages', 'chat',
+  'gallery', 'map',
+]
+
+export function ideaWarrantsMultiFile(idea: string): boolean {
+  const text = (idea || '').toLowerCase()
+  if (!text.trim()) return false
+
+  // Explicit multi-page / multi-section asks (plural intent only — "landing page
+  // for a shop" must NOT match, so no bare "page for").
+  if (/\b(multi-?page|multiple (pages|sections|screens|views)|several (pages|sections|screens|views))\b/.test(text)) {
+    return true
+  }
+
+  // Count DISTINCT named surfaces (dedupe substrings, e.g. "nav bar"⊂"navbar" won't
+  // double count because we match on whole words below).
+  const seen = new Set<string>()
+  for (const term of SURFACE_TERMS) {
+    const re = new RegExp(`\\b${term.replace(/\s+/g, '\\s+')}\\b`)
+    if (re.test(text)) seen.add(term.replace(/\s+/g, ''))
+  }
+  return seen.size >= 3
+}
+
 export function multiFileEmphasis(complexity: IdeaComplexity): string {
   if (complexity === 'complex') {
     return [
