@@ -12,6 +12,8 @@ import { validateGeneratedCode } from '@/lib/code-validator'
 import { buildValidationFallbackComponent } from '@/lib/validation-fallback'
 import { runValidationRetryLoop, buildRepairPrompt } from '@/lib/generation-retry'
 import { checkObedience, buildObediencePrompt } from '@/lib/build/obedience-gate'
+import { buildRagContext } from '@/lib/build/rag-context'
+import { recallPastPerformance, storeGenerationMemory } from '@/lib/agent/zeromemory'
 import { buildVerifyPrompt, buildVerifyAgentOptions } from '@/lib/agent/verify-loop'
 import { GenerationCheckpoint, resolveDegradation } from '@/lib/generation-checkpoint'
 import { stripGradients } from '@/lib/gradient-blocker'
@@ -299,7 +301,12 @@ export async function POST(request: NextRequest) {
           // shallow single-file complex apps (prod verify: multiFile=0%).
           const fileStructureComplexity = wantsMultiFile ? 'complex' : complexityScore.overallComplexity
           const fileStructureBlock = '\n\n' + multiFileEmphasis(fileStructureComplexity)
-          const enhancedSystemPrompt = themedPrompt + themePrompt + imagePrompt + memoryContext + compositionBlock + fileStructureBlock
+          // RAG codegen (#81 · Phase 7a): ground THIS build in what worked on similar
+          // past builds via ZeroMemory recall. Best-effort + timeout-bounded — an
+          // empty/failed recall yields '' (no-op), so it never blocks generation.
+          const ragBlock = await buildRagContext(message, recallPastPerformance)
+          if (ragBlock) console.log(`🧠 RAG context injected (${ragBlock.length} chars from ZeroMemory)`)
+          const enhancedSystemPrompt = themedPrompt + themePrompt + imagePrompt + memoryContext + compositionBlock + fileStructureBlock + ragBlock
 
           // ============================================================
           // CLAUDE AGENT PATH — headless Claude Code agent via SSE
@@ -1229,6 +1236,27 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
             console.log(`♻️ Serving last-good checkpoint from '${degradation.stage}' stage`)
             finalContent = degradation.code
             validation = { valid: true, code: degradation.code }
+          }
+
+          // Consolidate this build outcome to ZeroMemory (#82 · Phase 7b): fire-and-
+          // forget episodic memory so the NEXT similar build can recall what worked
+          // (read side = buildRagContext above). Rich metadata (data-backed, multi-
+          // file, obedience) makes recalls actionable. Never blocks the response.
+          try {
+            const served = finalContent || ''
+            const obFinal = checkObedience(served, message)
+            const dbBacked = /\/api\/db\//.test(served)
+            const usedMultiFile = /\/\/\s*---\s*FILE:/.test(served)
+            // Simple quality proxy in [0,1]: valid + data-backed + no obedience gaps + multi-file-when-warranted.
+            const quality = (validation.valid ? 0.4 : 0) + (dbBacked ? 0.25 : 0) +
+              (obFinal.ok ? 0.2 : 0) + ((wantsMultiFile ? usedMultiFile : true) ? 0.15 : 0)
+            storeGenerationMemory(message, validation.valid, quality, {
+              dbBacked, multiFile: usedMultiFile, wantsMultiFile,
+              persistenceGap: obFinal.persistenceGap, aikitGaps: obFinal.aikitGaps,
+              bytes: served.length,
+            })
+          } catch (memErr: any) {
+            console.warn('[ZeroMemory] consolidate error (non-fatal):', memErr?.message || memErr)
           }
 
           if (!validation.valid) {
