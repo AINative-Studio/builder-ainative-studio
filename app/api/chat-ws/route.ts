@@ -14,6 +14,7 @@ import { runValidationRetryLoop, buildRepairPrompt } from '@/lib/generation-retr
 import { checkObedience, buildObediencePrompt } from '@/lib/build/obedience-gate'
 import { buildRagContext } from '@/lib/build/rag-context'
 import { shouldDecompose, buildDecompositionPrompt, buildFixAndDecomposePrompt } from '@/lib/build/decomposition'
+import { selectModelForComplexity, modelSelectionReport } from '@/lib/build/model-select'
 import { recallPastPerformance, storeGenerationMemory } from '@/lib/agent/zeromemory'
 import { buildVerifyPrompt, buildVerifyAgentOptions } from '@/lib/agent/verify-loop'
 import { GenerationCheckpoint, resolveDegradation } from '@/lib/generation-checkpoint'
@@ -126,12 +127,15 @@ function getPrimaryClaudeClient(): { client: any; provider: 'bedrock' | 'anthrop
  * as the main gen; fall back to the AINative proxy with a model it actually has.
  * Returns the text content, or '' on failure. Never throws.
  */
-async function runClaudePass(system: string, user: string, maxTokens = 8192): Promise<string> {
+async function runClaudePass(system: string, user: string, maxTokens = 16000, modelOverride?: string): Promise<string> {
   const primary = getPrimaryClaudeClient()
   if (primary?.client) {
     try {
+      // On Bedrock, use the caller's model (the same tier the gen used) so a complex
+      // app's repair stays on the strong model instead of the cheaper default (#306).
+      const model = (primary.provider === 'bedrock' && modelOverride) ? modelOverride : primary.model
       const resp = await primary.client.messages.create({
-        model: primary.model,
+        model,
         max_tokens: maxTokens,
         system,
         messages: [{ role: 'user', content: user }],
@@ -344,6 +348,12 @@ export async function POST(request: NextRequest) {
           // shallow single-file complex apps (prod verify: multiFile=0%).
           const fileStructureComplexity = wantsMultiFile ? 'complex' : complexityScore.overallComplexity
           const fileStructureBlock = '\n\n' + multiFileEmphasis(fileStructureComplexity)
+          // SMART MODEL SELECTION (#306): pick the model by complexity so a simple app
+          // pays Sonnet prices and only a complex multi-file app gets Opus. Overridable
+          // per tier via CODY_MODEL_SIMPLE/MEDIUM/COMPLEX. Returns a Bedrock profile ID
+          // passed straight into the gen call below (overrides the client default).
+          const selectedGenModel = selectModelForComplexity(complexityScore.overallComplexity, { wantsMultiFile })
+          console.log(modelSelectionReport(complexityScore.overallComplexity, wantsMultiFile, selectedGenModel))
           // RAG codegen (#81 · Phase 7a): ground THIS build in what worked on similar
           // past builds via ZeroMemory recall. Best-effort + timeout-bounded — an
           // empty/failed recall yields '' (no-op), so it never blocks generation.
@@ -825,11 +835,21 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
             // ============ PRIMARY CLAUDE PATH — Bedrock (Config C) or direct Anthropic ============
             const claude = _primaryClaude?.client || null
             if (claude) {
-              console.log(`🧠 Using ${_claudeLabel} via ${_primaryClaude!.provider}`)
+              // Smart model selection (#306): on the Bedrock path, use the
+              // complexity-selected profile ID so simple apps stay on Sonnet and only
+              // complex apps pay for Opus. The direct-Anthropic path uses its own IDs,
+              // so only override for Bedrock; else keep the client default.
+              const genModel = _primaryClaude!.provider === 'bedrock' ? selectedGenModel : _primaryClaude!.model
+              console.log(`🧠 Using ${genModel} via ${_primaryClaude!.provider}`)
               try {
                 const claudeResponse = await claude.messages.create({
-                  model: _primaryClaude!.model,
-                  max_tokens: 8192,
+                  model: genModel,
+                  // #310: a complex multi-file app (aerosol was ~7700 tok) was hitting
+                  // the 8192 ceiling → TRUNCATED mid-JSX → misnested-brace syntax
+                  // errors that no repair could fix. Raise to 16000 so rich Opus builds
+                  // finish. This is a primary cause of "broken build" — not just the
+                  // model. Bedrock Sonnet/Opus both support >8k output.
+                  max_tokens: 16000,
                   system: llmSystemPrompt,
                   messages: previousMessages.length > 0
                     ? [...previousMessages.map((m: any) => ({ role: m.role, content: m.content })), { role: 'user', content: enhancedPrompt }]
@@ -1251,6 +1271,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                 const raw = await runClaudePass(
                   'You improve AND split a working React app in one step. Return ONLY the files in the // --- FILE: … --- marker format. Keep every feature.',
                   buildFixAndDecomposePrompt(message, buildObediencePrompt(message, ob), finalContent),
+                  16000, selectedGenModel,
                 )
                 const v = validateGeneratedCode(raw)
                 const multi = /\/\/\s*---\s*FILE:/.test(v.code || '')
@@ -1272,6 +1293,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                 const obRaw = await runClaudePass(
                   'You improve a working React app to follow AINative rules. Return ONLY the full corrected app in ```jsx markers. Keep every feature; do not break anything.',
                   `${buildObediencePrompt(message, ob)}\n\nCURRENT APP:\n\`\`\`jsx\n${finalContent.slice(0, 12000)}\n\`\`\``,
+                  16000, selectedGenModel,
                 )
                 const obValidation = validateGeneratedCode(obRaw)
                 if (obValidation.valid && obValidation.code && obValidation.code.length > 200) {
@@ -1288,6 +1310,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                 const decRaw = await runClaudePass(
                   'You refactor a working React app into multiple files. Return ONLY the files in the // --- FILE: … --- marker format. Change no behavior.',
                   buildDecompositionPrompt(message, finalContent),
+                  16000, selectedGenModel,
                 )
                 const decValidation = validateGeneratedCode(decRaw)
                 const decMultiFile = /\/\/\s*---\s*FILE:/.test(decValidation.code || '')

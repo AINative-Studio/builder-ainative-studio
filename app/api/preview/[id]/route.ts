@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getPreview, isPreviewStreaming, storePreview, getSSRPreview } from '@/lib/preview-store'
 import { validateJavaScriptCode, sanitizeForSandpack } from '@/lib/code-validator'
 import { detectRootComponent } from '@/lib/component-detector'
+import { flattenMultiFile } from '@/lib/build/flatten-multifile'
 // Sucrase removed — builds were failing. Using client-side Babel.
 // The key fix is using models that produce COMPLETE code (not maverick 512-tok)
 
@@ -184,33 +185,15 @@ export async function GET(
 
   let componentCode = ''
 
-  // Handle multi-file output: extract the LARGEST file with a component function
+  // Handle multi-file output (builder#308): a multi-file app (App.tsx importing
+  // ./components/Header, …) previously extracted ONLY App.tsx here — so on the
+  // single-file Babel path every imported child was undefined and the app rendered
+  // BLANK (the aerosol bug). flattenMultiFile inlines the child components into
+  // App's scope (strips relative imports/exports, concatenates children above App)
+  // so <Header/> etc. resolve. Single-file content is a no-op.
   if (content.includes('// --- FILE:')) {
-    const files = content.split(/\/\/\s*---\s*FILE:\s*/i)
-
-    // Strategy: find App.tsx first, then the largest file with a function declaration
-    let mainFile = files.find(f => /^src\/App\.tsx|^App\.tsx/i.test(f.trim()))
-
-    if (!mainFile) {
-      // Find the largest file that actually contains a component function
-      let bestFile = ''
-      let bestSize = 0
-      for (const f of files) {
-        const fileContent = f.replace(/^.*?---\s*\n?/, '').trim()
-        if (fileContent.length > bestSize && (fileContent.includes('function ') || fileContent.includes('const ')) && fileContent.includes('return')) {
-          bestFile = f
-          bestSize = fileContent.length
-        }
-      }
-      if (bestFile) mainFile = bestFile
-    }
-
-    if (!mainFile && files.length > 1) mainFile = files[1]
-
-    if (mainFile) {
-      componentCode = mainFile.replace(/^.*?---\s*\n?/, '').trim()
-      console.log(`[Preview] Extracted main file from multi-file output (${componentCode.length} chars)`)
-    }
+    componentCode = flattenMultiFile(content)
+    console.log(`[Preview] Flattened multi-file output → single module (${componentCode.length} chars)`)
   }
 
   // If no multi-file, try markdown code blocks
@@ -545,18 +528,43 @@ export async function GET(
     const validation = validateJavaScriptCode(componentCode, { importsStripped: true, lenient: true })
     if (!validation.valid) {
       console.error('Preview validation failed for ID:', id, 'Error:', validation.error)
+      // Customer-facing recovery page (#310). This used to be a raw dev error with a
+      // dead-end "<a href='/'>" that booted a paying customer to the homepage. Now it
+      // offers a REAL "Regenerate" action: postMessage to the parent builder (the
+      // preview iframe is sandboxed with a null origin, so it can't navigate the
+      // parent directly — it posts an 'ainative-preview-nav' regenerate action that
+      // Preview.tsx handles by re-running the build). The raw code stays behind a
+      // details toggle for debugging, not as the primary UX.
+      const safeErr = String(validation.error || 'syntax error').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       const errorHtml = `
         <!DOCTYPE html>
         <html>
-        <body style="font-family: sans-serif; padding: 20px;">
-          <h2>Code Validation Error</h2>
-          <p>The generated code has syntax errors and cannot be rendered safely.</p>
-          <pre style="background: #fee; padding: 15px; border-radius: 4px; color: #c00;">${validation.error}</pre>
-          <details>
-            <summary style="cursor: pointer; margin-top: 20px;">View problematic code</summary>
-            <pre style="background: #f5f5f5; padding: 15px; margin-top: 10px; overflow: auto;">${componentCode.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
-          </details>
-          <p style="margin-top: 20px;"><a href="/">← Go back and try regenerating</a></p>
+        <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <script src="https://cdn.tailwindcss.com"></script></head>
+        <body style="margin:0;background:#f8fafc;font-family:system-ui,-apple-system,sans-serif">
+          <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px">
+            <div style="max-width:460px;text-align:center;background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:40px 32px;box-shadow:0 4px 24px rgba(0,0,0,0.06)">
+              <div style="font-size:40px;margin-bottom:12px">🛠️</div>
+              <h1 style="font-size:20px;font-weight:700;color:#0f172a;margin:0 0 8px">This build needs another pass</h1>
+              <p style="font-size:14px;color:#475569;line-height:1.6;margin:0 0 24px">
+                Cody's first version didn't render cleanly. One click to rebuild it — the next attempt usually gets it right.
+              </p>
+              <button id="regen" style="background:#ec3013;color:#fff;border:0;border-radius:10px;padding:12px 24px;font-size:15px;font-weight:600;cursor:pointer">
+                ↻ Regenerate this app
+              </button>
+              <details style="margin-top:24px;text-align:left">
+                <summary style="cursor:pointer;font-size:12px;color:#94a3b8">Technical details</summary>
+                <pre style="background:#fef2f2;padding:12px;border-radius:8px;color:#991b1b;font-size:12px;overflow:auto;margin-top:8px">${safeErr}</pre>
+              </details>
+            </div>
+          </div>
+          <script>
+            document.getElementById('regen').addEventListener('click', function(){
+              // Sandboxed frame → tell the parent builder to rebuild (it owns the chat/gen flow).
+              try { window.parent.postMessage({ type: 'ainative-preview-nav', action: 'regenerate' }, '*'); } catch(e){}
+              this.textContent = '↻ Rebuilding…'; this.disabled = true;
+            });
+          </script>
         </body>
         </html>
       `

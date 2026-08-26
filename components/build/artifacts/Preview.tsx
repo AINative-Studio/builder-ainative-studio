@@ -83,13 +83,24 @@ export function Preview() {
       if (!data || data.type !== 'ainative-preview-nav') return
       if (data.action === 'home') {
         window.location.href = '/'
+      } else if (data.action === 'regenerate') {
+        // A failed-build error page asked to REBUILD the app (#310). Re-run the SAME
+        // idea through generation (START_BUILD) instead of dead-ending the customer
+        // on the homepage. With the stronger model now default, the retry usually
+        // succeeds. Falls back to a reload if there's no idea to rebuild.
+        if (state.idea && state.appSub) {
+          dispatch({ type: 'START_BUILD', idea: state.idea, appSub: state.appSub, companyName: state.companyName })
+          dispatch({ type: 'GOTO_VIEW', view: 'preview' as import('@/lib/build/state').ArtifactView })
+        } else {
+          window.location.reload()
+        }
       } else if (data.action === 'retry' || data.action === 'reload') {
         window.location.reload()
       }
     }
     window.addEventListener('message', onPreviewMessage)
     return () => window.removeEventListener('message', onPreviewMessage)
-  }, [])
+  }, [state.idea, state.appSub, state.companyName, dispatch])
 
   // The real, shareable URL: the durable /build/{slug} subdirectory (works
   // immediately, no DNS, resolves for anyone). (FIX-2 / #213 / #78)
