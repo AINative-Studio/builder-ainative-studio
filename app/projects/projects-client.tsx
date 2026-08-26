@@ -22,6 +22,12 @@ interface Project {
 interface TierUsage {
   max: number
   remaining: number
+  // The user's real plan name from the API. The banner previously hard-coded
+  // "Hobbyist" — but $5 Hobbyist is a dev/API tier, not a Builder membership, so
+  // Builder must never mislabel entry users as Hobbyist. Falls back to a neutral
+  // label when absent. Refs #6680.
+  tier?: string | null
+  planName?: string | null
 }
 
 export function ProjectsClient({ isAINative }: { isAINative: boolean }) {
@@ -153,7 +159,12 @@ export function ProjectsClient({ isAINative }: { isAINative: boolean }) {
             </span>
           ) : (
             <span>
-              Hobbyist plan: <strong>{tierUsage.remaining}</strong> of{' '}
+              {(tierUsage.planName || tierUsage.tier) ? (
+                <>{tierUsage.planName || tierUsage.tier} plan: </>
+              ) : (
+                <>Your plan: </>
+              )}
+              <strong>{tierUsage.remaining}</strong> of{' '}
               <strong>{tierUsage.max}</strong> apps remaining.
             </span>
           )}
