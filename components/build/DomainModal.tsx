@@ -39,6 +39,9 @@ type ByoStatus = 'idle' | 'pending' | 'verifying' | 'live' | 'error' | 'needs_pr
 // sessionStorage key holding the domain a signed-out founder chose to buy, so the
 // purchase resumes to Stripe checkout after they authenticate and land back on Live.
 const RESUME_KEY = 'ainative:domain-purchase-resume'
+// sessionStorage key holding a domain a signed-out founder chose to CONNECT (BYO),
+// so the connect resumes after they authenticate and land back on Live (#53).
+const BYO_RESUME_KEY = 'ainative:domain-connect-resume'
 
 export function DomainModal({ brand, slug, keywords, open, onClose, onRequireAuth }: {
   brand: string; slug?: string; keywords?: string; open: boolean; onClose: () => void
@@ -189,6 +192,26 @@ export function DomainModal({ brand, slug, keywords, open, onClose, onRequireAut
     }
   }, [signedIn, startCheckout])
 
+  // Resume the BYO connect after auth (#53): a signed-out founder who clicked Connect
+  // was routed to sign-in with the domain stashed. On return (now authenticated),
+  // reopen the BYO tab pre-filled and flag it to auto-connect (handled once
+  // connectByo is defined, via byoResumePending below).
+  const [byoResumePending, setByoResumePending] = useState<string | null>(null)
+  useEffect(() => {
+    if (!signedIn) return
+    let pending: { domain?: string } | null = null
+    try {
+      const raw = sessionStorage.getItem(BYO_RESUME_KEY)
+      if (raw) pending = JSON.parse(raw)
+    } catch { pending = null }
+    if (pending?.domain) {
+      try { sessionStorage.removeItem(BYO_RESUME_KEY) } catch {}
+      setTab('byo')
+      setByoInput(pending.domain)
+      setByoResumePending(pending.domain)
+    }
+  }, [signedIn])
+
   // Fulfillment: after Stripe redirects back with ?domain_session=…, verify the
   // payment and register + point DNS. Runs once regardless of modal open state.
   useEffect(() => {
@@ -257,10 +280,23 @@ export function DomainModal({ brand, slug, keywords, open, onClose, onRequireAut
     return () => { stop = true; clearInterval(id) }
   }, [open, tab, byoDomain, byoStatus, slug, brand])
 
+  // Route a signed-out founder into auth so the connect RESUMES on return. Mirrors
+  // onBuy's auth-gating so the BYO Connect button never dead-ends with just a message
+  // (the bug: an anonymous click returned reason:'signin' and only showed passive
+  // text, so the button looked broken). #53.
+  const routeToAuthForByo = useCallback((domain: string) => {
+    try { sessionStorage.setItem(BYO_RESUME_KEY, JSON.stringify({ domain, slug: slug || brand })) } catch {}
+    if (onRequireAuth) { onRequireAuth(); return }
+    const back = `/build/${encodeURIComponent(slug || brand)}`
+    window.location.href = `/api/auth/signin?callbackUrl=${encodeURIComponent(back)}`
+  }, [slug, brand, onRequireAuth])
+
   // Kick off connecting a domain the founder already owns (#53).
   const connectByo = useCallback(async () => {
     const d = byoInput.trim()
     if (!d || byoBusy) return
+    // Anonymous founder → route to sign-in (with resume) instead of a dead message.
+    if (!signedIn) { routeToAuthForByo(d); return }
     setByoBusy(true); setByoMsg(null)
     try {
       const res = await fetch('/api/build/connect-domain', {
@@ -273,8 +309,10 @@ export function DomainModal({ brand, slug, keywords, open, onClose, onRequireAut
         setByoMsg(data.detail || 'Provision this company first, then connect your domain.')
         return
       }
+      // The session lapsed between render and click (rare) — route to auth, don't
+      // strand the founder on a passive message.
       if (data?.reason === 'signin') {
-        setByoMsg('Please sign in to connect a domain you own.')
+        routeToAuthForByo(d)
         return
       }
       if (!data?.ok) {
@@ -289,7 +327,16 @@ export function DomainModal({ brand, slug, keywords, open, onClose, onRequireAut
     } finally {
       setByoBusy(false)
     }
-  }, [byoInput, byoBusy, slug, brand])
+  }, [byoInput, byoBusy, slug, brand, signedIn, routeToAuthForByo])
+
+  // Auto-fire the resumed BYO connect once the input is pre-filled from the stash
+  // and we're authenticated (#53). Guarded so it runs a single time per resume.
+  useEffect(() => {
+    if (!byoResumePending || !signedIn) return
+    if (byoInput.trim() !== byoResumePending.trim()) return
+    setByoResumePending(null)
+    connectByo()
+  }, [byoResumePending, signedIn, byoInput, connectByo])
 
   // Copy a DNS record value to the clipboard (#53) — one-click for the registrar.
   const copyValue = useCallback(async (value: string, key: string) => {
@@ -376,7 +423,7 @@ export function DomainModal({ brand, slug, keywords, open, onClose, onRequireAut
                 disabled={byoBusy}
               />
               <button type="submit" className="btn-secondary" disabled={!byoInput.trim() || byoBusy} data-testid="byo-connect-cta">
-                {byoBusy ? 'Connecting…' : byoDomain ? 'Re-check' : 'Connect'}
+                {byoBusy ? 'Connecting…' : byoDomain ? 'Re-check' : !signedIn ? 'Sign in to connect' : 'Connect'}
               </button>
             </form>
 

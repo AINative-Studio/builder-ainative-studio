@@ -83,9 +83,13 @@ export async function POST(request: NextRequest) {
         domain,
         slug,
         email,
-        // Return to the company's Live page; the modal fulfills on ?domain_session.
-        success_url: `${APP}/build/${slug}?domain_session={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${APP}/build/${slug}?domain_cancelled=1`,
+        // Return to the company's LIVE DASHBOARD (the SPA screen), not the public
+        // /build/{slug} app page. `/build/{slug}` renders the built app for visitors;
+        // the founder must land back on their dashboard where the modal fulfills on
+        // ?domain_session (success) or simply reopens on cancel. Both used to point at
+        // the public app page, which stranded the founder on their own app view.
+        success_url: `${APP}/build?screen=live&company=${encodeURIComponent(slug)}&domain_session={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${APP}/build?screen=live&company=${encodeURIComponent(slug)}&domain_cancelled=1`,
       }),
       signal: AbortSignal.timeout(30000),
     })
