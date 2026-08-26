@@ -11,6 +11,7 @@ import { updatePreviewPartial, storePreview, getChatData } from '@/lib/preview-s
 import { validateGeneratedCode } from '@/lib/code-validator'
 import { buildValidationFallbackComponent } from '@/lib/validation-fallback'
 import { runValidationRetryLoop, buildRepairPrompt } from '@/lib/generation-retry'
+import { checkObedience, buildObediencePrompt } from '@/lib/build/obedience-gate'
 import { buildVerifyPrompt, buildVerifyAgentOptions } from '@/lib/agent/verify-loop'
 import { GenerationCheckpoint, resolveDegradation } from '@/lib/generation-checkpoint'
 import { stripGradients } from '@/lib/gradient-blocker'
@@ -1166,6 +1167,50 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               fallback: true,
               error: agentFallbackSucceeded ? undefined : 'Agent fallback validation failed',
             }).catch(e => console.warn('[AgentRuns] fallback log failed:', e?.message || e))
+          }
+
+          // OBEDIENCE GATE (#297): syntactically valid, but does it FOLLOW the rules?
+          // If the app should persist (manages records) but hardcodes data, or hand-
+          // rolls a UI pattern AIKit provides, do ONE targeted re-prompt to fix it —
+          // then re-validate and only keep the result if it's still valid. Bounded to
+          // a single attempt so we never regress a working app or add latency loops.
+          if (validation.valid && finalContent) {
+            try {
+              const ob = checkObedience(finalContent, message)
+              if (!ob.ok) {
+                console.log(`📏 Obedience gap → re-prompt: ${ob.reasons.join(' | ')}`)
+                safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+                  type: 'build_step',
+                  step: 'Wiring real data + AINative components…',
+                })}\n\n`))
+                const obRes = await ainativeClient.chat.completions.create({
+                  model: DEFAULT_MODEL,
+                  max_tokens: 8192,
+                  temperature: 0.4,
+                  messages: [
+                    { role: 'system', content: 'You improve a working React app to follow AINative rules. Return ONLY the full corrected app in ```jsx markers. Keep every feature; do not break anything.' },
+                    { role: 'user', content: `${buildObediencePrompt(message, ob)}\n\nCURRENT APP:\n\`\`\`jsx\n${finalContent.slice(0, 12000)}\n\`\`\`` },
+                  ],
+                })
+                const obRaw = obRes.choices?.[0]?.message?.content || ''
+                const obValidation = validateGeneratedCode(obRaw)
+                if (obValidation.valid && obValidation.code && obValidation.code.length > 200) {
+                  // Only adopt the obedience-improved version if it STILL passes AND
+                  // actually closed a gap (don't swap for a worse/equal result).
+                  const after = checkObedience(obValidation.code, message)
+                  const improved = (ob.persistenceGap && !after.persistenceGap) ||
+                    (ob.aikitGaps.length > after.aikitGaps.length)
+                  if (improved) {
+                    console.log('📏 Obedience re-prompt improved the app — adopting.')
+                    finalContent = obValidation.code
+                    validation = obValidation
+                    checkpoint.record('obedience', finalContent, true)
+                  }
+                }
+              }
+            } catch (obErr: any) {
+              console.warn('[Obedience] gate error (non-fatal):', obErr?.message || obErr)
+            }
           }
 
           // Final decision — degradation ladder (#81): serve current-if-valid,
