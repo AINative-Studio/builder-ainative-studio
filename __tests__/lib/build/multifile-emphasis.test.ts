@@ -35,6 +35,25 @@ describe('ideaWarrantsMultiFile (#291) — the actual gate', () => {
   it('2 surfaces → false (below threshold)', () => {
     expect(ideaWarrantsMultiFile('an app with a table and a chart')).toBe(false)
   })
+
+  // #293: a TERSE complex archetype names zero surface terms but inherently has
+  // many surfaces — it must still route multi-file (prod verify caught these as
+  // single-file: crm/dashboard/ecommerce all multiFile=0%).
+  it('terse complex archetypes → true even with no explicit surface words', () => {
+    expect(ideaWarrantsMultiFile('a CRM to track deals and customers')).toBe(true)
+    expect(ideaWarrantsMultiFile('an analytics dashboard')).toBe(true)
+    expect(ideaWarrantsMultiFile('an online store to sell products')).toBe(true)
+    expect(ideaWarrantsMultiFile('a project management app')).toBe(true)
+    expect(ideaWarrantsMultiFile('an admin panel')).toBe(true)
+    expect(ideaWarrantsMultiFile('a booking system')).toBe(true)
+  })
+
+  it('archetype detection does NOT over-trigger on genuinely simple ideas', () => {
+    expect(ideaWarrantsMultiFile('a simple counter app')).toBe(false)
+    expect(ideaWarrantsMultiFile('a notes app to write and save notes')).toBe(false)
+    expect(ideaWarrantsMultiFile('a tip calculator')).toBe(false)
+    expect(ideaWarrantsMultiFile('a pomodoro timer')).toBe(false)
+  })
 })
 
 describe('multiFileEmphasis (#291)', () => {

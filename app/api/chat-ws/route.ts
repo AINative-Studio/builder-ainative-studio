@@ -291,8 +291,14 @@ export async function POST(request: NextRequest) {
           const compositionBlock = '\n\n' + codegenCompositionBlock(message, 'company')
           // Multi-file emphasis (#291): complexity-gate the file structure so complex
           // ideas split into components (→ Sandpack), simple ideas stay single-file
-          // (→ fast Babel path). Uses the complexityScore already computed above.
-          const fileStructureBlock = '\n\n' + multiFileEmphasis(complexityScore.overallComplexity)
+          // (→ fast Babel path). #293: when the idea warrants multi-file (a named
+          // complex archetype like "a CRM"/"a dashboard", which analyzeComplexity
+          // under-scores as "simple"), FORCE the complex file-structure block so the
+          // system prompt doesn't say "single file is fine" while the user directive
+          // says "output multiple files" — that contradiction was a top cause of
+          // shallow single-file complex apps (prod verify: multiFile=0%).
+          const fileStructureComplexity = wantsMultiFile ? 'complex' : complexityScore.overallComplexity
+          const fileStructureBlock = '\n\n' + multiFileEmphasis(fileStructureComplexity)
           const enhancedSystemPrompt = themedPrompt + themePrompt + imagePrompt + memoryContext + compositionBlock + fileStructureBlock
 
           // ============================================================

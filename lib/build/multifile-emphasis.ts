@@ -43,6 +43,25 @@ const SURFACE_TERMS = [
   'gallery', 'map',
 ]
 
+/**
+ * Complex app ARCHETYPES (#293). A terse idea like "a CRM" or "an analytics
+ * dashboard" names ZERO surface terms yet inherently has many surfaces (list +
+ * detail + filters + charts + settings). The surface-count heuristic alone scored
+ * these single-file (multiFile=0% in prod verify), producing shallow complex apps.
+ * Naming a known archetype is itself sufficient signal for multi-file output.
+ */
+const COMPLEX_ARCHETYPES = [
+  'crm', 'dashboard', 'admin panel', 'admin dashboard', 'analytics',
+  'marketplace', 'ecommerce', 'e-commerce', 'online store', 'storefront',
+  'project management', 'kanban', 'issue tracker', 'help ?desk', 'ticketing',
+  'social network', 'social media', 'forum', 'community',
+  'booking', 'reservation', 'scheduling', 'appointment',
+  'inventory', 'point of sale', 'pos system', 'erp',
+  'learning management', 'lms', 'content management', 'cms',
+  'invoicing', 'accounting', 'billing', 'expense',
+  'pipeline', 'sales pipeline', 'lead', 'deal',
+]
+
 export function ideaWarrantsMultiFile(idea: string): boolean {
   const text = (idea || '').toLowerCase()
   if (!text.trim()) return false
@@ -51,6 +70,12 @@ export function ideaWarrantsMultiFile(idea: string): boolean {
   // for a shop" must NOT match, so no bare "page for").
   if (/\b(multi-?page|multiple (pages|sections|screens|views)|several (pages|sections|screens|views))\b/.test(text)) {
     return true
+  }
+
+  // A named complex archetype is sufficient on its own (#293) — these have many
+  // surfaces even when the idea string is terse (e.g. "a CRM", "a dashboard").
+  for (const arch of COMPLEX_ARCHETYPES) {
+    if (new RegExp(`\\b${arch}\\b`).test(text)) return true
   }
 
   // Count DISTINCT named surfaces (dedupe substrings, e.g. "nav bar"⊂"navbar" won't
