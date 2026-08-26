@@ -13,6 +13,7 @@ import { buildValidationFallbackComponent } from '@/lib/validation-fallback'
 import { runValidationRetryLoop, buildRepairPrompt } from '@/lib/generation-retry'
 import { checkObedience, buildObediencePrompt } from '@/lib/build/obedience-gate'
 import { buildRagContext } from '@/lib/build/rag-context'
+import { shouldDecompose, buildDecompositionPrompt } from '@/lib/build/decomposition'
 import { recallPastPerformance, storeGenerationMemory } from '@/lib/agent/zeromemory'
 import { buildVerifyPrompt, buildVerifyAgentOptions } from '@/lib/agent/verify-loop'
 import { GenerationCheckpoint, resolveDegradation } from '@/lib/generation-checkpoint'
@@ -1223,6 +1224,43 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               }
             } catch (obErr: any) {
               console.warn('[Obedience] gate error (non-fatal):', obErr?.message || obErr)
+            }
+          }
+
+          // DECOMPOSITION PASS (#293 · Phase 5): live capture proved the model ignores
+          // the multi-file directive and returns a single large App.tsx for complex
+          // ideas (multiFile=0%). When the idea warrants multi-file but we got one big
+          // file with no markers, run ONE bounded split-only refactor into the marker
+          // format the parser consumes. Only adopt it if it STILL validates AND actually
+          // produced multiple files — otherwise keep the single-file version (no regress).
+          if (validation.valid && finalContent && shouldDecompose(finalContent, wantsMultiFile)) {
+            try {
+              console.log('🧩 Decomposition pass: splitting single-file complex app into components…')
+              safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+                type: 'build_step', step: 'Splitting into components…',
+              })}\n\n`))
+              const decRes = await ainativeClient.chat.completions.create({
+                model: DEFAULT_MODEL,
+                max_tokens: 8192,
+                temperature: 0.2,
+                messages: [
+                  { role: 'system', content: 'You refactor a working React app into multiple files. Return ONLY the files in the // --- FILE: … --- marker format. Change no behavior.' },
+                  { role: 'user', content: buildDecompositionPrompt(message, finalContent) },
+                ],
+              })
+              const decRaw = decRes.choices?.[0]?.message?.content || ''
+              const decValidation = validateGeneratedCode(decRaw)
+              const decMultiFile = /\/\/\s*---\s*FILE:/.test(decValidation.code || '')
+              if (decValidation.valid && decMultiFile && (decValidation.code?.length || 0) > finalContent.length * 0.7) {
+                console.log('🧩 Decomposition produced a valid multi-file app — adopting.')
+                finalContent = decValidation.code
+                validation = decValidation
+                checkpoint.record('decomposition', finalContent, true)
+              } else {
+                console.log('🧩 Decomposition rejected (invalid/single-file/too-short) — keeping single file.')
+              }
+            } catch (decErr: any) {
+              console.warn('[Decomposition] pass error (non-fatal):', decErr?.message || decErr)
             }
           }
 
