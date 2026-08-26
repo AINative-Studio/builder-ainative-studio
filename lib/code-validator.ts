@@ -1487,10 +1487,25 @@ export function validateJavaScriptCode(
       fixes: fixes.length > 0 ? fixes : undefined,
     }
   } catch (error) {
-    const errorMessage =
-      error instanceof Error
-        ? error.message.replace(/\(\d+:\d+\)/, '').trim()
-        : 'Unknown syntax error'
+    const rawMessage = error instanceof Error ? error.message : 'Unknown syntax error'
+    const errorMessage = rawMessage.replace(/\(\d+:\d+\)/, '').trim()
+
+    // Preserve the parser's line:col + the offending source line so the retry can
+    // point the model at the EXACT spot (#306: generic "Unexpected token" gave the
+    // repair loop nothing to work with, so it kept failing on big complex apps).
+    // Babel puts location on err.loc {line,column} and in the message as "(L:C)".
+    const loc: { line?: number; column?: number } = (error as any)?.loc || {}
+    const locMatch = rawMessage.match(/\((\d+):(\d+)\)/)
+    const line = loc.line ?? (locMatch ? parseInt(locMatch[1], 10) : undefined)
+    const column = loc.column ?? (locMatch ? parseInt(locMatch[2], 10) : undefined)
+    let errorWithLocation = errorMessage
+    if (line !== undefined) {
+      const srcLines = fixedCode.split('\n')
+      const offending = srcLines[line - 1] ?? ''
+      errorWithLocation =
+        `${errorMessage} at line ${line}${column !== undefined ? `, column ${column}` : ''}` +
+        (offending ? `\nThe problem is on this line:\n${offending.trim().slice(0, 200)}` : '')
+    }
 
     // Check if it's a CATASTROPHIC error that will definitely break in browser
     const errorLower = errorMessage.toLowerCase()
@@ -1524,11 +1539,10 @@ export function validateJavaScriptCode(
 
     if (isCatastrophicError) {
       // This will definitely fail in browser - report error
-      console.error('❌ Code validation failed (catastrophic):', errorMessage)
-      console.error('Problematic code snippet:', fixedCode.substring(0, 200))
+      console.error('❌ Code validation failed (catastrophic):', errorWithLocation)
       return {
         valid: false,
-        error: errorMessage,
+        error: errorWithLocation,
         code: fixedCode,
         autoFixed: fixes.length > 0,
         fixes: fixes.length > 0 ? fixes : undefined,
