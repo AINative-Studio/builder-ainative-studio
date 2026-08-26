@@ -188,6 +188,14 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     url: `${DOCS}/marketplace/overview`,
     apiBase: 'https://api.ainative.studio/v1/public/intents',
     triggers: ['marketplace', 'two-sided', 'match', 'matching', 'buyers and sellers', 'services', 'gig', 'booking'] },
+  { name: 'AINativeNGO', category: 'business-ops',
+    // "InstitutionOS" — 8-layer OS for AI-native institutions. Live API verified at
+    // ngo.ainative.studio (openapi.json, 360 endpoints): grants, impact, donors,
+    // board/board-memory, compliance, federation, specialized-agents, retention.
+    purpose: 'Nonprofit / NGO operations (InstitutionOS): donors, donations, grants, impact reporting, board governance, compliance, volunteers',
+    url: `${DOCS}/ngo/overview`,
+    apiBase: 'https://ngo.ainative.studio/api/v1',
+    triggers: ['nonprofit', 'non-profit', 'ngo', 'charity', 'charitable', 'donation', 'donate', 'donor', 'donors', 'fundraiser', 'fundraising', 'grant', 'grants', 'grant management', 'volunteer', 'volunteers', 'philanthropy', 'impact', 'foundation', 'institution'] },
   { name: 'Browser Agent', category: 'business-ops',
     purpose: 'Web data extraction + browser automation (MCP)',
     url: `${DOCS}/business-ops/browser-agent`,

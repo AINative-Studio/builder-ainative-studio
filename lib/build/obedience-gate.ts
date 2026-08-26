@@ -59,12 +59,27 @@ export function hasPersistenceGap(code: string, idea: string): boolean {
 const AIKIT_PATTERNS: Array<{ handRolled: RegExp; component: string; label: string }> = [
   // A stat/metric card: a number + a label/change, hand-built with divs.
   { handRolled: /className="[^"]*\b(text-3xl|text-4xl)[^"]*"[^>]*>\s*\{?[^<]*(\$|%|\d)/, component: 'MetricCard', label: 'stat/metric cards' },
-  // A left nav column.
+  // A left nav column (w-NN sidebar) OR an <aside> element used as nav.
   { handRolled: /className="[^"]*\b(w-64|w-56|w-72)\b[^"]*"[^>]*>[\s\S]{0,400}(nav|aside|sidebar)/i, component: 'AIKitSidebar', label: 'sidebar navigation' },
+  { handRolled: /<aside[\s>][\s\S]{0,300}(<nav|onClick|href|menu|item)/i, component: 'AIKitSidebar', label: 'sidebar navigation' },
   // A data table built from <table>.
   { handRolled: /<table[\s>]/i, component: 'AIKitTable', label: 'data table' },
   // Pricing cards.
   { handRolled: /(price|pricing|\/mo|per month)[\s\S]{0,200}(Get started|Choose|Subscribe|Buy)/i, component: 'AIKitPriceCard', label: 'pricing cards' },
+  // A top app header/nav bar hand-built with <header>/<nav>.
+  { handRolled: /<(header|nav)[\s>][\s\S]{0,300}(<a\b|href|onClick|logo|brand|search)/i, component: 'AIKitHeader', label: 'app header / nav bar' },
+  // Product cards: an image + name + price + add-to-cart, hand-built.
+  { handRolled: /(add to cart|addtocart|buy now)[\s\S]{0,60}|(<img[\s\S]{0,200}(\$|price)[\s\S]{0,120}(add|cart|buy))/i, component: 'AIKitProductCard', label: 'product cards' },
+  // Pagination: prev/next page buttons hand-built.
+  { handRolled: /(Prev(ious)?[\s\S]{0,120}Next|Page\s*\{?\s*\d)[\s\S]{0,80}(onClick|setPage|currentPage)/i, component: 'AIKitPagination', label: 'pagination' },
+  // A vertical timeline / activity feed hand-built with divs + dots.
+  { handRolled: /(timeline|activity feed)[\s\S]{0,200}(map\(|<li|rounded-full)/i, component: 'AIKitTimeline', label: 'timeline / activity feed' },
+  // Multi-step wizard/stepper hand-built.
+  { handRolled: /(step\s*\d|currentStep|activeStep)[\s\S]{0,160}(map\(|rounded-full|border)/i, component: 'AIKitStepper', label: 'multi-step / stepper' },
+  // Banner / alert bar hand-built.
+  { handRolled: /className="[^"]*\b(bg-(red|yellow|green|blue|amber)-(50|100|500))\b[^"]*"[^>]*>[\s\S]{0,140}(alert|warning|success|error|dismiss|notice)/i, component: 'AIKitBanner', label: 'banner / alert' },
+  // Star rating hand-built with SVG/★ stars.
+  { handRolled: /(★|<svg[\s\S]{0,120}star)[\s\S]{0,80}(★|map\(|rating)/i, component: 'AIKitRating', label: 'star rating' },
 ]
 
 /** Which AIKit components are already used/imported in the code? */

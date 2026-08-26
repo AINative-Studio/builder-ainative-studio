@@ -67,6 +67,20 @@ describe('primitive-catalog codegen composition (#218)', () => {
     expect(block).toContain('https://zeroinvoice.ainative.studio/api')
   })
 
+  it('nonprofit idea wires AINativeNGO (InstitutionOS), not OpenCapStack (#302)', () => {
+    const block = codegenCompositionBlock('a nonprofit donation platform to manage donors, grants, and impact reporting', 'company')
+    expect(block).toContain('AINativeNGO')
+    expect(block).toContain('https://ngo.ainative.studio/api/v1')
+    // Nonprofit fundraising must NOT be confused with startup-equity fundraising.
+    expect(block).not.toContain('OpenCapStack')
+  })
+
+  it('startup-equity fundraising still wires OpenCapStack, not AINativeNGO (#302)', () => {
+    const block = codegenCompositionBlock('a startup cap table to manage SAFEs, investors, and vesting', 'company')
+    expect(block).toContain('OpenCapStack')
+    expect(block).not.toContain('AINativeNGO')
+  })
+
   it('always steers toward AI Kit + ZeroDB even when no business-ops primitive matches', () => {
     const block = codegenCompositionBlock('xyzzy plugh nonsense idea', 'company')
     expect(block).toContain('@ainative/ai-kit-core')
