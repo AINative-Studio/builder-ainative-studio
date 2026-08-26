@@ -17,10 +17,14 @@ describe('model-select (#306) — complexity-driven, quality-first', () => {
     expect(selectModelForComplexity('medium', { env: {} })).not.toContain('opus')
   })
 
-  it('bumps a multi-file medium idea to the complex (Opus) model', () => {
+  it('a multi-file idea bumps to Opus from ANY tier (analyzeComplexity under-scores terse complex ideas)', () => {
+    // A terse "a CRM …" scores simple/medium but wantsMultiFile is the reliable
+    // "this is complex" signal → Opus regardless of the flaky complexity score.
     expect(selectModelForComplexity('medium', { wantsMultiFile: true, env: {} })).toBe(OPUS46)
-    // simple + multiFile is NOT bumped (only medium→complex).
-    expect(selectModelForComplexity('simple', { wantsMultiFile: true, env: {} })).toBe(SONNET45)
+    expect(selectModelForComplexity('simple', { wantsMultiFile: true, env: {} })).toBe(OPUS46)
+    // Without the multi-file signal, tiers stay on their cheap defaults.
+    expect(selectModelForComplexity('simple', { env: {} })).toBe(SONNET45)
+    expect(selectModelForComplexity('medium', { env: {} })).toBe(SONNET46)
   })
 
   it('env override wins over the default (retune without deploy)', () => {

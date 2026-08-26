@@ -50,8 +50,12 @@ export function selectModelForComplexity(
   opts: { wantsMultiFile?: boolean; env?: Record<string, string | undefined> } = {},
 ): string {
   const env = opts.env || process.env
-  const tier: Complexity =
-    complexity === 'medium' && opts.wantsMultiFile ? 'complex' : complexity
+  // A multi-file idea → the COMPLEX (strong) model, from ANY tier. analyzeComplexity
+  // badly under-scores terse-but-complex ideas: "a CRM with a sidebar, contacts table,
+  // deal pipeline, activity feed, reports" scores "simple", yet it's exactly a
+  // multi-surface app that needs Opus. wantsMultiFile (the surface/archetype signal)
+  // is the reliable "this is complex" tell, so it overrides the tier entirely.
+  const tier: Complexity = opts.wantsMultiFile ? 'complex' : complexity
   const override = (env[ENV_KEY[tier]] || '').trim()
   return override || DEFAULTS[tier]
 }
