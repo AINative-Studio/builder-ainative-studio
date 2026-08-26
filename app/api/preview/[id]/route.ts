@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getPreview, isPreviewStreaming, storePreview, getSSRPreview } from '@/lib/preview-store'
 import { validateJavaScriptCode, sanitizeForSandpack } from '@/lib/code-validator'
 import { detectRootComponent } from '@/lib/component-detector'
+import { flattenMultiFile } from '@/lib/build/flatten-multifile'
 // Sucrase removed — builds were failing. Using client-side Babel.
 // The key fix is using models that produce COMPLETE code (not maverick 512-tok)
 
@@ -184,33 +185,15 @@ export async function GET(
 
   let componentCode = ''
 
-  // Handle multi-file output: extract the LARGEST file with a component function
+  // Handle multi-file output (builder#308): a multi-file app (App.tsx importing
+  // ./components/Header, …) previously extracted ONLY App.tsx here — so on the
+  // single-file Babel path every imported child was undefined and the app rendered
+  // BLANK (the aerosol bug). flattenMultiFile inlines the child components into
+  // App's scope (strips relative imports/exports, concatenates children above App)
+  // so <Header/> etc. resolve. Single-file content is a no-op.
   if (content.includes('// --- FILE:')) {
-    const files = content.split(/\/\/\s*---\s*FILE:\s*/i)
-
-    // Strategy: find App.tsx first, then the largest file with a function declaration
-    let mainFile = files.find(f => /^src\/App\.tsx|^App\.tsx/i.test(f.trim()))
-
-    if (!mainFile) {
-      // Find the largest file that actually contains a component function
-      let bestFile = ''
-      let bestSize = 0
-      for (const f of files) {
-        const fileContent = f.replace(/^.*?---\s*\n?/, '').trim()
-        if (fileContent.length > bestSize && (fileContent.includes('function ') || fileContent.includes('const ')) && fileContent.includes('return')) {
-          bestFile = f
-          bestSize = fileContent.length
-        }
-      }
-      if (bestFile) mainFile = bestFile
-    }
-
-    if (!mainFile && files.length > 1) mainFile = files[1]
-
-    if (mainFile) {
-      componentCode = mainFile.replace(/^.*?---\s*\n?/, '').trim()
-      console.log(`[Preview] Extracted main file from multi-file output (${componentCode.length} chars)`)
-    }
+    componentCode = flattenMultiFile(content)
+    console.log(`[Preview] Flattened multi-file output → single module (${componentCode.length} chars)`)
   }
 
   // If no multi-file, try markdown code blocks
