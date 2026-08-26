@@ -86,8 +86,30 @@ async function mockConnectApi(
   })
 }
 
-async function openHarness(page: Page): Promise<number> {
-  const res = await page.goto(`${BASE_URL}/test-components/domain-modal`, { waitUntil: 'networkidle', timeout: 30_000 })
+// The DomainModal gates anonymous users to sign-in (#53), so the connect/buy FLOW
+// tests need a signed-in harness (?authed=1). Pass {authed:false} to verify the
+// sign-in-routing path. Uses domcontentloaded (not networkidle) because the modal's
+// domain-search fetch can keep the network busy indefinitely.
+async function openHarness(page: Page, opts: { authed?: boolean } = {}): Promise<number> {
+  const authed = opts.authed !== false
+  // next-auth's SessionProvider fetches /api/auth/session and lets it override any
+  // static session prop, so a signed-in harness must mock that endpoint. Return a
+  // real-shaped authenticated session when authed, and null (signed out) otherwise.
+  await page.route('**/api/auth/session', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      // Signed IN → a real session object; signed OUT → null (next-auth treats an
+      // empty {} as a truthy session, so it MUST be null to resolve unauthenticated).
+      body: authed
+        ? JSON.stringify({ user: { email: 'founder@example.com', name: 'Founder' }, expires: '2999-01-01T00:00:00.000Z' })
+        : 'null',
+    }),
+  )
+  const url = `${BASE_URL}/test-components/domain-modal${authed ? '?authed=1' : ''}`
+  const res = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+  // Wait for the harness to hydrate + the modal to mount before tests query it.
+  await page.locator('.m-modal-scrim').first().waitFor({ timeout: 20_000 }).catch(() => {})
   return res?.status() ?? 0
 }
 
@@ -114,6 +136,29 @@ test.describe('DomainModal — BYO tab present (three paths) (#53)', () => {
     await page.locator('[data-testid="domain-tab-byo"]').click()
     await expect(page.locator('[data-testid="domain-byo-panel"]')).toBeVisible()
     await expect(page.locator('[data-testid="byo-domain-input"]')).toBeVisible()
+  })
+
+  // Regression (9b21b96): an ANONYMOUS founder clicking Connect must be routed to
+  // sign-in (onRequireAuth), NOT left on a passive message that makes the button
+  // look broken (the originally-reported bug). Runs the harness signed-OUT.
+  test('anonymous Connect routes to sign-in instead of dead-ending', async ({ page }) => {
+    let connectCalled = false
+    await page.route('**/api/build/connect-domain', async (route) => {
+      connectCalled = true
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: false, reason: 'signin' }) })
+    })
+    const status = await openHarness(page, { authed: false })
+    test.skip(status === 404, 'Test harness page not wired')
+
+    await page.locator('[data-testid="domain-tab-byo"]').click()
+    // The CTA signals sign-in intent when signed out.
+    await expect(page.locator('[data-testid="byo-connect-cta"]')).toHaveText(/sign in to connect/i)
+    await page.locator('[data-testid="byo-domain-input"]').fill('myowndomain.com')
+    await page.locator('[data-testid="byo-connect-cta"]').click()
+
+    // onRequireAuth fired (harness records it) and no POST was made while anonymous.
+    await expect(page.locator('[data-testid="harness-auth-required"]')).toBeVisible()
+    expect(connectCalled).toBe(false)
   })
 })
 

@@ -242,6 +242,17 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next()
     }
 
+    // Allow the component test harnesses for anonymous users (#292). These are
+    // inert, isolated component mounts under /test-components/* used by Playwright
+    // e2e specs (e.g. the DomainModal harness). Without this the middleware
+    // redirects them to /login, so the harness never renders the component and the
+    // whole suite fails locally — which is exactly the #292 symptom (the modal
+    // "doesn't render locally"): it wasn't a compile divergence, the route was
+    // auth-gated. They carry no real data and no privileged surface.
+    if (pathname.startsWith('/test-components/')) {
+      return NextResponse.next()
+    }
+
     // Allow public JavaScript files (like shadcn-components.js)
     if (pathname.endsWith('.js') && !pathname.startsWith('/api/')) {
       return NextResponse.next()
