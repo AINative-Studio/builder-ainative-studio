@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { extractCodeFromMarkdown, validateGeneratedCode } from '@/lib/code-validator'
+import { extractCodeFromMarkdown, validateGeneratedCode, findUnresolvedComponents } from '@/lib/code-validator'
 
 /**
  * Regression (#296): a multi-file generation (// --- FILE: … --- markers, each file
@@ -51,5 +51,31 @@ describe('multi-file extraction (#296)', () => {
   it('raw code with no fences and no markers passes through', () => {
     const raw = 'export default function App(){ return <div>x</div> }'
     expect(extractCodeFromMarkdown(raw)).toContain('function App')
+  })
+})
+
+/**
+ * Regression (#293): decomposed multi-file TS apps were rejected because TypeScript
+ * GENERIC type arguments (useState<Contact[]>, forwardRef<HTMLButtonElement, …>) and
+ * interface/type names matched the PascalCase JSX-component regex and were flagged as
+ * "unresolved components" — killing the decomposition adoption (crm/ecommerce kept
+ * their single-file version). Generics/DOM-types/interfaces must NOT be flagged;
+ * genuinely-undefined JSX components still must be.
+ */
+describe('findUnresolvedComponents — TS generics are not components (#293)', () => {
+  it('does not flag TS generic type args or interface names', () => {
+    expect(findUnresolvedComponents('const [r] = useState<Contact[]>([])')).toEqual([])
+    expect(findUnresolvedComponents('const B = forwardRef<HTMLButtonElement, ButtonProps>((p,r)=><button/>)')).toEqual([])
+    expect(findUnresolvedComponents('interface SidebarProps{}\nconst x = useRef<SidebarProps>(null)')).toEqual([])
+  })
+
+  it('still flags a genuinely undefined JSX component', () => {
+    expect(findUnresolvedComponents('function App(){ return <TotallyMadeUpWidget /> }')).toContain('TotallyMadeUpWidget')
+    expect(findUnresolvedComponents('function App(){ return (<MadeUp2 />) }')).toContain('MadeUp2')
+  })
+
+  it('does not flag a resolved local component or a known AIKit one', () => {
+    expect(findUnresolvedComponents('function Card(){return <div/>}\nfunction App(){return <Card/>}')).toEqual([])
+    expect(findUnresolvedComponents('function App(){return <MetricCard title="x"/>}')).toEqual([])
   })
 })

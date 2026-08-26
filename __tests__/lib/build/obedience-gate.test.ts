@@ -62,6 +62,35 @@ describe('obedience-gate: AIKit (#297)', () => {
   it('no AIKit gaps for a plain app', () => {
     expect(findAikitGaps('function App(){return <div>hi</div>}')).toEqual([])
   })
+
+  // #78 (Phase 4): broadened detectors — the gate now catches more hand-rolled
+  // patterns so it re-prompts the model to use AIKit (baseline aikit=0%).
+  it('flags a hand-rolled <aside> sidebar', () => {
+    const code = 'function App(){return <aside className="flex"><nav><a href="#" onClick={()=>{}}>Home</a></nav></aside>}'
+    expect(findAikitGaps(code).some(g => g.includes('AIKitSidebar'))).toBe(true)
+  })
+
+  it('flags a hand-rolled app header/nav bar', () => {
+    const code = 'function App(){return <header className="flex"><span>Brand</span><a href="/x">Link</a></header>}'
+    expect(findAikitGaps(code).some(g => g.includes('AIKitHeader'))).toBe(true)
+  })
+
+  it('flags hand-rolled product cards', () => {
+    const code = 'function App(){return <div><img src="p.jpg"/><span>$29</span><button>Add to cart</button></div>}'
+    expect(findAikitGaps(code).some(g => g.includes('AIKitProductCard'))).toBe(true)
+  })
+
+  it('flags a hand-rolled star rating', () => {
+    const code = 'function App(){return <div>{[1,2,3].map(i=><span key={i}>★</span>)} rating</div>}'
+    expect(findAikitGaps(code).some(g => g.includes('AIKitRating'))).toBe(true)
+  })
+
+  it('does NOT flag AIKit components that are already used', () => {
+    const code = 'function App(){return <div><AIKitHeader title="x"/><AIKitSidebar items={[]}/></div>}'
+    const gaps = findAikitGaps(code)
+    expect(gaps.some(g => g.includes('AIKitHeader'))).toBe(false)
+    expect(gaps.some(g => g.includes('AIKitSidebar'))).toBe(false)
+  })
 })
 
 describe('obedience-gate: checkObedience + prompt', () => {

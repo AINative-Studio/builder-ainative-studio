@@ -14,6 +14,8 @@
  * this is the derived index the code consumes.
  */
 
+import { componentGuidanceBlock } from './primitive-graph'
+
 export interface CatalogPrimitive {
   /** Canonical display name, must match docs/AINATIVE_PRIMITIVES.md */
   name: string
@@ -188,6 +190,14 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     url: `${DOCS}/marketplace/overview`,
     apiBase: 'https://api.ainative.studio/v1/public/intents',
     triggers: ['marketplace', 'two-sided', 'match', 'matching', 'buyers and sellers', 'services', 'gig', 'booking'] },
+  { name: 'AINativeNGO', category: 'business-ops',
+    // "InstitutionOS" — 8-layer OS for AI-native institutions. Live API verified at
+    // ngo.ainative.studio (openapi.json, 360 endpoints): grants, impact, donors,
+    // board/board-memory, compliance, federation, specialized-agents, retention.
+    purpose: 'Nonprofit / NGO operations (InstitutionOS): donors, donations, grants, impact reporting, board governance, compliance, volunteers',
+    url: `${DOCS}/ngo/overview`,
+    apiBase: 'https://ngo.ainative.studio/api/v1',
+    triggers: ['nonprofit', 'non-profit', 'ngo', 'charity', 'charitable', 'donation', 'donate', 'donor', 'donors', 'fundraiser', 'fundraising', 'grant', 'grants', 'grant management', 'volunteer', 'volunteers', 'philanthropy', 'impact', 'foundation', 'institution'] },
   { name: 'Browser Agent', category: 'business-ops',
     purpose: 'Web data extraction + browser automation (MCP)',
     url: `${DOCS}/business-ops/browser-agent`,
@@ -480,11 +490,28 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
     `## COMPOSE WITH REAL AINATIVE PRIMITIVES (MANDATORY — do NOT re-implement business logic)\n\n` +
     `This app must be BUILT ON AINative's real products, not a from-scratch clone. When a primitive below covers a capability the app needs (invoicing, CRM/sales, ecommerce/checkout, telephony/SMS, cap-table/equity, helpdesk, content/social, streaming, marketplace), you MUST call that primitive's real endpoint/SDK instead of hand-rolling the logic:\n\n` +
     lines.join('\n') + '\n\n' +
+    // FOUNDATIONAL (#298): every app gets ZeroDB (via the same-origin proxy) + a
+    // lightweight auth pattern by DEFAULT — these are non-optional, regardless of
+    // which SaaS primitives matched. The /api/db proxy is the ONLY data path that
+    // works from a generated app (same-origin, server holds the key); direct
+    // primitive Bearer calls auth-fail client-side, so we anchor persistence here.
+    `### FOUNDATION — ALWAYS WIRE THESE (every app):\n` +
+    `- DATA (ZeroDB): persist ALL app records via the same-origin proxy — never an in-memory store, never a direct external DB:\n` +
+    `    GET  /api/db/{table}            → list rows (returns { data: [ {id, ...fields} ] })\n` +
+    `    POST /api/db/{table}            → insert (body = the row object; returns the flat row with an id)\n` +
+    `    PUT  /api/db/{table}?id={id}    → update    DELETE /api/db/{table}?id={id} → delete\n` +
+    `  Load on mount with useEffect; re-fetch or update state after writes. Rows come back FLAT with an \`id\`.\n` +
+    `- AUTH (lightweight, no backend): if the app has per-user data, scope it to a user id kept in localStorage\n` +
+    `  (e.g. \`let uid = localStorage.getItem('uid') || crypto.randomUUID(); localStorage.setItem('uid', uid)\`),\n` +
+    `  store \`userId: uid\` on each row, and filter reads with \`/api/db/{table}?filter=\${encodeURIComponent(JSON.stringify({userId: uid}))}\`.\n` +
+    `  For a real login screen, render an email+continue form that sets that uid — do NOT call an external auth API.\n\n` +
     `Rules:\n` +
     `1. Import \`@ainative/ai-kit-core\` (and its React bindings) for UI primitives — do NOT rebuild chat, tables, product cards, or dashboards from scratch when an AI Kit component exists.\n` +
-    `2. For business operations, call the REAL REST endpoints above (with \`fetch\` against the exact base URL, sending \`Authorization: Bearer \${process.env.AINATIVE_API_KEY}\`). Read the API key from an environment variable — NEVER hardcode a secret.\n` +
-    `3. Do NOT reimplement invoicing, CRM, ecommerce carts/checkout, telephony, cap-table math, or helpdesk ticketing when the matching primitive exists — wire it up. Regenerating that business logic from scratch is a FAILING score.\n` +
-    `4. Persist app data through ZeroDB rather than an ad-hoc in-memory store when the app needs to save records.\n` +
-    `5. Add a short comment above each primitive call noting which AINative product it composes (e.g. \`// ZeroCommerce checkout\`), so the wiring is auditable.`
+    `2. Persist through /api/db (above) — this is MANDATORY when the app saves any records. The generated app runs in the browser, so it does NOT have AINATIVE_API_KEY; NEVER put a Bearer key or secret in app code. The SaaS primitive endpoints listed above are called SERVER-SIDE only (by the platform), not from generated app code.\n` +
+    `3. Do NOT reimplement invoicing, CRM, ecommerce carts/checkout, telephony, cap-table math, or helpdesk ticketing when the matching primitive exists — model the app around composing it. Regenerating that business logic from scratch is a FAILING score.\n` +
+    `4. Add a short comment above each data call noting the AINative product it composes (e.g. \`// ZeroDB — orders\`), so the wiring is auditable.` +
+    // #83 (Phase 7c): traverse the primitive/component graph so the model gets the
+    // CONCRETE AIKit components this archetype's surfaces need (attacks aikit=0%).
+    componentGuidanceBlock(idea)
   )
 }

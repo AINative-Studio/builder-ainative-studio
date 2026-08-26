@@ -12,6 +12,9 @@ import { validateGeneratedCode } from '@/lib/code-validator'
 import { buildValidationFallbackComponent } from '@/lib/validation-fallback'
 import { runValidationRetryLoop, buildRepairPrompt } from '@/lib/generation-retry'
 import { checkObedience, buildObediencePrompt } from '@/lib/build/obedience-gate'
+import { buildRagContext } from '@/lib/build/rag-context'
+import { shouldDecompose, buildDecompositionPrompt, buildFixAndDecomposePrompt } from '@/lib/build/decomposition'
+import { recallPastPerformance, storeGenerationMemory } from '@/lib/agent/zeromemory'
 import { buildVerifyPrompt, buildVerifyAgentOptions } from '@/lib/agent/verify-loop'
 import { GenerationCheckpoint, resolveDegradation } from '@/lib/generation-checkpoint'
 import { stripGradients } from '@/lib/gradient-blocker'
@@ -111,6 +114,48 @@ function getPrimaryClaudeClient(): { client: any; provider: 'bedrock' | 'anthrop
     return { client: direct, provider: 'anthropic', model: CLAUDE_MODEL }
   }
   return null
+}
+
+/**
+ * Run a bounded secondary LLM pass (obedience re-prompt, decomposition, verify fix)
+ * on the PRIMARY Claude client via .messages.create(). Critical: the secondary passes
+ * previously called ainativeClient.chat.completions.create({ model: DEFAULT_MODEL }),
+ * but when Bedrock is primary DEFAULT_MODEL is a Claude ID the AINative OpenAI proxy
+ * does NOT serve → every secondary pass 500'd (obedience + decomposition silently
+ * failed, so aikit/multiFile never improved). Route them through the same Claude path
+ * as the main gen; fall back to the AINative proxy with a model it actually has.
+ * Returns the text content, or '' on failure. Never throws.
+ */
+async function runClaudePass(system: string, user: string, maxTokens = 8192): Promise<string> {
+  const primary = getPrimaryClaudeClient()
+  if (primary?.client) {
+    try {
+      const resp = await primary.client.messages.create({
+        model: primary.model,
+        max_tokens: maxTokens,
+        system,
+        messages: [{ role: 'user', content: user }],
+      })
+      return (resp.content || [])
+        .filter((b: any) => b.type === 'text')
+        .map((b: any) => b.text)
+        .join('\n')
+    } catch (err: any) {
+      console.warn('[runClaudePass] primary Claude failed, trying AINative fallback:', err?.message?.slice(0, 80))
+    }
+  }
+  // Fallback: AINative OpenAI-compatible proxy with a model it actually serves.
+  try {
+    const res = await ainativeClient.chat.completions.create({
+      model: process.env.DEFAULT_MODEL || 'nous-coder',
+      max_tokens: maxTokens,
+      messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+    })
+    return res.choices?.[0]?.message?.content || ''
+  } catch (err: any) {
+    console.warn('[runClaudePass] AINative fallback also failed:', err?.message?.slice(0, 80))
+    return ''
+  }
 }
 
 // Fallback chains (used when Claude is unavailable)
@@ -291,9 +336,20 @@ export async function POST(request: NextRequest) {
           const compositionBlock = '\n\n' + codegenCompositionBlock(message, 'company')
           // Multi-file emphasis (#291): complexity-gate the file structure so complex
           // ideas split into components (→ Sandpack), simple ideas stay single-file
-          // (→ fast Babel path). Uses the complexityScore already computed above.
-          const fileStructureBlock = '\n\n' + multiFileEmphasis(complexityScore.overallComplexity)
-          const enhancedSystemPrompt = themedPrompt + themePrompt + imagePrompt + memoryContext + compositionBlock + fileStructureBlock
+          // (→ fast Babel path). #293: when the idea warrants multi-file (a named
+          // complex archetype like "a CRM"/"a dashboard", which analyzeComplexity
+          // under-scores as "simple"), FORCE the complex file-structure block so the
+          // system prompt doesn't say "single file is fine" while the user directive
+          // says "output multiple files" — that contradiction was a top cause of
+          // shallow single-file complex apps (prod verify: multiFile=0%).
+          const fileStructureComplexity = wantsMultiFile ? 'complex' : complexityScore.overallComplexity
+          const fileStructureBlock = '\n\n' + multiFileEmphasis(fileStructureComplexity)
+          // RAG codegen (#81 · Phase 7a): ground THIS build in what worked on similar
+          // past builds via ZeroMemory recall. Best-effort + timeout-bounded — an
+          // empty/failed recall yields '' (no-op), so it never blocks generation.
+          const ragBlock = await buildRagContext(message, recallPastPerformance)
+          if (ragBlock) console.log(`🧠 RAG context injected (${ragBlock.length} chars from ZeroMemory)`)
+          const enhancedSystemPrompt = themedPrompt + themePrompt + imagePrompt + memoryContext + compositionBlock + fileStructureBlock + ragBlock
 
           // ============================================================
           // CLAUDE AGENT PATH — headless Claude Code agent via SSE
@@ -1022,7 +1078,12 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
             // re-validate, stop as soon as it passes. Cap at 3, rotate models (#77).
             const retryLoop = await runValidationRetryLoop(validation, {
               maxRetries: 3,
-              models: [DEFAULT_MODEL, 'gpt-oss-20b', 'ministral-14b'],
+              // NOTE: this repair loop runs on ainativeClient (the OpenAI-compatible
+              // proxy), which does NOT serve the Claude DEFAULT_MODEL when Bedrock is
+              // primary — using it here wastes attempt 1 on a guaranteed 500. Use only
+              // proxy-served models here; Claude-quality repair happens in the agent
+              // verify-loop / obedience pass (runClaudePass) above.
+              models: ['nous-coder', 'gpt-oss-20b', 'ministral-14b'],
               prompt: message,
               onAttempt: (attempt, total, model) => {
                 safeEnqueue(encoder.encode(`data: ${JSON.stringify({
@@ -1169,47 +1230,76 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
             }).catch(e => console.warn('[AgentRuns] fallback log failed:', e?.message || e))
           }
 
-          // OBEDIENCE GATE (#297): syntactically valid, but does it FOLLOW the rules?
-          // If the app should persist (manages records) but hardcodes data, or hand-
-          // rolls a UI pattern AIKit provides, do ONE targeted re-prompt to fix it —
-          // then re-validate and only keep the result if it's still valid. Bounded to
-          // a single attempt so we never regress a working app or add latency loops.
+          // POST-GEN IMPROVEMENT PASSES (#297 obedience · #293 decomposition · #305
+          // latency). The app is syntactically valid, but: does it FOLLOW the rules
+          // (persist via /api/db, use AIKit not hand-rolled divs), and — for a complex
+          // idea — is it split into files? Both are "improve this app" refactors. When
+          // BOTH apply we do them in ONE combined Claude pass (fix + split) so the
+          // heaviest builds don't chain two calls past the client SSE window; otherwise
+          // we run just the one that applies. Every adoption is gated on STILL-valid +
+          // actually-improved, so a bad pass never regresses a working app.
           if (validation.valid && finalContent) {
             try {
               const ob = checkObedience(finalContent, message)
-              if (!ob.ok) {
+              const needsDecomp = shouldDecompose(finalContent, wantsMultiFile)
+              const needsObedience = !ob.ok
+
+              if (needsObedience && needsDecomp) {
+                // Combined single pass: fix rules AND split into files (#305).
+                console.log(`🔧 Combined fix+split pass: ${ob.reasons.join(' | ')} + decomposition`)
+                safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Wiring data + components, splitting files…' })}\n\n`))
+                const raw = await runClaudePass(
+                  'You improve AND split a working React app in one step. Return ONLY the files in the // --- FILE: … --- marker format. Keep every feature.',
+                  buildFixAndDecomposePrompt(message, buildObediencePrompt(message, ob), finalContent),
+                )
+                const v = validateGeneratedCode(raw)
+                const multi = /\/\/\s*---\s*FILE:/.test(v.code || '')
+                const after = v.valid ? checkObedience(v.code, message) : ob
+                const obeyImproved = (ob.persistenceGap && !after.persistenceGap) || (ob.aikitGaps.length > after.aikitGaps.length)
+                if (v.valid && multi && (v.code?.length || 0) > finalContent.length * 0.7) {
+                  console.log('🔧 Combined pass produced a valid multi-file, rule-following app — adopting.')
+                  finalContent = v.code; validation = v; checkpoint.record('fix+split', finalContent, true)
+                } else if (v.valid && obeyImproved && (v.code?.length || 0) > 200) {
+                  // split didn't take but the fixes did — still an improvement.
+                  console.log('🔧 Combined pass fixed rules (single-file) — adopting.')
+                  finalContent = v.code; validation = v; checkpoint.record('fix', finalContent, true)
+                } else {
+                  console.log('🔧 Combined pass rejected — keeping original.')
+                }
+              } else if (needsObedience) {
                 console.log(`📏 Obedience gap → re-prompt: ${ob.reasons.join(' | ')}`)
-                safeEnqueue(encoder.encode(`data: ${JSON.stringify({
-                  type: 'build_step',
-                  step: 'Wiring real data + AINative components…',
-                })}\n\n`))
-                const obRes = await ainativeClient.chat.completions.create({
-                  model: DEFAULT_MODEL,
-                  max_tokens: 8192,
-                  temperature: 0.4,
-                  messages: [
-                    { role: 'system', content: 'You improve a working React app to follow AINative rules. Return ONLY the full corrected app in ```jsx markers. Keep every feature; do not break anything.' },
-                    { role: 'user', content: `${buildObediencePrompt(message, ob)}\n\nCURRENT APP:\n\`\`\`jsx\n${finalContent.slice(0, 12000)}\n\`\`\`` },
-                  ],
-                })
-                const obRaw = obRes.choices?.[0]?.message?.content || ''
+                safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Wiring real data + AINative components…' })}\n\n`))
+                const obRaw = await runClaudePass(
+                  'You improve a working React app to follow AINative rules. Return ONLY the full corrected app in ```jsx markers. Keep every feature; do not break anything.',
+                  `${buildObediencePrompt(message, ob)}\n\nCURRENT APP:\n\`\`\`jsx\n${finalContent.slice(0, 12000)}\n\`\`\``,
+                )
                 const obValidation = validateGeneratedCode(obRaw)
                 if (obValidation.valid && obValidation.code && obValidation.code.length > 200) {
-                  // Only adopt the obedience-improved version if it STILL passes AND
-                  // actually closed a gap (don't swap for a worse/equal result).
                   const after = checkObedience(obValidation.code, message)
-                  const improved = (ob.persistenceGap && !after.persistenceGap) ||
-                    (ob.aikitGaps.length > after.aikitGaps.length)
+                  const improved = (ob.persistenceGap && !after.persistenceGap) || (ob.aikitGaps.length > after.aikitGaps.length)
                   if (improved) {
                     console.log('📏 Obedience re-prompt improved the app — adopting.')
-                    finalContent = obValidation.code
-                    validation = obValidation
-                    checkpoint.record('obedience', finalContent, true)
+                    finalContent = obValidation.code; validation = obValidation; checkpoint.record('obedience', finalContent, true)
                   }
                 }
+              } else if (needsDecomp) {
+                console.log('🧩 Decomposition pass: splitting single-file complex app into components…')
+                safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Splitting into components…' })}\n\n`))
+                const decRaw = await runClaudePass(
+                  'You refactor a working React app into multiple files. Return ONLY the files in the // --- FILE: … --- marker format. Change no behavior.',
+                  buildDecompositionPrompt(message, finalContent),
+                )
+                const decValidation = validateGeneratedCode(decRaw)
+                const decMultiFile = /\/\/\s*---\s*FILE:/.test(decValidation.code || '')
+                if (decValidation.valid && decMultiFile && (decValidation.code?.length || 0) > finalContent.length * 0.7) {
+                  console.log('🧩 Decomposition produced a valid multi-file app — adopting.')
+                  finalContent = decValidation.code; validation = decValidation; checkpoint.record('decomposition', finalContent, true)
+                } else {
+                  console.log('🧩 Decomposition rejected (invalid/single-file/too-short) — keeping single file.')
+                }
               }
-            } catch (obErr: any) {
-              console.warn('[Obedience] gate error (non-fatal):', obErr?.message || obErr)
+            } catch (passErr: any) {
+              console.warn('[PostGenPass] error (non-fatal):', passErr?.message || passErr)
             }
           }
 
@@ -1223,6 +1313,27 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
             console.log(`♻️ Serving last-good checkpoint from '${degradation.stage}' stage`)
             finalContent = degradation.code
             validation = { valid: true, code: degradation.code }
+          }
+
+          // Consolidate this build outcome to ZeroMemory (#82 · Phase 7b): fire-and-
+          // forget episodic memory so the NEXT similar build can recall what worked
+          // (read side = buildRagContext above). Rich metadata (data-backed, multi-
+          // file, obedience) makes recalls actionable. Never blocks the response.
+          try {
+            const served = finalContent || ''
+            const obFinal = checkObedience(served, message)
+            const dbBacked = /\/api\/db\//.test(served)
+            const usedMultiFile = /\/\/\s*---\s*FILE:/.test(served)
+            // Simple quality proxy in [0,1]: valid + data-backed + no obedience gaps + multi-file-when-warranted.
+            const quality = (validation.valid ? 0.4 : 0) + (dbBacked ? 0.25 : 0) +
+              (obFinal.ok ? 0.2 : 0) + ((wantsMultiFile ? usedMultiFile : true) ? 0.15 : 0)
+            storeGenerationMemory(message, validation.valid, quality, {
+              dbBacked, multiFile: usedMultiFile, wantsMultiFile,
+              persistenceGap: obFinal.persistenceGap, aikitGaps: obFinal.aikitGaps,
+              bytes: served.length,
+            })
+          } catch (memErr: any) {
+            console.warn('[ZeroMemory] consolidate error (non-fatal):', memErr?.message || memErr)
           }
 
           if (!validation.valid) {

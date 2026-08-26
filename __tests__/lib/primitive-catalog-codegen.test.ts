@@ -41,9 +41,18 @@ describe('primitive-catalog codegen composition (#218)', () => {
     expect(block).toContain('https://zerocommerce.ainative.studio/api/v1')
     // Explicit instruction not to hand-roll checkout/cart
     expect(block).toMatch(/checkout/i)
-    // Bearer auth from env, never hardcoded
-    expect(block).toContain('AINATIVE_API_KEY')
-    expect(block).toMatch(/NEVER hardcode/i)
+    // #298: never hardcode a secret; the app runs client-side so it uses the
+    // same-origin /api/db proxy, NOT a Bearer key (those endpoints are server-side).
+    expect(block).toMatch(/NEVER put a Bearer key or secret/i)
+    expect(block).toContain('/api/db/')
+  })
+
+  it('every app gets the foundational ZeroDB + auth wiring by default (#298)', () => {
+    // Even a non-matching idea must get the /api/db data layer + auth pattern.
+    const block = codegenCompositionBlock('a personal habit tracker', 'app')
+    expect(block).toMatch(/FOUNDATION — ALWAYS WIRE THESE/i)
+    expect(block).toContain('/api/db/{table}')
+    expect(block).toMatch(/localStorage/i) // the lightweight auth pattern
   })
 
   it('B2B SaaS idea wires ZeroPipeline (CRM) real endpoint', () => {
@@ -56,6 +65,20 @@ describe('primitive-catalog codegen composition (#218)', () => {
     const block = codegenCompositionBlock('an invoicing app that bills clients and gets paid', 'company')
     expect(block).toContain('ZeroInvoice')
     expect(block).toContain('https://zeroinvoice.ainative.studio/api')
+  })
+
+  it('nonprofit idea wires AINativeNGO (InstitutionOS), not OpenCapStack (#302)', () => {
+    const block = codegenCompositionBlock('a nonprofit donation platform to manage donors, grants, and impact reporting', 'company')
+    expect(block).toContain('AINativeNGO')
+    expect(block).toContain('https://ngo.ainative.studio/api/v1')
+    // Nonprofit fundraising must NOT be confused with startup-equity fundraising.
+    expect(block).not.toContain('OpenCapStack')
+  })
+
+  it('startup-equity fundraising still wires OpenCapStack, not AINativeNGO (#302)', () => {
+    const block = codegenCompositionBlock('a startup cap table to manage SAFEs, investors, and vesting', 'company')
+    expect(block).toContain('OpenCapStack')
+    expect(block).not.toContain('AINativeNGO')
   })
 
   it('always steers toward AI Kit + ZeroDB even when no business-ops primitive matches', () => {
