@@ -14,13 +14,24 @@
  * client-side on the exact map Sandpack would receive.
  */
 
-/** Files that are not real source and must not count toward "multi-file". */
+/**
+ * Files that are not real APP-COMPONENT source and must not count toward
+ * "multi-file". Excludes:
+ *  - non-code files (.txt/.json/.xml).
+ *  - SEO/scaffold the generator always emits (robots.ts, sitemap.ts, manifest,
+ *    llms.txt) — present even for a single-file app, so counting them would
+ *    falsely flag every app as multi-file.
+ *  - Next.js framework files (layout.tsx, not a rendered component in the preview).
+ * Only genuine app components/pages/lib count, which is what decides Sandpack.
+ */
 function isSourceFile(path: string): boolean {
-  // Code files only. Exclude data/config/asset files the generator sometimes emits.
   if (!/\.(t|j)sx?$/.test(path)) return false
-  // Exclude well-known non-app files.
   if (path.endsWith('.d.ts')) return false
   if (path.includes('/node_modules/')) return false
+  const base = path.split('/').pop() || ''
+  // SEO / framework scaffold — emitted regardless of app complexity.
+  const SCAFFOLD = new Set(['robots.ts', 'robots.tsx', 'sitemap.ts', 'sitemap.tsx', 'layout.tsx', 'layout.ts', 'manifest.ts', 'manifest.tsx', 'not-found.tsx', 'loading.tsx', 'error.tsx'])
+  if (SCAFFOLD.has(base)) return false
   return true
 }
 

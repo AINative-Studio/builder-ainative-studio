@@ -76,5 +76,28 @@ describe('preview-engine routing (#291)', () => {
       }
       expect(shouldUseSandpack(mixed)).toBe(true)
     })
+
+    it('App.tsx + SEO/framework scaffold only → Babel (scaffold does NOT count)', () => {
+      // The real prod shape: the whole app is in App.tsx; robots/sitemap/layout are
+      // always-emitted scaffold, not extra components. Must NOT falsely route to Sandpack.
+      const scaffoldOnly = {
+        '/src/App.tsx': 'import React from "react"\nexport default function App(){return <div/>}',
+        '/app/robots.ts': 'export default function robots(){}',
+        '/app/sitemap.ts': 'export default function sitemap(){}',
+        '/app/layout.tsx': 'export default function Layout({children}){return children}',
+      }
+      expect(countSourceFiles(scaffoldOnly)).toBe(1)
+      expect(shouldUseSandpack(scaffoldOnly)).toBe(false)
+    })
+
+    it('App.tsx + real component files (with scaffold) → Sandpack', () => {
+      const realMulti = {
+        '/src/App.tsx': 'import Sidebar from "./components/Sidebar"\nexport default function App(){return <Sidebar/>}',
+        '/src/components/Sidebar.tsx': 'export default function Sidebar(){return <nav/>}',
+        '/app/robots.ts': 'export default function robots(){}',
+      }
+      expect(countSourceFiles(realMulti)).toBe(2)
+      expect(shouldUseSandpack(realMulti)).toBe(true)
+    })
   })
 })
