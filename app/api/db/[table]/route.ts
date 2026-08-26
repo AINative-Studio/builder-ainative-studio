@@ -16,6 +16,55 @@ const ZERODB_API = 'https://api.ainative.studio/api'
 const PROJECT_ID = process.env.ZERODB_PROJECT_ID || '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
 const API_KEY = process.env.ZERODB_API_KEY || ''
 
+/**
+ * Normalize a raw ZeroDB row into the FLAT shape generated apps expect.
+ *
+ * ZeroDB stores app fields nested under `row_data` and the id as `row_id`:
+ *   { row_data: { cost, agent, ... }, row_id: "uuid", created_at, ... }
+ * But the model naturally writes `row.id`, `row.cost`, etc. (flat), matching the
+ * prompt's example. The mismatch made EVERY data-backed app crash — e.g.
+ * `Cannot read properties of undefined (reading 'id')` — because `row.id` was
+ * undefined (it's `row_id`) and fields lived under `row_data`. Flatten here so the
+ * proxy returns exactly what generated code reads: fields at top level, plus a
+ * stable `id`. Idempotent for rows that are already flat.
+ */
+function flattenRow(row: any): any {
+  if (!row || typeof row !== 'object') return row
+  const hasRowData = row.row_data && typeof row.row_data === 'object'
+  const inner = hasRowData ? row.row_data : {}
+  // Start from the row's OWN top-level fields (so already-flat rows keep their
+  // fields), drop the ZeroDB envelope keys, then overlay the row_data fields.
+  const { row_data: _rd, row_id, created_at, updated_at, table_id, table_name, project_id, ...topLevel } = row
+  const id = row_id ?? row.id ?? inner.id
+  const createdAt = created_at ?? inner.created_at
+  const updatedAt = updated_at ?? inner.updated_at
+  return {
+    ...(hasRowData ? {} : topLevel), // preserve fields on already-flat rows
+    ...inner,                        // app fields from row_data win
+    ...(id !== undefined ? { id } : {}),
+    ...(createdAt !== undefined ? { created_at: createdAt } : {}),
+    ...(updatedAt !== undefined ? { updated_at: updatedAt } : {}),
+  }
+}
+
+/** Normalize a ZeroDB response body so `data` is always a flat array (list) or a
+ *  flat object (single insert/update). Leaves unknown shapes untouched. */
+function normalizeBody(json: any): any {
+  if (!json || typeof json !== 'object') return json
+  // List responses: { data: [ {row_data,...}, ... ], total, ... }
+  if (Array.isArray(json.data)) {
+    return { ...json, data: json.data.map(flattenRow) }
+  }
+  // Single-row responses (insert/update) come back as the raw row itself:
+  // { row_data, row_id, ... }. Wrap in { data } so the app can read either
+  // `res.data` (matches the list shape) or the flat fields directly.
+  if (json.row_data !== undefined || json.row_id !== undefined) {
+    const flat = flattenRow(json)
+    return { data: flat, ...flat }
+  }
+  return json
+}
+
 async function zerodbFetch(method: string, path: string, body?: any) {
   const res = await fetch(`${ZERODB_API}${path}`, {
     method,
@@ -30,7 +79,7 @@ async function zerodbFetch(method: string, path: string, body?: any) {
     const text = await res.text().catch(() => '')
     return NextResponse.json({ error: `ZeroDB error: ${res.status}`, detail: text }, { status: res.status })
   }
-  return NextResponse.json(await res.json())
+  return NextResponse.json(normalizeBody(await res.json()))
 }
 
 // Ensure table exists (auto-create on first use)
@@ -95,7 +144,7 @@ export async function POST(
         body: JSON.stringify({ row_data: row }),
         signal: AbortSignal.timeout(10000),
       })
-      if (res.ok) results.push(await res.json())
+      if (res.ok) results.push(flattenRow(await res.json()))
     }
     return NextResponse.json({ inserted: results.length, data: results })
   }
