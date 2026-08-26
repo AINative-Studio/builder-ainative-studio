@@ -116,6 +116,48 @@ function getPrimaryClaudeClient(): { client: any; provider: 'bedrock' | 'anthrop
   return null
 }
 
+/**
+ * Run a bounded secondary LLM pass (obedience re-prompt, decomposition, verify fix)
+ * on the PRIMARY Claude client via .messages.create(). Critical: the secondary passes
+ * previously called ainativeClient.chat.completions.create({ model: DEFAULT_MODEL }),
+ * but when Bedrock is primary DEFAULT_MODEL is a Claude ID the AINative OpenAI proxy
+ * does NOT serve → every secondary pass 500'd (obedience + decomposition silently
+ * failed, so aikit/multiFile never improved). Route them through the same Claude path
+ * as the main gen; fall back to the AINative proxy with a model it actually has.
+ * Returns the text content, or '' on failure. Never throws.
+ */
+async function runClaudePass(system: string, user: string, maxTokens = 8192): Promise<string> {
+  const primary = getPrimaryClaudeClient()
+  if (primary?.client) {
+    try {
+      const resp = await primary.client.messages.create({
+        model: primary.model,
+        max_tokens: maxTokens,
+        system,
+        messages: [{ role: 'user', content: user }],
+      })
+      return (resp.content || [])
+        .filter((b: any) => b.type === 'text')
+        .map((b: any) => b.text)
+        .join('\n')
+    } catch (err: any) {
+      console.warn('[runClaudePass] primary Claude failed, trying AINative fallback:', err?.message?.slice(0, 80))
+    }
+  }
+  // Fallback: AINative OpenAI-compatible proxy with a model it actually serves.
+  try {
+    const res = await ainativeClient.chat.completions.create({
+      model: process.env.DEFAULT_MODEL || 'nous-coder',
+      max_tokens: maxTokens,
+      messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+    })
+    return res.choices?.[0]?.message?.content || ''
+  } catch (err: any) {
+    console.warn('[runClaudePass] AINative fallback also failed:', err?.message?.slice(0, 80))
+    return ''
+  }
+}
+
 // Fallback chains (used when Claude is unavailable)
 const FREE_FALLBACKS = ['ministral-14b', 'nous-coder', 'gpt-oss-20b']
 const PAID_FALLBACKS = ['kimi-k2.6', 'nous-coder', 'nemotron-70b', 'ministral-14b']
@@ -1036,7 +1078,12 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
             // re-validate, stop as soon as it passes. Cap at 3, rotate models (#77).
             const retryLoop = await runValidationRetryLoop(validation, {
               maxRetries: 3,
-              models: [DEFAULT_MODEL, 'gpt-oss-20b', 'ministral-14b'],
+              // NOTE: this repair loop runs on ainativeClient (the OpenAI-compatible
+              // proxy), which does NOT serve the Claude DEFAULT_MODEL when Bedrock is
+              // primary — using it here wastes attempt 1 on a guaranteed 500. Use only
+              // proxy-served models here; Claude-quality repair happens in the agent
+              // verify-loop / obedience pass (runClaudePass) above.
+              models: ['nous-coder', 'gpt-oss-20b', 'ministral-14b'],
               prompt: message,
               onAttempt: (attempt, total, model) => {
                 safeEnqueue(encoder.encode(`data: ${JSON.stringify({
@@ -1197,16 +1244,10 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                   type: 'build_step',
                   step: 'Wiring real data + AINative components…',
                 })}\n\n`))
-                const obRes = await ainativeClient.chat.completions.create({
-                  model: DEFAULT_MODEL,
-                  max_tokens: 8192,
-                  temperature: 0.4,
-                  messages: [
-                    { role: 'system', content: 'You improve a working React app to follow AINative rules. Return ONLY the full corrected app in ```jsx markers. Keep every feature; do not break anything.' },
-                    { role: 'user', content: `${buildObediencePrompt(message, ob)}\n\nCURRENT APP:\n\`\`\`jsx\n${finalContent.slice(0, 12000)}\n\`\`\`` },
-                  ],
-                })
-                const obRaw = obRes.choices?.[0]?.message?.content || ''
+                const obRaw = await runClaudePass(
+                  'You improve a working React app to follow AINative rules. Return ONLY the full corrected app in ```jsx markers. Keep every feature; do not break anything.',
+                  `${buildObediencePrompt(message, ob)}\n\nCURRENT APP:\n\`\`\`jsx\n${finalContent.slice(0, 12000)}\n\`\`\``,
+                )
                 const obValidation = validateGeneratedCode(obRaw)
                 if (obValidation.valid && obValidation.code && obValidation.code.length > 200) {
                   // Only adopt the obedience-improved version if it STILL passes AND
@@ -1239,16 +1280,10 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               safeEnqueue(encoder.encode(`data: ${JSON.stringify({
                 type: 'build_step', step: 'Splitting into components…',
               })}\n\n`))
-              const decRes = await ainativeClient.chat.completions.create({
-                model: DEFAULT_MODEL,
-                max_tokens: 8192,
-                temperature: 0.2,
-                messages: [
-                  { role: 'system', content: 'You refactor a working React app into multiple files. Return ONLY the files in the // --- FILE: … --- marker format. Change no behavior.' },
-                  { role: 'user', content: buildDecompositionPrompt(message, finalContent) },
-                ],
-              })
-              const decRaw = decRes.choices?.[0]?.message?.content || ''
+              const decRaw = await runClaudePass(
+                'You refactor a working React app into multiple files. Return ONLY the files in the // --- FILE: … --- marker format. Change no behavior.',
+                buildDecompositionPrompt(message, finalContent),
+              )
               const decValidation = validateGeneratedCode(decRaw)
               const decMultiFile = /\/\/\s*---\s*FILE:/.test(decValidation.code || '')
               if (decValidation.valid && decMultiFile && (decValidation.code?.length || 0) > finalContent.length * 0.7) {
