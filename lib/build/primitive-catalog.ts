@@ -14,6 +14,8 @@
  * this is the derived index the code consumes.
  */
 
+import { componentGuidanceBlock } from './primitive-graph'
+
 export interface CatalogPrimitive {
   /** Canonical display name, must match docs/AINATIVE_PRIMITIVES.md */
   name: string
@@ -507,6 +509,9 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
     `1. Import \`@ainative/ai-kit-core\` (and its React bindings) for UI primitives — do NOT rebuild chat, tables, product cards, or dashboards from scratch when an AI Kit component exists.\n` +
     `2. Persist through /api/db (above) — this is MANDATORY when the app saves any records. The generated app runs in the browser, so it does NOT have AINATIVE_API_KEY; NEVER put a Bearer key or secret in app code. The SaaS primitive endpoints listed above are called SERVER-SIDE only (by the platform), not from generated app code.\n` +
     `3. Do NOT reimplement invoicing, CRM, ecommerce carts/checkout, telephony, cap-table math, or helpdesk ticketing when the matching primitive exists — model the app around composing it. Regenerating that business logic from scratch is a FAILING score.\n` +
-    `4. Add a short comment above each data call noting the AINative product it composes (e.g. \`// ZeroDB — orders\`), so the wiring is auditable.`
+    `4. Add a short comment above each data call noting the AINative product it composes (e.g. \`// ZeroDB — orders\`), so the wiring is auditable.` +
+    // #83 (Phase 7c): traverse the primitive/component graph so the model gets the
+    // CONCRETE AIKit components this archetype's surfaces need (attacks aikit=0%).
+    componentGuidanceBlock(idea)
   )
 }
