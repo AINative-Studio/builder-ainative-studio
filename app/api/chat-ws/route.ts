@@ -126,7 +126,7 @@ function getPrimaryClaudeClient(): { client: any; provider: 'bedrock' | 'anthrop
  * as the main gen; fall back to the AINative proxy with a model it actually has.
  * Returns the text content, or '' on failure. Never throws.
  */
-async function runClaudePass(system: string, user: string, maxTokens = 8192): Promise<string> {
+async function runClaudePass(system: string, user: string, maxTokens = 16000): Promise<string> {
   const primary = getPrimaryClaudeClient()
   if (primary?.client) {
     try {
@@ -829,7 +829,12 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               try {
                 const claudeResponse = await claude.messages.create({
                   model: _primaryClaude!.model,
-                  max_tokens: 8192,
+                  // #310: a complex multi-file app (aerosol was ~7700 tok) was hitting
+                  // the 8192 ceiling → TRUNCATED mid-JSX → misnested-brace syntax
+                  // errors that no repair could fix. Raise to 16000 so rich Opus builds
+                  // finish. This is a primary cause of "broken build" — not just the
+                  // model. Bedrock Sonnet/Opus both support >8k output.
+                  max_tokens: 16000,
                   system: llmSystemPrompt,
                   messages: previousMessages.length > 0
                     ? [...previousMessages.map((m: any) => ({ role: m.role, content: m.content })), { role: 'user', content: enhancedPrompt }]
