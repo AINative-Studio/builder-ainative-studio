@@ -5,7 +5,7 @@ import { nanoid } from 'nanoid'
 import { verifyAndEnhancePrompt } from '@/lib/component-verifier'
 import { PROFESSIONAL_SYSTEM_PROMPT } from '@/lib/professional-prompt'
 import { codegenCompositionBlock } from '@/lib/build/primitive-catalog'
-import { multiFileEmphasis } from '@/lib/build/multifile-emphasis'
+import { multiFileEmphasis, multiFileUserDirective } from '@/lib/build/multifile-emphasis'
 import { enhancePromptWithMockData } from '@/lib/mock-data-generator'
 import { updatePreviewPartial, storePreview, getChatData } from '@/lib/preview-store'
 import { validateGeneratedCode } from '@/lib/code-validator'
@@ -247,6 +247,16 @@ export async function POST(request: NextRequest) {
 
           if (shouldEnhance) {
             enhancedPrompt = enhancePromptWithMockData(componentVerifiedPrompt)
+          }
+
+          // Multi-file directive (#291): for a COMPLEX idea, prepend an explicit
+          // "output multiple files (with this exact marker format)" directive to the
+          // USER message — the model weights the user message far more than deep
+          // system-prompt emphasis, so this is what actually makes it split into
+          // components (→ parseMultiFileOutput → Sandpack). Simple/medium ideas are
+          // untouched and stay single-file (→ fast Babel path).
+          if (shouldEnhance && complexityScore.overallComplexity === 'complex') {
+            enhancedPrompt = multiFileUserDirective() + '\n' + enhancedPrompt
           }
 
           // Skip Unsplash images — adds latency and open-source models ignore URLs

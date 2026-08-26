@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { multiFileEmphasis } from '@/lib/build/multifile-emphasis'
+import { multiFileEmphasis, multiFileUserDirective } from '@/lib/build/multifile-emphasis'
 
 describe('multiFileEmphasis (#291)', () => {
   it('complex → REQUIRES multi-file split', () => {
@@ -30,5 +30,22 @@ describe('multiFileEmphasis (#291)', () => {
       expect(multiFileEmphasis(c).trim().length).toBeGreaterThan(0)
       expect(multiFileEmphasis(c)).toMatch(/## FILE STRUCTURE FOR THIS BUILD/i)
     }
+  })
+})
+
+describe('multiFileUserDirective (#291)', () => {
+  it('instructs multi-file output with the EXACT marker format the parser expects', () => {
+    const d = multiFileUserDirective()
+    expect(d).toMatch(/OUTPUT THIS AS MULTIPLE FILES/i)
+    // The exact // --- FILE: … --- marker parseMultiFileOutput looks for.
+    expect(d).toContain('// --- FILE: src/App.tsx ---')
+    expect(d).toMatch(/relative imports/i)
+    expect(d).toMatch(/Do NOT put everything in one file/i)
+  })
+
+  it('shows App.tsx as the entry that imports the sections', () => {
+    const d = multiFileUserDirective()
+    expect(d).toMatch(/App\.tsx is the default-export entry/i)
+    expect(d).toMatch(/Sidebar/i) // an example section component
   })
 })

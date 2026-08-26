@@ -50,3 +50,30 @@ export function multiFileEmphasis(complexity: IdeaComplexity): string {
     'split into multiple files. Prioritize a fast, correct, complete single component.',
   ].join('\n')
 }
+
+/**
+ * A concise multi-file directive to PREPEND to the USER message for a complex idea
+ * (#291). System-prompt emphasis alone proved too weak — the 44K-char prompt is
+ * dense with single-`App()` examples, so the model kept emitting one file. The user
+ * message is weighted far more heavily and sits right next to the request, so the
+ * directive lands here with the EXACT marker format shown inline for the model to
+ * copy. Only used for complex ideas; simple/medium keep the default behavior.
+ */
+export function multiFileUserDirective(): string {
+  return [
+    'IMPORTANT — OUTPUT THIS AS MULTIPLE FILES. This app is complex, so split it into',
+    'separate component files. Emit each file with a marker line in EXACTLY this format:',
+    '',
+    '// --- FILE: src/App.tsx ---',
+    '<code for App.tsx — imports and composes the sections>',
+    '// --- FILE: src/components/Sidebar.tsx ---',
+    '<code for Sidebar.tsx>',
+    '// --- FILE: src/components/<Section>.tsx ---',
+    '<code for each major section/feature>',
+    '',
+    'Rules: src/App.tsx is the default-export entry that imports the section components',
+    'with relative imports (e.g. import Sidebar from "./components/Sidebar"). Put each',
+    'major section/feature in its own file. Do NOT put everything in one file.',
+    '',
+  ].join('\n')
+}
