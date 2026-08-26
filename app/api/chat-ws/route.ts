@@ -13,7 +13,7 @@ import { buildValidationFallbackComponent } from '@/lib/validation-fallback'
 import { runValidationRetryLoop, buildRepairPrompt } from '@/lib/generation-retry'
 import { checkObedience, buildObediencePrompt } from '@/lib/build/obedience-gate'
 import { buildRagContext } from '@/lib/build/rag-context'
-import { shouldDecompose, buildDecompositionPrompt } from '@/lib/build/decomposition'
+import { shouldDecompose, buildDecompositionPrompt, buildFixAndDecomposePrompt } from '@/lib/build/decomposition'
 import { recallPastPerformance, storeGenerationMemory } from '@/lib/agent/zeromemory'
 import { buildVerifyPrompt, buildVerifyAgentOptions } from '@/lib/agent/verify-loop'
 import { GenerationCheckpoint, resolveDegradation } from '@/lib/generation-checkpoint'
@@ -1230,72 +1230,76 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
             }).catch(e => console.warn('[AgentRuns] fallback log failed:', e?.message || e))
           }
 
-          // OBEDIENCE GATE (#297): syntactically valid, but does it FOLLOW the rules?
-          // If the app should persist (manages records) but hardcodes data, or hand-
-          // rolls a UI pattern AIKit provides, do ONE targeted re-prompt to fix it —
-          // then re-validate and only keep the result if it's still valid. Bounded to
-          // a single attempt so we never regress a working app or add latency loops.
+          // POST-GEN IMPROVEMENT PASSES (#297 obedience · #293 decomposition · #305
+          // latency). The app is syntactically valid, but: does it FOLLOW the rules
+          // (persist via /api/db, use AIKit not hand-rolled divs), and — for a complex
+          // idea — is it split into files? Both are "improve this app" refactors. When
+          // BOTH apply we do them in ONE combined Claude pass (fix + split) so the
+          // heaviest builds don't chain two calls past the client SSE window; otherwise
+          // we run just the one that applies. Every adoption is gated on STILL-valid +
+          // actually-improved, so a bad pass never regresses a working app.
           if (validation.valid && finalContent) {
             try {
               const ob = checkObedience(finalContent, message)
-              if (!ob.ok) {
+              const needsDecomp = shouldDecompose(finalContent, wantsMultiFile)
+              const needsObedience = !ob.ok
+
+              if (needsObedience && needsDecomp) {
+                // Combined single pass: fix rules AND split into files (#305).
+                console.log(`🔧 Combined fix+split pass: ${ob.reasons.join(' | ')} + decomposition`)
+                safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Wiring data + components, splitting files…' })}\n\n`))
+                const raw = await runClaudePass(
+                  'You improve AND split a working React app in one step. Return ONLY the files in the // --- FILE: … --- marker format. Keep every feature.',
+                  buildFixAndDecomposePrompt(message, buildObediencePrompt(message, ob), finalContent),
+                )
+                const v = validateGeneratedCode(raw)
+                const multi = /\/\/\s*---\s*FILE:/.test(v.code || '')
+                const after = v.valid ? checkObedience(v.code, message) : ob
+                const obeyImproved = (ob.persistenceGap && !after.persistenceGap) || (ob.aikitGaps.length > after.aikitGaps.length)
+                if (v.valid && multi && (v.code?.length || 0) > finalContent.length * 0.7) {
+                  console.log('🔧 Combined pass produced a valid multi-file, rule-following app — adopting.')
+                  finalContent = v.code; validation = v; checkpoint.record('fix+split', finalContent, true)
+                } else if (v.valid && obeyImproved && (v.code?.length || 0) > 200) {
+                  // split didn't take but the fixes did — still an improvement.
+                  console.log('🔧 Combined pass fixed rules (single-file) — adopting.')
+                  finalContent = v.code; validation = v; checkpoint.record('fix', finalContent, true)
+                } else {
+                  console.log('🔧 Combined pass rejected — keeping original.')
+                }
+              } else if (needsObedience) {
                 console.log(`📏 Obedience gap → re-prompt: ${ob.reasons.join(' | ')}`)
-                safeEnqueue(encoder.encode(`data: ${JSON.stringify({
-                  type: 'build_step',
-                  step: 'Wiring real data + AINative components…',
-                })}\n\n`))
+                safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Wiring real data + AINative components…' })}\n\n`))
                 const obRaw = await runClaudePass(
                   'You improve a working React app to follow AINative rules. Return ONLY the full corrected app in ```jsx markers. Keep every feature; do not break anything.',
                   `${buildObediencePrompt(message, ob)}\n\nCURRENT APP:\n\`\`\`jsx\n${finalContent.slice(0, 12000)}\n\`\`\``,
                 )
                 const obValidation = validateGeneratedCode(obRaw)
                 if (obValidation.valid && obValidation.code && obValidation.code.length > 200) {
-                  // Only adopt the obedience-improved version if it STILL passes AND
-                  // actually closed a gap (don't swap for a worse/equal result).
                   const after = checkObedience(obValidation.code, message)
-                  const improved = (ob.persistenceGap && !after.persistenceGap) ||
-                    (ob.aikitGaps.length > after.aikitGaps.length)
+                  const improved = (ob.persistenceGap && !after.persistenceGap) || (ob.aikitGaps.length > after.aikitGaps.length)
                   if (improved) {
                     console.log('📏 Obedience re-prompt improved the app — adopting.')
-                    finalContent = obValidation.code
-                    validation = obValidation
-                    checkpoint.record('obedience', finalContent, true)
+                    finalContent = obValidation.code; validation = obValidation; checkpoint.record('obedience', finalContent, true)
                   }
                 }
+              } else if (needsDecomp) {
+                console.log('🧩 Decomposition pass: splitting single-file complex app into components…')
+                safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Splitting into components…' })}\n\n`))
+                const decRaw = await runClaudePass(
+                  'You refactor a working React app into multiple files. Return ONLY the files in the // --- FILE: … --- marker format. Change no behavior.',
+                  buildDecompositionPrompt(message, finalContent),
+                )
+                const decValidation = validateGeneratedCode(decRaw)
+                const decMultiFile = /\/\/\s*---\s*FILE:/.test(decValidation.code || '')
+                if (decValidation.valid && decMultiFile && (decValidation.code?.length || 0) > finalContent.length * 0.7) {
+                  console.log('🧩 Decomposition produced a valid multi-file app — adopting.')
+                  finalContent = decValidation.code; validation = decValidation; checkpoint.record('decomposition', finalContent, true)
+                } else {
+                  console.log('🧩 Decomposition rejected (invalid/single-file/too-short) — keeping single file.')
+                }
               }
-            } catch (obErr: any) {
-              console.warn('[Obedience] gate error (non-fatal):', obErr?.message || obErr)
-            }
-          }
-
-          // DECOMPOSITION PASS (#293 · Phase 5): live capture proved the model ignores
-          // the multi-file directive and returns a single large App.tsx for complex
-          // ideas (multiFile=0%). When the idea warrants multi-file but we got one big
-          // file with no markers, run ONE bounded split-only refactor into the marker
-          // format the parser consumes. Only adopt it if it STILL validates AND actually
-          // produced multiple files — otherwise keep the single-file version (no regress).
-          if (validation.valid && finalContent && shouldDecompose(finalContent, wantsMultiFile)) {
-            try {
-              console.log('🧩 Decomposition pass: splitting single-file complex app into components…')
-              safeEnqueue(encoder.encode(`data: ${JSON.stringify({
-                type: 'build_step', step: 'Splitting into components…',
-              })}\n\n`))
-              const decRaw = await runClaudePass(
-                'You refactor a working React app into multiple files. Return ONLY the files in the // --- FILE: … --- marker format. Change no behavior.',
-                buildDecompositionPrompt(message, finalContent),
-              )
-              const decValidation = validateGeneratedCode(decRaw)
-              const decMultiFile = /\/\/\s*---\s*FILE:/.test(decValidation.code || '')
-              if (decValidation.valid && decMultiFile && (decValidation.code?.length || 0) > finalContent.length * 0.7) {
-                console.log('🧩 Decomposition produced a valid multi-file app — adopting.')
-                finalContent = decValidation.code
-                validation = decValidation
-                checkpoint.record('decomposition', finalContent, true)
-              } else {
-                console.log('🧩 Decomposition rejected (invalid/single-file/too-short) — keeping single file.')
-              }
-            } catch (decErr: any) {
-              console.warn('[Decomposition] pass error (non-fatal):', decErr?.message || decErr)
+            } catch (passErr: any) {
+              console.warn('[PostGenPass] error (non-fatal):', passErr?.message || passErr)
             }
           }
 

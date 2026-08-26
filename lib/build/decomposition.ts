@@ -36,6 +36,40 @@ export function shouldDecompose(code: string, wantsMultiFile: boolean, minChars 
 }
 
 /**
+ * Combined obedience-fix + decomposition prompt (#305). When an app both has
+ * obedience gaps AND warrants multi-file, doing two sequential Claude passes pushed
+ * the heaviest builds past the client SSE window. This does BOTH in one pass: apply
+ * the rule fixes, THEN split into files — one call instead of two. `obedienceFixes`
+ * is the buildObediencePrompt() text (the specific /api/db + AIKit gaps to fix).
+ */
+export function buildFixAndDecomposePrompt(idea: string, obedienceFixes: string, singleFileCode: string): string {
+  return [
+    `You will improve AND split a working React app (idea: "${idea}") in ONE step.`,
+    ``,
+    `STEP 1 — apply these fixes (keep every feature, change nothing else):`,
+    obedienceFixes,
+    ``,
+    `STEP 2 — then split the corrected app into MULTIPLE files:`,
+    `- src/App.tsx composes the sections via relative imports`,
+    `- one file per major section/component under src/components/`,
+    `- output EVERY file with a marker line in EXACTLY this format (nothing before the first marker):`,
+    ``,
+    `// --- FILE: src/App.tsx ---`,
+    `<code>`,
+    `// --- FILE: src/components/Sidebar.tsx ---`,
+    `<code>`,
+    ``,
+    `Rules: relative imports, every import resolves, keep all state/handlers/api-db calls`,
+    `and AIKit components. Return ONLY the files.`,
+    ``,
+    `CURRENT APP:`,
+    '```jsx',
+    singleFileCode.slice(0, 16000),
+    '```',
+  ].join('\n')
+}
+
+/**
  * Build the decomposition prompt. Instructs a split-only refactor into the exact
  * marker format the multi-file parser consumes, preserving every feature.
  */

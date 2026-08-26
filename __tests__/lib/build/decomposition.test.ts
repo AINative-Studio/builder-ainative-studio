@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { hasFileMarkers, shouldDecompose, buildDecompositionPrompt } from '@/lib/build/decomposition'
+import { hasFileMarkers, shouldDecompose, buildDecompositionPrompt, buildFixAndDecomposePrompt } from '@/lib/build/decomposition'
 
 const bigSingleFile = 'export default function App(){\n' + '  // logic\n'.repeat(500) + '  return <div/>\n}'
 
@@ -38,5 +38,18 @@ describe('decomposition (#293 · Phase 5)', () => {
     const huge = 'x'.repeat(50000)
     const p = buildDecompositionPrompt('a CRM', huge)
     expect(p.length).toBeLessThan(17000)
+  })
+
+  it('combined fix+split prompt includes BOTH the fixes and the marker format (#305)', () => {
+    const p = buildFixAndDecomposePrompt('a CRM', '1) PERSIST REAL DATA via /api/db', bigSingleFile)
+    expect(p).toMatch(/STEP 1/i)
+    expect(p).toContain('/api/db')
+    expect(p).toMatch(/STEP 2/i)
+    expect(p).toContain('// --- FILE: src/App.tsx ---')
+  })
+
+  it('combined prompt caps the embedded source', () => {
+    const p = buildFixAndDecomposePrompt('a CRM', 'fix X', 'x'.repeat(50000))
+    expect(p.length).toBeLessThan(17500)
   })
 })
