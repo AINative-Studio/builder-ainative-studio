@@ -26,7 +26,7 @@ export default defineConfig({
       // the whole repo would dilute the number with hundreds of untested legacy UI
       // files (making the % meaningless and CI useless). `lib/build` + `lib/growth`
       // is where the testable logic lives; it currently sits at ~98%/100%.
-      include: ['lib/build/**', 'lib/growth/**'],
+      include: ['lib/build/**', 'lib/growth/**', 'lib/help/**'],
       exclude: [
         'node_modules/',
         '__tests__/',

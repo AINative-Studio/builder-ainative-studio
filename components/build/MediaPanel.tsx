@@ -27,7 +27,8 @@
  * or #51 OnboardingVideo sections.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { validateUpload, isUploadedAsset, UPLOAD_ACCEPT_ATTR } from '@/lib/build/media-upload'
 
 type MediaKind = 'image' | 'video'
 type MediaFrequency = 'once' | 'daily' | 'weekly' | 'monthly'
@@ -46,6 +47,8 @@ interface Asset {
   url: string
   prompt: string
   createdAt: string
+  /** 'upload' marks a founder-uploaded photo; anything else is Cody-generated. */
+  provider?: string
 }
 
 const FREQUENCIES: { key: MediaFrequency; label: string }[] = [
@@ -105,6 +108,9 @@ export function MediaPanel({
   const [freq, setFreq] = useState<Record<MediaKind, MediaFrequency>>({ image: 'weekly', video: 'weekly' })
   const [busy, setBusy] = useState<string | null>(null)
   const [notice, setNotice] = useState<Record<MediaKind, string>>({ image: '', video: '' })
+  // Upload-your-own (#323 / GR-14) — file input + per-upload notice.
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [uploadNotice, setUploadNotice] = useState('')
 
   const load = useCallback(() => {
     let alive = true
@@ -129,7 +135,8 @@ export function MediaPanel({
   useEffect(() => load(), [load])
 
   const routineFor = (k: MediaKind) => routines.find((r) => r.mediaKind === k)
-  const latestAsset = (k: MediaKind) => assets.find((a) => a.mediaKind === k)
+  // "Last generated" for the auto sections means Cody's output — uploads don't count.
+  const latestAsset = (k: MediaKind) => assets.find((a) => a.mediaKind === k && !isUploadedAsset(a))
 
   // START AUTO — persist the routine (intent captured even if generation is off),
   // then, when configured, immediately kick a first on-brand generation.
@@ -183,6 +190,39 @@ export function MediaPanel({
       }
     } catch {
       setNotice((n) => ({ ...n, [k]: 'Connection hiccup — try again.' }))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // Upload your own photo (#323 / GR-14): validate client-side with the SAME pure
+  // rules the server enforces (images only, ≤5MB), then POST the multipart form.
+  const onUploadChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // allow re-picking the same file
+    if (!file) return
+    setUploadNotice('')
+    const verdict = validateUpload({ name: file.name, type: file.type, size: file.size })
+    if (!verdict.ok) { setUploadNotice(verdict.message); return }
+    setBusy('upload')
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      fd.append('companyId', companyId)
+      const res = await fetch('/api/build/media/upload', { method: 'POST', body: fd })
+      const d = await res.json().catch(() => null)
+      if (res.status === 401) {
+        setUploadNotice('You’ll need to sign in before I can keep your photos.')
+        return
+      }
+      if (!res.ok || !d?.url) {
+        setUploadNotice(d?.message || 'I couldn’t upload that photo — try again shortly.')
+        return
+      }
+      setUploadNotice('Your photo is in — it’s in the library below.')
+      load()
+    } catch {
+      setUploadNotice('Connection hiccup — try again.')
     } finally {
       setBusy(null)
     }
@@ -278,6 +318,62 @@ export function MediaPanel({
               </div>
             )
           })}
+
+          {/* Upload your own (#323 / GR-14) — real photos alongside the generated media. */}
+          <div className="m-task-card" data-testid="media-upload-card">
+            <div className="m-task-card-top">
+              <span className="st is-planned">YOURS</span>
+              <span className="m-chip">Your Photos</span>
+            </div>
+            <p className="m-task-title">
+              Upload your own photos — your product, your team, your space. I keep them in the same
+              library as the media I generate.
+            </p>
+            <div className="m-infra-btns">
+              <button
+                className="btn-primary"
+                data-testid="media-upload-btn"
+                disabled={busy != null}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                {busy === 'upload' ? 'Uploading…' : 'Upload a photo'}
+              </button>
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={UPLOAD_ACCEPT_ATTR}
+              style={{ display: 'none' }}
+              data-testid="media-upload-input"
+              onChange={onUploadChange}
+            />
+            <div className="m-task-card-foot m-mono">
+              <span className="m-task-meta">PNG, JPG, WebP or SVG · up to 5MB</span>
+            </div>
+            {uploadNotice && (
+              <p className="m-mono m-ver-status" data-testid="media-upload-notice">{uploadNotice}</p>
+            )}
+          </div>
+
+          {/* Library — every owned asset, yours and Cody's, distinguishable at a glance. */}
+          {assets.length > 0 && (
+            <div className="m-task-card" data-testid="media-library">
+              <div className="m-task-card-top">
+                <span className="m-chip">Library</span>
+              </div>
+              {assets.slice(0, 12).map((a) => (
+                <div key={a.id} className="m-task-card-foot m-mono" data-testid="media-library-item" data-media-source={isUploadedAsset(a) ? 'upload' : 'generated'}>
+                  <span className={`st ${isUploadedAsset(a) ? 'is-running' : 'is-planned'}`}>
+                    {isUploadedAsset(a) ? 'yours' : '◇ Cody'}
+                  </span>
+                  <span className="m-task-meta">{a.mediaKind} · {fmtDate(a.createdAt)}</span>
+                  <a className="btn-ghost m-task-view" href={a.url} target="_blank" rel="noreferrer">
+                    View →
+                  </a>
+                </div>
+              ))}
+            </div>
+          )}
         </>
       )}
     </div>

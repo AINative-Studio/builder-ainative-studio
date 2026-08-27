@@ -10,6 +10,7 @@
 import { useBuild } from '@/contexts/build-context'
 import { WorkspaceShell } from '@/components/build/WorkspaceShell'
 import { CodyFeed } from '@/components/build/CodyFeed'
+import { FirstRunGuide } from '@/components/build/FirstRunGuide'
 import { PoweringThis } from '@/components/build/PoweringThis'
 import { ArtifactRouter } from '@/components/build/ArtifactRouter'
 
@@ -17,6 +18,8 @@ export function Workspace() {
   const { state } = useBuild()
   return (
     <WorkspaceShell feed={<CodyFeed />}>
+      {/* #319 GR-10 — one-time coach strip, top of the center panel. */}
+      <FirstRunGuide />
       <PoweringThis view={state.view} />
       <ArtifactRouter view={state.view} />
     </WorkspaceShell>

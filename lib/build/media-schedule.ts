@@ -353,6 +353,66 @@ export async function listMedia(scopeKey: string): Promise<{ routines: MediaRout
 }
 
 /**
+ * Upload raw image bytes to the project's ZeroDB file storage (#323 / GR-14) —
+ * the same S3-backed files bucket the platform owns, under the same project as
+ * the `build_media` rows. Returns the ZeroDB file id on success, '' on any
+ * failure — never throws, so a storage hiccup can't 500 the upload route.
+ *
+ * Endpoint (verified): POST {ZERODB_API}/v1/projects/{id}/files/upload with a
+ * multipart `file` field; the file name may carry a folder path (uploads/…).
+ */
+export async function uploadMediaFile(input: {
+  bytes: ArrayBuffer | Uint8Array
+  key: string
+  contentType: string
+}): Promise<string> {
+  if (!input?.key || !input?.bytes) return ''
+  try {
+    const form = new FormData()
+    const bytes = input.bytes instanceof Uint8Array ? input.bytes : new Uint8Array(input.bytes)
+    form.append('file', new Blob([bytes as BlobPart], { type: input.contentType }), input.key)
+    const res = await fetch(`${ZERODB_API}/v1/projects/${PROJECT_ID}/files/upload`, {
+      method: 'POST',
+      headers: { 'X-API-Key': getApiKey() },
+      body: form,
+      signal: AbortSignal.timeout(30_000),
+    })
+    if (!res.ok) return ''
+    const data = await res.json().catch(() => null)
+    const id = String(data?.file_id || '')
+    return id
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Resolve a fresh (presigned, short-lived) download URL + content type for a
+ * stored ZeroDB file. The serve route redirects to this on every request so the
+ * asset's OWN url ({@link import('./media-upload').uploadedAssetUrl}) stays
+ * durable while the bucket presigns keep expiring. Null on any failure.
+ */
+export async function fetchFileDownload(
+  fileId: string,
+): Promise<{ url: string; contentType: string } | null> {
+  if (!fileId) return null
+  try {
+    const res = await fetch(`${ZERODB_API}/v1/projects/${PROJECT_ID}/files/${fileId}/download`, {
+      method: 'GET',
+      headers: { 'X-API-Key': getApiKey() },
+      signal: AbortSignal.timeout(12_000),
+    })
+    if (!res.ok) return null
+    const data = await res.json().catch(() => null)
+    const url = String(data?.download_url || '')
+    if (!url) return null
+    return { url, contentType: String(data?.content_type || 'application/octet-stream') }
+  } catch {
+    return null
+  }
+}
+
+/**
  * Run a single media generation against the core Multimodal primitive and persist
  * the resulting asset to the company's own storage. GATED (#54 req 6): returns a
  * typed result and NEVER throws.

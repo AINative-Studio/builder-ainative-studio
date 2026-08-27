@@ -87,8 +87,12 @@ export function Intake() {
         onChange={(e) => setIdea(e.target.value)}
         autoFocus
       />
+      {/* #319 GR-10 — step-numbered microcopy for a founder with zero prior context. */}
+      <p className="m-helper m-mono">
+        Step 1 of 2 — describe your idea in one sentence. I do everything else.
+      </p>
       <p className="m-helper">
-        You&apos;ll answer ~2 quick questions while I build · I&apos;ll name your company and give it a live preview URL.
+        Step 2 happens while I build — you&apos;ll answer ~2 quick questions · I&apos;ll name your company and give it a live preview URL.
       </p>
       <button className="btn-primary" onClick={start} disabled={!idea.trim() || naming}>
         {naming ? 'Naming your company…' : 'Let Cody build it →'}

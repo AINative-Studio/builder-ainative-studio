@@ -509,6 +509,17 @@
 .m-nudge-foot { display: flex; align-items: center; gap: 12px; }
 .m-nudge-accept { background: var(--co); color: #fff; border: 0; padding: 8px 14px; font-family: var(--font-heading); font-size: 13px; font-weight: 600; cursor: pointer; }
 
+/* ---- First-run coach strip (#319 GR-10) ---- */
+.m-firstrun { border: 2px solid var(--color-accent); background: var(--color-accent-100); padding: 16px 18px; margin-bottom: 24px; }
+.m-firstrun-head { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--color-accent-700); margin: 0 0 8px; }
+.m-firstrun-lede { font-family: var(--font-heading); font-size: 16px; font-weight: 600; color: var(--color-text); margin: 0 0 10px; }
+.m-firstrun-steps { list-style: none; margin: 0 0 12px; padding: 0; }
+.m-firstrun-steps li { font-size: 14px; color: var(--text-body-85); line-height: 1.6; margin: 4px 0; }
+.m-firstrun-num { display: inline-block; min-width: 18px; color: var(--color-accent); font-weight: 600; margin-right: 6px; }
+.m-firstrun-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.m-firstrun-thats { font-size: 12px; color: var(--text-body-70); }
+.m-firstrun-dismiss { padding: 8px 18px; }
+
 /* ---- Powering this (#221, #66) ---- */
 .m-powering { display: flex; align-items: center; gap: 12px; padding: 8px 0 16px; border-bottom: 1px solid var(--color-divider); margin-bottom: 24px; flex-wrap: wrap; }
 .m-powering-label { font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--text-faint); }
@@ -1175,3 +1186,56 @@
   border: 0; padding: 10px 16px; font-family: var(--font-heading); font-size: 15px; font-weight: 600; cursor: pointer;
 }
 .modernist .m-land-btn-ink:hover { opacity: 0.9; }
+
+/* ============================================================================
+   "I'm stuck" jump-to-answer box (#321, GR-12) — embedded on /help and
+   /guides/[slug]. Flat, editorial, 0 radius; typographic glyphs only.
+   ============================================================================ */
+.modernist.m-stuck {
+  border: 2px solid var(--color-divider);
+  border-top: 2px solid var(--color-text);
+  background: var(--color-bg);
+  padding: 24px;
+  text-align: left;
+}
+.modernist .m-stuck-eyebrow { margin: 0 0 8px; }
+.modernist .m-stuck-lead {
+  font-family: var(--font-body); font-size: 14px; color: var(--text-body-70);
+  margin: 0 0 16px; max-width: 56ch;
+}
+.modernist .m-stuck-form { display: flex; gap: 10px; flex-wrap: wrap; }
+.modernist .m-stuck-input {
+  flex: 1 1 260px; padding: 10px 14px; font-family: var(--font-body); font-size: 15px;
+  color: var(--color-text); background: #fff; border: 2px solid var(--neutral-line);
+  border-radius: 0;
+}
+.modernist .m-stuck-input:focus { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.modernist .m-stuck-input::placeholder { color: var(--text-faint); }
+.modernist .m-stuck-btn {
+  background: var(--color-accent); color: #fff; border: 0; padding: 10px 18px;
+  font-family: var(--font-heading); font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.modernist .m-stuck-btn:hover { background: var(--color-accent-600); }
+.modernist .m-stuck-btn:disabled { opacity: 0.5; cursor: default; }
+.modernist .m-stuck-error { margin: 14px 0 0; font-size: 12px; color: var(--color-accent-700); }
+.modernist .m-stuck-results { margin-top: 18px; border-top: 1px solid var(--color-divider); padding-top: 14px; }
+.modernist .m-stuck-empty { font-family: var(--font-body); font-size: 14px; color: var(--text-muted); margin: 0; }
+.modernist .m-stuck-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.modernist .m-stuck-item { border: 1.5px solid var(--color-divider); background: #fff; }
+.modernist .m-stuck-link {
+  display: block; padding: 12px 14px; text-decoration: none; color: var(--color-text);
+  transition: border-color 0.12s, background 0.12s;
+}
+.modernist .m-stuck-item:hover { border-color: var(--color-accent); }
+.modernist .m-stuck-parent {
+  display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.12em;
+  color: var(--text-muted); margin-bottom: 4px;
+}
+.modernist .m-stuck-title {
+  display: block; font-family: var(--font-heading); font-weight: 700; font-size: 15px;
+}
+.modernist .m-stuck-title .m-glyph { color: var(--color-accent); }
+.modernist .m-stuck-snippet {
+  display: block; font-family: var(--font-body); font-size: 13px; color: var(--text-body-70);
+  margin-top: 4px; line-height: 1.45;
+}
