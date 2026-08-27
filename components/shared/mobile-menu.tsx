@@ -127,6 +127,24 @@ export function MobileMenu({ onInfoDialogOpen }: MobileMenuProps) {
                   </div>
                 )}
 
+                {/* My Builds (#330) — persistent path back to a signed-in user's builds. */}
+                {session?.user?.id && (
+                  <div className="space-y-2">
+                    <Button
+                      variant="ghost"
+                      className="w-full justify-start h-auto p-3 text-left"
+                      asChild
+                    >
+                      <Link href="/build?screen=companies" onClick={closeMenu} data-testid="mobile-nav-my-builds">
+                        <div className="flex items-center gap-3 w-full">
+                          <LayoutTemplate className="h-4 w-4 flex-shrink-0" />
+                          <div className="flex-1"><span className="font-medium">My Builds</span></div>
+                        </div>
+                      </Link>
+                    </Button>
+                  </div>
+                )}
+
                 {/* Menu items */}
                 <div className="space-y-2">
                   <Button
