@@ -405,8 +405,8 @@ describe('planUnlocks — plan gating', () => {
 // ── initialBuildState sanity ──────────────────────────────────────────────────
 
 describe('initialBuildState', () => {
-  it('starts at fork screen with auto=true', () => {
-    expect(initialBuildState.screen).toBe('fork')
+  it('starts at landing screen with auto=true', () => {
+    expect(initialBuildState.screen).toBe('landing')
     expect(initialBuildState.auto).toBe(true)
     expect(initialBuildState.paused).toBe(false)
     expect(initialBuildState.idea).toBe('')

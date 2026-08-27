@@ -26,7 +26,9 @@ function applyActions(actions: BuildAction[], initial: BuildState = initialBuild
 describe('initialBuildState', () => {
   it('has the expected defaults', () => {
     const s = initialBuildState
-    expect(s.screen).toBe('fork')
+    // Public marketing landing is the front door (Claude Design handoff); the
+    // context redirects signed-in visitors past it to their builds.
+    expect(s.screen).toBe('landing')
     expect(s.track).toBe('app')
     expect(s.view).toBe('brief')
     expect(s.plan).toBe('')
@@ -50,6 +52,43 @@ describe('buildReducer — GOTO_SCREEN', () => {
     const next = buildReducer(prev, { type: 'GOTO_SCREEN', screen: 'account' })
     expect(next.track).toBe('company')
     expect(next.screen).toBe('account')
+  })
+})
+
+describe('landing funnel (Claude Design handoff)', () => {
+  it('landing → start → build are all reachable screens via GOTO_SCREEN', () => {
+    for (const screen of ['landing', 'start', 'build'] as const) {
+      const s = buildReducer(initialBuildState, { type: 'GOTO_SCREEN', screen })
+      expect(s.screen).toBe(screen)
+    }
+  })
+
+  it('SET_IDEA seeds the idea field without starting a build ("Surprise me")', () => {
+    const seeded = 'An AI answer engine that replies from your own docs.'
+    const s = buildReducer(initialBuildState, { type: 'SET_IDEA', idea: seeded })
+    expect(s.idea).toBe(seeded)
+    // Seeding must NOT navigate or start building — the founder still edits in Intake.
+    expect(s.screen).toBe(initialBuildState.screen)
+    expect(s.building).toBe(false)
+  })
+
+  it('SET_IDEA does not clobber unrelated state', () => {
+    const prev = { ...initialBuildState, track: 'company' as const, companyName: 'Acme' }
+    const s = buildReducer(prev, { type: 'SET_IDEA', idea: 'x' })
+    expect(s.track).toBe('company')
+    expect(s.companyName).toBe('Acme')
+  })
+
+  it('full funnel: landing → start → build → PICK_TRACK(company) lands on intake', () => {
+    const s = applyActions([
+      { type: 'GOTO_SCREEN', screen: 'start' },
+      { type: 'GOTO_SCREEN', screen: 'build' },
+      { type: 'SET_IDEA', idea: 'seeded surprise idea' },
+      { type: 'PICK_TRACK', track: 'company' },
+    ])
+    expect(s.screen).toBe('intake')
+    expect(s.track).toBe('company')
+    expect(s.idea).toBe('seeded surprise idea') // seed survives into intake
   })
 })
 
@@ -340,7 +379,7 @@ describe('buildReducer — RESTORE_BUILD', () => {
     expect(s.appSub).toBe('restored-sub')
     expect(s.activePlan).toBe('pro')
     expect(s.enrolled).toBe(true)
-    expect(s.screen).toBe('fork') // unchanged
+    expect(s.screen).toBe('landing') // unchanged (RESTORE_BUILD never navigates)
   })
 })
 

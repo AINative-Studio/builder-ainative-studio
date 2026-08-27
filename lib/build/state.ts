@@ -7,6 +7,11 @@
  */
 
 export type Screen =
+  | 'landing'     // public marketing front door (Claude Design handoff): 4-beat
+                  // pinned-scroll hero, shown to cold/logged-out visitors before
+                  // the builder path. Signed-in visitors skip straight to builds.
+  | 'start'       // funnel step 1: "Let's get started" — Create a new company / Grow
+  | 'build'       // funnel step 2: "Let's build something" — Surprise me / Build my idea
   | 'fork' | 'intake' | 'ws' | 'pricing' | 'live'
   | 'login' | 'signup' | 'forgot' | 'reset' | 'account'
   | 'companies'   // "my companies" index (#253) — a founder's built companies
@@ -97,7 +102,10 @@ export type Overlay =
   | { kind: 'provisioning' }                 // infra is being provisioned
 
 export const initialBuildState: BuildState = {
-  screen: 'fork',
+  // Public front door first (Claude Design handoff). The context redirects a
+  // signed-in visitor past the landing to their builds, and any ?screen= deep
+  // link still overrides this — so QA/ads/returning founders are unaffected.
+  screen: 'landing',
   track: 'app',
   view: 'brief',
   plan: '',
@@ -171,11 +179,16 @@ export type BuildAction =
   | { type: 'TOGGLE_INDEX' }
   | { type: 'SET_APP_CHATID'; chatId: string }
   | { type: 'SET_ACTIVE_PLAN'; plan: ActivePlan; enrolled?: boolean }
+  // Seed the idea field before Intake mounts (funnel "Surprise me" pre-fills a
+  // starter idea; does NOT start a build). Intake prefills its input from this.
+  | { type: 'SET_IDEA'; idea: string }
 
 export function buildReducer(state: BuildState, action: BuildAction): BuildState {
   switch (action.type) {
     case 'GOTO_SCREEN':
       return { ...state, screen: action.screen }
+    case 'SET_IDEA':
+      return { ...state, idea: action.idea }
     case 'PICK_TRACK':
       return {
         ...state,

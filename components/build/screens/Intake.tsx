@@ -10,7 +10,9 @@ import { trackEvent } from '@/components/analytics/google-analytics'
 export function Intake() {
   const { state, dispatch } = useBuild()
   const { status: sessionStatus } = useSession()
-  const [idea, setIdea] = useState('')
+  // Prefill from a seeded idea (funnel "Surprise me" sets state.idea before Intake
+  // mounts) so the founder lands on a ready-to-edit starter idea, not a blank field.
+  const [idea, setIdea] = useState(state.idea || '')
   const [naming, setNaming] = useState(false)
 
   const start = async () => {
