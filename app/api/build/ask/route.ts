@@ -23,6 +23,7 @@ import OpenAI from 'openai'
 import { getClaudeCompletion } from '@/lib/build/claude-completion'
 import { auth } from '@/app/(auth)/auth'
 import { getPlanStatus } from '@/lib/ainative/plan'
+import { resolveActivePlan } from '@/lib/ainative/active-plan'
 import { modelsForTier } from '@/lib/build/tier-models'
 import { selectPrimitives, catalogPromptBlock } from '@/lib/build/primitive-catalog'
 import {
@@ -66,8 +67,10 @@ async function resolveScopeKey(companyId: string): Promise<string> {
   return chatScopeKey(ownerKey, slug)
 }
 
-/** Fetch a compact backlog summary for this company to ground Cody's answers. */
-async function fetchBacklogSummary(companyId: string, idea: string, companyName: string, track: string): Promise<string> {
+/** Fetch a compact backlog summary for this company to ground Cody's answers.
+ *  Plan-aware: a PAID founder's queue is framed as work-in-queue (their plan
+ *  covers it) — the conversion-gate line is only included for free accounts. */
+async function fetchBacklogSummary(companyId: string, idea: string, companyName: string, track: string, paid: boolean): Promise<string> {
   try {
     const base = process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio'
     const url = new URL('/api/build/backlog', base)
@@ -85,8 +88,10 @@ async function fetchBacklogSummary(companyId: string, idea: string, companyName:
     return (
       `COMPANY BACKLOG:\n` +
       `Built & live now: ${builtNames}\n` +
-      `Queued (requires plan/domain): ${queuedNames}\n` +
-      `Conversion gate: ${d.gate || ''}`
+      (paid
+        ? `In the queue (covered by the founder's plan — next runs pick these up): ${queuedNames}`
+        : `Queued (part of the paid build-out): ${queuedNames}\n` +
+          `Conversion gate: ${d.gate || ''}`)
     )
   } catch {
     return ''
@@ -114,13 +119,37 @@ export async function POST(request: NextRequest) {
   const { names: primitiveNames } = selectPrimitives(idea, track)
   const primList = primitiveNames.join(', ')
 
+  // Plan-aware voice (Greg Rose feedback 2026-08-27): resolve the account's real
+  // plan BEFORE building the prompt/backlog framing — see gateInstructions below.
+  const { plan: activePlan } = await resolveActivePlan().catch(() => ({ plan: '' as const }))
+  const paid = Boolean(activePlan)
+
   // Fetch backlog so Cody can cite real items (not invented ones)
   const backlogBlock = companyId
-    ? await fetchBacklogSummary(companyId, idea, companyName, track)
+    ? await fetchBacklogSummary(companyId, idea, companyName, track, paid)
     : ''
 
   // Build the catalog block for context
   const catalogBlock = catalogPromptBlock(idea, track)
+
+  // Cody was scripted to pitch "buy a domain + subscription" to EVERY founder —
+  // including paying Enterprise accounts, and including free founders who still
+  // have build credits and CAN iterate right now. A paying founder is never
+  // pitched; a free founder is told what they can do NOW for free first.
+  const gateInstructions = paid
+    ? `- The founder is on a PAID AINative plan (${activePlan}) — their plan already covers the build-out. ` +
+      `NEVER pitch a subscription, plan, or purchase, and never say work is "gated". ` +
+      `When they ask for a change or feature: confirm you're on it in first person ` +
+      `("I'll wire that next — it's in the queue for tonight's run"), name the concrete backlog items ` +
+      `it maps to, and point at the real levers they already have (Auto Mode, the nightly loop, ` +
+      `regenerating the app from the workspace). A custom domain is OPTIONAL — mention it only if ` +
+      `they ask about domains.\n`
+    : `- The founder is on the FREE tier. They can still iterate NOW at no cost: updating and ` +
+      `regenerating the app preview from the workspace uses their free build allowance — say so ` +
+      `plainly when they ask for a change, and tell them to make the change from the workspace. ` +
+      `Only the REAL backend build-out (production data wiring, 24/7 ops, custom domain) is part of ` +
+      `a plan: frame that honestly as "when you're ready to make it real" — never imply a small ` +
+      `edit requires payment. Do NOT promise free future backend feature work.\n`
 
   const system =
     `You are Cody, the AI co-founder who just built and now operates "${companyName}", ` +
@@ -134,10 +163,8 @@ export async function POST(request: NextRequest) {
     `- Be specific to THIS company and THIS idea — not generic AI advice.\n` +
     `- If they ask about status, what's next, or why things aren't working yet:\n` +
     `  (a) Say what IS live now (the frontend preview + foundational primitives above).\n` +
-    `  (b) Frame the conversion gate clearly: "Once you buy a domain + start a subscription, ` +
-    `I build the real backend and wire [specific primitives from the backlog] for real."\n` +
-    `  (c) Name 3-5 CONCRETE backlog items from the company backlog above — use the actual titles.\n` +
-    `  (d) Do NOT promise free future feature work. The queued items are real but gated on a plan.\n` +
+    `  (b) Name 3-5 CONCRETE backlog items from the company backlog above — use the actual titles.\n` +
+    gateInstructions +
     `- Keep it to 2-4 sentences for simple questions; up to 6 sentences for status/next-steps questions.\n` +
     `- No fluff, no disclaimers. Run it 24/7 via the nightly autonomous loop.`
 

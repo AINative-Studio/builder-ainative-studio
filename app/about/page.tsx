@@ -24,10 +24,13 @@ const PAGE_URL = 'https://builder.ainative.studio/about'
 export const metadata: Metadata = {
   title: 'About — Why I Built AINative Builder | Toby, AINative Studio',
   description:
-    "Toby's first-person founder story: why he built AINative Builder, the problem with closed AI black boxes, and the vision of Cody — an AI co-founder that builds a real app you own, then runs the company.",
+    "Toby's first-person founder story: from employee #1 at IdeaMarket (Bill Gross's Idealab) to Techstars Tulsa to AINative Builder — a decade removing the friction between idea and market, and the vision of Cody, an AI co-founder that builds a real app you own, then runs the company.",
   keywords: [
     'AINative Builder founder story',
     'why I built AINative',
+    'IdeaMarket Idealab Bill Gross',
+    'IdeaMarket employee 1',
+    'Techstars Tulsa 2023',
     'AI co-founder story',
     'founder vision AINative',
     'Cody AI co-founder',
@@ -202,6 +205,140 @@ export default function AboutPage() {
               systems a real product needs — CRM, billing, helpdesk, voice. And if you wanted to
               understand or modify what was built, you were staring at a black box you didn&apos;t
               write and couldn&apos;t own.
+            </p>
+          </section>
+
+          <hr className="border-border" />
+
+          {/* --- Origin: IdeaMarket --- */}
+          <section aria-label="Where the pursuit really started">
+            <h2
+              className="text-2xl mb-4"
+              style={{ fontFamily: 'var(--font-newsreader), Georgia, serif', fontWeight: 500 }}
+            >
+              Where the pursuit really started: IdeaMarket.
+            </h2>
+
+            <p>AINative didn&apos;t begin with generative AI.</p>
+
+            <p className="mt-6">
+              In many ways, I&apos;ve been working on this problem for more than a decade:{' '}
+              <strong>how do we remove the friction between an idea and the market?</strong>
+            </p>
+
+            <p className="mt-6">
+              Long before today&apos;s AI coding tools, I had firsthand experience trying to solve
+              exactly that problem at <strong>IdeaMarket</strong>, an Idealab company founded by
+              Bill Gross. I was <strong>employee #1 at IdeaMarket</strong>. I came up with the
+              initial UI/UX and product concepts and then drove product development and the
+              development team as we turned that vision into a working platform.
+            </p>
+
+            <p className="mt-6">
+              The premise was ambitious: create what I thought of as a{' '}
+              <strong>reverse venture capital network</strong>. Traditional venture capital starts
+              with an entrepreneur who already has a company and is looking for money. We wanted to
+              start earlier. <strong>Start with the idea.</strong>
+            </p>
+
+            <p className="mt-6">
+              IdeaMarket was a curated, crowdsourced marketplace for ideas that could solve everyday
+              problems, address unmet needs, and uncover entirely new business opportunities. What
+              made the model especially interesting was who participated. Well-known entrepreneurs
+              and investors — including{' '}
+              <strong>
+                Steve Case, Shervin Pishevar, Max Levchin, and others — were investors in IdeaMarket
+                and also actively submitted ideas to the platform. Peter Diamandis was an advisor
+                and idea collaborator.
+              </strong>
+            </p>
+
+            <p className="mt-6">
+              So instead of investors only evaluating ideas after entrepreneurs had turned them into
+              startups, we were asking accomplished entrepreneurs, investors, and innovators to help
+              surface opportunities themselves. Then IdeaMarket would do something unusual:{' '}
+              <strong>match those ideas with talent and money to launch companies.</strong> The
+              model was essentially: <strong>Idea → Entrepreneur → Talent → Capital → Company</strong>.
+            </p>
+
+            <p className="mt-6">
+              I loved that problem. I became obsessed with the possibility that entrepreneurship
+              itself could be redesigned — that we could create systems that systematically reduced
+              the friction between someone recognizing an opportunity and actually getting a product
+              into the market. My role put me right in the middle of that challenge. I wasn&apos;t
+              just thinking about it theoretically. I was designing the initial product experience,
+              determining how people would interact with ideas, and leading the development effort
+              required to turn the concept into software.
+            </p>
+
+            <p className="mt-6">
+              And it taught me something that has stayed with me ever since:{' '}
+              <strong>
+                great ideas aren&apos;t particularly scarce. The ability to turn them into something
+                real is.
+              </strong>
+            </p>
+
+            <p className="mt-6">
+              At IdeaMarket, our answer was to build a network around the entrepreneur:{' '}
+              <strong>Ideas + Talent + Capital.</strong> More than a decade later, AI made me
+              realize there might be another way. What if we could put much of that capability{' '}
+              <strong>directly into the hands of the entrepreneur?</strong>
+            </p>
+          </section>
+
+          <hr className="border-border" />
+
+          {/* --- The thread: IdeaMarket → Techstars → AINative --- */}
+          <section aria-label="The thread from IdeaMarket to AINative">
+            <h2
+              className="text-2xl mb-4"
+              style={{ fontFamily: 'var(--font-newsreader), Georgia, serif', fontWeight: 500 }}
+            >
+              The thread from IdeaMarket to AINative.
+            </h2>
+
+            <p>
+              When I look back now, there&apos;s a very clear line connecting these experiences. At
+              IdeaMarket our model was: <strong>Idea + Talent + Capital → Company</strong>.
+            </p>
+
+            <p className="mt-6">
+              Then, during the <strong>Spring 2023 Techstars Tulsa cohort</strong>, I saw the other
+              side of the equation. Even when founders had great ideas, mentorship, networks, and
+              access to potential capital, they could still burn precious weeks just trying to build
+              an MVP. That experience brought me back to the same question I&apos;d been pursuing
+              since IdeaMarket: <strong>how do we remove the friction between idea and market?</strong>
+            </p>
+
+            <p className="mt-6">
+              Only this time, something fundamental had changed. AI had arrived. At IdeaMarket, we
+              tried to surround an idea with the human and financial resources required to turn it
+              into a company. With AINative, I&apos;m asking whether we can give an entrepreneur an{' '}
+              <strong>AI-native operating system for creating the company itself.</strong>{' '}
+              Development. Infrastructure. Data. CRM. Billing. Customer support. Inference. Memory.
+              Agents. Operations. And an AI-native technical co-founder — Cody — to help orchestrate
+              it.
+            </p>
+
+            <p className="mt-6">
+              So, in a way,{' '}
+              <strong>
+                AINative is the technological continuation of a problem I&apos;ve been obsessed with
+                since IdeaMarket.
+              </strong>{' '}
+              IdeaMarket asked: <strong>how do we match great ideas with everything required to
+              turn them into companies?</strong> AINative asks:{' '}
+              <strong>
+                what if we could put everything required to start building the company directly into
+                the hands of the person with the idea?
+              </strong>
+            </p>
+
+            <p className="mt-6">
+              That&apos;s the journey from IdeaMarket to Techstars Tulsa to AINative. And the
+              mission underneath all three has remained remarkably consistent:{' '}
+              <strong>remove as much friction as possible between idea and market.</strong>
             </p>
           </section>
 
