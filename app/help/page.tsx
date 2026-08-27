@@ -15,6 +15,7 @@ import Link from 'next/link'
 import { AppHeader } from '@/components/shared/app-header'
 import { FAQ_ENTRIES, faqPageJsonLd } from '@/lib/build/help-faq'
 import { HelpAskBox } from './HelpAskBox'
+import { ImStuck } from '@/components/help/ImStuck'
 
 const PAGE_URL = 'https://builder.ainative.studio/help'
 const ORG_NAME = 'AINative Studio'
@@ -164,6 +165,17 @@ export default function HelpPage() {
               </div>
             </div>
           ))}
+        </section>
+
+        {/* "I'm stuck" jump-to-answer (#321) — searches every guide section +
+            FAQ entry and deep-links straight to the answer. Sits at the bottom
+            of the page so a reader who scrolled the whole FAQ without finding
+            their answer gets a targeted next step. */}
+        <section
+          className="container mx-auto px-4 pb-16 max-w-3xl"
+          aria-label="Stuck? Find the answer"
+        >
+          <ImStuck />
         </section>
 
         {/* Bottom CTA */}

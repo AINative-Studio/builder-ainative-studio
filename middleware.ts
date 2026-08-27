@@ -124,7 +124,12 @@ export async function middleware(request: NextRequest) {
       pathname === '/api/chat' ||
       pathname.startsWith('/api/rlhf/') ||
       pathname.startsWith('/api/db/') ||
-      pathname.startsWith('/api/build/')
+      pathname.startsWith('/api/build/') ||
+      // "I'm stuck" jump-to-answer retrieval (#321) — pure local search over the
+      // guides/FAQ catalog. Lives on /help + /guides/[slug], both anonymous
+      // surfaces, so it MUST work without auth (same class of bug that bit
+      // /best, /about, and /test-components).
+      pathname.startsWith('/api/help/')
 
     if (pathname.startsWith('/api/') && isPublicApiRoute) {
       return NextResponse.next()
