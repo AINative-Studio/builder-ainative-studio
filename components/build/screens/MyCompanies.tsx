@@ -38,9 +38,21 @@ const PLAN_LABEL: Record<string, string> = {
 }
 
 export function MyCompanies() {
-  const { dispatch } = useBuild()
+  const { state, dispatch } = useBuild()
   const { status } = useSession()
   const signedIn = status === 'authenticated'
+
+  // Existing-subscriber recognition (#251): hydrate the account plan so
+  // companies without a per-company subscription carry the founder's real plan
+  // chip instead of "Free" (Enterprise founders saw "Free" everywhere).
+  useEffect(() => {
+    if (!signedIn || state.activePlan) return
+    fetch('/api/build/subscription/status')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d?.plan) dispatch({ type: 'SET_ACTIVE_PLAN', plan: d.plan }) })
+      .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signedIn, state.activePlan])
   const [companies, setCompanies] = useState<Company[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [portalBusy, setPortalBusy] = useState(false)
@@ -139,6 +151,11 @@ export function MyCompanies() {
                     </div>
                     {paid ? (
                       <span className="m-chip m-profile-plan">{PLAN_LABEL[c.plan!] || c.plan}</span>
+                    ) : state.activePlan ? (
+                      /* Account-level plan covers companies with no per-company
+                         subscription — never label them "Free" for a paying
+                         founder (Enterprise saw "Free" chips, 2026-08-27). */
+                      <span className="m-chip m-profile-plan">{PLAN_LABEL[state.activePlan] || state.activePlan}</span>
                     ) : trialLeft != null ? (
                       <span className="m-chip">Trial · {trialLeft}h left</span>
                     ) : (

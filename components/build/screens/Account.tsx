@@ -33,6 +33,9 @@ export interface UsageMeter {
   used: number
   total: number
   unit: string
+  /** Unlimited plans (enterprise) have no real denominator — render "unlimited",
+   *  never "/ 0" (founder-reported: "935,862.41 / 0"). */
+  unlimited?: boolean
 }
 
 /**
@@ -48,8 +51,11 @@ export function buildMeters(credits: any, usage: any): UsageMeter[] | null {
   const used = typeof credits?.used === 'number' ? credits.used : null
   if (granted === null && used === null) return null
 
+  // Unlimited (enterprise) ledgers report unlimited:true with granted = null
+  // (the -1 sentinel is normalized away) — there is no honest denominator.
+  const unlimited = credits?.unlimited === true || (granted === null && used !== null)
   const meters: UsageMeter[] = [
-    { label: 'API credits', used: used ?? 0, total: granted ?? 0, unit: '' },
+    { label: 'API credits', used: used ?? 0, total: granted ?? 0, unit: '', unlimited },
   ]
 
   // Surface real token usage from /credits/usage/current when the ledger reports it.
@@ -85,6 +91,18 @@ export function Account() {
   const activePlan = state.activePlan
   const gates = planUnlocks(activePlan)
   const [portalBusy, setPortalBusy] = useState(false)
+
+  // Existing-subscriber recognition (#251) — the same hydration Live/Pricing run.
+  // Without it, an Enterprise/admin account opening Account directly saw plan
+  // chips reading "Free" plus an Upgrade CTA (founder-reported bug 2026-08-27).
+  useEffect(() => {
+    if (isGuest || state.activePlan) return
+    fetch('/api/build/subscription/status')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d?.plan) dispatch({ type: 'SET_ACTIVE_PLAN', plan: d.plan }) })
+      .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isGuest, state.activePlan])
 
   // Live credit ledger (#312) — authenticated users only. Absent until loaded.
   const [creditsData, setCreditsData] = useState<{ credits: any; usage: any } | null>(null)
@@ -269,8 +287,8 @@ export function Account() {
             <div className="m-meters">
               {meters.map((m) => (
                 <div key={m.label} className="m-meter" data-testid={`account-meter-${m.label}`}>
-                  <div className="m-meter-top"><span className="m-mono m-meter-l">{m.label}</span><span className="m-mono m-meter-v">{m.used.toLocaleString()}{m.unit} / {m.total.toLocaleString()}{m.unit}</span></div>
-                  <div className="m-meter-bar"><span style={{ width: `${m.total > 0 ? Math.min(100, (m.used / m.total) * 100) : 0}%` }} /></div>
+                  <div className="m-meter-top"><span className="m-mono m-meter-l">{m.label}</span><span className="m-mono m-meter-v">{m.unlimited ? `${m.used.toLocaleString()}${m.unit} · unlimited` : `${m.used.toLocaleString()}${m.unit} / ${m.total.toLocaleString()}${m.unit}`}</span></div>
+                  <div className="m-meter-bar"><span style={{ width: m.unlimited ? '100%' : `${m.total > 0 ? Math.min(100, (m.used / m.total) * 100) : 0}%`, opacity: m.unlimited ? 0.25 : undefined }} /></div>
                 </div>
               ))}
             </div>
