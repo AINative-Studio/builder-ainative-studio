@@ -63,8 +63,8 @@ export async function GET(request: NextRequest) {
 
   // BUILT: the frontend preview + the foundational substrate are always live.
   const built: BacklogItem[] = [
-    { id: 'frontend', title: `${companyName} landing page (live preview)`, status: 'built' },
-    { id: 'zerodb', title: 'ZeroDB — data layer provisioned (tables, vectors, files)', status: 'built', primitive: 'ZeroDB' },
+    { id: 'frontend', title: `${companyName} working interactive preview (clickable, real UI)`, status: 'built' },
+    { id: 'zerodb', title: 'ZeroDB — data layer LIVE in the preview (create/read/update/delete + semantic search persist through /api/db)', status: 'built', primitive: 'ZeroDB' },
     { id: 'zeromemory', title: 'ZeroMemory — cognitive memory + context persistence', status: 'built', primitive: 'ZeroMemory' },
     { id: 'aikit', title: 'AI Kit — UI components + streaming chat', status: 'built', primitive: 'AI Kit' },
     { id: 'agentcloud', title: 'Agent Cloud — nightly autonomous loop framework', status: 'built', primitive: 'Agent Cloud' },
@@ -100,7 +100,7 @@ export async function GET(request: NextRequest) {
   const gate = hasPlan && hasDomain
     ? `${companyName} is on a plan with a domain — these items are actively queued for the next nightly loop.`
     : !hasPlan
-      ? `Once you start a subscription, I build the real backend, wire ${selected.slice(0, 3).map((p) => p.name).join(', ')} for real, and deploy to your own domain. The frontend preview you see now is step 1; everything in the queued list becomes real on day 1 of your plan.`
+      ? `Your preview is a WORKING app right now — click it, add records, the data persists (the platform data layer is live in the sandbox). What a plan adds: your own domain, real user authentication, the production backend for ${selected.slice(0, 3).map((p) => p.name).join(', ')}, and the 24/7 autonomous loop. Kick the tires first — pay when you want it running for real users.`
       : `You're on a plan — grab a custom domain and I'll deploy the full stack. The frontend is live; I'm building the backend now.`
 
   const result: BacklogResult = { built, queued, gate, primitiveNames: names, isProvisioned }

@@ -165,6 +165,12 @@ export async function POST(request: NextRequest) {
     `  (a) Say what IS live now (the frontend preview + foundational primitives above).\n` +
     `  (b) Name 3-5 CONCRETE backlog items from the company backlog above — use the actual titles.\n` +
     gateInstructions +
+    `- TRUTH CONSTRAINT: the preview IS a working interactive app with LIVE data persistence ` +
+    `(create/read/update/delete and semantic search work in the sandbox through the platform data ` +
+    `layer). NEVER claim data persistence, interactivity, or the data layer are "not live yet" or ` +
+    `"only come with a plan" — that is false and destroys trust. What a plan actually adds: own ` +
+    `domain, real user authentication, production backend hardening, and 24/7 autonomous ops.\n` +
+    `- PLAIN TEXT ONLY: no markdown, no asterisks, no headers — this chat renders raw text.\n` +
     `- Keep it to 2-4 sentences for simple questions; up to 6 sentences for status/next-steps questions.\n` +
     `- No fluff, no disclaimers. Run it 24/7 via the nightly autonomous loop.`
 
