@@ -8,6 +8,93 @@
   }
 
   // ============================================================
+  // RENDER HARDENING (wallkind crash class, 2026-08-27)
+  // LLM-authored apps pass reasonable-but-unexpected prop shapes (e.g.
+  // actions={[{label:'Sign in', variant:'ghost'}]}). Rendering a raw object as
+  // a React child throws "Objects are not valid as a React child" and the
+  // ErrorBoundary white-screens the WHOLE app. These helpers coerce any value
+  // into something renderable, and every exported component is wrapped in a
+  // boundary so one bad prop can never take down the app again.
+  // ============================================================
+  function isReactEl(v) { return v && typeof v === 'object' && v.$$typeof !== undefined; }
+
+  /** Coerce ANY value into a renderable child. Objects render their most
+   *  label-like field; unrenderable values render as nothing (never throw). */
+  function safeChild(v) {
+    if (v == null || typeof v === 'boolean') return null;
+    if (typeof v === 'string' || typeof v === 'number') return v;
+    if (isReactEl(v)) return v;
+    if (Array.isArray(v)) return v.map(function (x, i) {
+      var c = safeChild(x);
+      return isReactEl(c) && c.key == null ? React.cloneElement(c, { key: i }) : c;
+    });
+    if (typeof v === 'object') {
+      return safeChild(v.label !== undefined ? v.label
+        : v.title !== undefined ? v.title
+        : v.name !== undefined ? v.name
+        : v.text !== undefined ? v.text
+        : v.children !== undefined ? v.children
+        : v.value !== undefined ? v.value
+        : null);
+    }
+    return null;
+  }
+
+  /** Render an "action" that may be a React node OR an {label, variant, onClick}
+   *  object (the shape LLMs naturally emit) — objects become real buttons. */
+  function renderActionLike(a, i) {
+    if (a == null || typeof a === 'boolean') return null;
+    if (typeof a === 'string' || typeof a === 'number' || isReactEl(a)) return safeChild(a);
+    if (Array.isArray(a)) return a.map(renderActionLike);
+    if (typeof a === 'object') {
+      var label = safeChild(a.label !== undefined ? a.label : (a.title !== undefined ? a.title : a.text));
+      if (label == null) return null;
+      var subtle = a.variant === 'ghost' || a.variant === 'secondary' || a.variant === 'outline' || a.variant === 'link';
+      return React.createElement('button', {
+        key: i, onClick: typeof a.onClick === 'function' ? a.onClick : undefined,
+        className: subtle
+          ? 'px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors'
+          : 'px-4 py-2 rounded-lg text-sm font-semibold bg-[#5867EF] text-white hover:bg-[#4756d6] transition-colors'
+      }, label);
+    }
+    return null;
+  }
+
+  /** Initials for a user prop that may be a string OR an object. */
+  function userInitials(user) {
+    if (typeof user === 'string') return user.slice(0, 2).toUpperCase();
+    if (user && typeof user === 'object') {
+      var src = user.initials || user.name || user.email || user.label || '';
+      if (typeof src === 'string' && src) return src.slice(0, 2).toUpperCase();
+    }
+    return '·';
+  }
+
+  /** Wrap a component in an error boundary: a crashing AIKit component renders
+   *  nothing instead of white-screening the entire generated app. */
+  function harden(Component, name) {
+    var Boundary = class extends React.Component {
+      constructor(props) { super(props); this.state = { failed: false }; }
+      static getDerivedStateFromError() { return { failed: true }; }
+      componentDidCatch(err) {
+        try { console.warn('[AIKit] ' + name + ' failed to render:', err && err.message); } catch (_) {}
+      }
+      render() {
+        if (this.state.failed) return null;
+        return React.createElement(Component, this.props);
+      }
+    };
+    Boundary.displayName = name;
+    return Boundary;
+  }
+
+  function hardenAll(components) {
+    var out = {};
+    for (var k in components) out[k] = harden(components[k], k);
+    return out;
+  }
+
+  // ============================================================
   // StreamingIndicator — Animated loading indicators (dots/pulse/wave)
   // ============================================================
   const StreamingIndicator = ({ variant = 'dots', className = '', size = 'default', color = '#5867EF', label = 'Loading...', ...props }) => {
@@ -625,14 +712,14 @@
                 React.createElement('polygon', { points: '13 2 3 14 12 14 11 22 21 10 12 10 13 2' })
               )
             ),
-            React.createElement('span', { className: 'text-xl font-bold text-slate-900' }, title || 'App')
+            React.createElement('span', { className: 'text-xl font-bold text-slate-900' }, safeChild(title) || 'App')
           ),
           navItems.length > 0 && React.createElement('nav', { className: 'hidden md:flex items-center gap-6' },
             navItems.map((item, i) =>
               React.createElement('a', {
                 key: i, href: item.href || '#',
                 className: cn('text-sm font-medium transition-colors', item.active ? 'text-slate-900' : 'text-slate-600 hover:text-slate-900')
-              }, item.label)
+              }, safeChild(item.label))
             )
           )
         ),
@@ -649,9 +736,9 @@
               className: 'pl-10 h-9 w-64 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-[#5867EF]/20 focus:border-[#5867EF]'
             })
           ),
-          actions,
+          renderActionLike(actions),
           user && React.createElement('div', { className: 'w-9 h-9 rounded-full bg-[#5867EF] flex items-center justify-center text-white text-sm font-semibold' },
-            typeof user === 'string' ? user.slice(0, 2).toUpperCase() : user
+            userInitials(user)
           )
         )
       )
@@ -672,7 +759,7 @@
                 onClick: () => onSort && onSort(col.key)
               },
                 React.createElement('div', { className: 'flex items-center gap-1' },
-                  col.label,
+                  safeChild(col.label),
                   sortColumn === col.key && React.createElement('svg', { width: 12, height: 12, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2 },
                     sortDirection === 'asc' ? React.createElement('path', { d: 'M12 19V5M5 12l7-7 7 7' }) : React.createElement('path', { d: 'M12 5v14M5 12l7 7 7-7' })
                   )
@@ -686,7 +773,7 @@
             React.createElement('tr', { key: i, className: 'border-b border-slate-100 hover:bg-slate-50/50 transition-colors' },
               columns.map((col, j) =>
                 React.createElement('td', { key: j, className: 'px-4 py-3 text-sm text-slate-700' },
-                  col.render ? col.render(row[col.key], row) : (row[col.key] != null ? row[col.key] : '')
+                  safeChild(col.render ? col.render(row[col.key], row) : (row[col.key] != null ? row[col.key] : ''))
                 )
               )
             )
@@ -1206,7 +1293,7 @@
   // Export ALL AIKit/AINative Primitive components
   // ============================================================
   if (typeof window !== 'undefined') {
-    window.AIKitComponents = {
+    window.AIKitComponents = hardenAll({
       // Core AI Components
       StreamingIndicator,
       VideoPlayer,
@@ -1243,6 +1330,6 @@
       Skeleton,
       SkeletonCard,
       EmptyState,
-    };
+    });
   }
 })();
