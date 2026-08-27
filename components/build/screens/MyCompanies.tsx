@@ -13,6 +13,8 @@
 import { useEffect, useState } from 'react'
 import { useBuild } from '@/contexts/build-context'
 import { useSession } from 'next-auth/react'
+import { migrateGuestWork } from '@/lib/build/guest-migration'
+import { MenuChip } from '@/components/build/MenuChip'
 
 interface Company {
   slug: string
@@ -47,7 +49,14 @@ export function MyCompanies() {
     if (status === 'loading') return
     if (!signedIn) { setLoading(false); return }
     let alive = true
-    fetch('/api/build/my-companies')
+    // Self-heal (#49 / missing-dashboard bug): claim any UNOWNED companies this
+    // browser built (localStorage slugs → /api/build/migrate stamps the
+    // server-verified session email) BEFORE listing, so builds made before
+    // ownership stamping — or as a guest — surface here instead of vanishing.
+    // Best-effort: a migration failure never blocks the list.
+    migrateGuestWork()
+      .catch(() => null)
+      .then(() => fetch('/api/build/my-companies'))
       .then((r) => (r.ok ? r.json() : { companies: [] }))
       .then((d) => { if (alive) setCompanies(Array.isArray(d?.companies) ? d.companies : []) })
       .catch(() => { if (alive) setCompanies([]) })
@@ -87,7 +96,11 @@ export function MyCompanies() {
       <header className="m-account-head">
         <button className="m-back" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'fork' })}>← Back</button>
         <h1 className="m-artifact m-account-h">My companies</h1>
-        <button className="btn-secondary" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'fork' })}>+ New company</button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button className="btn-secondary" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'fork' })}>+ New company</button>
+          {/* Polsia-parity account MENU — present on every signed-in surface. */}
+          <MenuChip />
+        </div>
       </header>
 
       {!signedIn ? (

@@ -2,7 +2,8 @@
 
 /** Top-level pivot router (#220) — switches screens off the state machine. */
 
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
+import { useSession } from 'next-auth/react'
 import { BuildProvider, useBuild } from '@/contexts/build-context'
 import { captureAttribution } from '@/lib/build/attribution'
 import { Landing } from '@/components/build/screens/Landing'
@@ -19,12 +20,41 @@ import { MyCompanies } from '@/components/build/screens/MyCompanies'
 import { ReferEarn } from '@/components/build/screens/ReferEarn'
 
 function ScreenRouter() {
-  const { state } = useBuild()
+  const { state, dispatch } = useBuild()
+  const { status } = useSession()
+  const checkedProjects = useRef(false)
 
-  // The landing IS the front door for EVERYONE (founder direction 2026-08-27):
-  // signed-in visitors are no longer auto-redirected past it — the landing nav
-  // shows them "Open Builder →" instead of "Sign in", and any ?screen= deep link
-  // (My Builds nav, QA, resume links) still jumps straight where it points.
+  // Polsia-parity front door (founder direction 2026-08-27):
+  //   - Logged out / brand-new → the marketing landing + funnel.
+  //   - Signed in WITH builder projects → their project dashboard loads (My
+  //     Builds), like Polsia landing on /dashboard/{company}.
+  //   - Signed in with NO projects → stays on the landing/funnel (new-user path).
+  // One-shot on initial load, and ONLY from the landing — a founder who
+  // deliberately navigates into the funnel ("+ New company", Get started) is
+  // never yanked out of it. ?screen= deep links win (they move screen off
+  // 'landing' before this fetch resolves).
+  const screenRef = useRef(state.screen)
+  screenRef.current = state.screen
+  useEffect(() => {
+    if (status !== 'authenticated' || checkedProjects.current) return
+    if (state.screen !== 'landing') { checkedProjects.current = true; return }
+    checkedProjects.current = true
+    fetch('/api/build/my-companies')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        // Re-check at resolve time: if the founder already navigated (deep link,
+        // Get started, Sign in), never yank them.
+        if (
+          screenRef.current === 'landing' &&
+          Array.isArray(d?.companies) && d.companies.length > 0
+        ) {
+          dispatch({ type: 'GOTO_SCREEN', screen: 'companies' })
+        }
+      })
+      .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, state.screen])
+
   switch (state.screen) {
     case 'landing': return <Landing />
     case 'start': return <Start />

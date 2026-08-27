@@ -243,7 +243,15 @@ export function ArtifactFrame({
           {next ? (
             <button className="btn-secondary" onClick={() => goView(next as never)}>Next ›</button>
           ) : (
-            <button className="btn-secondary" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'pricing' })}>Next ›</button>
+            /* Forward-to-pricing only AFTER the founder has actually seen the
+               rendered preview (sawPreview) — navigating away mid-generation
+               unmounts Preview and aborts the in-flight app build. */
+            <button
+              className="btn-secondary"
+              disabled={!state.sawPreview}
+              title={state.sawPreview ? undefined : 'Your app preview is still building'}
+              onClick={() => state.sawPreview && dispatch({ type: 'GOTO_SCREEN', screen: 'pricing' })}
+            >Next ›</button>
           )}
         </div>
       ) : (

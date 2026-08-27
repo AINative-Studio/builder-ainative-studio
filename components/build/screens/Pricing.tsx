@@ -73,9 +73,25 @@ export function Pricing() {
       .catch(() => { /* silent — copy line only */ })
     return () => { on = false }
   }, [])
+  // Existing-subscriber recognition (#251) — the same hydration Live runs. An
+  // AINative Enterprise/paid founder reaching Pricing must be RECOGNIZED, not
+  // pitched plans they already have (their plan limits govern Builder usage).
+  useEffect(() => {
+    if (state.activePlan) return
+    fetch('/api/build/subscription/status')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d?.plan) dispatch({ type: 'SET_ACTIVE_PLAN', plan: d.plan }) })
+      .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.activePlan])
+
   // The tier the proposal cost line points at (#68) — the featured/recommended
   // plan, falling back to the first tier so the proposal always has a price.
   const featuredTier = TIERS.find((t) => t.featured) ?? TIERS[0]
+  const onPlanLabel: Record<string, string> = {
+    pro: 'Pro', business: 'Business', enterprise: 'Enterprise', cody_vcto: 'Cody · Virtual CTO',
+  }
+  const alreadyCovered = Boolean(state.activePlan)
 
   const choose = async (tier: (typeof TIERS)[number]) => {
     dispatch({ type: 'PICK_PLAN', plan: tier.plan })
@@ -168,6 +184,23 @@ export function Pricing() {
           tier for the cost line; the tiers below own checkout. */}
       <ProposalGate plan={{ id: featuredTier.id, name: featuredTier.name, monthly: featuredTier.monthly }} />
 
+      {/* Existing-subscriber recognition (#251): a founder already on an AINative
+          paid plan (Pro/Business/Enterprise) is COVERED — never pitch them tiers
+          they already have. Their plan limits govern Builder usage. */}
+      {alreadyCovered && (
+        <div className="m-cody-banner" data-testid="pricing-on-plan">
+          <p>
+            <span className="m-glyph">◇</span> You&apos;re on the AINative{' '}
+            <strong>{onPlanLabel[state.activePlan] || state.activePlan}</strong> plan — Builder is
+            covered by your existing plan limits. No new subscription needed.
+          </p>
+          <button className="btn-primary" data-testid="pricing-keep-building" onClick={backToLive}>
+            Keep building →
+          </button>
+        </div>
+      )}
+
+      {!alreadyCovered && (<>
       <div className="m-billing-toggle" data-testid="billing-toggle">
         <div className="m-billing-switch" role="group" aria-label="Billing period">
           <button
@@ -217,6 +250,7 @@ export function Pricing() {
           yearly once it&apos;s live.
         </p>
       )}
+      </>)}
       <p className="m-reassure m-mono">Real domain · real database · you own 100% · no revenue share.</p>
     </div>
   )

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
-import { useRealPreview } from '@/lib/build/useRealPreview'
+import { useRealPreview, __resetRealPreviewGens } from '@/lib/build/useRealPreview'
 
 /**
  * Tests for lib/build/useRealPreview.ts — SSE-based real preview hook.
@@ -36,6 +36,10 @@ function sseResponse(chunks: string[]): Response {
 function sseEvent(payload: unknown): string {
   return `data: ${JSON.stringify(payload)}\n\n`
 }
+
+// Generation state is MODULE-level (survives unmount by design) — reset it
+// between tests so specs reusing idea strings never re-attach to a prior run.
+beforeEach(() => __resetRealPreviewGens())
 
 // ── disabled state ───────────────────────────────────────────────────────────
 

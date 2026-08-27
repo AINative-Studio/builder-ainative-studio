@@ -5,6 +5,7 @@
 import { useBuild } from '@/contexts/build-context'
 import { LiveProof } from '@/components/build/LiveProof'
 import { LiveTicker } from '@/components/build/LiveTicker'
+import { MenuChip } from '@/components/build/MenuChip'
 import { ValueStrip } from '@/components/build/ValueStrip'
 import { FRONT_DOOR_VALUE_LINE } from '@/lib/build/front-door-value'
 import { APP_VIEWS, COMPANY_VIEWS } from '@/lib/build/state'
@@ -14,7 +15,12 @@ export function Fork() {
   return (
     <div className="modernist m-fork">
       <LiveTicker />
-      <span className="m-eyebrow">AINATIVE BUILDER</span>
+      {/* Polsia-parity account MENU, upper-right on the fork too (not just the
+          workspace act-bar) — a signed-in founder always has their menu. */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span className="m-eyebrow">AINATIVE BUILDER</span>
+        <MenuChip />
+      </div>
       <h1 className="m-h1">Don&apos;t build from scratch.</h1>
       {/* Value prop (#65): one plain line the target persona gets instantly — before any auth. */}
       <p className="m-value-line" data-testid="front-door-value-line">{FRONT_DOOR_VALUE_LINE}</p>

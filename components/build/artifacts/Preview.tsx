@@ -201,8 +201,15 @@ export function Preview() {
       )}
       {/* Fallback for the completed-MVP state when the preview frame itself
           couldn't render (error): keep the original forward path, no cost claim
-          — we don't pitch a sprint over a preview the founder can't see. */}
-      {state.builtMVP && !showUpsell && (
+          — we don't pitch a sprint over a preview the founder can't see.
+          CRITICAL GATE: never while status==='generating' — builtMVP flips when
+          the ARTIFACT sequence completes, which is before the real app build
+          finishes, so this banner used to surface mid-generation; clicking it
+          navigated to Pricing, unmounted this component, and ABORTED the
+          in-flight generation (useRealPreview cleanup). Make-it-real only
+          exists once generation has actually settled (ready → upsell above;
+          error → this fallback). */}
+      {state.builtMVP && !showUpsell && status === 'error' && (
         <div className="m-cody-banner">
           <p><span className="m-glyph">◇</span> Your MVP is live in the sandbox. Ready to put it in front of real users and build the company?</p>
           <button className="btn-primary" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'pricing' })}>Make it real →</button>

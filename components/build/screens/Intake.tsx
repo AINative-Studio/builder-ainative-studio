@@ -3,7 +3,7 @@
 /** Intake screen (#222) — capture the idea in one field. Copy verbatim from 04-SCREENS §2. */
 
 import { useState } from 'react'
-import { useSession } from 'next-auth/react'
+import { useSession, getSession } from 'next-auth/react'
 import { useBuild } from '@/contexts/build-context'
 import { trackEvent } from '@/components/analytics/google-analytics'
 import { decideLimitAction } from '@/lib/build/value-moment'
@@ -39,7 +39,17 @@ export function Intake() {
     // Stash the idea/brand and route to signup; after they register + verify and
     // land back, the deferred build fires (see build-context). Naming already
     // happened above (cheap brand call) so the signup screen can greet the company.
-    if (sessionStatus !== 'authenticated') {
+    //
+    // RACE FIX: useSession() reports 'loading' until the provider resolves — a
+    // fast submit was walled at "create your account" even though the founder
+    // WAS logged in. When the hook isn't 'authenticated' yet, resolve the
+    // session definitively before deciding; only genuinely-anonymous defers.
+    let authed = sessionStatus === 'authenticated'
+    if (!authed) {
+      const s = await getSession().catch(() => null)
+      authed = Boolean(s?.user)
+    }
+    if (!authed) {
       trackEvent('idea_gated_signup', 'funnel', state.track, undefined)
       dispatch({
         type: 'DEFER_BUILD', idea,

@@ -10,6 +10,7 @@
  */
 
 import { NextRequest } from 'next/server'
+import { auth } from '@/app/(auth)/auth'
 import { registerApp, resolveApp } from '@/lib/build/app-registry'
 import { deployPersistent } from '@/lib/build/deploy'
 import { checkAppReady } from '@/lib/build/ready-gate'
@@ -53,14 +54,35 @@ export async function POST(request: NextRequest) {
     target = { url: t.url, dnsPointable: t.dnsPointable }
   } catch { /* fall back to no deployUrl; /build/{slug} still resolves */ }
 
+  // The registry is append + latest-wins, so re-registering MUST carry the
+  // existing entry forward — otherwise a fresh row would shadow provision-time
+  // fields (zerodbProjectId, plan, domain, ownerEmail…) and silently orphan them.
+  const existing = await resolveApp(slug).catch(() => null)
+
+  // Ownership (#253 / Greg's missing-dashboard bug): stamp the signed-in
+  // founder as owner AT REGISTRATION — provisioning/checkout may never run for a
+  // free build, and an unowned entry is invisible to /api/build/my-companies.
+  // Never overwrite a DIFFERENT existing owner (no stealing).
+  let ownerEmail = existing?.ownerEmail || undefined
+  try {
+    const session = await auth()
+    const email = ((session as any)?.user?.email as string | undefined)?.trim().toLowerCase()
+    if (email) {
+      const current = (existing?.ownerEmail || '').toLowerCase()
+      if (!current || current === email) ownerEmail = email
+    }
+  } catch { /* anonymous or auth hiccup — register unowned as before */ }
+
   const ok = await registerApp({
+    ...(existing || {}),
     slug,
     chatId,
-    name: b.name ? String(b.name).slice(0, 120) : undefined,
-    tagline: b.tagline ? String(b.tagline).slice(0, 200) : undefined,
-    color: b.color ? String(b.color).slice(0, 9) : undefined,
+    ownerEmail,
+    name: b.name ? String(b.name).slice(0, 120) : existing?.name,
+    tagline: b.tagline ? String(b.tagline).slice(0, 200) : existing?.tagline,
+    color: b.color ? String(b.color).slice(0, 9) : existing?.color,
     track: b.track === 'company' ? 'company' : 'app',
-    deployUrl: target?.url,
+    deployUrl: target?.url || existing?.deployUrl,
   })
   return Response.json({ ok, deployUrl: target?.url || null, dnsPointable: target?.dnsPointable ?? false })
 }

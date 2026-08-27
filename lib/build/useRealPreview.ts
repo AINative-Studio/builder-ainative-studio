@@ -6,119 +6,155 @@
  * existing codegen + preview pipeline (/api/chat-ws → preview store →
  * /api/preview/{id}).
  *
- * On mount (once), it POSTs the idea to /api/chat-ws and reads the SSE stream
- * ONLY to learn the chatId (the `init` event) and to know when to refresh the
- * iframe (`refresh`/`files`/`error`). Generation runs server-side and populates
- * the preview store keyed by that chatId; we render /api/preview/{chatId} in the
- * browser frame. Works for anonymous/free users (server-side key).
+ * GENERATION SURVIVES NAVIGATION (founder bug 2026-08-27): the old hook aborted
+ * the /api/chat-ws stream in its unmount cleanup, so ANY navigation away from
+ * the Preview artifact mid-build — browsing artifacts after "Take the wheel",
+ * clicking toward pricing, Auto Mode — killed the in-flight app build and the
+ * founder's preview "disappeared". Generation state now lives at MODULE level,
+ * keyed by idea: the stream runs to completion regardless of what's mounted,
+ * and a remounting Preview re-attaches to the in-flight (or finished) run
+ * instead of restarting it.
  *
- * Returns { previewUrl, status, refreshKey } for the Preview component to render.
+ * Returns { previewUrl, status, chatId, files } for the Preview component.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useReducer } from 'react'
 
 type Status = 'idle' | 'generating' | 'ready' | 'error'
 
+interface Gen {
+  chatId: string | null
+  status: Status
+  files: Record<string, string> | null
+  refreshKey: number
+  listeners: Set<() => void>
+}
+
+// Module-level registry: one generation per idea for the lifetime of the page.
+const gens = new Map<string, Gen>()
+
+/** TEST-ONLY: clear the module-level registry so specs don't leak generation
+ *  state across tests (each test reuses similar idea strings). */
+export function __resetRealPreviewGens(): void {
+  gens.clear()
+}
+
+function genFor(idea: string): Gen {
+  let g = gens.get(idea)
+  if (!g) {
+    g = { chatId: null, status: 'idle', files: null, refreshKey: 0, listeners: new Set() }
+    gens.set(idea, g)
+  }
+  return g
+}
+
+function notify(g: Gen) {
+  for (const l of g.listeners) l()
+}
+
+async function runGeneration(idea: string, g: Gen): Promise<void> {
+  try {
+    const res = await fetch('/api/chat-ws', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        // Neutral framing (#291): don't force "single-page" — that biased every
+        // idea toward a single-file blob and defeated the multi-file/Sandpack
+        // path. The server's complexity analyzer decides scope: a simple idea
+        // still yields one lean file (Babel), a complex one is split into
+        // components (multi-file → Sandpack). See chat-ws multi-file emphasis.
+        message:
+          `Build a polished, working web app for this idea: ${idea}. ` +
+          `Make it interactive and visually complete with realistic sample data.`,
+      }),
+    })
+    if (!res.body) { g.status = 'error'; notify(g); return }
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+    // read the SSE stream: pull chatId from init, refresh on refresh/files
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const events = buf.split('\n\n')
+      buf = events.pop() || ''
+      for (const ev of events) {
+        const line = ev.split('\n').find((l) => l.startsWith('data:'))
+        if (!line) continue
+        let payload: any
+        try { payload = JSON.parse(line.slice(5).trim()) } catch { continue }
+        if (payload.type === 'init' && payload.chatId) {
+          g.chatId = payload.chatId
+          notify(g)
+        } else if (payload.type === 'files') {
+          // Capture the multi-file payload for the Sandpack route (#291), then
+          // trigger a refresh. Keep the latest non-empty map (a later event can
+          // supersede an earlier partial one).
+          if (payload.files && typeof payload.files === 'object' && Object.keys(payload.files).length > 0) {
+            g.files = payload.files as Record<string, string>
+          }
+          g.refreshKey += 1
+          notify(g)
+        } else if (payload.type === 'refresh') {
+          // don't flip to "ready" yet — a refresh can fire on partial/empty
+          // content. We confirm renderable content after the stream ends.
+          g.refreshKey += 1
+          notify(g)
+        } else if (payload.type === 'error') {
+          g.status = 'error'
+          notify(g)
+        }
+      }
+    }
+
+    // Stream ended. Confirm the preview actually has RENDERABLE content
+    // before showing it — the pipeline can occasionally return an empty/too-
+    // short body (e.g. a failed primary model), which /api/preview renders as
+    // "No renderable code found". Verify, and if empty, do NOT show it.
+    if (g.chatId) {
+      const ok = await previewHasContent(g.chatId)
+      if (ok) {
+        g.status = 'ready'
+        g.refreshKey += 1
+      } else if (g.status !== 'error') {
+        g.status = 'error'
+      }
+    } else if (g.status !== 'error') {
+      g.status = 'error'
+    }
+    notify(g)
+  } catch {
+    g.status = 'error'
+    notify(g)
+  }
+}
+
 export function useRealPreview(idea: string, enabled: boolean) {
-  const [chatId, setChatId] = useState<string | null>(null)
-  const [status, setStatus] = useState<Status>('idle')
-  const [refreshKey, setRefreshKey] = useState(0)
-  // Multi-file payload from the SSE `files` event (#291). Captured directly off the
-  // stream from the SAME generating instance — no cross-instance store fetch — so
-  // it's stable on multi-instance Railway. Preview.tsx routes this to Sandpack when
-  // the app is genuinely multi-file, else keeps the Babel iframe.
-  const [files, setFiles] = useState<Record<string, string> | null>(null)
-  const started = useRef(false)
+  const [, force] = useReducer((x: number) => x + 1, 0)
+  const g = useMemo(() => genFor(idea || ''), [idea])
 
   useEffect(() => {
-    if (!enabled || started.current || !idea) return
-    started.current = true
-    setStatus('generating')
+    if (!enabled || !idea) return
+    const listener = () => force()
+    g.listeners.add(listener)
+    // Kick generation once per idea; a remount RE-ATTACHES to the same run
+    // (or its finished result) instead of restarting or aborting it.
+    if (g.status === 'idle') {
+      g.status = 'generating'
+      notify(g)
+      void runGeneration(idea, g)
+    } else {
+      // Re-attached mid-flight or post-completion — sync this instance now.
+      force()
+    }
+    return () => { g.listeners.delete(listener) }
+  }, [enabled, idea, g])
 
-    const ac = new AbortController()
-    let gotChatId: string | null = null
-
-    ;(async () => {
-      try {
-        const res = await fetch('/api/chat-ws', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          signal: ac.signal,
-          body: JSON.stringify({
-            // Neutral framing (#291): don't force "single-page" — that biased every
-            // idea toward a single-file blob and defeated the multi-file/Sandpack
-            // path. The server's complexity analyzer decides scope: a simple idea
-            // still yields one lean file (Babel), a complex one is split into
-            // components (multi-file → Sandpack). See chat-ws multi-file emphasis.
-            message:
-              `Build a polished, working web app for this idea: ${idea}. ` +
-              `Make it interactive and visually complete with realistic sample data.`,
-          }),
-        })
-        if (!res.body) { setStatus('error'); return }
-
-        const reader = res.body.getReader()
-        const decoder = new TextDecoder()
-        let buf = ''
-        // read the SSE stream: pull chatId from init, refresh on refresh/files
-        for (;;) {
-          const { done, value } = await reader.read()
-          if (done) break
-          buf += decoder.decode(value, { stream: true })
-          const events = buf.split('\n\n')
-          buf = events.pop() || ''
-          for (const ev of events) {
-            const line = ev.split('\n').find((l) => l.startsWith('data:'))
-            if (!line) continue
-            let payload: any
-            try { payload = JSON.parse(line.slice(5).trim()) } catch { continue }
-            if (payload.type === 'init' && payload.chatId) {
-              gotChatId = payload.chatId
-              setChatId(payload.chatId)
-            } else if (payload.type === 'files') {
-              // Capture the multi-file payload for the Sandpack route (#291), then
-              // trigger a refresh. Keep the latest non-empty map (a later event can
-              // supersede an earlier partial one).
-              if (payload.files && typeof payload.files === 'object' && Object.keys(payload.files).length > 0) {
-                setFiles(payload.files as Record<string, string>)
-              }
-              setRefreshKey((k) => k + 1)
-            } else if (payload.type === 'refresh') {
-              // don't flip to "ready" yet — a refresh can fire on partial/empty
-              // content. We confirm renderable content after the stream ends.
-              setRefreshKey((k) => k + 1)
-            } else if (payload.type === 'error') {
-              setStatus('error')
-            }
-          }
-        }
-
-        // Stream ended. Confirm the preview actually has RENDERABLE content
-        // before showing it — the pipeline can occasionally return an empty/too-
-        // short body (e.g. a failed primary model), which /api/preview renders as
-        // "No renderable code found". Verify, and if empty, do NOT show it.
-        if (gotChatId) {
-          const ok = await previewHasContent(gotChatId, ac.signal)
-          if (ok) {
-            setStatus('ready')
-            setRefreshKey((k) => k + 1)
-          } else if (!ac.signal.aborted) {
-            setStatus('error')
-          }
-        } else if (!ac.signal.aborted) {
-          setStatus('error')
-        }
-      } catch (e) {
-        if (!ac.signal.aborted) setStatus('error')
-      }
-    })()
-
-    return () => ac.abort()
-  }, [enabled, idea])
-
-  const previewUrl = chatId && status === 'ready' ? `/api/preview/${chatId}?r=${refreshKey}` : null
+  const previewUrl = g.chatId && g.status === 'ready' ? `/api/preview/${g.chatId}?r=${g.refreshKey}` : null
   // `files` is exposed so Preview.tsx can route a multi-file app to Sandpack (#291).
-  return { previewUrl, status, chatId, files }
+  return { previewUrl, status: g.status, chatId: g.chatId, files: g.files }
 }
 
 /**
@@ -127,9 +163,9 @@ export function useRealPreview(idea: string, enabled: boolean) {
  * usable. We treat that stub — and any suspiciously tiny body — as "not ready"
  * so the Preview shows a building/retry state instead of a broken frame.
  */
-async function previewHasContent(id: string, signal: AbortSignal): Promise<boolean> {
+async function previewHasContent(id: string): Promise<boolean> {
   try {
-    const res = await fetch(`/api/preview/${id}`, { signal })
+    const res = await fetch(`/api/preview/${id}`)
     if (!res.ok) return false
     const html = await res.text()
     if (/No renderable code found/i.test(html)) return false

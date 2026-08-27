@@ -14,6 +14,7 @@ import { trackMeta } from '@/components/analytics/meta-pixel'
 import { useLiveProof } from '@/lib/build/useLiveProof'
 import { buildSystems, type BusinessSystem } from '@/lib/build/business-systems'
 import { DomainModal } from '@/components/build/DomainModal'
+import { MenuChip } from '@/components/build/MenuChip'
 import { planUnlocks, type ActivePlan } from '@/lib/build/state'
 import { useSession } from 'next-auth/react'
 import { SystemStatusBadge } from '@/components/build/SystemStatusBadge'
@@ -459,6 +460,8 @@ export function Live() {
           <a className="m-mono m-live-url" href={liveHref} target="_blank" rel="noreferrer">
             {appReady ? `${customDomain ? 'Live at ' : ''}${liveLabel} ↗` : 'building your site…'}
           </a>
+          {/* Polsia-parity account MENU on the operating dashboard. */}
+          <MenuChip />
         </div>
       </header>
 

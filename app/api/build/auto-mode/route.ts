@@ -42,7 +42,8 @@ import {
 } from '@/lib/build/auto-mode'
 import { enrollCompany, setLoopEnabled } from '@/lib/build/loop-enrollment'
 import { runNightlyLoop } from '@/lib/build/autonomous-loop'
-import { planUnlocks, type ActivePlan } from '@/lib/build/state'
+import { planUnlocks } from '@/lib/build/state'
+import { resolveActivePlan } from '@/lib/ainative/active-plan'
 import { logger } from '@/lib/logger'
 
 export const runtime = 'nodejs'
@@ -67,15 +68,15 @@ async function ownerKeyFromSession(): Promise<string> {
 }
 
 /**
- * Resolve whether Auto Mode is unlocked for this caller. Reads the verified plan
- * from the subscription status endpoint's underlying source is out of scope here;
- * we accept the plan passed by the (already plan-aware) client but re-gate on the
- * server so a spoofed body can only DOWNGRADE, never upgrade — the run itself is
- * still safe because dispatch requires the platform API key regardless.
+ * Resolve whether Auto Mode is unlocked for this caller — SERVER-side, from the
+ * session → core /auth/me (resolveActivePlan). The old check gated on
+ * `body.plan`, which the panel never sent, so EVERY founder — including
+ * Enterprise/admin — got `not_paid` and was bounced to pricing. The client body
+ * is never consulted for entitlement.
  */
-function isGated(plan: unknown): boolean {
-  const p = (typeof plan === 'string' ? plan : '') as ActivePlan
-  return !planUnlocks(p).nightlyLoop
+async function isGated(): Promise<boolean> {
+  const { plan } = await resolveActivePlan()
+  return !planUnlocks(plan).nightlyLoop
 }
 
 /** GET — current run + live progress + cost catalog. Never 500s. */
@@ -127,8 +128,9 @@ export async function POST(request: NextRequest) {
   }
 
   // ---- START ------------------------------------------------------------
-  // Plan gate (#58 req 5): bounded auto-run is Business+ (same unlock as nightly).
-  if (isGated(body.plan)) {
+  // Plan gate (#58 req 5): bounded auto-run is Business+ (same unlock as nightly),
+  // resolved SERVER-side from the session — never from the request body.
+  if (await isGated()) {
     return Response.json({ ok: false, reason: 'not_paid' }, { status: 200 })
   }
 

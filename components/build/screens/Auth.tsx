@@ -80,7 +80,17 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
       dispatch({ type: 'SET_RUNWAY_NOTE', note: runwayNote })
       return
     }
-    go(state.appSub ? 'live' : 'fork')
+    // Polsia-parity landing (founder direction 2026-08-27): a returning founder
+    // logs in and lands on THEIR PROJECTS (My Builds dashboard) — the Fork/new-
+    // build funnel is only for accounts with no builder projects yet. An active
+    // in-browser build (appSub) still resumes on its Live screen first.
+    if (state.appSub) { go('live'); return }
+    try {
+      const r = await fetch('/api/build/my-companies')
+      const d = r.ok ? await r.json() : null
+      if (Array.isArray(d?.companies) && d.companies.length > 0) { go('companies'); return }
+    } catch { /* fall through to the new-user path */ }
+    go('fork')
   }
 
   // #74 — enter the "verify your email" state: stop treating the user as logged
