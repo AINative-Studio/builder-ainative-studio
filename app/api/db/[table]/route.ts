@@ -1,20 +1,51 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { verifyAppDataToken } from '@/lib/build/app-data-token'
 
 /**
- * ZeroDB Proxy API — allows generated apps to do CRUD without exposing API key.
+ * ZeroDB Proxy API — lets a generated app do CRUD without exposing an API key.
  *
  * GET  /api/db/{table}         → list/query rows
  * POST /api/db/{table}         → insert row
  * PUT  /api/db/{table}?id=xxx  → update row
  * DELETE /api/db/{table}?id=xxx → delete row
  *
- * Guest users get the shared builder project.
- * Signed-in users could get their own project (future).
+ * SECURITY (#331): the app's data is scoped to ITS OWN ZeroDB project via a signed
+ * per-app DATA TOKEN (lib/build/app-data-token), NOT a shared project and NOT a
+ * client-supplied slug. resolveProject() verifies the token server-side and returns
+ * the bound projectId; a missing/forged token FAILS CLOSED to the shared default
+ * ONLY for the legacy/unprovisioned case (documented). This closes the cross-tenant
+ * IDOR (a caller can't target another company by naming its slug — they'd need that
+ * company's unguessable signed token).
  */
 
 const ZERODB_API = 'https://api.ainative.studio/api'
-const PROJECT_ID = process.env.ZERODB_PROJECT_ID || '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
+const SHARED_PROJECT_ID = process.env.ZERODB_PROJECT_ID || '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
 const API_KEY = process.env.ZERODB_API_KEY || ''
+
+/**
+ * Resolve the ZeroDB project for THIS request from the per-app data token (#331).
+ * Token sources (server-verified, never a raw slug): Authorization: Bearer <token>,
+ * x-ainative-db-token header, or ?t= query. Returns the token-bound projectId when
+ * valid. For an ABSENT token we fall back to the shared project (legacy/unprovisioned
+ * apps generated before tokens) — but a PRESENT-but-INVALID token FAILS CLOSED (null)
+ * so a forged token never silently reads the shared pool. Callers treat null as 401.
+ */
+function resolveProject(request: NextRequest): { projectId: string } | null {
+  const auth = request.headers.get('authorization') || ''
+  const bearer = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : ''
+  const token =
+    bearer ||
+    request.headers.get('x-ainative-db-token') ||
+    request.nextUrl.searchParams.get('t') ||
+    ''
+  if (!token) {
+    // No token at all → legacy/unprovisioned app → shared project (documented).
+    return { projectId: SHARED_PROJECT_ID }
+  }
+  const payload = verifyAppDataToken(token)
+  if (!payload) return null // present but invalid/forged → FAIL CLOSED
+  return { projectId: payload.projectId }
+}
 
 /**
  * Normalize a raw ZeroDB row into the FLAT shape generated apps expect.
@@ -83,9 +114,9 @@ async function zerodbFetch(method: string, path: string, body?: any) {
 }
 
 // Ensure table exists (auto-create on first use)
-async function ensureTable(table: string) {
+async function ensureTable(table: string, projectId: string) {
   try {
-    await fetch(`${ZERODB_API}/v1/projects/${PROJECT_ID}/database/tables`, {
+    await fetch(`${ZERODB_API}/v1/projects/${projectId}/database/tables`, {
       method: 'POST',
       headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify({ table_name: table }),
@@ -96,11 +127,18 @@ async function ensureTable(table: string) {
   }
 }
 
+/** 401 response for a present-but-invalid per-app token (#331 fail-closed). */
+const UNAUTHORIZED = () =>
+  NextResponse.json({ error: 'invalid or missing app data token' }, { status: 401 })
+
 // GET /api/db/{table} — list or query rows
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ table: string }> }
 ) {
+  const scope = resolveProject(request)
+  if (!scope) return UNAUTHORIZED()
+  const PROJECT_ID = scope.projectId
   const { table } = await params
   const searchParams = request.nextUrl.searchParams
   const limit = searchParams.get('limit') || '50'
@@ -145,11 +183,14 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ table: string }> }
 ) {
+  const scope = resolveProject(request)
+  if (!scope) return UNAUTHORIZED()
+  const PROJECT_ID = scope.projectId
   const { table } = await params
   const body = await request.json()
 
   // Auto-create table on first insert
-  await ensureTable(table)
+  await ensureTable(table, PROJECT_ID)
 
   // Support both single row and batch
   if (Array.isArray(body)) {
@@ -177,6 +218,9 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ table: string }> }
 ) {
+  const scope = resolveProject(request)
+  if (!scope) return UNAUTHORIZED()
+  const PROJECT_ID = scope.projectId
   const { table } = await params
   const rowId = request.nextUrl.searchParams.get('id')
   if (!rowId) {
@@ -194,6 +238,9 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ table: string }> }
 ) {
+  const scope = resolveProject(request)
+  if (!scope) return UNAUTHORIZED()
+  const PROJECT_ID = scope.projectId
   const { table } = await params
   const rowId = request.nextUrl.searchParams.get('id')
   if (!rowId) {
