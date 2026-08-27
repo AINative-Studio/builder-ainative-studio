@@ -22,6 +22,9 @@ export interface PersistInput {
   status: 'success' | 'degraded' | 'error'
   /** Whether the served code passed validation. */
   valid: boolean
+  /** Parsed multi-file map (#333) — persisted durably so multi-file apps can
+   *  restore the Sandpack path after the live SSE stream is gone. */
+  files?: Record<string, string>
 }
 
 export interface PersistResult {
@@ -38,6 +41,7 @@ export type SaveFn = (data: {
   codeLength: number
   category?: string
   isShowcase?: boolean
+  files?: Record<string, string>
 }) => Promise<boolean>
 
 /**
@@ -66,6 +70,9 @@ export async function persistGeneration(
     model: input.model,
     codeLength: input.code.length,
     category: 'general',
+    // The multi-file map rides along when present (#333) — saveGeneration
+    // enforces the row-size ceiling and drops it (logged) when oversized.
+    files: input.files && Object.keys(input.files).length > 0 ? input.files : undefined,
     // Surface only successful, validated, substantial generations to the showcase.
     // The showcase quality gate (isQualityApp) also requires >= 2000 chars, so
     // flagging short code as isShowcase here is misleading — it would still be

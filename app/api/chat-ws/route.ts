@@ -32,6 +32,7 @@ import { mergeChunks, getMergeSummary } from '@/lib/agent/chunk-merger'
 import { generateAINativeFileSet } from '@/lib/ainative-file-generator'
 import { selectTheme, formatThemeForPrompt, applyThemeToPrompt } from '@/lib/theme-system'
 import { parseMultiFileOutput } from '@/lib/multi-file-parser'
+import { shouldUseSandpack } from '@/lib/build/preview-engine'
 import { storeFiles as storeFilesV2 } from '@/lib/preview-store-v2'
 import { logModelConfiguration } from '@/lib/config/model-validator'
 import { isClaudeAgentEnabled, isClaudeAgentFallbackEnabled, runHeadlessAgent } from '@/lib/agent/claude-agent'
@@ -1458,7 +1459,13 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               const { saveGeneration } = await import('@/lib/zerodb-store')
               const { persistGeneration } = await import('@/lib/generation-persist')
               const pr = await persistGeneration(
-                { chatId: responseId, prompt: message, code: finalContent, model: requestedModel || DEFAULT_MODEL, status: 'success', valid: validation.valid },
+                // files (#333): persist the parsed multi-file map alongside the
+                // blob so multi-file apps can restore the Sandpack path from the
+                // durable store after the live SSE stream is gone. Only when the
+                // app actually QUALIFIES for Sandpack — single-file apps (whose
+                // map is just the AX scaffold) stay lean, Babel restores them
+                // from generated_code alone.
+                { chatId: responseId, prompt: message, code: finalContent, model: requestedModel || DEFAULT_MODEL, status: 'success', valid: validation.valid, files: shouldUseSandpack(parsedFiles) ? parsedFiles : undefined },
                 saveGeneration,
               )
               console.log(`[PERSIST] success path: ${pr.reason}`)

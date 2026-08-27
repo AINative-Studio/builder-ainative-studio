@@ -132,7 +132,7 @@ export function Landing() {
           {/* beat 2 — Builder is your team */}
           <div className="m-land-beat" style={{ opacity: beat2, pointerEvents: beat2 > 0.5 ? 'auto' : 'none' }}>
             <div className="m-land-beat" style={{ background: 'var(--color-bg)' }} />
-            <div className="m-land-beat" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', alignItems: 'center', gap: '6vw', padding: '0 8vw' }}>
+            <div className="m-land-beat m-land-beat2-grid">
               <div>
                 <h2 className="m-land-title" style={{ fontSize: 'clamp(30px,4.5vw,52px)', margin: '0 0 26px' }}>Builder is your team.</h2>
                 <div style={{ display: 'grid', gap: 14 }}>
@@ -144,7 +144,7 @@ export function Landing() {
                   <div className="m-land-title" style={{ fontSize: 18 }}>One partner. Every act.</div>
                 </div>
               </div>
-              <img className="m-land-photo" alt="" style={{ position: 'static', height: '64vh' }}
+              <img className="m-land-photo m-land-beat2-photo" alt=""
                 src="https://images.unsplash.com/photo-1522071820081-009f0129c71c?w=1200&q=60&auto=format" />
             </div>
           </div>

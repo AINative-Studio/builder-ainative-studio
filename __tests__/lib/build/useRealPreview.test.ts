@@ -37,6 +37,15 @@ function sseEvent(payload: unknown): string {
   return `data: ${JSON.stringify(payload)}\n\n`
 }
 
+/**
+ * The files-rehydrate call (#333): when the stream ends without a usable
+ * `files` payload, the hook fetches /api/generation/{id}/files. A 404 is the
+ * normal single-file answer — this mocks that response.
+ */
+function filesNotFound(): Response {
+  return { ok: false, status: 404, json: async () => ({ files: null }) } as unknown as Response
+}
+
 // Generation state is MODULE-level (survives unmount by design) — reset it
 // between tests so specs reusing idea strings never re-attach to a prior run.
 beforeEach(() => __resetRealPreviewGens())
@@ -78,7 +87,9 @@ describe('useRealPreview — happy path (init + ready)', () => {
         sseEvent({ type: 'refresh' }),
         sseEvent({ type: 'files' }),
       ]))
-      // Call 2: previewHasContent verification
+      // Call 2: files-rehydrate (#333) — 404 = single-file app
+      .mockResolvedValueOnce(filesNotFound())
+      // Call 3: previewHasContent verification
       .mockResolvedValueOnce({
         ok: true,
         text: async () => '<html>lots of real content'.padEnd(900, 'x') + '</html>',
@@ -90,10 +101,11 @@ describe('useRealPreview — happy path (init + ready)', () => {
     await waitFor(() => expect(result.current.status).toBe('ready'), { timeout: 3000 })
     expect(result.current.chatId).toBe('chat-abc')
     expect(result.current.previewUrl).toContain('/api/preview/chat-abc')
-    // Verify both fetch calls happened: POST to chat-ws + GET to /api/preview/chat-abc
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    // Verify the fetch sequence: POST chat-ws → GET files rehydrate → GET /api/preview/chat-abc
+    expect(fetchMock).toHaveBeenCalledTimes(3)
     expect((fetchMock.mock.calls[0][0] as string)).toContain('chat-ws')
-    expect((fetchMock.mock.calls[1][0] as string)).toContain('chat-abc')
+    expect((fetchMock.mock.calls[1][0] as string)).toContain('/api/generation/chat-abc/files')
+    expect((fetchMock.mock.calls[2][0] as string)).toContain('/api/preview/chat-abc')
   })
 
   it('previewUrl includes a refreshKey query param', async () => {
@@ -101,6 +113,7 @@ describe('useRealPreview — happy path (init + ready)', () => {
       .mockResolvedValueOnce(sseResponse([
         sseEvent({ type: 'init', chatId: 'chat-xyz' }),
       ]))
+      .mockResolvedValueOnce(filesNotFound())
       .mockResolvedValueOnce({
         ok: true,
         text: async () => 'x'.padEnd(900),
@@ -110,6 +123,30 @@ describe('useRealPreview — happy path (init + ready)', () => {
     const { result } = renderHook(() => useRealPreview('Music player', true))
     await waitFor(() => expect(result.current.status).toBe('ready'), { timeout: 3000 })
     expect(result.current.previewUrl).toMatch(/\?r=\d+/)
+  })
+
+  it('rehydrates the files map from the durable endpoint when the SSE stream had none (#333)', async () => {
+    const files = {
+      '/src/App.tsx': `import S from './components/S'\nexport default function App(){ return <S/> }`,
+      '/src/components/S.tsx': `export default function S(){ return <aside/> }`,
+    }
+    const fetchMock = vi.fn()
+      // SSE stream ends WITHOUT a files payload (cut stream / proxy drop)
+      .mockResolvedValueOnce(sseResponse([
+        sseEvent({ type: 'init', chatId: 'chat-rehydrate' }),
+      ]))
+      // files-rehydrate returns the durable map
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ files }) } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => 'x'.padEnd(900),
+      } as unknown as Response)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useRealPreview('Beacon crossposter', true))
+    await waitFor(() => expect(result.current.status).toBe('ready'), { timeout: 3000 })
+    expect(result.current.files).toEqual(files)
+    expect((fetchMock.mock.calls[1][0] as string)).toBe('/api/generation/chat-rehydrate/files')
   })
 })
 
@@ -137,6 +174,7 @@ describe('useRealPreview — error paths', () => {
         sseEvent({ type: 'init', chatId: 'chat-err' }),
         sseEvent({ type: 'error', message: 'codegen failed' }),
       ]))
+      .mockResolvedValueOnce(filesNotFound())
       .mockResolvedValueOnce({
         ok: true,
         text: async () => '<html>' + 'x'.repeat(200) + '</html>',
@@ -163,6 +201,7 @@ describe('useRealPreview — error paths', () => {
       .mockResolvedValueOnce(sseResponse([
         sseEvent({ type: 'init', chatId: 'chat-empty' }),
       ]))
+      .mockResolvedValueOnce(filesNotFound())
       .mockResolvedValueOnce({
         ok: true,
         text: async () => '<html>No renderable code found</html>',
@@ -177,6 +216,7 @@ describe('useRealPreview — error paths', () => {
       .mockResolvedValueOnce(sseResponse([
         sseEvent({ type: 'init', chatId: 'chat-short' }),
       ]))
+      .mockResolvedValueOnce(filesNotFound())
       .mockResolvedValueOnce({
         ok: true,
         text: async () => '<html>tiny</html>',
@@ -191,6 +231,7 @@ describe('useRealPreview — error paths', () => {
       .mockResolvedValueOnce(sseResponse([
         sseEvent({ type: 'init', chatId: 'chat-404' }),
       ]))
+      .mockResolvedValueOnce(filesNotFound())
       .mockResolvedValueOnce({
         ok: false,
         status: 404,
@@ -213,6 +254,7 @@ describe('useRealPreview — SSE event parsing', () => {
         'data: {bad json}\n\n',
         sseEvent({ type: 'init', chatId: 'chat-recover' }),
       ]))
+      .mockResolvedValueOnce(filesNotFound())
       .mockResolvedValueOnce({
         ok: true,
         text: async () => 'x'.padEnd(900),
@@ -229,6 +271,7 @@ describe('useRealPreview — SSE event parsing', () => {
         'event: ping\n\n', // no data: line
         sseEvent({ type: 'init', chatId: 'chat-noping' }),
       ]))
+      .mockResolvedValueOnce(filesNotFound())
       .mockResolvedValueOnce({
         ok: true,
         text: async () => 'x'.padEnd(900),
@@ -243,6 +286,7 @@ describe('useRealPreview — SSE event parsing', () => {
       .mockResolvedValueOnce(sseResponse([
         sseEvent({ type: 'init', chatId: 'chat-once' }),
       ]))
+      .mockResolvedValueOnce(filesNotFound())
       .mockResolvedValueOnce({
         ok: true,
         text: async () => 'x'.padEnd(900),
@@ -257,7 +301,7 @@ describe('useRealPreview — SSE event parsing', () => {
 
     rerender({ idea: 'An idea', enabled: true })
     await act(async () => {})
-    // `started` ref prevents a second fetch
-    expect(fetchMock).toHaveBeenCalledTimes(2) // still just the original 2
+    // `started` ref prevents a second generation run
+    expect(fetchMock).toHaveBeenCalledTimes(3) // still just the original run's 3
   })
 })

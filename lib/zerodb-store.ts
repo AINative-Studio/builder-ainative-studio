@@ -67,6 +67,13 @@ async function zerodbRequest(
 }
 
 /**
+ * Max serialized size of the multi-file map persisted alongside generatedCode
+ * (#333). ZeroDB rows have a practical size ceiling — beyond ~800KB we skip the
+ * files map (with a logged note) rather than risk failing the whole row write.
+ */
+const MAX_FILES_JSON_BYTES = 800_000
+
+/**
  * Save a generation to ZeroDB (fire-and-forget)
  */
 export async function saveGeneration(data: {
@@ -79,6 +86,9 @@ export async function saveGeneration(data: {
   title?: string
   isShowcase?: boolean
   ssrHtml?: string
+  /** Parsed multi-file map (#333) — persisted as files_json so the Sandpack
+   *  path works from the durable store, not just the live SSE stream. */
+  files?: Record<string, string>
 }): Promise<boolean> {
   try {
     const row: Record<string, any> = {
@@ -93,6 +103,20 @@ export async function saveGeneration(data: {
       created_at: new Date().toISOString(),
     }
     if (data.ssrHtml) row.ssr_html = data.ssrHtml
+    if (data.files && Object.keys(data.files).length > 0) {
+      try {
+        const filesJson = JSON.stringify(data.files)
+        if (filesJson.length <= MAX_FILES_JSON_BYTES) {
+          row.files_json = filesJson
+        } else {
+          console.warn(
+            `[ZeroDB] files map for ${data.chatId} is ${filesJson.length}B > ${MAX_FILES_JSON_BYTES}B — skipping durable files persist (row size limit); generated_code blob still saved`,
+          )
+        }
+      } catch {
+        /* unserializable files map — persist the code without it */
+      }
+    }
 
     const result = await zerodbRequest(
       'POST',
@@ -114,7 +138,13 @@ export async function saveGeneration(data: {
 /**
  * Load a generation by chatId from ZeroDB
  */
-export async function loadGeneration(chatId: string): Promise<{ prompt: string; generatedCode: string; ssrHtml?: string } | null> {
+export async function loadGeneration(chatId: string): Promise<{
+  prompt: string
+  generatedCode: string
+  ssrHtml?: string
+  /** Durable multi-file map (#333), when one was persisted. */
+  files?: Record<string, string> | null
+} | null> {
   try {
     // Use ZeroDB query endpoint with server-side filtering by chat_id
     const result = await zerodbRequest(
@@ -127,10 +157,21 @@ export async function loadGeneration(chatId: string): Promise<{ prompt: string; 
     if (rows.length > 0) {
       const row = rows[0].row_data || rows[0]
       console.log(`[ZeroDB] Loaded generation ${chatId} (${row.code_length || '?'} chars)`)
+      // Rehydrate the durable files map (#333) — tolerate absent/corrupt JSON.
+      let files: Record<string, string> | null = null
+      if (typeof row.files_json === 'string' && row.files_json.length > 0) {
+        try {
+          const parsed = JSON.parse(row.files_json)
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) files = parsed
+        } catch {
+          /* corrupt files_json — the generated_code blob is still usable */
+        }
+      }
       return {
         prompt: row.prompt,
         generatedCode: row.generated_code,
         ssrHtml: row.ssr_html,
+        files,
       }
     }
     return null

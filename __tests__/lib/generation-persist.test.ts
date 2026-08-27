@@ -84,4 +84,19 @@ describe('persistGeneration (#89)', () => {
     await persistGeneration({ ...base, code: 'x'.repeat(2000), valid: false }, save)
     expect(save.mock.calls[0][0].isShowcase).toBe(false)
   })
+
+  it('passes the multi-file map through to save (#333)', async () => {
+    const save = vi.fn().mockResolvedValue(true)
+    const files = { '/src/App.tsx': 'a', '/src/components/S.tsx': 'b' }
+    await persistGeneration({ ...base, files }, save)
+    expect(save.mock.calls[0][0].files).toEqual(files)
+  })
+
+  it('omits files when absent or empty (#333)', async () => {
+    const save = vi.fn().mockResolvedValue(true)
+    await persistGeneration(base, save)
+    expect(save.mock.calls[0][0].files).toBeUndefined()
+    await persistGeneration({ ...base, files: {} }, save)
+    expect(save.mock.calls[1][0].files).toBeUndefined()
+  })
 })

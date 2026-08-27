@@ -15,6 +15,8 @@
  * agent-triggered call all agree on the numbers.
  */
 
+import { appendRecentEvent, type AutoRunEvent } from '@/lib/build/auto-run-activity'
+
 /** Reuses the SAME table as the nightly loop (#207); Auto Mode rows carry kind: 'auto'. */
 const TABLE = 'builder_loop_enrollments'
 
@@ -231,6 +233,18 @@ export interface AutoRun {
   stoppedAt?: string | null
   /** Owner key (server-derived) so the run is scoped like every other store. */
   ownerKey?: string
+  /**
+   * Event trail (#340): the last MAX_RECENT_EVENTS things this run actually did
+   * (task dispatched / shipped / failed), appended by the dispatch path. Rides
+   * along on GET /api/build/auto-mode automatically — the Live swarm card + the
+   * per-company ribbon read it. Absent on pre-#340 rows.
+   */
+  recentEvents?: AutoRunEvent[]
+  /**
+   * Set when a row is an event-append update of the SAME run — later than
+   * startedAt so latestAutoRun picks the freshest snapshot of the run.
+   */
+  updatedAt?: string | null
 }
 
 function rowsUrl(): string {
@@ -295,6 +309,9 @@ export async function stopAutoRun(input: {
     expiresAt: current?.expiresAt ?? null,
     stoppedAt: new Date(now).toISOString(),
     ownerKey: input.ownerKey ?? current?.ownerKey,
+    // Carry the event trail (#340) onto the stop row so the run's history
+    // survives the stop snapshot (the latest row always wins).
+    recentEvents: current?.recentEvents,
   }
   try {
     const res = await fetch(rowsUrl(), {
@@ -328,12 +345,49 @@ export async function getAutoRun(companyId: string): Promise<AutoRun | null> {
 /**
  * Pick the most recent 'auto' row for a company from a list of row_data. Pure so
  * it's unit-tested directly. Latest by the row's own timestamp (stoppedAt for a
- * stop row, else startedAt) — so a fresh stop always supersedes its start.
+ * stop row, else updatedAt for an event-append row (#340), else startedAt) — so
+ * a fresh stop always supersedes its start, and an event append supersedes the
+ * plain start row it snapshots.
  */
 export function latestAutoRun(rows: AutoRun[], companyId: string): AutoRun | null {
   const mine = rows.filter((r) => r?.kind === 'auto' && r.companyId === companyId)
   if (!mine.length) return null
-  const stamp = (r: AutoRun) => new Date(r.stoppedAt || r.startedAt || 0).getTime()
+  const stamp = (r: AutoRun) => new Date(r.stoppedAt || r.updatedAt || r.startedAt || 0).getTime()
   mine.sort((a, b) => stamp(b) - stamp(a))
   return mine[0]
+}
+
+/**
+ * Append a run event (#340) to the ACTIVE run's recentEvents ring buffer — the
+ * dispatch path calls this wherever a task is dispatched (auto-mode start's
+ * immediate dispatch + the nightly-loop cron tick). Appends a NEW row that
+ * snapshots the run with the event added and updatedAt bumped, so the latest
+ * row (by stamp) always carries the full trail. No-op (null) when there is no
+ * ACTIVE run for the company — a plain nightly enrollment without Auto Mode
+ * never grows a trail. Best-effort: never throws.
+ */
+export async function appendAutoRunEvent(
+  companyId: string,
+  event: AutoRunEvent,
+  nowMs?: number,
+): Promise<AutoRun | null> {
+  if (!autoModeConfigured() || !companyId) return null
+  const now = nowMs ?? Date.now()
+  const current = await getAutoRun(companyId)
+  if (!current || !runProgress(current, now).running) return null
+  const updated: AutoRun = {
+    ...current,
+    recentEvents: appendRecentEvent(current.recentEvents, event),
+    updatedAt: new Date(now).toISOString(),
+  }
+  try {
+    const res = await fetch(rowsUrl(), {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ row_data: updated }),
+      signal: AbortSignal.timeout(20000),
+    })
+    return res.ok ? updated : null
+  } catch {
+    return null
+  }
 }

@@ -38,8 +38,10 @@ import {
   startAutoRun,
   stopAutoRun,
   getAutoRun,
+  appendAutoRunEvent,
   type AutoDuration,
 } from '@/lib/build/auto-mode'
+import { dispatchEventTitle } from '@/lib/build/auto-run-activity'
 import { enrollCompany, setLoopEnabled } from '@/lib/build/loop-enrollment'
 import { runNightlyLoop } from '@/lib/build/autonomous-loop'
 import { planUnlocks } from '@/lib/build/state'
@@ -164,6 +166,14 @@ export async function POST(request: NextRequest) {
     try {
       const r = await runNightlyLoop({ companyId, companyName, track })
       firstTaskId = r.taskId
+      // Event trail (#340): record what this run just did on the AutoRun record
+      // so the Live swarm card + per-company ribbon show the founder's OWN
+      // agents' activity. Honest — grounded in the real dispatch result.
+      await appendAutoRunEvent(companyId, {
+        ts: new Date().toISOString(),
+        title: dispatchEventTitle({ track, taskId: r.taskId }),
+        status: r.status === 'dispatched' ? 'dispatched' : 'failed',
+      }).catch(() => {})
     } catch (err) {
       logger.warn('auto-mode first dispatch failed', { companyId, err: (err as Error)?.message })
     }

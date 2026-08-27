@@ -8,6 +8,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { listEnrolled, recordRun } from '@/lib/build/loop-enrollment'
 import { runNightlyLoop } from '@/lib/build/autonomous-loop'
+import { appendAutoRunEvent } from '@/lib/build/auto-mode'
+import { dispatchEventTitle } from '@/lib/build/auto-run-activity'
 import { chatScopeKey } from '@/lib/build/chat-store'
 import { createDocument } from '@/lib/build/document-store'
 import { buildDailyReport, dailyReportTitle } from '@/lib/build/document-prompts'
@@ -37,6 +39,18 @@ export async function GET(request: NextRequest) {
         companyId: e.companyId, companyName: e.companyName, track: e.track, goal: e.goal,
       })
       await recordRun(e.companyId, r.taskId, r.status)
+
+      // Event trail (#340): when an Auto Mode run is ACTIVE for this company,
+      // append this dispatch to its recentEvents ring so the founder's Live
+      // dashboard shows the run's real activity. No-op for plain nightly
+      // enrollments (appendAutoRunEvent only writes to an active run).
+      if (r.status !== 'skipped') {
+        await appendAutoRunEvent(e.companyId, {
+          ts: new Date().toISOString(),
+          title: dispatchEventTitle({ track: e.track, taskId: r.taskId }),
+          status: r.status === 'dispatched' ? 'dispatched' : 'failed',
+        }).catch(() => {})
+      }
 
       // Append a dated daily operational report to the company's Documents library
       // (#64 req 4). Grounded ENTIRELY in this run's REAL result (task id, status,

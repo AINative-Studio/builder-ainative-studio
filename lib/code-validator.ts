@@ -1634,6 +1634,7 @@ export interface ParseGateResult {
     | 'unresolved_component'
     | 'object_as_child'
     | 'undefined_reference'
+    | 'missing_local_import'
   /** Human-readable error (the validator's message), when ok === false. */
   error?: string
 }

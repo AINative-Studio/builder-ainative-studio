@@ -9,35 +9,62 @@
  * retrying" state rather than shipping a Syntax-Error page or an empty frame (the
  * quad college-social-app bug).
  *
+ * builder#333 adds the COMPLETENESS GATE on top: a truncated multi-file
+ * generation (the beacon repro — App imports Analytics but the stream was cut
+ * before Analytics was emitted) can pass the parse gate file-by-file yet still
+ * be unshippable. findMissingLocalImports proves the payload actually contains
+ * every local component it imports; a flagged app is treated exactly like a
+ * parse failure (422 → client auto-retries) instead of persisting a broken app.
+ *
  * The gate resolves code from the SAME sources the /api/preview/[id] renderer uses,
  * so its verdict matches what the browser will actually try to run.
  */
 
 import { getPreview } from '@/lib/preview-store'
+import { getFiles as getFilesV2 } from '@/lib/preview-store-v2'
 import { isRenderable, type ParseGateResult } from '@/lib/code-validator'
+import { findMissingLocalImports } from '@/lib/build/completeness-gate'
 
 export interface ReadyCheck extends ParseGateResult {
   /** True when we found stored code to check. False → cannot verify (fail-open). */
   checked: boolean
 }
 
+interface StoredApp {
+  code: string
+  /** The multi-file map when one is available (in-memory V2 store or durable files_json). */
+  files: Record<string, string> | null
+}
+
 /**
- * Resolve a chatId's stored generated code from the durable/in-memory stores.
- * In-memory preview store is fastest; ZeroDB is the durable source of truth that
- * survives restarts (register-app can run long after generation, in another
- * process). Returns the raw content (markdown / multi-file blob / raw code) or null.
+ * Resolve a chatId's stored generated code (and, when available, its multi-file
+ * map) from the durable/in-memory stores. In-memory preview store is fastest;
+ * ZeroDB is the durable source of truth that survives restarts (register-app
+ * can run long after generation, in another process). Returns null if neither
+ * store has content.
  */
-async function resolveStoredCode(chatId: string): Promise<string | null> {
+async function resolveStoredApp(chatId: string): Promise<StoredApp | null> {
+  // The in-memory V2 store holds the parsed files map from this instance's
+  // generation — best-effort in both branches (never required).
+  let memFiles: Record<string, string> | null = null
+  try {
+    memFiles = getFilesV2(chatId)
+  } catch {
+    /* files map unavailable — the code-only checks still run */
+  }
+
   // 1) In-memory preview store (populated during generation / on prior render).
   const mem = getPreview(chatId)
-  if (mem && mem.trim()) return mem
+  if (mem && mem.trim()) return { code: mem, files: memFiles }
 
   // 2) Durable ZeroDB copy. Dynamic import keeps this off the hot path and avoids
   //    pulling the ZeroDB client into modules that never need it.
   try {
     const { loadGeneration } = await import('@/lib/zerodb-store')
     const gen = await loadGeneration(chatId)
-    if (gen?.generatedCode && gen.generatedCode.trim()) return gen.generatedCode
+    if (gen?.generatedCode && gen.generatedCode.trim()) {
+      return { code: gen.generatedCode, files: gen.files || memFiles }
+    }
   } catch {
     /* durable store unavailable — fall through to fail-open */
   }
@@ -56,11 +83,27 @@ async function resolveStoredCode(chatId: string): Promise<string | null> {
  * validation is the primary guard and this is defense-in-depth.
  */
 export async function checkAppReady(chatId: string): Promise<ReadyCheck> {
-  const code = await resolveStoredCode(chatId)
-  if (code === null) {
+  const stored = await resolveStoredApp(chatId)
+  if (stored === null) {
     // Nothing to verify — don't block on a store miss.
     return { checked: false, ok: true }
   }
-  const gate = isRenderable(code)
-  return { checked: true, ...gate }
+
+  const gate = isRenderable(stored.code)
+  if (!gate.ok) return { checked: true, ...gate }
+
+  // Completeness gate (#333): the code parses, but is every local component it
+  // imports actually IN the payload? A truncated generation (Analytics imported,
+  // never emitted) must not be marked ready — same retry path as a parse failure.
+  const missing = findMissingLocalImports(stored.code, stored.files ?? undefined)
+  if (missing.length > 0) {
+    return {
+      checked: true,
+      ok: false,
+      reason: 'missing_local_import',
+      error: `Truncated generation: imported local module(s) never defined in the payload: ${missing.join(', ')}`,
+    }
+  }
+
+  return { checked: true, ok: true }
 }

@@ -109,6 +109,22 @@ async function runGeneration(idea: string, g: Gen): Promise<void> {
       }
     }
 
+    // Files rehydrate (#333): if the SSE stream ended without a usable `files`
+    // event (cut stream, proxy drop), refetch the map from the durable read
+    // path so a multi-file app still takes the Sandpack route. Best-effort —
+    // a 404 just means this is a single-file app (Babel path).
+    if (g.chatId && !g.files) {
+      try {
+        const r = await fetch(`/api/generation/${g.chatId}/files`)
+        if (r.ok) {
+          const d = await r.json().catch(() => null)
+          if (d?.files && typeof d.files === 'object' && Object.keys(d.files).length > 0) {
+            g.files = d.files as Record<string, string>
+          }
+        }
+      } catch { /* keep files null — single-file rendering still works */ }
+    }
+
     // Stream ended. Confirm the preview actually has RENDERABLE content
     // before showing it — the pipeline can occasionally return an empty/too-
     // short body (e.g. a failed primary model), which /api/preview renders as

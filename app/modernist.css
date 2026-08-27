@@ -1285,3 +1285,72 @@
   border: 1.5px solid var(--neutral-line); border-radius: 0;
 }
 .m-feedback-input:focus { outline: none; border-color: var(--color-accent); }
+
+/* ============================================================================
+   Phone + tablet collapse (#334–#339) — the sub-tablet strategy modernist.css
+   never had. Every rule lives behind a max-width query so desktop is untouched.
+   Measured at 375px before these rules: .m-auth min-content 516px (+141px),
+   .m-tiers 513px (+138px), .m-account-head 423px (+48px), .m-fork-cards 148px
+   tracks, Landing beat-2 146px tracks, tap targets 18–39px.
+   ============================================================================ */
+
+/* Landing beat 2 (#337) — was an inline gridTemplateColumns:'1fr 1fr' in
+   Landing.tsx; moved here so it can stack at phone widths. */
+.modernist .m-land-beat2-grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  align-items: center; gap: 6vw; padding: 0 8vw;
+}
+.modernist .m-land-beat2-photo { position: static; height: 64vh; }
+
+/* Workspace + Live collapse (#336). The `.is-tablet` class (set by the
+   matchMedia listener in contexts/build-context.tsx dispatching SET_TABLET at
+   <=1024px) still applies; these media queries carry the same collapse in pure
+   CSS so the layout can never blow out even if the JS flag misses. */
+@media (max-width: 900px) {
+  .m-ws-body { grid-template-columns: 1fr; }
+  .m-live-grid { grid-template-columns: 1fr; }
+  .m-live-col.m-live-col-chat { position: static; max-height: none; order: -1; }
+  .m-live-masthead { padding: 20px; }
+  .m-live-funnel { padding: 14px 20px; }
+  .m-center { padding: 28px 20px; }
+}
+
+/* Auth + pricing stacks and touch ergonomics (#334, #335, #339). */
+@media (max-width: 760px) {
+  .m-auth { grid-template-columns: 1fr; min-height: 0; }
+  .m-auth-brand { padding: 28px 24px; }
+  .m-auth-form { padding: 32px 24px; max-width: none; }
+  .m-auth-statement { font-size: 26px; }
+
+  .m-pricing { padding: 32px 20px; }
+  .m-tiers { grid-template-columns: 1fr; }
+  .m-billing-switch button { min-height: 44px; }
+
+  /* Tap minimums (#339) — 44px iOS HIG floor for the small text controls. */
+  .modernist .btn-ghost,
+  .m-back,
+  .modernist .m-land-signin,
+  .m-account-chip { min-height: 44px; display: inline-flex; align-items: center; }
+  .modernist .m-land-foot a { display: inline-flex; align-items: center; min-height: 44px; }
+
+  /* Legibility floor (#339) — labels >=12px, instructional copy >=14px. */
+  .m-field-l { font-size: 12px; }
+  .m-helper { font-size: 14px; }
+}
+
+/* Front door + landing beat 2 stacks (#337). */
+@media (max-width: 700px) {
+  .m-fork-cards { grid-template-columns: 1fr; }
+  .m-fork, .m-intake { padding-inline: 20px; padding-block: 32px; }
+  .m-landing-features { grid-template-columns: 1fr; }
+  .modernist .m-land-beat2-grid { grid-template-columns: 1fr; padding: 0 24px; }
+  /* The 64vh photo cannot share a 100vh pinned beat with the copy stack —
+     drop it on phones so the rules stay readable. */
+  .modernist .m-land-beat2-photo { display: none; }
+}
+
+/* Account screens (#338). */
+@media (max-width: 600px) {
+  .m-account { padding: 24px 16px; }
+  .m-account-head { flex-wrap: wrap; row-gap: 10px; }
+}

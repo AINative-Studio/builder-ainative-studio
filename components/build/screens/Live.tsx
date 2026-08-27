@@ -12,6 +12,8 @@ import { useBuild } from '@/contexts/build-context'
 import { trackEvent } from '@/components/analytics/google-analytics'
 import { trackMeta } from '@/components/analytics/meta-pixel'
 import { useLiveProof } from '@/lib/build/useLiveProof'
+import { useAutoRun } from '@/lib/build/useAutoRun'
+import { activityState, ribbonLine, ACTIVITY_EMPTY_LINE } from '@/lib/build/auto-run-activity'
 import { buildSystems, type BusinessSystem } from '@/lib/build/business-systems'
 import { DomainModal } from '@/components/build/DomainModal'
 import { MenuChip } from '@/components/build/MenuChip'
@@ -61,6 +63,11 @@ export function Live() {
   const [leadSaved, setLeadSaved] = useState(false)
   const company = state.companyName || 'Your Company'
   const companyId = state.appSub || company.toLowerCase().replace(/\s+/g, '-')
+  // Auto Mode run activity (#340): poll THIS company's run + its event trail so
+  // the swarm card and the masthead ribbon show the founder's OWN agents at work.
+  const auto = useAutoRun(companyId)
+  const swarmActivity = activityState(auto.progress.running, auto.events)
+  const runRibbon = ribbonLine(auto.progress.running, auto.events, company)
   // Real, working subdirectory URL — no dead subdomain. (FIX-2)
   const appPath = `/build/${state.appSub || companyId}`
   const url = `builder.ainative.studio${appPath}`
@@ -453,6 +460,14 @@ export function Live() {
         <p className="m-live-status-line" data-testid="live-status-line">
           {liveStatusLine(company, onWatch)}
         </p>
+        {/* Per-company activity ribbon (#340): while an Auto Mode run is active,
+            the latest run event in Cody's mono voice — THIS company's swarm, not
+            the platform-wide proof (which stays, below the grid). */}
+        {runRibbon && (
+          <p className="m-mono m-live-status-line" data-testid="auto-run-ribbon" style={{ opacity: 0.85 }}>
+            <span className="m-glyph">◇</span> {runRibbon}
+          </p>
+        )}
         <div className="m-live-masthead-right">
           <span className={`m-mono m-live-watch ${onWatch ? '' : 'is-preview'}`}>
             <span className="m-live-dot" /> {onWatch ? 'Cody is on watch' : 'Preview mode'}
@@ -573,7 +588,34 @@ export function Live() {
               swapping in the real clip is a one-line env change. */}
           <OnboardingVideo />
           <div className="m-live-card m-upsell">
-            <div className="m-mono m-live-card-h">Hire the swarm</div>
+            <div className="m-mono m-live-card-h">
+              Hire the swarm
+              {swarmActivity.mode !== 'hidden' && (
+                <span className="st is-running" data-testid="swarm-live-status" style={{ marginLeft: 8 }}>
+                  auto mode
+                </span>
+              )}
+            </div>
+            {/* Live run activity (#340): while an Auto Mode run is ACTIVE for this
+                company the card shows the run's real event trail — agent-style rows
+                (mono title + status glyph ● dispatched / ✓ shipped / · failed) in
+                the workspace swarm grammar. Honest warm-up state (real pipeline
+                stages) while the run has no events yet; hidden when no run. */}
+            {swarmActivity.mode === 'empty' && (
+              <p className="m-mono m-metric-note" data-testid="swarm-live-empty">
+                {ACTIVITY_EMPTY_LINE}
+              </p>
+            )}
+            {swarmActivity.mode === 'rows' && (
+              <div data-testid="swarm-live-rows" style={{ display: 'grid', gap: 6, marginBottom: 10 }}>
+                {swarmActivity.rows.map((row) => (
+                  <div className="m-agent-head" key={`${row.ts}-${row.title}-${row.status}`}>
+                    <span className="m-mono m-agent-name">{row.title}</span>
+                    <span className={`m-agent-badge ${row.tone}`}>{row.glyph} {row.status}</span>
+                  </div>
+                ))}
+              </div>
+            )}
             <p className="m-live-card-body">
               {activePlan
                 ? `On ${PLAN_LABEL[activePlan] || activePlan}. ${gates.nightlyLoop ? 'Cody runs the nightly loop on your company.' : 'Cody is building and running your company.'}`
