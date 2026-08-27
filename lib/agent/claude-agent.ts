@@ -24,6 +24,7 @@ import {
   isAgentEnabled,
   isAgentFallbackEnabled,
   resolveAgentModel,
+  buildAgentMcpWiring,
 } from './agent-runtime'
 
 // ---------------------------------------------------------------------------
@@ -212,6 +213,14 @@ export async function* runHeadlessAgent(
   // read→edit→verify→retry loop; cody stops early on its own when done.
   const maxTurns = options.maxTurns || 12
 
+  // MCP tool wiring (#296 item 3, finally activated): give the agent the
+  // AINative primitive MCP fleet (ZeroDB 69-tool surface, ZeroMemory,
+  // ZeroVoice, OpenCapStack, Strapi) so Cody can OPERATE primitives during a
+  // build, not just generate code that talks about them. Server-level
+  // mcp__<name> entries extend allowedTools; inert when no key / CODY_AGENT_MCP=0.
+  const mcp = buildAgentMcpWiring()
+  const effectiveTools = [...allowedTools, ...mcp.allowedTools]
+
   const args: string[] = [
     '--print',
     prompt,
@@ -222,8 +231,9 @@ export async function* runHeadlessAgent(
     '--max-turns', String(maxTurns),
     '--max-budget-usd', String(maxBudgetUsd),
     '--bare',
-    '--allowedTools', ...allowedTools,
+    '--allowedTools', ...effectiveTools,
   ]
+  if (mcp.configJson) args.push('--mcp-config', mcp.configJson)
 
   // Always inject the agent system prompt (workspace rules)
   const fullSystemPrompt = AGENT_SYSTEM_PROMPT + (systemPrompt ? '\n\n' + systemPrompt : '')

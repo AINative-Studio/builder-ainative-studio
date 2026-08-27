@@ -140,6 +140,9 @@ importers:
       ai:
         specifier: ^5.0.22
         version: 5.0.142(zod@4.3.6)
+      ainative-zerodb-mcp-server:
+        specifier: 2.0.8
+        version: 2.0.8(zod@4.3.6)
       archiver:
         specifier: ^7.0.1
         version: 7.0.1
@@ -3924,6 +3927,11 @@ packages:
     engines: {node: '>=18'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
+
+  ainative-zerodb-mcp-server@2.0.8:
+    resolution: {integrity: sha512-3mi8u+g5N5e54TeJN1ldrMWtETmQrTODl/knwW4LYRuCUYQtmSq5U8n7WBsCHCVnYzTITkXtsXi6u8gob2d7ZQ==}
+    engines: {node: '>=18.0.0', npm: '>=9.0.0'}
+    hasBin: true
 
   ajv-formats@2.1.1:
     resolution: {integrity: sha512-Wx0Kx52hxE7C18hkMEggYlEifqWZtYaRgouJor+WMdPnQyEK13vgEWyVNup7SoeeoLMsr4kf5h6dOW11I15MUA==}
@@ -10013,6 +10021,28 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  '@modelcontextprotocol/sdk@1.29.0(zod@4.3.6)':
+    dependencies:
+      '@hono/node-server': 1.19.14(hono@4.12.30)
+      ajv: 8.18.0
+      ajv-formats: 3.0.1(ajv@8.18.0)
+      content-type: 1.0.5
+      cors: 2.8.6
+      cross-spawn: 7.0.6
+      eventsource: 3.0.7
+      eventsource-parser: 3.0.6
+      express: 5.2.1
+      express-rate-limit: 8.6.0(express@5.2.1)
+      hono: 4.12.30
+      jose: 6.1.3
+      json-schema-typed: 8.0.2
+      pkce-challenge: 5.0.1
+      raw-body: 3.0.2
+      zod: 4.3.6
+      zod-to-json-schema: 3.25.2(zod@4.3.6)
+    transitivePeerDependencies:
+      - supports-color
+
   '@monaco-editor/loader@1.7.0':
     dependencies:
       state-local: 1.0.7
@@ -12432,6 +12462,17 @@ snapshots:
       '@ai-sdk/provider-utils': 3.0.21(zod@4.3.6)
       '@opentelemetry/api': 1.9.0
       zod: 4.3.6
+
+  ainative-zerodb-mcp-server@2.0.8(zod@4.3.6):
+    dependencies:
+      '@modelcontextprotocol/sdk': 1.29.0(zod@4.3.6)
+      axios: 1.18.1
+      uuid: 11.1.0
+    transitivePeerDependencies:
+      - '@cfworker/json-schema'
+      - debug
+      - supports-color
+      - zod
 
   ajv-formats@2.1.1(ajv@8.18.0):
     optionalDependencies:
@@ -17397,6 +17438,10 @@ snapshots:
   zod-to-json-schema@3.25.2(zod@3.25.76):
     dependencies:
       zod: 3.25.76
+
+  zod-to-json-schema@3.25.2(zod@4.3.6):
+    dependencies:
+      zod: 4.3.6
 
   zod@3.25.76: {}
 

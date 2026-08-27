@@ -132,3 +132,42 @@ export function isAgentFallbackEnabled(env: NodeJS.ProcessEnv = process.env): bo
   if (env.USE_CLAUDE_AGENT_FALLBACK === 'true') return true
   return isAgentEnabled(env)
 }
+
+/**
+ * MCP tool wiring for the spawned agent (closes the gap in epic #296 item 3:
+ * the epic shipped the MCP client + catalog but the AGENT never received a
+ * single MCP server — its tools were only Write/Edit).
+ *
+ * REALITY CHECK (2026-08-27): the catalog's hosted HTTP fleet
+ * (mcp.ainative.studio/*) does not exist — that hostname is swallowed by the
+ * builder's own wildcard-subdomain routing. The REAL AINative MCP servers are
+ * STDIO npm packages; the flagship is `ainative-zerodb-mcp-server` (the
+ * 69-tool ZeroDB surface), installed as a direct dependency so the spawn is
+ * warm on Railway. The agent gets it via a Claude-Code-compatible stdio
+ * --mcp-config, and `mcp__zerodb` extends allowedTools at the server level.
+ *
+ * Gated OFF only by CODY_AGENT_MCP=0; inert (null) when no API key is present.
+ */
+export function buildAgentMcpWiring(env: NodeJS.ProcessEnv = process.env): {
+  configJson: string | null
+  allowedTools: string[]
+} {
+  if ((env.CODY_AGENT_MCP || '').trim() === '0') return { configJson: null, allowedTools: [] }
+  const key = env.ZERODB_API_KEY || env.AINATIVE_API_KEY || ''
+  if (!key) return { configJson: null, allowedTools: [] }
+  const serverEntry = join(process.cwd(), 'node_modules', 'ainative-zerodb-mcp-server', 'index.js')
+  if (!existsSync(serverEntry)) return { configJson: null, allowedTools: [] }
+  const mcpServers: Record<string, unknown> = {
+    zerodb: {
+      type: 'stdio',
+      command: process.execPath, // the running node binary — no PATH lookup
+      args: [serverEntry],
+      env: {
+        ZERODB_API_KEY: key,
+        ZERODB_API_URL: env.ZERODB_API_URL || 'https://api.ainative.studio',
+        ...(env.ZERODB_PROJECT_ID ? { ZERODB_PROJECT_ID: env.ZERODB_PROJECT_ID } : {}),
+      },
+    },
+  }
+  return { configJson: JSON.stringify({ mcpServers }), allowedTools: ['mcp__zerodb'] }
+}
