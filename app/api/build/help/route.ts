@@ -28,6 +28,11 @@ import {
   buildHelpSystemPrompt,
   type FaqEntry,
 } from '@/lib/build/help-faq'
+import {
+  isCapabilityQuestion,
+  retrieveCapabilities,
+  capabilitiesGroundingBlock,
+} from '@/lib/build/capabilities'
 
 export const runtime = 'nodejs'
 
@@ -57,9 +62,23 @@ export async function POST(request: NextRequest) {
   }
 
   // 1. Retrieve grounding (pure, local, always available).
-  const entries = retrieveFaq(question, 4)
-  const context = buildGroundingContext(entries)
-  const sources = toSources(entries)
+  // #316/#313: for a "what can I build" intent, ground with the PLAIN-ENGLISH
+  // capabilities catalog (primitive → what you build → replaces X → included), NOT
+  // the API reference. This is the exact bug — discovery surfaced the raw API ref
+  // instead of a capabilities overview. Blend capabilities + FAQ so the answer
+  // educates on what's possible and cites the capabilities used.
+  const isCapQ = isCapabilityQuestion(question)
+  const entries = retrieveFaq(question, isCapQ ? 2 : 4)
+  const caps = isCapQ ? retrieveCapabilities(question, 8) : []
+  const context = isCapQ
+    ? capabilitiesGroundingBlock(caps) + '\n\n' + buildGroundingContext(entries)
+    : buildGroundingContext(entries)
+  const sources = isCapQ
+    ? [
+        ...caps.map((c) => ({ id: `cap:${c.product}`, question: `${c.product} — ${c.build}` })),
+        ...toSources(entries),
+      ]
+    : toSources(entries)
   const system = buildHelpSystemPrompt(context)
 
   // 2. Primary: Claude (Bedrock → Anthropic) grounded in the FAQ context.

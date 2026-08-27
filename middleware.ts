@@ -178,6 +178,13 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next()
     }
 
+    // Capabilities page — the plain-English "what can I build" surface (#313/#316).
+    // MUST render for anonymous visitors: prosumers discover what's possible BEFORE
+    // signing up (the #1 customer ask). Same crawlability requirement as /help.
+    if (pathname.startsWith('/capabilities')) {
+      return NextResponse.next()
+    }
+
     // Pricing page — public ad-landing + SEO/AEO asset; MUST be crawlable and
     // reachable without an account, else it 307→/login and burns paid ad clicks
     // and blocks search indexing (#76).
