@@ -12,11 +12,11 @@
  * Reads the signed-in founder's real identity + active plan (no hardcoded mock),
  * links to the "my companies" index and the real Stripe billing portal, so an
  * existing subscriber sees their true plan and can self-serve manage/cancel it
- * (not a dead /settings/billing route). Usage meters remain illustrative until a
- * real usage endpoint is wired (tracked separately).
+ * (not a dead /settings/billing route). Usage meters read the authoritative
+ * per-user credit ledger via GET /api/credits (#312) — no hardcoded numbers.
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useBuild } from '@/contexts/build-context'
 import { useSession, signOut } from 'next-auth/react'
 import { planUnlocks, type ActivePlan } from '@/lib/build/state'
@@ -28,13 +28,52 @@ const PLAN_LABEL: Record<ActivePlan, string> = {
   '': 'Free', pro: 'Pro', business: 'Business', enterprise: 'Enterprise', cody_vcto: 'Cody · Virtual CTO',
 }
 
-// Illustrative usage meters — real per-account usage endpoint is out of scope here.
-const METERS = [
-  { label: 'API credits', used: 3400, total: 10000, unit: '' },
-  { label: 'LLM tokens', used: 1.2, total: 5, unit: 'M' },
-  { label: 'Storage', used: 0.8, total: 5, unit: 'GB' },
-  { label: 'MCP hours', used: 6, total: 40, unit: 'h' },
-]
+export interface UsageMeter {
+  label: string
+  used: number
+  total: number
+  unit: string
+}
+
+/**
+ * Build the "Usage this month" meters from the live /api/credits payload.
+ * Returns `null` when the ledger data is absent so the UI can show an honest
+ * loading / zero state instead of fabricated numbers.
+ *
+ * `credits` is the normalized ledger ({ granted, used, remaining, ... }); `usage`
+ * is the raw /credits/usage/current body (token counts etc., when present).
+ */
+export function buildMeters(credits: any, usage: any): UsageMeter[] | null {
+  const granted = typeof credits?.granted === 'number' ? credits.granted : null
+  const used = typeof credits?.used === 'number' ? credits.used : null
+  if (granted === null && used === null) return null
+
+  const meters: UsageMeter[] = [
+    { label: 'API credits', used: used ?? 0, total: granted ?? 0, unit: '' },
+  ]
+
+  // Surface real token usage from /credits/usage/current when the ledger reports it.
+  const u = usage?.data ?? usage
+  const tokensUsed = typeof u?.tokens_used === 'number'
+    ? u.tokens_used
+    : (typeof u?.total_tokens === 'number' ? u.total_tokens : null)
+  const tokensTotal = typeof u?.tokens_limit === 'number'
+    ? u.tokens_limit
+    : (typeof u?.token_limit === 'number' ? u.token_limit : null)
+  if (tokensUsed !== null || tokensTotal !== null) {
+    meters.push({ label: 'LLM tokens', used: tokensUsed ?? 0, total: tokensTotal ?? 0, unit: '' })
+  }
+
+  return meters
+}
+
+/** Format the ledger reset date, or null to hide the line when unknown. */
+export function formatResetLine(resetsAt: unknown): string | null {
+  if (typeof resetsAt !== 'string' || resetsAt.trim() === '') return null
+  const d = new Date(resetsAt)
+  if (Number.isNaN(d.getTime())) return null
+  return `Resets ${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`
+}
 
 export function Account() {
   const { state, dispatch } = useBuild()
@@ -46,6 +85,24 @@ export function Account() {
   const activePlan = state.activePlan
   const gates = planUnlocks(activePlan)
   const [portalBusy, setPortalBusy] = useState(false)
+
+  // Live credit ledger (#312) — authenticated users only. Absent until loaded.
+  const [creditsData, setCreditsData] = useState<{ credits: any; usage: any } | null>(null)
+  const [creditsLoading, setCreditsLoading] = useState(false)
+  useEffect(() => {
+    if (isGuest) return
+    let cancelled = false
+    setCreditsLoading(true)
+    fetch('/api/credits')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => { if (!cancelled && data) setCreditsData(data) })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setCreditsLoading(false) })
+    return () => { cancelled = true }
+  }, [isGuest])
+
+  const meters = buildMeters(creditsData?.credits, creditsData?.usage)
+  const resetLine = formatResetLine(creditsData?.credits?.resetsAt)
 
   // Manage plan / billing — open the real Stripe customer portal (#253).
   const manageBilling = async () => {
@@ -205,17 +262,25 @@ export function Account() {
         </div>
       </section>
 
-      <section className="m-account-sec">
+      <section className="m-account-sec" data-testid="account-usage-section">
         <h2 className="m-mono m-account-sec-h">Usage this month</h2>
-        <div className="m-meters">
-          {METERS.map((m) => (
-            <div key={m.label} className="m-meter">
-              <div className="m-meter-top"><span className="m-mono m-meter-l">{m.label}</span><span className="m-mono m-meter-v">{m.used}{m.unit} / {m.total}{m.unit}</span></div>
-              <div className="m-meter-bar"><span style={{ width: `${(m.used / m.total) * 100}%` }} /></div>
+        {meters && meters.length > 0 ? (
+          <>
+            <div className="m-meters">
+              {meters.map((m) => (
+                <div key={m.label} className="m-meter" data-testid={`account-meter-${m.label}`}>
+                  <div className="m-meter-top"><span className="m-mono m-meter-l">{m.label}</span><span className="m-mono m-meter-v">{m.used.toLocaleString()}{m.unit} / {m.total.toLocaleString()}{m.unit}</span></div>
+                  <div className="m-meter-bar"><span style={{ width: `${m.total > 0 ? Math.min(100, (m.used / m.total) * 100) : 0}%` }} /></div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-        <p className="m-mono m-meter-reset">Resets in 12 days</p>
+            {resetLine && <p className="m-mono m-meter-reset" data-testid="account-usage-reset">{resetLine}</p>}
+          </>
+        ) : (
+          <p className="m-mono m-muted" data-testid="account-usage-empty">
+            {creditsLoading ? 'Loading usage…' : 'No usage recorded yet this month.'}
+          </p>
+        )}
       </section>
 
       <section className="m-account-sec" data-testid="account-security-section">

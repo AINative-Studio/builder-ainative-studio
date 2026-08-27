@@ -21,7 +21,7 @@ interface UserNavProps {
 }
 
 export function UserNav({ session }: UserNavProps) {
-  const [credits, setCredits] = useState<{ balance: any; usage: any } | null>(null)
+  const [credits, setCredits] = useState<{ credits: any; usage: any } | null>(null)
 
   const initials =
     session?.user?.email?.split('@')[0]?.slice(0, 2)?.toUpperCase() || 'U'
@@ -72,12 +72,10 @@ export function UserNav({ session }: UserNavProps) {
                 {session.user.email}
               </p>
             )}
-            {isAINative && credits?.balance && (
+            {isAINative && typeof credits?.credits?.remaining === 'number' && (
               <p className="text-xs leading-none text-emerald-600 dark:text-emerald-400 mt-1 flex items-center gap-1">
                 <Coins className="h-3 w-3" />
-                ${typeof credits.balance.balance === 'number'
-                  ? credits.balance.balance.toFixed(2)
-                  : credits.balance.balance ?? '0.00'}
+                {credits.credits.remaining.toLocaleString()} credits
               </p>
             )}
           </div>
