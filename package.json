@@ -80,7 +80,7 @@
     "@vitest/coverage-v8": "^3.2.4",
     "adm-zip": "^0.5.16",
     "ai": "^5.0.22",
-    "ainative-zerodb-mcp-server": "2.0.8",
+    "ainative-zerodb-mcp-server": "2.3.2",
     "archiver": "^7.0.1",
     "bcrypt-ts": "^7.1.0",
     "class-variance-authority": "^0.7.0",
