@@ -173,328 +173,195 @@ export default function AboutPage() {
           className="space-y-8 text-lg leading-relaxed"
           style={{ fontFamily: 'var(--font-newsreader), Georgia, serif' }}
         >
-          {/* --- Act I: The problem --- */}
-          <section aria-label="The problem">
-            {/*
-             * PLACEHOLDER — Toby: replace this opening with the specific moment,
-             * project, or frustration that made you start building. The more
-             * concrete and personal, the stronger the story.
-             */}
-            <p>
-              I&apos;ve been building software products for most of my career. And for most of
-              that time, the gap between &ldquo;I have an idea&rdquo; and &ldquo;I have a product
-              people can use&rdquo; required a team — or months of nights and weekends — to close.
-              That gap has always been the first and most brutal filter on what gets built.
-            </p>
-
-            <p className="mt-6">
-              When the first wave of AI coding tools appeared, I thought that was finally about to
-              change. Tools that could take a description and generate UI, components, even whole
-              apps — this felt like it should be the answer. I tried them all.
-            </p>
-
-            <p className="mt-6">
-              {/*
-               * PLACEHOLDER — Toby: add the specific anecdote about what was
-               * missing. What was the moment you realized these tools weren't
-               * solving the real problem?
-               */}
-              They were fast. They were impressive. But every one of them had the same structural
-              flaw: they gave you a prototype, not a company. The code was yours in theory, but
-              you were completely on your own for deployment, for customers, for the dozen business
-              systems a real product needs — CRM, billing, helpdesk, voice. And if you wanted to
-              understand or modify what was built, you were staring at a black box you didn&apos;t
-              write and couldn&apos;t own.
-            </p>
-          </section>
-
-          <hr className="border-border" />
-
-          {/* --- Origin: IdeaMarket --- */}
-          <section aria-label="Where the pursuit really started">
+          {/* Definitive founder narrative (Toby, 2026-08-27): IdeaMarket → Techstars
+              Tulsa → AINative, framed around compressing idea-to-customer. */}
+          <section aria-label="From IdeaMarket to AINative">
             <h2
               className="text-2xl mb-4"
               style={{ fontFamily: 'var(--font-newsreader), Georgia, serif', fontWeight: 500 }}
             >
-              Where the pursuit really started: IdeaMarket.
+              From IdeaMarket to AINative.
             </h2>
 
-            <p>AINative didn&apos;t begin with generative AI.</p>
-
-            <p className="mt-6">
-              In many ways, I&apos;ve been working on this problem for more than a decade:{' '}
-              <strong>how do we remove the friction between an idea and the market?</strong>
+            <p>
+              When I look back, there&apos;s a clear thread connecting the things I&apos;ve spent
+              years working on.
             </p>
 
             <p className="mt-6">
-              Long before today&apos;s AI coding tools, I had firsthand experience trying to solve
-              exactly that problem at <strong>IdeaMarket</strong>, an Idealab company founded by
-              Bill Gross. I was <strong>employee #1 at IdeaMarket</strong>. I came up with the
-              initial UI/UX and product concepts and then drove product development and the
-              development team as we turned that vision into a working platform.
+              At <strong>IdeaMarket</strong>, where I was employee #1, I developed the initial
+              UI/UX and product concepts and drove product and the development team. We were
+              building a marketplace around a simple but ambitious premise: promising ideas could
+              be matched with the <strong>entrepreneurs, talent, and capital</strong> required to
+              bring them to market.
             </p>
 
             <p className="mt-6">
-              The premise was ambitious: create what I thought of as a{' '}
-              <strong>reverse venture capital network</strong>. Traditional venture capital starts
-              with an entrepreneur who already has a company and is looking for money. We wanted to
-              start earlier. <strong>Start with the idea.</strong>
-            </p>
-
-            <p className="mt-6">
-              IdeaMarket was a curated, crowdsourced marketplace for ideas that could solve everyday
-              problems, address unmet needs, and uncover entirely new business opportunities. What
-              made the model especially interesting was who participated. Well-known entrepreneurs
-              and investors — including{' '}
+              Well-known entrepreneurs and investors — including{' '}
               <strong>
-                Steve Case, Shervin Pishevar, Max Levchin, and others — were investors in IdeaMarket
-                and also actively submitted ideas to the platform. Peter Diamandis was an advisor
-                and idea collaborator.
+                Steve Case, Shervin Pishevar, Max Levchin, and others — invested in IdeaMarket and
+                submitted ideas to the platform. Peter Diamandis was an advisor and idea
+                collaborator.
               </strong>
             </p>
 
             <p className="mt-6">
-              So instead of investors only evaluating ideas after entrepreneurs had turned them into
-              startups, we were asking accomplished entrepreneurs, investors, and innovators to help
-              surface opportunities themselves. Then IdeaMarket would do something unusual:{' '}
-              <strong>match those ideas with talent and money to launch companies.</strong> The
-              model was essentially: <strong>Idea → Entrepreneur → Talent → Capital → Company</strong>.
-            </p>
-
-            <p className="mt-6">
-              I loved that problem. I became obsessed with the possibility that entrepreneurship
-              itself could be redesigned — that we could create systems that systematically reduced
-              the friction between someone recognizing an opportunity and actually getting a product
-              into the market. My role put me right in the middle of that challenge. I wasn&apos;t
-              just thinking about it theoretically. I was designing the initial product experience,
-              determining how people would interact with ideas, and leading the development effort
-              required to turn the concept into software.
-            </p>
-
-            <p className="mt-6">
-              And it taught me something that has stayed with me ever since:{' '}
+              The model was essentially: <strong>Idea → Talent → Capital → Market</strong>. That
+              experience shaped a question I&apos;ve continued to pursue:{' '}
               <strong>
-                great ideas aren&apos;t particularly scarce. The ability to turn them into something
-                real is.
+                how much friction can we remove between someone having a valuable idea and
+                discovering whether the market actually wants it?
               </strong>
             </p>
 
             <p className="mt-6">
-              At IdeaMarket, our answer was to build a network around the entrepreneur:{' '}
-              <strong>Ideas + Talent + Capital.</strong> More than a decade later, AI made me
-              realize there might be another way. What if we could put much of that capability{' '}
-              <strong>directly into the hands of the entrepreneur?</strong>
+              Years later, during the <strong>Spring 2023 Techstars Tulsa cohort</strong>, I
+              encountered that problem again from a different perspective. I was mentoring founders
+              in a three-month accelerator. These were talented people with promising ideas,
+              mentors, networks, and access to potential investors. But I watched founders lose
+              some of the most valuable weeks of the program simply trying to get an MVP built.
             </p>
+
+            <p className="mt-6">
+              That bothered me. Because in a three-month accelerator, by week four you
+              shouldn&apos;t still be fighting with the machinery required to test your idea.{' '}
+              <strong>You should already be learning from customers.</strong>
+            </p>
+
+            <p className="mt-6">That became the catalyst for AINative.</p>
           </section>
 
           <hr className="border-border" />
 
-          {/* --- The thread: IdeaMarket → Techstars → AINative --- */}
-          <section aria-label="The thread from IdeaMarket to AINative">
+          <section aria-label="The real gap">
             <h2
               className="text-2xl mb-4"
               style={{ fontFamily: 'var(--font-newsreader), Georgia, serif', fontWeight: 500 }}
             >
-              The thread from IdeaMarket to AINative.
+              The real gap isn&apos;t idea-to-code. It&apos;s idea-to-customer.
             </h2>
 
             <p>
-              When I look back now, there&apos;s a very clear line connecting these experiences. At
-              IdeaMarket our model was: <strong>Idea + Talent + Capital → Company</strong>.
+              Generative AI created an extraordinary opportunity to accelerate software
+              development. But faster code generation doesn&apos;t solve the entire problem. An
+              entrepreneur still needs data infrastructure, authentication, deployment, billing,
+              customer management, support, analytics, communications, AI inference, memory, and
+              all the other systems surrounding a real product.
             </p>
 
             <p className="mt-6">
-              Then, during the <strong>Spring 2023 Techstars Tulsa cohort</strong>, I saw the other
-              side of the equation. Even when founders had great ideas, mentorship, networks, and
-              access to potential capital, they could still burn precious weeks just trying to build
-              an MVP. That experience brought me back to the same question I&apos;d been pursuing
-              since IdeaMarket: <strong>how do we remove the friction between idea and market?</strong>
-            </p>
-
-            <p className="mt-6">
-              Only this time, something fundamental had changed. AI had arrived. At IdeaMarket, we
-              tried to surround an idea with the human and financial resources required to turn it
-              into a company. With AINative, I&apos;m asking whether we can give an entrepreneur an{' '}
-              <strong>AI-native operating system for creating the company itself.</strong>{' '}
-              Development. Infrastructure. Data. CRM. Billing. Customer support. Inference. Memory.
-              Agents. Operations. And an AI-native technical co-founder — Cody — to help orchestrate
-              it.
-            </p>
-
-            <p className="mt-6">
-              So, in a way,{' '}
+              So I started thinking about AINative differently. Instead of asking{' '}
+              <strong>how can AI generate an application faster?</strong> I asked:{' '}
               <strong>
-                AINative is the technological continuation of a problem I&apos;ve been obsessed with
-                since IdeaMarket.
-              </strong>{' '}
-              IdeaMarket asked: <strong>how do we match great ideas with everything required to
-              turn them into companies?</strong> AINative asks:{' '}
-              <strong>
-                what if we could put everything required to start building the company directly into
-                the hands of the person with the idea?
+                what infrastructure would allow an entrepreneur to move from an idea to a real
+                customer interaction as quickly as possible?
               </strong>
             </p>
 
             <p className="mt-6">
-              That&apos;s the journey from IdeaMarket to Techstars Tulsa to AINative. And the
-              mission underneath all three has remained remarkably consistent:{' '}
-              <strong>remove as much friction as possible between idea and market.</strong>
+              That&apos;s why we started building AINative as a collection of composable
+              primitives. ZeroDB for data and intelligence. ZeroPipeline for customer
+              relationships. ZeroInvoice for billing. ServiceOS for customer service. ZeroVoice
+              for communications. Agent infrastructure, inference, memory, and operational
+              services underneath them. And Cody as the interface that helps developers and
+              founders put those capabilities together.
+            </p>
+
+            <p className="mt-6">
+              The objective isn&apos;t simply to generate more software.{' '}
+              <strong>
+                It&apos;s to eliminate as many steps as possible between an entrepreneur and their
+                first meaningful customer learning.
+              </strong>
             </p>
           </section>
 
           <hr className="border-border" />
 
-          {/* --- Act II: The insight --- */}
-          <section aria-label="The insight">
+          <section aria-label="Compressing the feedback loop">
             <h2
               className="text-2xl mb-4"
               style={{ fontFamily: 'var(--font-newsreader), Georgia, serif', fontWeight: 500 }}
             >
-              The real gap isn&apos;t code generation. It&apos;s the whole company.
+              We&apos;re compressing the feedback loop.
             </h2>
 
-            {/*
-             * PLACEHOLDER — Toby: the reframing insight. What did you realize
-             * about what founders actually need vs. what AI tools were providing?
-             */}
             <p>
-              What I kept coming back to: a solo founder or a small team doesn&apos;t just need a
-              UI. They need a company — a real product on a real URL, connected to real business
-              systems, generating real revenue, and improving over time without constant manual
-              intervention.
+              This distinction matters. AI cannot manufacture product-market fit. It can&apos;t
+              guarantee that an idea deserves to become a company. Customers still make that
+              decision. What AI can change is <strong>how quickly you get to ask them.</strong>
             </p>
 
             <p className="mt-6">
-              The coding tools I&apos;d seen were solving the wrong problem. They replaced the
-              engineer but left the founder to figure out everything else. That&apos;s still months
-              of work. It&apos;s still most of the gap.
+              Historically, an entrepreneur might move through:{' '}
+              <strong>
+                Idea → Team → Capital → Development → Infrastructure → Deployment → Customer →
+                Feedback
+              </strong>
+              . Every arrow represents time, money, coordination, and risk.
             </p>
 
             <p className="mt-6">
-              So I started asking a different question: what if the AI wasn&apos;t a tool you
-              used, but a co-founder you worked with? What if it could take your one-line idea,
-              build the actual product, wire up the business systems, deploy everything to a live
-              URL — and then keep running it?
+              What I&apos;ve been pursuing since IdeaMarket is the ability to compress that
+              journey: <strong>Idea → Product → Customer → Learn → Iterate</strong>. That&apos;s
+              the opportunity I see in AI-native development.
+            </p>
+
+            <p className="mt-6">
+              Because the scarce resource for an early-stage entrepreneur isn&apos;t ideas.{' '}
+              <strong>It&apos;s learning cycles.</strong> How many times can you put something real
+              in front of customers, discover something you didn&apos;t know, and improve the
+              product before you run out of time, money, or momentum?
+            </p>
+
+            <p className="mt-6">
+              If technology allows an entrepreneur to run ten meaningful learning cycles in the
+              time it previously took to run one, that changes the economics of experimentation.
+              And potentially entrepreneurship itself.
             </p>
           </section>
 
           <hr className="border-border" />
 
-          {/* --- Act III: Cody --- */}
-          <section aria-label="Introducing Cody">
+          <section aria-label="A pursuit that predates the AI wave">
             <h2
               className="text-2xl mb-4"
               style={{ fontFamily: 'var(--font-newsreader), Georgia, serif', fontWeight: 500 }}
             >
-              Meet Cody.
+              This is a pursuit that predates the current AI wave.
             </h2>
 
-            <p>That&apos;s who Cody is. Not an assistant. Not a generator. An AI co-founder.</p>
-
-            <p className="mt-6">
-              You give Cody one line — your idea, your company, your product. Cody builds it: a
-              real application, on a real URL, backed by real infrastructure. ZeroDB for your
-              data. ZeroPipeline for your CRM. ZeroInvoice for billing. ServiceOS for helpdesk.
-              ZeroVoice for your phone line. These are not mock-ups. They are production systems,
-              and every one of them is yours.
-            </p>
-
-            <p className="mt-6">
-              {/*
-               * PLACEHOLDER — Toby: describe what the autonomous loop feels like
-               * from the founder's perspective. What does Cody do overnight?
-               * What do you wake up to? How is this different from every other
-               * tool you've used?
-               */}
-              And then Cody keeps going. Every night, while you&apos;re not watching, the
-              autonomous loop runs: lead qualification, customer follow-up, support triage,
-              operational reporting. You wake up to a company that has been running itself.
-            </p>
-
-            <p className="mt-6">
-              The code is open. You can read it, fork it, and extend it. There is no revenue
-              share. There is no platform lock-in. You own 100% of what&apos;s built — because
-              it is built on open primitives, not a closed black box.
-            </p>
-          </section>
-
-          <hr className="border-border" />
-
-          {/* --- Act IV: Ownership --- */}
-          <section aria-label="Why ownership matters">
-            <h2
-              className="text-2xl mb-4"
-              style={{ fontFamily: 'var(--font-newsreader), Georgia, serif', fontWeight: 500 }}
-            >
-              Why I care about ownership.
-            </h2>
-
-            {/*
-             * PLACEHOLDER — Toby: your strongest differentiation argument.
-             * Why do YOU personally care about this beyond the business case?
-             * This is the paragraph LLMs and journalists will cite — make it sharp.
-             */}
             <p>
-              Every other platform that is genuinely good at autonomous company operations is a
-              closed system. You can&apos;t see how it works. You can&apos;t modify it when it
-              does the wrong thing. You are, in the most literal sense, renting your own company
-              from a vendor.
+              That&apos;s important to me. AINative wasn&apos;t born from watching the latest
+              generation of AI products and deciding that I wanted to build another one. The
+              underlying problem has been something I&apos;ve been thinking about for years.
             </p>
 
             <p className="mt-6">
-              I think that is a fundamental problem — not just the business risk of vendor
-              dependency, though that is real, but because the relationship between a founder and
-              their company should be one of ownership, not subscription. You should be able to
-              look at the system that runs your business and understand it. Inspect it. Improve
-              it. That requires it to be open.
+              At IdeaMarket, we attempted to reduce the distance between{' '}
+              <strong>ideas and opportunity</strong> by bringing together ideas, entrepreneurs,
+              talent, and capital. At Techstars Tulsa, I saw how much friction still existed
+              between <strong>founders and customers</strong>, even when many of those other
+              ingredients were present.
             </p>
 
             <p className="mt-6">
-              AINative Builder is built on open primitives because that is the only architecture
-              where you actually own the thing we build together. The primitives — ZeroDB,
-              ZeroPipeline, ZeroInvoice, ServiceOS, ZeroVoice — are real, documented, inspectable
-              services. When Cody composes them into your product, the composition is visible. You
-              own the artifacts. If AINative Studio disappeared tomorrow, your company would still
-              run.
-            </p>
-          </section>
-
-          <hr className="border-border" />
-
-          {/* --- Act V: Vision --- */}
-          <section aria-label="Vision">
-            <h2
-              className="text-2xl mb-4"
-              style={{ fontFamily: 'var(--font-newsreader), Georgia, serif', fontWeight: 500 }}
-            >
-              Where this goes.
-            </h2>
-
-            {/*
-             * PLACEHOLDER — Toby: your forward-looking vision. What does the
-             * world look like if this works? Be bold — this is your big bet.
-             */}
-            <p>
-              I believe the question &ldquo;how do I start a company?&rdquo; is about to become
-              meaningfully easier to answer. Not because AI will make every business succeed —
-              most companies fail for reasons that have nothing to do with execution — but because
-              the execution layer is being automated.
+              AI gave me a new way to attack that same old problem. Instead of requiring
+              entrepreneurs to assemble every piece of technical infrastructure themselves, what
+              if we could make those capabilities available as primitives they could compose?
+              Instead of spending weeks getting ready to learn, what if they could start learning
+              almost immediately?
             </p>
 
             <p className="mt-6">
-              The entrepreneurs who get there first will be the ones who treat AI not as a
-              productivity tool but as an operating partner. That&apos;s the relationship
-              I&apos;m building with Cody. Not a tool you prompt. A co-founder you brief.
+              That&apos;s the opportunity behind AINative. And that&apos;s the north star:{' '}
+              <strong>compress the distance between idea and customer to almost zero.</strong>
             </p>
 
             <p className="mt-6">
-              {/*
-               * PLACEHOLDER — Toby: your personal north star. What is the
-               * specific outcome that would tell you this worked?
-               */}
-              The north star I&apos;m working toward: the day when the gap between an idea and a
-              running company is measured in minutes, not months — and the person who closed that
-              gap owns everything they built.
+              Not because every idea should become a company. But because every entrepreneur
+              should have the opportunity to discover, as quickly and inexpensively as possible,
+              whether their idea deserves to become one.
             </p>
 
             <p className="mt-6">That&apos;s why I built this. Come build something.</p>
