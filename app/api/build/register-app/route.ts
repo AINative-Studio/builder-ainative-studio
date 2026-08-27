@@ -31,7 +31,15 @@ export async function POST(request: NextRequest) {
   // found (store miss); BLOCK when we can prove it's broken, returning an honest
   // "generation failed, retrying" state so the client re-generates instead of
   // deploying a broken preview.
-  const ready = await checkAppReady(chatId).catch(() => ({ checked: false, ok: true } as const))
+  // Store-miss RETRY (aerosol root cause, 2026-08-27): register can race the
+  // durable persist — a store miss fail-opened and a truncated app got
+  // registered while its code was still landing. Re-check up to 3× (2s apart)
+  // before accepting an unverifiable app; genuine store outages still fail open.
+  let ready = await checkAppReady(chatId).catch(() => ({ checked: false, ok: true } as const))
+  for (let i = 0; !ready.checked && i < 3; i++) {
+    await new Promise((r) => setTimeout(r, 2000))
+    ready = await checkAppReady(chatId).catch(() => ({ checked: false, ok: true } as const))
+  }
   if (ready.checked && !ready.ok) {
     return Response.json(
       {

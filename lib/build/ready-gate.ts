@@ -24,6 +24,8 @@ import { getPreview } from '@/lib/preview-store'
 import { getFiles as getFilesV2 } from '@/lib/preview-store-v2'
 import { isRenderable, type ParseGateResult } from '@/lib/code-validator'
 import { findMissingLocalImports } from '@/lib/build/completeness-gate'
+import { flattenMultiFile } from '@/lib/build/flatten-multifile'
+import { parse as babelParse } from '@babel/parser'
 
 export interface ReadyCheck extends ParseGateResult {
   /** True when we found stored code to check. False → cannot verify (fail-open). */
@@ -102,6 +104,24 @@ export async function checkAppReady(chatId: string): Promise<ReadyCheck> {
       ok: false,
       reason: 'missing_local_import',
       error: `Truncated generation: imported local module(s) never defined in the payload: ${missing.join(', ')}`,
+    }
+  }
+
+  // FLATTENED-PARSE GATE (aerosol repro, 2026-08-27): a generation truncated
+  // MID-FILE (JSX cut off inside a component — code jumps from an open <div>
+  // to "));}}") resolves every import, and isRenderable missed the imbalance,
+  // but the flattened blob the browser actually runs fails to parse. Prove the
+  // exact artifact the preview serves parses — this is deterministic for both
+  // the beacon and aerosol truncation shapes.
+  try {
+    babelParse(flattenMultiFile(stored.code), { sourceType: 'module', plugins: ['jsx'] })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message.split('\n')[0] : String(e)
+    return {
+      checked: true,
+      ok: false,
+      reason: 'syntax_error',
+      error: `Truncated/unbalanced generation (flattened parse): ${msg}`,
     }
   }
 
