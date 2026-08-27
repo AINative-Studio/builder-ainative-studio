@@ -3,14 +3,56 @@ import { getPreview, isPreviewStreaming, storePreview, getSSRPreview } from '@/l
 import { validateJavaScriptCode, sanitizeForSandpack } from '@/lib/code-validator'
 import { detectRootComponent } from '@/lib/component-detector'
 import { flattenMultiFile } from '@/lib/build/flatten-multifile'
+import { mintAppDataToken } from '@/lib/build/app-data-token'
 // Sucrase removed — builds were failing. Using client-side Babel.
 // The key fix is using models that produce COMPLETE code (not maverick 512-tok)
+
+/**
+ * Per-app data token (#331): when the embedder passes ?slug=, mint the signed
+ * token that scopes this app's /api/db calls to ITS OWN ZeroDB project — but
+ * ONLY if the slug's registered chatId matches THIS preview id (the binding
+ * check: naming someone else's slug on your own preview mints nothing). The
+ * token is injected as a fetch shim so generated code needs no changes.
+ */
+async function mintPreviewDbToken(slug: string | null, previewId: string): Promise<string> {
+  if (!slug || !/^[a-z0-9-]{1,64}$/i.test(slug)) return ''
+  try {
+    const { resolveApp } = await import('@/lib/build/app-registry')
+    const entry = await resolveApp(slug)
+    if (!entry || entry.chatId !== previewId || !entry.zerodbProjectId) return ''
+    return mintAppDataToken(entry.zerodbProjectId, slug, Math.floor(Date.now() / 1000))
+  } catch {
+    return ''
+  }
+}
+
+/** The injected fetch shim: attaches the app's data token on same-origin
+ *  /api/db requests. No-op (empty string) when there is no token. */
+function dbTokenShim(token: string): string {
+  if (!token) return ''
+  return `<script>(function(){
+  var T=${JSON.stringify(token)};var of=window.fetch;
+  window.fetch=function(input,init){
+    try{
+      var u=typeof input==='string'?input:((input&&input.url)||'');
+      if(u.indexOf('/api/db')===0){
+        init=init||{};
+        var h=new Headers(init.headers||((typeof input==='object'&&input.headers)||undefined));
+        h.set('x-ainative-db-token',T);
+        init.headers=h;
+      }
+    }catch(e){}
+    return of.call(this,input,init);
+  };
+})();</script>`
+}
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+  const dbToken = await mintPreviewDbToken(request.nextUrl.searchParams.get('slug'), id)
 
   let content = getPreview(id)
 
@@ -23,7 +65,7 @@ export async function GET(
     const ssrHtml = getSSRPreview(id)
     if (ssrHtml) {
       console.log(`[Preview] No live code — serving frozen SSR HTML for ${id} (${ssrHtml.length}b)`)
-      return new Response(ssrHtml, {
+      return new Response(ssrHtml.replace(/<head([^>]*)>/i, `<head$1>${dbTokenShim(dbToken)}`), {
         headers: {
           'Content-Type': 'text/html; charset=utf-8',
           'X-Frame-Options': 'SAMEORIGIN',
@@ -54,7 +96,7 @@ export async function GET(
         console.log(`[Preview] Restored code from ZeroDB for ID: ${id} (re-rendering with current template)`)
       } else if (gen?.ssrHtml) {
         console.log(`[Preview] No code — serving SSR HTML from ZeroDB for ID: ${id}`)
-        return new Response(gen.ssrHtml, {
+        return new Response(gen.ssrHtml.replace(/<head([^>]*)>/i, `<head$1>${dbTokenShim(dbToken)}`), {
           headers: {
             'Content-Type': 'text/html; charset=utf-8',
             'X-Frame-Options': 'SAMEORIGIN',
@@ -654,6 +696,7 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Preview</title>
+    ${dbTokenShim(dbToken)}
     <!-- Google Fonts: Inter (primary) + Geist-like fallback -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

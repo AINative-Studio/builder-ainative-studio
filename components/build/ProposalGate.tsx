@@ -68,7 +68,7 @@ export function ProposalGate({ plan }: ProposalGateProps) {
   // panel always shows the real running app, never a fabricated mock.
   const appSub = state.appSub || (state.companyName || '').toLowerCase().replace(/\s+/g, '-')
   const appPreviewUrl = state.appChatId
-    ? `/api/preview/${state.appChatId}`
+    ? `/api/preview/${state.appChatId}${appSub ? `?slug=${encodeURIComponent(appSub)}` : ''}`
     : appSub
       ? `/build/${appSub}`
       : null

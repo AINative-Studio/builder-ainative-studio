@@ -54,7 +54,7 @@ export default async function AppSubdirPage({ params }: Props) {
         </a>
       </header>
       <iframe
-        src={`/api/preview/${entry.chatId}`}
+        src={`/api/preview/${entry.chatId}?slug=${encodeURIComponent(slug)}`}
         title={entry.name || slug}
         style={{ flex: 1, border: 0, width: '100%' }}
         sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"

@@ -158,7 +158,9 @@ export function Preview() {
           ) : previewUrl ? (
             <iframe
               key={previewUrl}
-              src={previewUrl}
+              // #331: pass the slug so the preview route can mint + inject this
+              // app's data token (scoping /api/db to its own ZeroDB project).
+              src={state.appSub ? `${previewUrl}${previewUrl.includes('?') ? '&' : '?'}slug=${encodeURIComponent(state.appSub)}` : previewUrl}
               className="m-preview-frame"
               title="Your generated app"
               // Security (#9/#10): NO allow-same-origin — the generated LLM-authored
