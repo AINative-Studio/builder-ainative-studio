@@ -192,25 +192,45 @@ export async function POST(
   // Auto-create table on first insert
   await ensureTable(table, PROJECT_ID)
 
+  // FIRST-WRITE RACE (verified live 2026-08-27): ZeroDB's table create is slow /
+  // eventually consistent, so the very first insert into a brand-new table can
+  // 404 even though ensureTable was awaited — a generated app's FIRST save
+  // silently failed (reproduced from a live app iframe; the identical request
+  // succeeded seconds later). On 404, re-ensure, back off briefly, retry once.
+  const insertOnce = async (row: unknown) =>
+    fetch(`${ZERODB_API}/v1/projects/${PROJECT_ID}/database/tables/${table}/rows`, {
+      method: 'POST',
+      headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ row_data: row }),
+      signal: AbortSignal.timeout(10000),
+    })
+  const insertWithRetry = async (row: unknown) => {
+    let res = await insertOnce(row)
+    if (res.status === 404) {
+      await ensureTable(table, PROJECT_ID)
+      await new Promise((r) => setTimeout(r, 1500))
+      res = await insertOnce(row)
+    }
+    return res
+  }
+
   // Support both single row and batch
   if (Array.isArray(body)) {
     // Batch insert
     const results = []
     for (const row of body) {
-      const res = await fetch(`${ZERODB_API}/v1/projects/${PROJECT_ID}/database/tables/${table}/rows`, {
-        method: 'POST',
-        headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ row_data: row }),
-        signal: AbortSignal.timeout(10000),
-      })
+      const res = await insertWithRetry(row)
       if (res.ok) results.push(flattenRow(await res.json()))
     }
     return NextResponse.json({ inserted: results.length, data: results })
   }
 
-  return zerodbFetch('POST', `/v1/projects/${PROJECT_ID}/database/tables/${table}/rows`, {
-    row_data: body,
-  })
+  const res = await insertWithRetry(body)
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return NextResponse.json({ error: `ZeroDB error: ${res.status}`, detail: text }, { status: res.status })
+  }
+  return NextResponse.json(normalizeBody(await res.json()))
 }
 
 // PUT /api/db/{table}?id=xxx — update row
