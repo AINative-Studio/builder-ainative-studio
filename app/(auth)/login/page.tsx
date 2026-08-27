@@ -3,8 +3,13 @@ import { auth } from '../auth'
 import { AuthForm } from '@/components/auth-form'
 import { AINativeOAuthButton } from '@/components/ainative-oauth-button'
 import { isOAuthConfigured } from '@/lib/auth/ainative-oauth'
+import { messageForOAuthError } from '@/lib/auth/oauth-error-messages'
 
-export default async function LoginPage() {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ error?: string }>
+}) {
   const session = await auth()
 
   if (session) {
@@ -12,6 +17,8 @@ export default async function LoginPage() {
   }
 
   const oauthEnabled = isOAuthConfigured()
+  const params = (await searchParams) || {}
+  const errorMessage = messageForOAuthError(params.error)
 
   return (
     <div className="flex h-screen w-screen items-center justify-center bg-background">
@@ -25,6 +32,14 @@ export default async function LoginPage() {
           </p>
         </div>
         <div className="flex flex-col space-y-4 bg-muted/50 px-4 py-8 sm:px-16">
+          {errorMessage && (
+            <div
+              role="alert"
+              className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300"
+            >
+              {errorMessage}
+            </div>
+          )}
           {oauthEnabled && (
             <>
               <AINativeOAuthButton />
