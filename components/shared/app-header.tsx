@@ -100,6 +100,18 @@ export function AppHeader({ className = '' }: AppHeaderProps) {
 
           {/* Desktop right side - Navigation + User */}
           <div className="hidden lg:flex items-center gap-4">
+            {/* My Builds (#330): a persistent path back to a signed-in user's builds
+                from ANY page — including after they navigate away (e.g. to the AINative
+                dashboard) and can't otherwise find their way back. Routes to the durable
+                server-side companies list (?screen=companies → /api/build/my-companies). */}
+            {session?.user && (
+              <Button variant="ghost" size="sm" asChild>
+                <Link href="/build?screen=companies" data-testid="nav-my-builds">
+                  <LayoutTemplate className="w-4 h-4 mr-1" />
+                  My Builds
+                </Link>
+              </Button>
+            )}
             {/* Public SEO links — visible to everyone, including crawlers */}
             <Button variant="ghost" size="sm" asChild>
               <Link href="/guides">
