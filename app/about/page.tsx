@@ -14,7 +14,8 @@ import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { AppHeader } from '@/components/shared/app-header'
 
-const PUBLISHED_DATE = '2026-08-24'
+// Founder direction: the story is dated August 2025 (top byline + footer).
+const PUBLISHED_DATE = '2025-08-24'
 const MODIFIED_DATE = '2026-08-24'
 const AUTHOR_NAME = 'Toby'
 const ORG_NAME = 'AINative Studio'
