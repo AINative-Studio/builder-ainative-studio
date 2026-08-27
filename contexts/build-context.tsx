@@ -39,6 +39,7 @@ type PersistedBuildState = Pick<
   'generated' | 'done' | 'genError' | 'builtCompany' | 'builtMVP'
   | 'wedgePicked' | 'answers' | 'companyName' | 'idea' | 'appSub'
   | 'brandTagline' | 'brandColor' | 'appChatId' | 'activePlan' | 'enrolled' | 'track'
+  | 'sawPreview'
 >
 
 function lsKey(slug: string) {
@@ -74,6 +75,7 @@ function saveBuildState(slug: string, state: BuildState) {
       activePlan: state.activePlan,
       enrolled: state.enrolled,
       track: state.track,
+      sawPreview: state.sawPreview,
     }
     window.localStorage.setItem(lsKey(slug), JSON.stringify(persisted))
   } catch {
@@ -170,6 +172,7 @@ export function BuildProvider({ children }: { children: ReactNode }) {
     state.builtCompany, state.builtMVP, state.wedgePicked, state.answers,
     state.companyName, state.idea, state.brandTagline, state.brandColor,
     state.appChatId, state.activePlan, state.enrolled, state.track,
+    state.sawPreview,
   ])
 
   // Encode current workspace view in the URL so a refresh restores position (#285).

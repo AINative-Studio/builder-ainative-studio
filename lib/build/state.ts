@@ -87,11 +87,20 @@ export interface BuildState {
   indexOpen: boolean       // the Index (jump-to-any-screen) panel is open
   activePlan: ActivePlan   // verified PAID subscription tier (#241); '' = none. Drives feature gates.
   enrolled: boolean        // Business+ auto-enrolled into the nightly loop (#241; cron is #243)
+  // Value moment (#310/#311 GR-01/GR-02): has this founder EVER seen a working,
+  // rendered preview of their app? Gates the pricing routing (no card ask before
+  // the first working preview) and the Pricing screen's honest framing. Set once
+  // by the Preview artifact when its iframe reaches 'ready'; persisted.
+  sawPreview: boolean
   // Auth wall (#dashboard-ux): when an anonymous founder submits an idea we stash the
   // generated idea/brand here and route them to signup FIRST (no tokens spent on an
   // un-registered visitor). After they register + verify + land back, the deferred
   // build fires. Null = no pending build.
   pendingBuild: { idea: string; appSub: string; companyName: string; brandTagline: string; brandColor: string } | null
+  // Ecosystem runway (#324 GR-15): Cody's honest one-liner when a build composed
+  // enough AINative primitives to earn extra free-build allowance. Set from the
+  // SERVER's credits response the moment the build is recorded; '' = nothing earned.
+  runwayNote: string
 }
 
 /** Full-bleed build overlays that can cover the workspace during autoplay (04-SCREENS §3). */
@@ -138,7 +147,9 @@ export const initialBuildState: BuildState = {
   indexOpen: false,
   activePlan: '',
   enrolled: false,
+  sawPreview: false,
   pendingBuild: null,
+  runwayNote: '',
 }
 
 export type BuildAction =
@@ -154,6 +165,9 @@ export type BuildAction =
   | { type: 'CLEAR_PENDING_BUILD' }
   | { type: 'GEN_DONE'; view: string; content: unknown }
   | { type: 'GEN_FAIL'; view: string; error: string }
+  /** Inline artifact edit (GR-16 #329): replace a view's generated content with
+   *  the founder's edit. Marks the artifact 'edited' and clears any gen error. */
+  | { type: 'EDIT_ARTIFACT'; view: string; content: unknown }
   | { type: 'GOTO_VIEW'; view: ArtifactView }
   | { type: 'SET_BUILDING'; building: boolean }
   | { type: 'COMPLETE_ARTIFACT'; view: string; status?: string }
@@ -174,14 +188,19 @@ export type BuildAction =
   | { type: 'ASK_PRIVACY' }
   | { type: 'TRIGGER_CONFLICT'; changedView: string; fromRescopeIntent?: boolean }
   /** Restore persisted build state from localStorage without clearing artifacts (#284). */
-  | { type: 'RESTORE_BUILD'; partial: Partial<Pick<BuildState, 'generated' | 'done' | 'genError' | 'builtCompany' | 'builtMVP' | 'wedgePicked' | 'answers' | 'companyName' | 'idea' | 'appSub' | 'brandTagline' | 'brandColor' | 'appChatId' | 'activePlan' | 'enrolled' | 'track'>> }
+  | { type: 'RESTORE_BUILD'; partial: Partial<Pick<BuildState, 'generated' | 'done' | 'genError' | 'builtCompany' | 'builtMVP' | 'wedgePicked' | 'answers' | 'companyName' | 'idea' | 'appSub' | 'brandTagline' | 'brandColor' | 'appChatId' | 'activePlan' | 'enrolled' | 'track' | 'sawPreview'>> }
   | { type: 'TOGGLE_RAIL' }
   | { type: 'TOGGLE_INDEX' }
   | { type: 'SET_APP_CHATID'; chatId: string }
+  // Value moment (#310/#311): the Preview artifact rendered a working app. One-way.
+  | { type: 'SAW_PREVIEW' }
   | { type: 'SET_ACTIVE_PLAN'; plan: ActivePlan; enrolled?: boolean }
   // Seed the idea field before Intake mounts (funnel "Surprise me" pre-fills a
   // starter idea; does NOT start a build). Intake prefills its input from this.
   | { type: 'SET_IDEA'; idea: string }
+  // Ecosystem runway note (#324 GR-15) — set from the server's credits response
+  // at the moment a build earns (or doesn't earn) the primitive-composition bonus.
+  | { type: 'SET_RUNWAY_NOTE'; note: string }
 
 export function buildReducer(state: BuildState, action: BuildAction): BuildState {
   switch (action.type) {
@@ -189,6 +208,8 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
       return { ...state, screen: action.screen }
     case 'SET_IDEA':
       return { ...state, idea: action.idea }
+    case 'SET_RUNWAY_NOTE':
+      return { ...state, runwayNote: action.note }
     case 'PICK_TRACK':
       return {
         ...state,
@@ -260,6 +281,16 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
         ...state,
         genError: { ...state.genError, [action.view]: action.error },
       }
+    case 'EDIT_ARTIFACT':
+      // Founder's inline edit (GR-16 #329) — same shape as GEN_DONE (the edit
+      // replaces the generated content and is persisted by the same #284
+      // localStorage effect), but the status pill reads 'edited'.
+      return {
+        ...state,
+        generated: { ...state.generated, [action.view]: action.content },
+        genError: { ...state.genError, [action.view]: '' },
+        done: { ...state.done, [action.view]: 'edited' },
+      }
     case 'GOTO_VIEW':
       return { ...state, view: action.view }
     case 'SET_BUILDING':
@@ -322,6 +353,11 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
       return { ...state, indexOpen: !state.indexOpen, railOpen: false }
     case 'SET_APP_CHATID':
       return { ...state, appChatId: action.chatId }
+    case 'SAW_PREVIEW':
+      // One-way: once the founder has seen a working preview, the value moment
+      // has happened for good (a NEW build doesn't un-see it — the flag is about
+      // the founder's journey, not one build). START_BUILD deliberately keeps it.
+      return { ...state, sawPreview: true }
     case 'SET_ACTIVE_PLAN':
       return {
         ...state,

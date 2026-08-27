@@ -149,6 +149,20 @@ describe('buildProposal', () => {
     expect(p.subline).toContain('your company')
   })
 
+  it('claims "you’ve seen it work" only when sawPreview (default true) (#310/#311)', () => {
+    const seen = buildProposal({ companyName: 'Riff', idea: 'crm', plan: PLAN, sawPreview: true })
+    expect(seen.headline).toBe('You’ve seen Riff work. Here’s what Cody builds next.')
+    expect(seen.subline).toContain('your app is running')
+
+    const unseen = buildProposal({ companyName: 'Riff', idea: 'crm', plan: PLAN, sawPreview: false })
+    expect(unseen.headline).toBe('Here’s what Cody is building for Riff.')
+    expect(unseen.subline).toContain('your app is on the way')
+    expect(unseen.subline).not.toContain('your app is running')
+
+    const unseenNoName = buildProposal({ idea: 'crm', plan: PLAN, sawPreview: false })
+    expect(unseenNoName.headline).toBe('Here’s what Cody is building.')
+  })
+
   it('trims whitespace-only company names to empty', () => {
     const p = buildProposal({ companyName: '   ', idea: 'crm sales pipeline', plan: PLAN })
     expect(p.companyName).toBe('')

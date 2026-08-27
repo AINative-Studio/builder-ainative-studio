@@ -35,8 +35,12 @@ export function ArtifactRouter({ view }: { view: string }) {
   const title = ARTIFACT_TITLES[view] ?? view
   const status = state.done[view] ?? (state.building ? 'building' : 'queued')
   const Body = SPECIAL_BODIES[view] ?? APP_ARTIFACT_BODIES[view] ?? COMPANY_ARTIFACT_BODIES[view]
+  // key={view} (#329): ArtifactFrame holds per-view UI state (edit drafts,
+  // feedback text, regenerating). Without a key React preserves the instance
+  // across view navigation — a PRD edit draft could be saved into another
+  // artifact. Remount per view so that state can never carry over.
   return (
-    <ArtifactFrame title={title} status={status} view={view}>
+    <ArtifactFrame key={view} title={title} status={status} view={view}>
       {Body ? <Body /> : undefined}
     </ArtifactFrame>
   )

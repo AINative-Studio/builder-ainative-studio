@@ -2,11 +2,13 @@
 
 /** Pricing (#226) — the Launch gate, framed as Cody's ask. 04-SCREENS Pricing. */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useBuild } from '@/contexts/build-context'
 import { trackEvent } from '@/components/analytics/google-analytics'
 import { trackMeta } from '@/components/analytics/meta-pixel'
 import { ProposalGate } from '@/components/build/ProposalGate'
+import { pricingFraming } from '@/lib/build/value-moment'
+import type { ArtifactView } from '@/lib/build/state'
 
 // Builder subscription tiers — the canonical AINative plan line (config/pricing.ts).
 // The free sandbox preview at /build/{slug} is the no-card entry (3 builds; see
@@ -55,6 +57,22 @@ export function Pricing() {
   const { state, dispatch } = useBuild()
   const [period, setPeriod] = useState<'monthly' | 'yearly'>('monthly')
   const isYearly = period === 'yearly'
+  // Ecosystem runway (#324 GR-15): read the SERVER-enforced credit status so the
+  // wall honestly reflects any extra free builds earned by composing AINative
+  // primitives. Best-effort — the wall renders the same without it.
+  const [runway, setRunway] = useState<{ ecosystemBonus: number; limit: number; baseLimit: number } | null>(null)
+  useEffect(() => {
+    let on = true
+    fetch('/api/build/credits')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (on && d && typeof d.ecosystemBonus === 'number' && d.ecosystemBonus > 0 && d.limit > 0) {
+          setRunway({ ecosystemBonus: d.ecosystemBonus, limit: d.limit, baseLimit: d.baseLimit })
+        }
+      })
+      .catch(() => { /* silent — copy line only */ })
+    return () => { on = false }
+  }, [])
   // The tier the proposal cost line points at (#68) — the featured/recommended
   // plan, falling back to the first tier so the proposal always has a price.
   const featuredTier = TIERS.find((t) => t.featured) ?? TIERS[0]
@@ -92,6 +110,21 @@ export function Pricing() {
   const backToLive = () => dispatch({ type: 'GOTO_SCREEN', screen: 'live' })
   const backLabel = state.companyName ? `‹ Back to ${state.companyName}` : '‹ Back'
 
+  // Honest framing (#310/#311 GR-01/GR-02): "your prototype works" is only
+  // claimable once the founder has actually SEEN a working preview. Before the
+  // value moment the screen offers the preview first — never a card ask that
+  // pretends value was already delivered. Pure logic in lib/build/value-moment.
+  const framing = pricingFraming({
+    sawPreview: state.sawPreview,
+    companyName: state.companyName,
+    appSub: state.appSub,
+    hasBuild: Boolean(state.idea && state.appSub),
+  })
+  const seePreviewFirst = () => {
+    dispatch({ type: 'GOTO_SCREEN', screen: 'ws' })
+    dispatch({ type: 'GOTO_VIEW', view: 'preview' as ArtifactView })
+  }
+
   return (
     <div className="modernist m-pricing" data-track={state.track}>
       {/* Escape hatch — the Pricing screen must never trap the user (#282). */}
@@ -105,12 +138,28 @@ export function Pricing() {
         {backLabel}
       </button>
       <p className="m-cody-line"><span className="m-glyph">◇</span> Cody · your technical co-founder</p>
-      <h1 className="m-h1">Your prototype works. Let&apos;s make it real.</h1>
-      <p className="m-sub">
-        I built {state.companyName || 'it'} for free — live at builder.ainative.studio/build/{state.appSub || 'your-app'}.
-        To put it in front of real users and let me run the company around it, pick how far we go. You own 100%.
-      </p>
+      <h1 className="m-h1" data-testid="pricing-headline">{framing.headline}</h1>
+      <p className="m-sub">{framing.sub}</p>
+      {/* Value-before-card escape (#310/#311): if the founder landed here without
+          ever seeing their working preview, the primary path is BACK to it. */}
+      {framing.showSeePreviewFirst && (
+        <button
+          type="button"
+          className="btn-primary"
+          data-testid="pricing-see-preview-first"
+          onClick={seePreviewFirst}
+        >
+          See your app first →
+        </button>
+      )}
       <p className="m-reassure m-mono">You own 100% of everything I build. Cancel anytime.</p>
+      {/* #324 GR-15 — honest runway line: only shown when the server says a bonus applied. */}
+      {runway && (
+        <p className="m-cody-line" data-testid="ecosystem-runway-pricing">
+          <span className="m-glyph">◇</span> Your builds composed AINative primitives — I extended your free
+          runway from {runway.baseLimit} to {runway.limit} builds.
+        </p>
+      )}
 
       {/* Designed proposal (#68) — the #1 conversion lever: the real app preview +
           the business systems Cody wires (each with "what it does" + click-to-preview)

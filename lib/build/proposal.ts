@@ -261,12 +261,17 @@ export function systemPreview(system: ProposedSystem): SystemPreview {
  * @param opts.idea         The founder's idea (drives system selection).
  * @param opts.plan         The recommended tier (name + price) for the cost line.
  * @param opts.maxSystems   Cap on proposed systems (default 4).
+ * @param opts.sawPreview   Has the founder actually SEEN their working preview
+ *                          (#310/#311)? "You've seen it work" is only claimable
+ *                          when true. Defaults true (the normal post-preview
+ *                          pay-gate path).
  */
 export function buildProposal(opts: {
   companyName?: string
   idea?: string
   plan: ProposalPlan
   maxSystems?: number
+  sawPreview?: boolean
 }): Proposal {
   const companyName = (opts.companyName || '').trim()
   const idea = (opts.idea || '').trim()
@@ -274,15 +279,23 @@ export function buildProposal(opts: {
   const maxSystems = opts.maxSystems ?? 4
 
   const systems = toProposedSystems(buildSystems(idea, {}, {}, maxSystems))
+  const sawPreview = opts.sawPreview ?? true
 
   const n = systems.length
-  const headline = companyName
-    ? `You’ve seen ${companyName} work. Here’s what Cody builds next.`
-    : 'You’ve seen it work. Here’s what Cody builds next.'
+  // Honest framing (#310/#311): claim "you've seen it work" only when the
+  // founder actually has. Before the value moment, present it as the plan.
+  const headline = sawPreview
+    ? (companyName
+        ? `You’ve seen ${companyName} work. Here’s what Cody builds next.`
+        : 'You’ve seen it work. Here’s what Cody builds next.')
+    : (companyName
+        ? `Here’s what Cody is building for ${companyName}.`
+        : 'Here’s what Cody is building.')
 
+  const running = sawPreview ? 'your app is running' : 'your app is on the way'
   const subline = n > 0
-    ? `You’re already down the path — your app is running. To make ${displayName} real, Cody wires ${n} business system${n === 1 ? '' : 's'} around it. Click any one to see what it’d look like.`
-    : `You’re already down the path — your app is running. Cody wires the business systems that make ${displayName} real.`
+    ? `You’re already down the path — ${running}. To make ${displayName} real, Cody wires ${n} business system${n === 1 ? '' : 's'} around it. Click any one to see what it’d look like.`
+    : `You’re already down the path — ${running}. Cody wires the business systems that make ${displayName} real.`
 
   const costLine = `Everything below is included on ${opts.plan.name} — $${opts.plan.monthly}/mo. You own 100%, cancel anytime.`
 

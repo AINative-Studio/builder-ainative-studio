@@ -6,6 +6,7 @@ import { useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { useBuild } from '@/contexts/build-context'
 import { trackEvent } from '@/components/analytics/google-analytics'
+import { decideLimitAction } from '@/lib/build/value-moment'
 
 export function Intake() {
   const { state, dispatch } = useBuild()
@@ -51,17 +52,29 @@ export function Intake() {
     // Freemium enforcement (#dashboard-ux): record a build against the founder's
     // allowance. If the free/starter limit is exhausted, route to pricing instead
     // of starting a build. Fails OPEN on any error (metering never hard-blocks).
+    // The idea/track let the SERVER compute this build's composed primitives for
+    // the ecosystem-runway bonus (#324 GR-15) — the bonus is never client-decided.
+    let runwayNote = ''
     try {
       const res = await fetch('/api/build/credits', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slug: brand.slug }),
+        body: JSON.stringify({ slug: brand.slug, idea, track: state.track }),
       })
       if (res.status === 402) {
         trackEvent('build_limit_reached', 'funnel', state.track, undefined)
-        dispatch({ type: 'GOTO_SCREEN', screen: 'pricing' })
-        setNaming(false)
-        return
+        // Value-moment gate (#310/#311 GR-01/GR-02): a founder who has NEVER
+        // seen a working preview is not routed to the pay gate — the build
+        // proceeds (fail toward value; the server's value guarantee allows the
+        // first visible build too). Only after the value moment does the limit
+        // route to pricing.
+        if (decideLimitAction({ limitReached: true, sawPreview: state.sawPreview }) === 'pricing') {
+          dispatch({ type: 'GOTO_SCREEN', screen: 'pricing' })
+          setNaming(false)
+          return
+        }
       }
+      const d = await res.json().catch(() => null)
+      if (typeof d?.ecosystem?.message === 'string') runwayNote = d.ecosystem.message
     } catch { /* fail open — proceed with the build */ }
 
     dispatch({
@@ -69,6 +82,9 @@ export function Intake() {
       appSub: brand.slug, companyName: brand.name,
       brandTagline: brand.tagline, brandColor: brand.color,
     })
+    // Surface the earned ecosystem-runway bonus in the workspace (#324 GR-15).
+    // Dispatched AFTER START_BUILD so a new-build reset can't clobber the note.
+    dispatch({ type: 'SET_RUNWAY_NOTE', note: runwayNote })
   }
 
   return (

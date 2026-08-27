@@ -415,6 +415,29 @@ describe('buildReducer — SET_APP_CHATID', () => {
   })
 })
 
+describe('buildReducer — SAW_PREVIEW (#310/#311 value moment)', () => {
+  it('defaults to false and flips true on SAW_PREVIEW', () => {
+    expect(initialBuildState.sawPreview).toBe(false)
+    const s = buildReducer(initialBuildState, { type: 'SAW_PREVIEW' })
+    expect(s.sawPreview).toBe(true)
+  })
+
+  it('is one-way: a NEW build does not un-see the value moment', () => {
+    const seen = buildReducer(initialBuildState, { type: 'SAW_PREVIEW' })
+    const s = buildReducer(seen, {
+      type: 'START_BUILD', idea: 'a fresh idea', appSub: 'fresh-co',
+    })
+    expect(s.sawPreview).toBe(true)
+  })
+
+  it('restores via RESTORE_BUILD (persisted per founder journey)', () => {
+    const s = buildReducer(initialBuildState, {
+      type: 'RESTORE_BUILD', partial: { sawPreview: true },
+    })
+    expect(s.sawPreview).toBe(true)
+  })
+})
+
 describe('buildReducer — SET_ACTIVE_PLAN', () => {
   it('sets activePlan to pro and auto-enrolls based on tier', () => {
     const s = buildReducer(initialBuildState, { type: 'SET_ACTIVE_PLAN', plan: 'pro' })

@@ -10,11 +10,23 @@
  * graceful message if generation fails. The Make-it-real banner is preserved.
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useBuild } from '@/contexts/build-context'
 import { useRealPreview } from '@/lib/build/useRealPreview'
 import { shouldUseSandpack } from '@/lib/build/preview-engine'
+import { FeedbackPulse } from '@/components/build/FeedbackPulse'
+import {
+  shouldShowMvpUpsell,
+  defaultSprintEstimate,
+  sprintCostLine,
+  buildsRemainingLine,
+} from '@/lib/build/value-moment'
 import dynamic from 'next/dynamic'
+
+// The recommended plan the sprint cost line is expressed against (#320) — the
+// featured tier from the pricing screen; its 1M-token allowance is published in
+// lib/build/value-moment.ts PLAN_TOKEN_ALLOWANCES.
+const RECOMMENDED_PLAN = { id: 'pro', name: 'Pro' }
 
 // Sandpack is a heavy client-only bundle (esbuild worker). Load it lazily so it's
 // code-split out of the common single-file path (Babel iframe) — only pulled when a
@@ -41,6 +53,45 @@ export function Preview() {
   // {slug}.ainative.studio wildcard host when configured, else the /build/{slug}
   // preview. Auto-deploying the app-track app to a real shareable URL is the goal.
   const [deployUrl, setDeployUrl] = useState<string | null>(null)
+  // Real build-credit status (#320) — read from GET /api/build/credits so the
+  // upsell's "X of N free builds" figure is never fabricated. Null until loaded.
+  const [credits, setCredits] = useState<{ used: number; limit: number; unlimited: boolean } | null>(null)
+
+  // Value moment (#310/#311 GR-01/GR-02): the founder is LOOKING at a working
+  // preview. Mark it in state (gates pricing routing + honest framing) and
+  // report it server-side (satisfies the free tier's one-visible-build
+  // guarantee — after this, the normal build limit applies). Best-effort.
+  useEffect(() => {
+    if (status !== 'ready' || state.sawPreview) return
+    dispatch({ type: 'SAW_PREVIEW' })
+    fetch('/api/build/credits', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event: 'preview_reached', slug: state.appSub }),
+    }).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status])
+
+  // MVP-first upsell (#320 GR-11): once the working MVP is visible, fetch the
+  // REAL credit status so the offer shows honest remaining-build numbers.
+  const showUpsell = shouldShowMvpUpsell({ builtMVP: state.builtMVP, previewStatus: status })
+  useEffect(() => {
+    if (!showUpsell || credits) return
+    fetch('/api/build/credits')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && typeof d.used === 'number') {
+          setCredits({ used: d.used, limit: d.limit, unlimited: !!d.unlimited })
+        }
+      })
+      .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showUpsell])
+
+  // The explicit sprint cost (#320): no per-sprint cost exists server-side, so
+  // this is computed from the REAL generation-pipeline caps and labeled as an
+  // estimate (see lib/build/value-moment.ts). Deterministic — memo once.
+  const sprintLine = useMemo(() => sprintCostLine(defaultSprintEstimate(), RECOMMENDED_PLAN), [])
+  const remainingLine = buildsRemainingLine(credits)
 
   // Once the app is ready, register slug → chatId so /build/{slug} resolves to it,
   // and store the chatId in state so the Live dashboard can link the real app. (FIX-2)
@@ -135,7 +186,23 @@ export function Preview() {
         </div>
       )}
 
-      {state.builtMVP && (
+      {/* MVP-first upsell (#320 GR-11): the working MVP is the value moment —
+          only THEN present the deeper build-out with an explicit, honest cost.
+          Shown strictly after the preview has rendered (never over a skeleton). */}
+      {showUpsell && (
+        <div className="m-cody-banner" data-testid="mvp-upsell">
+          <p>
+            <span className="m-glyph">◇</span> Your MVP works — you&apos;re looking at it.
+            Want the full build-out? The deeper PRD, sprint plan, and the business systems
+            around your app are one sprint. {sprintLine}{remainingLine ? ` ${remainingLine}` : ''}
+          </p>
+          <button className="btn-primary" data-testid="mvp-upsell-cta" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'pricing' })}>See the sprint offer →</button>
+        </div>
+      )}
+      {/* Fallback for the completed-MVP state when the preview frame itself
+          couldn't render (error): keep the original forward path, no cost claim
+          — we don't pitch a sprint over a preview the founder can't see. */}
+      {state.builtMVP && !showUpsell && (
         <div className="m-cody-banner">
           <p><span className="m-glyph">◇</span> Your MVP is live in the sandbox. Ready to put it in front of real users and build the company?</p>
           <button className="btn-primary" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'pricing' })}>Make it real →</button>
@@ -184,6 +251,10 @@ export function Preview() {
           )}
         </div>
       </div>
+
+      {/* RLHF pulse (#332): one-tap signal on the generation, right at the value
+          moment — the app just rendered. Once per generation, never blocking. */}
+      {status === 'ready' && <FeedbackPulse surface="preview" chatId={chatId || undefined} />}
     </>
   )
 }

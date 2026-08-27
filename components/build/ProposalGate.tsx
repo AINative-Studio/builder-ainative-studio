@@ -50,8 +50,11 @@ export function ProposalGate({ plan }: ProposalGateProps) {
         companyName: state.companyName,
         idea: state.idea,
         plan,
+        // Honest framing (#310/#311): only claim "you've seen it work" when the
+        // founder has actually seen the working preview render.
+        sawPreview: state.sawPreview,
       }),
-    [state.companyName, state.idea, plan],
+    [state.companyName, state.idea, plan, state.sawPreview],
   )
 
   // Which system's preview is expanded (click-to-preview). Default to the first

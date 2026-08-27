@@ -16,6 +16,8 @@
  * so every counted build has an owner.
  */
 
+import { computeTotalEcosystemBonus } from '@/lib/build/ecosystem-bonus'
+
 const AINATIVE_API = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 const API_KEY = process.env.AINATIVE_API_KEY || process.env.ZERODB_API_KEY || ''
 const PROJECT_ID = process.env.ZERODB_PROJECT_ID || ''
@@ -62,60 +64,163 @@ export function buildLimitForTier(tier: string): number {
 
 export interface BuildCreditStatus {
   used: number
-  limit: number        // -1 = unlimited
+  limit: number        // EFFECTIVE limit (baseLimit + ecosystemBonus); -1 = unlimited
+  baseLimit: number    // the tier's base allowance before any ecosystem bonus
+  ecosystemBonus: number // extra builds earned by composing AINative primitives (#324 GR-15)
   remaining: number    // Infinity when unlimited
   allowed: boolean     // may this owner start another build?
   unlimited: boolean
+  /**
+   * Value guarantee (#310/#311 GR-01/GR-02): true when this status was allowed
+   * ONLY because the owner has never reached a working preview. The free tier
+   * guarantees one VISIBLE build — credits are recorded at build START, so a
+   * founder whose builds all failed/were abandoned before rendering must not
+   * hit a card wall having never seen value.
+   */
+  valueGuarantee?: boolean
 }
 
-/** Count how many builds this owner has recorded (best-effort; 0 on any error). */
-async function countBuilds(ownerEmail: string): Promise<number> {
-  if (!configured() || !ownerEmail) return 0
+/**
+ * Apply the value guarantee (#310/#311) to a resolved credit status. PURE —
+ * fully unit-covered. If the owner is out of credits but has NEVER reached a
+ * working preview, the build is allowed anyway (flagged valueGuarantee) so the
+ * first visible build always happens before any paywall. An owner who HAS seen
+ * a preview keeps the normal limit.
+ */
+export function applyValueGuarantee(
+  status: BuildCreditStatus,
+  everReachedPreview: boolean,
+): BuildCreditStatus {
+  if (status.allowed) return status
+  if (everReachedPreview) return status
+  return { ...status, allowed: true, valueGuarantee: true }
+}
+
+/**
+ * Read this owner's recorded builds: how many, plus the total ecosystem-runway
+ * bonus earned from the primitives each build composed (#324 GR-15). The bonus
+ * is recomputed from the persisted per-build primitives lists (not a stored
+ * number) so it stays deterministic under constant changes. Best-effort;
+ * zeros on any error (fail open elsewhere).
+ */
+async function readOwnerBuilds(ownerEmail: string): Promise<{ used: number; bonus: number }> {
+  if (!configured() || !ownerEmail) return { used: 0, bonus: 0 }
   try {
     const res = await fetch(rowsUrl(), {
       method: 'GET',
       headers: headers(),
       signal: AbortSignal.timeout(12000),
     })
-    if (!res.ok) return 0
+    if (!res.ok) return { used: 0, bonus: 0 }
     const data = await res.json().catch(() => null)
-    const rows: Array<{ row_data?: { ownerEmail?: string; event?: string } }> =
+    const rows: Array<{ row_data?: { ownerEmail?: string; event?: string; primitives?: string[] } }> =
       data?.rows || data?.data || []
-    return rows.filter(
+    const mine = rows.filter(
       (r) => r?.row_data?.ownerEmail === ownerEmail && r?.row_data?.event === 'build',
-    ).length
+    )
+    const bonus = computeTotalEcosystemBonus(
+      mine.map((r) => (Array.isArray(r?.row_data?.primitives) ? r.row_data!.primitives! : [])),
+    )
+    return { used: mine.length, bonus }
   } catch {
-    return 0
+    return { used: 0, bonus: 0 }
   }
 }
 
 /**
  * Resolve the owner's build-credit status for a tier. FAILS OPEN (allowed:true)
  * when ZeroDB is unconfigured or on any error — metering must never hard-block.
+ *
+ * #324 GR-15: the EFFECTIVE limit is baseLimit + the ecosystem-runway bonus the
+ * owner earned by composing AINative primitives in past builds — so the 402
+ * threshold in the credits route automatically accounts for it.
  */
 export async function getBuildCreditStatus(
   ownerEmail: string,
   tier: string,
 ): Promise<BuildCreditStatus> {
-  const limit = buildLimitForTier(tier)
-  if (limit < 0) {
-    return { used: 0, limit: -1, remaining: Infinity, allowed: true, unlimited: true }
+  const baseLimit = buildLimitForTier(tier)
+  if (baseLimit < 0) {
+    return {
+      used: 0, limit: -1, baseLimit: -1, ecosystemBonus: 0,
+      remaining: Infinity, allowed: true, unlimited: true,
+    }
   }
   // Unconfigured metering → fail open (don't block on infra we can't reach).
   if (!configured() || !ownerEmail) {
-    return { used: 0, limit, remaining: limit, allowed: true, unlimited: false }
+    return {
+      used: 0, limit: baseLimit, baseLimit, ecosystemBonus: 0,
+      remaining: baseLimit, allowed: true, unlimited: false,
+    }
   }
-  const used = await countBuilds(ownerEmail)
+  const { used, bonus } = await readOwnerBuilds(ownerEmail)
+  const limit = baseLimit + bonus
   const remaining = Math.max(0, limit - used)
-  return { used, limit, remaining, allowed: remaining > 0, unlimited: false }
+  return {
+    used, limit, baseLimit, ecosystemBonus: bonus,
+    remaining, allowed: remaining > 0, unlimited: false,
+  }
 }
 
 /**
  * Record that this owner started a build (append-only). Best-effort — a failed
  * write never blocks the build (we'd rather under-count than dead-end a founder).
  * Returns true if the row was written.
+ *
+ * `primitives` (#324 GR-15) is the SERVER-computed list of AINative primitives
+ * this build composes (from selectPrimitives(idea, track) in the credits route).
+ * It's persisted with the row so future status reads can deterministically
+ * recompute the ecosystem-runway bonus.
  */
-export async function recordBuild(ownerEmail: string, slug?: string): Promise<boolean> {
+export async function recordBuild(
+  ownerEmail: string,
+  slug?: string,
+  primitives?: string[],
+): Promise<boolean> {
+  return appendEvent(ownerEmail, 'build', slug, primitives)
+}
+
+/**
+ * Record the VALUE MOMENT (#310/#311): this owner's build reached a working,
+ * rendered preview. Drives the value guarantee — once at least one of these
+ * exists, the normal build limit applies; until then a founder is never walled
+ * off before seeing their app work. Best-effort, append-only.
+ */
+export async function recordPreviewReached(ownerEmail: string, slug?: string): Promise<boolean> {
+  return appendEvent(ownerEmail, 'preview_reached', slug)
+}
+
+/**
+ * Has this owner EVER had a build reach a working preview? Fails toward false
+ * on any error — which fails the gate OPEN (the value guarantee allows the
+ * build), consistent with "metering must never hard-block".
+ */
+export async function hasReachedPreview(ownerEmail: string): Promise<boolean> {
+  if (!configured() || !ownerEmail) return false
+  try {
+    const res = await fetch(rowsUrl(), {
+      method: 'GET',
+      headers: headers(),
+      signal: AbortSignal.timeout(12000),
+    })
+    if (!res.ok) return false
+    const data = await res.json().catch(() => null)
+    const rows: Array<{ row_data?: { ownerEmail?: string; event?: string } }> =
+      data?.rows || data?.data || []
+    return rows.some(
+      (r) => r?.row_data?.ownerEmail === ownerEmail && r?.row_data?.event === 'preview_reached',
+    )
+  } catch {
+    return false
+  }
+}
+
+async function appendEvent(
+  ownerEmail: string,
+  event: string,
+  slug?: string,
+  primitives?: string[],
+): Promise<boolean> {
   if (!configured() || !ownerEmail) return false
   try {
     const res = await fetch(rowsUrl(), {
@@ -124,8 +229,9 @@ export async function recordBuild(ownerEmail: string, slug?: string): Promise<bo
       body: JSON.stringify({
         row_data: {
           ownerEmail,
-          event: 'build',
+          event,
           slug: slug || '',
+          primitives: Array.isArray(primitives) ? primitives : [],
           createdAt: new Date().toISOString(),
         },
       }),

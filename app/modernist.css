@@ -221,6 +221,9 @@
 .m-sub { font-size: 17px; color: var(--text-body-70); max-width: 60ch; line-height: 1.5; }
 .m-cody-line { font-family: var(--font-mono); font-size: 13px; color: var(--text-body-70); margin: 20px 0; }
 .m-cody-line .m-glyph { color: var(--color-accent); }
+/* #324 GR-15 — ecosystem runway note: Cody's line in the workspace when a build's
+   primitive composition earned extra free runway. Flat, machine-text, no rounding. */
+.m-runway-note { margin: 12px 0 4px; padding: 8px 12px; border-left: 3px solid var(--color-accent); background: var(--color-surface, transparent); }
 
 .m-fork-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; background: var(--color-divider); margin-top: 40px; }
 .m-fork-card { background: var(--color-bg); padding: 34px 28px; border-top: 5px solid var(--track); cursor: pointer; transition: box-shadow 0.15s; }
@@ -580,6 +583,18 @@
 .m-artifact-h1 { font-weight: 500; font-size: 44px; line-height: 1.05; margin: 0 0 8px; }
 .m-artifact-meta { font-size: 11px; color: var(--text-muted); margin: 0 0 24px; }
 .m-artifact-body { font-family: var(--font-artifact); font-size: 16px; line-height: 1.6; color: var(--text-body-85); }
+
+/* ---- Per-artifact review actions: Regenerate / Edit (GR-16 #329) ---- */
+.m-artifact-meta-row { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin: 0 0 24px; }
+.m-artifact-meta-row .m-artifact-meta { margin: 0; }
+.m-artifact-actions { display: flex; gap: 8px; margin-left: auto; }
+.modernist .m-artifact-action { font-size: 11px; padding: 4px 10px; border: 1px solid var(--neutral-line); }
+.modernist .m-artifact-action:disabled { opacity: 0.5; cursor: default; }
+.m-artifact-feedback { display: flex; flex-direction: column; gap: 8px; margin: 0 0 24px; padding: 14px; border: 1.5px solid var(--neutral-line); background: var(--color-surface); }
+.m-artifact-edit { display: flex; flex-direction: column; gap: 8px; }
+.m-artifact-textarea { width: 100%; padding: 10px 12px; border: 1.5px solid var(--neutral-line); background: var(--color-bg); font-family: var(--font-mono); font-size: 12px; line-height: 1.55; resize: vertical; }
+.m-artifact-textarea:focus { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.m-artifact-action-cta { display: flex; gap: 10px; }
 .m-artifact-nav { display: flex; gap: 12px; margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--color-divider); }
 
 /* ---- Artifact bodies (#223) ---- */
@@ -1239,3 +1254,34 @@
   display: block; font-family: var(--font-body); font-size: 13px; color: var(--text-body-70);
   margin-top: 4px; line-height: 1.45;
 }
+
+/* ── FeedbackPulse (#332 DATA-1) — post-generation RLHF rating strip ──── */
+.m-feedback-pulse {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin: 12px 0; padding: 10px 14px;
+  background: var(--color-surface); border: 1.5px solid var(--neutral-line);
+  font-size: 12px; color: var(--text-body-85);
+}
+.m-feedback-pulse .m-glyph { color: var(--color-accent); }
+.m-feedback-pulse.is-done { border-color: var(--color-accent); background: var(--color-accent-100); }
+.m-feedback-q { display: inline-flex; align-items: center; gap: 6px; }
+.m-feedback-btn {
+  font-family: inherit; font-size: 12px; padding: 6px 14px; cursor: pointer;
+  background: #fff; color: var(--color-text);
+  border: 1.5px solid var(--neutral-line); border-radius: 0;
+  transition: border-color 0.12s, background 0.12s;
+}
+.m-feedback-btn:hover { border-color: var(--color-accent); }
+.m-feedback-dismiss {
+  font-family: inherit; font-size: 11px; padding: 6px 8px; cursor: pointer;
+  margin-left: auto; background: transparent; border: none; border-radius: 0;
+  color: var(--text-muted); text-decoration: underline;
+}
+.m-feedback-dismiss:hover { color: var(--color-text); }
+.m-feedback-input {
+  flex: 1 1 220px; height: 32px; padding: 0 10px; min-width: 160px;
+  font-family: inherit; font-size: 12px;
+  background: #fff; color: var(--color-text);
+  border: 1.5px solid var(--neutral-line); border-radius: 0;
+}
+.m-feedback-input:focus { outline: none; border-color: var(--color-accent); }

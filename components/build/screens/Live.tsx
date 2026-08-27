@@ -27,6 +27,7 @@ import { DocumentsPanel } from '@/components/build/DocumentsPanel'
 import { MediaPanel } from '@/components/build/MediaPanel'
 import { AutoModePanel } from '@/components/build/AutoModePanel'
 import { WebsitePanel } from '@/components/build/WebsitePanel'
+import { FeedbackPulse } from '@/components/build/FeedbackPulse'
 
 /** Display label for an active paid tier (#241). */
 const PLAN_LABEL: Record<ActivePlan, string> = {
@@ -525,6 +526,14 @@ export function Live() {
         </div>
       )}
       {planStatus && <p className="m-mono m-domain-status" style={{ padding: '0 var(--m-pad, 24px)' }}>{planStatus}</p>}
+
+      {/* RLHF pulse (#332): rate the built company once it's live. One rating
+          per generation (keyed by chatId/slug), dismissible, never blocking. */}
+      {state.builtCompany && (
+        <div style={{ padding: '0 var(--m-pad, 24px)' }}>
+          <FeedbackPulse surface="live" />
+        </div>
+      )}
 
       <div className={`m-live-grid ${state.tablet ? 'is-tablet' : ''}`}>
         {/* LEFT — Cody status + metrics + upsell */}

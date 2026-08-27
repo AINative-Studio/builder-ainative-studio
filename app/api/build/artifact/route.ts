@@ -11,13 +11,16 @@
  * The enterprise-gated agent-swarm path is reserved for the paid real-build step
  * (see core#6422).
  *
- * Body: { view, idea, track, companyName?, prior? }
+ * Body: { view, idea, track, companyName?, prior?, feedback? }
+ *   feedback (GR-16 #329): founder's review notes when REGENERATING an artifact —
+ *   appended to the generation prompt so the redraft applies the requested changes.
  * Returns: { view, content (parsed JSON per artifact schema), provider, model }
  */
 
 import { NextRequest } from 'next/server'
 import OpenAI from 'openai'
 import { ARTIFACT_PROMPTS, type ArtifactContext } from '@/lib/build/artifact-prompts'
+import { feedbackInstruction } from '@/lib/build/artifact-edit'
 import { getClaudeCompletion } from '@/lib/build/claude-completion'
 import { auth } from '@/app/(auth)/auth'
 import { getPlanStatus } from '@/lib/ainative/plan'
@@ -94,7 +97,7 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'invalid JSON body' }, { status: 400 })
   }
 
-  const { view, idea, track, companyName, prior } = body || {}
+  const { view, idea, track, companyName, prior, feedback } = body || {}
   if (!view || !ARTIFACT_PROMPTS[view]) {
     return Response.json({ error: `unknown or missing view: ${view}` }, { status: 400 })
   }
@@ -117,7 +120,9 @@ export async function POST(request: NextRequest) {
   const langInstr = languageInstruction(contentLanguage)
   const system =
     spec.system + `\nRequired JSON schema: ${spec.schemaHint}` + (langInstr ? `\n${langInstr}` : '')
-  const user = spec.user(ctx)
+  // Regeneration feedback (GR-16 #329): appended to THIS view's prompt so the
+  // redraft applies the founder's requested changes. '' when absent/blank.
+  const user = spec.user(ctx) + feedbackInstruction(typeof feedback === 'string' ? feedback : '')
 
   // Tier → model: Hobbyist=Haiku 4.5, Pro/Scale=Sonnet 4.5, Enterprise=Opus 4.5.
   // An explicit BUILD_ARTIFACT_MODEL env still overrides (ops escape hatch).

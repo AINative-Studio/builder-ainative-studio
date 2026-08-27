@@ -11,6 +11,7 @@ import { useBuild } from '@/contexts/build-context'
 import { WorkspaceShell } from '@/components/build/WorkspaceShell'
 import { CodyFeed } from '@/components/build/CodyFeed'
 import { FirstRunGuide } from '@/components/build/FirstRunGuide'
+import { EcosystemRunwayNote } from '@/components/build/EcosystemRunwayNote'
 import { PoweringThis } from '@/components/build/PoweringThis'
 import { ArtifactRouter } from '@/components/build/ArtifactRouter'
 
@@ -20,6 +21,8 @@ export function Workspace() {
     <WorkspaceShell feed={<CodyFeed />}>
       {/* #319 GR-10 — one-time coach strip, top of the center panel. */}
       <FirstRunGuide />
+      {/* #324 GR-15 — Cody's line when this build's primitive composition earned runway. */}
+      <EcosystemRunwayNote />
       <PoweringThis view={state.view} />
       <ArtifactRouter view={state.view} />
     </WorkspaceShell>

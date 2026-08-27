@@ -10,6 +10,7 @@ import { trackEvent } from '@/components/analytics/google-analytics'
 import { trackMeta } from '@/components/analytics/meta-pixel'
 import { migrateGuestWork } from '@/lib/build/guest-migration'
 import { getRefCode } from '@/lib/build/attribution'
+import { decideLimitAction } from '@/lib/build/value-moment'
 
 function BrandPanel() {
   return (
@@ -53,18 +54,30 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
       const pb = state.pendingBuild
       // Freemium enforcement (#dashboard-ux): count this newly-registered founder's
       // first build; if somehow already at their limit, route to pricing. Fails OPEN.
+      // Value-moment gate (#310/#311): a founder who has never seen a working
+      // preview always proceeds to build — never a pay gate before first value.
+      // idea/track let the server compute the composed primitives for the
+      // ecosystem-runway bonus (#324 GR-15) — server-decided, never client-sent.
+      let runwayNote = ''
       try {
         const res = await fetch('/api/build/credits', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ slug: pb.appSub }),
+          body: JSON.stringify({ slug: pb.appSub, idea: pb.idea, track: state.track }),
         })
-        if (res.status === 402) { go('pricing'); return }
+        if (
+          res.status === 402 &&
+          decideLimitAction({ limitReached: true, sawPreview: state.sawPreview }) === 'pricing'
+        ) { go('pricing'); return }
+        const d = await res.json().catch(() => null)
+        if (typeof d?.ecosystem?.message === 'string') runwayNote = d.ecosystem.message
       } catch { /* fail open */ }
       dispatch({
         type: 'START_BUILD',
         idea: pb.idea, appSub: pb.appSub, companyName: pb.companyName,
         brandTagline: pb.brandTagline, brandColor: pb.brandColor,
       })
+      // Surface the earned runway bonus in the workspace (#324 GR-15).
+      dispatch({ type: 'SET_RUNWAY_NOTE', note: runwayNote })
       return
     }
     go(state.appSub ? 'live' : 'fork')

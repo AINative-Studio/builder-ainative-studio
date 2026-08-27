@@ -9,11 +9,18 @@
  * the navigable track sequence (COMPANY_VIEWS / APP_VIEWS), so the generic
  * prev/next pager is always empty for them. Replace the dead pager with
  * explicit escape CTAs so no screen can trap the user.
+ *
+ * GR-16 (#329): every GENERATED artifact is reviewable — a Regenerate action
+ * (with an optional "What should change?" feedback box, appended to the
+ * generation prompt) and an inline Edit action (textarea over the raw content,
+ * Save updates the generated map and persists via the same #284 mechanism).
+ * Pure logic lives in lib/build/artifact-edit.ts.
  */
 
 import { useBuild } from '@/contexts/build-context'
 import { SHARED_LATE_VIEWS } from '@/lib/build/state'
-import type { ReactNode } from 'react'
+import { collectPrior, serializeArtifact, applyEdit } from '@/lib/build/artifact-edit'
+import { useState, type ReactNode } from 'react'
 
 /** Stable artifact IDs per 04-SCREENS (PB-01, PRD-01, …). */
 const ARTIFACT_ID: Record<string, string> = {
@@ -26,7 +33,7 @@ const ARTIFACT_ID: Record<string, string> = {
 function statusClass(status: string): string {
   if (/build|run|generat|accret/i.test(status)) return 'is-running'
   if (/need|input/i.test(status)) return 'is-needs'
-  if (/done|approv|connect|ship|deploy|provision|live|ready|assigned/i.test(status)) return 'is-done'
+  if (/done|approv|connect|ship|deploy|provision|live|ready|assigned|edited/i.test(status)) return 'is-done'
   return ''
 }
 
@@ -54,6 +61,74 @@ export function ArtifactFrame({
   const isLate = isSharedLateView(view)
   const companyLabel = state.companyName || 'company'
 
+  // ── Per-artifact review actions (GR-16 #329) ──────────────────────────────
+  // Shown on every artifact that has GENERATED content (prose views after
+  // GEN_DONE). Build views (swarm/infra/preview) and late shared views have no
+  // generated text, so they get no actions.
+  const genContent = state.generated[view]
+  const hasGen = genContent !== undefined && genContent !== null && !isLate
+  const [mode, setMode] = useState<'none' | 'feedback' | 'edit'>('none')
+  const [feedback, setFeedback] = useState('')
+  const [draft, setDraft] = useState('')
+  const [editError, setEditError] = useState('')
+  const [regenerating, setRegenerating] = useState(false)
+
+  // Re-run generation for THIS view only, with the founder's feedback appended
+  // to the generation prompt (server side). Shows the existing forming overlay;
+  // success replaces the content via GEN_DONE, failure surfaces via GEN_FAIL.
+  const runRegenerate = async () => {
+    if (regenerating || !state.idea) return
+    const fb = feedback.trim()
+    setMode('none')
+    setRegenerating(true)
+    dispatch({ type: 'SET_OVERLAY', overlay: { kind: 'forming', view } })
+    try {
+      const res = await fetch('/api/build/artifact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          view,
+          idea: state.idea,
+          track: state.track,
+          companyName: state.companyName || undefined,
+          prior: collectPrior(views, state.generated, view),
+          feedback: fb || undefined,
+        }),
+      })
+      const data = await res.json().catch(() => null)
+      if (res.ok && data?.content) {
+        dispatch({ type: 'GEN_DONE', view, content: data.content })
+        setFeedback('')
+      } else {
+        dispatch({ type: 'GEN_FAIL', view, error: data?.error || `HTTP ${res.status}` })
+      }
+    } catch (e: unknown) {
+      dispatch({ type: 'GEN_FAIL', view, error: e instanceof Error ? e.message : String(e) })
+    } finally {
+      dispatch({ type: 'SET_OVERLAY', overlay: { kind: 'none' } })
+      setRegenerating(false)
+    }
+  }
+
+  const startEdit = () => {
+    setDraft(serializeArtifact(genContent))
+    setEditError('')
+    setMode('edit')
+  }
+
+  const saveEdit = () => {
+    const result = applyEdit(genContent, draft)
+    if (!result.ok) {
+      setEditError(result.error)
+      return
+    }
+    // EDIT_ARTIFACT updates state.generated, which the build-context #284
+    // effect persists to localStorage under the company slug automatically.
+    dispatch({ type: 'EDIT_ARTIFACT', view, content: result.content })
+    setMode('none')
+    setEditError('')
+  }
+
   // For SHARED_LATE_VIEWS: after conflict is resolved the forward CTA is the
   // graph. For the graph itself the forward CTA returns to Live. This keeps
   // every late view's forward/back chain explicit and never dead (#283).
@@ -80,9 +155,69 @@ export function ArtifactFrame({
         {artifactId && <span className="m-artifact-id m-mono">{artifactId}</span>}
       </div>
       <h1 className="m-artifact m-artifact-h1">{title}</h1>
-      {meta && <p className="m-artifact-meta m-mono">{meta}</p>}
+      {(meta || hasGen) && (
+        <div className="m-artifact-meta-row">
+          {meta && <p className="m-artifact-meta m-mono">{meta}</p>}
+          {hasGen && (
+            <div className="m-artifact-actions">
+              <button
+                className="btn-ghost m-artifact-action"
+                disabled={regenerating}
+                onClick={() => setMode(mode === 'feedback' ? 'none' : 'feedback')}
+              >
+                Regenerate
+              </button>
+              <button
+                className="btn-ghost m-artifact-action"
+                disabled={regenerating}
+                onClick={() => (mode === 'edit' ? setMode('none') : startEdit())}
+              >
+                {mode === 'edit' ? 'Cancel edit' : 'Edit'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      {mode === 'feedback' && hasGen && (
+        <div className="m-artifact-feedback">
+          <label className="m-field-l" htmlFor={`m-feedback-${view}`}>What should change?</label>
+          <textarea
+            id={`m-feedback-${view}`}
+            className="m-artifact-textarea"
+            rows={3}
+            value={feedback}
+            onChange={(e) => setFeedback(e.target.value)}
+            placeholder="Optional — leave blank and I take a fresh pass."
+          />
+          <div className="m-artifact-action-cta">
+            <button className="btn-secondary" disabled={regenerating} onClick={runRegenerate}>
+              Regenerate →
+            </button>
+            <button className="btn-ghost" disabled={regenerating} onClick={() => setMode('none')}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
       <div className="m-artifact-body">
-        {children ?? <p className="m-sub">Cody is composing this artifact from AINative primitives.</p>}
+        {mode === 'edit' && hasGen ? (
+          <div className="m-artifact-edit">
+            <textarea
+              className="m-artifact-textarea is-edit"
+              rows={16}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              aria-label={`Edit ${title}`}
+            />
+            {editError && <p className="m-field-err m-mono">{editError}</p>}
+            <div className="m-artifact-action-cta">
+              <button className="btn-secondary" onClick={saveEdit}>Save →</button>
+              <button className="btn-ghost" onClick={() => { setMode('none'); setEditError('') }}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          children ?? <p className="m-sub">Cody is composing this artifact from AINative primitives.</p>
+        )}
       </div>
 
       {/* SHARED_LATE_VIEWS: replace the generic pager with explicit escape CTAs
