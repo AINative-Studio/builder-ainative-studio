@@ -16,6 +16,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { useSession } from 'next-auth/react'
 import { useBuild } from '@/contexts/build-context'
 
 const TICKER_LINES = [
@@ -43,12 +44,16 @@ function seg(p: number, start: number, end: number): number {
 
 export function Landing() {
   const { dispatch } = useBuild()
+  const { status } = useSession()
   const [progress, setProgress] = useState(0)
   const [tickerIdx, setTickerIdx] = useState(0)
   const stageRef = useRef<HTMLDivElement>(null)
 
   const startFlow = () => { window.scrollTo(0, 0); dispatch({ type: 'GOTO_SCREEN', screen: 'start' }) }
+  // Signed-out → auth; signed-in → straight into their builds (My Builds). The
+  // landing shows for everyone (founder direction) — this is the fast lane out.
   const goSignIn = () => { window.scrollTo(0, 0); dispatch({ type: 'GOTO_SCREEN', screen: 'login' }) }
+  const openBuilder = () => { window.scrollTo(0, 0); dispatch({ type: 'GOTO_SCREEN', screen: 'companies' }) }
 
   // Scroll → progress. The stage is 4× viewport tall; progress maps the scroll
   // position within it to 0..1 (the prototype's 3.15 divisor keeps the last
@@ -83,7 +88,11 @@ export function Landing() {
       {/* top nav */}
       <div className="m-land-nav">
         <div className="m-land-title" style={{ fontSize: 22 }}>BUILDER</div>
-        <button onClick={goSignIn} className="m-land-signin" data-testid="landing-signin">Sign in</button>
+        {status === 'authenticated' ? (
+          <button onClick={openBuilder} className="m-land-signin" data-testid="landing-open-builder">Open Builder →</button>
+        ) : (
+          <button onClick={goSignIn} className="m-land-signin" data-testid="landing-signin">Sign in</button>
+        )}
       </div>
 
       {/* pinned scrollytelling stage (4× viewport tall) */}

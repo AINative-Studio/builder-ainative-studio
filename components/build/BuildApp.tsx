@@ -3,7 +3,6 @@
 /** Top-level pivot router (#220) — switches screens off the state machine. */
 
 import { useEffect } from 'react'
-import { useSession } from 'next-auth/react'
 import { BuildProvider, useBuild } from '@/contexts/build-context'
 import { captureAttribution } from '@/lib/build/attribution'
 import { Landing } from '@/components/build/screens/Landing'
@@ -19,23 +18,13 @@ import { Account } from '@/components/build/screens/Account'
 import { MyCompanies } from '@/components/build/screens/MyCompanies'
 import { ReferEarn } from '@/components/build/screens/ReferEarn'
 
-/** The public marketing funnel screens shown before the builder path. A
- *  signed-in visitor is redirected past these to their builds (Fork). */
-const MARKETING_SCREENS = new Set(['landing', 'start', 'build'])
-
 function ScreenRouter() {
-  const { state, dispatch } = useBuild()
-  const { status } = useSession()
+  const { state } = useBuild()
 
-  // Signed-in visitors skip the marketing landing/funnel and go straight to the
-  // builder (Fork), unless a ?screen= deep link already sent them elsewhere. Only
-  // fires on the marketing screens, so it never disrupts an in-progress build.
-  useEffect(() => {
-    if (status === 'authenticated' && MARKETING_SCREENS.has(state.screen)) {
-      dispatch({ type: 'GOTO_SCREEN', screen: 'fork' })
-    }
-  }, [status, state.screen, dispatch])
-
+  // The landing IS the front door for EVERYONE (founder direction 2026-08-27):
+  // signed-in visitors are no longer auto-redirected past it — the landing nav
+  // shows them "Open Builder →" instead of "Sign in", and any ?screen= deep link
+  // (My Builds nav, QA, resume links) still jumps straight where it points.
   switch (state.screen) {
     case 'landing': return <Landing />
     case 'start': return <Start />
