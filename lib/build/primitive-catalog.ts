@@ -500,6 +500,8 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
     `    GET  /api/db/{table}            → list rows (returns { data: [ {id, ...fields} ] })\n` +
     `    POST /api/db/{table}            → insert (body = the row object; returns the flat row with an id)\n` +
     `    PUT  /api/db/{table}?id={id}    → update    DELETE /api/db/{table}?id={id} → delete\n` +
+    `    GET  /api/db/{table}?search={text}  → SEMANTIC search (returns { results: [...] }); use this for\n` +
+    `        "search"/"find similar" features — do NOT hand-roll client-side text filtering for semantic search.\n` +
     `  Load on mount with useEffect; re-fetch or update state after writes. Rows come back FLAT with an \`id\`.\n` +
     `- AUTH (lightweight, no backend): if the app has per-user data, scope it to a user id kept in localStorage\n` +
     `  (e.g. \`let uid = localStorage.getItem('uid') || crypto.randomUUID(); localStorage.setItem('uid', uid)\`),\n` +

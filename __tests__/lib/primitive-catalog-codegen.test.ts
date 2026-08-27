@@ -55,6 +55,14 @@ describe('primitive-catalog codegen composition (#218)', () => {
     expect(block).toMatch(/localStorage/i) // the lightweight auth pattern
   })
 
+  it('foundation block includes the semantic-search pattern (#317)', () => {
+    const block = codegenCompositionBlock('an app to search my notes', 'app')
+    expect(block).toContain('/api/db/{table}?search=')
+    expect(block).toMatch(/SEMANTIC search/)
+    // steers away from hand-rolled client-side filtering
+    expect(block).toMatch(/do NOT hand-roll client-side text filtering/i)
+  })
+
   it('B2B SaaS idea wires ZeroPipeline (CRM) real endpoint', () => {
     const block = codegenCompositionBlock('a B2B sales CRM to track deals and leads', 'company')
     expect(block).toContain('ZeroPipeline')

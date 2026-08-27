@@ -105,6 +105,24 @@ export async function GET(
   const searchParams = request.nextUrl.searchParams
   const limit = searchParams.get('limit') || '50'
   const filter = searchParams.get('filter')
+  const search = searchParams.get('search')
+
+  // SEMANTIC SEARCH (#317): a generated app couldn't do ZeroDB semantic search —
+  // there was no same-origin path (the client can't hold the ZeroDB key, and the
+  // proxy only did CRUD), so "I set it up but it never worked". Wire it here:
+  //   GET /api/db/{table}?search=<text>[&threshold=0.7]
+  // forwards to ZeroDB's embeddings/search (auto-embeds the text query, server-side
+  // key). Returns { results, total_results, ... }. Semantic search is over the
+  // project's vector store (namespace = table), so the app must have stored vectors.
+  if (search) {
+    const threshold = searchParams.get('threshold')
+    return zerodbFetch('POST', `/v1/projects/${PROJECT_ID}/embeddings/search`, {
+      query: search,
+      limit: parseInt(limit),
+      namespace: table,
+      ...(threshold ? { threshold: parseFloat(threshold) } : {}),
+    })
+  }
 
   if (filter) {
     // Query with filter
