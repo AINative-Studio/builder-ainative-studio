@@ -1,7 +1,7 @@
 'use client'
 
 import { useActionState } from 'react'
-import { signInAction, signUpAction, guestSignInAction } from '@/app/(auth)/actions'
+import { signInAction, signUpAction } from '@/app/(auth)/actions'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import Link from 'next/link'
@@ -77,20 +77,8 @@ export function AuthForm({ type }: AuthFormProps) {
 
       {type === 'signin' && (
         <>
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t" />
-            </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-background px-2 text-muted-foreground">Or</span>
-            </div>
-          </div>
-
-          <form action={guestSignInAction}>
-            <Button type="submit" variant="outline" className="w-full">
-              Continue as Guest
-            </Button>
-          </form>
+          {/* "Continue as Guest" removed (founder direction 2026-08-27): no
+              anonymous users in the funnel — registration is the entry. */}
         </>
       )}
     </>

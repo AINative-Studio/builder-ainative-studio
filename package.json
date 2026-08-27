@@ -41,7 +41,7 @@
     "@ai-sdk/react": "^2.0.22",
     "@ainative/ai-kit": "0.2.0",
     "@ainative/ai-kit-core": "0.2.0",
-    "@ainative/cody-cli": "^0.12.61",
+    "@ainative/cody-cli": "^0.12.82",
     "@anthropic-ai/claude-code": "^2.1.191",
     "@anthropic-ai/sdk": "^0.65.0",
     "@babel/core": "^7.29.0",

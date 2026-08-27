@@ -24,8 +24,8 @@ importers:
         specifier: 0.2.0
         version: 0.2.0(ioredis@5.10.0)(ws@8.19.0(bufferutil@4.1.0))
       '@ainative/cody-cli':
-        specifier: ^0.12.61
-        version: 0.12.61(@types/react@19.2.14)(bufferutil@4.1.0)
+        specifier: ^0.12.82
+        version: 0.12.82(@types/react@19.2.14)(bufferutil@4.1.0)
       '@anthropic-ai/claude-code':
         specifier: ^2.1.191
         version: 2.1.191
@@ -362,8 +362,8 @@ packages:
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
 
-  '@ainative/cody-cli@0.12.61':
-    resolution: {integrity: sha512-o8dVAMGshso2s/5wsFoKrNfb2Q3iJ/BWfa1BoH+aMCwmzFaQwruNyG427tQEoX4T+gGQG2LkbpwqD8M/nD94Mg==}
+  '@ainative/cody-cli@0.12.82':
+    resolution: {integrity: sha512-apQMVISNcWU3/mlb32iIvZbiVHqhv9qRXSKNff8Twe/CNW8kNfbq5sKri7gJz3xIsQ2XwFSlYeIinxPem08NEg==}
     engines: {node: '>=18.0.0'}
     hasBin: true
 
@@ -8322,7 +8322,7 @@ snapshots:
       - tiktoken
       - ws
 
-  '@ainative/cody-cli@0.12.61(@types/react@19.2.14)(bufferutil@4.1.0)':
+  '@ainative/cody-cli@0.12.82(@types/react@19.2.14)(bufferutil@4.1.0)':
     dependencies:
       '@ainative/cody-for-chrome-mcp': 0.1.1(zod@3.25.76)
       '@ainative/sandbox-runtime': 0.0.49

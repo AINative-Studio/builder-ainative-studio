@@ -42,12 +42,27 @@ export function getAgentBinary(env: NodeJS.ProcessEnv = process.env): string {
  * explicit and pass the AINative key through as the ANTHROPIC_API_KEY the
  * Claude-compatible CLI expects).
  */
+/** Config C: cody's Bedrock provider is active (provider routing fixed in
+ *  cody-cli#351). When on, the agent must NOT be pointed at the AINative
+ *  chat proxy — Bedrock env (CODY_USE_BEDROCK, AWS_BEARER_TOKEN_BEDROCK,
+ *  BEDROCK_MODEL_ID) flows through the process.env spread. */
+export function isCodyBedrock(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env.CODY_USE_BEDROCK || '').trim() === '1'
+}
+
 export function getAgentSpawnEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const runtime = getAgentRuntime(env)
   const overrides: Record<string, string> = {}
   if (runtime === 'cody') {
-    // cody-cli defaults to https://api.ainative.studio; make it explicit so the
-    // builder's ANTHROPIC_BASE_URL (if set for Claude) doesn't leak into cody.
+    // Config C (CODY_USE_BEDROCK=1): let cody's OWN Bedrock provider route the
+    // call — overriding ANTHROPIC_BASE_URL/KEY here pointed it at the AINative
+    // chat proxy, which 400s on the mapped model ("model identifier is
+    // invalid", builder#239): the agent NEVER ran on prod and no tool-using
+    // trajectories were captured.
+    if (isCodyBedrock(env)) return overrides
+    // AINative-proxy mode: cody-cli defaults to https://api.ainative.studio;
+    // make it explicit so the builder's ANTHROPIC_BASE_URL (if set for Claude)
+    // doesn't leak into cody.
     overrides.ANTHROPIC_BASE_URL =
       env.AINATIVE_API_URL || env.CODY_BASE_URL || 'https://api.ainative.studio'
     const key = env.AINATIVE_API_KEY || env.ANTHROPIC_API_KEY || env.ZERODB_API_KEY
@@ -82,6 +97,14 @@ export function resolveAgentModel(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   if (getAgentRuntime(env) !== 'cody') return model
+  // Config C: cody on Bedrock serves the Anthropic family directly — map
+  // shorthands to the configured Bedrock model id, NOT to an AINative coding
+  // model (kimi-k2.6 → 400 on the proxy; this bypassed the agent entirely).
+  if (isCodyBedrock(env)) {
+    const bedrockModel = (env.BEDROCK_MODEL_ID || 'us.anthropic.claude-sonnet-4-6').trim()
+    if (_ANTHROPIC_SHORTHANDS.has(model.trim().toLowerCase())) return bedrockModel
+    return model
+  }
   const codyDefault = (env.CODY_MODEL || 'kimi-k2.6').trim()
   // Only remap the Anthropic-family shorthands the AINative tier can't serve;
   // an explicit AINative model name (kimi-k2.6, qwen3-coder-flash, …) is honored.
