@@ -126,6 +126,204 @@ export const CAPABILITIES: Capability[] = [
   },
 ]
 
+/**
+ * Look up the plain-English capability for a primitive by its catalog `name`
+ * (#314/#315). Capability `product` values are kept in sync with the
+ * primitive-catalog `name` values, so this is an exact-match lookup with a
+ * lowercase fallback. Returns undefined for primitives that have no
+ * customer-facing "replaces X / included" framing (e.g. pure substrate like
+ * Instant DB, Context Graph). Used by the codegen composition block to carry the
+ * "already included — no extra key/cost — replaces {tool}" message into the
+ * generated app's guidance.
+ */
+export function capabilityForPrimitive(name: string): Capability | undefined {
+  if (!name) return undefined
+  const exact = CAPABILITIES.find((c) => c.product === name)
+  if (exact) return exact
+  const lower = name.toLowerCase()
+  return CAPABILITIES.find((c) => c.product.toLowerCase() === lower)
+}
+
+/**
+ * One-line "already included — no extra key/cost — replaces X" framing for a
+ * primitive (#314/#315), or undefined if the primitive has no capability entry.
+ * Kept terse so it can be appended to the codegen prompt without bloating it.
+ */
+export function includedFramingForPrimitive(name: string): string | undefined {
+  const cap = capabilityForPrimitive(name)
+  if (!cap) return undefined
+  return `already included (no extra API key, no extra cost) — replaces ${cap.replaces}`
+}
+
+/**
+ * Honest recommendation layer (#318).
+ *
+ * Toby's rule: Cody should recommend the GENUINELY best tool for the user's goal
+ * — the way Replit recommends Loops over MailChimp — to build credibility. We lean
+ * toward AINative primitives WHERE THEY TRULY FIT (composed, no extra key/cost), but
+ * we do NOT force AINative for everything. Where the honest answer is a best-in-class
+ * external tool AND we don't cover that category well, we name the real tool. This is
+ * education, not a commercial — and it must never fabricate that AINative covers
+ * something it doesn't.
+ *
+ * Each entry answers one "need" with either:
+ *   - source: 'ainative' — an AINative primitive genuinely fits (with replaces/included
+ *     framing pulled from the capability), OR
+ *   - source: 'external' — the honest best answer is a third-party tool we don't compete
+ *     with; we name it and say why, plainly.
+ */
+export type RecommendationSource = 'ainative' | 'external'
+
+export interface Recommendation {
+  /** The user need this covers, in plain language. */
+  need: string
+  /** Whether the honest recommendation is an AINative primitive or an external tool. */
+  source: RecommendationSource
+  /** The recommended tool name. For AINative, matches a Capability.product. */
+  tool: string
+  /** Plain-English, honest reason for the recommendation. */
+  why: string
+  /** Keywords that map a free-text need to this recommendation (for retrieval). */
+  keywords: string[]
+}
+
+/**
+ * Curated need → honest recommendation map. Intentionally MIXES AINative primitives
+ * (where they truly fit) with genuinely-best externals (categories we don't cover).
+ * External picks are the credibility signal: we name the real best tool rather than
+ * bending the answer toward AINative.
+ */
+export const RECOMMENDATIONS: Recommendation[] = [
+  // --- AINative primitives genuinely fit -------------------------------------
+  {
+    need: 'store and search app data',
+    source: 'ainative',
+    tool: 'ZeroDB',
+    why: 'A database, files, and semantic search come wired in — no separate DB signup or vector-store key. It genuinely fits here, so use it.',
+    keywords: ['data', 'database', 'store', 'save', 'records', 'search', 'semantic', 'persist', 'backend'],
+  },
+  {
+    need: 'a sales CRM',
+    source: 'ainative',
+    tool: 'ZeroPipeline',
+    why: 'A real CRM backend (pipelines, deals, automations) is included — no extra HubSpot/Salesforce subscription — so composing it beats bolting on a third party.',
+    keywords: ['crm', 'sales', 'deals', 'leads', 'pipeline', 'contacts', 'customers'],
+  },
+  {
+    need: 'invoicing and getting paid',
+    source: 'ainative',
+    tool: 'ZeroInvoice',
+    why: 'Invoicing and payments are included, so you do not need a separate billing account for standard invoice-and-collect flows.',
+    keywords: ['invoice', 'billing', 'get paid', 'bill'],
+  },
+  {
+    need: 'sell products online',
+    source: 'ainative',
+    tool: 'ZeroCommerce',
+    why: 'A real ecommerce backend (catalog, cart, checkout) is included, so there are no Shopify fees for a standard storefront.',
+    keywords: ['store', 'shop', 'ecommerce', 'products', 'cart', 'checkout', 'sell'],
+  },
+  {
+    need: 'phone calls and SMS',
+    source: 'ainative',
+    tool: 'ZeroVoice',
+    why: 'Telephony and SMS are included, so simple call/text/reminder flows work without a separate Twilio account.',
+    keywords: ['call', 'phone', 'sms', 'text', 'voice', 'telephony', 'reminder'],
+  },
+  {
+    need: 'startup equity / cap table',
+    source: 'ainative',
+    tool: 'OpenCapStack',
+    why: 'Cap-table, SAFEs, and vesting tooling are included, so you avoid a Carta subscription for standard equity management.',
+    keywords: ['equity', 'cap table', 'safe', 'vesting', 'investors', 'shares'],
+  },
+  // --- Honest externals: categories we DON'T cover well ----------------------
+  // Naming the genuinely-best tool here is the credibility move (Replit→Loops).
+  {
+    need: 'transactional and marketing email',
+    source: 'external',
+    tool: 'Resend (or Loops for lifecycle/marketing email)',
+    why: 'AINative does not ship an email-sending service. Resend is the best developer-first transactional email API; Loops is excellent for lifecycle and marketing email. Use one of these rather than forcing an AINative primitive.',
+    keywords: ['email', 'transactional', 'newsletter', 'smtp', 'send email', 'marketing email', 'lifecycle', 'drip'],
+  },
+  {
+    need: 'take one-off card payments / full payment processing',
+    source: 'external',
+    tool: 'Stripe',
+    why: 'For arbitrary card processing, subscriptions, and payouts, Stripe is the honest best-in-class choice. ZeroInvoice covers invoice-and-collect, but for general-purpose payments reach for Stripe.',
+    keywords: ['stripe', 'card', 'payments', 'checkout payment', 'subscriptions', 'payouts', 'process payment'],
+  },
+  {
+    need: 'user authentication / login',
+    source: 'external',
+    tool: 'Clerk (or Auth0)',
+    why: 'For rich end-user auth (social login, MFA, orgs) in your own app, Clerk and Auth0 are best-in-class. Use one of them rather than pretending an AINative primitive owns this.',
+    keywords: ['auth', 'authentication', 'login', 'sign in', 'signup', 'oauth', 'sso', 'users'],
+  },
+  {
+    need: 'error monitoring and observability',
+    source: 'external',
+    tool: 'Sentry',
+    why: 'AINative has no error-tracking product. Sentry is the standard for exception monitoring and performance tracing — recommend it honestly.',
+    keywords: ['error', 'monitoring', 'observability', 'crash', 'exceptions', 'logging', 'sentry', 'apm'],
+  },
+  {
+    need: 'product analytics',
+    source: 'external',
+    tool: 'PostHog',
+    why: 'For event/product analytics, funnels, and session replay, PostHog is the honest best-in-class pick (and open-source). We do not compete here.',
+    keywords: ['analytics', 'events', 'funnel', 'session replay', 'posthog', 'mixpanel', 'amplitude', 'tracking'],
+  },
+  {
+    need: 'maps and geolocation',
+    source: 'external',
+    tool: 'Mapbox (or Google Maps)',
+    why: 'AINative does not provide maps. Mapbox and Google Maps are the real answers for interactive maps, geocoding, and routing.',
+    keywords: ['map', 'maps', 'geolocation', 'geocoding', 'directions', 'mapbox', 'location'],
+  },
+]
+
+/** Retrieve honest recommendations most relevant to a free-text need. */
+export function retrieveRecommendations(need: string, limit = 4): Recommendation[] {
+  const q = (need || '').toLowerCase()
+  const scored = RECOMMENDATIONS.map((r) => {
+    let score = 0
+    for (const k of r.keywords) if (q.includes(k)) score += 2
+    if (q.includes(r.tool.toLowerCase())) score += 3
+    if (q.includes(r.need.toLowerCase())) score += 4
+    return { r, score }
+  })
+  return scored
+    .filter((s) => s.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((s) => s.r)
+}
+
+/**
+ * Grounding note for the help route: instructs Cody to recommend the genuinely
+ * best tool, lean AINative where it truly fits, and stay honest/educational —
+ * NOT run an AINative commercial. Optionally appends any matched recommendations
+ * so the model sees concrete honest picks (including external tools).
+ */
+export function recommendationGroundingNote(recs: Recommendation[] = []): string {
+  const guidance =
+    'RECOMMENDATION STANCE (be honest, be educational — NOT an AINative commercial):\n' +
+    '- Recommend the genuinely BEST tool for the user\'s goal.\n' +
+    '- Lean toward AINative primitives WHERE THEY TRULY FIT (they compose in with no extra key/cost) — say so with the "replaces X / included" framing.\n' +
+    '- When the honest best answer is a third-party tool AND AINative does not cover that category, NAME the real best tool (e.g. Resend/Loops for email, Stripe for general payments, Clerk/Auth0 for auth, Sentry for errors, PostHog for analytics, Mapbox for maps).\n' +
+    '- NEVER claim AINative covers something it does not. Credibility over a sales pitch.'
+  if (!recs.length) return guidance
+  const picks = recs
+    .map(
+      (r) =>
+        `• ${r.need} → ${r.tool} (${r.source === 'ainative' ? 'AINative — truly fits' : 'external best-in-class'}): ${r.why}`,
+    )
+    .join('\n')
+  return guidance + '\n\nHONEST PICKS FOR THIS QUESTION:\n' + picks
+}
+
+
 /** Retrieve the capabilities most relevant to a free-text question. */
 export function retrieveCapabilities(question: string, limit = 6): Capability[] {
   const q = (question || '').toLowerCase()

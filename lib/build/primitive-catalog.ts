@@ -15,6 +15,7 @@
  */
 
 import { componentGuidanceBlock } from './primitive-graph'
+import { includedFramingForPrimitive } from './capabilities'
 
 export interface CatalogPrimitive {
   /** Canonical display name, must match docs/AINATIVE_PRIMITIVES.md */
@@ -477,7 +478,12 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
     const how = p.apiBase
       ? `call its REST API at \`${p.apiBase}\` (Authorization: Bearer <AINATIVE_API_KEY>)`
       : `import its SDK \`${p.sdk}\``
-    lines.push(`- ${p.name} — ${p.purpose}. To use: ${how}. Docs: ${p.url}`)
+    // #314/#315: carry the plain-English "already included — no extra key/cost —
+    // replaces {commercial tool}" framing so the generated app proactively tells
+    // the user they already have this built-in (e.g. "replaces HubSpot").
+    const framing = includedFramingForPrimitive(p.name)
+    const included = framing ? ` (${framing})` : ''
+    lines.push(`- ${p.name}${included} — ${p.purpose}. To use: ${how}. Docs: ${p.url}`)
   }
   if (lines.length === 0) {
     // No wireable primitive matched — still steer the model toward AI Kit + ZeroDB.
@@ -511,7 +517,11 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
     `1. Import \`@ainative/ai-kit-core\` (and its React bindings) for UI primitives — do NOT rebuild chat, tables, product cards, or dashboards from scratch when an AI Kit component exists.\n` +
     `2. Persist through /api/db (above) — this is MANDATORY when the app saves any records. The generated app runs in the browser, so it does NOT have AINATIVE_API_KEY; NEVER put a Bearer key or secret in app code. The SaaS primitive endpoints listed above are called SERVER-SIDE only (by the platform), not from generated app code.\n` +
     `3. Do NOT reimplement invoicing, CRM, ecommerce carts/checkout, telephony, cap-table math, or helpdesk ticketing when the matching primitive exists — model the app around composing it. Regenerating that business logic from scratch is a FAILING score.\n` +
-    `4. Add a short comment above each data call noting the AINative product it composes (e.g. \`// ZeroDB — orders\`), so the wiring is auditable.` +
+    `4. Add a short comment above each data call noting the AINative product it composes (e.g. \`// ZeroDB — orders\`), so the wiring is auditable.\n` +
+    // #314/#315: the "already included / replaces X" framing above is a SELLING
+    // POINT — surface it to the user, don't bury it. When a feature is powered by
+    // one of these primitives, tell them in plain English they already have it.
+    `5. Where a primitive above is marked "already included (no extra API key, no extra cost) — replaces {commercial tool}", surface that to the user in plain English where the feature lives (e.g. a caption or tooltip: "Billing is built-in — no extra key, replaces Stripe Invoicing"). Do NOT tell the user to sign up for or pay for the tool it replaces.` +
     // #83 (Phase 7c): traverse the primitive/component graph so the model gets the
     // CONCRETE AIKit components this archetype's surfaces need (attacks aikit=0%).
     componentGuidanceBlock(idea)
