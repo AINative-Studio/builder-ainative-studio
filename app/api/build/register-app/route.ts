@@ -15,6 +15,8 @@ import { registerApp, resolveApp } from '@/lib/build/app-registry'
 import { deployPersistent } from '@/lib/build/deploy'
 import { checkAppReady, resolveStoredApp } from '@/lib/build/ready-gate'
 import { checkSeededData, type SeededDataCheck } from '@/lib/build/seed-check'
+import { commitRegeneration, provisionCompanyRepo } from '@/lib/git/company-repo'
+import { BUILDER_WORKSPACE_ID } from '@/lib/build/instant-db'
 
 export const runtime = 'nodejs'
 
@@ -112,10 +114,40 @@ export async function POST(request: NextRequest) {
     track: b.track === 'company' ? 'company' : 'app',
     deployUrl: target?.url || existing?.deployUrl,
   })
+
+  // #349: Git commit for regeneration. If the company already has a git repo,
+  // commit the new code. If not but they're provisioned, create the repo now.
+  // Best-effort — never blocks the registration response.
+  let gitCommitted = false
+  try {
+    const stored = await resolveStoredApp(chatId)
+    if (stored?.files && Object.keys(stored.files).length > 0) {
+      if (existing?.gitRepoId) {
+        // Existing repo → commit regeneration
+        gitCommitted = await commitRegeneration({
+          slug,
+          files: stored.files,
+          taskLabel: b.taskLabel,
+        })
+      } else if (existing?.zerodbProjectId) {
+        // Provisioned but no repo yet → provision git now
+        const git = await provisionCompanyRepo({
+          workspaceId: BUILDER_WORKSPACE_ID,
+          slug,
+          files: stored.files,
+        })
+        gitCommitted = git.ok
+      }
+    }
+  } catch (err) {
+    console.warn(`[register-app] Git commit error for ${slug}:`, err)
+  }
+
   return Response.json({
     ok,
     deployUrl: target?.url || null,
     dnsPointable: target?.dnsPointable ?? false,
+    gitCommitted,
     // #343: observability for the real-data invariant (never blocks).
     seededData: seededData
       ? { dataBacked: seededData.dataBacked, checked: seededData.checked, seeded: seededData.seeded, tables: seededData.tables, seededTables: seededData.seededTables }

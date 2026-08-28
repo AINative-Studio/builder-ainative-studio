@@ -37,6 +37,8 @@ import {
 } from '@/lib/build/instant-db'
 import { provisionPipeline } from '@/lib/build/zeropipeline'
 import { provisionZeroDbViaMcp, isMcpProvisionEnabled } from '@/lib/build/mcp-provision'
+import { provisionCompanyRepo } from '@/lib/git/company-repo'
+import { resolveStoredApp } from '@/lib/build/ready-gate'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -210,6 +212,29 @@ export async function POST(request: NextRequest) {
     workspaceFiled: filed.filed,
   })
 
+  // #349: Provision per-company Gitea repo and push initial commit. Best-effort —
+  // a failure logs but doesn't block the main provisioning response. The git repo
+  // gives founders real version history + PR-based code review for task changes.
+  let gitProvisioned = false
+  let gitResult: { gitRepoUrl?: string; gitRepoId?: string; gitOrg?: string; reason?: string } = {}
+  try {
+    const stored = await resolveStoredApp(existing.chatId)
+    if (stored?.files && Object.keys(stored.files).length > 0) {
+      const git = await provisionCompanyRepo({
+        workspaceId: BUILDER_WORKSPACE_ID,
+        slug,
+        files: stored.files,
+      })
+      gitProvisioned = git.ok
+      gitResult = git
+      if (!git.ok) {
+        console.warn(`[provision] Git repo provision failed for ${slug}: ${git.reason}`)
+      }
+    }
+  } catch (err) {
+    console.warn(`[provision] Git repo provision error for ${slug}:`, err)
+  }
+
   return Response.json({
     ok: true,
     zerodbProjectId: prov.projectId,
@@ -224,6 +249,8 @@ export async function POST(request: NextRequest) {
     plan: plan || null,
     created: true,
     pipelineProvisioned: pipeline.provisioned,
+    gitProvisioned,
+    gitRepoUrl: gitResult.gitRepoUrl,
     deployUrl: target.url,
     dnsPointable: target.dnsPointable,
     persisted,
