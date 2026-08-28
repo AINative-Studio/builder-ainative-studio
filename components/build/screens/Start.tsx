@@ -43,10 +43,13 @@ export function Start() {
   return (
     <div className="modernist" style={{ minHeight: 'calc(100vh - 41px)', display: 'flex', flexDirection: 'column' }}>
       <div className="m-land-nav" style={{ position: 'static' }}>
-        <div className="m-land-title" style={{ fontSize: 22 }}>BUILDER</div>
+        <button onClick={() => { window.scrollTo(0, 0); dispatch({ type: 'GOTO_SCREEN', screen: 'landing' }) }} className="m-land-title" style={{ fontSize: 22, background: 'none', border: 0, cursor: 'pointer', padding: 0 }} aria-label="Back to the landing page" data-testid="funnel-brand-home">BUILDER</button>
       </div>
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 24px', gap: 36 }}>
+        <div style={{ width: '100%', maxWidth: 420 }}>
+          <button onClick={() => { window.scrollTo(0, 0); dispatch({ type: 'GOTO_SCREEN', screen: 'landing' }) }} className="m-land-signin" style={{ letterSpacing: '.06em' }} data-testid="start-back">&larr; Back</button>
+        </div>
         <h1 className="m-land-title" style={{ fontSize: 'clamp(30px,5vw,52px)', margin: 0 }}>Let&apos;s get started.</h1>
 
         <div style={{ display: 'grid', gap: 8, width: '100%', maxWidth: 420 }}>
