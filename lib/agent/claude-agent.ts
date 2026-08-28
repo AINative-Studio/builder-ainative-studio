@@ -15,8 +15,9 @@
 
 import { spawn, type ChildProcess } from 'child_process'
 import { cp, rm } from 'fs/promises'
-import { TrajectoryCapture } from './trajectory-capture'
+import { TrajectoryCapture, type TrajectoryStep } from './trajectory-capture'
 import { storeTrajectory } from './trajectory-store'
+import { buildStaircase, defaultSummarize, isStaircaseEnabled } from './context-staircase'
 import { mcpDataProvisioningBlock } from '@/lib/build/primitive-catalog'
 import { createWorktree, getWorktreeFiles, getWorktreePath } from './worktree-manager'
 import {
@@ -86,6 +87,14 @@ export interface AgentOptions {
    * review turn would waste the tight turn budget.
    */
   planReview?: boolean
+  /**
+   * Prior trajectory steps for a resuming / continuing build (#345). When
+   * present AND the staircase is wired (CODY_CONTEXT_STAIRCASE_WIRED=1), a
+   * tiered-recap staircase over these steps is appended to the system prompt so
+   * a long/multi-feature build carries whole-build state at bounded tokens.
+   * Bounded + fail-open: any failure falls back to the linear window.
+   */
+  priorSteps?: TrajectoryStep[]
 }
 
 /** Raw event from Claude Code's stream-json output. */
@@ -178,6 +187,48 @@ export function isClaudeAgentEnabled(): boolean {
  */
 export function isClaudeAgentFallbackEnabled(): boolean {
   return isAgentFallbackEnabled()
+}
+
+/**
+ * True when the staircase should ACTUALLY be assembled + appended to the system
+ * prompt. Two gates: the logic kill switch (CODY_CONTEXT_STAIRCASE, default ON)
+ * AND the wiring flag (CODY_CONTEXT_STAIRCASE_WIRED, default OFF — the sealing
+ * pass costs LLM calls, so opt in per #345 after measurement).
+ */
+export function isStaircaseWired(): boolean {
+  return isStaircaseEnabled() && process.env.CODY_CONTEXT_STAIRCASE_WIRED === '1'
+}
+
+/**
+ * Build the tiered-recap staircase block for the system prompt (#345). Bounded
+ * + fail-open: returns '' (never throws) when not wired, when there are no prior
+ * steps, or on any internal failure — the caller's linear window then stands.
+ */
+async function buildStaircaseBlock(
+  chatId: string,
+  priorSteps: TrajectoryStep[] | undefined,
+  model: string,
+): Promise<string> {
+  try {
+    if (!isStaircaseWired()) return ''
+    if (!priorSteps || priorSteps.length === 0) return ''
+    const result = await buildStaircase({
+      chatId,
+      steps: priorSteps,
+      model,
+      summarize: defaultSummarize(),
+    })
+    if (!result.text) return ''
+    return (
+      '\n\n## Build memory (tiered recap)\n' +
+      'This is your own memory of the build so far — coarse for older work, ' +
+      'verbatim for the most recent steps. Use it to stay coherent across the ' +
+      'whole build; drill into a span by re-reading the referenced files.\n\n' +
+      result.text
+    )
+  } catch {
+    return ''
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -282,10 +333,20 @@ export async function* runHeadlessAgent(
   // data provisioning paragraph (#343). Only when wired: instructing a
   // tool-less run to call MCP makes it hallucinate.
   const mcpBlock = mcp.configJson ? '\n\n' + mcpDataProvisioningBlock() : ''
+
+  // #345: tiered-recap context staircase for resuming/long builds. Whole-build
+  // state at BOUNDED tokens instead of a forgetful linear window. DELIBERATELY
+  // gated behind CODY_CONTEXT_STAIRCASE_WIRED=1 (default OFF): the sealing pass
+  // spends LLM calls, so we wire it but keep it off until measured. The kill
+  // switch CODY_CONTEXT_STAIRCASE=0 disables the logic entirely. Bounded +
+  // fail-open — any failure yields an empty block and the linear window stands.
+  const staircaseBlock = await buildStaircaseBlock(chatId, options.priorSteps, model)
+
   const fullSystemPrompt =
     AGENT_SYSTEM_PROMPT +
     (planReview ? '\n\n' + planReviewPromptBlock() : '') +
     mcpBlock +
+    staircaseBlock +
     (systemPrompt ? '\n\n' + systemPrompt : '')
   args.push('--append-system-prompt', fullSystemPrompt)
 
