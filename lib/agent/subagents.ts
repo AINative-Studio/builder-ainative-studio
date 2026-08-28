@@ -7,7 +7,7 @@ import {
 } from './agent-profiles'
 import { createMetricsCollector, extractTokenUsage, MetricsCollector } from './metrics'
 import { recallPastPerformance, storeGenerationMemory } from './zeromemory'
-import { subagentForkRecord } from './trajectory-capture'
+import { subagentForkRecord, planRefork } from './trajectory-capture'
 import { storeTrajectory } from './trajectory-store'
 
 /**
@@ -354,6 +354,10 @@ export async function runOrchestratorAgent(
     }
   }
 
+  // #347 slice 3: bounded re-forks when validation fails. Rather than dead-ending,
+  // re-run code from the last good step (design spec + QA feedback) up to N times.
+  const maxReforks = Number(process.env.SUBAGENT_MAX_REFORKS || 2)
+
   console.log('\n👔 CODY (Team Leader): Alright team, we have a new component to build. Let\'s do this right.\n')
   console.log(`📋 Mission: "${userPrompt}"\n`)
 
@@ -402,7 +406,7 @@ export async function runOrchestratorAgent(
 
   metricsCollector.startSubagent('code')
   const codeStart = Date.now()
-  const codeResult = await runCodeSubagent(
+  let codeResult = await runCodeSubagent(
     designResult.output,
     systemPrompt,
     userPrompt
@@ -435,7 +439,7 @@ export async function runOrchestratorAgent(
 
   metricsCollector.startSubagent('validation')
   const validationStart = Date.now()
-  const validationResult = await runValidationSubagent(
+  let validationResult = await runValidationSubagent(
     codeResult.output,
     designResult.output
   )
@@ -448,12 +452,61 @@ export async function runOrchestratorAgent(
   )
   captureFork('validation', 3, validationResult, validationStart)
 
+  // #347 slice 3: when validation fails, RE-FORK from the last good step (code,
+  // step 2) instead of dead-ending. Re-run code with the QA feedback appended to
+  // the spec, then re-validate — bounded to maxReforks. Each re-fork is captured
+  // under the parent traj_id with parent_step=2 (where it forked from). The
+  // accepted fork's reward=1 falls out of subagentForkRecord(success).
+  for (let attempt = 1; attempt <= maxReforks && !validationResult.success; attempt++) {
+    const plan = planRefork({
+      parentTrajId: parentTraj,
+      lastGoodStep: 2,
+      subagentType: 'code',
+      attempt,
+      maxRetries: maxReforks,
+    })
+    if (!plan) break
+    console.log(`👔 CODY: Re-fork ${attempt}/${maxReforks} — dev team, address QA's notes and rebuild.\n`)
+
+    // Fold the QA report into the spec so the coder fixes the reported issues.
+    const feedbackSpec = `${designResult.output}\n\nQA FEEDBACK TO ADDRESS (previous attempt failed validation):\n${validationResult.output}`
+    const reforkStart = Date.now()
+    const reCode = await runCodeSubagent(feedbackSpec, systemPrompt, userPrompt)
+    // Capture the code re-fork under the parent with the retry provenance.
+    if (captureTrajectories) {
+      try {
+        storeTrajectory(
+          subagentForkRecord({
+            parentTrajId: parentTraj,
+            parentStep: 2,
+            subagentType: plan.traj_id.split('.').slice(1).join('.'), // 'code.retryN'
+            chatId: parentTraj,
+            task: userPrompt,
+            model,
+            output: reCode.output || '',
+            success: reCode.success,
+            stopReason: reCode.metadata?.stopReason ?? null,
+            createdAt: new Date().toISOString(),
+            durationMs: Date.now() - reforkStart,
+          }),
+        ).catch(() => {})
+      } catch { /* capture must never break generation */ }
+    }
+    if (!reCode.success) continue // code re-fork itself failed; try again or exhaust
+    codeResult = reCode
+
+    // Re-validate the re-forked code.
+    const reValStart = Date.now()
+    validationResult = await runValidationSubagent(codeResult.output, designResult.output)
+    captureFork(`validation.retry${attempt}`, 3, validationResult, reValStart)
+  }
+
   if (validationResult.success) {
     console.log('✅ QA team: All checks passed, Cody. This is production-ready.')
     console.log('👔 CODY: Excellent work, team. Ship it with confidence. 🚀\n')
   } else {
     console.warn('⚠️ QA team: Found some issues, Cody. See the report.')
-    console.log('👔 CODY: Issues noted. We ship with quality or we don\'t ship. Let\'s address these.\n')
+    console.log('👔 CODY: Issues noted after re-forks. We ship with quality or we don\'t ship.\n')
   }
 
   // Complete metrics collection and publish

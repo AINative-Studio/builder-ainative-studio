@@ -303,6 +303,27 @@ export class TrajectoryCapture {
   }
 }
 
+/**
+ * Plan a re-fork after a failed phase (#347 slice 3). Instead of dead-ending, the
+ * orchestrator re-forks from the last good step (e.g. re-run code from the design
+ * spec + the QA feedback). This decides WHETHER to retry and mints the child's
+ * provenance suffix. Pure + deterministic (attempt-indexed, no Date.now/random).
+ *
+ * `attempt` is 1-based (the first retry is attempt 1). Returns null once attempts
+ * are exhausted (>= maxRetries) — the caller then accepts the best result it has.
+ */
+export function planRefork(args: {
+  parentTrajId: string
+  lastGoodStep: number
+  subagentType: string
+  attempt: number
+  maxRetries: number
+}): TrajectoryProvenance | null {
+  if (args.attempt < 1 || args.attempt > args.maxRetries) return null
+  // Suffix disambiguates the retry chain: e.g. 'code.retry1', 'code.retry2'.
+  return forkProvenance(args.parentTrajId, args.lastGoodStep, `${args.subagentType}.retry${args.attempt}`)
+}
+
 function truncateInput(input: unknown): unknown {
   try {
     const s = JSON.stringify(input)
