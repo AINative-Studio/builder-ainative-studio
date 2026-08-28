@@ -104,18 +104,38 @@ const SCAFFOLD_TSCONFIG = JSON.stringify(
   2,
 )
 
+// #348: an UNMISTAKABLE sentinel, not a plausible-looking title. The old
+// placeholder said "Builder Session" — which reads like a real loading state,
+// so a leaked stub (agent never edited App.tsx) shipped as a blank page nobody
+// could tell was broken (aerosol/tidemark). This marker is what the ready-gate
+// fingerprints against (isScaffoldApp) to reject an unedited scaffold.
+export const SCAFFOLD_APP_MARKER = '__CODY_UNEDITED_SCAFFOLD__'
 const SCAFFOLD_APP_TSX = `import { useState } from 'react'
 
+// ${SCAFFOLD_APP_MARKER} — the agent must REPLACE this file with the real app.
 export default function App() {
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
       <h1 className="text-2xl font-bold text-gray-900">
-        Builder Session
+        Preparing your app…
       </h1>
     </div>
   )
 }
 `
+
+/** #348: true when the stored app code is (still) the unedited scaffold — either
+ *  it carries the sentinel marker, or it's trivially short and renders only the
+ *  placeholder heading. Used by the ready-gate to block persisting a stub. */
+export function isScaffoldApp(code: string | undefined | null): boolean {
+  if (!code) return true
+  const trimmed = code.trim()
+  if (trimmed.length === 0) return true // blank App is no app
+  if (code.includes(SCAFFOLD_APP_MARKER)) return true
+  // Defensive: even without the marker (older stubs), a sub-400-char App that
+  // renders the placeholder heading and nothing else is the scaffold.
+  return trimmed.length < 400 && /Preparing your app|Builder Session/.test(trimmed)
+}
 
 const SCAFFOLD_INDEX_CSS = `@import "tailwindcss";
 `

@@ -26,6 +26,7 @@ import { isRenderable, type ParseGateResult } from '@/lib/code-validator'
 import { findMissingLocalImports } from '@/lib/build/completeness-gate'
 import { flattenMultiFile } from '@/lib/build/flatten-multifile'
 import { getWorktreeTestFailure } from '@/lib/agent/test-runner'
+import { isScaffoldApp } from '@/lib/agent/worktree-manager'
 import { parse as babelParse } from '@babel/parser'
 
 export interface ReadyCheck extends ParseGateResult {
@@ -109,6 +110,21 @@ export async function checkAppReady(chatId: string): Promise<ReadyCheck> {
   if (stored === null) {
     // Nothing to verify — don't block on a store miss.
     return { checked: false, ok: true }
+  }
+
+  // SCAFFOLD-IDENTITY GATE (#348): the agent seeds src/App.tsx with a placeholder
+  // stub it's meant to REPLACE. When the agent dies/times out without editing it
+  // (#350), the untouched 263-char scaffold gets collected + persisted — and it
+  // PASSES every parse/render/completeness gate because it's valid, renderable
+  // React. That is the aerosol/tidemark blank-"Builder Session" bug. Reject it:
+  // the app is the seed, not the user's app. Same 422 retry path.
+  if (isScaffoldApp(stored.code)) {
+    return {
+      checked: true,
+      ok: false,
+      reason: 'unedited_scaffold',
+      error: 'Generation produced only the seed scaffold (the agent never wrote the app) — not shippable.',
+    }
   }
 
   const gate = isRenderable(stored.code)
