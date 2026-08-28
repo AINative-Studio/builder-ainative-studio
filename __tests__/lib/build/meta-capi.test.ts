@@ -14,8 +14,8 @@ import {
  * No-op path tests use the static import (constants are '' in tests unless set).
  */
 
-function mockFetch(impl) {
-  const fn = vi.fn(async (url, init) => {
+function mockFetch(impl: (url: string, init?: RequestInit) => { ok: boolean; status?: number }) {
+  const fn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const r = impl(String(url), init)
     return { ok: r.ok, status: r.status ?? (r.ok ? 200 : 500),
       json: async () => ({}), text: async () => '' }
@@ -24,7 +24,7 @@ function mockFetch(impl) {
   return fn
 }
 
-function makeRequest(cookieHeader) {
+function makeRequest(cookieHeader: string) {
   return new Request('https://example.com', { headers: { cookie: cookieHeader } })
 }
 
@@ -45,12 +45,13 @@ describe('metaCapiEnabled', () => {
     expect(typeof metaCapiEnabled()).toBe('boolean')
   })
 
-  it('logic: Boolean("" && "") === false', () => {
+  it('logic: Boolean checks for pixel+token presence', () => {
     // Verify the underlying Boolean logic (module constants are empty in tests)
-    expect(Boolean('' && '')).toBe(false)
-    expect(Boolean('pixel' && '')).toBe(false)
-    expect(Boolean('' && 'token')).toBe(false)
-    expect(Boolean('pixel' && 'token')).toBe(true)
+    const emptyPixel = '', emptyToken = '', pixel = 'pixel', token = 'token'
+    expect(Boolean(emptyPixel && emptyToken)).toBe(false)
+    expect(Boolean(pixel && emptyToken)).toBe(false)
+    expect(Boolean(emptyPixel && token)).toBe(false)
+    expect(Boolean(pixel && token)).toBe(true)
   })
 })
 
@@ -88,7 +89,7 @@ describe('reportMetaConversion -- with CAPI configured', () => {
     expect(String(url)).toContain('PX1')
     expect(String(url)).toContain('events')
     expect(String(url)).toContain('access_token=')
-    const body = JSON.parse(init.body)
+    const body = JSON.parse(init!.body as string)
     expect(Array.isArray(body.data)).toBe(true)
     expect(body.data).toHaveLength(1)
     const event = body.data[0]
@@ -102,7 +103,7 @@ describe('reportMetaConversion -- with CAPI configured', () => {
     const fn = mockFetch(() => ({ ok: true }))
     const { reportMetaConversion: report } = await freshCapi()
     await report({ eventName: 'CompleteRegistration', eventId: 'evt-reg-1', email: 'Test@Example.COM' })
-    const userData = JSON.parse(fn.mock.calls[0][1].body).data[0].user_data
+    const userData = JSON.parse(fn.mock.calls[0][1]!.body as string).data[0].user_data
     expect(Array.isArray(userData.em)).toBe(true)
     expect(userData.em[0]).toHaveLength(64) // SHA-256 hex
     const { createHash } = await import('crypto')
@@ -114,7 +115,7 @@ describe('reportMetaConversion -- with CAPI configured', () => {
     const fn = mockFetch(() => ({ ok: true }))
     const { reportMetaConversion: report } = await freshCapi()
     await report({ eventName: 'InitiateCheckout', eventId: 'evt-chk-1' })
-    expect(JSON.parse(fn.mock.calls[0][1].body).data[0].user_data.em).toBeUndefined()
+    expect(JSON.parse(fn.mock.calls[0][1]!.body as string).data[0].user_data.em).toBeUndefined()
   })
 
   it('includes fbc, fbp, clientIp, and userAgent in user_data when provided', async () => {
@@ -123,7 +124,7 @@ describe('reportMetaConversion -- with CAPI configured', () => {
     await report({ eventName: 'Purchase', eventId: 'evt-p1',
       fbc: 'fb.1.123.click', fbp: 'fb.1.123.browser',
       clientIp: '1.2.3.4', userAgent: 'Mozilla/5.0' })
-    const userData = JSON.parse(fn.mock.calls[0][1].body).data[0].user_data
+    const userData = JSON.parse(fn.mock.calls[0][1]!.body as string).data[0].user_data
     expect(userData.fbc).toBe('fb.1.123.click')
     expect(userData.fbp).toBe('fb.1.123.browser')
     expect(userData.client_ip_address).toBe('1.2.3.4')
@@ -135,7 +136,7 @@ describe('reportMetaConversion -- with CAPI configured', () => {
     const { reportMetaConversion: report } = await freshCapi()
     await report({ eventName: 'Purchase', eventId: 'evt-p2', value: 149, currency: 'EUR',
       custom: { slug: 'my-co', plan: 'enterprise' } })
-    const customData = JSON.parse(fn.mock.calls[0][1].body).data[0].custom_data
+    const customData = JSON.parse(fn.mock.calls[0][1]!.body as string).data[0].custom_data
     expect(customData.value).toBe(149)
     expect(customData.currency).toBe('EUR')
     expect(customData.slug).toBe('my-co')
@@ -146,42 +147,42 @@ describe('reportMetaConversion -- with CAPI configured', () => {
     const fn = mockFetch(() => ({ ok: true }))
     const { reportMetaConversion: report } = await freshCapi()
     await report({ eventName: 'Lead', eventId: 'evt-1' })
-    expect(JSON.parse(fn.mock.calls[0][1].body).data[0].custom_data.currency).toBe('USD')
+    expect(JSON.parse(fn.mock.calls[0][1]!.body as string).data[0].custom_data.currency).toBe('USD')
   })
 
   it('omits value from custom_data when value is undefined', async () => {
     const fn = mockFetch(() => ({ ok: true }))
     const { reportMetaConversion: report } = await freshCapi()
     await report({ eventName: 'Lead', eventId: 'evt-1' })
-    expect(JSON.parse(fn.mock.calls[0][1].body).data[0].custom_data.value).toBeUndefined()
+    expect(JSON.parse(fn.mock.calls[0][1]!.body as string).data[0].custom_data.value).toBeUndefined()
   })
 
   it('includes test_event_code when META_TEST_EVENT_CODE is set', async () => {
     const fn = mockFetch(() => ({ ok: true }))
     const { reportMetaConversion: report } = await freshCapi('TEST12345')
     await report({ eventName: 'Lead', eventId: 'evt-1' })
-    expect(JSON.parse(fn.mock.calls[0][1].body).test_event_code).toBe('TEST12345')
+    expect(JSON.parse(fn.mock.calls[0][1]!.body as string).test_event_code).toBe('TEST12345')
   })
 
   it('omits test_event_code when META_TEST_EVENT_CODE is not set', async () => {
     const fn = mockFetch(() => ({ ok: true }))
     const { reportMetaConversion: report } = await freshCapi()
     await report({ eventName: 'Lead', eventId: 'evt-1' })
-    expect(JSON.parse(fn.mock.calls[0][1].body).test_event_code).toBeUndefined()
+    expect(JSON.parse(fn.mock.calls[0][1]!.body as string).test_event_code).toBeUndefined()
   })
 
   it('includes eventSourceUrl when provided', async () => {
     const fn = mockFetch(() => ({ ok: true }))
     const { reportMetaConversion: report } = await freshCapi()
     await report({ eventName: 'Lead', eventId: 'evt-1', eventSourceUrl: 'https://ainative.studio/pricing' })
-    expect(JSON.parse(fn.mock.calls[0][1].body).data[0].event_source_url).toBe('https://ainative.studio/pricing')
+    expect(JSON.parse(fn.mock.calls[0][1]!.body as string).data[0].event_source_url).toBe('https://ainative.studio/pricing')
   })
 
   it('omits event_source_url when not provided', async () => {
     const fn = mockFetch(() => ({ ok: true }))
     const { reportMetaConversion: report } = await freshCapi()
     await report({ eventName: 'Lead', eventId: 'evt-1' })
-    expect(JSON.parse(fn.mock.calls[0][1].body).data[0].event_source_url).toBeUndefined()
+    expect(JSON.parse(fn.mock.calls[0][1]!.body as string).data[0].event_source_url).toBeUndefined()
   })
 
   it('returns false when fetch responds with a non-ok status', async () => {

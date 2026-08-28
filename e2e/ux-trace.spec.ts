@@ -20,11 +20,11 @@ function watch(page: Page, label: string) {
       const u = r.url()
       if (/ainative\.studio|localhost/.test(u)) {
         const err = r.failure() ? r.failure()!.errorText : 'failed'
-        console.log(`FINDING: [${label}] request FAILED: ${r.request().method()} ${u} — ${err}`)
+        console.log(`FINDING: [${label}] request FAILED: ${r.method()} ${u} — ${err}`)
       }
     } catch {}
   })
-  page.on('response', (r) => { try { if (r.url().includes('/api/') && r.status() >= 500) console.log(`FINDING: [${label}] 5xx: ${r.request().method()} ${r.url()} -> ${r.status()}`) } catch {} })
+  page.on('response', (r) => { try { if (r.url().includes('/api/') && r.status() >= 500) console.log(`FINDING: [${label}] 5xx: ${r.request().url()} -> ${r.status()}`) } catch {} })
 }
 
 test.describe('UX trace — company track', () => {

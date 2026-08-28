@@ -10,7 +10,7 @@ import { rollup, type LearningRow } from '@/lib/build/learning'
  * (rollup) which has no env dependency.
  */
 
-function mockFetch(impl) {
+function mockFetch(impl: (url: string, init?: RequestInit) => { ok: boolean; status?: number; body?: unknown }) {
   const fn = vi.fn(async (url, init) => {
     const r = impl(String(url), init)
     return {

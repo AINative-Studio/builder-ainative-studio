@@ -263,7 +263,7 @@ describe('BedrockClient — request shaping', () => {
       CODY_USE_BEDROCK: '1',
       AWS_BEARER_TOKEN_BEDROCK: 'tok',
       AWS_REGION: 'us-west-2',
-    } as NodeJS.ProcessEnv)
+    } as unknown as NodeJS.ProcessEnv)
     await client.messages.create({ max_tokens: 100, messages: [{ role: 'user', content: 'hi' }] })
     const body = JSON.parse(fakeFetch.mock.calls[0][1].body)
     expect(body.anthropic_version).toBe('bedrock-2023-05-31')
@@ -281,7 +281,7 @@ describe('BedrockClient — request shaping', () => {
     const client = new BedrockClient({
       CODY_USE_BEDROCK: '1',
       AWS_BEARER_TOKEN_BEDROCK: 'tok',
-    } as NodeJS.ProcessEnv)
+    } as unknown as NodeJS.ProcessEnv)
     await client.messages.create({ max_tokens: 100, system: 'be helpful', messages: [{ role: 'user', content: 'test' }] })
     const body = JSON.parse(fakeFetch.mock.calls[0][1].body)
     expect(body.system).toBe('be helpful')
@@ -299,7 +299,7 @@ describe('BedrockClient — request shaping', () => {
       CODY_USE_BEDROCK: '1',
       AWS_BEARER_TOKEN_BEDROCK: 'tok',
       AWS_REGION: 'eu-central-1',
-    } as NodeJS.ProcessEnv)
+    } as unknown as NodeJS.ProcessEnv)
     await client.messages.create({ max_tokens: 10, messages: [{ role: 'user', content: 'x' }] })
     const url: string = fakeFetch.mock.calls[0][0]
     expect(url).toContain('eu-central-1')

@@ -194,7 +194,7 @@ describe('calculatePriorityScore', () => {
 
 describe('findUnloadCandidates', () => {
   const options = {
-    eligiblePriorities: ['low', 'medium'] as const,
+    eligiblePriorities: ['low', 'medium'] as ('low' | 'medium' | 'high' | 'critical')[],
     minAccessCount: 1,
     minTimeSinceAccess: 300000, // 5 min
     now: NOW,
@@ -214,7 +214,7 @@ describe('findUnloadCandidates', () => {
       item({ id: 'low-older', priority: 'low', tokenCost: 800, lastAccessedAt: new Date(NOW - 999999) }),
       item({ id: 'medium', priority: 'medium', tokenCost: 800, lastAccessedAt: new Date(NOW - 900000) }),
     ];
-    const chosen = findUnloadCandidates(items, 1000, { ...options, eligiblePriorities: ['low', 'medium'] });
+    const chosen = findUnloadCandidates(items, 1000, { ...options, eligiblePriorities: ['low', 'medium'] as ('low' | 'medium' | 'high' | 'critical')[] });
     // low priority comes first; oldest low first; needs >=1000 so two low items.
     expect(chosen.map((c) => c.id)).toEqual(['low-older', 'low-old']);
   });

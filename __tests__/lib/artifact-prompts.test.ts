@@ -38,7 +38,7 @@ describe('GENERATED_VIEWS', () => {
   })
 
   it('has the same size as ARTIFACT_PROMPTS', () => {
-    expect(GENERATED_VIEWS.size).toBe(Object.keys(ARTIFACT_PROMPTS).size ?? Object.keys(ARTIFACT_PROMPTS).length)
+    expect(GENERATED_VIEWS.size).toBe(Object.keys(ARTIFACT_PROMPTS).length)
   })
 
   it('includes all expected views', () => {

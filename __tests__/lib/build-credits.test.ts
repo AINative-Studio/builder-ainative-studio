@@ -44,11 +44,11 @@ describe('build-credits (#dashboard-ux)', () => {
 describe('applyValueGuarantee (#310/#311 GR-01/GR-02 — one visible build guaranteed)', () => {
   const exhausted: BuildCreditStatus = {
     used: FREE_BUILD_LIMIT, limit: FREE_BUILD_LIMIT, remaining: 0,
-    allowed: false, unlimited: false,
+    allowed: false, unlimited: false, baseLimit: FREE_BUILD_LIMIT, ecosystemBonus: 0,
   }
   const withinLimit: BuildCreditStatus = {
     used: 1, limit: FREE_BUILD_LIMIT, remaining: FREE_BUILD_LIMIT - 1,
-    allowed: true, unlimited: false,
+    allowed: true, unlimited: false, baseLimit: FREE_BUILD_LIMIT, ecosystemBonus: 0,
   }
 
   it('allows an out-of-credits owner who has NEVER reached a working preview', () => {

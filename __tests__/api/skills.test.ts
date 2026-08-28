@@ -26,7 +26,7 @@ describe('Skills API', () => {
   describe('GET /api/skills', () => {
     it('should return unauthorized if not authenticated', async () => {
       const { auth } = await import('@/app/(auth)/auth')
-      vi.mocked(auth).mockResolvedValue(null)
+      vi.mocked(auth).mockResolvedValue(null as unknown as Awaited<ReturnType<typeof auth>>)
 
       const request = new NextRequest('http://localhost:3000/api/skills')
       const response = await GET(request)
@@ -176,7 +176,7 @@ describe('Skills API', () => {
       vi.mocked(getSkillById).mockResolvedValue(mockSkill as any)
 
       const request = new NextRequest('http://localhost:3000/api/skills/test-skill')
-      const response = await GET_SKILL(request, { params: { skillId: 'test-skill' } })
+      const response = await GET_SKILL(request, { params: Promise.resolve({ skillId: 'test-skill' }) })
 
       expect(response.status).toBe(200)
       const data = await response.json()
@@ -191,7 +191,7 @@ describe('Skills API', () => {
       vi.mocked(getSkillById).mockResolvedValue(null)
 
       const request = new NextRequest('http://localhost:3000/api/skills/nonexistent')
-      const response = await GET_SKILL(request, { params: { skillId: 'nonexistent' } })
+      const response = await GET_SKILL(request, { params: Promise.resolve({ skillId: 'nonexistent' }) })
 
       expect(response.status).toBe(404)
       const data = await response.json()
@@ -224,7 +224,7 @@ describe('Skills API', () => {
         method: 'PATCH',
         body: JSON.stringify({ name: 'Updated Skill' }),
       })
-      const response = await PATCH(request, { params: { skillId: 'test-skill' } })
+      const response = await PATCH(request, { params: Promise.resolve({ skillId: 'test-skill' }) })
 
       expect(response.status).toBe(200)
       const data = await response.json()
@@ -249,7 +249,7 @@ describe('Skills API', () => {
         method: 'PATCH',
         body: JSON.stringify({ name: 'Updated' }),
       })
-      const response = await PATCH(request, { params: { skillId: 'test-skill' } })
+      const response = await PATCH(request, { params: Promise.resolve({ skillId: 'test-skill' }) })
 
       expect(response.status).toBe(403)
       const data = await response.json()
@@ -276,7 +276,7 @@ describe('Skills API', () => {
       const request = new NextRequest('http://localhost:3000/api/skills/test-skill', {
         method: 'DELETE',
       })
-      const response = await DELETE(request, { params: { skillId: 'test-skill' } })
+      const response = await DELETE(request, { params: Promise.resolve({ skillId: 'test-skill' }) })
 
       expect(response.status).toBe(200)
       const data = await response.json()
@@ -300,7 +300,7 @@ describe('Skills API', () => {
       const request = new NextRequest('http://localhost:3000/api/skills/test-skill', {
         method: 'DELETE',
       })
-      const response = await DELETE(request, { params: { skillId: 'test-skill' } })
+      const response = await DELETE(request, { params: Promise.resolve({ skillId: 'test-skill' }) })
 
       expect(response.status).toBe(403)
       const data = await response.json()

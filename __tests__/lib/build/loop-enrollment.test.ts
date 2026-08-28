@@ -9,8 +9,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
  * Tests verifying unconfigured no-ops reset modules and unset env first.
  */
 
-function mockFetch(impl) {
-  const fn = vi.fn(async (url, init) => {
+function mockFetch(impl: (url: string, init?: RequestInit) => { ok: boolean; status?: number; body?: unknown }) {
+  const fn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     const r = impl(String(url), init)
     return {
       ok: r.ok,
@@ -82,8 +82,8 @@ describe('enrollCompany', () => {
     expect(result).toBe(true)
     const [url, init] = fn.mock.calls[0]
     expect(String(url)).toContain('/database/tables/builder_loop_enrollments/rows')
-    expect(init.method).toBe('POST')
-    const body = JSON.parse(init.body)
+    expect(init!.method).toBe('POST')
+    const body = JSON.parse(init!.body as string)
     expect(body.row_data).toMatchObject({ companyId: 'co-1', companyName: 'Co One', track: 'company',
       goal: 'Scale to 100 customers', ownerKey: 'founder@co.com', enabled: true })
     expect(typeof body.row_data.enrolledAt).toBe('string')
@@ -128,7 +128,7 @@ describe('setLoopEnabled', () => {
     const fn = mockFetch(() => ({ ok: true }))
     const { setLoopEnabled } = await freshConfigured()
     await setLoopEnabled('co-1', 'Co One', 'company', true)
-    const body = JSON.parse(fn.mock.calls[0][1].body)
+    const body = JSON.parse(fn.mock.calls[0][1]!.body as string)
     expect(body.row_data).toMatchObject({ companyId: 'co-1', companyName: 'Co One', track: 'company', enabled: true })
   })
 
@@ -136,7 +136,7 @@ describe('setLoopEnabled', () => {
     const fn = mockFetch(() => ({ ok: true }))
     const { setLoopEnabled } = await freshConfigured()
     await setLoopEnabled('co-1', 'Co', 'app', false)
-    expect(JSON.parse(fn.mock.calls[0][1].body).row_data.enabled).toBe(false)
+    expect(JSON.parse(fn.mock.calls[0][1]!.body as string).row_data.enabled).toBe(false)
   })
 
   it('returns false when API responds non-ok', async () => {
@@ -171,7 +171,7 @@ describe('recordRun', () => {
     const fn = mockFetch(() => ({ ok: true }))
     const { recordRun } = await freshConfigured()
     await recordRun('co-1', 'task-abc', 'completed')
-    const body = JSON.parse(fn.mock.calls[0][1].body)
+    const body = JSON.parse(fn.mock.calls[0][1]!.body as string)
     expect(body.row_data).toMatchObject({ kind: 'run', companyId: 'co-1',
       lastTaskId: 'task-abc', lastStatus: 'completed', enabled: false })
     expect(typeof body.row_data.lastRunAt).toBe('string')
@@ -181,7 +181,7 @@ describe('recordRun', () => {
     const fn = mockFetch(() => ({ ok: true }))
     const { recordRun } = await freshConfigured()
     await recordRun('co-1', null, 'failed')
-    expect(JSON.parse(fn.mock.calls[0][1].body).row_data.lastTaskId).toBeNull()
+    expect(JSON.parse(fn.mock.calls[0][1]!.body as string).row_data.lastTaskId).toBeNull()
   })
 
   it('is non-fatal -- swallows network errors without throwing', async () => {
@@ -290,8 +290,8 @@ describe('getLastRun', () => {
     const { getLastRun } = await freshConfigured()
     const result = await getLastRun('co-1')
     expect(result).not.toBeNull()
-    expect(result.lastTaskId).toBe('task-new')
-    expect(result.lastStatus).toBe('failed')
+    expect(result!.lastTaskId).toBe('task-new')
+    expect(result!.lastStatus).toBe('failed')
   })
 
   it('returns null when no run events exist for the company', async () => {
@@ -319,7 +319,7 @@ describe('getLastRun', () => {
     ] } }))
     const { getLastRun } = await freshConfigured()
     const result = await getLastRun('co-1')
-    expect(result.lastTaskId).toBe('t1')
+    expect(result!.lastTaskId).toBe('t1')
   })
 })
 
