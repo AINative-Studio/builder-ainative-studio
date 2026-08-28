@@ -137,7 +137,10 @@ export async function middleware(request: NextRequest) {
       // middleware session gate was 401'ing them BEFORE their own secret check
       // could run, so no scheduled job could ever fire. Allowlisting the path is
       // safe: every cron handler rejects a missing/wrong secret itself.
-      pathname.startsWith('/api/cron/')
+      pathname.startsWith('/api/cron/') ||
+      // Webhook endpoints (#349 Gitea). These self-authenticate via HMAC
+      // signature validation inside the handler, not session tokens.
+      pathname.startsWith('/api/webhooks/')
 
     if (pathname.startsWith('/api/') && isPublicApiRoute) {
       return NextResponse.next()
