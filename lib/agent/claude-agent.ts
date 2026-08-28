@@ -95,6 +95,23 @@ export interface AgentOptions {
    * Bounded + fail-open: any failure falls back to the linear window.
    */
   priorSteps?: TrajectoryStep[]
+  /**
+   * Build complexity (#350). 'simple'|'medium' get the LEAN prompt — only the
+   * base workspace rules — because stacking the plan/review (#342), MCP-data
+   * (#343) and test-gen (#341) instruction blocks made the agent produce a
+   * runaway single turn that exhausted its token/budget ceiling (~13min,
+   * reason=max_tokens) and shipped only the seed scaffold. The full discipline
+   * is reserved for 'complex' multi-file builds that can absorb it. Defaults to
+   * 'complex' (opt-in leaning) so callers that don't classify keep prior behavior.
+   */
+  complexity?: 'simple' | 'medium' | 'complex'
+  /**
+   * Hard wall-clock ceiling for the spawned agent (#350). A run that grinds to
+   * max_tokens over 13 minutes wastes budget and ships nothing; this aborts the
+   * child cleanly at the deadline so the caller falls back to the fast
+   * non-agent path instead. Default: AGENT_WALL_CLOCK_MS (4 min).
+   */
+  maxWallClockMs?: number
 }
 
 /** Raw event from Claude Code's stream-json output. */
@@ -143,6 +160,28 @@ interface ClaudeStreamEvent {
 // the files it wrote. Still no Bash/Glob/Grep — no shell, no exploring.
 const DEFAULT_ALLOWED_TOOLS = ['Read', 'Write', 'Edit']
 const DEFAULT_MAX_BUDGET_USD = 1.0
+/** Wall-clock ceiling for a single agent run (#350) — a run past this is killed
+ *  so the caller falls back to the fast non-agent path. Override via env. */
+const AGENT_WALL_CLOCK_MS = Number(process.env.AGENT_WALL_CLOCK_MS || 240_000)
+/** #350: only 'complex' builds get the heavy plan/review/MCP/test prompt blocks;
+ *  simple/medium get the lean base prompt (the pre-session behavior that worked).
+ *  Undefined defaults to full discipline so non-classifying callers are unchanged. */
+export function wantsFullDiscipline(complexity: AgentOptions['complexity']): boolean {
+  return complexity === undefined || complexity === 'complex'
+}
+
+/** #350: the effective turn budget for a build, given complexity + plan-review.
+ *  Exported for testing the runaway-prevention math. */
+export function computeAgentTurnBudget(
+  complexity: AgentOptions['complexity'],
+  optMaxTurns?: number,
+  planReviewOpt?: boolean,
+): { maxTurns: number; planReview: boolean } {
+  const full = wantsFullDiscipline(complexity)
+  const planReview = full && planReviewOpt !== false
+  const baseTurns = optMaxTurns || (full ? 12 : 6)
+  return { maxTurns: baseTurns + (planReview ? PLAN_REVIEW_TURN_HEADROOM : 0), planReview }
+}
 const DEFAULT_MODEL = 'sonnet'
 const AGENT_SYSTEM_PROMPT = `You are building a React component in an isolated workspace.
 
@@ -292,18 +331,26 @@ export async function* runHeadlessAgent(
   // maxTurns=3 the run hit --max-turns mid-tool-call and cody returned an empty
   // error result (cody-cli#251 / builder#99). 12 gives room for a full
   // read→edit→verify→retry loop; cody stops early on its own when done.
-  // #342: plan + bounded review discipline (default ON; repair runs opt out).
-  const planReview = options.planReview !== false
-  // #342: add fixed headroom for the plan turn (.cody-plan.md) + the ONE
-  // self-review pass, so they never eat the budget meant for building.
-  const maxTurns = (options.maxTurns || 12) + (planReview ? PLAN_REVIEW_TURN_HEADROOM : 0)
+  // #350: gate the heavy discipline on complexity. Simple/medium builds get the
+  // lean base prompt + fewer turns (they don't need — and were BROKEN by —
+  // stacked plan/review/MCP instructions). Complex builds keep the full loop.
+  const fullDiscipline = wantsFullDiscipline(options.complexity)
+  // #342/#350: plan+review discipline and the turn budget are complexity-gated —
+  // see computeAgentTurnBudget (unit-tested). Simple/medium get the lean loop.
+  const { maxTurns, planReview } = computeAgentTurnBudget(
+    options.complexity,
+    options.maxTurns,
+    options.planReview,
+  )
 
   // MCP tool wiring (#296 item 3, finally activated): give the agent the
   // AINative primitive MCP fleet (ZeroDB 69-tool surface, ZeroMemory,
   // ZeroVoice, OpenCapStack, Strapi) so Cody can OPERATE primitives during a
   // build, not just generate code that talks about them. Server-level
   // mcp__<name> entries extend allowedTools; inert when no key / CODY_AGENT_MCP=0.
-  const mcp = buildAgentMcpWiring()
+  // #350: MCP data-provisioning is heavy discipline — wire the tools only for
+  // complex builds so a simple app isn't pushed into a runaway multi-tool turn.
+  const mcp = fullDiscipline ? buildAgentMcpWiring() : { configJson: null, allowedTools: [] as string[] }
   const effectiveTools = [...allowedTools, ...mcp.allowedTools]
 
   const args: string[] = [
@@ -385,6 +432,19 @@ export async function* runHeadlessAgent(
     abortSignal.addEventListener('abort', onAbort, { once: true })
     child.on('exit', () => abortSignal.removeEventListener('abort', onAbort))
   }
+
+  // Wall-clock ceiling (#350): a run that grinds toward max_tokens over many
+  // minutes is dead weight — kill it at the deadline so the stream ends and the
+  // caller falls back to the fast non-agent path instead of shipping the seed
+  // scaffold. SIGTERM first, SIGKILL shortly after if it ignores it.
+  const wallClockMs = options.maxWallClockMs ?? AGENT_WALL_CLOCK_MS
+  let timedOut = false
+  const wallClockTimer = setTimeout(() => {
+    timedOut = true
+    try { child.kill('SIGTERM') } catch { /* already gone */ }
+    setTimeout(() => { try { child.kill('SIGKILL') } catch { /* already gone */ } }, 5_000)
+  }, wallClockMs)
+  child.on('exit', () => clearTimeout(wallClockTimer))
 
   // 4. Process the NDJSON stream
   let turnCount = 0
@@ -595,6 +655,18 @@ export async function* runHeadlessAgent(
       .finally(() => {
         if (snapshotOk) void rm(snapshotPath, { recursive: true, force: true }).catch(() => {})
       })
+  }
+
+  // #350: a wall-clock kill is a FATAL failure — the run never finished, so
+  // whatever is in the worktree is a partial/seed scaffold, not the app. Surface
+  // it clearly so the caller falls back to the non-agent path (never persists).
+  if (timedOut) {
+    yield {
+      type: 'error',
+      error: `Agent exceeded the ${Math.round(wallClockMs / 1000)}s wall-clock limit and was terminated (#350) — falling back.`,
+      fatal: true,
+    }
+    return
   }
 
   if (exitCode !== 0 && !abortSignal?.aborted) {

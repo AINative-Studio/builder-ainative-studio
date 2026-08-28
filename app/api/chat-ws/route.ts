@@ -413,6 +413,12 @@ export async function POST(request: NextRequest) {
                   systemPrompt: enhancedSystemPrompt,
                   abortSignal: request.signal,
                   maxTurns: agentMaxTurns,
+                  // #350: only complex/multi-file builds get the heavy discipline
+                  // (plan/review/MCP) + full turn budget; simple/medium get the
+                  // lean prompt so the agent can't run away to max_tokens.
+                  complexity: fileStructureComplexity === 'complex'
+                    ? 'complex'
+                    : (complexityScore.overallComplexity as 'simple' | 'medium' | 'complex'),
                 },
               )
 
