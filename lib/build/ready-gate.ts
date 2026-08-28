@@ -149,8 +149,19 @@ export async function checkAppReady(chatId: string): Promise<ReadyCheck> {
   // but the flattened blob the browser actually runs fails to parse. Prove the
   // exact artifact the preview serves parses — this is deterministic for both
   // the beacon and aerosol truncation shapes.
+  //
+  // #352: the plugin set MUST match the preview renderer's parser, else we
+  // false-reject valid apps the browser renders fine. The renderer
+  // (app/api/preview/[id]/route.ts) transforms with the TYPESCRIPT preset —
+  // generated apps are .tsx with type annotations — so a jsx-only parse chokes
+  // on valid TS syntax (aerosol 154:30 "Missing semicolon"), reporting a
+  // "truncation" that isn't one. Include 'typescript' so this gate only ever
+  // blocks GENUINE structural breakage (unbalanced JSX/braces), never TS syntax.
   try {
-    babelParse(flattenMultiFile(stored.code), { sourceType: 'module', plugins: ['jsx'] })
+    babelParse(flattenMultiFile(stored.code), {
+      sourceType: 'module',
+      plugins: ['jsx', 'typescript'],
+    })
   } catch (e) {
     const msg = e instanceof Error ? e.message.split('\n')[0] : String(e)
     return {
