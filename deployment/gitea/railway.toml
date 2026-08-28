@@ -1,0 +1,25 @@
+# Gitea on Railway — per-company git repository service
+# Deploy: railway up --service gitea
+#
+# This provisions a self-hosted Gitea instance for:
+#   - Per-company private repositories
+#   - Agent commit-granularity (task→branch→commit)
+#   - Committee-gated PRs
+#
+# Prerequisites:
+#   1. Railway PostgreSQL service (GITEA_DATABASE_URL)
+#   2. Railway Redis service (optional, for caching)
+#   3. S3-compatible storage for LFS (existing MinIO/ZeroDB bucket)
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "deployment/gitea/Dockerfile"
+
+[deploy]
+healthcheckPath = "/api/healthz"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+
+[service]
+internalPort = 3000
