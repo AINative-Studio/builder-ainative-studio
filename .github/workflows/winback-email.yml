@@ -1,0 +1,34 @@
+name: Winback Email Campaign
+
+# Fires the winback email campaign daily: re-engages founders who haven't
+# visited their company in 7+ days with a "Jump back in" email via Resend.
+# (#344 - Replit-style winback)
+
+on:
+  schedule:
+    # 14:00 UTC daily (~morning for US timezones, afternoon for EU)
+    - cron: '0 14 * * *'
+  workflow_dispatch: {} # allow manual trigger
+
+jobs:
+  send-winback:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send winback emails
+        run: |
+          echo "Triggering winback email campaign…"
+          code=$(curl -sS -o /tmp/resp.json -w "%{http_code}" \
+            "https://builder.ainative.studio/api/cron/winback?send=true" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            --max-time 120)
+          echo "HTTP $code"
+          cat /tmp/resp.json
+          echo
+          if [ "$code" != "200" ]; then
+            echo "::error::Winback campaign returned HTTP $code"
+            exit 1
+          fi
+          # Log results for monitoring
+          sent=$(cat /tmp/resp.json | jq -r '.sent // 0')
+          failed=$(cat /tmp/resp.json | jq -r '.failed // 0')
+          echo "Sent: $sent, Failed: $failed"
