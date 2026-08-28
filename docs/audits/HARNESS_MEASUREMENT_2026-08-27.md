@@ -48,3 +48,11 @@ The unit tests prove the algorithm is a correct port; there is no live path that
 | #345 staircase | **keep-inert until iterative/resumed builds exist.** No live path exercises it today; the algorithm is verified by unit tests. Revisit when the edit-loop ships. |
 
 **Guardrails:** CODY_CONTEXT_STAIRCASE_WIRED confirmed unset throughout.
+
+---
+
+## UPDATE 2026-08-28 — roster FIXED (#351), verdict must be re-measured
+
+The "degraded roster" confound above is resolved. #351 (commit 9addc73, deploy c01afab3) corrected the invalid model ids: `DEFAULT_ROSTER` is now `['claude-opus-4.5', 'qwen-coder-32b', 'gemini-flash']` — three vendors that all reach the proxy. Behavior-verified live: `committee-review?chatId=CWak9S7vN1bqGOxoTEqH2` returns `rosterSize:3, succeeded:3`, three independent verdicts (approve / request-changes / needs-discussion).
+
+**So the N=6 confusion matrix above is now STALE** — it measured a single model (claude-opus-4.5) wearing committee clothing. Before any keep/gate decision on #346, the study must be **re-run with the real 3-model committee on N≥12 labeled builds**, this time measuring actual cross-vendor AGREEMENT (do 3 vendors concur? does concurrence predict render outcome better than the free deterministic gates?). Until that re-measurement, #346 stays keep-inert. The staircase (#345) verdict is unchanged (no live single-pass path exercises it).
