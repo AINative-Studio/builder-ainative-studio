@@ -72,8 +72,8 @@ export const RESERVED_SUBDOMAINS = new Set([
   // Synced from the live ainative.studio Netlify DNS zone (existing apps — 2026-08-21).
   'acquireos', 'agency', 'agent402', 'agentflow', 'aikit', 'api', 'blaq',
   'boardlens', 'build', 'builder', 'buildos', 'chat', 'community', 'dealer',
-  'dealership-api', 'dev', 'docs', 'dothack', 'draftline', 'foundersapi', 'hack',
-  'helpdesk', 'insurance-agent', 'live', 'memory', 'mif', 'ngo', 'ocean',
+  'dealership-api', 'dev', 'docs', 'dothack', 'draftline', 'foundersapi', 'git',
+  'hack', 'helpdesk', 'insurance-agent', 'live', 'memory', 'mif', 'ngo', 'ocean',
   'oceanapi', 'pillsense', 'pipeline', 'properstack', 'publicfounders', 'qnn',
   'qui', 'sc-builders', 'specbook', 'surgeonmatch', 'winning-careers', 'wwmaa',
   'zerodb', 'zeroinvoice', 'zeropipeline', 'zerowarranty',
