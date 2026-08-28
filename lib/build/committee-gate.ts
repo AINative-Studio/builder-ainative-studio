@@ -159,7 +159,14 @@ export type RunModel = (args: {
  * issue. These are AINative-proxy model names (the proxy routes each to its
  * vendor). Overridable via COMMITTEE_MODELS or the `models` option.
  */
-export const DEFAULT_ROSTER = ['claude-opus-4.5', 'qwen-2.5-coder-32b', 'gemini-2.5-pro']
+// #351: the prior ids ('qwen-2.5-coder-32b', 'gemini-2.5-pro') were NOT in the
+// AINative proxy registry — every call 400'd ("Unknown model … not in the model
+// registry"), so only claude-opus-4.5 ever reached and the "committee" was a
+// single reviewer (the whole cross-vendor-independence premise was untested).
+// These ids are verified live against GET /api/v1/models + a chat/completions
+// smoke (both 200 "OK"): qwen-coder-32b (Qwen) + gemini-flash (Google) + Claude
+// = three vendors, which is what makes agreement meaningful.
+export const DEFAULT_ROSTER = ['claude-opus-4.5', 'qwen-coder-32b', 'gemini-flash']
 
 /** Default chair (strong synthesis model). Overridable via COMMITTEE_CHAIR. */
 export const DEFAULT_CHAIR = 'claude-opus-4.5'
