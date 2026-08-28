@@ -15,6 +15,9 @@ Standing loop: work these in priority order. For EACH: fix on a branch → gate 
 6. **#347** — Trajectory fork/merge DAG (medium-term; after #345/#346 measured).
 7. **#349** — EPIC per-company Gitea on Railway. Needs founder decisions (org tenancy, founder git access r/w vs read-only) before implementation — do NOT start building without those answers; the epic body lists them.
 
+## GENERATION HANG (found 2026-08-28 tick) — investigate NEXT
+chat-ws route is ALIVE (GET→405, correct) but a POST produces ZERO stream events in 90s — no init/chatId/error, hangs before the first write. NOT a crash (route loads; the ENOENT agent-profiles log is a benign pre-existing warning), NOT my #348 change (route imports fine). Likely the bedrock/AINative inference call hanging without timeout OR an upstream throttle with no error surfaced. This blocks aerosol regen + the measurement study. NEXT TICK: pull deeper prod logs around a live POST (railway logs during a curl), check if runClaudePass/the bedrock client has a request timeout, and whether it is throttled (429) silently swallowed. If it is upstream throttle, back off. If it is a missing timeout on our side, add one so the stream fails fast to an honest error instead of hanging.
+
 ## Guardrails
 - CODY_AGENT_PRIMARY must stay UNSET until #350's real fix lands (bedrock path is primary + reliable).
 - CODY_CONTEXT_STAIRCASE_WIRED must stay UNSET (staircase inert until measured).
