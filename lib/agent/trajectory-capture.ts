@@ -102,6 +102,63 @@ export function rootProvenance(trajId: string): TrajectoryProvenance {
   return { traj_id: trajId, parent_traj: null, parent_step: null, node_role: 'root' }
 }
 
+/**
+ * Build a FORK trajectory record for a single subagent run (#347 slice 2). The
+ * hierarchical orchestrator (subagents.ts) runs design→code→validation via the
+ * Anthropic SDK — not the stream-json runHeadlessAgent — so there is no event
+ * stream to tap. Instead we synthesize a one-step trajectory per subagent and
+ * fork it under the parent run's traj_id at a distinct parent step, so the DAG
+ * records parent → [design, code, validation] with provenance pointers.
+ *
+ * Pure + deterministic: the caller supplies createdAt/durationMs (no Date.now in
+ * the core). `success` IS the objective reward — design/code/validation each
+ * either produced usable output or did not. `parentStep` orders the forks.
+ */
+export function subagentForkRecord(args: {
+  parentTrajId: string
+  parentStep: number
+  subagentType: string
+  chatId: string
+  task: string
+  model: string
+  output: string
+  success: boolean
+  stopReason?: string | null
+  createdAt: string
+  durationMs: number
+}): TrajectoryRecord {
+  const prov = forkProvenance(args.parentTrajId, args.parentStep, args.subagentType)
+  const reward: 0 | 1 = args.success ? 1 : 0
+  const step: TrajectoryStep = {
+    turn: 1,
+    role: 'assistant',
+    text: (args.output || '').slice(0, 8000),
+    tool: `subagent:${args.subagentType}`,
+  }
+  return {
+    ...prov,
+    chat_id: args.chatId,
+    task: args.task.slice(0, 4000),
+    model: args.model,
+    steps: [step],
+    file_tree: [],
+    num_turns: 1,
+    total_cost_usd: null,
+    duration_ms: args.durationMs,
+    is_error: !args.success,
+    stop_reason: args.stopReason ?? null,
+    verify: {
+      installed: null,
+      built: null,
+      ran: null,
+      httpOk: null,
+      reward,
+      detail: `subagent ${args.subagentType}: ${args.success ? 'ok' : 'failed'}`,
+    },
+    created_at: args.createdAt,
+  }
+}
+
 /** In-flight (not yet completed) assistant message reconstructed from
  *  --include-partial-messages stream_event chunks (#343). */
 interface PartialTurn {

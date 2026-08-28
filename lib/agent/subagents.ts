@@ -7,6 +7,8 @@ import {
 } from './agent-profiles'
 import { createMetricsCollector, extractTokenUsage, MetricsCollector } from './metrics'
 import { recallPastPerformance, storeGenerationMemory } from './zeromemory'
+import { subagentForkRecord } from './trajectory-capture'
+import { storeTrajectory } from './trajectory-store'
 
 /**
  * Subagents Architecture (US-025)
@@ -318,6 +320,40 @@ export async function runOrchestratorAgent(
     chatId
   )
 
+  // Trajectory DAG capture (#347 slice 2). The orchestrator run is the ROOT; each
+  // subagent forks under it with provenance pointers. Fire-and-forget + flag-gated
+  // (CAPTURE_TRAJECTORIES) so it never affects the generation path. parentTraj is
+  // the run's chatId (or a session-derived id) — the same identity the root
+  // TrajectoryCapture uses, so root + forks share one tree.
+  const captureTrajectories = process.env.CAPTURE_TRAJECTORIES === 'true'
+  const parentTraj = chatId || sessionId || `orch-${Date.now()}`
+  const captureFork = (
+    subagentType: string,
+    parentStep: number,
+    result: SubagentResult,
+    startedAt: number,
+  ): void => {
+    if (!captureTrajectories) return
+    try {
+      const record = subagentForkRecord({
+        parentTrajId: parentTraj,
+        parentStep,
+        subagentType,
+        chatId: parentTraj,
+        task: userPrompt,
+        model,
+        output: result.output || '',
+        success: result.success,
+        stopReason: result.metadata?.stopReason ?? null,
+        createdAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt,
+      })
+      storeTrajectory(record).catch(() => {})
+    } catch {
+      /* capture must never break generation */
+    }
+  }
+
   console.log('\n👔 CODY (Team Leader): Alright team, we have a new component to build. Let\'s do this right.\n')
   console.log(`📋 Mission: "${userPrompt}"\n`)
 
@@ -336,6 +372,7 @@ export async function runOrchestratorAgent(
   console.log('🎨 [1/3] Design Agents (ai-product-architect + system-architect): On it, Cody...\n')
 
   metricsCollector.startSubagent('design')
+  const designStart = Date.now()
   const designResult = await runDesignSubagent(userPrompt, enrichedMemoryContext)
   metricsCollector.endSubagent(
     'design',
@@ -344,6 +381,7 @@ export async function runOrchestratorAgent(
     designResult.metadata?.error,
     designResult.metadata
   )
+  captureFork('design', 1, designResult, designStart)
 
   if (!designResult.success) {
     console.error('👔 CODY: Design analysis failed. We need to regroup and try again.')
@@ -363,6 +401,7 @@ export async function runOrchestratorAgent(
   console.log('💻 [2/3] Code Agents (frontend-ui-builder + ai-product-architect): Building component...\n')
 
   metricsCollector.startSubagent('code')
+  const codeStart = Date.now()
   const codeResult = await runCodeSubagent(
     designResult.output,
     systemPrompt,
@@ -375,6 +414,7 @@ export async function runOrchestratorAgent(
     codeResult.metadata?.error,
     codeResult.metadata
   )
+  captureFork('code', 2, codeResult, codeStart)
 
   if (!codeResult.success) {
     console.error('👔 CODY: Code generation failed. Not acceptable. Let\'s fix this.')
@@ -394,6 +434,7 @@ export async function runOrchestratorAgent(
   console.log('🔍 [3/3] QA Agents (qa-bug-hunter + test-engineer): Running comprehensive quality checks...\n')
 
   metricsCollector.startSubagent('validation')
+  const validationStart = Date.now()
   const validationResult = await runValidationSubagent(
     codeResult.output,
     designResult.output
@@ -405,6 +446,7 @@ export async function runOrchestratorAgent(
     validationResult.metadata?.error,
     validationResult.metadata
   )
+  captureFork('validation', 3, validationResult, validationStart)
 
   if (validationResult.success) {
     console.log('✅ QA team: All checks passed, Cody. This is production-ready.')
