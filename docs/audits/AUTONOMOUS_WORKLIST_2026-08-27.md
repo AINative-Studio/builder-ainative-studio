@@ -14,7 +14,7 @@ Standing loop: work these in priority order. For EACH: fix on a branch → gate 
 4. **Harness measurement study** — resume agent a7de5930dc293a9cf (was rate-limited by ANTHROPIC, transient) to finish the committee confusion matrix (#346) + staircase A/B (#345) and write docs/audits/HARNESS_MEASUREMENT_2026-08-27.md. Ensure CODY_CONTEXT_STAIRCASE_WIRED stays UNSET on prod after.
 
 ## Backlog (build when P0 clear)
-5. **#344** — Replit-style winback email via Resend (spec: docs/growth/WINBACK_EMAIL_2026-08-27.md). Prereq: fix the /api/cron/* middleware allowlist (audit dormant finding #9) so a cron can fire.
+5. **#344** — Replit-style winback email via Resend (spec: docs/growth/WINBACK_EMAIL_2026-08-27.md). ✅ PREREQ CLEARED 2026-08-28 (@cc88e89, deploy 438a8b4e): /api/cron/* now middleware-allowlisted (audit finding #9) — behavior-verified on prod (cron/alerts body flipped middleware "Authentication required" → handler "Unauthorized", proving handler now reachable). REMAINING (next tick): build lib/growth/winback-email.ts (Resend, Cody voice), dormant-owner query (app-registry ownerEmail × no 7d activity), /api/cron/winback route (Bearer $CRON_SECRET), 30d idempotency via ZeroDB builder_emails, UTM'd CTA, unsubscribe; then wire a Railway cron.
 6. **#347** — Trajectory fork/merge DAG (medium-term; after #345/#346 measured).
 7. **#349** — EPIC per-company Gitea on Railway. Needs founder decisions (org tenancy, founder git access r/w vs read-only) before implementation — do NOT start building without those answers; the epic body lists them.
 
