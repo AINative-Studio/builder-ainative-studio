@@ -40,6 +40,11 @@ export async function storeTrajectory(record: TrajectoryRecord): Promise<boolean
         // how full_conversation is stored in rlhf_training_data.
         body: JSON.stringify({
           row_data: {
+            // Provenance (#347) — makes the row a node in the fork/merge DAG.
+            traj_id: record.traj_id,
+            parent_traj: record.parent_traj,
+            parent_step: record.parent_step,
+            node_role: record.node_role,
             chat_id: record.chat_id,
             task: record.task,
             model: record.model,

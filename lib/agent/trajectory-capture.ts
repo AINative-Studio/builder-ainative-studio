@@ -41,7 +41,26 @@ export interface VerifyResult {
   detail: string
 }
 
-export interface TrajectoryRecord {
+/**
+ * Provenance pointers making a trajectory a NODE in a fork/merge DAG (#347).
+ * A root run has parent_traj=null. A subagent/re-fork run carries the parent
+ * trajectory id it forked FROM and the parent step index it forked AT — so the
+ * offline explorer can walk the tree and RLHF data knows which fork led to the
+ * accepted build. Slice 1 is the pure data model; the fork/merge WIRING in the
+ * subagent orchestrator + re-fork-on-failure are slices 2 and 3.
+ */
+export interface TrajectoryProvenance {
+  /** Stable identity of THIS trajectory node (unique per fork, unlike chat_id). */
+  traj_id: string
+  /** The trajectory this one forked from; null for a root run. */
+  parent_traj: string | null
+  /** The step index in the parent this node forked at; null for a root run. */
+  parent_step: number | null
+  /** 'root' = top-level run; 'fork' = spawned from a parent trajectory. */
+  node_role: 'root' | 'fork'
+}
+
+export interface TrajectoryRecord extends TrajectoryProvenance {
   chat_id: string
   task: string
   model: string
@@ -56,6 +75,31 @@ export interface TrajectoryRecord {
   stop_reason: string | null
   verify: VerifyResult
   created_at: string
+}
+
+/**
+ * Mint the provenance for a CHILD trajectory forked from a parent (#347). Pure +
+ * deterministic: the caller supplies a unique `suffix` (e.g. a subagent index or
+ * a monotonic counter) so this never touches Date.now/random and stays
+ * unit-testable. Returns the fields a forked TrajectoryCapture is constructed
+ * with. `parentStep` is where in the parent's steps[] the fork happened.
+ */
+export function forkProvenance(
+  parentTrajId: string,
+  parentStep: number,
+  suffix: string | number,
+): TrajectoryProvenance {
+  return {
+    traj_id: `${parentTrajId}.${suffix}`,
+    parent_traj: parentTrajId,
+    parent_step: parentStep,
+    node_role: 'fork',
+  }
+}
+
+/** Provenance for a ROOT trajectory (no parent). `trajId` defaults to chatId. */
+export function rootProvenance(trajId: string): TrajectoryProvenance {
+  return { traj_id: trajId, parent_traj: null, parent_step: null, node_role: 'root' }
 }
 
 /** In-flight (not yet completed) assistant message reconstructed from
@@ -78,11 +122,19 @@ export class TrajectoryCapture {
    *  at finalize when it never does (#343 steps:[] fix). */
   private partial: PartialTurn | null = null
 
+  /** Provenance for this trajectory node (#347). Defaults to a ROOT whose
+   *  traj_id is the chatId — so existing (non-forked) callers are unchanged. A
+   *  forked subagent run passes forkProvenance(parentTraj, parentStep, suffix). */
+  readonly provenance: TrajectoryProvenance
+
   constructor(
     readonly chatId: string,
     readonly task: string,
     readonly model: string,
-  ) {}
+    provenance?: TrajectoryProvenance,
+  ) {
+    this.provenance = provenance ?? rootProvenance(chatId)
+  }
 
   /** Feed each raw stream-json event (called from the streaming loop). */
   observe(event: any): void {
@@ -174,6 +226,10 @@ export class TrajectoryCapture {
     const fileTree = safeFileTree(worktreePath)
     const verify = await autoVerify(worktreePath)
     return {
+      traj_id: this.provenance.traj_id,
+      parent_traj: this.provenance.parent_traj,
+      parent_step: this.provenance.parent_step,
+      node_role: this.provenance.node_role,
       chat_id: this.chatId,
       task: this.task.slice(0, 4000),
       model: this.model,
