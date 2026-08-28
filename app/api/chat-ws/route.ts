@@ -17,6 +17,7 @@ import { shouldDecompose, buildDecompositionPrompt, buildFixAndDecomposePrompt }
 import { selectModelForComplexity, modelSelectionReport } from '@/lib/build/model-select'
 import { recallPastPerformance, storeGenerationMemory } from '@/lib/agent/zeromemory'
 import { buildVerifyPrompt, buildVerifyAgentOptions } from '@/lib/agent/verify-loop'
+import { getWorktreeTestFailure, clearWorktreeTestResult } from '@/lib/agent/test-runner'
 import { GenerationCheckpoint, resolveDegradation } from '@/lib/generation-checkpoint'
 import { stripGradients } from '@/lib/gradient-blocker'
 import { fetchContextualImages, formatImagesForPrompt, getFallbackImages } from '@/lib/services/unsplash.service'
@@ -25,7 +26,7 @@ import { addComponentToMemory, formatMemoryForPrompt } from '@/lib/services/memo
 import { runOrchestratorAgent } from '@/lib/agent/subagents'
 import { useSubagents as resolveUseSubagents } from '@/lib/agent/generation-mode'
 import { parsePRDForBuildSteps } from '@/lib/prd-parser'
-import { analyzeComplexity, getComplexityReport } from '@/lib/agent/complexity-analyzer'
+import { analyzeComplexity, augmentPRDAnalysisForChunking, getComplexityReport } from '@/lib/agent/complexity-analyzer'
 import { createChunkPlan, getChunkPlanSummary } from '@/lib/agent/chunk-planner'
 import { executeChunkPlan, getGenerationSummary } from '@/lib/agent/multi-pass-generator'
 import { mergeChunks, getMergeSummary } from '@/lib/agent/chunk-merger'
@@ -584,6 +585,74 @@ export async function POST(request: NextRequest) {
                 fallback: false,
                 error: agentError,
               }).catch(e => console.warn('[AgentRuns] primary log failed:', e?.message || e))
+
+              // TDD GATE REPAIR (#341): the worktree test runner (inside
+              // runHeadlessAgent) executed the generated vitest file and
+              // recorded a FAILURE for this chat. Feed it to the verify-loop
+              // repair agent — the SAME dormant machinery the fix path below
+              // uses — so the app is repaired BEFORE the ready-gate 422s
+              // register-app. One bounded pass ($0.75 / 6 turns); if repair
+              // fails, the recorded failure stands and the 422 retry path
+              // regenerates honestly.
+              const worktreeTestFailure = getWorktreeTestFailure(responseId)
+              if (worktreeTestFailure) {
+                console.log('🧪 Generated tests failed — running verify-loop repair pass')
+                safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+                  type: 'build_step',
+                  step: 'Generated tests failed — running verify agent to repair',
+                })}\n\n`))
+                const testFixChatId = `testfix-${responseId}-${Date.now()}`
+                try {
+                  let repairOutput = ''
+                  for await (const fixEvent of runHeadlessAgent(
+                    buildVerifyPrompt(message, worktreeTestFailure.error, fullContent),
+                    testFixChatId,
+                    buildVerifyAgentOptions(),
+                  )) {
+                    switch (fixEvent.type) {
+                      case 'build_step':
+                        safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+                          type: 'build_step',
+                          step: `Verify agent: ${fixEvent.step}`,
+                        })}\n\n`))
+                        break
+                      case 'files': {
+                        const fixedApp = fixEvent.files['src/App.tsx'] || fixEvent.files['src/App.jsx'] || fixEvent.files['App.tsx'] || fixEvent.files['App.jsx']
+                        if (fixedApp) repairOutput = fixedApp
+                        break
+                      }
+                      case 'chunk':
+                        repairOutput += fixEvent.content
+                        break
+                      case 'error':
+                        console.error(`🧪 Verify-loop repair error: ${fixEvent.error}`)
+                        break
+                    }
+                  }
+                  if (repairOutput.length > 200) {
+                    const repairValidation = validateGeneratedCode(repairOutput)
+                    if (repairValidation.valid) {
+                      console.log('✅ Verify-loop repaired the failing-test app — using repaired code')
+                      fullContent = repairValidation.code
+                      updatePreviewPartial(responseId, fullContent)
+                      safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'refresh' })}\n\n`))
+                      // Clear the recorded failure so the ready-gate accepts
+                      // the repaired app instead of blocking on stale signal.
+                      clearWorktreeTestResult(responseId)
+                    } else {
+                      console.error('❌ Verify-loop repair output failed validation:', repairValidation.error)
+                    }
+                  } else {
+                    console.error('❌ Verify-loop repair produced insufficient output:', repairOutput.length, 'chars')
+                  }
+                } catch (fixErr) {
+                  // Repair is best-effort — a runner hiccup must not kill the
+                  // generation; the recorded test failure still gates readiness.
+                  console.error('❌ Verify-loop repair pass threw:', fixErr instanceof Error ? fixErr.message : fixErr)
+                } finally {
+                  cleanupWorktree(testFixChatId).catch(() => {})
+                }
+              }
             } else {
               // Agent failed or produced no output — reset and fall through
               // to the existing model call path below
@@ -648,8 +717,12 @@ export async function POST(request: NextRequest) {
             console.log(`   Strategy: ${complexityScore.chunkingStrategy}`)
             console.log(`   Estimated tokens: ${complexityScore.estimatedTokens.toLocaleString()}`)
 
-            // Create chunk plan
-            const chunkPlan = createChunkPlan(message, prdAnalysis, complexityScore)
+            // Create chunk plan. #342: augment sparse raw-idea analyses with
+            // idea-derived surfaces so the planner gets real feature phases
+            // (a raw "CRM with contacts + deals + invoicing" parses to ~0
+            // pages, which yielded a degenerate core+integration-only plan).
+            const chunkAnalysis = augmentPRDAnalysisForChunking(prdAnalysis, message)
+            const chunkPlan = createChunkPlan(message, chunkAnalysis, complexityScore)
             console.log('\n' + getChunkPlanSummary(chunkPlan))
 
             // Execute chunk plan with progress streaming

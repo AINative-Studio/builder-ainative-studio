@@ -47,6 +47,7 @@ export async function storeTrajectory(record: TrajectoryRecord): Promise<boolean
             total_cost_usd: record.total_cost_usd,
             duration_ms: record.duration_ms,
             is_error: record.is_error,
+            stop_reason: record.stop_reason,
             reward: record.verify.reward,
             verify_installed: record.verify.installed,
             verify_built: record.verify.built,

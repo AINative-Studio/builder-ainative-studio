@@ -11,6 +11,7 @@
 
 import { mkdir, rm, readdir, readFile, writeFile, stat } from 'fs/promises'
 import { join, relative, extname } from 'path'
+import { isAgentScratchFile } from './plan-review'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -119,6 +120,33 @@ export default function App() {
 const SCAFFOLD_INDEX_CSS = `@import "tailwindcss";
 `
 
+// Baseline TDD-gate test (#341). Seeded so the agent only ever EDITS this file
+// (creating a NEW file is not auto-accepted under acceptEdits in the cody
+// runtime — the smoke run showed the agent falling back to denied Bash
+// heredocs and erroring out). Even if the agent never touches it, the worktree
+// test gate still executes a REAL render of the generated App: undefined
+// components, bad imports and render-path crashes all fail here.
+const SCAFFOLD_APP_TEST_TSX = `import { describe, it, expect, vi } from 'vitest'
+import { renderToString } from 'react-dom/server'
+import App from './App'
+
+// The test environment is Node (no DOM). Stub the network so any /api/db call
+// is a mocked round-trip.
+vi.stubGlobal('fetch', vi.fn(async () => ({
+  ok: true,
+  status: 200,
+  json: async () => ({ rows: [] }),
+  text: async () => '',
+})))
+
+describe('App', () => {
+  it('renders without crashing', () => {
+    const html = renderToString(<App />)
+    expect(html.length).toBeGreaterThan(0)
+  })
+})
+`
+
 const SCAFFOLD_MAIN_TSX = `import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
@@ -191,6 +219,12 @@ export async function createWorktree(chatId: string): Promise<string> {
     [join(dir, 'tsconfig.json'), SCAFFOLD_TSCONFIG],
     [join(dir, 'index.html'), SCAFFOLD_INDEX_HTML],
     [join(srcDir, 'App.tsx'), SCAFFOLD_APP_TSX],
+    [join(srcDir, 'App.test.tsx'), SCAFFOLD_APP_TEST_TSX],
+    // Seed the plan file too (#342 verifier critical): cody under acceptEdits
+    // does NOT auto-accept CREATING files — the agent flailed into rejected
+    // Bash heredocs and skipped the plan in 2/3 live runs. Seeded, the plan is
+    // only ever an Edit (the same fix that made the test file reliable, #341).
+    [join(dir, '.cody-plan.md'), '# Plan\n\n(Replace with your feature/file/build-order checklist before writing code.)\n'],
     [join(srcDir, 'main.tsx'), SCAFFOLD_MAIN_TSX],
     [join(srcDir, 'index.css'), SCAFFOLD_INDEX_CSS],
   ]
@@ -256,6 +290,11 @@ export async function getWorktreeFiles(
       } else if (entry.isFile()) {
         const ext = extname(entry.name)
         if (!READABLE_EXTENSIONS.has(ext)) {
+          continue
+        }
+        // Agent scratch files (.cody-plan.md etc., #342) are working memory,
+        // not app code — never collect them into the output file map.
+        if (isAgentScratchFile(entry.name)) {
           continue
         }
 

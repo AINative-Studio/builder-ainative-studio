@@ -62,30 +62,57 @@ const COMPLEX_ARCHETYPES = [
   'pipeline', 'sales pipeline', 'lead', 'deal',
 ]
 
+/**
+ * Explicit multi-page / multi-section asks (plural intent only — "landing page
+ * for a shop" must NOT match, so no bare "page for").
+ */
+export function hasExplicitMultiPageAsk(idea: string): boolean {
+  const text = (idea || '').toLowerCase()
+  return /\b(multi-?page|multiple (pages|sections|screens|views)|several (pages|sections|screens|views))\b/.test(text)
+}
+
+/**
+ * True when the idea names a known complex archetype (#293) — these have many
+ * surfaces even when the idea string is terse (e.g. "a CRM", "a dashboard").
+ */
+export function namesComplexArchetype(idea: string): boolean {
+  const text = (idea || '').toLowerCase()
+  for (const arch of COMPLEX_ARCHETYPES) {
+    if (new RegExp(`\\b${arch}\\b`).test(text)) return true
+  }
+  return false
+}
+
+/**
+ * DISTINCT app surfaces named by the idea (deduped: "nav bar"⊂"navbar" won't
+ * double count because we match on whole words and normalize whitespace).
+ * Exported for the complexity analyzer (#342) so chunking thresholds and the
+ * multi-file gate share ONE surface vocabulary.
+ */
+export function detectIdeaSurfaces(idea: string): string[] {
+  const text = (idea || '').toLowerCase()
+  if (!text.trim()) return []
+  const seen = new Map<string, string>() // normalized key → display term
+  for (const term of SURFACE_TERMS) {
+    // Plural-tolerant: "reports"/"charts"/"forms" name the same surface as the
+    // singular term (#342 — singular-only matching under-counted real ideas).
+    const re = new RegExp(`\\b${term.replace(/\s+/g, '\\s+')}s?\\b`)
+    const key = term.replace(/\s+/g, '')
+    if (re.test(text) && !seen.has(key)) seen.set(key, term)
+  }
+  return Array.from(seen.values())
+}
+
 export function ideaWarrantsMultiFile(idea: string): boolean {
   const text = (idea || '').toLowerCase()
   if (!text.trim()) return false
 
-  // Explicit multi-page / multi-section asks (plural intent only — "landing page
-  // for a shop" must NOT match, so no bare "page for").
-  if (/\b(multi-?page|multiple (pages|sections|screens|views)|several (pages|sections|screens|views))\b/.test(text)) {
-    return true
-  }
+  if (hasExplicitMultiPageAsk(text)) return true
 
-  // A named complex archetype is sufficient on its own (#293) — these have many
-  // surfaces even when the idea string is terse (e.g. "a CRM", "a dashboard").
-  for (const arch of COMPLEX_ARCHETYPES) {
-    if (new RegExp(`\\b${arch}\\b`).test(text)) return true
-  }
+  // A named complex archetype is sufficient on its own (#293).
+  if (namesComplexArchetype(text)) return true
 
-  // Count DISTINCT named surfaces (dedupe substrings, e.g. "nav bar"⊂"navbar" won't
-  // double count because we match on whole words below).
-  const seen = new Set<string>()
-  for (const term of SURFACE_TERMS) {
-    const re = new RegExp(`\\b${term.replace(/\s+/g, '\\s+')}\\b`)
-    if (re.test(text)) seen.add(term.replace(/\s+/g, ''))
-  }
-  return seen.size >= 3
+  return detectIdeaSurfaces(text).length >= 3
 }
 
 export function multiFileEmphasis(complexity: IdeaComplexity): string {

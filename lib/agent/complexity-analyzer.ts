@@ -3,7 +3,22 @@
  *
  * Analyzes PRD requirements and determines if chunking is needed
  * based on pages, features, and state complexity.
+ *
+ * #342 recalibration: the PRD parser only finds pages/features in STRUCTURED
+ * PRDs — a raw idea ("a CRM with contacts, deals, and invoicing") parses to
+ * near-zero counts, so requiresChunking never fired and every multi-feature
+ * idea went single-shot. We now blend in the idea-level signals that already
+ * gate multi-file output (#291/#293, lib/build/multifile-emphasis): named
+ * surfaces + complex archetypes. A genuinely multi-FEATURE idea now routes to
+ * the multi-pass planner; a terse archetype ("a dashboard") stays single-shot
+ * multi-file (the proven cheaper path).
  */
+
+import {
+  detectIdeaSurfaces,
+  hasExplicitMultiPageAsk,
+  namesComplexArchetype,
+} from '../build/multifile-emphasis'
 
 export interface PRDAnalysis {
   pages: Array<{ name: string; route: string }>
@@ -23,7 +38,24 @@ export interface ComplexityScore {
   chunkingStrategy?: 'none' | '3-phase' | '4-phase' | '5-phase+'
   /** True when the request should be routed to the headless agent (Phase 4). */
   shouldUseAgent: boolean
+  /** Distinct app surfaces the raw idea names (#342 — shared vocabulary with the multi-file gate). */
+  ideaSurfaceCount: number
+  /** True when the idea names a known complex archetype ("a CRM", "an admin panel"). */
+  namesArchetype: boolean
+  /**
+   * True for a genuinely multi-FEATURE idea: an archetype fleshed out with 3+
+   * named surfaces, 4+ distinct surfaces on their own, or an explicit
+   * multi-page ask. This is what fires the multi-pass planner for raw ideas.
+   */
+  multiFeatureIdea: boolean
 }
+
+/**
+ * Pages an archetype implies even when the idea is terse — "a CRM" has a list,
+ * a detail view, filters, and settings whether or not the founder types them.
+ * Used only to size the token estimate, not to force chunking on its own.
+ */
+const ARCHETYPE_IMPLIED_PAGES = 4
 
 /**
  * Analyze PRD complexity and determine if chunking is needed
@@ -33,24 +65,48 @@ export function analyzeComplexity(prdAnalysis: PRDAnalysis, prdText: string): Co
   const featureCount = prdAnalysis.features.length
   const componentCount = prdAnalysis.components.length
 
+  // Idea-level signals (#342): the PRD parser under-counts raw ideas, so blend
+  // in the surface/archetype vocabulary that already gates multi-file output.
+  const ideaSurfaces = detectIdeaSurfaces(prdText)
+  const ideaSurfaceCount = ideaSurfaces.length
+  const namesArchetype = namesComplexArchetype(prdText)
+  // Threshold note: archetype words often double as surface words ("analytics
+  // dashboard" = 1 archetype + 2 surfaces), so archetype+2 was too twitchy —
+  // it fired for terse ideas that belong on the cheap single-shot path. An
+  // archetype needs 3+ named surfaces (i.e. features actually spelled out)
+  // before multi-pass pays for itself.
+  const multiFeatureIdea =
+    hasExplicitMultiPageAsk(prdText) ||
+    (namesArchetype && ideaSurfaceCount >= 3) ||
+    ideaSurfaceCount >= 4
+
+  // Effective counts: whichever is larger — what the parser found (structured
+  // PRDs) or what the idea names (raw ideas).
+  const effectivePageCount = Math.max(pageCount, namesArchetype ? ARCHETYPE_IMPLIED_PAGES : 0)
+  const effectiveFeatureCount = Math.max(featureCount, ideaSurfaceCount)
+
   // Detect state complexity based on PRD content
   const stateComplexity = detectStateComplexity(prdText)
 
   // Calculate estimated tokens based on page count and features
-  const estimatedTokens = estimateRequiredTokens(pageCount, featureCount, componentCount, stateComplexity)
+  const estimatedTokens = estimateRequiredTokens(effectivePageCount, effectiveFeatureCount, componentCount, stateComplexity)
 
-  // Determine overall complexity
-  const overallComplexity = determineOverallComplexity(pageCount, featureCount, stateComplexity)
+  // Determine overall complexity — a multi-feature idea is complex by
+  // definition (many surfaces to build), even when the parser found nothing.
+  const baseComplexity = determineOverallComplexity(effectivePageCount, effectiveFeatureCount, stateComplexity)
+  const overallComplexity = multiFeatureIdea ? 'complex' : baseComplexity
 
-  // Determine if chunking is required
-  const requiresChunking = estimatedTokens > 10000 || pageCount > 5
+  // Determine if chunking is required. #342: multi-feature ideas fire the
+  // multi-pass planner; terse archetypes ("a dashboard") deliberately do NOT —
+  // they stay on the cheaper single-shot multi-file path (#293).
+  const requiresChunking = estimatedTokens > 10000 || effectivePageCount > 5 || multiFeatureIdea
 
   // Recommend chunking strategy
   let chunkingStrategy: ComplexityScore['chunkingStrategy'] = 'none'
   if (requiresChunking) {
-    if (pageCount <= 7) {
+    if (effectivePageCount <= 7) {
       chunkingStrategy = '3-phase'
-    } else if (pageCount <= 12) {
+    } else if (effectivePageCount <= 12) {
       chunkingStrategy = '4-phase'
     } else {
       chunkingStrategy = '5-phase+'
@@ -70,7 +126,55 @@ export function analyzeComplexity(prdAnalysis: PRDAnalysis, prdText: string): Co
     requiresChunking,
     chunkingStrategy,
     shouldUseAgent,
+    ideaSurfaceCount,
+    namesArchetype,
+    multiFeatureIdea,
   }
+}
+
+/**
+ * Augment a sparse PRD analysis with idea-derived pages/features so the chunk
+ * planner has real material to plan with (#342). Without this, a raw
+ * multi-feature idea reaches createChunkPlan with pages=[] and yields a
+ * degenerate core+integration plan with ZERO feature phases.
+ *
+ * Only adds surfaces the parser did not already cover; leaves structured PRDs
+ * (which parse rich page lists) untouched. Pure — returns a new object.
+ */
+export function augmentPRDAnalysisForChunking(
+  prdAnalysis: PRDAnalysis,
+  prdText: string,
+): PRDAnalysis {
+  const surfaces = detectIdeaSurfaces(prdText)
+  if (surfaces.length === 0) return prdAnalysis
+
+  const existingRoutes = new Set(prdAnalysis.pages.map((p) => p.route.toLowerCase()))
+  const existingNames = new Set(prdAnalysis.pages.map((p) => p.name.toLowerCase()))
+
+  const pages = [...prdAnalysis.pages]
+  const features = [...prdAnalysis.features]
+  const existingFeatures = new Set(features.map((f) => f.toLowerCase()))
+
+  for (const surface of surfaces) {
+    const route = '/' + surface.replace(/\s+/g, '-')
+    const name = surface
+      .split(/\s+/)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ')
+    if (existingRoutes.has(route) || existingNames.has(name.toLowerCase())) continue
+    // Skip surfaces the parser already mapped under a different route name
+    // (e.g. parser found "Dashboard (/)" and the surface is "dashboard").
+    if ([...existingNames].some((n) => n.includes(surface))) continue
+    pages.push({ name, route })
+    existingRoutes.add(route)
+    existingNames.add(name.toLowerCase())
+    if (!existingFeatures.has(surface)) {
+      features.push(name)
+      existingFeatures.add(surface)
+    }
+  }
+
+  return { ...prdAnalysis, pages, features }
 }
 
 /**
@@ -162,6 +266,8 @@ export function getComplexityReport(score: ComplexityScore): string {
   lines.push(`   Features: ${score.featureCount}`)
   lines.push(`   Components: ${score.componentCount}`)
   lines.push(`   State Complexity: ${score.stateComplexity}`)
+  lines.push(`   Idea Surfaces: ${score.ideaSurfaceCount}${score.namesArchetype ? ' (names a complex archetype)' : ''}`)
+  lines.push(`   Multi-feature Idea: ${score.multiFeatureIdea ? 'yes' : 'no'}`)
   lines.push(`   Overall: ${score.overallComplexity}`)
   lines.push(`   Estimated Tokens: ${score.estimatedTokens.toLocaleString()}`)
 

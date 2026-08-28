@@ -13,7 +13,8 @@ import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { registerApp, resolveApp } from '@/lib/build/app-registry'
 import { deployPersistent } from '@/lib/build/deploy'
-import { checkAppReady } from '@/lib/build/ready-gate'
+import { checkAppReady, resolveStoredApp } from '@/lib/build/ready-gate'
+import { checkSeededData, type SeededDataCheck } from '@/lib/build/seed-check'
 
 export const runtime = 'nodejs'
 
@@ -67,6 +68,25 @@ export async function POST(request: NextRequest) {
   // fields (zerodbProjectId, plan, domain, ownerEmail…) and silently orphan them.
   const existing = await resolveApp(slug).catch(() => null)
 
+  // SEEDED-DATA CHECK (#343): for data-backed apps (code reads/writes through
+  // /api/db/{table}), do a cheap ZeroDB read to verify at least one real table
+  // exists with seeded rows — scoped to the company's own project when one was
+  // provisioned, else the shared preview project (same resolution /api/db uses).
+  // STRICTLY FAIL-OPEN: this never blocks registration — an unseeded app still
+  // works (starts empty), and a ZeroDB hiccup must not take down the ready
+  // path. Surfaced in the response + warn log so real-data adoption is
+  // measurable.
+  let seededData: SeededDataCheck | null = null
+  try {
+    const stored = await resolveStoredApp(chatId)
+    if (stored) {
+      seededData = await checkSeededData(stored.code, existing?.zerodbProjectId)
+      if (seededData.dataBacked && seededData.checked && !seededData.seeded) {
+        console.warn(`[register-app] ${slug}: data-backed app with NO seeded data — ${seededData.detail}`)
+      }
+    }
+  } catch { /* fail-open — never block on the data check */ }
+
   // Ownership (#253 / Greg's missing-dashboard bug): stamp the signed-in
   // founder as owner AT REGISTRATION — provisioning/checkout may never run for a
   // free build, and an unowned entry is invisible to /api/build/my-companies.
@@ -92,7 +112,15 @@ export async function POST(request: NextRequest) {
     track: b.track === 'company' ? 'company' : 'app',
     deployUrl: target?.url || existing?.deployUrl,
   })
-  return Response.json({ ok, deployUrl: target?.url || null, dnsPointable: target?.dnsPointable ?? false })
+  return Response.json({
+    ok,
+    deployUrl: target?.url || null,
+    dnsPointable: target?.dnsPointable ?? false,
+    // #343: observability for the real-data invariant (never blocks).
+    seededData: seededData
+      ? { dataBacked: seededData.dataBacked, checked: seededData.checked, seeded: seededData.seeded, tables: seededData.tables, seededTables: seededData.seededTables }
+      : null,
+  })
 }
 
 export async function GET(request: NextRequest) {

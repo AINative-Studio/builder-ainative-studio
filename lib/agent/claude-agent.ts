@@ -14,9 +14,20 @@
  */
 
 import { spawn, type ChildProcess } from 'child_process'
+import { cp, rm } from 'fs/promises'
 import { TrajectoryCapture } from './trajectory-capture'
 import { storeTrajectory } from './trajectory-store'
+import { mcpDataProvisioningBlock } from '@/lib/build/primitive-catalog'
 import { createWorktree, getWorktreeFiles, getWorktreePath } from './worktree-manager'
+import {
+  buildTestGenerationInstructions,
+  buildTestFailureError,
+  findGeneratedTestFile,
+  isWorktreeTestGateEnabled,
+  recordWorktreeTestResult,
+  runWorktreeTests,
+  stripTestFiles,
+} from './test-runner'
 import {
   getAgentBinary,
   getAgentRuntime,
@@ -26,6 +37,7 @@ import {
   resolveAgentModel,
   buildAgentMcpWiring,
 } from './agent-runtime'
+import { planReviewPromptBlock, PLAN_REVIEW_TURN_HEADROOM } from './plan-review'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -61,6 +73,19 @@ export interface AgentOptions {
   allowedTools?: string[]
   /** Abort signal to cancel the agent. */
   abortSignal?: AbortSignal
+  /**
+   * Run the worktree vitest gate on the generated test file after the agent
+   * finishes (#341). Defaults to true; verify/repair runs set false so a fix
+   * pass never re-enters the gate.
+   */
+  runGeneratedTests?: boolean
+  /**
+   * Plan + bounded self-review discipline (#342). Default true for build runs:
+   * the agent maintains .cody-plan.md and does ONE review pass before finish.
+   * Set false for short repair-style runs (verify-loop) where a plan file and
+   * review turn would waste the tight turn budget.
+   */
+  planReview?: boolean
 }
 
 /** Raw event from Claude Code's stream-json output. */
@@ -105,13 +130,16 @@ interface ClaudeStreamEvent {
 // Constants
 // ---------------------------------------------------------------------------
 
-const DEFAULT_ALLOWED_TOOLS = ['Write', 'Edit']  // Only write/edit — no exploring, no bash
+// Write/Edit to build; Read so the single self-review pass (#342) can re-read
+// the files it wrote. Still no Bash/Glob/Grep — no shell, no exploring.
+const DEFAULT_ALLOWED_TOOLS = ['Read', 'Write', 'Edit']
 const DEFAULT_MAX_BUDGET_USD = 1.0
 const DEFAULT_MODEL = 'sonnet'
 const AGENT_SYSTEM_PROMPT = `You are building a React component in an isolated workspace.
 
 WORKSPACE STRUCTURE (already exists, do NOT explore — just write code):
   src/App.tsx — EDIT THIS FILE with your component (default export)
+  src/App.test.tsx — EDIT THIS FILE with vitest tests for the app (see TESTS below)
   src/main.tsx — entry point (do not modify)
   src/index.css — Tailwind imports (do not modify)
   package.json — has react, tailwind, lucide-react, recharts (do not modify)
@@ -124,10 +152,12 @@ RULES:
 - Use recharts for charts: import { LineChart, BarChart, ... } from 'recharts'
 - DO NOT run npm install, npm run build, or any shell commands
 - DO NOT run ls, cat, or explore the filesystem — the structure is above
-- DO NOT create new files — put everything in src/App.tsx
+- DO NOT create new files — all app code goes in src/App.tsx, all tests in the existing src/App.test.tsx
 - Make it visually polished with realistic sample data
 - Ensure all JSX tags are properly closed
-- For content strings with apostrophes (contractions like "it's", "you're"), use double quotes or escape the apostrophe (\\') so they don't end the string early and break the syntax`
+- For content strings with apostrophes (contractions like "it's", "you're"), use double quotes or escape the apostrophe (\\') so they don't end the string early and break the syntax
+
+${buildTestGenerationInstructions()}`
 
 // ---------------------------------------------------------------------------
 // Guard
@@ -211,7 +241,11 @@ export async function* runHeadlessAgent(
   // maxTurns=3 the run hit --max-turns mid-tool-call and cody returned an empty
   // error result (cody-cli#251 / builder#99). 12 gives room for a full
   // read→edit→verify→retry loop; cody stops early on its own when done.
-  const maxTurns = options.maxTurns || 12
+  // #342: plan + bounded review discipline (default ON; repair runs opt out).
+  const planReview = options.planReview !== false
+  // #342: add fixed headroom for the plan turn (.cody-plan.md) + the ONE
+  // self-review pass, so they never eat the budget meant for building.
+  const maxTurns = (options.maxTurns || 12) + (planReview ? PLAN_REVIEW_TURN_HEADROOM : 0)
 
   // MCP tool wiring (#296 item 3, finally activated): give the agent the
   // AINative primitive MCP fleet (ZeroDB 69-tool surface, ZeroMemory,
@@ -231,12 +265,28 @@ export async function* runHeadlessAgent(
     '--max-turns', String(maxTurns),
     '--max-budget-usd', String(maxBudgetUsd),
     '--bare',
+    // #343 trajectory fix: cody only emits a complete `assistant` event when a
+    // message FINISHES. A run killed mid-turn (budget / max-turns / abort)
+    // therefore produced ZERO assistant events, and every such prod trajectory
+    // landed with steps:[] even though the agent was mid-tool-call. Partial
+    // events ({type:'stream_event', event:{content_block_start|delta|...}})
+    // let TrajectoryCapture reconstruct the in-flight turn. translateEvent
+    // intentionally IGNORES stream_event so SSE output is not double-emitted.
+    '--include-partial-messages',
     '--allowedTools', ...effectiveTools,
   ]
   if (mcp.configJson) args.push('--mcp-config', mcp.configJson)
 
-  // Always inject the agent system prompt (workspace rules)
-  const fullSystemPrompt = AGENT_SYSTEM_PROMPT + (systemPrompt ? '\n\n' + systemPrompt : '')
+  // Compose the agent system prompt: workspace rules + plan/review discipline
+  // (#342) + — only when the ZeroDB MCP server is actually wired — the real-
+  // data provisioning paragraph (#343). Only when wired: instructing a
+  // tool-less run to call MCP makes it hallucinate.
+  const mcpBlock = mcp.configJson ? '\n\n' + mcpDataProvisioningBlock() : ''
+  const fullSystemPrompt =
+    AGENT_SYSTEM_PROMPT +
+    (planReview ? '\n\n' + planReviewPromptBlock() : '') +
+    mcpBlock +
+    (systemPrompt ? '\n\n' + systemPrompt : '')
   args.push('--append-system-prompt', fullSystemPrompt)
 
   // 3. Spawn the agent process — binary + env resolved by AGENT_RUNTIME (#79).
@@ -457,14 +507,33 @@ export async function* runHeadlessAgent(
 
   // Finalize + auto-verify + persist the trajectory for fine-tuning. Runs
   // regardless of exit code (failed runs are valuable negative-reward signal).
-  // Fully detached: awaited errors are swallowed so capture never affects the
-  // generation result. The npm install/build in autoVerify is slow, so we do
-  // NOT block the generator on it — fire it and let it complete in background.
+  // The npm install/build in autoVerify is slow, so we do NOT block the
+  // generator on it — but the caller (chat-ws) deletes the worktree as soon as
+  // this generator returns, so the backgrounded verify raced the cleanup and
+  // EVERY prod reward failed with "ENOENT: uv_cwd" / "shell-init: error
+  // retrieving current directory" (#343). Fix: take a cheap snapshot copy of
+  // the worktree NOW (awaited — small scaffold, milliseconds), then run the
+  // slow verify against the snapshot in the background and clean it up after.
   if (trajectory) {
+    const snapshotPath = `${worktreePath}-trajsnap`
+    let snapshotOk = false
+    try {
+      await cp(worktreePath, snapshotPath, {
+        recursive: true,
+        force: true,
+        filter: (src) => !src.includes('node_modules') && !src.includes('/.git'),
+      })
+      snapshotOk = true
+    } catch (err) {
+      console.warn('[Trajectory] worktree snapshot failed:', err)
+    }
     void trajectory
-      .finalize(worktreePath, startTime)
+      .finalize(snapshotOk ? snapshotPath : worktreePath, startTime)
       .then((record) => storeTrajectory(record))
       .catch((err) => console.warn('[Trajectory] capture failed:', err))
+      .finally(() => {
+        if (snapshotOk) void rm(snapshotPath, { recursive: true, force: true }).catch(() => {})
+      })
   }
 
   if (exitCode !== 0 && !abortSignal?.aborted) {
@@ -475,16 +544,54 @@ export async function* runHeadlessAgent(
 
   // 6. Read final files from the worktree
   yield { type: 'build_step', step: 'Collecting output files' }
+  let collectedFiles: Record<string, string> = {}
   try {
-    const files = await getWorktreeFiles(chatId)
-    if (Object.keys(files).length > 0) {
-      yield { type: 'files', files }
+    collectedFiles = await getWorktreeFiles(chatId)
+    if (Object.keys(collectedFiles).length > 0) {
+      // Test files are internal verification artifacts (#341) — strip them
+      // from the pipeline files map so a single-file app + its test doesn't
+      // get routed as a multi-file app or persisted into the preview.
+      const appFiles = stripTestFiles(collectedFiles)
+      if (Object.keys(appFiles).length > 0) {
+        yield { type: 'files', files: appFiles }
+      }
     }
   } catch (err) {
     yield {
       type: 'error',
       error: `Failed to read worktree files: ${err instanceof Error ? err.message : String(err)}`,
       fatal: false,
+    }
+  }
+
+  // 6b. TDD GATE (#341): run the generated vitest file in the worktree before
+  // the app can be marked ready. Bounded: one test file, 60s hard timeout,
+  // fail-open on every infra error — only a genuinely failing test records a
+  // blockable outcome. chat-ws feeds a FAIL to the verify-loop repair agent;
+  // ready-gate 422s register-app if the failure is never repaired.
+  if (options.runGeneratedTests !== false && isWorktreeTestGateEnabled()) {
+    const testFile = findGeneratedTestFile(Object.keys(collectedFiles))
+    if (!testFile) {
+      console.log('[TestGate] no generated test file found — skipping (fail-open)')
+    } else {
+      yield { type: 'build_step', step: `Running generated tests (${testFile})` }
+      try {
+        const outcome = await runWorktreeTests(worktreePath, testFile)
+        recordWorktreeTestResult(chatId, outcome)
+        console.log(`[TestGate] ${outcome.status} in ${outcome.durationMs}ms: ${outcome.summary.slice(0, 200)}`)
+        if (outcome.status === 'pass') {
+          yield { type: 'build_step', step: `Generated tests passed (${outcome.durationMs}ms)` }
+        } else if (outcome.status === 'fail') {
+          yield { type: 'build_step', step: 'Generated tests FAILED — queuing repair' }
+          yield { type: 'error', error: buildTestFailureError(outcome.summary), fatal: false }
+        } else {
+          // skipped / infra_error — never block on tooling.
+          yield { type: 'build_step', step: `Test runner unavailable (${outcome.status}) — continuing` }
+        }
+      } catch (err) {
+        // Runner threw unexpectedly — infra, fail-open.
+        console.warn('[TestGate] runner threw (fail-open):', err instanceof Error ? err.message : err)
+      }
     }
   }
 

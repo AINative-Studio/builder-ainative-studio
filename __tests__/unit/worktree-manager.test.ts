@@ -150,6 +150,30 @@ describe('worktree-manager', () => {
       expect(files['image.png']).toBeUndefined()
     })
 
+    it('excludes agent scratch files (.cody-plan.md, .cody-analysis.md) from the output map (#342)', async () => {
+      const path = await createWorktree(testChatId)
+
+      await writeFile(join(path, '.cody-plan.md'), '# Plan\n- [x] build it', 'utf-8')
+      await writeFile(join(path, '.cody-analysis.md'), '# Analysis', 'utf-8')
+      // A real markdown file must still be collected — only scratch names are excluded
+      await writeFile(join(path, 'README.md'), '# App readme', 'utf-8')
+
+      const files = await getWorktreeFiles(testChatId)
+
+      expect(files['.cody-plan.md']).toBeUndefined()
+      expect(files['.cody-analysis.md']).toBeUndefined()
+      expect(files['README.md']).toBeDefined()
+    })
+
+    it('excludes agent scratch files even in subdirectories (#342)', async () => {
+      const path = await createWorktree(testChatId)
+      const sub = join(path, 'src')
+      await writeFile(join(sub, '.cody-plan.md'), '# nested plan', 'utf-8')
+
+      const files = await getWorktreeFiles(testChatId)
+      expect(Object.keys(files).some((k) => k.endsWith('.cody-plan.md'))).toBe(false)
+    })
+
     it('includes newly added tsx/ts files from subdirectories', async () => {
       const path = await createWorktree(testChatId)
 

@@ -453,6 +453,31 @@ export function catalogPromptBlock(idea: string, track: 'app' | 'company' = 'com
 }
 
 /**
+ * MCP real-data provisioning paragraph (#343) — appended to the AGENT system
+ * prompt (lib/agent/claude-agent.ts) when the spawned agent actually has the
+ * ZeroDB MCP server wired (buildAgentMcpWiring). The agent has had 69+ live
+ * mcp__zerodb__* tools since #296, but no prompt ever instructed their use —
+ * so every data-backed build shipped with mock-feel data and zero organic MCP
+ * usage. This paragraph closes that gap: for any app that persists records,
+ * the agent must CREATE the real tables and SEED 5-10 realistic records at
+ * build time, so the first thing a founder sees is a live app with real data.
+ *
+ * Only inject this when MCP wiring is live — telling a plain completion model
+ * (no tool_use) to call MCP tools makes it hallucinate tool syntax into code.
+ */
+export function mcpDataProvisioningBlock(): string {
+  return (
+    `REAL DATA VIA MCP (MANDATORY for any app that reads/writes records):\n` +
+    `You have live mcp__zerodb__* tools — use them to provision the app's REAL data layer before you finish:\n` +
+    `1. For EACH table the app touches through /api/db/{table}, call mcp__zerodb__zerodb_create_table with table_name set to exactly that {table} segment (e.g. the app fetches /api/db/tasks → table_name "tasks").\n` +
+    `2. Seed 5-10 REALISTIC records into each primary table with mcp__zerodb__zerodb_insert_rows — plausible domain data (real-looking names, dates, amounts, statuses that match the app's subject), NEVER "Test 1"/"foo"/"Lorem". Row field names MUST exactly match the fields the app's code reads.\n` +
+    `3. Do NOT hardcode those records in the app code. The app loads them at runtime via GET /api/db/{table} — the seeded rows are what a first-time user sees, and their edits persist to the same table.\n` +
+    `Your MCP connection targets the shared preview ZeroDB project (the same one /api/db serves for un-provisioned apps), so seeded rows appear in the running preview.\nIMPORTANT — attempt once, never loop: if an mcp__zerodb__ call errors, do NOT retry it more than once total. Fall back immediately: tables auto-create on the app's first POST /api/db/{table} insert, so seed by having the app itself write realistic starter records on first load when its GET returns empty. Never burn turns on failing MCP calls.\n` +
+    `Skip this ONLY when the app genuinely persists nothing (e.g. a pure calculator). MCP tool calls are allowed and expected — they are not shell commands.`
+  )
+}
+
+/**
  * CODEGEN composition block (#218) — the other half of #288's selection.
  *
  * #288 wired selection (WHICH primitives) into the artifact/summary prompts.
@@ -509,6 +534,9 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
     `    GET  /api/db/{table}?search={text}  → SEMANTIC search (returns { results: [...] }); use this for\n` +
     `        "search"/"find similar" features — do NOT hand-roll client-side text filtering for semantic search.\n` +
     `  Load on mount with useEffect; re-fetch or update state after writes. Rows come back FLAT with an \`id\`.\n` +
+    `  Tables MAY be pre-seeded with real records at build time (#343) — on first load, render\n` +
+    `  whatever GET /api/db/{table} returns as the source of truth. Do NOT ship a hardcoded mock array as the\n` +
+    `  data source; at most use a tiny inline fallback ONLY when the fetch itself fails.\n` +
     `- AUTH (lightweight, no backend): if the app has per-user data, scope it to a user id kept in localStorage\n` +
     `  (e.g. \`let uid = localStorage.getItem('uid') || crypto.randomUUID(); localStorage.setItem('uid', uid)\`),\n` +
     `  store \`userId: uid\` on each row, and filter reads with \`/api/db/{table}?filter=\${encodeURIComponent(JSON.stringify({userId: uid}))}\`.\n` +

@@ -22,6 +22,13 @@ export interface TrajectoryStep {
   tool?: string
   toolInput?: unknown
   toolResult?: string
+  /**
+   * True when this step was reconstructed from partial stream_event chunks of a
+   * turn that never completed (run killed by budget / max-turns / abort). The
+   * step is real signal — the agent WAS doing this — but its input may be a
+   * truncated prefix (#343 steps:[] fix).
+   */
+  partial?: boolean
 }
 
 export interface VerifyResult {
@@ -44,8 +51,18 @@ export interface TrajectoryRecord {
   total_cost_usd: number | null
   duration_ms: number
   is_error: boolean
+  /** Terminal stop reason from the result event (e.g. max_budget_usd,
+   *  max_turns, end_turn) — diagnoses WHY a run has partial/empty steps. */
+  stop_reason: string | null
   verify: VerifyResult
   created_at: string
+}
+
+/** In-flight (not yet completed) assistant message reconstructed from
+ *  --include-partial-messages stream_event chunks (#343). */
+interface PartialTurn {
+  text: string
+  tools: Array<{ name: string; inputJson: string }>
 }
 
 /** Accumulates a single Cody run's trajectory from raw stream-json events. */
@@ -55,6 +72,11 @@ export class TrajectoryCapture {
   private numTurns = 0
   private cost: number | null = null
   private isError = false
+  private stopReason: string | null = null
+  /** In-flight partial turn from stream_event chunks; superseded by the
+   *  complete `assistant` event when the message finishes, flushed into steps
+   *  at finalize when it never does (#343 steps:[] fix). */
+  private partial: PartialTurn | null = null
 
   constructor(
     readonly chatId: string,
@@ -66,6 +88,9 @@ export class TrajectoryCapture {
   observe(event: any): void {
     if (!event || typeof event !== 'object') return
     if (event.type === 'assistant' && event.message?.content) {
+      // The message COMPLETED — it supersedes any partial reconstruction of
+      // the same in-flight turn (avoids double-recording).
+      this.partial = null
       this.turn++
       for (const block of event.message.content) {
         if (block.type === 'text' && block.text) {
@@ -90,17 +115,62 @@ export class TrajectoryCapture {
           this.steps.push({ turn: this.turn, role: 'tool_result', toolResult: content.slice(0, 4000) })
         }
       }
+    } else if (event.type === 'stream_event' && event.event) {
+      // Partial-message chunks (--include-partial-messages, #343): cody wraps
+      // the Anthropic SSE event under `event`. A turn killed mid-flight
+      // (budget / max-turns / abort) NEVER emits its complete `assistant`
+      // message — before this handler, every such prod trajectory landed with
+      // steps:[] despite real tool calls. Reconstruct the in-flight turn here;
+      // the complete assistant event (when it arrives) supersedes it above.
+      const ev = event.event
+      if (ev.type === 'message_start') {
+        this.partial = { text: '', tools: [] }
+      } else if (ev.type === 'content_block_start' && ev.content_block?.type === 'tool_use') {
+        this.partial = this.partial || { text: '', tools: [] }
+        this.partial.tools.push({ name: String(ev.content_block.name || ''), inputJson: '' })
+      } else if (ev.type === 'content_block_delta' && ev.delta) {
+        this.partial = this.partial || { text: '', tools: [] }
+        if (ev.delta.type === 'text_delta' && ev.delta.text) {
+          if (this.partial.text.length < 8000) this.partial.text += String(ev.delta.text)
+        } else if (ev.delta.type === 'input_json_delta' && ev.delta.partial_json) {
+          const tool = this.partial.tools[this.partial.tools.length - 1]
+          if (tool && tool.inputJson.length < 4000) tool.inputJson += String(ev.delta.partial_json)
+        }
+      }
     } else if (event.type === 'result') {
       // Prefer the reported turn count, but fall back to the observed number of
       // assistant turns (the result event can report 0 on early termination).
       this.numTurns = event.num_turns || this.turn
       this.cost = typeof event.total_cost_usd === 'number' ? event.total_cost_usd : null
       this.isError = Boolean(event.is_error)
+      const reason = event.stop_reason ?? event.terminal_reason ?? null
+      this.stopReason = reason != null ? String(reason) : null
+    }
+  }
+
+  /** Flush a turn that never completed into steps (marked partial). */
+  private flushPartial(): void {
+    const p = this.partial
+    if (!p) return
+    this.partial = null
+    if (!p.text && p.tools.length === 0) return
+    this.turn++
+    if (p.text) {
+      this.steps.push({ turn: this.turn, role: 'assistant', text: p.text.slice(0, 8000), partial: true })
+    }
+    for (const t of p.tools) {
+      if (!t.name) continue
+      let input: unknown = null
+      try { input = JSON.parse(t.inputJson) } catch { input = { _truncated: true, preview: t.inputJson.slice(0, 2000) } }
+      this.steps.push({ turn: this.turn, role: 'assistant', tool: t.name, toolInput: truncateInput(input), partial: true })
     }
   }
 
   /** Finalize: snapshot the file tree, auto-verify, and return the record. */
   async finalize(worktreePath: string, startTime: number): Promise<TrajectoryRecord> {
+    // A turn that was streaming when the run died never got its complete
+    // assistant event — record what we reconstructed from partials (#343).
+    this.flushPartial()
     const fileTree = safeFileTree(worktreePath)
     const verify = await autoVerify(worktreePath)
     return {
@@ -113,6 +183,7 @@ export class TrajectoryCapture {
       total_cost_usd: this.cost,
       duration_ms: Date.now() - startTime,
       is_error: this.isError,
+      stop_reason: this.stopReason,
       verify,
       created_at: new Date().toISOString(),
     }

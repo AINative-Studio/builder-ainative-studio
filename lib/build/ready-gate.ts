@@ -25,6 +25,7 @@ import { getFiles as getFilesV2 } from '@/lib/preview-store-v2'
 import { isRenderable, type ParseGateResult } from '@/lib/code-validator'
 import { findMissingLocalImports } from '@/lib/build/completeness-gate'
 import { flattenMultiFile } from '@/lib/build/flatten-multifile'
+import { getWorktreeTestFailure } from '@/lib/agent/test-runner'
 import { parse as babelParse } from '@babel/parser'
 
 export interface ReadyCheck extends ParseGateResult {
@@ -32,7 +33,7 @@ export interface ReadyCheck extends ParseGateResult {
   checked: boolean
 }
 
-interface StoredApp {
+export interface StoredApp {
   code: string
   /** The multi-file map when one is available (in-memory V2 store or durable files_json). */
   files: Record<string, string> | null
@@ -44,8 +45,11 @@ interface StoredApp {
  * ZeroDB is the durable source of truth that survives restarts (register-app
  * can run long after generation, in another process). Returns null if neither
  * store has content.
+ *
+ * Exported for the seeded-data check (#343, lib/build/seed-check.ts), which
+ * needs the same "what code will this app actually run" resolution.
  */
-async function resolveStoredApp(chatId: string): Promise<StoredApp | null> {
+export async function resolveStoredApp(chatId: string): Promise<StoredApp | null> {
   // The in-memory V2 store holds the parsed files map from this instance's
   // generation — best-effort in both branches (never required).
   let memFiles: Record<string, string> | null = null
@@ -85,6 +89,22 @@ async function resolveStoredApp(chatId: string): Promise<StoredApp | null> {
  * validation is the primary guard and this is defense-in-depth.
  */
 export async function checkAppReady(chatId: string): Promise<ReadyCheck> {
+  // TDD GATE (#341): the agent primary path ran the generated vitest file in
+  // the session worktree and recorded a FAILURE that was never repaired by the
+  // verify-loop. That is real, executed proof the app is broken — same 422
+  // retry path as a parse failure. In-memory + TTL'd: another instance (or an
+  // expired record) simply sees null and falls through to the parse gates, so
+  // this can only ever block on genuine signal, never on tooling.
+  const testFailure = getWorktreeTestFailure(chatId)
+  if (testFailure) {
+    return {
+      checked: true,
+      ok: false,
+      reason: 'generated_tests_failed',
+      error: testFailure.error,
+    }
+  }
+
   const stored = await resolveStoredApp(chatId)
   if (stored === null) {
     // Nothing to verify — don't block on a store miss.

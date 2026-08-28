@@ -1,5 +1,48 @@
 import { describe, it, expect } from 'vitest'
-import { multiFileEmphasis, multiFileUserDirective, ideaWarrantsMultiFile } from '@/lib/build/multifile-emphasis'
+import {
+  multiFileEmphasis,
+  multiFileUserDirective,
+  ideaWarrantsMultiFile,
+  detectIdeaSurfaces,
+  namesComplexArchetype,
+  hasExplicitMultiPageAsk,
+} from '@/lib/build/multifile-emphasis'
+
+// #342: granular signals exported for the complexity analyzer — chunking and
+// the multi-file gate must share ONE surface vocabulary.
+describe('idea signal exports (#342)', () => {
+  it('detectIdeaSurfaces counts DISTINCT surfaces', () => {
+    expect(detectIdeaSurfaces('an app with a table, a chart, and a settings page')).toHaveLength(3)
+    expect(detectIdeaSurfaces('an app with a table and a chart')).toHaveLength(2)
+    expect(detectIdeaSurfaces('a tip calculator')).toHaveLength(0)
+    expect(detectIdeaSurfaces('')).toHaveLength(0)
+  })
+
+  it('detectIdeaSurfaces dedupes repeated mentions', () => {
+    const surfaces = detectIdeaSurfaces('a table view, another table, and more table rows')
+    expect(surfaces).toHaveLength(1)
+  })
+
+  it('namesComplexArchetype recognizes terse archetypes', () => {
+    expect(namesComplexArchetype('a CRM to track deals')).toBe(true)
+    expect(namesComplexArchetype('an analytics dashboard')).toBe(true)
+    expect(namesComplexArchetype('a notes app')).toBe(false)
+    expect(namesComplexArchetype('')).toBe(false)
+  })
+
+  it('hasExplicitMultiPageAsk matches plural intent only', () => {
+    expect(hasExplicitMultiPageAsk('a multi-page app')).toBe(true)
+    expect(hasExplicitMultiPageAsk('an app with several screens')).toBe(true)
+    expect(hasExplicitMultiPageAsk('a landing page for a shop')).toBe(false)
+    expect(hasExplicitMultiPageAsk('')).toBe(false)
+  })
+
+  it('ideaWarrantsMultiFile is consistent with the granular signals (refactor guard)', () => {
+    const idea = 'a CRM with sidebar nav, contacts table, deal pipeline kanban, activity feed, and reports page with charts'
+    expect(namesComplexArchetype(idea) || detectIdeaSurfaces(idea).length >= 3).toBe(true)
+    expect(ideaWarrantsMultiFile(idea)).toBe(true)
+  })
+})
 
 describe('ideaWarrantsMultiFile (#291) — the actual gate', () => {
   it('multi-surface ideas → multi-file (true)', () => {

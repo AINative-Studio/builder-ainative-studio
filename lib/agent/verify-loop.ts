@@ -64,6 +64,8 @@ export function buildVerifyAgentOptions(model?: string): {
   maxTurns: number
   allowedTools: string[]
   systemPrompt: string
+  runGeneratedTests: boolean
+  planReview: boolean
 } {
   return {
     model,
@@ -71,5 +73,11 @@ export function buildVerifyAgentOptions(model?: string): {
     maxTurns: VERIFY_MAX_TURNS,
     allowedTools: VERIFY_AGENT_TOOLS,
     systemPrompt: buildVerifySystemPrompt(),
+    // A repair pass must never re-enter the worktree test gate (#341) — the
+    // gate belongs to the primary generation run only. And a repair run is
+    // short and targeted (#342) — a plan file + review turn would waste its
+    // 6-turn budget. The build path keeps both disciplines on.
+    runGeneratedTests: false,
+    planReview: false,
   }
 }
