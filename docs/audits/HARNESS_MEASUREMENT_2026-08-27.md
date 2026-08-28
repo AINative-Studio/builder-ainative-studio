@@ -56,3 +56,26 @@ The unit tests prove the algorithm is a correct port; there is no live path that
 The "degraded roster" confound above is resolved. #351 (commit 9addc73, deploy c01afab3) corrected the invalid model ids: `DEFAULT_ROSTER` is now `['claude-opus-4.5', 'qwen-coder-32b', 'gemini-flash']` — three vendors that all reach the proxy. Behavior-verified live: `committee-review?chatId=CWak9S7vN1bqGOxoTEqH2` returns `rosterSize:3, succeeded:3`, three independent verdicts (approve / request-changes / needs-discussion).
 
 **So the N=6 confusion matrix above is now STALE** — it measured a single model (claude-opus-4.5) wearing committee clothing. Before any keep/gate decision on #346, the study must be **re-run with the real 3-model committee on N≥12 labeled builds**, this time measuring actual cross-vendor AGREEMENT (do 3 vendors concur? does concurrence predict render outcome better than the free deterministic gates?). Until that re-measurement, #346 stays keep-inert. The staircase (#345) verdict is unchanged (no live single-pass path exercises it).
+
+---
+
+## RE-MEASUREMENT 2026-08-28 — real 3-vendor committee (post-#351)
+
+With the roster fixed (#351: claude-opus-4.5 + qwen-coder-32b + gemini-flash all reach), I re-ran the committee on 3 builds with KNOWN-PASS render outcomes (durable >2000 chars AND verified rendering live this tick): aerosol (9530), counter (9529), tidemark (21483).
+
+### Result — the committee is OVER-CAUTIOUS as a gate
+| Build | Real render | succeeded | committee verdict | per-vendor |
+|---|---|---|---|---|
+| aerosol | PASS | 3/3 | **needs-discussion** | claude=approve, qwen=request-changes, gemini=needs-discussion |
+| counter | PASS | 2/3 | **needs-discussion** | claude=approve, qwen=needs-discussion, gemini=needs-discussion |
+| tidemark | PASS | 3/3 | **needs-discussion** | claude=approve, qwen=request-changes, gemini=needs-discussion |
+
+**All 3 known-good builds → `needs-discussion` (0/3 approved).** claude approved all three (correct); qwen + gemini systematically flagged request-changes / needs-discussion. So now that the committee genuinely runs multi-vendor, the cross-vendor DISAGREEMENT resolves AGAINST shipping working apps — a 100% false-block rate on this known-PASS set.
+
+### Verdict on #346: **DO NOT gate builds with the committee. Keep-inert (confirmed, now on real evidence).**
+- The single-model study (stale N=6) already showed it didn't beat the deterministic gates.
+- The real 3-vendor study shows the opposite failure mode: it's far too conservative — qwen-coder-32b + gemini-flash raise blocking concerns on apps that render perfectly. As an APPROVAL gate it would block 100% of these good builds.
+- Cross-vendor *agreement* is not achievable at a useful threshold with this roster/prompt: the frontier reviewer (claude) is calibrated, the cheaper vendors are not. A committee is only as good as its weakest reviewer when you require consensus.
+- **Recommendation:** keep the committee OFF the live gate. If pursued, it needs (a) a calibrated reviewer prompt that defines the approve bar tightly, and (b) a WEIGHTED or chair-arbitrated decision (trust the frontier reviewer, use the others only as tie-breakers) rather than requiring consensus — otherwise the weakest vendor vetoes every build. Until then the free deterministic gates (parse/completeness/flattened-parse/scaffold-identity) remain the right shipping gate.
+
+N is small (3 PASS, no FAIL builds still available), but the signal is unambiguous: 0/3 approve on known-good is a gate you cannot ship behind.
