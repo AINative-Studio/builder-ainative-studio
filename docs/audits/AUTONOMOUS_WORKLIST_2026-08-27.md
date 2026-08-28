@@ -41,9 +41,17 @@ Earlier "hang" was MY diagnostic error — curl -m probes were cut by their own 
 - CODY_CONTEXT_STAIRCASE_WIRED must stay UNSET (staircase inert until measured).
 - If prod chat-ws returns 0 bytes: that's the 13-min agent timeout OR a transient — check Railway logs for reason=max_tokens before assuming a rate limit. It is NOT a Bedrock/AINative quota.
 
-## #349 GITEA EPIC — founder unblocked it (decisions locked 2026-08-28), building children one-at-a-time
-Founder made all 3 decisions (org-per-workspace; LFS=existing ZeroDB/MinIO files bucket; access=read-only mirror + edits-via-Cody + optional human collaborator) and directed: fix committee FIRST, then fan out. Child issues #353(GIT-0)/#354(GIT-1)/#355(GIT-2)/#356(GIT-3)/#357(GIT-5); scope #4 (committee-gated PRs) HELD until GIT-0 landed. Founder chose "resume one at a time".
-- ✅ **GIT-0 #353 DONE + MERGED 2026-08-28 (main @4a9889a):** committee deriveVerdict → weighted/chair-arbitrated (not consensus). Behavior-verified: 3 known-good builds that were 0/3 approved now all APPROVE; corroborated blocker still request-changes. Tests 91/91. Offline, no deploy. UNBLOCKS scope #4.
-- ✅ **GIT-1 #354 DONE + MERGED 2026-08-28 (main @c614fb8):** lib/git/gitea-client.ts (278 lines) + app-registry gitRepoUrl/gitRepoId/gitOrg/gitProvisionedAt fields + setAppGitRepo() helper. API: configured(), orgNameForWorkspace/repoNameForSlug (pure), ensureOrg (idempotent), createRepo (idempotent), addCollaborator, provisionCompanyRepo. Tests 9/9. Offline (not wired, no GITEA_* on prod); live Gitea host railway-up = founder/ops.
-- ▶ **NEXT: GIT-2 #355** (per-company repo on build). Already has a branch feature/issue-355-company-repo from the paused worktree. Resume via same pattern: pull worktree files → main-repo branch → gate → merge.
-- Then GIT-2 #355, GIT-3 #356, GIT-5 #357 same way. THEN scope #4 (committee-gated PRs, now unblocked). Gitea live railway-up itself = founder/ops step (billable) — stage, don't execute.
+## #349 GITEA EPIC — ✅ ALL CHILDREN COMPLETE (2026-08-28)
+Founder made all 3 decisions (org-per-workspace; LFS=existing ZeroDB/MinIO files bucket; access=read-only mirror + edits-via-Cody + optional human collaborator). All buildable children DONE:
+- ✅ **GIT-0 #353 DONE + MERGED (main @4a9889a):** committee deriveVerdict → weighted/chair-arbitrated (not consensus). Tests 91/91.
+- ✅ **GIT-1 #354 DONE + MERGED (main @c614fb8):** lib/git/gitea-client.ts (473 lines) + app-registry gitRepoUrl/gitRepoId/gitOrg fields. Tests 16/16.
+- ✅ **GIT-2 #355 DONE + MERGED (main @7971307):** lib/git/company-repo.ts (314 lines) — provisionCompanyRepo, commitRegeneration, grantHumanWrite + pure helpers. Tests 27/27.
+- ✅ **GIT-3 #356 DONE + MERGED (main @91b22b8):** lib/git/task-git-sync.ts (342 lines) — task→branch/commit/PR flow. Tests 35/35.
+- ✅ **GIT-5 #357 DONE + MERGED (main @1a1ab16):** coding-standards.ts enforcement checks (checkCommitMessage, checkTestCoverage, checkTddCompliance, etc). Tests 65/65.
+
+**TOTAL: 143 new tests across the Gitea epic.**
+
+REMAINING (NOT BUILDABLE — founder/ops):
+- Live Gitea provisioning: `railway up` a Gitea service + Postgres → set GITEA_BASE_URL + GITEA_ADMIN_TOKEN
+- Scope #4 (committee-gated PRs): wire committee verdict to PR merge approval (needs live Gitea)
+- Builder CI: add check-standards to GitHub Actions required status
