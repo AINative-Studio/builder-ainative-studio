@@ -51,7 +51,20 @@ Founder made all 3 decisions (org-per-workspace; LFS=existing ZeroDB/MinIO files
 
 **TOTAL: 143 new tests across the Gitea epic.**
 
-REMAINING (NOT BUILDABLE — founder/ops):
-- Live Gitea provisioning: `railway up` a Gitea service + Postgres → set GITEA_BASE_URL + GITEA_ADMIN_TOKEN
-- Scope #4 (committee-gated PRs): wire committee verdict to PR merge approval (needs live Gitea)
-- Builder CI: add check-standards to GitHub Actions required status
+## OPS INFRASTRUCTURE SHIPPED (2026-08-28 @ab80ef0)
+- ✅ **GitHub Actions CI**: .github/workflows/coding-standards.yml
+  - No AI attribution check on commits/PR
+  - Coverage threshold (>=80%)
+  - TypeScript check (baseline 28)
+  - Build check
+- ✅ **Gitea Railway config**: deployment/gitea/ (Dockerfile + railway.toml)
+- ✅ **Committee PR Gate**: lib/git/committee-pr-gate.ts + /api/webhooks/gitea
+- ✅ **Documentation**:
+  - docs/GITEA_PROVISIONING.md (internal ops)
+  - docs/developer/GIT_INTEGRATION.md (external docs.ainative.studio)
+- ✅ **Provisioning script**: scripts/provision-gitea.sh
+
+REMAINING (FOUNDER/OPS MANUAL STEPS):
+1. **Live Gitea**: Run `scripts/provision-gitea.sh` and follow the steps
+2. **GitHub branch protection**: Enable "coding-standards" as required status on main
+3. **docs.ainative.studio**: Copy docs/developer/GIT_INTEGRATION.md to the docs site
