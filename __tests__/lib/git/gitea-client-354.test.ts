@@ -3,6 +3,7 @@ import {
   configured,
   orgNameForWorkspace,
   repoNameForSlug,
+  taskBranchName,
 } from '@/lib/git/gitea-client'
 
 /**
@@ -73,6 +74,41 @@ describe('gitea-client (#354 GIT-1)', () => {
 
     it('is deterministic', () => {
       expect(repoNameForSlug('foo')).toBe(repoNameForSlug('foo'))
+    })
+  })
+
+  describe('taskBranchName (pure, #356 GIT-3)', () => {
+    it('produces a task branch name with prefix', () => {
+      expect(taskBranchName('task-123')).toBe('task/task-123')
+    })
+
+    it('lowercases the taskId', () => {
+      expect(taskBranchName('TASK-ABC')).toBe('task/task-abc')
+    })
+
+    it('sanitizes special characters', () => {
+      const name = taskBranchName('task/with:special@chars')
+      expect(name).toBe('task/task-with-special-chars')
+    })
+
+    it('preserves dots and underscores', () => {
+      expect(taskBranchName('task_v1.2')).toBe('task/task_v1.2')
+    })
+
+    it('truncates long taskIds to 50 chars', () => {
+      const longId = 'a'.repeat(100)
+      const name = taskBranchName(longId)
+      // 'task/' (5) + 50 = 55
+      expect(name.length).toBeLessThanOrEqual(55)
+    })
+
+    it('returns empty string for empty input', () => {
+      expect(taskBranchName('')).toBe('')
+      expect(taskBranchName('   ')).toBe('')
+    })
+
+    it('is deterministic', () => {
+      expect(taskBranchName('x')).toBe(taskBranchName('x'))
     })
   })
 })

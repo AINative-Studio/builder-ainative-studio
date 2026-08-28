@@ -276,3 +276,198 @@ export async function provisionCompanyRepo(
   if (!repo) return null
   return { org, repo }
 }
+
+// ---------------------------------------------------------------------------
+// Branch operations (#356 GIT-3 — task→branch mapping)
+// ---------------------------------------------------------------------------
+
+/** A minimal branch reference returned by Gitea. */
+export interface GiteaBranch {
+  name: string
+  commit: { sha: string; url?: string }
+}
+
+/**
+ * Get the default branch's HEAD SHA. Returns null if not found or unconfigured.
+ * THROWS on non-404 errors.
+ */
+export async function getDefaultBranchSha(org: string, repo: string): Promise<string | null> {
+  if (!configured() || !org || !repo) return null
+  const repoName = repoNameForSlug(repo)
+  const res = await giteaFetch(
+    `/repos/${encodeURIComponent(org)}/${encodeURIComponent(repoName)}/branches/main`,
+    { method: 'GET' },
+  )
+  if (res.status === 404) {
+    // Try master if main doesn't exist
+    const masterRes = await giteaFetch(
+      `/repos/${encodeURIComponent(org)}/${encodeURIComponent(repoName)}/branches/master`,
+      { method: 'GET' },
+    )
+    if (masterRes.status === 404) return null
+    if (!masterRes.ok) return null
+    const master = (await masterRes.json()) as GiteaBranch
+    return master.commit?.sha || null
+  }
+  if (!res.ok) return null
+  const branch = (await res.json()) as GiteaBranch
+  return branch.commit?.sha || null
+}
+
+/**
+ * Create a branch for a task. PURE naming: task/{taskId}. IDEMPOTENT — returns
+ * the existing branch if present. Returns null when unconfigured. THROWS on
+ * genuine failures.
+ */
+export async function createTaskBranch(
+  org: string,
+  repo: string,
+  taskId: string,
+  baseSha?: string,
+): Promise<GiteaBranch | null> {
+  if (!configured() || !org || !repo || !taskId) return null
+  const repoName = repoNameForSlug(repo)
+  const branchName = taskBranchName(taskId)
+
+  // Pre-flight: already exists?
+  const existing = await getBranch(org, repoName, branchName)
+  if (existing) return existing
+
+  // Get base SHA if not provided
+  let sha: string | undefined = baseSha
+  if (!sha) {
+    const defaultSha = await getDefaultBranchSha(org, repo)
+    if (!defaultSha) return null
+    sha = defaultSha
+  }
+
+  const res = await giteaFetch(
+    `/repos/${encodeURIComponent(org)}/${encodeURIComponent(repoName)}/branches`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        new_branch_name: branchName,
+        old_ref_name: sha,
+      }),
+    },
+  )
+  if (res.status === 409) {
+    // Race condition — branch created concurrently
+    return getBranch(org, repoName, branchName)
+  }
+  if (!res.ok) throw new Error(`gitea createTaskBranch ${branchName} failed: ${res.status}`)
+  return (await res.json()) as GiteaBranch
+}
+
+/**
+ * Get a branch by name. Returns null if not found or unconfigured.
+ */
+export async function getBranch(
+  org: string,
+  repo: string,
+  branchName: string,
+): Promise<GiteaBranch | null> {
+  if (!configured() || !org || !repo || !branchName) return null
+  const repoName = repoNameForSlug(repo)
+  const res = await giteaFetch(
+    `/repos/${encodeURIComponent(org)}/${encodeURIComponent(repoName)}/branches/${encodeURIComponent(branchName)}`,
+    { method: 'GET' },
+  )
+  if (res.status === 404) return null
+  if (!res.ok) return null
+  return (await res.json()) as GiteaBranch
+}
+
+/**
+ * Derive the branch name for a task. PURE. Format: task/{taskId}
+ * Sanitizes the taskId to be a valid git branch name.
+ */
+export function taskBranchName(taskId: string): string {
+  const clean = String(taskId || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 50)
+  return clean ? `task/${clean}` : ''
+}
+
+// ---------------------------------------------------------------------------
+// Pull Request operations (#356 GIT-3 — task→PR mapping)
+// ---------------------------------------------------------------------------
+
+/** A minimal PR reference returned by Gitea. */
+export interface GiteaPullRequest {
+  id: number
+  number: number
+  title: string
+  body?: string
+  state: string
+  html_url: string
+  head: { ref: string; sha?: string }
+  base: { ref: string }
+}
+
+/**
+ * Create a pull request from a task branch to main. IDEMPOTENT — if a PR already
+ * exists for this head→base, returns it. Returns null when unconfigured.
+ * THROWS on genuine failures.
+ */
+export async function createTaskPR(
+  org: string,
+  repo: string,
+  opts: {
+    taskId: string
+    title: string
+    body?: string
+    baseBranch?: string
+  },
+): Promise<GiteaPullRequest | null> {
+  if (!configured() || !org || !repo || !opts.taskId) return null
+  const repoName = repoNameForSlug(repo)
+  const headBranch = taskBranchName(opts.taskId)
+  const baseBranch = opts.baseBranch || 'main'
+
+  // Pre-flight: check if PR already exists for this branch
+  const existing = await findPRByHead(org, repoName, headBranch)
+  if (existing) return existing
+
+  const res = await giteaFetch(
+    `/repos/${encodeURIComponent(org)}/${encodeURIComponent(repoName)}/pulls`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        title: opts.title,
+        body: opts.body || '',
+        head: headBranch,
+        base: baseBranch,
+      }),
+    },
+  )
+  if (res.status === 409 || res.status === 422) {
+    // PR may already exist — try to find it
+    const raced = await findPRByHead(org, repoName, headBranch)
+    if (raced) return raced
+  }
+  if (!res.ok) throw new Error(`gitea createTaskPR ${org}/${repoName}#${opts.taskId} failed: ${res.status}`)
+  return (await res.json()) as GiteaPullRequest
+}
+
+/**
+ * Find an open PR by head branch. Returns null if none found.
+ */
+export async function findPRByHead(
+  org: string,
+  repo: string,
+  headBranch: string,
+): Promise<GiteaPullRequest | null> {
+  if (!configured() || !org || !repo || !headBranch) return null
+  const repoName = repoNameForSlug(repo)
+  const res = await giteaFetch(
+    `/repos/${encodeURIComponent(org)}/${encodeURIComponent(repoName)}/pulls?state=open&head=${encodeURIComponent(headBranch)}`,
+    { method: 'GET' },
+  )
+  if (!res.ok) return null
+  const prs = (await res.json()) as GiteaPullRequest[]
+  return prs.find((pr) => pr.head.ref === headBranch) || null
+}
