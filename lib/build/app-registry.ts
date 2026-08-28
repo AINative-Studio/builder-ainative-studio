@@ -89,6 +89,16 @@ export interface AppEntry {
   // billable service. `railwayDeployedAt` records when it was first provisioned.
   railwayServiceId?: string
   railwayDeployedAt?: string
+  // Per-company Gitea repository (#354, GIT-1). One private repo per company slug,
+  // under one Gitea org per AINative workspace (org-per-workspace, epic #349). Set
+  // once the repo is provisioned via lib/git/gitea-client (provisionCompanyRepo).
+  // `gitRepoUrl` is the https clone URL, `gitRepoId` the numeric Gitea repo id
+  // (stringified), `gitOrg` the workspace's Gitea org name. Presence makes repo
+  // provisioning idempotent — the provisioner skips creation when already set.
+  gitRepoUrl?: string
+  gitRepoId?: string
+  gitOrg?: string
+  gitProvisionedAt?: string
   // Company lifecycle (#57, Danger Zone). Absent/'active' = the company is live and
   // its app is served. 'offline' = the founder took the app offline (kept, but not
   // served). 'deleted' = the founder deleted the company (soft delete — the row is
@@ -400,6 +410,33 @@ export async function setAppRailwayService(
     // A real Railway host supersedes the durable-preview deployUrl.
     deployUrl: fields.deployUrl || existing.deployUrl,
     domain: fields.domain || existing.domain,
+  })
+}
+
+/**
+ * Attach a per-company Gitea repository to a company (#354, GIT-1). Appends an updated
+ * row with the git fields so resolveApp() (latest-wins) surfaces the repo handle.
+ *
+ * IDEMPOTENCY: no-op success (returns true) when the same gitRepoId is already stored —
+ * provisionCompanyRepo checks the registry before creating, but this guards the write
+ * path too, so a re-run never appends a churn row. No-op (false) if the slug isn't
+ * registered or required fields are missing.
+ */
+export async function setAppGitRepo(
+  slug: string,
+  fields: { gitRepoUrl: string; gitRepoId: string; gitOrg: string },
+): Promise<boolean> {
+  if (!fields.gitRepoUrl || !fields.gitRepoId || !fields.gitOrg) return false
+  const existing = await resolveApp(slug)
+  if (!existing) return false
+  // Already recorded this exact repo → nothing to write.
+  if (existing.gitRepoId === fields.gitRepoId) return true
+  return registerApp({
+    ...existing,
+    gitRepoUrl: fields.gitRepoUrl,
+    gitRepoId: fields.gitRepoId,
+    gitOrg: fields.gitOrg,
+    gitProvisionedAt: existing.gitProvisionedAt || new Date().toISOString(),
   })
 }
 
