@@ -64,23 +64,36 @@ Founder made all 3 decisions (org-per-workspace; LFS=existing ZeroDB/MinIO files
   - docs/developer/GIT_INTEGRATION.md (external docs.ainative.studio)
 - ✅ **Provisioning script**: scripts/provision-gitea.sh
 
-## ✅ GITEA LIVE (2026-08-28)
-**https://git.ainative.studio** — fully provisioned and operational.
+## ✅ GITEA LIVE + INTEGRATED (2026-08-28)
+**https://git.ainative.studio** — fully provisioned, integrated, and tested.
 
 Infrastructure:
 - ✅ DNS: git.ainative.studio → Railway (CNAME + TXT verification on Netlify)
 - ✅ SSL: Valid Let's Encrypt certificate
 - ✅ Database: Railway Postgres (isolated instance)
 - ✅ 'git' added to RESERVED_SUBDOMAINS (wildcard protection)
+- ✅ Logo: Updated to AINative logo
 
-Builder integration:
+Builder integration (deployed @8b4b538):
 - ✅ GITEA_BASE_URL=https://git.ainative.studio
 - ✅ GITEA_ADMIN_TOKEN set (cody-admin, full admin scope)
 - ✅ GITEA_WEBHOOK_SECRET set
+- ✅ /api/build/provision: provisions git repo alongside ZeroDB
+- ✅ /api/build/register-app: commits regenerations to existing repos
 
 Users created:
 - **cody-admin** (cody@ainative.studio) — site admin, API token holder
 - **test-founder** (founder@test.ainative.studio) — test user
+
+Tests:
+- Git module tests: 97 passed
+- Integration tests: 13 passed
+- E2E tests: org create, repo create, commit, regeneration commit all pass
+
+Performance:
+- Create org: ~330ms
+- Create repo: ~530ms
+- Push file: ~690ms
 
 Credentials: ~/Desktop/gitea-credentials.txt
 
