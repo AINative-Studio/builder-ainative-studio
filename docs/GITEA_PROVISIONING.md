@@ -57,15 +57,19 @@ railway up --service gitea
 
 Set these in Railway for the builder service:
 
-| Variable | Description | Example |
-|----------|-------------|---------|
+| Variable | Description | Value |
+|----------|-------------|-------|
 | `GITEA_BASE_URL` | Gitea service URL | `https://git.ainative.studio` |
-| `GITEA_ADMIN_TOKEN` | Admin API token | `gta_xxxxx` |
-| `GITEA_WEBHOOK_SECRET` | Webhook HMAC secret | `whsec_xxxxx` |
+| `GITEA_ADMIN_TOKEN` | Admin API token | (set in Railway, see step 5) |
+| `GITEA_WEBHOOK_SECRET` | Webhook HMAC secret | (generate with `openssl rand -hex 32`) |
+
+**Production URLs:**
+- Gitea UI: https://git.ainative.studio
+- API: https://git.ainative.studio/api/v1/
 
 ### 4. Configure Gitea Webhook
 
-In Gitea admin (https://git.ainative.studio/admin):
+In Gitea admin (https://git.ainative.studio/admin/hooks):
 
 1. Go to **Settings → Webhooks → Add Webhook**
 2. URL: `https://builder.ainative.studio/api/webhooks/gitea`
@@ -145,6 +149,15 @@ When `GITEA_BASE_URL` or `GITEA_ADMIN_TOKEN` are unset:
 - No errors are thrown
 - Build/deploy continues normally
 - Git features are simply disabled
+
+## Production Status
+
+| Component | URL | Status |
+|-----------|-----|--------|
+| Gitea | https://git.ainative.studio | Live |
+| Builder webhook | https://builder.ainative.studio/api/webhooks/gitea | Deployed |
+| DNS | git.ainative.studio → Railway | Active |
+| SSL | Let's Encrypt via Railway | Valid |
 
 ## Troubleshooting
 
