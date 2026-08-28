@@ -129,7 +129,15 @@ export async function middleware(request: NextRequest) {
       // guides/FAQ catalog. Lives on /help + /guides/[slug], both anonymous
       // surfaces, so it MUST work without auth (same class of bug that bit
       // /best, /about, and /test-components).
-      pathname.startsWith('/api/help/')
+      pathname.startsWith('/api/help/') ||
+      // Cron endpoints (#344, audit dormant finding #9). These are NOT session
+      // routes — they're called by a scheduler and self-authenticate with
+      // `Authorization: Bearer $CRON_SECRET` inside the handler (see
+      // /api/cron/alerts, /api/build/nightly-loop, /api/build/learning). The
+      // middleware session gate was 401'ing them BEFORE their own secret check
+      // could run, so no scheduled job could ever fire. Allowlisting the path is
+      // safe: every cron handler rejects a missing/wrong secret itself.
+      pathname.startsWith('/api/cron/')
 
     if (pathname.startsWith('/api/') && isPublicApiRoute) {
       return NextResponse.next()
