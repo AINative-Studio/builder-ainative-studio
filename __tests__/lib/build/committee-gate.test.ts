@@ -15,6 +15,7 @@ import {
   isKilledByEnv,
   resolveRoster,
   DEFAULT_ROSTER,
+  DEFAULT_CHAIR,
   MAX_ROSTER,
   // prompts
   reviewerSystemPrompt,
@@ -456,50 +457,134 @@ describe('rankFindings', () => {
 // verdict derivation
 // ---------------------------------------------------------------------------
 
-describe('deriveVerdict', () => {
+describe('deriveVerdict (weighted / chair-arbitrated — builder#353)', () => {
   const merge = (reviews: ReviewerReview[]) => mergeFindingsLocally(reviews)
+  // The frontier/chair reviewer is the calibrated backbone of the verdict.
+  const CHAIR = DEFAULT_CHAIR // 'claude-opus-4.5'
 
-  it('request-changes when a blocker is corroborated (agreement>=2)', () => {
+  // ---- the core #353 regression: known-good builds must APPROVE ----
+
+  it('THE FIX: frontier approves + a single dissenting vendor does NOT block', () => {
+    // aerosol/counter/tidemark shape: chair approves (calibrated + correct),
+    // qwen raises a lone blocker, gemini raises a lone major and needs-discussion.
+    // The old CONSENSUS rule false-blocked this; the weighted rule must APPROVE.
+    const reviews = [
+      review(CHAIR, [], { verdict: 'approve' }),
+      review('qwen-coder-32b', [finding({ title: 'suspected dead button', severity: 'blocker', confidence: 0.5 })], {
+        verdict: 'request-changes',
+      }),
+      review('gemini-flash', [finding({ title: 'no responsive layout', severity: 'major', confidence: 0.6 })], {
+        verdict: 'needs-discussion',
+      }),
+    ]
+    expect(deriveVerdict(reviews, merge(reviews), CHAIR)).toBe('approve')
+  })
+
+  it('a single dissenting vendor cannot force request-changes when the chair approves', () => {
+    const reviews = [
+      review(CHAIR, [], { verdict: 'approve' }),
+      review('qwen-coder-32b', [], { verdict: 'request-changes' }),
+    ]
+    expect(deriveVerdict(reviews, merge(reviews), CHAIR)).toBe('approve')
+  })
+
+  it('a single dissenting vendor cannot force needs-discussion when the chair approves', () => {
+    const reviews = [
+      review(CHAIR, [], { verdict: 'approve' }),
+      review('gemini-flash', [], { verdict: 'needs-discussion' }),
+    ]
+    expect(deriveVerdict(reviews, merge(reviews), CHAIR)).toBe('approve')
+  })
+
+  it('approve: chair approves and no blocker is corroborated by >=2 reviewers', () => {
+    const reviews = [
+      review(CHAIR, [finding({ title: 'tiny nit', severity: 'nit', confidence: 0.9 })], { verdict: 'approve' }),
+      review('qwen-coder-32b', [finding({ title: 'a lone major only qwen sees', severity: 'major', confidence: 0.8 })], {
+        verdict: 'request-changes',
+      }),
+    ]
+    expect(deriveVerdict(reviews, merge(reviews), CHAIR)).toBe('approve')
+  })
+
+  // ---- corroborated blocker is the one signal strong enough to override ----
+
+  it('request-changes when a blocker is corroborated (agreement>=2), even if the chair approved', () => {
+    // Two independent vendors agree on the SAME blocker → override the chair.
+    const reviews = [
+      review(CHAIR, [], { verdict: 'approve' }),
+      review('qwen-coder-32b', [finding({ title: 'boom', severity: 'blocker', confidence: 0.4 })]),
+      review('gemini-flash', [finding({ title: 'boom', severity: 'blocker', confidence: 0.4 })]),
+    ]
+    const merged = merge(reviews)
+    expect(merged.some((f) => f.severity === 'blocker' && f.agreement >= 2)).toBe(true)
+    expect(deriveVerdict(reviews, merged, CHAIR)).toBe('request-changes')
+  })
+
+  it('request-changes when the chair itself raises a high-confidence blocker', () => {
+    const reviews = [
+      review(CHAIR, [finding({ title: 'data loss on save', severity: 'blocker', confidence: 0.9 })], {
+        verdict: 'request-changes',
+      }),
+      review('qwen-coder-32b', [], { verdict: 'approve' }),
+    ]
+    expect(deriveVerdict(reviews, merge(reviews), CHAIR)).toBe('request-changes')
+  })
+
+  // ---- needs-discussion reserved for a genuine split on a real blocker ----
+
+  it('needs-discussion: chair is uncertain AND a real blocker exists (genuine split)', () => {
+    const reviews = [
+      review(CHAIR, [finding({ title: 'maybe boom', severity: 'blocker', confidence: 0.4 })], {
+        verdict: 'needs-discussion',
+      }),
+    ]
+    expect(deriveVerdict(reviews, merge(reviews), CHAIR)).toBe('needs-discussion')
+  })
+
+  it('chair wants changes but raised no blocker → request-changes (chair is the backbone)', () => {
+    const reviews = [
+      review(CHAIR, [finding({ title: 'incomplete feature', severity: 'major', confidence: 0.6 })], {
+        verdict: 'request-changes',
+      }),
+    ]
+    expect(deriveVerdict(reviews, merge(reviews), CHAIR)).toBe('request-changes')
+  })
+
+  // ---- chair absent: fall back to the merged signal, never a lone veto ----
+
+  it('no chair on the roster: corroborated blocker still yields request-changes', () => {
     const reviews = [
       review('a', [finding({ title: 'boom', severity: 'blocker', confidence: 0.4 })]),
       review('b', [finding({ title: 'boom', severity: 'blocker', confidence: 0.4 })]),
     ]
-    expect(deriveVerdict(reviews, merge(reviews))).toBe('request-changes')
+    expect(deriveVerdict(reviews, merge(reviews), CHAIR)).toBe('request-changes')
   })
 
-  it('request-changes when a lone blocker is high-confidence (>=0.7)', () => {
-    const reviews = [review('a', [finding({ title: 'boom', severity: 'blocker', confidence: 0.9 })], { verdict: 'request-changes' })]
-    expect(deriveVerdict(reviews, merge(reviews))).toBe('request-changes')
-  })
-
-  it('needs-discussion for a lone low-confidence blocker (chair discipline)', () => {
-    const reviews = [review('a', [finding({ title: 'maybe boom', severity: 'blocker', confidence: 0.3 })], { verdict: 'needs-discussion' })]
-    expect(deriveVerdict(reviews, merge(reviews))).toBe('needs-discussion')
-  })
-
-  it('needs-discussion when a major exists', () => {
+  it('no chair on the roster: a lone dissenting vendor does NOT block (approve)', () => {
     const reviews = [
-      review('a', [finding({ title: 'meh', severity: 'major', confidence: 0.5 })], { verdict: 'approve' }),
-      review('b', [], { verdict: 'approve' }),
+      review('a', [finding({ title: 'lone concern', severity: 'major', confidence: 0.8 })], {
+        verdict: 'request-changes',
+      }),
+      review('b', [], { verdict: 'needs-discussion' }),
     ]
-    expect(deriveVerdict(reviews, merge(reviews))).toBe('needs-discussion')
+    expect(deriveVerdict(reviews, merge(reviews), CHAIR)).toBe('approve')
   })
 
-  it('request-changes when a majority of reviewers say so', () => {
+  it('defaults the chair to DEFAULT_CHAIR when none is passed', () => {
     const reviews = [
-      review('a', [], { verdict: 'request-changes' }),
-      review('b', [], { verdict: 'request-changes' }),
-      review('c', [], { verdict: 'approve' }),
+      review(DEFAULT_CHAIR, [], { verdict: 'approve' }),
+      review('gemini-flash', [], { verdict: 'request-changes' }),
     ]
-    expect(deriveVerdict(reviews, merge(reviews))).toBe('request-changes')
-  })
-
-  it('approve when clean (only nits, all approve)', () => {
-    const reviews = [
-      review('a', [finding({ title: 'tiny', severity: 'nit', confidence: 0.9 })], { verdict: 'approve' }),
-      review('b', [], { verdict: 'approve' }),
-    ]
+    // No third arg → uses DEFAULT_CHAIR → chair approves → approve.
     expect(deriveVerdict(reviews, merge(reviews))).toBe('approve')
+  })
+
+  it('approve when clean (chair approves, only nits)', () => {
+    const reviews = [
+      review(CHAIR, [finding({ title: 'tiny', severity: 'nit', confidence: 0.9 })], { verdict: 'approve' }),
+      review('qwen-coder-32b', [], { verdict: 'approve' }),
+    ]
+    expect(deriveVerdict(reviews, merge(reviews), CHAIR)).toBe('approve')
   })
 })
 
