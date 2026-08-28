@@ -28,7 +28,7 @@ Standing loop: work these in priority order. For EACH: fix on a branch → gate 
 All buildable dev issues in this work stream are DONE: #341/342/343 (build-quality), #345 (staircase), #346 (committee), #348 (scaffold gate), #350 (agent envelope), #351 (committee roster), #352 (aerosol gate parser), #344 (winback feature), #347 (trajectory DAG). What remains is NOT buildable-by-loop:
 - **#349** — founder-blocked (Gitea epic tenancy/access decisions).
 - **#344 residual** — founder/ops only (schedule Railway cron for /api/cron/winback?send=true, set RESEND_API_KEY + verify sending domain, first run ?send=true&limit=1).
-- **#346 re-measurement** — optional: re-run the committee confusion matrix now the roster is 3-vendor (N≥12); needs a labeled build set. Could be a next tick IF founder wants the measurement; otherwise idle.
+- **#346 re-measurement** — ✅ DONE 2026-08-28 (@1fbc29e): real 3-vendor committee run on 3 known-PASS builds → 0/3 approved, all needs-discussion (100% false-block). VERDICT: do NOT gate with the committee; keep OFF the live gate; needs weighted/chair-arbitrated (not consensus) + calibrated prompt if ever revisited. Deterministic gates remain the shipping gate. No further measurement without those 2 changes.
 - **Subagents/staircase enablement** — flipping USE_SUBAGENTS / CODY_CONTEXT_STAIRCASE_WIRED are founder/measurement calls, NOT loop actions.
 → Loop should REPORT STATUS AND STOP unless the founder points it at #346 re-measurement or unblocks #349.
 7. **#349** — EPIC per-company Gitea on Railway. Needs founder decisions (org tenancy, founder git access r/w vs read-only) before implementation — do NOT start building without those answers; the epic body lists them.
