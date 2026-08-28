@@ -257,6 +257,17 @@ export async function migrateGuestCompanies(
 export async function listAppsForOwner(ownerEmail: string): Promise<AppEntry[]> {
   const email = (ownerEmail || '').trim().toLowerCase()
   if (!configured() || !email) return []
+  return (await listAllApps()).filter((e) => (e.ownerEmail || '').toLowerCase() === email)
+}
+
+/**
+ * Every registered company, collapsed to the latest row per slug (latest-wins,
+ * matching resolveApp), most-recently-created first. Empty on any error or when
+ * unconfigured. Used by the winback sweep (#344) to find dormant owners; the
+ * caller applies its own filters (has ownerEmail, not deleted, inactive N days).
+ */
+export async function listAllApps(): Promise<AppEntry[]> {
+  if (!configured()) return []
   try {
     const res = await fetch(`${rowsUrl()}?limit=1000`, { headers: headers(), signal: AbortSignal.timeout(20000) })
     if (!res.ok) return []
@@ -272,7 +283,6 @@ export async function listAppsForOwner(ownerEmail: string): Promise<AppEntry[]> 
       if (!prev || (e.createdAt || '').localeCompare(prev.createdAt || '') > 0) latest.set(e.slug, e)
     }
     return Array.from(latest.values())
-      .filter((e) => (e.ownerEmail || '').toLowerCase() === email)
       .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
   } catch {
     return []
