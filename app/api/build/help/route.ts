@@ -45,7 +45,11 @@ const ainative = new OpenAI({
   baseURL: (process.env.AINATIVE_API_URL || 'https://api.ainative.studio') + '/v1',
 })
 
-const AINATIVE_FALLBACK_MODEL = process.env.AINATIVE_HELP_MODEL || 'nous-coder'
+// 'nous-coder' is FULLY DEPRECATED, no upstream at all (core's registry hard-
+// fails it — confirmed live during #360 investigation). glm-5 is a live
+// general-purpose replacement (qwen-coder-32b, core's other suggestion, is
+// coding-specialized — not the right fit for this help-center Q&A route).
+const AINATIVE_FALLBACK_MODEL = process.env.AINATIVE_HELP_MODEL || 'glm-5'
 
 /** Build the grounded system prompt for a set of retrieved FAQ entries. */
 
