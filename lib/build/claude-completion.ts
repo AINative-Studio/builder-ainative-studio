@@ -21,7 +21,12 @@ function anthropicDirect(): { client: any; model: string } | null {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const Anthropic = require('@anthropic-ai/sdk').default || require('@anthropic-ai/sdk')
-    return { client: new Anthropic({ apiKey: key }), model: CLAUDE_MODEL }
+    // maxRetries: 0 — the caller (app/api/build/artifact/route.ts) already
+    // retries/repairs/falls back across providers at the route level; the
+    // SDK's own default retry-on-429/5xx would stack silently underneath
+    // that, amplifying request volume exactly when a provider is already
+    // struggling under load (Ref #360).
+    return { client: new Anthropic({ apiKey: key, maxRetries: 0 }), model: CLAUDE_MODEL }
   } catch {
     return null
   }
