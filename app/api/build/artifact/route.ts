@@ -19,6 +19,7 @@
 
 import { NextRequest } from 'next/server'
 import OpenAI from 'openai'
+import * as Sentry from '@sentry/nextjs'
 import { ARTIFACT_PROMPTS, type ArtifactContext } from '@/lib/build/artifact-prompts'
 import { feedbackInstruction } from '@/lib/build/artifact-edit'
 import { getClaudeCompletion } from '@/lib/build/claude-completion'
@@ -29,6 +30,11 @@ import { loadCoreProfile } from '@/lib/build/profile'
 import { languageInstruction, normalizeLanguage, DEFAULT_CONTENT_LANGUAGE } from '@/lib/build/content-language'
 
 export const runtime = 'nodejs'
+
+// A hung provider call (no network-level error, just never resolving) used to
+// stall a generation forever with no client-visible signal. Bound every
+// provider call so a hang surfaces as a normal timeout failure instead.
+const PROVIDER_TIMEOUT_MS = 20_000
 
 const ainative = new OpenAI({
   apiKey: process.env.AINATIVE_API_KEY || process.env.API_Key || process.env.ZERODB_API_KEY || '',
@@ -129,6 +135,18 @@ export async function POST(request: NextRequest) {
   const tierModels = modelsForTier(await resolveTier())
   const bedrockModel = process.env.BUILD_ARTIFACT_MODEL || tierModels.bedrockModel
 
+  // Every attempt this request makes across both providers — logged to Sentry
+  // as breadcrumbs so a final failure carries the FULL story (which providers/
+  // models were tried and how each one specifically failed), not just the last
+  // error. Nothing is sent to Sentry unless every attempt below is exhausted.
+  const attemptLog: string[] = []
+  // One extra "fix your JSON" pass per provider response — this is the actual
+  // most common real-world failure (the model wrote prose around the JSON, or
+  // truncated it), and it used to burn the provider's ONE shot and fall through
+  // immediately instead of just asking the same model to repair its own output.
+  const repairInstruction =
+    '\n\nYour previous reply could not be parsed as JSON. Reply with ONLY the raw JSON object — no prose, no markdown fences, no trailing commentary.'
+
   // 1) Primary: Bedrock / direct Anthropic (provider-agnostic .messages.create).
   // Bedrock accepts a per-call model override, so we invoke the TIER's model, not
   // the client default. (Direct Anthropic ignores the Bedrock profile id and uses
@@ -136,49 +154,74 @@ export async function POST(request: NextRequest) {
   const claude = getClaudeCompletion()
   if (claude) {
     const model = claude.provider === 'bedrock' ? bedrockModel : claude.model
-    try {
-      const res = await claude.client.messages.create({
-        model,
-        max_tokens: 1600,
-        temperature: 0.55,
-        system,
-        messages: [{ role: 'user', content: user }],
-      })
-      const text = (res.content || [])
-        .filter((b: any) => b.type === 'text')
-        .map((b: any) => b.text)
-        .join('\n')
-      const content = parseJson(text)
-      if (content) {
-        return Response.json({ view, content, provider: claude.provider, model, tier: tierModels.tier })
+    for (let pass = 0; pass < 2; pass++) {
+      try {
+        const res = await claude.client.messages.create(
+          {
+            model,
+            max_tokens: 1600,
+            temperature: 0.55,
+            system,
+            messages: [{ role: 'user', content: pass === 0 ? user : user + repairInstruction }],
+          },
+          { signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS) },
+        )
+        const text = (res.content || [])
+          .filter((b: any) => b.type === 'text')
+          .map((b: any) => b.text)
+          .join('\n')
+        const content = parseJson(text)
+        if (content) {
+          return Response.json({ view, content, provider: claude.provider, model, tier: tierModels.tier })
+        }
+        attemptLog.push(`${claude.provider}/${model} pass ${pass + 1}: unparseable JSON`)
+      } catch (e: any) {
+        const msg = e?.message?.slice(0, 120) || String(e)
+        attemptLog.push(`${claude.provider}/${model} pass ${pass + 1}: ${msg}`)
+        // A repair pass only makes sense after a parseable-but-wrong response;
+        // a hard call failure (timeout, 5xx, network) won't be fixed by asking
+        // the same broken call to try again — move on to the next provider now.
+        break
       }
-      console.warn(`[build/artifact] ${view}: ${claude.provider} returned unparseable JSON, falling back`)
-    } catch (e: any) {
-      console.warn(`[build/artifact] ${view}: ${claude.provider} ${model} failed (${e?.message?.slice(0, 80)}), falling back`)
     }
   }
 
   // 2) Fallback: AINative chat-completions (tier's Claude model, then a free model)
   for (const model of [tierModels.ainativeModel, AINATIVE_FALLBACK]) {
-    try {
-      const res = await ainative.chat.completions.create({
-        model,
-        max_tokens: 1600,
-        temperature: 0.55,
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: user },
-        ],
-      })
-      const text = res.choices?.[0]?.message?.content || ''
-      const content = parseJson(text)
-      if (content) {
-        return Response.json({ view, content, provider: 'ainative', model, tier: tierModels.tier })
+    for (let pass = 0; pass < 2; pass++) {
+      try {
+        const res = await ainative.chat.completions.create(
+          {
+            model,
+            max_tokens: 1600,
+            temperature: 0.55,
+            messages: [
+              { role: 'system', content: system },
+              { role: 'user', content: pass === 0 ? user : user + repairInstruction },
+            ],
+          },
+          { signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS) },
+        )
+        const text = res.choices?.[0]?.message?.content || ''
+        const content = parseJson(text)
+        if (content) {
+          return Response.json({ view, content, provider: 'ainative', model, tier: tierModels.tier })
+        }
+        attemptLog.push(`ainative/${model} pass ${pass + 1}: unparseable JSON`)
+      } catch (e: any) {
+        const msg = e?.message?.slice(0, 120) || String(e)
+        attemptLog.push(`ainative/${model} pass ${pass + 1}: ${msg}`)
+        break
       }
-    } catch (e: any) {
-      console.warn(`[build/artifact] ${view}: ainative ${model} failed (${e?.message?.slice(0, 80)})`)
     }
   }
+
+  console.warn(`[build/artifact] ${view}: all providers exhausted — ${attemptLog.join(' | ')}`)
+  Sentry.captureMessage(`build/artifact generation exhausted: ${view}`, {
+    level: 'error',
+    tags: { view, track: ctx.track, tier: tierModels.tier },
+    extra: { attempts: attemptLog, ideaPreview: ctx.idea.slice(0, 200) },
+  })
 
   return Response.json(
     { error: 'generation_unavailable', view },

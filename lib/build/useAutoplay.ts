@@ -151,18 +151,29 @@ export function useAutoplay(state: BuildState, dispatch: Dispatch) {
       schedule(() => {
         // Artifact generation can hit a TRANSIENT provider blip: /api/build/artifact
         // returns 503 'generation_unavailable' only when EVERY provider (Bedrock/
-        // Anthropic + both AINative fallbacks) fails at once. A single blip used to
+        // Anthropic + both AINative fallbacks, each now with a JSON-repair pass —
+        // see app/api/build/artifact/route.ts) fails at once. A single blip used to
         // fail the artifact permanently and stall the whole build with no recovery
-        // (this is what left coastal/nXl2rNA1f6FuavVJ_X0kF half-built). Retry such
+        // (this is what left coastal/nXl2rNA1f6FuavVJ_X0kF half-built, and what left
+        // Dwellow's landing page silently showing placeholder copy). Retry such
         // transient failures with backoff before giving up; only a genuine, repeated
         // failure surfaces GEN_FAIL. 4xx (bad request) is NOT retried — it won't heal.
-        const MAX_ATTEMPTS = 3
+        // 5 attempts (up from 3) because the server-side repair pass means a single
+        // client attempt now represents up to 6 underlying model calls — worth a
+        // couple more client rounds before asking the user to intervene at all.
+        const MAX_ATTEMPTS = 5
         const isTransient = (status: number, error?: string) =>
-          status === 503 || status === 502 || status === 429 || status === 0 ||
+          status === 503 || status === 502 || status === 500 || status === 504 || status === 429 || status === 0 ||
           error === 'generation_unavailable'
 
         const backoff = (n: number) =>
-          new Promise((res) => setTimeout(res, 800 * Math.pow(2, n - 1))) // 0.8s, 1.6s
+          new Promise((res) => setTimeout(res, Math.min(800 * Math.pow(2, n - 1), 6400))) // 0.8s,1.6s,3.2s,6.4s…capped
+
+        // Bound EACH attempt so a hung request (server never responds, no
+        // network-level error) can't stall the whole build forever in
+        // "Generating…" — it now times out and retries like any other
+        // transient failure instead of leaving the view stuck indefinitely.
+        const ATTEMPT_TIMEOUT_MS = 25_000
 
         const attempt = async (n: number): Promise<void> => {
           let response: Response
@@ -170,15 +181,15 @@ export function useAutoplay(state: BuildState, dispatch: Dispatch) {
             response = await fetch('/api/build/artifact', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              signal: ac.signal,
+              signal: AbortSignal.any([ac.signal, AbortSignal.timeout(ATTEMPT_TIMEOUT_MS)]),
               body: JSON.stringify({
                 view: next, idea: state.idea, track: state.track,
                 companyName: state.companyName || undefined, prior,
               }),
             })
           } catch (e: unknown) {
-            // Network-level reject (offline, connection reset, aborted). Aborts are
-            // terminal; other network errors are transient → retry with backoff.
+            // ac.signal.aborted (teardown/unmount) is terminal — everything else,
+            // including our own per-attempt timeout firing, is transient → retry.
             if (ac.signal.aborted) return
             if (n < MAX_ATTEMPTS) { await backoff(n); if (ac.signal.aborted) return; return attempt(n + 1) }
             dispatch({ type: 'GEN_FAIL', view: next, error: e instanceof Error ? e.message : String(e) })
