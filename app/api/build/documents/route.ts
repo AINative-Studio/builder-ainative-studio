@@ -47,7 +47,10 @@ const ainative = new OpenAI({
   baseURL: (process.env.AINATIVE_API_URL || 'https://api.ainative.studio') + '/v1',
 })
 const AINATIVE_MODEL = process.env.BUILD_DOC_MODEL || 'claude-sonnet-4.5'
-const AINATIVE_FALLBACK = 'nous-coder'
+// 'nous-coder' is FULLY DEPRECATED, no upstream at all (core's registry hard-
+// fails it — confirmed live during #360 investigation). qwen-coder-32b is
+// core's own suggested live replacement.
+const AINATIVE_FALLBACK = 'qwen-coder-32b'
 
 /** Resolve the durable documents scope key from the SERVER session + company slug. */
 async function resolveScopeKey(companyId: string): Promise<string> {

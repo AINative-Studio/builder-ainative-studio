@@ -105,7 +105,7 @@ describe('POST /api/build/artifact — AINative error body capture', () => {
     // A hard 5xx does NOT trigger a same-provider repair pass (only an
     // unparseable-but-200 response does) — it breaks straight to the NEXT
     // model. So call 1 = ainativeModel pass 1, call 2 = AINATIVE_FALLBACK
-    // (nous-coder) pass 1. Each must show its OWN distinct body in the log,
+    // (qwen-coder-32b) pass 1. Each must show its OWN distinct body in the log,
     // proving the per-call box isn't shared/stale module state (the exact
     // race a single shared "lastError" variable would risk under concurrent
     // requests).

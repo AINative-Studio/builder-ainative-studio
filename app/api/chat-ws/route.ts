@@ -151,9 +151,11 @@ async function runClaudePass(system: string, user: string, maxTokens = 16000, mo
     }
   }
   // Fallback: AINative OpenAI-compatible proxy with a model it actually serves.
+  // 'nous-coder' is FULLY DEPRECATED, no upstream at all (core's registry
+  // hard-fails it — confirmed live during #360 investigation).
   try {
     const res = await ainativeClient.chat.completions.create({
-      model: process.env.DEFAULT_MODEL || 'nous-coder',
+      model: process.env.DEFAULT_MODEL || 'qwen-coder-32b',
       max_tokens: maxTokens,
       messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
     })
@@ -165,8 +167,11 @@ async function runClaudePass(system: string, user: string, maxTokens = 16000, mo
 }
 
 // Fallback chains (used when Claude is unavailable)
-const FREE_FALLBACKS = ['ministral-14b', 'nous-coder', 'gpt-oss-20b']
-const PAID_FALLBACKS = ['kimi-k2.6', 'nous-coder', 'nemotron-70b', 'ministral-14b']
+// 'nous-coder' is FULLY DEPRECATED, no upstream at all (core's registry
+// hard-fails it — confirmed live during #360 investigation). Replaced with
+// qwen-coder-32b, core's own suggested live replacement.
+const FREE_FALLBACKS = ['ministral-14b', 'qwen-coder-32b', 'gpt-oss-20b']
+const PAID_FALLBACKS = ['kimi-k2.6', 'qwen-coder-32b', 'nemotron-70b', 'ministral-14b']
 
 // Model routing config — all models route through AINative API
 const MODEL_CONFIG: Record<string, { provider: 'meta' | 'ainative'; modelId: string; tier: 'free' | 'paid' }> = {
@@ -175,7 +180,8 @@ const MODEL_CONFIG: Record<string, { provider: 'meta' | 'ainative'; modelId: str
   'kimi-k2': { provider: 'ainative', modelId: 'kimi-k2', tier: 'paid' },
   'nemotron-70b': { provider: 'ainative', modelId: 'nemotron-70b', tier: 'paid' },
   // === FREE TIER — fast, reliable ===
-  'nous-coder': { provider: 'ainative', modelId: 'nous-coder', tier: 'free' },
+  // 'nous-coder' REMOVED — fully deprecated, core hard-fails it (Ref #360).
+  'qwen-coder-32b': { provider: 'ainative', modelId: 'qwen-coder-32b', tier: 'free' },
   'gpt-oss-20b': { provider: 'ainative', modelId: 'gpt-oss-20b', tier: 'free' },
   'ministral-14b': { provider: 'ainative', modelId: 'ministral-14b', tier: 'free' },
   // llama-4-maverick REMOVED — AINative caps at 512 tokens, ALWAYS truncated
@@ -1183,7 +1189,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               // primary — using it here wastes attempt 1 on a guaranteed 500. Use only
               // proxy-served models here; Claude-quality repair happens in the agent
               // verify-loop / obedience pass (runClaudePass) above.
-              models: ['nous-coder', 'gpt-oss-20b', 'ministral-14b'],
+              models: ['qwen-coder-32b', 'gpt-oss-20b', 'ministral-14b'],
               prompt: message,
               onAttempt: (attempt, total, model) => {
                 safeEnqueue(encoder.encode(`data: ${JSON.stringify({

@@ -71,7 +71,15 @@ function makeCapturingFetch(): { fetch: typeof fetch; box: { body: string | null
 
 const AINATIVE_BASE_URL = (process.env.AINATIVE_API_URL || 'https://api.ainative.studio') + '/v1'
 const AINATIVE_API_KEY = process.env.AINATIVE_API_KEY || process.env.API_Key || process.env.ZERODB_API_KEY || ''
-const AINATIVE_FALLBACK = 'nous-coder'
+// 'nous-coder' is FULLY DEPRECATED with no upstream at all (core's model
+// registry hard-fails it: "NousCoder is a deprecated model with no available
+// upstream" — confirmed live in production logs during #360 stress testing,
+// every single call to this "fallback" 400'd). This was builder's absolute
+// last resort when both Bedrock AND the primary AINative model failed — so a
+// dead fallback here meant the whole chain had zero real redundancy left at
+// exactly the moment it mattered. qwen-coder-32b is core's own suggested
+// live replacement (registry: HF Qwen/Qwen2.5-Coder-32B-Instruct).
+const AINATIVE_FALLBACK = 'qwen-coder-32b'
 
 /**
  * Resolve the caller's plan tier from their session, so generation uses the
