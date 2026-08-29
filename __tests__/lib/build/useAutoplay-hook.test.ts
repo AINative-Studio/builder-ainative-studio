@@ -182,6 +182,7 @@ describe('useAutoplay — ASK_PRIVACY (hook body)', () => {
     ;(globalThis as any).__triggerEffect?.(0)
     const types = dispatch.mock.calls.map((c) => c[0].type)
     expect(types).not.toContain('ASK_PRIVACY')
+    vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
 })
@@ -240,6 +241,7 @@ describe('useAutoplay — GOTO_VIEW navigation (hook body)', () => {
     expect(types).toContain('GOTO_VIEW')
     const gotoCall = dispatch.mock.calls.find((c) => c[0].type === 'GOTO_VIEW')
     expect(gotoCall![0].view).toBe('brief')
+    vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
 })
@@ -294,6 +296,7 @@ describe('useAutoplay — prose view (hook body)', () => {
     )
     expect(formingCall).toBeDefined()
     expect(formingCall![0].overlay.view).toBe('brief')
+    vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
 
@@ -316,10 +319,12 @@ describe('useAutoplay — prose view (hook body)', () => {
     await new Promise((r) => origSetTimeout(r, 50))
     const types = dispatch.mock.calls.map((c) => c[0].type)
     expect(types).toContain('GEN_DONE')
+    vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
 
   it('dispatches GEN_FAIL when fetch returns HTTP error with synchronous schedule', async () => {
+    const origSetTimeout = globalThis.setTimeout
     vi.stubGlobal('setTimeout', (fn: () => void) => { fn(); return 0 as any })
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: false,
@@ -331,14 +336,18 @@ describe('useAutoplay — prose view (hook body)', () => {
     const dispatch = vi.fn()
     useAutoplay(state, dispatch)
     ;(globalThis as any).__triggerEffect?.(0)
-    // Wait multiple microtask rounds for the promise chain to resolve
-    for (let i = 0; i < 10; i++) await Promise.resolve()
+    // MAX_ATTEMPTS=5 retries, each an async round-trip — a real macrotask wait
+    // (matching the GEN_DONE test above) rather than a fixed microtask-tick
+    // count reliably drains every retry regardless of attempt count.
+    await new Promise((r) => origSetTimeout(r, 50))
     const types = dispatch.mock.calls.map((c) => c[0].type)
     expect(types).toContain('GEN_FAIL')
+    vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
 
   it('dispatches GEN_FAIL when fetch rejects with synchronous schedule', async () => {
+    const origSetTimeout = globalThis.setTimeout
     vi.stubGlobal('setTimeout', (fn: () => void) => { fn(); return 0 as any })
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('net fail')))
 
@@ -346,9 +355,10 @@ describe('useAutoplay — prose view (hook body)', () => {
     const dispatch = vi.fn()
     useAutoplay(state, dispatch)
     ;(globalThis as any).__triggerEffect?.(0)
-    for (let i = 0; i < 10; i++) await Promise.resolve()
+    await new Promise((r) => origSetTimeout(r, 50))
     const types = dispatch.mock.calls.map((c) => c[0].type)
     expect(types).toContain('GEN_FAIL')
+    vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
 })
@@ -399,6 +409,7 @@ describe('useAutoplay — unknown view fallback', () => {
       (c) => c[0].type === 'COMPLETE_ARTIFACT' && c[0].view === 'swarm',
     )
     expect(completeCall).toBeDefined()
+    vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
 })

@@ -3,32 +3,35 @@
 /**
  * Company Track artifact bodies (#224, wired #207).
  *
- * These now render REAL generated content from state.generated[view] (produced
- * by /api/build/artifact from the founder's idea). While an artifact is still
- * generating (not yet in state.generated), we show a shimmer placeholder; on
- * generation failure we show the error + the static example so the shell never
- * looks broken. Structure/classes match 04-SCREENS §15-20.
+ * These render REAL generated content from state.generated[view] (produced by
+ * /api/build/artifact from the founder's idea). While an artifact is still
+ * generating (not yet in state.generated), we show a shimmer placeholder.
+ *
+ * A founder's first look at their product must never read as broken or
+ * generic — Cody is framed as a co-founder still working the problem, not a
+ * system throwing an error. So a view that has NEVER produced content keeps
+ * retrying automatically in the background (useGenAutoRetry) and shows the
+ * calm GenStuck state, never silently-fallback placeholder copy or a raw
+ * error, while it fights for a real draft. GenError (a small inline note) only
+ * ever appears for the minor case where content ALREADY exists and a
+ * follow-up regenerate/edit attempt failed — the founder still has their
+ * previous good draft on screen the whole time.
  */
 
 import type { ReactNode } from 'react'
 import { useBuild } from '@/contexts/build-context'
-import { Section, Tag, Generating, useGen } from '@/components/build/artifacts/gen-helpers'
+import { Section, Tag, Generating, GenError, GenStuck, useGenAutoRetry } from '@/components/build/artifacts/gen-helpers'
 
 export const Thesis = () => {
-  const { data, error } = useGen<{
+  const { data, error, stuck, retrying, retry } = useGenAutoRetry<{
     meta: string; problem: string; problemTag?: string; who: string; whoTag?: string; wedge: string; whyNow: string
   }>('thesis')
-  if (!data && !error) return <Generating lines={5} />
-  const d = data ?? {
-    meta: 'The company\'s home artifact — it grows as evidence lands',
-    problem: 'Teams can\'t find answers buried in their own tools.', problemTag: 'EVIDENCE · 3 interviews',
-    who: 'High-SKU ops teams with fragmented knowledge.', whoTag: 'ASSUMPTION · sizing TBD',
-    wedge: 'Start where the pain is sharpest: support teams answering the same questions daily.',
-    whyNow: 'Retrieval + agents finally make a private, cited answer engine viable at team scale.',
-  }
+  if (!data && !stuck) return <Generating lines={5} />
+  if (!data && stuck) return <GenStuck onRetry={retry} retrying={retrying} />
+  const d = data!
   return (
     <>
-      {error && <p className="m-artifact-meta m-mono is-error">Generation failed ({error}) — showing an example.</p>}
+      {error && <GenError error={error} />}
       <p className="m-artifact-meta m-mono">{d.meta}</p>
       <Section h="The problem">{d.problem} {d.problemTag && <Tag kind="evidence">{d.problemTag}</Tag>}</Section>
       <Section h="Who feels it most">{d.who} {d.whoTag && <Tag kind="assumption">{d.whoTag}</Tag>}</Section>
@@ -39,19 +42,13 @@ export const Thesis = () => {
 }
 
 export const BusinessModel = () => {
-  const { data, error } = useGen<{ tiers: Array<{ plan: string; price: string; for: string }>; economics: string[] }>('businessModel')
-  if (!data && !error) return <Generating lines={4} />
-  const d = data ?? {
-    tiers: [
-      { plan: 'Team', price: '$20/seat/mo', for: 'Small teams' },
-      { plan: 'Business', price: '$40/seat/mo', for: 'Multi-team' },
-      { plan: 'Enterprise', price: 'Custom', for: 'Security + SSO' },
-    ],
-    economics: ['~85% gross margin (inference + storage the main cost drivers)', 'Land on one team, expand across the org'],
-  }
+  const { data, error, stuck, retrying, retry } = useGenAutoRetry<{ tiers: Array<{ plan: string; price: string; for: string }>; economics: string[] }>('businessModel')
+  if (!data && !stuck) return <Generating lines={4} />
+  if (!data && stuck) return <GenStuck onRetry={retry} retrying={retrying} />
+  const d = data!
   return (
     <>
-      {error && <p className="m-artifact-meta m-mono is-error">Generation failed ({error}) — showing an example.</p>}
+      {error && <GenError error={error} />}
       <table className="m-table">
         <thead><tr><th>Plan</th><th>Price</th><th>For</th></tr></thead>
         <tbody>
@@ -66,15 +63,13 @@ export const BusinessModel = () => {
 }
 
 export const Positioning = () => {
-  const { data, error } = useGen<{ statement: string; unlike: string[] }>('positioning')
-  if (!data && !error) return <Generating lines={3} />
-  const d = data ?? {
-    statement: 'For teams drowning in their own knowledge, this is the answer engine that replies from your own tools — with citations — so no one hunts for what already exists.',
-    unlike: ['Not public search — answers only from your data', 'Not a wiki — no one maintains it', 'Always cited — never a guess'],
-  }
+  const { data, error, stuck, retrying, retry } = useGenAutoRetry<{ statement: string; unlike: string[] }>('positioning')
+  if (!data && !stuck) return <Generating lines={3} />
+  if (!data && stuck) return <GenStuck onRetry={retry} retrying={retrying} />
+  const d = data!
   return (
     <>
-      {error && <p className="m-artifact-meta m-mono is-error">Generation failed ({error}) — showing an example.</p>}
+      {error && <GenError error={error} />}
       <blockquote className="m-pullquote m-artifact">{d.statement}</blockquote>
       <Section h="Unlike the alternatives"><ul className="m-list">{(d.unlike || []).map((u, i) => <li key={i}>{u}</li>)}</ul></Section>
     </>
@@ -82,16 +77,16 @@ export const Positioning = () => {
 }
 
 export const Landing = () => {
-  const { data, error } = useGen<{ eyebrow: string; headline: string; sub: string; features: Array<{ h: string; d: string }> }>('landing')
-  if (!data && !error) return <Generating lines={4} />
-  const d = data ?? {
-    eyebrow: 'YOUR COMPANY', headline: 'Ask your company anything.',
-    sub: 'Cited answers from your own tools — private, current, instant.',
-    features: [{ h: 'Cited', d: 'Every answer shows its sources' }, { h: 'Current', d: 'Reads your live tools' }, { h: 'Private', d: 'Never leaves your data' }],
-  }
+  const { data, error, stuck, retrying, retry } = useGenAutoRetry<{ eyebrow: string; headline: string; sub: string; features: Array<{ h: string; d: string }> }>('landing')
+  if (!data && !stuck) return <Generating lines={4} />
+  // The free, top-of-funnel artifact prospects see before ever paying — this is
+  // the ONE view where "never show broken" matters most. No fallback copy, no
+  // error banner: hold the calm GenStuck state until a real draft lands.
+  if (!data && stuck) return <GenStuck onRetry={retry} retrying={retrying} />
+  const d = data!
   return (
     <div className="m-landing-preview">
-      {error && <p className="m-artifact-meta m-mono is-error">Generation failed ({error}) — showing an example.</p>}
+      {error && <GenError error={error} />}
       <span className="m-eyebrow">{d.eyebrow}</span>
       <h2 className="m-artifact m-landing-h">{d.headline}</h2>
       <p className="m-sub">{d.sub}</p>
@@ -107,17 +102,13 @@ export const Landing = () => {
 
 export const Plan30 = () => {
   const { dispatch } = useBuild()
-  const { data, error } = useGen<{ weeks: Array<{ w: string; d: string }> }>('plan30')
-  if (!data && !error) return <Generating lines={4} />
-  const weeks = data?.weeks ?? [
-    { w: 'Week 1', d: 'Connect first data sources, ship to 1 design-partner team' },
-    { w: 'Week 2', d: 'Tune retrieval on real queries, add citations UI' },
-    { w: 'Week 3', d: 'Open to 3 more teams, wire the sales pipeline' },
-    { w: 'Week 4', d: 'First paid conversion, turn on the nightly agent loop' },
-  ]
+  const { data, error, stuck, retrying, retry } = useGenAutoRetry<{ weeks: Array<{ w: string; d: string }> }>('plan30')
+  if (!data && !stuck) return <Generating lines={4} />
+  if (!data && stuck) return <GenStuck onRetry={retry} retrying={retrying} />
+  const weeks = data!.weeks
   return (
     <>
-      {error && <p className="m-artifact-meta m-mono is-error">Generation failed ({error}) — showing an example.</p>}
+      {error && <GenError error={error} />}
       <div className="m-week-grid m-seams">
         {weeks.map((wk, i) => (
           <div key={i} className="m-week"><div className="m-mono m-week-h">{wk.w}</div><p>{wk.d}</p></div>
