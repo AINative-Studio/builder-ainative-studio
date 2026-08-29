@@ -1,3 +1,7 @@
+# Single-package repo — no sub-packages, but pnpm now requires `packages` to be
+# present (even empty) or `pnpm install` fails with ERR_PNPM_INVALID_WORKSPACE_CONFIGURATION.
+packages: []
+
 onlyBuiltDependencies:
   - '@ainative/cody-cli'
   - '@anthropic-ai/claude-code'
@@ -6,6 +10,5 @@ onlyBuiltDependencies:
   - es5-ext
   - esbuild
   - protobufjs
-  - redis-memory-server
   - sharp
   - unrs-resolver
