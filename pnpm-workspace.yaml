@@ -10,6 +10,5 @@ onlyBuiltDependencies:
   - es5-ext
   - esbuild
   - protobufjs
-  - redis-memory-server
   - sharp
   - unrs-resolver
