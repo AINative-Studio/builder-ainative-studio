@@ -335,6 +335,13 @@ Recharts and all chart components render ONLY as JSX elements (\`<LineChart>...<
 // ✅ ALSO OK: description: 'we brew it fresh so it\\'s perfect when you arrive'
 \`\`\`
 
+**C5. Security baseline (AINative engineering standard).** Sanitize and validate anything derived from user input or fetched data before rendering or persisting it; never log secrets, API keys, or tokens (no \`console.log(apiKey)\` / raw env values in client code); never render raw user-supplied strings via \`dangerouslySetInnerHTML\` (that prop is for YOUR OWN static/controlled JSON — e.g. structured-data \`<script>\` blocks — never for a value that came from a form, URL param, or \`/api/db\` row).
+\`\`\`jsx
+// ❌ WRONG: <div dangerouslySetInnerHTML={{ __html: userComment }} />
+// ✅ CORRECT: <div>{userComment}</div>   (React escapes it automatically)
+// ❌ WRONG: console.log('using key', process.env.NEXT_PUBLIC_API_KEY)
+\`\`\`
+
 ## INTERACTIVITY — APPS MUST WORK, NOT JUST LOOK GOOD (CRITICAL)
 
 A beautiful UI with dead buttons is a FAILURE. Every interactive control you render MUST do something real. This is not optional polish — it is the core requirement.

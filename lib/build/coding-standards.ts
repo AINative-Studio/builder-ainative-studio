@@ -11,12 +11,24 @@
  *   - primitives-first     (compose AINative primitives, don't regenerate)
  *   - security baseline    (validate inputs, never log secrets)
  *
- * Two consumers:
+ * Consumers:
  *   1. The `codingStandards` artifact (display) — grounds Cody's stated
  *      Definition of Done so it's consistent across every idea, not hallucinated.
- *   2. The codegen/swarm dispatch (`/api/build/swarm`) — the standards are
- *      injected into the build agents' context so Cody actually BUILDS to them
- *      (the integrity piece, not display-only).
+ *   2. The AGENTIC swarm dispatch (`/api/build/swarm`) — the FULL standards
+ *      block is injected verbatim into the build agents' context, since a real
+ *      swarm run has its own commits/PRs/tests to hold to TDD/coverage/
+ *      git-workflow. Currently enterprise-gated and returning 500 upstream
+ *      (core#6422), so this path is rarely exercised in production yet.
+ *   3. The single-shot app-codegen prompt (`lib/professional-prompt.ts`, used
+ *      by every tier via `app/api/chat-ws/route.ts` — the actual generation
+ *      path most builds go through) carries only the standards that make
+ *      sense for one-shot generated frontend code with no commit/test loop of
+ *      its own: security-baseline (its "C5" rule). TDD/coverage/git-workflow/
+ *      no-ai-attribution are properties of the ENGINEERING PROCESS building
+ *      Cody, not of a generated app's code, so they are NOT (and should not
+ *      be) injected there — don't assume this file's full standards list
+ *      applies to every codegen path; check which of the two above a change
+ *      actually needs to reach.
  *
  * These strings are intentionally idea-agnostic: the standards are the same for
  * every app; only light tailoring (which primitives, which security surface)
