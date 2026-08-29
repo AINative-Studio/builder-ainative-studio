@@ -36,10 +36,41 @@ export const runtime = 'nodejs'
 // provider call so a hang surfaces as a normal timeout failure instead.
 const PROVIDER_TIMEOUT_MS = 20_000
 
-const ainative = new OpenAI({
-  apiKey: process.env.AINATIVE_API_KEY || process.env.API_Key || process.env.ZERODB_API_KEY || '',
-  baseURL: (process.env.AINATIVE_API_URL || 'https://api.ainative.studio') + '/v1',
-})
+/**
+ * The OpenAI SDK only surfaces `error.error` (the OpenAI-shaped `{error:
+ * {message}}` envelope) on a thrown APIError — it reads the raw response body
+ * once internally to build that shape, then DISCARDS it. Core's actual error
+ * contract is `{detail, error_code, next_action}` (no top-level `error` key at
+ * all, see app/main.py's http_exception_handler in the core repo), so
+ * `error.error` is always undefined and the SDK falls back to a useless
+ * "{status} status code (no body)" message — even though core sent a real,
+ * informative body every time. (Ref #360.)
+ *
+ * makeCapturingFetch returns a FRESH fetch + box per call — this route handler
+ * runs on a shared warm Node.js instance across concurrent requests, so a
+ * single module-level "last error" variable would let one request's error body
+ * leak into another's log under load (exactly the concurrency this bug was
+ * found under). The box is a plain object, not a module let, so each call to
+ * ainative.chat.completions.create() below gets its own private capture.
+ */
+function makeCapturingFetch(): { fetch: typeof fetch; box: { body: string | null } } {
+  const box = { body: null as string | null }
+  const capturingFetch: typeof fetch = async (input, init) => {
+    const res = await fetch(input, init)
+    if (!res.ok) {
+      try {
+        box.body = await res.clone().text()
+      } catch {
+        box.body = null
+      }
+    }
+    return res
+  }
+  return { fetch: capturingFetch, box }
+}
+
+const AINATIVE_BASE_URL = (process.env.AINATIVE_API_URL || 'https://api.ainative.studio') + '/v1'
+const AINATIVE_API_KEY = process.env.AINATIVE_API_KEY || process.env.API_Key || process.env.ZERODB_API_KEY || ''
 const AINATIVE_FALLBACK = 'nous-coder'
 
 /**
@@ -189,6 +220,13 @@ export async function POST(request: NextRequest) {
   // 2) Fallback: AINative chat-completions (tier's Claude model, then a free model)
   for (const model of [tierModels.ainativeModel, AINATIVE_FALLBACK]) {
     for (let pass = 0; pass < 2; pass++) {
+      const { fetch: capturingFetch, box } = makeCapturingFetch()
+      // maxRetries: 0 — the SDK retries 429/5xx up to twice by DEFAULT, which
+      // stacks silently underneath our own pass/model retry loop (up to 3x
+      // real HTTP calls per logical attempt here, unlogged). Under the exact
+      // concurrent-load conditions that cause 429s in the first place, that
+      // amplification makes things worse, not better (Ref #360).
+      const ainative = new OpenAI({ apiKey: AINATIVE_API_KEY, baseURL: AINATIVE_BASE_URL, fetch: capturingFetch, maxRetries: 0 })
       try {
         const res = await ainative.chat.completions.create(
           {
@@ -209,7 +247,14 @@ export async function POST(request: NextRequest) {
         }
         attemptLog.push(`ainative/${model} pass ${pass + 1}: unparseable JSON`)
       } catch (e: any) {
-        const msg = e?.message?.slice(0, 120) || String(e)
+        // e.message is the SDK's OWN formatting, which is "{status} status code
+        // (no body)" whenever core's response doesn't match the OpenAI error
+        // shape — true for every core error, since core uses {detail, error_code}.
+        // box.body is core's REAL raw body, captured by capturingFetch before
+        // the SDK discarded it (Ref #360).
+        const status = e?.status
+        const raw = box.body?.slice(0, 200)
+        const msg = raw ? `${status ?? ''} ${raw}`.trim() : (e?.message?.slice(0, 120) || String(e))
         attemptLog.push(`ainative/${model} pass ${pass + 1}: ${msg}`)
         break
       }
