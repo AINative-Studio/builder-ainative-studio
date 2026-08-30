@@ -101,7 +101,7 @@ export const Landing = () => {
 }
 
 export const Plan30 = () => {
-  const { dispatch } = useBuild()
+  const { state, dispatch } = useBuild()
   const { data, error, stuck, retrying, retry } = useGenAutoRetry<{ weeks: Array<{ w: string; d: string }> }>('plan30')
   if (!data && !stuck) return <Generating lines={4} />
   if (!data && stuck) return <GenStuck onRetry={retry} retrying={retrying} />
@@ -109,6 +109,15 @@ export const Plan30 = () => {
   return (
     <>
       {error && <GenError error={error} />}
+      {/* #378: the generated name was only ever shown once the founder reached the
+          dashboard, causing a beat of confusion ("what is {name}?"). It's already
+          known by this step (state.companyName is set at START_BUILD, before
+          plan30 generates) — surface it here instead of leaving it a surprise. */}
+      {state.companyName && (
+        <p className="m-artifact-meta m-mono" data-testid="plan30-company-name">
+          Your company: <strong>{state.companyName}</strong>
+        </p>
+      )}
       <div className="m-week-grid m-seams">
         {weeks.map((wk, i) => (
           <div key={i} className="m-week"><div className="m-mono m-week-h">{wk.w}</div><p>{wk.d}</p></div>

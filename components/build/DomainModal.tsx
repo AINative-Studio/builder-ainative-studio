@@ -481,7 +481,12 @@ export function DomainModal({ brand, slug, keywords, open, onClose, onRequireAut
           <p className="m-sub">Custom-domain purchasing isn&apos;t enabled yet. Your site is already live at
             builder.ainative.studio/build/{brand} — you can add a domain later.</p>
         ) : loading ? (
-          <p className="m-sub">Checking what&apos;s available for <strong>{brand}</strong>…</p>
+          // #378: the plain static line gave no visual sign it was actively working,
+          // so a click could read as unregistered. m-domain-checking pulses so it's
+          // unmistakably "in progress," not stalled.
+          <p className="m-sub m-domain-checking" data-testid="domain-checking">
+            Checking available domains for <strong>{brand}</strong>…
+          </p>
         ) : (
           <>
             {/* Search input — pinned above the scrollable list so it's always visible (#48). */}

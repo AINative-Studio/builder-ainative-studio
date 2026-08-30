@@ -262,9 +262,13 @@ export function WebsitePanel({
         </p>
 
         {!canManage ? (
-          <p className="m-mono m-task-empty" data-testid="secrets-locked">
-            Upgrade to add runtime secrets for your app.
-          </p>
+          // #378: this used to be plain text, same weight as active content, so it
+          // didn't read as an upgrade CTA. A real button (matching the existing
+          // upgrade-CTA pattern used elsewhere, e.g. "Claim subdomain (upgrade)")
+          // makes the paywall obvious instead of looking like an inert placeholder.
+          <button className="btn-primary" data-testid="secrets-locked" onClick={onRequireUpgrade}>
+            Upgrade to add runtime secrets →
+          </button>
         ) : !secretsLoaded ? (
           <p className="m-mono m-task-empty" data-testid="secrets-loading">loading secrets…</p>
         ) : !secretsAvailable && secrets.length === 0 ? (
