@@ -18,9 +18,11 @@ import {
   configured,
   findPRByHead,
   taskBranchName,
+  fetchRepoFiles,
   type GiteaPullRequest,
 } from './gitea-client'
 import { checkAllStandards, formatForCommittee } from '@/lib/build/coding-standards'
+import { runCoverage } from '@/lib/build/coverage-runner'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -31,6 +33,12 @@ export interface PRReviewRequest {
   repo: string
   prNumber: number
   diff?: string
+  /** The PR's head branch (#375) — needed to measure REAL coverage against
+   *  the PR's actual resulting file state, not just the base branch. Optional
+   *  for backward compatibility with existing callers; when absent, the
+   *  standards gate falls back to the file-existence-only check (unchanged
+   *  behavior) rather than failing the whole gate. */
+  headRef?: string
 }
 
 export interface PRReviewResult {
@@ -144,6 +152,25 @@ export async function getPRChangedFiles(
 // ---------------------------------------------------------------------------
 
 /**
+ * Measure REAL coverage for a PR's head branch (#375, closes #369). Returns
+ * undefined (not 0) when it genuinely can't be measured — an app with no
+ * test suite, an unreadable repo state, or a coverage run that fails to
+ * produce a number — so checkAllStandards skips the coverage check entirely
+ * rather than gating on a fabricated number. Never throws.
+ */
+async function measurePRCoverage(org: string, repo: string, headRef: string): Promise<number | undefined> {
+  try {
+    const files = await fetchRepoFiles(org, repo, headRef)
+    if (!files) return undefined
+    const coverage = await runCoverage(files)
+    if (!coverage.testable || coverage.coveragePercent === null) return undefined
+    return coverage.coveragePercent
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Run the coding standards check on a PR. This is the first gate before
  * the committee review — ensures basic hygiene (no AI attribution, etc).
  */
@@ -158,10 +185,17 @@ export async function runStandardsGate(req: PRReviewRequest): Promise<PRReviewRe
   // Get test files (approximate: look for .test. files in the diff)
   const testFiles = changedFiles.filter((f) => /\.(test|spec)\.(ts|tsx)$/.test(f))
 
+  // Real coverage (#375): only attempted when the caller supplied the PR's
+  // head branch. Absent that, `coverage` stays undefined and
+  // checkAllStandards simply skips the coverage check — unchanged behavior
+  // for any existing caller that predates this wiring.
+  const coverage = req.headRef ? await measurePRCoverage(req.org, req.repo, req.headRef) : undefined
+
   // Run standards check
   const result = checkAllStandards({
     changedFiles,
     testFiles,
+    coverage,
   })
 
   const committee = formatForCommittee(result)
@@ -250,5 +284,5 @@ export async function handlePRWebhook(
   const org = repository.owner.login
   const repo = repository.name
 
-  return runCommitteeGate({ org, repo, prNumber: number })
+  return runCommitteeGate({ org, repo, prNumber: number, headRef: pull_request.head?.ref })
 }
