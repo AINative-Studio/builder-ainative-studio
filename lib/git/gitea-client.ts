@@ -471,3 +471,102 @@ export async function findPRByHead(
   const prs = (await res.json()) as GiteaPullRequest[]
   return prs.find((pr) => pr.head.ref === headBranch) || null
 }
+
+// ---------------------------------------------------------------------------
+// Repo file fetch (#373/#374 — read a company's CURRENT generated app before
+// implementing a backlog task against it, and before coverage-verifying the
+// result)
+// ---------------------------------------------------------------------------
+
+interface GiteaTreeEntry {
+  path: string
+  type: 'blob' | 'tree'
+  sha: string
+  size?: number
+}
+
+interface GiteaTreeResponse {
+  tree: GiteaTreeEntry[]
+  truncated?: boolean
+}
+
+/** Files this large are almost certainly binary/generated assets, not source
+ *  the implementation step needs to read — skip them rather than pulling
+ *  megabytes of base64 into the LLM's context for no benefit. */
+export const MAX_FETCHABLE_FILE_BYTES = 200_000
+
+/**
+ * Filter a Gitea tree listing down to fetchable text-source blobs — real
+ * files (not subtrees) at or under the size ceiling. PURE, unit-testable
+ * without a network call.
+ */
+export function filterFetchableBlobs(tree: GiteaTreeEntry[]): GiteaTreeEntry[] {
+  return tree.filter(
+    (e) => e.type === 'blob' && (e.size === undefined || e.size <= MAX_FETCHABLE_FILE_BYTES),
+  )
+}
+
+/**
+ * Decode a Gitea contents-API response body into UTF-8 text, or null when the
+ * body isn't a valid base64-encoded text payload (binary content, malformed
+ * response). PURE.
+ */
+export function decodeGiteaContent(body: { content?: string; encoding?: string } | null | undefined): string | null {
+  if (!body?.content || body.encoding !== 'base64') return null
+  try {
+    return Buffer.from(body.content, 'base64').toString('utf-8')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Fetch every text file's current content from a branch (default: main), as a
+ * flat path→content map. Returns null when unconfigured or the repo/branch
+ * doesn't exist — never throws for a missing repo (a company that hasn't been
+ * git-provisioned yet is a normal state, not an error). THROWS on a genuine
+ * API failure (auth/server error) so a real outage is visible, not silently
+ * treated as "empty repo."
+ *
+ * Skips files over MAX_FETCHABLE_FILE_BYTES and anything the base64 decode
+ * fails on (binary content) — callers get a best-effort source-file map, not
+ * a byte-perfect mirror of the repo.
+ */
+export async function fetchRepoFiles(
+  org: string,
+  repo: string,
+  branch = 'main',
+): Promise<Record<string, string> | null> {
+  if (!configured() || !org || !repo) return null
+  const repoName = repoNameForSlug(repo)
+
+  const treeRes = await giteaFetch(
+    `/repos/${encodeURIComponent(org)}/${encodeURIComponent(repoName)}/git/trees/${encodeURIComponent(branch)}?recursive=true`,
+    { method: 'GET' },
+  )
+  if (treeRes.status === 404) return null
+  if (!treeRes.ok) throw new Error(`gitea fetchRepoFiles ${org}/${repoName} tree failed: ${treeRes.status}`)
+  const tree = (await treeRes.json()) as GiteaTreeResponse
+
+  const blobs = filterFetchableBlobs(tree.tree)
+
+  const files: Record<string, string> = {}
+  for (const blob of blobs) {
+    try {
+      const contentRes = await giteaFetch(
+        `/repos/${encodeURIComponent(org)}/${encodeURIComponent(repoName)}/contents/${encodeURIComponent(blob.path)}?ref=${encodeURIComponent(branch)}`,
+        { method: 'GET' },
+      )
+      if (!contentRes.ok) continue
+      const body = (await contentRes.json()) as { content?: string; encoding?: string }
+      const decoded = decodeGiteaContent(body)
+      if (decoded === null) continue
+      files[blob.path] = decoded
+    } catch {
+      // A single file's fetch/decode failure (binary content, transient
+      // network blip) must not fail the whole map — best-effort by design.
+      continue
+    }
+  }
+  return files
+}
