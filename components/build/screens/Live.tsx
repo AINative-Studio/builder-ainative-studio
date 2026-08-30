@@ -635,13 +635,17 @@ export function Live() {
             <div className="m-mono m-live-card-h">Business systems</div>
             {/* Total savings vs stand-alone SaaS (#dashboard-ux): sum the comparable
                 monthly cost of every system shown, so the founder sees what they'd
-                pay to assemble this stack from separate providers — included here. */}
+                pay to assemble this stack from separate providers — included here.
+                #378: spell out "included at no extra cost" plainly — the old
+                "included, usage-based" phrasing read as ambiguous (cost vs. value),
+                per a real founder's feedback in a usability walkthrough. */}
             {(() => {
               const total = systems.reduce((sum, s) => sum + (s.savedMonthly || 0), 0)
               if (total <= 0) return null
               return (
                 <p className="m-system-savings-total" data-testid="systems-savings-total">
-                  ≈ <strong>${total}/mo</strong> of stand-alone SaaS — <span className="m-mono">included, usage-based</span>
+                  <s className="m-system-savings-strike">${total}/mo</s> of stand-alone SaaS —{' '}
+                  <strong>included at no extra cost</strong>
                 </p>
               )
             })()}
@@ -672,15 +676,20 @@ export function Live() {
                     <SystemSaving vsProvider={s.vsProvider} savedMonthly={s.savedMonthly} />
                   </a>
                 ) : (
-                  <div key={s.key} className="m-system">
+                  // #378: this card has no click handler of its own (only the "docs ↗"
+                  // link inside is real) — a founder's instinct was to click the
+                  // highlighted name itself, since the shared .m-system class made it
+                  // look identically clickable to the provisioned/linked card above.
+                  // m-system-static drops the pointer cursor + hover affordance so an
+                  // inert card no longer masquerades as one.
+                  <div key={s.key} className="m-system m-system-static">
                     <span className="m-system-name">{s.name}</span>
                     <span className="m-system-stat m-mono">{s.stat}</span>
                     <span className="m-chip m-system-prim">{s.primitive}</span>
                     {/* Live/Planned badge (#67): replaces ● live / ○ sim text markers. */}
                     <SystemStatusBadge provisioned={s.provisioned} />
                     <SystemSaving vsProvider={s.vsProvider} savedMonthly={s.savedMonthly} />
-                    {/* "learn more" as a secondary affordance only, not the primary action (#278) */}
-                    <a className="m-system-learn m-mono" href={s.docUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>docs ↗</a>
+                    <a className="m-system-learn m-mono" href={s.docUrl} target="_blank" rel="noreferrer">docs ↗</a>
                   </div>
                 )
               )}
@@ -741,6 +750,12 @@ export function Live() {
               the live one); REVERT rolls the live site back via Railway with a
               confirmation + honest rolling-back → validating → live status. A new,
               distinct section — does not touch #67 systems / #55 Tasks / #52 chat. */}
+          {/* #378: no visual grouping existed between the dev/build-ops panels below
+              and the business-ops/growth panels further down — a founder said they
+              visually "blend together." Section labels reuse the existing
+              .m-website-section-h mono-caps treatment already used inside
+              WebsitePanel, so this doesn't introduce a new visual language. */}
+          <div className="m-mono m-website-section-h" data-testid="section-build-ops" style={{ marginTop: 4 }}>Build ops</div>
           <VersionsPanel companyId={companyId} />
           {/* Website / App management (#63) — Redeploy the current version
               (health-checked "redeploying → validating → live", finishing the old
@@ -762,6 +777,7 @@ export function Live() {
               {owner, company}; VIEW renders structured markdown. A new, distinct
               section — does not touch #67 systems / #52 chat / #55 Tasks / #62
               Versions / #65 masthead. */}
+          <div className="m-mono m-website-section-h" data-testid="section-business-ops" style={{ marginTop: 4 }}>Business ops</div>
           <DocumentsPanel
             companyId={companyId}
             idea={state.idea}
@@ -778,6 +794,7 @@ export function Live() {
               ZeroDB. Shows last-generated + next run; inert + honest when media creds
               aren't set. A new, distinct section — does not touch #67 systems / #52
               chat / #55 Tasks / #62 Versions / #64 Documents / #65 masthead / #51 video. */}
+          <div className="m-mono m-website-section-h" data-testid="section-growth" style={{ marginTop: 4 }}>Growth</div>
           <MediaPanel
             companyId={companyId}
             companyName={company}

@@ -209,7 +209,11 @@ export function VersionsPanel({ companyId }: { companyId: string }) {
             {versions.map((v) => (
               <li
                 key={v.deploymentId}
-                className="m-task-card"
+                // #378: this card has no click action of its own (only the inner
+                // REVERT button does) — m-version-card drops the hover affordance
+                // .m-task-card normally implies, since a founder's instinct was to
+                // click the card itself expecting it to do something.
+                className="m-task-card m-version-card"
                 data-testid="version-card"
                 data-status={v.status}
               >

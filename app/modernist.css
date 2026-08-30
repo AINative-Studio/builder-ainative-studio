@@ -147,6 +147,7 @@
 
 /* ---- motion ---- */
 @keyframes m-pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.55; transform: scale(0.82); } }
+@keyframes m-text-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
 @keyframes m-shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
 @keyframes m-formIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @keyframes m-lineIn { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
@@ -219,6 +220,8 @@
 .m-eyebrow { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.16em; color: var(--color-accent); }
 .m-h1 { font-family: var(--font-artifact); font-weight: 500; font-size: clamp(38px, 6vw, 66px); line-height: 1.02; margin: 14px 0 10px; color: var(--color-text); }
 .m-sub { font-size: 17px; color: var(--text-body-70); max-width: 60ch; line-height: 1.5; }
+/* #378: makes a "still checking" line unmistakably in-progress rather than static. */
+.m-domain-checking { animation: m-text-pulse 1.4s ease-in-out infinite; }
 .m-cody-line { font-family: var(--font-mono); font-size: 13px; color: var(--text-body-70); margin: 20px 0; }
 .m-cody-line .m-glyph { color: var(--color-accent); }
 /* #324 GR-15 — ecosystem runway note: Cody's line in the workspace when a build's
@@ -602,7 +605,10 @@
 .m-sec-h { font-weight: 600; font-size: 20px; margin: 0 0 8px; }
 .m-sec-body { font-family: var(--font-artifact); font-size: 16px; line-height: 1.6; color: var(--text-body-85); }
 .m-list { margin: 6px 0; padding-left: 20px; }
-.m-list li { margin: 4px 0; }
+/* #378: generated content (e.g. unit-economics bullets) can run long/technical —
+   more line-height + spacing between items so a dense generated line has room to
+   breathe instead of reading as one packed block. */
+.m-list li { margin: 10px 0; line-height: 1.6; }
 .m-checks li, .m-checklist li { list-style: none; margin-left: -20px; }
 .m-checks li::before { content: '✓ '; color: var(--success); }
 .m-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
@@ -849,6 +855,11 @@
 .m-systems { grid-template-columns: 1fr 1fr; }
 .m-system { background: var(--color-bg); border: 0; padding: 14px; text-align: left; cursor: pointer; display: flex; flex-direction: column; gap: 4px; }
 .m-system:hover { background: var(--color-surface); }
+/* #378: an unprovisioned system card (rendered as a <div>, not an <a>) has no
+   click handler of its own — only the "docs ↗" link inside is real. Drop the
+   inherited pointer cursor + hover affordance so it stops looking clickable. */
+.m-system-static { cursor: default; }
+.m-system-static:hover { background: var(--color-bg); }
 .m-system-name { font-family: var(--font-heading); font-weight: 600; font-size: 14px; }
 .m-system-stat { font-size: 11px; color: var(--text-muted); }
 .m-system-prim { align-self: flex-start; margin-top: 4px; }
@@ -863,6 +874,9 @@
   font-size: 12px; color: var(--text-body-85); margin: 0 0 8px;
 }
 .m-system-savings-total strong { color: var(--color-accent, #1f7a3d); }
+/* #378: struck-through price reads as "value included" (sale framing) rather
+   than a charge — the red/plain number alone was mistaken for a cost. */
+.m-system-savings-strike { color: var(--text-muted); text-decoration: line-through; }
 .m-tonight li { list-style: none; margin-left: -20px; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-body-70); padding: 3px 0; }
 
 /* Onboarding video player (#51): left-column slot, placeholder + real-video states. */
@@ -923,6 +937,9 @@
 .m-task-tab-n { opacity: 0.7; font-variant-numeric: tabular-nums; }
 .m-task-empty { font-size: 12px; color: var(--text-muted); line-height: 1.6; margin: 8px 0 0; }
 .m-task-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+/* #378: a version-history card has no click action of its own — override the
+   shared .m-task-card:hover so it stops looking like an inert card is clickable. */
+.m-version-card:hover { background: var(--color-bg); }
 .m-task-card { background: var(--color-bg); padding: 12px; display: flex; flex-direction: column; gap: 6px; }
 .m-task-card:hover { background: var(--color-surface); }
 .m-task-card-top { display: flex; align-items: center; gap: 8px; }
@@ -962,7 +979,9 @@
 .m-secret-input:focus { outline: none; border-color: var(--track); }
 
 .m-infra-urls { font-size: 12px; color: var(--text-muted); line-height: 1.7; margin: 0 0 12px; }
-.m-infra-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+/* #378: 6px read as one tight cluster — a founder wasn't sure a domain-search
+   click had registered vs. needing a second click on an adjacent button. */
+.m-infra-btns { display: flex; flex-wrap: wrap; gap: 10px; }
 .m-infra-btns button { font-size: 12px; padding: 6px 10px; }
 /* Not-yet-wired affordance (#256): visibly inert so it never looks clickable. */
 .m-infra-btns button:disabled { cursor: default; opacity: 0.5; }
