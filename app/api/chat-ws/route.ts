@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import OpenAI from 'openai'
 import { nanoid } from 'nanoid'
+import * as Sentry from '@sentry/nextjs'
 import { verifyAndEnhancePrompt } from '@/lib/component-verifier'
 import { PROFESSIONAL_SYSTEM_PROMPT } from '@/lib/professional-prompt'
 import { codegenCompositionBlock } from '@/lib/build/primitive-catalog'
@@ -9,6 +10,7 @@ import { multiFileEmphasis, multiFileUserDirective, ideaWarrantsMultiFile } from
 import { enhancePromptWithMockData } from '@/lib/mock-data-generator'
 import { updatePreviewPartial, storePreview, getChatData } from '@/lib/preview-store'
 import { validateGeneratedCode } from '@/lib/code-validator'
+import { validateOutput } from '@/lib/build/output-validator'
 import { buildValidationFallbackComponent } from '@/lib/validation-fallback'
 import { runValidationRetryLoop, buildRepairPrompt } from '@/lib/generation-retry'
 import { checkObedience, buildObediencePrompt } from '@/lib/build/obedience-gate'
@@ -1168,6 +1170,24 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
           let finalContent = validation.code
           console.log('[VALIDATION] Result:', validation.valid ? '✅ valid' : '❌ invalid', 'finalContent:', finalContent.length, 'chars')
           let retryAttempted = false
+
+          // Real output validation (#366): a fast, deterministic scan of what
+          // was actually generated — security baseline (dangerouslySetInnerHTML
+          // on non-static content, secret-shaped console.log/warn args) and the
+          // AX rubric's own "exactly one <h1>" critical rule. This never blocks
+          // or fixes the build (a scoped remediation pass is future work) — it
+          // only makes a real compliance failure visible instead of silently
+          // trusting that the system prompt was followed.
+          const outputValidation = validateOutput(finalContent)
+          if (!outputValidation.passed) {
+            const failedChecks = outputValidation.checks.filter((c) => !c.passed)
+            console.warn('[OUTPUT-VALIDATION] Failed checks:', failedChecks.map((c) => c.name).join(', '))
+            Sentry.captureMessage(`build/chat-ws output validation failed: ${responseId}`, {
+              level: 'warning',
+              tags: { responseId, checks: failedChecks.map((c) => c.name).join(',') },
+              extra: { summary: outputValidation.summary, failedChecks },
+            })
+          }
 
           // Checkpoint the last VALID version across stages so we never render a
           // regression — worst case we serve an earlier working build (#81).
