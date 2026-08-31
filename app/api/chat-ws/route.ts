@@ -10,7 +10,7 @@ import { multiFileEmphasis, multiFileUserDirective, ideaWarrantsMultiFile } from
 import { enhancePromptWithMockData } from '@/lib/mock-data-generator'
 import { updatePreviewPartial, storePreview, getChatData } from '@/lib/preview-store'
 import { validateGeneratedCode } from '@/lib/code-validator'
-import { validateOutput } from '@/lib/build/output-validator'
+import { validateOutput, validateFileImports } from '@/lib/build/output-validator'
 import { buildValidationFallbackComponent } from '@/lib/validation-fallback'
 import { runValidationRetryLoop, buildRepairPrompt } from '@/lib/generation-retry'
 import { checkObedience, buildObediencePrompt } from '@/lib/build/obedience-gate'
@@ -1544,6 +1544,25 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
             // Parse into multi-file output for Sandpack
             const parsedFiles = parseMultiFileOutput(finalContent, message)
             console.log(`📦 Parsed ${Object.keys(parsedFiles).length} files for Sandpack:`, Object.keys(parsedFiles))
+
+            // Real output validation, rule 4 (#384): does every file that USES a
+            // JSX component actually import (or locally define) it? Runs on the
+            // real multi-file payload right before it's persisted — the exact
+            // shape of the real bug (Driftwood's App.tsx used <Card>/<Button>/
+            // <Select> etc. with zero imports, even though card.tsx/button.tsx/
+            // select.tsx all existed elsewhere in this SAME payload). Detection
+            // + visibility only, matching #366's precedent — never blocks or
+            // auto-fixes the response.
+            const fileImportValidation = validateFileImports(parsedFiles)
+            if (!fileImportValidation.passed) {
+              const failedFiles = fileImportValidation.checks.filter((c) => !c.passed)
+              console.warn('[OUTPUT-VALIDATION] Files with unresolved JSX imports:', failedFiles.map((c) => c.name).join(', '))
+              Sentry.captureMessage(`build/chat-ws JSX import validation failed: ${responseId}`, {
+                level: 'warning',
+                tags: { responseId, files: failedFiles.map((c) => c.name).join(',') },
+                extra: { summary: fileImportValidation.summary, failedFiles },
+              })
+            }
 
             // Store in V2 store
             storeFilesV2(responseId, parsedFiles, { usage: tokenUsage })

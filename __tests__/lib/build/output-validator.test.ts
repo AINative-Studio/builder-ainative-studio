@@ -7,6 +7,9 @@ import {
   checkNoSecretLogging,
   checkSingleH1,
   validateOutput,
+  findMissingJsxImports,
+  checkJsxImportsResolved,
+  validateFileImports,
 } from '@/lib/build/output-validator'
 
 /**
@@ -177,5 +180,218 @@ describe('validateOutput (aggregate)', () => {
   it('is a pure function — same input always produces the same result', () => {
     const code = '<h1>Stable</h1>'
     expect(validateOutput(code)).toEqual(validateOutput(code))
+  })
+})
+
+/**
+ * #384 — real, user-reported crash (Driftwood, jason@adamandella.com): JSX
+ * used a component (Card, Button, Select, ...) with no import binding, even
+ * though the component's own file existed elsewhere in the same multi-file
+ * payload. Guaranteed `ReferenceError` at render. Distinct from and unguarded
+ * by both #366's original 3 rules and completeness-gate.ts's
+ * findMissingLocalImports (opposite direction: import STATEMENTS resolving,
+ * not JSX USES being imported).
+ */
+describe('findMissingJsxImports', () => {
+  it('reproduces the exact Driftwood failure shape: JSX uses Card/Button/Select with zero imports', () => {
+    const code = `
+      import AIKitHeader from './components/aikit/AIKitHeader'
+
+      export default function App() {
+        return (
+          <div>
+            <AIKitHeader />
+            <Card>
+              <CardHeader><CardTitle>Settings</CardTitle></CardHeader>
+              <CardContent>
+                <Label>Name</Label>
+                <Input />
+                <Select>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectItem value="a">A</SelectItem></SelectContent>
+                </Select>
+                <Button>Save</Button>
+              </CardContent>
+            </Card>
+          </div>
+        )
+      }
+    `
+    const missing = findMissingJsxImports(code)
+    expect(missing).toEqual(
+      ['Button', 'Card', 'CardContent', 'CardHeader', 'CardTitle', 'Input', 'Label', 'Select', 'SelectContent', 'SelectItem', 'SelectTrigger', 'SelectValue'].sort()
+    )
+    // AIKitHeader IS imported — must never be flagged as missing.
+    expect(missing).not.toContain('AIKitHeader')
+  })
+
+  it('does not flag a component defined locally in the same file (function declaration)', () => {
+    const code = `
+      function Badge() { return <span>New</span> }
+      export default function App() {
+        return <div><Badge /></div>
+      }
+    `
+    expect(findMissingJsxImports(code)).toEqual([])
+  })
+
+  it('does not flag a component defined locally in the same file (const arrow function)', () => {
+    const code = `
+      const Badge = () => <span>New</span>
+      export default function App() {
+        return <div><Badge /></div>
+      }
+    `
+    expect(findMissingJsxImports(code)).toEqual([])
+  })
+
+  it('does not flag an aliased named import', () => {
+    const code = `
+      import { Button as PrimaryButton } from './components/ui/button'
+      export default function App() {
+        return <div><PrimaryButton /></div>
+      }
+    `
+    expect(findMissingJsxImports(code)).toEqual([])
+  })
+
+  it('does not flag a default + named import on one line', () => {
+    const code = `
+      import App, { Header } from './App'
+      export default function Root() {
+        return <App><Header /></App>
+      }
+    `
+    expect(findMissingJsxImports(code)).toEqual([])
+  })
+
+  it('does not flag a multi-line named import clause', () => {
+    const code = `
+      import {
+        Card,
+        CardHeader,
+        CardContent,
+      } from './components/ui/card'
+      export default function App() {
+        return <Card><CardHeader /><CardContent /></Card>
+      }
+    `
+    expect(findMissingJsxImports(code)).toEqual([])
+  })
+
+  it('checks only the base identifier for namespaced JSX (<Foo.Bar>) — Bar is a property access, not a binding', () => {
+    const code = `
+      import * as Icons from './icons'
+      export default function App() {
+        return <div><Icons.Star /></div>
+      }
+    `
+    expect(findMissingJsxImports(code)).toEqual([])
+  })
+
+  it('still flags a namespaced JSX base identifier that truly has no binding', () => {
+    const code = `
+      export default function App() {
+        return <div><Icons.Star /></div>
+      }
+    `
+    expect(findMissingJsxImports(code)).toEqual(['Icons'])
+  })
+
+  it('never flags lowercase tags (real DOM elements)', () => {
+    const code = `export default function App() { return <div><span>hi</span></div> }`
+    expect(findMissingJsxImports(code)).toEqual([])
+  })
+
+  it('never flags React.Fragment / bare <Fragment>', () => {
+    const code = `
+      import { Fragment } from 'react'
+      export default function App() {
+        return <Fragment><div>a</div></Fragment>
+      }
+    `
+    expect(findMissingJsxImports(code)).toEqual([])
+  })
+
+  it('does not flag an import type clause as a value binding (erased at runtime) but also does not falsely flag real usage', () => {
+    const code = `
+      import type { CardProps } from './types'
+      import { Card } from './components/ui/card'
+      export default function App() {
+        return <Card />
+      }
+    `
+    expect(findMissingJsxImports(code)).toEqual([])
+  })
+
+  it('returns empty for code with no JSX at all', () => {
+    expect(findMissingJsxImports('const x = 1')).toEqual([])
+  })
+})
+
+describe('checkJsxImportsResolved', () => {
+  it('passes when every used component is imported', () => {
+    const code = `import { Button } from './button'; export default () => <Button />`
+    const result = checkJsxImportsResolved(code)
+    expect(result.passed).toBe(true)
+    expect(result.name).toBe('jsx-imports-resolved')
+  })
+
+  it('fails with reason and details on the Driftwood shape', () => {
+    const code = `export default () => <Card><Button /></Card>`
+    const result = checkJsxImportsResolved(code)
+    expect(result.passed).toBe(false)
+    expect(result.reason).toMatch(/2 JSX component/)
+    expect(result.details).toEqual(['Button', 'Card'])
+  })
+})
+
+describe('validateFileImports (multi-file aggregate)', () => {
+  it('reproduces Driftwood exactly: App.tsx missing imports, ui files themselves are fine, ignores non-code files', () => {
+    const files: Record<string, string> = {
+      '/src/App.tsx': `
+        import AIKitHeader from './components/aikit/AIKitHeader'
+        export default function App() {
+          return <div><AIKitHeader /><Card><Button>Save</Button></Card></div>
+        }
+      `,
+      '/src/components/ui/card.tsx': `export function Card({ children }: any) { return <div>{children}</div> }`,
+      '/src/components/ui/button.tsx': `export function Button({ children }: any) { return <button>{children}</button> }`,
+      '/public/robots.txt': `User-agent: *`,
+    }
+    const result = validateFileImports(files)
+    expect(result.passed).toBe(false)
+    expect(result.checks).toHaveLength(3) // App.tsx + card.tsx + button.tsx — robots.txt excluded
+    const appCheck = result.checks.find((c) => c.name === '/src/App.tsx')
+    expect(appCheck?.passed).toBe(false)
+    expect(appCheck?.details).toEqual(['Button', 'Card'])
+    // card.tsx and button.tsx each define their own component — both pass on their own.
+    expect(result.checks.find((c) => c.name === '/src/components/ui/card.tsx')?.passed).toBe(true)
+    expect(result.checks.find((c) => c.name === '/src/components/ui/button.tsx')?.passed).toBe(true)
+    expect(result.summary).toMatch(/1\/3 file\(s\)/)
+  })
+
+  it('passes a fully-compliant multi-file payload', () => {
+    const files: Record<string, string> = {
+      '/src/App.tsx': `
+        import { Card } from './components/ui/card'
+        export default function App() { return <Card /> }
+      `,
+      '/src/components/ui/card.tsx': `export function Card() { return <div /> }`,
+    }
+    const result = validateFileImports(files)
+    expect(result.passed).toBe(true)
+    expect(result.summary).toMatch(/All 2 file\(s\)/)
+  })
+
+  it('never fabricates a result — an empty files map passes trivially with zero checks', () => {
+    const result = validateFileImports({})
+    expect(result.passed).toBe(true)
+    expect(result.checks).toEqual([])
+  })
+
+  it('is a pure function — same input always produces the same result', () => {
+    const files = { '/src/App.tsx': `export default () => <Card />` }
+    expect(validateFileImports(files)).toEqual(validateFileImports(files))
   })
 })
