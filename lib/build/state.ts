@@ -320,7 +320,13 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
     case 'MVP_DONE':
       return { ...state, builtMVP: true, building: false }
     case 'COMPANY_DONE':
-      return { ...state, builtCompany: true, building: false, screen: 'live' }
+      // #398: land the founder at the TOP of the artifacts list (thesis) when
+      // they enter the persistent workspace, not wherever autoplay's live
+      // walk-through left `view` (plan30 — the last-generated artifact, by
+      // design, while generation is actually running). Once generation is
+      // done, the founder is free to browse; starting at the first artifact
+      // reads as more intuitive than starting at the last.
+      return { ...state, builtCompany: true, building: false, screen: 'live', view: trackViews(state.track)[0] as ArtifactView }
     case 'PICK_PLAN':
       return { ...state, plan: action.plan }
     case 'SET_PROPAGATING':
