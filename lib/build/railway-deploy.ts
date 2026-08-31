@@ -26,6 +26,16 @@
  * railwayServiceId on the company BEFORE calling ensureCompanyService() and skip if
  * present, so re-running verify for an already-deployed company never creates a second
  * (billable) service. See deployPersistent() in deploy.ts.
+ *
+ * SUPERSEDED FOR THE REAL PER-COMPANY CASE (#381): ensureCompanyService() below
+ * assumes one SHARED source (RAILWAY_COMPANY_SOURCE_IMAGE/_REPO) serves every
+ * company — the wrong shape once each company deploys its OWN generated code
+ * from its OWN Gitea repo. That real path is `deployCompanyFromGitea()` in
+ * ./company-deploy.ts (railway CLI `add`+`up` from a per-company scaffolded
+ * FileMap, verified end-to-end this session), not this module's GraphQL
+ * serviceCreate. Kept here, unmodified, in case a genuinely shared-image
+ * deploy is ever wanted as a separate, smaller feature — see #381's issue
+ * comments for why the two are NOT the same problem.
  */
 
 const RAILWAY_API_URL =
