@@ -84,6 +84,12 @@ export interface AppEntry {
   // the company. Absent/false = still simulated.
   commerceProvisioned?: boolean
   commerceStoreId?: string
+  // OpenCapStack (cap table primitive) provisioning (#427, child of #414/#422).
+  // Unlike ZeroPipeline/ZeroCommerce, auth is a dedicated service account (no
+  // AINative-federated auth on OpenCapStack's side) — true once a real company
+  // record was created there. Absent/false = still simulated.
+  capstackProvisioned?: boolean
+  capstackCompanyId?: string
   // The persistent hosting target for the company app (#243). Today this is the
   // durable preview URL; the deploy seam swaps in a real Railway/*.ainative.studio host.
   deployUrl?: string
@@ -375,6 +381,8 @@ export async function setAppProvisioned(
     pipelineId?: string
     commerceProvisioned?: boolean
     commerceStoreId?: string
+    capstackProvisioned?: boolean
+    capstackCompanyId?: string
     workspaceId?: string
     workspaceFiled?: boolean
     railwayServiceId?: string

@@ -37,6 +37,7 @@ import {
 } from '@/lib/build/instant-db'
 import { provisionPipeline } from '@/lib/build/zeropipeline'
 import { provisionStore } from '@/lib/build/zerocommerce'
+import { provisionCapTable } from '@/lib/build/opencapstack'
 import { provisionZeroDbViaMcp, isMcpProvisionEnabled } from '@/lib/build/mcp-provision'
 import { provisionCompanyRepo } from '@/lib/git/company-repo'
 import { resolveStoredApp } from '@/lib/build/ready-gate'
@@ -179,6 +180,18 @@ export async function POST(request: NextRequest) {
     commerce = { provisioned: zc.ok, storeId: zc.storeId, reason: zc.ok ? undefined : zc.reason }
   }
 
+  // #427 (child of #414/#422): also provision the company's REAL OpenCapStack
+  // cap table. Unlike ZeroPipeline/ZeroCommerce this doesn't need the founder's
+  // JWT — OpenCapStack has no AINative-federated auth, so it authenticates as
+  // a dedicated builder service account instead (env-configured; provisionCapTable
+  // no-ops honestly if that account isn't configured). Best-effort — a failure
+  // just leaves the cap table card honestly simulated.
+  let capstack: { provisioned: boolean; companyId?: string; reason?: string } = { provisioned: false }
+  {
+    const ocs = await provisionCapTable(String(existing.name || b?.name || slug))
+    capstack = { provisioned: ocs.ok, companyId: ocs.companyId, reason: ocs.ok ? undefined : ocs.reason }
+  }
+
   // #250: file this company's project under the AINative Builder workspace, so all
   // generated companies live under one workspace instead of the Builder key's default
   // "AINative Studio". Instant DB doesn't honor the workspace_id we send on create yet
@@ -222,6 +235,8 @@ export async function POST(request: NextRequest) {
     pipelineId: pipeline.pipelineId,
     commerceProvisioned: commerce.provisioned,
     commerceStoreId: commerce.storeId,
+    capstackProvisioned: capstack.provisioned,
+    capstackCompanyId: capstack.companyId,
     // #250: record the intended Builder workspace + whether the re-parent stuck.
     workspaceId: BUILDER_WORKSPACE_ID,
     workspaceFiled: filed.filed,
@@ -265,6 +280,7 @@ export async function POST(request: NextRequest) {
     created: true,
     pipelineProvisioned: pipeline.provisioned,
     commerceProvisioned: commerce.provisioned,
+    capstackProvisioned: capstack.provisioned,
     gitProvisioned,
     gitRepoUrl: gitResult.gitRepoUrl,
     deployUrl: target.url,
