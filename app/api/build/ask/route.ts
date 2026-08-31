@@ -29,10 +29,11 @@ import { selectPrimitives, catalogPromptBlock } from '@/lib/build/primitive-cata
 import {
   deriveOwnerKey,
   chatScopeKey,
-  loadChat,
+  loadChatWithFallback,
   saveExchange,
   buildMessagesWithHistory,
 } from '@/lib/build/chat-store'
+import { resolveApp } from '@/lib/build/app-registry'
 
 export const runtime = 'nodejs'
 
@@ -65,6 +66,24 @@ async function resolveScopeKey(companyId: string): Promise<string> {
   const session = await auth().catch(() => null)
   const ownerKey = deriveOwnerKey(session as any)
   return chatScopeKey(ownerKey, slug)
+}
+
+/**
+ * Resolve the company's own dedicated ZeroDB project id (#400), when it has
+ * one — real per-company chat ownership instead of the shared platform
+ * project. Best-effort: any resolution failure yields undefined, which makes
+ * every chat-store call below fall back to the shared project (unchanged
+ * pre-#400 behavior) rather than failing the request.
+ */
+export async function resolveCompanyProjectId(companyId: string): Promise<string | undefined> {
+  const slug = String(companyId || '').trim()
+  if (!slug) return undefined
+  try {
+    const entry = await resolveApp(slug)
+    return entry?.zerodbProjectId || undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** Fetch a compact backlog summary for this company to ground Cody's answers.
@@ -113,7 +132,8 @@ export async function POST(request: NextRequest) {
   // Resolve the persistent conversation scope (owner from session + company) and
   // load recent history so Cody has memory of the last few turns (#52).
   const scopeKey = await resolveScopeKey(companyId)
-  const history = scopeKey ? await loadChat(scopeKey).catch(() => []) : []
+  const companyProjectId = await resolveCompanyProjectId(companyId)
+  const history = scopeKey ? await loadChatWithFallback(scopeKey, undefined, companyProjectId).catch(() => []) : []
 
   // Get the actual primitives selected for this company's idea
   const { names: primitiveNames } = selectPrimitives(idea, track)
@@ -182,7 +202,7 @@ export async function POST(request: NextRequest) {
 
   /** Persist the completed exchange (best-effort; never blocks the response). */
   const persist = (answer: string) => {
-    if (scopeKey && answer) void saveExchange(scopeKey, question, answer)
+    if (scopeKey && answer) void saveExchange(scopeKey, question, answer, companyProjectId)
   }
 
   const claude = getClaudeCompletion()
@@ -226,6 +246,7 @@ export async function GET(request: NextRequest) {
   const companyId = String(params.get('chatId') || params.get('companyId') || '').slice(0, 80)
   const scopeKey = await resolveScopeKey(companyId)
   if (!scopeKey) return Response.json({ turns: [] })
-  const turns = await loadChat(scopeKey).catch(() => [])
+  const companyProjectId = await resolveCompanyProjectId(companyId)
+  const turns = await loadChatWithFallback(scopeKey, undefined, companyProjectId).catch(() => [])
   return Response.json({ turns })
 }

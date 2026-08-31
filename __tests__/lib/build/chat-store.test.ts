@@ -6,6 +6,7 @@ import {
   appendChatTurn,
   saveExchange,
   loadChat,
+  loadChatWithFallback,
   DEFAULT_HISTORY_TURNS,
   MAX_LOAD_TURNS,
   type ChatTurn,
@@ -321,5 +322,118 @@ describe('loadChat (#52)', () => {
     const turns = await loadChat('a::b')
     expect(fn).toHaveBeenCalledTimes(1)
     expect(turns).toEqual([])
+  })
+})
+
+// ---------- #400: per-company ZeroDB project ----------
+const SHARED_PROJECT_ID_FALLBACK = '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
+
+describe('appendChatTurn / saveExchange — per-company projectId (#400)', () => {
+  beforeEach(() => { process.env.ZERODB_API_KEY = 'k'; delete process.env.ZERODB_PROJECT_ID })
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+  it('writes to the SHARED project when no projectId is given (unchanged pre-#400 behavior)', async () => {
+    const fn = mockFetch(() => ({ ok: true, json: () => ({ id: 'r1' }) }))
+    await appendChatTurn('a::b', { role: 'user', text: 'hi' })
+    const [url] = fn.mock.calls[0]
+    expect(url).toContain(`/projects/${SHARED_PROJECT_ID_FALLBACK}/database/tables/build_chat/rows`)
+  })
+
+  it('writes to the COMPANY project when a projectId is given', async () => {
+    const fn = mockFetch(() => ({ ok: true, json: () => ({ id: 'r1' }) }))
+    await appendChatTurn('a::b', { role: 'user', text: 'hi' }, 'company-proj-123')
+    const [url] = fn.mock.calls[0]
+    expect(url).toContain('/projects/company-proj-123/database/tables/build_chat/rows')
+  })
+
+  it('treats a blank/whitespace projectId as "no project" — falls back to shared', async () => {
+    const fn = mockFetch(() => ({ ok: true, json: () => ({ id: 'r1' }) }))
+    await appendChatTurn('a::b', { role: 'user', text: 'hi' }, '   ')
+    const [url] = fn.mock.calls[0]
+    expect(url).toContain(`/projects/${SHARED_PROJECT_ID_FALLBACK}/`)
+  })
+
+  it('saveExchange writes BOTH turns to the same company project', async () => {
+    const urls: string[] = []
+    const fn = mockFetch((url) => { urls.push(url); return { ok: true } })
+    await saveExchange('a::b', 'q', 'a', 'company-proj-123')
+    expect(fn).toHaveBeenCalledTimes(2)
+    expect(urls.every((u) => u.includes('/projects/company-proj-123/'))).toBe(true)
+  })
+})
+
+describe('loadChatWithFallback (#400)', () => {
+  beforeEach(() => { process.env.ZERODB_API_KEY = 'k'; delete process.env.ZERODB_PROJECT_ID })
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+  it('is equivalent to loadChat (single shared-project call) when no projectId is given', async () => {
+    const fn = mockFetch(() => ({ ok: true, json: () => ({ data: [] }) }))
+    await loadChatWithFallback('a::b')
+    expect(fn).toHaveBeenCalledTimes(1)
+    expect(fn.mock.calls[0][0]).toContain(`/projects/${SHARED_PROJECT_ID_FALLBACK}/`)
+  })
+
+  it('merges OLD shared-project history with NEW company-project turns, oldest-first', async () => {
+    const fn = vi.fn(async (url: string, init: any) => {
+      const isCompanyProject = url.includes('/projects/company-proj-123/')
+      const data = isCompanyProject
+        ? [{ row_data: { role: 'user', text: 'new-turn', created_at: '2026-02-01T00:00:00Z' } }]
+        : [{ row_data: { role: 'user', text: 'old-turn', created_at: '2026-01-01T00:00:00Z' } }]
+      return { ok: true, status: 200, json: async () => ({ data }), text: async () => '' } as any
+    })
+    vi.stubGlobal('fetch', fn)
+
+    const turns = await loadChatWithFallback('a::b', undefined, 'company-proj-123')
+    expect(turns.map((t) => t.text)).toEqual(['old-turn', 'new-turn'])
+    // Confirms BOTH projects were actually queried — a provisioned company
+    // never silently loses its pre-migration shared-project history.
+    expect(fn).toHaveBeenCalledTimes(2)
+  })
+
+  it('never loses history when the company-project read fails — shared history still returned', async () => {
+    const fn = vi.fn(async (url: string) => {
+      if (url.includes('/projects/company-proj-123/')) throw new Error('company project unreachable')
+      return {
+        ok: true, status: 200,
+        json: async () => ({ data: [{ row_data: { role: 'user', text: 'old-turn', created_at: '1' } }] }),
+        text: async () => '',
+      } as any
+    })
+    vi.stubGlobal('fetch', fn)
+
+    const turns = await loadChatWithFallback('a::b', undefined, 'company-proj-123')
+    expect(turns.map((t) => t.text)).toEqual(['old-turn'])
+  })
+
+  it('falls back to a single shared-project read when projectId happens to equal the shared project id (avoids double-counting)', async () => {
+    const fn = mockFetch(() => ({ ok: true, json: () => ({ data: [] }) }))
+    await loadChatWithFallback('a::b', undefined, SHARED_PROJECT_ID_FALLBACK)
+    expect(fn).toHaveBeenCalledTimes(1)
+  })
+
+  it('respects the limit cap across the merged result', async () => {
+    const fn = vi.fn(async (url: string) => {
+      const isCompanyProject = url.includes('/projects/company-proj-123/')
+      const data = isCompanyProject
+        ? [
+            { row_data: { role: 'user', text: 'new1', created_at: '2026-02-01T00:00:01Z' } },
+            { row_data: { role: 'user', text: 'new2', created_at: '2026-02-01T00:00:02Z' } },
+          ]
+        : [
+            { row_data: { role: 'user', text: 'old1', created_at: '2026-01-01T00:00:01Z' } },
+            { row_data: { role: 'user', text: 'old2', created_at: '2026-01-01T00:00:02Z' } },
+          ]
+      return { ok: true, status: 200, json: async () => ({ data }), text: async () => '' } as any
+    })
+    vi.stubGlobal('fetch', fn)
+
+    const turns = await loadChatWithFallback('a::b', 2, 'company-proj-123')
+    expect(turns.map((t) => t.text)).toEqual(['new1', 'new2'])
+  })
+
+  it('returns [] for a blank scope key without calling fetch', async () => {
+    const fn = mockFetch(() => ({ ok: true }))
+    expect(await loadChatWithFallback('', undefined, 'company-proj-123')).toEqual([])
+    expect(fn).not.toHaveBeenCalled()
   })
 })
