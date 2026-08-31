@@ -181,14 +181,30 @@ export function buildBrandPrompt(mediaKind: MediaKind, brand: BrandContext): str
 /**
  * Shape the request body for the core Multimodal generation endpoint from a media
  * kind + prompt. Pure — no network — so the request contract is unit-testable.
+ *
+ * #403: the bare `/api/v1/multimodal/video` path this used to send never
+ * existed on core — confirmed via direct read of core's real FastAPI router
+ * (app/api/api_v1/endpoints/multimodal.py), which only registers
+ * `/video/i2v`, `/video/t2v`, `/video/cogvideox`. Every video-generation call
+ * has 404'd against core since #54 shipped (silently — the caller already
+ * treats a failed generation as an honest 'failed' state, never a crash,
+ * which is why this went unnoticed). Builder only ever sends a text prompt
+ * (no source image), matching `/video/t2v` (text-to-video) — never
+ * `/video/i2v` (needs a source image) or `/video/cogvideox`. Core's real
+ * VideoT2VRequest schema is `{prompt, duration}` (schemas/multimodal.py:101),
+ * not `{prompt, kind}` — `duration` defaults to 5s server-side if omitted.
+ *
+ * Note: core's real response for a video job is ASYNC (status:'processing' +
+ * task_id, not an immediate video_url) — the polling gap this implies is
+ * tracked separately as #404, out of scope for this routing fix.
  */
 export function buildGenerationRequest(mediaKind: MediaKind, prompt: string): {
   path: string
   body: Record<string, unknown>
 } {
   return {
-    path: mediaKind === 'video' ? '/api/v1/multimodal/video' : '/api/v1/multimodal/image',
-    body: { prompt, kind: mediaKind },
+    path: mediaKind === 'video' ? '/api/v1/multimodal/video/t2v' : '/api/v1/multimodal/image',
+    body: mediaKind === 'video' ? { prompt } : { prompt, kind: mediaKind },
   }
 }
 
