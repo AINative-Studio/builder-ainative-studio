@@ -20,6 +20,7 @@
 import { useBuild } from '@/contexts/build-context'
 import { SHARED_LATE_VIEWS } from '@/lib/build/state'
 import { collectPrior, serializeArtifact, applyEdit } from '@/lib/build/artifact-edit'
+import { CompanyNameEdit } from '@/components/build/CompanyNameEdit'
 import { useState, type ReactNode } from 'react'
 
 /** Stable artifact IDs per 04-SCREENS (PB-01, PRD-01, …). */
@@ -155,6 +156,22 @@ export function ArtifactFrame({
         {artifactId && <span className="m-artifact-id m-mono">{artifactId}</span>}
       </div>
       <h1 className="m-artifact m-artifact-h1">{title}</h1>
+      {/* #396: editable company name, Company-track only (App-track has no
+          wedge/naming concept — APP_VIEWS never includes 'wedge'). Rendered
+          on every Company-track artifact from thesis onward — the wedge
+          interrupt itself is a full-bleed takeover with no frame chrome, so
+          it can't render DURING wedge, but this satisfies "before that
+          step" (thesis) and "after" (businessModel onward). Regenerate is
+          plan30-only per the issue's exact ask. */}
+      {state.track === 'company' && !isLate && (
+        <CompanyNameEdit
+          companyName={state.companyName}
+          idea={state.idea}
+          track={state.track}
+          showRegenerate={view === 'plan30'}
+          onChange={(name) => dispatch({ type: 'SET_COMPANY_NAME', companyName: name })}
+        />
+      )}
       {(meta || hasGen) && (
         <div className="m-artifact-meta-row">
           {meta && <p className="m-artifact-meta m-mono">{meta}</p>}
