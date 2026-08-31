@@ -31,7 +31,8 @@ import {
 import { markConverted } from '@/lib/build/learning'
 import { reportConversion, gclidFromRequest } from '@/lib/build/conversions'
 import { reportMetaConversion, fbcFromRequest, fbpFromRequest } from '@/lib/build/meta-capi'
-import { deployRailwayService, railwayDeployEnabled } from '@/lib/build/deploy'
+import { deployCompanyFromGitea, companyDeployEnabled } from '@/lib/build/company-deploy'
+import { BUILDER_WORKSPACE_ID } from '@/lib/build/instant-db'
 import { deriveOwnerKey } from '@/lib/build/chat-store'
 import { creditReferrerOnSubscribe } from '@/lib/build/referral'
 
@@ -120,38 +121,38 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // #243: provision the company's DEDICATED per-company Railway service (its own
-    // real backend/host, custom-domain-bindable via #240). THIS IS THE PAID-ONLY
-    // TRIGGER — we are past the `paid && plan` gate above, so this branch is only
-    // ever reached for a VERIFIED PAID subscription, never a free/anonymous build.
+    // #243/#389: provision the company's DEDICATED per-company Railway service,
+    // deployed from the company's OWN Gitea repo content (#381's real mechanism —
+    // `railway add` + `railway up`, NOT the old shared-image GraphQL flow, which
+    // never worked for any real company: confirmed this session 0/67 companies in
+    // the registry ever got a railwayServiceId, since RAILWAY_COMPANY_SOURCE_IMAGE/
+    // _REPO were never configured). THIS IS THE PAID-ONLY TRIGGER — we are past the
+    // `paid && plan` gate above, so this branch is only ever reached for a VERIFIED
+    // PAID subscription, never a free/anonymous build.
     //
     // Cost-safe + idempotent:
-    //  - Inert unless RAILWAY_DEPLOY_ENABLED (+ token + source) is configured
-    //    (railwayDeployEnabled()); otherwise deployRailwayService() returns 'skipped'
-    //    with no Railway API call.
-    //  - We read the registry FIRST and pass any persisted railwayServiceId, so a
-    //    re-run of verify for an already-deployed company returns 'existing' WITHOUT
-    //    creating a second billable service.
+    //  - Inert unless RAILWAY_DEPLOY_ENABLED is set (companyDeployEnabled()) — no
+    //    Railway CLI call at all otherwise.
+    //  - We read the registry FIRST and pass alreadyProvisioned = true when a
+    //    railwayServiceId is already persisted, so a re-run of verify for an
+    //    already-deployed company skips `railway add` and goes straight to
+    //    `railway up` (a redeploy of current content, never a second billable
+    //    service — mirrors deployCompanyApp()'s own idempotency contract).
+    //  - A company with no Gitea repo yet is a normal, expected state
+    //    (deployCompanyFromGitea returns {ok:false, reason:'no_repo'}), not an error.
     // Best-effort: a deploy failure must never fail checkout confirmation.
     let deployed: boolean | undefined
-    if (slug && railwayDeployEnabled()) {
+    if (slug && companyDeployEnabled()) {
       try {
         const entry = await resolveApp(slug).catch(() => null)
         if (entry?.chatId) {
-          const dep = await deployRailwayService({
-            slug,
-            zerodbProjectId: entry.zerodbProjectId,
-            existingServiceId: entry.railwayServiceId,
-            existingUrl: entry.deployUrl,
-          })
-          if (dep.status === 'created' && dep.serviceId) {
+          const alreadyProvisioned = Boolean(entry.railwayServiceId)
+          const dep = await deployCompanyFromGitea(entry.workspaceId || BUILDER_WORKSPACE_ID, slug, alreadyProvisioned)
+          if (dep.ok && dep.serviceName) {
             await setAppRailwayService(slug, {
-              railwayServiceId: dep.serviceId,
+              railwayServiceId: dep.serviceName,
               deployUrl: dep.url,
-              domain: dep.domain,
             }).catch(() => {})
-            deployed = true
-          } else if (dep.status === 'existing') {
             deployed = true
           }
         }
