@@ -150,7 +150,11 @@ describe('primitive-catalog additions (#410)', () => {
     // /api/v1/build, not the generic /api/v1 most AINative services use.
     expect(getPrimitive('AgentFlow')?.apiBase).toBe('https://agentflow.ainative.studio/api/v1/build')
     expect(getPrimitive('QNN API')?.apiBase).toBe('https://qnn.ainative.studio/api/v1')
-    expect(getPrimitive('SpaceTime OS')?.apiBase).toBe('https://oceanapi.ainative.studio/api/v1')
+    // #425: the original "SpaceTime OS" entry actually pointed at Ocean (an
+    // unrelated knowledge-base primitive) — split into two correctly-identified
+    // entries. Real SpaceTime OS / Sentinel OS is its own service.
+    expect(getPrimitive('Ocean')?.apiBase).toBe('https://oceanapi.ainative.studio/api/v1')
+    expect(getPrimitive('SpaceTime OS')?.apiBase).toBe('https://sentinel-os-api-production.up.railway.app/api/v1')
   })
 
   it('ZeroCRM is distinct from ZeroPipeline, not a duplicate/rename', () => {
@@ -162,7 +166,7 @@ describe('primitive-catalog additions (#410)', () => {
 
   it('none of the 7 additions collide with an existing catalog name', () => {
     const names = CATALOG.map((p) => p.name)
-    const added = ['ZeroCRM', 'ZeroERP', 'ZeroForms', 'ZeroBooks', 'AgentFlow', 'QNN API', 'SpaceTime OS']
+    const added = ['ZeroCRM', 'ZeroERP', 'ZeroForms', 'ZeroBooks', 'AgentFlow', 'QNN API', 'SpaceTime OS', 'Ocean']
     for (const name of added) {
       expect(names.filter((n) => n === name)).toHaveLength(1)
     }
