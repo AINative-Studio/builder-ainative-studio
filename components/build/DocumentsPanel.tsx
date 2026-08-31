@@ -27,9 +27,10 @@
  * #55 Tasks, #62 Versions or #65 masthead sections.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { DOCUMENT_UPLOAD_ACCEPT_ATTR } from '@/lib/build/document-upload'
 
 /** A library entry as returned by /api/build/documents (mirrors DocumentSummary). */
 interface DocumentSummary {
@@ -106,6 +107,12 @@ export function DocumentsPanel({
   // Pitch-deck export (#69) — a PAID deliverable generated from the company's artifacts.
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
+  // Document upload (#399) — a founder drops a real reference file (PDF/TXT/MD/
+  // DOC/DOCX/CSV) into the workspace; Cody's own chat responses reference this
+  // being possible, but no upload path existed until now.
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const load = useCallback(() => {
     let alive = true
@@ -161,6 +168,29 @@ export function DocumentsPanel({
       setGenError('Connection hiccup — try generating again.')
     } finally {
       setGenerating(null)
+    }
+  }
+
+  // Upload a reference document (#399) — POST the real file bytes, then refresh
+  // the library so the upload appears next to Cody's generated docs.
+  const uploadDocument = async (file: File) => {
+    setUploadError(null)
+    setUploading(true)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      form.append('companyId', companyId)
+      const res = await fetch('/api/build/documents/upload', { method: 'POST', body: form })
+      const d = await res.json().catch(() => null)
+      if (!res.ok) {
+        setUploadError(d?.message || d?.error || 'Could not upload that file.')
+        return
+      }
+      load()
+    } catch {
+      setUploadError('Connection hiccup — try uploading again.')
+    } finally {
+      setUploading(false)
     }
   }
 
@@ -259,6 +289,35 @@ export function DocumentsPanel({
       </div>
       {exportError && (
         <p className="m-mono m-ver-status is-error" data-testid="deck-export-error">{exportError}</p>
+      )}
+
+      {/* Upload a reference document (#399) — the real capability behind Cody's
+          own chat references to dropping docs into the workspace. */}
+      <div className="m-infra-btns" data-testid="document-upload">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={DOCUMENT_UPLOAD_ACCEPT_ATTR}
+          style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0,0,0,0)', border: 0 }}
+          data-testid="document-upload-input"
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            e.target.value = ''
+            if (file) void uploadDocument(file)
+          }}
+        />
+        <button
+          className="btn-secondary"
+          data-testid="document-upload-btn"
+          disabled={uploading}
+          aria-label="Upload a reference document"
+          onClick={() => fileInputRef.current?.click()}
+        >
+          {uploading ? 'Uploading…' : 'Upload a document'}
+        </button>
+      </div>
+      {uploadError && (
+        <p className="m-mono m-ver-status is-error" data-testid="document-upload-error">{uploadError}</p>
       )}
 
       {/* Documents vs Reports tabs (#64 req 2). */}
