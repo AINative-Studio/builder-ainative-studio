@@ -135,3 +135,46 @@ describe('primitive-catalog codegen composition (#218)', () => {
     expect(block).toMatch(/Do NOT tell the user to sign up/i)
   })
 })
+
+// #410 — 7 confirmed-real AINative primitives previously missing from the
+// catalog entirely (ZeroCRM, ZeroERP, ZeroForms, ZeroBooks, AgentFlow, QNN
+// API, SpaceTime OS). Real apiBase for each verified against the live service
+// (see #410's issue comments for the verification trail) — not guessed.
+describe('primitive-catalog additions (#410)', () => {
+  it('registers all 7 previously-missing primitives with real apiBase values', () => {
+    expect(getPrimitive('ZeroCRM')?.apiBase).toBe('https://zerocrm-production.up.railway.app/api/v1')
+    expect(getPrimitive('ZeroERP')?.apiBase).toBe('https://zeroerp-production.up.railway.app/api/v1')
+    expect(getPrimitive('ZeroForms')?.apiBase).toBe('https://zeroforms-production.up.railway.app/api/v1')
+    expect(getPrimitive('ZeroBooks')?.apiBase).toBe('https://zerobooks-production.up.railway.app/api/v1')
+    // AgentFlow's real prefix (confirmed via its own live openapi.json) is
+    // /api/v1/build, not the generic /api/v1 most AINative services use.
+    expect(getPrimitive('AgentFlow')?.apiBase).toBe('https://agentflow.ainative.studio/api/v1/build')
+    expect(getPrimitive('QNN API')?.apiBase).toBe('https://qnn.ainative.studio/api/v1')
+    expect(getPrimitive('SpaceTime OS')?.apiBase).toBe('https://oceanapi.ainative.studio/api/v1')
+  })
+
+  it('ZeroCRM is distinct from ZeroPipeline, not a duplicate/rename', () => {
+    const crm = getPrimitive('ZeroCRM')
+    const pipeline = getPrimitive('ZeroPipeline')
+    expect(crm?.apiBase).not.toBe(pipeline?.apiBase)
+    expect(crm?.purpose).not.toBe(pipeline?.purpose)
+  })
+
+  it('none of the 7 additions collide with an existing catalog name', () => {
+    const names = CATALOG.map((p) => p.name)
+    const added = ['ZeroCRM', 'ZeroERP', 'ZeroForms', 'ZeroBooks', 'AgentFlow', 'QNN API', 'SpaceTime OS']
+    for (const name of added) {
+      expect(names.filter((n) => n === name)).toHaveLength(1)
+    }
+  })
+
+  it('a forms/survey idea composition surfaces ZeroForms', () => {
+    const sel = selectPrimitives('a customer intake survey with webhook notifications', 'app')
+    expect(sel.names).toContain('ZeroForms')
+  })
+
+  it('a bookkeeping idea composition surfaces ZeroBooks', () => {
+    const sel = selectPrimitives('an app that tracks expenses and chart of accounts', 'company')
+    expect(sel.names).toContain('ZeroBooks')
+  })
+})
