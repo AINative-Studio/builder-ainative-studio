@@ -199,14 +199,31 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     url: `${DOCS}/moonshots/qnn-api`,
     apiBase: 'https://qnn.ainative.studio/api/v1',
     triggers: ['quantum', 'quantum computing', 'quantum neural network', 'qnn', 'quantum machine learning'] },
-  { name: 'SpaceTime OS', category: 'data-memory',
-    // Real live service is branded "Ocean API — Knowledge & Action Workspace"
-    // (confirmed via its own openapi.json) — blocks/links/pages semantic content
-    // organization, not literally spacetime/physics-related despite the name.
+  { name: 'Ocean', category: 'data-memory',
+    // Confirmed via its own openapi.json (45 real endpoints: blocks/pages/tags/
+    // semantic search) — this is the real "oceanapi.ainative.studio" service
+    // (Railway: ocean-backend, repo AINative-Studio/ocean-backend). Previously
+    // mislabeled "SpaceTime OS" in this catalog (#425) — unrelated to the real
+    // SpaceTime OS / Sentinel OS primitive below.
     purpose: 'Knowledge & action workspace: blocks, links, pages, semantic content organization',
-    url: `${DOCS}/data-memory/spacetime-os`,
+    url: `${DOCS}/data-memory/ocean`,
     apiBase: 'https://oceanapi.ainative.studio/api/v1',
     triggers: ['knowledge base', 'wiki', 'notes', 'notion-like', 'blocks', 'linked notes', 'knowledge management', 'second brain'] },
+  { name: 'SpaceTime OS', category: 'business-ops',
+    // Real service: Railway `sentinel-os-api` (repo AINative-Studio/spacetime-os),
+    // live at sentinel-os-api-production.up.railway.app / api.usesentinel.io —
+    // confirmed via its own openapi.json. Publicly branded "SpaceTime OS" (repo
+    // root ships SpaceTime_OS_Whitepaper_2026.pdf, "Built by SpaceTime
+    // Industries"); the codebase's internal name is "Sentinel OS". A
+    // vertical-specific critical-infrastructure platform (cable infrastructure /
+    // port security) — its POST /api/v1/tenants requires a SUPER_ADMIN role, not
+    // a founder-JWT-reusable self-serve flow like most other primitives here, so
+    // deliberately NOT `foundational` — surfaced to Cody only for a
+    // security/infrastructure-vertical idea, never auto-provisioned (#422).
+    purpose: 'Critical-infrastructure protection & response orchestration (cable infrastructure, port security)',
+    url: `${DOCS}/business-ops/spacetime-os`,
+    apiBase: 'https://sentinel-os-api-production.up.railway.app/api/v1',
+    triggers: ['critical infrastructure', 'infrastructure protection', 'cable infrastructure', 'port security', 'sensor network', 'threat detection', 'security orchestration'] },
   { name: 'OpenCapStack', category: 'business-ops',
     purpose: 'Cap table + equity (OCTA): stakeholders, SAFEs, grants, vesting, waterfall, investor portals',
     url: `${DOCS}/opencapstack/overview`,
