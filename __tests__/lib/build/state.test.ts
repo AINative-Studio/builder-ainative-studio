@@ -317,6 +317,18 @@ describe('buildReducer — MVP_DONE / COMPANY_DONE', () => {
     expect(s.building).toBe(false)
     expect(s.screen).toBe('live')
   })
+
+  // #398: autoplay's live walk-through leaves `view` on the LAST artifact
+  // (plan30) once generation finishes — COMPANY_DONE must reset it to the
+  // FIRST artifact (thesis) so re-entering the workspace lands the founder
+  // at the top of the artifacts list, not the bottom.
+  it('COMPANY_DONE resets view to the first company-track artifact (thesis), regardless of where autoplay left it', () => {
+    const s = buildReducer(
+      { ...initialBuildState, track: 'company', building: true, view: 'plan30' },
+      { type: 'COMPANY_DONE' },
+    )
+    expect(s.view).toBe('thesis')
+  })
 })
 
 describe('buildReducer — PICK_PLAN', () => {
