@@ -118,7 +118,11 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
   { name: 'ZeroMemory', category: 'data-memory', foundational: true,
     purpose: 'Cognitive memory (working/episodic/semantic), consolidation, decision traces, RDF/SPARQL KG',
     url: `${DOCS}/zeromemory/overview`,
-    apiBase: 'https://api.ainative.studio/api/v1',
+    // Real REST mount confirmed live (#416): POST /remember, /recall etc. under
+    // /api/v1/public/memory/v2 (core: app/api/routers/public.py → zeromemory.py).
+    // Uses the SAME ZeroDB project API key provisionInstantDb() already creates —
+    // no separate provisioning needed.
+    apiBase: 'https://api.ainative.studio/api/v1/public/memory/v2',
     // Memory MCP (18 tools) — docs/AINATIVE_PRIMITIVES.md §6.
     mcpUrl: `${MCP_BASE}/memory`,
     mcpTools: 18,
