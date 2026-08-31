@@ -32,11 +32,19 @@ function fakeChild(opts: { stdout?: string; stderr?: string; exitCode?: number |
   return child
 }
 
-const h = vi.hoisted(() => ({ spawn: vi.fn() }))
+const h = vi.hoisted(() => ({ spawn: vi.fn(), ensureRailwayCli: vi.fn() }))
 vi.mock('child_process', () => ({ spawn: h.spawn }))
+// #380 — deployCompanyApp resolves the railway CLI binary path before any
+// spawn() call. Mocked here so every existing spawn-call-count/shape
+// assertion in this file stays valid (it only cares about the `railway
+// add`/`up`/`domain` calls, not the CLI-install step, which has its own
+// dedicated tests in railway-cli-install.test.ts).
+vi.mock('@/lib/build/railway-cli-install', () => ({ ensureRailwayCli: h.ensureRailwayCli }))
 
 beforeEach(() => {
   h.spawn.mockReset()
+  h.ensureRailwayCli.mockReset()
+  h.ensureRailwayCli.mockResolvedValue({ ok: true, binaryPath: '/tmp/railway-cli/railway' })
   vi.stubEnv('RAILWAY_DEPLOY_ENABLED', 'true')
 })
 
@@ -149,5 +157,17 @@ describe('deployCompanyApp — full orchestration with spawn mocked', () => {
     const result = await deployCompanyApp('acme', { 'src/App.tsx': 'x' })
 
     expect(result.ok).toBe(false)
+  })
+
+  it('when the lazy railway CLI install itself fails, deployCompanyApp fails honestly WITHOUT spawning anything', async () => {
+    const { deployCompanyApp } = await import('@/lib/build/company-deploy')
+    h.ensureRailwayCli.mockResolvedValue({ ok: false, reason: 'download/extract error: network timeout' })
+
+    const result = await deployCompanyApp('acme', { 'src/App.tsx': 'x' })
+
+    expect(result.ok).toBe(false)
+    expect(result.reason).toMatch(/railway CLI unavailable/)
+    expect(result.reason).toMatch(/network timeout/)
+    expect(h.spawn).not.toHaveBeenCalled()
   })
 })

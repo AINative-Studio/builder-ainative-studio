@@ -28,6 +28,7 @@ import { writeFileMapToTemp, type FileMap } from './coverage-runner'
 import { generateCompanyScaffold, hasDeployableEntrypoint } from './company-scaffold'
 import { serviceNameForSlug } from './railway-deploy'
 import { fetchRepoFiles, orgNameForWorkspace } from '@/lib/git/gitea-client'
+import { ensureRailwayCli } from './railway-cli-install'
 
 export interface CompanyDeployResult {
   ok: boolean
@@ -53,12 +54,13 @@ export function companyDeployEnabled(): boolean {
 }
 
 function runCli(
+  binaryPath: string,
   args: string[],
   cwd: string | undefined,
   timeoutMs: number,
 ): Promise<{ exitCode: number | null; timedOut: boolean; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const child = spawn('railway', args, { cwd, shell: false })
+    const child = spawn(binaryPath, args, { cwd, shell: false })
     let stdout = ''
     let stderr = ''
     let timedOut = false
@@ -103,8 +105,8 @@ export function parseLastJsonLine(stdout: string): Record<string, unknown> | nul
  * getting one is always this SEPARATE `railway domain` call. Best-effort:
  * a domain-mint failure must not fail an otherwise-successful deploy.
  */
-async function ensureServiceDomain(serviceName: string): Promise<string | undefined> {
-  const result = await runCli(['domain', '--service', serviceName, '--json'], undefined, 30_000)
+async function ensureServiceDomain(binaryPath: string, serviceName: string): Promise<string | undefined> {
+  const result = await runCli(binaryPath, ['domain', '--service', serviceName, '--json'], undefined, 30_000)
   if (result.exitCode !== 0) return undefined
   const parsed = parseLastJsonLine(result.stdout)
   const domain = parsed?.domain
@@ -120,10 +122,10 @@ async function ensureServiceDomain(serviceName: string): Promise<string | undefi
  * trusts, mirroring ensureCompanyService()'s existing idempotency contract
  * in railway-deploy.ts.
  */
-async function ensureEmptyService(slug: string, alreadyProvisioned: boolean): Promise<{ ok: boolean; reason?: string }> {
+async function ensureEmptyService(binaryPath: string, slug: string, alreadyProvisioned: boolean): Promise<{ ok: boolean; reason?: string }> {
   if (alreadyProvisioned) return { ok: true }
   const name = serviceNameForSlug(slug)
-  const result = await runCli(['add', '--service', name, '--variables', `COMPANY_SLUG=${slug}`, '--json'], undefined, 60_000)
+  const result = await runCli(binaryPath, ['add', '--service', name, '--variables', `COMPANY_SLUG=${slug}`, '--json'], undefined, 60_000)
   if (result.exitCode !== 0) {
     return { ok: false, reason: result.timedOut ? 'railway add timed out' : `railway add failed: ${result.stderr.slice(0, 300)}` }
   }
@@ -164,8 +166,17 @@ export async function deployCompanyApp(
     return { ok: false, reason: 'no_app_entrypoint' }
   }
 
+  // The deployed container has no `railway` binary on PATH (confirmed via
+  // SSH this session) — resolve/lazily-install it before any CLI call.
+  // Cost-safety note: this only ever runs once companyDeployEnabled() is
+  // true, so it never fires in a normal, unconfigured deployment.
+  const cli = await ensureRailwayCli()
+  if (!cli.ok || !cli.binaryPath) {
+    return { ok: false, reason: `railway CLI unavailable: ${cli.reason}` }
+  }
+
   const serviceName = serviceNameForSlug(safeSlug)
-  const ensured = await ensureEmptyService(safeSlug, alreadyProvisioned)
+  const ensured = await ensureEmptyService(cli.binaryPath, safeSlug, alreadyProvisioned)
   if (!ensured.ok) return { ok: false, reason: ensured.reason }
 
   const scaffolded = generateCompanyScaffold(files)
@@ -175,6 +186,7 @@ export async function deployCompanyApp(
     dir = await writeFileMapToTemp(scaffolded)
 
     const up = await runCli(
+      cli.binaryPath,
       ['up', dir, '--service', serviceName, '--detach', '--json'],
       undefined,
       DEPLOY_TIMEOUT_MS,
@@ -196,7 +208,7 @@ export async function deployCompanyApp(
     return {
       ok: true,
       serviceName,
-      url: await ensureServiceDomain(serviceName),
+      url: await ensureServiceDomain(cli.binaryPath, serviceName),
     }
   } finally {
     if (dir) {
