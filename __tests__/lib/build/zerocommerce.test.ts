@@ -1,0 +1,174 @@
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { provisionStore } from '@/lib/build/zerocommerce'
+
+/**
+ * lib/build/zerocommerce — ZeroCommerce provisioning client (#417).
+ * Covers: no-JWT guard, successful provisioning (store id/slug extraction),
+ * error shapes (401 auth, 400 duplicate-store business rule, 422 validation),
+ * JSON parse failure, network error. All fetch calls are mocked.
+ */
+
+function mockFetch(impl: (url: string, init?: RequestInit) => { ok: boolean; status?: number; json?: object }) {
+  const fn = vi.fn(async (url: string, init?: RequestInit) => {
+    const r = impl(String(url), init)
+    return {
+      ok: r.ok,
+      status: r.status ?? (r.ok ? 200 : 500),
+      json: async () => (r.json ?? {}),
+    } as unknown as Response
+  })
+  vi.stubGlobal('fetch', fn)
+  return fn
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
+
+describe('provisionStore (#417)', () => {
+  it('returns { ok: false, reason: "no_jwt" } immediately when jwt is empty', async () => {
+    const fn = mockFetch(() => ({ ok: true }))
+    const result = await provisionStore('', 'my-co', 'My Company')
+    expect(result.ok).toBe(false)
+    expect(result.reason).toBe('no_jwt')
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('returns { ok: false, reason: "no_jwt" } when jwt is undefined (coerced empty)', async () => {
+    const fn = mockFetch(() => ({ ok: true }))
+    const result = await provisionStore(undefined as unknown as string, 'my-co', 'My Company')
+    expect(result.ok).toBe(false)
+    expect(result.reason).toBe('no_jwt')
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('POSTs to /commerce/stores/onboard with Bearer auth and correct store shape', async () => {
+    const fn = mockFetch(() => ({ ok: true, status: 201, json: { id: 'store-123', slug: 'acme-co' } }))
+    const result = await provisionStore('jwt-token-abc', 'acme-co', 'Acme Corp')
+
+    expect(result.ok).toBe(true)
+    expect(result.storeId).toBe('store-123')
+    expect(result.slug).toBe('acme-co')
+    expect(result.status).toBe(201)
+
+    const [url, init] = fn.mock.calls[0]
+    expect(String(url)).toContain('/commerce/stores/onboard')
+    expect((init as RequestInit).method).toBe('POST')
+
+    const headers = (init as RequestInit).headers as Record<string, string>
+    expect(headers['Authorization']).toBe('Bearer jwt-token-abc')
+    expect(headers['Content-Type']).toBe('application/json')
+    // No Idempotency-Key — not documented for this endpoint, unlike ZeroPipeline.
+    expect(headers['Idempotency-Key']).toBeUndefined()
+
+    const body = JSON.parse((init as RequestInit).body as string)
+    expect(body.name).toBe('Acme Corp')
+    expect(body.slug).toBe('acme-co')
+  })
+
+  it('uses slug as fallback in the store name when companyName is empty', async () => {
+    const fn = mockFetch(() => ({ ok: true, json: { id: 's1', slug: 'my-slug' } }))
+    await provisionStore('jwt', 'my-slug', '')
+
+    const body = JSON.parse((fn.mock.calls[0][1] as RequestInit).body as string)
+    expect(body.name).toBe('my-slug')
+  })
+
+  it('extracts storeId from data.store.id as fallback', async () => {
+    mockFetch(() => ({ ok: true, json: { store: { id: 'store-nested-456' } } }))
+    const result = await provisionStore('jwt', 'co', 'Company')
+    expect(result.ok).toBe(true)
+    expect(result.storeId).toBe('store-nested-456')
+  })
+
+  it('falls back to the input slug when response has no slug field', async () => {
+    mockFetch(() => ({ ok: true, json: { id: 's1' } }))
+    const result = await provisionStore('jwt', 'co-slug', 'Company')
+    expect(result.ok).toBe(true)
+    expect(result.slug).toBe('co-slug')
+  })
+
+  it('returns empty storeId string when response has no id fields', async () => {
+    mockFetch(() => ({ ok: true, json: {} }))
+    const result = await provisionStore('jwt', 'co', 'Company')
+    expect(result.ok).toBe(true)
+    expect(result.storeId).toBe('')
+  })
+
+  it('returns { ok: false } with real reason on 401 auth failure', async () => {
+    mockFetch(() => ({
+      ok: false,
+      status: 401,
+      json: { message: 'Invalid or expired token' },
+    }))
+    const result = await provisionStore('jwt', 'co', 'Company')
+    expect(result.ok).toBe(false)
+    expect(result.status).toBe(401)
+    expect(result.reason).toContain('Invalid or expired token')
+  })
+
+  it('returns { ok: false } with real reason on 400 (likely duplicate-store business rule — "one store per owner")', async () => {
+    mockFetch(() => ({
+      ok: false,
+      status: 400,
+      json: { detail: 'Owner already has a store' },
+    }))
+    const result = await provisionStore('jwt', 'co', 'Company')
+    expect(result.ok).toBe(false)
+    expect(result.status).toBe(400)
+    expect(result.reason).toContain('Owner already has a store')
+  })
+
+  it('returns { ok: false } with reason from data.detail when message is absent (422 validation)', async () => {
+    mockFetch(() => ({
+      ok: false,
+      status: 422,
+      json: { detail: 'Unprocessable entity: slug must be URL-safe' },
+    }))
+    const result = await provisionStore('jwt', 'co', 'Company')
+    expect(result.ok).toBe(false)
+    expect(result.status).toBe(422)
+    expect(result.reason).toContain('Unprocessable entity')
+  })
+
+  it('falls back to status code string when data has no message/detail', async () => {
+    mockFetch(() => ({ ok: false, status: 503, json: {} }))
+    const result = await provisionStore('jwt', 'co', 'Company')
+    expect(result.ok).toBe(false)
+    expect(result.reason).toBe('503')
+  })
+
+  it('truncates reason to 160 chars for extremely long error messages', async () => {
+    const longMessage = 'x'.repeat(300)
+    mockFetch(() => ({ ok: false, status: 500, json: { message: longMessage } }))
+    const result = await provisionStore('jwt', 'co', 'Company')
+    expect(result.ok).toBe(false)
+    expect((result.reason ?? '').length).toBeLessThanOrEqual(160)
+  })
+
+  it('returns { ok: false } (never throws) when fetch throws a network error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('Connection refused') }))
+    const result = await provisionStore('jwt', 'co', 'Company')
+    expect(result.ok).toBe(false)
+    expect(result.reason).toContain('Connection refused')
+  })
+
+  it('returns { ok: false } (never throws) when the response body is not valid JSON', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => { throw new Error('Unexpected token') },
+    } as unknown as Response)))
+    const result = await provisionStore('jwt', 'co', 'Company')
+    expect(result.ok).toBe(true)
+    expect(result.storeId).toBe('')
+  })
+
+  it('sets status on successful response', async () => {
+    mockFetch(() => ({ ok: true, status: 201, json: { id: 'store-new' } }))
+    const result = await provisionStore('jwt', 'co', 'Company')
+    expect(result.ok).toBe(true)
+    expect(result.status).toBe(201)
+  })
+})
