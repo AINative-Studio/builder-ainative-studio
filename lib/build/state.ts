@@ -168,6 +168,12 @@ export type BuildAction =
   /** Inline artifact edit (GR-16 #329): replace a view's generated content with
    *  the founder's edit. Marks the artifact 'edited' and clears any gen error. */
   | { type: 'EDIT_ARTIFACT'; view: string; content: unknown }
+  /** #396: the founder edits or regenerates the auto-generated company name
+   *  from the artifact chrome (thesis onward) — companyName was previously
+   *  set once at build-start and never user-editable until the post-generation
+   *  dashboard (SettingsForm). A blank/whitespace-only name is ignored (never
+   *  clears the name back to empty). */
+  | { type: 'SET_COMPANY_NAME'; companyName: string }
   | { type: 'GOTO_VIEW'; view: ArtifactView }
   | { type: 'SET_BUILDING'; building: boolean }
   | { type: 'COMPLETE_ARTIFACT'; view: string; status?: string }
@@ -291,6 +297,11 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
         genError: { ...state.genError, [action.view]: '' },
         done: { ...state.done, [action.view]: 'edited' },
       }
+    case 'SET_COMPANY_NAME': {
+      const trimmed = action.companyName.trim()
+      if (!trimmed) return state
+      return { ...state, companyName: trimmed }
+    }
     case 'GOTO_VIEW':
       return { ...state, view: action.view }
     case 'SET_BUILDING':
