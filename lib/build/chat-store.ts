@@ -15,13 +15,42 @@
  * survives reload, so a guest's thread is restored on refresh; once they log in,
  * the migrate flow (#49) re-owns their companies and future turns key by email.
  *
+ * PER-COMPANY PROJECT (#400): a company that has been paid-provisioned gets its
+ * own dedicated ZeroDB project (`AppEntry.zerodbProjectId`, from #243). Once
+ * that exists, chat should be owned there instead of the shared platform
+ * project — real per-company data ownership, not a shared table scoped only by
+ * a string key. `appendChatTurn`/`saveExchange`/`loadChat` therefore take an
+ * OPTIONAL `projectId` — omitted (or falsy), they behave exactly as before
+ * (the shared platform project), so every pre-#400 caller is unaffected.
+ *
+ * MIGRATION DECISION: deliberately NOT migrating old shared-table history into
+ * a company's project at provisioning time. A real cross-project data move (read
+ * all rows, write elsewhere, decide whether/when to delete the originals) is a
+ * meaningfully riskier operation than this issue's actual pain point requires,
+ * and this codebase has no existing precedent for it — #243's own tmp→permanent
+ * flow (`claimCompanyProject`) only flips a metadata flag on the SAME project,
+ * it never moves data between projects. Instead: NEW turns for a provisioned
+ * company are written to its own project going forward; OLD history remains
+ * readable from the shared project as a fallback so nothing is silently lost —
+ * see `loadChatWithFallback`.
+ *
  * The heavy I/O (ZeroDB) is isolated from the pure logic (scope key derivation,
  * history → messages) so the pure core can be unit-tested without a network.
  */
 
 const ZERODB_API = process.env.ZERODB_API_URL || 'https://api.ainative.studio/api'
-const PROJECT_ID = process.env.ZERODB_PROJECT_ID || '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
+/** The shared platform project every unprovisioned company's chat lives in,
+ *  and where every provisioned company's OLD (pre-#400) history still lives. */
+const SHARED_PROJECT_ID = process.env.ZERODB_PROJECT_ID || '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
 const TABLE_NAME = 'build_chat'
+
+/** Resolve which ZeroDB project a call should target: the company's own
+ *  dedicated project when given and non-empty, else the shared platform
+ *  project (unchanged pre-#400 behavior). PURE. */
+function resolveProjectId(projectId?: string): string {
+  const trimmed = String(projectId || '').trim()
+  return trimmed || SHARED_PROJECT_ID
+}
 
 /** A single persisted chat turn. */
 export interface ChatTurn {
@@ -144,10 +173,14 @@ async function zerodbRequest(
  * Persist one turn (user or assistant) for a conversation. Fire-and-forget:
  * returns true on success, false on any failure (never throws), so a persistence
  * hiccup can't break the chat request.
+ *
+ * `projectId` (#400): the company's own dedicated ZeroDB project, when it has
+ * one. Omitted/falsy → the shared platform project (unchanged behavior).
  */
 export async function appendChatTurn(
   scopeKey: string,
   turn: { role: 'user' | 'assistant'; text: string },
+  projectId?: string,
 ): Promise<boolean> {
   const text = String(turn?.text || '').trim()
   if (!scopeKey || !text || (turn.role !== 'user' && turn.role !== 'assistant')) return false
@@ -160,7 +193,7 @@ export async function appendChatTurn(
     }
     const result = await zerodbRequest(
       'POST',
-      `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/rows`,
+      `/v1/projects/${resolveProjectId(projectId)}/database/tables/${TABLE_NAME}/rows`,
       { row_data: row },
     )
     return !!result
@@ -178,9 +211,10 @@ export async function saveExchange(
   scopeKey: string,
   question: string,
   answer: string,
+  projectId?: string,
 ): Promise<boolean> {
-  const uOk = await appendChatTurn(scopeKey, { role: 'user', text: question })
-  const aOk = await appendChatTurn(scopeKey, { role: 'assistant', text: answer })
+  const uOk = await appendChatTurn(scopeKey, { role: 'user', text: question }, projectId)
+  const aOk = await appendChatTurn(scopeKey, { role: 'assistant', text: answer }, projectId)
   return uOk && aOk
 }
 
@@ -192,13 +226,14 @@ export async function saveExchange(
 export async function loadChat(
   scopeKey: string,
   limit: number = MAX_LOAD_TURNS,
+  projectId?: string,
 ): Promise<ChatTurn[]> {
   if (!scopeKey) return []
   const cap = Math.min(Math.max(1, limit), MAX_LOAD_TURNS)
   try {
     const result = await zerodbRequest(
       'POST',
-      `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/query`,
+      `/v1/projects/${resolveProjectId(projectId)}/database/tables/${TABLE_NAME}/query`,
       { filters: { scope_key: scopeKey }, limit: cap },
       { retries: 1 },
     )
@@ -218,4 +253,38 @@ export async function loadChat(
     console.warn('[chat-store] loadChat failed:', (e as Error)?.name || e)
     return []
   }
+}
+
+/**
+ * Load a company's FULL conversation view (#400): recent turns from its own
+ * dedicated project (when it has one) PLUS its older history from the shared
+ * platform project, so a provisioned company never appears to have "lost"
+ * pre-migration history — it's just not physically moved (see module docblock
+ * for why). Oldest-first, deduped is unnecessary since the two sources are
+ * time-disjoint in practice (a company's own-project turns only start
+ * existing from the moment it was provisioned onward).
+ *
+ * When `projectId` is absent, this is equivalent to `loadChat(scopeKey, limit)`
+ * — a single shared-project read, no extra call.
+ */
+export async function loadChatWithFallback(
+  scopeKey: string,
+  limit: number = MAX_LOAD_TURNS,
+  projectId?: string,
+): Promise<ChatTurn[]> {
+  if (!scopeKey) return []
+  const trimmed = String(projectId || '').trim()
+  // Also covers the (unlikely, but real) edge case of a company's own project
+  // id happening to equal the shared platform project — avoids querying and
+  // merging the same rows against themselves.
+  if (!trimmed || trimmed === SHARED_PROJECT_ID) return loadChat(scopeKey, limit)
+
+  const [ownTurns, sharedTurns] = await Promise.all([
+    loadChat(scopeKey, limit, trimmed),
+    loadChat(scopeKey, limit),
+  ])
+  const cap = Math.min(Math.max(1, limit), MAX_LOAD_TURNS)
+  return [...sharedTurns, ...ownTurns]
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .slice(-cap)
 }
