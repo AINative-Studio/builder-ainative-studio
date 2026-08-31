@@ -79,6 +79,11 @@ export interface AppEntry {
   // founder (ZeroPipeline is JWT-auth, not api-key). Absent/false = still simulated.
   pipelineProvisioned?: boolean
   pipelineId?: string
+  // ZeroCommerce (ecommerce primitive) provisioning (#417, child of #414). Same
+  // JWT-auth pattern as ZeroPipeline — true once a real store was created for
+  // the company. Absent/false = still simulated.
+  commerceProvisioned?: boolean
+  commerceStoreId?: string
   // The persistent hosting target for the company app (#243). Today this is the
   // durable preview URL; the deploy seam swaps in a real Railway/*.ainative.studio host.
   deployUrl?: string
@@ -368,6 +373,8 @@ export async function setAppProvisioned(
     claimToken?: string
     pipelineProvisioned?: boolean
     pipelineId?: string
+    commerceProvisioned?: boolean
+    commerceStoreId?: string
     workspaceId?: string
     workspaceFiled?: boolean
     railwayServiceId?: string

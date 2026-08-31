@@ -36,6 +36,7 @@ import {
   TRIAL_WINDOW_MS,
 } from '@/lib/build/instant-db'
 import { provisionPipeline } from '@/lib/build/zeropipeline'
+import { provisionStore } from '@/lib/build/zerocommerce'
 import { provisionZeroDbViaMcp, isMcpProvisionEnabled } from '@/lib/build/mcp-provision'
 import { provisionCompanyRepo } from '@/lib/git/company-repo'
 import { resolveStoredApp } from '@/lib/build/ready-gate'
@@ -166,6 +167,18 @@ export async function POST(request: NextRequest) {
     pipeline = { provisioned: zp.ok, pipelineId: zp.pipelineId, reason: zp.ok ? undefined : zp.reason }
   }
 
+  // #417 (child of #414): also provision the company's REAL ZeroCommerce store
+  // when we have the founder's JWT (same direct-JWT-bearer auth as ZeroPipeline
+  // — confirmed via ZeroCommerce's own OpenAPI spec, no OAuth redirect needed).
+  // Best-effort — a failure just leaves the Commerce card honestly simulated.
+  // No cost-safety gating needed (software-only store record, no recurring
+  // resource cost the way ZeroVoice's phone numbers have, #415).
+  let commerce: { provisioned: boolean; storeId?: string; reason?: string } = { provisioned: false }
+  if (jwt) {
+    const zc = await provisionStore(jwt, slug, String(existing.name || b?.name || slug))
+    commerce = { provisioned: zc.ok, storeId: zc.storeId, reason: zc.ok ? undefined : zc.reason }
+  }
+
   // #250: file this company's project under the AINative Builder workspace, so all
   // generated companies live under one workspace instead of the Builder key's default
   // "AINative Studio". Instant DB doesn't honor the workspace_id we send on create yet
@@ -207,6 +220,8 @@ export async function POST(request: NextRequest) {
     provisionedAt,
     pipelineProvisioned: pipeline.provisioned,
     pipelineId: pipeline.pipelineId,
+    commerceProvisioned: commerce.provisioned,
+    commerceStoreId: commerce.storeId,
     // #250: record the intended Builder workspace + whether the re-parent stuck.
     workspaceId: BUILDER_WORKSPACE_ID,
     workspaceFiled: filed.filed,
@@ -249,6 +264,7 @@ export async function POST(request: NextRequest) {
     plan: plan || null,
     created: true,
     pipelineProvisioned: pipeline.provisioned,
+    commerceProvisioned: commerce.provisioned,
     gitProvisioned,
     gitRepoUrl: gitResult.gitRepoUrl,
     deployUrl: target.url,
