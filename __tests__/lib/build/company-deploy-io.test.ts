@@ -49,9 +49,16 @@ beforeEach(() => {
 })
 
 describe('deployCompanyApp — full orchestration with spawn mocked', () => {
-  it('happy path: add (new service) -> up -> domain, all real call shapes', async () => {
+  // #380 fix: deployCompanyApp now calls `railway link` (to establish CLI
+  // project context — confirmed empirically this session that `railway add`/
+  // `up` fail with "Project not found" without it) before its first `add`/
+  // `up` call. Every mock chain below gets this as its FIRST entry.
+  const linkOk = () => fakeChild({ exitCode: 0 })
+
+  it('happy path: link -> add (new service) -> up -> domain, all real call shapes', async () => {
     const { deployCompanyApp } = await import('@/lib/build/company-deploy')
     h.spawn
+      .mockImplementationOnce(linkOk) // railway link
       .mockImplementationOnce(() => fakeChild({ stdout: '{"id":"svc-1","name":"company-acme"}', exitCode: 0 })) // railway add
       .mockImplementationOnce(() => fakeChild({ stdout: '{"deploymentId":"dep-1","logsUrl":"https://railway.com/x"}', exitCode: 0 })) // railway up
       .mockImplementationOnce(() => fakeChild({ stdout: '{"domain":"company-acme-production.up.railway.app"}', exitCode: 0 })) // railway domain
@@ -61,38 +68,55 @@ describe('deployCompanyApp — full orchestration with spawn mocked', () => {
     expect(result.ok).toBe(true)
     expect(result.serviceName).toBe('company-acme')
     expect(result.url).toBe('https://company-acme-production.up.railway.app')
-    expect(h.spawn).toHaveBeenCalledTimes(3)
-    expect(h.spawn.mock.calls[0][1]).toEqual(expect.arrayContaining(['add', '--service', 'company-acme']))
-    expect(h.spawn.mock.calls[1][1]).toEqual(expect.arrayContaining(['up', '--service', 'company-acme', '--detach', '--json']))
+    expect(h.spawn).toHaveBeenCalledTimes(4)
+    expect(h.spawn.mock.calls[0][1]).toEqual(expect.arrayContaining(['link']))
+    expect(h.spawn.mock.calls[1][1]).toEqual(expect.arrayContaining(['add', '--service', 'company-acme']))
+    expect(h.spawn.mock.calls[2][1]).toEqual(expect.arrayContaining(['up', '--path-as-root', '--service', 'company-acme', '--detach', '--json']))
   })
 
   it('already-provisioned company skips `railway add` entirely — no duplicate service risk', async () => {
     const { deployCompanyApp } = await import('@/lib/build/company-deploy')
     h.spawn
+      .mockImplementationOnce(linkOk) // railway link
       .mockImplementationOnce(() => fakeChild({ stdout: '{"deploymentId":"dep-2"}', exitCode: 0 })) // railway up
       .mockImplementationOnce(() => fakeChild({ stdout: '{"domain":"company-acme-production.up.railway.app"}', exitCode: 0 })) // railway domain
 
     const result = await deployCompanyApp('acme', { 'src/App.tsx': 'x' }, /* alreadyProvisioned */ true)
 
     expect(result.ok).toBe(true)
-    expect(h.spawn).toHaveBeenCalledTimes(2)
-    expect(h.spawn.mock.calls[0][1]).toEqual(expect.arrayContaining(['up']))
+    expect(h.spawn).toHaveBeenCalledTimes(3)
+    expect(h.spawn.mock.calls[1][1]).toEqual(expect.arrayContaining(['up']))
+  })
+
+  it('railway link failure surfaces the real reason, never proceeds to add/up', async () => {
+    const { deployCompanyApp } = await import('@/lib/build/company-deploy')
+    h.spawn.mockImplementationOnce(() => fakeChild({ stderr: 'Unauthorized', exitCode: 1 }))
+
+    const result = await deployCompanyApp('acme', { 'src/App.tsx': 'x' })
+
+    expect(result.ok).toBe(false)
+    expect(result.reason).toMatch(/railway link unavailable/)
+    expect(h.spawn).toHaveBeenCalledTimes(1)
   })
 
   it('railway add failure surfaces the real reason, never proceeds to up', async () => {
     const { deployCompanyApp } = await import('@/lib/build/company-deploy')
-    h.spawn.mockImplementationOnce(() => fakeChild({ stderr: 'workspace not found', exitCode: 1 }))
+    h.spawn
+      .mockImplementationOnce(linkOk)
+      .mockImplementationOnce(() => fakeChild({ stderr: 'workspace not found', exitCode: 1 }))
 
     const result = await deployCompanyApp('acme', { 'src/App.tsx': 'x' })
 
     expect(result.ok).toBe(false)
     expect(result.reason).toMatch(/railway add failed/)
-    expect(h.spawn).toHaveBeenCalledTimes(1)
+    expect(h.spawn).toHaveBeenCalledTimes(2)
   })
 
   it('railway add with no parseable service id fails honestly', async () => {
     const { deployCompanyApp } = await import('@/lib/build/company-deploy')
-    h.spawn.mockImplementationOnce(() => fakeChild({ stdout: 'not json at all', exitCode: 0 }))
+    h.spawn
+      .mockImplementationOnce(linkOk)
+      .mockImplementationOnce(() => fakeChild({ stdout: 'not json at all', exitCode: 0 }))
 
     const result = await deployCompanyApp('acme', { 'src/App.tsx': 'x' })
 
@@ -103,6 +127,7 @@ describe('deployCompanyApp — full orchestration with spawn mocked', () => {
   it('railway up failure surfaces the real reason', async () => {
     const { deployCompanyApp } = await import('@/lib/build/company-deploy')
     h.spawn
+      .mockImplementationOnce(linkOk)
       .mockImplementationOnce(() => fakeChild({ stdout: '{"id":"svc-1"}', exitCode: 0 }))
       .mockImplementationOnce(() => fakeChild({ stderr: 'build failed: missing dependency', exitCode: 1 }))
 
@@ -115,6 +140,7 @@ describe('deployCompanyApp — full orchestration with spawn mocked', () => {
   it('railway up timeout is reported as a timeout, not a generic failure', async () => {
     const { deployCompanyApp } = await import('@/lib/build/company-deploy')
     h.spawn
+      .mockImplementationOnce(linkOk)
       .mockImplementationOnce(() => fakeChild({ stdout: '{"id":"svc-1"}', exitCode: 0 }))
       .mockImplementationOnce(() => {
         const child: any = new EventEmitter()
@@ -140,6 +166,7 @@ describe('deployCompanyApp — full orchestration with spawn mocked', () => {
   it('railway up succeeds but domain resolution fails — deploy still reported successful, url just absent', async () => {
     const { deployCompanyApp } = await import('@/lib/build/company-deploy')
     h.spawn
+      .mockImplementationOnce(linkOk)
       .mockImplementationOnce(() => fakeChild({ stdout: '{"id":"svc-1"}', exitCode: 0 }))
       .mockImplementationOnce(() => fakeChild({ stdout: '{"deploymentId":"dep-1"}', exitCode: 0 }))
       .mockImplementationOnce(() => fakeChild({ stderr: 'domain error', exitCode: 1 }))

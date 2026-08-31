@@ -26,7 +26,7 @@ import { spawn } from 'child_process'
 import { promises as fs } from 'fs'
 import { writeFileMapToTemp, type FileMap } from './coverage-runner'
 import { generateCompanyScaffold, hasDeployableEntrypoint } from './company-scaffold'
-import { serviceNameForSlug } from './railway-deploy'
+import { serviceNameForSlug, companyProjectId } from './railway-deploy'
 import { fetchRepoFiles, orgNameForWorkspace } from '@/lib/git/gitea-client'
 import { ensureRailwayCli } from './railway-cli-install'
 
@@ -47,10 +47,43 @@ export const DEPLOY_TIMEOUT_MS = 300_000
  *  Deliberately separate from railwayDeployEnabled() in railway-deploy.ts —
  *  that gate is scoped to the OLD shared-image GraphQL flow (still checks
  *  RAILWAY_COMPANY_SOURCE_IMAGE/_REPO, which this module doesn't use). This
- *  flow only needs RAILWAY_DEPLOY_ENABLED itself; the `railway` CLI's own
- *  session auth (not an env-var token) is what authorizes the actual calls. */
+ *  flow only needs RAILWAY_DEPLOY_ENABLED itself; RAILWAY_API_TOKEN (see
+ *  ensureRailwayLink below) is what authorizes the actual calls. */
 export function companyDeployEnabled(): boolean {
   return process.env.RAILWAY_DEPLOY_ENABLED === 'true'
+}
+
+/**
+ * Establish Railway CLI project context for THIS process (#380 fix). Confirmed
+ * live, empirically, this session: `railway add`/`railway up` fail with
+ * "Project not found. Run railway link" unless a `~/.railway/config.json`
+ * link already exists for the current directory — and a freshly-spawned
+ * server process (or a fresh SSH session) never has one. `railway link`
+ * itself requires an ACCOUNT-scoped token passed as RAILWAY_API_TOKEN
+ * specifically — a PROJECT-scoped RAILWAY_TOKEN fails `link` even though it
+ * successfully authenticates other CLI/GraphQL calls (confirmed: Railway's
+ * own Help Station documents this token-type split). Per-process, not
+ * cached across invocations — matches the fact that each real request is a
+ * fresh, possibly-fresh-container Node process; `railway link` itself is
+ * fast (~1s) so re-running it defensively before every deploy call is cheap
+ * insurance against a container that was recycled since the last link.
+ */
+async function ensureRailwayLink(binaryPath: string): Promise<{ ok: boolean; reason?: string }> {
+  const result = await runCli(
+    binaryPath,
+    ['link', '-p', companyProjectId(), '-e', 'production'],
+    undefined,
+    30_000,
+  )
+  if (result.exitCode !== 0) {
+    return {
+      ok: false,
+      reason: result.timedOut
+        ? 'railway link timed out'
+        : `railway link failed: ${result.stderr.slice(0, 300) || result.stdout.slice(0, 300)}`,
+    }
+  }
+  return { ok: true }
 }
 
 function runCli(
@@ -175,6 +208,11 @@ export async function deployCompanyApp(
     return { ok: false, reason: `railway CLI unavailable: ${cli.reason}` }
   }
 
+  const linked = await ensureRailwayLink(cli.binaryPath)
+  if (!linked.ok) {
+    return { ok: false, reason: `railway link unavailable: ${linked.reason}` }
+  }
+
   const serviceName = serviceNameForSlug(safeSlug)
   const ensured = await ensureEmptyService(cli.binaryPath, safeSlug, alreadyProvisioned)
   if (!ensured.ok) return { ok: false, reason: ensured.reason }
@@ -185,9 +223,15 @@ export async function deployCompanyApp(
   try {
     dir = await writeFileMapToTemp(scaffolded)
 
+    // --path-as-root: without it, `railway up <dir>` fails server-side with
+    // "prefix not found" (confirmed empirically this session, reproduced via
+    // direct manual CLI invocation against a real temp dir) — the bare PATH
+    // argument alone expects a different archive layout than what a plain
+    // directory upload produces. --path-as-root makes the given dir the
+    // upload root, which is what we want for a materialized scaffold dir.
     const up = await runCli(
       cli.binaryPath,
-      ['up', dir, '--service', serviceName, '--detach', '--json'],
+      ['up', dir, '--path-as-root', '--service', serviceName, '--detach', '--json'],
       undefined,
       DEPLOY_TIMEOUT_MS,
     )

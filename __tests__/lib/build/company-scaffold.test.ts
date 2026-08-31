@@ -54,6 +54,43 @@ describe('generateCompanyScaffold — the real Driftwood/test-company shape (App
     expect(result['src/App.tsx']).toBe(bareApp['src/App.tsx'])
   })
 
+  // Regression coverage for a real build failure found this session via a
+  // genuine `npm run build` against a real Railway service: the scaffold
+  // pinned tailwindcss@4 but used v3-era config/directives, producing
+  // "It looks like you're trying to use tailwindcss directly as a PostCSS
+  // plugin" and killing the build. Fixed to Tailwind v4's own required shape.
+  it('uses Tailwind v4-correct PostCSS plugin, not the v3 direct-plugin shape', () => {
+    const result = generateCompanyScaffold(bareApp)
+    expect(result['postcss.config.js']).toContain('@tailwindcss/postcss')
+    expect(result['postcss.config.js']).not.toMatch(/tailwindcss:\s*\{\}/)
+    const pkg = JSON.parse(result['package.json'])
+    expect(pkg.devDependencies['@tailwindcss/postcss']).toBeDefined()
+  })
+
+  it('globals.css uses the Tailwind v4 single-import directive, not the v3 three-directive form', () => {
+    const result = generateCompanyScaffold(bareApp)
+    expect(result['app/globals.css']).toContain('@import "tailwindcss"')
+    expect(result['app/globals.css']).not.toContain('@tailwind base')
+  })
+
+  // Regression coverage for a second real build failure found this session:
+  // the Dockerfile's runner stage always does
+  // `COPY --from=builder /app/public ./public`, which fails the whole
+  // Railway build ("checksum of ref ...: /app/public: not found") when
+  // nothing under public/ exists — true for every real Gitea repo checked
+  // this session (App.tsx only, no assets).
+  it('scaffolds public/.gitkeep so the Dockerfile\'s public/ COPY never fails on a repo with no assets', () => {
+    const result = generateCompanyScaffold(bareApp)
+    expect(result['public/.gitkeep']).toBeDefined()
+  })
+
+  it('does NOT add public/.gitkeep when the company repo already has real files under public/', () => {
+    const withPublicAsset = { ...bareApp, 'public/favicon.ico': 'binary-content-placeholder' }
+    const result = generateCompanyScaffold(withPublicAsset)
+    expect(result['public/.gitkeep']).toBeUndefined()
+    expect(result['public/favicon.ico']).toBe('binary-content-placeholder')
+  })
+
   it('package.json is valid, parseable JSON with a real build script', () => {
     const result = generateCompanyScaffold(bareApp)
     const pkg = JSON.parse(result['package.json'])
