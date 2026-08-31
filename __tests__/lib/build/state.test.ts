@@ -692,3 +692,24 @@ describe('countWoven', () => {
     expect(countWoven(state, {})).toBe(0)
   })
 })
+
+describe('buildReducer — SET_COMPANY_NAME (#396)', () => {
+  it('sets a trimmed company name', () => {
+    const prev: BuildState = { ...initialBuildState, companyName: 'Old Name' }
+    const s = buildReducer(prev, { type: 'SET_COMPANY_NAME', companyName: '  New Name  ' })
+    expect(s.companyName).toBe('New Name')
+  })
+
+  it('ignores a blank/whitespace-only name — never clears companyName to empty', () => {
+    const prev: BuildState = { ...initialBuildState, companyName: 'Keep Me' }
+    const s = buildReducer(prev, { type: 'SET_COMPANY_NAME', companyName: '   ' })
+    expect(s.companyName).toBe('Keep Me')
+  })
+
+  it('does not affect any other state field', () => {
+    const prev: BuildState = { ...initialBuildState, companyName: 'A', idea: 'an idea', track: 'company' }
+    const s = buildReducer(prev, { type: 'SET_COMPANY_NAME', companyName: 'B' })
+    expect(s.idea).toBe('an idea')
+    expect(s.track).toBe('company')
+  })
+})
