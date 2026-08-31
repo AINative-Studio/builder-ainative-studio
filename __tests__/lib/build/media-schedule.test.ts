@@ -140,8 +140,19 @@ describe('buildGenerationRequest', () => {
   it('routes image to the image endpoint', () => {
     expect(buildGenerationRequest('image', 'p')).toEqual({ path: '/api/v1/multimodal/image', body: { prompt: 'p', kind: 'image' } })
   })
-  it('routes video to the video endpoint', () => {
-    expect(buildGenerationRequest('video', 'p').path).toBe('/api/v1/multimodal/video')
+  // #403: the bare '/api/v1/multimodal/video' this used to send never existed
+  // on core (confirmed via direct read of core's real FastAPI router — only
+  // /video/i2v, /video/t2v, /video/cogvideox are registered) — every video
+  // generation call has 404'd since #54 shipped. Builder only ever sends a
+  // text prompt (no source image), so /video/t2v (text-to-video) is the
+  // correct real route, not /video/i2v (needs a source image).
+  it('routes video to the real text-to-video endpoint, not the bare path that never existed on core', () => {
+    expect(buildGenerationRequest('video', 'p')).toEqual({ path: '/api/v1/multimodal/video/t2v', body: { prompt: 'p' } })
+  })
+  it("video request body matches core's real VideoT2VRequest schema shape ({prompt}) — no unused 'kind' field", () => {
+    const { body } = buildGenerationRequest('video', 'a wave at sunset')
+    expect(body).not.toHaveProperty('kind')
+    expect(body.prompt).toBe('a wave at sunset')
   })
 })
 
