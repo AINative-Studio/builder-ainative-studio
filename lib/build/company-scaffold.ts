@@ -77,8 +77,8 @@ const SCAFFOLD_PACKAGE_JSON = {
     '@types/react': '^19',
     '@types/react-dom': '^19',
     tailwindcss: '^4',
+    '@tailwindcss/postcss': '^4',
     postcss: '^8.4.0',
-    autoprefixer: '^10.4.0',
   },
 } as const
 
@@ -121,8 +121,7 @@ module.exports = {
 
 const SCAFFOLD_POSTCSS_CONFIG = `module.exports = {
   plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
+    '@tailwindcss/postcss': {},
   },
 }
 `
@@ -150,9 +149,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 }
 `
 
-const SCAFFOLD_GLOBALS_CSS = `@tailwind base;
-@tailwind components;
-@tailwind utilities;
+const SCAFFOLD_GLOBALS_CSS = `@import "tailwindcss";
 `
 
 const SCAFFOLD_DOCKERFILE = `FROM node:20-alpine AS builder
@@ -223,6 +220,16 @@ export function generateCompanyScaffold(files: FileMap): FileMap {
   }
   if (!hasFile(files, '.dockerignore')) {
     scaffolded['.dockerignore'] = SCAFFOLD_DOCKERIGNORE
+  }
+  // The Dockerfile's runner stage always `COPY --from=builder /app/public
+  // ./public` (standard Next.js layout) — that COPY fails the whole build if
+  // no file under public/ exists at all (confirmed empirically this session:
+  // "checksum of ref ...: /app/public: not found"). Next.js itself doesn't
+  // create this directory; ensure at least one file lives there so it's
+  // always real on disk, whether or not the company's own repo has assets.
+  const hasPublicFile = Object.keys(files).some((p) => p.replace(/^\/+/, '').startsWith('public/'))
+  if (!hasPublicFile) {
+    scaffolded['public/.gitkeep'] = ''
   }
 
   return scaffolded
