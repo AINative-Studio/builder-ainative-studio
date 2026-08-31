@@ -55,6 +55,12 @@ const isLocal = process.env.USE_META_API === 'true'
 const metaClient = new OpenAI({
   apiKey: process.env.META_API_KEY || '',
   baseURL: process.env.META_BASE_URL || 'https://api.llama.com/compat/v1',
+  // #383: these are the FALLBACK paths (primary is lib/bedrock-client.ts's
+  // hand-rolled fetch client, which already has zero retries) — the OpenAI
+  // SDK retries 429/5xx up to 2x by default, which can stack latency under
+  // concurrent load exactly like lib/build/claude-completion.ts's Anthropic
+  // client did before its own maxRetries:0 fix earlier this session.
+  maxRetries: 0,
 })
 
 // AINative API client
@@ -63,6 +69,7 @@ const ainativeBaseURL = (process.env.AINATIVE_API_URL || 'https://api.ainative.s
 const ainativeClient = new OpenAI({
   apiKey: process.env.AINATIVE_API_KEY || process.env.API_Key || process.env.ZERODB_API_KEY || '',
   baseURL: ainativeBaseURL,
+  maxRetries: 0,
 })
 
 // Get the appropriate client based on environment
@@ -93,7 +100,7 @@ function getAnthropicDirectClient() {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const Anthropic = require('@anthropic-ai/sdk').default || require('@anthropic-ai/sdk')
-    anthropicClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+    anthropicClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 0 })
     console.log('✅ Anthropic (direct API) client initialized for Claude Sonnet 4.5')
     return anthropicClient
   } catch (e) {
