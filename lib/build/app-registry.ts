@@ -109,6 +109,16 @@ export interface AppEntry {
   zerovoiceProvisioned?: boolean
   zerovoiceNumberId?: string
   zerovoiceE164?: string
+  // ZeroInvoice connect (#418, child of #414). UNLIKE every other primitive
+  // here, ZeroInvoice's real auth is a browser-redirect OAuth 2.1+PKCE flow
+  // that hands the founder off to ZeroInvoice's OWN frontend/dashboard —
+  // confirmed via source: ZeroInvoice's real callback handler sets its own
+  // cookies and redirects to ITS OWN /dashboard, never back to builder.
+  // Builder structurally cannot observe whether the flow completed (no
+  // callback, no token, no verify endpoint exists). zeroinvoiceConnectedAt
+  // is therefore an HONEST "founder clicked Connect" signal, not a
+  // confirmed-connected state — never presented as verified.
+  zeroinvoiceConnectClickedAt?: string
   // The persistent hosting target for the company app (#243). Today this is the
   // durable preview URL; the deploy seam swaps in a real Railway/*.ainative.studio host.
   deployUrl?: string
@@ -238,6 +248,22 @@ export async function setAppZeroVoice(
     zerovoiceProvisioned: true,
     zerovoiceNumberId: fields.numberId,
     zerovoiceE164: fields.e164,
+  })
+}
+
+/**
+ * Record that a founder clicked "Connect ZeroInvoice" (#418) — an honest,
+ * unverified click signal, never a confirmed-connected state (see the
+ * zeroinvoiceConnectClickedAt field doc for why builder cannot verify this
+ * server-side). Best-effort; a persistence hiccup must not block the
+ * redirect itself.
+ */
+export async function setAppZeroInvoiceConnectClicked(slug: string): Promise<boolean> {
+  const existing = await resolveApp(slug)
+  if (!existing) return false
+  return registerApp({
+    ...existing,
+    zeroinvoiceConnectClickedAt: new Date().toISOString(),
   })
 }
 
