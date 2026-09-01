@@ -39,6 +39,7 @@ import { provisionPipeline } from '@/lib/build/zeropipeline'
 import { provisionStore } from '@/lib/build/zerocommerce'
 import { provisionCapTable } from '@/lib/build/opencapstack'
 import { provisionForm } from '@/lib/build/zeroforms'
+import { provisionProject } from '@/lib/build/agentflow'
 import { provisionZeroDbViaMcp, isMcpProvisionEnabled } from '@/lib/build/mcp-provision'
 import { provisionCompanyRepo } from '@/lib/git/company-repo'
 import { resolveStoredApp } from '@/lib/build/ready-gate'
@@ -207,6 +208,21 @@ export async function POST(request: NextRequest) {
     forms = { provisioned: zf.ok, formId: zf.formId, reason: zf.ok ? undefined : zf.reason }
   }
 
+  // #419 (child of #414): also provision the company's REAL AgentFlow default
+  // project when we have the founder's JWT. Same direct-JWT-bearer auth as
+  // ZeroPipeline/ZeroCommerce/ZeroForms — AgentFlow's original credential-shape
+  // mismatch (password-only login) was fixed upstream instead of worked around
+  // here (AINative-Studio/AgentFlow#73/#74): its auth now falls back to
+  // verifying an AINative platform JWT directly, auto-provisioning a local
+  // user on first use. Best-effort — a failure just leaves the AgentFlow card
+  // honestly simulated. No cost-safety gating needed (software-only project
+  // record, no recurring resource cost).
+  let agentflow: { provisioned: boolean; projectId?: string; reason?: string } = { provisioned: false }
+  if (jwt) {
+    const af = await provisionProject(jwt, slug, String(existing.name || b?.name || slug))
+    agentflow = { provisioned: af.ok, projectId: af.projectId, reason: af.ok ? undefined : af.reason }
+  }
+
   // #250: file this company's project under the AINative Builder workspace, so all
   // generated companies live under one workspace instead of the Builder key's default
   // "AINative Studio". Instant DB doesn't honor the workspace_id we send on create yet
@@ -254,6 +270,8 @@ export async function POST(request: NextRequest) {
     capstackCompanyId: capstack.companyId,
     formsProvisioned: forms.provisioned,
     formsFormId: forms.formId,
+    agentflowProvisioned: agentflow.provisioned,
+    agentflowProjectId: agentflow.projectId,
     // #250: record the intended Builder workspace + whether the re-parent stuck.
     workspaceId: BUILDER_WORKSPACE_ID,
     workspaceFiled: filed.filed,
@@ -299,6 +317,7 @@ export async function POST(request: NextRequest) {
     commerceProvisioned: commerce.provisioned,
     capstackProvisioned: capstack.provisioned,
     formsProvisioned: forms.provisioned,
+    agentflowProvisioned: agentflow.provisioned,
     gitProvisioned,
     gitRepoUrl: gitResult.gitRepoUrl,
     deployUrl: target.url,

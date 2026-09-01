@@ -95,6 +95,12 @@ export interface AppEntry {
   // form was created for the company. Absent/false = still simulated.
   formsProvisioned?: boolean
   formsFormId?: string
+  // AgentFlow (visual agent-workflow primitive) provisioning (#419, child of
+  // #414). Same direct-JWT-auth pattern as ZeroPipeline/ZeroCommerce/ZeroForms
+  // — true once a real default project was created for the company.
+  // Absent/false = still simulated.
+  agentflowProvisioned?: boolean
+  agentflowProjectId?: string
   // The persistent hosting target for the company app (#243). Today this is the
   // durable preview URL; the deploy seam swaps in a real Railway/*.ainative.studio host.
   deployUrl?: string
@@ -390,6 +396,8 @@ export async function setAppProvisioned(
     capstackCompanyId?: string
     formsProvisioned?: boolean
     formsFormId?: string
+    agentflowProvisioned?: boolean
+    agentflowProjectId?: string
     workspaceId?: string
     workspaceFiled?: boolean
     railwayServiceId?: string
