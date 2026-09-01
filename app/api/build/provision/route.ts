@@ -38,6 +38,7 @@ import {
 import { provisionPipeline } from '@/lib/build/zeropipeline'
 import { provisionStore } from '@/lib/build/zerocommerce'
 import { provisionCapTable } from '@/lib/build/opencapstack'
+import { provisionForm } from '@/lib/build/zeroforms'
 import { provisionZeroDbViaMcp, isMcpProvisionEnabled } from '@/lib/build/mcp-provision'
 import { provisionCompanyRepo } from '@/lib/git/company-repo'
 import { resolveStoredApp } from '@/lib/build/ready-gate'
@@ -192,6 +193,20 @@ export async function POST(request: NextRequest) {
     capstack = { provisioned: ocs.ok, companyId: ocs.companyId, reason: ocs.ok ? undefined : ocs.reason }
   }
 
+  // #421 (child of #414): also provision the company's REAL ZeroForms default
+  // form when we have the founder's JWT (same direct-JWT-bearer auth as
+  // ZeroPipeline/ZeroCommerce — confirmed via ZeroForms' own source, which
+  // maps a validated AINative key onto a User with is_verified=True set
+  // explicitly, satisfying the require_verified gate on form creation with
+  // no separate ZeroForms signup/dashboard step). Best-effort — a failure
+  // just leaves the Forms card honestly simulated. No cost-safety gating
+  // needed (software-only form record, no recurring resource cost).
+  let forms: { provisioned: boolean; formId?: string; reason?: string } = { provisioned: false }
+  if (jwt) {
+    const zf = await provisionForm(jwt, slug, String(existing.name || b?.name || slug))
+    forms = { provisioned: zf.ok, formId: zf.formId, reason: zf.ok ? undefined : zf.reason }
+  }
+
   // #250: file this company's project under the AINative Builder workspace, so all
   // generated companies live under one workspace instead of the Builder key's default
   // "AINative Studio". Instant DB doesn't honor the workspace_id we send on create yet
@@ -237,6 +252,8 @@ export async function POST(request: NextRequest) {
     commerceStoreId: commerce.storeId,
     capstackProvisioned: capstack.provisioned,
     capstackCompanyId: capstack.companyId,
+    formsProvisioned: forms.provisioned,
+    formsFormId: forms.formId,
     // #250: record the intended Builder workspace + whether the re-parent stuck.
     workspaceId: BUILDER_WORKSPACE_ID,
     workspaceFiled: filed.filed,
@@ -281,6 +298,7 @@ export async function POST(request: NextRequest) {
     pipelineProvisioned: pipeline.provisioned,
     commerceProvisioned: commerce.provisioned,
     capstackProvisioned: capstack.provisioned,
+    formsProvisioned: forms.provisioned,
     gitProvisioned,
     gitRepoUrl: gitResult.gitRepoUrl,
     deployUrl: target.url,
