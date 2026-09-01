@@ -112,6 +112,27 @@ describe('POST /api/build/credits (#324 GR-15)', () => {
     expect(expected).toContain('ZeroPipeline')
   })
 
+  it('surfaces viaDripToken honestly when the build was only allowed via the daily drip (#450)', async () => {
+    h.getBuildCreditStatus
+      .mockResolvedValueOnce(status({ used: 3, remaining: 1, viaDripToken: true })) // gate check
+      .mockResolvedValueOnce(status({ used: 4, remaining: 0 })) // re-read after recording
+    const res: any = await post({ slug: 'drip-app', idea: PLAIN_IDEA })
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.ok).toBe(true)
+    expect(json.viaDripToken).toBe(true)
+    expect(h.recordBuild).toHaveBeenCalled() // the drip build IS recorded, same as any other
+  })
+
+  it('does not falsely claim viaDripToken when the build was within the normal allowance', async () => {
+    h.getBuildCreditStatus
+      .mockResolvedValueOnce(status()) // normal, no drip flag
+      .mockResolvedValueOnce(status({ used: 1, remaining: 2 }))
+    const res: any = await post({ slug: 'normal-app', idea: PLAIN_IDEA })
+    const json = await res.json()
+    expect(json.viaDripToken).toBeFalsy()
+  })
+
   it('IGNORES a client-sent primitives list — the bonus is never client-decided', async () => {
     h.getBuildCreditStatus.mockResolvedValue(status())
     await post({
