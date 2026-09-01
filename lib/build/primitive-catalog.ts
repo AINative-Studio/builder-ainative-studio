@@ -570,21 +570,37 @@ export function mcpDataProvisioningBlock(): string {
 }
 
 /**
- * Primitives with a real, generated-app-callable runtime path today. Every
- * other primitive with an `apiBase` is provisioned SERVER-SIDE (at company
- * checkout, using the founder's own AINative identity or a builder-held
- * service credential) but has NO proxy route a browser-run generated app can
- * call — a direct client-side `fetch()` with a Bearer key fails 100% of the
- * time (no key ships to the browser) and, for several primitives (ZeroCommerce/
- * ZeroPipeline/AgentFlow/ZeroForms — "one store per owner user"), the
- * resource is scoped to the FOUNDER'S identity, not a durable per-company
- * service credential builder could proxy on the generated app's behalf even
- * if a proxy route existed. Telling the model to `fetch()` these directly
+ * Primitives with a real, generated-app-callable runtime path today, mapped
+ * to the "To use" instruction that path implies. Every other primitive with
+ * an `apiBase` is provisioned SERVER-SIDE (at company checkout, using the
+ * founder's own AINative identity or a builder-held service credential) but
+ * has NO proxy route a browser-run generated app can call — a direct
+ * client-side `fetch()` with a Bearer key fails 100% of the time (no key
+ * ships to the browser). Telling the model to `fetch()` those directly
  * produced code that is guaranteed broken at runtime — see the investigation
  * that added this constant. AI Kit ships as an SDK import, not a fetch, so it
  * has no runtime-path problem either.
+ *
+ * ZeroDB/Instant DB: a durable service key builder holds forever backs
+ * /api/db — the original, always-worked case.
+ *
+ * ZeroCommerce (#443): "one store per owner user" — the resource is scoped
+ * to the FOUNDER'S own AINative identity, not a separate service credential.
+ * /api/primitive/zerocommerce/{...path} closes that gap: builder captures
+ * and durably refreshes a copy of the founder's tokens at provision time
+ * (lib/build/primitive-credentials.ts) and proxies runtime calls through
+ * them — same-origin, so the generated app never sees the credential.
+ * ZeroPipeline/AgentFlow/ZeroForms share the identical founder-scoped shape
+ * but do not have their own proxy wired yet; they stay in the honest
+ * "already provisioned server-side, don't call directly" framing below
+ * until each gets the same treatment.
  */
-const RUNTIME_PROXIED_PRIMITIVES = new Set(['ZeroDB', 'Instant DB'])
+const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = {
+  ZeroDB: () => `call its REST API at \`https://api.ainative.studio/api/v1\` (Authorization: Bearer <AINATIVE_API_KEY>)`,
+  'Instant DB': () => `call its REST API at \`https://api.ainative.studio/api/v1\` (Authorization: Bearer <AINATIVE_API_KEY>)`,
+  ZeroCommerce: () =>
+    `call the same-origin proxy at \`/api/primitive/zerocommerce/{path}\` (e.g. \`/api/primitive/zerocommerce/commerce/products\`) — NO Authorization header needed, the platform attaches the founder's real ZeroCommerce credential server-side; the path after \`zerocommerce/\` matches ZeroCommerce's own REST path exactly`,
+}
 
 /**
  * CODEGEN composition block (#218) — the other half of #288's selection.
@@ -614,8 +630,8 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
     seen.add(p.name)
     const how = !p.apiBase
       ? `import its SDK \`${p.sdk}\``
-      : RUNTIME_PROXIED_PRIMITIVES.has(p.name)
-        ? `call its REST API at \`${p.apiBase}\` (Authorization: Bearer <AINATIVE_API_KEY>)`
+      : RUNTIME_PROXIED_PRIMITIVES[p.name]
+        ? RUNTIME_PROXIED_PRIMITIVES[p.name](p.apiBase)
         : `it was already provisioned for this company server-side at setup time — the generated app does NOT call \`${p.apiBase}\` directly (no key ships to the browser); build the UI/logic assuming that data/action already exists, and persist any app-side records it produces through the ZeroDB proxy below`
     // #314/#315: carry the plain-English "already included — no extra key/cost —
     // replaces {commercial tool}" framing so the generated app proactively tells
@@ -657,7 +673,7 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
     `  For a real login screen, render an email+continue form that sets that uid — do NOT call an external auth API.\n\n` +
     `Rules:\n` +
     `1. Import \`@ainative/ai-kit-core\` (and its React bindings) for UI primitives — do NOT rebuild chat, tables, product cards, or dashboards from scratch when an AI Kit component exists.\n` +
-    `2. Persist through /api/db (above) — this is MANDATORY when the app saves any records. The generated app runs in the browser, so it does NOT have AINATIVE_API_KEY; NEVER put a Bearer key or secret in app code, and NEVER fetch() a primitive's apiBase directly unless this block explicitly said to (only ZeroDB/Instant DB have a real browser-callable path today). For every other primitive listed above, treat its capability as already set up by the platform — build the UI around it, don't call its API from generated code.\n` +
+    `2. Persist through /api/db (above) — this is MANDATORY when the app saves any records. The generated app runs in the browser, so it does NOT have AINATIVE_API_KEY; NEVER put a Bearer key or secret in app code, and NEVER fetch() a primitive's apiBase directly unless this block explicitly said to (only ZeroDB/Instant DB/ZeroCommerce have a real browser-callable path today — ZeroDB/Instant DB via /api/db with a Bearer key, ZeroCommerce via the /api/primitive/zerocommerce proxy with NO key). For every other primitive listed above, treat its capability as already set up by the platform — build the UI around it, don't call its API from generated code.\n` +
     `3. Do NOT reimplement invoicing, CRM, ecommerce carts/checkout, telephony, cap-table math, or helpdesk ticketing when the matching primitive exists — model the app around composing it. Regenerating that business logic from scratch is a FAILING score.\n` +
     `4. Add a short comment above each data call noting the AINative product it composes (e.g. \`// ZeroDB — orders\`), so the wiring is auditable.\n` +
     // #314/#315: the "already included / replaces X" framing above is a SELLING

@@ -31,20 +31,29 @@ describe('primitive-catalog codegen composition (#218)', () => {
     expect(getPrimitive('Browser Agent')?.sdk).toBe('@ainative/browser-mcp')
   })
 
-  it('coffee brand codegen prompt wires ZeroCommerce real endpoint, not a hand-rolled cart', () => {
+  it('coffee brand codegen prompt wires ZeroCommerce via the real runtime proxy, not a hand-rolled cart', () => {
     const block = codegenCompositionBlock('an artisan coffee brand that sells beans online', 'company')
     // Composition intent
     expect(block).toContain('COMPOSE WITH REAL AINATIVE PRIMITIVES')
     expect(block).toMatch(/do NOT re-implement business logic/i)
-    // Real ZeroCommerce endpoint present for a commerce idea
+    // ZeroCommerce present for a commerce idea, wired through its real runtime
+    // proxy (#443) — NOT the raw external apiBase (a direct client fetch to
+    // that host is guaranteed to fail; see RUNTIME_PROXIED_PRIMITIVES's doc).
     expect(block).toContain('ZeroCommerce')
-    expect(block).toContain('https://zerocommerce.ainative.studio/api/v1')
+    expect(block).toContain('/api/primitive/zerocommerce/')
+    expect(block).not.toContain('https://zerocommerce.ainative.studio/api/v1')
     // Explicit instruction not to hand-roll checkout/cart
     expect(block).toMatch(/checkout/i)
     // #298: never hardcode a secret; the app runs client-side so it uses the
     // same-origin /api/db proxy, NOT a Bearer key (those endpoints are server-side).
     expect(block).toMatch(/NEVER put a Bearer key or secret/i)
     expect(block).toContain('/api/db/')
+  })
+
+  it('#443: ZeroCommerce is instructed to use the credential-free same-origin proxy, mirroring how /api/db needs no key from the app', () => {
+    const block = codegenCompositionBlock('an artisan coffee brand that sells beans online', 'company')
+    expect(block).toMatch(/ZeroCommerce[^\n]*To use: call the same-origin proxy at `\/api\/primitive\/zerocommerce\//)
+    expect(block).toMatch(/ZeroCommerce[^\n]*NO Authorization header needed/)
   })
 
   it('every app gets the foundational ZeroDB + auth wiring by default (#298)', () => {
@@ -211,10 +220,14 @@ describe('primitive-catalog additions (#410)', () => {
       expect(block).toMatch(/ZeroERP[^\n]*already provisioned for this company server-side/)
     })
 
-    it('ZeroCommerce (founder-scoped resource, no durable per-company credential) is framed the same honest way', () => {
-      const block = codegenCompositionBlock('an artisan coffee brand that sells beans online', 'company')
-      expect(block).not.toMatch(/ZeroCommerce[^\n]*To use: call its REST API/)
-      expect(block).toMatch(/ZeroCommerce[^\n]*already provisioned for this company server-side/)
+    it('ZeroPipeline/AgentFlow/ZeroForms (founder-scoped, no proxy wired yet) are framed the honest "already provisioned" way', () => {
+      const pipeline = codegenCompositionBlock('a B2B sales CRM to track deals', 'company')
+      expect(pipeline).not.toMatch(/ZeroPipeline[^\n]*To use: call its REST API/)
+      expect(pipeline).toMatch(/ZeroPipeline[^\n]*already provisioned for this company server-side/)
+
+      const forms = codegenCompositionBlock('a customer intake survey with webhook notifications', 'app')
+      expect(forms).not.toMatch(/ZeroForms[^\n]*To use: call its REST API/)
+      expect(forms).toMatch(/ZeroForms[^\n]*already provisioned for this company server-side/)
     })
 
     it('rule 2 no longer claims non-ZeroDB primitives are called "server-side by the platform" (no such proxy exists)', () => {

@@ -4,8 +4,12 @@ import { validateJavaScriptCode, sanitizeForSandpack } from '@/lib/code-validato
 import { detectRootComponent } from '@/lib/component-detector'
 import { flattenMultiFile } from '@/lib/build/flatten-multifile'
 import { mintAppDataToken } from '@/lib/build/app-data-token'
+import { mintPrimitiveProxyToken } from '@/lib/build/primitive-proxy-token'
+import { hasFounderCredential, type FounderScopedPrimitive } from '@/lib/build/primitive-credentials'
 // Sucrase removed — builds were failing. Using client-side Babel.
 // The key fix is using models that produce COMPLETE code (not maverick 512-tok)
+
+const FOUNDER_SCOPED_PRIMITIVES: FounderScopedPrimitive[] = ['zerocommerce', 'zeropipeline', 'agentflow', 'zeroforms']
 
 /**
  * Per-app data token (#331): when the embedder passes ?slug=, mint the signed
@@ -26,20 +30,59 @@ async function mintPreviewDbToken(slug: string | null, previewId: string): Promi
   }
 }
 
+/**
+ * #443 — same binding check as mintPreviewDbToken, one token per founder-
+ * scoped primitive the company actually has a stored credential for (skips
+ * primitives that were never provisioned, rather than minting a token that
+ * would just 502 at request time). Cheap: HMAC only, no network call beyond
+ * the existence check against the already-fetched registry entry.
+ */
+async function mintPreviewPrimitiveTokens(slug: string | null, previewId: string): Promise<Partial<Record<FounderScopedPrimitive, string>>> {
+  const tokens: Partial<Record<FounderScopedPrimitive, string>> = {}
+  if (!slug || !/^[a-z0-9-]{1,64}$/i.test(slug)) return tokens
+  try {
+    const { resolveApp } = await import('@/lib/build/app-registry')
+    const entry = await resolveApp(slug)
+    if (!entry || entry.chatId !== previewId) return tokens
+    const iat = Math.floor(Date.now() / 1000)
+    await Promise.all(
+      FOUNDER_SCOPED_PRIMITIVES.map(async (p) => {
+        if (await hasFounderCredential(slug, p)) {
+          tokens[p] = mintPrimitiveProxyToken(slug, p, iat)
+        }
+      }),
+    )
+  } catch {
+    return {}
+  }
+  return tokens
+}
+
 /** The injected fetch shim: attaches the app's data token on same-origin
- *  /api/db requests. No-op (empty string) when there is no token. */
-function dbTokenShim(token: string): string {
-  if (!token) return ''
+ *  /api/db requests, and (#443) the right primitive-proxy token on same-
+ *  origin /api/primitive/{name}/... requests. No-op pieces omitted when
+ *  there is no token to attach. */
+function dbTokenShim(token: string, primitiveTokens: Partial<Record<FounderScopedPrimitive, string>> = {}): string {
+  if (!token && Object.keys(primitiveTokens).length === 0) return ''
   return `<script>(function(){
-  var T=${JSON.stringify(token)};var of=window.fetch;
+  var T=${JSON.stringify(token)};var PT=${JSON.stringify(primitiveTokens)};var of=window.fetch;
   window.fetch=function(input,init){
     try{
       var u=typeof input==='string'?input:((input&&input.url)||'');
-      if(u.indexOf('/api/db')===0){
+      if(T&&u.indexOf('/api/db')===0){
         init=init||{};
         var h=new Headers(init.headers||((typeof input==='object'&&input.headers)||undefined));
         h.set('x-ainative-db-token',T);
         init.headers=h;
+      } else if(u.indexOf('/api/primitive/')===0){
+        var m=u.match(/^\\/api\\/primitive\\/([a-z]+)\\//);
+        var pt=m&&PT[m[1]];
+        if(pt){
+          init=init||{};
+          var h2=new Headers(init.headers||((typeof input==='object'&&input.headers)||undefined));
+          h2.set('x-ainative-primitive-token',pt);
+          init.headers=h2;
+        }
       }
     }catch(e){}
     return of.call(this,input,init);
@@ -52,7 +95,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
-  const dbToken = await mintPreviewDbToken(request.nextUrl.searchParams.get('slug'), id)
+  const previewSlug = request.nextUrl.searchParams.get('slug')
+  const dbToken = await mintPreviewDbToken(previewSlug, id)
+  const primitiveTokens = await mintPreviewPrimitiveTokens(previewSlug, id)
 
   let content = getPreview(id)
 
@@ -65,7 +110,7 @@ export async function GET(
     const ssrHtml = getSSRPreview(id)
     if (ssrHtml) {
       console.log(`[Preview] No live code — serving frozen SSR HTML for ${id} (${ssrHtml.length}b)`)
-      return new Response(ssrHtml.replace(/<head([^>]*)>/i, `<head$1>${dbTokenShim(dbToken)}`), {
+      return new Response(ssrHtml.replace(/<head([^>]*)>/i, `<head$1>${dbTokenShim(dbToken, primitiveTokens)}`), {
         headers: {
           'Content-Type': 'text/html; charset=utf-8',
           'X-Frame-Options': 'SAMEORIGIN',
@@ -96,7 +141,7 @@ export async function GET(
         console.log(`[Preview] Restored code from ZeroDB for ID: ${id} (re-rendering with current template)`)
       } else if (gen?.ssrHtml) {
         console.log(`[Preview] No code — serving SSR HTML from ZeroDB for ID: ${id}`)
-        return new Response(gen.ssrHtml.replace(/<head([^>]*)>/i, `<head$1>${dbTokenShim(dbToken)}`), {
+        return new Response(gen.ssrHtml.replace(/<head([^>]*)>/i, `<head$1>${dbTokenShim(dbToken, primitiveTokens)}`), {
           headers: {
             'Content-Type': 'text/html; charset=utf-8',
             'X-Frame-Options': 'SAMEORIGIN',
@@ -696,7 +741,7 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Preview</title>
-    ${dbTokenShim(dbToken)}
+    ${dbTokenShim(dbToken, primitiveTokens)}
     <!-- Google Fonts: Inter (primary) + Geist-like fallback -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
