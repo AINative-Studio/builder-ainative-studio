@@ -72,10 +72,13 @@ describe('primitive-catalog codegen composition (#218)', () => {
     expect(block).toMatch(/do NOT hand-roll client-side text filtering/i)
   })
 
-  it('B2B SaaS idea wires ZeroPipeline (CRM) real endpoint', () => {
+  it('B2B SaaS idea wires ZeroPipeline (CRM) via its real same-origin runtime proxy (#443)', () => {
     const block = codegenCompositionBlock('a B2B sales CRM to track deals and leads', 'company')
     expect(block).toContain('ZeroPipeline')
-    expect(block).toContain('https://pipeline.ainative.studio/api/v1')
+    // ZeroPipeline is founder-identity-scoped (#443) — the generated app calls
+    // the same-origin proxy, never ZeroPipeline's real host directly.
+    expect(block).toContain('/api/primitive/zeropipeline/')
+    expect(block).not.toContain('https://pipeline.ainative.studio/api/v1')
   })
 
   it('invoicing idea wires ZeroInvoice real endpoint', () => {
@@ -220,14 +223,18 @@ describe('primitive-catalog additions (#410)', () => {
       expect(block).toMatch(/ZeroERP[^\n]*already provisioned for this company server-side/)
     })
 
-    it('ZeroPipeline/AgentFlow/ZeroForms (founder-scoped, no proxy wired yet) are framed the honest "already provisioned" way', () => {
-      const pipeline = codegenCompositionBlock('a B2B sales CRM to track deals', 'company')
-      expect(pipeline).not.toMatch(/ZeroPipeline[^\n]*To use: call its REST API/)
-      expect(pipeline).toMatch(/ZeroPipeline[^\n]*already provisioned for this company server-side/)
-
+    it('AgentFlow/ZeroForms (founder-scoped, no proxy wired yet) are framed the honest "already provisioned" way', () => {
       const forms = codegenCompositionBlock('a customer intake survey with webhook notifications', 'app')
       expect(forms).not.toMatch(/ZeroForms[^\n]*To use: call its REST API/)
       expect(forms).toMatch(/ZeroForms[^\n]*already provisioned for this company server-side/)
+    })
+
+    it('ZeroPipeline (#443 follow-up: real proxy shipped) now gets a real same-origin proxy instruction, not the placeholder', () => {
+      const block = codegenCompositionBlock('a B2B sales CRM to track deals', 'company')
+      expect(block).toContain('ZeroPipeline')
+      expect(block).not.toMatch(/ZeroPipeline[^\n]*already provisioned for this company server-side/)
+      expect(block).toMatch(/ZeroPipeline[^\n]*To use: call the same-origin proxy at `\/api\/primitive\/zeropipeline\//)
+      expect(block).toMatch(/ZeroPipeline[^\n]*NO Authorization header needed/)
     })
 
     it('rule 2 no longer claims non-ZeroDB primitives are called "server-side by the platform" (no such proxy exists)', () => {

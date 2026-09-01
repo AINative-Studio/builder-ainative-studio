@@ -171,6 +171,22 @@ export async function POST(request: NextRequest) {
   if (jwt) {
     const zp = await provisionPipeline(jwt, slug, String(existing.name || b?.name || slug))
     pipeline = { provisioned: zp.ok, pipelineId: zp.pipelineId, reason: zp.ok ? undefined : zp.reason }
+    if (zp.ok) {
+      // #443: ZeroPipeline is also scoped to the founder's own AINative
+      // identity — same durable-credential capture as ZeroCommerce above, so
+      // the runtime proxy (/api/primitive/zeropipeline/...) has a refreshable
+      // token to serve the deployed app with later. Best-effort.
+      const rawToken = await getToken({ req: request, secret: process.env.AUTH_SECRET }).catch(() => null)
+      if (rawToken?.refreshToken || rawToken?.accessToken) {
+        storeFounderCredential(
+          slug,
+          'zeropipeline',
+          jwt,
+          rawToken.refreshToken as string | undefined,
+          rawToken.expiresAt ? Math.max(0, Math.floor((Number(rawToken.expiresAt) - Date.now()) / 1000)) : undefined,
+        ).catch(() => {})
+      }
+    }
   }
 
   // #417 (child of #414): also provision the company's REAL ZeroCommerce store

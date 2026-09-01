@@ -130,4 +130,30 @@ describe('GET/POST /api/primitive/[primitive]/[...path] (#443)', () => {
     const res: any = await GET(req(), ctx('zerocommerce', ['commerce', 'products']))
     expect(res.status).toBe(502)
   })
+
+  describe('zeropipeline (#443 follow-up)', () => {
+    it('is a known primitive, routed to the real ZeroPipeline host with the resolved founder token', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'real-pipeline-token' })
+      const fetchMock = vi.fn(async (url: string, init: any) => {
+        expect(url).toBe('https://pipeline.ainative.studio/api/v1/pipelines')
+        expect(init.headers.Authorization).toBe('Bearer real-pipeline-token')
+        return { status: 200, text: async () => JSON.stringify({ pipelines: [] }), headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const res: any = await GET(req(), ctx('zeropipeline', ['pipelines']))
+      expect(res.status).toBe(200)
+      expect(h.resolveFounderCredential).toHaveBeenCalledWith('acme', 'zeropipeline')
+    })
+
+    it('returns an honest 502 when no founder credential was ever stored', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: false, reason: 'not_provisioned' })
+      const res: any = await GET(req(), ctx('zeropipeline', ['pipelines']))
+      expect(res.status).toBe(502)
+      const json = await res.json()
+      expect(json).toEqual({ error: 'primitive_unavailable', reason: 'not_provisioned' })
+    })
+  })
 })
