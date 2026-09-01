@@ -570,6 +570,23 @@ export function mcpDataProvisioningBlock(): string {
 }
 
 /**
+ * Primitives with a real, generated-app-callable runtime path today. Every
+ * other primitive with an `apiBase` is provisioned SERVER-SIDE (at company
+ * checkout, using the founder's own AINative identity or a builder-held
+ * service credential) but has NO proxy route a browser-run generated app can
+ * call — a direct client-side `fetch()` with a Bearer key fails 100% of the
+ * time (no key ships to the browser) and, for several primitives (ZeroCommerce/
+ * ZeroPipeline/AgentFlow/ZeroForms — "one store per owner user"), the
+ * resource is scoped to the FOUNDER'S identity, not a durable per-company
+ * service credential builder could proxy on the generated app's behalf even
+ * if a proxy route existed. Telling the model to `fetch()` these directly
+ * produced code that is guaranteed broken at runtime — see the investigation
+ * that added this constant. AI Kit ships as an SDK import, not a fetch, so it
+ * has no runtime-path problem either.
+ */
+const RUNTIME_PROXIED_PRIMITIVES = new Set(['ZeroDB', 'Instant DB'])
+
+/**
  * CODEGEN composition block (#218) — the other half of #288's selection.
  *
  * #288 wired selection (WHICH primitives) into the artifact/summary prompts.
@@ -580,7 +597,10 @@ export function mcpDataProvisioningBlock(): string {
  * rather than regenerating fragile CRUD — is the moat vs. generic app builders.
  *
  * It lists ONLY the primitives selected for this idea that expose a real
- * endpoint/SDK, so the model gets the concrete URL to fetch() against.
+ * endpoint/SDK. Only `RUNTIME_PROXIED_PRIMITIVES` get a literal fetch()
+ * instruction (they have a real same-origin proxy the generated app can call);
+ * everything else is framed honestly as "already provisioned server-side, the
+ * app doesn't call it directly" — see that constant's doc for why.
  */
 export function codegenCompositionBlock(idea: string, track: 'app' | 'company' = 'company'): string {
   const { foundational, selected } = selectPrimitives(idea, track)
@@ -592,9 +612,11 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
   for (const p of wireable) {
     if (seen.has(p.name)) continue
     seen.add(p.name)
-    const how = p.apiBase
-      ? `call its REST API at \`${p.apiBase}\` (Authorization: Bearer <AINATIVE_API_KEY>)`
-      : `import its SDK \`${p.sdk}\``
+    const how = !p.apiBase
+      ? `import its SDK \`${p.sdk}\``
+      : RUNTIME_PROXIED_PRIMITIVES.has(p.name)
+        ? `call its REST API at \`${p.apiBase}\` (Authorization: Bearer <AINATIVE_API_KEY>)`
+        : `it was already provisioned for this company server-side at setup time — the generated app does NOT call \`${p.apiBase}\` directly (no key ships to the browser); build the UI/logic assuming that data/action already exists, and persist any app-side records it produces through the ZeroDB proxy below`
     // #314/#315: carry the plain-English "already included — no extra key/cost —
     // replaces {commercial tool}" framing so the generated app proactively tells
     // the user they already have this built-in (e.g. "replaces HubSpot").
@@ -611,7 +633,7 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
   }
   return (
     `## COMPOSE WITH REAL AINATIVE PRIMITIVES (MANDATORY — do NOT re-implement business logic)\n\n` +
-    `This app must be BUILT ON AINative's real products, not a from-scratch clone. When a primitive below covers a capability the app needs (invoicing, CRM/sales, ecommerce/checkout, telephony/SMS, cap-table/equity, helpdesk, content/social, streaming, marketplace), you MUST call that primitive's real endpoint/SDK instead of hand-rolling the logic:\n\n` +
+    `This app must be BUILT ON AINative's real products, not a from-scratch clone. When a primitive below covers a capability the app needs (invoicing, CRM/sales, ecommerce/checkout, telephony/SMS, cap-table/equity, helpdesk, content/social, streaming, marketplace), design around that primitive instead of hand-rolling the logic — follow the "To use" instruction for each one exactly, since some are called directly and some are already provisioned server-side (see below):\n\n` +
     lines.join('\n') + '\n\n' +
     // FOUNDATIONAL (#298): every app gets ZeroDB (via the same-origin proxy) + a
     // lightweight auth pattern by DEFAULT — these are non-optional, regardless of
@@ -635,7 +657,7 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
     `  For a real login screen, render an email+continue form that sets that uid — do NOT call an external auth API.\n\n` +
     `Rules:\n` +
     `1. Import \`@ainative/ai-kit-core\` (and its React bindings) for UI primitives — do NOT rebuild chat, tables, product cards, or dashboards from scratch when an AI Kit component exists.\n` +
-    `2. Persist through /api/db (above) — this is MANDATORY when the app saves any records. The generated app runs in the browser, so it does NOT have AINATIVE_API_KEY; NEVER put a Bearer key or secret in app code. The SaaS primitive endpoints listed above are called SERVER-SIDE only (by the platform), not from generated app code.\n` +
+    `2. Persist through /api/db (above) — this is MANDATORY when the app saves any records. The generated app runs in the browser, so it does NOT have AINATIVE_API_KEY; NEVER put a Bearer key or secret in app code, and NEVER fetch() a primitive's apiBase directly unless this block explicitly said to (only ZeroDB/Instant DB have a real browser-callable path today). For every other primitive listed above, treat its capability as already set up by the platform — build the UI around it, don't call its API from generated code.\n` +
     `3. Do NOT reimplement invoicing, CRM, ecommerce carts/checkout, telephony, cap-table math, or helpdesk ticketing when the matching primitive exists — model the app around composing it. Regenerating that business logic from scratch is a FAILING score.\n` +
     `4. Add a short comment above each data call noting the AINative product it composes (e.g. \`// ZeroDB — orders\`), so the wiring is auditable.\n` +
     // #314/#315: the "already included / replaces X" framing above is a SELLING

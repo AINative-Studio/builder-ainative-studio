@@ -184,4 +184,54 @@ describe('primitive-catalog additions (#410)', () => {
     const sel = selectPrimitives('an app that tracks expenses and chart of accounts', 'company')
     expect(sel.names).toContain('ZeroBooks')
   })
+
+  describe('honest runtime-path framing (found via live stress-test of the build workflow)', () => {
+    // Live infra + source investigation confirmed generated app code has NO
+    // real way to call a non-ZeroDB primitive directly: no browser bundle
+    // ever carries AINATIVE_API_KEY, and several primitives (ZeroCommerce,
+    // ZeroPipeline, AgentFlow, ZeroForms) provision "one resource per owner
+    // user" — scoped to the FOUNDER's identity, not a durable per-company
+    // service credential builder could proxy even with a generic route. The
+    // prompt must never instruct a direct fetch() to these; it must say the
+    // capability was already set up server-side instead.
+
+    it('only ZeroDB and Instant DB get a literal fetch()-with-Bearer instruction', () => {
+      const block = codegenCompositionBlock('an inventory and warehouse tool for a small manufacturer', 'company')
+      // ZeroDB/Instant DB: real browser-callable path (via /api/db), so the
+      // literal REST-call instruction is honest here.
+      expect(block).toMatch(/ZeroDB[^\n]*To use: call its REST API at `https:\/\/api\.ainative\.studio\/api\/v1`/)
+      expect(block).toMatch(/Instant DB[^\n]*To use: call its REST API at/)
+    })
+
+    it('ZeroERP (no browser-callable proxy) is framed as already-provisioned, not a direct fetch target', () => {
+      const block = codegenCompositionBlock('an inventory and warehouse tool for a small manufacturer', 'company')
+      expect(block).toContain('ZeroERP')
+      // Must NOT tell the model to call ZeroERP's real host directly.
+      expect(block).not.toMatch(/ZeroERP[^\n]*To use: call its REST API/)
+      expect(block).toMatch(/ZeroERP[^\n]*already provisioned for this company server-side/)
+    })
+
+    it('ZeroCommerce (founder-scoped resource, no durable per-company credential) is framed the same honest way', () => {
+      const block = codegenCompositionBlock('an artisan coffee brand that sells beans online', 'company')
+      expect(block).not.toMatch(/ZeroCommerce[^\n]*To use: call its REST API/)
+      expect(block).toMatch(/ZeroCommerce[^\n]*already provisioned for this company server-side/)
+    })
+
+    it('rule 2 no longer claims non-ZeroDB primitives are called "server-side by the platform" (no such proxy exists)', () => {
+      const block = codegenCompositionBlock('a customer support helpdesk with tickets', 'company')
+      // The old, misleading claim must be gone.
+      expect(block).not.toMatch(/SaaS primitive endpoints listed above are called SERVER-SIDE only \(by the platform\)/)
+      // The honest replacement must be present.
+      expect(block).toMatch(/NEVER fetch\(\) a primitive's apiBase directly unless this block explicitly said to/)
+    })
+
+    it('never instructs the model to fetch a non-proxied primitive even when it is the only match', () => {
+      // ServiceOS has no provisioning step at all (access is implicit via the
+      // founder's JWT) and is not in RUNTIME_PROXIED_PRIMITIVES — a generated
+      // app still cannot call it directly (no JWT in the browser bundle).
+      const block = codegenCompositionBlock('a customer support helpdesk with tickets', 'company')
+      expect(block).toContain('ServiceOS')
+      expect(block).not.toMatch(/ServiceOS[^\n]*To use: call its REST API/)
+    })
+  })
 })
