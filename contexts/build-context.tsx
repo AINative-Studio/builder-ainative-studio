@@ -9,7 +9,7 @@
 import { createContext, useContext, useReducer, useEffect, useCallback, useMemo, type ReactNode } from 'react'
 import {
   buildReducer, initialBuildState, trackViews, countWoven,
-  type BuildState, type BuildAction, type ArtifactView, type Track,
+  type BuildState, type BuildAction, type ArtifactView, type Track, type CompanyRole,
   APP_VIEWS, COMPANY_VIEWS, SHARED_LATE_VIEWS,
 } from '@/lib/build/state'
 import { PRIMITIVE_MAP, TOTAL_PRIMITIVES } from '@/lib/build/primitives'
@@ -25,7 +25,7 @@ interface BuildContextValue {
   woven: number
   totalPrimitives: number
   goView: (view: ArtifactView) => void
-  pickTrack: (track: Track) => void
+  pickTrack: (track: Track, role?: CompanyRole) => void
 }
 
 const BuildContext = createContext<BuildContextValue | null>(null)
@@ -207,7 +207,7 @@ export function BuildProvider({ children }: { children: ReactNode }) {
   const woven = useMemo(() => countWoven(state, PRIMITIVE_MAP), [state])
 
   const goView = useCallback((view: ArtifactView) => dispatch({ type: 'GOTO_VIEW', view }), [])
-  const pickTrack = useCallback((track: Track) => dispatch({ type: 'PICK_TRACK', track }), [])
+  const pickTrack = useCallback((track: Track, role?: CompanyRole) => dispatch({ type: 'PICK_TRACK', track, role }), [])
 
   // The full Act-2 autoplay engine (prose gen + swarm/infra/preview build phases
   // + overlays + ribbon + the privacy decision + MVP completion) lives in

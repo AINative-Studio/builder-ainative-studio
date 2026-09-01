@@ -364,6 +364,49 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     triggers: ['monetize', 'marketplace payout', 'revenue share', 'stripe connect', 'sell api', 'developer earnings'] },
 ]
 
+/**
+ * Company-track role selection (#448) — decomposes "build a company" from
+ * one monolithic build into a specific function a founder can pick, so the
+ * outcome is legible ("this builds your Marketing operation") instead of an
+ * undifferentiated "company" with no defined deliverable.
+ *
+ * Deliberately a NAME-based boost list, not `category`-based: every
+ * business-ops primitive shares one category, so a category filter can't
+ * distinguish "Sales" (ZeroPipeline/ZeroInvoice/ZeroCommerce) from
+ * "Marketing" (Content Workflow/Live Streaming) — they're both
+ * `business-ops`. Real primitive names are the only thing that actually
+ * differentiates a role.
+ */
+export type CompanyRole = 'marketing' | 'sales' | 'operations'
+
+export const COMPANY_ROLES: { id: CompanyRole; label: string; description: string }[] = [
+  { id: 'marketing', label: 'Marketing', description: 'Content, outreach, and audience growth — Content Workflow, Live Streaming, market research' },
+  { id: 'sales', label: 'Sales', description: 'Pipeline, invoicing, and storefront — ZeroPipeline, ZeroInvoice, ZeroCommerce' },
+  { id: 'operations', label: 'Operations', description: 'Resource planning, support, and back-office — ZeroERP, ServiceOS, ZeroForms, ZeroBooks' },
+]
+
+/** Real catalog names each role emphasizes. Kept as a plain record (not derived
+ *  from `category`) so each role stays precisely scoped as the catalog grows. */
+const ROLE_PRIMITIVE_NAMES: Record<CompanyRole, string[]> = {
+  marketing: ['Content Workflow', 'Live Streaming', 'Data Marketplace', 'ZeroVoice'],
+  sales: ['ZeroPipeline', 'ZeroInvoice', 'ZeroCommerce', 'ZeroVoice'],
+  operations: ['ZeroERP', 'ServiceOS', 'ZeroForms', 'ZeroBooks'],
+}
+
+/**
+ * True when `role` is a real role, `track` is 'company' (roles are a
+ * company-track concept only — the app track has no provisioning-time role
+ * distinction to back it), and `primitive` is one of that role's named picks.
+ * Centralized here (not duplicated at each call site) so every caller gets
+ * the track guard for free — an earlier draft of this feature forgot the
+ * guard in `selectPrimitives`'s filter and let a role leak into app-track
+ * selections; caught by this file's own test suite before it shipped.
+ */
+function isRoleEmphasized(primitive: CatalogPrimitive, track: 'app' | 'company', role: CompanyRole | undefined): boolean {
+  if (!role || track !== 'company') return false
+  return ROLE_PRIMITIVE_NAMES[role]?.includes(primitive.name) ?? false
+}
+
 /** Fast lookup by name; also guards against any accidental duplicate entry
  *  in PRIMITIVE_CATALOG (first occurrence wins) — see #412. */
 const CATALOG_BY_NAME = new Map<string, CatalogPrimitive>()
@@ -521,7 +564,11 @@ function isFoundationalOnTrack(primitive: CatalogPrimitive, track: 'app' | 'comp
   return false
 }
 
-export function scorePrimitives(idea: string, track: 'app' | 'company' = 'company'): PrimitiveScore[] {
+export function scorePrimitives(
+  idea: string,
+  track: 'app' | 'company' = 'company',
+  role?: CompanyRole,
+): PrimitiveScore[] {
   const hay = ` ${(idea || '').toLowerCase()} `
   return CATALOG.map((primitive) => {
     const matched = primitive.triggers.filter((t) => hay.includes(` ${t}`) || hay.includes(`${t} `) || hay.includes(t))
@@ -530,6 +577,10 @@ export function scorePrimitives(idea: string, track: 'app' | 'company' = 'compan
     // On the company track, the "run a company" business-ops layer is the whole
     // point — give it a slight nudge so a live company surfaces real ops.
     if (track === 'company' && primitive.category === 'business-ops') score += 0.25
+    // #448: a selected role narrows "company" further — its named primitives
+    // outrank the rest of business-ops so the build is legibly a Marketing/
+    // Sales/Operations build, not an undifferentiated everything-at-once one.
+    if (isRoleEmphasized(primitive, track, role)) score += 1
     return { primitive, score, matched }
   }).sort((a, b) => b.score - a.score)
 }
@@ -555,11 +606,12 @@ export function selectPrimitives(
   idea: string,
   track: 'app' | 'company' = 'company',
   maxSelected = 6,
+  role?: CompanyRole,
 ): SelectionResult {
-  const scored = scorePrimitives(idea, track)
+  const scored = scorePrimitives(idea, track, role)
   const foundational = CATALOG.filter((p) => isFoundationalOnTrack(p, track, idea))
   const selected = scored
-    .filter((s) => !isFoundationalOnTrack(s.primitive, track, idea) && s.matched.length > 0)
+    .filter((s) => !isFoundationalOnTrack(s.primitive, track, idea) && (s.matched.length > 0 || isRoleEmphasized(s.primitive, track, role)))
     .slice(0, maxSelected)
     .map((s) => s.primitive)
   const names: string[] = []
@@ -573,11 +625,14 @@ export function selectPrimitives(
  * catalog to choose from (so it isn't anchored on a hardcoded shortlist) while
  * highlighting the idea-matched candidates.
  */
-export function catalogPromptBlock(idea: string, track: 'app' | 'company' = 'company'): string {
-  const { names } = selectPrimitives(idea, track)
+export function catalogPromptBlock(idea: string, track: 'app' | 'company' = 'company', role?: CompanyRole): string {
+  const { names } = selectPrimitives(idea, track, 6, role)
   const full = CATALOG.map((p) => `- ${p.name}: ${p.purpose}`).join('\n')
+  const roleLine = role
+    ? `\nThis is a ${COMPANY_ROLES.find((r) => r.id === role)?.label ?? role} build — lead with the primitives that power that function specifically.\n`
+    : ''
   return (
-    `AINATIVE PRIMITIVE CATALOG (compose from THESE real products — do not invent primitives):\n${full}\n\n` +
+    `AINATIVE PRIMITIVE CATALOG (compose from THESE real products — do not invent primitives):\n${full}\n${roleLine}\n` +
     `Most relevant to this idea (lead with these, add others only if the idea calls for them): ${names.join(', ')}.\n` +
     `Pick the primitives THIS specific idea needs and say how each is used. Do not default to a generic set.`
   )
@@ -671,8 +726,8 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
  * everything else is framed honestly as "already provisioned server-side, the
  * app doesn't call it directly" — see that constant's doc for why.
  */
-export function codegenCompositionBlock(idea: string, track: 'app' | 'company' = 'company'): string {
-  const { foundational, selected } = selectPrimitives(idea, track)
+export function codegenCompositionBlock(idea: string, track: 'app' | 'company' = 'company', role?: CompanyRole): string {
+  const { foundational, selected } = selectPrimitives(idea, track, 6, role)
   // Wire foundational substrate first, then the idea-matched business-ops layer.
   const wireable = [...foundational, ...selected].filter((p) => p.apiBase || p.sdk)
   // De-dup by name (foundational + selected can't overlap, but be safe).

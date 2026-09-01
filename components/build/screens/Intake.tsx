@@ -68,7 +68,7 @@ export function Intake() {
     try {
       const res = await fetch('/api/build/credits', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slug: brand.slug, idea, track: state.track }),
+        body: JSON.stringify({ slug: brand.slug, idea, track: state.track, role: state.role || undefined }),
       })
       if (res.status === 402) {
         trackEvent('build_limit_reached', 'funnel', state.track, undefined)

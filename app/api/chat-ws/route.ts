@@ -206,7 +206,11 @@ const MODEL_CONFIG: Record<string, { provider: 'meta' | 'ainative'; modelId: str
 
 export async function POST(request: NextRequest) {
   try {
-    const { message, chatId, model: requestedModel } = await request.json()
+    const { message, chatId, model: requestedModel, role: companyRole } = await request.json()
+    // #448: an optional company-build role (marketing/sales/operations)
+    // narrows composition toward that function's primitives. Untrusted
+    // client input — validate against the real role set, default to none.
+    const validRole = ['marketing', 'sales', 'operations'].includes(companyRole) ? companyRole : undefined
 
     if (!message) {
       return Response.json({ error: 'Message is required' }, { status: 400 })
@@ -354,7 +358,7 @@ export async function POST(request: NextRequest) {
           // generated apps COMPOSE real endpoints (ZeroCommerce/ZeroInvoice/etc.)
           // instead of regenerating business logic. #288 shipped the selection
           // half; this is the codegen half. Selection is idea-driven off `message`.
-          const compositionBlock = '\n\n' + codegenCompositionBlock(message, 'company')
+          const compositionBlock = '\n\n' + codegenCompositionBlock(message, 'company', validRole)
           // Multi-file emphasis (#291): complexity-gate the file structure so complex
           // ideas split into components (→ Sandpack), simple ideas stay single-file
           // (→ fast Babel path). #293: when the idea warrants multi-file (a named

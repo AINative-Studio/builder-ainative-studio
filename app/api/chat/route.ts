@@ -31,7 +31,11 @@ const AVAILABLE_COMPONENTS = [
 
 export async function POST(request: NextRequest) {
   try {
-    const { message, chatId, attachments, streaming, model: selectedModel } = await request.json()
+    const { message, chatId, attachments, streaming, model: selectedModel, role: companyRole } = await request.json()
+    // #448: an optional company-build role (marketing/sales/operations)
+    // narrows composition toward that function's primitives. Untrusted
+    // client input — validate against the real role set, default to none.
+    const validRole = ['marketing', 'sales', 'operations'].includes(companyRole) ? companyRole : undefined
 
     if (!message) {
       return Response.json({ error: 'Message is required' }, { status: 400 })
@@ -174,7 +178,7 @@ export async function POST(request: NextRequest) {
     // Wires ZeroCommerce/ZeroInvoice/ZeroPipeline/etc. real endpoints so the
     // generated app calls them instead of hand-rolling business logic.
     const enhancedSystemPrompt =
-      promptEnhancement.systemPrompt + '\n\n' + codegenCompositionBlock(message, 'company')
+      promptEnhancement.systemPrompt + '\n\n' + codegenCompositionBlock(message, 'company', validRole)
 
     console.log('LLAMA API request:', {
       originalMessage: message,
