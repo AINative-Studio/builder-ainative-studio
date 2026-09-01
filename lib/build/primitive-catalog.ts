@@ -228,9 +228,12 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     purpose: 'Cap table + equity (OCTA): stakeholders, SAFEs, grants, vesting, waterfall, investor portals',
     url: `${DOCS}/opencapstack/overview`,
     apiBase: 'https://api.opencapstack.com/api/v1',
-    // OpenCapStack MCP — docs/AINATIVE_PRIMITIVES.md §4 (JWT bearer + MCP). Tool
-    // count not published in §6; left undefined.
-    mcpUrl: `${MCP_BASE}/opencapstack`,
+    // OpenCapStack MCP is the real, published `@opencapstack/mcp-server` npm
+    // package (npx-launched, stdio by default; 27 tools) — verified live (#413).
+    // It is NOT a hosted server behind mcp.ainative.studio: MCP_BASE/opencapstack
+    // 301-redirects into builder's own SPA rather than serving MCP protocol
+    // (core#6667). Registered in MCP_SERVERS below with a doc-page pointer,
+    // matching the existing GTM (stdio) entry's pattern.
     triggers: ['equity', 'cap table', 'captable', 'fundraising', 'fundraise', 'safe', 'investors', 'shares', 'vesting', 'valuation', 'dilution', 'startup equity'] },
   { name: 'ServiceOS', category: 'business-ops',
     purpose: 'Helpdesk / customer-service operations: tickets, queues, agent workflows',
@@ -268,9 +271,17 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     purpose: 'Web data extraction + browser automation (MCP)',
     url: `${DOCS}/business-ops/browser-agent`,
     sdk: '@ainative/browser-mcp',
-    // Browser Agent ships as an MCP server via `npx @ainative/browser-mcp` (stdio) —
-    // docs/AINATIVE_PRIMITIVES.md §3. Carry the doc pointer; transport is stdio, not HTTP.
-    mcpUrl: `${DOCS}/business-ops/browser-agent`,
+    // Real, live REST API confirmed (#411/#413): GET .../health lists real
+    // endpoints (act, extract, validate, task, extract-to-table,
+    // enrich-memory, batch-extract, enrich-memory-async).
+    apiBase: 'https://api.ainative.studio/api/v1/public/browser',
+    // NOTE (#413): this primitive ALSO ships as an MCP server via
+    // `npx @ainative/browser-mcp` (stdio) — docs/AINATIVE_PRIMITIVES.md §3 —
+    // but that's a locally-spawned stdio process, not a URL, and was
+    // previously mis-set here as `mcpUrl: <a docs page>`, which isn't a real
+    // server endpoint and was never registered in MCP_SERVERS either.
+    // Deliberately not setting mcpUrl / registering it there: use the real
+    // REST apiBase above for HTTP-based composition instead.
     triggers: ['scrape', 'scraping', 'extract', 'crawl', 'browser automation', 'web data', 'monitor prices', 'aggregat'] },
 
   // ---- Data / AI supporting primitives (idea-gated) ----
@@ -282,6 +293,7 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
   { name: 'Search & Discovery', category: 'data-memory',
     purpose: 'Unified search (users/posts/groups/events) + semantic search, autocomplete, trending, recommendations — powers the feed and people-discovery',
     url: `${DOCS}/search/overview`,
+    apiBase: 'https://api.ainative.studio',
     triggers: ['search', 'discovery', 'recommendations', 'recommend', 'browse', 'find', 'autocomplete', 'feed',
       'social', 'community', 'people', 'discover people', 'groups', 'trending', 'explore'] },
   { name: 'Data Marketplace', category: 'data-memory',
@@ -310,23 +322,28 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     apiBase: 'https://api.ainative.studio/api/v1',
     triggers: ['community', 'social', 'social network', 'social media', 'groups', 'group', 'members', 'membership',
       'forum', 'collaborative', 'feed', 'posts', 'comments', 'notifications', 'notify', 'messaging', 'people'] },
-  { name: 'Search & Discovery', category: 'data-memory',
-    purpose: 'Unified + semantic search, autocomplete, trending, recommendations',
-    url: `${DOCS}/search/overview`,
-    triggers: [] }, // (dedup guard — see SELECTION below)
-
   // ---- Payments / monetization (idea-gated) ----
   { name: 'Agent402', category: 'auth-billing',
     purpose: 'Agentic (machine-to-machine) payments over Web3',
     url: `${DOCS}/web3/agent402`,
+    // Real backend confirmed live (#411) — agent402.ainative.studio is the
+    // frontend SPA (every path resolves to the same shell); the real API is
+    // the separate Agent-402 Railway service, self-identified as "ZeroDB
+    // Agent Finance API". Real routes are mixed-prefix (some at root, e.g.
+    // /activity, /anchor/*; some under /api/v1/*) — apiBase is the bare host.
+    apiBase: 'https://agent-402-production.up.railway.app',
     triggers: ['agentic payments', 'machine payments', 'x402', 'agent pays', 'pay per call', 'micropayments'] },
   { name: 'Developer Program', category: 'auth-billing',
     purpose: 'Let the app monetize itself: 0–40% markup + Stripe Connect payouts',
     url: `${DOCS}/developer-program/overview`,
+    // Real routes confirmed live via core's own openapi.json (#411):
+    // /api/v1/public/developer/{payouts,earnings,analytics,logs}/*.
+    apiBase: 'https://api.ainative.studio/api/v1/public/developer',
     triggers: ['monetize', 'marketplace payout', 'revenue share', 'stripe connect', 'sell api', 'developer earnings'] },
 ]
 
-/** Fast de-duplicated view (the array above intentionally documents a dup guard). */
+/** Fast lookup by name; also guards against any accidental duplicate entry
+ *  in PRIMITIVE_CATALOG (first occurrence wins) — see #412. */
 const CATALOG_BY_NAME = new Map<string, CatalogPrimitive>()
 for (const p of PRIMITIVE_CATALOG) if (!CATALOG_BY_NAME.has(p.name)) CATALOG_BY_NAME.set(p.name, p)
 export const CATALOG: CatalogPrimitive[] = Array.from(CATALOG_BY_NAME.values())
@@ -375,6 +392,10 @@ export const MCP_SERVERS: McpServerRef[] = [
   { id: 'zerovoice', label: 'ZeroVoice MCP', url: `${MCP_BASE}/zerovoice`, tools: 25, primitive: 'ZeroVoice', transport: 'http' },
   // GTM ships via `@ainative/gtm-mcp` (stdio) — carry the doc overview as its pointer.
   { id: 'gtm', label: 'GTM MCP', url: `${DOCS}/mcp/gtm-server`, primitive: 'Content Workflow', transport: 'stdio' },
+  // OpenCapStack ships via `@opencapstack/mcp-server` (stdio, npx-launched) —
+  // real published package verified live (#413); no AINative-hosted HTTP URL
+  // exists for it (mcp.ainative.studio/opencapstack is broken — core#6667).
+  { id: 'opencapstack', label: 'OpenCapStack MCP', url: `${DOCS}/opencapstack/overview`, tools: 27, primitive: 'OpenCapStack', transport: 'stdio' },
 ]
 
 const MCP_SERVERS_BY_ID = new Map(MCP_SERVERS.map((s) => [s.id, s]))
