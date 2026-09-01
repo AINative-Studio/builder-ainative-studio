@@ -623,20 +623,24 @@ export function mcpDataProvisioningBlock(): string {
  * ZeroDB/Instant DB: a durable service key builder holds forever backs
  * /api/db — the original, always-worked case.
  *
- * ZeroCommerce/ZeroPipeline/AgentFlow (#443): "one store/pipeline/project per
- * owner user" — the resource is scoped to the FOUNDER'S own AINative
- * identity, not a separate service credential. /api/primitive/{name}/{...path}
- * closes that gap: builder captures and durably refreshes a copy of the
- * founder's tokens at provision time (lib/build/primitive-credentials.ts)
- * and proxies runtime calls through them — same-origin, so the generated app
- * never sees the credential. AgentFlow's real base is confirmed via its live
- * openapi.json (/api/v1/projects/, NOT the /api/v1/build path a prior pass
- * here had guessed).
+ * ZeroCommerce/ZeroPipeline/AgentFlow/ZeroForms (#443): "one store/pipeline/
+ * project/form per owner user" — the resource is scoped to the FOUNDER'S own
+ * AINative identity, not a separate service credential. Confirmed for
+ * ZeroForms specifically via its real `get_current_user` source: an AINative
+ * key resolves to a `User` scoped to THAT key's own `organization_id` — a
+ * builder-held service key would create/read the SERVICE ACCOUNT's forms,
+ * not the founder's company's, so the founder's own captured identity is
+ * required, the same as the other three (no cheaper service-key shortcut
+ * exists here). /api/primitive/{name}/{...path} closes that gap: builder
+ * captures and durably refreshes a copy of the founder's tokens at
+ * provision time (lib/build/primitive-credentials.ts) and proxies runtime
+ * calls through them — same-origin, so the generated app never sees the
+ * credential. AgentFlow's real base is confirmed via its live openapi.json
+ * (/api/v1/projects/, NOT the /api/v1/build path a prior pass here had
+ * guessed). ZeroForms' real base has no /api prefix (confirmed live: /v1/forms
+ * 401s correctly, /api/v1/forms 404s).
  *
- * ZeroForms shares the identical founder-scoped shape but does not have its
- * own proxy wired yet; it stays in the honest "already provisioned
- * server-side, don't call directly" framing below until it gets the same
- * treatment.
+ * This covers all 4 originally-scoped founder-identity primitives from #443.
  */
 const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = {
   ZeroDB: () => `call its REST API at \`https://api.ainative.studio/api/v1\` (Authorization: Bearer <AINATIVE_API_KEY>)`,
@@ -647,6 +651,8 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
     `call the same-origin proxy at \`/api/primitive/zeropipeline/{path}\` (e.g. \`/api/primitive/zeropipeline/pipelines\`) — NO Authorization header needed, the platform attaches the founder's real ZeroPipeline credential server-side; the path after \`zeropipeline/\` matches ZeroPipeline's own REST path exactly`,
   AgentFlow: () =>
     `call the same-origin proxy at \`/api/primitive/agentflow/{path}\` (e.g. \`/api/primitive/agentflow/projects/\`) — NO Authorization header needed, the platform attaches the founder's real AgentFlow credential server-side; the path after \`agentflow/\` matches AgentFlow's own REST path exactly`,
+  ZeroForms: () =>
+    `call the same-origin proxy at \`/api/primitive/zeroforms/{path}\` (e.g. \`/api/primitive/zeroforms/forms\`) — NO Authorization header needed, the platform attaches the founder's real ZeroForms credential server-side; the path after \`zeroforms/\` matches ZeroForms' own REST path exactly (no /api prefix — ZeroForms' real routes are /v1/forms, not /api/v1/forms)`,
 }
 
 /**

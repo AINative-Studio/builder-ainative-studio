@@ -197,4 +197,36 @@ describe('GET/POST /api/primitive/[primitive]/[...path] (#443)', () => {
       expect(json).toEqual({ error: 'primitive_unavailable', reason: 'not_provisioned' })
     })
   })
+
+  describe('ZeroForms (#443 follow-up — last of the 4 originally-scoped founder-identity primitives)', () => {
+    it('forwards to the real ZeroForms base — /v1/forms, NO /api prefix (live-verified)', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'zf-token' })
+      const fetchMock = vi.fn(async (url: string, init: any) => {
+        expect(url).toBe('https://zeroforms-production.up.railway.app/v1/forms')
+        expect(init.headers.Authorization).toBe('Bearer zf-token')
+        return { status: 200, text: async () => JSON.stringify({ forms: [] }), headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const res: any = await GET(req(), ctx('zeroforms', ['forms']))
+      expect(res.status).toBe(200)
+      expect(h.resolveFounderCredential).toHaveBeenCalledWith('acme', 'zeroforms')
+    })
+
+    it('401s on a missing token with no COMPANY_SLUG, same fail-closed behavior as the other primitives', async () => {
+      const res: any = await GET(req(), ctx('zeroforms', ['forms']))
+      expect(res.status).toBe(401)
+      expect(h.resolveFounderCredential).not.toHaveBeenCalled()
+    })
+
+    it('502s honestly when no ZeroForms credential was ever stored for this company', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: false, reason: 'not_provisioned' })
+      const res: any = await GET(req(), ctx('zeroforms', ['forms']))
+      expect(res.status).toBe(502)
+      const json = await res.json()
+      expect(json).toEqual({ error: 'primitive_unavailable', reason: 'not_provisioned' })
+    })
+  })
 })

@@ -226,18 +226,22 @@ describe('primitive-catalog additions (#410)', () => {
       expect(block).toMatch(/ZeroERP[^\n]*already provisioned for this company server-side/)
     })
 
-    it('AgentFlow/ZeroForms (founder-scoped, no proxy wired yet) are framed the honest "already provisioned" way', () => {
-      const forms = codegenCompositionBlock('a customer intake survey with webhook notifications', 'app')
-      expect(forms).not.toMatch(/ZeroForms[^\n]*To use: call its REST API/)
-      expect(forms).toMatch(/ZeroForms[^\n]*already provisioned for this company server-side/)
-    })
-
     it('ZeroPipeline (#443 follow-up: real proxy shipped) now gets a real same-origin proxy instruction, not the placeholder', () => {
       const block = codegenCompositionBlock('a B2B sales CRM to track deals', 'company')
       expect(block).toContain('ZeroPipeline')
       expect(block).not.toMatch(/ZeroPipeline[^\n]*already provisioned for this company server-side/)
       expect(block).toMatch(/ZeroPipeline[^\n]*To use: call the same-origin proxy at `\/api\/primitive\/zeropipeline\//)
       expect(block).toMatch(/ZeroPipeline[^\n]*NO Authorization header needed/)
+    })
+
+    it('ZeroForms (#443 follow-up: real proxy shipped, last of the 4 founder-scoped primitives) now gets a real same-origin proxy instruction', () => {
+      // ZeroForms provisioning is company-track only (checkout provisions the
+      // default form) — use 'company' to match what's actually provisioned.
+      const block = codegenCompositionBlock('a customer intake survey with webhook notifications', 'company')
+      expect(block).toContain('ZeroForms')
+      expect(block).not.toMatch(/ZeroForms[^\n]*already provisioned for this company server-side/)
+      expect(block).toMatch(/ZeroForms[^\n]*To use: call the same-origin proxy at `\/api\/primitive\/zeroforms\//)
+      expect(block).toMatch(/ZeroForms[^\n]*NO Authorization header needed/)
     })
 
     it('rule 2 no longer claims non-ZeroDB primitives are called "server-side by the platform" (no such proxy exists)', () => {
