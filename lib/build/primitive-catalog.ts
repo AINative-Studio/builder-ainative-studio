@@ -179,7 +179,10 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
   { name: 'ZeroForms', category: 'business-ops',
     purpose: 'API-first online forms: build, publish, embed, collect submissions + webhooks',
     url: `${DOCS}/business-ops/zeroforms`,
-    apiBase: 'https://zeroforms-production.up.railway.app/api/v1',
+    // Real live route is /v1/* (no /api prefix) — confirmed via live probe
+    // (#421): /api/v1/forms 404s, /v1/forms correctly 401s with "Invalid or
+    // unauthorized AINative API key". The old apiBase had an extra /api segment.
+    apiBase: 'https://zeroforms-production.up.railway.app/v1',
     triggers: ['form', 'forms', 'survey', 'intake form', 'signup form', 'contact form', 'questionnaire', 'submission', 'webhook'] },
   { name: 'ZeroBooks', category: 'business-ops',
     purpose: 'AI-native accounting + bookkeeping: transparent pricing, agent-first UX, ZeroDB-backed',

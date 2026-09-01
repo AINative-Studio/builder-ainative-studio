@@ -90,6 +90,11 @@ export interface AppEntry {
   // record was created there. Absent/false = still simulated.
   capstackProvisioned?: boolean
   capstackCompanyId?: string
+  // ZeroForms (online-forms primitive) provisioning (#421, child of #414). Same
+  // JWT-auth pattern as ZeroPipeline/ZeroCommerce — true once a real default
+  // form was created for the company. Absent/false = still simulated.
+  formsProvisioned?: boolean
+  formsFormId?: string
   // The persistent hosting target for the company app (#243). Today this is the
   // durable preview URL; the deploy seam swaps in a real Railway/*.ainative.studio host.
   deployUrl?: string
@@ -383,6 +388,8 @@ export async function setAppProvisioned(
     commerceStoreId?: string
     capstackProvisioned?: boolean
     capstackCompanyId?: string
+    formsProvisioned?: boolean
+    formsFormId?: string
     workspaceId?: string
     workspaceFiled?: boolean
     railwayServiceId?: string

@@ -144,7 +144,10 @@ describe('primitive-catalog additions (#410)', () => {
   it('registers all 7 previously-missing primitives with real apiBase values', () => {
     expect(getPrimitive('ZeroCRM')?.apiBase).toBe('https://zerocrm-production.up.railway.app/api/v1')
     expect(getPrimitive('ZeroERP')?.apiBase).toBe('https://zeroerp-production.up.railway.app/api/v1')
-    expect(getPrimitive('ZeroForms')?.apiBase).toBe('https://zeroforms-production.up.railway.app/api/v1')
+    // Real live route is /v1/* (no /api prefix) — confirmed via live probe
+    // (#421): /api/v1/forms 404s, /v1/forms correctly 401s with "Invalid or
+    // unauthorized AINative API key".
+    expect(getPrimitive('ZeroForms')?.apiBase).toBe('https://zeroforms-production.up.railway.app/v1')
     expect(getPrimitive('ZeroBooks')?.apiBase).toBe('https://zerobooks-production.up.railway.app/api/v1')
     // AgentFlow's real prefix (confirmed via its own live openapi.json) is
     // /api/v1/build, not the generic /api/v1 most AINative services use.
