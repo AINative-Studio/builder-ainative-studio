@@ -101,6 +101,14 @@ export interface AppEntry {
   // Absent/false = still simulated.
   agentflowProvisioned?: boolean
   agentflowProjectId?: string
+  // ZeroVoice (telephony primitive) provisioning (#415, child of #414). UNLIKE
+  // every other primitive here, this carries a REAL recurring cost — never
+  // auto-provisioned in provision/route.ts's checkout flow. Only set via an
+  // explicit founder-triggered action (a real button, paid-tier + opt-in
+  // env-flag gated). Absent/false = not provisioned (default for everyone).
+  zerovoiceProvisioned?: boolean
+  zerovoiceNumberId?: string
+  zerovoiceE164?: string
   // The persistent hosting target for the company app (#243). Today this is the
   // durable preview URL; the deploy seam swaps in a real Railway/*.ainative.studio host.
   deployUrl?: string
@@ -207,6 +215,29 @@ export async function setAppByoDomain(
     byoDomainId: fields.byoDomainId ?? existing.byoDomainId,
     byoDomainStatus: fields.status ?? existing.byoDomainStatus,
     byoDomainConnectedAt: existing.byoDomainConnectedAt || new Date().toISOString(),
+  })
+}
+
+/**
+ * Record a real ZeroVoice number provisioned for a company (#415) — a
+ * separate, explicit founder-triggered action outside provision/route.ts's
+ * checkout flow, so it gets its own setter (same shape as setAppByoDomain)
+ * rather than growing setAppProvisioned's checkout-batch param bag.
+ */
+export async function setAppZeroVoice(
+  slug: string,
+  fields: { numberId: string; e164: string },
+): Promise<boolean> {
+  if (!fields.numberId || !fields.e164) return false
+  const existing = await resolveApp(slug)
+  if (!existing) return false
+  // Already recorded this exact number → nothing to write.
+  if (existing.zerovoiceNumberId === fields.numberId) return true
+  return registerApp({
+    ...existing,
+    zerovoiceProvisioned: true,
+    zerovoiceNumberId: fields.numberId,
+    zerovoiceE164: fields.e164,
   })
 }
 
