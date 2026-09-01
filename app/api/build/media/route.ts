@@ -36,6 +36,11 @@ import {
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+// #404: video generation is genuinely async and this route now polls for
+// completion (up to pollVideoStatus's own 300s timeout) — matches the
+// maxDuration convention already used for other long-running routes
+// (deploy, company-app, nightly-loop, committee-review).
+export const maxDuration = 300
 
 /** Resolve the durable media scope key from the SERVER session + company slug. */
 async function resolveScopeKey(companyId: string): Promise<string> {
