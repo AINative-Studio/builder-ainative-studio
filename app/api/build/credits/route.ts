@@ -105,7 +105,7 @@ export async function POST(request: Request) {
   // The bonus this build ACTUALLY added to the runway (0 once the cap is hit, or
   // when metering is unconfigured) — never promise an extension that didn't apply.
   const bonusApplied = Math.max(0, (after.ecosystemBonus ?? 0) - (status.ecosystemBonus ?? 0))
-  const composed = countEcosystemPrimitives(primitives)
+  const composed = countEcosystemPrimitives(primitives, track, idea)
   return NextResponse.json({
     ok: true,
     ...after,

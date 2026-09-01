@@ -4,6 +4,7 @@ import {
   ECOSYSTEM_BONUS_MIN_PRIMITIVES,
   ECOSYSTEM_BONUS_MAX_TOTAL,
   DEFAULT_SUBSTRATE_PRIMITIVES,
+  defaultSubstratePrimitives,
   countEcosystemPrimitives,
   computeEcosystemBonus,
   computeTotalEcosystemBonus,
@@ -85,6 +86,28 @@ describe('ecosystem-bonus (#324 GR-15)', () => {
     it('returns 0 for no builds or malformed input', () => {
       expect(computeTotalEcosystemBonus([])).toBe(0)
       expect(computeTotalEcosystemBonus(undefined as unknown as string[][])).toBe(0)
+    })
+  })
+
+  describe('OpenCapStack track-scoped substrate (#427/#443 follow-up)', () => {
+    it('counts as substrate on the company track (real, unconditional provisioning per #427)', () => {
+      expect(defaultSubstratePrimitives('company').has('opencapstack')).toBe(true)
+      expect(countEcosystemPrimitives(['ZeroInvoice', 'OpenCapStack'], 'company')).toBe(1)
+    })
+
+    it('does NOT count as substrate on the app track (not auto-provisioned there)', () => {
+      expect(defaultSubstratePrimitives('app').has('opencapstack')).toBe(false)
+      expect(countEcosystemPrimitives(['ZeroInvoice', 'OpenCapStack'], 'app')).toBe(2)
+    })
+
+    it('a nonprofit idea keeps OpenCapStack out of substrate, so composing it still counts (#302 carve-out)', () => {
+      const nonprofitIdea = 'a nonprofit donation platform to manage donors, grants, and impact reporting'
+      expect(defaultSubstratePrimitives('company', nonprofitIdea).has('opencapstack')).toBe(false)
+      expect(countEcosystemPrimitives(['AINativeNGO', 'OpenCapStack'], 'company', nonprofitIdea)).toBe(2)
+    })
+
+    it('DEFAULT_SUBSTRATE_PRIMITIVES (no-idea default) still includes opencapstack on the company track', () => {
+      expect(DEFAULT_SUBSTRATE_PRIMITIVES.has('opencapstack')).toBe(true)
     })
   })
 

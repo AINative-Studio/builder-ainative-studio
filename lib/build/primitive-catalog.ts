@@ -54,8 +54,14 @@ export interface CatalogPrimitive {
   /**
    * Foundational primitives every build composes (ZeroDB/ZeroMemory/AI Kit/
    * Agent Cloud). These are always included; `triggers` still lets them rank.
+   * `true` = every track (app + company). `'company'` = only the company
+   * track, where `app/api/build/provision/route.ts` genuinely, unconditionally
+   * provisions the resource for every checkout (e.g. OpenCapStack's real cap
+   * table — #427 provisions it best-effort for every company, not just
+   * equity/fundraising-triggered ideas, so Cody/the UI must surface it the
+   * same way, not gate it behind trigger words a founder may never type).
    */
-  foundational?: boolean
+  foundational?: boolean | 'company'
   /**
    * MCP server endpoint for this primitive (#73). When present, this primitive
    * is not just callable via REST — Cody can OPERATE it agentically as a set of
@@ -230,7 +236,13 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     url: `${DOCS}/business-ops/spacetime-os`,
     apiBase: 'https://sentinel-os-api-production.up.railway.app/api/v1',
     triggers: ['critical infrastructure', 'infrastructure protection', 'cable infrastructure', 'port security', 'sensor network', 'threat detection', 'security orchestration'] },
-  { name: 'OpenCapStack', category: 'business-ops',
+  { name: 'OpenCapStack', category: 'business-ops', foundational: 'company',
+    // #427 provisions a real cap table for EVERY company unconditionally at
+    // checkout (app/api/build/provision/route.ts, best-effort via a builder
+    // service account — no founder JWT or idea-matched trigger needed). Since
+    // it's always real, it must always be surfaced to Cody/the UI on the
+    // company track too — not gated behind equity/fundraising trigger words a
+    // founder building e.g. a coffee-shop app would never type.
     purpose: 'Cap table + equity (OCTA): stakeholders, SAFEs, grants, vesting, waterfall, investor portals',
     url: `${DOCS}/opencapstack/overview`,
     apiBase: 'https://api.opencapstack.com/api/v1',
@@ -482,12 +494,35 @@ export interface PrimitiveScore {
  * overlap. Foundational primitives get a floor so the substrate is always
  * present, but a strong idea-match still outranks them for ordering.
  */
+/**
+ * True when a primitive's `foundational` flag applies on the given track.
+ *
+ * OpenCapStack is a special case (#443 follow-up): #427 auto-provisions a
+ * real cap table for every company unconditionally, so it's genuine
+ * company-track substrate — EXCEPT when the idea reads as nonprofit-shaped,
+ * where AINativeNGO (donors/grants/impact, not startup equity) is the real
+ * fit (#302). Detected by AINativeNGO's own triggers matching the idea,
+ * rather than a second hardcoded keyword list, so the two carve-outs can't
+ * drift apart.
+ */
+function isFoundationalOnTrack(primitive: CatalogPrimitive, track: 'app' | 'company', idea: string): boolean {
+  if (primitive.name === 'OpenCapStack' && track === 'company') {
+    const hay = ` ${(idea || '').toLowerCase()} `
+    const ngo = CATALOG.find((p) => p.name === 'AINativeNGO')
+    const isNonprofitIdea = ngo?.triggers.some((t) => hay.includes(` ${t}`) || hay.includes(`${t} `) || hay.includes(t)) ?? false
+    return !isNonprofitIdea
+  }
+  if (primitive.foundational === true) return true
+  if (primitive.foundational === 'company') return track === 'company'
+  return false
+}
+
 export function scorePrimitives(idea: string, track: 'app' | 'company' = 'company'): PrimitiveScore[] {
   const hay = ` ${(idea || '').toLowerCase()} `
   return CATALOG.map((primitive) => {
     const matched = primitive.triggers.filter((t) => hay.includes(` ${t}`) || hay.includes(`${t} `) || hay.includes(t))
     let score = matched.length
-    if (primitive.foundational) score += 0.5 // floor so substrate always ranks
+    if (isFoundationalOnTrack(primitive, track, idea)) score += 0.5 // floor so substrate always ranks
     // On the company track, the "run a company" business-ops layer is the whole
     // point — give it a slight nudge so a live company surfaces real ops.
     if (track === 'company' && primitive.category === 'business-ops') score += 0.25
@@ -518,9 +553,9 @@ export function selectPrimitives(
   maxSelected = 6,
 ): SelectionResult {
   const scored = scorePrimitives(idea, track)
-  const foundational = CATALOG.filter((p) => p.foundational)
+  const foundational = CATALOG.filter((p) => isFoundationalOnTrack(p, track, idea))
   const selected = scored
-    .filter((s) => !s.primitive.foundational && s.matched.length > 0)
+    .filter((s) => !isFoundationalOnTrack(s.primitive, track, idea) && s.matched.length > 0)
     .slice(0, maxSelected)
     .map((s) => s.primitive)
   const names: string[] = []

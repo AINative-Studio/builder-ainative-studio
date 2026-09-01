@@ -24,6 +24,31 @@
 
 import { CATALOG } from '@/lib/build/primitive-catalog'
 
+/**
+ * A primitive's `foundational` flag counts as substrate on this track.
+ *
+ * OpenCapStack carries the same nonprofit carve-out as `selectPrimitives`
+ * (#302/#443 follow-up): it's real, unconditional company-track substrate
+ * EXCEPT for a nonprofit idea, where a founder composing it (via AINativeNGO's
+ * own trigger words matching) should still count toward the ecosystem bonus
+ * rather than be silently discounted as "always there anyway."
+ */
+function isSubstrateOnTrack(
+  primitive: { name: string; foundational?: boolean | 'company'; triggers: string[] },
+  track: 'app' | 'company',
+  idea: string,
+): boolean {
+  if (primitive.name === 'OpenCapStack' && track === 'company') {
+    const hay = ` ${(idea || '').toLowerCase()} `
+    const ngo = CATALOG.find((p) => p.name === 'AINativeNGO')
+    const isNonprofitIdea = ngo?.triggers.some((t) => hay.includes(` ${t}`) || hay.includes(`${t} `) || hay.includes(t)) ?? false
+    return !isNonprofitIdea
+  }
+  if (primitive.foundational === true) return true
+  if (primitive.foundational === 'company') return track === 'company'
+  return false
+}
+
 /** Extra build allowance granted per qualifying (>= min primitives) build. */
 export const ECOSYSTEM_BONUS_BUILDS = 1
 
@@ -42,19 +67,36 @@ function normalize(name: string): string {
  * the catalog's foundational primitives. Derived from the catalog so the two
  * never drift; 'zerodb' is also listed explicitly per the GR-15 spec ("beyond
  * the default ZeroDB") in case its foundational flag ever changes.
+ *
+ * Track-scoped: a `foundational: 'company'` primitive (e.g. OpenCapStack —
+ * #427 auto-provisions its real cap table for every company unconditionally,
+ * so it's genuine substrate there) is ONLY substrate on the company track.
+ * On the app track it isn't auto-provisioned at all, so a founder whose idea
+ * genuinely trigger-matches it should still earn ecosystem-bonus credit for
+ * composing it — excluding it universally would silently under-count that.
+ *
+ * `idea` defaults to '' (no nonprofit signal) so existing callers that don't
+ * have the idea text handy keep today's behavior (OpenCapStack as substrate
+ * on the company track) rather than silently changing shape.
  */
-export const DEFAULT_SUBSTRATE_PRIMITIVES: ReadonlySet<string> = new Set([
-  'zerodb',
-  ...CATALOG.filter((p) => p.foundational).map((p) => normalize(p.name)),
-])
+export function defaultSubstratePrimitives(track: 'app' | 'company' = 'company', idea = ''): ReadonlySet<string> {
+  return new Set([
+    'zerodb',
+    ...CATALOG.filter((p) => isSubstrateOnTrack(p, track, idea)).map((p) => normalize(p.name)),
+  ])
+}
+
+/** @deprecated Use `defaultSubstratePrimitives(track)` — this fixed set assumes the company track. */
+export const DEFAULT_SUBSTRATE_PRIMITIVES: ReadonlySet<string> = defaultSubstratePrimitives('company')
 
 /** Count the DISTINCT ecosystem (non-substrate) primitives in a build's composition. */
-export function countEcosystemPrimitives(primitivesUsed: string[]): number {
+export function countEcosystemPrimitives(primitivesUsed: string[], track: 'app' | 'company' = 'company', idea = ''): number {
+  const substrate = defaultSubstratePrimitives(track, idea)
   const distinct = new Set<string>()
   for (const raw of primitivesUsed || []) {
     if (typeof raw !== 'string') continue
     const name = normalize(raw)
-    if (!name || DEFAULT_SUBSTRATE_PRIMITIVES.has(name)) continue
+    if (!name || substrate.has(name)) continue
     distinct.add(name)
   }
   return distinct.size
@@ -63,9 +105,15 @@ export function countEcosystemPrimitives(primitivesUsed: string[]): number {
 /**
  * Bonus build allowance earned by ONE build's composition: ECOSYSTEM_BONUS_BUILDS
  * when it composes >= ECOSYSTEM_BONUS_MIN_PRIMITIVES ecosystem primitives, else 0.
+ *
+ * `track` defaults to 'company' (recorded builds don't persist their track
+ * today) — deliberately the conservative default: a 'company'-foundational
+ * primitive like OpenCapStack is excluded as substrate either way this
+ * defaults, so this only under-counts the rare app-track build whose idea
+ * happens to trigger-match a primitive that's foundational-for-company only.
  */
-export function computeEcosystemBonus(primitivesUsed: string[]): number {
-  return countEcosystemPrimitives(primitivesUsed) >= ECOSYSTEM_BONUS_MIN_PRIMITIVES
+export function computeEcosystemBonus(primitivesUsed: string[], track: 'app' | 'company' = 'company'): number {
+  return countEcosystemPrimitives(primitivesUsed, track) >= ECOSYSTEM_BONUS_MIN_PRIMITIVES
     ? ECOSYSTEM_BONUS_BUILDS
     : 0
 }
