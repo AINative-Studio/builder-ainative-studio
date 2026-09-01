@@ -30,8 +30,10 @@ describe('primitive-catalog MCP metadata (#73)', () => {
     expect(getPrimitive('ZeroMemory')?.mcpTools).toBe(18)
     expect(getPrimitive('ZeroVoice')?.mcpTools).toBe(25)
     expect(getPrimitive('Content Workflow')?.mcpTools).toBe(21) // Strapi MCP
-    // OpenCapStack has an MCP server but no published tool count.
-    expect(getPrimitive('OpenCapStack')?.mcpUrl).toBeTruthy()
+    // OpenCapStack ships an MCP server (@opencapstack/mcp-server, stdio) but it
+    // isn't AINative-hosted, so it has no mcpUrl on the catalog primitive itself
+    // — it's registered in MCP_SERVERS instead (#413).
+    expect(getPrimitive('OpenCapStack')?.mcpUrl).toBeUndefined()
     expect(getPrimitive('OpenCapStack')?.mcpTools).toBeUndefined()
   })
 
@@ -45,10 +47,12 @@ describe('primitive-catalog MCP metadata (#73)', () => {
 
   it('getMcpOperablePrimitives returns only primitives with an mcpUrl', () => {
     const operable = getMcpOperablePrimitives()
-    expect(operable.length).toBeGreaterThanOrEqual(5)
+    expect(operable.length).toBeGreaterThanOrEqual(4)
     expect(operable.every((p) => !!p.mcpUrl)).toBe(true)
     expect(operable.map((p) => p.name)).toContain('ZeroDB')
     expect(operable.map((p) => p.name)).not.toContain('ZeroCommerce')
+    // OpenCapStack is MCP-operable via stdio (MCP_SERVERS), not a catalog mcpUrl.
+    expect(operable.map((p) => p.name)).not.toContain('OpenCapStack')
   })
 
   it('isMcpOperable reflects mcp metadata', () => {
@@ -60,7 +64,7 @@ describe('primitive-catalog MCP metadata (#73)', () => {
 
   it('MCP_SERVERS covers the 7+ published servers with ids + transports', () => {
     const ids = MCP_SERVERS.map((s) => s.id)
-    for (const id of ['zerodb', 'memory', 'prd-generator', 'sequential-thinking', 'design-system', 'strapi', 'zerovoice', 'gtm']) {
+    for (const id of ['zerodb', 'memory', 'prd-generator', 'sequential-thinking', 'design-system', 'strapi', 'zerovoice', 'gtm', 'opencapstack']) {
       expect(ids).toContain(id)
     }
     // ZeroDB is the full 69-tool HTTP server.
@@ -70,6 +74,11 @@ describe('primitive-catalog MCP metadata (#73)', () => {
     expect(zerodb?.primitive).toBe('ZeroDB')
     // GTM is stdio (npx).
     expect(getMcpServer('gtm')?.transport).toBe('stdio')
+    // OpenCapStack is stdio too (npx @opencapstack/mcp-server) — #413.
+    const opencapstack = getMcpServer('opencapstack')
+    expect(opencapstack?.transport).toBe('stdio')
+    expect(opencapstack?.tools).toBe(27)
+    expect(opencapstack?.primitive).toBe('OpenCapStack')
   })
 
   it('getMcpServer returns undefined for unknown ids', () => {
