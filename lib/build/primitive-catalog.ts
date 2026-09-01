@@ -157,7 +157,10 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
   { name: 'ZeroVoice', category: 'business-ops',
     purpose: 'Programmable telephony (Twilio): calls, SMS, IVR, recording + transcription, DNC/TCPA',
     url: `${DOCS}/zerovoice/overview`,
-    apiBase: 'https://api.ainative.studio/api/v1',
+    // Real live host confirmed via live probe (#415): api.ainative.studio does
+    // NOT proxy ZeroVoice's own routes at all (404, route doesn't exist there);
+    // the real, auth-gated, working host is ZeroVoice's own Railway service.
+    apiBase: 'https://zerovoice-production.up.railway.app/api/v1',
     // ZeroVoice MCP (25 tools) — docs/AINATIVE_PRIMITIVES.md §6. Lets the running
     // company make/receive real calls + SMS as agentic MCP tool calls (run-time ops).
     mcpUrl: `${MCP_BASE}/zerovoice`,
