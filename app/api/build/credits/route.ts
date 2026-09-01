@@ -110,6 +110,7 @@ export async function POST(request: Request) {
     ok: true,
     ...after,
     valueGuarantee: status.valueGuarantee ?? false,
+    viaDripToken: status.viaDripToken ?? false,
     tier: owner.tier,
     ecosystem: {
       composed,

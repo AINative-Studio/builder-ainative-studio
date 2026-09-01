@@ -14,6 +14,16 @@
  * The counter is keyed by the AINative account email (owner identity). Anonymous
  * visitors can't reach a build anymore (the auth wall forces registration first),
  * so every counted build has an owner.
+ *
+ * Drip token (#450): once a HOBBYIST founder has exhausted their base allowance
+ * AND any ecosystem bonus, they still get ONE additional build per UTC calendar
+ * day rather than a hard wall — a small, bounded retention nudge distinct from
+ * the value guarantee (which only fires before a founder's first working
+ * preview). Only the free tier ever needs this: starter/paid tiers already have
+ * their own real (larger, or unlimited) allowance. Tracked as the same
+ * append-only 'build' event already recorded for every build — a drip build is
+ * indistinguishable in storage from a normal one, it's just permitted past the
+ * base+bonus limit by isDripEligible's date check below.
  */
 
 import { computeTotalEcosystemBonus } from '@/lib/build/ecosystem-bonus'
@@ -78,6 +88,15 @@ export interface BuildCreditStatus {
    * hit a card wall having never seen value.
    */
   valueGuarantee?: boolean
+  /**
+   * Drip token (#450): true when this status is allowed ONLY because the
+   * founder's base allowance + ecosystem bonus is exhausted but they're
+   * eligible for today's one bonus build (hobbyist tier only, resets daily
+   * at UTC midnight). Distinct from valueGuarantee — this fires AFTER a
+   * founder has already seen real value, as an ongoing retention nudge, not
+   * a first-build guarantee.
+   */
+  viaDripToken?: boolean
 }
 
 /**
@@ -103,17 +122,19 @@ export function applyValueGuarantee(
  * number) so it stays deterministic under constant changes. Best-effort;
  * zeros on any error (fail open elsewhere).
  */
-async function readOwnerBuilds(ownerEmail: string): Promise<{ used: number; bonus: number }> {
-  if (!configured() || !ownerEmail) return { used: 0, bonus: 0 }
+async function readOwnerBuilds(
+  ownerEmail: string,
+): Promise<{ used: number; bonus: number; lastBuildAt: string | null }> {
+  if (!configured() || !ownerEmail) return { used: 0, bonus: 0, lastBuildAt: null }
   try {
     const res = await fetch(rowsUrl(), {
       method: 'GET',
       headers: headers(),
       signal: AbortSignal.timeout(12000),
     })
-    if (!res.ok) return { used: 0, bonus: 0 }
+    if (!res.ok) return { used: 0, bonus: 0, lastBuildAt: null }
     const data = await res.json().catch(() => null)
-    const rows: Array<{ row_data?: { ownerEmail?: string; event?: string; primitives?: string[] } }> =
+    const rows: Array<{ row_data?: { ownerEmail?: string; event?: string; primitives?: string[]; createdAt?: string } }> =
       data?.rows || data?.data || []
     const mine = rows.filter(
       (r) => r?.row_data?.ownerEmail === ownerEmail && r?.row_data?.event === 'build',
@@ -121,10 +142,38 @@ async function readOwnerBuilds(ownerEmail: string): Promise<{ used: number; bonu
     const bonus = computeTotalEcosystemBonus(
       mine.map((r) => (Array.isArray(r?.row_data?.primitives) ? r.row_data!.primitives! : [])),
     )
-    return { used: mine.length, bonus }
+    const lastBuildAt = mine.reduce<string | null>((latest, r) => {
+      const at = r?.row_data?.createdAt
+      if (!at) return latest
+      return !latest || at > latest ? at : latest
+    }, null)
+    return { used: mine.length, bonus, lastBuildAt }
   } catch {
-    return { used: 0, bonus: 0 }
+    return { used: 0, bonus: 0, lastBuildAt: null }
   }
+}
+
+/** UTC calendar-day key, e.g. "2026-09-01" — used to gate the drip to once/day. */
+function utcDayKey(iso: string): string {
+  return iso.slice(0, 10)
+}
+
+/**
+ * Is this owner eligible for today's drip build? Only ever called once the
+ * base allowance + ecosystem bonus is exhausted (used > 0 is guaranteed at the
+ * call site) — true when their last recorded build was NOT today (UTC), so
+ * they haven't already used today's drip.
+ *
+ * A null lastBuildAt here means builds exist but none carried a parseable
+ * createdAt (legacy/malformed rows) — NOT "never built." Never over-grant on
+ * missing data: default to false (no drip) rather than silently unlocking one,
+ * matching this file's fail-toward-conservative-on-uncertain-data posture
+ * (contrast with the fail-OPEN behavior for infra-level failures like an
+ * unreachable store, which is a deliberate, different tradeoff).
+ */
+function isDripEligible(lastBuildAt: string | null): boolean {
+  if (!lastBuildAt) return false
+  return utcDayKey(lastBuildAt) !== utcDayKey(new Date().toISOString())
 }
 
 /**
@@ -153,12 +202,27 @@ export async function getBuildCreditStatus(
       remaining: baseLimit, allowed: true, unlimited: false,
     }
   }
-  const { used, bonus } = await readOwnerBuilds(ownerEmail)
+  const { used, bonus, lastBuildAt } = await readOwnerBuilds(ownerEmail)
   const limit = baseLimit + bonus
   const remaining = Math.max(0, limit - used)
+  if (remaining > 0) {
+    return {
+      used, limit, baseLimit, ecosystemBonus: bonus,
+      remaining, allowed: true, unlimited: false,
+    }
+  }
+  // Base allowance + bonus exhausted — hobbyist gets one drip build/day instead
+  // of a hard wall. Starter/paid tiers have their own real allowance and never
+  // reach the drip (buildLimitForTier already returns their own limit/-1 above).
+  if (tier === 'hobbyist' && isDripEligible(lastBuildAt)) {
+    return {
+      used, limit, baseLimit, ecosystemBonus: bonus,
+      remaining: 1, allowed: true, unlimited: false, viaDripToken: true,
+    }
+  }
   return {
     used, limit, baseLimit, ecosystemBonus: bonus,
-    remaining, allowed: remaining > 0, unlimited: false,
+    remaining: 0, allowed: false, unlimited: false,
   }
 }
 
