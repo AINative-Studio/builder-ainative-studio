@@ -14,6 +14,7 @@ import { chatScopeKey } from '@/lib/build/chat-store'
 import { createDocument } from '@/lib/build/document-store'
 import { buildDailyReport, dailyReportTitle } from '@/lib/build/document-prompts'
 import { runMediaRoutines } from '@/lib/build/media-routine'
+import { runTaskResolutions } from '@/lib/build/task-resolution-loop'
 import { logger } from '@/lib/logger'
 
 export const dynamic = 'force-dynamic'
@@ -34,6 +35,8 @@ export async function GET(request: NextRequest) {
     const results = []
     let reportsWritten = 0
     let mediaGenerated = 0
+    let tasksAttempted = 0
+    let tasksCompleted = 0
     for (const e of enrolled) {
       const r = await runNightlyLoop({
         companyId: e.companyId, companyName: e.companyName, track: e.track, goal: e.goal,
@@ -92,14 +95,30 @@ export async function GET(request: NextRequest) {
         } catch (err) {
           logger.warn('Media routine run failed', { companyId: e.companyId, err: (err as Error)?.message })
         }
+
+        // Task resolution (#433, epic #371): resolveTask() had zero real
+        // callers anywhere in the app until this — alongside the media
+        // routine and swarm dispatch, resolve any DUE (`todo`) backlog tasks
+        // for this company via the real coverage-gated pipeline. Best-effort
+        // + fully bounded (MAX_TASKS_PER_COMPANY_PER_RUN): a hiccup here must
+        // never break the nightly loop, and one company's backlog must never
+        // starve the shared route's maxDuration budget.
+        try {
+          const scopeKey = chatScopeKey(e.ownerKey, e.companyId)
+          const t = await runTaskResolutions(scopeKey, e.companyId)
+          tasksAttempted += t.attempted
+          tasksCompleted += t.completed
+        } catch (err) {
+          logger.warn('Task resolution run failed', { companyId: e.companyId, err: (err as Error)?.message })
+        }
       }
 
       results.push(r)
     }
 
     const dispatched = results.filter((r) => r.status === 'dispatched').length
-    logger.info('Nightly autonomous loop complete', { dispatched, total: results.length, reportsWritten, mediaGenerated })
-    return NextResponse.json({ ok: true, enrolled: enrolled.length, dispatched, reportsWritten, mediaGenerated, results })
+    logger.info('Nightly autonomous loop complete', { dispatched, total: results.length, reportsWritten, mediaGenerated, tasksAttempted, tasksCompleted })
+    return NextResponse.json({ ok: true, enrolled: enrolled.length, dispatched, reportsWritten, mediaGenerated, tasksAttempted, tasksCompleted, results })
   } catch (error) {
     logger.error('Nightly autonomous loop failed', error as Error)
     return NextResponse.json({ error: 'Nightly loop failed' }, { status: 500 })
