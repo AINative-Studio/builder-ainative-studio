@@ -26,6 +26,7 @@
  */
 
 import { NextRequest } from 'next/server'
+import { getToken } from 'next-auth/jwt'
 import { auth } from '@/app/(auth)/auth'
 import { resolveApp, setAppProvisioned, setAppOwner } from '@/lib/build/app-registry'
 import { deployPersistent } from '@/lib/build/deploy'
@@ -43,6 +44,7 @@ import { provisionProject } from '@/lib/build/agentflow'
 import { provisionZeroERPTenant } from '@/lib/build/zeroerp'
 import { provisionZeroDbViaMcp, isMcpProvisionEnabled } from '@/lib/build/mcp-provision'
 import { provisionCompanyRepo } from '@/lib/git/company-repo'
+import { storeFounderCredential } from '@/lib/build/primitive-credentials'
 import { resolveStoredApp } from '@/lib/build/ready-gate'
 
 export const runtime = 'nodejs'
@@ -181,6 +183,25 @@ export async function POST(request: NextRequest) {
   if (jwt) {
     const zc = await provisionStore(jwt, slug, String(existing.name || b?.name || slug))
     commerce = { provisioned: zc.ok, storeId: zc.storeId, reason: zc.ok ? undefined : zc.reason }
+    if (zc.ok) {
+      // #443: the store is scoped to the founder's own AINative identity —
+      // there is no separate service credential to hold after provisioning.
+      // Durably store the founder's refreshable token now, while their
+      // session is live, so a runtime proxy can serve the DEPLOYED app on
+      // this founder's behalf later without needing their browser present.
+      // Best-effort — a storage failure just means #443's proxy has nothing
+      // to serve for this company; it does not block provisioning itself.
+      const rawToken = await getToken({ req: request, secret: process.env.AUTH_SECRET }).catch(() => null)
+      if (rawToken?.refreshToken || rawToken?.accessToken) {
+        storeFounderCredential(
+          slug,
+          'zerocommerce',
+          jwt,
+          rawToken.refreshToken as string | undefined,
+          rawToken.expiresAt ? Math.max(0, Math.floor((Number(rawToken.expiresAt) - Date.now()) / 1000)) : undefined,
+        ).catch(() => {})
+      }
+    }
   }
 
   // #427 (child of #414/#422): also provision the company's REAL OpenCapStack
