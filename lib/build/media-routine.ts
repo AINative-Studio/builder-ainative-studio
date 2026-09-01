@@ -26,6 +26,15 @@ import {
 /**
  * Run all DUE media routines for a scope. Returns how many assets were generated
  * (0 when unconfigured or nothing due). Never throws.
+ *
+ * #404: a due VIDEO routine can now take up to ~300s (async polling) instead of
+ * a quick synchronous call. Routines run sequentially here, and the caller
+ * (nightly-loop) iterates this across every company's scope in one process —
+ * with `maxDuration = 300` on that route, more than one company with a due
+ * video routine in the same nightly run risks exceeding the route's own
+ * timeout. Not addressed here (a nightly-loop scheduling/concurrency
+ * question, out of #404's scope) — flagging for whoever owns that route's
+ * iteration strategy.
  */
 export async function runMediaRoutines(
   scopeKey: string,

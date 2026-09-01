@@ -429,12 +429,82 @@ export async function fetchFileDownload(
 }
 
 /**
+ * Real, terminal statuses MiniMax's video job reports (raw strings, passed
+ * through unchanged by core's `get_video_status` — confirmed via core source,
+ * `services/minimax_video_service.py`). 'Success' is the only completion
+ * state that carries a video_url; 'Fail'/'Failed' are honest terminal
+ * failures. Anything else ('Preparing'/'Processing'/'Queueing'/etc.) means
+ * keep polling.
+ */
+const VIDEO_STATUS_SUCCESS = 'Success'
+const VIDEO_STATUS_FAILURES = new Set(['Fail', 'Failed'])
+
+/** Extract a usable video URL from any of the response shapes core may return. */
+function extractVideoUrl(data: any): string {
+  return String(data?.video_url || data?.url || data?.output?.url || data?.data?.url || data?.asset_url || '')
+}
+
+/**
+ * Poll core's video status endpoint until the job reaches a terminal state
+ * (#404) — video generation is genuinely async (MiniMax jobs take 1-5 min);
+ * the initial POST only returns status:'processing' + task_id, never a
+ * finished video_url. Bounded by both a max attempt count and an overall
+ * timeout so this NEVER hangs indefinitely — mirrors core's own polling
+ * defaults (`generate_video`'s poll_timeout_s=300, poll_interval_s=5) as the
+ * evidence-based starting point, not a guess.
+ *
+ * Pure with respect to timing (interval/timeout are injectable) so the
+ * retry/timeout logic is unit-testable without real waits.
+ */
+export async function pollVideoStatus(
+  taskId: string,
+  opts: { intervalMs?: number; timeoutMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<{ status: 'completed' | 'failed' | 'timeout'; videoUrl?: string }> {
+  const intervalMs = opts.intervalMs ?? 5_000
+  const timeoutMs = opts.timeoutMs ?? 300_000
+  const sleep = opts.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)))
+  const deadline = Date.now() + timeoutMs
+
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${CORE_API}/api/v1/multimodal/video/status/${encodeURIComponent(taskId)}`, {
+        method: 'GET',
+        headers: { 'X-API-Key': getApiKey() },
+        signal: AbortSignal.timeout(15_000),
+      })
+      if (res.ok) {
+        const data = await res.json().catch(() => null)
+        const rawStatus = String(data?.status || '')
+        if (rawStatus === VIDEO_STATUS_SUCCESS) {
+          const videoUrl = extractVideoUrl(data)
+          return videoUrl ? { status: 'completed', videoUrl } : { status: 'failed' }
+        }
+        if (VIDEO_STATUS_FAILURES.has(rawStatus)) {
+          return { status: 'failed' }
+        }
+        // Any other status (Preparing/Processing/Queueing/…) → keep polling.
+      }
+    } catch {
+      // Transient poll failure — keep trying until the deadline, never throw.
+    }
+    await sleep(intervalMs)
+  }
+  return { status: 'timeout' }
+}
+
+/**
  * Run a single media generation against the core Multimodal primitive and persist
  * the resulting asset to the company's own storage. GATED (#54 req 6): returns a
  * typed result and NEVER throws.
  *   - 'disabled'  → generation isn't configured (flag/key) — inert, no-op.
  *   - 'failed'    → configured, but the generation call produced no asset.
  *   - 'generated' → an on-brand asset was produced + persisted (asset returned).
+ *
+ * #404: video generation is genuinely async — the initial POST only accepts
+ * the job (status:'processing' + task_id), it never returns a finished
+ * video_url. When the response carries a task_id, poll for completion before
+ * giving up; image generation is unaffected (confirmed synchronous — no
+ * task_id in its response shape).
  */
 export async function runMediaGeneration(
   scopeKey: string,
@@ -453,7 +523,13 @@ export async function runMediaGeneration(
     })
     if (!res.ok) return { status: 'failed' }
     const data = await res.json().catch(() => null)
-    const url = data?.url || data?.output?.url || data?.data?.url || data?.asset_url || ''
+    let url = extractVideoUrl(data)
+    const taskId = String(data?.task_id || '')
+    if (!url && mediaKind === 'video' && taskId && String(data?.status || '') !== VIDEO_STATUS_SUCCESS) {
+      const polled = await pollVideoStatus(taskId)
+      if (polled.status !== 'completed' || !polled.videoUrl) return { status: 'failed' }
+      url = polled.videoUrl
+    }
     if (!url) return { status: 'failed' }
     const asset = await saveAsset(scopeKey, { mediaKind, url, prompt, provider: data?.provider || data?.model })
     return asset ? { status: 'generated', asset } : { status: 'failed' }

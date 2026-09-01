@@ -20,6 +20,7 @@ import {
   saveAsset,
   listMedia,
   runMediaGeneration,
+  pollVideoStatus,
   type MediaRoutine,
   type MediaAsset,
 } from '@/lib/build/media-schedule'
@@ -286,5 +287,118 @@ describe('I/O: saveRoutine / saveAsset / listMedia / runMediaGeneration', () => 
     process.env.BUILD_MEDIA_ENABLED = 'true'
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('boom') }))
     expect((await runMediaGeneration('a::b', 'image', {})).status).toBe('failed')
+  })
+
+  // #404: video generation is async — the initial POST only accepts the job
+  // (status:'processing' + task_id), it never returns a finished video_url.
+  it('runMediaGeneration polls to completion for an async video job', async () => {
+    process.env.BUILD_MEDIA_ENABLED = 'true'
+    // First poll attempt already reports Success — pollVideoStatus's internal
+    // loop exits before ever calling its (real, un-injectable from this call
+    // path) sleep, so this stays fast without needing fake timers. The
+    // multi-attempt progression (Preparing → Processing → Success) is covered
+    // directly against pollVideoStatus below, where the fast sleep IS injectable.
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(OK({ status: 'processing', task_id: 'task-1' }) as any) // initial POST
+      .mockResolvedValueOnce(OK({ status: 'Success', task_id: 'task-1', video_url: 'http://x/v.mp4' }) as any) // poll — done
+      .mockResolvedValueOnce(OK({ ok: true }) as any) // saveAsset
+    vi.stubGlobal('fetch', fetchMock)
+    const res = await runMediaGeneration('a::b', 'video', { companyName: 'Acme' })
+    expect(res.status).toBe('generated')
+    expect(res.asset?.url).toBe('http://x/v.mp4')
+    // Poll call hits the real status endpoint with the task id.
+    const pollCall = fetchMock.mock.calls[1]
+    expect(String(pollCall[0])).toContain('/api/v1/multimodal/video/status/task-1')
+  })
+
+  it('runMediaGeneration reports failed when the video job terminally fails', async () => {
+    process.env.BUILD_MEDIA_ENABLED = 'true'
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(OK({ status: 'processing', task_id: 'task-1' }) as any)
+      .mockResolvedValueOnce(OK({ status: 'Fail', task_id: 'task-1' }) as any)
+    vi.stubGlobal('fetch', fetchMock)
+    const res = await runMediaGeneration('a::b', 'video', {})
+    expect(res.status).toBe('failed')
+  })
+
+  it('runMediaGeneration does not poll when the initial video response already has a url', async () => {
+    process.env.BUILD_MEDIA_ENABLED = 'true'
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(OK({ status: 'Success', video_url: 'http://x/v.mp4' }) as any)
+      .mockResolvedValueOnce(OK({ ok: true }) as any) // saveAsset
+    vi.stubGlobal('fetch', fetchMock)
+    const res = await runMediaGeneration('a::b', 'video', {})
+    expect(res.status).toBe('generated')
+    expect(fetchMock).toHaveBeenCalledTimes(2) // no separate poll call
+  })
+
+  it('runMediaGeneration does not poll for image generation even without a url', async () => {
+    process.env.BUILD_MEDIA_ENABLED = 'true'
+    vi.stubGlobal('fetch', vi.fn(async () => OK({ status: 'processing', task_id: 'task-1' }) as any))
+    const res = await runMediaGeneration('a::b', 'image', {})
+    expect(res.status).toBe('failed')
+  })
+})
+
+describe('pollVideoStatus (#404)', () => {
+  const fastSleep = async () => {}
+
+  it('returns completed with the video url on Success', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => OK({ status: 'Success', video_url: 'http://x/v.mp4' }) as any))
+    const res = await pollVideoStatus('t1', { sleep: fastSleep })
+    expect(res).toEqual({ status: 'completed', videoUrl: 'http://x/v.mp4' })
+  })
+
+  it('returns failed on a Success status with no video url (never fabricates a url)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => OK({ status: 'Success' }) as any))
+    const res = await pollVideoStatus('t1', { sleep: fastSleep })
+    expect(res.status).toBe('failed')
+  })
+
+  it('returns failed on Fail', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => OK({ status: 'Fail' }) as any))
+    expect((await pollVideoStatus('t1', { sleep: fastSleep })).status).toBe('failed')
+  })
+
+  it('returns failed on Failed', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => OK({ status: 'Failed' }) as any))
+    expect((await pollVideoStatus('t1', { sleep: fastSleep })).status).toBe('failed')
+  })
+
+  it('keeps polling through Preparing/Processing/Queueing until Success', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(OK({ status: 'Preparing' }) as any)
+      .mockResolvedValueOnce(OK({ status: 'Queueing' }) as any)
+      .mockResolvedValueOnce(OK({ status: 'Processing' }) as any)
+      .mockResolvedValueOnce(OK({ status: 'Success', video_url: 'http://x/v.mp4' }) as any)
+    vi.stubGlobal('fetch', fetchMock)
+    const res = await pollVideoStatus('t1', { sleep: fastSleep })
+    expect(res).toEqual({ status: 'completed', videoUrl: 'http://x/v.mp4' })
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+  })
+
+  it('never hangs indefinitely — times out honestly when the job never terminates', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => OK({ status: 'Processing' }) as any))
+    // A tiny timeout + interval so the loop actually exhausts real wall-clock quickly.
+    const res = await pollVideoStatus('t1', { sleep: fastSleep, intervalMs: 1, timeoutMs: 5 })
+    expect(res.status).toBe('timeout')
+  })
+
+  it('survives a transient poll failure and keeps trying until it succeeds', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error('network blip'))
+      .mockResolvedValueOnce(OK({ status: 'Success', video_url: 'http://x/v.mp4' }) as any)
+    vi.stubGlobal('fetch', fetchMock)
+    const res = await pollVideoStatus('t1', { sleep: fastSleep })
+    expect(res).toEqual({ status: 'completed', videoUrl: 'http://x/v.mp4' })
+  })
+
+  it('survives a non-ok poll response and keeps trying', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(ERR(502) as any)
+      .mockResolvedValueOnce(OK({ status: 'Success', video_url: 'http://x/v.mp4' }) as any)
+    vi.stubGlobal('fetch', fetchMock)
+    const res = await pollVideoStatus('t1', { sleep: fastSleep })
+    expect(res).toEqual({ status: 'completed', videoUrl: 'http://x/v.mp4' })
   })
 })
