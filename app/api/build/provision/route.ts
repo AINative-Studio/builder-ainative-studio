@@ -238,6 +238,7 @@ export async function POST(request: NextRequest) {
   if (jwt) {
     const zf = await provisionForm(jwt, slug, String(existing.name || b?.name || slug))
     forms = { provisioned: zf.ok, formId: zf.formId, reason: zf.ok ? undefined : zf.reason }
+    if (zf.ok) await captureFounderCredentialForProxy(request, slug, 'zeroforms', jwt)
   }
 
   // #419 (child of #414): also provision the company's REAL AgentFlow default
