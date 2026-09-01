@@ -124,6 +124,12 @@ export async function middleware(request: NextRequest) {
       pathname === '/api/chat' ||
       pathname.startsWith('/api/rlhf/') ||
       pathname.startsWith('/api/db/') ||
+      // Founder-scoped primitive runtime proxy (#443). Self-authenticates
+      // exactly like /api/db/ — a deployed company reads COMPANY_SLUG from
+      // its own env, the shared preview iframe presents a signed per-app
+      // token — never a session cookie, so this route was unreachable behind
+      // the session gate below (a generated app has no session).
+      pathname.startsWith('/api/primitive/') ||
       pathname.startsWith('/api/build/') ||
       // "I'm stuck" jump-to-answer retrieval (#321) — pure local search over the
       // guides/FAQ catalog. Lives on /help + /guides/[slug], both anonymous
