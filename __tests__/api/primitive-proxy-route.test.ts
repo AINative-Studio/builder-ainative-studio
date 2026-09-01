@@ -156,4 +156,45 @@ describe('GET/POST /api/primitive/[primitive]/[...path] (#443)', () => {
       expect(json).toEqual({ error: 'primitive_unavailable', reason: 'not_provisioned' })
     })
   })
+
+  describe('AgentFlow (#443 follow-up)', () => {
+    function agentflowReq(opts: { method?: string; headers?: Record<string, string>; body?: string } = {}) {
+      return {
+        method: opts.method || 'GET',
+        nextUrl: new URL('https://builder.ainative.studio/api/primitive/agentflow/projects/'),
+        headers: new Headers(opts.headers || {}),
+        text: async () => opts.body ?? '',
+      } as any
+    }
+
+    it('forwards to the real AgentFlow base — /api/v1/projects/, NOT /api/v1/build (live-verified against its openapi.json)', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'af-token' })
+      const fetchMock = vi.fn(async (url: string, init: any) => {
+        expect(url).toBe('https://agentflow.ainative.studio/api/v1/projects/')
+        expect(init.headers.Authorization).toBe('Bearer af-token')
+        return { status: 200, text: async () => JSON.stringify({ id: 'proj-1' }), headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const res: any = await GET(agentflowReq(), ctx('agentflow', ['projects', '']))
+      expect(res.status).toBe(200)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('401s on a missing token with no COMPANY_SLUG, same fail-closed behavior as ZeroCommerce', async () => {
+      const res: any = await GET(agentflowReq(), ctx('agentflow', ['projects', '']))
+      expect(res.status).toBe(401)
+      expect(h.resolveFounderCredential).not.toHaveBeenCalled()
+    })
+
+    it('502s honestly when no AgentFlow credential was ever stored for this company', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: false, reason: 'not_provisioned' })
+      const res: any = await GET(agentflowReq(), ctx('agentflow', ['projects', '']))
+      expect(res.status).toBe(502)
+      const json = await res.json()
+      expect(json).toEqual({ error: 'primitive_unavailable', reason: 'not_provisioned' })
+    })
+  })
 })

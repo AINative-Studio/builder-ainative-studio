@@ -44,7 +44,7 @@ import { provisionProject } from '@/lib/build/agentflow'
 import { provisionZeroERPTenant } from '@/lib/build/zeroerp'
 import { provisionZeroDbViaMcp, isMcpProvisionEnabled } from '@/lib/build/mcp-provision'
 import { provisionCompanyRepo } from '@/lib/git/company-repo'
-import { storeFounderCredential } from '@/lib/build/primitive-credentials'
+import { storeFounderCredential, type FounderScopedPrimitive } from '@/lib/build/primitive-credentials'
 import { resolveStoredApp } from '@/lib/build/ready-gate'
 
 export const runtime = 'nodejs'
@@ -53,6 +53,33 @@ export const maxDuration = 60
 // Plans that unlock a PERMANENT project + real provisioning (#207/#241). A
 // permanent (sk_) key requires one of these — provisioning is PAID-gated.
 const PAID_PLANS = new Set(['launch', 'company', 'pro', 'business', 'enterprise', 'cody_vcto'])
+
+/**
+ * #443: a founder-scoped primitive (ZeroCommerce, AgentFlow, …) has no
+ * separate service credential builder can hold after provisioning — the
+ * resource is scoped to the founder's own AINative identity. Durably store
+ * their refreshable token now, while the session is live, so the runtime
+ * proxy (app/api/primitive/[primitive]/[...path]/route.ts) can serve the
+ * DEPLOYED app on this founder's behalf later without needing their browser
+ * present. Best-effort — a storage failure just means the proxy has nothing
+ * to serve for this company/primitive; it never blocks provisioning itself.
+ */
+async function captureFounderCredentialForProxy(
+  request: NextRequest,
+  slug: string,
+  primitive: FounderScopedPrimitive,
+  jwt: string,
+): Promise<void> {
+  const rawToken = await getToken({ req: request, secret: process.env.AUTH_SECRET }).catch(() => null)
+  if (!rawToken?.refreshToken && !rawToken?.accessToken) return
+  await storeFounderCredential(
+    slug,
+    primitive,
+    jwt,
+    rawToken.refreshToken as string | undefined,
+    rawToken.expiresAt ? Math.max(0, Math.floor((Number(rawToken.expiresAt) - Date.now()) / 1000)) : undefined,
+  ).catch(() => {})
+}
 
 export async function POST(request: NextRequest) {
   const b = await request.json().catch(() => null)
@@ -171,22 +198,7 @@ export async function POST(request: NextRequest) {
   if (jwt) {
     const zp = await provisionPipeline(jwt, slug, String(existing.name || b?.name || slug))
     pipeline = { provisioned: zp.ok, pipelineId: zp.pipelineId, reason: zp.ok ? undefined : zp.reason }
-    if (zp.ok) {
-      // #443: ZeroPipeline is also scoped to the founder's own AINative
-      // identity — same durable-credential capture as ZeroCommerce above, so
-      // the runtime proxy (/api/primitive/zeropipeline/...) has a refreshable
-      // token to serve the deployed app with later. Best-effort.
-      const rawToken = await getToken({ req: request, secret: process.env.AUTH_SECRET }).catch(() => null)
-      if (rawToken?.refreshToken || rawToken?.accessToken) {
-        storeFounderCredential(
-          slug,
-          'zeropipeline',
-          jwt,
-          rawToken.refreshToken as string | undefined,
-          rawToken.expiresAt ? Math.max(0, Math.floor((Number(rawToken.expiresAt) - Date.now()) / 1000)) : undefined,
-        ).catch(() => {})
-      }
-    }
+    if (zp.ok) await captureFounderCredentialForProxy(request, slug, 'zeropipeline', jwt)
   }
 
   // #417 (child of #414): also provision the company's REAL ZeroCommerce store
@@ -199,25 +211,7 @@ export async function POST(request: NextRequest) {
   if (jwt) {
     const zc = await provisionStore(jwt, slug, String(existing.name || b?.name || slug))
     commerce = { provisioned: zc.ok, storeId: zc.storeId, reason: zc.ok ? undefined : zc.reason }
-    if (zc.ok) {
-      // #443: the store is scoped to the founder's own AINative identity —
-      // there is no separate service credential to hold after provisioning.
-      // Durably store the founder's refreshable token now, while their
-      // session is live, so a runtime proxy can serve the DEPLOYED app on
-      // this founder's behalf later without needing their browser present.
-      // Best-effort — a storage failure just means #443's proxy has nothing
-      // to serve for this company; it does not block provisioning itself.
-      const rawToken = await getToken({ req: request, secret: process.env.AUTH_SECRET }).catch(() => null)
-      if (rawToken?.refreshToken || rawToken?.accessToken) {
-        storeFounderCredential(
-          slug,
-          'zerocommerce',
-          jwt,
-          rawToken.refreshToken as string | undefined,
-          rawToken.expiresAt ? Math.max(0, Math.floor((Number(rawToken.expiresAt) - Date.now()) / 1000)) : undefined,
-        ).catch(() => {})
-      }
-    }
+    if (zc.ok) await captureFounderCredentialForProxy(request, slug, 'zerocommerce', jwt)
   }
 
   // #427 (child of #414/#422): also provision the company's REAL OpenCapStack
@@ -259,6 +253,7 @@ export async function POST(request: NextRequest) {
   if (jwt) {
     const af = await provisionProject(jwt, slug, String(existing.name || b?.name || slug))
     agentflow = { provisioned: af.ok, projectId: af.projectId, reason: af.ok ? undefined : af.reason }
+    if (af.ok) await captureFounderCredentialForProxy(request, slug, 'agentflow', jwt)
   }
 
   // #439 (child of #414/#422): also provision the company's REAL ZeroERP

@@ -161,9 +161,12 @@ describe('primitive-catalog additions (#410)', () => {
     // unauthorized AINative API key".
     expect(getPrimitive('ZeroForms')?.apiBase).toBe('https://zeroforms-production.up.railway.app/v1')
     expect(getPrimitive('ZeroBooks')?.apiBase).toBe('https://zerobooks-production.up.railway.app/api/v1')
-    // AgentFlow's real prefix (confirmed via its own live openapi.json) is
-    // /api/v1/build, not the generic /api/v1 most AINative services use.
-    expect(getPrimitive('AgentFlow')?.apiBase).toBe('https://agentflow.ainative.studio/api/v1/build')
+    // Re-verified (#443 follow-up): AgentFlow's real prefix is the plain
+    // /api/v1 (confirmed via a real POST to /api/v1/projects/ returning a
+    // structured FastAPI auth-reject body). The original #410 claim of a
+    // /build prefix was wrong — that path only 200s because it falls
+    // through to the SPA's HTML shell, not a real API route.
+    expect(getPrimitive('AgentFlow')?.apiBase).toBe('https://agentflow.ainative.studio/api/v1')
     expect(getPrimitive('QNN API')?.apiBase).toBe('https://qnn.ainative.studio/api/v1')
     // #425: the original "SpaceTime OS" entry actually pointed at Ocean (an
     // unrelated knowledge-base primitive) — split into two correctly-identified
@@ -252,6 +255,14 @@ describe('primitive-catalog additions (#410)', () => {
       const block = codegenCompositionBlock('a customer support helpdesk with tickets', 'company')
       expect(block).toContain('ServiceOS')
       expect(block).not.toMatch(/ServiceOS[^\n]*To use: call its REST API/)
+    })
+
+    it('AgentFlow now gets a real same-origin proxy instruction, not the honest-placeholder framing (#443 follow-up)', () => {
+      const block = codegenCompositionBlock('a no-code visual agent workflow builder', 'company')
+      expect(block).toContain('AgentFlow')
+      expect(block).not.toMatch(/AgentFlow[^\n]*already provisioned for this company server-side/)
+      expect(block).toMatch(/AgentFlow[^\n]*To use: call the same-origin proxy at `\/api\/primitive\/agentflow\//)
+      expect(block).toMatch(/AgentFlow[^\n]*NO Authorization header needed/)
     })
   })
 

@@ -37,7 +37,10 @@ export const runtime = 'nodejs'
 const PRIMITIVE_BASES: Record<FounderScopedPrimitive, string> = {
   zerocommerce: process.env.ZEROCOMMERCE_API_URL || 'https://zerocommerce.ainative.studio/api/v1',
   zeropipeline: process.env.ZEROPIPELINE_API_URL || 'https://pipeline.ainative.studio/api/v1',
-  agentflow: process.env.AGENTFLOW_API_URL || 'https://agentflow.ainative.studio/api/v1/build',
+  // Real base confirmed via AgentFlow's live openapi.json (/api/v1/projects/,
+  // no /build segment — the PR that first added this entry had it wrong;
+  // matches lib/build/agentflow.ts's own AF_BASE, which was already correct).
+  agentflow: process.env.AGENTFLOW_API_URL || 'https://agentflow.ainative.studio/api/v1',
   zeroforms: process.env.ZEROFORMS_API_URL || 'https://zeroforms-production.up.railway.app/v1',
 }
 
