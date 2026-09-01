@@ -58,11 +58,21 @@ export function wildcardUrl(slug: string): string | null {
  * wildcard, so those apps keep resolving to their own services — this set is the
  * defense-in-depth guard in case any such Host ever reaches the Builder.
  *
- * The bulk of this list is SYNCED from the real ainative.studio Netlify DNS zone
- * (every first-label subdomain with an explicit A/CNAME/ALIAS/NETLIFY record as of
- * 2026-08-21), plus common infra labels. When you stand up a new *.ainative.studio
- * host, add its label here too. To re-sync: list the zone's records and take every
- * single-label host record name.
+ * The bulk of this list is SYNCED directly from Railway's API (every service's
+ * custom `*.ainative.studio` domain, across all ~20 Railway projects in the
+ * workspace — not a point-in-time DNS snapshot) as of 2026-09-01, plus common
+ * infra labels and the documented-but-not-yet-DNS-provisioned hosted primitive
+ * MCP gateway labels (core#6667 — these currently have NO dedicated DNS record
+ * and fall through to the `*.ainative.studio` wildcard, so they MUST be reserved
+ * here even though `list-domains` finds no owning service for them yet). When
+ * you stand up a new *.ainative.studio host — or reserve a label for a future
+ * one, hosted or not — add it here too (see the "new subdomain" checklist item
+ * in docs/WORKSPACE_AND_PROVISIONING_ARCHITECTURE.md). To re-sync: for every
+ * Railway project (`list-projects`) and every service in it (`list-services`),
+ * call `list-domains` and collect every custom domain ending in
+ * `.ainative.studio`; cross-check against `netlify api getDnsRecords` for the
+ * `ainative.studio` zone since some labels (like the MCP gateway ones) are
+ * DNS-only / not-yet-provisioned and won't show up as a Railway custom domain.
  */
 export const RESERVED_SUBDOMAINS = new Set([
   // Generic infra / common labels (not necessarily in DNS, but must never be slugs).
@@ -77,6 +87,14 @@ export const RESERVED_SUBDOMAINS = new Set([
   'oceanapi', 'pillsense', 'pipeline', 'properstack', 'publicfounders', 'qnn',
   'qui', 'sc-builders', 'specbook', 'surgeonmatch', 'winning-careers', 'wwmaa',
   'zerodb', 'zeroinvoice', 'zeropipeline', 'zerowarranty',
+  // Re-verified against the live Railway API across all workspace projects
+  // (2026-09-01) — no new hosted-service labels found beyond the above.
+  // Hosted primitive MCP gateway labels (core#6667) — documented at
+  // mcp.ainative.studio/{server} but not yet DNS-provisioned with their own
+  // record; currently ride the wildcard and MUST stay reserved so they never
+  // get treated as a company slug and rewritten into /build/{label}.
+  'mcp', 'strapi', 'prd-generator', 'sequential-thinking', 'design-system',
+  'gtm', 'opencapstack', 'google-ads', 'meta-ads', 'dataforseo',
 ])
 
 /**

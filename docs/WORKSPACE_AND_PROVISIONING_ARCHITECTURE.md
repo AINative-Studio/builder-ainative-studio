@@ -112,6 +112,16 @@ User describes idea in /build
   real subdomains + infra labels so the rewrite never hijacks a sibling.
   **When you add a new `*.ainative.studio` app, add its label to
   `RESERVED_SUBDOMAINS`.**
+- **Gotcha (core#6667):** a label with a *documented* hostname but **no DNS
+  record yet** (e.g. a service that's planned/announced but not provisioned)
+  gets NO protection from (1) — it falls straight through to the wildcard and
+  IS hijacked into `/build/{label}` unless it's also in `RESERVED_SUBDOMAINS`.
+  `mcp`, `strapi`, `prd-generator`, `gtm`, `sequential-thinking`,
+  `design-system`, `opencapstack`, `google-ads`, `meta-ads`, `dataforseo` were
+  missed this way and are now reserved — when documenting a new
+  `*.ainative.studio` hostname (in a README, MCP config example, etc.) reserve
+  its label immediately, even before the real DNS record / Railway service
+  exists.
 
 ### Custom domains (LIVE)
 - Buy: `POST /api/build/domains` → core `POST /api/v1/public/domains/purchase`

@@ -41,6 +41,18 @@ describe('wildcardSlugFromHost', () => {
     }
   })
 
+  it('ignores hosted primitive MCP gateway labels (core#6667)', () => {
+    // These are documented at mcp.ainative.studio/{server} but have no dedicated
+    // DNS record yet — they fall through to the wildcard and, without this
+    // reservation, get hijacked into /build/{label} instead of ever reaching a
+    // real gateway. Must never resolve as a company slug.
+    for (const sub of ['mcp', 'strapi', 'prd-generator', 'gtm',
+                       'sequential-thinking', 'design-system', 'opencapstack',
+                       'google-ads', 'meta-ads', 'dataforseo']) {
+      expect(wildcardSlugFromHost(`${sub}.ainative.studio`, HOST)).toBeNull()
+    }
+  })
+
   it('ignores multi-label subdomains (not a single company slug)', () => {
     expect(wildcardSlugFromHost('a.b.ainative.studio', HOST)).toBeNull()
   })
