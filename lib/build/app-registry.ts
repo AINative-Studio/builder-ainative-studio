@@ -101,6 +101,17 @@ export interface AppEntry {
   // Absent/false = still simulated.
   agentflowProvisioned?: boolean
   agentflowProjectId?: string
+  // ZeroERP (accounting/ERP primitive) provisioning (#439, child of
+  // #414/#422). UNLIKE ZeroPipeline/ZeroCommerce/ZeroForms/AgentFlow,
+  // ZeroERP's onboarding endpoint takes NO auth (public, confirmed via
+  // source) but needs the founder's email to invite as admin — gated on a
+  // signed-in founder's email, not the JWT. `zeroerpInviteToken` is a raw,
+  // currently-UNREDEEMABLE token (AINative-Studio/ZeroERP#1094 — no
+  // accept-invite endpoint exists yet on ZeroERP's side) — never surface it
+  // as a working link until that's resolved. Absent/false = still simulated.
+  zeroerpProvisioned?: boolean
+  zeroerpOrgId?: string
+  zeroerpInviteToken?: string
   // ZeroVoice (telephony primitive) provisioning (#415, child of #414). UNLIKE
   // every other primitive here, this carries a REAL recurring cost — never
   // auto-provisioned in provision/route.ts's checkout flow. Only set via an
@@ -455,6 +466,9 @@ export async function setAppProvisioned(
     formsFormId?: string
     agentflowProvisioned?: boolean
     agentflowProjectId?: string
+    zeroerpProvisioned?: boolean
+    zeroerpOrgId?: string
+    zeroerpInviteToken?: string
     workspaceId?: string
     workspaceFiled?: boolean
     railwayServiceId?: string
