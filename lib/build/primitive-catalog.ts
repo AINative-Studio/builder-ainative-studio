@@ -584,13 +584,13 @@ export function mcpDataProvisioningBlock(): string {
  * ZeroDB/Instant DB: a durable service key builder holds forever backs
  * /api/db — the original, always-worked case.
  *
- * ZeroCommerce (#443): "one store per owner user" — the resource is scoped
- * to the FOUNDER'S own AINative identity, not a separate service credential.
- * /api/primitive/zerocommerce/{...path} closes that gap: builder captures
- * and durably refreshes a copy of the founder's tokens at provision time
- * (lib/build/primitive-credentials.ts) and proxies runtime calls through
- * them — same-origin, so the generated app never sees the credential.
- * ZeroPipeline/AgentFlow/ZeroForms share the identical founder-scoped shape
+ * ZeroCommerce/ZeroPipeline (#443): "one store/pipeline per owner user" —
+ * the resource is scoped to the FOUNDER'S own AINative identity, not a
+ * separate service credential. /api/primitive/{name}/{...path} closes that
+ * gap: builder captures and durably refreshes a copy of the founder's tokens
+ * at provision time (lib/build/primitive-credentials.ts) and proxies runtime
+ * calls through them — same-origin, so the generated app never sees the
+ * credential. AgentFlow/ZeroForms share the identical founder-scoped shape
  * but do not have their own proxy wired yet; they stay in the honest
  * "already provisioned server-side, don't call directly" framing below
  * until each gets the same treatment.
@@ -600,6 +600,8 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
   'Instant DB': () => `call its REST API at \`https://api.ainative.studio/api/v1\` (Authorization: Bearer <AINATIVE_API_KEY>)`,
   ZeroCommerce: () =>
     `call the same-origin proxy at \`/api/primitive/zerocommerce/{path}\` (e.g. \`/api/primitive/zerocommerce/commerce/products\`) — NO Authorization header needed, the platform attaches the founder's real ZeroCommerce credential server-side; the path after \`zerocommerce/\` matches ZeroCommerce's own REST path exactly`,
+  ZeroPipeline: () =>
+    `call the same-origin proxy at \`/api/primitive/zeropipeline/{path}\` (e.g. \`/api/primitive/zeropipeline/pipelines\`) — NO Authorization header needed, the platform attaches the founder's real ZeroPipeline credential server-side; the path after \`zeropipeline/\` matches ZeroPipeline's own REST path exactly`,
 }
 
 /**
@@ -673,7 +675,7 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
     `  For a real login screen, render an email+continue form that sets that uid — do NOT call an external auth API.\n\n` +
     `Rules:\n` +
     `1. Import \`@ainative/ai-kit-core\` (and its React bindings) for UI primitives — do NOT rebuild chat, tables, product cards, or dashboards from scratch when an AI Kit component exists.\n` +
-    `2. Persist through /api/db (above) — this is MANDATORY when the app saves any records. The generated app runs in the browser, so it does NOT have AINATIVE_API_KEY; NEVER put a Bearer key or secret in app code, and NEVER fetch() a primitive's apiBase directly unless this block explicitly said to (only ZeroDB/Instant DB/ZeroCommerce have a real browser-callable path today — ZeroDB/Instant DB via /api/db with a Bearer key, ZeroCommerce via the /api/primitive/zerocommerce proxy with NO key). For every other primitive listed above, treat its capability as already set up by the platform — build the UI around it, don't call its API from generated code.\n` +
+    `2. Persist through /api/db (above) — this is MANDATORY when the app saves any records. The generated app runs in the browser, so it does NOT have AINATIVE_API_KEY; NEVER put a Bearer key or secret in app code, and NEVER fetch() a primitive's apiBase directly unless this block explicitly said to (only ZeroDB/Instant DB/ZeroCommerce/ZeroPipeline have a real browser-callable path today — ZeroDB/Instant DB via /api/db with a Bearer key, ZeroCommerce/ZeroPipeline via their /api/primitive/{name} proxy with NO key). For every other primitive listed above, treat its capability as already set up by the platform — build the UI around it, don't call its API from generated code.\n` +
     `3. Do NOT reimplement invoicing, CRM, ecommerce carts/checkout, telephony, cap-table math, or helpdesk ticketing when the matching primitive exists — model the app around composing it. Regenerating that business logic from scratch is a FAILING score.\n` +
     `4. Add a short comment above each data call noting the AINative product it composes (e.g. \`// ZeroDB — orders\`), so the wiring is auditable.\n` +
     // #314/#315: the "already included / replaces X" framing above is a SELLING
