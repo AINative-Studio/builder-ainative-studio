@@ -21,6 +21,14 @@ export type Track = 'app' | 'company'
 export type Plan = '' | 'launch' | 'company'
 
 /**
+ * A company build can optionally target a specific function instead of one
+ * undifferentiated "build a company" (#448 — the tangible-outcome gap: a
+ * first-time user couldn't tell what "company" produces). '' = no role
+ * chosen, matches today's behavior exactly.
+ */
+export type CompanyRole = '' | 'marketing' | 'sales' | 'operations'
+
+/**
  * Active PAID subscription tier (#241), distinct from `Plan` (the in-flow
  * pricing-picker choice). Set after Stripe checkout is verified server-side;
  * screens gate unlocks off it (Pro → custom domain, Business → nightly-loop
@@ -56,6 +64,7 @@ export interface PendingQuestion {
 export interface BuildState {
   screen: Screen
   track: Track
+  role: CompanyRole
   view: ArtifactView
   plan: Plan
   auto: boolean            // Cody autoplaying vs user manual nav
@@ -116,6 +125,7 @@ export const initialBuildState: BuildState = {
   // link still overrides this — so QA/ads/returning founders are unaffected.
   screen: 'landing',
   track: 'app',
+  role: '',
   view: 'brief',
   plan: '',
   auto: true,
@@ -154,7 +164,7 @@ export const initialBuildState: BuildState = {
 
 export type BuildAction =
   | { type: 'GOTO_SCREEN'; screen: Screen }
-  | { type: 'PICK_TRACK'; track: Track }
+  | { type: 'PICK_TRACK'; track: Track; role?: CompanyRole }
   | { type: 'START_BUILD'; idea: string; appSub: string; companyName?: string; brandTagline?: string; brandColor?: string }
   // Auth wall (#dashboard-ux): stash the idea/brand and route to signup instead of
   // building — used when an anonymous founder submits an idea.
@@ -194,7 +204,7 @@ export type BuildAction =
   | { type: 'ASK_PRIVACY' }
   | { type: 'TRIGGER_CONFLICT'; changedView: string; fromRescopeIntent?: boolean }
   /** Restore persisted build state from localStorage without clearing artifacts (#284). */
-  | { type: 'RESTORE_BUILD'; partial: Partial<Pick<BuildState, 'generated' | 'done' | 'genError' | 'builtCompany' | 'builtMVP' | 'wedgePicked' | 'answers' | 'companyName' | 'idea' | 'appSub' | 'brandTagline' | 'brandColor' | 'appChatId' | 'activePlan' | 'enrolled' | 'track' | 'sawPreview'>> }
+  | { type: 'RESTORE_BUILD'; partial: Partial<Pick<BuildState, 'generated' | 'done' | 'genError' | 'builtCompany' | 'builtMVP' | 'wedgePicked' | 'answers' | 'companyName' | 'idea' | 'appSub' | 'brandTagline' | 'brandColor' | 'appChatId' | 'activePlan' | 'enrolled' | 'track' | 'role' | 'sawPreview'>> }
   | { type: 'TOGGLE_RAIL' }
   | { type: 'TOGGLE_INDEX' }
   | { type: 'SET_APP_CHATID'; chatId: string }
@@ -220,6 +230,9 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
       return {
         ...state,
         track: action.track,
+        // #448: role only means anything on the company track — an app-track
+        // pick clears any stale role from a prior company attempt.
+        role: action.track === 'company' ? (action.role ?? state.role) : '',
         view: action.track === 'app' ? 'brief' : 'thesis',
         screen: 'intake',
       }

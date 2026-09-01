@@ -106,6 +106,30 @@ describe('buildReducer — PICK_TRACK', () => {
     expect(s.view).toBe('thesis')
     expect(s.screen).toBe('intake')
   })
+
+  describe('#448 — company role (marketing/sales/operations)', () => {
+    it('defaults role to "" (no change to existing behavior when unspecified)', () => {
+      const s = buildReducer(initialBuildState, { type: 'PICK_TRACK', track: 'company' })
+      expect(s.role).toBe('')
+    })
+
+    it('stores a role when picking the company track', () => {
+      const s = buildReducer(initialBuildState, { type: 'PICK_TRACK', track: 'company', role: 'sales' })
+      expect(s.role).toBe('sales')
+    })
+
+    it('clears any stale role when picking the app track', () => {
+      const withRole = buildReducer(initialBuildState, { type: 'PICK_TRACK', track: 'company', role: 'marketing' })
+      const s = buildReducer(withRole, { type: 'PICK_TRACK', track: 'app' })
+      expect(s.role).toBe('')
+    })
+
+    it('a company pick with no role keeps a previously-set role (re-entering intake)', () => {
+      const withRole = buildReducer(initialBuildState, { type: 'PICK_TRACK', track: 'company', role: 'operations' })
+      const s = buildReducer(withRole, { type: 'PICK_TRACK', track: 'company' })
+      expect(s.role).toBe('operations')
+    })
+  })
 })
 
 describe('buildReducer — START_BUILD', () => {

@@ -11,7 +11,10 @@
  * `build` screen in the BuildApp state machine.
  */
 
+import { useState } from 'react'
 import { useBuild } from '@/contexts/build-context'
+import { COMPANY_ROLES } from '@/lib/build/primitive-catalog'
+import type { CompanyRole } from '@/lib/build/state'
 
 /** A small rotating pool of concrete starter ideas for "Surprise me". Index is
  *  derived from the clock so it varies per visit without needing Math.random in
@@ -26,11 +29,15 @@ const SURPRISE_IDEAS = [
 
 export function BuildStart() {
   const { dispatch, pickTrack } = useBuild()
+  const [role, setRole] = useState<CompanyRole>('')
 
   const goIntake = () => {
     window.scrollTo(0, 0)
     // The funnel creates a company → Company track. PICK_TRACK routes to Intake.
-    pickTrack('company')
+    // #448: an optional role (Marketing/Sales/Operations) narrows what gets
+    // built so the outcome is legible, instead of one undifferentiated
+    // "company" — '' (no role picked) keeps today's behavior exactly.
+    pickTrack('company', role || undefined)
   }
 
   const pickSurprise = () => {
@@ -67,6 +74,37 @@ export function BuildStart() {
           <button onClick={goIntake} className="btn-primary m-land-btn-block" style={{ padding: '18px 20px', fontSize: 15 }} data-testid="build-own-idea">
             Build my idea
           </button>
+        </div>
+
+        {/* #448: optional role focus — makes "build a company" a legible,
+            specific outcome (a Marketing/Sales/Operations build) instead of
+            one undifferentiated build. Skippable: leaving nothing selected
+            keeps today's behavior exactly. */}
+        <div style={{ width: '100%', maxWidth: 420, marginTop: 4 }}>
+          <div className="m-land-opt-sub" style={{ textAlign: 'center', marginBottom: 8 }}>
+            Optional — focus the build on one function
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }} role="group" aria-label="Focus this company build on a specific function">
+            {COMPANY_ROLES.map((r) => (
+              <button
+                key={r.id}
+                type="button"
+                onClick={() => setRole(role === r.id ? '' : r.id)}
+                aria-pressed={role === r.id}
+                title={r.description}
+                data-testid={`build-role-${r.id}`}
+                className="btn-secondary"
+                style={{
+                  padding: '8px 14px',
+                  fontSize: 13,
+                  borderColor: role === r.id ? 'currentColor' : undefined,
+                  fontWeight: role === r.id ? 600 : 400,
+                }}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
     </div>

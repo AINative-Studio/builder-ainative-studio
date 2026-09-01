@@ -301,4 +301,77 @@ describe('primitive-catalog additions (#410)', () => {
       expect(block).toMatch(/OpenCapStack[^\n]*already provisioned for this company server-side/)
     })
   })
+
+  describe('company role selection (#448 — "build a company" outcome legibility)', () => {
+    // Deliberately generic/vague ideas with NO trigger-word matches for the
+    // role's own primitives — this is the real regression risk: a role must
+    // bias selection even when nothing in the idea text hints at it, or role
+    // selection would be a no-op for most founders (who won't type "CRM"
+    // themselves, that's the whole point of picking a role instead).
+    const VAGUE_IDEA = 'a small business that wants to grow'
+
+    it('no role: a vague idea does not surface role-specific primitives beyond what triggers match', () => {
+      const { names } = selectPrimitives(VAGUE_IDEA, 'company')
+      expect(names).not.toContain('ZeroPipeline')
+      expect(names).not.toContain('Content Workflow')
+      expect(names).not.toContain('ZeroERP')
+    })
+
+    it('sales role: surfaces ZeroPipeline/ZeroInvoice/ZeroCommerce even with zero keyword overlap', () => {
+      const { names } = selectPrimitives(VAGUE_IDEA, 'company', 6, 'sales')
+      expect(names).toContain('ZeroPipeline')
+      expect(names).toContain('ZeroInvoice')
+      expect(names).toContain('ZeroCommerce')
+    })
+
+    it('marketing role: surfaces Content Workflow/Live Streaming even with zero keyword overlap', () => {
+      const { names } = selectPrimitives(VAGUE_IDEA, 'company', 6, 'marketing')
+      expect(names).toContain('Content Workflow')
+      expect(names).toContain('Live Streaming')
+      // Sales-only primitives should not be pulled in by the marketing role.
+      expect(names).not.toContain('ZeroInvoice')
+    })
+
+    it('operations role: surfaces ZeroERP/ServiceOS/ZeroForms/ZeroBooks even with zero keyword overlap', () => {
+      const { names } = selectPrimitives(VAGUE_IDEA, 'company', 6, 'operations')
+      expect(names).toContain('ZeroERP')
+      expect(names).toContain('ServiceOS')
+      expect(names).toContain('ZeroForms')
+      expect(names).toContain('ZeroBooks')
+    })
+
+    it('the same idea produces materially different selections across roles (the actual product goal)', () => {
+      const sales = selectPrimitives(VAGUE_IDEA, 'company', 6, 'sales').names
+      const marketing = selectPrimitives(VAGUE_IDEA, 'company', 6, 'marketing').names
+      const operations = selectPrimitives(VAGUE_IDEA, 'company', 6, 'operations').names
+      expect(sales).not.toEqual(marketing)
+      expect(sales).not.toEqual(operations)
+      expect(marketing).not.toEqual(operations)
+    })
+
+    it('role has no effect on the app track (roles are a company-track concept only)', () => {
+      const withRole = selectPrimitives(VAGUE_IDEA, 'app', 6, 'sales').names
+      const withoutRole = selectPrimitives(VAGUE_IDEA, 'app', 6).names
+      expect(withRole).toEqual(withoutRole)
+    })
+
+    it('codegenCompositionBlock surfaces the role framing line and role-emphasized primitives', () => {
+      const block = codegenCompositionBlock(VAGUE_IDEA, 'company', 'sales')
+      expect(block).toContain('ZeroPipeline')
+      expect(block).toContain('ZeroInvoice')
+    })
+
+    it('catalogPromptBlock tells the model this is a role-focused build', () => {
+      const block = catalogPromptBlock(VAGUE_IDEA, 'company', 'marketing')
+      expect(block).toMatch(/Marketing build/i)
+    })
+
+    it('an idea that already trigger-matches a DIFFERENT role still gets the picked role emphasized', () => {
+      // Idea text says "inventory" (ZeroERP/operations trigger), but founder
+      // picked "sales" — sales primitives must still be present.
+      const { names } = selectPrimitives('a shop that tracks inventory', 'company', 6, 'sales')
+      expect(names).toContain('ZeroCommerce') // real trigger match ('inventory' -> ZeroCommerce too)
+      expect(names).toContain('ZeroPipeline') // role-boosted despite no trigger match
+    })
+  })
 })
