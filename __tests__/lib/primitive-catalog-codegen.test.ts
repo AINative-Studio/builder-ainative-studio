@@ -247,4 +247,36 @@ describe('primitive-catalog additions (#410)', () => {
       expect(block).not.toMatch(/ServiceOS[^\n]*To use: call its REST API/)
     })
   })
+
+  describe('OpenCapStack is real, unconditional company substrate (#427 always provisions it)', () => {
+    it('appears for a company-track idea with zero equity/cap-table language', () => {
+      const { names, foundational } = selectPrimitives('a coffee shop loyalty rewards app', 'company')
+      expect(names).toContain('OpenCapStack')
+      expect(foundational.map((p) => p.name)).toContain('OpenCapStack')
+    })
+
+    it('does NOT appear on the app track for the same idea (no auto-provisioning there)', () => {
+      const { names } = selectPrimitives('a coffee shop loyalty rewards app', 'app')
+      expect(names).not.toContain('OpenCapStack')
+    })
+
+    it('a nonprofit idea still gets AINativeNGO instead, not OpenCapStack (#302 carve-out preserved)', () => {
+      const { names } = selectPrimitives('a nonprofit donation platform to manage donors, grants, and impact reporting', 'company')
+      expect(names).toContain('AINativeNGO')
+      expect(names).not.toContain('OpenCapStack')
+    })
+
+    it('an explicit equity idea still gets OpenCapStack (unaffected by the nonprofit carve-out)', () => {
+      const { names } = selectPrimitives('a startup cap table and equity management tool', 'company')
+      expect(names).toContain('OpenCapStack')
+      expect(names).not.toContain('AINativeNGO')
+    })
+
+    it('is framed as already-provisioned server-side, not a direct-fetch target (not in RUNTIME_PROXIED_PRIMITIVES)', () => {
+      const block = codegenCompositionBlock('a coffee shop loyalty rewards app', 'company')
+      expect(block).toContain('OpenCapStack')
+      expect(block).not.toMatch(/OpenCapStack[^\n]*To use: call its REST API/)
+      expect(block).toMatch(/OpenCapStack[^\n]*already provisioned for this company server-side/)
+    })
+  })
 })
