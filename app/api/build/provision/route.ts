@@ -40,6 +40,7 @@ import { provisionStore } from '@/lib/build/zerocommerce'
 import { provisionCapTable } from '@/lib/build/opencapstack'
 import { provisionForm } from '@/lib/build/zeroforms'
 import { provisionProject } from '@/lib/build/agentflow'
+import { provisionZeroERPTenant } from '@/lib/build/zeroerp'
 import { provisionZeroDbViaMcp, isMcpProvisionEnabled } from '@/lib/build/mcp-provision'
 import { provisionCompanyRepo } from '@/lib/git/company-repo'
 import { resolveStoredApp } from '@/lib/build/ready-gate'
@@ -223,6 +224,26 @@ export async function POST(request: NextRequest) {
     agentflow = { provisioned: af.ok, projectId: af.projectId, reason: af.ok ? undefined : af.reason }
   }
 
+  // #439 (child of #414/#422): also provision the company's REAL ZeroERP
+  // tenant. UNLIKE every JWT-auth primitive above, ZeroERP's onboarding
+  // endpoint takes no auth at all (confirmed via source: `security: []`,
+  // "no authentication — the wizard is literally the very first thing a
+  // new tenant hits") but it DOES need the founder's email to send the
+  // admin invite to — so this is gated on a signed-in founder's email
+  // rather than the JWT. Best-effort — a failure just leaves the ZeroERP
+  // card honestly simulated. No cost-safety gating needed (software-only
+  // tenant record, no recurring resource cost). The returned invite token
+  // is currently NOT redeemable anywhere (AINative-Studio/ZeroERP#1094 —
+  // ZeroERP issues invite tokens but has no accept-invite endpoint), so we
+  // surface it honestly as a raw token, never a fabricated "click here" link.
+  let zeroerp: { provisioned: boolean; orgId?: string; inviteToken?: string; reason?: string } = {
+    provisioned: false,
+  }
+  if (ownerEmail) {
+    const ze = await provisionZeroERPTenant(ownerEmail, slug, String(existing.name || b?.name || slug))
+    zeroerp = { provisioned: ze.ok, orgId: ze.orgId, inviteToken: ze.inviteToken, reason: ze.ok ? undefined : ze.reason }
+  }
+
   // #250: file this company's project under the AINative Builder workspace, so all
   // generated companies live under one workspace instead of the Builder key's default
   // "AINative Studio". Instant DB doesn't honor the workspace_id we send on create yet
@@ -272,6 +293,9 @@ export async function POST(request: NextRequest) {
     formsFormId: forms.formId,
     agentflowProvisioned: agentflow.provisioned,
     agentflowProjectId: agentflow.projectId,
+    zeroerpProvisioned: zeroerp.provisioned,
+    zeroerpOrgId: zeroerp.orgId,
+    zeroerpInviteToken: zeroerp.inviteToken,
     // #250: record the intended Builder workspace + whether the re-parent stuck.
     workspaceId: BUILDER_WORKSPACE_ID,
     workspaceFiled: filed.filed,
@@ -318,6 +342,7 @@ export async function POST(request: NextRequest) {
     capstackProvisioned: capstack.provisioned,
     formsProvisioned: forms.provisioned,
     agentflowProvisioned: agentflow.provisioned,
+    zeroerpProvisioned: zeroerp.provisioned,
     gitProvisioned,
     gitRepoUrl: gitResult.gitRepoUrl,
     deployUrl: target.url,
