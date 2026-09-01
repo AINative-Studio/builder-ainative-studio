@@ -201,10 +201,14 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
   { name: 'AgentFlow', category: 'agent-cloud',
     purpose: 'No-code visual builder for AI agent workflows: build, run, and stream agent flows',
     url: `${DOCS}/agent-cloud/agentflow`,
-    // Real apiBase confirmed via its own live openapi.json (title: "AgentFlow") —
-    // note the real prefix is /api/v1/build, not the generic /api/v1 most
-    // AINative services use.
-    apiBase: 'https://agentflow.ainative.studio/api/v1/build',
+    // Real apiBase re-verified (#443 follow-up) against AgentFlow's live
+    // root openapi.json (title: "AgentFlow", real path /api/v1/projects/) —
+    // a prior pass here claimed a /build prefix, but that path 200s only
+    // because it falls through to the SPA's HTML shell, not a real route;
+    // the genuine API is the plain /api/v1 prefix, confirmed via a real
+    // POST to /api/v1/projects/ returning a structured FastAPI auth-reject
+    // JSON body, matching lib/build/agentflow.ts's own AF_BASE.
+    apiBase: 'https://agentflow.ainative.studio/api/v1',
     triggers: ['visual agent builder', 'no-code agent', 'workflow builder', 'agent workflow', 'drag and drop agent', 'flow builder'] },
   { name: 'QNN API', category: 'ai-inference',
     purpose: 'Train and run Quantum Neural Networks via API (moonshot-stage)',
@@ -619,16 +623,20 @@ export function mcpDataProvisioningBlock(): string {
  * ZeroDB/Instant DB: a durable service key builder holds forever backs
  * /api/db — the original, always-worked case.
  *
- * ZeroCommerce/ZeroPipeline (#443): "one store/pipeline per owner user" —
- * the resource is scoped to the FOUNDER'S own AINative identity, not a
- * separate service credential. /api/primitive/{name}/{...path} closes that
- * gap: builder captures and durably refreshes a copy of the founder's tokens
- * at provision time (lib/build/primitive-credentials.ts) and proxies runtime
- * calls through them — same-origin, so the generated app never sees the
- * credential. AgentFlow/ZeroForms share the identical founder-scoped shape
- * but do not have their own proxy wired yet; they stay in the honest
- * "already provisioned server-side, don't call directly" framing below
- * until each gets the same treatment.
+ * ZeroCommerce/ZeroPipeline/AgentFlow (#443): "one store/pipeline/project per
+ * owner user" — the resource is scoped to the FOUNDER'S own AINative
+ * identity, not a separate service credential. /api/primitive/{name}/{...path}
+ * closes that gap: builder captures and durably refreshes a copy of the
+ * founder's tokens at provision time (lib/build/primitive-credentials.ts)
+ * and proxies runtime calls through them — same-origin, so the generated app
+ * never sees the credential. AgentFlow's real base is confirmed via its live
+ * openapi.json (/api/v1/projects/, NOT the /api/v1/build path a prior pass
+ * here had guessed).
+ *
+ * ZeroForms shares the identical founder-scoped shape but does not have its
+ * own proxy wired yet; it stays in the honest "already provisioned
+ * server-side, don't call directly" framing below until it gets the same
+ * treatment.
  */
 const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = {
   ZeroDB: () => `call its REST API at \`https://api.ainative.studio/api/v1\` (Authorization: Bearer <AINATIVE_API_KEY>)`,
@@ -637,6 +645,8 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
     `call the same-origin proxy at \`/api/primitive/zerocommerce/{path}\` (e.g. \`/api/primitive/zerocommerce/commerce/products\`) — NO Authorization header needed, the platform attaches the founder's real ZeroCommerce credential server-side; the path after \`zerocommerce/\` matches ZeroCommerce's own REST path exactly`,
   ZeroPipeline: () =>
     `call the same-origin proxy at \`/api/primitive/zeropipeline/{path}\` (e.g. \`/api/primitive/zeropipeline/pipelines\`) — NO Authorization header needed, the platform attaches the founder's real ZeroPipeline credential server-side; the path after \`zeropipeline/\` matches ZeroPipeline's own REST path exactly`,
+  AgentFlow: () =>
+    `call the same-origin proxy at \`/api/primitive/agentflow/{path}\` (e.g. \`/api/primitive/agentflow/projects/\`) — NO Authorization header needed, the platform attaches the founder's real AgentFlow credential server-side; the path after \`agentflow/\` matches AgentFlow's own REST path exactly`,
 }
 
 /**
