@@ -35,6 +35,7 @@ import { deployCompanyFromGitea, companyDeployEnabled } from '@/lib/build/compan
 import { BUILDER_WORKSPACE_ID } from '@/lib/build/instant-db'
 import { deriveOwnerKey } from '@/lib/build/chat-store'
 import { creditReferrerOnSubscribe } from '@/lib/build/referral'
+import { enrollCompany, isEnrolled } from '@/lib/build/loop-enrollment'
 
 // Monthly $ value per plan — the conversion value sent to Google Ads.
 const PLAN_VALUE: Record<string, number> = { pro: 49, launch: 49, business: 149, company: 149, enterprise: 999, cody_vcto: 4999 }
@@ -70,7 +71,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Business+ auto-enroll into the nightly loop (flag only; cron is #243).
+    // Business+ auto-enroll into the nightly loop (cron itself is #243).
     const enrolled = plan === 'business' || plan === 'enterprise' || plan === 'cody_vcto'
     // Persist the plan on the company so Live can reflect it going forward.
     if (slug) {
@@ -78,6 +79,33 @@ export async function POST(request: NextRequest) {
       // #270: mark this company's build CONVERTED (+ plan) in the recursive learning
       // loop. Fire-and-forget — must never block or fail checkout confirmation.
       markConverted(slug, plan).catch(() => {})
+      // #464 — setAppPlan() above only stamps `enrolled` on the app-registry row;
+      // nothing ever read that flag, so a Business+ company never actually landed
+      // in the SEPARATE store (lib/build/loop-enrollment.ts) the nightly cron
+      // (app/api/build/nightly-loop/route.ts → listEnrolled()) really iterates.
+      // Bridge the two here: a real registry lookup for companyName/track, then a
+      // real enrollCompany() call, so "Business+ auto-enrolls" is actually true.
+      // Guarded by isEnrolled() first — this route is explicitly documented as
+      // safe to call repeatedly for the same checkout (page refresh, retry), and
+      // enrollCompany() itself just appends a row with no dedup, so an unguarded
+      // call here would double- (or N-times-) enroll the company, making the
+      // nightly loop process it more than once per run. Best-effort — must never
+      // block or fail checkout confirmation.
+      if (enrolled) {
+        resolveApp(slug)
+          .then(async (entry) => {
+            if (!entry) return
+            if (await isEnrolled(slug)) return
+            const track = entry.track === 'company' ? 'company' : 'app'
+            return enrollCompany({
+              companyId: slug,
+              companyName: entry.name || slug,
+              track,
+              ownerKey: entry.ownerEmail ? entry.ownerEmail.trim().toLowerCase() : undefined,
+            })
+          })
+          .catch(() => {})
+      }
     }
 
     // #207: report the PAID conversion to Google Ads (via core), keyed by the gclid
