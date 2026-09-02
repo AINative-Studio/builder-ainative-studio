@@ -11,7 +11,7 @@
 
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
-import { registerApp, resolveApp } from '@/lib/build/app-registry'
+import { registerApp, resolveApp, type AppEntry } from '@/lib/build/app-registry'
 import { deployPersistent } from '@/lib/build/deploy'
 import { checkAppReady, resolveStoredApp } from '@/lib/build/ready-gate'
 import { checkSeededData, type SeededDataCheck } from '@/lib/build/seed-check'
@@ -21,10 +21,27 @@ import { enrollCompany, isEnrolled } from '@/lib/build/loop-enrollment'
 
 export const runtime = 'nodejs'
 
+/**
+ * Resolve a real, currently-taken slug into the first free variant
+ * (`{base}-2`, `{base}-3`, …). Only called once a genuine collision is
+ * already confirmed (a DIFFERENT build owns `base`) — this just finds
+ * where the collision chain ends. Capped at 50 attempts so a pathological
+ * loop can never hang the request; falls back to a timestamp-suffixed
+ * slug in the astronomically unlikely case all 50 are somehow also taken.
+ */
+async function firstFreeSlug(base: string): Promise<string> {
+  for (let n = 2; n <= 50; n++) {
+    const candidate = `${base}-${n}`.slice(0, 40)
+    const taken = await resolveApp(candidate).catch(() => null)
+    if (!taken) return candidate
+  }
+  return `${base}-${Date.now().toString(36)}`.slice(0, 40)
+}
+
 export async function POST(request: NextRequest) {
   const b = await request.json().catch(() => null)
   if (!b?.slug || !b?.chatId) return Response.json({ error: 'slug and chatId required' }, { status: 400 })
-  const slug = String(b.slug).slice(0, 40)
+  const requestedSlug = String(b.slug).slice(0, 40)
   const chatId = String(b.chatId).slice(0, 64)
 
   // PRE-DEPLOY PARSE GATE (builder#77): before this slug is registered as ready +
@@ -57,6 +74,19 @@ export async function POST(request: NextRequest) {
     )
   }
 
+  // COLLISION CHECK: a `slug` is derived client-side from the founder's chosen
+  // company name (a naive lowercase+dash transform, no uniqueness check of its
+  // own) — two unrelated founders naming their company the same thing would,
+  // without this, silently share/overwrite one registry row (confirmed: no
+  // protection existed before this check). A DIFFERENT chatId already
+  // registered under this slug is the real collision signal — the SAME chatId
+  // means this is just a regeneration of the founder's own existing build,
+  // which must keep its original slug, not get suffixed on every save.
+  const requestedOwner = await resolveApp(requestedSlug).catch(() => null)
+  const slug = requestedOwner && requestedOwner.chatId !== chatId
+    ? await firstFreeSlug(requestedSlug)
+    : requestedSlug
+
   // #213: resolve the durable live URL via the shared persistent-deploy seam and
   // persist it, so every generated app has a real shareable URL from registration.
   // Best-effort — a deploy-resolution hiccup must not block registration.
@@ -69,7 +99,10 @@ export async function POST(request: NextRequest) {
   // The registry is append + latest-wins, so re-registering MUST carry the
   // existing entry forward — otherwise a fresh row would shadow provision-time
   // fields (zerodbProjectId, plan, domain, ownerEmail…) and silently orphan them.
-  const existing = await resolveApp(slug).catch(() => null)
+  // Safe to reuse requestedOwner here: when slug !== requestedSlug (a real
+  // collision was just resolved), the freshly-picked slug is confirmed free,
+  // so `existing` is correctly null for it — no second resolveApp call needed.
+  const existing = slug === requestedSlug ? requestedOwner : null
 
   // SEEDED-DATA CHECK (#343): for data-backed apps (code reads/writes through
   // /api/db/{table}), do a cheap ZeroDB read to verify at least one real table
@@ -167,6 +200,13 @@ export async function POST(request: NextRequest) {
 
   return Response.json({
     ok,
+    slug,
+    // Present only when the requested slug collided with a DIFFERENT
+    // founder's existing build and got auto-suffixed — lets the client
+    // update its own state.appSub so /build/{slug} + all subsequent calls
+    // use the real, actually-registered slug instead of the one that lost
+    // the naming collision.
+    slugChanged: slug !== requestedSlug ? slug : null,
     deployUrl: target?.url || null,
     dnsPointable: target?.dnsPointable ?? false,
     gitCommitted,

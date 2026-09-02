@@ -95,7 +95,9 @@ describe('POST /api/build/register-app — auto-enroll into the nightly loop', (
 
   it('does NOT double-enroll a regeneration of an already-enrolled company', async () => {
     h.isEnrolled.mockResolvedValue(true)
-    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'old-chat', name: 'Acme', track: 'app', ownerEmail: 'a@b.com' })
+    // SAME chatId as the request → a real regeneration of the founder's own
+    // existing build, not a collision with someone else's.
+    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-2', name: 'Acme', track: 'app', ownerEmail: 'a@b.com' })
     await POST(req({ slug: 'acme', chatId: 'chat-2', name: 'Acme', track: 'app' }))
     await flush()
     expect(h.isEnrolled).toHaveBeenCalledWith('acme')
