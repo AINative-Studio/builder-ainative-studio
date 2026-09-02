@@ -224,6 +224,32 @@ function getApiKey(): string {
   return process.env.AINATIVE_API_KEY || process.env.API_Key || process.env.ZERODB_API_KEY || ''
 }
 
+/**
+ * Ensure the `build_media` ZeroDB table exists before writing to it. Live-
+ * confirmed in production: the table was never created (`404 Table
+ * 'build_media' not found`), so every real "START AUTO" schedule save has
+ * been silently failing since this feature shipped — `saveRoutine` returned
+ * null, the route returned 502, and the founder saw "Could not save the
+ * schedule — try again shortly" no matter how many times they retried.
+ * Mirrors `app/api/db/[table]/route.ts`'s and `primitive-credentials.ts`'s
+ * proven `ensureTable` pattern exactly: best-effort, idempotent (ZeroDB
+ * no-ops on an existing table), never throws — the real write's own result
+ * stays authoritative either way.
+ */
+async function ensureTable(): Promise<void> {
+  try {
+    await fetch(`${ZERODB_API}/v1/projects/${PROJECT_ID}/database/tables`, {
+      method: 'POST',
+      headers: { 'X-API-Key': getApiKey(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ table_name: TABLE_NAME }),
+      signal: AbortSignal.timeout(5000),
+    })
+  } catch {
+    // Table might already exist, or the create call itself failed — either
+    // way, fall through to the real write and let ITS result be authoritative.
+  }
+}
+
 /** Coerce a raw ZeroDB row into a MediaRoutine, or null when malformed. */
 export function coerceRoutine(raw: any, scopeKey = ''): MediaRoutine | null {
   const r = raw?.row_data || raw
@@ -314,6 +340,7 @@ export async function saveRoutine(
     createdAt: now,
     lastRunAt: input.lastRunAt,
   }
+  await ensureTable()
   const result = await zerodbRequest(
     'POST',
     `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/rows`,
@@ -338,6 +365,7 @@ export async function saveAsset(
     createdAt: new Date().toISOString(),
     provider: input.provider,
   }
+  await ensureTable()
   const result = await zerodbRequest(
     'POST',
     `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/rows`,
