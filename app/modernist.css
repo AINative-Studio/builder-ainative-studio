@@ -818,7 +818,7 @@
 .m-live { min-height: 100vh; }
 .m-live-masthead { background: var(--alert); color: #fff; padding: 26px 44px; display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
 .m-live-tag { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.85; }
-.m-live-h { font-weight: 500; font-size: 34px; margin: 0; flex: 0 0 auto; }
+.m-live-h { font-weight: 500; font-size: 34px; margin: 0; flex: 1 1 auto; min-width: 0; overflow-wrap: break-word; }
 .m-live-masthead-right { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .m-live-watch { font-size: 12px; display: inline-flex; align-items: center; }
 .m-live-watch .m-live-dot { background: #fff; }
@@ -827,6 +827,15 @@
 .m-live-watch.is-preview { opacity: 0.85; }
 .m-live-watch.is-preview .m-live-dot { background: rgba(255, 255, 255, 0.5); animation: none; }
 .m-live-url { font-size: 12px; color: #fff; text-decoration: underline; opacity: 0.9; }
+/* #474 — a long company-name h1 (flex: 0 0 auto, no wrap fallback) plus the
+   masthead's fixed 44px side padding pushed a few px past the viewport width
+   on narrow phones (confirmed 375px/iPhone SE: scrollWidth 382 vs
+   clientWidth 375). Give the masthead breathing room back on narrow screens
+   instead of relying on the h1 alone to absorb it. */
+@media (max-width: 420px) {
+  .m-live-masthead { padding: 20px 16px; gap: 10px; }
+  .m-live-h { font-size: 26px; }
+}
 
 .m-live-grid { display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: 2px; background: var(--color-divider); padding: 2px; align-items: start; }
 .m-live-grid.is-tablet { grid-template-columns: 1fr; }
