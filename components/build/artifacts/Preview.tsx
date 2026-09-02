@@ -107,7 +107,15 @@ export function Preview() {
       }),
     })
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (d?.deployUrl) setDeployUrl(String(d.deployUrl)) })
+      .then((d) => {
+        if (d?.deployUrl) setDeployUrl(String(d.deployUrl))
+        // The requested slug collided with a DIFFERENT founder's existing
+        // build and got auto-suffixed server-side (register-app's
+        // firstFreeSlug) — adopt the real, actually-registered slug so
+        // /build/{slug} and every subsequent call use it, not the one that
+        // lost the naming collision.
+        if (d?.slugChanged) dispatch({ type: 'RESTORE_BUILD', partial: { appSub: String(d.slugChanged) } })
+      })
       .catch(() => {})
   }, [status, chatId, state.appSub])
 

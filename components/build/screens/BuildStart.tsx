@@ -11,25 +11,18 @@
  * `build` screen in the BuildApp state machine.
  */
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useBuild } from '@/contexts/build-context'
 import { COMPANY_ROLES } from '@/lib/build/primitive-catalog'
 import type { CompanyRole } from '@/lib/build/state'
-
-/** A small rotating pool of concrete starter ideas for "Surprise me". Index is
- *  derived from the clock so it varies per visit without needing Math.random in
- *  render. Kept concrete + on-brand (real, buildable AI-native companies). */
-const SURPRISE_IDEAS = [
-  'An AI answer engine that replies from a company’s own docs and tools, with citations.',
-  'A nightly agent that reviews a startup’s pipeline and drafts the next-best outreach for each deal.',
-  'A support copilot that resolves tickets from your knowledge base and escalates only what it can’t.',
-  'An invoicing service where closed deals auto-bill and reconcile against the cap table.',
-  'A research assistant that monitors a market and files a morning brief on what changed and why.',
-]
+import { pickSurpriseIdea } from '@/lib/build/surprise-ideas'
 
 export function BuildStart() {
   const { dispatch, pickTrack } = useBuild()
   const [role, setRole] = useState<CompanyRole>('')
+  // Tracks the last-shown idea (across clicks in this mount, not persisted)
+  // purely so pickSurpriseIdea can avoid an immediate back-to-back repeat.
+  const lastIdeaRef = useRef<string | null>(null)
 
   const goIntake = () => {
     window.scrollTo(0, 0)
@@ -41,7 +34,13 @@ export function BuildStart() {
   }
 
   const pickSurprise = () => {
-    const idea = SURPRISE_IDEAS[Math.floor(Date.now() / 60000) % SURPRISE_IDEAS.length]
+    // A real click handler, so Math.random() (inside pickSurpriseIdea) is
+    // safe here — unlike in render, where it would break SSR hydration.
+    // Previously this was Math.floor(Date.now()/60000) % 5: a 5-idea pool,
+    // deterministically bucketed by the clock, so repeated clicks within
+    // the same minute always returned the identical idea.
+    const idea = pickSurpriseIdea(lastIdeaRef.current)
+    lastIdeaRef.current = idea
     dispatch({ type: 'SET_IDEA', idea })
     goIntake()
   }
