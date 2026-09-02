@@ -44,7 +44,7 @@ import { provisionProject } from '@/lib/build/agentflow'
 import { provisionZeroERPTenant } from '@/lib/build/zeroerp'
 import { provisionZeroDbViaMcp, isMcpProvisionEnabled } from '@/lib/build/mcp-provision'
 import { provisionCompanyRepo } from '@/lib/git/company-repo'
-import { storeFounderCredential, type FounderScopedPrimitive } from '@/lib/build/primitive-credentials'
+import { storeFounderCredential, fetchOrganizationId, type FounderScopedPrimitive } from '@/lib/build/primitive-credentials'
 import { resolveStoredApp } from '@/lib/build/ready-gate'
 
 export const runtime = 'nodejs'
@@ -257,6 +257,36 @@ export async function POST(request: NextRequest) {
     if (af.ok) await captureFounderCredentialForProxy(request, slug, 'agentflow', jwt)
   }
 
+  // #414: ZeroCRM needs no explicit provisioning call at all — its own
+  // get-or-create auth (app/api/deps.py::_get_or_create_user_from_ainative_identity)
+  // auto-creates the Org+User from the founder's AINative identity on the
+  // FIRST authenticated request the runtime proxy ever makes on their
+  // behalf. Live-verified (GET /api/v1/deals?org_id=<real org> → 200,
+  // idempotent on repeat calls). The only real work here is capturing the
+  // credential (same as the other 4 founder-scoped primitives) PLUS the
+  // founder's organization_uuid, since — unlike those 4 — ZeroCRM needs it
+  // as an explicit ?org_id= query param (its JWT carries no org claim at
+  // all: confirmed via direct decode, {sub, exp, type} only). Best-effort —
+  // a failure here just leaves the CRM card honestly simulated.
+  let zerocrm: { provisioned: boolean; reason?: string } = { provisioned: false }
+  if (jwt) {
+    const orgId = await fetchOrganizationId(jwt)
+    if (orgId) {
+      const rawToken = await getToken({ req: request, secret: process.env.AUTH_SECRET }).catch(() => null)
+      const stored = await storeFounderCredential(
+        slug,
+        'zerocrm',
+        jwt,
+        rawToken?.refreshToken as string | undefined,
+        rawToken?.expiresAt ? Math.max(0, Math.floor((Number(rawToken.expiresAt) - Date.now()) / 1000)) : undefined,
+        orgId,
+      ).catch(() => false)
+      zerocrm = { provisioned: stored, reason: stored ? undefined : 'credential_store_failed' }
+    } else {
+      zerocrm = { provisioned: false, reason: 'organization_id_unavailable' }
+    }
+  }
+
   // #439 (child of #414/#422): also provision the company's REAL ZeroERP
   // tenant. UNLIKE every JWT-auth primitive above, ZeroERP's onboarding
   // endpoint takes no auth at all (confirmed via source: `security: []`,
@@ -326,6 +356,7 @@ export async function POST(request: NextRequest) {
     formsFormId: forms.formId,
     agentflowProvisioned: agentflow.provisioned,
     agentflowProjectId: agentflow.projectId,
+    zerocrmProvisioned: zerocrm.provisioned,
     zeroerpProvisioned: zeroerp.provisioned,
     zeroerpOrgId: zeroerp.orgId,
     zeroerpInviteToken: zeroerp.inviteToken,
@@ -375,6 +406,7 @@ export async function POST(request: NextRequest) {
     capstackProvisioned: capstack.provisioned,
     formsProvisioned: forms.provisioned,
     agentflowProvisioned: agentflow.provisioned,
+    zerocrmProvisioned: zerocrm.provisioned,
     zeroerpProvisioned: zeroerp.provisioned,
     gitProvisioned,
     gitRepoUrl: gitResult.gitRepoUrl,

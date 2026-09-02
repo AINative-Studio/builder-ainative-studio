@@ -229,4 +229,91 @@ describe('GET/POST /api/primitive/[primitive]/[...path] (#443)', () => {
       expect(json).toEqual({ error: 'primitive_unavailable', reason: 'not_provisioned' })
     })
   })
+
+  describe('ZeroCRM (#414 — needs no explicit provisioning call, but requires an injected ?org_id=)', () => {
+    function crmReq(opts: { search?: string } = {}) {
+      return {
+        method: 'GET',
+        nextUrl: new URL(`https://builder.ainative.studio/api/primitive/zerocrm/deals${opts.search || ''}`),
+        headers: new Headers({}),
+        text: async () => '',
+      } as any
+    }
+
+    it('is a known primitive, routed to the real ZeroCRM host', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'crm-token', organizationId: 'org-123' })
+      const fetchMock = vi.fn(async (url: string, init: any) => {
+        expect(String(url)).toBe('https://zerocrm-production.up.railway.app/api/v1/deals?org_id=org-123')
+        expect(init.headers.Authorization).toBe('Bearer crm-token')
+        return { status: 200, text: async () => JSON.stringify({ items: [], total: 0 }), headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const res: any = await GET(crmReq(), ctx('zerocrm', ['deals']))
+      expect(res.status).toBe(200)
+      expect(h.resolveFounderCredential).toHaveBeenCalledWith('acme', 'zerocrm')
+    })
+
+    it('injects the stored organizationId as ?org_id= when the caller supplied no query at all', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'tok', organizationId: 'real-org-uuid' })
+      const fetchMock = vi.fn(async (url: string) => {
+        expect(String(url)).toContain('org_id=real-org-uuid')
+        return { status: 200, text: async () => '{}', headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      await GET(crmReq(), ctx('zerocrm', ['deals']))
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('never overrides a caller-supplied org_id already present in the query string', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'tok', organizationId: 'stored-org' })
+      const fetchMock = vi.fn(async (url: string) => {
+        expect(String(url)).toContain('org_id=caller-supplied-org')
+        expect(String(url)).not.toContain('stored-org')
+        return { status: 200, text: async () => '{}', headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      await GET(crmReq({ search: '?org_id=caller-supplied-org' }), ctx('zerocrm', ['deals']))
+    })
+
+    it('forwards with no org_id param at all when no organizationId was ever captured (still an honest attempt, not a 502)', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'tok' }) // no organizationId
+      const fetchMock = vi.fn(async (url: string) => {
+        expect(String(url)).toBe('https://zerocrm-production.up.railway.app/api/v1/deals')
+        return { status: 200, text: async () => '{}', headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      await GET(crmReq(), ctx('zerocrm', ['deals']))
+    })
+
+    it('other primitives never get an org_id injected — only zerocrm', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'tok', organizationId: 'should-never-appear' })
+      const fetchMock = vi.fn(async (url: string) => {
+        expect(String(url)).not.toContain('org_id')
+        return { status: 200, text: async () => '{}', headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      await GET(req(), ctx('zerocommerce', ['commerce', 'products']))
+    })
+
+    it('401s on a missing token with no COMPANY_SLUG, same fail-closed behavior as the other primitives', async () => {
+      const res: any = await GET(crmReq(), ctx('zerocrm', ['deals']))
+      expect(res.status).toBe(401)
+      expect(h.resolveFounderCredential).not.toHaveBeenCalled()
+    })
+
+    it('502s honestly when no ZeroCRM credential was ever stored for this company', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: false, reason: 'not_provisioned' })
+      const res: any = await GET(crmReq(), ctx('zerocrm', ['deals']))
+      expect(res.status).toBe(502)
+      const json = await res.json()
+      expect(json).toEqual({ error: 'primitive_unavailable', reason: 'not_provisioned' })
+    })
+  })
 })

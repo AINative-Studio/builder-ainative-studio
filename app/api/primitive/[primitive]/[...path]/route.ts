@@ -42,10 +42,16 @@ const PRIMITIVE_BASES: Record<FounderScopedPrimitive, string> = {
   // matches lib/build/agentflow.ts's own AF_BASE, which was already correct).
   agentflow: process.env.AGENTFLOW_API_URL || 'https://agentflow.ainative.studio/api/v1',
   zeroforms: process.env.ZEROFORMS_API_URL || 'https://zeroforms-production.up.railway.app/v1',
+  // #414/#655 — ZeroCRM auto-provisions the Org+User on first authenticated
+  // request (app/api/deps.py::_get_or_create_user_from_ainative_identity),
+  // no separate provisioning call exists or is needed — live-verified via
+  // GET /api/v1/deals?org_id=<real AINative organization_uuid> → 200 with a
+  // freshly-created org, idempotent on repeat calls.
+  zerocrm: process.env.ZEROCRM_API_URL || 'https://zerocrm-production.up.railway.app/api/v1',
 }
 
 function isFounderScopedPrimitive(name: string): name is FounderScopedPrimitive {
-  return name === 'zerocommerce' || name === 'zeropipeline' || name === 'agentflow' || name === 'zeroforms'
+  return name === 'zerocommerce' || name === 'zeropipeline' || name === 'agentflow' || name === 'zeroforms' || name === 'zerocrm'
 }
 
 /** Resolve which company's founder credential this request should use.
@@ -94,7 +100,20 @@ async function forward(
   }
 
   const base = PRIMITIVE_BASES[primitiveName]
-  const targetUrl = `${base}/${path.join('/')}${request.nextUrl.search}`
+  // #414 — ZeroCRM's get-or-create org resolution requires an explicit
+  // ?org_id= query param (unlike the other 4 founder-scoped primitives,
+  // which resolve org scoping server-side from the JWT alone — confirmed via
+  // direct decode that AINative's JWT carries no org claim at all). The
+  // generated app's own code has no way to know the founder's real
+  // organization_uuid, so the proxy injects it here from the credential
+  // captured at provision time, rather than expecting the caller to supply
+  // it. Never overrides a caller-supplied org_id if one is already present.
+  const search = new URLSearchParams(request.nextUrl.search)
+  if (primitiveName === 'zerocrm' && credential.organizationId && !search.has('org_id')) {
+    search.set('org_id', credential.organizationId)
+  }
+  const searchString = search.toString()
+  const targetUrl = `${base}/${path.join('/')}${searchString ? `?${searchString}` : ''}`
 
   let body: string | undefined
   if (request.method !== 'GET' && request.method !== 'HEAD') {
