@@ -126,6 +126,21 @@ export interface AppEntry {
   // paid-tier + opt-in env-flag gated, same posture as ZeroVoice above.
   growthAdTestCampaignId?: string
   growthAdTestCreatedAt?: string
+  // Real funding for the campaign above: builder charges the founder the
+  // FULL requested amount but only ever submits 80% of it as the real Meta
+  // budget (the 20% margin is captured by never telling Meta the full
+  // amount) — computed server-side on core, never trusted from the client.
+  // Set once core's webhook confirms the Stripe payment actually succeeded.
+  growthAdBudgetPaymentIntentId?: string
+  growthAdBudgetRequestedCents?: number
+  growthAdBudgetRealCents?: number
+  growthAdBudgetFundedAt?: string
+  // Last-synced reporting snapshot pulled from Meta's Insights API — display
+  // only, refreshed on demand from the Live dashboard, never used to compute
+  // billing (billing is fixed at purchase time above).
+  growthAdTestClicks?: number
+  growthAdTestCpcCents?: number
+  growthAdTestInsightsSyncedAt?: string
   // ZeroInvoice connect (#418, child of #414). UNLIKE every other primitive
   // here, ZeroInvoice's real auth is a browser-redirect OAuth 2.1+PKCE flow
   // that hands the founder off to ZeroInvoice's OWN frontend/dashboard —
@@ -286,6 +301,44 @@ export async function setAppGrowthAdTest(
     ...existing,
     growthAdTestCampaignId: fields.campaignId,
     growthAdTestCreatedAt: new Date().toISOString(),
+  })
+}
+
+/**
+ * Record a confirmed ad-budget payment (#449) — called ONLY from the
+ * core-verified webhook callback (app/api/webhooks/ad-budget-confirmed),
+ * never from anything client-triggered. Idempotent on paymentIntentId so a
+ * webhook redelivery doesn't double-record.
+ */
+export async function setAppGrowthAdBudgetFunded(
+  slug: string,
+  fields: { paymentIntentId: string; requestedCents: number; realCents: number },
+): Promise<boolean> {
+  if (!fields.paymentIntentId) return false
+  const existing = await resolveApp(slug)
+  if (!existing) return false
+  if (existing.growthAdBudgetPaymentIntentId === fields.paymentIntentId) return true
+  return registerApp({
+    ...existing,
+    growthAdBudgetPaymentIntentId: fields.paymentIntentId,
+    growthAdBudgetRequestedCents: fields.requestedCents,
+    growthAdBudgetRealCents: fields.realCents,
+    growthAdBudgetFundedAt: new Date().toISOString(),
+  })
+}
+
+/** Record a refreshed clicks/CPC snapshot from Meta's Insights API (#449). */
+export async function setAppGrowthAdInsights(
+  slug: string,
+  fields: { clicks: number; cpcCents: number },
+): Promise<boolean> {
+  const existing = await resolveApp(slug)
+  if (!existing) return false
+  return registerApp({
+    ...existing,
+    growthAdTestClicks: fields.clicks,
+    growthAdTestCpcCents: fields.cpcCents,
+    growthAdTestInsightsSyncedAt: new Date().toISOString(),
   })
 }
 

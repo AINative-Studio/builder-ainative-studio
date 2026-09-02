@@ -437,6 +437,7 @@ export function planUnlocks(plan: ActivePlan): {
   customDomain: boolean
   nightlyLoop: boolean
   swarm: boolean
+  growth: boolean
 } {
   const rank: Record<ActivePlan, number> = {
     '': 0, pro: 1, business: 2, enterprise: 3, cody_vcto: 4,
@@ -446,6 +447,9 @@ export function planUnlocks(plan: ActivePlan): {
     customDomain: r >= 1,   // Pro+
     nightlyLoop: r >= 2,    // Business+
     swarm: r >= 3,          // Enterprise+
+    // Growth/ad-testing (#449) — any paid plan, same threshold the server's
+    // own PAID_PLANS check uses (app/api/build/growth/ad-budget-checkout).
+    growth: r >= 1,
   }
 }
 

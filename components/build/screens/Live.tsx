@@ -29,6 +29,7 @@ import { OnboardingVideo } from '@/components/build/OnboardingVideo'
 import { DocumentsPanel } from '@/components/build/DocumentsPanel'
 import { MediaPanel } from '@/components/build/MediaPanel'
 import { AutoModePanel } from '@/components/build/AutoModePanel'
+import { GrowthPanel } from '@/components/build/GrowthPanel'
 import { WebsitePanel } from '@/components/build/WebsitePanel'
 import { FeedbackPulse } from '@/components/build/FeedbackPulse'
 
@@ -816,6 +817,19 @@ export function Live() {
             companyName={company}
             track={state.track}
             unlocked={gates.nightlyLoop}
+            onUpgrade={goUpgrade}
+          />
+
+          {/* Growth (#449) — fund a real, automated Meta ad-test campaign run
+              from AINative's own ad account (the founder never touches Meta
+              directly). Paid-gated (any paid plan). A NEW, distinct section —
+              does not touch #67 systems / #52 chat / #55 Tasks / #62 Versions
+              / #64 Documents / #65 masthead / #51 video / #54 media / #58
+              Auto Mode. */}
+          <GrowthPanel
+            companyId={companyId}
+            companyName={company}
+            unlocked={gates.growth}
             onUpgrade={goUpgrade}
           />
         </div>
