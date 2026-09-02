@@ -3,15 +3,17 @@
  * call). Toby committed to surfacing a "Growth" section where paid founders
  * get an automated ad-testing layer to validate their product.
  *
- * SCOPE OF THIS PASS: the full vision includes builder acting as a reseller
- * marking up real ad spend for margin — that billing half needs a real
- * metered/usage-billing API on core that does not exist today (builder only
- * proxies fixed-price subscription checkout to core, per
- * app/api/build/checkout/route.ts; never holds a Stripe key directly). Filed
- * that gap as core#6835. This module ships the safe half: creating ONE real,
- * PAUSED Meta Ads test campaign a founder can review and manually launch —
- * never auto-activated, never any real spend from this code path. No billing
- * of any kind happens here.
+ * FULL SCOPE NOW SHIPPED: builder uses AINative's OWN Meta ad account (not
+ * the founder's), charges the founder the full requested amount, and only
+ * ever submits 80% of it to Meta as the real budget — the 20% margin is
+ * captured by never telling Meta the full amount, computed server-side on
+ * core (app/api/v1/endpoints/ad_budget.py), never trusted from the client.
+ * See app/api/build/growth/ad-budget-checkout/route.ts (payment init) and
+ * app/api/webhooks/ad-budget-confirmed/route.ts (the ONLY place a real
+ * campaign gets created, gated on a verified Stripe payment via core's
+ * webhook). This module (`createAdTestCampaign`) is called from that
+ * webhook handler, still hardcoded PAUSED — no code path here can activate
+ * real spend on its own.
  *
  * REAL INTEGRATION LAYER — corrected during implementation: the
  * `mcp__meta-ads__*` tools available in an interactive agent session are NOT
@@ -104,6 +106,45 @@ export async function createAdTestCampaign(input: AdTestCampaignInput): Promise<
       return { ok: false, reason: 'campaign_response_missing_id' }
     }
     return { ok: true, campaignId, status: res.status }
+  } catch (e: any) {
+    return { ok: false, reason: String(e?.message || e).slice(0, 160) }
+  }
+}
+
+export interface AdTestInsights {
+  ok: boolean
+  clicks?: number
+  cpcCents?: number
+  reason?: string
+}
+
+/**
+ * Fetch real clicks + cost-per-click for a campaign from Meta's Insights API
+ * — display only, refreshed on demand, never used to compute billing
+ * (billing is fixed server-side at purchase time). Never throws.
+ *
+ * Real contract: GET {GRAPH_API_BASE}/{campaignId}/insights?fields=clicks,cpc
+ */
+export async function fetchAdTestInsights(campaignId: string): Promise<AdTestInsights> {
+  if (!growthAdTestingCredentialConfigured()) return { ok: false, reason: 'credential_not_configured' }
+  if (!campaignId) return { ok: false, reason: 'campaign_id_required' }
+
+  const accessToken = process.env.METAADS_ACCESS_TOKEN as string
+
+  try {
+    const url = `${GRAPH_API_BASE}/${encodeURIComponent(campaignId)}/insights?fields=clicks,cpc&access_token=${encodeURIComponent(accessToken)}`
+    const res = await fetch(url, { signal: AbortSignal.timeout(15000) })
+    const data = await res.json().catch(() => null)
+    if (!res.ok) {
+      return { ok: false, reason: String(data?.error?.message || res.status).slice(0, 160) }
+    }
+    // Meta returns { data: [ { clicks, cpc, ... } ] } — no rows yet (a fresh,
+    // still-PAUSED campaign with zero delivery) is a real, honest zero-state,
+    // not an error.
+    const row = Array.isArray(data?.data) ? data.data[0] : null
+    const clicks = row?.clicks ? Number(row.clicks) : 0
+    const cpc = row?.cpc ? Number(row.cpc) : 0
+    return { ok: true, clicks, cpcCents: Math.round(cpc * 100) }
   } catch (e: any) {
     return { ok: false, reason: String(e?.message || e).slice(0, 160) }
   }
