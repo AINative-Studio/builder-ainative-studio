@@ -21,16 +21,18 @@ vi.hoisted(() => {
   process.env.DEPLOYMENT_ENCRYPTION_KEY = 'a'.repeat(64) // 32 bytes hex
 })
 
-const h = vi.hoisted(() => ({ refreshAINativeToken: vi.fn() }))
+const h = vi.hoisted(() => ({ refreshAINativeToken: vi.fn(), ainativeFetch: vi.fn() }))
 vi.mock('@/lib/auth/tokenRefresh', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/auth/tokenRefresh')>()
   return { ...actual, refreshAINativeToken: h.refreshAINativeToken }
 })
+vi.mock('@/lib/ainative/client', () => ({ ainativeFetch: h.ainativeFetch }))
 
 import {
   storeFounderCredential,
   resolveFounderCredential,
   hasFounderCredential,
+  fetchOrganizationId,
 } from '@/lib/build/primitive-credentials'
 
 function mockFetchSequence(responses: Array<{ ok: boolean; json?: any; text?: string }>) {
@@ -163,6 +165,73 @@ describe('storeFounderCredential + resolveFounderCredential (#443)', () => {
     const serialized = JSON.stringify(sentBody)
     expect(serialized).not.toContain('super-secret-token')
     expect(serialized).not.toContain('super-secret-refresh')
+  })
+})
+
+describe('organizationId (#414 — ZeroCRM support)', () => {
+  it('round-trips organizationId through store + resolve', async () => {
+    const store = mockFetchSequence([{ ok: true }, { ok: true }])
+    await storeFounderCredential('acme', 'zerocrm', 'crm-token', undefined, 3600, 'real-org-uuid')
+    const sentBody = JSON.parse(String(((store.mock.calls[1] as any)[1] as any).body))
+    expect(sentBody.row_data.organizationId).toBe('real-org-uuid')
+
+    mockFetchSequence([{ ok: true, json: { data: [{ row_data: sentBody.row_data }] } }])
+    const result = await resolveFounderCredential('acme', 'zerocrm')
+    expect(result.ok).toBe(true)
+    expect(result.organizationId).toBe('real-org-uuid')
+  })
+
+  it('is undefined for the other 4 primitives, which never pass one', async () => {
+    const store = mockFetchSequence([{ ok: true }, { ok: true }])
+    await storeFounderCredential('acme', 'zerocommerce', 'tok', undefined, 3600)
+    const sentBody = JSON.parse(String(((store.mock.calls[1] as any)[1] as any).body))
+    expect(sentBody.row_data.organizationId).toBeUndefined()
+
+    mockFetchSequence([{ ok: true, json: { data: [{ row_data: sentBody.row_data }] } }])
+    const result = await resolveFounderCredential('acme', 'zerocommerce')
+    expect(result.organizationId).toBeUndefined()
+  })
+
+  it('is preserved across a token refresh', async () => {
+    const store1 = mockFetchSequence([{ ok: true }, { ok: true }])
+    await storeFounderCredential('acme', 'zerocrm', 'old-access', 'old-refresh', -10, 'org-abc')
+    const sentBody = JSON.parse(String(((store1.mock.calls[1] as any)[1] as any).body))
+
+    h.refreshAINativeToken.mockResolvedValue({ accessToken: 'new-access', refreshToken: 'new-refresh', expiresIn: 3600 })
+
+    const listThenStore = mockFetchSequence([
+      { ok: true, json: { data: [{ row_data: sentBody.row_data }] } },
+      { ok: true },
+      { ok: true },
+    ])
+
+    const result = await resolveFounderCredential('acme', 'zerocrm')
+    expect(result.organizationId).toBe('org-abc')
+    // The re-store after refresh must also carry organizationId forward, not drop it.
+    const reStoreBody = JSON.parse(String(((listThenStore.mock.calls[2] as any)[1] as any).body))
+    expect(reStoreBody.row_data.organizationId).toBe('org-abc')
+  })
+})
+
+describe('fetchOrganizationId (#414)', () => {
+  beforeEach(() => h.ainativeFetch.mockReset())
+
+  it('returns the real organization_uuid from /api/v1/auth/me', async () => {
+    h.ainativeFetch.mockResolvedValue({ organization_uuid: 'real-org-uuid' })
+    const id = await fetchOrganizationId('some-jwt')
+    expect(id).toBe('real-org-uuid')
+    expect(h.ainativeFetch).toHaveBeenCalledWith('/api/v1/auth/me', 'some-jwt', { method: 'GET' })
+  })
+
+  it('returns undefined when the response has no organization_uuid', async () => {
+    h.ainativeFetch.mockResolvedValue({ email: 'a@b.com' })
+    expect(await fetchOrganizationId('jwt')).toBeUndefined()
+  })
+
+  it('returns undefined, never throws, when ainativeFetch fails (e.g. a real 401)', async () => {
+    h.ainativeFetch.mockReset()
+    h.ainativeFetch.mockImplementationOnce(() => Promise.reject(new Error('Unauthorized')))
+    await expect(fetchOrganizationId('jwt')).resolves.toBeUndefined()
   })
 })
 

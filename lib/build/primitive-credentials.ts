@@ -28,6 +28,7 @@
 
 import { encryptToken, decryptToken } from '@/lib/services/credentials.service'
 import { refreshAINativeToken, shouldRefreshToken } from '@/lib/auth/tokenRefresh'
+import { ainativeFetch } from '@/lib/ainative/client'
 
 const AINATIVE_API = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 const API_KEY = process.env.AINATIVE_API_KEY || process.env.ZERODB_API_KEY || ''
@@ -37,7 +38,7 @@ const TABLE = 'builder_primitive_credentials'
 /** Primitives whose provisioning is scoped to the founder's own identity
  *  (confirmed "one resource per owner user" for ZeroCommerce via #417; the
  *  others share the same direct-JWT-bearer provisioning shape). */
-export type FounderScopedPrimitive = 'zerocommerce' | 'zeropipeline' | 'agentflow' | 'zeroforms'
+export type FounderScopedPrimitive = 'zerocommerce' | 'zeropipeline' | 'agentflow' | 'zeroforms' | 'zerocrm'
 
 interface StoredCredentialRow {
   slug: string
@@ -50,6 +51,17 @@ interface StoredCredentialRow {
   refreshAuthTag?: string
   expiresAt?: number
   createdAt: string
+  /**
+   * The founder's real AINative organization_uuid (#414 — ZeroCRM support).
+   * Not secret (a real, live org id, not a credential) so stored in plain
+   * text alongside the encrypted tokens. ZeroCRM's get-or-create auth
+   * (app/api/deps.py) needs this as an explicit ?org_id= query param — the
+   * JWT itself only carries {sub, exp, type}, no org claim (confirmed via
+   * direct decode), unlike ZeroCommerce/ZeroPipeline/AgentFlow/ZeroForms,
+   * which resolve org scoping server-side from the JWT alone. Optional
+   * because the other 4 primitives never need it.
+   */
+  organizationId?: string
 }
 
 function rowsUrl(): string {
@@ -72,6 +84,21 @@ function configured(): boolean {
  * it into a quiet `false`. This call is best-effort and idempotent (ZeroDB
  * no-ops on an existing table), so it's safe to attempt on every write.
  */
+/**
+ * Fetch the founder's real AINative organization_uuid via GET /api/v1/auth/me
+ * (#414 — ZeroCRM needs this as an explicit ?org_id=). Best-effort: returns
+ * undefined on any failure rather than throwing, since this must never block
+ * provisioning for the primitives that don't need it.
+ */
+export async function fetchOrganizationId(accessToken: string): Promise<string | undefined> {
+  try {
+    const me = await ainativeFetch<{ organization_uuid?: string }>('/api/v1/auth/me', accessToken, { method: 'GET' })
+    return typeof me?.organization_uuid === 'string' && me.organization_uuid ? me.organization_uuid : undefined
+  } catch {
+    return undefined
+  }
+}
+
 async function ensureTable(): Promise<void> {
   try {
     await fetch(`${AINATIVE_API}/api/v1/projects/${PROJECT_ID}/database/tables`, {
@@ -99,6 +126,7 @@ export async function storeFounderCredential(
   accessToken: string,
   refreshToken: string | undefined,
   expiresInSeconds: number | undefined,
+  organizationId?: string,
 ): Promise<boolean> {
   if (!configured() || !slug || !primitive || !accessToken) return false
   try {
@@ -116,6 +144,7 @@ export async function storeFounderCredential(
         : {}),
       expiresAt: expiresInSeconds ? Date.now() + expiresInSeconds * 1000 : undefined,
       createdAt: new Date().toISOString(),
+      ...(organizationId ? { organizationId } : {}),
     }
     const res = await fetch(rowsUrl(), {
       method: 'POST',
@@ -153,6 +182,8 @@ export interface ResolvedCredential {
   ok: boolean
   accessToken?: string
   reason?: 'not_provisioned' | 'decrypt_failed' | 'refresh_failed' | 'refresh_unavailable'
+  /** The founder's AINative organization_uuid, when captured (ZeroCRM only). */
+  organizationId?: string
 }
 
 /**
@@ -178,7 +209,7 @@ export async function resolveFounderCredential(
   }
 
   if (!shouldRefreshToken(row.expiresAt)) {
-    return { ok: true, accessToken }
+    return { ok: true, accessToken, organizationId: row.organizationId }
   }
 
   // Near/at expiry — refresh using the stored refresh token. This call needs
@@ -187,7 +218,7 @@ export async function resolveFounderCredential(
     // No refresh token was captured (e.g. the provider didn't issue one) —
     // the existing access token may still work until the caller actually
     // gets a 401 from the primitive itself; surface it rather than block.
-    return { ok: true, accessToken }
+    return { ok: true, accessToken, organizationId: row.organizationId }
   }
 
   let refreshToken: string
@@ -215,9 +246,10 @@ export async function resolveFounderCredential(
     refreshed.accessToken,
     refreshed.refreshToken || refreshToken,
     refreshed.expiresIn,
+    row.organizationId,
   )
 
-  return { ok: true, accessToken: refreshed.accessToken }
+  return { ok: true, accessToken: refreshed.accessToken, organizationId: row.organizationId }
 }
 
 /** Whether a founder credential has ever been stored for {slug, primitive} —

@@ -112,6 +112,11 @@ export interface AppEntry {
   zeroerpProvisioned?: boolean
   zeroerpOrgId?: string
   zeroerpInviteToken?: string
+  // ZeroCRM (#414) — needs no explicit provisioning call; its own get-or-create
+  // auth auto-creates the Org+User from the founder's AINative identity on
+  // the runtime proxy's FIRST request. Absent/false = still simulated (no
+  // credential captured yet, e.g. no signed-in founder at provision time).
+  zerocrmProvisioned?: boolean
   // ZeroVoice (telephony primitive) provisioning (#415, child of #414). UNLIKE
   // every other primitive here, this carries a REAL recurring cost — never
   // auto-provisioned in provision/route.ts's checkout flow. Only set via an
@@ -546,6 +551,7 @@ export async function setAppProvisioned(
     formsFormId?: string
     agentflowProvisioned?: boolean
     agentflowProjectId?: string
+    zerocrmProvisioned?: boolean
     zeroerpProvisioned?: boolean
     zeroerpOrgId?: string
     zeroerpInviteToken?: string
