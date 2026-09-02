@@ -4,7 +4,7 @@
  * coverage-gated verification runner into one honest end-to-end pipeline:
  *
  *   todo → in_progress → implement (#373) → commit to Gitea (task-git-sync)
- *        → verify coverage (#372) → completed (real PR + real coverage number)
+ *        → verify coverage (#372) → completed (real PR, auto-merged, redeployed)
  *                                  → failed  (real reason, no merge)
  *
  * A task NEVER moves to `completed` on a fabricated result. Every stage
@@ -14,14 +14,29 @@
  * with the real reason recorded in BuildTask.output — never silently marked
  * done, never retried indefinitely (v1 scope: single attempt, matching
  * #373's own no-retry decision).
+ *
+ * #468 — auto-merge on completion. Before this, `commitTaskWithPR` opened a
+ * PR but NOTHING in the codebase ever merged it, so a `completed` task's real,
+ * coverage-verified work sat on an unmerged branch forever — the nightly loop
+ * could report a task done while the founder's live app never changed. Per
+ * the owner's explicit decision ("auto merge always, and keep the loop
+ * going"), a `completed` outcome now squash-merges the PR into `main` and, if
+ * Railway deploy is enabled for this environment, triggers a real redeploy so
+ * the change actually reaches the founder's live app — not just their Gitea
+ * history. Both steps are best-effort AFTER the task is already durably
+ * `completed`: a merge or deploy hiccup downgrades the founder's visibility
+ * (the PR/commit stays real and inspectable) but never flips a genuinely
+ * coverage-verified task back to `failed`.
  */
 
-import { fetchRepoFiles } from '@/lib/git/gitea-client'
+import { fetchRepoFiles, mergeTaskPR } from '@/lib/git/gitea-client'
 import { commitTaskWithPR } from '@/lib/git/task-git-sync'
-import { resolveApp } from '@/lib/build/app-registry'
+import { resolveApp, setAppRailwayService } from '@/lib/build/app-registry'
 import { implementTask } from '@/lib/build/task-implementer'
 import { runCoverage } from '@/lib/build/coverage-runner'
 import { updateTask, type BuildTask } from '@/lib/build/task-store'
+import { deployCompanyFromGitea, companyDeployEnabled } from '@/lib/build/company-deploy'
+import { BUILDER_WORKSPACE_ID } from '@/lib/build/instant-db'
 
 export const COVERAGE_FLOOR = 80
 
@@ -31,6 +46,10 @@ export interface ResolveTaskResult {
   reason?: string
   prUrl?: string
   coveragePercent?: number | null
+  /** #468 — whether the PR was auto-merged to main. Always false for a failed task. */
+  merged?: boolean
+  /** #468 — whether a real redeploy was triggered after a successful merge. */
+  redeployed?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -121,8 +140,34 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
   const coverage = await runCoverage(fullTree)
   const outcome = decideOutcomeFromCoverage(coverage)
 
+  // #468 — auto-merge + redeploy on a genuinely completed, coverage-verified
+  // task. Best-effort: a merge/deploy hiccup must never downgrade an already
+  // coverage-verified `completed` outcome to `failed` — the real work and its
+  // PR remain valid and inspectable either way, this just decides whether the
+  // founder's LIVE app reflects it automatically or needs a manual merge.
+  let merged = false
+  let redeployed = false
+  if (outcome.stage === 'completed' && gitResult.prNumber) {
+    merged = await mergeTaskPR(app.gitOrg, slug, gitResult.prNumber).catch(() => false)
+    if (merged && companyDeployEnabled()) {
+      try {
+        const alreadyProvisioned = Boolean(app.railwayServiceId)
+        const dep = await deployCompanyFromGitea(app.workspaceId || BUILDER_WORKSPACE_ID, slug, alreadyProvisioned)
+        if (dep.ok && dep.serviceName) {
+          await setAppRailwayService(slug, { railwayServiceId: dep.serviceName, deployUrl: dep.url }).catch(() => {})
+          redeployed = true
+        }
+      } catch { /* best-effort — a redeploy hiccup never downgrades a completed task */ }
+    }
+  }
+
+  const mergeNote = outcome.stage === 'completed'
+    ? merged
+      ? redeployed ? ' Merged to main and redeployed.' : ' Merged to main.'
+      : ' PR left open — could not auto-merge (needs manual review).'
+    : ''
   const output = outcome.stage === 'completed'
-    ? `${gitResult.prUrl ? `PR: ${gitResult.prUrl}. ` : ''}${outcome.reason || ''}`.trim()
+    ? `${gitResult.prUrl ? `PR: ${gitResult.prUrl}. ` : ''}${outcome.reason || ''}${mergeNote}`.trim()
     : outcome.reason || 'Coverage verification failed.'
 
   await updateTask(scopeKey, task.id, { stage: outcome.stage, output })
@@ -133,5 +178,7 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
     reason: outcome.stage === 'failed' ? outcome.reason : undefined,
     prUrl: gitResult.prUrl,
     coveragePercent: coverage.coveragePercent,
+    merged,
+    redeployed,
   }
 }

@@ -472,6 +472,39 @@ export async function findPRByHead(
   return prs.find((pr) => pr.head.ref === headBranch) || null
 }
 
+/**
+ * Merge a pull request (#468). Squash-merges by default — a task branch is a
+ * single logical change, and squashing keeps the company's `main` history
+ * readable rather than importing every intermediate implementation commit.
+ * Returns true on a successful merge, false on any failure (already merged,
+ * conflicts, PR not found, Gitea unconfigured) — never throws, since this is
+ * called from an autonomous pipeline that must degrade to "still a PR, just
+ * not auto-merged" rather than crash the whole task resolution.
+ */
+export async function mergeTaskPR(
+  org: string,
+  repo: string,
+  prNumber: number,
+): Promise<boolean> {
+  if (!configured() || !org || !repo || !prNumber) return false
+  const repoName = repoNameForSlug(repo)
+  try {
+    const res = await giteaFetch(
+      `/repos/${encodeURIComponent(org)}/${encodeURIComponent(repoName)}/pulls/${prNumber}/merge`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ Do: 'squash' }),
+      },
+    )
+    // 200 = merged. 405 = not mergeable (conflicts, checks pending, already
+    // merged) — a real, expected outcome, not a crash; the PR simply stays
+    // open for manual resolution.
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Repo file fetch (#373/#374 — read a company's CURRENT generated app before
 // implementing a backlog task against it, and before coverage-verifying the
