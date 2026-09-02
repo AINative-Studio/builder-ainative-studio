@@ -30,6 +30,8 @@
 
 import { NextRequest } from 'next/server'
 import { gclidFromRequest } from '@/lib/build/conversions'
+import { reportMetaConversion, fbcFromRequest, fbpFromRequest } from '@/lib/build/meta-capi'
+import { createHash } from 'crypto'
 
 export const runtime = 'nodejs'
 
@@ -154,11 +156,30 @@ export async function POST(request: NextRequest) {
     const verificationRequired =
       data?.email_verification_required === true ||
       (data?.user && data.user.email_verified === false)
+    // #465 · Meta: report the CompleteRegistration conversion via CAPI server-side
+    // (survives ad-blockers/ITP) — mirrors the Lead report in lib/build/lead's
+    // route. Best-effort, full no-op unless Meta CAPI is configured. event_id is
+    // deterministic (email-keyed, no timestamp, no slug — a company doesn't exist
+    // yet at signup) and returned to the client below so its browser Pixel
+    // CompleteRegistration call can reuse the SAME id for Meta to dedup the pair
+    // — computed once here (server-side email normalization is the source of
+    // truth) rather than re-derived client-side, where it could drift.
+    const metaEventId = `register-${createHash('sha256').update(email).digest('hex').slice(0, 16)}`
+    reportMetaConversion({
+      eventName: 'CompleteRegistration',
+      eventId: metaEventId,
+      email,
+      fbc: fbcFromRequest(request), fbp: fbpFromRequest(request),
+      clientIp: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || undefined,
+      userAgent: request.headers.get('user-agent') || undefined,
+      custom: { source: 'builder' },
+    }).catch(() => {})
     return Response.json({
       ok: true,
       email,
       verificationRequired: Boolean(verificationRequired),
       gclidAttached: Boolean(gclid),
+      metaEventId,
     })
   } catch (e: any) {
     return Response.json({ ok: false, error: String(e?.message || e).slice(0, 120) }, { status: 502 })
