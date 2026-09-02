@@ -17,6 +17,7 @@ import { checkAppReady, resolveStoredApp } from '@/lib/build/ready-gate'
 import { checkSeededData, type SeededDataCheck } from '@/lib/build/seed-check'
 import { commitRegeneration, provisionCompanyRepo } from '@/lib/git/company-repo'
 import { BUILDER_WORKSPACE_ID } from '@/lib/build/instant-db'
+import { enrollCompany, isEnrolled } from '@/lib/build/loop-enrollment'
 
 export const runtime = 'nodejs'
 
@@ -103,6 +104,9 @@ export async function POST(request: NextRequest) {
     }
   } catch { /* anonymous or auth hiccup — register unowned as before */ }
 
+  const track = b.track === 'company' ? 'company' : 'app'
+  const companyName = b.name ? String(b.name).slice(0, 120) : (existing?.name || slug)
+
   const ok = await registerApp({
     ...(existing || {}),
     slug,
@@ -111,9 +115,27 @@ export async function POST(request: NextRequest) {
     name: b.name ? String(b.name).slice(0, 120) : existing?.name,
     tagline: b.tagline ? String(b.tagline).slice(0, 200) : existing?.tagline,
     color: b.color ? String(b.color).slice(0, 9) : existing?.color,
-    track: b.track === 'company' ? 'company' : 'app',
+    track,
     deployUrl: target?.url || existing?.deployUrl,
   })
+
+  // Auto-enroll EVERY registered company (free or paid) into the nightly
+  // backlog loop at registration time — previously enrollment only ever
+  // happened at Business+ paid upgrade (subscription/verify) or via the
+  // founder manually clicking "Hire the swarm"; a free build had no path
+  // in at all. Guarded by isEnrolled() first (register-app is called on
+  // every regeneration too, not just the first registration, and
+  // enrollCompany() itself has no dedup — an unguarded call here would
+  // re-enroll on every single regen). Best-effort — a store hiccup must
+  // never fail registration itself.
+  if (ok) {
+    isEnrolled(slug)
+      .then((already) => {
+        if (already) return
+        return enrollCompany({ companyId: slug, companyName, track, ownerKey: ownerEmail })
+      })
+      .catch(() => {})
+  }
 
   // #349: Git commit for regeneration. If the company already has a git repo,
   // commit the new code. If not but they're provisioned, create the repo now.
