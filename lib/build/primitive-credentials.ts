@@ -63,6 +63,30 @@ function configured(): boolean {
 }
 
 /**
+ * Ensure the credential table exists before writing to it — mirrors
+ * `app/api/db/[table]/route.ts`'s `ensureTable` pattern exactly. Live-tested
+ * this session: the table genuinely did not exist in production (a real
+ * NOT_FOUND from ZeroDB, not a permissions issue), so every real call to
+ * `storeFounderCredential` had been silently failing since #445 shipped —
+ * `configured()` was true, the POST itself 404'd, and the catch-all swallowed
+ * it into a quiet `false`. This call is best-effort and idempotent (ZeroDB
+ * no-ops on an existing table), so it's safe to attempt on every write.
+ */
+async function ensureTable(): Promise<void> {
+  try {
+    await fetch(`${AINATIVE_API}/api/v1/projects/${PROJECT_ID}/database/tables`, {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({ table_name: TABLE }),
+      signal: AbortSignal.timeout(5000),
+    })
+  } catch {
+    // Table might already exist, or the create call itself failed — either
+    // way, fall through to the real write and let ITS result be authoritative.
+  }
+}
+
+/**
  * Store the founder's access + refresh token for a primitive, captured at
  * provision time (the founder's browser session is live then — the natural
  * capture point). Appends a row; latest wins on read, matching
@@ -78,6 +102,7 @@ export async function storeFounderCredential(
 ): Promise<boolean> {
   if (!configured() || !slug || !primitive || !accessToken) return false
   try {
+    await ensureTable()
     const access = encryptToken(accessToken)
     const refresh = refreshToken ? encryptToken(refreshToken) : null
     const row: StoredCredentialRow = {

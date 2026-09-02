@@ -57,18 +57,54 @@ afterEach(() => {
 
 describe('storeFounderCredential + resolveFounderCredential (#443)', () => {
   it('round-trips a stored access token through real AES-256-GCM encryption', async () => {
-    const store = mockFetchSequence([{ ok: true }])
+    // ensureTable() fires first (idempotent, best-effort), then the real row write.
+    const store = mockFetchSequence([{ ok: true }, { ok: true }])
     const ok = await storeFounderCredential('acme', 'zerocommerce', 'real-access-token', 'real-refresh-token', 3600)
     expect(ok).toBe(true)
-    expect(store).toHaveBeenCalledTimes(1)
+    expect(store).toHaveBeenCalledTimes(2)
 
     // Resolve reads the row back — mock the list response with the same
-    // encrypted payload storeFounderCredential would have sent.
-    const sentBody = JSON.parse(String(((store.mock.calls[0] as any)[1] as any).body))
+    // encrypted payload storeFounderCredential would have sent (the SECOND
+    // call — the first is the ensureTable POST to .../tables, not .../rows).
+    const sentBody = JSON.parse(String(((store.mock.calls[1] as any)[1] as any).body))
     mockFetchSequence([{ ok: true, json: { data: [{ row_data: sentBody.row_data }] } }])
     const result = await resolveFounderCredential('acme', 'zerocommerce')
     expect(result.ok).toBe(true)
     expect(result.accessToken).toBe('real-access-token')
+  })
+
+  it('creates the table before writing — live-found production bug: the table never existed, so every real store silently failed (returned false, never threw)', async () => {
+    // Real production behavior before this fix: POST .../rows 404'd with
+    // "Table not found" because no one had ever created the table, and the
+    // catch-all swallowed it into a quiet `false`. ensureTable() must fire
+    // BEFORE the row write, and the row write's own result is authoritative.
+    const store = mockFetchSequence([{ ok: true }, { ok: true }])
+    await storeFounderCredential('acme', 'zerocommerce', 'tok', 'refresh', 3600)
+    expect(store).toHaveBeenCalledTimes(2)
+    const [tableCallUrl] = store.mock.calls[0] as any
+    const [rowCallUrl] = store.mock.calls[1] as any
+    expect(String(tableCallUrl)).toMatch(/\/database\/tables$/)
+    expect(String(rowCallUrl)).toMatch(/\/database\/tables\/builder_primitive_credentials\/rows$/)
+    const tableCallBody = JSON.parse(String(((store.mock.calls[0] as any)[1] as any).body))
+    expect(tableCallBody).toEqual({ table_name: 'builder_primitive_credentials' })
+  })
+
+  it('still returns false if the real row write fails, even when ensureTable succeeds — table-create success never masks a real write failure', async () => {
+    const store = mockFetchSequence([{ ok: true }, { ok: false }])
+    const ok = await storeFounderCredential('acme', 'zerocommerce', 'tok', 'refresh', 3600)
+    expect(ok).toBe(false)
+    expect(store).toHaveBeenCalledTimes(2)
+  })
+
+  it('never throws even when ensureTable itself throws (e.g. network error on the create call) — falls through to the real write attempt', async () => {
+    let call = 0
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      call++
+      if (call === 1) throw new Error('ensureTable network error')
+      return { ok: true, text: async () => '{}', json: async () => ({}) } as unknown as Response
+    }))
+    const ok = await storeFounderCredential('acme', 'zerocommerce', 'tok', 'refresh', 3600)
+    expect(ok).toBe(true)
   })
 
   it('returns not_provisioned when no credential was ever stored', async () => {
@@ -84,9 +120,9 @@ describe('storeFounderCredential + resolveFounderCredential (#443)', () => {
   })
 
   it('auto-refreshes a near-expiry token and persists the rotated pair', async () => {
-    const store1 = mockFetchSequence([{ ok: true }])
+    const store1 = mockFetchSequence([{ ok: true }, { ok: true }])
     await storeFounderCredential('acme', 'zerocommerce', 'old-access', 'old-refresh', -10) // already expired
-    const sentBody = JSON.parse(String(((store1.mock.calls[0] as any)[1] as any).body))
+    const sentBody = JSON.parse(String(((store1.mock.calls[1] as any)[1] as any).body))
 
     h.refreshAINativeToken.mockResolvedValue({
       accessToken: 'new-access',
@@ -96,6 +132,7 @@ describe('storeFounderCredential + resolveFounderCredential (#443)', () => {
 
     const listThenStore = mockFetchSequence([
       { ok: true, json: { data: [{ row_data: sentBody.row_data }] } }, // resolve reads the expired row
+      { ok: true }, // ensureTable, ahead of the re-store
       { ok: true }, // the re-store of the refreshed pair
     ])
 
@@ -103,13 +140,13 @@ describe('storeFounderCredential + resolveFounderCredential (#443)', () => {
     expect(h.refreshAINativeToken).toHaveBeenCalledWith('old-refresh')
     expect(result.ok).toBe(true)
     expect(result.accessToken).toBe('new-access')
-    expect(listThenStore).toHaveBeenCalledTimes(2)
+    expect(listThenStore).toHaveBeenCalledTimes(3)
   })
 
   it('fails closed (refresh_failed) when the stored refresh token is invalid/revoked', async () => {
-    const store1 = mockFetchSequence([{ ok: true }])
+    const store1 = mockFetchSequence([{ ok: true }, { ok: true }])
     await storeFounderCredential('acme', 'zerocommerce', 'old-access', 'old-refresh', -10)
-    const sentBody = JSON.parse(String(((store1.mock.calls[0] as any)[1] as any).body))
+    const sentBody = JSON.parse(String(((store1.mock.calls[1] as any)[1] as any).body))
 
     h.refreshAINativeToken.mockResolvedValue(null) // revoked/invalid refresh token
 
@@ -120,9 +157,9 @@ describe('storeFounderCredential + resolveFounderCredential (#443)', () => {
   })
 
   it('never leaks the raw token in storeFounderCredential\'s persisted row', async () => {
-    const store = mockFetchSequence([{ ok: true }])
+    const store = mockFetchSequence([{ ok: true }, { ok: true }])
     await storeFounderCredential('acme', 'zerocommerce', 'super-secret-token', 'super-secret-refresh', 3600)
-    const sentBody = JSON.parse(String(((store.mock.calls[0] as any)[1] as any).body))
+    const sentBody = JSON.parse(String(((store.mock.calls[1] as any)[1] as any).body))
     const serialized = JSON.stringify(sentBody)
     expect(serialized).not.toContain('super-secret-token')
     expect(serialized).not.toContain('super-secret-refresh')
