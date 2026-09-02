@@ -236,6 +236,62 @@ describe('I/O: saveRoutine / saveAsset / listMedia / runMediaGeneration', () => 
     expect(await saveAsset('a::b', { mediaKind: 'image', url: '', prompt: 'p' })).toBeNull()
   })
 
+  describe('ensureTable (build_media table-missing production fix)', () => {
+    // Live-confirmed in production: the `build_media` table was never created,
+    // so every real "START AUTO" schedule save 404'd and got silently
+    // swallowed into a generic "Could not save the schedule" error, for BOTH
+    // Auto Image and Auto Video. saveRoutine/saveAsset now ensure the table
+    // exists (idempotent, best-effort) before every write.
+    it('saveRoutine calls ensureTable (POST .../database/tables) BEFORE the real row write', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(OK({ ok: true }) as any)
+      vi.stubGlobal('fetch', fetchMock)
+      await saveRoutine('a::b', { mediaKind: 'image', frequency: 'weekly' })
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      const [ensureUrl, ensureInit] = fetchMock.mock.calls[0]
+      expect(String(ensureUrl)).toMatch(/\/database\/tables$/)
+      expect(JSON.parse(String(ensureInit.body))).toEqual({ table_name: 'build_media' })
+      const [writeUrl] = fetchMock.mock.calls[1]
+      expect(String(writeUrl)).toMatch(/\/database\/tables\/build_media\/rows$/)
+    })
+
+    it('saveAsset also calls ensureTable before its real row write', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(OK({ ok: true }) as any)
+      vi.stubGlobal('fetch', fetchMock)
+      await saveAsset('a::b', { mediaKind: 'video', url: 'http://x/v.mp4', prompt: 'p' })
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(String(fetchMock.mock.calls[0][0])).toMatch(/\/database\/tables$/)
+    })
+
+    it('works for BOTH Auto Image and Auto Video (the reported failure covered both)', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(OK({ ok: true }) as any)
+      vi.stubGlobal('fetch', fetchMock)
+      const image = await saveRoutine('a::b', { mediaKind: 'image', frequency: 'daily' })
+      const video = await saveRoutine('a::b', { mediaKind: 'video', frequency: 'daily' })
+      expect(image?.mediaKind).toBe('image')
+      expect(video?.mediaKind).toBe('video')
+    })
+
+    it('a failed ensureTable never blocks the real write — its own result stays authoritative', async () => {
+      // ensureTable is fire-and-forget (never throws, result ignored) — the
+      // REAL write's own ok/fail result is what saveRoutine returns.
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(ERR(500) as any) // ensureTable fails
+        .mockResolvedValueOnce(OK({ ok: true }) as any) // real write still succeeds
+      vi.stubGlobal('fetch', fetchMock)
+      const r = await saveRoutine('a::b', { mediaKind: 'image', frequency: 'weekly' })
+      expect(r?.mediaKind).toBe('image')
+    })
+
+    it('never throws when ensureTable itself throws (e.g. network error)', async () => {
+      const fetchMock = vi.fn()
+        .mockRejectedValueOnce(new Error('network down')) // ensureTable throws
+        .mockResolvedValueOnce(OK({ ok: true }) as any) // real write still attempted + succeeds
+      vi.stubGlobal('fetch', fetchMock)
+      const r = await saveRoutine('a::b', { mediaKind: 'video', frequency: 'monthly' })
+      expect(r?.mediaKind).toBe('video')
+    })
+  })
+
   it('listMedia returns latest routine per kind + assets', async () => {
     const rows = [
       { row_data: { id: 'r1', rowKind: 'routine', mediaKind: 'image', frequency: 'weekly', enabled: true, createdAt: '2026-08-01T00:00:00Z' } },
@@ -263,6 +319,7 @@ describe('I/O: saveRoutine / saveAsset / listMedia / runMediaGeneration', () => 
     process.env.BUILD_MEDIA_ENABLED = 'true'
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(OK({ url: 'http://x/gen.png', provider: 'multimodal' }) as any) // generate
+      .mockResolvedValueOnce(OK({}) as any) // saveAsset's ensureTable (build_media table-missing fix — best-effort, response unused)
       .mockResolvedValueOnce(OK({ ok: true }) as any) // saveAsset
     vi.stubGlobal('fetch', fetchMock)
     const res = await runMediaGeneration('a::b', 'image', { companyName: 'Acme', tagline: 't', color: '#123' })
@@ -301,6 +358,7 @@ describe('I/O: saveRoutine / saveAsset / listMedia / runMediaGeneration', () => 
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(OK({ status: 'processing', task_id: 'task-1' }) as any) // initial POST
       .mockResolvedValueOnce(OK({ status: 'Success', task_id: 'task-1', video_url: 'http://x/v.mp4' }) as any) // poll — done
+      .mockResolvedValueOnce(OK({}) as any) // saveAsset's ensureTable (build_media table-missing fix)
       .mockResolvedValueOnce(OK({ ok: true }) as any) // saveAsset
     vi.stubGlobal('fetch', fetchMock)
     const res = await runMediaGeneration('a::b', 'video', { companyName: 'Acme' })
@@ -325,11 +383,12 @@ describe('I/O: saveRoutine / saveAsset / listMedia / runMediaGeneration', () => 
     process.env.BUILD_MEDIA_ENABLED = 'true'
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(OK({ status: 'Success', video_url: 'http://x/v.mp4' }) as any)
+      .mockResolvedValueOnce(OK({}) as any) // saveAsset's ensureTable (build_media table-missing fix)
       .mockResolvedValueOnce(OK({ ok: true }) as any) // saveAsset
     vi.stubGlobal('fetch', fetchMock)
     const res = await runMediaGeneration('a::b', 'video', {})
     expect(res.status).toBe('generated')
-    expect(fetchMock).toHaveBeenCalledTimes(2) // no separate poll call
+    expect(fetchMock).toHaveBeenCalledTimes(3) // generate + ensureTable + saveAsset, no separate poll call
   })
 
   it('runMediaGeneration does not poll for image generation even without a url', async () => {
