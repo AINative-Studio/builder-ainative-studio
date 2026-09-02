@@ -147,8 +147,11 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
         }
         trackEvent('sign_up', 'funnel', state.track)
         // Meta Pixel CompleteRegistration (mirrors GA4 sign_up). No-op if the pixel
-        // isn't configured. No server CAPI twin for signup, so no shared event_id.
-        trackMeta('CompleteRegistration', { content_name: state.track })
+        // isn't configured. #465 — the register route now also reports this via
+        // server-side CAPI (survives ad-blockers/ITP) and returns the SAME
+        // deterministic event id it used, so Meta dedups the Pixel/CAPI pair
+        // instead of double-counting the conversion.
+        trackMeta('CompleteRegistration', { content_name: state.track }, d.metaEventId)
         // #74 — if core says email verification is still required, don't pretend
         // the founder is logged in: show the verify-email + resend state instead
         // of auto-signing-in (which would 403 at login and dead-end silently).

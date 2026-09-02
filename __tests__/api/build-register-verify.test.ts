@@ -24,10 +24,19 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const h = vi.hoisted(() => ({
   gclidFromRequest: vi.fn(),
+  reportMetaConversion: vi.fn(),
+  fbcFromRequest: vi.fn(),
+  fbpFromRequest: vi.fn(),
 }))
 
 vi.mock('@/lib/build/conversions', () => ({
   gclidFromRequest: h.gclidFromRequest,
+}))
+
+vi.mock('@/lib/build/meta-capi', () => ({
+  reportMetaConversion: h.reportMetaConversion,
+  fbcFromRequest: h.fbcFromRequest,
+  fbpFromRequest: h.fbpFromRequest,
 }))
 
 import { POST } from '@/app/api/build/register/route'
@@ -48,6 +57,9 @@ describe('POST /api/build/register — verification honesty (#74)', () => {
 
   beforeEach(() => {
     h.gclidFromRequest.mockReset().mockReturnValue(null)
+    h.reportMetaConversion.mockReset().mockResolvedValue(true)
+    h.fbcFromRequest.mockReset().mockReturnValue(undefined)
+    h.fbpFromRequest.mockReset().mockReturnValue(undefined)
     fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
   })
@@ -135,6 +147,54 @@ describe('POST /api/build/register — verification honesty (#74)', () => {
       fetchMock.mockResolvedValue(coreOk({ email_verification_required: false }))
       const res = await POST(req({ email: 'a@b.com', password: 'longenough1' }, 'ax_utm=%7Bnot-json'))
       expect((await res.json()).ok).toBe(true)
+    })
+  })
+
+  describe('Meta CAPI CompleteRegistration (#465)', () => {
+    it('reports CompleteRegistration via CAPI on a successful registration', async () => {
+      fetchMock.mockResolvedValue(coreOk({ email_verification_required: false }))
+      const res = await POST(req({ email: 'A@B.com', password: 'longenough1' }))
+      const d = await res.json()
+      expect(h.reportMetaConversion).toHaveBeenCalledTimes(1)
+      const call = h.reportMetaConversion.mock.calls[0][0]
+      expect(call.eventName).toBe('CompleteRegistration')
+      expect(call.email).toBe('a@b.com') // normalized (trim+lowercase), matches the response email
+      expect(typeof call.eventId).toBe('string')
+      expect(call.eventId.length).toBeGreaterThan(0)
+      // The eventId returned to the client MUST match what was sent to CAPI, so
+      // the browser Pixel call can dedup against this server-side report.
+      expect(d.metaEventId).toBe(call.eventId)
+    })
+
+    it('produces a deterministic eventId for the same normalized email', async () => {
+      fetchMock.mockResolvedValue(coreOk({ email_verification_required: false }))
+      const d1 = await (await POST(req({ email: 'same@b.com', password: 'longenough1' }))).json()
+      const d2 = await (await POST(req({ email: 'Same@B.com  ', password: 'longenough1' }))).json()
+      expect(d1.metaEventId).toBe(d2.metaEventId)
+    })
+
+    it('does not report CAPI when core registration fails', async () => {
+      fetchMock.mockResolvedValue({ ok: false, status: 409, json: async () => ({ detail: 'already registered' }) })
+      await POST(req({ email: 'a@b.com', password: 'longenough1' }))
+      expect(h.reportMetaConversion).not.toHaveBeenCalled()
+    })
+
+    it('does not block or fail registration when CAPI reporting rejects', async () => {
+      h.reportMetaConversion.mockRejectedValue(new Error('meta graph api down'))
+      fetchMock.mockResolvedValue(coreOk({ email_verification_required: false }))
+      const res = await POST(req({ email: 'a@b.com', password: 'longenough1' }))
+      expect(res.status).toBe(200)
+      expect((await res.json()).ok).toBe(true)
+    })
+
+    it('passes fbc/fbp cookies through to the CAPI call', async () => {
+      h.fbcFromRequest.mockReturnValue('fb.1.111.abc')
+      h.fbpFromRequest.mockReturnValue('fb.1.222.xyz')
+      fetchMock.mockResolvedValue(coreOk({ email_verification_required: false }))
+      await POST(req({ email: 'a@b.com', password: 'longenough1' }))
+      const call = h.reportMetaConversion.mock.calls[0][0]
+      expect(call.fbc).toBe('fb.1.111.abc')
+      expect(call.fbp).toBe('fb.1.222.xyz')
     })
   })
 
