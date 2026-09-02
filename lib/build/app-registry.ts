@@ -120,6 +120,12 @@ export interface AppEntry {
   zerovoiceProvisioned?: boolean
   zerovoiceNumberId?: string
   zerovoiceE164?: string
+  // Growth module: automated ad-testing (#449) — a real, human-reviewable
+  // PAUSED Meta Ads campaign created for this company. Never auto-activated;
+  // a founder must launch it themselves. Explicit founder-triggered action,
+  // paid-tier + opt-in env-flag gated, same posture as ZeroVoice above.
+  growthAdTestCampaignId?: string
+  growthAdTestCreatedAt?: string
   // ZeroInvoice connect (#418, child of #414). UNLIKE every other primitive
   // here, ZeroInvoice's real auth is a browser-redirect OAuth 2.1+PKCE flow
   // that hands the founder off to ZeroInvoice's OWN frontend/dashboard —
@@ -259,6 +265,27 @@ export async function setAppZeroVoice(
     zerovoiceProvisioned: true,
     zerovoiceNumberId: fields.numberId,
     zerovoiceE164: fields.e164,
+  })
+}
+
+/**
+ * Record a real, PAUSED Meta Ads test campaign created for a company (#449) —
+ * a separate, explicit founder-triggered action, same shape as
+ * setAppZeroVoice (its own setter rather than growing setAppProvisioned's
+ * checkout-batch param bag).
+ */
+export async function setAppGrowthAdTest(
+  slug: string,
+  fields: { campaignId: string },
+): Promise<boolean> {
+  if (!fields.campaignId) return false
+  const existing = await resolveApp(slug)
+  if (!existing) return false
+  if (existing.growthAdTestCampaignId === fields.campaignId) return true
+  return registerApp({
+    ...existing,
+    growthAdTestCampaignId: fields.campaignId,
+    growthAdTestCreatedAt: new Date().toISOString(),
   })
 }
 
