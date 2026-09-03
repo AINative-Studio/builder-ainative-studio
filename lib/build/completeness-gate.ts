@@ -23,6 +23,18 @@
  * Wired into checkAppReady (lib/build/ready-gate.ts): a flagged generation is
  * NOT marked ready — register-app returns its 422 retry path and the client
  * regenerates instead of persisting a broken app.
+ *
+ * findUndeclaredJsxComponents() covers the INVERSE gap (repro: chatId
+ * Cnpaj8K87WqxsAj3G-WBc, app 'beacon' — 2026-09-02). `ScheduleView.tsx` used
+ * `<Card>`/`<CardContent>` throughout but never imported them, even though
+ * `ui/card.tsx` defining both WAS fully emitted elsewhere in the same payload.
+ * findMissingLocalImports can't see this: it only walks DECLARED imports
+ * looking for a missing definition — a component that never declared the
+ * import at all has nothing to walk. The share-page flattener (flatten-
+ * multifile.ts) only inlines a file when something actually imports it, so
+ * `Card`/`CardContent` are silently dropped and the browser dies on the
+ * flattened output with an undefined-reference/parse failure the user sees as
+ * a raw "Unexpected token" panel.
  */
 
 /** One parsed import statement with its local specifier and local bindings. */
@@ -260,6 +272,71 @@ export function findMissingLocalImports(
     }
 
     return [...missing]
+  } catch {
+    // Pure detector must never block on its own failure — fail-open.
+    return []
+  }
+}
+
+/** Capitalized JSX opening tags: `<Card`, `<Card.Item`, `<Card />` — not `<div>`. */
+const JSX_TAG = /<([A-Z][\w$]*)(?:\.[A-Za-z_$][\w$]*)?[\s/>]/g
+
+/** Global/ambient identifiers a generated component may reference without a local import. */
+const KNOWN_GLOBAL_JSX = new Set([
+  'React',
+  'Fragment',
+  'Suspense',
+  'ErrorBoundary',
+])
+
+/** Every capitalized identifier the payload defines OR imports from a non-local (npm) specifier. */
+function collectKnownIdentifiers(content: string): Set<string> {
+  const known = new Set<string>(KNOWN_GLOBAL_JSX)
+  const withClause = /import\s+([^'";]+?)\s+from\s*['"]([^'"]+)['"]/g
+  let m: RegExpExecArray | null
+  while ((m = withClause.exec(content)) !== null) {
+    for (const b of parseClauseBindings(m[1].trim())) known.add(b)
+  }
+  for (const m2 of content.matchAll(/(?:^|[\n;{(\s])(?:export\s+(?:default\s+)?)?(?:async\s+)?(?:function|class)\s+([A-Za-z_$][\w$]*)/g)) {
+    known.add(m2[1])
+  }
+  for (const m3 of content.matchAll(/(?:^|[\n;{(\s])(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)) {
+    known.add(m3[1])
+  }
+  return known
+}
+
+/**
+ * THE INVERSE DETECTOR. Returns capitalized JSX component names that a file
+ * renders but never imports or defines — even though the payload defines them
+ * SOMEWHERE ELSE (the beacon 'Card'/'CardContent' repro). Empty array means
+ * every JSX tag used resolves to an import or a local definition.
+ *
+ * Only meaningful with a files map: without per-file boundaries there is no
+ * "this file never imported it" to detect (a single-blob payload already gets
+ * inline-definition coverage from findMissingLocalImports).
+ */
+export function findUndeclaredJsxComponents(
+  code: string,
+  files?: Record<string, string>,
+): string[] {
+  try {
+    let map = files && Object.keys(files).length > 0 ? files : null
+    if (!map && /\/\/\s*---\s*FILE:/.test(code || '')) {
+      map = splitMarkerBlob(code || '')
+    }
+    if (!map) return []
+
+    const problems = new Set<string>()
+    for (const [path, content] of Object.entries(map)) {
+      if (!CODE_FILE.test(path) || path.endsWith('.d.ts') || typeof content !== 'string') continue
+      const known = collectKnownIdentifiers(content)
+      for (const m of content.matchAll(JSX_TAG)) {
+        const name = m[1]
+        if (!known.has(name)) problems.add(name)
+      }
+    }
+    return [...problems]
   } catch {
     // Pure detector must never block on its own failure — fail-open.
     return []

@@ -23,7 +23,7 @@
 import { getPreview } from '@/lib/preview-store'
 import { getFiles as getFilesV2 } from '@/lib/preview-store-v2'
 import { isRenderable, type ParseGateResult } from '@/lib/code-validator'
-import { findMissingLocalImports } from '@/lib/build/completeness-gate'
+import { findMissingLocalImports, findUndeclaredJsxComponents } from '@/lib/build/completeness-gate'
 import { flattenMultiFile } from '@/lib/build/flatten-multifile'
 import { getWorktreeTestFailure } from '@/lib/agent/test-runner'
 import { isScaffoldApp } from '@/lib/agent/worktree-manager'
@@ -140,6 +140,20 @@ export async function checkAppReady(chatId: string): Promise<ReadyCheck> {
       ok: false,
       reason: 'missing_local_import',
       error: `Truncated generation: imported local module(s) never defined in the payload: ${missing.join(', ')}`,
+    }
+  }
+
+  // Inverse completeness gate (builder#333 follow-up, beacon 'Card'/'CardContent'
+  // repro): a component can use a JSX tag it never imported even though the
+  // payload defines that component elsewhere — findMissingLocalImports can't
+  // see this since there's no declared import to check. Same 422 retry path.
+  const undeclared = findUndeclaredJsxComponents(stored.code, stored.files ?? undefined)
+  if (undeclared.length > 0) {
+    return {
+      checked: true,
+      ok: false,
+      reason: 'missing_local_import',
+      error: `Undeclared JSX component(s) — used but never imported: ${undeclared.join(', ')}`,
     }
   }
 
