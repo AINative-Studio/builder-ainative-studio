@@ -16,8 +16,20 @@
  * (ainative.studio/intelligence) — now pointed at each user's company.
  */
 
-const AINATIVE_API = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
-const API_KEY = process.env.AINATIVE_API_KEY || process.env.ZERODB_API_KEY || ''
+/**
+ * Read lazily, not cached at module scope: a top-level const freezes whatever
+ * the env was at first import, which broke tests setting AINATIVE_API_KEY
+ * per-test (module import happens once, before any beforeEach) and would
+ * equally miss a real env change without a full process restart in
+ * production. Matches the established pattern elsewhere (media-schedule.ts's
+ * getApiKey(), the nightshift route) — read at call time instead.
+ */
+function ainativeApi(): string {
+  return process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
+}
+function apiKey(): string {
+  return process.env.AINATIVE_API_KEY || process.env.ZERODB_API_KEY || ''
+}
 
 export interface NightlyRunInput {
   companyId: string
@@ -38,7 +50,7 @@ export interface NightlyRunResult {
 async function getBriefing(input: NightlyRunInput): Promise<string | null> {
   try {
     const res = await fetch(
-      `${AINATIVE_API}/api/v1/internal/intelligence/agent-briefing?role=founder-operator&context=${encodeURIComponent(input.companyName)}`,
+      `${ainativeApi()}/api/v1/internal/intelligence/agent-briefing?role=founder-operator&context=${encodeURIComponent(input.companyName)}`,
       { headers: authHeaders(), signal: AbortSignal.timeout(20000) },
     )
     if (!res.ok) return null
@@ -67,7 +79,7 @@ async function dispatchSwarmTask(
   // (public router mounts under /api/v1/public; get_current_user_flexible: the
   // builder's API key authenticates; requires an enterprise plan). Returns task_id.
   try {
-    const res = await fetch(`${AINATIVE_API}/api/v1/public/agent-swarm/tasks`, {
+    const res = await fetch(`${ainativeApi()}/api/v1/public/agent-swarm/tasks`, {
       method: 'POST',
       headers: { ...authHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -97,7 +109,7 @@ async function dispatchSwarmTask(
  * loop. Returns a result the cron persists + the Live dashboard can surface.
  */
 export async function runNightlyLoop(input: NightlyRunInput): Promise<NightlyRunResult> {
-  if (!API_KEY) {
+  if (!apiKey()) {
     return { companyId: input.companyId, briefing: null, taskId: null, status: 'skipped', detail: 'no AINative API key configured' }
   }
   const briefing = await getBriefing(input)
@@ -116,5 +128,6 @@ function buildTaskDescription(input: NightlyRunInput, briefing: string | null): 
 }
 
 function authHeaders(): Record<string, string> {
-  return { Authorization: `Bearer ${API_KEY}`, 'X-API-Key': API_KEY }
+  const key = apiKey()
+  return { Authorization: `Bearer ${key}`, 'X-API-Key': key }
 }
