@@ -33,20 +33,31 @@ export async function GET(request: NextRequest) {
     return Response.json({ hasRun: false, companyId })
   }
 
-  // Real run exists → generate a concise morning summary grounded in the company.
+  // Real run exists → generate a concise morning summary grounded ONLY in the
+  // fields we actually have (lastStatus/lastTaskId/lastRunAt). The route used
+  // to ask Claude to invent "what I evaluated" / "the recommended next move"
+  // with zero real task content passed in — no title, no output, nothing from
+  // the actual run. Claude had no grounding for that, and would sometimes
+  // (correctly, per its own training) write an honest refusal to fabricate
+  // specifics instead of a summary — which then rendered verbatim on the
+  // dashboard as if it WERE the summary (2026-09 beacon repro). Until real
+  // task content (title/output) can be threaded through from task-store.ts —
+  // that needs an owner/scope key this route doesn't currently have — the
+  // prompt must not ask for first-person specifics it can't back up.
   let summary: string | null = null
   const claude = getClaudeCompletion()
   if (claude) {
     try {
       const res = await claude.client.messages.create({
         model: claude.model,
-        max_tokens: 220,
-        temperature: 0.6,
+        max_tokens: 120,
+        temperature: 0.5,
         system:
           `You are Cody, the AI co-founder operating "${companyName}" (idea: "${idea}"). ` +
-          `You ran the nightly autonomous loop overnight (status: ${run.lastStatus}). Write a 2-3 sentence ` +
-          `morning summary for the founder: what you evaluated, the single highest-leverage task you ran, ` +
-          `and the recommended next move. Be specific to this company, first person, no fluff.` +
+          `The nightly autonomous loop ran overnight; its recorded status is "${run.lastStatus || 'dispatched'}". ` +
+          `Write ONE short, honest sentence for the founder confirming the run happened and its status. ` +
+          `Do NOT invent or imply specifics about what was evaluated, what task ran, or what to do next — ` +
+          `you have no record of that, only the status. First person, no fluff.` +
           (languageInstruction(contentLanguage) ? ` ${languageInstruction(contentLanguage)}` : ''),
         messages: [{ role: 'user', content: 'Give me the morning summary.' }],
       })
