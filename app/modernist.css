@@ -1059,6 +1059,8 @@
 .m-select { padding: 10px 12px; border: 1.5px solid var(--neutral-line); font-family: var(--font-body); font-size: 14px; background: var(--color-surface); }
 .m-field-hint { font-size: 11px; }
 .m-field-err { font-size: 11px; color: #b42318; }
+/* #479: advisory (never blocking) name-collision notice — amber, distinct from the red m-field-err. */
+.m-field-warn { font-size: 11px; color: #93650a; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .m-settings-actions { display: flex; align-items: center; gap: 14px; margin-top: 4px; }
 .m-settings-status { font-size: 12px; }
 .m-settings-status.is-done { color: var(--color-accent-700); }

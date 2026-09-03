@@ -45,7 +45,16 @@ function setInputValue(input: HTMLInputElement, value: string) {
 }
 
 describe('CompanyNameEdit — display + click-to-edit', () => {
-  afterEach(() => unmount())
+  const originalFetch = global.fetch
+  beforeEach(() => {
+    // #479: save() now checks /api/build/name-available before committing.
+    // Default to "available" so pre-existing save/cancel behavior is unaffected.
+    global.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ available: true }) })
+  })
+  afterEach(() => {
+    global.fetch = originalFetch
+    unmount()
+  })
 
   it('renders the current company name as a clickable label', () => {
     render(
@@ -73,7 +82,7 @@ describe('CompanyNameEdit — display + click-to-edit', () => {
     expect(input.value).toBe('Acme')
   })
 
-  it('Save calls onChange with the trimmed new name and exits edit mode', () => {
+  it('Save calls onChange with the trimmed new name and exits edit mode', async () => {
     const onChange = vi.fn()
     render(
       <CompanyNameEdit companyName="Acme" idea="an idea" track="company" showRegenerate={false} onChange={onChange} />,
@@ -83,12 +92,16 @@ describe('CompanyNameEdit — display + click-to-edit', () => {
     const input = host.querySelector('input') as HTMLInputElement
     act(() => setInputValue(input, '  New Co  '))
     const saveBtn = Array.from(host.querySelectorAll('button')).find((b) => b.textContent === 'Save') as HTMLButtonElement
-    act(() => saveBtn.click())
+    await act(async () => {
+      saveBtn.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
     expect(onChange).toHaveBeenCalledWith('New Co')
     expect(host.querySelector('input')).toBeFalsy() // back to display mode
   })
 
-  it('Save with a blank name shows an error and does NOT call onChange', () => {
+  it('Save with a blank name shows an error and does NOT call onChange (never even checks availability)', async () => {
     const onChange = vi.fn()
     render(
       <CompanyNameEdit companyName="Acme" idea="an idea" track="company" showRegenerate={false} onChange={onChange} />,
@@ -98,9 +111,13 @@ describe('CompanyNameEdit — display + click-to-edit', () => {
     const input = host.querySelector('input') as HTMLInputElement
     act(() => setInputValue(input, '   '))
     const saveBtn = Array.from(host.querySelectorAll('button')).find((b) => b.textContent === 'Save') as HTMLButtonElement
-    act(() => saveBtn.click())
+    await act(async () => {
+      saveBtn.click()
+      await Promise.resolve()
+    })
     expect(onChange).not.toHaveBeenCalled()
     expect(host.textContent).toContain('empty')
+    expect(global.fetch).not.toHaveBeenCalled()
   })
 
   it('Cancel discards the draft and returns to display mode without calling onChange', () => {
@@ -198,5 +215,124 @@ describe('CompanyNameEdit — Regenerate (plan30-only)', () => {
     })
     expect(onChange).not.toHaveBeenCalled()
     expect(host.textContent).toContain('Couldn')
+  })
+})
+
+describe('CompanyNameEdit — #479 manual-rename advisory collision check', () => {
+  const originalFetch = global.fetch
+  beforeEach(() => {
+    global.fetch = vi.fn()
+  })
+  afterEach(() => {
+    global.fetch = originalFetch
+    unmount()
+  })
+
+  async function typeAndSave(name: string) {
+    const trigger = host.querySelector('[data-testid="company-name-edit-trigger"]') as HTMLButtonElement
+    act(() => trigger.click())
+    const input = host.querySelector('input') as HTMLInputElement
+    act(() => setInputValue(input, name))
+    const saveBtn = Array.from(host.querySelectorAll('button')).find((b) => b.textContent === 'Save') as HTMLButtonElement
+    await act(async () => {
+      saveBtn.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+  }
+
+  it('an available name saves immediately with no warning (current behavior, unchanged)', async () => {
+    ;(global.fetch as any).mockResolvedValue({ ok: true, json: async () => ({ available: true }) })
+    const onChange = vi.fn()
+    render(
+      <CompanyNameEdit companyName="Acme" idea="an idea" track="company" showRegenerate={false} onChange={onChange} chatId="chat-1" />,
+    )
+    await typeAndSave('Brand New Co')
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/build/name-available',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ name: 'Brand New Co', chatId: 'chat-1' }) }),
+    )
+    expect(onChange).toHaveBeenCalledWith('Brand New Co')
+    expect(host.querySelector('[data-testid="company-name-collision-warning"]')).toBeFalsy()
+  })
+
+  it('a name taken by a DIFFERENT company shows a real advisory warning and does NOT save yet', async () => {
+    ;(global.fetch as any).mockResolvedValue({
+      ok: true,
+      json: async () => ({ available: false, slug: 'dwello', existingName: 'Dwello' }),
+    })
+    const onChange = vi.fn()
+    render(
+      <CompanyNameEdit companyName="Acme" idea="an idea" track="company" showRegenerate={false} onChange={onChange} chatId="chat-1" />,
+    )
+    await typeAndSave('Dwello')
+    expect(onChange).not.toHaveBeenCalled()
+    const warning = host.querySelector('[data-testid="company-name-collision-warning"]')
+    expect(warning).toBeTruthy()
+    expect(warning!.textContent).toContain('Dwello')
+    // still in edit mode — never silently blocked, founder can still act
+    expect(host.querySelector('input')).toBeTruthy()
+  })
+
+  it('"Use it anyway" commits the taken name exactly as typed', async () => {
+    ;(global.fetch as any).mockResolvedValue({
+      ok: true,
+      json: async () => ({ available: false, slug: 'dwello', existingName: 'Dwello' }),
+    })
+    const onChange = vi.fn()
+    render(
+      <CompanyNameEdit companyName="Acme" idea="an idea" track="company" showRegenerate={false} onChange={onChange} chatId="chat-1" />,
+    )
+    await typeAndSave('Dwello')
+    const useAnyway = host.querySelector('[data-testid="company-name-use-anyway"]') as HTMLButtonElement
+    act(() => useAnyway.click())
+    expect(onChange).toHaveBeenCalledWith('Dwello')
+    expect(host.querySelector('input')).toBeFalsy() // back to display mode
+    expect(host.querySelector('[data-testid="company-name-collision-warning"]')).toBeFalsy()
+  })
+
+  it('editing then reverting to the SAME company\'s own existing name never false-warns', async () => {
+    // The registry hit is this company's own chatId — the route itself would
+    // return available:true for this case (#479 acceptance criteria), so the
+    // component just needs to trust and pass through what the endpoint says.
+    ;(global.fetch as any).mockResolvedValue({ ok: true, json: async () => ({ available: true }) })
+    const onChange = vi.fn()
+    render(
+      <CompanyNameEdit companyName="Acme" idea="an idea" track="company" showRegenerate={false} onChange={onChange} chatId="chat-1" />,
+    )
+    await typeAndSave('Acme')
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/build/name-available',
+      expect.objectContaining({ body: JSON.stringify({ name: 'Acme', chatId: 'chat-1' }) }),
+    )
+    expect(onChange).toHaveBeenCalledWith('Acme')
+    expect(host.querySelector('[data-testid="company-name-collision-warning"]')).toBeFalsy()
+  })
+
+  it('a registry-check failure fails open — saves immediately, never blocks on an infra hiccup', async () => {
+    ;(global.fetch as any).mockRejectedValue(new Error('network down'))
+    const onChange = vi.fn()
+    render(
+      <CompanyNameEdit companyName="Acme" idea="an idea" track="company" showRegenerate={false} onChange={onChange} chatId="chat-1" />,
+    )
+    await typeAndSave('Whatever Co')
+    expect(onChange).toHaveBeenCalledWith('Whatever Co')
+    expect(host.querySelector('[data-testid="company-name-collision-warning"]')).toBeFalsy()
+  })
+
+  it('editing the draft after a warning clears it (no stale warning on a changed name)', async () => {
+    ;(global.fetch as any).mockResolvedValue({
+      ok: true,
+      json: async () => ({ available: false, slug: 'dwello', existingName: 'Dwello' }),
+    })
+    const onChange = vi.fn()
+    render(
+      <CompanyNameEdit companyName="Acme" idea="an idea" track="company" showRegenerate={false} onChange={onChange} chatId="chat-1" />,
+    )
+    await typeAndSave('Dwello')
+    expect(host.querySelector('[data-testid="company-name-collision-warning"]')).toBeTruthy()
+    const input = host.querySelector('input') as HTMLInputElement
+    act(() => setInputValue(input, 'Dwello Two'))
+    expect(host.querySelector('[data-testid="company-name-collision-warning"]')).toBeFalsy()
   })
 })
