@@ -74,14 +74,17 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  // COLLISION CHECK: a `slug` is derived client-side from the founder's chosen
-  // company name (a naive lowercase+dash transform, no uniqueness check of its
-  // own) — two unrelated founders naming their company the same thing would,
-  // without this, silently share/overwrite one registry row (confirmed: no
-  // protection existed before this check). A DIFFERENT chatId already
-  // registered under this slug is the real collision signal — the SAME chatId
-  // means this is just a regeneration of the founder's own existing build,
-  // which must keep its original slug, not get suffixed on every save.
+  // COLLISION SAFETY NET, not the primary defense: the real prevention lives
+  // upstream in /api/build/brand, which checks the registry BEFORE ever
+  // proposing a name and re-prompts the LLM to invent something genuinely
+  // different on a collision, rather than mechanically suffixing a number
+  // onto an otherwise-good name. This check exists only to catch what that
+  // upstream gate can't — a race between two near-simultaneous registrations,
+  // or any future caller that reaches this route without going through brand
+  // generation first — so it should fire rarely, not routinely. A DIFFERENT
+  // chatId already registered under this slug is the real collision signal —
+  // the SAME chatId means this is just a regeneration of the founder's own
+  // existing build, which must keep its original slug.
   const requestedOwner = await resolveApp(requestedSlug).catch(() => null)
   const slug = requestedOwner && requestedOwner.chatId !== chatId
     ? await firstFreeSlug(requestedSlug)
