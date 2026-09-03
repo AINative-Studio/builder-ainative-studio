@@ -211,8 +211,11 @@ describe('ZeroDB I/O (#64)', () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ id: 'row' }) })
     vi.stubGlobal('fetch', fetchMock)
     const doc = await createDocument('a::b', { title: 'Mission', content: 'body', type: 'mission' })
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    const [url, opts] = fetchMock.mock.calls[0]
+    // ensureTable() fires first (build_documents table-missing fix), then the real row write.
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const [ensureUrl] = fetchMock.mock.calls[0]
+    expect(String(ensureUrl)).toMatch(/\/database\/tables$/)
+    const [url, opts] = fetchMock.mock.calls[1]
     expect(String(url)).toContain('/database/tables/build_documents/rows')
     expect(opts.method).toBe('POST')
     const sent = JSON.parse(opts.body)
@@ -226,13 +229,38 @@ describe('ZeroDB I/O (#64)', () => {
     vi.stubGlobal('fetch', fetchMock)
     const doc = await createDocument('a::b', { title: 'Daily', content: 'body', type: 'daily' })
     expect(doc!.kind).toBe('report')
-    const sent = JSON.parse(fetchMock.mock.calls[0][1].body)
+    const sent = JSON.parse(fetchMock.mock.calls[1][1].body)
     expect(sent.row_data.kind).toBe('report')
   })
 
   it('createDocument swallows a failed write and returns null', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({}) }))
     expect(await createDocument('a::b', { title: 't', content: 'c' })).toBeNull()
+  })
+
+  describe('ensureTable (build_documents table-missing production fix)', () => {
+    // Live-confirmed in production: the build_documents table was never
+    // created, so every real document generation (Research/Roadmap/Mission/
+    // Market) and caller-authored write 404'd and got silently swallowed
+    // into a generic "could not persist document" 502 — the same class of
+    // bug as the build_media table-missing fix (#54).
+    it('a failed ensureTable never blocks the real write — its own result stays authoritative', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) }) // ensureTable fails
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ id: 'row' }) }) // real write still succeeds
+      vi.stubGlobal('fetch', fetchMock)
+      const doc = await createDocument('a::b', { title: 'Mission', content: 'body', type: 'mission' })
+      expect(doc!.title).toBe('Mission')
+    })
+
+    it('never throws when ensureTable itself throws (e.g. network error)', async () => {
+      const fetchMock = vi.fn()
+        .mockRejectedValueOnce(new Error('network down')) // ensureTable throws
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ id: 'row' }) }) // real write still attempted + succeeds
+      vi.stubGlobal('fetch', fetchMock)
+      const doc = await createDocument('a::b', { title: 'Research', content: 'body', type: 'research' })
+      expect(doc!.title).toBe('Research')
+    })
   })
 
   it('listDocuments returns [] for an empty library (honest empty state)', async () => {

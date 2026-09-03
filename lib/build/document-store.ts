@@ -303,6 +303,31 @@ async function zerodbRequest(
 }
 
 /**
+ * Ensure the `build_documents` ZeroDB table exists before writing to it.
+ * Live-confirmed in production (2026-09): the table was never created (`404
+ * Table 'build_documents' not found`), so EVERY real document generation
+ * (Research/Roadmap/Mission/Market) and caller-authored write (including the
+ * nightly loop's daily operational reports) has been silently 502ing since
+ * this feature shipped — the exact same class of bug as the build_media
+ * table-missing fix (#54). Mirrors that proven pattern exactly: best-effort,
+ * idempotent (ZeroDB no-ops on an existing table), never throws — the real
+ * write's own result stays authoritative either way.
+ */
+async function ensureTable(): Promise<void> {
+  try {
+    await fetch(`${ZERODB_API}/v1/projects/${PROJECT_ID}/database/tables`, {
+      method: 'POST',
+      headers: { 'X-API-Key': getApiKey(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ table_name: TABLE_NAME }),
+      signal: AbortSignal.timeout(5000),
+    })
+  } catch {
+    // Table might already exist, or the create call itself failed — either
+    // way, fall through to the real write and let ITS result be authoritative.
+  }
+}
+
+/**
  * Persist a document for a scope. Best-effort: returns the created BuildDocument on
  * success, null on any failure (never throws) so a persistence hiccup can't break
  * the request. The type is normalized and the kind derived from it before write.
@@ -328,6 +353,7 @@ export async function createDocument(
     created_at: now,
   }
   try {
+    await ensureTable()
     const result = await zerodbRequest(
       'POST',
       `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/rows`,
