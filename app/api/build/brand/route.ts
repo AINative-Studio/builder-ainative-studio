@@ -25,6 +25,7 @@ import { NextRequest } from 'next/server'
 import OpenAI from 'openai'
 import { getClaudeCompletion } from '@/lib/build/claude-completion'
 import { resolveApp } from '@/lib/build/app-registry'
+import { toSlug } from '@/lib/build/slug'
 
 export const runtime = 'nodejs'
 
@@ -34,16 +35,6 @@ const ainative = new OpenAI({
 })
 
 /** Clean slug: lowercase, alnum + single dashes, <= 24 chars, no leading/trailing dash. */
-function toSlug(name: string): string {
-  const s = (name || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 24)
-    .replace(/-+$/g, '')
-  return s || 'app'
-}
-
 function parseJson(raw: string): any {
   if (!raw) return null
   let s = raw.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()

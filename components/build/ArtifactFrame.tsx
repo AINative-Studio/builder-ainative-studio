@@ -170,6 +170,7 @@ export function ArtifactFrame({
           track={state.track}
           showRegenerate={view === 'plan30'}
           onChange={(name) => dispatch({ type: 'SET_COMPANY_NAME', companyName: name })}
+          chatId={state.appChatId}
         />
       )}
       {(meta || hasGen) && (
