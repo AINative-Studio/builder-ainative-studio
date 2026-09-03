@@ -315,20 +315,76 @@ describe('I/O: saveRoutine / saveAsset / listMedia / runMediaGeneration', () => 
     expect(res.status).toBe('disabled')
     expect(spy).toBeDefined()
   })
-  it('runMediaGeneration generates + persists an owned asset when configured', async () => {
+  it('runMediaGeneration generates + persists an owned VIDEO asset when configured (real video shape: a url field)', async () => {
     process.env.BUILD_MEDIA_ENABLED = 'true'
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(OK({ url: 'http://x/gen.png', provider: 'multimodal' }) as any) // generate
+      .mockResolvedValueOnce(OK({ url: 'http://x/gen.mp4', provider: 'multimodal' }) as any) // generate
       .mockResolvedValueOnce(OK({}) as any) // saveAsset's ensureTable (build_media table-missing fix — best-effort, response unused)
       .mockResolvedValueOnce(OK({ ok: true }) as any) // saveAsset
     vi.stubGlobal('fetch', fetchMock)
-    const res = await runMediaGeneration('a::b', 'image', { companyName: 'Acme', tagline: 't', color: '#123' })
+    const res = await runMediaGeneration('a::b', 'video', { companyName: 'Acme', tagline: 't', color: '#123' })
     expect(res.status).toBe('generated')
-    expect(res.asset?.url).toBe('http://x/gen.png')
-    // The generation request must hit the multimodal image endpoint with an on-brand prompt.
+    expect(res.asset?.url).toBe('http://x/gen.mp4')
+    // The generation request must hit the multimodal video endpoint with an on-brand prompt.
     const firstCall = fetchMock.mock.calls[0]
-    expect(String(firstCall[0])).toContain('/api/v1/multimodal/image')
+    expect(String(firstCall[0])).toContain('/api/v1/multimodal/video/t2v')
     expect(String(firstCall[1].body)).toContain('Acme')
+  })
+
+  describe('image generation — real response shape is {image_base64}, not a url (live repro, 2026-09)', () => {
+    // Direct curl against the real production endpoint confirmed the actual
+    // response shape: {"image_base64": "..."}. The route used to only know
+    // how to extract a `url` field (mirroring the video endpoint's shape),
+    // so EVERY real image generation call silently returned status:'failed'
+    // even though the multimodal call itself succeeded — the base64 payload
+    // was never decoded, uploaded to durable storage, or turned into a URL.
+
+    it('decodes image_base64, uploads it, and persists the durable asset URL', async () => {
+      process.env.BUILD_MEDIA_ENABLED = 'true'
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(OK({ image_base64: Buffer.from('fake-png-bytes').toString('base64'), provider: 'multimodal' }) as any) // generate
+        .mockResolvedValueOnce(OK({ file_id: '11111111-1111-1111-1111-111111111111' }) as any) // uploadMediaFile
+        .mockResolvedValueOnce(OK({}) as any) // saveAsset's ensureTable
+        .mockResolvedValueOnce(OK({ ok: true }) as any) // saveAsset
+      vi.stubGlobal('fetch', fetchMock)
+      const res = await runMediaGeneration('a::b', 'image', { companyName: 'Acme' })
+      expect(res.status).toBe('generated')
+      expect(res.asset?.url).toBe('/api/build/media/upload?id=11111111-1111-1111-1111-111111111111')
+      // The upload call must send the real decoded bytes as multipart form data.
+      const uploadCall = fetchMock.mock.calls[1]
+      expect(String(uploadCall[0])).toContain('/files/upload')
+    })
+
+    it('reports failed when image_base64 is present but the upload itself fails', async () => {
+      process.env.BUILD_MEDIA_ENABLED = 'true'
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(OK({ image_base64: Buffer.from('x').toString('base64') }) as any) // generate
+        .mockResolvedValueOnce(ERR(500) as any) // uploadMediaFile fails
+      vi.stubGlobal('fetch', fetchMock)
+      const res = await runMediaGeneration('a::b', 'image', {})
+      expect(res.status).toBe('failed')
+    })
+
+    it('reports failed (never crashes) on an empty/malformed base64 payload', async () => {
+      process.env.BUILD_MEDIA_ENABLED = 'true'
+      vi.stubGlobal('fetch', vi.fn(async () => OK({ image_base64: '' }) as any))
+      const res = await runMediaGeneration('a::b', 'image', {})
+      expect(res.status).toBe('failed')
+    })
+
+    it('a real url field still wins for image responses that provide one directly (defensive — does not regress if core ever changes shape)', async () => {
+      process.env.BUILD_MEDIA_ENABLED = 'true'
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(OK({ url: 'http://x/direct.png', image_base64: 'should-be-ignored' }) as any)
+        .mockResolvedValueOnce(OK({}) as any)
+        .mockResolvedValueOnce(OK({ ok: true }) as any)
+      vi.stubGlobal('fetch', fetchMock)
+      const res = await runMediaGeneration('a::b', 'image', {})
+      expect(res.status).toBe('generated')
+      expect(res.asset?.url).toBe('http://x/direct.png')
+      // Only 3 calls (generate + ensureTable + saveAsset) — never touched the upload path.
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+    })
   })
   it('runMediaGeneration reports failed when the core call errors', async () => {
     process.env.BUILD_MEDIA_ENABLED = 'true'
