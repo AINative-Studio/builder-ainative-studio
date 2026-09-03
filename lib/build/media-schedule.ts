@@ -29,6 +29,7 @@
  */
 
 import { deriveOwnerKey, chatScopeKey } from '@/lib/build/chat-store'
+import { buildUploadKey, uploadedAssetUrl } from '@/lib/build/media-upload'
 
 const ZERODB_API = process.env.ZERODB_API_URL || 'https://api.ainative.studio/api'
 const PROJECT_ID = process.env.ZERODB_PROJECT_ID || '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
@@ -473,6 +474,37 @@ function extractVideoUrl(data: any): string {
 }
 
 /**
+ * Core's real image endpoint (confirmed live, 2026-09) returns
+ * `{image_base64: "..."}` inline — NOT a url field, unlike the video
+ * endpoint's shape extractVideoUrl expects. Every real image generation call
+ * was silently returning {status:'failed'} because `url` was always empty
+ * for images: the base64 payload was never decoded, uploaded to durable
+ * storage, or turned into a URL at all — that handling simply didn't exist.
+ */
+function extractImageBase64(data: any): string {
+  return String(data?.image_base64 || data?.data?.image_base64 || '')
+}
+
+/**
+ * Decode a generated image's base64 payload, upload it to the company's own
+ * ZeroDB file storage (the SAME store founder photo uploads use, #323), and
+ * return the durable serve URL. Empty string on any failure — the caller
+ * treats that exactly like any other generation failure (honest 'failed',
+ * never a crash).
+ */
+async function persistBase64Image(scopeKey: string, base64: string): Promise<string> {
+  try {
+    const bytes = Buffer.from(base64, 'base64')
+    if (!bytes.length) return ''
+    const key = buildUploadKey(scopeKey, `generated-${Date.now()}.png`)
+    const fileId = await uploadMediaFile({ bytes, key, contentType: 'image/png' })
+    return fileId ? uploadedAssetUrl(fileId) : ''
+  } catch {
+    return ''
+  }
+}
+
+/**
  * Poll core's video status endpoint until the job reaches a terminal state
  * (#404) — video generation is genuinely async (MiniMax jobs take 1-5 min);
  * the initial POST only returns status:'processing' + task_id, never a
@@ -552,6 +584,10 @@ export async function runMediaGeneration(
     if (!res.ok) return { status: 'failed' }
     const data = await res.json().catch(() => null)
     let url = extractVideoUrl(data)
+    if (!url && mediaKind === 'image') {
+      const base64 = extractImageBase64(data)
+      if (base64) url = await persistBase64Image(scopeKey, base64)
+    }
     const taskId = String(data?.task_id || '')
     if (!url && mediaKind === 'video' && taskId && String(data?.status || '') !== VIDEO_STATUS_SUCCESS) {
       const polled = await pollVideoStatus(taskId)
