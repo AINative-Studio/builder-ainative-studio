@@ -299,17 +299,34 @@ export function MediaPanel({
                   </span>
                 </div>
 
-                {/* Latest owned asset preview (honest empty otherwise). */}
+                {/* Latest owned asset preview (honest empty otherwise). A text-only
+                    "View latest →" link was easy to miss entirely after a real
+                    generation — a founder hitting Generate with nothing visibly
+                    changing on the page read as "nothing happened." An inline
+                    thumbnail (image kind only — video keeps the link, no <video>
+                    preview yet) makes the real output immediately visible. */}
                 {asset ? (
-                  <a
-                    className="btn-ghost m-task-view"
-                    href={asset.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    data-testid={`media-asset-${key}`}
-                  >
-                    View latest {key} →
-                  </a>
+                  key === 'image' ? (
+                    <a
+                      className="m-media-thumb-link"
+                      href={asset.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      data-testid={`media-asset-${key}`}
+                    >
+                      <img className="m-media-thumb" src={asset.url} alt={`Latest generated ${key} for ${companyName || 'your company'}`} loading="lazy" />
+                    </a>
+                  ) : (
+                    <a
+                      className="btn-ghost m-task-view"
+                      href={asset.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      data-testid={`media-asset-${key}`}
+                    >
+                      View latest {key} →
+                    </a>
+                  )
                 ) : null}
 
                 {notice[key] && (
