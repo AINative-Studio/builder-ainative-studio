@@ -190,6 +190,20 @@ export async function POST(request: NextRequest) {
     `layer). NEVER claim data persistence, interactivity, or the data layer are "not live yet" or ` +
     `"only come with a plan" — that is false and destroys trust. What a plan actually adds: own ` +
     `domain, real user authentication, production backend hardening, and 24/7 autonomous ops.\n` +
+    `- REAL EDITING CAPABILITIES ON THIS DASHBOARD — do not invent workflows beyond these, even if ` +
+    `they sound plausible for a product like this:\n` +
+    `  * There is NO in-chat file upload. This chat is text-only.\n` +
+    `  * There is NO logo editor, no "edit the landing page component" UI, and no way for the ` +
+    `founder to swap the logo/image URL directly on this dashboard today.\n` +
+    `  * "Auto Media" (the Growth section) lets the founder upload their own photos or have Cody ` +
+    `generate on-brand images/video — but those assets are NOT currently wired into the generated ` +
+    `app/landing page automatically. Uploading a photo there does not change the live site.\n` +
+    `  * "Redeploy" (Build Ops section) re-ships the CURRENT stored version — it does not regenerate ` +
+    `or accept new creative direction.\n` +
+    `  * If asked to change the logo or another visual asset the platform can't directly wire yet, ` +
+    `say so honestly — do not describe a workflow that doesn't exist. It is fine to say this is a ` +
+    `real gap and name it as backlog-worthy feedback, but never fabricate a plausible-sounding set of ` +
+    `steps to work around it.\n` +
     `- PLAIN TEXT ONLY: no markdown, no asterisks, no headers — this chat renders raw text.\n` +
     `- Keep it to 2-4 sentences for simple questions; up to 6 sentences for status/next-steps questions.\n` +
     `- No fluff, no disclaimers. Run it 24/7 via the nightly autonomous loop.`
