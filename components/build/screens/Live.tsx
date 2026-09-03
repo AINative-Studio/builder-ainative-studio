@@ -554,10 +554,28 @@ export function Live() {
         </div>
       )}
 
+      {/* Hero metrics row (#483): the one glanceable "is my company doing
+          anything" signal — promoted out of column 1 into a full-width strip
+          so it resolves first, above the 3-column grid, instead of being the
+          second card down a side column at the same weight as everything
+          else. Mobile gets this for free (full-width block stacks first,
+          before any column content) — see #486. */}
+      <div className="m-live-hero-metrics" data-testid="hero-metrics">
+        <div className="m-metric-rows">
+          {/* Honest zero-state for a just-shipped company — the swarm fills these. */}
+          <div className="m-metric"><span className="m-metric-v m-artifact">0</span><span className="m-metric-l m-mono">visitors</span></div>
+          <div className="m-metric"><span className="m-metric-v m-artifact">0</span><span className="m-metric-l m-mono">waitlist</span></div>
+          <div className="m-metric"><span className="m-metric-v m-artifact">$0</span><span className="m-metric-l m-mono">revenue</span></div>
+        </div>
+        <p className="m-mono m-metric-note">Live from day one — Cody grows these nightly.</p>
+      </div>
+
       <div className={`m-live-grid ${state.tablet ? 'is-tablet' : ''}`}>
-        {/* LEFT — Cody status + metrics + upsell */}
+        {/* LEFT — Cody status + upsell */}
         <div className="m-live-col">
-          <div className="m-live-card">
+          {/* #485: primary weight — this is the one status card in column 1
+              a founder should actually read first, vs onboarding/upsell below. */}
+          <div className="m-live-card m-live-card--primary">
             <div className="m-mono m-live-card-h">
               <span className="m-glyph">◇</span> Cody · nightly run{' '}
               <span className={`st ${nightshift?.hasRun ? 'is-done' : 'is-running'}`}>
@@ -573,16 +591,6 @@ export function Live() {
               <button className="btn-ghost" onClick={openGraph}>Open the artifact graph →</button>
               <button className="btn-ghost" onClick={rescopeWedge}>Re-scope the wedge ⚠</button>
             </div>
-          </div>
-          <div className="m-live-card">
-            <div className="m-mono m-live-card-h">Business metrics</div>
-            <div className="m-metric-rows">
-              {/* Honest zero-state for a just-shipped company — the swarm fills these. */}
-              <div className="m-metric"><span className="m-metric-v m-artifact">0</span><span className="m-metric-l m-mono">visitors</span></div>
-              <div className="m-metric"><span className="m-metric-v m-artifact">0</span><span className="m-metric-l m-mono">waitlist</span></div>
-              <div className="m-metric"><span className="m-metric-v m-artifact">$0</span><span className="m-metric-l m-mono">revenue</span></div>
-            </div>
-            <p className="m-mono m-metric-note">Live from day one — Cody grows these nightly.</p>
           </div>
           {/* Onboarding tutorial video (#51): replaces the raw black-box placeholder.
               Video source is configurable via NEXT_PUBLIC_ONBOARDING_VIDEO_SRC so

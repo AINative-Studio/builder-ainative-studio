@@ -401,7 +401,8 @@
 .m-swarm-badge.is-preview { color: var(--text-faint); }
 
 /* Signup funnel banner on Live (FIX-4) */
-.m-live-funnel { display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap; padding: 14px 44px; background: var(--ink); color: #f0ece8; border-bottom: 2px solid var(--color-divider); font-size: 14px; }
+/* #482: trimmed vertical padding (14px -> 10px) alongside the masthead trim. */
+.m-live-funnel { display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap; padding: 10px 44px; background: var(--ink); color: #f0ece8; border-bottom: 2px solid var(--color-divider); font-size: 14px; }
 .m-live-funnel strong { color: #fff; }
 .m-live-funnel-cta { display: flex; gap: 10px; align-items: center; }
 .m-live-funnel-cta .btn-ghost { color: #cfc9c4; }
@@ -816,9 +817,12 @@
    Live dashboard (#226)
    ============================================================================ */
 .m-live { min-height: 100vh; }
-.m-live-masthead { background: var(--alert); color: #fff; padding: 26px 44px; display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+/* #482: trimmed from 26px/34px to reclaim fold height — the funnel banner
+   right below duplicates a lot of this bar's job, so the masthead itself
+   doesn't need to be this tall to still read as a strong brand moment. */
+.m-live-masthead { background: var(--alert); color: #fff; padding: 16px 44px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .m-live-tag { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.1em; opacity: 0.85; }
-.m-live-h { font-weight: 500; font-size: 34px; margin: 0; flex: 1 1 auto; min-width: 0; overflow-wrap: break-word; }
+.m-live-h { font-weight: 500; font-size: 26px; margin: 0; flex: 1 1 auto; min-width: 0; overflow-wrap: break-word; }
 .m-live-masthead-right { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .m-live-watch { font-size: 12px; display: inline-flex; align-items: center; }
 .m-live-watch .m-live-dot { background: #fff; }
@@ -833,8 +837,20 @@
    clientWidth 375). Give the masthead breathing room back on narrow screens
    instead of relying on the h1 alone to absorb it. */
 @media (max-width: 420px) {
-  .m-live-masthead { padding: 20px 16px; gap: 10px; }
-  .m-live-h { font-size: 26px; }
+  .m-live-masthead { padding: 16px; gap: 10px; }
+  .m-live-h { font-size: 24px; }
+}
+
+/* Hero metrics row (#483) — the one glanceable "is my company doing anything"
+   signal, promoted full-width above the 3-column grid so it's the first thing
+   that resolves visually, not a same-weight card buried in column 1. */
+.m-live-hero-metrics { padding: 22px 44px; background: var(--color-bg); border-bottom: 2px solid var(--color-divider); }
+.m-live-hero-metrics .m-metric-rows { gap: 48px; }
+.m-live-hero-metrics .m-metric-v { font-size: 40px; }
+@media (max-width: 640px) {
+  .m-live-hero-metrics { padding: 18px 16px; }
+  .m-live-hero-metrics .m-metric-rows { gap: 28px; }
+  .m-live-hero-metrics .m-metric-v { font-size: 30px; }
 }
 
 .m-live-grid { display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: 2px; background: var(--color-divider); padding: 2px; align-items: start; }
@@ -850,13 +866,26 @@
    it, and this sticky rail pins the chat near the top of the viewport as the founder
    scrolls the middle column. Sits below the sticky masthead. Disabled on tablet
    (single column) so the chat just flows to the top of the stack. */
-.m-live-col.m-live-col-chat { position: sticky; top: 12px; align-self: start; max-height: calc(100vh - 24px); }
-.m-live-col.m-live-col-chat > .m-chat { min-height: 0; max-height: calc(100vh - 24px); }
-.m-live-grid.is-tablet .m-live-col-chat { position: static; max-height: none; }
+/* #484: the column previously only declared max-height, so a sticky flex item
+   sizes to its CONTENT, not the max — .m-chat's `flex: 1` (from the last-child
+   rule above) had nothing to grow against and the chat card sat far short of
+   the viewport, leaving a large empty gray region below it as the founder
+   scrolled. An explicit height (not just max-height) gives the column real
+   size to fill, so the chat log genuinely occupies the sticky rail. */
+.m-live-col.m-live-col-chat { position: sticky; top: 12px; align-self: start; height: calc(100vh - 24px); max-height: calc(100vh - 24px); }
+.m-live-col.m-live-col-chat > .m-chat { min-height: 0; height: 100%; max-height: calc(100vh - 24px); }
+.m-live-grid.is-tablet .m-live-col-chat { position: static; height: auto; max-height: none; }
+.m-live-grid.is-tablet .m-live-col-chat > .m-chat { height: auto; max-height: none; }
 /* On tablet, order the chat rail FIRST so the founder can talk to Cody immediately
    instead of scrolling past the whole systems stack. */
 .m-live-grid.is-tablet .m-live-col-chat { order: -1; }
 .m-live-card { background: var(--color-bg); padding: 18px; }
+/* #485: primary weight for genuinely actionable/status cards (nightly run,
+   auto-mode-running) vs the flat default every other card (settings, docs,
+   upsells) uses — an accent-colored left rule + slightly bolder header so
+   scanning the page tells you what's actionable at a glance. */
+.m-live-card--primary { border-left: 3px solid var(--color-accent, var(--alert)); padding-left: 15px; }
+.m-live-card--primary .m-live-card-h { color: var(--text-body-85, var(--text-body-70)); font-weight: 600; }
 .m-live-card-h { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-body-70); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
 .m-live-card-body { font-size: 14px; color: var(--text-body-70); line-height: 1.5; margin: 0 0 12px; }
 .m-upsell { background: var(--ink); color: #f3f2f2; display: flex; flex-direction: column; }
@@ -1349,9 +1378,10 @@
 @media (max-width: 900px) {
   .m-ws-body { grid-template-columns: 1fr; }
   .m-live-grid { grid-template-columns: 1fr; }
-  .m-live-col.m-live-col-chat { position: static; max-height: none; order: -1; }
-  .m-live-masthead { padding: 20px; }
-  .m-live-funnel { padding: 14px 20px; }
+  .m-live-col.m-live-col-chat { position: static; height: auto; max-height: none; order: -1; }
+  .m-live-col.m-live-col-chat > .m-chat { height: auto; max-height: none; }
+  .m-live-masthead { padding: 16px; }
+  .m-live-funnel { padding: 10px 20px; }
   .m-center { padding: 28px 20px; }
 }
 
