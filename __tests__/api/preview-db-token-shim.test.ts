@@ -86,6 +86,13 @@ describe('dbTokenShim — generated apps get the right header on the right path'
     expect(captured.headers?.get('x-ainative-db-token')).toBe('real-db-token')
   })
 
+  it('attaches x-ainative-db-token on /api/opencapstack/* requests (#503)', async () => {
+    const html = dbTokenShim('real-db-token')
+    const { captured } = runShimAndCapture(html, '/api/opencapstack/company')
+    await window.fetch('/api/opencapstack/company')
+    expect(captured.headers?.get('x-ainative-db-token')).toBe('real-db-token')
+  })
+
   it('attaches x-ainative-primitive-token on a matching /api/primitive/{name}/ path', async () => {
     const html = dbTokenShim('real-db-token', { zerocommerce: 'real-primitive-token' })
     const { captured } = runShimAndCapture(html, '/api/primitive/zerocommerce/products')

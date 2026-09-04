@@ -33,7 +33,13 @@ export interface OpenCapStackResult {
   status?: number
 }
 
-async function loginServiceAccount(): Promise<{ ok: boolean; token?: string; reason?: string; status?: number }> {
+/**
+ * Exported (#503) so the runtime proxy (app/api/opencapstack/[action]/route.ts)
+ * can log in fresh per-request and forward a generated app's call, the same
+ * "no caching, short-lived token" contract provisionCapTable already uses —
+ * not a separate auth implementation.
+ */
+export async function loginServiceAccount(): Promise<{ ok: boolean; token?: string; reason?: string; status?: number }> {
   const email = process.env.OPENCAPSTACK_SERVICE_EMAIL || ''
   const password = process.env.OPENCAPSTACK_SERVICE_PASSWORD || ''
   if (!email || !password) return { ok: false, reason: 'no_service_account' }

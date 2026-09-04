@@ -117,6 +117,14 @@ export interface AppEntry {
   // the runtime proxy's FIRST request. Absent/false = still simulated (no
   // credential captured yet, e.g. no signed-in founder at provision time).
   zerocrmProvisioned?: boolean
+  // OpenCapStack (#427, child of #414). provisionCapTable's real companyId
+  // was computed at checkout and returned once in the provision response,
+  // but never durably stored — a runtime proxy has no way to know which
+  // OpenCapStack company a given app maps to without this. Absent = either
+  // never provisioned, or provisioned before this field existed (pre-dates
+  // this fix; falls back to the simulated card, matches every other
+  // "provisioned but not backfilled" primitive's existing behavior here).
+  opencapstackCompanyId?: string
   // ZeroVoice (telephony primitive) provisioning (#415, child of #414). UNLIKE
   // every other primitive here, this carries a REAL recurring cost — never
   // auto-provisioned in provision/route.ts's checkout flow. Only set via an
@@ -566,6 +574,13 @@ export async function setAppProvisioned(
   return registerApp({
     ...existing,
     ...fields,
+    // capstackCompanyId (the provision-response field name, matched to
+    // provision/route.ts's existing capstack.companyId shape) durably lands
+    // on AppEntry.opencapstackCompanyId — was being spread into `fields` and
+    // silently dropped (not a real AppEntry key) before this fix (#503),
+    // leaving the runtime proxy with no way to resolve which OpenCapStack
+    // company a given app maps to.
+    opencapstackCompanyId: fields.capstackCompanyId || existing.opencapstackCompanyId,
     provisionedAt: fields.provisionedAt || new Date().toISOString(),
   })
 }
