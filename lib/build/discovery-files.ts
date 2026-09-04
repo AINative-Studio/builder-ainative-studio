@@ -59,10 +59,17 @@ export async function resolveDiscoveryFile(slug: string, key: DiscoveryFileKey):
   if (!stored?.code) return null
 
   const liveUrl = `https://builder.ainative.studio/build/${clean}`
-  const files = generateAINativeFileSet(entry.tagline || entry.name || clean, stored.code, {
+  // Build the overrides object with ONLY the keys that have a real value —
+  // generateAINativeFileSet spreads this over extractAppMetadata's computed
+  // defaults, so an explicit `description: undefined` here would overwrite a
+  // perfectly good default with undefined and crash every downstream
+  // `.replace()` call on it (confirmed live, 2026-09: real 500 in production).
+  const overrides: { name?: string; description?: string; domain?: string } = {
     name: entry.name || clean,
-    description: entry.tagline || undefined,
     domain: entry.domain ? `https://${entry.domain}` : liveUrl,
-  })
+  }
+  if (entry.tagline) overrides.description = entry.tagline
+
+  const files = generateAINativeFileSet(entry.tagline || entry.name || clean, stored.code, overrides)
   return files[KEY_TO_GENERATED_PATH[key]] ?? null
 }
