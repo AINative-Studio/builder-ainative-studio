@@ -124,6 +124,10 @@ export async function middleware(request: NextRequest) {
       pathname === '/api/chat' ||
       pathname.startsWith('/api/rlhf/') ||
       pathname.startsWith('/api/db/') ||
+      // ZeroMemory runtime proxy (#496). Self-authenticates exactly like
+      // /api/db/ — the same signed per-app data token, verified inside the
+      // handler; a generated app has no session cookie to present here.
+      pathname.startsWith('/api/memory/') ||
       // Founder-scoped primitive runtime proxy (#443). Self-authenticates
       // exactly like /api/db/ — a deployed company reads COMPANY_SLUG from
       // its own env, the shared preview iframe presents a signed per-app
