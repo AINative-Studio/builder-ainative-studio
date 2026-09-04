@@ -329,6 +329,11 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
   { name: 'Model Catalog', category: 'ai-inference',
     purpose: '47 models across text/code/reasoning/image/video/audio/embedding',
     url: `${DOCS}/api/models`,
+    // Runtime proxy at /api/model-catalog/list (#505/#508) — see route.ts for
+    // why only `list` is wired (single-model lookup's real id contract is
+    // unconfirmed). apiBase kept for consistency with other proxied
+    // primitives; the generated app never calls it directly.
+    apiBase: 'https://api.ainative.studio/api/v1/public/models',
     triggers: ['model', 'llm', 'inference', 'ai model', 'reasoning'] },
 
   // ---- Community / social primitives (idea-gated) — docs/AINATIVE_PRIMITIVES.md §9 ----
@@ -695,7 +700,20 @@ export function mcpDataProvisioningBlock(): string {
  * guessed). ZeroForms' real base has no /api prefix (confirmed live: /v1/forms
  * 401s correctly, /api/v1/forms 404s).
  *
- * This covers all 4 originally-scoped founder-identity primitives from #443.
+ * This covers the 4 originally-scoped founder-identity primitives from #443.
+ *
+ * ZeroMemory/Browser Agent/Agent402/OpenCapStack/Model Catalog/Developer
+ * Program/Community/AINativeNGO (#496/#499/#500/#503/#505/#510): each got a
+ * real, live, auth-gated `/api/{slug}/[action]/route.ts` proxy this session
+ * — but adding the route alone did NOT make Cody's generated code call it.
+ * This constant is the ONLY thing that puts a literal fetch() instruction in
+ * the codegen prompt; being live-curlable is necessary but not sufficient.
+ * Confirmed via a real, currently-passing test
+ * (__tests__/lib/primitive-catalog-codegen.test.ts) that OpenCapStack was
+ * being framed as "already provisioned server-side" — i.e. the model was
+ * being told NOT to call its own live proxy. Same bug class as #443, just
+ * one layer up: the backend existed, but nothing told the model it could
+ * use it.
  */
 const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = {
   ZeroDB: () => `call its REST API at \`https://api.ainative.studio/api/v1\` (Authorization: Bearer <AINATIVE_API_KEY>)`,
@@ -708,6 +726,26 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
     `call the same-origin proxy at \`/api/primitive/agentflow/{path}\` (e.g. \`/api/primitive/agentflow/projects/\`) — NO Authorization header needed, the platform attaches the founder's real AgentFlow credential server-side; the path after \`agentflow/\` matches AgentFlow's own REST path exactly`,
   ZeroForms: () =>
     `call the same-origin proxy at \`/api/primitive/zeroforms/{path}\` (e.g. \`/api/primitive/zeroforms/forms\`) — NO Authorization header needed, the platform attaches the founder's real ZeroForms credential server-side; the path after \`zeroforms/\` matches ZeroForms' own REST path exactly (no /api prefix — ZeroForms' real routes are /v1/forms, not /api/v1/forms)`,
+  // #496/#499/#500/#503/#505/#510 — these 8 use a NARROWER shape than the
+  // 5 above: a fixed `/api/{slug}/{action}` route with a hard allowlist of
+  // real actions (not an arbitrary-path passthrough), so the model must be
+  // told the EXACT allowed actions or it will hallucinate a path that 404s.
+  ZeroMemory: () =>
+    `call the same-origin proxy — NO Authorization header needed, the platform attaches this company's own memory namespace server-side: POST /api/memory/remember { content, memory_type? } and POST /api/memory/recall { query } (both JSON body, return the real ZeroMemory response)`,
+  'Browser Agent': () =>
+    `call the same-origin proxy — NO Authorization header needed: POST /api/browser-agent/extract { url, extract_goal } and POST /api/browser-agent/act { url, instruction } (both JSON body)`,
+  Agent402: () =>
+    `call the same-origin proxy — NO Authorization header needed, GET only: GET /api/agent402/capabilities and GET /api/agent402/projects (payments/payouts/Hedera actions are deliberately NOT exposed — do not attempt them)`,
+  OpenCapStack: () =>
+    `call the same-origin proxy — NO Authorization header needed: GET /api/opencapstack/company returns this company's own cap-table record (404 if none was provisioned at checkout)`,
+  'Model Catalog': () =>
+    `call the same-origin proxy — NO Authorization header needed, GET only: GET /api/model-catalog/list returns the real available AINative inference models`,
+  'Developer Program': () =>
+    `call the same-origin proxy — NO Authorization header needed, GET only: GET /api/developer-program/analytics and GET /api/developer-program/logs (earnings/payouts are deliberately NOT exposed — do not attempt them)`,
+  Community: () =>
+    `call the same-origin proxy — NO Authorization header needed, GET only: GET /api/community/members returns the real AINative community member list`,
+  AINativeNGO: () =>
+    `call the same-origin proxy — NO Authorization header needed, GET only: GET /api/ainative-ngo/institutions returns real nonprofit/NGO institution records`,
 }
 
 /**
@@ -781,7 +819,7 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
     `  For a real login screen, render an email+continue form that sets that uid — do NOT call an external auth API.\n\n` +
     `Rules:\n` +
     `1. Import \`@ainative/ai-kit-core\` (and its React bindings) for UI primitives — do NOT rebuild chat, tables, product cards, or dashboards from scratch when an AI Kit component exists.\n` +
-    `2. Persist through /api/db (above) — this is MANDATORY when the app saves any records. The generated app runs in the browser, so it does NOT have AINATIVE_API_KEY; NEVER put a Bearer key or secret in app code, and NEVER fetch() a primitive's apiBase directly unless this block explicitly said to (only ZeroDB/Instant DB/ZeroCommerce/ZeroPipeline have a real browser-callable path today — ZeroDB/Instant DB via /api/db with a Bearer key, ZeroCommerce/ZeroPipeline via their /api/primitive/{name} proxy with NO key). For every other primitive listed above, treat its capability as already set up by the platform — build the UI around it, don't call its API from generated code.\n` +
+    `2. Persist through /api/db (above) — this is MANDATORY when the app saves any records. The generated app runs in the browser, so it does NOT have AINATIVE_API_KEY; NEVER put a Bearer key or secret in app code, and NEVER fetch() a primitive's apiBase directly unless this block explicitly said to. Each primitive above tells you EXACTLY how to call it under "To use:" — follow that literally (same-origin proxy path and method, no Authorization header for proxied primitives, a Bearer key only for ZeroDB/Instant DB via /api/db). For any primitive listed above framed as "already provisioned for this company server-side," treat its capability as already set up by the platform — build the UI around it, don't call its API from generated code.\n` +
     `3. Do NOT reimplement invoicing, CRM, ecommerce carts/checkout, telephony, cap-table math, or helpdesk ticketing when the matching primitive exists — model the app around composing it. Regenerating that business logic from scratch is a FAILING score.\n` +
     `4. Add a short comment above each data call noting the AINative product it composes (e.g. \`// ZeroDB — orders\`), so the wiring is auditable.\n` +
     // #314/#315: the "already included / replaces X" framing above is a SELLING
