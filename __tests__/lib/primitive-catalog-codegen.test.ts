@@ -87,10 +87,10 @@ describe('primitive-catalog codegen composition (#218)', () => {
     expect(block).toContain('https://zeroinvoice.ainative.studio/api')
   })
 
-  it('nonprofit idea wires AINativeNGO (InstitutionOS), not OpenCapStack (#302)', () => {
+  it('nonprofit idea wires AINativeNGO (InstitutionOS) as a real direct-fetch target, not OpenCapStack (#302, #510)', () => {
     const block = codegenCompositionBlock('a nonprofit donation platform to manage donors, grants, and impact reporting', 'company')
     expect(block).toContain('AINativeNGO')
-    expect(block).toContain('https://ngo.ainative.studio/api/v1')
+    expect(block).toMatch(/AINativeNGO[^\n]*GET \/api\/ainative-ngo\/institutions/)
     // Nonprofit fundraising must NOT be confused with startup-equity fundraising.
     expect(block).not.toContain('OpenCapStack')
   })
@@ -294,11 +294,114 @@ describe('primitive-catalog additions (#410)', () => {
       expect(names).not.toContain('AINativeNGO')
     })
 
-    it('is framed as already-provisioned server-side, not a direct-fetch target (not in RUNTIME_PROXIED_PRIMITIVES)', () => {
-      const block = codegenCompositionBlock('a coffee shop loyalty rewards app', 'company')
+    it('is a real direct-fetch target via its runtime proxy, not framed as already-provisioned (#510 fix — was in RUNTIME_PROXIED_PRIMITIVES gap)', () => {
+      const block = codegenCompositionBlock('a startup cap table and equity management tool', 'company')
       expect(block).toContain('OpenCapStack')
-      expect(block).not.toMatch(/OpenCapStack[^\n]*To use: call its REST API/)
-      expect(block).toMatch(/OpenCapStack[^\n]*already provisioned for this company server-side/)
+      expect(block).not.toMatch(/OpenCapStack[^\n]*already provisioned for this company server-side/)
+      expect(block).toMatch(/OpenCapStack[^\n]*GET \/api\/opencapstack\/company/)
+    })
+  })
+
+  describe('#510 fix — the 8 primitives wired live tonight are real direct-fetch targets, not cosmetic', () => {
+    // Before this fix: the /api/{slug}/[action] proxy routes were live and
+    // correctly auth-gated, but NONE of these 8 were in RUNTIME_PROXIED_
+    // PRIMITIVES, so codegenCompositionBlock told the model their data "was
+    // already provisioned server-side" — i.e. explicitly NOT to call the
+    // very proxy that had just been built and live-verified. A generated
+    // app could never reach any of them no matter what the founder typed.
+
+    it('ZeroMemory (foundational — always selected) wires the real remember/recall proxy', () => {
+      const block = codegenCompositionBlock('a habit tracker app', 'app')
+      expect(block).toContain('ZeroMemory')
+      expect(block).not.toMatch(/ZeroMemory[^\n]*already provisioned for this company server-side/)
+      expect(block).toMatch(/ZeroMemory[^\n]*POST \/api\/memory\/remember/)
+      expect(block).toMatch(/ZeroMemory[^\n]*POST \/api\/memory\/recall/)
+    })
+
+    it('Browser Agent wires the real extract/act proxy for a scraping idea', () => {
+      const { names } = selectPrimitives('a tool that scrapes competitor pricing from their websites', 'app')
+      expect(names).toContain('Browser Agent')
+      const block = codegenCompositionBlock('a tool that scrapes competitor pricing from their websites', 'app')
+      expect(block).not.toMatch(/Browser Agent[^\n]*already provisioned for this company server-side/)
+      expect(block).toMatch(/Browser Agent[^\n]*POST \/api\/browser-agent\/extract/)
+      expect(block).toMatch(/Browser Agent[^\n]*POST \/api\/browser-agent\/act/)
+    })
+
+    it('Agent402 wires the real capabilities/projects proxy for an agentic-payments idea', () => {
+      const block = codegenCompositionBlock('an agent that pays other agents per API call using x402', 'company')
+      expect(block).toContain('Agent402')
+      expect(block).not.toMatch(/Agent402[^\n]*already provisioned for this company server-side/)
+      expect(block).toMatch(/Agent402[^\n]*GET \/api\/agent402\/capabilities/)
+      expect(block).toMatch(/Agent402[^\n]*GET \/api\/agent402\/projects/)
+      // Payments/Hedera/payouts are deliberately excluded from the allowlist —
+      // the instruction must not imply they're reachable.
+      expect(block).not.toMatch(/Agent402[^\n]*\/api\/agent402\/payouts/)
+    })
+
+    it('Model Catalog wires the real /list proxy for a model-selection idea (also fixes: had no apiBase, was filtered out of codegen entirely)', () => {
+      const block = codegenCompositionBlock('a tool to compare AI model pricing and pick the best LLM for a task', 'app')
+      expect(block).toContain('Model Catalog')
+      expect(block).not.toMatch(/Model Catalog[^\n]*already provisioned for this company server-side/)
+      expect(block).toMatch(/Model Catalog[^\n]*GET \/api\/model-catalog\/list/)
+    })
+
+    it('Developer Program wires the real analytics/logs proxy for a monetization idea, excluding earnings/payouts', () => {
+      const block = codegenCompositionBlock('an API marketplace where developers sell access and get Stripe Connect payouts', 'company')
+      expect(block).toContain('Developer Program')
+      expect(block).not.toMatch(/Developer Program[^\n]*already provisioned for this company server-side/)
+      expect(block).toMatch(/Developer Program[^\n]*GET \/api\/developer-program\/analytics/)
+      expect(block).toMatch(/Developer Program[^\n]*GET \/api\/developer-program\/logs/)
+      expect(block).not.toMatch(/Developer Program[^\n]*\/api\/developer-program\/earnings/)
+    })
+
+    it('Community wires the real /members proxy for a social/community idea', () => {
+      const block = codegenCompositionBlock('a community platform with member groups and a social feed', 'app')
+      expect(block).toContain('Community')
+      expect(block).not.toMatch(/Community[^\n]*already provisioned for this company server-side/)
+      expect(block).toMatch(/Community[^\n]*GET \/api\/community\/members/)
+    })
+
+    it('AINativeNGO wires the real /institutions proxy for a nonprofit idea', () => {
+      const block = codegenCompositionBlock('a nonprofit that tracks donors and grant applications', 'company')
+      expect(block).toContain('AINativeNGO')
+      expect(block).not.toMatch(/AINativeNGO[^\n]*already provisioned for this company server-side/)
+      expect(block).toMatch(/AINativeNGO[^\n]*GET \/api\/ainative-ngo\/institutions/)
+    })
+
+    it('OpenCapStack wires the real /company proxy for a cap-table idea (duplicate coverage alongside the #302 describe block above, kept for a single source of truth on the 8)', () => {
+      const block = codegenCompositionBlock('a startup cap table and equity management tool', 'company')
+      expect(block).toContain('OpenCapStack')
+      expect(block).not.toMatch(/OpenCapStack[^\n]*already provisioned for this company server-side/)
+      expect(block).toMatch(/OpenCapStack[^\n]*GET \/api\/opencapstack\/company/)
+    })
+
+    it('none of the 8 leak a raw external apiBase into the prompt (would guarantee a client-side fetch failure)', () => {
+      const ideas: Array<[string, 'app' | 'company']> = [
+        ['a habit tracker app', 'app'],
+        ['a tool that scrapes competitor pricing from their websites', 'app'],
+        ['an agent that pays other agents per API call using x402', 'company'],
+        ['a tool to compare AI model pricing and pick the best LLM for a task', 'app'],
+        ['an API marketplace where developers sell access and get Stripe Connect payouts', 'company'],
+        ['a community platform with member groups and a social feed', 'app'],
+        ['a nonprofit that tracks donors and grant applications', 'company'],
+        ['a startup cap table and equity management tool', 'company'],
+      ]
+      const rawBases = [
+        'api.ainative.studio/api/v1/public/memory',
+        'api.ainative.studio/api/v1/public/browser',
+        'agent-402-production.up.railway.app',
+        'api.ainative.studio/api/v1/public/models',
+        'api.ainative.studio/api/v1/public/developer',
+        // Community's apiBase (api.ainative.studio/api/v1) is too generic to
+        // assert against without false positives from unrelated foundational
+        // ZeroDB text — its own route-shape assertion above is sufficient.
+        'ngo.ainative.studio',
+        'api.opencapstack.com',
+      ]
+      for (const [idea, track] of ideas) {
+        const block = codegenCompositionBlock(idea, track)
+        for (const base of rawBases) expect(block).not.toContain(base)
+      }
     })
   })
 
