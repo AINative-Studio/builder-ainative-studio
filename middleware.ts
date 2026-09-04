@@ -136,6 +136,10 @@ export async function middleware(request: NextRequest) {
       // /api/memory/ — the same signed per-app data token; a generated app
       // has no session cookie to present here.
       pathname.startsWith('/api/agent402/') ||
+      // OpenCapStack runtime proxy (#503). Self-authenticates exactly like
+      // /api/memory/ — the same signed per-app data token; a generated app
+      // has no session cookie to present here.
+      pathname.startsWith('/api/opencapstack/') ||
       // Founder-scoped primitive runtime proxy (#443). Self-authenticates
       // exactly like /api/db/ — a deployed company reads COMPANY_SLUG from
       // its own env, the shared preview iframe presents a signed per-app
