@@ -768,12 +768,84 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
     'instead of calling the real ZeroCommerce proxy. If the feature is a product listing, cart, or checkout, it MUST ' +
     'call GET/POST /api/primitive/zerocommerce/commerce/{products,checkout} — persisting products/cart/orders through ' +
     'generic /api/db rows instead is a FAILING implementation even if the UI looks identical to the user.',
+  // #525: AgentFlow shares the SAME confirmed gap — a real 83,084-char
+  // generation for "a no-code visual agent workflow builder with drag and
+  // drop flow building" never called /api/primitive/agentflow/ and had ZERO
+  // /api/ references of any kind (didn't even fall back to /api/db). Same
+  // fix shape as #524/#521: literal fetch() snippet + named anti-pattern.
   ZeroPipeline: () =>
-    `call the same-origin proxy at \`/api/primitive/zeropipeline/{path}\` (e.g. \`/api/primitive/zeropipeline/pipelines\`) — NO Authorization header needed, the platform attaches the founder's real ZeroPipeline credential server-side; the path after \`zeropipeline/\` matches ZeroPipeline's own REST path exactly`,
+    `call the same-origin proxy at \`/api/primitive/zeropipeline/{path}\` — NO Authorization header needed, the platform attaches the founder's real ZeroPipeline credential server-side; the path after \`zeropipeline/\` matches ZeroPipeline's own REST path exactly.\n` +
+    '  Real call shape (copy this exactly, do not paraphrase — the default pipeline itself is provisioned once at checkout via POST /pipelines, confirmed live per #243; the generated app only ever reads/writes deals through this proxy):\n' +
+    '  ```js\n' +
+    "  // List this company's real deals/leads\n" +
+    "  const res = await fetch('/api/primitive/zeropipeline/deals')\n" +
+    '  const { deals } = await res.json() // real pipeline deals, not fabricated leads\n' +
+    '\n' +
+    "  // Create a new deal/lead\n" +
+    "  await fetch('/api/primitive/zeropipeline/deals', {\n" +
+    "    method: 'POST', headers: { 'Content-Type': 'application/json' },\n" +
+    '    body: JSON.stringify({ name: dealName, stage: \'Lead\' }),\n' +
+    '  })\n' +
+    '  ```\n' +
+    '  ANTI-PATTERN — FORBIDDEN: do NOT hand-roll a leads/deals table using /api/db tables instead of calling the real ' +
+    'ZeroPipeline proxy. If the feature is a CRM/sales-pipeline surface (deals, leads, stages), it MUST call ' +
+    'GET/POST /api/primitive/zeropipeline/deals — persisting deals through generic /api/db rows instead is a FAILING ' +
+    'implementation even if the UI looks identical to the user.',
   AgentFlow: () =>
-    `call the same-origin proxy at \`/api/primitive/agentflow/{path}\` (e.g. \`/api/primitive/agentflow/projects/\`) — NO Authorization header needed, the platform attaches the founder's real AgentFlow credential server-side; the path after \`agentflow/\` matches AgentFlow's own REST path exactly`,
+    `call the same-origin proxy at \`/api/primitive/agentflow/{path}\` — NO Authorization header needed, the platform attaches the founder's real AgentFlow credential server-side; the path after \`agentflow/\` matches AgentFlow's own REST path exactly.\n` +
+    '  Real call shape (copy this exactly, do not paraphrase — a default project itself is provisioned once at checkout via POST /projects/, confirmed live via AgentFlow\'s own openapi.json per #419; the generated app only ever reads/writes agent workflows through this proxy):\n' +
+    '  ```js\n' +
+    "  // List this company's real AgentFlow projects (each project holds agent workflows)\n" +
+    "  const res = await fetch('/api/primitive/agentflow/projects/')\n" +
+    '  const projects = await res.json() // real AgentFlow projects, not a mocked list\n' +
+    '  ```\n' +
+    '  ANTI-PATTERN — FORBIDDEN: do NOT hand-roll a fake "agent workflow" list or simulate flow execution with local ' +
+    'state instead of calling the real AgentFlow proxy. If the feature manages agent workflows/projects, it MUST call ' +
+    'GET/POST /api/primitive/agentflow/projects/ — faking it with /api/db rows or client-side state instead is a ' +
+    'FAILING implementation even if the UI looks identical to the user.',
+  // #524 scope check — ZeroForms below is STRENGTHENED ON SUSPICION, not
+  // direct live confirmation (unlike ZeroCommerce #524, AgentFlow #525, and
+  // ZeroCRM #527, all confirmed via a real production generation — ZeroCRM's
+  // sweep ran a genuine full 30.3-minute generation and failed the same way).
+  // ZeroForms shares the identical original-5 provenance (#443), the
+  // identical plain-prose instruction shape proven insufficient four times
+  // now, and the identical missing-from-RUNTIME_PROXY_PATH_SUBSTRINGS gap —
+  // strengthened here on that pattern match while its own live confirmation
+  // is still pending.
   ZeroForms: () =>
-    `call the same-origin proxy at \`/api/primitive/zeroforms/{path}\` (e.g. \`/api/primitive/zeroforms/forms\`) — NO Authorization header needed, the platform attaches the founder's real ZeroForms credential server-side; the path after \`zeroforms/\` matches ZeroForms' own REST path exactly (no /api prefix — ZeroForms' real routes are /v1/forms, not /api/v1/forms)`,
+    `call the same-origin proxy at \`/api/primitive/zeroforms/{path}\` — NO Authorization header needed, the platform attaches the founder's real ZeroForms credential server-side; the path after \`zeroforms/\` matches ZeroForms' own REST path exactly (no /api prefix — ZeroForms' real routes are /v1/forms, not /api/v1/forms).\n` +
+    '  Real call shape (copy this exactly, do not paraphrase — a default form itself is provisioned once at checkout via POST /forms, confirmed live per #421; the generated app only ever reads/writes forms + submissions through this proxy):\n' +
+    '  ```js\n' +
+    "  // List this company's real ZeroForms forms\n" +
+    "  const res = await fetch('/api/primitive/zeroforms/forms')\n" +
+    '  const forms = await res.json() // real forms, not a hardcoded form definition\n' +
+    '  ```\n' +
+    '  ANTI-PATTERN — FORBIDDEN: do NOT hand-roll a form builder or store submissions in /api/db instead of calling ' +
+    'the real ZeroForms proxy. If the feature is building/publishing forms or collecting submissions, it MUST call ' +
+    'GET/POST /api/primitive/zeroforms/forms — reimplementing it with /api/db rows instead is a FAILING implementation ' +
+    'even if the UI looks identical to the user.',
+  // #527/#414/#655: ZeroCRM CONFIRMED via the live sweep — a genuine full
+  // 30.3-minute generation (not a network-drop artifact) failed the same way
+  // as ZeroCommerce/AgentFlow. ZeroCRM was ALREADY wired into the runtime
+  // proxy route (app/api/primitive/[primitive]/[...path]/route.ts's
+  // PRIMITIVE_BASES + isFounderScopedPrimitive) and its real endpoint is
+  // separately live-verified (GET /api/v1/deals?org_id=<real org> → 200, org
+  // auto-provisioned on first call) — but it was missing from
+  // RUNTIME_PROXIED_PRIMITIVES entirely, so codegen never told the model
+  // ZeroCRM was directly callable AT ALL. A worse gap than ZeroCommerce's (no
+  // instruction vs. a weak one), caught by the same #524 scope check.
+  ZeroCRM: () =>
+    `call the same-origin proxy at \`/api/primitive/zerocrm/{path}\` — NO Authorization header needed, the platform attaches the founder's real ZeroCRM credential AND the correct \`org_id\` server-side; the path after \`zerocrm/\` matches ZeroCRM's own REST path exactly.\n` +
+    '  Real call shape (copy this exactly, do not paraphrase — live-verified per #414/#655: the org is auto-provisioned on first authenticated call, no separate onboarding step):\n' +
+    '  ```js\n' +
+    "  // List this company's real ZeroCRM contacts/deals (org_id is injected server-side — do not add it yourself)\n" +
+    "  const res = await fetch('/api/primitive/zerocrm/deals')\n" +
+    '  const deals = await res.json() // real ZeroCRM records, not fabricated contacts\n' +
+    '  ```\n' +
+    '  ANTI-PATTERN — FORBIDDEN: do NOT hand-roll a contacts/deals list using /api/db tables instead of calling the ' +
+    'real ZeroCRM proxy. If the feature is a lightweight CRM/contact-management surface, it MUST call ' +
+    'GET/POST /api/primitive/zerocrm/deals — persisting contacts through generic /api/db rows instead is a FAILING ' +
+    'implementation even if the UI looks identical to the user.',
   // #522: ZeroVoice closes the same gap #443 fixed for the 5 primitives above
   // — a real, founder-scoped credential is captured at provisioning time
   // (#415's explicit /api/build/zerovoice action), so the runtime proxy shape
@@ -909,11 +981,14 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
  * small, precise, regex-friendly fact instead of parsing prompt text.
  */
 export const RUNTIME_PROXY_PATH_SUBSTRINGS: Record<string, string[]> = {
-  // #524: was missing entirely for ZeroCommerce (and the other 4 original
-  // founder-scoped primitives — see that issue for scope), so the #518
-  // post-generation compliance validator had no way to catch an unwired
-  // ZeroCommerce selection. Now it does.
+  // #524/#525/#527: was missing entirely for all 5 original founder-scoped
+  // primitives, so the #518 post-generation compliance validator had no way
+  // to catch an unwired selection of any of them. Now it does.
   ZeroCommerce: ['/api/primitive/zerocommerce/commerce/products', '/api/primitive/zerocommerce/commerce/checkout'],
+  ZeroPipeline: ['/api/primitive/zeropipeline/deals'],
+  AgentFlow: ['/api/primitive/agentflow/projects/'],
+  ZeroForms: ['/api/primitive/zeroforms/forms'],
+  ZeroCRM: ['/api/primitive/zerocrm/deals'],
   ZeroVoice: ['/api/primitive/zerovoice/calls/outbound', '/api/primitive/zerovoice/sms/send'],
   ZeroMemory: ['/api/memory/remember', '/api/memory/recall'],
   'Browser Agent': ['/api/browser-agent/extract', '/api/browser-agent/act'],
