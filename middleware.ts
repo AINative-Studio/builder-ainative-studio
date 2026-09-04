@@ -140,6 +140,22 @@ export async function middleware(request: NextRequest) {
       // /api/memory/ — the same signed per-app data token; a generated app
       // has no session cookie to present here.
       pathname.startsWith('/api/opencapstack/') ||
+      // Model Catalog runtime proxy (#505). Self-authenticates exactly like
+      // /api/memory/ — the same signed per-app data token; a generated app
+      // has no session cookie to present here.
+      pathname.startsWith('/api/model-catalog/') ||
+      // AINativeNGO runtime proxy. Self-authenticates exactly like
+      // /api/memory/ — the same signed per-app data token; a generated app
+      // has no session cookie to present here.
+      pathname.startsWith('/api/ainative-ngo/') ||
+      // Developer Program runtime proxy (#505). Self-authenticates exactly
+      // like /api/memory/ — the same signed per-app data token; a generated
+      // app has no session cookie to present here.
+      pathname.startsWith('/api/developer-program/') ||
+      // Community runtime proxy (#505). Self-authenticates exactly like
+      // /api/memory/ — the same signed per-app data token; a generated app
+      // has no session cookie to present here.
+      pathname.startsWith('/api/community/') ||
       // Founder-scoped primitive runtime proxy (#443). Self-authenticates
       // exactly like /api/db/ — a deployed company reads COMPANY_SLUG from
       // its own env, the shared preview iframe presents a signed per-app

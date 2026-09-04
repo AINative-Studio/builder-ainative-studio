@@ -93,6 +93,20 @@ describe('dbTokenShim — generated apps get the right header on the right path'
     expect(captured.headers?.get('x-ainative-db-token')).toBe('real-db-token')
   })
 
+  it('attaches x-ainative-db-token on /api/model-catalog/* requests (#505)', async () => {
+    const html = dbTokenShim('real-db-token')
+    const { captured } = runShimAndCapture(html, '/api/model-catalog/list')
+    await window.fetch('/api/model-catalog/list')
+    expect(captured.headers?.get('x-ainative-db-token')).toBe('real-db-token')
+  })
+
+  it('attaches x-ainative-db-token on /api/ainative-ngo/* requests', async () => {
+    const html = dbTokenShim('real-db-token')
+    const { captured } = runShimAndCapture(html, '/api/ainative-ngo/institutions')
+    await window.fetch('/api/ainative-ngo/institutions')
+    expect(captured.headers?.get('x-ainative-db-token')).toBe('real-db-token')
+  })
+
   it('attaches x-ainative-primitive-token on a matching /api/primitive/{name}/ path', async () => {
     const html = dbTokenShim('real-db-token', { zerocommerce: 'real-primitive-token' })
     const { captured } = runShimAndCapture(html, '/api/primitive/zerocommerce/products')
