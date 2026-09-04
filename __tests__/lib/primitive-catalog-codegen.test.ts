@@ -478,3 +478,65 @@ describe('primitive-catalog additions (#410)', () => {
     })
   })
 })
+
+// =======================================
+// primitiveGroundingBlock (#519) — the planning-artifact sibling of
+// codegenCompositionBlock. Same selectPrimitives() call, phrased as prose
+// instruction for a business-writing model instead of a coding one.
+// =======================================
+describe('primitiveGroundingBlock (#519)', () => {
+  const journalingIdea =
+    'a personal journaling app that remembers my past entries and recalls relevant memories when I write something new'
+
+  it('is exported as a function', async () => {
+    const { primitiveGroundingBlock } = await import('@/lib/build/primitive-catalog')
+    expect(typeof primitiveGroundingBlock).toBe('function')
+  })
+
+  it('lists the real, idea-matched primitives (mirrors selectPrimitives) for a memory-recall idea', async () => {
+    const { primitiveGroundingBlock, selectPrimitives } = await import('@/lib/build/primitive-catalog')
+    const block = primitiveGroundingBlock(journalingIdea, 'company')
+    const { names } = selectPrimitives(journalingIdea, 'company')
+    for (const name of names) {
+      expect(block, `grounding block must list ${name}`).toContain(name)
+    }
+    expect(block).toContain('ZeroMemory')
+    expect(block).toContain('ZeroDB')
+  })
+
+  it('instructs citing real primitives instead of inventing third-party tools', async () => {
+    const { primitiveGroundingBlock } = await import('@/lib/build/primitive-catalog')
+    const block = primitiveGroundingBlock(journalingIdea, 'company')
+    expect(block).toMatch(/cite THESE real, already-selected AINative primitives/i)
+    expect(block).toMatch(/Do NOT invent or suggest[^.]*third-party tools/i)
+    // Names the exact tools the real production bug invented, so the model
+    // sees concrete examples of what NOT to say.
+    expect(block).toMatch(/OpenAI/)
+    expect(block).toMatch(/Firebase/)
+  })
+
+  it('produces materially different idea-matched primitive lists (not a hardcoded shortlist)', async () => {
+    const { primitiveGroundingBlock } = await import('@/lib/build/primitive-catalog')
+    const journaling = primitiveGroundingBlock(journalingIdea, 'company')
+    const crm = primitiveGroundingBlock('a B2B sales CRM to track deals and leads', 'company')
+    // ZeroMemory is foundational (always selected on the company track), so it
+    // appears in both — the real signal of idea-specificity is the non
+    // -foundational, trigger-matched primitive each idea pulls in.
+    expect(journaling).toContain('ZeroMemory')
+    expect(crm).toContain('ZeroPipeline')
+    expect(journaling).not.toContain('ZeroPipeline')
+  })
+
+  it('always includes the foundational primitives even for a non-matching idea', async () => {
+    const { primitiveGroundingBlock } = await import('@/lib/build/primitive-catalog')
+    const block = primitiveGroundingBlock('a scheduling app for hair salons', 'company')
+    expect(block).toContain('ZeroDB')
+  })
+
+  it('does not duplicate primitives that are both foundational and idea-matched', async () => {
+    const { primitiveGroundingBlock } = await import('@/lib/build/primitive-catalog')
+    const block = primitiveGroundingBlock(journalingIdea, 'company')
+    const occurrences = block.split('ZeroMemory —').length - 1
+    expect(occurrences).toBe(1)
+  })
+})

@@ -12,7 +12,7 @@
  * visitor (the swarm path is enterprise-gated — see core#6422).
  */
 
-import { catalogPromptBlock } from './primitive-catalog'
+import { catalogPromptBlock, primitiveGroundingBlock } from './primitive-catalog'
 import { codingStandardsContextBlock } from './coding-standards'
 
 export interface ArtifactSpec {
@@ -64,7 +64,11 @@ export const ARTIFACT_PROMPTS: Record<string, ArtifactSpec> = {
       'Write the VENTURE THESIS. JSON keys: meta (one-line description of what this artifact is), ' +
       'problem (the core problem this idea solves), problemTag (e.g. "EVIDENCE · N interviews" or "ASSUMPTION · TBD"), ' +
       'who (who feels the pain most), whoTag, wedge (the sharpest starting point), whyNow (why this is viable now). ' +
-      'Schema: {"meta","problem","problemTag","who","whoTag","wedge","whyNow"}',
+      'Schema: {"meta","problem","problemTag","who","whoTag","wedge","whyNow"}' +
+      // #519: whyNow/wedge often reach for a technical enabler ("AI embeddings now
+      // exist") — ground that in the platform's OWN already-selected primitives
+      // instead of generic third-party tech.
+      primitiveGroundingBlock(ctx.idea, ctx.track),
   },
   wedge: {
     system: BASE_SYSTEM,
@@ -82,7 +86,11 @@ export const ARTIFACT_PROMPTS: Record<string, ArtifactSpec> = {
       ctxPreamble(ctx) +
       'Write the BUSINESS MODEL. JSON: tiers (array of 2-4 {plan, price, for}), ' +
       'economics (array of 2-3 unit-economics bullets specific to this idea). ' +
-      'Schema: {"tiers":[{"plan","price","for"}],"economics":[...]}',
+      'Schema: {"tiers":[{"plan","price","for"}],"economics":[...]}' +
+      // #519: unit-economics bullets often name a cost driver (embeddings API,
+      // hosting, a third-party SaaS bill) — ground those in the real, already
+      // -selected AINative primitives so the economics reflect what's actually built.
+      primitiveGroundingBlock(ctx.idea, ctx.track),
   },
   positioning: {
     system: BASE_SYSTEM,
@@ -106,7 +114,12 @@ export const ARTIFACT_PROMPTS: Record<string, ArtifactSpec> = {
     user: (ctx) =>
       ctxPreamble(ctx) +
       'Write the 30-DAY PLAN. JSON: weeks (array of exactly 4 {w:"Week N", d:"concrete goal for that week"}). ' +
-      'Make each week specific to this idea. Schema: {"weeks":[{"w","d"}]}',
+      'Make each week specific to this idea. Schema: {"weeks":[{"w","d"}]}' +
+      // #519: this is the artifact the bug report caught red-handed — a real
+      // production plan30 said "OpenAI embeddings API" + "Firebase" for a memory
+      // -recall feature the SAME session's composition table correctly wired to
+      // ZeroMemory + ZeroDB. Ground the MVP/build weeks in the real selection.
+      primitiveGroundingBlock(ctx.idea, ctx.track),
   },
 
   // ---- App Track ----

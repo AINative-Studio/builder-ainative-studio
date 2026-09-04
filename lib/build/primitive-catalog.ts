@@ -831,3 +831,46 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
     componentGuidanceBlock(idea)
   )
 }
+
+/**
+ * PLANNING/ARTIFACT primitive-grounding block (#519).
+ *
+ * codegenCompositionBlock() (above) tells the CODE-GENERATION model which real
+ * AINative primitives to wire up. But the company-track PLANNING artifacts
+ * (thesis, businessModel, plan30, …) are prose written by a completely
+ * separate LLM call (app/api/build/artifact/route.ts via ARTIFACT_PROMPTS in
+ * artifact-prompts.ts) that never received any equivalent instruction — so
+ * when a plan discusses technical implementation, the model falls back to
+ * generic industry knowledge (OpenAI embeddings, Firebase, Stripe, …) instead
+ * of the platform's OWN already-selected primitives. A real production run
+ * for a journaling app whose composition table correctly cited ZeroMemory +
+ * ZeroDB produced a 30-Day Plan that instead said "OpenAI embeddings API" and
+ * "Firebase" — same idea, same session, two inconsistent stories.
+ *
+ * This is the prose-appropriate sibling of codegenCompositionBlock(): same
+ * selectPrimitives() call (so the planning artifacts and the composition
+ * table always agree on what was selected), but phrased as an instruction to
+ * a business-writing model, not a coding one — cite these primitives BY NAME
+ * when the plan touches implementation, and do not invent third-party tools
+ * for capabilities the platform already provides.
+ */
+export function primitiveGroundingBlock(idea: string, track: 'app' | 'company' = 'company', role?: CompanyRole): string {
+  const { foundational, selected } = selectPrimitives(idea, track, 6, role)
+  const seen = new Set<string>()
+  const lines: string[] = []
+  for (const p of [...foundational, ...selected]) {
+    if (seen.has(p.name)) continue
+    seen.add(p.name)
+    lines.push(`- ${p.name} — ${p.purpose}`)
+  }
+  return (
+    `\n\nREAL AINATIVE PRIMITIVES ALREADY SELECTED FOR THIS IDEA (do not invent alternatives):\n` +
+    lines.join('\n') + '\n' +
+    `When this plan/artifact discusses technical implementation (data storage, memory/recall, search, payments, ` +
+    `CRM, messaging, auth, or any other capability one of the primitives above already provides), cite THESE real, ` +
+    `already-selected AINative primitives by name instead of generic third-party tools. Do NOT invent or suggest ` +
+    `third-party tools (e.g. OpenAI's embeddings API, Firebase, Stripe, Twilio, Auth0) for capabilities these ` +
+    `primitives already provide — this idea's own composition table already committed to the list above, so this ` +
+    `artifact must stay consistent with it.`
+  )
+}
