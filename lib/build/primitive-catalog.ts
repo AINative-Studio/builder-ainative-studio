@@ -738,8 +738,36 @@ export function mcpDataProvisioningBlock(): string {
 const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = {
   ZeroDB: () => `call its REST API at \`https://api.ainative.studio/api/v1\` (Authorization: Bearer <AINATIVE_API_KEY>)`,
   'Instant DB': () => `call its REST API at \`https://api.ainative.studio/api/v1\` (Authorization: Bearer <AINATIVE_API_KEY>)`,
+  // #524: ZeroCommerce was one of the ORIGINAL 5 founder-scoped primitives
+  // (#443) — trusted on faith since then, never behaviorally live-tested. A
+  // real production run for a "handmade coffee mugs" shop idea produced
+  // 76,015 chars of generated code that persisted the ENTIRE product catalog
+  // + checkout through generic /api/db tables and called
+  // /api/primitive/zerocommerce/ ZERO times, despite this instruction being
+  // present in the composition block. Root cause: same as #518 (ZeroMemory)
+  // — plain prose with no code fence/anti-pattern language is too easy for
+  // the model to satisfy with a lookalike reimplementation instead of the
+  // real call. Strengthened with the same treatment #521 gave the 8 newer
+  // primitives: a literal, copy-pasteable fetch() snippet + an explicit
+  // named anti-pattern to forbid, naming the EXACT failure mode observed.
   ZeroCommerce: () =>
-    `call the same-origin proxy at \`/api/primitive/zerocommerce/{path}\` (e.g. \`/api/primitive/zerocommerce/commerce/products\`) — NO Authorization header needed, the platform attaches the founder's real ZeroCommerce credential server-side; the path after \`zerocommerce/\` matches ZeroCommerce's own REST path exactly`,
+    `call the same-origin proxy at \`/api/primitive/zerocommerce/{path}\` — NO Authorization header needed, the platform attaches the founder's real ZeroCommerce credential server-side; the path after \`zerocommerce/\` matches ZeroCommerce's own REST path exactly.\n` +
+    '  Real call shape (copy this exactly, do not paraphrase — the store itself is provisioned once at checkout via POST /commerce/stores/onboard, confirmed live per #417; the generated app only ever reads/writes products, cart, and orders through this proxy):\n' +
+    '  ```js\n' +
+    "  // List products in this company's real ZeroCommerce catalog\n" +
+    "  const res = await fetch('/api/primitive/zerocommerce/commerce/products')\n" +
+    '  const { products } = await res.json() // real catalog rows, not a hardcoded array\n' +
+    '\n' +
+    "  // Create a checkout session for the current cart\n" +
+    "  await fetch('/api/primitive/zerocommerce/commerce/checkout', {\n" +
+    "    method: 'POST', headers: { 'Content-Type': 'application/json' },\n" +
+    '    body: JSON.stringify({ items: cartItems }),\n' +
+    '  })\n' +
+    '  ```\n' +
+    '  ANTI-PATTERN — FORBIDDEN: do NOT hand-roll a product catalog, shopping cart, or checkout using /api/db tables ' +
+    'instead of calling the real ZeroCommerce proxy. If the feature is a product listing, cart, or checkout, it MUST ' +
+    'call GET/POST /api/primitive/zerocommerce/commerce/{products,checkout} — persisting products/cart/orders through ' +
+    'generic /api/db rows instead is a FAILING implementation even if the UI looks identical to the user.',
   ZeroPipeline: () =>
     `call the same-origin proxy at \`/api/primitive/zeropipeline/{path}\` (e.g. \`/api/primitive/zeropipeline/pipelines\`) — NO Authorization header needed, the platform attaches the founder's real ZeroPipeline credential server-side; the path after \`zeropipeline/\` matches ZeroPipeline's own REST path exactly`,
   AgentFlow: () =>
@@ -881,6 +909,11 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
  * small, precise, regex-friendly fact instead of parsing prompt text.
  */
 export const RUNTIME_PROXY_PATH_SUBSTRINGS: Record<string, string[]> = {
+  // #524: was missing entirely for ZeroCommerce (and the other 4 original
+  // founder-scoped primitives — see that issue for scope), so the #518
+  // post-generation compliance validator had no way to catch an unwired
+  // ZeroCommerce selection. Now it does.
+  ZeroCommerce: ['/api/primitive/zerocommerce/commerce/products', '/api/primitive/zerocommerce/commerce/checkout'],
   ZeroVoice: ['/api/primitive/zerovoice/calls/outbound', '/api/primitive/zerovoice/sms/send'],
   ZeroMemory: ['/api/memory/remember', '/api/memory/recall'],
   'Browser Agent': ['/api/browser-agent/extract', '/api/browser-agent/act'],

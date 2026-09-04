@@ -466,6 +466,78 @@ describe('primitive-catalog additions (#410)', () => {
     })
   })
 
+  describe('#524 fix — ZeroCommerce runtime proxy compliance (real live generation never called it)', () => {
+    // Real repro from #524: idea "an online shop selling handmade coffee mugs
+    // with a product catalog and checkout" produced 76,015 chars of generated
+    // code with ZERO calls to /api/primitive/zerocommerce/ — everything was
+    // persisted through generic /api/db tables instead, despite ZeroCommerce's
+    // (then plain-prose) instruction being present in the composition block.
+    const MUG_SHOP_IDEA = 'an online shop selling handmade coffee mugs with a product catalog and checkout'
+
+    it('the idea selects ZeroCommerce', () => {
+      const { names } = selectPrimitives(MUG_SHOP_IDEA, 'app')
+      expect(names).toContain('ZeroCommerce')
+    })
+
+    it('the composition block carries a literal code fence + explicit anti-pattern language for ZeroCommerce', () => {
+      const block = codegenCompositionBlock(MUG_SHOP_IDEA, 'app')
+      expect(block).toContain('ZeroCommerce')
+      expect(block).toMatch(/```js[\s\S]*fetch\('\/api\/primitive\/zerocommerce\/commerce\/products'\)/)
+      expect(block).toMatch(/fetch\('\/api\/primitive\/zerocommerce\/commerce\/checkout'/)
+      expect(block).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      // Names the EXACT observed failure mode, not a generic warning.
+      expect(block).toMatch(/do NOT hand-roll a product catalog, shopping cart, or checkout using \/api\/db tables/i)
+    })
+
+    it('does not leak the raw external ZeroCommerce apiBase into the prompt', () => {
+      const block = codegenCompositionBlock(MUG_SHOP_IDEA, 'app')
+      expect(block).not.toContain('zerocommerce.ainative.studio')
+    })
+
+    it('RUNTIME_PROXY_PATH_SUBSTRINGS carries the real proxy paths so the #518 compliance validator catches an unwired ZeroCommerce selection', () => {
+      expect(RUNTIME_PROXY_PATH_SUBSTRINGS.ZeroCommerce).toEqual([
+        '/api/primitive/zerocommerce/commerce/products',
+        '/api/primitive/zerocommerce/commerce/checkout',
+      ])
+      expect(getComplianceCheckedPrimitiveNames()).toContain('ZeroCommerce')
+    })
+
+    it('getRuntimeProxyInstruction returns the same instruction text codegenCompositionBlock injects', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')
+      expect(instruction).toBeDefined()
+      expect(instruction).toMatch(/fetch\('\/api\/primitive\/zerocommerce\/commerce\/products'\)/)
+      expect(instruction).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      const block = codegenCompositionBlock(MUG_SHOP_IDEA, 'app')
+      expect(block).toContain(instruction!.split('\n')[0])
+    })
+
+    it('findPrimitiveComplianceGaps (the #518 validator) flags a commerce idea whose generated code never called the ZeroCommerce proxy', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      // Simulate exactly the #524 failure: a real generated app that persists
+      // products/cart through /api/db and never touches /api/primitive/zerocommerce/.
+      const brokenCode = `
+        function App() {
+          useEffect(() => { fetch('/api/db/products').then(r => r.json()).then(d => setProducts(d.data)) }, [])
+          async function checkout() { await fetch('/api/db/orders', { method: 'POST', body: JSON.stringify(cart) }) }
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(brokenCode, MUG_SHOP_IDEA)
+      expect(gaps).toContain('ZeroCommerce')
+    })
+
+    it('findPrimitiveComplianceGaps does not flag ZeroCommerce when the real proxy IS called', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      const compliantCode = `
+        function App() {
+          useEffect(() => { fetch('/api/primitive/zerocommerce/commerce/products').then(r => r.json()).then(d => setProducts(d.products)) }, [])
+          async function checkout() { await fetch('/api/primitive/zerocommerce/commerce/checkout', { method: 'POST', body: JSON.stringify({ items: cart }) }) }
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(compliantCode, MUG_SHOP_IDEA)
+      expect(gaps).not.toContain('ZeroCommerce')
+    })
+  })
+
   describe('company role selection (#448 — "build a company" outcome legibility)', () => {
     // Deliberately generic/vague ideas with NO trigger-word matches for the
     // role's own primitives — this is the real regression risk: a role must
