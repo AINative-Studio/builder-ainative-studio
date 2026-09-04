@@ -334,10 +334,18 @@ export function generateJsonLd(meta: AppMetadata): object {
 }
 
 /**
- * Generate the complete AINative file set
+ * Generate the complete AINative file set. `overrides` lets a caller with real,
+ * durable company data (name/tagline/live URL — from app-registry.ts, not the
+ * heuristic keyword-matching extractAppMetadata does on the raw idea prompt)
+ * replace the guessed fields — used by the live-serving route (#493) so a
+ * founder's real domain/name appears instead of a placeholder `{name}.app`.
  */
-export function generateAINativeFileSet(prompt: string, code: string): Record<string, string> {
-  const meta = extractAppMetadata(prompt, code)
+export function generateAINativeFileSet(
+  prompt: string,
+  code: string,
+  overrides: Partial<Pick<AppMetadata, 'name' | 'description' | 'domain'>> = {},
+): Record<string, string> {
+  const meta = { ...extractAppMetadata(prompt, code), ...overrides }
 
   return {
     'public/robots.txt': generateRobotsTxt(meta),
