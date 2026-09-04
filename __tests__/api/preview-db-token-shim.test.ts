@@ -58,6 +58,34 @@ describe('dbTokenShim — generated apps get the right header on the right path'
     expect(captured.headers?.get('x-ainative-db-token')).toBe('real-db-token')
   })
 
+  it('attaches x-ainative-db-token on /api/browser-agent/* requests (#499)', async () => {
+    const html = dbTokenShim('real-db-token')
+    const { captured } = runShimAndCapture(html, '/api/browser-agent/extract')
+    await window.fetch('/api/browser-agent/extract', { method: 'POST' })
+    expect(captured.headers?.get('x-ainative-db-token')).toBe('real-db-token')
+  })
+
+  it('attaches x-ainative-db-token on /api/browser-agent/act too', async () => {
+    const html = dbTokenShim('real-db-token')
+    const { captured } = runShimAndCapture(html, '/api/browser-agent/act')
+    await window.fetch('/api/browser-agent/act', { method: 'POST' })
+    expect(captured.headers?.get('x-ainative-db-token')).toBe('real-db-token')
+  })
+
+  it('attaches x-ainative-db-token on /api/agent402/* requests (#500)', async () => {
+    const html = dbTokenShim('real-db-token')
+    const { captured } = runShimAndCapture(html, '/api/agent402/capabilities')
+    await window.fetch('/api/agent402/capabilities')
+    expect(captured.headers?.get('x-ainative-db-token')).toBe('real-db-token')
+  })
+
+  it('attaches x-ainative-db-token on /api/agent402/projects too', async () => {
+    const html = dbTokenShim('real-db-token')
+    const { captured } = runShimAndCapture(html, '/api/agent402/projects')
+    await window.fetch('/api/agent402/projects')
+    expect(captured.headers?.get('x-ainative-db-token')).toBe('real-db-token')
+  })
+
   it('attaches x-ainative-primitive-token on a matching /api/primitive/{name}/ path', async () => {
     const html = dbTokenShim('real-db-token', { zerocommerce: 'real-primitive-token' })
     const { captured } = runShimAndCapture(html, '/api/primitive/zerocommerce/products')
