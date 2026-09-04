@@ -3,6 +3,7 @@ import {
   usesDataLayer,
   hasPersistenceGap,
   findAikitGaps,
+  findPrimitiveComplianceGaps,
   checkObedience,
   buildObediencePrompt,
 } from '@/lib/build/obedience-gate'
@@ -122,5 +123,112 @@ describe('obedience-gate: checkObedience + prompt', () => {
   it('never throws on empty/garbage input', () => {
     expect(() => checkObedience('', '')).not.toThrow()
     expect(checkObedience('', '').ok).toBe(true)
+  })
+})
+
+// #518: codegenCompositionBlock correctly instructs the model to call a
+// RUNTIME_PROXIED_PRIMITIVES primitive's real proxy, but a live production test
+// showed the model doesn't reliably follow that instruction — a journaling app's
+// "related memories" feature was pure client-side keyword matching over rows
+// already loaded from /api/db, never calling /api/memory/remember or
+// /api/memory/recall despite ZeroMemory being selected and instructed. This gate
+// detects that specific compliance gap (idea asked for the capability, code never
+// called the real endpoint) so the existing obedience retry loop can repair it.
+describe('obedience-gate: primitive proxy compliance (#518)', () => {
+  const keywordMatchingMemoryApp = `
+function App(){
+  const [entries, setEntries] = useState([])
+  useEffect(()=>{ fetch('/api/db/journal_entries').then(r=>r.json()).then(d=>setEntries(d.data||[])) },[])
+  function findRelatedMemories(text){
+    const words = text.toLowerCase().split(/\\s+/)
+    return entries.filter(e => words.some(w => e.text.toLowerCase().includes(w)))
+  }
+  return (<div>{entries.map(e => <div key={e.id}>{e.text}</div>)}</div>)
+}`
+
+  const realMemoryApp = `
+function App(){
+  const [entries, setEntries] = useState([])
+  useEffect(()=>{ fetch('/api/db/journal_entries').then(r=>r.json()).then(d=>setEntries(d.data||[])) },[])
+  async function findRelatedMemories(text){
+    const res = await fetch('/api/memory/recall', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ query: text }),
+    })
+    return (await res.json()).results
+  }
+  return (<div>{entries.map(e => <div key={e.id}>{e.text}</div>)}</div>)
+}`
+
+  // Note: deliberately avoids substrings like "remembers" (contains "members",
+  // a Community trigger) so this idea only matches ZeroMemory's own triggers —
+  // keeps the compliance-gap assertions below scoped to the one primitive under
+  // test instead of incidentally tripping an unrelated one via keyword overlap.
+  const JOURNAL_IDEA = 'a personal journaling app with memory of past entries that recalls relevant history when I write something new'
+
+  it('reproduces the real #518 failure: journaling idea + client-side keyword matching flags ZeroMemory', () => {
+    const gaps = findPrimitiveComplianceGaps(keywordMatchingMemoryApp, JOURNAL_IDEA)
+    expect(gaps).toContain('ZeroMemory')
+  })
+
+  it('does NOT flag when the app actually calls the real ZeroMemory proxy', () => {
+    const gaps = findPrimitiveComplianceGaps(realMemoryApp, JOURNAL_IDEA)
+    expect(gaps).not.toContain('ZeroMemory')
+  })
+
+  it('does NOT flag ZeroMemory for an idea that never asked for memory/recall (avoids false positives on foundational primitives)', () => {
+    // ZeroMemory is `foundational: true` — always selected/wired regardless of
+    // idea — so this must be gated on idea-trigger overlap, not raw selection,
+    // or a plain counter app would falsely fail this check forever.
+    const counter = "function App(){const[n,setN]=useState(0);return <button onClick={()=>setN(n+1)}>{n}</button>}"
+    expect(findPrimitiveComplianceGaps(counter, 'a simple counter app')).toEqual([])
+  })
+
+  it('never throws and returns no gaps on empty/garbage input', () => {
+    expect(() => findPrimitiveComplianceGaps('', '')).not.toThrow()
+    expect(findPrimitiveComplianceGaps('', '')).toEqual([])
+  })
+
+  it('flags Browser Agent when a scraping idea never calls its real extract/act proxy', () => {
+    const fakeScraper = "function App(){ const prices = [{name:'Competitor A', price: 9.99}]; return <div/> }"
+    const gaps = findPrimitiveComplianceGaps(fakeScraper, 'a tool that scrapes competitor pricing from their websites')
+    expect(gaps).toContain('Browser Agent')
+  })
+
+  it('does not flag Browser Agent when the real extract proxy is called', () => {
+    const realScraper = "function App(){ fetch('/api/browser-agent/extract', {method:'POST'}); return <div/> }"
+    const gaps = findPrimitiveComplianceGaps(realScraper, 'a tool that scrapes competitor pricing from their websites')
+    expect(gaps).not.toContain('Browser Agent')
+  })
+
+  it('checkObedience surfaces primitiveComplianceGaps and a reason string', () => {
+    const r = checkObedience(keywordMatchingMemoryApp, JOURNAL_IDEA)
+    expect(r.ok).toBe(false)
+    expect(r.primitiveComplianceGaps).toContain('ZeroMemory')
+    expect(r.reasons.join(' ')).toMatch(/ZeroMemory/)
+  })
+
+  it('buildObediencePrompt includes the real call shape + anti-pattern warning for the flagged primitive', () => {
+    const r = checkObedience(keywordMatchingMemoryApp, JOURNAL_IDEA)
+    const prompt = buildObediencePrompt(JOURNAL_IDEA, r)
+    expect(prompt).toMatch(/YOU WERE TOLD TO CALL THESE REAL PRIMITIVES AND DID NOT/)
+    expect(prompt).toContain('ZeroMemory')
+    expect(prompt).toMatch(/POST \/api\/memory\/recall/)
+    expect(prompt).toMatch(/client-side keyword\/text/i)
+    expect(prompt).toMatch(/Return the corrected full app/)
+  })
+
+  it('buildObediencePrompt omits the primitive-compliance section when there is no such gap', () => {
+    const r = checkObedience(realMemoryApp, JOURNAL_IDEA)
+    const prompt = buildObediencePrompt(JOURNAL_IDEA, r)
+    expect(prompt).not.toMatch(/YOU WERE TOLD TO CALL THESE REAL PRIMITIVES AND DID NOT/)
+  })
+
+  it('a role can surface a role-emphasized primitive gap even without idea-text overlap', () => {
+    // Sales role boosts ZeroPipeline/ZeroInvoice/ZeroCommerce regardless of idea
+    // text — but ZeroPipeline/etc. aren't in RUNTIME_PROXY_PATH_SUBSTRINGS, so this
+    // just guards that passing a role doesn't throw and still returns a real array.
+    expect(() => findPrimitiveComplianceGaps('function App(){}', 'a small business', 'sales')).not.toThrow()
+    expect(Array.isArray(findPrimitiveComplianceGaps('function App(){}', 'a small business', 'sales'))).toBe(true)
   })
 })

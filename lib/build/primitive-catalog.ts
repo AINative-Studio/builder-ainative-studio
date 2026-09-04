@@ -714,6 +714,19 @@ export function mcpDataProvisioningBlock(): string {
  * being told NOT to call its own live proxy. Same bug class as #443, just
  * one layer up: the backend existed, but nothing told the model it could
  * use it.
+ *
+ * #518 follow-up: even with the instruction textually correct, a real
+ * production run for a journaling app that should have called
+ * POST /api/memory/recall instead reimplemented "related memories" as
+ * client-side keyword-overlap matching over rows already loaded from
+ * /api/db — a hand-rolled substitute for the exact primitive it was told to
+ * use, with zero calls to /api/memory/* anywhere in the generated source.
+ * Prose-only instructions are too easy for the model to satisfy with a
+ * lookalike reimplementation instead of the real call. Each entry below now
+ * carries (a) a literal, copy-pasteable fetch() snippet showing the exact
+ * call shape, and (b) explicit anti-pattern language naming the specific
+ * hand-rolled substitute to avoid for that primitive, not just prose
+ * describing the endpoint.
  */
 const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = {
   ZeroDB: () => `call its REST API at \`https://api.ainative.studio/api/v1\` (Authorization: Bearer <AINATIVE_API_KEY>)`,
@@ -730,22 +743,136 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
   // 5 above: a fixed `/api/{slug}/{action}` route with a hard allowlist of
   // real actions (not an arbitrary-path passthrough), so the model must be
   // told the EXACT allowed actions or it will hallucinate a path that 404s.
+  //
+  // #518: each of these 8 now also carries a literal fetch() snippet + a
+  // named anti-pattern to forbid, not just prose — see this constant's doc.
   ZeroMemory: () =>
-    `call the same-origin proxy — NO Authorization header needed, the platform attaches this company's own memory namespace server-side: POST /api/memory/remember { content, memory_type? } and POST /api/memory/recall { query } (both JSON body, return the real ZeroMemory response)`,
+    `call the same-origin proxy — NO Authorization header needed, the platform attaches this company's own memory namespace server-side: POST /api/memory/remember { content, memory_type? } and POST /api/memory/recall { query } (both JSON body, return the real ZeroMemory response).\n` +
+    '  Real call shape (copy this exactly, do not paraphrase):\n' +
+    '  ```js\n' +
+    "  // Store a memory (call this after the user creates/edits a record worth recalling later)\n" +
+    "  await fetch('/api/memory/remember', {\n" +
+    "    method: 'POST', headers: { 'Content-Type': 'application/json' },\n" +
+    '    body: JSON.stringify({ content: entryText, memory_type: \'episodic\' }),\n' +
+    '  })\n' +
+    '\n' +
+    "  // Recall relevant memories (call this to find items semantically related to new input)\n" +
+    "  const res = await fetch('/api/memory/recall', {\n" +
+    "    method: 'POST', headers: { 'Content-Type': 'application/json' },\n" +
+    '    body: JSON.stringify({ query: newEntryText }),\n' +
+    '  })\n' +
+    '  const { results } = await res.json() // real ZeroMemory semantic matches, not a keyword filter you wrote\n' +
+    '  ```\n' +
+    '  ANTI-PATTERN — FORBIDDEN: do NOT implement "related/similar memories", "recall", or "surface past entries" as ' +
+    'client-side keyword/substring/word-overlap matching over rows already loaded from /api/db (e.g. splitting text ' +
+    'into words and scoring overlap). That defeats the entire purpose of ZeroMemory\'s semantic memory layer — it is ' +
+    'not a text-search convenience, it is the actual feature. You MUST call POST /api/memory/remember and ' +
+    'POST /api/memory/recall for any "remembers"/"recalls"/"related to past"/"similar to previous" feature; a ' +
+    'hand-rolled lookalike is a FAILING implementation even if it looks similar to the user.',
   'Browser Agent': () =>
-    `call the same-origin proxy — NO Authorization header needed: POST /api/browser-agent/extract { url, extract_goal } and POST /api/browser-agent/act { url, instruction } (both JSON body)`,
+    `call the same-origin proxy — NO Authorization header needed: POST /api/browser-agent/extract { url, extract_goal } and POST /api/browser-agent/act { url, instruction } (both JSON body).\n` +
+    '  Real call shape:\n' +
+    '  ```js\n' +
+    "  const res = await fetch('/api/browser-agent/extract', {\n" +
+    "    method: 'POST', headers: { 'Content-Type': 'application/json' },\n" +
+    "    body: JSON.stringify({ url: targetUrl, extract_goal: 'the specific data to pull out' }),\n" +
+    '  })\n' +
+    '  const data = await res.json() // real extracted data, not a guessed/mocked value\n' +
+    '  ```\n' +
+    '  ANTI-PATTERN — FORBIDDEN: do NOT fabricate scraped/extracted data inline (hardcoded arrays claiming to be ' +
+    '"live" competitor prices, listings, or page content) instead of calling /api/browser-agent/extract or /act. ' +
+    'If the feature claims to read a real external page, it MUST call this proxy.',
   Agent402: () =>
-    `call the same-origin proxy — NO Authorization header needed, GET only: GET /api/agent402/capabilities and GET /api/agent402/projects (payments/payouts/Hedera actions are deliberately NOT exposed — do not attempt them)`,
+    `call the same-origin proxy — NO Authorization header needed, GET only: GET /api/agent402/capabilities and GET /api/agent402/projects (payments/payouts/Hedera actions are deliberately NOT exposed — do not attempt them).\n` +
+    '  Real call shape:\n' +
+    '  ```js\n' +
+    "  const res = await fetch('/api/agent402/capabilities')\n" +
+    '  const { capabilities } = await res.json()\n' +
+    '  ```\n' +
+    '  ANTI-PATTERN — FORBIDDEN: do NOT hardcode a fake "agent payment capabilities" or "x402 project" list — call ' +
+    'GET /api/agent402/capabilities / GET /api/agent402/projects for the real data.',
   OpenCapStack: () =>
-    `call the same-origin proxy — NO Authorization header needed: GET /api/opencapstack/company returns this company's own cap-table record (404 if none was provisioned at checkout)`,
+    `call the same-origin proxy — NO Authorization header needed: GET /api/opencapstack/company returns this company's own cap-table record (404 if none was provisioned at checkout).\n` +
+    '  Real call shape:\n' +
+    '  ```js\n' +
+    "  const res = await fetch('/api/opencapstack/company')\n" +
+    '  const capTable = res.ok ? await res.json() : null // 404 = not provisioned, handle gracefully\n' +
+    '  ```\n' +
+    '  ANTI-PATTERN — FORBIDDEN: do NOT hand-roll cap-table math (dilution, vesting schedules, SAFE conversion) with ' +
+    'local state — call GET /api/opencapstack/company for the real, already-provisioned record.',
   'Model Catalog': () =>
-    `call the same-origin proxy — NO Authorization header needed, GET only: GET /api/model-catalog/list returns the real available AINative inference models`,
+    `call the same-origin proxy — NO Authorization header needed, GET only: GET /api/model-catalog/list returns the real available AINative inference models.\n` +
+    '  Real call shape:\n' +
+    '  ```js\n' +
+    "  const res = await fetch('/api/model-catalog/list')\n" +
+    '  const { models } = await res.json() // real, current model list — not a hardcoded array\n' +
+    '  ```\n' +
+    '  ANTI-PATTERN — FORBIDDEN: do NOT hardcode a static list of model names/prices in the component — that list ' +
+    'goes stale immediately; call GET /api/model-catalog/list for the live catalog.',
   'Developer Program': () =>
-    `call the same-origin proxy — NO Authorization header needed, GET only: GET /api/developer-program/analytics and GET /api/developer-program/logs (earnings/payouts are deliberately NOT exposed — do not attempt them)`,
+    `call the same-origin proxy — NO Authorization header needed, GET only: GET /api/developer-program/analytics and GET /api/developer-program/logs (earnings/payouts are deliberately NOT exposed — do not attempt them).\n` +
+    '  Real call shape:\n' +
+    '  ```js\n' +
+    "  const res = await fetch('/api/developer-program/analytics')\n" +
+    '  const analytics = await res.json() // real usage analytics, not mocked numbers\n' +
+    '  ```\n' +
+    '  ANTI-PATTERN — FORBIDDEN: do NOT invent placeholder analytics/usage numbers — call ' +
+    'GET /api/developer-program/analytics and /logs for the real data.',
   Community: () =>
-    `call the same-origin proxy — NO Authorization header needed, GET only: GET /api/community/members returns the real AINative community member list`,
+    `call the same-origin proxy — NO Authorization header needed, GET only: GET /api/community/members returns the real AINative community member list.\n` +
+    '  Real call shape:\n' +
+    '  ```js\n' +
+    "  const res = await fetch('/api/community/members')\n" +
+    '  const { members } = await res.json() // real member list, not fabricated profiles\n' +
+    '  ```\n' +
+    '  ANTI-PATTERN — FORBIDDEN: do NOT fabricate a fake member/user list — call GET /api/community/members.',
   AINativeNGO: () =>
-    `call the same-origin proxy — NO Authorization header needed, GET only: GET /api/ainative-ngo/institutions returns real nonprofit/NGO institution records`,
+    `call the same-origin proxy — NO Authorization header needed, GET only: GET /api/ainative-ngo/institutions returns real nonprofit/NGO institution records.\n` +
+    '  Real call shape:\n' +
+    '  ```js\n' +
+    "  const res = await fetch('/api/ainative-ngo/institutions')\n" +
+    '  const { institutions } = await res.json() // real institution records, not sample data\n' +
+    '  ```\n' +
+    '  ANTI-PATTERN — FORBIDDEN: do NOT hardcode sample nonprofit/institution records — call ' +
+    'GET /api/ainative-ngo/institutions for the real data.',
+}
+
+/**
+ * Names of catalog primitives whose selection implies a specific, greppable
+ * real-proxy path substring that MUST appear somewhere in the generated code
+ * if that primitive was actually wired (used by the #518 post-generation
+ * compliance check below). Kept separate from RUNTIME_PROXIED_PRIMITIVES'S
+ * prompt strings (which are prose+code for the MODEL) so the validator has a
+ * small, precise, regex-friendly fact instead of parsing prompt text.
+ */
+export const RUNTIME_PROXY_PATH_SUBSTRINGS: Record<string, string[]> = {
+  ZeroMemory: ['/api/memory/remember', '/api/memory/recall'],
+  'Browser Agent': ['/api/browser-agent/extract', '/api/browser-agent/act'],
+  Agent402: ['/api/agent402/capabilities', '/api/agent402/projects'],
+  OpenCapStack: ['/api/opencapstack/company'],
+  'Model Catalog': ['/api/model-catalog/list'],
+  'Developer Program': ['/api/developer-program/analytics', '/api/developer-program/logs'],
+  Community: ['/api/community/members'],
+  AINativeNGO: ['/api/ainative-ngo/institutions'],
+}
+
+/** Names of primitives covered by the #518 post-generation compliance check. */
+export function getComplianceCheckedPrimitiveNames(): string[] {
+  return Object.keys(RUNTIME_PROXY_PATH_SUBSTRINGS)
+}
+
+/**
+ * The exact "To use" instruction (code snippet + anti-pattern language) for a
+ * RUNTIME_PROXIED_PRIMITIVES primitive, keyed by name. Exposed so the #518
+ * post-generation repair prompt (lib/build/obedience-gate.ts) can quote the
+ * SAME instruction the model already got in the composition block instead of
+ * duplicating it — a repair pass that repeats the identical, specific
+ * anti-pattern warning is more likely to land than a generic "please fix"
+ * re-prompt. Returns undefined for a primitive not in the map.
+ */
+export function getRuntimeProxyInstruction(name: string): string | undefined {
+  const build = RUNTIME_PROXIED_PRIMITIVES[name]
+  return build ? build(getPrimitive(name)?.apiBase || '') : undefined
 }
 
 /**

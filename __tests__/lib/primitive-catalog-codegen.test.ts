@@ -6,6 +6,9 @@ import {
   CATALOG,
   CATALOG_SIZE,
   getPrimitive,
+  RUNTIME_PROXY_PATH_SUBSTRINGS,
+  getRuntimeProxyInstruction,
+  getComplianceCheckedPrimitiveNames,
 } from '@/lib/build/primitive-catalog'
 
 describe('primitive-catalog codegen composition (#218)', () => {
@@ -538,5 +541,76 @@ describe('primitiveGroundingBlock (#519)', () => {
     const block = primitiveGroundingBlock(journalingIdea, 'company')
     const occurrences = block.split('ZeroMemory —').length - 1
     expect(occurrences).toBe(1)
+  })
+})
+
+// #518: codegenCompositionBlock's instruction is textually correct but a real
+// production run showed the model doesn't reliably follow it (a journaling app's
+// ZeroMemory "related memories" feature was hand-rolled client-side keyword
+// matching, never calling /api/memory/*). Fix #1: strengthen each
+// RUNTIME_PROXIED_PRIMITIVES instruction with a literal, copy-pasteable code
+// snippet + explicit anti-pattern language naming the specific hand-rolled
+// substitute to forbid — these tests cover that fix directly.
+describe('#518: strengthened runtime-proxy instructions (literal code + anti-pattern language)', () => {
+  it('ZeroMemory instruction includes a literal fetch() snippet for both remember and recall', () => {
+    const block = codegenCompositionBlock('a habit tracker app', 'app')
+    expect(block).toMatch(/```js[\s\S]*fetch\('\/api\/memory\/remember'/)
+    expect(block).toMatch(/```js[\s\S]*fetch\('\/api\/memory\/recall'/)
+  })
+
+  it('ZeroMemory instruction explicitly forbids the exact failure mode observed in production (#518)', () => {
+    const block = codegenCompositionBlock('a habit tracker app', 'app')
+    expect(block).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+    expect(block).toMatch(/client-side keyword\/substring\/word-overlap matching/i)
+    expect(block).toMatch(/You MUST call POST \/api\/memory\/remember and POST \/api\/memory\/recall/)
+  })
+
+  it('every RUNTIME_PROXIED_PRIMITIVES-backed primitive in the compliance map carries a literal code snippet + anti-pattern warning', () => {
+    // Exercise each compliance-checked primitive via an idea that actually
+    // selects it, and assert the composition block contains a real code fence
+    // and an explicit FORBIDDEN anti-pattern line for that primitive's block.
+    const cases: Array<[string, string]> = [
+      ['ZeroMemory', 'a habit tracker app'],
+      ['Browser Agent', 'a tool that scrapes competitor pricing from their websites'],
+      ['Agent402', 'an agent that pays other agents per API call using x402'],
+      ['OpenCapStack', 'a startup cap table and equity management tool'],
+      ['Model Catalog', 'a tool to compare AI model pricing and pick the best LLM for a task'],
+      ['Developer Program', 'an API marketplace where developers sell access and get Stripe Connect payouts'],
+      ['Community', 'a community platform with member groups and a social feed'],
+      ['AINativeNGO', 'a nonprofit that tracks donors and grant applications'],
+    ]
+    for (const [name, idea] of cases) {
+      const track = ['Agent402', 'OpenCapStack', 'Developer Program', 'AINativeNGO'].includes(name) ? 'company' : 'app'
+      const block = codegenCompositionBlock(idea, track as 'app' | 'company')
+      expect(block, `${name} block should contain the primitive name`).toContain(name)
+      expect(block, `${name} block should contain a code fence`).toMatch(/```js/)
+      expect(block, `${name} block should contain an explicit anti-pattern warning`).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+    }
+  })
+
+  it('RUNTIME_PROXY_PATH_SUBSTRINGS gives a small, greppable fact per compliance-checked primitive', () => {
+    expect(RUNTIME_PROXY_PATH_SUBSTRINGS.ZeroMemory).toEqual(['/api/memory/remember', '/api/memory/recall'])
+    expect(RUNTIME_PROXY_PATH_SUBSTRINGS['Browser Agent']).toEqual(['/api/browser-agent/extract', '/api/browser-agent/act'])
+    expect(RUNTIME_PROXY_PATH_SUBSTRINGS.OpenCapStack).toEqual(['/api/opencapstack/company'])
+  })
+
+  it('getComplianceCheckedPrimitiveNames matches the keys of RUNTIME_PROXY_PATH_SUBSTRINGS', () => {
+    const names = getComplianceCheckedPrimitiveNames()
+    expect(names.sort()).toEqual(Object.keys(RUNTIME_PROXY_PATH_SUBSTRINGS).sort())
+    expect(names).toContain('ZeroMemory')
+  })
+
+  it('getRuntimeProxyInstruction returns the same instruction text codegenCompositionBlock injects, for reuse in a repair prompt', () => {
+    const instruction = getRuntimeProxyInstruction('ZeroMemory')
+    expect(instruction).toBeDefined()
+    expect(instruction).toMatch(/POST \/api\/memory\/recall/)
+    expect(instruction).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+    const block = codegenCompositionBlock('a habit tracker app', 'app')
+    expect(block).toContain(instruction!.split('\n')[0]) // first line matches verbatim what's in the block
+  })
+
+  it('getRuntimeProxyInstruction returns undefined for a primitive with no runtime proxy instruction', () => {
+    expect(getRuntimeProxyInstruction('ZeroERP')).toBeUndefined()
+    expect(getRuntimeProxyInstruction('totally-not-a-real-primitive')).toBeUndefined()
   })
 })

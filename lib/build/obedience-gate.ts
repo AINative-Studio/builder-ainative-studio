@@ -13,11 +13,27 @@
  *    dashboard/… — an "add/create/save/list" surface) AND the app has NO /api/db call.
  *  - AIKit: only when the app hand-rolls a UI pattern AIKit provides (metric/stat
  *    cards, a nav sidebar, a data table, pricing/product cards, chat bubbles).
+ *  - primitive proxy compliance (#518): only when the IDEA TEXT ITSELF matches a
+ *    RUNTIME_PROXIED_PRIMITIVES primitive's own trigger keywords (e.g. "remembers",
+ *    "recalls" → ZeroMemory) but the generated code contains NO reference to ANY of
+ *    its real proxy paths — meaning the model was explicitly instructed to call the
+ *    real endpoint for a feature the founder clearly asked for, and didn't, almost
+ *    always because it hand-rolled a lookalike substitute instead (confirmed live: a
+ *    journaling app's "related memories" feature was pure client-side keyword
+ *    matching over /api/db rows, with zero calls to /api/memory/* despite ZeroMemory
+ *    being selected and instructed). Deliberately keyed off idea-trigger overlap
+ *    rather than raw selectPrimitives() output: several of these primitives
+ *    (ZeroMemory chief among them) are `foundational` and so are ALWAYS selected/
+ *    wired regardless of the idea — flagging every app that doesn't call
+ *    /api/memory/* would false-positive on a plain counter or landing page that was
+ *    never asked to remember anything.
  *
  * Pure + deterministic. Never throws. Conservative — a false "no gap" is fine (the
  * app still works); we only re-prompt on a HIGH-confidence gap so we don't waste
- * turns on apps that legitimately don't need persistence/AIKit (e.g. a counter).
+ * turns on apps that legitimately don't need persistence/AIKit/a specific primitive
+ * (e.g. a counter).
  */
+import { scorePrimitives, RUNTIME_PROXY_PATH_SUBSTRINGS, getRuntimeProxyInstruction, type CompanyRole } from './primitive-catalog'
 
 /** Does the code call the ZeroDB proxy for real persistence? */
 export function usesDataLayer(code: string): boolean {
@@ -107,17 +123,43 @@ export function findAikitGaps(code: string): string[] {
   return [...new Set(gaps)]
 }
 
+/**
+ * #518: which RUNTIME_PROXIED_PRIMITIVES primitives the IDEA ITSELF clearly asked
+ * for (real trigger-keyword overlap, e.g. "remembers"/"recalls" → ZeroMemory) but
+ * whose real proxy path was NEVER called anywhere in the generated code. Uses
+ * scorePrimitives' idea-trigger overlap (`matched`) rather than raw selection —
+ * several of these primitives are `foundational` and so are always wired/selected
+ * regardless of the idea; gating on trigger overlap instead keeps this check scoped
+ * to apps that genuinely asked for the capability, mirroring how hasPersistenceGap
+ * only fires for record-managing ideas rather than every app.
+ */
+export function findPrimitiveComplianceGaps(code: string, idea: string, role?: CompanyRole): string[] {
+  const src = code || ''
+  const scored = scorePrimitives(idea, 'company', role)
+  const gaps: string[] = []
+  for (const [name, paths] of Object.entries(RUNTIME_PROXY_PATH_SUBSTRINGS)) {
+    const score = scored.find((s) => s.primitive.name === name)
+    if (!score || score.matched.length === 0) continue // idea never asked for this capability
+    const calledAny = paths.some((p) => src.includes(p))
+    if (!calledAny) gaps.push(name)
+  }
+  return gaps
+}
+
 export interface ObedienceResult {
   ok: boolean
   persistenceGap: boolean
   aikitGaps: string[]
+  /** #518: selected primitives whose real proxy path was never called. */
+  primitiveComplianceGaps: string[]
   reasons: string[]
 }
 
 /** Inspect generated code + idea; report obedience gaps for the re-prompt. */
-export function checkObedience(code: string, idea: string): ObedienceResult {
+export function checkObedience(code: string, idea: string, role?: CompanyRole): ObedienceResult {
   const persistenceGap = hasPersistenceGap(code, idea)
   const aikitGaps = findAikitGaps(code)
+  const primitiveComplianceGaps = findPrimitiveComplianceGaps(code, idea, role)
   const reasons: string[] = []
   if (persistenceGap) {
     reasons.push('App manages user records but hardcodes data — must persist via /api/db.')
@@ -125,7 +167,10 @@ export function checkObedience(code: string, idea: string): ObedienceResult {
   if (aikitGaps.length) {
     reasons.push(`Hand-rolled UI that AIKit provides: ${aikitGaps.join(', ')}.`)
   }
-  return { ok: reasons.length === 0, persistenceGap, aikitGaps, reasons }
+  if (primitiveComplianceGaps.length) {
+    reasons.push(`Selected primitive(s) never called their real proxy: ${primitiveComplianceGaps.join(', ')}.`)
+  }
+  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, reasons }
 }
 
 /**
@@ -134,7 +179,7 @@ export function checkObedience(code: string, idea: string): ObedienceResult {
  */
 export function buildObediencePrompt(idea: string, result: ObedienceResult): string {
   const parts: string[] = [
-    'The generated app works but does NOT follow two required AINative rules. Fix ONLY these, keep everything else:',
+    'The generated app works but does NOT follow required AINative rules. Fix ONLY these, keep everything else:',
     '',
   ]
   if (result.persistenceGap) {
@@ -157,6 +202,25 @@ export function buildObediencePrompt(idea: string, result: ObedienceResult): str
       '   <AIKitPriceCard name="Pro" price="$49" features={[...]} />',
       '',
     )
+  }
+  if (result.primitiveComplianceGaps.length) {
+    // #518: this app was told to compose these real primitives (they appeared in
+    // the composition block) but never called ANY of their real proxy paths — the
+    // observed live failure mode is a hand-rolled lookalike substitute (e.g.
+    // client-side keyword matching standing in for ZeroMemory recall), so quote
+    // the EXACT same instruction + anti-pattern warning the model already had,
+    // rather than a generic "please fix" that's easy to satisfy shallowly again.
+    parts.push(
+      `3) YOU WERE TOLD TO CALL THESE REAL PRIMITIVES AND DID NOT: ${result.primitiveComplianceGaps.join(', ')}.`,
+      '   Search your own code for any hand-rolled logic standing in for these (e.g. client-side keyword/text',
+      '   matching, hardcoded lists, fabricated data) and REPLACE it with the real call below. Do not just add',
+      '   an unused import — the feature must actually invoke the endpoint.',
+      '',
+    )
+    for (const name of result.primitiveComplianceGaps) {
+      const instruction = getRuntimeProxyInstruction(name)
+      if (instruction) parts.push(`   ${name} — To use: ${instruction}`, '')
+    }
   }
   parts.push('Return the corrected full app. Do not remove features.')
   return parts.join('\n')
