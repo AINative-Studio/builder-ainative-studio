@@ -59,9 +59,10 @@ async function mintPreviewPrimitiveTokens(slug: string | null, previewId: string
 }
 
 /** The injected fetch shim: attaches the app's data token on same-origin
- *  /api/db requests, and (#443) the right primitive-proxy token on same-
- *  origin /api/primitive/{name}/... requests. No-op pieces omitted when
- *  there is no token to attach. */
+ *  /api/db, /api/memory/ (#496), /api/browser-agent/ (#499), and
+ *  /api/agent402/ (#500) requests, and (#443) the right primitive-proxy
+ *  token on same-origin /api/primitive/{name}/... requests. No-op pieces
+ *  omitted when there is no token to attach. */
 export function dbTokenShim(token: string, primitiveTokens: Partial<Record<FounderScopedPrimitive, string>> = {}): string {
   if (!token && Object.keys(primitiveTokens).length === 0) return ''
   return `<script>(function(){
@@ -69,7 +70,7 @@ export function dbTokenShim(token: string, primitiveTokens: Partial<Record<Found
   window.fetch=function(input,init){
     try{
       var u=typeof input==='string'?input:((input&&input.url)||'');
-      if(T&&(u.indexOf('/api/db')===0||u.indexOf('/api/memory/')===0)){
+      if(T&&(u.indexOf('/api/db')===0||u.indexOf('/api/memory/')===0||u.indexOf('/api/browser-agent/')===0||u.indexOf('/api/agent402/')===0)){
         init=init||{};
         var h=new Headers(init.headers||((typeof input==='object'&&input.headers)||undefined));
         h.set('x-ainative-db-token',T);

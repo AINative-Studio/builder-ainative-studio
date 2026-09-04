@@ -128,6 +128,14 @@ export async function middleware(request: NextRequest) {
       // /api/db/ — the same signed per-app data token, verified inside the
       // handler; a generated app has no session cookie to present here.
       pathname.startsWith('/api/memory/') ||
+      // Browser Agent runtime proxy (#499). Self-authenticates exactly like
+      // /api/memory/ — the same signed per-app data token; a generated app
+      // has no session cookie to present here.
+      pathname.startsWith('/api/browser-agent/') ||
+      // Agent402 runtime proxy (#500). Self-authenticates exactly like
+      // /api/memory/ — the same signed per-app data token; a generated app
+      // has no session cookie to present here.
+      pathname.startsWith('/api/agent402/') ||
       // Founder-scoped primitive runtime proxy (#443). Self-authenticates
       // exactly like /api/db/ — a deployed company reads COMPANY_SLUG from
       // its own env, the shared preview iframe presents a signed per-app
