@@ -235,6 +235,27 @@ describe('fetchOrganizationId (#414)', () => {
   })
 })
 
+describe('zerovoice (#522 — closes the runtime-proxy gap #415 left open)', () => {
+  it('round-trips a stored access token through real AES-256-GCM encryption, same as the other 5 founder-scoped primitives', async () => {
+    const store = mockFetchSequence([{ ok: true }, { ok: true }])
+    const ok = await storeFounderCredential('acme', 'zerovoice', 'real-zerovoice-token', 'real-zerovoice-refresh', 3600)
+    expect(ok).toBe(true)
+
+    const sentBody = JSON.parse(String(((store.mock.calls[1] as any)[1] as any).body))
+    expect(sentBody.row_data.primitive).toBe('zerovoice')
+    mockFetchSequence([{ ok: true, json: { data: [{ row_data: sentBody.row_data }] } }])
+    const result = await resolveFounderCredential('acme', 'zerovoice')
+    expect(result.ok).toBe(true)
+    expect(result.accessToken).toBe('real-zerovoice-token')
+  })
+
+  it('returns not_provisioned when no ZeroVoice credential was ever captured (e.g. a company provisioned before #522 shipped)', async () => {
+    mockFetchSequence([{ ok: true, json: { data: [] } }])
+    const result = await resolveFounderCredential('never-provisioned', 'zerovoice')
+    expect(result).toEqual({ ok: false, reason: 'not_provisioned' })
+  })
+})
+
 describe('hasFounderCredential (#443)', () => {
   it('returns true when a credential row exists', async () => {
     mockFetchSequence([{ ok: true, json: { data: [{ row_data: { slug: 'acme', primitive: 'zerocommerce', encryptedToken: 'x', iv: 'y', authTag: 'z', createdAt: '2026-01-01' } }] } }])

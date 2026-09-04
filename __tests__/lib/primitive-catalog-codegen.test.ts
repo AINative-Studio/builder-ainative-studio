@@ -408,6 +408,64 @@ describe('primitive-catalog additions (#410)', () => {
     })
   })
 
+  describe('#522 fix — ZeroVoice runtime proxy (real, live, auth-gated API had NO call path)', () => {
+    // Before this fix: ZeroVoice's per-company account was provisioned at
+    // checkout (#415's ZEROVOICE_PROVISION_ENABLED flag), but ZeroVoice was
+    // missing from RUNTIME_PROXIED_PRIMITIVES entirely — codegenCompositionBlock
+    // fell to the "already provisioned server-side, do NOT call directly"
+    // framing, same bug class #510 fixed for the other 8. A calls/SMS idea's
+    // generated app therefore had zero real way to reach ZeroVoice.
+    const CALL_SMS_IDEA = 'an appointment reminder app that places outbound phone calls and sends SMS text messages to customers'
+
+    it('a calls/SMS-triggering idea selects ZeroVoice', () => {
+      const { names } = selectPrimitives(CALL_SMS_IDEA, 'company')
+      expect(names).toContain('ZeroVoice')
+    })
+
+    it('wires the real same-origin proxy, not the "already provisioned server-side" placeholder', () => {
+      const block = codegenCompositionBlock(CALL_SMS_IDEA, 'company')
+      expect(block).toContain('ZeroVoice')
+      expect(block).not.toMatch(/ZeroVoice[^\n]*already provisioned for this company server-side/)
+      expect(block).toMatch(/ZeroVoice[^\n]*To use: call the same-origin proxy at `\/api\/primitive\/zerovoice\//)
+      expect(block).toMatch(/ZeroVoice[^\n]*NO Authorization header needed/)
+    })
+
+    it('the literal call shape references the real, live-confirmed endpoint paths (POST /calls/outbound, POST /sms/send)', () => {
+      const block = codegenCompositionBlock(CALL_SMS_IDEA, 'company')
+      expect(block).toMatch(/POST \/api\/primitive\/zerovoice\/calls\/outbound/)
+      expect(block).toMatch(/POST \/api\/primitive\/zerovoice\/sms\/send/)
+      expect(block).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+    })
+
+    it('does not leak the raw external ZeroVoice apiBase into the prompt', () => {
+      const block = codegenCompositionBlock(CALL_SMS_IDEA, 'company')
+      expect(block).not.toContain('zerovoice-production.up.railway.app')
+    })
+
+    it('RUNTIME_PROXY_PATH_SUBSTRINGS carries the real proxy paths so the #518 compliance validator catches an unwired ZeroVoice selection', () => {
+      expect(RUNTIME_PROXY_PATH_SUBSTRINGS.ZeroVoice).toEqual([
+        '/api/primitive/zerovoice/calls/outbound',
+        '/api/primitive/zerovoice/sms/send',
+      ])
+      expect(getComplianceCheckedPrimitiveNames()).toContain('ZeroVoice')
+    })
+
+    it('getRuntimeProxyInstruction returns the same instruction text codegenCompositionBlock injects', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroVoice')
+      expect(instruction).toBeDefined()
+      expect(instruction).toMatch(/POST \/api\/primitive\/zerovoice\/calls\/outbound/)
+      expect(instruction).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      const block = codegenCompositionBlock(CALL_SMS_IDEA, 'company')
+      expect(block).toContain(instruction!.split('\n')[0])
+    })
+
+    it('#522 regression guard: a memory/recall idea (no calls/SMS language) must NOT select ZeroVoice — the bare "call"/"calls" triggers were removed precisely because "recalls" is a substring match', () => {
+      const journalIdea = 'a personal journaling app with memory of past entries that recalls relevant history when I write something new'
+      const { names } = selectPrimitives(journalIdea, 'company')
+      expect(names).not.toContain('ZeroVoice')
+    })
+  })
+
   describe('company role selection (#448 — "build a company" outcome legibility)', () => {
     // Deliberately generic/vague ideas with NO trigger-word matches for the
     // role's own primitives — this is the real regression risk: a role must

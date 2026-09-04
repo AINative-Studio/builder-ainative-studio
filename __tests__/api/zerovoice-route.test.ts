@@ -15,7 +15,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
  *  - an already-provisioned company short-circuits to the existing number
  *    WITHOUT calling provisionZeroVoiceNumber again (idempotent at the
  *    route layer too, on top of the client's own idempotency guard);
- *  - a provisioning failure is surfaced honestly, never fabricated as success.
+ *  - a provisioning failure is surfaced honestly, never fabricates success;
+ *  - #522: a successful (fresh or already-provisioned) call captures the
+ *    founder's credential for the runtime proxy to use later, mirroring
+ *    provision/route.ts's captureFounderCredentialForProxy exactly.
  * All collaborators are mocked; no real network/Twilio call is made.
  */
 
@@ -26,6 +29,8 @@ const h = vi.hoisted(() => ({
   setAppZeroVoice: vi.fn(async () => true),
   provisionZeroVoiceNumber: vi.fn(),
   zeroVoiceProvisionEnabled: vi.fn(() => true),
+  getToken: vi.fn(),
+  storeFounderCredential: vi.fn(async () => true),
 }))
 
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
@@ -38,6 +43,8 @@ vi.mock('@/lib/build/zerovoice', () => ({
   provisionZeroVoiceNumber: h.provisionZeroVoiceNumber,
   zeroVoiceProvisionEnabled: h.zeroVoiceProvisionEnabled,
 }))
+vi.mock('next-auth/jwt', () => ({ getToken: h.getToken }))
+vi.mock('@/lib/build/primitive-credentials', () => ({ storeFounderCredential: h.storeFounderCredential }))
 
 import { POST } from '@/app/api/build/zerovoice/route'
 
@@ -55,6 +62,8 @@ beforeEach(() => {
   h.getPlanStatus.mockResolvedValue({ tier: 'pro' })
   h.resolveApp.mockResolvedValue(UNPROVISIONED)
   h.setAppZeroVoice.mockResolvedValue(true)
+  h.getToken.mockResolvedValue({ accessToken: 'tok', refreshToken: 'refresh-tok', expiresAt: Math.floor(Date.now() / 1000) + 3600 })
+  h.storeFounderCredential.mockResolvedValue(true)
 })
 
 describe('POST /api/build/zerovoice (#415)', () => {
@@ -132,5 +141,47 @@ describe('POST /api/build/zerovoice (#415)', () => {
     const json = await res.json()
     expect(json).toEqual(expect.objectContaining({ ok: false, reason: 'no_available_numbers' }))
     expect(h.setAppZeroVoice).not.toHaveBeenCalled()
+  })
+
+  describe('#522 — founder credential capture for the runtime proxy', () => {
+    it('captures the founder credential after a fresh, successful provision', async () => {
+      h.provisionZeroVoiceNumber.mockResolvedValue({ ok: true, numberId: 'num-new', e164: '+15559998888' })
+      await POST(postReq({ slug: 'acme' }))
+      expect(h.storeFounderCredential).toHaveBeenCalledWith(
+        'acme',
+        'zerovoice',
+        'tok',
+        'refresh-tok',
+        expect.any(Number),
+      )
+    })
+
+    it('also captures the credential on the already-provisioned short-circuit (backfill for companies provisioned before #522)', async () => {
+      h.resolveApp.mockResolvedValue(PROVISIONED)
+      await POST(postReq({ slug: 'acme' }))
+      expect(h.storeFounderCredential).toHaveBeenCalledWith(
+        'acme',
+        'zerovoice',
+        'tok',
+        'refresh-tok',
+        expect.any(Number),
+      )
+      expect(h.provisionZeroVoiceNumber).not.toHaveBeenCalled()
+    })
+
+    it('does NOT capture a credential when provisioning fails', async () => {
+      h.provisionZeroVoiceNumber.mockResolvedValue({ ok: false, reason: 'no_available_numbers' })
+      await POST(postReq({ slug: 'acme' }))
+      expect(h.storeFounderCredential).not.toHaveBeenCalled()
+    })
+
+    it('never throws when getToken resolves nothing (best-effort, does not block the real response)', async () => {
+      h.getToken.mockResolvedValue(null)
+      h.provisionZeroVoiceNumber.mockResolvedValue({ ok: true, numberId: 'num-new', e164: '+15559998888' })
+      const res: any = await POST(postReq({ slug: 'acme' }))
+      const json = await res.json()
+      expect(json).toEqual({ ok: true, numberId: 'num-new', e164: '+15559998888' })
+      expect(h.storeFounderCredential).not.toHaveBeenCalled()
+    })
   })
 })
