@@ -48,10 +48,15 @@ const PRIMITIVE_BASES: Record<FounderScopedPrimitive, string> = {
   // GET /api/v1/deals?org_id=<real AINative organization_uuid> → 200 with a
   // freshly-created org, idempotent on repeat calls.
   zerocrm: process.env.ZEROCRM_API_URL || 'https://zerocrm-production.up.railway.app/api/v1',
+  // #522 — ZeroVoice's per-company account is provisioned at the explicit
+  // /api/build/zerovoice action (#415), same founder-JWT-bearer credential
+  // shape as the 5 above. Real base confirmed via live openapi.json
+  // (api.ainative.studio does NOT proxy ZeroVoice at all — 404s there).
+  zerovoice: process.env.ZEROVOICE_API_URL || 'https://zerovoice-production.up.railway.app/api/v1',
 }
 
 function isFounderScopedPrimitive(name: string): name is FounderScopedPrimitive {
-  return name === 'zerocommerce' || name === 'zeropipeline' || name === 'agentflow' || name === 'zeroforms' || name === 'zerocrm'
+  return name === 'zerocommerce' || name === 'zeropipeline' || name === 'agentflow' || name === 'zeroforms' || name === 'zerocrm' || name === 'zerovoice'
 }
 
 /** Resolve which company's founder credential this request should use.

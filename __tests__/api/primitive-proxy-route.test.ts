@@ -230,6 +230,61 @@ describe('GET/POST /api/primitive/[primitive]/[...path] (#443)', () => {
     })
   })
 
+  describe('ZeroVoice (#522 — closes the runtime-proxy gap #415 left open)', () => {
+    it('is a known primitive, routed to the real ZeroVoice host with the resolved founder token', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'real-zerovoice-token' })
+      const fetchMock = vi.fn(async (url: string, init: any) => {
+        expect(url).toBe('https://zerovoice-production.up.railway.app/api/v1/calls/outbound')
+        expect(init.headers.Authorization).toBe('Bearer real-zerovoice-token')
+        return { status: 201, text: async () => JSON.stringify({ id: 'call-1', status: 'queued' }), headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const res: any = await POST(
+        req({ method: 'POST', body: '{"from_number":"+15551230000","to_number":"+15559876543"}' }),
+        ctx('zerovoice', ['calls', 'outbound']),
+      )
+      expect(res.status).toBe(201)
+      expect(h.resolveFounderCredential).toHaveBeenCalledWith('acme', 'zerovoice')
+    })
+
+    it('forwards a POST to /sms/send with its body, and never leaks the founder credential in the response', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'super-secret-zerovoice-token' })
+      const fetchMock = vi.fn(async (url: string, init: any) => {
+        expect(url).toBe('https://zerovoice-production.up.railway.app/api/v1/sms/send')
+        expect(init.method).toBe('POST')
+        expect(init.body).toBe('{"from_number":"+15551230000","to_number":"+15559876543","body":"hi"}')
+        return { status: 202, text: async () => JSON.stringify({ id: 'sms-1', status: 'queued' }), headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const res: any = await POST(
+        req({ method: 'POST', body: '{"from_number":"+15551230000","to_number":"+15559876543","body":"hi"}' }),
+        ctx('zerovoice', ['sms', 'send']),
+      )
+      expect(res.status).toBe(202)
+      const text = JSON.stringify(await res.json())
+      expect(text).not.toContain('super-secret-zerovoice-token')
+    })
+
+    it('401s on a missing token with no COMPANY_SLUG, same fail-closed behavior as the other primitives', async () => {
+      const res: any = await POST(req({ method: 'POST' }), ctx('zerovoice', ['calls', 'outbound']))
+      expect(res.status).toBe(401)
+      expect(h.resolveFounderCredential).not.toHaveBeenCalled()
+    })
+
+    it('502s honestly when no ZeroVoice credential was ever stored for this company', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: false, reason: 'not_provisioned' })
+      const res: any = await POST(req({ method: 'POST' }), ctx('zerovoice', ['calls', 'outbound']))
+      expect(res.status).toBe(502)
+      const json = await res.json()
+      expect(json).toEqual({ error: 'primitive_unavailable', reason: 'not_provisioned' })
+    })
+  })
+
   describe('ZeroCRM (#414 — needs no explicit provisioning call, but requires an injected ?org_id=)', () => {
     function crmReq(opts: { search?: string } = {}) {
       return {

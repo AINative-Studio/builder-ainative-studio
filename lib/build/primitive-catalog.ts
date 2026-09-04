@@ -171,7 +171,14 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     // company make/receive real calls + SMS as agentic MCP tool calls (run-time ops).
     mcpUrl: `${MCP_BASE}/zerovoice`,
     mcpTools: 25,
-    triggers: ['call', 'calls', 'phone', 'sms', 'text', 'voice', 'telephony', 'ivr', 'dial', 'cold call', 'appointment reminder'] },
+    // #522: 'call'/'calls' were dropped as bare triggers — scorePrimitives'
+    // matching (lib/build/primitive-catalog.ts's scorePrimitives) falls back
+    // to a plain substring check with no word-boundary guard, so a bare
+    // 'call' trigger false-matched ANY idea containing "recall", "called", or
+    // "calling" (e.g. a journaling app that "recalls relevant history" —
+    // real regression this fix surfaced in __tests__/lib/build/obedience-gate.test.ts).
+    // Kept only phrases specific enough not to collide with common English.
+    triggers: ['phone call', 'phone calls', 'outbound call', 'cold calling', 'phone', 'sms', 'text message', 'voice', 'telephony', 'ivr', 'dial', 'cold call', 'appointment reminder'] },
   { name: 'ZeroCRM', category: 'business-ops',
     // Distinct product from ZeroPipeline (confirmed via its own repo description,
     // not a rename/duplicate) — a lighter-weight CRM aimed at solo operators
@@ -739,6 +746,34 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
     `call the same-origin proxy at \`/api/primitive/agentflow/{path}\` (e.g. \`/api/primitive/agentflow/projects/\`) — NO Authorization header needed, the platform attaches the founder's real AgentFlow credential server-side; the path after \`agentflow/\` matches AgentFlow's own REST path exactly`,
   ZeroForms: () =>
     `call the same-origin proxy at \`/api/primitive/zeroforms/{path}\` (e.g. \`/api/primitive/zeroforms/forms\`) — NO Authorization header needed, the platform attaches the founder's real ZeroForms credential server-side; the path after \`zeroforms/\` matches ZeroForms' own REST path exactly (no /api prefix — ZeroForms' real routes are /v1/forms, not /api/v1/forms)`,
+  // #522: ZeroVoice closes the same gap #443 fixed for the 5 primitives above
+  // — a real, founder-scoped credential is captured at provisioning time
+  // (#415's explicit /api/build/zerovoice action), so the runtime proxy shape
+  // is identical to ZeroCommerce/ZeroPipeline/AgentFlow/ZeroForms, NOT the
+  // narrower fixed-allowlist `/api/{slug}/{action}` shape the 8 below use.
+  // Real endpoint paths (POST /calls/outbound, POST /sms/send) confirmed live
+  // against ZeroVoice's own openapi.json — calls/SMS are the two triggers
+  // this primitive is actually selected for (lib/build/primitive-catalog.ts's
+  // own triggers list: 'call', 'sms', 'text', 'phone', 'dial', ...).
+  ZeroVoice: () =>
+    `call the same-origin proxy at \`/api/primitive/zerovoice/{path}\` (e.g. \`/api/primitive/zerovoice/calls/outbound\`, \`/api/primitive/zerovoice/sms/send\`) — NO Authorization header needed, the platform attaches the founder's real ZeroVoice credential server-side; the path after \`zerovoice/\` matches ZeroVoice's own REST path exactly.\n` +
+    '  Real call shape (copy this exactly, do not paraphrase):\n' +
+    '  ```js\n' +
+    "  // Place an outbound call (from_number = this company's ZeroVoice number, e164 format)\n" +
+    "  await fetch('/api/primitive/zerovoice/calls/outbound', {\n" +
+    "    method: 'POST', headers: { 'Content-Type': 'application/json' },\n" +
+    "    body: JSON.stringify({ from_number: companyE164, to_number: customerE164, record: false }),\n" +
+    '  })\n' +
+    '\n' +
+    "  // Send an SMS\n" +
+    "  await fetch('/api/primitive/zerovoice/sms/send', {\n" +
+    "    method: 'POST', headers: { 'Content-Type': 'application/json' },\n" +
+    "    body: JSON.stringify({ from_number: companyE164, to_number: customerE164, body: messageText }),\n" +
+    '  })\n' +
+    '  ```\n' +
+    '  ANTI-PATTERN — FORBIDDEN: do NOT simulate "call placed" / "SMS sent" with a local status update, a fake ' +
+    'toast, or a client-side mock timer instead of calling this proxy. If the feature claims to place a real call ' +
+    'or send a real text, it MUST call POST /api/primitive/zerovoice/calls/outbound or POST /api/primitive/zerovoice/sms/send.',
   // #496/#499/#500/#503/#505/#510 — these 8 use a NARROWER shape than the
   // 5 above: a fixed `/api/{slug}/{action}` route with a hard allowlist of
   // real actions (not an arbitrary-path passthrough), so the model must be
@@ -846,6 +881,7 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
  * small, precise, regex-friendly fact instead of parsing prompt text.
  */
 export const RUNTIME_PROXY_PATH_SUBSTRINGS: Record<string, string[]> = {
+  ZeroVoice: ['/api/primitive/zerovoice/calls/outbound', '/api/primitive/zerovoice/sms/send'],
   ZeroMemory: ['/api/memory/remember', '/api/memory/recall'],
   'Browser Agent': ['/api/browser-agent/extract', '/api/browser-agent/act'],
   Agent402: ['/api/agent402/capabilities', '/api/agent402/projects'],

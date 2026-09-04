@@ -37,8 +37,17 @@ const TABLE = 'builder_primitive_credentials'
 
 /** Primitives whose provisioning is scoped to the founder's own identity
  *  (confirmed "one resource per owner user" for ZeroCommerce via #417; the
- *  others share the same direct-JWT-bearer provisioning shape). */
-export type FounderScopedPrimitive = 'zerocommerce' | 'zeropipeline' | 'agentflow' | 'zeroforms' | 'zerocrm'
+ *  others share the same direct-JWT-bearer provisioning shape).
+ *
+ *  zerovoice (#522, closing the runtime-proxy gap #415 left open): ZeroVoice
+ *  numbers are ALSO scoped to the founder's own AINative identity — same
+ *  direct-JWT-bearer auth as the other 5 (confirmed via lib/build/zerovoice.ts's
+ *  own doc comment: "Auth: same unified AINative founder JWT bearer used by
+ *  zeropipeline.ts/zerocommerce.ts/zeroforms.ts/agentflow.ts"). Unlike those 5,
+ *  its credential is captured at the EXPLICIT /api/build/zerovoice provisioning
+ *  action (not the checkout-time provision/route.ts flow), since ZeroVoice is
+ *  deliberately opt-in (real recurring cost, #415). */
+export type FounderScopedPrimitive = 'zerocommerce' | 'zeropipeline' | 'agentflow' | 'zeroforms' | 'zerocrm' | 'zerovoice'
 
 interface StoredCredentialRow {
   slug: string
