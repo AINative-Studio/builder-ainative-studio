@@ -345,7 +345,12 @@ export function generateAINativeFileSet(
   code: string,
   overrides: Partial<Pick<AppMetadata, 'name' | 'description' | 'domain'>> = {},
 ): Record<string, string> {
-  const meta = { ...extractAppMetadata(prompt, code), ...overrides }
+  // Only spread DEFINED override keys — an explicit `{description: undefined}`
+  // from a caller would otherwise overwrite extractAppMetadata's real computed
+  // default with undefined and crash every downstream `.replace()` call on it
+  // (confirmed live, 2026-09: this exact shape 500'd in production).
+  const definedOverrides = Object.fromEntries(Object.entries(overrides).filter(([, v]) => v !== undefined))
+  const meta = { ...extractAppMetadata(prompt, code), ...definedOverrides }
 
   return {
     'public/robots.txt': generateRobotsTxt(meta),
