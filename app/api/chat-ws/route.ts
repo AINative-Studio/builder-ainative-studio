@@ -1377,7 +1377,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
           // actually-improved, so a bad pass never regresses a working app.
           if (validation.valid && finalContent) {
             try {
-              const ob = checkObedience(finalContent, message)
+              const ob = checkObedience(finalContent, message, validRole)
               const needsDecomp = shouldDecompose(finalContent, wantsMultiFile)
               const needsObedience = !ob.ok
 
@@ -1392,8 +1392,10 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                 )
                 const v = validateGeneratedCode(raw)
                 const multi = /\/\/\s*---\s*FILE:/.test(v.code || '')
-                const after = v.valid ? checkObedience(v.code, message) : ob
-                const obeyImproved = (ob.persistenceGap && !after.persistenceGap) || (ob.aikitGaps.length > after.aikitGaps.length)
+                const after = v.valid ? checkObedience(v.code, message, validRole) : ob
+                const obeyImproved = (ob.persistenceGap && !after.persistenceGap) ||
+                  (ob.aikitGaps.length > after.aikitGaps.length) ||
+                  (ob.primitiveComplianceGaps.length > after.primitiveComplianceGaps.length)
                 if (v.valid && multi && (v.code?.length || 0) > finalContent.length * 0.7) {
                   console.log('🔧 Combined pass produced a valid multi-file, rule-following app — adopting.')
                   finalContent = v.code; validation = v; checkpoint.record('fix+split', finalContent, true)
@@ -1414,8 +1416,10 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                 )
                 const obValidation = validateGeneratedCode(obRaw)
                 if (obValidation.valid && obValidation.code && obValidation.code.length > 200) {
-                  const after = checkObedience(obValidation.code, message)
-                  const improved = (ob.persistenceGap && !after.persistenceGap) || (ob.aikitGaps.length > after.aikitGaps.length)
+                  const after = checkObedience(obValidation.code, message, validRole)
+                  const improved = (ob.persistenceGap && !after.persistenceGap) ||
+                    (ob.aikitGaps.length > after.aikitGaps.length) ||
+                    (ob.primitiveComplianceGaps.length > after.primitiveComplianceGaps.length)
                   if (improved) {
                     console.log('📏 Obedience re-prompt improved the app — adopting.')
                     finalContent = obValidation.code; validation = obValidation; checkpoint.record('obedience', finalContent, true)
@@ -1461,7 +1465,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
           // file, obedience) makes recalls actionable. Never blocks the response.
           try {
             const served = finalContent || ''
-            const obFinal = checkObedience(served, message)
+            const obFinal = checkObedience(served, message, validRole)
             const dbBacked = /\/api\/db\//.test(served)
             const usedMultiFile = /\/\/\s*---\s*FILE:/.test(served)
             // Simple quality proxy in [0,1]: valid + data-backed + no obedience gaps + multi-file-when-warranted.
@@ -1470,6 +1474,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
             storeGenerationMemory(message, validation.valid, quality, {
               dbBacked, multiFile: usedMultiFile, wantsMultiFile,
               persistenceGap: obFinal.persistenceGap, aikitGaps: obFinal.aikitGaps,
+              primitiveComplianceGaps: obFinal.primitiveComplianceGaps,
               bytes: served.length,
             })
           } catch (memErr: any) {
