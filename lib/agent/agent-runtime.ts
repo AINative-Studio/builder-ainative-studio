@@ -203,27 +203,44 @@ export function isAgentFallbackEnabled(env: NodeJS.ProcessEnv = process.env): bo
  *     on every call) this file's safety bar exists to prevent, just moved
  *     from account-provisioning risk (the issue's own stated concern) to
  *     process-spawn risk.
- * Deferred, not silently skipped: wire it if/when a real Node-native MCP
- * server ships for ZeroPipeline (matching the ZeroDB/Browser Agent/Sequential
- * Thinking shape), or once this repo has an actual Python runtime story.
+ * UPDATE (builder#555, same day): a real Node-native MCP server now ships for
+ * ZeroPipeline — `lib/agent/mcp-servers/zeropipeline-mcp-server.mjs`, a
+ * genuine from-scratch reimplementation (using the real
+ * `@modelcontextprotocol/sdk`) of the same tool surface the Python package
+ * exposes, calling ZeroPipeline's real REST API directly (the same
+ * `https://pipeline.ainative.studio/api/v1` base `/api/primitive/zeropipeline/`
+ * already proxies to). It is a LOCAL FILE in this repo, not an npm package —
+ * see the `entry` variant of McpServerSpec below — so its existence check is
+ * simpler (`existsSync` on the file itself, not a node_modules lookup) and it
+ * ships 13 of the real 35 tools (the prioritized core CRM subset: pipelines,
+ * deals, customers, activities, tasks), not the full surface, to keep the
+ * initial wiring reviewable. Auth is a flat `ZEROPIPELINE_API_KEY` (AINative
+ * bearer token/JWT — see lib/build/zeropipeline.ts), matching the other 3
+ * servers' flat-env-var contract rather than the founder-credential-resolution
+ * flow the Next.js proxy route uses (this runs as a standalone child process
+ * with no access to that credential store).
  *
-
  * Every server below shares one safety bar: env-gated (real key present),
- * existence-checked (`existsSync` on the installed package's real entry file
- * — a missing package fails closed, never throws), and additive to
- * `allowedTools` only when actually wired. A single kill switch
- * (CODY_AGENT_MCP=0) disables ALL servers at once for parity with the
- * pre-existing behavior.
+ * existence-checked (`existsSync` on the installed package's real entry file,
+ * or the local server file — a missing package/file fails closed, never
+ * throws), and additive to `allowedTools` only when actually wired. A single
+ * kill switch (CODY_AGENT_MCP=0) disables ALL servers at once for parity with
+ * the pre-existing behavior.
  */
 
-/** One STDIO MCP server this repo can wire into the spawned agent. */
+/** One STDIO MCP server this repo can wire into the spawned agent. Entry file
+ *  is resolved either from an installed npm package (`pkg` + `entryFile`,
+ *  relative to node_modules/<pkg>/) or directly from a local repo file
+ *  (`entry`, relative to the repo root) — exactly one of the two is set. */
 interface McpServerSpec {
   /** Key under `mcpServers` in the --mcp-config JSON, and the allowedTools name (`mcp__<name>`). */
   name: string
-  /** npm package name as installed in node_modules. */
-  pkg: string
-  /** Entry file relative to the package root (its `main`/`bin` target). */
-  entryFile: string
+  /** npm package name as installed in node_modules. Mutually exclusive with `entry`. */
+  pkg?: string
+  /** Entry file relative to the package root (its `main`/`bin` target). Required when `pkg` is set. */
+  entryFile?: string
+  /** Entry file relative to the repo root, for a server that ships as a local file in THIS repo rather than an npm package. Mutually exclusive with `pkg`/`entryFile`. */
+  entry?: string
   /** Env vars to pass to the spawned server process. Return null to skip wiring (e.g. missing required key). */
   buildEnv: (env: NodeJS.ProcessEnv) => Record<string, string> | null
 }
@@ -272,6 +289,30 @@ const MCP_SERVER_SPECS: McpServerSpec[] = [
       }
     },
   },
+  {
+    // builder#555 — real Node-native ZeroPipeline MCP server, shipped as a
+    // local file in this repo (lib/agent/mcp-servers/zeropipeline-mcp-server.mjs),
+    // not an npm package (see the UPDATE comment above MCP_SERVER_SPECS).
+    // 13-tool prioritized core CRM subset — pipelines, deals, customers,
+    // activities, tasks — calling ZeroPipeline's real REST API directly.
+    name: 'zeropipeline',
+    entry: 'lib/agent/mcp-servers/zeropipeline-mcp-server.mjs',
+    // Flat env-var contract matching the real Python package's own client.py
+    // (ZEROPIPELINE_API_KEY as an AINative bearer token/JWT — see
+    // lib/build/zeropipeline.ts), NOT the founder-credential-resolution flow
+    // the Next.js proxy route uses (this runs as a standalone child process
+    // with no access to that credential store).
+    buildEnv: (env) => {
+      const key = env.ZEROPIPELINE_API_KEY || ''
+      if (!key) return null
+      return {
+        ZEROPIPELINE_API_KEY: key,
+        ZEROPIPELINE_API_BASE_URL: env.ZEROPIPELINE_API_BASE_URL || env.ZEROPIPELINE_API_URL || 'https://pipeline.ainative.studio/api/v1',
+        ...(env.ZEROPIPELINE_AGENT_NAME ? { ZEROPIPELINE_AGENT_NAME: env.ZEROPIPELINE_AGENT_NAME } : {}),
+        ...(env.ZEROPIPELINE_AGENT_TYPE ? { ZEROPIPELINE_AGENT_TYPE: env.ZEROPIPELINE_AGENT_TYPE } : {}),
+      }
+    },
+  },
 ]
 
 /**
@@ -291,8 +332,12 @@ export function buildAgentMcpWiring(env: NodeJS.ProcessEnv = process.env): {
   for (const spec of MCP_SERVER_SPECS) {
     const serverEnv = spec.buildEnv(env)
     if (!serverEnv) continue // required key absent — skip this server, keep checking others
-    const serverEntry = join(process.cwd(), 'node_modules', spec.pkg, spec.entryFile)
-    if (!existsSync(serverEntry)) continue // package not installed — fail closed for this server only
+    // Local repo file (spec.entry) or an installed npm package (spec.pkg +
+    // spec.entryFile) — exactly one is set per spec.
+    const serverEntry = spec.entry
+      ? join(process.cwd(), spec.entry)
+      : join(process.cwd(), 'node_modules', spec.pkg as string, spec.entryFile as string)
+    if (!existsSync(serverEntry)) continue // package/file not present — fail closed for this server only
     mcpServers[spec.name] = {
       type: 'stdio',
       command: process.execPath, // the running node binary — no PATH lookup
