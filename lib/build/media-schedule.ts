@@ -162,6 +162,22 @@ export function isRoutineDue(routine: Pick<MediaRoutine, 'enabled' | 'frequency'
  * Build the on-brand generation prompt from the company's brand artifacts
  * (#54 req 4). Grounded ENTIRELY in real brand fields — never fabricated. Falls
  * back gracefully when a field is missing.
+ *
+ * FIXED (real, live bug): the previous prompt literally wrote the phrase "an
+ * on-brand marketing asset" as prose INSIDE the text sent to the image model —
+ * e.g. "Create a marketing image for Beacon, an on-brand marketing asset." Image
+ * models routinely render literal prompt phrases as visible text in the image
+ * (this is exactly how "BEACON / beacon / on-Brand Marketing asset" ended up
+ * baked into a real generated image as on-image copy). "On-brand" was never
+ * meant to be something the model DRAWS — it's an instruction about STYLE, not
+ * content. The fix: (1) never state that phrase as prose the model could quote
+ * back, (2) push the company's real idea/what-it-does to the FRONT of the
+ * prompt so the subject matter is actually grounded in this company's business
+ * (previously idea was a trailing, easily-ignored clause — a company with no
+ * idea text at all, e.g. auto-fired from the nightly loop with just a name,
+ * degraded straight to generic stock-photo tropes), and (3) explicitly instruct
+ * the model NOT to render any instructional/meta text as visible words unless
+ * it is a real, intentional headline.
  */
 export function buildBrandPrompt(mediaKind: MediaKind, brand: BrandContext): string {
   const name = (brand.companyName || 'the company').trim()
@@ -169,12 +185,21 @@ export function buildBrandPrompt(mediaKind: MediaKind, brand: BrandContext): str
   const idea = (brand.idea || '').trim()
   const color = (brand.color || '').trim()
   const noun = mediaKind === 'video' ? 'a short promotional video' : 'a marketing image'
+  const subject = idea
+    ? `${name}: ${idea}`
+    : `${name}${tagline ? ` — ${tagline}` : ''}`
   const parts = [
-    `Create ${noun} for ${name}, an on-brand marketing asset.`,
-    tagline ? `Brand tagline: "${tagline}".` : '',
-    idea ? `What the company does: ${idea}.` : '',
-    color ? `Use the brand accent color ${color} prominently.` : '',
-    'Style: modern, clean, professional. No text overlays unless essential. High visual quality.',
+    `Create ${noun} for a real company. What this company actually does: ${subject}.`,
+    'The image must depict THIS business — its real product, service, or the problem it',
+    'solves — not a generic, unrelated stock scene. Ground every visual choice (setting,',
+    'subject, objects) in what the company does; do not default to an unrelated industry',
+    '(e.g. fashion/apparel imagery) unless the company itself is in that industry.',
+    tagline ? `Brand tagline (for tone only — do not render this text in the image): "${tagline}".` : '',
+    color ? `Use the brand accent color ${color} prominently in the palette.` : '',
+    'Style: modern, clean, professional photography or illustration, high visual quality.',
+    'Do NOT render any words, letters, logos, or captions in the image — no text overlays',
+    'of any kind, including the company name, tagline, or any instructional phrasing from',
+    'this prompt. This must be a purely visual asset with zero on-image text.',
   ]
   return parts.filter(Boolean).join(' ')
 }

@@ -135,6 +135,44 @@ describe('buildBrandPrompt', () => {
     expect(p).toContain('the company')
     expect(p).not.toContain('undefined')
   })
+
+  // ---- Real, live bug: "BEACON / beacon / on-Brand Marketing asset" baked
+  // into a real generated image as literal on-image text. Root cause: the
+  // OLD prompt wrote the literal phrase "an on-brand marketing asset" as
+  // prose the image model could quote back verbatim. Fixed by (1) never
+  // stating that phrase as renderable prose, (2) explicitly instructing the
+  // model not to render ANY text, and (3) grounding the subject in the
+  // company's real idea instead of a generic template. ----
+  describe('prompt-leak fix (#490-3 — off-brand / literal-text-in-image bug)', () => {
+    it('never contains the literal leaking phrase "on-brand marketing asset"', () => {
+      const p = buildBrandPrompt('image', { companyName: 'Beacon' })
+      expect(p.toLowerCase()).not.toContain('on-brand marketing asset')
+    })
+    it('never contains the literal leaking phrase for video either', () => {
+      const p = buildBrandPrompt('video', { companyName: 'Beacon', tagline: 'Guiding growth' })
+      expect(p.toLowerCase()).not.toContain('on-brand marketing asset')
+    })
+    it('explicitly instructs the model not to render any words/text/logos in the image', () => {
+      const p = buildBrandPrompt('image', { companyName: 'Beacon' })
+      expect(p).toMatch(/do not render|no text overlays|zero on-image text/i)
+    })
+    it('explicitly tells the model the tagline is for tone only, not to render it', () => {
+      const p = buildBrandPrompt('image', { companyName: 'Beacon', tagline: 'Guiding growth' })
+      expect(p).toMatch(/do not render this text/i)
+    })
+    it('grounds the subject in the real idea when present, instructing against generic unrelated imagery', () => {
+      const p = buildBrandPrompt('image', { companyName: 'Beacon', idea: 'a lighthouse-as-a-service safety beacon network for maritime shipping' })
+      expect(p).toContain('a lighthouse-as-a-service safety beacon network for maritime shipping')
+      expect(p).toMatch(/ground every visual choice/i)
+      expect(p).toMatch(/not a generic, unrelated stock scene/i)
+    })
+    it('still degrades gracefully to name+tagline when no idea is available (no fabrication)', () => {
+      const p = buildBrandPrompt('image', { companyName: 'Beacon', tagline: 'Guiding growth' })
+      expect(p).toContain('Beacon')
+      expect(p).toContain('Guiding growth')
+      expect(p).not.toContain('undefined')
+    })
+  })
 })
 
 describe('buildGenerationRequest', () => {

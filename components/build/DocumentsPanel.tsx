@@ -102,6 +102,7 @@ export function DocumentsPanel({
   const [loaded, setLoaded] = useState(false)
   const [viewing, setViewing] = useState<FullDocument | null>(null)
   const [viewLoading, setViewLoading] = useState(false)
+  const [viewError, setViewError] = useState<string | null>(null)
   const [generating, setGenerating] = useState<string | null>(null)
   const [genError, setGenError] = useState<string | null>(null)
   // Pitch-deck export (#69) — a PAID deliverable generated from the company's artifacts.
@@ -133,13 +134,29 @@ export function DocumentsPanel({
   useEffect(() => load(), [load])
 
   // VIEW — load the full document content on demand.
+  //
+  // Real bug: this used to fail SILENTLY. When the fetch 404'd (or returned a
+  // shape without `document`), the code did nothing at all — `viewing` stayed
+  // null, the loading spinner appeared then vanished, and the user was left with
+  // no dialog, no error, no feedback whatsoever. Clicking VIEW looked exactly
+  // like "does nothing" because, from the user's side, it WAS doing nothing
+  // visible on failure. Every failure path now sets a real, visible error.
   const view = async (id: string) => {
     setViewLoading(true)
     setViewing(null)
+    setViewError(null)
     try {
       const res = await fetch(`/api/build/documents?companyId=${encodeURIComponent(companyId)}&id=${encodeURIComponent(id)}`)
       const d = await res.json().catch(() => null)
-      if (res.ok && d?.document) setViewing(d.document as FullDocument)
+      if (res.ok && d?.document) {
+        setViewing(d.document as FullDocument)
+      } else if (res.status === 404) {
+        setViewError('That document could not be found — it may have been removed.')
+      } else {
+        setViewError('Could not load that document — try again shortly.')
+      }
+    } catch {
+      setViewError('Connection hiccup — try viewing that document again.')
     } finally {
       setViewLoading(false)
     }
@@ -409,6 +426,17 @@ export function DocumentsPanel({
             </div>
           )}
         </>
+      )}
+
+      {/* VIEW failure — a real, visible error instead of the click silently doing
+          nothing (the exact "View goes nowhere" bug report). */}
+      {viewError && !viewing && !viewLoading && (
+        <p className="m-mono m-ver-status is-error" data-testid="document-view-error">
+          {viewError}{' '}
+          <button className="btn-ghost" data-testid="document-view-error-dismiss" onClick={() => setViewError(null)}>
+            dismiss
+          </button>
+        </p>
       )}
 
       {/* VIEW — full structured markdown, rendered in-app (#64 req 5). */}

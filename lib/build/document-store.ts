@@ -399,6 +399,14 @@ export async function listDocuments(
  * Fetch a single document (with full `content`) by id within a scope. Returns null
  * when not found / on failure. The scope filter ensures one founder can't read
  * another company's document. Used by the VIEW action + agent get.
+ *
+ * Defensive id check: never trust the query's `filters.id` alone to have picked
+ * the exact right row. When many documents share a scope (the #64 duplicate-
+ * report bug produced 20 rows in one scope with near-identical titles), the
+ * safest contract is to search the returned candidate(s) for an EXACT id match
+ * rather than blindly take rows[0] — a query-layer quirk (index lag, a filter
+ * silently not applied, ties on `limit`) must never surface the WRONG document
+ * under a VIEW click that looks like it did nothing.
  */
 export async function getDocument(scopeKey: string, id: string): Promise<BuildDocument | null> {
   if (!scopeKey || !id) return null
@@ -406,14 +414,36 @@ export async function getDocument(scopeKey: string, id: string): Promise<BuildDo
     const result = await zerodbRequest(
       'POST',
       `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/query`,
-      { filters: { scope_key: scopeKey, id }, limit: 1 },
+      { filters: { scope_key: scopeKey, id }, limit: 5 },
       { retries: 1 },
     )
     const rows: any[] = result?.data || []
     if (!rows.length) return null
-    return coerceDocument(rows[0], scopeKey)
+    const match = rows.find((r) => String((r?.row_data || r)?.id || '') === id) || rows[0]
+    return coerceDocument(match, scopeKey)
   } catch (e) {
     console.warn('[document-store] getDocument failed:', (e as Error)?.name || e)
     return null
+  }
+}
+
+/**
+ * Has a report of `type` already been written for this scope on the given
+ * calendar date (YYYY-MM-DD, compared against each report's createdAt)? Used to
+ * make the nightly loop's daily-report append idempotent PER REAL DAY — a second
+ * defense layer alongside deduping the enrollment list itself (loop-enrollment.ts
+ * `dedupeByCompany`), so even a future duplicate dispatch for the same company on
+ * the same day can't append a second "Daily Operational Report" for that date.
+ * Returns false (never blocks the write) on any query failure.
+ */
+export async function hasReportForDate(scopeKey: string, type: DocType, dateISO: string): Promise<boolean> {
+  if (!scopeKey || !dateISO) return false
+  const day = dateISO.slice(0, 10) // YYYY-MM-DD
+  if (!day) return false
+  try {
+    const docs = await listDocuments(scopeKey, MAX_LOAD_DOCUMENTS)
+    return docs.some((d) => d.type === type && d.createdAt.slice(0, 10) === day)
+  } catch {
+    return false
   }
 }
