@@ -117,12 +117,14 @@ const jsonLd = {
   '@context': 'https://schema.org',
   '@graph': [
     {
-      '@type': 'WebApplication',
+      // Product (not WebApplication/SoftwareApplication) — those app types
+      // require a star rating for Google Rich Results eligibility, and we
+      // never fabricate rating data that doesn't exist (#517).
+      '@type': 'Product',
       name: 'AINative Builder',
       url: 'https://builder.ainative.studio',
       description: 'An AI co-founder that builds AND runs your company: describe an idea and Cody composes a real running product plus the business systems around it, launches it, and operates it 24/7 on real AINative primitives you own. Build a company or an app — from a prompt to a real, running, AX-optimized product.',
-      applicationCategory: 'DeveloperApplication',
-      operatingSystem: 'Web',
+      category: 'DeveloperApplication',
       offers: {
         '@type': 'AggregateOffer',
         lowPrice: '0',
@@ -136,7 +138,7 @@ const jsonLd = {
           { '@type': 'Offer', name: 'Enterprise', price: '699', priceCurrency: 'USD', description: '10M LLM tokens/month, 200K API credits, Agent Swarm, 100GB storage, SSO' },
         ],
       },
-      featureList: [
+      additionalProperty: [
         'AI React component generation',
         'Multi-model support (Claude, Qwen, Gemma, DeepSeek)',
         'Agent Experience (AX) optimization',
@@ -145,9 +147,8 @@ const jsonLd = {
         'Template gallery',
         'One-click deployment',
         'Design token system',
-      ],
-      screenshot: 'https://builder.ainative.studio/opengraph-image',
-      softwareVersion: '1.0.0',
+      ].map((value) => ({ '@type': 'PropertyValue', name: 'feature', value })),
+      image: 'https://builder.ainative.studio/opengraph-image',
     },
     {
       '@type': 'WebSite',

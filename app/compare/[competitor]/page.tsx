@@ -370,10 +370,11 @@ export default async function CompetitorPage({ params }: PageProps) {
 
   const softwareJsonLd = {
     '@context': 'https://schema.org',
-    '@type': 'SoftwareApplication',
+    // Product (not SoftwareApplication) — that type requires a star rating for
+    // Google Rich Results eligibility, and we never fabricate one (#517).
+    '@type': 'Product',
     name: 'AINative Builder',
-    applicationCategory: 'DeveloperApplication',
-    operatingSystem: 'Web',
+    category: 'DeveloperApplication',
     url: 'https://builder.ainative.studio',
     description:
       'AI-powered app builder with multi-model AI, AX optimization, automatic SEO, and open-source code. Build and run a real company from an idea.',
