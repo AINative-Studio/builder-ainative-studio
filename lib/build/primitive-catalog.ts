@@ -129,9 +129,14 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     // Uses the SAME ZeroDB project API key provisionInstantDb() already creates —
     // no separate provisioning needed.
     apiBase: 'https://api.ainative.studio/api/v1/public/memory/v2',
-    // Memory MCP (18 tools) — docs/AINATIVE_PRIMITIVES.md §6.
-    mcpUrl: `${MCP_BASE}/memory`,
-    mcpTools: 18,
+    // NOT setting mcpUrl/mcpTools here (#534): docs/AINATIVE_PRIMITIVES.md §6
+    // documents a "Memory MCP" (18 tools) at MCP_BASE/memory, but that host is
+    // confirmed DEAD via live curl (404 on every tested path, served by
+    // builder's own SPA catch-all, not an MCP handler) — same pattern as the
+    // OpenCapStack fix (#429/#413). No stdio-npm alternative is known to exist
+    // for ZeroMemory either, unlike ZeroDB's real `ainative-zerodb-mcp-server`.
+    // Refs core#6667 (the hosted MCP gateway epic) — re-verify live before
+    // ever re-adding this field.
     triggers: ['memory', 'remember', 'personalization', 'personalize', 'context', 'history', 'preferences'] },
   { name: 'AI Kit', category: 'ui', foundational: true,
     purpose: 'UI component framework (React/Vue/Svelte/Next streaming chat, Safety, A2UI)',
@@ -167,10 +172,14 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     // NOT proxy ZeroVoice's own routes at all (404, route doesn't exist there);
     // the real, auth-gated, working host is ZeroVoice's own Railway service.
     apiBase: 'https://zerovoice-production.up.railway.app/api/v1',
-    // ZeroVoice MCP (25 tools) — docs/AINATIVE_PRIMITIVES.md §6. Lets the running
-    // company make/receive real calls + SMS as agentic MCP tool calls (run-time ops).
-    mcpUrl: `${MCP_BASE}/zerovoice`,
-    mcpTools: 25,
+    // NOT setting mcpUrl/mcpTools here (#534): docs/AINATIVE_PRIMITIVES.md §6
+    // documents a "ZeroVoice MCP" (25 tools) at MCP_BASE/zerovoice, but that
+    // host is confirmed DEAD via live curl (404 on every tested path, served
+    // by builder's own SPA catch-all, not an MCP handler) — same pattern as
+    // the OpenCapStack fix (#429/#413). No stdio-npm alternative is known to
+    // exist for ZeroVoice either, unlike ZeroDB's real
+    // `ainative-zerodb-mcp-server`. Refs core#6667 (the hosted MCP gateway
+    // epic) — re-verify live before ever re-adding this field.
     // #522: 'call'/'calls' were dropped as bare triggers — scorePrimitives'
     // matching (lib/build/primitive-catalog.ts's scorePrimitives) falls back
     // to a plain substring check with no word-boundary guard, so a bare
@@ -273,10 +282,14 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     purpose: 'AI content + distribution: personas, scheduled posts, auto-captions, avatar videos, auto-publish',
     url: `${DOCS}/api/content-workflow`,
     apiBase: 'https://api.ainative.studio/api/v1/public',
-    // Strapi MCP (21 tools) — docs/AINATIVE_PRIMITIVES.md §6. Stands up / operates a
-    // real CMS for content-driven apps agentically.
-    mcpUrl: `${MCP_BASE}/strapi`,
-    mcpTools: 21,
+    // NOT setting mcpUrl/mcpTools here (#534): docs/AINATIVE_PRIMITIVES.md §6
+    // documents a "Strapi MCP" (21 tools) at MCP_BASE/strapi, but that host is
+    // confirmed DEAD via live curl (404 on every tested path, served by
+    // builder's own SPA catch-all, not an MCP handler) — same pattern as the
+    // OpenCapStack fix (#429/#413). No stdio-npm alternative is known to
+    // exist for this primitive either, unlike ZeroDB's real
+    // `ainative-zerodb-mcp-server`. Refs core#6667 (the hosted MCP gateway
+    // epic) — re-verify live before ever re-adding this field.
     triggers: ['content', 'marketing', 'social', 'social media', 'posts', 'blog', 'creator', 'captions', 'newsletter', 'campaigns', 'seo', 'brand awareness'] },
   { name: 'Live Streaming', category: 'business-ops',
     purpose: 'Streams (RTMPS in / HLS out), real-time chat, VOD, audience analytics, WebRTC',
@@ -458,6 +471,21 @@ export interface McpServerRef {
  * The published AINative MCP fleet (docs/AINATIVE_PRIMITIVES.md §6). Single source
  * of truth for WHICH servers the multi-server client can connect to. HTTP servers
  * are keyed off MCP_BASE so one env var retargets the fleet.
+ *
+ * REALITY CHECK (#534): every `transport: 'http'` entry below (zerodb, memory,
+ * prd-generator, sequential-thinking, design-system, strapi, zerovoice) points
+ * at MCP_BASE (mcp.ainative.studio), which is confirmed DEAD via live curl —
+ * real 404s on all of them, served by builder's own SPA catch-all, not an MCP
+ * handler (Refs core#6667, still open). `getMcpServer('zerodb')` is still
+ * referenced from `lib/build/mcp-provision.ts`, but that wedge is inert by
+ * default (ENABLE_MCP_PROVISION unset) and fails closed to the existing REST
+ * fallback when the dead host 404s — it does not surface a false "connected"
+ * state. The ONE genuinely live ZeroDB MCP path in production is a completely
+ * different mechanism: `lib/agent/agent-runtime.ts`'s `buildAgentMcpWiring()`,
+ * which spawns the real stdio npm package `ainative-zerodb-mcp-server`
+ * directly — it does not read this array at all. Do not treat an `http` entry
+ * here as evidence any of these servers are reachable; re-verify live via curl
+ * before wiring a real caller to one.
  */
 export const MCP_SERVERS: McpServerRef[] = [
   { id: 'zerodb', label: 'Full ZeroDB MCP', url: `${MCP_BASE}/zerodb`, tools: 69, primitive: 'ZeroDB', transport: 'http' },
