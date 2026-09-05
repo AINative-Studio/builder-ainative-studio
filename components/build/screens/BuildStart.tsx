@@ -3,7 +3,11 @@
 /**
  * BuildStart — funnel step 2 (Claude Design handoff). "Let's build something."
  *
- *   Surprise me   → Builder seeds a starter idea, then the founder refines it in Intake.
+ *   Surprise me   → an LLM invents a starter idea (POST /api/build/surprise-idea,
+ *                   grounded in the real primitive catalog, biased toward
+ *                   whatever primitives haven't shown up recently — falls back
+ *                   to the static pool in lib/build/surprise-ideas.ts on any
+ *                   failure/timeout), then the founder refines it in Intake.
  *   Build my idea → straight to Intake with a blank field.
  *
  * Both commit the Company track (the funnel's "create a company" framing) and
@@ -17,11 +21,17 @@ import { COMPANY_ROLES } from '@/lib/build/primitive-catalog'
 import type { CompanyRole } from '@/lib/build/state'
 import { pickSurpriseIdea } from '@/lib/build/surprise-ideas'
 
+/** "Surprise me" is a single click a founder expects to feel near-instant —
+ *  a hung LLM call must never leave the button spinning indefinitely, so the
+ *  client enforces its own timeout independent of the route's own. */
+const SURPRISE_IDEA_CLIENT_TIMEOUT_MS = 10000
+
 export function BuildStart() {
   const { dispatch, pickTrack } = useBuild()
   const [role, setRole] = useState<CompanyRole>('')
+  const [isSurprising, setIsSurprising] = useState(false)
   // Tracks the last-shown idea (across clicks in this mount, not persisted)
-  // purely so pickSurpriseIdea can avoid an immediate back-to-back repeat.
+  // purely so the static-pool fallback can avoid an immediate back-to-back repeat.
   const lastIdeaRef = useRef<string | null>(null)
 
   const goIntake = () => {
@@ -33,14 +43,32 @@ export function BuildStart() {
     pickTrack('company', role || undefined)
   }
 
-  const pickSurprise = () => {
-    // A real click handler, so Math.random() (inside pickSurpriseIdea) is
-    // safe here — unlike in render, where it would break SSR hydration.
-    // Previously this was Math.floor(Date.now()/60000) % 5: a 5-idea pool,
-    // deterministically bucketed by the clock, so repeated clicks within
-    // the same minute always returned the identical idea.
-    const idea = pickSurpriseIdea(lastIdeaRef.current)
+  const pickSurprise = async () => {
+    if (isSurprising) return // ignore a double-click while a request is in flight
+    setIsSurprising(true)
+    // The idea now comes from a real LLM call (POST /api/build/surprise-idea),
+    // grounded in the full real primitive catalog and biased toward whatever
+    // primitives haven't shown up in recent picks — the static SURPRISE_IDEAS
+    // pool (lib/build/surprise-ideas.ts) structurally could never surface most
+    // of the catalog (fixed 14-string array, each idea only ever triggers
+    // whichever primitives happen to share its hardcoded words). That pool is
+    // kept as the fallback below, not the primary path, for exactly the
+    // moment this call fails or times out.
+    let idea: string
+    try {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), SURPRISE_IDEA_CLIENT_TIMEOUT_MS)
+      const res = await fetch('/api/build/surprise-idea', { method: 'POST', signal: controller.signal })
+      clearTimeout(timer)
+      const json = res.ok ? await res.json().catch(() => null) : null
+      idea = typeof json?.idea === 'string' && json.idea.trim() ? json.idea : pickSurpriseIdea(lastIdeaRef.current)
+    } catch {
+      // Network error, timeout, or abort — never leave the founder stuck with
+      // no idea because the model call failed; fall back to the static pool.
+      idea = pickSurpriseIdea(lastIdeaRef.current)
+    }
     lastIdeaRef.current = idea
+    setIsSurprising(false)
     dispatch({ type: 'SET_IDEA', idea })
     goIntake()
   }
@@ -63,8 +91,15 @@ export function BuildStart() {
         <h1 className="m-land-title" style={{ fontSize: 'clamp(30px,5vw,52px)', margin: '0 0 8px' }}>Let&apos;s build something.</h1>
 
         <div style={{ display: 'grid', gap: 6, width: '100%', maxWidth: 420 }}>
-          <button onClick={pickSurprise} className="btn-secondary m-land-btn-block" style={{ padding: '18px 20px', fontSize: 15 }} data-testid="build-surprise">
-            Surprise me
+          <button
+            onClick={pickSurprise}
+            disabled={isSurprising}
+            aria-busy={isSurprising}
+            className="btn-secondary m-land-btn-block"
+            style={{ padding: '18px 20px', fontSize: 15, opacity: isSurprising ? 0.7 : 1, cursor: isSurprising ? 'wait' : 'pointer' }}
+            data-testid="build-surprise"
+          >
+            {isSurprising ? 'Thinking of something…' : 'Surprise me'}
           </button>
           <div className="m-land-opt-sub" style={{ textAlign: 'center', marginBottom: 8 }}>Builder will come up with an idea</div>
 
