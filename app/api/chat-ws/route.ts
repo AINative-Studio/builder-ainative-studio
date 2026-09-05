@@ -6,6 +6,7 @@ import * as Sentry from '@sentry/nextjs'
 import { verifyAndEnhancePrompt } from '@/lib/component-verifier'
 import { PROFESSIONAL_SYSTEM_PROMPT } from '@/lib/professional-prompt'
 import { codegenCompositionBlock } from '@/lib/build/primitive-catalog'
+import { dataModelContextBlock } from '@/lib/build/data-model-context'
 import { multiFileEmphasis, multiFileUserDirective, ideaWarrantsMultiFile } from '@/lib/build/multifile-emphasis'
 import { enhancePromptWithMockData } from '@/lib/mock-data-generator'
 import { updatePreviewPartial, storePreview, getChatData } from '@/lib/preview-store'
@@ -213,11 +214,15 @@ const MODEL_CONFIG: Record<string, { provider: 'meta' | 'ainative'; modelId: str
 
 export async function POST(request: NextRequest) {
   try {
-    const { message, chatId, model: requestedModel, role: companyRole } = await request.json()
+    const { message, chatId, model: requestedModel, role: companyRole, dataModel } = await request.json()
     // #448: an optional company-build role (marketing/sales/operations)
     // narrows composition toward that function's primitives. Untrusted
     // client input — validate against the real role set, default to none.
     const validRole = ['marketing', 'sales', 'operations'].includes(companyRole) ? companyRole : undefined
+    // #532: the founder's already-generated + reviewed dataModel artifact, when
+    // the client has one. Formatted defensively — malformed/absent input just
+    // yields '' (no-op), never blocks or fails generation.
+    const dataModelBlock = dataModelContextBlock(dataModel)
 
     if (!message) {
       return Response.json({ error: 'Message is required' }, { status: 400 })
@@ -387,7 +392,10 @@ export async function POST(request: NextRequest) {
           // empty/failed recall yields '' (no-op), so it never blocks generation.
           const ragBlock = await buildRagContext(message, recallPastPerformance)
           if (ragBlock) console.log(`🧠 RAG context injected (${ragBlock.length} chars from ZeroMemory)`)
-          const enhancedSystemPrompt = themedPrompt + themePrompt + imagePrompt + memoryContext + compositionBlock + fileStructureBlock + ragBlock
+          // #532: keep the generated app's schema consistent with the dataModel
+          // artifact the founder already reviewed (when one was passed through).
+          if (dataModelBlock) console.log(`🗂️  Data model context injected (${dataModelBlock.length} chars from founder's reviewed artifact)`)
+          const enhancedSystemPrompt = themedPrompt + themePrompt + imagePrompt + memoryContext + compositionBlock + fileStructureBlock + ragBlock + dataModelBlock
 
           // ============================================================
           // CLAUDE AGENT PATH — headless Claude Code agent via SSE
