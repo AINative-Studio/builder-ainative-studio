@@ -208,4 +208,21 @@ describe('buildAgentMcpWiring (builder#534 — real multi-server MCP wiring)', (
       expect(parsed.mcpServers[name].args[0]).toMatch(/node_modules.*index\.js$/)
     }
   })
+
+  // builder#555: ZeroPipeline was investigated for the same treatment and
+  // deliberately NOT wired — `@ainative/zeropipeline-mcp` (real, published,
+  // v0.1.0) ships no Node MCP server at all, only a `bin/cli.mjs` shim that
+  // delegates to a SEPARATE Python package (`zeropipeline-mcp` on PyPI) this
+  // Node-only repo has no runtime story for. Wiring it into MCP_SERVER_SPECS
+  // would `existsSync`-pass on the shim file while failing at spawn time on
+  // every real call — see the REALITY CHECK comment above MCP_SERVER_SPECS.
+  // This test locks in that decision so it isn't silently reversed.
+  it('does NOT wire ZeroPipeline — no Node-native server package exists yet (builder#555)', () => {
+    const out = buildAgentMcpWiring(env({ ZERODB_API_KEY: 'zk-123', ZEROPIPELINE_API_KEY: 'zp-123' }))
+    expect(out.allowedTools).not.toContain('mcp__zeropipeline')
+    if (out.configJson) {
+      const parsed = JSON.parse(out.configJson)
+      expect(parsed.mcpServers.zeropipeline).toBeUndefined()
+    }
+  })
 })
