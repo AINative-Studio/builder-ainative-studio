@@ -12,7 +12,7 @@ import { updatePreviewPartial, storePreview, getChatData } from '@/lib/preview-s
 import { validateGeneratedCode } from '@/lib/code-validator'
 import { validateOutput, validateFileImports } from '@/lib/build/output-validator'
 import { buildValidationFallbackComponent } from '@/lib/validation-fallback'
-import { runValidationRetryLoop, buildRepairPrompt } from '@/lib/generation-retry'
+import { runValidationRetryLoop, buildRepairPrompt, extractErrorWindow } from '@/lib/generation-retry'
 import { checkObedience, buildObediencePrompt } from '@/lib/build/obedience-gate'
 import { buildRagContext } from '@/lib/build/rag-context'
 import { shouldDecompose, buildDecompositionPrompt, buildFixAndDecomposePrompt } from '@/lib/build/decomposition'
@@ -1245,7 +1245,12 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                     {
                       role: 'user',
                       content:
-                        `${buildRepairPrompt(message, error)}\n\nBROKEN CODE:\n\`\`\`jsx\n${(brokenCode || fullContent).slice(0, 8000)}\n\`\`\``,
+                        // builder#531: center the window on the error's own line
+                        // instead of a flat prefix slice — a large/multi-file
+                        // generation's real defect can be well past char 8000,
+                        // which fed the repair model code that looked fine and
+                        // guaranteed every retry attempt failed the same way.
+                        `${buildRepairPrompt(message, error)}\n\nBROKEN CODE:\n\`\`\`jsx\n${extractErrorWindow(brokenCode || fullContent, error)}\n\`\`\``,
                     },
                   ],
                 })
