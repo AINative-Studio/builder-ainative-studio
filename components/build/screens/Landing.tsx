@@ -169,9 +169,9 @@ export function Landing() {
       {/* footer */}
       <div className="m-land-foot">
         <a href="/about">About</a>
-        <a href="/terms">Terms</a>
+        <a href="https://ainative.studio/terms">Terms</a>
         <a href="/acceptable-use">Acceptable use</a>
-        <a href="/privacy">Privacy</a>
+        <a href="https://ainative.studio/privacy">Privacy</a>
         <span>Support: <a href="mailto:support@ainative.studio">support@ainative.studio</a></span>
       </div>
     </div>
