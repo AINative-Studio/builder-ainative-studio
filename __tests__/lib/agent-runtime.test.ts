@@ -209,20 +209,90 @@ describe('buildAgentMcpWiring (builder#534 — real multi-server MCP wiring)', (
     }
   })
 
-  // builder#555: ZeroPipeline was investigated for the same treatment and
-  // deliberately NOT wired — `@ainative/zeropipeline-mcp` (real, published,
-  // v0.1.0) ships no Node MCP server at all, only a `bin/cli.mjs` shim that
-  // delegates to a SEPARATE Python package (`zeropipeline-mcp` on PyPI) this
-  // Node-only repo has no runtime story for. Wiring it into MCP_SERVER_SPECS
-  // would `existsSync`-pass on the shim file while failing at spawn time on
-  // every real call — see the REALITY CHECK comment above MCP_SERVER_SPECS.
-  // This test locks in that decision so it isn't silently reversed.
-  it('does NOT wire ZeroPipeline — no Node-native server package exists yet (builder#555)', () => {
-    const out = buildAgentMcpWiring(env({ ZERODB_API_KEY: 'zk-123', ZEROPIPELINE_API_KEY: 'zp-123' }))
-    expect(out.allowedTools).not.toContain('mcp__zeropipeline')
-    if (out.configJson) {
-      const parsed = JSON.parse(out.configJson)
-      expect(parsed.mcpServers.zeropipeline).toBeUndefined()
-    }
+  // builder#555 (re-scoped): a real Node-native ZeroPipeline MCP server now
+  // ships as a local file in this repo (lib/agent/mcp-servers/zeropipeline-mcp-server.mjs)
+  // — a genuine reimplementation calling ZeroPipeline's real REST API
+  // directly, NOT the broken `@ainative/zeropipeline-mcp` npm shim (still
+  // correctly unwired — see the REALITY CHECK comment above MCP_SERVER_SPECS).
+  // These tests run against the REAL local file, existence-checked like the
+  // other three servers.
+  describe('ZeroPipeline wiring (builder#555 — real Node-native server)', () => {
+    it('wires zeropipeline when ZEROPIPELINE_API_KEY is present and the local server file exists', () => {
+      const out = buildAgentMcpWiring(env({ ZEROPIPELINE_API_KEY: 'zp-123' }))
+      expect(out.allowedTools).toContain('mcp__zeropipeline')
+      const parsed = JSON.parse(out.configJson as string)
+      expect(parsed.mcpServers.zeropipeline).toBeDefined()
+    })
+
+    it('is independent of the ZeroDB-family key — wires with ONLY ZEROPIPELINE_API_KEY set', () => {
+      const out = buildAgentMcpWiring(env({ ZEROPIPELINE_API_KEY: 'zp-123' }))
+      expect(out.allowedTools).toEqual(['mcp__zeropipeline'])
+    })
+
+    it('does not wire zeropipeline when ZEROPIPELINE_API_KEY is absent, even with other keys present', () => {
+      const out = buildAgentMcpWiring(env({ ZERODB_API_KEY: 'zk-123' }))
+      expect(out.allowedTools).not.toContain('mcp__zeropipeline')
+    })
+
+    it('env includes the default ZEROPIPELINE_API_BASE_URL and omits optional agent headers when unset', () => {
+      const out = buildAgentMcpWiring(env({ ZEROPIPELINE_API_KEY: 'zp-123' }))
+      const parsed = JSON.parse(out.configJson as string)
+      expect(parsed.mcpServers.zeropipeline.env).toEqual({
+        ZEROPIPELINE_API_KEY: 'zp-123',
+        ZEROPIPELINE_API_BASE_URL: 'https://pipeline.ainative.studio/api/v1',
+      })
+    })
+
+    it('honors a ZEROPIPELINE_API_BASE_URL / ZEROPIPELINE_API_URL override and passes through agent headers', () => {
+      const out = buildAgentMcpWiring(
+        env({
+          ZEROPIPELINE_API_KEY: 'zp-123',
+          ZEROPIPELINE_API_URL: 'https://staging.pipeline.example.com/api/v1',
+          ZEROPIPELINE_AGENT_NAME: 'cody',
+          ZEROPIPELINE_AGENT_TYPE: 'coding-agent',
+        }),
+      )
+      const parsed = JSON.parse(out.configJson as string)
+      expect(parsed.mcpServers.zeropipeline.env).toEqual({
+        ZEROPIPELINE_API_KEY: 'zp-123',
+        ZEROPIPELINE_API_BASE_URL: 'https://staging.pipeline.example.com/api/v1',
+        ZEROPIPELINE_AGENT_NAME: 'cody',
+        ZEROPIPELINE_AGENT_TYPE: 'coding-agent',
+      })
+    })
+
+    it('ZEROPIPELINE_API_BASE_URL takes precedence over ZEROPIPELINE_API_URL', () => {
+      const out = buildAgentMcpWiring(
+        env({
+          ZEROPIPELINE_API_KEY: 'zp-123',
+          ZEROPIPELINE_API_BASE_URL: 'https://base-wins.example.com',
+          ZEROPIPELINE_API_URL: 'https://url-loses.example.com',
+        }),
+      )
+      const parsed = JSON.parse(out.configJson as string)
+      expect(parsed.mcpServers.zeropipeline.env.ZEROPIPELINE_API_BASE_URL).toBe('https://base-wins.example.com')
+    })
+
+    it('spawns via process.execPath with a stdio type, entry resolved from the repo root (not node_modules)', () => {
+      const out = buildAgentMcpWiring(env({ ZEROPIPELINE_API_KEY: 'zp-123' }))
+      const parsed = JSON.parse(out.configJson as string)
+      expect(parsed.mcpServers.zeropipeline.type).toBe('stdio')
+      expect(parsed.mcpServers.zeropipeline.command).toBe(process.execPath)
+      expect(parsed.mcpServers.zeropipeline.args[0]).toMatch(/lib\/agent\/mcp-servers\/zeropipeline-mcp-server\.mjs$/)
+      expect(parsed.mcpServers.zeropipeline.args[0]).not.toMatch(/node_modules/)
+    })
+
+    it('CODY_AGENT_MCP=0 disables zeropipeline along with every other server', () => {
+      const out = buildAgentMcpWiring(env({ ZEROPIPELINE_API_KEY: 'zp-123', CODY_AGENT_MCP: '0' }))
+      expect(out.allowedTools).toEqual([])
+      expect(out.configJson).toBeNull()
+    })
+
+    it('wires alongside the other three servers when all four keys are present', () => {
+      const out = buildAgentMcpWiring(env({ ZERODB_API_KEY: 'zk-123', ZEROPIPELINE_API_KEY: 'zp-123' }))
+      expect(out.allowedTools.sort()).toEqual(
+        ['mcp__browser-agent', 'mcp__sequential-thinking', 'mcp__zerodb', 'mcp__zeropipeline'].sort(),
+      )
+    })
   })
 })

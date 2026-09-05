@@ -407,6 +407,17 @@ export async function* runHeadlessAgent(
       `use sparingly, only when the problem needs more structured reasoning than inline thinking already gives you.`,
     )
   }
+  // builder#555 — real Node-native ZeroPipeline MCP server, wired only when a
+  // real ZEROPIPELINE_API_KEY is present (see MCP_SERVER_SPECS in agent-runtime.ts).
+  if (mcp.allowedTools.includes('mcp__zeropipeline')) {
+    extraMcpNotes.push(
+      `You also have live mcp__zeropipeline__* tools (list_pipelines, get_pipeline, list_deals, ` +
+      `create_deal, update_deal, move_deal_stage, get_deal_score, list_customers, create_customer, ` +
+      `list_activities, log_activity, list_tasks, create_task) for real ZeroPipeline CRM operations — ` +
+      `use them when the build genuinely needs to read or write real pipeline/deal/customer data, not for ` +
+      `anything servable by existing app code.`,
+    )
+  }
   const extraMcpBlock = extraMcpNotes.length ? '\n\n' + extraMcpNotes.join('\n') : ''
 
   // #345: tiered-recap context staircase for resuming/long builds. Whole-build
