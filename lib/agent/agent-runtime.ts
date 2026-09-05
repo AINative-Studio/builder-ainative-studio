@@ -173,6 +173,41 @@ export function isAgentFallbackEnabled(env: NodeJS.ProcessEnv = process.env): bo
  * per-company STRAPI_URL/STRAPI_TOKEN this repo has no provisioning story for
  * (same gap as ZeroVoice hit earlier) — deferred, not silently skipped.
  *
+ * REALITY CHECK (2026-09-05, builder#555): `@ainative/zeropipeline-mcp` was
+ * investigated for the same treatment and is NOT wired — verified live via
+ * `npm view`/`npm pack` + extracting the real published tarball, not the
+ * issue's claims. Findings that broke the premise:
+ *   - The real published version is 0.1.0 (issue claimed 0.2.0).
+ *   - The npm package ships NO Node MCP server at all — its entire contents
+ *     are `bin/cli.mjs`, a shim that `which`-locates a `zeropipeline-mcp`
+ *     binary or shells out to `python3 -m zeropipeline_mcp`. Its own README
+ *     says so outright: "thin Node.js shim that spawns the Python
+ *     zeropipeline-mcp process ... No Node.js runtime dependencies needed —
+ *     it delegates to the Python server." There is no `index.js`/Node entry
+ *     file this repo's `existsSync(node_modules/<pkg>/<entryFile>)` +
+ *     `command: process.execPath, args: [serverEntry]` spawn contract (see
+ *     buildAgentMcpWiring below) can ever satisfy honestly — the real 41-tool
+ *     implementation lives entirely in the SEPARATE PyPI package
+ *     `zeropipeline-mcp` (Python 3.10+, FastMCP, `zeropipeline_mcp/server.py`
+ *     — verified by downloading and reading the actual wheel), and the tool
+ *     count itself is 41, not the issue's "30" (includes bulk_create_customers,
+ *     bulk_tag_customers, update_customer, get_tag_coverage, enrich_customer,
+ *     and 3 luma_* tools the issue's summary omitted entirely).
+ *   - This repo (builder-ainative-studio) is Node/Next.js only — no
+ *     Dockerfile, no requirements.txt/Pipfile, no Python runtime anywhere in
+ *     the deploy path (railway.json is a Node/nixpacks build). There is no
+ *     provisioning story for a Python 3.10+ interpreter on the Railway
+ *     container, so even installing the npm shim would `existsSync`-pass on
+ *     `bin/cli.mjs` while failing at spawn time on every real invocation —
+ *     the exact fail-OPEN failure mode (a tool that appears wired but errors
+ *     on every call) this file's safety bar exists to prevent, just moved
+ *     from account-provisioning risk (the issue's own stated concern) to
+ *     process-spawn risk.
+ * Deferred, not silently skipped: wire it if/when a real Node-native MCP
+ * server ships for ZeroPipeline (matching the ZeroDB/Browser Agent/Sequential
+ * Thinking shape), or once this repo has an actual Python runtime story.
+ *
+
  * Every server below shares one safety bar: env-gated (real key present),
  * existence-checked (`existsSync` on the installed package's real entry file
  * — a missing package fails closed, never throws), and additive to
