@@ -6,13 +6,14 @@ import * as Sentry from '@sentry/nextjs'
 import { verifyAndEnhancePrompt } from '@/lib/component-verifier'
 import { PROFESSIONAL_SYSTEM_PROMPT } from '@/lib/professional-prompt'
 import { codegenCompositionBlock } from '@/lib/build/primitive-catalog'
+import { dataModelContextBlock } from '@/lib/build/data-model-context'
 import { multiFileEmphasis, multiFileUserDirective, ideaWarrantsMultiFile } from '@/lib/build/multifile-emphasis'
 import { enhancePromptWithMockData } from '@/lib/mock-data-generator'
 import { updatePreviewPartial, storePreview, getChatData } from '@/lib/preview-store'
 import { validateGeneratedCode } from '@/lib/code-validator'
 import { validateOutput, validateFileImports } from '@/lib/build/output-validator'
 import { buildValidationFallbackComponent } from '@/lib/validation-fallback'
-import { runValidationRetryLoop, buildRepairPrompt } from '@/lib/generation-retry'
+import { runValidationRetryLoop, buildRepairPrompt, extractErrorWindow } from '@/lib/generation-retry'
 import { checkObedience, buildObediencePrompt } from '@/lib/build/obedience-gate'
 import { buildRagContext } from '@/lib/build/rag-context'
 import { shouldDecompose, buildDecompositionPrompt, buildFixAndDecomposePrompt } from '@/lib/build/decomposition'
@@ -179,38 +180,49 @@ async function runClaudePass(system: string, user: string, maxTokens = 16000, mo
 // 'nous-coder' is FULLY DEPRECATED, no upstream at all (core's registry
 // hard-fails it — confirmed live during #360 investigation). Replaced with
 // qwen-coder-32b, core's own suggested live replacement.
-const FREE_FALLBACKS = ['ministral-14b', 'qwen-coder-32b', 'gpt-oss-20b']
-const PAID_FALLBACKS = ['kimi-k2.6', 'qwen-coder-32b', 'nemotron-70b', 'ministral-14b']
+const STANDARD_FALLBACKS = ['ministral-14b', 'qwen-coder-32b', 'gpt-oss-20b']
+const PREMIUM_FALLBACKS = ['kimi-k2.6', 'qwen-coder-32b', 'nemotron-70b', 'ministral-14b']
 
-// Model routing config — all models route through AINative API
-const MODEL_CONFIG: Record<string, { provider: 'meta' | 'ainative'; modelId: string; tier: 'free' | 'paid' }> = {
-  // === PAID TIER — best quality, longer output ===
-  'kimi-k2.6': { provider: 'ainative', modelId: 'kimi-k2.6', tier: 'paid' },
-  'kimi-k2': { provider: 'ainative', modelId: 'kimi-k2', tier: 'paid' },
-  'nemotron-70b': { provider: 'ainative', modelId: 'nemotron-70b', tier: 'paid' },
-  // === FREE TIER — fast, reliable ===
+// Model routing config — all models route through AINative API.
+// NOTE: 'tier' here is a COMPUTE-COST-ROUTING concept (cheap/fast model vs.
+// expensive/slow model for code generation) — NOT the customer billing-plan
+// tier (hobbyist/pro/scale/enterprise) handled by lib/ainative/plan.ts and
+// lib/services/plan.service.ts. Do not conflate the two axes: a Hobbyist
+// billing-plan customer can still be routed to a 'premium' compute model if
+// the product allows it. Neither value implies the model is free to run —
+// AINative's DigitalOcean-hosted inference is never actually zero-cost (#536).
+const MODEL_CONFIG: Record<string, { provider: 'meta' | 'ainative'; modelId: string; tier: 'standard' | 'premium' }> = {
+  // === PREMIUM COMPUTE TIER — best quality, longer output ===
+  'kimi-k2.6': { provider: 'ainative', modelId: 'kimi-k2.6', tier: 'premium' },
+  'kimi-k2': { provider: 'ainative', modelId: 'kimi-k2', tier: 'premium' },
+  'nemotron-70b': { provider: 'ainative', modelId: 'nemotron-70b', tier: 'premium' },
+  // === STANDARD COMPUTE TIER — fast, reliable ===
   // 'nous-coder' REMOVED — fully deprecated, core hard-fails it (Ref #360).
-  'qwen-coder-32b': { provider: 'ainative', modelId: 'qwen-coder-32b', tier: 'free' },
-  'gpt-oss-20b': { provider: 'ainative', modelId: 'gpt-oss-20b', tier: 'free' },
-  'ministral-14b': { provider: 'ainative', modelId: 'ministral-14b', tier: 'free' },
+  'qwen-coder-32b': { provider: 'ainative', modelId: 'qwen-coder-32b', tier: 'standard' },
+  'gpt-oss-20b': { provider: 'ainative', modelId: 'gpt-oss-20b', tier: 'standard' },
+  'ministral-14b': { provider: 'ainative', modelId: 'ministral-14b', tier: 'standard' },
   // llama-4-maverick REMOVED — AINative caps at 512 tokens, ALWAYS truncated
-  // 'llama-4-maverick': { provider: isLocal ? 'meta' : 'ainative', modelId: 'llama-4-maverick', tier: 'free' },
-  'nemotron-super-49b': { provider: 'ainative', modelId: 'nemotron-super-49b', tier: 'free' },
-  'cohere-command': { provider: 'ainative', modelId: 'cohere-command', tier: 'free' },
+  // 'llama-4-maverick': { provider: isLocal ? 'meta' : 'ainative', modelId: 'llama-4-maverick', tier: 'standard' },
+  'nemotron-super-49b': { provider: 'ainative', modelId: 'nemotron-super-49b', tier: 'standard' },
+  'cohere-command': { provider: 'ainative', modelId: 'cohere-command', tier: 'standard' },
   // === INTERMITTENT — may come back online ===
-  'codestral-22b': { provider: 'ainative', modelId: 'codestral-22b', tier: 'free' },
-  'devstral': { provider: 'ainative', modelId: 'devstral', tier: 'free' },
-  'deepseek-v3': { provider: 'ainative', modelId: 'deepseek-v3', tier: 'free' },
-  'qwen3-32b': { provider: 'ainative', modelId: 'qwen3-32b', tier: 'free' },
+  'codestral-22b': { provider: 'ainative', modelId: 'codestral-22b', tier: 'standard' },
+  'devstral': { provider: 'ainative', modelId: 'devstral', tier: 'standard' },
+  'deepseek-v3': { provider: 'ainative', modelId: 'deepseek-v3', tier: 'standard' },
+  'qwen3-32b': { provider: 'ainative', modelId: 'qwen3-32b', tier: 'standard' },
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const { message, chatId, model: requestedModel, role: companyRole } = await request.json()
+    const { message, chatId, model: requestedModel, role: companyRole, dataModel } = await request.json()
     // #448: an optional company-build role (marketing/sales/operations)
     // narrows composition toward that function's primitives. Untrusted
     // client input — validate against the real role set, default to none.
     const validRole = ['marketing', 'sales', 'operations'].includes(companyRole) ? companyRole : undefined
+    // #532: the founder's already-generated + reviewed dataModel artifact, when
+    // the client has one. Formatted defensively — malformed/absent input just
+    // yields '' (no-op), never blocks or fails generation.
+    const dataModelBlock = dataModelContextBlock(dataModel)
 
     if (!message) {
       return Response.json({ error: 'Message is required' }, { status: 400 })
@@ -380,7 +392,10 @@ export async function POST(request: NextRequest) {
           // empty/failed recall yields '' (no-op), so it never blocks generation.
           const ragBlock = await buildRagContext(message, recallPastPerformance)
           if (ragBlock) console.log(`🧠 RAG context injected (${ragBlock.length} chars from ZeroMemory)`)
-          const enhancedSystemPrompt = themedPrompt + themePrompt + imagePrompt + memoryContext + compositionBlock + fileStructureBlock + ragBlock
+          // #532: keep the generated app's schema consistent with the dataModel
+          // artifact the founder already reviewed (when one was passed through).
+          if (dataModelBlock) console.log(`🗂️  Data model context injected (${dataModelBlock.length} chars from founder's reviewed artifact)`)
+          const enhancedSystemPrompt = themedPrompt + themePrompt + imagePrompt + memoryContext + compositionBlock + fileStructureBlock + ragBlock + dataModelBlock
 
           // ============================================================
           // CLAUDE AGENT PATH — headless Claude Code agent via SSE
@@ -1058,10 +1073,10 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               // Single-turn call with fallback chain
               // CRITICAL: Only system+user messages (2 messages). Multi-turn (>2) triggers 512-token cap.
               // Use tier-appropriate fallback chain
-              const modelTier = MODEL_CONFIG[requestedModel]?.tier || 'free'
-              const MODELS_TO_TRY = modelTier === 'paid'
-                ? [modelId, ...PAID_FALLBACKS.filter(m => m !== modelId)]
-                : [modelId, ...FREE_FALLBACKS.filter(m => m !== modelId)]
+              const modelTier = MODEL_CONFIG[requestedModel]?.tier || 'standard'
+              const MODELS_TO_TRY = modelTier === 'premium'
+                ? [modelId, ...PREMIUM_FALLBACKS.filter(m => m !== modelId)]
+                : [modelId, ...STANDARD_FALLBACKS.filter(m => m !== modelId)]
               const singleTurnMessages = [
                 { role: 'system' as const, content: llmSystemPrompt },
                 // Merge conversation history into a single user message to keep it 2-message single-turn
@@ -1245,7 +1260,12 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                     {
                       role: 'user',
                       content:
-                        `${buildRepairPrompt(message, error)}\n\nBROKEN CODE:\n\`\`\`jsx\n${(brokenCode || fullContent).slice(0, 8000)}\n\`\`\``,
+                        // builder#531: center the window on the error's own line
+                        // instead of a flat prefix slice — a large/multi-file
+                        // generation's real defect can be well past char 8000,
+                        // which fed the repair model code that looked fine and
+                        // guaranteed every retry attempt failed the same way.
+                        `${buildRepairPrompt(message, error)}\n\nBROKEN CODE:\n\`\`\`jsx\n${extractErrorWindow(brokenCode || fullContent, error)}\n\`\`\``,
                     },
                   ],
                 })

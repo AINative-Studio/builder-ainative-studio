@@ -19,12 +19,40 @@
 
 const FILE_MARKER = /^\/\/\s*---\s*FILE:\s*(.+?)\s*---\s*$/
 
+/**
+ * Strip a wrapping markdown code fence (```jsx ... ``` / ```tsx ... ``` / bare
+ * ``` ... ```), if present, before FILE-marker parsing (builder#499).
+ *
+ * `storePreview()` (app/api/chat-ws/route.ts) wraps the served code as
+ * `` `\`\`\`jsx\n${finalContent}\n\`\`\`` `` before writing it to the in-memory
+ * preview store, and `resolveStoredApp()` (lib/build/ready-gate.ts) reads that
+ * store FIRST — so `raw` here is routinely the FENCED string, not the bare
+ * FILE-marker blob. parseFiles() has no concept of code fences: it only splits
+ * on `// --- FILE: ---` lines, so the closing ` ``` ` line was silently
+ * appended as a trailing line of whichever file happened to be LAST in the
+ * blob. That stray triple-backtick then parses as an unterminated template
+ * literal once flattened — reproduced exactly in
+ * __tests__/lib/build/flatten-multifile.test.ts ("fenced multi-file input").
+ * This is the confirmed root cause of the register-app 422 syntax_error
+ * false-positives on genuinely valid, successfully-generated apps.
+ *
+ * Conservative: only strips a fence that wraps the ENTIRE string (opening
+ * fence on the first non-blank line, closing fence on the last non-blank
+ * line) — a stray ``` appearing mid-file (e.g. inside a JSX text node) is left
+ * untouched.
+ */
+function stripWrappingCodeFence(raw: string): string {
+  const trimmed = (raw || '').trim()
+  const m = trimmed.match(/^```[a-zA-Z0-9]*\s*\n([\s\S]*?)\n?```$/)
+  return m ? m[1] : raw
+}
+
 /** Parse `// --- FILE: path ---` markers into { normalizedBasename: code }. */
 export function parseFiles(raw: string): Record<string, string> {
   const files: Record<string, string> = {}
   let cur: string | null = null
   let buf: string[] = []
-  for (const line of (raw || '').split('\n')) {
+  for (const line of stripWrappingCodeFence(raw).split('\n')) {
     const m = line.match(FILE_MARKER)
     if (m) {
       if (cur) files[cur] = buf.join('\n').trim()

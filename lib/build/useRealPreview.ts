@@ -15,6 +15,12 @@
  * and a remounting Preview re-attaches to the in-flight (or finished) run
  * instead of restarting it.
  *
+ * dataModel wiring (#532): the founder's already-generated + reviewed dataModel
+ * artifact (the ZeroDB schema Cody committed to on paper) is passed through to
+ * /api/chat-ws so the REAL generated app's schema stays consistent with the
+ * document the founder read. Optional — a missing/unavailable dataModel just
+ * means the prior idea-only behavior (chat-ws degrades gracefully server-side).
+ *
  * Returns { previewUrl, status, chatId, files } for the Preview component.
  */
 
@@ -52,7 +58,7 @@ function notify(g: Gen) {
   for (const l of g.listeners) l()
 }
 
-async function runGeneration(idea: string, g: Gen): Promise<void> {
+async function runGeneration(idea: string, g: Gen, dataModel?: unknown): Promise<void> {
   try {
     const res = await fetch('/api/chat-ws', {
       method: 'POST',
@@ -66,6 +72,13 @@ async function runGeneration(idea: string, g: Gen): Promise<void> {
         message:
           `Build a polished, working web app for this idea: ${idea}. ` +
           `Make it interactive and visually complete with realistic sample data.`,
+        // #532: the founder's already-generated + reviewed dataModel artifact
+        // (the ZeroDB schema Cody committed to on paper), passed through as
+        // additive server-side context — never mixed into `message`, which
+        // drives keyword-based complexity/multi-file heuristics that a raw
+        // JSON blob would pollute. Omitted (undefined) degrades server-side
+        // to today's idea-only behavior.
+        ...(dataModel ? { dataModel } : {}),
       }),
     })
     if (!res.body) { g.status = 'error'; notify(g); return }
@@ -147,7 +160,7 @@ async function runGeneration(idea: string, g: Gen): Promise<void> {
   }
 }
 
-export function useRealPreview(idea: string, enabled: boolean) {
+export function useRealPreview(idea: string, enabled: boolean, dataModel?: unknown) {
   const [, force] = useReducer((x: number) => x + 1, 0)
   const g = useMemo(() => genFor(idea || ''), [idea])
 
@@ -160,12 +173,16 @@ export function useRealPreview(idea: string, enabled: boolean) {
     if (g.status === 'idle') {
       g.status = 'generating'
       notify(g)
-      void runGeneration(idea, g)
+      void runGeneration(idea, g, dataModel)
     } else {
       // Re-attached mid-flight or post-completion — sync this instance now.
       force()
     }
     return () => { g.listeners.delete(listener) }
+    // dataModel intentionally excluded: generation is keyed/deduped by idea
+    // alone (module-level `gens` map) — a re-render with a freshly-resolved
+    // dataModel must NOT restart an in-flight or completed generation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, idea, g])
 
   const previewUrl = g.chatId && g.status === 'ready' ? `/api/preview/${g.chatId}?r=${g.refreshKey}` : null

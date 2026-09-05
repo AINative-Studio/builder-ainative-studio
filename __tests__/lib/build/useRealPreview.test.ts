@@ -243,6 +243,47 @@ describe('useRealPreview — error paths', () => {
   })
 })
 
+// ── dataModel wiring (#532) ──────────────────────────────────────────────────
+
+describe('useRealPreview — dataModel wiring (#532)', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('includes dataModel in the /api/chat-ws request body when passed', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(sseResponse([
+        sseEvent({ type: 'init', chatId: 'chat-dm' }),
+      ]))
+      .mockResolvedValueOnce(filesNotFound())
+      .mockResolvedValueOnce({ ok: true, text: async () => 'x'.padEnd(900) } as unknown as Response)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const dataModel = { summary: 'a habit tracker', entities: [{ name: 'Habit', fields: ['id: string'] }] }
+    const { result } = renderHook(() => useRealPreview('Build a habit tracker', true, dataModel))
+    await waitFor(() => expect(result.current.status).toBe('ready'), { timeout: 3000 })
+
+    const [, init] = fetchMock.mock.calls[0]
+    const body = JSON.parse((init as RequestInit).body as string)
+    expect(body.dataModel).toEqual(dataModel)
+  })
+
+  it('omits dataModel from the request body when not passed (undefined)', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(sseResponse([
+        sseEvent({ type: 'init', chatId: 'chat-no-dm' }),
+      ]))
+      .mockResolvedValueOnce(filesNotFound())
+      .mockResolvedValueOnce({ ok: true, text: async () => 'x'.padEnd(900) } as unknown as Response)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useRealPreview('Build a todo app', true))
+    await waitFor(() => expect(result.current.status).toBe('ready'), { timeout: 3000 })
+
+    const [, init] = fetchMock.mock.calls[0]
+    const body = JSON.parse((init as RequestInit).body as string)
+    expect(body).not.toHaveProperty('dataModel')
+  })
+})
+
 // ── SSE event parsing ────────────────────────────────────────────────────────
 
 describe('useRealPreview — SSE event parsing', () => {

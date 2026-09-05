@@ -146,28 +146,207 @@ export function isAgentFallbackEnabled(env: NodeJS.ProcessEnv = process.env): bo
  * warm on Railway. The agent gets it via a Claude-Code-compatible stdio
  * --mcp-config, and `mcp__zerodb` extends allowedTools at the server level.
  *
- * Gated OFF only by CODY_AGENT_MCP=0; inert (null) when no API key is present.
+ * REALITY CHECK (2026-09-05, builder#534 re-scope): the live per-instance MCP
+ * HOSTING catalog (GET /api/v1/public/mcp/catalog — a DIFFERENT, working
+ * system from the half-deployed shared gateway tracked in core#6953) lists 21
+ * real servers. Two more are safely wireable here with env vars this repo
+ * already has, same fail-closed bar as ZeroDB:
+ *   - `@ainative/browser-mcp` (npm, real, 1.1.3): Browser Agent's own MCP
+ *     server. Verified by inspecting the published tarball directly — its
+ *     `BROWSER_TOOLS` array (src/tools/browser-tools.js) names 8 real tools
+ *     (browser_act, browser_extract, browser_validate, browser_task,
+ *     browser_extract_to_table, browser_enrich_memory, browser_batch_extract,
+ *     browser_enrich_memory_async), NOT the "6 tools" the package's own
+ *     header comment/README claim (stale doc, real array is the source of
+ *     truth). It also reads `AINATIVE_API_KEY`/`AINATIVE_API_URL` (optionally
+ *     `AINATIVE_USERNAME`/`AINATIVE_PASSWORD`) — the catalog's
+ *     `config_template` for this entry (ZERODB_API_KEY/ZERODB_PROJECT_ID) is
+ *     WRONG/stale; wiring follows the package's real client code
+ *     (src/client/browser-client.js), not the catalog template.
+ *   - `zerodb-sequential-thinking-mcp` (npm, real, 0.1.1): persistent
+ *     chain-of-thought reasoning. Tool names verified from its own
+ *     src/tools.js: sequential_think, sequential_conclude, sequential_resume.
+ *     Reads ZERODB_API_KEY/ZERODB_BASE_URL/ZERODB_PROJECT_ID as documented —
+ *     it self-provisions a ZeroDB account when they're absent, but we only
+ *     wire it here when a real key is already present (same bar as the rest).
+ * `ainative-strapi-mcp` is NOT wired: its catalog entry requires a
+ * per-company STRAPI_URL/STRAPI_TOKEN this repo has no provisioning story for
+ * (same gap as ZeroVoice hit earlier) — deferred, not silently skipped.
+ *
+ * REALITY CHECK (2026-09-05, builder#555): `@ainative/zeropipeline-mcp` was
+ * investigated for the same treatment and is NOT wired — verified live via
+ * `npm view`/`npm pack` + extracting the real published tarball, not the
+ * issue's claims. Findings that broke the premise:
+ *   - The real published version is 0.1.0 (issue claimed 0.2.0).
+ *   - The npm package ships NO Node MCP server at all — its entire contents
+ *     are `bin/cli.mjs`, a shim that `which`-locates a `zeropipeline-mcp`
+ *     binary or shells out to `python3 -m zeropipeline_mcp`. Its own README
+ *     says so outright: "thin Node.js shim that spawns the Python
+ *     zeropipeline-mcp process ... No Node.js runtime dependencies needed —
+ *     it delegates to the Python server." There is no `index.js`/Node entry
+ *     file this repo's `existsSync(node_modules/<pkg>/<entryFile>)` +
+ *     `command: process.execPath, args: [serverEntry]` spawn contract (see
+ *     buildAgentMcpWiring below) can ever satisfy honestly — the real 41-tool
+ *     implementation lives entirely in the SEPARATE PyPI package
+ *     `zeropipeline-mcp` (Python 3.10+, FastMCP, `zeropipeline_mcp/server.py`
+ *     — verified by downloading and reading the actual wheel), and the tool
+ *     count itself is 41, not the issue's "30" (includes bulk_create_customers,
+ *     bulk_tag_customers, update_customer, get_tag_coverage, enrich_customer,
+ *     and 3 luma_* tools the issue's summary omitted entirely).
+ *   - This repo (builder-ainative-studio) is Node/Next.js only — no
+ *     Dockerfile, no requirements.txt/Pipfile, no Python runtime anywhere in
+ *     the deploy path (railway.json is a Node/nixpacks build). There is no
+ *     provisioning story for a Python 3.10+ interpreter on the Railway
+ *     container, so even installing the npm shim would `existsSync`-pass on
+ *     `bin/cli.mjs` while failing at spawn time on every real invocation —
+ *     the exact fail-OPEN failure mode (a tool that appears wired but errors
+ *     on every call) this file's safety bar exists to prevent, just moved
+ *     from account-provisioning risk (the issue's own stated concern) to
+ *     process-spawn risk.
+ * UPDATE (builder#555, same day): a real Node-native MCP server now ships for
+ * ZeroPipeline — `lib/agent/mcp-servers/zeropipeline-mcp-server.mjs`, a
+ * genuine from-scratch reimplementation (using the real
+ * `@modelcontextprotocol/sdk`) of the same tool surface the Python package
+ * exposes, calling ZeroPipeline's real REST API directly (the same
+ * `https://pipeline.ainative.studio/api/v1` base `/api/primitive/zeropipeline/`
+ * already proxies to). It is a LOCAL FILE in this repo, not an npm package —
+ * see the `entry` variant of McpServerSpec below — so its existence check is
+ * simpler (`existsSync` on the file itself, not a node_modules lookup) and it
+ * ships 13 of the real 35 tools (the prioritized core CRM subset: pipelines,
+ * deals, customers, activities, tasks), not the full surface, to keep the
+ * initial wiring reviewable. Auth is a flat `ZEROPIPELINE_API_KEY` (AINative
+ * bearer token/JWT — see lib/build/zeropipeline.ts), matching the other 3
+ * servers' flat-env-var contract rather than the founder-credential-resolution
+ * flow the Next.js proxy route uses (this runs as a standalone child process
+ * with no access to that credential store).
+ *
+ * Every server below shares one safety bar: env-gated (real key present),
+ * existence-checked (`existsSync` on the installed package's real entry file,
+ * or the local server file — a missing package/file fails closed, never
+ * throws), and additive to `allowedTools` only when actually wired. A single
+ * kill switch (CODY_AGENT_MCP=0) disables ALL servers at once for parity with
+ * the pre-existing behavior.
+ */
+
+/** One STDIO MCP server this repo can wire into the spawned agent. Entry file
+ *  is resolved either from an installed npm package (`pkg` + `entryFile`,
+ *  relative to node_modules/<pkg>/) or directly from a local repo file
+ *  (`entry`, relative to the repo root) — exactly one of the two is set. */
+interface McpServerSpec {
+  /** Key under `mcpServers` in the --mcp-config JSON, and the allowedTools name (`mcp__<name>`). */
+  name: string
+  /** npm package name as installed in node_modules. Mutually exclusive with `entry`. */
+  pkg?: string
+  /** Entry file relative to the package root (its `main`/`bin` target). Required when `pkg` is set. */
+  entryFile?: string
+  /** Entry file relative to the repo root, for a server that ships as a local file in THIS repo rather than an npm package. Mutually exclusive with `pkg`/`entryFile`. */
+  entry?: string
+  /** Env vars to pass to the spawned server process. Return null to skip wiring (e.g. missing required key). */
+  buildEnv: (env: NodeJS.ProcessEnv) => Record<string, string> | null
+}
+
+const MCP_SERVER_SPECS: McpServerSpec[] = [
+  {
+    name: 'zerodb',
+    pkg: 'ainative-zerodb-mcp-server',
+    entryFile: 'index.js',
+    buildEnv: (env) => {
+      const key = env.ZERODB_API_KEY || env.AINATIVE_API_KEY || ''
+      if (!key) return null
+      return {
+        ZERODB_API_KEY: key,
+        ZERODB_API_URL: env.ZERODB_API_URL || 'https://api.ainative.studio',
+        ...(env.ZERODB_PROJECT_ID ? { ZERODB_PROJECT_ID: env.ZERODB_PROJECT_ID } : {}),
+      }
+    },
+  },
+  {
+    name: 'browser-agent',
+    pkg: '@ainative/browser-mcp',
+    entryFile: 'index.js',
+    // Real env contract per the package's own client code (AINATIVE_*, not
+    // the catalog's stale ZERODB_* template) — see the REALITY CHECK above.
+    buildEnv: (env) => {
+      const key = env.AINATIVE_API_KEY || env.ZERODB_API_KEY || ''
+      if (!key) return null
+      return {
+        AINATIVE_API_KEY: key,
+        AINATIVE_API_URL: env.AINATIVE_API_URL || 'https://api.ainative.studio',
+      }
+    },
+  },
+  {
+    name: 'sequential-thinking',
+    pkg: 'zerodb-sequential-thinking-mcp',
+    entryFile: 'index.js',
+    buildEnv: (env) => {
+      const key = env.ZERODB_API_KEY || env.AINATIVE_API_KEY || ''
+      if (!key) return null
+      return {
+        ZERODB_API_KEY: key,
+        ZERODB_BASE_URL: env.ZERODB_BASE_URL || env.ZERODB_API_URL || 'https://api.ainative.studio',
+        ...(env.ZERODB_PROJECT_ID ? { ZERODB_PROJECT_ID: env.ZERODB_PROJECT_ID } : {}),
+      }
+    },
+  },
+  {
+    // builder#555 — real Node-native ZeroPipeline MCP server, shipped as a
+    // local file in this repo (lib/agent/mcp-servers/zeropipeline-mcp-server.mjs),
+    // not an npm package (see the UPDATE comment above MCP_SERVER_SPECS).
+    // 13-tool prioritized core CRM subset — pipelines, deals, customers,
+    // activities, tasks — calling ZeroPipeline's real REST API directly.
+    name: 'zeropipeline',
+    entry: 'lib/agent/mcp-servers/zeropipeline-mcp-server.mjs',
+    // Flat env-var contract matching the real Python package's own client.py
+    // (ZEROPIPELINE_API_KEY as an AINative bearer token/JWT — see
+    // lib/build/zeropipeline.ts), NOT the founder-credential-resolution flow
+    // the Next.js proxy route uses (this runs as a standalone child process
+    // with no access to that credential store).
+    buildEnv: (env) => {
+      const key = env.ZEROPIPELINE_API_KEY || ''
+      if (!key) return null
+      return {
+        ZEROPIPELINE_API_KEY: key,
+        ZEROPIPELINE_API_BASE_URL: env.ZEROPIPELINE_API_BASE_URL || env.ZEROPIPELINE_API_URL || 'https://pipeline.ainative.studio/api/v1',
+        ...(env.ZEROPIPELINE_AGENT_NAME ? { ZEROPIPELINE_AGENT_NAME: env.ZEROPIPELINE_AGENT_NAME } : {}),
+        ...(env.ZEROPIPELINE_AGENT_TYPE ? { ZEROPIPELINE_AGENT_TYPE: env.ZEROPIPELINE_AGENT_TYPE } : {}),
+      }
+    },
+  },
+]
+
+/**
+ * Gated OFF only by CODY_AGENT_MCP=0; each server is independently inert
+ * (skipped, never throws) when its package isn't installed or its required
+ * env vars are absent. Returns configJson: null only when NO server wired.
  */
 export function buildAgentMcpWiring(env: NodeJS.ProcessEnv = process.env): {
   configJson: string | null
   allowedTools: string[]
 } {
   if ((env.CODY_AGENT_MCP || '').trim() === '0') return { configJson: null, allowedTools: [] }
-  const key = env.ZERODB_API_KEY || env.AINATIVE_API_KEY || ''
-  if (!key) return { configJson: null, allowedTools: [] }
-  const serverEntry = join(process.cwd(), 'node_modules', 'ainative-zerodb-mcp-server', 'index.js')
-  if (!existsSync(serverEntry)) return { configJson: null, allowedTools: [] }
-  const mcpServers: Record<string, unknown> = {
-    zerodb: {
+
+  const mcpServers: Record<string, unknown> = {}
+  const allowedTools: string[] = []
+
+  for (const spec of MCP_SERVER_SPECS) {
+    const serverEnv = spec.buildEnv(env)
+    if (!serverEnv) continue // required key absent — skip this server, keep checking others
+    // Local repo file (spec.entry) or an installed npm package (spec.pkg +
+    // spec.entryFile) — exactly one is set per spec.
+    const serverEntry = spec.entry
+      ? join(process.cwd(), spec.entry)
+      : join(process.cwd(), 'node_modules', spec.pkg as string, spec.entryFile as string)
+    if (!existsSync(serverEntry)) continue // package/file not present — fail closed for this server only
+    mcpServers[spec.name] = {
       type: 'stdio',
       command: process.execPath, // the running node binary — no PATH lookup
       args: [serverEntry],
-      env: {
-        ZERODB_API_KEY: key,
-        ZERODB_API_URL: env.ZERODB_API_URL || 'https://api.ainative.studio',
-        ...(env.ZERODB_PROJECT_ID ? { ZERODB_PROJECT_ID: env.ZERODB_PROJECT_ID } : {}),
-      },
-    },
+      env: serverEnv,
+    }
+    allowedTools.push(`mcp__${spec.name}`)
   }
-  return { configJson: JSON.stringify({ mcpServers }), allowedTools: ['mcp__zerodb'] }
+
+  if (allowedTools.length === 0) return { configJson: null, allowedTools: [] }
+  return { configJson: JSON.stringify({ mcpServers }), allowedTools }
 }

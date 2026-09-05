@@ -40,7 +40,12 @@ export async function getProject(
   return ainativeFetch<Project>(`/api/v1/projects/${projectId}`, accessToken)
 }
 
-/** POST /api/v1/projects — create a project (= a generated app). */
+/** POST /api/v1/projects — create a project (= a generated app).
+ *
+ * Default tier is 'hobbyist' — core #128 retired the 'free' plan; Hobbyist
+ * ($5, 7-day trial) is the current entry tier (see lib/ainative/plan.ts's
+ * normalizeTier, which treats 'free' as a legacy inbound value only). A
+ * caller-supplied input.tier still overrides this default. */
 export async function createProject(
   accessToken: string,
   input: ProjectCreateInput,
@@ -49,7 +54,7 @@ export async function createProject(
     method: 'POST',
     body: {
       database_enabled: true,
-      tier: 'free',
+      tier: 'hobbyist',
       ...input,
     },
   })

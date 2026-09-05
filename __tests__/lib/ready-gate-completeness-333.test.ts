@@ -114,4 +114,22 @@ describe('builder#333 checkAppReady completeness gate', () => {
     expect(r.checked).toBe(false)
     expect(r.ok).toBe(true)
   })
+
+  // builder#499: register-app rejected genuinely valid, successfully-generated
+  // apps with a 422 generation_failed/syntax_error at the FLATTENED-PARSE gate.
+  // Root cause: app/api/chat-ws/route.ts's storePreview() call wraps the served
+  // code in a markdown fence (`` `\`\`\`jsx\n${finalContent}\n\`\`\`` ``) before
+  // writing it to the SAME in-memory preview store checkAppReady reads via
+  // getPreview() FIRST — so the real stored.code is routinely fenced, not the
+  // bare FILE-marker blob a manual reconstruction would produce. The stray
+  // closing ``` landed inside the last file's body and broke the flattened
+  // parse (an "Unterminated template" — matching the issue's exact
+  // "flattened-parse error at a specific location" symptom) even though the
+  // per-file completeness/import checks above it all passed cleanly.
+  it('passes a COMPLETE multi-file blob wrapped in a markdown code fence (the real in-memory preview-store shape, builder#499)', async () => {
+    getPreview.mockReturnValue('```jsx\n' + COMPLETE_BLOB + '\n```')
+    const r = await checkAppReady('chat-fenced-complete')
+    expect(r.checked).toBe(true)
+    expect(r.ok).toBe(true)
+  })
 })

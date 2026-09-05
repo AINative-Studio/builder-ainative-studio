@@ -298,6 +298,13 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next()
     }
 
+    // Allow /docs (e.g. /docs/components) for anonymous users — these pages are
+    // listed in app/sitemap.ts and MUST be crawlable/indexable without an
+    // account. Without this they 307→/login, which blocks indexing entirely (#515).
+    if (pathname === '/docs' || pathname.startsWith('/docs/')) {
+      return NextResponse.next()
+    }
+
     // Allow preview routes for anonymous users
     if (pathname.startsWith('/preview/')) {
       return NextResponse.next()

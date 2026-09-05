@@ -408,6 +408,399 @@ describe('primitive-catalog additions (#410)', () => {
     })
   })
 
+  describe('#522 fix — ZeroVoice runtime proxy (real, live, auth-gated API had NO call path)', () => {
+    // Before this fix: ZeroVoice's per-company account was provisioned at
+    // checkout (#415's ZEROVOICE_PROVISION_ENABLED flag), but ZeroVoice was
+    // missing from RUNTIME_PROXIED_PRIMITIVES entirely — codegenCompositionBlock
+    // fell to the "already provisioned server-side, do NOT call directly"
+    // framing, same bug class #510 fixed for the other 8. A calls/SMS idea's
+    // generated app therefore had zero real way to reach ZeroVoice.
+    const CALL_SMS_IDEA = 'an appointment reminder app that places outbound phone calls and sends SMS text messages to customers'
+
+    it('a calls/SMS-triggering idea selects ZeroVoice', () => {
+      const { names } = selectPrimitives(CALL_SMS_IDEA, 'company')
+      expect(names).toContain('ZeroVoice')
+    })
+
+    it('wires the real same-origin proxy, not the "already provisioned server-side" placeholder', () => {
+      const block = codegenCompositionBlock(CALL_SMS_IDEA, 'company')
+      expect(block).toContain('ZeroVoice')
+      expect(block).not.toMatch(/ZeroVoice[^\n]*already provisioned for this company server-side/)
+      expect(block).toMatch(/ZeroVoice[^\n]*To use: call the same-origin proxy at `\/api\/primitive\/zerovoice\//)
+      expect(block).toMatch(/ZeroVoice[^\n]*NO Authorization header needed/)
+    })
+
+    it('the literal call shape references the real, live-confirmed endpoint paths (POST /calls/outbound, POST /sms/send)', () => {
+      const block = codegenCompositionBlock(CALL_SMS_IDEA, 'company')
+      expect(block).toMatch(/POST \/api\/primitive\/zerovoice\/calls\/outbound/)
+      expect(block).toMatch(/POST \/api\/primitive\/zerovoice\/sms\/send/)
+      expect(block).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+    })
+
+    it('does not leak the raw external ZeroVoice apiBase into the prompt', () => {
+      const block = codegenCompositionBlock(CALL_SMS_IDEA, 'company')
+      expect(block).not.toContain('zerovoice-production.up.railway.app')
+    })
+
+    it('RUNTIME_PROXY_PATH_SUBSTRINGS carries the real proxy paths so the #518 compliance validator catches an unwired ZeroVoice selection', () => {
+      expect(RUNTIME_PROXY_PATH_SUBSTRINGS.ZeroVoice).toEqual([
+        '/api/primitive/zerovoice/calls/outbound',
+        '/api/primitive/zerovoice/sms/send',
+      ])
+      expect(getComplianceCheckedPrimitiveNames()).toContain('ZeroVoice')
+    })
+
+    it('getRuntimeProxyInstruction returns the same instruction text codegenCompositionBlock injects', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroVoice')
+      expect(instruction).toBeDefined()
+      expect(instruction).toMatch(/POST \/api\/primitive\/zerovoice\/calls\/outbound/)
+      expect(instruction).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      const block = codegenCompositionBlock(CALL_SMS_IDEA, 'company')
+      expect(block).toContain(instruction!.split('\n')[0])
+    })
+
+    it('#522 regression guard: a memory/recall idea (no calls/SMS language) must NOT select ZeroVoice — the bare "call"/"calls" triggers were removed precisely because "recalls" is a substring match', () => {
+      const journalIdea = 'a personal journaling app with memory of past entries that recalls relevant history when I write something new'
+      const { names } = selectPrimitives(journalIdea, 'company')
+      expect(names).not.toContain('ZeroVoice')
+    })
+  })
+
+  describe('#524 fix — ZeroCommerce runtime proxy compliance (real live generation never called it)', () => {
+    // Real repro from #524: idea "an online shop selling handmade coffee mugs
+    // with a product catalog and checkout" produced 76,015 chars of generated
+    // code with ZERO calls to /api/primitive/zerocommerce/ — everything was
+    // persisted through generic /api/db tables instead, despite ZeroCommerce's
+    // (then plain-prose) instruction being present in the composition block.
+    const MUG_SHOP_IDEA = 'an online shop selling handmade coffee mugs with a product catalog and checkout'
+
+    it('the idea selects ZeroCommerce', () => {
+      const { names } = selectPrimitives(MUG_SHOP_IDEA, 'app')
+      expect(names).toContain('ZeroCommerce')
+    })
+
+    it('the composition block carries a literal code fence + explicit anti-pattern language for ZeroCommerce', () => {
+      const block = codegenCompositionBlock(MUG_SHOP_IDEA, 'app')
+      expect(block).toContain('ZeroCommerce')
+      expect(block).toMatch(/```js[\s\S]*fetch\('\/api\/primitive\/zerocommerce\/commerce\/products'\)/)
+      expect(block).toMatch(/fetch\('\/api\/primitive\/zerocommerce\/commerce\/checkout'/)
+      expect(block).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      // Names the EXACT observed failure mode, not a generic warning.
+      expect(block).toMatch(/do NOT hand-roll a product catalog, shopping cart, or checkout using \/api\/db tables/i)
+    })
+
+    it('does not leak the raw external ZeroCommerce apiBase into the prompt', () => {
+      const block = codegenCompositionBlock(MUG_SHOP_IDEA, 'app')
+      expect(block).not.toContain('zerocommerce.ainative.studio')
+    })
+
+    it('RUNTIME_PROXY_PATH_SUBSTRINGS carries the real proxy paths so the #518 compliance validator catches an unwired ZeroCommerce selection', () => {
+      expect(RUNTIME_PROXY_PATH_SUBSTRINGS.ZeroCommerce).toEqual([
+        '/api/primitive/zerocommerce/commerce/products',
+        '/api/primitive/zerocommerce/commerce/checkout',
+      ])
+      expect(getComplianceCheckedPrimitiveNames()).toContain('ZeroCommerce')
+    })
+
+    it('getRuntimeProxyInstruction returns the same instruction text codegenCompositionBlock injects', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')
+      expect(instruction).toBeDefined()
+      expect(instruction).toMatch(/fetch\('\/api\/primitive\/zerocommerce\/commerce\/products'\)/)
+      expect(instruction).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      const block = codegenCompositionBlock(MUG_SHOP_IDEA, 'app')
+      expect(block).toContain(instruction!.split('\n')[0])
+    })
+
+    it('findPrimitiveComplianceGaps (the #518 validator) flags a commerce idea whose generated code never called the ZeroCommerce proxy', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      // Simulate exactly the #524 failure: a real generated app that persists
+      // products/cart through /api/db and never touches /api/primitive/zerocommerce/.
+      const brokenCode = `
+        function App() {
+          useEffect(() => { fetch('/api/db/products').then(r => r.json()).then(d => setProducts(d.data)) }, [])
+          async function checkout() { await fetch('/api/db/orders', { method: 'POST', body: JSON.stringify(cart) }) }
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(brokenCode, MUG_SHOP_IDEA)
+      expect(gaps).toContain('ZeroCommerce')
+    })
+
+    it('findPrimitiveComplianceGaps does not flag ZeroCommerce when the real proxy IS called', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      const compliantCode = `
+        function App() {
+          useEffect(() => { fetch('/api/primitive/zerocommerce/commerce/products').then(r => r.json()).then(d => setProducts(d.products)) }, [])
+          async function checkout() { await fetch('/api/primitive/zerocommerce/commerce/checkout', { method: 'POST', body: JSON.stringify({ items: cart }) }) }
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(compliantCode, MUG_SHOP_IDEA)
+      expect(gaps).not.toContain('ZeroCommerce')
+    })
+  })
+
+  describe('#525 fix — AgentFlow runtime proxy compliance (real live generation never called it, and persisted nothing at all)', () => {
+    // Real repro from #525: idea "a no-code visual agent workflow builder with
+    // drag and drop flow building" produced 83,084 chars of generated code
+    // with ZERO calls to /api/primitive/agentflow/ AND zero /api/ references
+    // of any kind — worse than ZeroCommerce's failure, this app didn't even
+    // fall back to /api/db.
+    const AGENTFLOW_IDEA = 'a no-code visual agent workflow builder with drag and drop flow building'
+
+    it('the idea selects AgentFlow', () => {
+      const { names } = selectPrimitives(AGENTFLOW_IDEA, 'app')
+      expect(names).toContain('AgentFlow')
+    })
+
+    it('the composition block carries a literal code fence + explicit anti-pattern language for AgentFlow', () => {
+      const block = codegenCompositionBlock(AGENTFLOW_IDEA, 'app')
+      expect(block).toContain('AgentFlow')
+      expect(block).toMatch(/```js[\s\S]*fetch\('\/api\/primitive\/agentflow\/projects\/'\)/)
+      expect(block).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      expect(block).toMatch(/do NOT hand-roll a fake "agent workflow" list or simulate flow execution/i)
+    })
+
+    it('does not leak the raw external AgentFlow apiBase into the prompt', () => {
+      const block = codegenCompositionBlock(AGENTFLOW_IDEA, 'app')
+      expect(block).not.toContain('agentflow.ainative.studio')
+    })
+
+    it('RUNTIME_PROXY_PATH_SUBSTRINGS carries the real proxy path so the #518 compliance validator catches an unwired AgentFlow selection', () => {
+      expect(RUNTIME_PROXY_PATH_SUBSTRINGS.AgentFlow).toEqual(['/api/primitive/agentflow/projects/'])
+      expect(getComplianceCheckedPrimitiveNames()).toContain('AgentFlow')
+    })
+
+    it('getRuntimeProxyInstruction returns the same instruction text codegenCompositionBlock injects', () => {
+      const instruction = getRuntimeProxyInstruction('AgentFlow')
+      expect(instruction).toBeDefined()
+      expect(instruction).toMatch(/fetch\('\/api\/primitive\/agentflow\/projects\/'\)/)
+      expect(instruction).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      const block = codegenCompositionBlock(AGENTFLOW_IDEA, 'app')
+      expect(block).toContain(instruction!.split('\n')[0])
+    })
+
+    it('findPrimitiveComplianceGaps (the #518 validator) flags an AgentFlow idea whose generated code never called the AgentFlow proxy', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      // Simulate exactly the #525 failure: a real generated app with ZERO
+      // /api/ references of any kind — not even a /api/db fallback.
+      const brokenCode = `
+        function App() {
+          const [flows, setFlows] = useState([])
+          function addFlow(name) { setFlows([...flows, { id: Date.now(), name }]) }
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(brokenCode, AGENTFLOW_IDEA)
+      expect(gaps).toContain('AgentFlow')
+    })
+
+    it('findPrimitiveComplianceGaps does not flag AgentFlow when the real proxy IS called', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      const compliantCode = `
+        function App() {
+          useEffect(() => { fetch('/api/primitive/agentflow/projects/').then(r => r.json()).then(setProjects) }, [])
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(compliantCode, AGENTFLOW_IDEA)
+      expect(gaps).not.toContain('AgentFlow')
+    })
+  })
+
+  describe('#527 fix — ZeroForms runtime proxy compliance (real live generation never called it)', () => {
+    // Real repro from #527: idea "an online form builder for surveys and
+    // intake forms with webhook submissions" produced 76,012 chars of
+    // generated code with ZERO calls to /api/primitive/zeroforms/ and zero
+    // /api/ references of any kind.
+    const FORMS_IDEA = 'an online form builder for surveys and intake forms with webhook submissions'
+
+    it('the idea selects ZeroForms', () => {
+      const { names } = selectPrimitives(FORMS_IDEA, 'app')
+      expect(names).toContain('ZeroForms')
+    })
+
+    it('the composition block carries a literal code fence + explicit anti-pattern language for ZeroForms', () => {
+      const block = codegenCompositionBlock(FORMS_IDEA, 'app')
+      expect(block).toContain('ZeroForms')
+      expect(block).toMatch(/```js[\s\S]*fetch\('\/api\/primitive\/zeroforms\/forms'\)/)
+      expect(block).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      expect(block).toMatch(/do NOT hand-roll a form builder or store submissions in \/api\/db/i)
+    })
+
+    it('does not leak the raw external ZeroForms apiBase into the prompt', () => {
+      const block = codegenCompositionBlock(FORMS_IDEA, 'app')
+      expect(block).not.toContain('zeroforms-production.up.railway.app')
+    })
+
+    it('RUNTIME_PROXY_PATH_SUBSTRINGS carries the real proxy path so the #518 compliance validator catches an unwired ZeroForms selection', () => {
+      expect(RUNTIME_PROXY_PATH_SUBSTRINGS.ZeroForms).toEqual(['/api/primitive/zeroforms/forms'])
+      expect(getComplianceCheckedPrimitiveNames()).toContain('ZeroForms')
+    })
+
+    it('getRuntimeProxyInstruction returns the same instruction text codegenCompositionBlock injects', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroForms')
+      expect(instruction).toBeDefined()
+      expect(instruction).toMatch(/fetch\('\/api\/primitive\/zeroforms\/forms'\)/)
+      expect(instruction).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      const block = codegenCompositionBlock(FORMS_IDEA, 'app')
+      expect(block).toContain(instruction!.split('\n')[0])
+    })
+
+    it('findPrimitiveComplianceGaps (the #518 validator) flags a forms idea whose generated code never called the ZeroForms proxy', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      const brokenCode = `
+        function App() {
+          const [forms, setForms] = useState([])
+          function addForm(name) { setForms([...forms, { id: Date.now(), name }]) }
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(brokenCode, FORMS_IDEA)
+      expect(gaps).toContain('ZeroForms')
+    })
+
+    it('findPrimitiveComplianceGaps does not flag ZeroForms when the real proxy IS called', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      const compliantCode = `
+        function App() {
+          useEffect(() => { fetch('/api/primitive/zeroforms/forms').then(r => r.json()).then(setForms) }, [])
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(compliantCode, FORMS_IDEA)
+      expect(gaps).not.toContain('ZeroForms')
+    })
+  })
+
+  describe('#528 fix — ZeroCRM runtime proxy compliance (was missing from RUNTIME_PROXIED_PRIMITIVES entirely)', () => {
+    // Real repro from #528: the ZeroCRM sweep ran a genuine full 30.3-minute
+    // generation (far longer than a network-drop failure, confirming a real
+    // result) and failed the same way as ZeroCommerce/AgentFlow/ZeroForms.
+    // Worse gap than those 3: ZeroCRM had NO RUNTIME_PROXIED_PRIMITIVES entry
+    // at all, even though the runtime proxy ROUTE already supported it
+    // (app/api/primitive/[primitive]/[...path]/route.ts's PRIMITIVE_BASES).
+    const CRM_IDEA = 'a simple crm for freelancers and solo founders to manage client contacts'
+
+    it('the idea selects ZeroCRM', () => {
+      const { names } = selectPrimitives(CRM_IDEA, 'app')
+      expect(names).toContain('ZeroCRM')
+    })
+
+    it('the composition block carries a literal code fence + explicit anti-pattern language for ZeroCRM (previously had NO instruction at all)', () => {
+      const block = codegenCompositionBlock(CRM_IDEA, 'app')
+      expect(block).toContain('ZeroCRM')
+      // Before this fix, ZeroCRM fell through to the "already provisioned
+      // server-side, do NOT call directly" placeholder — the worst-case
+      // framing, since ZeroCRM's proxy route already existed and worked.
+      expect(block).not.toMatch(/ZeroCRM[^\n]*already provisioned for this company server-side/)
+      expect(block).toMatch(/```js[\s\S]*fetch\('\/api\/primitive\/zerocrm\/deals'\)/)
+      expect(block).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      expect(block).toMatch(/do NOT hand-roll a contacts\/deals list using \/api\/db tables/i)
+    })
+
+    it('does not leak the raw external ZeroCRM apiBase into the prompt', () => {
+      const block = codegenCompositionBlock(CRM_IDEA, 'app')
+      expect(block).not.toContain('zerocrm-production.up.railway.app')
+    })
+
+    it('RUNTIME_PROXY_PATH_SUBSTRINGS carries the real proxy path so the #518 compliance validator catches an unwired ZeroCRM selection', () => {
+      expect(RUNTIME_PROXY_PATH_SUBSTRINGS.ZeroCRM).toEqual(['/api/primitive/zerocrm/deals'])
+      expect(getComplianceCheckedPrimitiveNames()).toContain('ZeroCRM')
+    })
+
+    it('getRuntimeProxyInstruction returns the same instruction text codegenCompositionBlock injects', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCRM')
+      expect(instruction).toBeDefined()
+      expect(instruction).toMatch(/fetch\('\/api\/primitive\/zerocrm\/deals'\)/)
+      expect(instruction).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      const block = codegenCompositionBlock(CRM_IDEA, 'app')
+      expect(block).toContain(instruction!.split('\n')[0])
+    })
+
+    it('findPrimitiveComplianceGaps (the #518 validator) flags a ZeroCRM idea whose generated code never called the ZeroCRM proxy', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      const brokenCode = `
+        function App() {
+          const [contacts, setContacts] = useState([])
+          function addContact(name) { setContacts([...contacts, { id: Date.now(), name }]) }
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(brokenCode, CRM_IDEA)
+      expect(gaps).toContain('ZeroCRM')
+    })
+
+    it('findPrimitiveComplianceGaps does not flag ZeroCRM when the real proxy IS called', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      const compliantCode = `
+        function App() {
+          useEffect(() => { fetch('/api/primitive/zerocrm/deals').then(r => r.json()).then(setContacts) }, [])
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(compliantCode, CRM_IDEA)
+      expect(gaps).not.toContain('ZeroCRM')
+    })
+  })
+
+  describe('#529 ZeroPipeline — strengthened proactively on pattern-match (not yet directly confirmed by a live sweep)', () => {
+    // #529: ZeroPipeline shares the identical original-5 provenance, plain-
+    // prose instruction shape, and RUNTIME_PROXY_PATH_SUBSTRINGS gap as the
+    // 4 CONFIRMED-broken primitives above, but has no direct live-sweep
+    // repro yet. Covered here so the strengthening itself is tested even
+    // though the underlying generation bug isn't independently confirmed for
+    // this specific primitive.
+    const PIPELINE_IDEA = 'a B2B sales CRM to track deals and leads through a pipeline'
+
+    it('the idea selects ZeroPipeline', () => {
+      const { names } = selectPrimitives(PIPELINE_IDEA, 'company')
+      expect(names).toContain('ZeroPipeline')
+    })
+
+    it('the composition block carries a literal code fence + explicit anti-pattern language for ZeroPipeline', () => {
+      const block = codegenCompositionBlock(PIPELINE_IDEA, 'company')
+      expect(block).toContain('ZeroPipeline')
+      expect(block).toMatch(/```js[\s\S]*fetch\('\/api\/primitive\/zeropipeline\/deals'\)/)
+      expect(block).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      expect(block).toMatch(/do NOT hand-roll a leads\/deals table using \/api\/db tables/i)
+    })
+
+    it('does not leak the raw external ZeroPipeline apiBase into the prompt', () => {
+      const block = codegenCompositionBlock(PIPELINE_IDEA, 'company')
+      expect(block).not.toContain('pipeline.ainative.studio')
+    })
+
+    it('RUNTIME_PROXY_PATH_SUBSTRINGS carries the real proxy path so the #518 compliance validator catches an unwired ZeroPipeline selection', () => {
+      expect(RUNTIME_PROXY_PATH_SUBSTRINGS.ZeroPipeline).toEqual(['/api/primitive/zeropipeline/deals'])
+      expect(getComplianceCheckedPrimitiveNames()).toContain('ZeroPipeline')
+    })
+
+    it('getRuntimeProxyInstruction returns the same instruction text codegenCompositionBlock injects', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroPipeline')
+      expect(instruction).toBeDefined()
+      expect(instruction).toMatch(/fetch\('\/api\/primitive\/zeropipeline\/deals'\)/)
+      expect(instruction).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      const block = codegenCompositionBlock(PIPELINE_IDEA, 'company')
+      expect(block).toContain(instruction!.split('\n')[0])
+    })
+
+    it('findPrimitiveComplianceGaps (the #518 validator) flags a pipeline idea whose generated code never called the ZeroPipeline proxy', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      const brokenCode = `
+        function App() {
+          const [deals, setDeals] = useState([])
+          function addDeal(name) { setDeals([...deals, { id: Date.now(), name }]) }
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(brokenCode, PIPELINE_IDEA)
+      expect(gaps).toContain('ZeroPipeline')
+    })
+
+    it('findPrimitiveComplianceGaps does not flag ZeroPipeline when the real proxy IS called', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      const compliantCode = `
+        function App() {
+          useEffect(() => { fetch('/api/primitive/zeropipeline/deals').then(r => r.json()).then(setDeals) }, [])
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(compliantCode, PIPELINE_IDEA)
+      expect(gaps).not.toContain('ZeroPipeline')
+    })
+  })
+
   describe('company role selection (#448 — "build a company" outcome legibility)', () => {
     // Deliberately generic/vague ideas with NO trigger-word matches for the
     // role's own primitives — this is the real regression risk: a role must

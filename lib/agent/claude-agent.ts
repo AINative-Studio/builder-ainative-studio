@@ -343,11 +343,16 @@ export async function* runHeadlessAgent(
     options.planReview,
   )
 
-  // MCP tool wiring (#296 item 3, finally activated): give the agent the
-  // AINative primitive MCP fleet (ZeroDB 69-tool surface, ZeroMemory,
-  // ZeroVoice, OpenCapStack, Strapi) so Cody can OPERATE primitives during a
-  // build, not just generate code that talks about them. Server-level
-  // mcp__<name> entries extend allowedTools; inert when no key / CODY_AGENT_MCP=0.
+  // MCP tool wiring (#296 item 3, finally activated; re-scoped builder#534):
+  // give the agent the REAL, installed AINative MCP servers — ZeroDB
+  // (69-tool surface), Browser Agent (@ainative/browser-mcp), and Sequential
+  // Thinking (zerodb-sequential-thinking-mcp) — so Cody can OPERATE
+  // primitives during a build, not just generate code that talks about them.
+  // (ZeroMemory/ZeroVoice/OpenCapStack/Strapi are NOT wired: no stdio package
+  // installed / no per-company credential story yet — see buildAgentMcpWiring.)
+  // Server-level mcp__<name> entries extend allowedTools; each server is
+  // independently inert when its key is absent or its package isn't
+  // installed, and CODY_AGENT_MCP=0 disables all of them at once.
   // #350: MCP data-provisioning is heavy discipline — wire the tools only for
   // complex builds so a simple app isn't pushed into a runaway multi-tool turn.
   const mcp = fullDiscipline ? buildAgentMcpWiring() : { configJson: null, allowedTools: [] as string[] }
@@ -378,8 +383,42 @@ export async function* runHeadlessAgent(
   // Compose the agent system prompt: workspace rules + plan/review discipline
   // (#342) + — only when the ZeroDB MCP server is actually wired — the real-
   // data provisioning paragraph (#343). Only when wired: instructing a
-  // tool-less run to call MCP makes it hallucinate.
-  const mcpBlock = mcp.configJson ? '\n\n' + mcpDataProvisioningBlock() : ''
+  // tool-less run to call MCP makes it hallucinate. Gated on the SPECIFIC
+  // server (not "any MCP wired") so this ZeroDB-only paragraph doesn't fire
+  // when just Browser Agent / Sequential Thinking ended up wired instead.
+  const mcpBlock = mcp.allowedTools.includes('mcp__zerodb') ? '\n\n' + mcpDataProvisioningBlock() : ''
+
+  // builder#534 (re-scoped): name the additional real tools when Browser
+  // Agent / Sequential Thinking are actually wired, so the agent knows they
+  // exist without hallucinating tool names for servers that AREN'T present.
+  const extraMcpNotes: string[] = []
+  if (mcp.allowedTools.includes('mcp__browser-agent')) {
+    extraMcpNotes.push(
+      `You also have live mcp__browser-agent__* tools (browser_act, browser_extract, browser_validate, ` +
+      `browser_task, browser_extract_to_table, browser_enrich_memory, browser_batch_extract, ` +
+      `browser_enrich_memory_async) for real browser automation and data extraction — use them when the ` +
+      `build genuinely requires driving or reading a live web page, not for anything servable by existing app code.`,
+    )
+  }
+  if (mcp.allowedTools.includes('mcp__sequential-thinking')) {
+    extraMcpNotes.push(
+      `You also have live mcp__sequential-thinking__* tools (sequential_think, sequential_conclude, ` +
+      `sequential_resume) for persisted step-by-step reasoning on a genuinely hard design decision — ` +
+      `use sparingly, only when the problem needs more structured reasoning than inline thinking already gives you.`,
+    )
+  }
+  // builder#555 — real Node-native ZeroPipeline MCP server, wired only when a
+  // real ZEROPIPELINE_API_KEY is present (see MCP_SERVER_SPECS in agent-runtime.ts).
+  if (mcp.allowedTools.includes('mcp__zeropipeline')) {
+    extraMcpNotes.push(
+      `You also have live mcp__zeropipeline__* tools (list_pipelines, get_pipeline, list_deals, ` +
+      `create_deal, update_deal, move_deal_stage, get_deal_score, list_customers, create_customer, ` +
+      `list_activities, log_activity, list_tasks, create_task) for real ZeroPipeline CRM operations — ` +
+      `use them when the build genuinely needs to read or write real pipeline/deal/customer data, not for ` +
+      `anything servable by existing app code.`,
+    )
+  }
+  const extraMcpBlock = extraMcpNotes.length ? '\n\n' + extraMcpNotes.join('\n') : ''
 
   // #345: tiered-recap context staircase for resuming/long builds. Whole-build
   // state at BOUNDED tokens instead of a forgetful linear window. DELIBERATELY
@@ -393,6 +432,7 @@ export async function* runHeadlessAgent(
     AGENT_SYSTEM_PROMPT +
     (planReview ? '\n\n' + planReviewPromptBlock() : '') +
     mcpBlock +
+    extraMcpBlock +
     staircaseBlock +
     (systemPrompt ? '\n\n' + systemPrompt : '')
   args.push('--append-system-prompt', fullSystemPrompt)

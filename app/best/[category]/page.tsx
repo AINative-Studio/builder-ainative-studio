@@ -385,10 +385,13 @@ export default async function BestCategoryPage({ params }: PageProps) {
 
   const softwareJsonLd = {
     '@context': 'https://schema.org',
-    '@type': 'SoftwareApplication',
+    // Product (not SoftwareApplication) — that type requires a star rating for
+    // Google Rich Results eligibility. The previous rating block here
+    // (4.8 / 127 ratings) was fabricated, with no real review source backing
+    // it, and has been removed rather than "completed" (#517).
+    '@type': 'Product',
     name: 'AINative Builder',
-    applicationCategory: 'DeveloperApplication',
-    operatingSystem: 'Web',
+    category: 'DeveloperApplication',
     url: 'https://builder.ainative.studio',
     description:
       'AI-powered app builder with multi-model AI, AX agent optimization, automatic SEO, and autonomous company operations.',
@@ -402,12 +405,6 @@ export default async function BestCategoryPage({ params }: PageProps) {
         priceCurrency: 'USD',
         unitText: 'MONTH',
       },
-    },
-    aggregateRating: {
-      '@type': 'AggregateRating',
-      ratingValue: '4.8',
-      ratingCount: '127',
-      bestRating: '5',
     },
   }
 

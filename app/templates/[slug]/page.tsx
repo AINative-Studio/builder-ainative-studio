@@ -98,11 +98,12 @@ export default async function TemplatePage({ params }: PageProps) {
 
   const jsonLd = {
     '@context': 'https://schema.org',
-    '@type': 'SoftwareApplication',
+    // Product (not SoftwareApplication) — that type requires a star rating for
+    // Google Rich Results eligibility, and we never fabricate one (#517).
+    '@type': 'Product',
     name: `${template.name} — AINative Builder Template`,
     description: template.description,
-    applicationCategory: 'DeveloperApplication',
-    operatingSystem: 'Web',
+    category: 'DeveloperApplication',
     url: `${BASE_URL}/templates/${slug}`,
     offers: {
       '@type': 'Offer',
@@ -110,7 +111,11 @@ export default async function TemplatePage({ params }: PageProps) {
       priceCurrency: 'USD',
     },
     keywords: template.keywords.join(', '),
-    featureList: template.features.map((f) => f.title),
+    additionalProperty: template.features.map((f) => ({
+      '@type': 'PropertyValue',
+      name: 'feature',
+      value: f.title,
+    })),
   }
 
   const breadcrumbJsonLd = {
