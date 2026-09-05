@@ -15,6 +15,13 @@
  *      Owner-only (real auth).
  *   C. Database Download — export the company's OWN ZeroDB data as JSON or CSV.
  *      Reinforces "you own 100%, take your data anytime."
+ *   D. Brand / Logo (#492) — upload your own logo/brand mark. Distinct from Auto
+ *      Media's general photo library: this persists a durable logoUrl directly on
+ *      the company record (AppEntry.logoUrl), not a media-library row. SCOPE
+ *      (documented in lib/build/logo-upload.ts): stores the upload and shows it
+ *      here; does NOT yet push it into an already-deployed company's live
+ *      generated site (that needs a separate single-file-patch primitive for an
+ *      arbitrary existing Gitea repo, which doesn't exist yet).
  *
  * Chrome: reuses the `.modernist` `.m-live-card`, `.st` pills, `.m-chip`,
  * `.m-task-*` and `.m-infra-btns` classes already used by the Versions / Tasks
@@ -24,7 +31,8 @@
  * when the company has no dedicated deploy service yet (unpaid / not provisioned).
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { validateLogoUpload, LOGO_ACCEPT_ATTR } from '@/lib/build/logo-upload'
 
 /** A masked runtime secret as returned by /api/build/secrets. */
 interface MaskedSecret {
@@ -69,6 +77,13 @@ export function WebsitePanel({
   const [exporting, setExporting] = useState<'json' | 'csv' | null>(null)
   const [exportError, setExportError] = useState<string | null>(null)
 
+  // ---- Brand / Logo (D, #492) ----
+  const [logoUrl, setLogoUrl] = useState<string | null>(null)
+  const [logoLoaded, setLogoLoaded] = useState(false)
+  const [logoBusy, setLogoBusy] = useState(false)
+  const [logoNotice, setLogoNotice] = useState('')
+  const logoInputRef = useRef<HTMLInputElement>(null)
+
   const loadSecrets = useCallback(() => {
     if (!canManage) { setSecretsLoaded(true); return }
     let alive = true
@@ -85,6 +100,60 @@ export function WebsitePanel({
   }, [companyId, canManage])
 
   useEffect(() => loadSecrets(), [loadSecrets])
+
+  // ---- Brand / Logo (D) ----
+  const loadLogo = useCallback(() => {
+    let alive = true
+    fetch(`/api/build/logo?companyId=${encodeURIComponent(companyId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (alive) { setLogoUrl(d?.url || null); setLogoLoaded(true) } })
+      .catch(() => { if (alive) setLogoLoaded(true) })
+    return () => { alive = false }
+  }, [companyId])
+
+  useEffect(() => loadLogo(), [loadLogo])
+
+  // Upload a logo — validate client-side with the SAME pure rules the server
+  // enforces (images only, ≤2MB), then POST the multipart form.
+  const onLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!canManage) { onRequireUpgrade?.(); e.target.value = ''; return }
+    const file = e.target.files?.[0]
+    e.target.value = '' // allow re-picking the same file
+    if (!file) return
+    setLogoNotice('')
+    const verdict = validateLogoUpload({ name: file.name, type: file.type, size: file.size })
+    if (!verdict.ok) { setLogoNotice(verdict.message); return }
+    setLogoBusy(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      fd.append('companyId', companyId)
+      const res = await fetch('/api/build/logo', { method: 'POST', body: fd })
+      const d = await res.json().catch(() => null)
+      if (res.status === 401) {
+        setLogoNotice('You’ll need to sign in before I can keep your logo.')
+        return
+      }
+      if (res.status === 403) {
+        setLogoNotice('Only the owner of this company can change its logo.')
+        return
+      }
+      if (!res.ok || !d?.url) {
+        setLogoNotice(d?.message || 'I couldn’t upload that logo — try again shortly.')
+        return
+      }
+      setLogoUrl(d.url)
+      setLogoNotice(
+        d.saved
+          ? 'Your logo is saved.'
+          : 'Your logo uploaded, but I couldn’t save it to your company yet — try again shortly.',
+      )
+    } catch {
+      setLogoNotice('Connection hiccup — try again.')
+    } finally {
+      setLogoBusy(false)
+    }
+  }
 
   // ---- Redeploy actions ----
   const requestRedeploy = () => {
@@ -251,6 +320,54 @@ export function WebsitePanel({
           >
             {redeployBusy ? 'Redeploying…' : 'Redeploy'}
           </button>
+        )}
+      </div>
+
+      {/* ---- D. Brand / Logo (#492) ---- */}
+      <div className="m-website-section" data-testid="website-brand">
+        <div className="m-mono m-website-section-h">Logo &amp; brand</div>
+        <p className="m-mono m-website-sub">
+          Upload your own logo or brand mark. PNG, JPG, WebP or SVG · up to 2MB.
+        </p>
+
+        {!logoLoaded ? (
+          <p className="m-mono m-task-empty" data-testid="logo-loading">loading logo…</p>
+        ) : (
+          <>
+            {logoUrl && (
+              <a
+                className="m-media-thumb-link"
+                href={logoUrl}
+                target="_blank"
+                rel="noreferrer"
+                data-testid="logo-current"
+              >
+                <img className="m-media-thumb" src={logoUrl} alt="Your current logo" loading="lazy" />
+              </a>
+            )}
+            <div className="m-infra-btns">
+              <button
+                className="btn-secondary"
+                data-testid="logo-upload-btn"
+                disabled={logoBusy}
+                onClick={() => (canManage ? logoInputRef.current?.click() : onRequireUpgrade?.())}
+                title={canManage ? 'Upload a logo' : 'Upgrade to upload a logo'}
+              >
+                {logoBusy ? 'Uploading…' : logoUrl ? 'Replace logo' : 'Upload a logo'}
+              </button>
+            </div>
+            <input
+              ref={logoInputRef}
+              type="file"
+              accept={LOGO_ACCEPT_ATTR}
+              style={{ display: 'none' }}
+              data-testid="logo-upload-input"
+              onChange={onLogoChange}
+            />
+            {logoNotice && (
+              <p className="m-mono m-ver-status" data-testid="logo-notice">{logoNotice}</p>
+            )}
+          </>
         )}
       </div>
 

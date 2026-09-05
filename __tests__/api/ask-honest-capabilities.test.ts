@@ -5,15 +5,19 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
  * the logo, can you update that on the landing page?" and Cody answered with
  * a fully fabricated workflow — "go into the workspace, edit the landing page
  * component, swap out the logo image URL or upload a new one, and hit
- * regenerate" — none of which exists. There is no in-chat file upload, no
- * logo editor, no landing-page-component editor, and no "regenerate" action
- * on the Live dashboard (only "Redeploy", which re-ships the current stored
- * version). The system prompt had zero grounding in real editing
- * capabilities, so the model invented a plausible-sounding but false answer.
+ * regenerate" — none of which existed at the time. The system prompt had zero
+ * grounding in real editing capabilities, so the model invented a
+ * plausible-sounding but false answer.
  *
- * The fix adds an explicit, honest capability manifest to the system prompt.
- * These tests assert the prompt Claude actually receives contains that
- * manifest and forbids the specific fabricated claims.
+ * #492 shipped the real logo upload this manifest originally had to deny —
+ * "Logo & brand" in the Website & app section now lets a founder upload their
+ * own logo/brand mark, saved to their company. It still has a real, honest
+ * limit: an uploaded logo is not yet automatically pushed into an
+ * already-deployed company's live generated site. The manifest was updated to
+ * describe the real capability AND its real limit, rather than denying the
+ * capability now exists. These tests assert the prompt Claude actually
+ * receives reflects that (accurate, not fabricated) capability + limit, and
+ * still forbids fabricating a workaround for anything genuinely unwired.
  */
 
 const h = vi.hoisted(() => ({
@@ -82,13 +86,22 @@ describe('POST /api/build/ask — honest capability grounding', () => {
     expect(system).toMatch(/no in-chat file upload/i)
   })
 
-  it('the system prompt tells Cody there is no logo editor / landing-page-component editor', async () => {
+  it('the system prompt tells Cody a real logo upload exists (#492)', async () => {
     const claude = fakeClaude('Honest answer.')
     h.getClaudeCompletion.mockReturnValue(claude)
     await POST(req({ question: 'Can you update the logo?', idea: 'an idea', companyName: 'Beacon', track: 'company' }))
     const system = String(claude.create.mock.calls[0][0].system)
-    expect(system).toMatch(/no logo editor/i)
-    expect(system).toMatch(/no way for the founder to swap the logo/i)
+    expect(system).toMatch(/real logo upload/i)
+    expect(system).toMatch(/logo & brand/i)
+  })
+
+  it('the system prompt is honest that an uploaded logo is not yet wired into an already-deployed live site', async () => {
+    const claude = fakeClaude('Honest answer.')
+    h.getClaudeCompletion.mockReturnValue(claude)
+    await POST(req({ question: 'Can you update the logo?', idea: 'an idea', companyName: 'Beacon', track: 'company' }))
+    const system = String(claude.create.mock.calls[0][0].system)
+    expect(system).toMatch(/not yet automatically pushed into/i)
+    expect(system).toMatch(/do not claim the live site updates automatically/i)
   })
 
   it('the system prompt clarifies Auto Media uploads are NOT wired into the live app', async () => {

@@ -191,6 +191,17 @@ export interface AppEntry {
   // separately via loop-enrollment (setLoopEnabled), which is orthogonal to this.
   lifecycleStatus?: 'active' | 'offline' | 'deleted'
   lifecycleAt?: string
+  // Founder-uploaded logo / brand mark (#492). `logoUrl` is the durable serve
+  // route (logoAssetUrl in logo-upload.ts) that redirects to a fresh presigned
+  // ZeroDB files URL on every request; `logoFileId` is the underlying ZeroDB
+  // file id (kept so a future re-upload/removal can target the right file).
+  // SCOPE (#492): persisted + founder-visible on the dashboard; NOT yet wired
+  // into an already-deployed company's live generated site (see logo-upload.ts
+  // for why — that requires a separate single-file-patch primitive for an
+  // arbitrary existing Gitea repo, which doesn't exist yet).
+  logoUrl?: string
+  logoFileId?: string
+  logoUpdatedAt?: string
   createdAt: string
 }
 
@@ -208,6 +219,32 @@ export async function registerApp(e: Omit<AppEntry, 'createdAt'>): Promise<boole
   } catch {
     return false
   }
+}
+
+/**
+ * Persist a founder-uploaded logo / brand mark on a company (#492). Appends an
+ * updated row carrying the existing entry plus the new logoUrl/logoFileId, so
+ * resolveApp() (latest-wins) surfaces it on the next dashboard load. No-op
+ * (false) if the slug isn't registered.
+ *
+ * Idempotent no-op success (true) when the SAME fileId is already stored, so
+ * re-reading the current logo never appends a churn row.
+ */
+export async function setAppLogo(
+  slug: string,
+  fields: { logoUrl: string; logoFileId?: string },
+): Promise<boolean> {
+  const logoUrl = (fields.logoUrl || '').trim()
+  if (!logoUrl) return false
+  const existing = await resolveApp(slug)
+  if (!existing) return false
+  if (existing.logoUrl === logoUrl && existing.logoFileId === fields.logoFileId) return true
+  return registerApp({
+    ...existing,
+    logoUrl,
+    logoFileId: fields.logoFileId,
+    logoUpdatedAt: new Date().toISOString(),
+  })
 }
 
 /**
