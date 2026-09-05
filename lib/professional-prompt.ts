@@ -123,14 +123,20 @@ Add rich Schema.org structured data describing the application:
 \`\`\`jsx
 <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify({
   "@context": "https://schema.org",
-  "@type": "WebApplication",
+  "@type": "Product",
   "name": "App Name",
-  "applicationCategory": "BusinessApplication",
-  "operatingSystem": "Web",
+  "category": "BusinessApplication",
   "description": "Detailed description of what this application does",
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
-  "featureList": ["Feature 1", "Feature 2", "Feature 3"]
+  "additionalProperty": [
+    { "@type": "PropertyValue", "name": "feature", "value": "Feature 1" },
+    { "@type": "PropertyValue", "name": "feature", "value": "Feature 2" },
+    { "@type": "PropertyValue", "name": "feature", "value": "Feature 3" }
+  ]
 }) }} />
+{/* Use "Product", not "WebApplication"/"SoftwareApplication" — those types require
+    an aggregateRating or review for Google Rich Results eligibility, and you must
+    NEVER fabricate a rating that doesn't exist. "Product" has no such requirement. */}
 \`\`\`
 
 ### AX-9: ARIA Roles and Descriptions for Complex Widgets

@@ -19,20 +19,21 @@ const jsonLd = {
   '@context': 'https://schema.org',
   '@graph': [
     {
-      '@type': 'SoftwareApplication',
+      // Product (not SoftwareApplication) — that type requires a star rating
+      // for Google Rich Results eligibility, and we never fabricate one (#517).
+      '@type': 'Product',
       name: 'AINative Builder',
-      applicationCategory: 'BusinessApplication',
-      operatingSystem: 'Web',
+      category: 'BusinessApplication',
       url: 'https://builder.ainative.studio/build',
       description:
         'AI that builds AND runs your company. Describe an idea; Cody composes a real, running product or an operating AI-native company from real AINative primitives (ZeroDB, ZeroMemory, Agent Cloud, ZeroPipeline, ZeroInvoice, ServiceOS, ZeroVoice), then runs it 24/7 on a nightly autonomous loop.',
-      featureList: [
+      additionalProperty: [
         'Idea → running app (real, shareable, durable URL)',
         'Idea → operating AI-native company (CRM, invoicing, helpdesk, voice)',
         'Every artifact composed live from real AINative primitives',
         'Nightly autonomous loop — runs your company while you sleep',
         'Claude Sonnet 4.5 / Haiku 4.5 / Opus 4.5 via Amazon Bedrock, tiered by plan',
-      ],
+      ].map((value) => ({ '@type': 'PropertyValue', name: 'feature', value })),
       offers: {
         '@type': 'AggregateOffer',
         lowPrice: '0', highPrice: '199', priceCurrency: 'USD', offerCount: 3,

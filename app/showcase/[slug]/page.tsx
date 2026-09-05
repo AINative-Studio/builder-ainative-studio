@@ -201,11 +201,13 @@ export default async function ShowcaseDetailPage({ params }: Props) {
         dangerouslySetInnerHTML={{
           __html: JSON.stringify({
             '@context': 'https://schema.org',
-            '@type': 'SoftwareApplication',
+            // Product (not SoftwareApplication) — that type requires a star
+            // rating for Google Rich Results eligibility, and we never
+            // fabricate one (#517).
+            '@type': 'Product',
             name: entry.title,
             description: entry.description,
-            applicationCategory: 'WebApplication',
-            operatingSystem: 'Web',
+            category: 'WebApplication',
             url: `https://builder.ainative.studio/showcase/${entry.slug}`,
             datePublished: entry.createdAt,
             creator: {
