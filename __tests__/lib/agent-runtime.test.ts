@@ -6,6 +6,7 @@ import {
   isAgentEnabled,
   isAgentFallbackEnabled,
   resolveAgentModel,
+  buildAgentMcpWiring,
 } from '@/lib/agent/agent-runtime'
 
 const env = (o: Record<string, string | undefined>) => o as NodeJS.ProcessEnv
@@ -122,5 +123,89 @@ describe('resolveAgentModel (builder#99 — cody model mapping)', () => {
     const e = env({ AGENT_RUNTIME: 'cody' })
     expect(resolveAgentModel('Sonnet', e)).toBe('kimi-k2.6')
     expect(resolveAgentModel(' OPUS ', e)).toBe('kimi-k2.6')
+  })
+})
+
+// builder#534 (re-scoped): buildAgentMcpWiring now wires THREE real, installed
+// stdio MCP servers (ZeroDB, Browser Agent, Sequential Thinking), each
+// independently env-gated + existence-checked + fail-closed. These tests run
+// against the REAL installed packages in node_modules (ainative-zerodb-mcp-server,
+// @ainative/browser-mcp, zerodb-sequential-thinking-mcp) — no fs mocking — so a
+// green run here means the packages are actually present at the paths the
+// wiring expects, not just that the gating logic is internally consistent.
+describe('buildAgentMcpWiring (builder#534 — real multi-server MCP wiring)', () => {
+  it('wires all three servers when a ZeroDB-family key is present and packages are installed', () => {
+    const out = buildAgentMcpWiring(env({ ZERODB_API_KEY: 'zk-123' }))
+    expect(out.configJson).not.toBeNull()
+    expect(out.allowedTools.sort()).toEqual(
+      ['mcp__browser-agent', 'mcp__sequential-thinking', 'mcp__zerodb'].sort(),
+    )
+    const parsed = JSON.parse(out.configJson as string)
+    expect(Object.keys(parsed.mcpServers).sort()).toEqual(
+      ['browser-agent', 'sequential-thinking', 'zerodb'].sort(),
+    )
+  })
+
+  it('falls back through AINATIVE_API_KEY for all three servers', () => {
+    const out = buildAgentMcpWiring(env({ AINATIVE_API_KEY: 'ak-123' }))
+    expect(out.allowedTools.sort()).toEqual(
+      ['mcp__browser-agent', 'mcp__sequential-thinking', 'mcp__zerodb'].sort(),
+    )
+  })
+
+  it('is inert (no config, no tools) with no key at all — fails closed, never throws', () => {
+    const out = buildAgentMcpWiring(env({}))
+    expect(out.configJson).toBeNull()
+    expect(out.allowedTools).toEqual([])
+  })
+
+  it('CODY_AGENT_MCP=0 disables ALL servers at once (single kill switch)', () => {
+    const out = buildAgentMcpWiring(env({ ZERODB_API_KEY: 'zk-123', CODY_AGENT_MCP: '0' }))
+    expect(out.configJson).toBeNull()
+    expect(out.allowedTools).toEqual([])
+  })
+
+  it('zerodb server env includes ZERODB_API_URL default and passes through ZERODB_PROJECT_ID', () => {
+    const out = buildAgentMcpWiring(
+      env({ ZERODB_API_KEY: 'zk-123', ZERODB_PROJECT_ID: 'proj-1' }),
+    )
+    const parsed = JSON.parse(out.configJson as string)
+    expect(parsed.mcpServers.zerodb.env).toEqual({
+      ZERODB_API_KEY: 'zk-123',
+      ZERODB_API_URL: 'https://api.ainative.studio',
+      ZERODB_PROJECT_ID: 'proj-1',
+    })
+  })
+
+  it('browser-agent server gets the AINATIVE_* env contract, not the catalog\'s stale ZERODB_* template', () => {
+    const out = buildAgentMcpWiring(env({ ZERODB_API_KEY: 'zk-123' }))
+    const parsed = JSON.parse(out.configJson as string)
+    expect(parsed.mcpServers['browser-agent'].env).toEqual({
+      AINATIVE_API_KEY: 'zk-123',
+      AINATIVE_API_URL: 'https://api.ainative.studio',
+    })
+  })
+
+  it('sequential-thinking server env includes ZERODB_BASE_URL and honors ZERODB_PROJECT_ID', () => {
+    const out = buildAgentMcpWiring(
+      env({ ZERODB_API_KEY: 'zk-123', ZERODB_PROJECT_ID: 'proj-1' }),
+    )
+    const parsed = JSON.parse(out.configJson as string)
+    expect(parsed.mcpServers['sequential-thinking'].env).toEqual({
+      ZERODB_API_KEY: 'zk-123',
+      ZERODB_BASE_URL: 'https://api.ainative.studio',
+      ZERODB_PROJECT_ID: 'proj-1',
+    })
+  })
+
+  it('every wired server spawns via process.execPath (no PATH lookup) with a stdio type', () => {
+    const out = buildAgentMcpWiring(env({ ZERODB_API_KEY: 'zk-123' }))
+    const parsed = JSON.parse(out.configJson as string)
+    for (const name of ['zerodb', 'browser-agent', 'sequential-thinking']) {
+      expect(parsed.mcpServers[name].type).toBe('stdio')
+      expect(parsed.mcpServers[name].command).toBe(process.execPath)
+      expect(Array.isArray(parsed.mcpServers[name].args)).toBe(true)
+      expect(parsed.mcpServers[name].args[0]).toMatch(/node_modules.*index\.js$/)
+    }
   })
 })
