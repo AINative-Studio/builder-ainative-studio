@@ -17,6 +17,7 @@ import {
   createDocument,
   listDocuments,
   getDocument,
+  hasReportForDate,
   MAX_LOAD_DOCUMENTS,
   type BuildDocument,
 } from '@/lib/build/document-store'
@@ -316,6 +317,36 @@ describe('ZeroDB I/O (#64)', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  // ---- Real bug: "VIEW does nothing" ----
+  // getDocument() used to trust rows[0] blindly — if the query layer ever
+  // returned more than one candidate (or one that doesn't actually match the
+  // requested id), the WRONG document could silently be returned with no
+  // error at all. This is exactly the failure mode that reads as "View does
+  // nothing" from the founder's side: clicking a specific report either loads
+  // some other document unnoticed, or (with the frontend's now-fixed error
+  // handling) surfaces a real error instead of nothing.
+  it('getDocument picks the row whose id EXACTLY matches when multiple candidates come back', async () => {
+    const rows = [
+      { row_data: { id: 'wrong-id', scope_key: 'a::b', type: 'daily', title: 'Wrong', content: 'wrong body', created_at: '2026-01-01T00:00:00Z' } },
+      { row_data: { id: 'x', scope_key: 'a::b', type: 'daily', title: 'Right', content: 'right body', created_at: '2026-01-01T00:00:00Z' } },
+    ]
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: rows }) })
+    vi.stubGlobal('fetch', fetchMock)
+    const doc = await getDocument('a::b', 'x')
+    expect(doc!.id).toBe('x')
+    expect(doc!.content).toBe('right body')
+  })
+
+  it('getDocument falls back to the first row when NONE of the candidates match the id exactly (defensive, never throws)', async () => {
+    const rows = [
+      { row_data: { id: 'some-other-id', scope_key: 'a::b', type: 'daily', title: 'Fallback', content: 'fallback body', created_at: '2026-01-01T00:00:00Z' } },
+    ]
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: rows }) })
+    vi.stubGlobal('fetch', fetchMock)
+    const doc = await getDocument('a::b', 'x')
+    expect(doc!.content).toBe('fallback body')
+  })
+
   it('createDocument swallows a thrown fetch (network error) and returns null', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNRESET')))
@@ -332,5 +363,68 @@ describe('ZeroDB I/O (#64)', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('timeout')))
     expect(await getDocument('a::b', 'x')).toBeNull()
+  })
+})
+
+// ---------- hasReportForDate (real bug: 8-10x duplicate daily reports) ----------
+describe('hasReportForDate', () => {
+  beforeEach(() => {
+    vi.stubEnv('ZERODB_API_KEY', 'test-key')
+    vi.stubEnv('ZERODB_PROJECT_ID', 'proj-1')
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  })
+
+  it('returns true when a report of the given type already exists on that calendar date', async () => {
+    const rows = [
+      { row_data: { id: 'r1', scope_key: 'a::b', type: 'daily', title: 'Daily Operational Report — Sep 5, 2026', content: 'x', created_at: '2026-09-05T07:00:00Z' } },
+    ]
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: rows }) }))
+    expect(await hasReportForDate('a::b', 'daily', '2026-09-05T07:05:00Z')).toBe(true)
+  })
+
+  it('returns false when no report exists yet for that date (first real run of the day)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: [] }) }))
+    expect(await hasReportForDate('a::b', 'daily', '2026-09-05T07:00:00Z')).toBe(false)
+  })
+
+  it('is scoped by calendar date — a report from a DIFFERENT day does not count', async () => {
+    const rows = [
+      { row_data: { id: 'r1', scope_key: 'a::b', type: 'daily', title: 'Daily Operational Report — Sep 4, 2026', content: 'x', created_at: '2026-09-04T07:00:00Z' } },
+    ]
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: rows }) }))
+    expect(await hasReportForDate('a::b', 'daily', '2026-09-05T07:00:00Z')).toBe(false)
+  })
+
+  it('is scoped by type — a durable document of a different type does not count as a report', async () => {
+    const rows = [
+      { row_data: { id: 'r1', scope_key: 'a::b', type: 'research', title: 'Research', content: 'x', created_at: '2026-09-05T07:00:00Z' } },
+    ]
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: rows }) }))
+    expect(await hasReportForDate('a::b', 'daily', '2026-09-05T07:00:00Z')).toBe(false)
+  })
+
+  it('returns false (never blocks the write) without a scope or date', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await hasReportForDate('', 'daily', '2026-09-05T07:00:00Z')).toBe(false)
+    expect(await hasReportForDate('a::b', 'daily', '')).toBe(false)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('returns false (never throws) when the query fails', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('timeout')))
+    expect(await hasReportForDate('a::b', 'daily', '2026-09-05T07:00:00Z')).toBe(false)
+  })
+
+  it('the 10-duplicate live repro: 10 same-day reports already present still reports true (write correctly skipped)', async () => {
+    const rows = Array.from({ length: 10 }, (_, i) => ({
+      row_data: { id: `r${i}`, scope_key: 'a::b', type: 'daily', title: 'Daily Operational Report — Sep 5, 2026', content: 'x', created_at: `2026-09-05T0${i}:00:00Z` },
+    }))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: rows }) }))
+    expect(await hasReportForDate('a::b', 'daily', '2026-09-05T09:00:00Z')).toBe(true)
   })
 })

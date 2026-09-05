@@ -254,6 +254,76 @@ describe('listEnrolled', () => {
     expect(result).toHaveLength(1)
     expect(result[0].companyId).toBe('co-x')
   })
+
+  // ---- Real bug repro: "Daily Operational Report" appeared 8-10x for one day ----
+  // Root cause confirmed live: this append-only store never deduped a company
+  // across multiple enrollment rows (e.g. from repeated "Hire the swarm" clicks
+  // before the enroll route itself was guarded — see app/api/build/enroll —
+  // or the client's enrollNightly() re-firing on every Live dashboard mount).
+  // The nightly-loop route iterates listEnrolled() with a plain `for` loop, so
+  // N duplicate rows for one company meant the FULL per-company pipeline
+  // (swarm dispatch, daily report append, media routine) ran N times in one
+  // cron tick. Deduping here is the durable, root-cause-level fix.
+  it('dedupes multiple enrollment rows for the SAME company down to one entry (the confirmed duplicate-report root cause)', async () => {
+    mockFetch(() => ({ ok: true, body: { data: [
+      makeEnrollmentRow({ companyId: 'beacon', enrolledAt: '2026-09-01T00:00:00Z' }),
+      makeEnrollmentRow({ companyId: 'beacon', enrolledAt: '2026-09-02T00:00:00Z' }),
+      makeEnrollmentRow({ companyId: 'beacon', enrolledAt: '2026-09-03T00:00:00Z' }),
+      makeEnrollmentRow({ companyId: 'other-co', enrolledAt: '2026-09-01T00:00:00Z' }),
+    ] } }))
+    const { listEnrolled } = await freshConfigured()
+    const result = await listEnrolled()
+    expect(result.map((r) => r.companyId).sort()).toEqual(['beacon', 'other-co'])
+  })
+
+  it('keeps the LATEST duplicate row per company (by enrolledAt)', async () => {
+    mockFetch(() => ({ ok: true, body: { data: [
+      makeEnrollmentRow({ companyId: 'beacon', companyName: 'Beacon v1', enrolledAt: '2026-09-01T00:00:00Z' }),
+      makeEnrollmentRow({ companyId: 'beacon', companyName: 'Beacon v2', enrolledAt: '2026-09-03T00:00:00Z' }),
+      makeEnrollmentRow({ companyId: 'beacon', companyName: 'Beacon v3 (stale, earlier)', enrolledAt: '2026-09-02T00:00:00Z' }),
+    ] } }))
+    const { listEnrolled } = await freshConfigured()
+    const result = await listEnrolled()
+    expect(result).toHaveLength(1)
+    expect(result[0].companyName).toBe('Beacon v2')
+  })
+})
+
+// ---------- dedupeByCompany (pure) ----------
+describe('dedupeByCompany', () => {
+  it('collapses N rows for one company down to 1, keeping the latest by enrolledAt', async () => {
+    const { dedupeByCompany } = await import('@/lib/build/loop-enrollment')
+    const rows = [
+      { companyId: 'a', companyName: 'A-old', track: 'app' as const, enabled: true, enrolledAt: '2026-01-01T00:00:00Z' },
+      { companyId: 'a', companyName: 'A-new', track: 'app' as const, enabled: true, enrolledAt: '2026-01-05T00:00:00Z' },
+      { companyId: 'b', companyName: 'B', track: 'company' as const, enabled: true, enrolledAt: '2026-01-01T00:00:00Z' },
+    ]
+    const result = dedupeByCompany(rows)
+    expect(result).toHaveLength(2)
+    expect(result.find((r) => r.companyId === 'a')?.companyName).toBe('A-new')
+  })
+
+  it('drops rows with no companyId', async () => {
+    const { dedupeByCompany } = await import('@/lib/build/loop-enrollment')
+    const result = dedupeByCompany([
+      { companyId: '', companyName: 'X', track: 'app', enabled: true, enrolledAt: '2026-01-01T00:00:00Z' } as any,
+    ])
+    expect(result).toEqual([])
+  })
+
+  it('handles an empty list', async () => {
+    const { dedupeByCompany } = await import('@/lib/build/loop-enrollment')
+    expect(dedupeByCompany([])).toEqual([])
+  })
+
+  it('ten duplicate rows for the same company collapse to exactly one (the live 10x repro)', async () => {
+    const { dedupeByCompany } = await import('@/lib/build/loop-enrollment')
+    const rows = Array.from({ length: 10 }, (_, i) => ({
+      companyId: 'beacon', companyName: 'Beacon', track: 'app' as const, enabled: true,
+      enrolledAt: `2026-09-05T00:0${i}:00Z`,
+    }))
+    expect(dedupeByCompany(rows)).toHaveLength(1)
+  })
 })
 
 // ---------- getLastRun ----------

@@ -111,7 +111,24 @@ export async function recordRun(companyId: string, taskId: string | null, status
   }
 }
 
-/** List enabled enrollments (the nightly cron iterates these). Excludes run-event rows. */
+/**
+ * List enabled enrollments (the nightly cron iterates these). Excludes run-event
+ * rows, and DEDUPES to one row per companyId (latest enrolledAt wins).
+ *
+ * Real bug (live, #64 nightly loop): this store is append-only — enrollCompany()
+ * appends a new row on every call with no upsert semantics, by design, so an
+ * enrollment's history is preserved. But nothing downstream ever collapsed that
+ * history back down to "one company, one entry" before the nightly loop iterated
+ * it: a company enrolled N times (e.g. multiple "Hire the swarm" clicks before the
+ * enroll route was guarded — see app/api/build/enroll/route.ts) came back from
+ * listEnrolled() as N separate entries, so the nightly-loop's `for (const e of
+ * enrolled)` loop ran the FULL per-company pipeline (swarm dispatch, daily report
+ * append, media routine, task resolution) once per duplicate — the confirmed root
+ * cause of "Daily Operational Report" appearing 8-10x for a single real day.
+ * Deduping here is the durable fix: it holds regardless of how a duplicate row
+ * got written (this bug, a future caller, a retried request), and needs no
+ * migration of the underlying append-only rows.
+ */
 export async function listEnrolled(): Promise<LoopEnrollment[]> {
   if (!configured()) return []
   try {
@@ -120,13 +137,32 @@ export async function listEnrolled(): Promise<LoopEnrollment[]> {
     const raw = await res.text()
     const data = JSON.parse(raw)
     const rows = Array.isArray(data) ? data : data.data || data.rows || []
-    return rows
+    const enrollments: LoopEnrollment[] = rows
       .map((r: { row_data?: LoopEnrollment & { kind?: string } }) => r.row_data)
       .filter((rd: (LoopEnrollment & { kind?: string }) | undefined): rd is LoopEnrollment =>
         Boolean(rd?.enabled) && rd?.kind !== 'run')
+    return dedupeByCompany(enrollments)
   } catch {
     return []
   }
+}
+
+/**
+ * Collapse a list of enrollment rows down to the single latest row per companyId
+ * (by enrolledAt, falling back to array order when timestamps tie/are missing).
+ * Pure — unit-testable without a network. Exported so the exact dedup rule the
+ * nightly loop depends on is directly testable.
+ */
+export function dedupeByCompany(enrollments: LoopEnrollment[]): LoopEnrollment[] {
+  const latestByCompany = new Map<string, LoopEnrollment>()
+  for (const e of enrollments) {
+    if (!e?.companyId) continue
+    const current = latestByCompany.get(e.companyId)
+    if (!current || (e.enrolledAt || '') >= (current.enrolledAt || '')) {
+      latestByCompany.set(e.companyId, e)
+    }
+  }
+  return [...latestByCompany.values()]
 }
 
 export interface CompanyRun {
