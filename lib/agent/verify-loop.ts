@@ -12,6 +12,8 @@
  * verify instruction. The chat-ws route wires them into runHeadlessAgent.
  */
 
+import { extractErrorWindow } from '@/lib/generation-retry'
+
 /** Tools the verify agent needs to genuinely check its work (not just write). */
 export const VERIFY_AGENT_TOOLS = ['Read', 'Write', 'Edit', 'Bash']
 
@@ -43,11 +45,19 @@ export function buildVerifySystemPrompt(): string {
 /**
  * Build the user prompt for the verify agent given the broken code and the
  * validation error that triggered repair.
+ *
+ * builder#531: the raw code is sliced through `extractErrorWindow`, which
+ * centers the window on the error's own "at line N" location instead of a flat
+ * prefix cutoff. A flat `slice(0, 12000)` silently drops the actual defect for
+ * any large or multi-file generation whose error lands past that offset (a
+ * real "community platform" build hit an unterminated template at line 734 —
+ * well outside a 12000-char prefix of a 700+ line multi-file payload), so the
+ * agent was asked to fix code that, from its view, had no error in it.
  */
 export function buildVerifyPrompt(prompt: string, error: string, brokenCode: string): string {
   return (
     `Fix this React component. It failed validation with:\n\nERROR: ${error}\n\n` +
-    `BROKEN CODE:\n\`\`\`jsx\n${(brokenCode || '').slice(0, 12000)}\n\`\`\`\n\n` +
+    `BROKEN CODE:\n\`\`\`jsx\n${extractErrorWindow(brokenCode || '', error, 12000)}\n\`\`\`\n\n` +
     `Produce a corrected, complete version of: ${prompt}\n` +
     'Make sure every component resolves and the build passes. Return ONLY the fixed code in ```jsx markers.'
   )
