@@ -170,7 +170,7 @@ export function Landing() {
       <div className="m-land-foot">
         <a href="/about">About</a>
         <a href="https://ainative.studio/terms">Terms</a>
-        <a href="/acceptable-use">Acceptable use</a>
+        <a href="https://ainative.studio/acceptable-use">Acceptable use</a>
         <a href="https://ainative.studio/privacy">Privacy</a>
         <span>Support: <a href="mailto:support@ainative.studio">support@ainative.studio</a></span>
       </div>

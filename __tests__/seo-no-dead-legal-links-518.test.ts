@@ -3,17 +3,19 @@ import path from 'path'
 import { describe, it, expect } from 'vitest'
 
 /**
- * #518 — the Landing footer (components/build/screens/Landing.tsx) links to
- * /terms and /privacy on builder.ainative.studio itself, but neither route
- * exists in this app (no app/terms or app/privacy directory). Anonymous
- * visitors clicking either link fall through middleware's default-deny and
- * get silently redirected to /login instead of a 404 or real content.
- * ainative.studio has real, live pages for both — confirmed 200 live before
- * this fix. Repointed to those instead of building placeholder pages here.
+ * #518/#540 — the Landing footer (components/build/screens/Landing.tsx)
+ * links to /terms, /privacy, and /acceptable-use on builder.ainative.studio
+ * itself, but none of those routes exist in this app (no app/terms,
+ * app/privacy, or app/acceptable-use directory). Anonymous visitors clicking
+ * any of them fall through middleware's default-deny and get silently
+ * redirected to /login instead of a 404 or real content. ainative.studio has
+ * real, live pages for all three — confirmed 200 live before each fix.
+ * Repointed to those instead of building placeholder pages here.
  *
- * /acceptable-use is a separate, still-open finding: no real page exists on
- * EITHER site to link to, so it is intentionally left as-is pending a real
- * content decision rather than guessed at.
+ * /acceptable-use was a separate, held-open finding (#540): no real page
+ * existed on EITHER site when /terms and /privacy were first fixed. A real
+ * page has since been published at ainative.studio/acceptable-use (confirmed
+ * live, real policy content) — repointed here to close out #540.
  */
 describe('Landing footer legal links point to real, live pages (SEO audit)', () => {
   const source = fs.readFileSync(
@@ -27,5 +29,9 @@ describe('Landing footer legal links point to real, live pages (SEO audit)', () 
 
   it('Privacy links to the real ainative.studio page, not the nonexistent local /privacy route', () => {
     expect(source).toMatch(/href="https:\/\/ainative\.studio\/privacy"/)
+  })
+
+  it('Acceptable use links to the real ainative.studio page, not the nonexistent local /acceptable-use route', () => {
+    expect(source).toMatch(/href="https:\/\/ainative\.studio\/acceptable-use"/)
   })
 })
