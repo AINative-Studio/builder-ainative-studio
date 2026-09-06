@@ -10,13 +10,23 @@
  * connect" signal, never a confirmed-connected state (builder structurally
  * cannot verify one exists).
  *
- * POST { slug } → { ok, authUrl? } — the caller should redirect/open a new
- * tab to authUrl on success.
+ * POST { slug, action?: 'authorize' | 'confirm' }
+ *   'authorize' (default) → { ok, authUrl? } — the caller should redirect/
+ *     open a new tab to authUrl on success.
+ *   'confirm' → { ok } — real bug fix: the UI had no way to move past
+ *     "Connect requested" even after a founder genuinely finished the OAuth
+ *     flow in the new tab (builder structurally cannot verify it server-
+ *     side). Records the founder's own SELF-reported "I finished connecting"
+ *     signal — never presented as platform-verified.
  */
 
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
-import { resolveApp, setAppZeroInvoiceConnectClicked } from '@/lib/build/app-registry'
+import {
+  resolveApp,
+  setAppZeroInvoiceConnectClicked,
+  setAppZeroInvoiceConnectConfirmed,
+} from '@/lib/build/app-registry'
 import { getZeroInvoiceAuthorizeUrl } from '@/lib/build/zeroinvoice'
 
 export const runtime = 'nodejs'
@@ -24,6 +34,7 @@ export const runtime = 'nodejs'
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null)
   const slug = String(body?.slug || '').trim()
+  const action = String(body?.action || 'authorize')
   if (!slug) return Response.json({ ok: false, reason: 'slug required' }, { status: 400 })
 
   // Connecting a third-party account is a real, account-scoped action on a
@@ -35,6 +46,11 @@ export async function POST(request: NextRequest) {
 
   const app = await resolveApp(slug).catch(() => null)
   if (!app) return Response.json({ ok: false, reason: 'company_not_found' }, { status: 404 })
+
+  if (action === 'confirm') {
+    const ok = await setAppZeroInvoiceConnectConfirmed(slug).catch(() => false)
+    return Response.json({ ok })
+  }
 
   const result = await getZeroInvoiceAuthorizeUrl()
   if (!result.ok || !result.authUrl) {

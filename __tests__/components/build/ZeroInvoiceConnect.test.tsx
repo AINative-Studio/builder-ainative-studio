@@ -93,7 +93,7 @@ describe('ZeroInvoiceConnect', () => {
       '/api/build/zeroinvoice',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ slug: 'acme' }),
+        body: JSON.stringify({ slug: 'acme', action: 'authorize' }),
       }),
     )
     expect(openSpy).toHaveBeenCalledWith(
@@ -172,5 +172,82 @@ describe('ZeroInvoiceConnect', () => {
     })
     const notice = host.querySelector('[data-testid="zeroinvoice-connect-notice"]')
     expect(notice?.textContent).toContain('Network error')
+  })
+
+  // ---- Real bug fix: founder self-confirmation closes the "stuck forever" loop ----
+  it('after clickedAt, a "I\'ve finished connecting" button appears (the missing path forward)', () => {
+    render(
+      <ZeroInvoiceConnect companyId="acme" signedIn={true} clickedAt="2026-09-01T00:00:00Z" onRequireAuth={() => {}} />,
+    )
+    const confirmBtn = host.querySelector('[data-testid="zeroinvoice-confirm-btn"]')
+    expect(confirmBtn).not.toBeNull()
+    expect(confirmBtn?.textContent).toContain("I've finished connecting")
+  })
+
+  it('clicking confirm POSTs action:"confirm" and flips to a clearly self-reported Connected state', async () => {
+    ;(global.fetch as any).mockResolvedValue({ ok: true, json: async () => ({ ok: true }) })
+    render(
+      <ZeroInvoiceConnect companyId="acme" signedIn={true} clickedAt="2026-09-01T00:00:00Z" onRequireAuth={() => {}} />,
+    )
+    const confirmBtn = host.querySelector('[data-testid="zeroinvoice-confirm-btn"]') as HTMLButtonElement
+    await act(async () => {
+      confirmBtn.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/build/zeroinvoice',
+      expect.objectContaining({ body: JSON.stringify({ slug: 'acme', action: 'confirm' }) }),
+    )
+    const status = host.querySelector('[data-testid="zeroinvoice-connect-status"]')
+    expect(status?.textContent).toContain('Connected')
+    // Never claims platform verification — must say self-reported.
+    expect(status?.textContent).toContain('self-reported')
+    // The confirm button itself disappears once confirmed (nothing left to confirm).
+    expect(host.querySelector('[data-testid="zeroinvoice-confirm-btn"]')).toBeNull()
+  })
+
+  it('a persisted confirmedAt (from reload) renders the confirmed state up front, no confirm button', () => {
+    render(
+      <ZeroInvoiceConnect
+        companyId="acme"
+        signedIn={true}
+        clickedAt="2026-09-01T00:00:00Z"
+        confirmedAt="2026-09-01T00:05:00Z"
+        onRequireAuth={() => {}}
+      />,
+    )
+    const status = host.querySelector('[data-testid="zeroinvoice-connect-status"]')
+    expect(status?.textContent).toContain('Connected')
+    expect(host.querySelector('[data-testid="zeroinvoice-confirm-btn"]')).toBeNull()
+  })
+
+  it('confirm never claims success on a failed save — stays honest', async () => {
+    ;(global.fetch as any).mockResolvedValue({ ok: true, json: async () => ({ ok: false }) })
+    render(
+      <ZeroInvoiceConnect companyId="acme" signedIn={true} clickedAt="2026-09-01T00:00:00Z" onRequireAuth={() => {}} />,
+    )
+    const confirmBtn = host.querySelector('[data-testid="zeroinvoice-confirm-btn"]') as HTMLButtonElement
+    await act(async () => {
+      confirmBtn.click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    const status = host.querySelector('[data-testid="zeroinvoice-connect-status"]')
+    expect(status?.textContent).not.toContain('Connected')
+    const notice = host.querySelector('[data-testid="zeroinvoice-connect-notice"]')
+    expect(notice?.textContent).toContain('Could not save')
+  })
+
+  it('an anonymous confirm click routes to sign-in instead of calling the API', async () => {
+    const onRequireAuth = vi.fn()
+    const fetchSpy = global.fetch as any
+    render(
+      <ZeroInvoiceConnect companyId="acme" signedIn={false} clickedAt="2026-09-01T00:00:00Z" onRequireAuth={onRequireAuth} />,
+    )
+    const confirmBtn = host.querySelector('[data-testid="zeroinvoice-confirm-btn"]') as HTMLButtonElement
+    await act(async () => { confirmBtn.click() })
+    expect(onRequireAuth).toHaveBeenCalled()
+    expect(fetchSpy).not.toHaveBeenCalled()
   })
 })

@@ -93,6 +93,10 @@ export function Live() {
   // read from the app-registry entry. Never a confirmed-connected state; see
   // ZeroInvoiceConnect's doc comment for why builder cannot verify more than this.
   const [zeroInvoiceClickedAt, setZeroInvoiceClickedAt] = useState<string | null>(null)
+  // Real bug fix: the founder's own "I finished connecting" self-report — the
+  // only way past "Connect requested" since builder structurally cannot
+  // verify the OAuth completion server-side (see ZeroInvoiceConnect doc).
+  const [zeroInvoiceConfirmedAt, setZeroInvoiceConfirmedAt] = useState<string | null>(null)
   // Persistent-cloud provisioning (#243): once a company is provisioned it has
   // its own real ZeroDB project + persistent deploy target, and the systems grid
   // reads real per-company data.
@@ -286,6 +290,7 @@ export function Live() {
           if (d.entry.domain) setCustomDomain(String(d.entry.domain))
           setSubdomainClaimed(d.entry.subdomainClaimed === true)
           if (d.entry.zeroinvoiceConnectClickedAt) setZeroInvoiceClickedAt(String(d.entry.zeroinvoiceConnectClickedAt))
+          if (d.entry.zeroinvoiceConnectConfirmedAt) setZeroInvoiceConfirmedAt(String(d.entry.zeroinvoiceConnectConfirmedAt))
         })
         .catch(() => { /* honest: no custom-domain line if unavailable */ })
     readDomain()
@@ -719,6 +724,7 @@ export function Live() {
               companyId={companyId}
               signedIn={signedIn}
               clickedAt={zeroInvoiceClickedAt}
+              confirmedAt={zeroInvoiceConfirmedAt}
               onRequireAuth={() => dispatch({ type: 'GOTO_SCREEN', screen: 'signup' })}
             />
           </div>

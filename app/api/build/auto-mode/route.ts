@@ -75,10 +75,21 @@ async function ownerKeyFromSession(): Promise<string> {
  * `body.plan`, which the panel never sent, so EVERY founder — including
  * Enterprise/admin — got `not_paid` and was bounced to pricing. The client body
  * is never consulted for entitlement.
+ *
+ * Real bug (live, Enterprise account): a transient core `/auth/me` hiccup
+ * (timeout/5xx) resolves to the exact same plan:'' shape as a genuinely
+ * unpaid account, so this used to bounce a real paying founder to checkout
+ * on a blip that had nothing to do with their entitlement. `verified:false`
+ * means "couldn't confirm right now" — that must never be treated as "not
+ * paid"; the caller gets 'unverified' (retryable, no redirect) instead.
  */
-async function isGated(): Promise<boolean> {
-  const { plan } = await resolveActivePlan()
-  return !planUnlocks(plan).nightlyLoop
+type GateResult = 'unlocked' | 'gated' | 'unverified'
+
+async function checkGate(): Promise<GateResult> {
+  const { plan, verified } = await resolveActivePlan()
+  if (planUnlocks(plan).nightlyLoop) return 'unlocked'
+  if (!verified) return 'unverified'
+  return 'gated'
 }
 
 /** GET — current run + live progress + cost catalog. Never 500s. */
@@ -132,8 +143,13 @@ export async function POST(request: NextRequest) {
   // ---- START ------------------------------------------------------------
   // Plan gate (#58 req 5): bounded auto-run is Business+ (same unlock as nightly),
   // resolved SERVER-side from the session — never from the request body.
-  if (await isGated()) {
+  // 'unverified' (core hiccup) must never be treated as 'gated' — see checkGate.
+  const gate = await checkGate()
+  if (gate === 'gated') {
     return Response.json({ ok: false, reason: 'not_paid' }, { status: 200 })
+  }
+  if (gate === 'unverified') {
+    return Response.json({ ok: false, reason: 'unverified' }, { status: 200 })
   }
 
   const duration: AutoDuration = normalizeDuration(body.duration)

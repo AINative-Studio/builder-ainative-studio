@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
   auth: vi.fn(),
   resolveApp: vi.fn(),
   setAppZeroInvoiceConnectClicked: vi.fn(async () => true),
+  setAppZeroInvoiceConnectConfirmed: vi.fn(async () => true),
   getZeroInvoiceAuthorizeUrl: vi.fn(),
 }))
 
@@ -25,6 +26,7 @@ vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
 vi.mock('@/lib/build/app-registry', () => ({
   resolveApp: h.resolveApp,
   setAppZeroInvoiceConnectClicked: h.setAppZeroInvoiceConnectClicked,
+  setAppZeroInvoiceConnectConfirmed: h.setAppZeroInvoiceConnectConfirmed,
 }))
 vi.mock('@/lib/build/zeroinvoice', () => ({ getZeroInvoiceAuthorizeUrl: h.getZeroInvoiceAuthorizeUrl }))
 
@@ -41,6 +43,7 @@ beforeEach(() => {
   h.auth.mockResolvedValue({ accessToken: 'tok', user: { email: 'f@x.com' } })
   h.resolveApp.mockResolvedValue(APP)
   h.setAppZeroInvoiceConnectClicked.mockResolvedValue(true)
+  h.setAppZeroInvoiceConnectConfirmed.mockResolvedValue(true)
 })
 
 describe('POST /api/build/zeroinvoice (#418)', () => {
@@ -86,5 +89,45 @@ describe('POST /api/build/zeroinvoice (#418)', () => {
     const res: any = await POST(postReq({ slug: 'acme' }))
     const json = await res.json()
     expect(json).toEqual({ ok: true, authUrl: 'https://api.ainative.studio/oauth/authorize?x=1' })
+  })
+
+  // ---- Real bug fix: action:'confirm' — founder self-confirmation ----
+  describe('action: "confirm" (the missing path forward)', () => {
+    it('records the founder\'s self-confirmation and never calls the authorize endpoint', async () => {
+      const res: any = await POST(postReq({ slug: 'acme', action: 'confirm' }))
+      const json = await res.json()
+      expect(json).toEqual({ ok: true })
+      expect(h.setAppZeroInvoiceConnectConfirmed).toHaveBeenCalledWith('acme')
+      expect(h.getZeroInvoiceAuthorizeUrl).not.toHaveBeenCalled()
+    })
+
+    it('still requires sign-in', async () => {
+      h.auth.mockResolvedValue(null)
+      const res: any = await POST(postReq({ slug: 'acme', action: 'confirm' }))
+      const json = await res.json()
+      expect(json).toEqual({ ok: false, reason: 'signin' })
+      expect(h.setAppZeroInvoiceConnectConfirmed).not.toHaveBeenCalled()
+    })
+
+    it('still 404s on an unknown company', async () => {
+      h.resolveApp.mockResolvedValue(null)
+      const res: any = await POST(postReq({ slug: 'nope', action: 'confirm' }))
+      expect(res.status).toBe(404)
+      expect(h.setAppZeroInvoiceConnectConfirmed).not.toHaveBeenCalled()
+    })
+
+    it('surfaces ok:false honestly when the save itself fails, never fabricates success', async () => {
+      h.setAppZeroInvoiceConnectConfirmed.mockResolvedValue(false)
+      const res: any = await POST(postReq({ slug: 'acme', action: 'confirm' }))
+      const json = await res.json()
+      expect(json).toEqual({ ok: false })
+    })
+
+    it('never throws when the save throws — surfaces ok:false', async () => {
+      h.setAppZeroInvoiceConnectConfirmed.mockRejectedValue(new Error('zerodb hiccup'))
+      const res: any = await POST(postReq({ slug: 'acme', action: 'confirm' }))
+      const json = await res.json()
+      expect(json).toEqual({ ok: false })
+    })
   })
 })
