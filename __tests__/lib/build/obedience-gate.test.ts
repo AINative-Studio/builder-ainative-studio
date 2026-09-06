@@ -6,6 +6,7 @@ import {
   findPrimitiveComplianceGaps,
   hasVisitorTrackingGap,
   hasFakeLeadCaptureGap,
+  hasHardcodedToggleGap,
   checkObedience,
   buildObediencePrompt,
 } from '@/lib/build/obedience-gate'
@@ -355,5 +356,71 @@ function App(){
     // just guards that passing a role doesn't throw and still returns a real array.
     expect(() => findPrimitiveComplianceGaps('function App(){}', 'a small business', 'sales')).not.toThrow()
     expect(Array.isArray(findPrimitiveComplianceGaps('function App(){}', 'a small business', 'sales'))).toBe(true)
+  })
+})
+
+// Real bug found live (same investigation as #566): a "favorite this gallery
+// item" toggle on a HARDCODED array is genuine user interaction that resets on
+// every reload — silently lost. hasPersistenceGap can't catch this: it
+// requires idea-hint overlap AND explicit Add/New/Create/Save BUTTON TEXT — a
+// favorite toggle is usually an icon button with no such text, and "favorite"
+// was never in the idea-hint list at all (confirmed live: a real "street art
+// gallery... favorite toggle" idea matched zero hints).
+describe('obedience-gate: hardcoded toggle (real bug, found live)', () => {
+  const GALLERY_APP = `
+function App(){
+  const [artPieces, setArtPieces] = useState([
+    { id: 1, title: 'Ocean Waves', artist: 'Marina Santos', favorited: false },
+    { id: 2, title: 'Boardwalk Dreams', artist: 'Jake Morrison', favorited: true },
+  ])
+  const toggleFavorite = (id) => {
+    setArtPieces(prev => prev.map(piece =>
+      piece.id === id ? { ...piece, favorited: !piece.favorited } : piece
+    ))
+  }
+  return (<div>{artPieces.map(p => <button key={p.id} onClick={()=>toggleFavorite(p.id)}>{p.favorited ? '♥' : '♡'}</button>)}</div>)
+}`
+
+  const PERSISTED_GALLERY_APP = `
+function App(){
+  const [artPieces, setArtPieces] = useState([])
+  useEffect(() => { fetch('/api/db/art').then(r=>r.json()).then(d=>setArtPieces(d.data||[])) }, [])
+  const toggleFavorite = (id, current) => {
+    fetch(\`/api/db/art?id=\${id}\`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ favorited: !current }) }).catch(()=>{})
+    setArtPieces(prev => prev.map(piece => piece.id === id ? { ...piece, favorited: !piece.favorited } : piece))
+  }
+  return (<div>{artPieces.map(p => <button key={p.id} onClick={()=>toggleFavorite(p.id, p.favorited)}>{p.favorited ? '♥' : '♡'}</button>)}</div>)
+}`
+
+  it('THE BUG: flags a favorite toggle on a hardcoded array (the real aerosol repro)', () => {
+    expect(hasHardcodedToggleGap(GALLERY_APP)).toBe(true)
+  })
+
+  it('does NOT flag when the list is loaded from and toggled through /api/db', () => {
+    expect(hasHardcodedToggleGap(PERSISTED_GALLERY_APP)).toBe(false)
+  })
+
+  it('does NOT flag an app with no toggle-on-array pattern at all', () => {
+    expect(hasHardcodedToggleGap('function App(){return <div>hi</div>}')).toBe(false)
+  })
+
+  it('checkObedience surfaces hardcodedToggleGap and a reason string', () => {
+    const r = checkObedience(GALLERY_APP, 'a street art gallery with a favorite toggle')
+    expect(r.hardcodedToggleGap).toBe(true)
+    expect(r.reasons.some((x) => x.includes('toggle on a hardcoded list'))).toBe(true)
+  })
+
+  it('buildObediencePrompt includes the real PUT call shape when this gap fires', () => {
+    const r = checkObedience(GALLERY_APP, 'a gallery app')
+    const prompt = buildObediencePrompt('a gallery app', r)
+    expect(prompt).toMatch(/PERSIST THE FAVORITE\/LIKE\/SAVE TOGGLE/)
+    expect(prompt).toMatch(/method: 'PUT'/)
+  })
+
+  it('buildObediencePrompt omits the toggle section when the list already persists', () => {
+    const r = checkObedience(PERSISTED_GALLERY_APP, 'a gallery app')
+    expect(r.hardcodedToggleGap).toBe(false)
+    const prompt = buildObediencePrompt('a gallery app', r)
+    expect(prompt).not.toMatch(/PERSIST THE FAVORITE\/LIKE\/SAVE TOGGLE/)
   })
 })

@@ -107,6 +107,31 @@ export function hasFakeLeadCaptureGap(code: string): boolean {
 }
 
 /**
+ * Real, live bug found live (same investigation as #566): a "favorite this
+ * gallery item" toggle on a HARDCODED array (`useState([{...}, {...}])`, an
+ * item-level boolean flipped via `.map()` inside the setter) is genuine user
+ * interaction that resets on every reload — silently lost, exactly the same
+ * class of defect as the lead-capture bug, just a different UI shape
+ * (favorite/like/save toggle instead of a form submit). `hasPersistenceGap`
+ * above can't catch this: it requires idea-hint overlap AND an explicit
+ * Add/New/Create/Save BUTTON TEXT — a favorite toggle is usually an icon
+ * button with no such text, and "favorite"/"like"/"save this" was never in
+ * the idea-hint list at all (confirmed live: a real "street art gallery...
+ * favorite toggle" idea matched zero hints). Unconditional, like visitor
+ * tracking and lead capture — any generated app can have a hardcoded list
+ * with a per-item toggle regardless of its core idea.
+ */
+function looksLikeToggleOnHardcodedList(code: string): boolean {
+  const hasHardcodedArray = /useState\(\s*\[\s*\{/.test(code)
+  const hasItemToggle = /\.map\(\s*\(?\w+\s*=>\s*\w+\.id\s*===[\s\S]{0,60}\?\s*\{\s*\.\.\.\w+,\s*\w+:\s*!\w+\.\w+\s*\}/.test(code)
+  return hasHardcodedArray && hasItemToggle
+}
+
+export function hasHardcodedToggleGap(code: string): boolean {
+  return looksLikeToggleOnHardcodedList(code) && !usesDataLayer(code)
+}
+
+/**
  * #483/#563: does the code fire the mandated visitor-tracking beacon
  * (`POST /api/db/visitors` on mount)? Real gap fix — the founder's Live
  * dashboard showed a "visitors" count that was a permanent, hardcoded 0 with
@@ -211,6 +236,9 @@ export interface ObedienceResult {
   /** Real bug (found live, 4/4 recent generations): an email/waitlist capture
    *  form that never persists what it captures. */
   fakeLeadCaptureGap: boolean
+  /** Real bug (found live): a favorite/like/save toggle on a hardcoded array
+   *  — genuine interaction silently lost on reload. */
+  hardcodedToggleGap: boolean
   reasons: string[]
 }
 
@@ -221,6 +249,7 @@ export function checkObedience(code: string, idea: string, role?: CompanyRole): 
   const primitiveComplianceGaps = findPrimitiveComplianceGaps(code, idea, role)
   const visitorTrackingGap = hasVisitorTrackingGap(code)
   const fakeLeadCaptureGap = hasFakeLeadCaptureGap(code)
+  const hardcodedToggleGap = hasHardcodedToggleGap(code)
   const reasons: string[] = []
   if (persistenceGap) {
     reasons.push('App manages user records but hardcodes data — must persist via /api/db.')
@@ -237,7 +266,10 @@ export function checkObedience(code: string, idea: string, role?: CompanyRole): 
   if (visitorTrackingGap) {
     reasons.push('Landing/home page never fires the mandated visitor-tracking beacon (POST /api/db/visitors on mount).')
   }
-  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, visitorTrackingGap, fakeLeadCaptureGap, reasons }
+  if (hardcodedToggleGap) {
+    reasons.push('A favorite/like/save toggle on a hardcoded list resets on reload — must persist via /api/db.')
+  }
+  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, visitorTrackingGap, fakeLeadCaptureGap, hardcodedToggleGap, reasons }
 }
 
 /**
@@ -308,6 +340,17 @@ export function buildObediencePrompt(idea: string, result: ObedienceResult): str
       "     headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email, joinedAt: new Date().toISOString() }) })",
       '     .catch(() => {}); setSubmitted(true); setEmail(\'\') }',
       '   Keep the existing success UI (alert/toast/inline message) — only the persistence is missing.',
+      '',
+    )
+  }
+  if (result.hardcodedToggleGap) {
+    parts.push(
+      '6) PERSIST THE FAVORITE/LIKE/SAVE TOGGLE — it currently only flips a field in a hardcoded, in-memory array',
+      '   (useState([{...}])), so every toggle resets the instant the page reloads. Load the list from /api/db on',
+      '   mount, and PUT the toggled field back on each click:',
+      "   fetch(`/api/db/<table>?id=${item.id}`, { method: 'PUT', headers: {'Content-Type':'application/json'},",
+      "     body: JSON.stringify({ favorited: !item.favorited }) }).catch(() => {})",
+      '   Keep the same instant-feeling UI (update local state immediately, PUT in the background).',
       '',
     )
   }
