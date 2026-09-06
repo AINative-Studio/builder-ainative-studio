@@ -22,6 +22,6 @@ export async function GET(request: NextRequest) {
   const app = await resolveApp(slug).catch(() => null)
   if (!app) return Response.json({ visitors: 0 })
 
-  const visitors = await countVisitors(app.zerodbProjectId)
+  const visitors = await countVisitors(app.zerodbProjectId, app.chatId)
   return Response.json({ visitors })
 }
