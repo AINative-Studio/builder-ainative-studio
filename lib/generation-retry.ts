@@ -122,12 +122,26 @@ export function buildRepairPrompt(prompt: string, error: string): string {
  * are formatted as `"${message} at line ${line}, column ${column}\n..."`. This
  * mirrors that exact shape so the two stay in lockstep — if that format ever
  * changes, this returns null and callers fall back to their previous behavior.
+ *
+ * Also matches @babel/parser's own native error format, `"... (LINE:COL)"` —
+ * the shape `ready-gate.ts`'s checkAppReady() surfaces (e.g. "Unexpected
+ * token, expected \":\" (133:39)") when register-app's pre-deploy parse gate
+ * catches a truncated/unbalanced generation the earlier in-request retry loop
+ * never saw (real bug: this 422 carried no consumer at all — see
+ * app/api/build/repair-app/route.ts for the fix).
  */
 export function parseErrorLine(error: string): number | null {
   const m = /\bat line (\d+)/.exec(error || '')
-  if (!m) return null
-  const n = parseInt(m[1], 10)
-  return Number.isFinite(n) && n > 0 ? n : null
+  if (m) {
+    const n = parseInt(m[1], 10)
+    return Number.isFinite(n) && n > 0 ? n : null
+  }
+  const babelM = /\((\d+):(\d+)\)\s*$/.exec(error || '')
+  if (babelM) {
+    const n = parseInt(babelM[1], 10)
+    return Number.isFinite(n) && n > 0 ? n : null
+  }
+  return null
 }
 
 /**

@@ -150,29 +150,57 @@ export function Preview() {
   useEffect(() => {
     if (status !== 'ready' || !chatId || !state.appSub) return
     dispatch({ type: 'SET_APP_CHATID', chatId })
-    fetch('/api/build/register-app', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        slug: state.appSub, chatId, name: state.companyName,
-        tagline: state.brandTagline, color: state.brandColor, track: state.track,
-      }),
+
+    const registerBody = JSON.stringify({
+      slug: state.appSub, chatId, name: state.companyName,
+      tagline: state.brandTagline, color: state.brandColor, track: state.track,
     })
-      .then(async (r) => {
-        const d = await r.json().catch(() => null)
-        return { ok: r.ok, d }
-      })
-      .then(({ ok, d }) => {
-        setRegistered(ok)
-        if (!ok) return
-        if (d?.deployUrl) setDeployUrl(String(d.deployUrl))
-        // The requested slug collided with a DIFFERENT founder's existing
-        // build and got auto-suffixed server-side (register-app's
-        // firstFreeSlug) — adopt the real, actually-registered slug so
-        // /build/{slug} and every subsequent call use it, not the one that
-        // lost the naming collision.
-        if (d?.slugChanged) dispatch({ type: 'RESTORE_BUILD', partial: { appSub: String(d.slugChanged) } })
-      })
-      .catch(() => setRegistered(false))
+    const tryRegister = () =>
+      fetch('/api/build/register-app', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: registerBody,
+      }).then(async (r) => ({ ok: r.ok, d: await r.json().catch(() => null) }))
+
+    let cancelled = false
+    const adopt = (d: any) => {
+      if (d?.deployUrl) setDeployUrl(String(d.deployUrl))
+      // The requested slug collided with a DIFFERENT founder's existing build
+      // and got auto-suffixed server-side (register-app's firstFreeSlug) —
+      // adopt the real, actually-registered slug so /build/{slug} and every
+      // subsequent call use it, not the one that lost the naming collision.
+      if (d?.slugChanged) dispatch({ type: 'RESTORE_BUILD', partial: { appSub: String(d.slugChanged) } })
+    }
+
+    tryRegister().then(async ({ ok, d }) => {
+      if (cancelled) return
+      if (ok) { setRegistered(true); adopt(d); return }
+
+      // Real bug fix (follow-up to the `registered` tri-state above): a 422
+      // here carries `retry:true` + the exact parse error — computed
+      // server-side but, until now, NEVER actually consumed by anything.
+      // The founder was stuck forever on a genuinely broken build with no
+      // path forward except starting over. Actually consume it: call the
+      // repair endpoint (re-generates the STORED broken code with the real
+      // error fed back — the same repair loop chat-ws uses for its own
+      // in-request retries, see app/api/build/repair-app), then re-attempt
+      // registration once on a successful repair.
+      if (d?.retry && d?.error) {
+        const repaired = await fetch('/api/build/repair-app', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chatId, error: d.error }),
+        }).then((r) => r.json()).catch(() => null)
+        if (cancelled) return
+        if (repaired?.recovered) {
+          const retry = await tryRegister().catch(() => ({ ok: false, d: null }))
+          if (cancelled) return
+          setRegistered(retry.ok)
+          if (retry.ok) adopt(retry.d)
+          return
+        }
+      }
+      setRegistered(false)
+    }).catch(() => { if (!cancelled) setRegistered(false) })
+
+    return () => { cancelled = true }
   }, [status, chatId, state.appSub])
 
   // Product rule (#78): the {slug}.ainative.studio subdomain must NOT be surfaced
