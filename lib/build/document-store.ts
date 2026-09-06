@@ -411,15 +411,29 @@ export async function listDocuments(
 export async function getDocument(scopeKey: string, id: string): Promise<BuildDocument | null> {
   if (!scopeKey || !id) return null
   try {
+    // Real, live bug (screenshot-reported: VIEW says "That document could not
+    // be found" for a report that IS genuinely listed): ZeroDB's query engine
+    // cannot filter on `id` at all — it lives inside `row_data`, and only
+    // `scope_key` is actually queryable there. Confirmed directly against
+    // production: `{filters:{scope_key, id}}` and even `{filters:{id}}` alone
+    // BOTH return zero rows for a row that indisputably has that exact id,
+    // while `{filters:{scope_key}}` alone correctly returns it. So passing
+    // `id` as a filter silently prunes every candidate to zero — every
+    // getDocument() call has 404'd unconditionally since this shipped,
+    // regardless of whether the document exists. Fix: filter ONLY on the
+    // field ZeroDB can actually query (scope_key), then do the exact-id match
+    // client-side against that scope's full row set (bounded, same cap the
+    // sibling listDocuments() already uses).
     const result = await zerodbRequest(
       'POST',
       `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/query`,
-      { filters: { scope_key: scopeKey, id }, limit: 5 },
+      { filters: { scope_key: scopeKey }, limit: MAX_LOAD_DOCUMENTS },
       { retries: 1 },
     )
     const rows: any[] = result?.data || []
     if (!rows.length) return null
-    const match = rows.find((r) => String((r?.row_data || r)?.id || '') === id) || rows[0]
+    const match = rows.find((r) => String((r?.row_data || r)?.id || '') === id)
+    if (!match) return null
     return coerceDocument(match, scopeKey)
   } catch (e) {
     console.warn('[document-store] getDocument failed:', (e as Error)?.name || e)
@@ -432,11 +446,21 @@ export async function getDocument(scopeKey: string, id: string): Promise<BuildDo
  * whether a row was actually removed, never throws. Requires a real ZeroDB
  * `row_id` to call the row-delete endpoint, which callers never retain (the
  * document model is keyed by the app-level `id`, not the storage row id) — so
- * this re-queries by {scope_key, id} first (same exact-match-by-real-id guard
- * `getDocument` uses, since a scope can hold near-identical rows) and deletes
- * the matched row(s) by their `row_id`. Used by the duplicate-report cleanup
- * (real bug: 20 rows landed in one scope before the write-time guard shipped —
- * see `hasReportForDate` below — and nothing before this could ever remove them).
+ * this queries by {scope_key} (see the real, live bug this shares with
+ * `getDocument` below), matches the exact-id row client-side, and deletes it
+ * by its `row_id`. Used by the duplicate-report cleanup (real bug: 20 rows
+ * landed in one scope before the write-time guard shipped — see
+ * `hasReportForDate` below — and nothing before this could ever remove them).
+ *
+ * Real, live bug (found while investigating a separate VIEW-404 report):
+ * ZeroDB's query engine cannot filter on `id` at all — it lives inside
+ * `row_data`, and only `scope_key` is actually queryable there. Passing
+ * `{scope_key, id}` (or even `{id}` alone) as filters silently prunes every
+ * candidate to zero, confirmed directly against production — meaning this
+ * function has been an unconditional no-op since it shipped: it always
+ * returned `false` even for a document that genuinely existed. See
+ * `getDocument`'s doc comment for the full evidence. Fixed the same way:
+ * filter ONLY on `scope_key`, match the exact id client-side.
  */
 export async function deleteDocument(scopeKey: string, id: string): Promise<boolean> {
   if (!scopeKey || !id) return false
@@ -444,7 +468,7 @@ export async function deleteDocument(scopeKey: string, id: string): Promise<bool
     const result = await zerodbRequest(
       'POST',
       `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/query`,
-      { filters: { scope_key: scopeKey, id }, limit: 10 },
+      { filters: { scope_key: scopeKey }, limit: MAX_LOAD_DOCUMENTS },
       { retries: 1 },
     )
     const rows: any[] = result?.data || []
