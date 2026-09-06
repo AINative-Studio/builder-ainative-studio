@@ -11,7 +11,7 @@ import { runNightlyLoop } from '@/lib/build/autonomous-loop'
 import { appendAutoRunEvent } from '@/lib/build/auto-mode'
 import { dispatchEventTitle } from '@/lib/build/auto-run-activity'
 import { chatScopeKey } from '@/lib/build/chat-store'
-import { createDocument, hasReportForDate } from '@/lib/build/document-store'
+import { createDocument, hasReportForDate, pruneDuplicateReports } from '@/lib/build/document-store'
 import { buildDailyReport, dailyReportTitle } from '@/lib/build/document-prompts'
 import { runMediaRoutines } from '@/lib/build/media-routine'
 import { runTaskResolutions } from '@/lib/build/task-resolution-loop'
@@ -90,6 +90,15 @@ export async function GET(request: NextRequest) {
             })
             if (doc) reportsWritten += 1
           }
+          // Self-healing cleanup (real bug: 20 duplicate reports landed in one
+          // scope for a single company BEFORE hasReportForDate existed, and
+          // nothing ever retroactively collapsed them — the write-time guard
+          // only stops NEW duplicates). Runs every pass, alongside the guard
+          // above, so any stray duplicate (this backlog, or a future one from
+          // a cause not yet found) self-heals on the very next nightly tick
+          // instead of silently accumulating forever. Best-effort: never
+          // blocks the loop.
+          await pruneDuplicateReports(scopeKey).catch(() => {})
         } catch (err) {
           logger.warn('Daily report append failed', { companyId: e.companyId, err: (err as Error)?.message })
         }
