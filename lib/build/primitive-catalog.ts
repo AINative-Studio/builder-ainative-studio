@@ -1115,7 +1115,15 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
     `- AUTH (lightweight, no backend): if the app has per-user data, scope it to a user id kept in localStorage\n` +
     `  (e.g. \`let uid = localStorage.getItem('uid') || crypto.randomUUID(); localStorage.setItem('uid', uid)\`),\n` +
     `  store \`userId: uid\` on each row, and filter reads with \`/api/db/{table}?filter=\${encodeURIComponent(JSON.stringify({userId: uid}))}\`.\n` +
-    `  For a real login screen, render an email+continue form that sets that uid — do NOT call an external auth API.\n\n` +
+    `  For a real login screen, render an email+continue form that sets that uid — do NOT call an external auth API.\n` +
+    `- VISITOR TRACKING (#483/#563 real gap fix — the founder's Live dashboard shows a real "visitors" count that\n` +
+    `  was previously a permanent, hardcoded 0 with nothing behind it): the top-level landing/home page component\n` +
+    `  MUST fire exactly ONE pageview on mount via the same /api/db proxy — a plain, honest event row, never a\n` +
+    `  fake counter:\n` +
+    `    useEffect(() => { fetch('/api/db/visitors', { method: 'POST', headers: {'Content-Type':'application/json'},\n` +
+    `      body: JSON.stringify({ path: window.location.pathname, ts: new Date().toISOString() }) }).catch(() => {}) }, [])\n` +
+    `  Fire this ONCE per mount of the landing/home route only (not on every route, not on every re-render) —\n` +
+    `  best-effort, a failed beacon must never block or error the page.\n\n` +
     `Rules:\n` +
     `1. Import \`@ainative/ai-kit-core\` (and its React bindings) for UI primitives — do NOT rebuild chat, tables, product cards, or dashboards from scratch when an AI Kit component exists.\n` +
     `2. Persist through /api/db (above) — this is MANDATORY when the app saves any records. The generated app runs in the browser, so it does NOT have AINATIVE_API_KEY; NEVER put a Bearer key or secret in app code, and NEVER fetch() a primitive's apiBase directly unless this block explicitly said to. Each primitive above tells you EXACTLY how to call it under "To use:" — follow that literally (same-origin proxy path and method, no Authorization header for proxied primitives, a Bearer key only for ZeroDB/Instant DB via /api/db). For any primitive listed above framed as "already provisioned for this company server-side," treat its capability as already set up by the platform — build the UI around it, don't call its API from generated code.\n` +

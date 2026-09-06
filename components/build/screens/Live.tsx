@@ -101,6 +101,18 @@ export function Live() {
   // its own real ZeroDB project + persistent deploy target, and the systems grid
   // reads real per-company data.
   const [provision, setProvision] = useState<{ provisioned: boolean; busy: boolean; projectId?: string }>({ provisioned: false, busy: false })
+  // Real visitor count (#483/#563) — was a permanent, hardcoded 0 with the copy
+  // "Cody grows these nightly," but nothing ever grew it. Now reads the real
+  // count of pageview beacons the generated landing page fires on mount.
+  const [visitors, setVisitors] = useState<number | null>(null)
+  useEffect(() => {
+    let alive = true
+    fetch(`/api/build/visitors?slug=${encodeURIComponent(companyId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (alive) setVisitors(typeof d?.visitors === 'number' ? d.visitors : 0) })
+      .catch(() => { if (alive) setVisitors(0) })
+    return () => { alive = false }
+  }, [companyId])
   const { status: sessionStatus } = useSession()
   const signedIn = sessionStatus === 'authenticated'
   const [planStatus, setPlanStatus] = useState<string | null>(null)
@@ -573,8 +585,14 @@ export function Live() {
           before any column content) — see #486. */}
       <div className="m-live-hero-metrics" data-testid="hero-metrics">
         <div className="m-metric-rows">
-          {/* Honest zero-state for a just-shipped company — the swarm fills these. */}
-          <div className="m-metric"><span className="m-metric-v m-artifact">0</span><span className="m-metric-l m-mono">visitors</span></div>
+          {/* Real visitor count (#483/#563) — the generated landing page's own
+              pageview beacon, read back from this company's ZeroDB project.
+              Waitlist/revenue remain an honest zero-state — no capture
+              mechanism exists yet for either (tracked separately). */}
+          <div className="m-metric">
+            <span className="m-metric-v m-artifact" data-testid="hero-metric-visitors">{visitors ?? '—'}</span>
+            <span className="m-metric-l m-mono">visitors</span>
+          </div>
           <div className="m-metric"><span className="m-metric-v m-artifact">0</span><span className="m-metric-l m-mono">waitlist</span></div>
           <div className="m-metric"><span className="m-metric-v m-artifact">$0</span><span className="m-metric-l m-mono">revenue</span></div>
         </div>

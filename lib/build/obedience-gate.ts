@@ -68,6 +68,21 @@ export function hasPersistenceGap(code: string, idea: string): boolean {
 }
 
 /**
+ * #483/#563: does the code fire the mandated visitor-tracking beacon
+ * (`POST /api/db/visitors` on mount)? Real gap fix — the founder's Live
+ * dashboard showed a "visitors" count that was a permanent, hardcoded 0 with
+ * NOTHING behind it for every generated app, ever, despite the dashboard's
+ * own copy claiming "Cody grows these nightly." Unlike the other gates here,
+ * this one is UNCONDITIONAL — every generated app has some kind of landing/
+ * home surface, so there's no idea-trigger overlap to gate on (mirrors how
+ * ZeroDB/AUTH in the FOUNDATION prompt block are always-required, not
+ * idea-conditional).
+ */
+export function hasVisitorTrackingGap(code: string): boolean {
+  return !/\/api\/db\/visitors/.test(code || '')
+}
+
+/**
  * AIKit patterns the model tends to hand-roll. Each entry: a regex that matches a
  * HAND-ROLLED version in the generated code, and the AIKit component to use instead.
  * We only flag when the AIKit component is NOT already imported/used.
@@ -152,6 +167,8 @@ export interface ObedienceResult {
   aikitGaps: string[]
   /** #518: selected primitives whose real proxy path was never called. */
   primitiveComplianceGaps: string[]
+  /** #483/#563: the mandated visitor-tracking beacon was never fired. */
+  visitorTrackingGap: boolean
   reasons: string[]
 }
 
@@ -160,6 +177,7 @@ export function checkObedience(code: string, idea: string, role?: CompanyRole): 
   const persistenceGap = hasPersistenceGap(code, idea)
   const aikitGaps = findAikitGaps(code)
   const primitiveComplianceGaps = findPrimitiveComplianceGaps(code, idea, role)
+  const visitorTrackingGap = hasVisitorTrackingGap(code)
   const reasons: string[] = []
   if (persistenceGap) {
     reasons.push('App manages user records but hardcodes data — must persist via /api/db.')
@@ -170,7 +188,10 @@ export function checkObedience(code: string, idea: string, role?: CompanyRole): 
   if (primitiveComplianceGaps.length) {
     reasons.push(`Selected primitive(s) never called their real proxy: ${primitiveComplianceGaps.join(', ')}.`)
   }
-  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, reasons }
+  if (visitorTrackingGap) {
+    reasons.push('Landing/home page never fires the mandated visitor-tracking beacon (POST /api/db/visitors on mount).')
+  }
+  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, visitorTrackingGap, reasons }
 }
 
 /**
@@ -221,6 +242,16 @@ export function buildObediencePrompt(idea: string, result: ObedienceResult): str
       const instruction = getRuntimeProxyInstruction(name)
       if (instruction) parts.push(`   ${name} — To use: ${instruction}`, '')
     }
+  }
+  if (result.visitorTrackingGap) {
+    parts.push(
+      '4) FIRE THE MANDATED VISITOR-TRACKING BEACON. The founder\'s Live dashboard reads a real visitors count —',
+      '   your landing/home page component MUST fire exactly ONE pageview on mount via the same /api/db proxy:',
+      "   useEffect(() => { fetch('/api/db/visitors', { method: 'POST', headers: {'Content-Type':'application/json'},",
+      "     body: JSON.stringify({ path: window.location.pathname, ts: new Date().toISOString() }) }).catch(() => {}) }, [])",
+      '   Best-effort — a failed beacon must never block or error the page. Once per mount, not per re-render.',
+      '',
+    )
   }
   parts.push('Return the corrected full app. Do not remove features.')
   return parts.join('\n')

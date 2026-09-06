@@ -4,6 +4,7 @@ import {
   hasPersistenceGap,
   findAikitGaps,
   findPrimitiveComplianceGaps,
+  hasVisitorTrackingGap,
   checkObedience,
   buildObediencePrompt,
 } from '@/lib/build/obedience-gate'
@@ -94,9 +95,53 @@ describe('obedience-gate: AIKit (#297)', () => {
   })
 })
 
+// #483/#563: the Live dashboard's "visitors" hero metric was a permanent,
+// hardcoded 0 with nothing behind it, for every generated app, ever — despite
+// the dashboard's own copy claiming "Cody grows these nightly." Unlike every
+// other gate here, this one is UNCONDITIONAL (no idea-trigger gating): every
+// generated app has some kind of landing/home surface.
+describe('obedience-gate: visitor tracking (#483/#563)', () => {
+  it('flags a plain app with no visitor beacon at all', () => {
+    expect(hasVisitorTrackingGap('function App(){return <div>hi</div>}')).toBe(true)
+  })
+
+  it('does NOT flag an app that fires the real beacon', () => {
+    const code = "useEffect(()=>{ fetch('/api/db/visitors', {method:'POST'}) }, [])"
+    expect(hasVisitorTrackingGap(code)).toBe(false)
+  })
+
+  it('is unconditional — flags even a plain counter with no data-management idea at all', () => {
+    expect(hasVisitorTrackingGap('function App(){ return <button>+1</button> }')).toBe(true)
+  })
+
+  it('checkObedience surfaces visitorTrackingGap and a reason string', () => {
+    const r = checkObedience('function App(){return <div/>}', 'a counter')
+    expect(r.visitorTrackingGap).toBe(true)
+    expect(r.reasons.some((x) => x.includes('visitor-tracking beacon'))).toBe(true)
+  })
+
+  it('buildObediencePrompt includes the real beacon call shape when this gap fires', () => {
+    const r = checkObedience('function App(){return <div/>}', 'a counter')
+    const prompt = buildObediencePrompt('a counter', r)
+    expect(prompt).toMatch(/FIRE THE MANDATED VISITOR-TRACKING BEACON/)
+    expect(prompt).toMatch(/\/api\/db\/visitors/)
+  })
+
+  it('buildObediencePrompt omits the visitor-tracking section when the beacon is already present', () => {
+    const code = "function App(){ useEffect(()=>{fetch('/api/db/visitors',{method:'POST'})},[]); return <div/>}"
+    const r = checkObedience(code, 'a counter')
+    expect(r.visitorTrackingGap).toBe(false)
+    const prompt = buildObediencePrompt('a counter', r)
+    expect(prompt).not.toMatch(/FIRE THE MANDATED VISITOR-TRACKING BEACON/)
+  })
+})
+
 describe('obedience-gate: checkObedience + prompt', () => {
-  it('ok:true when no gaps', () => {
-    const r = checkObedience("function App(){return <div>hi</div>}", 'a counter')
+  it('ok:true when no gaps (including the mandated visitor beacon)', () => {
+    const r = checkObedience(
+      "function App(){ useEffect(()=>{fetch('/api/db/visitors',{method:'POST'})},[]); return <div>hi</div>}",
+      'a counter',
+    )
     expect(r.ok).toBe(true)
     expect(r.reasons).toEqual([])
   })
@@ -120,9 +165,11 @@ describe('obedience-gate: checkObedience + prompt', () => {
     expect(prompt).not.toMatch(/USE AIKIT COMPONENTS/)
   })
 
-  it('never throws on empty/garbage input', () => {
+  it('never throws on empty/garbage input (still flags the unconditional visitor-tracking gap)', () => {
     expect(() => checkObedience('', '')).not.toThrow()
-    expect(checkObedience('', '').ok).toBe(true)
+    const r = checkObedience('', '')
+    expect(r.visitorTrackingGap).toBe(true)
+    expect(r.reasons).toContain('Landing/home page never fires the mandated visitor-tracking beacon (POST /api/db/visitors on mount).')
   })
 })
 
