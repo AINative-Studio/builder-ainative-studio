@@ -40,6 +40,35 @@ const SandpackPreview = dynamic(
   ) },
 )
 
+type PreviewStatus = 'idle' | 'generating' | 'ready' | 'error'
+
+/**
+ * Pure decision: the "Live in production" chip's real label. Real bug fix —
+ * a build can render fine client-side (status:'ready') while the SERVER'S
+ * pre-deploy parse gate rejects registering it (a real syntax error caught by
+ * a stricter check), and the founder deserves to know that's still resolving
+ * rather than seeing a confident "Live in production" claim. See the
+ * register-app effect in Preview() for the full incident + evidence.
+ */
+export function livePreviewLabel(status: PreviewStatus, registered: boolean | null): string {
+  if (status === 'ready' && registered === false) return 'Fixing a generation error…'
+  if (status === 'ready') return 'Live in production'
+  if (status === 'error') return 'Preview unavailable'
+  return 'Building your app…'
+}
+
+/**
+ * Pure decision: should the shareable /build/{slug} URL be shown at all?
+ * Gated on `registered === true` (not just status:'ready') — showing this
+ * link before the registry actually confirms the row exists means the
+ * founder copies/shares a URL that 404s forever (real, live bug found via E2E
+ * verification against production: register-app's 422 rejection was silently
+ * discarded, the UI never reflected it).
+ */
+export function shouldShowShareUrl(chatId: string | null | undefined, registered: boolean | null, appSub: string | null | undefined): boolean {
+  return Boolean(chatId) && registered === true && Boolean(appSub)
+}
+
 export function Preview() {
   const { state, dispatch } = useBuild()
   // Kick real generation once the user reaches the preview view with an idea.
@@ -105,6 +134,19 @@ export function Preview() {
   // Once the app is ready, register slug → chatId so /build/{slug} resolves to it,
   // and store the chatId in state so the Live dashboard can link the real app. (FIX-2)
   // register-app also resolves + persists the durable live URL (#213) and returns it.
+  //
+  // Real, live bug found via E2E verification (#563 follow-up): register-app has
+  // a real pre-deploy parse gate (builder#77) that can reject a build that LOOKS
+  // ready client-side (status==='ready', the iframe rendered) but fails a
+  // stricter server-side re-check (e.g. a syntax error the flattened parse
+  // catches). That rejection is a real 422 with `retry:true` — but this effect
+  // used to discard it entirely (`r.ok ? r.json() : null` resolves to `null` on
+  // a non-2xx, and the `.then` callback did nothing with it). The founder saw a
+  // confident "Live in production" chip and a copyable shareable link that
+  // 404'd forever, because the registry never actually got a row. `registered`
+  // now tracks the real outcome so the UI can stop claiming a URL exists when
+  // the server just refused to create it.
+  const [registered, setRegistered] = useState<boolean | null>(null)
   useEffect(() => {
     if (status !== 'ready' || !chatId || !state.appSub) return
     dispatch({ type: 'SET_APP_CHATID', chatId })
@@ -115,8 +157,13 @@ export function Preview() {
         tagline: state.brandTagline, color: state.brandColor, track: state.track,
       }),
     })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
+      .then(async (r) => {
+        const d = await r.json().catch(() => null)
+        return { ok: r.ok, d }
+      })
+      .then(({ ok, d }) => {
+        setRegistered(ok)
+        if (!ok) return
         if (d?.deployUrl) setDeployUrl(String(d.deployUrl))
         // The requested slug collided with a DIFFERENT founder's existing
         // build and got auto-suffixed server-side (register-app's
@@ -125,7 +172,7 @@ export function Preview() {
         // lost the naming collision.
         if (d?.slugChanged) dispatch({ type: 'RESTORE_BUILD', partial: { appSub: String(d.slugChanged) } })
       })
-      .catch(() => {})
+      .catch(() => setRegistered(false))
   }, [status, chatId, state.appSub])
 
   // Product rule (#78): the {slug}.ainative.studio subdomain must NOT be surfaced
@@ -172,7 +219,7 @@ export function Preview() {
 
   // The real, shareable URL: the durable /build/{slug} subdirectory (works
   // immediately, no DNS, resolves for anyone). (FIX-2 / #213 / #78)
-  const shareUrl = chatId && status === 'ready' && state.appSub
+  const shareUrl = shouldShowShareUrl(chatId, registered, state.appSub)
     ? (typeof window !== 'undefined' ? `${window.location.origin}/build/${state.appSub}` : `/build/${state.appSub}`)
     : null
 
@@ -184,10 +231,7 @@ export function Preview() {
     }).catch(() => {})
   }
 
-  const liveLabel =
-    status === 'ready' ? 'Live in production'
-    : status === 'error' ? 'Preview unavailable'
-    : 'Building your app…'
+  const liveLabel = livePreviewLabel(status, registered)
 
   return (
     <>
@@ -200,6 +244,20 @@ export function Preview() {
           <span className="m-mono m-share-label">Shareable link</span>
           <a className="m-mono m-share-url" href={shareUrl} target="_blank" rel="noreferrer">{shareUrl}</a>
           <button className="btn-secondary m-share-copy" onClick={copyShare}>{copied ? '✓ Copied' : 'Copy'}</button>
+        </div>
+      )}
+
+      {/* Real bug found via E2E verification: register-app's pre-deploy parse
+          gate rejected this build (a real syntax error), but the UI used to
+          keep showing "Live in production" + a copyable link that 404s
+          forever — the founder had no idea anything was wrong. Honest instead:
+          say so, and never render the share bar above until registered:true. */}
+      {status === 'ready' && registered === false && (
+        <div className="m-cody-banner" data-testid="register-failed-banner">
+          <p>
+            <span className="m-glyph">◇</span> Cody hit a generation error while finishing your app and is
+            repairing it — the preview below is real, but the shareable link isn&apos;t ready yet.
+          </p>
         </div>
       )}
 
