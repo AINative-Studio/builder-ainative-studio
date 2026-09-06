@@ -184,6 +184,20 @@ describe('parseErrorLine (#531)', () => {
     expect(parseErrorLine('Element type is invalid: <Foo> is used but not defined')).toBeNull()
     expect(parseErrorLine('')).toBeNull()
   })
+
+  // Real bug fix (register-app repair follow-up): checkAppReady's parse gate
+  // (lib/build/ready-gate.ts) surfaces @babel/parser's own native error
+  // format — "... (LINE:COL)" — which this function did not recognize before,
+  // so a repair triggered from a register-app rejection would always fall
+  // back to a flat prefix slice instead of centering on the real error line.
+  it('extracts the line number from a @babel/parser-style "(line:col)" error', () => {
+    expect(parseErrorLine('Truncated/unbalanced generation (flattened parse): Unexpected token, expected ":" (133:39)')).toBe(133)
+    expect(parseErrorLine('Unexpected token (42:7)')).toBe(42)
+  })
+
+  it('prefers the "at line N" format when both are somehow present', () => {
+    expect(parseErrorLine('Unterminated template. at line 734, column 3 (99:1)')).toBe(734)
+  })
 })
 
 describe('extractErrorWindow (#531)', () => {
