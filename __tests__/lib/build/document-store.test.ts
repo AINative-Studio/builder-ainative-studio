@@ -297,14 +297,23 @@ describe('ZeroDB I/O (#64)', () => {
     expect(sent.limit).toBe(MAX_LOAD_DOCUMENTS)
   })
 
-  it('getDocument returns the full document filtered by scope + id', async () => {
+  // ---- Real, live bug (found while investigating a separate VIEW-404 report):
+  // ZeroDB's query engine cannot filter on `id` at all — it lives inside
+  // row_data, and only scope_key is actually queryable there. Confirmed
+  // directly against production: {filters:{scope_key,id}} and even
+  // {filters:{id}} alone BOTH return zero rows for a row that indisputably
+  // has that exact id, while {filters:{scope_key}} alone correctly returns
+  // it. So getDocument() 404'd unconditionally for every real document until
+  // fixed to filter ONLY on scope_key and match the id client-side. ----
+  it('getDocument filters ONLY on scope_key (the field ZeroDB can actually query), then matches id client-side', async () => {
     const row = { row_data: { id: 'x', scope_key: 'a::b', type: 'research', title: 'R', content: 'full body', created_at: '2026-01-01T00:00:00Z' } }
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: [row] }) })
     vi.stubGlobal('fetch', fetchMock)
     const doc = await getDocument('a::b', 'x')
     expect(doc!.content).toBe('full body')
     const sent = JSON.parse(fetchMock.mock.calls[0][1].body)
-    expect(sent.filters).toEqual({ scope_key: 'a::b', id: 'x' })
+    expect(sent.filters).toEqual({ scope_key: 'a::b' })
+    expect(sent.filters).not.toHaveProperty('id')
   })
 
   it('getDocument returns null when not found', async () => {
@@ -340,14 +349,14 @@ describe('ZeroDB I/O (#64)', () => {
     expect(doc!.content).toBe('right body')
   })
 
-  it('getDocument falls back to the first row when NONE of the candidates match the id exactly (defensive, never throws)', async () => {
+  it('getDocument returns null (never a wrong document) when NONE of the scope\'s rows match the id exactly', async () => {
     const rows = [
-      { row_data: { id: 'some-other-id', scope_key: 'a::b', type: 'daily', title: 'Fallback', content: 'fallback body', created_at: '2026-01-01T00:00:00Z' } },
+      { row_data: { id: 'some-other-id', scope_key: 'a::b', type: 'daily', title: 'Wrong', content: 'wrong body', created_at: '2026-01-01T00:00:00Z' } },
     ]
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: rows }) })
     vi.stubGlobal('fetch', fetchMock)
     const doc = await getDocument('a::b', 'x')
-    expect(doc!.content).toBe('fallback body')
+    expect(doc).toBeNull()
   })
 
   it('createDocument swallows a thrown fetch (network error) and returns null', async () => {
@@ -501,6 +510,37 @@ describe('deleteDocument', () => {
     const deleteCall = fetchMock.mock.calls[1]
     expect(String(deleteCall[0])).toContain('/rows/row-abc')
     expect(deleteCall[1]?.method).toBe('DELETE')
+  })
+
+  // ---- Real, live bug (shares getDocument's root cause): filtering by `id`
+  // silently returns zero rows against ZeroDB, since only scope_key is
+  // actually queryable in row_data — meaning deleteDocument() was an
+  // unconditional no-op in production regardless of whether the document
+  // existed. Fixed the same way: filter ONLY on scope_key, match client-side. ----
+  it('filters ONLY on scope_key (the field ZeroDB can actually query) — never sends id as a filter', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ data: [{ row_id: 'row-abc', row_data: { id: 'd1' } }] }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ message: 'deleted' }) })
+    vi.stubGlobal('fetch', fetchMock)
+    await deleteDocument('a::b', 'd1')
+    const sent = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(sent.filters).toEqual({ scope_key: 'a::b' })
+    expect(sent.filters).not.toHaveProperty('id')
+  })
+
+  it('finds and deletes the exact row even among OTHER rows in the same scope (client-side match)', async () => {
+    const rows = [
+      { row_id: 'row-other', row_data: { id: 'd-other' } },
+      { row_id: 'row-target', row_data: { id: 'd1' } },
+    ]
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ data: rows }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ message: 'deleted' }) })
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await deleteDocument('a::b', 'd1')).toBe(true)
+    const deleteCall = fetchMock.mock.calls[1]
+    expect(String(deleteCall[0])).toContain('/rows/row-target')
+    expect(String(deleteCall[0])).not.toContain('/rows/row-other')
   })
 
   it('returns false when no row matches the exact id (defensive, same guard as getDocument)', async () => {
