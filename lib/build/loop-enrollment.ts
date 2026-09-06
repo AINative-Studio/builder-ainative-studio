@@ -132,11 +132,7 @@ export async function recordRun(companyId: string, taskId: string | null, status
 export async function listEnrolled(): Promise<LoopEnrollment[]> {
   if (!configured()) return []
   try {
-    const res = await fetch(`${rowsUrl()}?limit=500`, { headers: headers(), signal: AbortSignal.timeout(25000) })
-    if (!res.ok) return []
-    const raw = await res.text()
-    const data = JSON.parse(raw)
-    const rows = Array.isArray(data) ? data : data.data || data.rows || []
+    const rows = await fetchAllRows()
     const enrollments: LoopEnrollment[] = rows
       .map((r: { row_data?: LoopEnrollment & { kind?: string } }) => r.row_data)
       .filter((rd: (LoopEnrollment & { kind?: string }) | undefined): rd is LoopEnrollment =>
@@ -145,6 +141,38 @@ export async function listEnrolled(): Promise<LoopEnrollment[]> {
   } catch {
     return []
   }
+}
+
+/**
+ * Page through every row in the append-only enrollment store. Real bug: this
+ * store never upserts (enrollCompany appends on every "Hire the swarm" /
+ * START AUTO MODE click) and had grown past a single 500-row page in
+ * production — a fixed `?limit=500` single fetch silently clips whichever
+ * rows fall past the page boundary, which could drop a real, currently-
+ * enrolled company from the nightly loop with no error or signal. Paginates
+ * with a hard cap (not truly unbounded) so a pathological table still can't
+ * hang the cron.
+ */
+const MAX_ENROLLMENT_PAGES = 20
+const ENROLLMENT_PAGE_SIZE = 500
+
+async function fetchAllRows(): Promise<Array<{ row_data?: LoopEnrollment & { kind?: string } }>> {
+  const all: Array<{ row_data?: LoopEnrollment & { kind?: string } }> = []
+  for (let page = 0; page < MAX_ENROLLMENT_PAGES; page++) {
+    const skip = page * ENROLLMENT_PAGE_SIZE
+    const res = await fetch(`${rowsUrl()}?limit=${ENROLLMENT_PAGE_SIZE}&skip=${skip}`, {
+      headers: headers(),
+      signal: AbortSignal.timeout(25000),
+    })
+    if (!res.ok) break
+    const raw = await res.text()
+    const data = JSON.parse(raw)
+    const rows = Array.isArray(data) ? data : data.data || data.rows || []
+    all.push(...rows)
+    const hasMore = Array.isArray(data) ? rows.length === ENROLLMENT_PAGE_SIZE : Boolean(data?.has_more)
+    if (!hasMore || rows.length < ENROLLMENT_PAGE_SIZE) break
+  }
+  return all
 }
 
 /**

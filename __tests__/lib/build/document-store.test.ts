@@ -18,6 +18,9 @@ import {
   listDocuments,
   getDocument,
   hasReportForDate,
+  deleteDocument,
+  pruneDuplicateReports,
+  planPruneReports,
   MAX_LOAD_DOCUMENTS,
   type BuildDocument,
 } from '@/lib/build/document-store'
@@ -426,5 +429,135 @@ describe('hasReportForDate', () => {
     }))
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: rows }) }))
     expect(await hasReportForDate('a::b', 'daily', '2026-09-05T09:00:00Z')).toBe(true)
+  })
+})
+
+describe('planPruneReports (pure)', () => {
+  const report = (id: string, day: string, type = 'daily'): BuildDocument => ({
+    id, scopeKey: 'a::b', kind: 'report', type: type as BuildDocument['type'],
+    title: 'Daily Operational Report', content: 'x', createdAt: `${day}T00:00:00Z`,
+  })
+  const doc = (id: string, day: string): BuildDocument => ({
+    id, scopeKey: 'a::b', kind: 'document', type: 'research',
+    title: 'Research', content: 'x', createdAt: `${day}T00:00:00Z`,
+  })
+
+  it('the real Beacon repro: 20 reports across 2 real days collapses to keeping just the newest per day', () => {
+    const sep5 = Array.from({ length: 10 }, (_, i) => report(`s5-${i}`, '2026-09-05'))
+    const sep4 = Array.from({ length: 10 }, (_, i) => report(`s4-${i}`, '2026-09-04'))
+    // Give each a distinct createdAt so "newest" is well-defined, matching real data.
+    sep5.forEach((d, i) => { d.createdAt = `2026-09-05T11:0${i}:00Z` })
+    sep4.forEach((d, i) => { d.createdAt = `2026-09-04T11:5${i}:00Z` })
+    const toDelete = planPruneReports([...sep5, ...sep4])
+    expect(toDelete).toHaveLength(18)
+    // The newest of each day must survive (not appear in the delete list).
+    expect(toDelete.some((d) => d.id === 's5-9')).toBe(false)
+    expect(toDelete.some((d) => d.id === 's4-9')).toBe(false)
+  })
+
+  it('never touches durable documents, even ones sharing a day with duplicate reports', () => {
+    const r1 = report('r1', '2026-09-05')
+    const r2 = report('r2', '2026-09-05')
+    r1.createdAt = '2026-09-05T00:00:00Z'
+    r2.createdAt = '2026-09-05T01:00:00Z' // newer — survives
+    const toDelete = planPruneReports([r1, r2, doc('d1', '2026-09-05'), doc('d2', '2026-09-05')])
+    expect(toDelete.map((d) => d.id)).toEqual(['r1'])
+  })
+
+  it('a single report for a day is never flagged as a duplicate', () => {
+    expect(planPruneReports([report('r1', '2026-09-05')])).toEqual([])
+  })
+
+  it('different report types on the same day are tracked independently', () => {
+    const toDelete = planPruneReports([
+      report('r1', '2026-09-05', 'daily'),
+      report('r2', '2026-09-05', 'weekly'),
+    ])
+    expect(toDelete).toEqual([])
+  })
+
+  it('empty input produces nothing to delete', () => {
+    expect(planPruneReports([])).toEqual([])
+  })
+})
+
+describe('deleteDocument', () => {
+  beforeEach(() => {
+    vi.stubEnv('ZERODB_API_KEY', 'test-key')
+    vi.stubEnv('ZERODB_PROJECT_ID', 'proj-1')
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  })
+
+  it('queries for the exact id then deletes the matched row by its real row_id', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ data: [{ row_id: 'row-abc', row_data: { id: 'd1' } }] }) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ message: 'deleted' }) })
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await deleteDocument('a::b', 'd1')).toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const deleteCall = fetchMock.mock.calls[1]
+    expect(String(deleteCall[0])).toContain('/rows/row-abc')
+    expect(deleteCall[1]?.method).toBe('DELETE')
+  })
+
+  it('returns false when no row matches the exact id (defensive, same guard as getDocument)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: [] }) }))
+    expect(await deleteDocument('a::b', 'missing')).toBe(false)
+  })
+
+  it('returns false without a scope or id', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await deleteDocument('', 'd1')).toBe(false)
+    expect(await deleteDocument('a::b', '')).toBe(false)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('never throws when the query fails', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('timeout')))
+    expect(await deleteDocument('a::b', 'd1')).toBe(false)
+  })
+})
+
+describe('pruneDuplicateReports', () => {
+  beforeEach(() => {
+    vi.stubEnv('ZERODB_API_KEY', 'test-key')
+    vi.stubEnv('ZERODB_PROJECT_ID', 'proj-1')
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  })
+
+  it('lists, plans, and deletes duplicates end to end — real Beacon-shaped repro', async () => {
+    const rows = [
+      { row_data: { id: 'new', scope_key: 'a::b', kind: 'report', type: 'daily', title: 'Daily Operational Report', content: 'x', created_at: '2026-09-05T11:07:00Z' } },
+      { row_data: { id: 'old', scope_key: 'a::b', kind: 'report', type: 'daily', title: 'Daily Operational Report', content: 'x', created_at: '2026-09-05T11:03:00Z' } },
+    ]
+    const fetchMock = vi.fn()
+      // listDocuments
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ data: rows }) })
+      // deleteDocument('old') → re-query by id
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ data: [{ row_id: 'row-old', row_data: rows[1].row_data }] }) })
+      // deleteDocument('old') → the actual DELETE
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ message: 'deleted' }) })
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await pruneDuplicateReports('a::b')).toEqual({ deleted: 1 })
+  })
+
+  it('returns { deleted: 0 } without a scope', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await pruneDuplicateReports('')).toEqual({ deleted: 0 })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('returns { deleted: 0 } when there is nothing to prune', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: [] }) }))
+    expect(await pruneDuplicateReports('a::b')).toEqual({ deleted: 0 })
   })
 })

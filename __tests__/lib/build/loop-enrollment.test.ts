@@ -245,6 +245,43 @@ describe('listEnrolled', () => {
     expect(String(fn.mock.calls[0][0])).toContain('limit=500')
   })
 
+  // ---- Real bug: production table has 574 rows (append-only growth from every
+  // "Hire the swarm" / START AUTO MODE click) — a single `?limit=500` fetch
+  // silently clipped whatever fell past the page boundary, which could drop a
+  // real, currently-enrolled company from the nightly loop with zero error or
+  // signal. Fixed by paginating through every row (bounded, so a pathological
+  // table still can't hang the cron).
+  it('paginates past a single 500-row page — a company past the first page is NOT silently dropped', async () => {
+    const page0 = Array.from({ length: 500 }, (_, i) => makeEnrollmentRow({ companyId: `co-${i}`, enrolledAt: '2026-09-01T00:00:00Z' }))
+    const page1 = [makeEnrollmentRow({ companyId: 'beacon', enrolledAt: '2026-09-05T00:00:00Z' })]
+    const fn = vi.fn(async (url: string | URL | Request) => {
+      const isPage1 = String(url).includes('skip=500')
+      const body = isPage1 ? { data: page1, has_more: false } : { data: page0, has_more: true }
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
+    })
+    vi.stubGlobal('fetch', fn)
+    const { listEnrolled } = await freshConfigured()
+    const result = await listEnrolled()
+    expect(result.some((r) => r.companyId === 'beacon')).toBe(true)
+    expect(result).toHaveLength(501)
+    expect(fn).toHaveBeenCalledTimes(2)
+  })
+
+  it('stops paginating once a page comes back short of the page size (no has_more field)', async () => {
+    const fn = mockFetch(() => ({ ok: true, body: { data: [makeEnrollmentRow({ companyId: 'co-1' })] } }))
+    const { listEnrolled } = await freshConfigured()
+    await listEnrolled()
+    expect(fn).toHaveBeenCalledTimes(1)
+  })
+
+  it('is bounded — a pathological always-full-page response cannot hang the cron forever', async () => {
+    const fullPage = Array.from({ length: 500 }, (_, i) => makeEnrollmentRow({ companyId: `co-${i}` }))
+    const fn = mockFetch(() => ({ ok: true, body: { data: fullPage, has_more: true } }))
+    const { listEnrolled } = await freshConfigured()
+    await listEnrolled()
+    expect(fn.mock.calls.length).toBeLessThanOrEqual(20)
+  })
+
   it('includes rows without kind field (pure enrollment rows)', async () => {
     mockFetch(() => ({ ok: true, body: { data: [
       { row_data: { companyId: 'co-x', companyName: 'Co X', track: 'app', enabled: true, enrolledAt: '2026-01-01' } },

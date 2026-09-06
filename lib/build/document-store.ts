@@ -428,6 +428,88 @@ export async function getDocument(scopeKey: string, id: string): Promise<BuildDo
 }
 
 /**
+ * Delete one document by its app-level `id` within a scope. Best-effort: returns
+ * whether a row was actually removed, never throws. Requires a real ZeroDB
+ * `row_id` to call the row-delete endpoint, which callers never retain (the
+ * document model is keyed by the app-level `id`, not the storage row id) — so
+ * this re-queries by {scope_key, id} first (same exact-match-by-real-id guard
+ * `getDocument` uses, since a scope can hold near-identical rows) and deletes
+ * the matched row(s) by their `row_id`. Used by the duplicate-report cleanup
+ * (real bug: 20 rows landed in one scope before the write-time guard shipped —
+ * see `hasReportForDate` below — and nothing before this could ever remove them).
+ */
+export async function deleteDocument(scopeKey: string, id: string): Promise<boolean> {
+  if (!scopeKey || !id) return false
+  try {
+    const result = await zerodbRequest(
+      'POST',
+      `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/query`,
+      { filters: { scope_key: scopeKey, id }, limit: 10 },
+      { retries: 1 },
+    )
+    const rows: any[] = result?.data || []
+    const matches = rows.filter((r) => String((r?.row_data || r)?.id || '') === id)
+    if (!matches.length) return false
+    let anyDeleted = false
+    for (const row of matches) {
+      const rowId = row?.row_id
+      if (!rowId) continue
+      const res = await zerodbRequest('DELETE', `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/rows/${rowId}`)
+      if (res) anyDeleted = true
+    }
+    return anyDeleted
+  } catch (e) {
+    console.warn('[document-store] deleteDocument failed:', (e as Error)?.name || e)
+    return false
+  }
+}
+
+/**
+ * Collapse duplicate reports in a scope down to one per {type, calendar day},
+ * keeping the newest and deleting the rest. Pure decision logic (`planPruneReports`)
+ * is unit-testable without a network; this wrapper does the real I/O. Best-effort:
+ * a delete failure for one row never blocks the others. Returns how many rows were
+ * actually removed. Documents (non-report kind) are never touched.
+ */
+export async function pruneDuplicateReports(scopeKey: string): Promise<{ deleted: number }> {
+  if (!scopeKey) return { deleted: 0 }
+  const docs = await listDocuments(scopeKey, MAX_LOAD_DOCUMENTS)
+  const toDelete = planPruneReports(docs)
+  let deleted = 0
+  for (const doc of toDelete) {
+    const ok = await deleteDocument(scopeKey, doc.id)
+    if (ok) deleted += 1
+  }
+  return { deleted }
+}
+
+/**
+ * Pure decision: given a scope's full document list, which report documents are
+ * redundant duplicates (same type + same calendar day, all but the newest)?
+ * Never touches `kind: 'document'` entries — only the time-series 'report' kind
+ * is ever considered duplicated by design (a real bug class was daily reports
+ * appended more than once per day, not durable artifacts).
+ */
+export function planPruneReports(docs: BuildDocument[]): BuildDocument[] {
+  const byKey = new Map<string, BuildDocument[]>()
+  for (const d of docs) {
+    if (d.kind !== 'report') continue
+    const day = String(d.createdAt || '').slice(0, 10)
+    const key = `${d.type}::${day}`
+    const list = byKey.get(key) || []
+    list.push(d)
+    byKey.set(key, list)
+  }
+  const toDelete: BuildDocument[] = []
+  for (const list of byKey.values()) {
+    if (list.length <= 1) continue
+    const sorted = [...list].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+    toDelete.push(...sorted.slice(1))
+  }
+  return toDelete
+}
+
+/**
  * Has a report of `type` already been written for this scope on the given
  * calendar date (YYYY-MM-DD, compared against each report's createdAt)? Used to
  * make the nightly loop's daily-report append idempotent PER REAL DAY — a second
