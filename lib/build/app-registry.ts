@@ -160,10 +160,21 @@ export interface AppEntry {
   // confirmed via source: ZeroInvoice's real callback handler sets its own
   // cookies and redirects to ITS OWN /dashboard, never back to builder.
   // Builder structurally cannot observe whether the flow completed (no
-  // callback, no token, no verify endpoint exists). zeroinvoiceConnectedAt
-  // is therefore an HONEST "founder clicked Connect" signal, not a
-  // confirmed-connected state — never presented as verified.
+  // callback, no token, no verify endpoint exists) — re-confirmed live
+  // against ZeroInvoice's own openapi.json: its FreshBooks/QuickBooks/Xero
+  // integrations each expose a real `/status` endpoint, but its OWN
+  // AINative-identity login does not. zeroinvoiceConnectedAt is therefore an
+  // HONEST "founder clicked Connect" signal, not a confirmed-connected state
+  // — never presented as verified.
   zeroinvoiceConnectClickedAt?: string
+  // Real bug (live): after clicking Connect and finishing the OAuth flow in
+  // the new tab, the founder had NO way to tell builder they were done — the
+  // UI stayed at "Connect requested" forever, reading as stuck/broken even
+  // though ZeroInvoice's own side had genuinely succeeded. Since builder
+  // cannot verify the connection server-side (see zeroinvoiceConnectClickedAt
+  // doc), the honest fix is a founder SELF-confirmation, clearly labeled as
+  // self-reported rather than platform-verified.
+  zeroinvoiceConnectConfirmedAt?: string
   // The persistent hosting target for the company app (#243). Today this is the
   // durable preview URL; the deploy seam swaps in a real Railway/*.ainative.studio host.
   deployUrl?: string
@@ -405,6 +416,22 @@ export async function setAppZeroInvoiceConnectClicked(slug: string): Promise<boo
   return registerApp({
     ...existing,
     zeroinvoiceConnectClickedAt: new Date().toISOString(),
+  })
+}
+
+/**
+ * Record that the founder SELF-CONFIRMED they finished connecting ZeroInvoice
+ * (real bug fix: the UI had no way to move past "Connect requested" even
+ * after a founder genuinely completed the OAuth flow — see
+ * zeroinvoiceConnectConfirmedAt's field doc). Best-effort; never a
+ * platform-verified state, only ever a founder's own honest report.
+ */
+export async function setAppZeroInvoiceConnectConfirmed(slug: string): Promise<boolean> {
+  const existing = await resolveApp(slug)
+  if (!existing) return false
+  return registerApp({
+    ...existing,
+    zeroinvoiceConnectConfirmedAt: new Date().toISOString(),
   })
 }
 

@@ -97,6 +97,12 @@ export function AutoModePanel({ companyId, companyName, track = 'company', unloc
         setNotice(`Auto Mode on — Cody is running ${companyName} for ${DURATION_LABELS[duration]}.`)
       } else if (d?.reason === 'not_paid') {
         onUpgrade()
+      } else if (d?.reason === 'unverified') {
+        // Real bug fix: a transient core hiccup used to look identical to
+        // "not paid" and silently bounced a real paying founder to checkout.
+        // Never redirect here — this is a retryable verification failure,
+        // not a confirmed entitlement gap.
+        setNotice('Could not verify your plan just now — try again in a moment.')
       } else if (d?.reason === 'unavailable') {
         setConfigured(false)
         setNotice('Auto Mode isn’t available in this environment yet.')
