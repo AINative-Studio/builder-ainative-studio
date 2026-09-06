@@ -68,6 +68,45 @@ export function hasPersistenceGap(code: string, idea: string): boolean {
 }
 
 /**
+ * Real, live, universal bug found via direct inspection of the 4 most recent
+ * real admin-owned generated companies (2026-09-06): EVERY ONE had an email/
+ * waitlist capture form (`type="email"` + a submit handler) that fires
+ * `alert()`, or flips a local `submitted` state and clears the input — the
+ * email is NEVER PERSISTED anywhere. A founder using any of these sees "200+
+ * people joined the waitlist" copy while every real submission is silently
+ * discarded. `hasPersistenceGap` above structurally can't catch this: it's
+ * scoped to an add-button + list UI shape (todo/CRM-style apps), while a
+ * landing page's lead-capture form is a completely different shape (a single
+ * form + submit, no list at all) — so it never matched.
+ */
+function looksLikeLeadCapture(code: string): boolean {
+  const hasEmailInput = /type=["']email["']/i.test(code)
+  const hasSubmitHandler = /(handleSubmit|handleEarlyAccess|handleWaitlist|handleSignup|onSubmit)\s*[:=]/.test(code)
+  return hasEmailInput && hasSubmitHandler
+}
+
+/**
+ * Does the code actually persist the captured email anywhere real? Note:
+ * builder's OWN /api/build/lead is NOT a valid answer here — it's an internal
+ * route for builder.ainative.studio's own visitor capture (requires the
+ * platform's server-side key); a generated app is a separately-hosted,
+ * sandboxed client that can never reach it. The only real persistence path a
+ * generated app has is the same /api/db/{table} proxy every other record uses.
+ */
+function persistsLeadCapture(code: string): boolean {
+  return usesDataLayer(code)
+}
+
+/**
+ * True when the app has an email/waitlist capture form but never persists
+ * what it captures. Unconditional like visitor tracking — any generated app
+ * can have a lead-capture form regardless of its core idea.
+ */
+export function hasFakeLeadCaptureGap(code: string): boolean {
+  return looksLikeLeadCapture(code) && !persistsLeadCapture(code)
+}
+
+/**
  * #483/#563: does the code fire the mandated visitor-tracking beacon
  * (`POST /api/db/visitors` on mount)? Real gap fix — the founder's Live
  * dashboard showed a "visitors" count that was a permanent, hardcoded 0 with
@@ -169,6 +208,9 @@ export interface ObedienceResult {
   primitiveComplianceGaps: string[]
   /** #483/#563: the mandated visitor-tracking beacon was never fired. */
   visitorTrackingGap: boolean
+  /** Real bug (found live, 4/4 recent generations): an email/waitlist capture
+   *  form that never persists what it captures. */
+  fakeLeadCaptureGap: boolean
   reasons: string[]
 }
 
@@ -178,6 +220,7 @@ export function checkObedience(code: string, idea: string, role?: CompanyRole): 
   const aikitGaps = findAikitGaps(code)
   const primitiveComplianceGaps = findPrimitiveComplianceGaps(code, idea, role)
   const visitorTrackingGap = hasVisitorTrackingGap(code)
+  const fakeLeadCaptureGap = hasFakeLeadCaptureGap(code)
   const reasons: string[] = []
   if (persistenceGap) {
     reasons.push('App manages user records but hardcodes data — must persist via /api/db.')
@@ -188,10 +231,13 @@ export function checkObedience(code: string, idea: string, role?: CompanyRole): 
   if (primitiveComplianceGaps.length) {
     reasons.push(`Selected primitive(s) never called their real proxy: ${primitiveComplianceGaps.join(', ')}.`)
   }
+  if (fakeLeadCaptureGap) {
+    reasons.push('Email/waitlist capture form never persists the email it collects — must save via /api/db.')
+  }
   if (visitorTrackingGap) {
     reasons.push('Landing/home page never fires the mandated visitor-tracking beacon (POST /api/db/visitors on mount).')
   }
-  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, visitorTrackingGap, reasons }
+  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, visitorTrackingGap, fakeLeadCaptureGap, reasons }
 }
 
 /**
@@ -250,6 +296,18 @@ export function buildObediencePrompt(idea: string, result: ObedienceResult): str
       "   useEffect(() => { fetch('/api/db/visitors', { method: 'POST', headers: {'Content-Type':'application/json'},",
       "     body: JSON.stringify({ path: window.location.pathname, ts: new Date().toISOString() }) }).catch(() => {}) }, [])",
       '   Best-effort — a failed beacon must never block or error the page. Once per mount, not per re-render.',
+      '',
+    )
+  }
+  if (result.fakeLeadCaptureGap) {
+    parts.push(
+      '5) PERSIST THE EMAIL/WAITLIST CAPTURE FORM — it currently only shows a fake "submitted" state (alert() or a',
+      '   local flag) and discards what the visitor typed. Real founders see fake signup counts while every real',
+      '   submission is silently lost. Fix the submit handler to actually save it via the same /api/db proxy:',
+      "   const handleSubmit = async (e) => { e.preventDefault(); await fetch('/api/db/waitlist', { method: 'POST',",
+      "     headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email, joinedAt: new Date().toISOString() }) })",
+      '     .catch(() => {}); setSubmitted(true); setEmail(\'\') }',
+      '   Keep the existing success UI (alert/toast/inline message) — only the persistence is missing.',
       '',
     )
   }

@@ -5,6 +5,7 @@ import {
   findAikitGaps,
   findPrimitiveComplianceGaps,
   hasVisitorTrackingGap,
+  hasFakeLeadCaptureGap,
   checkObedience,
   buildObediencePrompt,
 } from '@/lib/build/obedience-gate'
@@ -133,6 +134,83 @@ describe('obedience-gate: visitor tracking (#483/#563)', () => {
     expect(r.visitorTrackingGap).toBe(false)
     const prompt = buildObediencePrompt('a counter', r)
     expect(prompt).not.toMatch(/FIRE THE MANDATED VISITOR-TRACKING BEACON/)
+  })
+})
+
+// #563 follow-up — found live via direct inspection of the 4 most recent real
+// admin-owned generated companies (2026-09-06): EVERY ONE had an email/
+// waitlist capture form that fires alert() or flips a local "submitted" flag
+// and discards the email — nothing ever persisted it. hasPersistenceGap can't
+// catch this: it's scoped to an add-button + list UI shape, while a landing
+// page's lead-capture form is a single form + submit, a completely different
+// shape.
+describe('obedience-gate: fake lead capture (real bug, found live)', () => {
+  const FAKE_ALERT = `
+function App(){
+  const [email, setEmail] = useState('')
+  const handleEarlyAccess = (e) => {
+    e.preventDefault()
+    if (email.trim()) { alert(\`Thanks! We'll contact you at \${email}\`); setEmail('') }
+  }
+  return (<form onSubmit={handleEarlyAccess}><input type="email" value={email} onChange={e=>setEmail(e.target.value)} /></form>)
+}`
+
+  const FAKE_SUBMITTED_FLAG = `
+function App(){
+  const [email, setEmail] = useState('')
+  const [submitted, setSubmitted] = useState(false)
+  const handleSubmit = (e) => {
+    e.preventDefault()
+    if (email.trim()) { setSubmitted(true); setTimeout(()=>setSubmitted(false), 3000); setEmail('') }
+  }
+  return (<form onSubmit={handleSubmit}><input type="email" value={email} onChange={e=>setEmail(e.target.value)} /></form>)
+}`
+
+  const REAL_PERSISTED = `
+function App(){
+  const [email, setEmail] = useState('')
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    await fetch('/api/db/waitlist', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email }) }).catch(()=>{})
+    setEmail('')
+  }
+  return (<form onSubmit={handleSubmit}><input type="email" value={email} onChange={e=>setEmail(e.target.value)} /></form>)
+}`
+
+  it('THE BUG: flags an alert()-only "Get Early Access" form (the real beacon repro)', () => {
+    expect(hasFakeLeadCaptureGap(FAKE_ALERT)).toBe(true)
+  })
+
+  it('THE BUG: flags a fake "submitted" flag that never persists (the real triage/siliport/shortlist repro)', () => {
+    expect(hasFakeLeadCaptureGap(FAKE_SUBMITTED_FLAG)).toBe(true)
+  })
+
+  it('does NOT flag a form that actually persists via /api/db', () => {
+    expect(hasFakeLeadCaptureGap(REAL_PERSISTED)).toBe(false)
+  })
+
+  it('does NOT flag an app with no email capture form at all', () => {
+    expect(hasFakeLeadCaptureGap('function App(){return <div>hi</div>}')).toBe(false)
+  })
+
+  it('checkObedience surfaces fakeLeadCaptureGap and a reason string', () => {
+    const r = checkObedience(FAKE_ALERT, 'a B2B SaaS landing page')
+    expect(r.fakeLeadCaptureGap).toBe(true)
+    expect(r.reasons.some((x) => x.includes('waitlist capture form'))).toBe(true)
+  })
+
+  it('buildObediencePrompt includes the real /api/db/waitlist call shape when this gap fires', () => {
+    const r = checkObedience(FAKE_ALERT, 'a landing page')
+    const prompt = buildObediencePrompt('a landing page', r)
+    expect(prompt).toMatch(/PERSIST THE EMAIL\/WAITLIST CAPTURE FORM/)
+    expect(prompt).toMatch(/\/api\/db\/waitlist/)
+  })
+
+  it('buildObediencePrompt omits the lead-capture section when the form already persists', () => {
+    const r = checkObedience(REAL_PERSISTED, 'a landing page')
+    expect(r.fakeLeadCaptureGap).toBe(false)
+    const prompt = buildObediencePrompt('a landing page', r)
+    expect(prompt).not.toMatch(/PERSIST THE EMAIL\/WAITLIST CAPTURE FORM/)
   })
 })
 
