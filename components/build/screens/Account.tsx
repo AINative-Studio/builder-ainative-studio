@@ -28,6 +28,21 @@ const PLAN_LABEL: Record<ActivePlan, string> = {
   '': 'Free', pro: 'Pro', business: 'Business', enterprise: 'Enterprise', cody_vcto: 'Cody · Virtual CTO',
 }
 
+/**
+ * Pure decision for the "Current plan" chip. Real bug (live, Enterprise
+ * account, screenshot-reported): `activePlan`'s default value ('') is
+ * INDISTINGUISHABLE from a confirmed-unpaid plan, and this screen used to
+ * render `PLAN_LABEL[activePlan]` unconditionally — so a signed-in founder
+ * opening Account directly saw "Free" the instant the component mounted,
+ * before the async subscription/status fetch even resolved (or forever, if
+ * it silently failed). While `planLoading` is true, never trust `activePlan`
+ * enough to label it "Free".
+ */
+export function planChipLabel(activePlan: ActivePlan, planLoading: boolean): string {
+  if (planLoading) return 'Checking your plan…'
+  return PLAN_LABEL[activePlan] || activePlan
+}
+
 export interface UsageMeter {
   label: string
   used: number
@@ -92,15 +107,28 @@ export function Account() {
   const gates = planUnlocks(activePlan)
   const [portalBusy, setPortalBusy] = useState(false)
 
+  // Real bug (live, Enterprise account, screenshot-reported): activePlan's
+  // default value ('') is INDISTINGUISHABLE from a confirmed-unpaid plan, and
+  // this screen had no loading state — so a signed-in founder opening Account
+  // directly saw the "Free" chip + upgrade copy render immediately on mount,
+  // before the async subscription/status fetch below even resolved (or
+  // forever, if it silently failed). `planLoading` closes that gap: starts
+  // true for any signed-in user with no plan hydrated yet, flips false once
+  // the fetch SETTLES either way, so the UI shows an honest "Checking your
+  // plan…" placeholder instead of a wrong, confident "Free".
+  const [planLoading, setPlanLoading] = useState(!isGuest && !state.activePlan)
+
   // Existing-subscriber recognition (#251) — the same hydration Live/Pricing run.
   // Without it, an Enterprise/admin account opening Account directly saw plan
   // chips reading "Free" plus an Upgrade CTA (founder-reported bug 2026-08-27).
   useEffect(() => {
-    if (isGuest || state.activePlan) return
+    if (isGuest || state.activePlan) { setPlanLoading(false); return }
+    setPlanLoading(true)
     fetch('/api/build/subscription/status')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => { if (d?.plan) dispatch({ type: 'SET_ACTIVE_PLAN', plan: d.plan }) })
       .catch(() => {})
+      .finally(() => setPlanLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isGuest, state.activePlan])
 
@@ -253,12 +281,16 @@ export function Account() {
         <div className="m-sec-rows">
           <div className="m-sec-row">
             <span>Current plan</span>
-            <span className="m-chip">{PLAN_LABEL[activePlan]}</span>
+            <span className="m-chip" data-testid="account-plan-chip">
+              {planChipLabel(activePlan, planLoading)}
+            </span>
           </div>
           <div className="m-sec-row">
             <span>Unlocks</span>
             <span className="m-mono m-muted">
-              {activePlan
+              {planLoading
+                ? '—'
+                : activePlan
                 ? [gates.customDomain && 'custom domain', gates.nightlyLoop && 'nightly loop', gates.swarm && 'agent swarm'].filter(Boolean).join(' · ') || '—'
                 : 'Upgrade to unlock custom domain, nightly loop, and the swarm.'}
             </span>
