@@ -1123,7 +1123,17 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
     `    useEffect(() => { fetch('/api/db/visitors', { method: 'POST', headers: {'Content-Type':'application/json'},\n` +
     `      body: JSON.stringify({ path: window.location.pathname, ts: new Date().toISOString() }) }).catch(() => {}) }, [])\n` +
     `  Fire this ONCE per mount of the landing/home route only (not on every route, not on every re-render) —\n` +
-    `  best-effort, a failed beacon must never block or error the page.\n\n` +
+    `  best-effort, a failed beacon must never block or error the page.\n` +
+    `- EMAIL / WAITLIST CAPTURE (real gap fix — found live: every one of 4 recently sampled real generated apps\n` +
+    `  had this exact bug): ANY form that collects an email — "Get Early Access", "Join the waitlist", a newsletter\n` +
+    `  signup, etc. — MUST persist the email via the same /api/db proxy. Do NOT just call alert() or flip a local\n` +
+    `  "submitted" flag and discard what the visitor typed — that silently loses every real signup:\n` +
+    `    const handleSubmit = async (e) => { e.preventDefault();\n` +
+    `      await fetch('/api/db/waitlist', { method: 'POST', headers: {'Content-Type':'application/json'},\n` +
+    `        body: JSON.stringify({ email, joinedAt: new Date().toISOString() }) }).catch(() => {});\n` +
+    `      setSubmitted(true); setEmail('') }\n` +
+    `  Keep whatever success UI you'd naturally build (toast/alert/inline message) — only the persistence is\n` +
+    `  mandatory; best-effort, a failed save must never block the visitor-facing success state.\n\n` +
     `Rules:\n` +
     `1. Import \`@ainative/ai-kit-core\` (and its React bindings) for UI primitives — do NOT rebuild chat, tables, product cards, or dashboards from scratch when an AI Kit component exists.\n` +
     `2. Persist through /api/db (above) — this is MANDATORY when the app saves any records. The generated app runs in the browser, so it does NOT have AINATIVE_API_KEY; NEVER put a Bearer key or secret in app code, and NEVER fetch() a primitive's apiBase directly unless this block explicitly said to. Each primitive above tells you EXACTLY how to call it under "To use:" — follow that literally (same-origin proxy path and method, no Authorization header for proxied primitives, a Bearer key only for ZeroDB/Instant DB via /api/db). For any primitive listed above framed as "already provisioned for this company server-side," treat its capability as already set up by the platform — build the UI around it, don't call its API from generated code.\n` +

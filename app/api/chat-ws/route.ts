@@ -1415,7 +1415,9 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                 const after = v.valid ? checkObedience(v.code, message, validRole) : ob
                 const obeyImproved = (ob.persistenceGap && !after.persistenceGap) ||
                   (ob.aikitGaps.length > after.aikitGaps.length) ||
-                  (ob.primitiveComplianceGaps.length > after.primitiveComplianceGaps.length)
+                  (ob.primitiveComplianceGaps.length > after.primitiveComplianceGaps.length) ||
+                  (ob.visitorTrackingGap && !after.visitorTrackingGap) ||
+                  (ob.fakeLeadCaptureGap && !after.fakeLeadCaptureGap)
                 if (v.valid && multi && (v.code?.length || 0) > finalContent.length * 0.7) {
                   console.log('🔧 Combined pass produced a valid multi-file, rule-following app — adopting.')
                   finalContent = v.code; validation = v; checkpoint.record('fix+split', finalContent, true)
@@ -1439,7 +1441,9 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                   const after = checkObedience(obValidation.code, message, validRole)
                   const improved = (ob.persistenceGap && !after.persistenceGap) ||
                     (ob.aikitGaps.length > after.aikitGaps.length) ||
-                    (ob.primitiveComplianceGaps.length > after.primitiveComplianceGaps.length)
+                    (ob.primitiveComplianceGaps.length > after.primitiveComplianceGaps.length) ||
+                    (ob.visitorTrackingGap && !after.visitorTrackingGap) ||
+                    (ob.fakeLeadCaptureGap && !after.fakeLeadCaptureGap)
                   if (improved) {
                     console.log('📏 Obedience re-prompt improved the app — adopting.')
                     finalContent = obValidation.code; validation = obValidation; checkpoint.record('obedience', finalContent, true)
@@ -1495,6 +1499,8 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               dbBacked, multiFile: usedMultiFile, wantsMultiFile,
               persistenceGap: obFinal.persistenceGap, aikitGaps: obFinal.aikitGaps,
               primitiveComplianceGaps: obFinal.primitiveComplianceGaps,
+              visitorTrackingGap: obFinal.visitorTrackingGap,
+              fakeLeadCaptureGap: obFinal.fakeLeadCaptureGap,
               bytes: served.length,
             })
           } catch (memErr: any) {
