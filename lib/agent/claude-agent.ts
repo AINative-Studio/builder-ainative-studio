@@ -17,6 +17,7 @@ import { spawn, type ChildProcess } from 'child_process'
 import { cp, rm } from 'fs/promises'
 import { TrajectoryCapture, type TrajectoryStep } from './trajectory-capture'
 import { storeTrajectory } from './trajectory-store'
+import { authorizeToolCall } from './casa-authorize'
 import { buildStaircase, defaultSummarize, isStaircaseEnabled } from './context-staircase'
 import { mcpDataProvisioningBlock } from '@/lib/build/primitive-catalog'
 import { createWorktree, getWorktreeFiles, getWorktreePath } from './worktree-manager'
@@ -576,6 +577,18 @@ export async function* runHeadlessAgent(
     toolName: string,
     input: Record<string, unknown>,
   ): Generator<AgentEvent> {
+    // Feed this real tool-call decision into core's CASA dataset pipeline
+    // (core#5019). Fire-and-forget — never awaited, never blocks/fails the
+    // real build. `prompt`/`chatId` are the enclosing runHeadlessAgent call's
+    // task and conversation identity.
+    authorizeToolCall({
+      toolName,
+      task: prompt,
+      toolParams: input,
+      agentId: chatId,
+      conversationId: chatId,
+    })
+
     switch (toolName) {
       case 'Write':
       case 'FileWrite':
