@@ -6,6 +6,8 @@
 
 **Update 2026-09-06 (later same day):** independently re-verified every pending topic against real, live DataForSEO Labs/SERP data (not the topic tool's own estimates) — see §2b and §4. Two real corrections came out of that pull: **"natural language parser" is a mismatched audience** (its real keyword cluster is NLP developer-tooling, not app-builder searchers) and should be dropped from the calendar, not just deprioritized; and **Replit already ranks #4 for "what is vibe coding"** with a dedicated blog post — this term is genuinely contested, not the clean greenfield the category/comparison terms in the paid brief are. `builder.ainative.studio` still ranks for 0 organic keywords as of this check (unchanged since 2026-08-24).
 
+**Update 2026-09-06 (SEMrush cross-validation):** a SEMrush MCP connection was added this session — see §2c for a THIRD independent data pull against the same topics plus real competitor/backlink data on Polsia. Headline finding: **SEMrush's volume/KD numbers diverge meaningfully from DataForSEO's on several terms** (documented honestly in §2c's table, not reconciled into one "true" number) — treat both as real, imperfect data sources rather than trusting either blindly. Separately, SEMrush's backlink pull materially updates `SEO_PAID_BRIEF_2026-08-24.md`'s Polsia backlink figures — real total is ~26x larger than previously documented (77,357 vs. 2,969 backlinks), though the AUTHORITY DISTRIBUTION confirms the original "modest, spammy-adjacent" read was directionally right (72% of referring domains sit at Authority Score 0–2) — see §2c for the full picture, including several genuinely high-authority exceptions (Forbes, Y Combinator, GitHub) the original pull didn't surface.
+
 ---
 
 ## TL;DR
@@ -90,6 +92,48 @@ Pulled live via `mcp__dfs-mcp__api_request` against DataForSEO Labs endpoints (s
 
 ---
 
+## 2c. SEMrush cross-validation (2026-09-06, third independent data source)
+
+A SEMrush MCP connection (`https://mcp.semrush.com/v2/mcp`) was added to this session and confirmed live. Ran the same content topics through SEMrush's `phrase_these` batch keyword report, re-checked `builder.ainative.studio`'s ranking status, and pulled real competitor + backlink data on Polsia — extending, not replacing, the DataForSEO figures in §2b.
+
+### Keyword numbers: real, but genuinely divergent from DataForSEO — documented honestly, not reconciled
+
+| Topic | SEMrush Vol/mo | SEMrush KD | DataForSEO Vol/mo (§2b) | DataForSEO KD (§2b) | Note |
+|---|---|---|---|---|---|
+| what is vibe coding | 49,500 | 65 | 60,500 | 38 | Same order of magnitude on volume; **KD differs by 27 points** — SEMrush rates it meaningfully harder. Given Replit's confirmed #4 ranking (§2b), the higher KD estimate is plausibly the more realistic one. |
+| vibe coding (base term) | 90,500 | 77 | 110,000 | 56 | Both large; SEMrush again rates it substantially harder to rank (77 vs 56). |
+| how to make a game | 6,600 | 40 | 15,000 (topic tool, §2) | 34 (topic tool, §2) | SEMrush volume is under half the topic tool's figure — a real, material gap worth noting before committing content budget on this number alone. |
+| rapid application development | 1,300 | 38 | 5,800 (topic tool, §2) | 24 (topic tool, §2) | Same pattern — SEMrush shows ~4x lower volume and meaningfully higher difficulty than the topic tool implied. |
+| how to create a video game | 2,900 | 43 | 4,400 | 16 | Volume roughly consistent; **KD differs sharply** (43 vs 16) — SEMrush does not support this being an "easy" term. |
+| how to make an app for free | 1,900 | 33 | 2,900 | 51 | Interesting inversion: SEMrush rates this EASIER than DataForSEO did, opposite direction from every other row. |
+| prototyping tools | 74,000 | 50 | 590 | 26 | **Enormous discrepancy** — 125x apart on volume. Almost certainly measuring different keyword scopes/match-types under the hood (broad "prototyping tools" as a generic engineering-tool search vs. DataForSEO's narrower cluster) — do not use either number in isolation to greenlight or kill this topic; it needs a manual SERP look before any content decision. |
+| natural language parser | 10 | 0 | 22,200 | 59 | SEMrush shows near-zero volume for the literal phrase — **independently reinforces the §2b conclusion to drop this topic**, via a completely different real signal (near-nonexistent literal search volume, vs. §2b's audience-mismatch argument). Two independent reasons now support dropping it. |
+| free game maker | 880 | 88 | 1,600 | 59 | Both sources agree this is hard (SEMrush even harder, KD 88) — reinforces §2b's recommendation to deprioritize this in favor of "how to create a video game." |
+| react native development services | 1,300 | 10 | 210 | 21 | Real fit assessment (low-priority, vendor-lookup intent) stands regardless of which volume figure is right. |
+| best vibe coding tools | 1,900 | 33 | 1,900 (§2b) | 6 (§2b) | **Volume matches exactly** — cross-validated with high confidence. **KD differs enormously** (33 vs 6) — treat the "KD 6, easy win" framing from earlier docs with real caution; SEMrush's own estimate is over 5x higher. |
+| lovable vibe coding | 720 | 35 | 1,000 (§2b) | 4 (§2b) | Volume roughly consistent. KD again diverges sharply (35 vs 4) — same caution as above. |
+
+**Honest takeaway:** these are two real, independently-operated keyword-data companies whose crawls, clustering methodology, and difficulty models genuinely disagree — sometimes by an order of magnitude. Neither is "wrong"; they measure differently. The pattern worth acting on is where they **agree directionally** (natural-language-parser near-zero-fit, free-game-maker being hard, best-vibe-coding-tools' volume) — trust those calls with high confidence. Where they diverge sharply on keyword DIFFICULTY specifically (best vibe coding tools, lovable vibe coding, how to create a video game), do not treat either KD number as a firm "quick win" guarantee — verify with a real, current SERP check before committing significant content budget on a "low KD" claim alone.
+
+### Ranking status — re-confirmed via SEMrush
+
+`domain_rank` for `builder.ainative.studio` returned **"NOTHING FOUND"** (SEMrush's own no-data response, distinct from a 0-value row) — a third independent confirmation (topic tool implicitly, DataForSEO explicitly in §2b, now SEMrush) that Builder has zero organic footprint today.
+
+### Real competitor + backlink data on Polsia (extends `SEO_PAID_BRIEF_2026-08-24.md` §1)
+
+**Organic competitors (SEMrush `domain_organic_organic`):** Polsia's top 20 real organic competitors are almost entirely brand-name/typo-squatter domains (`polisia.kz`, `polisa.nl`, `pulsyai.com`, `polsia.app`, `pulseai.io`, etc.) — **none of the previously-tracked comparison competitors (v0, Lovable, Bolt, Base44) appear in this list at all.** This reinforces the existing brief's "~92% branded traffic" finding from a completely different angle: Polsia's own organic competitive set, per SEMrush, is mostly people/bots targeting ITS brand name, not a real competitive category. One real, previously-untracked domain surfaced with meaningful scale: **`cto.new`** (2,995 organic keywords, $14,165 organic traffic cost) — worth a quick look as a possible adjacent competitor, though its relevance score to Polsia was low (0.04), so this may be incidental overlap rather than a true competitor.
+
+**Backlinks — a real, material update to the existing brief's figures:**
+
+| Metric | `SEO_PAID_BRIEF_2026-08-24.md` (DataForSEO) | SEMrush (2026-09-06) |
+|---|---|---|
+| Total backlinks | 2,969 | **77,357** |
+| Referring domains | 355 | **1,871** |
+
+This is a real, ~26x/5x divergence, not a rounding difference — worth flagging to whoever owns the paid brief rather than silently overwriting it. **However, the qualitative conclusion holds up under closer inspection:** SEMrush's own Authority Score distribution for Polsia's 1,871 referring domains shows **1,353 domains (72%) sitting at Authority Score 0–2** — a very low-quality long tail, consistent with the original brief's "modest, spammy-adjacent" characterization. The real nuance the original pull missed: a genuine minority of Polsia's backlinks come from real, high-authority domains — **Forbes (AS 93), Y Combinator (AS 72), GitHub (AS 100), Medium (AS 97), Substack (AS 86, 50 links), Dev.to (AS 69, 10 links)** — almost certainly earned via press coverage rather than systematic link-building. **Net read: the backlink wall is still beatable (the bulk of the profile is low-quality), but Polsia has real, if sparse, high-authority press mentions that a pure "they have no real links" framing would understate.**
+
+---
+
 ## 3. Recommended content calendar (Phase 1 — next 2–4 weeks)
 
 Prioritized by (a) genuine fit with Builder's real product, (b) overlap with the existing paid-brief's "SEO-winnable" comparison pages, so content can cross-link into an existing funnel rather than being an orphaned post.
@@ -115,7 +159,7 @@ Prioritized by (a) genuine fit with Builder's real product, (b) overlap with the
 
 ## 4. Data log — all topics now verified
 
-All 10 original topics have now been checked, either via the topic tool's own full pull (§2) or independent real DataForSEO Labs data (§2b). No pending items remain. Two real corrections came out of the DataForSEO pass — see the ⚠️ rows.
+All 10 original topics have now been checked via the topic tool's own full pull (§2), independent real DataForSEO Labs data (§2b), AND a third independent SEMrush pull (§2c). No pending items remain. Two real corrections came out of the DataForSEO pass — see the ⚠️ rows. §2c's full cross-source comparison table shows real, sometimes large numeric divergence between DataForSEO and SEMrush on several terms — treat the single Volume/KD figures below as ONE source's read (DataForSEO or the topic tool), not an absolute truth; see §2c before making a content-budget decision based on a "low KD" claim alone.
 
 | Topic | Volume/mo | Avg KD | Intent | Status |
 |---|---|---|---|---|

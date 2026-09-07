@@ -45,7 +45,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
 
   // "Best" list pages targeting low-difficulty buyer-intent keywords.
   // Keep in sync with CATEGORIES in app/best/[category]/page.tsx.
-  const bestEntries: MetadataRoute.Sitemap = ['ai-app-builder', 'vibe-coding-tools'].map(slug => ({
+  const bestEntries: MetadataRoute.Sitemap = ['ai-app-builder', 'vibe-coding-tools', 'rapid-application-development'].map(slug => ({
     url: `${baseUrl}/best/${slug}`,
     lastModified: now,
     changeFrequency: 'weekly' as const,

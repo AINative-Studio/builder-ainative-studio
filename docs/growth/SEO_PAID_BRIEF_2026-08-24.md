@@ -23,6 +23,8 @@
 
 **Polsia backlinks:** rank 353, 2,969 backlinks from **355 referring domains** (270 main). Modest, spammy-adjacent (spam score 6). *This is beatable* — it's not an authority wall.
 
+> **Update 2026-09-06:** an independent SEMrush pull found materially higher totals — **77,357 backlinks from 1,871 referring domains** (~26x/5x this doc's DataForSEO figures). The qualitative "beatable, not an authority wall" conclusion still holds (72% of those referring domains sit at Authority Score 0–2, a low-quality long tail) — but Polsia does have a genuine minority of high-authority backlinks this original pull missed (Forbes AS93, GitHub AS100, Y Combinator AS72, Medium AS97), likely earned press coverage rather than link-building. See `SEO_CONTENT_TOPICS_2026-09-06.md` §2c for the full breakdown.
+
 **Polsia position distribution:** pos1=11, pos2-3=2, pos4-10=3, then a long tail of 60 keywords stranded at position 11–100 (i.e. page 2+, ~zero traffic). They are not competing for non-branded terms.
 
 ---
