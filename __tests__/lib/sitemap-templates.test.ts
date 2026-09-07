@@ -24,4 +24,14 @@ describe('sitemap — template landing pages', () => {
   it('emits no duplicate URLs', () => {
     expect(new Set(urls).size).toBe(urls.length)
   })
+
+  // Real, live bug (found via a third-party technical SEO audit, 2026-09-06):
+  // /templates/analytics and /templates/submit are both explicitly auth-gated
+  // in middleware.ts ("Submit/analytics stay gated below") — every crawl of
+  // these two sitemap URLs 307-redirected to /login. A sitemap must only ever
+  // list URLs that resolve 200 for an anonymous crawler.
+  it('never lists the auth-gated /templates/analytics or /templates/submit routes', () => {
+    expect(urls).not.toContain('https://builder.ainative.studio/templates/analytics')
+    expect(urls).not.toContain('https://builder.ainative.studio/templates/submit')
+  })
 })

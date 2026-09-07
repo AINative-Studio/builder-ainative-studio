@@ -151,17 +151,14 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: 'weekly',
       priority: 0.7,
     },
-    {
-      url: `${baseUrl}/templates/analytics`,
-      lastModified: now,
-      changeFrequency: 'weekly',
-      priority: 0.6,
-    },
-    {
-      url: `${baseUrl}/templates/submit`,
-      lastModified: now,
-      changeFrequency: 'monthly',
-      priority: 0.4,
-    },
+    // Real, live bug (found via a third-party technical SEO audit,
+    // 2026-09-06): this sitemap used to also list /templates/analytics and
+    // /templates/submit — BOTH explicitly auth-gated in middleware.ts
+    // ("Submit/analytics stay gated below"), so every crawl of those two
+    // URLs 307-redirected to /login. A sitemap must only ever list URLs
+    // that resolve 200 for an anonymous crawler; listing a gated route
+    // actively hurts crawl-budget trust, not just wastes it. Removed both
+    // entries rather than un-gating the routes — they're real account-
+    // scoped actions/data, not public content.
   ]
 }
