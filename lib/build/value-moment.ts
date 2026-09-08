@@ -167,6 +167,26 @@ export function decideLimitAction(opts: {
 }
 
 /**
+ * Real bug (live, Enterprise account, screenshot-reported 2026-09-08): a
+ * founder who reached Pricing via Live/Account (never having visited the
+ * dedicated view=preview screen) saw "See your app work first" — even though
+ * the Pricing screen's own ProposalGate embeds their real running app in an
+ * iframe ("YOUR APP — ALREADY RUNNING") a few lines below. Root cause:
+ * SAW_PREVIEW only ever dispatched from artifacts/Preview.tsx's own effect, a
+ * second, independent preview-rendering surface never marked it.
+ *
+ * If Pricing is about to show the founder their real, already-generated app,
+ * that IS the value moment — this predicate says so, regardless of whether
+ * the founder ever visited the other preview screen.
+ */
+export function pricingScreenHasRealApp(opts: {
+  appChatId?: string | null
+  appSub?: string | null
+}): boolean {
+  return Boolean((opts.appChatId || '').trim() || (opts.appSub || '').trim())
+}
+
+/**
  * The MVP-first upsell (#320) shows only AFTER the value moment: the MVP is
  * done AND the preview actually rendered (status 'ready'). Never over a
  * skeleton, an error state, or mid-generation.

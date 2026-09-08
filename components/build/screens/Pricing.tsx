@@ -7,7 +7,7 @@ import { useBuild } from '@/contexts/build-context'
 import { trackEvent } from '@/components/analytics/google-analytics'
 import { trackMeta } from '@/components/analytics/meta-pixel'
 import { ProposalGate } from '@/components/build/ProposalGate'
-import { pricingFraming } from '@/lib/build/value-moment'
+import { pricingFraming, pricingScreenHasRealApp } from '@/lib/build/value-moment'
 import type { ArtifactView } from '@/lib/build/state'
 
 // Builder subscription tiers — the canonical AINative plan line (config/pricing.ts).
@@ -84,6 +84,16 @@ export function Pricing() {
       .catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.activePlan])
+
+  // Real bug (live, Enterprise account, screenshot-reported 2026-09-08): see
+  // pricingScreenHasRealApp's doc comment in lib/build/value-moment.ts.
+  useEffect(() => {
+    if (state.sawPreview) return
+    if (pricingScreenHasRealApp({ appChatId: state.appChatId, appSub: state.appSub })) {
+      dispatch({ type: 'SAW_PREVIEW' })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.appChatId, state.appSub])
 
   // The tier the proposal cost line points at (#68) — the featured/recommended
   // plan, falling back to the first tier so the proposal always has a price.
