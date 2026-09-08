@@ -106,7 +106,7 @@ const MCP_BASE =
 export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
   // ---- Foundational substrate (always available) ----
   { name: 'ZeroDB', category: 'data-memory', foundational: true,
-    purpose: 'Persistent knowledge layer: vector search, tables, files, events, functions, per-project Postgres — also the store for social posts/feed/comments/likes/messages',
+    purpose: 'Persistent knowledge layer: vector search, tables, S3-compatible object/file storage (upload, download, presigned URLs — no separate AWS account needed), events, functions, per-project Postgres — also the store for social posts/feed/comments/likes/messages',
     url: `${DOCS}/zerodb/overview`,
     apiBase: 'https://api.ainative.studio/api/v1',
     // Full ZeroDB MCP (69+ tools, whole data layer) — docs/AINATIVE_PRIMITIVES.md §6.
@@ -114,8 +114,15 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     // project/tables at preview instead of a mock.
     mcpUrl: `${MCP_BASE}/zerodb`,
     mcpTools: 69,
+    // 's3'/'aws'/'bucket'/'object storage'/'metadata' added 2026-09-08 — a real
+    // user asked Cody about S3 object metadata and Cody, lacking these triggers/
+    // phrasing, invented a fictitious "you need to build a custom AWS IAM/S3
+    // bridge" requirement instead of pointing at the S3-compatible storage
+    // ZeroDB already provides (lib/build/media-schedule.ts's real upload/
+    // download endpoints). See docs/growth/BUGFIX_S3_STORAGE_GROUNDING_2026-09-08.md.
     triggers: ['data', 'database', 'persist', 'store', 'save', 'records', 'search', 'vectors', 'rag', 'files',
-      'posts', 'post', 'feed', 'comments', 'comment', 'likes', 'like', 'timeline', 'messages', 'messaging', 'dm', 'content'] },
+      'file storage', 'object storage', 's3', 's3-compatible', 'aws', 'bucket', 'upload', 'download', 'presigned',
+      'metadata', 'posts', 'post', 'feed', 'comments', 'comment', 'likes', 'like', 'timeline', 'messages', 'messaging', 'dm', 'content'] },
   { name: 'Instant DB', category: 'data-memory', foundational: true,
     purpose: 'A live ZeroDB project + API key in one request — no signup/auth/card',
     url: `${DOCS}/api/instant-db`,
