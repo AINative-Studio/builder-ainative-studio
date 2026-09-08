@@ -96,6 +96,21 @@ export function formatResetLine(resetsAt: unknown): string | null {
   return `Resets ${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`
 }
 
+/**
+ * Real bug (live, Enterprise account, screenshot-reported 2026-09-08):
+ * "Manage plan / billing" silently did nothing on failure — no error state
+ * existed at all, so a founder whose account has no real Stripe customer
+ * behind it (plausible for an internally-granted Enterprise plan) saw the
+ * button flip back to idle with zero indication anything went wrong. Always
+ * returns a non-empty, actionable message — never blank — so the failure is
+ * visible instead of silent.
+ */
+export function portalErrorMessage(serverError?: string | null): string {
+  const trimmed = (serverError || '').trim()
+  if (trimmed) return trimmed
+  return 'Could not open the billing portal. Contact support@ainative.studio for help with your plan.'
+}
+
 export function Account() {
   const { state, dispatch } = useBuild()
   const { data: session } = useSession()
@@ -106,6 +121,13 @@ export function Account() {
   const activePlan = state.activePlan
   const gates = planUnlocks(activePlan)
   const [portalBusy, setPortalBusy] = useState(false)
+  // Real bug (live, Enterprise account, screenshot-reported 2026-09-08):
+  // "Manage plan / billing" silently did nothing on failure — the fetch's
+  // catch block had no error state at all, so a founder whose account has no
+  // real Stripe customer behind it (plausible for an internally-granted
+  // Enterprise plan) saw the button flip back to its idle label with zero
+  // indication anything went wrong. Surface the real error instead of silence.
+  const [portalError, setPortalError] = useState('')
 
   // Real bug (live, Enterprise account, screenshot-reported): activePlan's
   // default value ('') is INDISTINGUISHABLE from a confirmed-unpaid plan, and
@@ -154,6 +176,7 @@ export function Account() {
   const manageBilling = async () => {
     if (portalBusy) return
     setPortalBusy(true)
+    setPortalError('')
     try {
       const r = await fetch('/api/build/subscription/portal', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -161,7 +184,10 @@ export function Account() {
       })
       const d = await r.json().catch(() => null)
       if (d?.url) { window.location.href = d.url; return }
-    } catch { /* fall through */ }
+      setPortalError(portalErrorMessage(d?.error))
+    } catch {
+      setPortalError(portalErrorMessage())
+    }
     setPortalBusy(false)
   }
 
@@ -309,6 +335,11 @@ export function Account() {
               ? <button className="btn-secondary" data-testid="account-manage-billing" disabled={portalBusy} onClick={manageBilling}>{portalBusy ? 'Opening…' : 'Manage plan / billing ↗'}</button>
               : <button className="btn-primary" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'pricing' })}>Upgrade →</button>}
           </div>
+          {portalError && (
+            <p className="m-mono m-account-portal-error" data-testid="account-portal-error" role="alert">
+              {portalError}
+            </p>
+          )}
         </div>
       </section>
 
