@@ -34,4 +34,11 @@ describe('sitemap — template landing pages', () => {
     expect(urls).not.toContain('https://builder.ainative.studio/templates/analytics')
     expect(urls).not.toContain('https://builder.ainative.studio/templates/submit')
   })
+
+  // /capabilities is a real, public, middleware-allowlisted page (#313/#316)
+  // that was missing from the sitemap entirely — found via the 2026-09-07 AEO
+  // gap analysis.
+  it('includes the /capabilities page', () => {
+    expect(urls).toContain('https://builder.ainative.studio/capabilities')
+  })
 })

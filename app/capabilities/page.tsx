@@ -3,10 +3,46 @@ import Link from 'next/link'
 import { AppHeader } from '@/components/shared/app-header'
 import { CAPABILITIES } from '@/lib/build/capabilities'
 
+const PAGE_URL = 'https://builder.ainative.studio/capabilities'
+
 export const metadata: Metadata = {
   title: 'What can I build? — AINative Builder capabilities',
   description:
     'Plain-English overview of what you can build with AINative: a CRM, an online store, invoicing, a helpdesk, phone/SMS, a nonprofit backend, and more — each included, no extra keys or subscriptions.',
+  alternates: { canonical: PAGE_URL },
+}
+
+// ItemList (not a rating-requiring app schema, matching #517's Product-not-
+// WebApplication precedent) so search/answer engines can enumerate the real,
+// included primitives instead of only the raw prose.
+const itemListJsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'ItemList',
+  name: 'What you can build with AINative Builder',
+  description:
+    'The real AINative primitives Cody composes from, each included with no extra signup, key, or subscription.',
+  numberOfItems: CAPABILITIES.length,
+  itemListElement: CAPABILITIES.map((c, i) => ({
+    '@type': 'ListItem',
+    position: i + 1,
+    name: c.product,
+    description: `${c.build} Replaces: ${c.replaces}.`,
+  })),
+}
+
+// FAQPage from the natural "what does AINative replace" questions this page
+// already answers per-capability — real content, not invented Q&A.
+const faqJsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'FAQPage',
+  mainEntity: CAPABILITIES.map((c) => ({
+    '@type': 'Question',
+    name: `Can I build ${c.examples[0]} with AINative Builder?`,
+    acceptedAnswer: {
+      '@type': 'Answer',
+      text: `Yes — ${c.build} This is included with no extra signup, key, or subscription, and replaces tools like ${c.replaces}.`,
+    },
+  })),
 }
 
 /**
@@ -17,6 +53,8 @@ export const metadata: Metadata = {
 export default function CapabilitiesPage() {
   return (
     <div className="min-h-screen bg-background">
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(itemListJsonLd) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }} />
       <AppHeader />
       <main className="mx-auto max-w-4xl px-4 py-12">
         <div className="mb-10">

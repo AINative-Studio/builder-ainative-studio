@@ -88,6 +88,15 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.9,
     },
     {
+      // "What can I build?" capabilities catalog — public, crawlable, FAQ/ItemList
+      // JSON-LD (#313/#316). Was live and allowlisted in middleware but missing
+      // from the sitemap entirely — found via the 2026-09-07 AEO gap analysis.
+      url: `${baseUrl}/capabilities`,
+      lastModified: now,
+      changeFrequency: 'weekly',
+      priority: 0.8,
+    },
+    {
       // Category landing ("AI that runs your company") — non-branded demand.
       url: `${baseUrl}/ai-company`,
       lastModified: now,
