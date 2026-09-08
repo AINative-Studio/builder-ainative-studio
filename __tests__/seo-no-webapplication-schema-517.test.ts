@@ -13,9 +13,16 @@ import { describe, it, expect } from 'vitest'
  * Same bug already fixed site-wide on ainative-website (#2139): converted to
  * `Product`, which carries no rating requirement, rather than fabricating a
  * rating that doesn't exist.
+ *
+ * The global block itself was later removed from app/layout.tsx entirely
+ * (it duplicated and conflicted with each page's own correct JSON-LD, and
+ * had gone stale — likely the root cause of the technical SEO audit's "444
+ * invalid structured data items" finding, see TECHNICAL_SEO_AUDIT_2026-09-06.md).
+ * The real homepage (app/page.tsx) now carries its own Product schema, so
+ * the never-fabricate-a-rating invariant is checked there instead.
  */
-describe('root layout JSON-LD does not use a rating-requiring schema type without a rating (SEO audit)', () => {
-  const source = fs.readFileSync(path.join(process.cwd(), 'app/layout.tsx'), 'utf8')
+describe('homepage JSON-LD does not use a rating-requiring schema type without a rating (SEO audit)', () => {
+  const source = fs.readFileSync(path.join(process.cwd(), 'app/page.tsx'), 'utf8')
 
   it('does not declare WebApplication/SoftwareApplication/MobileApplication', () => {
     expect(source).not.toMatch(/@type['"]:\s*['"](WebApplication|SoftwareApplication|MobileApplication)['"]/)
