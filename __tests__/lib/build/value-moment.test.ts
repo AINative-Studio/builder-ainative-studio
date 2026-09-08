@@ -11,6 +11,7 @@ import {
   decideLimitAction,
   shouldShowMvpUpsell,
   pricingFraming,
+  pricingScreenHasRealApp,
 } from '@/lib/build/value-moment'
 
 /**
@@ -170,5 +171,31 @@ describe('pricingFraming (#310/#311 — honest pay-gate copy)', () => {
     const f = pricingFraming({ sawPreview: true })
     expect(f.sub).toContain('I built it for free')
     expect(f.sub).toContain('/build/your-app')
+  })
+})
+
+/**
+ * Real bug (live, Enterprise account, screenshot-reported 2026-09-08): a
+ * founder who reached Pricing via Live/Account saw "See your app work first"
+ * even though this same screen's ProposalGate embeds their real running app
+ * inline. Root cause: SAW_PREVIEW only ever dispatched from a different
+ * component (artifacts/Preview.tsx). pricingScreenHasRealApp locks in that
+ * having a real app (chatId or slug) counts as the value moment regardless
+ * of which screen showed it.
+ */
+describe('pricingScreenHasRealApp (2026-09-08 bugfix)', () => {
+  it('THE BUG: true when the founder has a real generated app, even having never visited view=preview', () => {
+    expect(pricingScreenHasRealApp({ appChatId: 'chat-123' })).toBe(true)
+    expect(pricingScreenHasRealApp({ appSub: 'voya' })).toBe(true)
+  })
+
+  it('false when there is genuinely no app yet', () => {
+    expect(pricingScreenHasRealApp({})).toBe(false)
+    expect(pricingScreenHasRealApp({ appChatId: '', appSub: '' })).toBe(false)
+    expect(pricingScreenHasRealApp({ appChatId: null, appSub: null })).toBe(false)
+  })
+
+  it('trims whitespace-only values to false', () => {
+    expect(pricingScreenHasRealApp({ appChatId: '   ' })).toBe(false)
   })
 })
