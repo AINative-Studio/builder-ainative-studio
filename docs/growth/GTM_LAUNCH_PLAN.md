@@ -115,7 +115,9 @@ Wire to the existing gclid→paid-conversion pipeline (`signup_source:builder`, 
 | 7b | **Submit new pages to Brave** (search.brave.com/submit-url — manual, CAPTCHA) | Toby | rides #1 | ⬜ |
 | 8 | Review + enable Google campaign | Toby | #3, #3b deployed | ⬜ |
 | 9 | Enable Meta campaign | growth | #4,5,6 | ⬜ |
-| 10 | Baseline LLM-mention share (Builder vs Polsia/Lovable) | growth | dfs-mcp | ⬜ |
+| 10 | Baseline LLM-mention share (Builder vs Polsia/Lovable) | growth | dfs-mcp | ✅ done 2026-09-06 — Builder **0/30**, Lovable 9/30, Bolt 8/30, Replit 4/30, Polsia 0/30. Full report: `LLM_MENTIONS_2026-09-06.md` |
+| 11 | Ship KD-winnable `/best/rapid-application-development` page | eng | none | ✅ built+deployed (#574, 2026-09-06) |
+| 12 | Off-site mentions: submit Builder to G2, Product Hunt, Trustpilot | Toby | requires real account/company ownership | ⬜ |
 
 ---
 
