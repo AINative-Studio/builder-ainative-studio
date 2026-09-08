@@ -30,11 +30,12 @@ export interface Capability {
 export const CAPABILITIES: Capability[] = [
   {
     product: 'ZeroDB',
-    build: 'Store and search your app’s data — records, files, and AI-powered semantic search — without setting up a database.',
-    examples: ['a notes app that saves and searches your notes', 'a CRM that stores contacts', 'a knowledge base with "find similar" search'],
-    replaces: 'Supabase / Firebase / Airtable + a vector DB like Pinecone',
-    included: 'Included free — no separate database signup, no extra key.',
-    keywords: ['data', 'database', 'store', 'save', 'records', 'search', 'semantic', 'vectors', 'files', 'persist'],
+    build: 'Store and search your app’s data — records, files and S3-compatible object storage (uploads, downloads, presigned URLs), and AI-powered semantic search — without setting up a database or a separate AWS account.',
+    examples: ['a notes app that saves and searches your notes', 'a CRM that stores contacts', 'a knowledge base with "find similar" search', 'an app that stores and analyzes object metadata (size, type, timestamps, access history)'],
+    replaces: 'Supabase / Firebase / Airtable + a vector DB like Pinecone + AWS S3',
+    included: 'Included free — no separate database signup, no extra key, no separate AWS/S3 account.',
+    keywords: ['data', 'database', 'store', 'save', 'records', 'search', 'semantic', 'vectors', 'files', 'persist',
+      'file storage', 'object storage', 's3', 's3-compatible', 'aws', 'bucket', 'upload', 'download', 'presigned', 'metadata'],
   },
   {
     product: 'ZeroPipeline',
