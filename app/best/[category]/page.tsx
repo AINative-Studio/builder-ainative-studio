@@ -64,13 +64,13 @@ const CATEGORY_DATA: Record<CategorySlug, CategoryData> = {
           'Automatic SEO with structured data on every generated page',
           'Open primitives you own: ZeroDB, ZeroPipeline, ZeroInvoice, ServiceOS, ZeroVoice',
           'Open-source codebase',
-          '72-hour free trial',
+          'Free tier: 3 builds, no credit card',
         ],
         cons: [
           'Newer platform — smaller community than v0 or Bolt',
-          '$49/month after trial (no permanent free tier)',
+          '$49/month for real production generation (free tier is limited to 3 builds)',
         ],
-        pricing: '72-hour trial, then $49/month',
+        pricing: 'Free (3 builds), then $49/month',
         bestFor: 'Founders who want AI to build AND run their company end-to-end on open primitives',
         url: 'https://builder.ainative.studio',
         isBuilder: true,
@@ -166,7 +166,7 @@ const CATEGORY_DATA: Record<CategorySlug, CategoryData> = {
       {
         question: 'Which AI app builder has the best free tier?',
         answer:
-          'v0 by Vercel and Bolt.new both offer permanent free tiers with token/credit limits. AINative Builder offers a 72-hour free trial with full feature access. Lovable and v0 have the most generous ongoing free plans for prototyping.',
+          'v0 by Vercel and Bolt.new both offer permanent free tiers with token/credit limits. AINative Builder also has a permanent free tier (3 builds, no credit card required) rather than a time-limited trial. Lovable and v0 have the most generous ongoing free build volume for prototyping.',
       },
       {
         question: 'Do AI app builders generate SEO-ready pages?',
@@ -213,13 +213,13 @@ const CATEGORY_DATA: Record<CategorySlug, CategoryData> = {
           'Automatic SEO on every generated page',
           'Open primitives: ZeroDB, ZeroPipeline, ZeroInvoice, ServiceOS, ZeroVoice',
           'Open-source code you own',
-          '72-hour free trial',
+          'Free tier: 3 builds, no credit card',
         ],
         cons: [
           'Newer platform — smaller ecosystem than Cursor',
-          '$49/month after trial',
+          '$49/month for real production generation (free tier is limited to 3 builds)',
         ],
-        pricing: '72-hour trial, then $49/month',
+        pricing: 'Free (3 builds), then $49/month',
         bestFor: 'Founders who want idea-to-running-company with AI, not just a code scaffold',
         url: 'https://builder.ainative.studio',
         isBuilder: true,
@@ -358,13 +358,13 @@ const CATEGORY_DATA: Record<CategorySlug, CategoryData> = {
           'Generated apps are real, exportable code — not locked to a visual editor',
           'Runs the resulting company autonomously (CRM, billing, helpdesk)',
           'Open primitives you own: ZeroDB, ZeroPipeline, ZeroInvoice',
-          '72-hour free trial',
+          'Free tier: 3 builds, no credit card',
         ],
         cons: [
           'Newer platform — smaller community than Bubble',
-          '$49/month after trial (no permanent free tier)',
+          '$49/month for real production generation (free tier is limited to 3 builds)',
         ],
-        pricing: '72-hour trial, then $49/month',
+        pricing: 'Free (3 builds), then $49/month',
         bestFor: 'Teams who want RAD speed without getting locked into a proprietary visual-editor runtime',
         url: 'https://builder.ainative.studio',
         isBuilder: true,
@@ -697,7 +697,7 @@ export default async function BestCategoryPage({ params }: PageProps) {
               Ready to build with the best?
             </h2>
             <p className="text-muted-foreground mb-8">
-              Start your 72-hour free trial. Go from idea to deployed app and autonomous business
+              Start free — no credit card required. Go from idea to deployed app and autonomous business
               operations in minutes.
             </p>
             <Button asChild size="lg">
