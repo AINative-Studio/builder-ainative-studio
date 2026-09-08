@@ -37,9 +37,15 @@ import {
 interface ProposalGateProps {
   /** Recommended tier to spotlight in the cost line (name + price). */
   plan: ProposalPlan
+  /**
+   * True when the founder is already on a paying AINative plan that covers
+   * Builder (2026-09-08 bugfix) — makes the cost line say "already included
+   * on your existing plan" instead of quoting an unrelated tier's price.
+   */
+  alreadyCovered?: boolean
 }
 
-export function ProposalGate({ plan }: ProposalGateProps) {
+export function ProposalGate({ plan, alreadyCovered }: ProposalGateProps) {
   const { state } = useBuild()
 
   // The proposal is deterministic given the founder's context. Recompute only
@@ -53,8 +59,9 @@ export function ProposalGate({ plan }: ProposalGateProps) {
         // Honest framing (#310/#311): only claim "you've seen it work" when the
         // founder has actually seen the working preview render.
         sawPreview: state.sawPreview,
+        alreadyCovered,
       }),
-    [state.companyName, state.idea, plan, state.sawPreview],
+    [state.companyName, state.idea, plan, state.sawPreview, alreadyCovered],
   )
 
   // Which system's preview is expanded (click-to-preview). Default to the first

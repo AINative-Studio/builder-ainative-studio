@@ -182,20 +182,32 @@ export function Pricing() {
           + a clear cost line, presented BEFORE the tiers so the founder experiences
           the plan (mid-journey) rather than being cold-sold. Spotlights the featured
           tier for the cost line; the tiers below own checkout. */}
-      <ProposalGate plan={{ id: featuredTier.id, name: featuredTier.name, monthly: featuredTier.monthly }} />
+      <ProposalGate
+        plan={{ id: featuredTier.id, name: featuredTier.name, monthly: featuredTier.monthly }}
+        alreadyCovered={alreadyCovered}
+      />
 
       {/* Existing-subscriber recognition (#251): a founder already on an AINative
           paid plan (Pro/Business/Enterprise) is COVERED — never pitch them tiers
-          they already have. Their plan limits govern Builder usage. */}
+          they already have. Their plan limits govern Builder usage.
+          2026-09-08 bugfix: this button used to say only "Keep building →" with
+          no indication that anything would actually happen — real customer
+          feedback ("there is no button to kick off this workflow") was this
+          screen giving zero visible confirmation before navigating away, even
+          though Live.tsx DOES auto-enroll the company into the nightly loop
+          once activePlan+gates.nightlyLoop are true. The copy now says plainly
+          what clicking through does; the actual confirmation ("— enrolled")
+          already lives on Live.tsx and is unchanged here. */}
       {alreadyCovered && (
         <div className="m-cody-banner" data-testid="pricing-on-plan">
           <p>
             <span className="m-glyph">◇</span> You&apos;re on the AINative{' '}
             <strong>{onPlanLabel[state.activePlan] || state.activePlan}</strong> plan — Builder is
-            covered by your existing plan limits. No new subscription needed.
+            covered by your existing plan limits. No new subscription needed. The 4 systems above
+            wire in automatically once you head back to your dashboard.
           </p>
           <button className="btn-primary" data-testid="pricing-keep-building" onClick={backToLive}>
-            Keep building →
+            Wire it up →
           </button>
         </div>
       )}
