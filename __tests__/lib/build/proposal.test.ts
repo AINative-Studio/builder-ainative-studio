@@ -181,6 +181,23 @@ describe('buildProposal', () => {
     expect(p.recommendedTier).toBe('business')
   })
 
+  // 2026-09-08 bugfix: real customer feedback (an Enterprise subscriber) — this
+  // cost line used to unconditionally say "included on Pro — $49/mo" even for a
+  // founder already covered by a higher, unrelated plan, directly contradicting
+  // the "you're covered, no new subscription" banner shown right below it.
+  it('never quotes an unrelated tier price when the founder is already covered', () => {
+    const p = buildProposal({
+      companyName: 'Voya',
+      idea: 'travel app',
+      plan: { id: 'pro', name: 'Pro', monthly: 49 },
+      alreadyCovered: true,
+    })
+    expect(p.costLine).not.toContain('$49/mo')
+    expect(p.costLine).not.toContain('Pro —')
+    expect(p.costLine.toLowerCase()).toContain('already included')
+    expect(p.costLine.toLowerCase()).toContain('no new subscription')
+  })
+
   it('honors the maxSystems cap', () => {
     const p = buildProposal({ companyName: 'Riff', idea: 'crm sales invoicing helpdesk voice commerce', plan: PLAN, maxSystems: 2 })
     expect(p.systems.length).toBeLessThanOrEqual(2)

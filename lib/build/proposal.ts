@@ -272,6 +272,15 @@ export function buildProposal(opts: {
   plan: ProposalPlan
   maxSystems?: number
   sawPreview?: boolean
+  /**
+   * Existing-subscriber recognition (2026-09-08 bugfix): true when the founder
+   * is already on a paying AINative plan (Pro/Business/Enterprise) that covers
+   * Builder. Real bug found via customer feedback: this cost line used to
+   * unconditionally say "included on Pro — $49/mo" even for an Enterprise
+   * subscriber, directly contradicting the correct "you're covered, no new
+   * subscription" banner rendered right below it on the same screen.
+   */
+  alreadyCovered?: boolean
 }): Proposal {
   const companyName = (opts.companyName || '').trim()
   const idea = (opts.idea || '').trim()
@@ -297,7 +306,9 @@ export function buildProposal(opts: {
     ? `You’re already down the path — ${running}. To make ${displayName} real, Cody wires ${n} business system${n === 1 ? '' : 's'} around it. Click any one to see what it’d look like.`
     : `You’re already down the path — ${running}. Cody wires the business systems that make ${displayName} real.`
 
-  const costLine = `Everything below is included on ${opts.plan.name} — $${opts.plan.monthly}/mo. You own 100%, cancel anytime.`
+  const costLine = opts.alreadyCovered
+    ? `Everything below is already included on your existing plan — no new subscription needed.`
+    : `Everything below is included on ${opts.plan.name} — $${opts.plan.monthly}/mo. You own 100%, cancel anytime.`
 
   return {
     companyName,
