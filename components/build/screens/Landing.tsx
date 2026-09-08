@@ -139,7 +139,7 @@ export function Landing() {
                   <div className="m-land-rule">Builder drafts your plan.</div>
                   <div className="m-land-rule">Builder builds your MVP.</div>
                   <div className="m-land-rule">Builder runs your pipeline.</div>
-                  <div className="m-land-rule">Builder closes your deals.</div>
+                  <div className="m-land-rule">Builder moves your deals toward close.</div>
                   <div className="m-land-rule is-last">Builder tracks your cap table.</div>
                   <div className="m-land-title" style={{ fontSize: 18 }}>One partner. Every act.</div>
                 </div>
@@ -168,6 +168,7 @@ export function Landing() {
 
       {/* footer */}
       <div className="m-land-foot">
+        <a href="/showcase">Showcase</a>
         <a href="/about">About</a>
         <a href="https://ainative.studio/terms">Terms</a>
         <a href="https://ainative.studio/acceptable-use">Acceptable use</a>
