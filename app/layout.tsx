@@ -107,77 +107,22 @@ export const metadata: Metadata = {
     googleBot: { index: true, follow: true, 'max-video-preview': -1, 'max-image-preview': 'large', 'max-snippet': -1 },
   },
   alternates: {
-    canonical: 'https://live.ainative.studio',
+    canonical: 'https://builder.ainative.studio',
   },
   verification: {},
 }
 
-// Dual JSON-LD: WebApplication + Organization (like Bolt, but richer)
-const jsonLd = {
-  '@context': 'https://schema.org',
-  '@graph': [
-    {
-      // Product (not WebApplication/SoftwareApplication) — those app types
-      // require a star rating for Google Rich Results eligibility, and we
-      // never fabricate rating data that doesn't exist (#517).
-      '@type': 'Product',
-      name: 'AINative Builder',
-      url: 'https://builder.ainative.studio',
-      description: 'An AI co-founder that builds AND runs your company: describe an idea and Cody composes a real running product plus the business systems around it, launches it, and operates it 24/7 on real AINative primitives you own. Build a company or an app — from a prompt to a real, running, AX-optimized product.',
-      category: 'DeveloperApplication',
-      offers: {
-        '@type': 'AggregateOffer',
-        lowPrice: '0',
-        highPrice: '699',
-        priceCurrency: 'USD',
-        offerCount: 4,
-        offers: [
-          { '@type': 'Offer', name: 'Starter', price: '0', priceCurrency: 'USD', description: '10K LLM tokens/month, 1K API credits, open-source models' },
-          { '@type': 'Offer', name: 'Pro', price: '49', priceCurrency: 'USD', description: '1M LLM tokens/month, 50K API credits, Claude Sonnet 4, 10GB storage' },
-          { '@type': 'Offer', name: 'Business', price: '149', priceCurrency: 'USD', description: '5M LLM tokens/month, 150K API credits, all models, Cody AI agent, 50GB storage' },
-          { '@type': 'Offer', name: 'Enterprise', price: '699', priceCurrency: 'USD', description: '10M LLM tokens/month, 200K API credits, Agent Swarm, 100GB storage, SSO' },
-        ],
-      },
-      additionalProperty: [
-        'AI React component generation',
-        'Multi-model support (Claude, Qwen, Gemma, DeepSeek)',
-        'Agent Experience (AX) optimization',
-        'Automatic SEO and structured data',
-        'Real-time streaming preview',
-        'Template gallery',
-        'One-click deployment',
-        'Design token system',
-      ].map((value) => ({ '@type': 'PropertyValue', name: 'feature', value })),
-      image: 'https://builder.ainative.studio/opengraph-image',
-    },
-    {
-      '@type': 'WebSite',
-      name: 'AINative Builder',
-      url: 'https://builder.ainative.studio',
-      potentialAction: {
-        '@type': 'SearchAction',
-        target: 'https://builder.ainative.studio/templates?search={search_term_string}',
-        'query-input': 'required name=search_term_string',
-      },
-    },
-    {
-      '@type': 'Organization',
-      name: 'AINative Studio',
-      url: 'https://ainative.studio',
-      logo: 'https://builder.ainative.studio/ainative-logo-v2.png',
-      description: 'Open-source AI-native IDE with agent memory, vector search, and multi-model support.',
-      sameAs: [
-        'https://github.com/AINative-Studio',
-        'https://twitter.com/AINativeStudio',
-      ],
-      parentOrganization: {
-        '@type': 'Organization',
-        name: 'AINative Studio',
-        url: 'https://ainative.studio',
-      },
-    },
-  ],
-}
+// Site-wide JSON-LD lives on individual pages (app/page.tsx, app/pricing/page.tsx,
+// app/best/[category]/page.tsx, app/compare/[competitor]/page.tsx, app/about/page.tsx,
+// etc.), each with data matching its own real content. A global block used to live
+// here and was injected on every route, including auth-shell pages that have no
+// business advertising Offers — it duplicated and conflicted with page-level schema
+// (two different Product/Offer blocks with two different prices on the same page)
+// and had gone stale (Business tier priced at $149, when lib/build/pricing-tiers.ts
+// has been $199 since #76). This was very likely the root cause of the "444 invalid
+// structured data items" finding in docs/growth/TECHNICAL_SEO_AUDIT_2026-09-06.md —
+// removed rather than fixed in place, since every route that needs structured data
+// already defines its own, correct copy.
 
 export default function RootLayout({
   children,
@@ -187,10 +132,6 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <script
-          type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-        />
         <script
           dangerouslySetInnerHTML={{
             __html: `

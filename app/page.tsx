@@ -23,6 +23,52 @@ export const metadata: Metadata = {
   alternates: { canonical: 'https://builder.ainative.studio/' },
 }
 
+// Product (not WebApplication/SoftwareApplication) — those app types require a
+// star rating for Google Rich Results eligibility, and we never fabricate rating
+// data that doesn't exist (#517). Prices mirror the real tiers in
+// lib/build/pricing-tiers.ts — do not hand-maintain a separate figure here.
+const productJsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'Product',
+  name: 'AINative Builder',
+  url: 'https://builder.ainative.studio',
+  description:
+    'An AI co-founder that builds AND runs your company: describe an idea and Cody composes a real running product plus the business systems around it, launches it, and operates it 24/7 on real AINative primitives you own.',
+  category: 'DeveloperApplication',
+  brand: { '@type': 'Organization', name: 'AINative Studio', url: 'https://ainative.studio' },
+  offers: {
+    '@type': 'AggregateOffer',
+    lowPrice: '0',
+    highPrice: '199',
+    priceCurrency: 'USD',
+    offerCount: 4,
+    url: 'https://builder.ainative.studio/pricing',
+  },
+}
+
+const webSiteJsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'WebSite',
+  name: 'AINative Builder',
+  url: 'https://builder.ainative.studio',
+  potentialAction: {
+    '@type': 'SearchAction',
+    target: 'https://builder.ainative.studio/templates?search={search_term_string}',
+    'query-input': 'required name=search_term_string',
+  },
+}
+
+const organizationJsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'Organization',
+  name: 'AINative Studio',
+  url: 'https://ainative.studio',
+  logo: 'https://builder.ainative.studio/ainative-logo-v2.png',
+  description:
+    'AINative Studio builds AINative Builder, an AI co-founder product that builds and runs companies on open primitives (ZeroDB, ZeroPipeline, ZeroInvoice, ServiceOS, ZeroVoice).',
+  sameAs: ['https://github.com/AINative-Studio', 'https://twitter.com/AINativeStudio'],
+}
+
 export default function Home() {
   const isDevelopment = process.env.NODE_ENV === 'development'
 
@@ -32,5 +78,12 @@ export default function Home() {
     return <EnvSetup missingVars={missingVars} />
   }
 
-  return <BuildApp />
+  return (
+    <>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(productJsonLd) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(webSiteJsonLd) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationJsonLd) }} />
+      <BuildApp />
+    </>
+  )
 }
