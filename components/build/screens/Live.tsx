@@ -7,7 +7,7 @@
  * Cody's nightly-run status is our real recursive loop pointed at the user's co.
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useBuild } from '@/contexts/build-context'
 import { trackEvent } from '@/components/analytics/google-analytics'
 import { trackMeta } from '@/components/analytics/meta-pixel'
@@ -57,6 +57,14 @@ export function Live() {
   // honest empty state so we don't flash "ask me anything" before hydration.
   const [chatLoaded, setChatLoaded] = useState(false)
   const [asking, setAsking] = useState(false)
+  // Real bug (customer-reported, 2026-09-08): the chat log now scrolls
+  // internally (app/modernist.css .m-chat-log) instead of overflowing the
+  // page, but with no auto-scroll a founder sending a new message would land
+  // back at the TOP of a long conversation instead of seeing the new reply.
+  const chatLogRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    chatLogRef.current?.scrollTo({ top: chatLogRef.current.scrollHeight })
+  }, [chat, asking])
   const [systems, setSystems] = useState<BusinessSystem[]>(buildSystems())
   const [nightshift, setNightshift] = useState<{ hasRun: boolean; summary?: string; lastRunAt?: string } | null>(null)
   // Early email capture (#207): an anonymous founder can save/share their company
@@ -890,7 +898,7 @@ export function Live() {
         <div className="m-live-col m-live-col-chat">
           <div className="m-live-card m-chat">
             <div className="m-mono m-live-card-h"><span className="m-glyph">◇</span> Ask Cody anything</div>
-            <div className="m-chat-log" data-testid="chat-log">
+            <div className="m-chat-log" data-testid="chat-log" ref={chatLogRef}>
               {/* Honest empty state (#52): shown only once the persisted thread has
                   loaded and is genuinely empty — a brand-new company, no fake history. */}
               {chatLoaded && chat.length === 0 && (
