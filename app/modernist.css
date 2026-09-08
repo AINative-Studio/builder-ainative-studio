@@ -1040,11 +1040,19 @@
 .m-infra-btns button.is-soon { border-style: dashed; color: var(--text-muted); border-color: var(--neutral-line); }
 
 .m-chat { display: flex; flex-direction: column; min-height: 320px; }
-.m-chat-log { flex: 1; display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px; }
+/* Real bug (customer-reported, 2026-09-08): "after a few chats, the screen is
+   out of space and no option to continue" — .m-chat-log had no overflow rule
+   at all, so a growing conversation just overflowed the card's bounds
+   (clipped or pushed .m-chat-input off-screen) instead of scrolling within
+   its own allotted space. .m-chat already sets min-height:0/height:100% on
+   its sticky column (#484) specifically so a flex child CAN shrink and
+   scroll internally — overflow-y was the missing piece that actually uses it.
+   .m-chat-input keeps flex-shrink:0 so Send never gets squeezed out either. */
+.m-chat-log { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px; }
 .m-chat-user { align-self: flex-end; background: var(--color-surface); padding: 8px 12px; font-size: 13px; max-width: 80%; }
 .m-chat-cody { font-size: 13px; color: var(--text-body-85); line-height: 1.5; }
 .m-chat-cody .m-glyph { color: var(--color-accent); }
-.m-chat-input { display: flex; gap: 6px; }
+.m-chat-input { display: flex; gap: 6px; flex-shrink: 0; }
 .m-chat-input input { flex: 1; padding: 9px 10px; border: 1.5px solid var(--neutral-line); font-family: var(--font-body); font-size: 13px; }
 .m-live-footprint { text-align: center; padding: 16px; font-size: 11px; color: var(--text-muted); background: var(--color-surface); }
 
