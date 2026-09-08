@@ -139,6 +139,24 @@ export function Account() {
   // the fetch SETTLES either way, so the UI shows an honest "Checking your
   // plan…" placeholder instead of a wrong, confident "Free".
   const [planLoading, setPlanLoading] = useState(!isGuest && !state.activePlan)
+  // AINative staff/admin recognition (2026-09-08): an admin's "Enterprise"
+  // plan (lib/ainative/active-plan.ts's staff bypass, rawPlan: 'admin') has no
+  // real Stripe customer behind it — confirmed live: "Manage plan / billing"
+  // correctly returns "No active Stripe subscription found" for such an
+  // account, since there is nothing for Stripe's portal to open. The real
+  // billing home for an admin is the AINative platform dashboard itself
+  // (ainative.studio/billing), not Builder's Stripe-portal proxy. Fetched in
+  // its own effect (not gated behind `state.activePlan` like the hydration
+  // effect below) so a founder who reaches Account with activePlan already
+  // hydrated from Live still gets recognized as admin.
+  const [isAinativeAdmin, setIsAinativeAdmin] = useState(false)
+  useEffect(() => {
+    if (isGuest) return
+    fetch('/api/build/subscription/status')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d?.admin === true) setIsAinativeAdmin(true) })
+      .catch(() => {})
+  }, [isGuest])
 
   // Existing-subscriber recognition (#251) — the same hydration Live/Pricing run.
   // Without it, an Enterprise/admin account opening Account directly saw plan
@@ -331,7 +349,22 @@ export function Account() {
           </div>
           <div className="m-sec-row">
             <span>Billing</span>
-            {activePlan
+            {isAinativeAdmin ? (
+              // AINative staff/admin: this "Enterprise" plan is a staff bypass
+              // (lib/ainative/active-plan.ts) with no real Stripe customer —
+              // Builder's Stripe-portal proxy correctly has nothing to open
+              // for this account. Route to the real AINative platform billing
+              // dashboard instead of a button that can only ever fail here.
+              <a
+                className="btn-secondary"
+                data-testid="account-ainative-billing-link"
+                href="https://ainative.studio/billing"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Manage on ainative.studio ↗
+              </a>
+            ) : activePlan
               ? <button className="btn-secondary" data-testid="account-manage-billing" disabled={portalBusy} onClick={manageBilling}>{portalBusy ? 'Opening…' : 'Manage plan / billing ↗'}</button>
               : <button className="btn-primary" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'pricing' })}>Upgrade →</button>}
           </div>
