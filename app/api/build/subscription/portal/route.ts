@@ -16,6 +16,15 @@ import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 
 export const runtime = 'nodejs'
+// Real bug (customer-reported, 2026-09-08): the client observed a 404 for
+// this exact route/method in production, while a direct server-side curl to
+// the same path succeeded (401 unauthenticated, as expected) — consistent
+// with an edge/CDN layer treating this session-scoped POST route as
+// cacheable/static (this deployment's homepage was observed serving
+// x-nextjs-cache: HIT). force-dynamic is the same fix already applied to the
+// sibling secrets route for exactly this class of never-cacheable,
+// session-authenticated handler.
+export const dynamic = 'force-dynamic'
 
 const CORE = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 const APP = process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio'
