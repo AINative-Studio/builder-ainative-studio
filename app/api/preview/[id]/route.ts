@@ -779,7 +779,21 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
                 ? JSON.stringify([chosenPreviewSystem.fonts.body.family, chosenPreviewSystem.fonts.heading.family, 'system-ui', 'sans-serif'])
                 : JSON.stringify(['Inter', 'Poppins', 'system-ui', 'sans-serif'])},
             },
-            colors: {
+            // Real bug (customer-reported, 2026-09-09, Ledra): this block was
+            // a pure literal with no chosenPreviewSystem branch at all, unlike
+            // fontFamily.sans right above it (#593 fixed fonts, missed this).
+            // Any generated class like bg-brand-primary/bg-dark-1 rendered
+            // AINative's generic purple/navy regardless of the chosen design
+            // system. Now derived from the same real palette data used
+            // everywhere else (lib/design-systems/catalog.ts via
+            // chosenPreviewSystem), falling back to the original literal
+            // values when no system was chosen.
+            colors: chosenPreviewSystem ? {
+              'brand-primary': chosenPreviewSystem.palette.accent,
+              'dark-1': chosenPreviewSystem.palette.bg,
+              'dark-2': chosenPreviewSystem.palette.surface,
+              'dark-3': chosenPreviewSystem.palette.accent2,
+            } : {
               'brand-primary': '#5867EF',
               'dark-1': '#131726',
               'dark-2': '#22263c',
@@ -807,7 +821,9 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
     <script src="/shadcn-components.js"></script>
     <script src="/aikit-components.js"></script>
     <style>
-      body { margin: 0; font-family: 'Inter', 'Poppins', system-ui, sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+      body { margin: 0; font-family: ${chosenPreviewSystem
+        ? `'${chosenPreviewSystem.fonts.body.family}', '${chosenPreviewSystem.fonts.heading.family}', system-ui, sans-serif`
+        : `'Inter', 'Poppins', system-ui, sans-serif`}; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
       *, *::before, *::after { box-sizing: border-box; }
       html { scroll-behavior: smooth; }
       h1, h2, h3, h4, h5, h6 { text-wrap: balance; }
