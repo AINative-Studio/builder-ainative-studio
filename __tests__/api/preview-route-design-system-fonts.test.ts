@@ -37,3 +37,54 @@ describe('preview [id] route loads the chosen design system\'s real fonts (2026-
     expect(source).toMatch(/chosenPreviewSystem\.fonts\.body\.family/)
   })
 })
+
+/**
+ * Real bug (customer-reported, 2026-09-09, Ledra): the chosen design system
+ * ("Ledger") DID reach the model's own generated component correctly (real
+ * Libre Franklin/JetBrains Mono fonts, real #1f6f43 accent, rounded-[0px] —
+ * confirmed via a deep analysis of the real generated output), but the
+ * static preview-shell HTML around it disagreed on two counts:
+ *   (a) the plain CSS `body { font-family: ... }` rule was a pure literal
+ *       ('Inter', 'Poppins', ...), unconditional, contradicting the
+ *       correctly-design-system-aware <link> tag and Tailwind
+ *       fontFamily.sans config two/three lines away in the SAME template.
+ *   (b) the Tailwind `colors` block (brand-primary/dark-1/2/3) was ALSO a
+ *       pure literal with no chosenPreviewSystem branch at all — any
+ *       generated class like bg-brand-primary rendered AINative's generic
+ *       purple/navy regardless of which system was chosen.
+ * Both are now derived from the same real palette data (chosenPreviewSystem)
+ * used everywhere else in this file, with the original literals kept only
+ * as the no-system-chosen fallback.
+ */
+describe('preview [id] route: body CSS font-family and Tailwind colors also honor the chosen system (2026-09-09 bugfix)', () => {
+  const source = fs.readFileSync(
+    path.join(process.cwd(), 'app/api/preview/[id]/route.ts'),
+    'utf8',
+  )
+
+  it('the plain CSS body rule is conditional on chosenPreviewSystem, not a bare literal', () => {
+    const bodyRuleIdx = source.indexOf("body { margin: 0; font-family:")
+    expect(bodyRuleIdx).toBeGreaterThan(-1)
+    const nearby = source.slice(bodyRuleIdx, bodyRuleIdx + 300)
+    expect(nearby).toMatch(/chosenPreviewSystem/)
+    expect(nearby).toMatch(/chosenPreviewSystem\.fonts\.body\.family/)
+  })
+
+  it('falls back to the original Inter/Poppins body font when no system was chosen', () => {
+    expect(source).toMatch(/'Inter', 'Poppins', system-ui, sans-serif/)
+  })
+
+  it('the Tailwind colors block is conditional on chosenPreviewSystem, mapped from the real palette', () => {
+    const colorsIdx = source.indexOf('colors: chosenPreviewSystem ? {')
+    expect(colorsIdx).toBeGreaterThan(-1)
+    const nearby = source.slice(colorsIdx, colorsIdx + 400)
+    expect(nearby).toMatch(/chosenPreviewSystem\.palette\.accent/)
+    expect(nearby).toMatch(/chosenPreviewSystem\.palette\.bg/)
+    expect(nearby).toMatch(/chosenPreviewSystem\.palette\.surface/)
+  })
+
+  it('falls back to the original hardcoded brand colors when no system was chosen', () => {
+    expect(source).toContain("'brand-primary': '#5867EF'")
+    expect(source).toContain("'dark-1': '#131726'")
+  })
+})
