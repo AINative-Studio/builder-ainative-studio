@@ -1,0 +1,21 @@
+<!-- @dsCard group="Components" name="Dialog" subtitle="Approval gate before a consequential action" viewport="640x360" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ledger — Dialog</title>
+<link rel="stylesheet" href="../styles.css" />
+<style>
+.demo { max-width: 640px; margin: 0 auto; padding: var(--space-6) var(--space-4) var(--space-8); }
+.demo-head { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.55; margin: var(--space-6) 0 var(--space-3); }
+.demo-head:first-child { margin-top: 0; }
+.row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-3); }
+.note { font-size: 12px; opacity: 0.6; max-width: 60ch; }
+</style>
+</head>
+<body>
+<div class="dialog-backdrop" style="position:absolute; min-height: 360px"><div class="dialog" role="dialog"><div class="dialog-title">Approve refund of $240?</div><div class="dialog-body">The agent will call <span class="tool">stripe.refund</span> for order #4411. This is irreversible.</div><div class="dialog-actions"><button type="button" class="btn btn-secondary">Reject</button><button type="button" class="btn btn-primary">Approve<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button></div></div></div>
+</body></html>
