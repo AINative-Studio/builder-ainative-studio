@@ -14,6 +14,7 @@ import { COMPANY_ARTIFACT_BODIES } from '@/components/build/artifacts/company-ar
 import { Swarm } from '@/components/build/artifacts/Swarm'
 import { Preview } from '@/components/build/artifacts/Preview'
 import { Wedge } from '@/components/build/artifacts/Wedge'
+import { DesignPicker } from '@/components/build/artifacts/DesignPicker'
 import { Pipeline } from '@/components/build/artifacts/Pipeline'
 import { Conflict } from '@/components/build/artifacts/Conflict'
 import { Graph } from '@/components/build/artifacts/Graph'
@@ -24,6 +25,7 @@ const SPECIAL_BODIES: Record<string, () => React.ReactNode> = {
   swarm: Swarm,
   preview: Preview,
   wedge: Wedge,
+  design: DesignPicker,
   pipeline: Pipeline,
   'rescope-intent': RescopeIntent,
   conflict: Conflict,

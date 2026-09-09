@@ -1,6 +1,6 @@
 /** Artifact display titles (04-SCREENS). Shared by ArtifactRouter + overlays. */
 export const ARTIFACT_TITLES: Record<string, string> = {
-  brief: 'Product Brief', prd: 'Product Requirements', comp: 'AINative Composition Plan',
+  design: 'Design System', brief: 'Product Brief', prd: 'Product Requirements', comp: 'AINative Composition Plan',
   dataModel: 'Data Model', memoryPolicy: 'Memory Policy', agentDef: 'Agent Definition',
   codingStandards: 'Engineering Standards', apiSpec: 'Integrations',
   backlog: 'Build Backlog', sprintPlan: 'Sprint Plan', swarm: 'The swarm',

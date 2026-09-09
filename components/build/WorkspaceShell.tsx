@@ -9,7 +9,7 @@
 import { useState } from 'react'
 import { useBuild } from '@/contexts/build-context'
 import { useSession } from 'next-auth/react'
-import { ACT_LABELS } from '@/lib/build/acts'
+import { APP_ACT_LABELS, COMPANY_ACT_LABELS } from '@/lib/build/acts'
 import type { Screen } from '@/lib/build/state'
 import { BuildOverlays } from '@/components/build/BuildOverlays'
 import { TerminalRibbon } from '@/components/build/TerminalRibbon'
@@ -23,7 +23,8 @@ function ActBar() {
   const { data: session } = useSession()
   const [menuOpen, setMenuOpen] = useState(false)
 
-  // Map current screen/view to one of the 5 acts for the tracker.
+  // Map current screen/view to one of this track's acts for the tracker.
+  const actLabels = state.track === 'company' ? COMPANY_ACT_LABELS : APP_ACT_LABELS
   const actIndex = currentActIndex(state)
   const doneCount = Object.keys(state.done).length
 
@@ -34,7 +35,7 @@ function ActBar() {
   return (
     <div className="m-actbar" role="navigation" aria-label="Build progress">
       <ol className="m-acts">
-        {ACT_LABELS.map((label, i) => {
+        {actLabels.map((label, i) => {
           const cls = i < actIndex ? 'is-done' : i === actIndex ? 'is-current' : 'is-upcoming'
           return (
             <li key={label} className={`m-act ${cls}`}>
@@ -165,11 +166,20 @@ export function WorkspaceShell({
 }
 
 // ---- helpers ----
-function currentActIndex(state: ReturnType<typeof useBuild>['state']): number {
-  // Idea(0) Build MVP(1) Launch(2) Company(3) Live(4)
+export function currentActIndex(state: ReturnType<typeof useBuild>['state']): number {
   if (state.screen === 'fork' || state.screen === 'intake') return 0
-  if (state.screen === 'pricing') return 2
   if (state.screen === 'live') return 4
-  if (state.track === 'company') return state.builtCompany ? 4 : 3
-  return state.builtMVP ? 2 : 1
+  if (state.track === 'company') {
+    // Company: Idea(0) Build MVP(1) Launch(2) Company(3) Live(4)
+    if (state.screen === 'pricing') return 2
+    return state.builtCompany ? 4 : 3
+  }
+  // App: Idea(0) Design(1) Build MVP(2) Launch(3) Live(4). Real bug
+  // (customer-reported, 2026-09-09): Design (#591) used to be invisible here
+  // entirely — the bar jumped straight from Idea to Build MVP as soon as
+  // generation started, even while the founder was still on the Design
+  // interrupt-view. designStepDone (not yet true) means still on Design.
+  if (state.screen === 'pricing') return 3
+  if (!state.designStepDone) return 1
+  return state.builtMVP ? 3 : 2
 }

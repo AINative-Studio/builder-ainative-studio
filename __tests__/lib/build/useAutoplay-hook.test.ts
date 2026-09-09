@@ -107,7 +107,7 @@ describe('useAutoplay — guard conditions (hook body)', () => {
 describe('useAutoplay — track complete (hook body)', () => {
   it('dispatches MVP_DONE + SET_OVERLAY + GOTO_VIEW when all app views done and builtMVP=false', () => {
     const allDone: Record<string, string> = {
-      brief: 'done', prd: 'done', comp: 'done', dataModel: 'done',
+      design: 'done', brief: 'done', prd: 'done', comp: 'done', dataModel: 'done',
       memoryPolicy: 'done', agentDef: 'done', codingStandards: 'done',
       apiSpec: 'done', backlog: 'done', sprintPlan: 'done',
       swarm: 'done', infra: 'done', preview: 'done',
@@ -123,7 +123,7 @@ describe('useAutoplay — track complete (hook body)', () => {
 
   it('does NOT dispatch MVP_DONE when builtMVP=true', () => {
     const allDone: Record<string, string> = {
-      brief: 'done', prd: 'done', comp: 'done', dataModel: 'done',
+      design: 'done', brief: 'done', prd: 'done', comp: 'done', dataModel: 'done',
       memoryPolicy: 'done', agentDef: 'done', codingStandards: 'done',
       apiSpec: 'done', backlog: 'done', sprintPlan: 'done',
       swarm: 'done', infra: 'done', preview: 'done',
@@ -154,7 +154,7 @@ describe('useAutoplay — ASK_PRIVACY (hook body)', () => {
   it('dispatches SET_OVERLAY(none) + ASK_PRIVACY when askedPrivacy=false and next is dataModel', () => {
     const state = wsState({
       askedPrivacy: false,
-      done: { brief: 'done', prd: 'done', comp: 'done' },
+      done: { design: 'done', brief: 'done', prd: 'done', comp: 'done' },
       view: 'dataModel',
       track: 'app',
     })
@@ -172,7 +172,7 @@ describe('useAutoplay — ASK_PRIVACY (hook body)', () => {
     // With askedPrivacy=true, the hook should not intercept
     const state = wsState({
       askedPrivacy: true,
-      done: { brief: 'done', prd: 'done', comp: 'done' },
+      done: { design: 'done', brief: 'done', prd: 'done', comp: 'done' },
       view: 'dataModel',
     })
     const dispatch = vi.fn()
@@ -226,12 +226,14 @@ describe('useAutoplay — wedge interrupt (hook body)', () => {
 
 describe('useAutoplay — GOTO_VIEW navigation (hook body)', () => {
   it('dispatches GOTO_VIEW when current view != next undone view', () => {
-    // 'brief' is undone (next in sequence), but current view is 'prd'
+    // 'brief' is undone (next in sequence), but current view is 'prd'.
+    // design must be marked done — otherwise IT'S the next undone view, not brief.
     const state = wsState({
-      done: {},
+      done: { design: 'done' },
       view: 'prd',
       track: 'app',
       askedPrivacy: true,
+      designStepDone: true,
     })
     const dispatch = vi.fn()
     vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
@@ -251,7 +253,7 @@ describe('useAutoplay — GOTO_VIEW navigation (hook body)', () => {
 describe('useAutoplay — build view overlay (hook body)', () => {
   it('dispatches SET_OVERLAY swarm for swarm view', () => {
     const doneBefore = {
-      brief: 'done', prd: 'done', comp: 'done', dataModel: 'done',
+      design: 'done', brief: 'done', prd: 'done', comp: 'done', dataModel: 'done',
       memoryPolicy: 'done', agentDef: 'done', codingStandards: 'done',
       apiSpec: 'done', backlog: 'done', sprintPlan: 'done',
     }
@@ -267,7 +269,7 @@ describe('useAutoplay — build view overlay (hook body)', () => {
 
   it('dispatches SET_OVERLAY provisioning for infra view', () => {
     const doneBefore = {
-      brief: 'done', prd: 'done', comp: 'done', dataModel: 'done',
+      design: 'done', brief: 'done', prd: 'done', comp: 'done', dataModel: 'done',
       memoryPolicy: 'done', agentDef: 'done', codingStandards: 'done',
       apiSpec: 'done', backlog: 'done', sprintPlan: 'done', swarm: 'done',
     }
@@ -287,7 +289,7 @@ describe('useAutoplay — build view overlay (hook body)', () => {
 describe('useAutoplay — prose view (hook body)', () => {
   it('dispatches SET_OVERLAY forming for a generated view', () => {
     vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {}))) // never resolves
-    const state = wsState({ done: {}, view: 'brief', track: 'app', askedPrivacy: true })
+    const state = wsState({ done: { design: 'done' }, view: 'brief', track: 'app', askedPrivacy: true, designStepDone: true })
     const dispatch = vi.fn()
     useAutoplay(state, dispatch)
     ;(globalThis as any).__triggerEffect?.(0)
@@ -311,7 +313,7 @@ describe('useAutoplay — prose view (hook body)', () => {
     } as unknown as Response)
     vi.stubGlobal('fetch', fetchMock)
 
-    const state = wsState({ done: {}, view: 'brief', track: 'app', askedPrivacy: true })
+    const state = wsState({ done: { design: 'done' }, view: 'brief', track: 'app', askedPrivacy: true, designStepDone: true })
     const dispatch = vi.fn()
     useAutoplay(state, dispatch)
     ;(globalThis as any).__triggerEffect?.(0)
@@ -332,7 +334,7 @@ describe('useAutoplay — prose view (hook body)', () => {
       json: async () => ({ error: 'boom' }),
     } as unknown as Response))
 
-    const state = wsState({ done: {}, view: 'brief', track: 'app', askedPrivacy: true })
+    const state = wsState({ done: { design: 'done' }, view: 'brief', track: 'app', askedPrivacy: true, designStepDone: true })
     const dispatch = vi.fn()
     useAutoplay(state, dispatch)
     ;(globalThis as any).__triggerEffect?.(0)
@@ -351,7 +353,7 @@ describe('useAutoplay — prose view (hook body)', () => {
     vi.stubGlobal('setTimeout', (fn: () => void) => { fn(); return 0 as any })
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('net fail')))
 
-    const state = wsState({ done: {}, view: 'brief', track: 'app', askedPrivacy: true })
+    const state = wsState({ done: { design: 'done' }, view: 'brief', track: 'app', askedPrivacy: true, designStepDone: true })
     const dispatch = vi.fn()
     useAutoplay(state, dispatch)
     ;(globalThis as any).__triggerEffect?.(0)
@@ -394,7 +396,7 @@ describe('useAutoplay — unknown view fallback', () => {
     vi.stubGlobal('setTimeout', (fn: () => void) => { fn(); return 0 as any })
 
     const doneBefore: Record<string, string> = {
-      brief: 'done', prd: 'done', comp: 'done', dataModel: 'done',
+      design: 'done', brief: 'done', prd: 'done', comp: 'done', dataModel: 'done',
       memoryPolicy: 'done', agentDef: 'done', codingStandards: 'done',
       apiSpec: 'done', backlog: 'done', sprintPlan: 'done',
     }
