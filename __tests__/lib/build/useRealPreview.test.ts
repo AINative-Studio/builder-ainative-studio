@@ -284,6 +284,63 @@ describe('useRealPreview — dataModel wiring (#532)', () => {
   })
 })
 
+// ── Design System Picker wiring (#592) ──────────────────────────────────────
+
+describe('useRealPreview — designSystemId wiring (#592)', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('includes designSystemId in the /api/chat-ws request body when the founder chose one', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(sseResponse([
+        sseEvent({ type: 'init', chatId: 'chat-ds' }),
+      ]))
+      .mockResolvedValueOnce(filesNotFound())
+      .mockResolvedValueOnce({ ok: true, text: async () => 'x'.padEnd(900) } as unknown as Response)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useRealPreview('Build a habit tracker', true, undefined, 'cody'))
+    await waitFor(() => expect(result.current.status).toBe('ready'), { timeout: 3000 })
+
+    const [, init] = fetchMock.mock.calls[0]
+    const body = JSON.parse((init as RequestInit).body as string)
+    expect(body.designSystemId).toBe('cody')
+  })
+
+  it('omits designSystemId from the request body when the founder skipped the picker (never a breaking change)', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(sseResponse([
+        sseEvent({ type: 'init', chatId: 'chat-no-ds' }),
+      ]))
+      .mockResolvedValueOnce(filesNotFound())
+      .mockResolvedValueOnce({ ok: true, text: async () => 'x'.padEnd(900) } as unknown as Response)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useRealPreview('Build a todo app', true))
+    await waitFor(() => expect(result.current.status).toBe('ready'), { timeout: 3000 })
+
+    const [, init] = fetchMock.mock.calls[0]
+    const body = JSON.parse((init as RequestInit).body as string)
+    expect(body).not.toHaveProperty('designSystemId')
+  })
+
+  it('omits designSystemId when passed as an empty string (the reducer default)', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(sseResponse([
+        sseEvent({ type: 'init', chatId: 'chat-empty-ds' }),
+      ]))
+      .mockResolvedValueOnce(filesNotFound())
+      .mockResolvedValueOnce({ ok: true, text: async () => 'x'.padEnd(900) } as unknown as Response)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useRealPreview('Build a todo app', true, undefined, ''))
+    await waitFor(() => expect(result.current.status).toBe('ready'), { timeout: 3000 })
+
+    const [, init] = fetchMock.mock.calls[0]
+    const body = JSON.parse((init as RequestInit).body as string)
+    expect(body).not.toHaveProperty('designSystemId')
+  })
+})
+
 // ── SSE event parsing ────────────────────────────────────────────────────────
 
 describe('useRealPreview — SSE event parsing', () => {

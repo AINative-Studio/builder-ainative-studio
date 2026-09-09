@@ -11,6 +11,7 @@ import { Start } from '@/components/build/screens/Start'
 import { BuildStart } from '@/components/build/screens/BuildStart'
 import { Fork } from '@/components/build/screens/Fork'
 import { Intake } from '@/components/build/screens/Intake'
+import { DesignPicker } from '@/components/build/screens/DesignPicker'
 import { Workspace } from '@/components/build/screens/Workspace'
 import { Pricing } from '@/components/build/screens/Pricing'
 import { Live } from '@/components/build/screens/Live'
@@ -61,6 +62,7 @@ function ScreenRouter() {
     case 'build': return <BuildStart />
     case 'fork': return <Fork />
     case 'intake': return <Intake />
+    case 'design': return <DesignPicker />
     case 'ws': return <Workspace />
     case 'pricing': return <Pricing />
     case 'live': return <Live />

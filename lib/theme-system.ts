@@ -211,3 +211,81 @@ export function applyThemeToPrompt(prompt: string, theme: ThemePalette): string 
     .replace(/THEME_DARK/g, theme.dark)
 }
 
+/**
+ * Design System Picker (#592) — map a founder-chosen DesignSystem
+ * (lib/design-systems/catalog.ts, richer real data: fonts, radius, shadows,
+ * imageTreatment) onto the ThemePalette shape formatThemeForPrompt/
+ * applyThemeToPrompt already consume, so an explicit pick reuses the exact
+ * same real prompt-injection mechanism as today's automatic selectTheme() —
+ * not a second, parallel pipeline.
+ */
+export function themeFromDesignSystem(system: {
+  id: string
+  name: string
+  palette: { bg: string; surface: string; text: string; accent: string; accent2: string }
+}): ThemePalette {
+  return {
+    id: system.id,
+    name: system.name,
+    primary: system.palette.accent,
+    primaryHover: darken(system.palette.accent, 20),
+    dark: system.palette.bg,
+    secondary: system.palette.accent2,
+    light: system.palette.surface,
+    accent: system.palette.accent2,
+    neutral: system.palette.text,
+  }
+}
+
+/**
+ * A real, correctly-formatted Google Fonts CSS2 URL for a design system's
+ * heading + body families and weights — the SAME query-string shape already
+ * proven working in every imported system's own compiled styles.css (e.g.
+ * `family=Cormorant:wght@300;400;500&family=Jost:wght@300;400;500`). Built
+ * here (#593) rather than left for the model to construct, so the codegen
+ * prompt can hand over an exact, pasteable string instead of a description.
+ */
+export function googleFontsUrl(system: {
+  fonts: {
+    heading: { family: string; weights: number[] }
+    body: { family: string; weights: number[] }
+  }
+}): string {
+  const familyParam = (f: { family: string; weights: number[] }) => {
+    const name = f.family.replace(/\s+/g, '+')
+    const weights = [...f.weights].sort((a, b) => a - b).join(';')
+    return `family=${name}:wght@${weights}`
+  }
+  const parts = [familyParam(system.fonts.heading)]
+  // Skip a duplicate &family= param when heading/body share the same family
+  // (avoids a malformed/redundant URL for systems like Modernist).
+  if (system.fonts.body.family !== system.fonts.heading.family) {
+    parts.push(familyParam(system.fonts.body))
+  }
+  return `https://fonts.googleapis.com/css2?${parts.join('&')}&display=swap`
+}
+
+/**
+ * Extra real design-system instructions ThemePalette has no field for
+ * (heading/body font, corner radius, shadow style) — appended after the
+ * COLOR THEME section so a chosen system's real typography/shape language
+ * reaches the codegen prompt, not just its colors.
+ */
+export function formatDesignSystemExtras(system: {
+  name: string
+  fonts: { heading: { family: string; weights: number[] }; body: { family: string; weights: number[] } }
+  radius: number
+  shadows: string
+}): string {
+  return `
+## TYPOGRAPHY & SHAPE — ${system.name.toUpperCase()} SYSTEM (MANDATORY)
+
+**Heading font**: "${system.fonts.heading.family}" — use for h1/h2/h3 and any large display text.
+**Body font**: "${system.fonts.body.family}" — use for paragraphs, labels, and UI text.
+Load BOTH fonts by adding this EXACT <link> tag to the document <head> — do not modify the URL, do not construct your own, do not default to a system font or Inter:
+\`<link rel="stylesheet" href="${googleFontsUrl(system)}">\`
+**Corner radius**: ${system.radius}px on buttons, cards, and inputs — apply consistently, do not mix radii.
+**Shadow style**: ${system.shadows === 'none' ? 'NO box-shadows anywhere — flat surfaces only, use borders for separation instead' : system.shadows === 'glow' ? 'colored glow shadows using the accent color, not gray drop-shadows' : `${system.shadows} shadows`}.
+`
+}
+

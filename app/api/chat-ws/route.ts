@@ -34,7 +34,8 @@ import { createChunkPlan, getChunkPlanSummary } from '@/lib/agent/chunk-planner'
 import { executeChunkPlan, getGenerationSummary } from '@/lib/agent/multi-pass-generator'
 import { mergeChunks, getMergeSummary } from '@/lib/agent/chunk-merger'
 import { generateAINativeFileSet } from '@/lib/ainative-file-generator'
-import { selectTheme, formatThemeForPrompt, applyThemeToPrompt } from '@/lib/theme-system'
+import { selectTheme, formatThemeForPrompt, applyThemeToPrompt, themeFromDesignSystem, formatDesignSystemExtras } from '@/lib/theme-system'
+import { getDesignSystem } from '@/lib/design-systems/catalog'
 import { parseMultiFileOutput } from '@/lib/multi-file-parser'
 import { shouldUseSandpack } from '@/lib/build/preview-engine'
 import { storeFiles as storeFilesV2 } from '@/lib/preview-store-v2'
@@ -214,7 +215,7 @@ const MODEL_CONFIG: Record<string, { provider: 'meta' | 'ainative'; modelId: str
 
 export async function POST(request: NextRequest) {
   try {
-    const { message, chatId, model: requestedModel, role: companyRole, dataModel } = await request.json()
+    const { message, chatId, model: requestedModel, role: companyRole, dataModel, designSystemId } = await request.json()
     // #448: an optional company-build role (marketing/sales/operations)
     // narrows composition toward that function's primitives. Untrusted
     // client input — validate against the real role set, default to none.
@@ -356,10 +357,21 @@ export async function POST(request: NextRequest) {
             { role: 'user' as const, content: enhancedPrompt }
           ]
 
-          // Select a color theme based on the prompt (variety instead of same purple every time)
-          const selectedTheme = selectTheme(message)
-          const themePrompt = formatThemeForPrompt(selectedTheme)
-          console.log(`🎨 Theme selected: ${selectedTheme.name} (${selectedTheme.primary})`)
+          // Design System Picker (#592): if the founder explicitly chose a system
+          // on the new 'design' screen (#591), use ITS real palette/fonts instead
+          // of the automatic prompt-based selection below. An unknown/missing id
+          // (the vast majority of requests today, and every request before this
+          // feature shipped) falls through to today's exact selectTheme(message)
+          // behavior — never a breaking change.
+          const chosenDesignSystem = typeof designSystemId === 'string' ? getDesignSystem(designSystemId) : undefined
+          const selectedTheme = chosenDesignSystem ? themeFromDesignSystem(chosenDesignSystem) : selectTheme(message)
+          const themePrompt = formatThemeForPrompt(selectedTheme) +
+            (chosenDesignSystem ? formatDesignSystemExtras(chosenDesignSystem) : '')
+          console.log(
+            chosenDesignSystem
+              ? `🎨 Design system chosen: ${chosenDesignSystem.name} (${chosenDesignSystem.palette.accent})`
+              : `🎨 Theme selected: ${selectedTheme.name} (${selectedTheme.primary})`
+          )
 
           // Build enhanced system prompt with theme + images + memory context
           // applyThemeToPrompt replaces THEME_PRIMARY/SECONDARY/ACCENT/DARK placeholders
