@@ -1599,6 +1599,10 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
             storePreview(responseId, cleanCodeResponse, message, {
               usage: tokenUsage,
               ainativeFiles,
+              // Design System Picker (#593): so the preview route's HTML
+              // wrapper can load THIS system's real Google Fonts instead of
+              // the hardcoded Inter+Poppins every preview got before this.
+              designSystemId: chosenDesignSystem?.id,
             })
 
             // Parse into multi-file output for Sandpack

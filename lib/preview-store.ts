@@ -25,6 +25,11 @@ interface ChatData {
   isStreaming?: boolean
   usage?: TokenUsage
   ainativeFiles?: Record<string, string>
+  // Design System Picker (#593): the founder's chosen system id (lib/design-
+  // systems/catalog.ts), when set, so the preview route's single-file HTML
+  // wrapper (app/api/preview/[id]/route.ts) can load ITS real Google Fonts
+  // instead of the hardcoded Inter+Poppins every preview got before this.
+  designSystemId?: string
 }
 
 declare global {
@@ -68,7 +73,7 @@ export function storePreview(
   id: string,
   content: string,
   userMessage?: string,
-  metadata?: { validationError?: string; usage?: TokenUsage; ainativeFiles?: Record<string, string> }
+  metadata?: { validationError?: string; usage?: TokenUsage; ainativeFiles?: Record<string, string>; designSystemId?: string }
 ): void {
   previewStore.set(id, content)
   console.log(`Preview stored with ID: ${id}, total stored: ${previewStore.size}`)
@@ -105,7 +110,8 @@ export function storePreview(
     validationError: metadata?.validationError,
     isStreaming: false,  // Mark as complete
     usage: metadata?.usage,
-    ainativeFiles: metadata?.ainativeFiles
+    ainativeFiles: metadata?.ainativeFiles,
+    designSystemId: metadata?.designSystemId ?? existingChat?.designSystemId
   })
 
   // Clean up old previews after 24 hours (increased from 1 hour)
