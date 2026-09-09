@@ -244,11 +244,20 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
         // pick clears any stale role from a prior company attempt.
         role: action.track === 'company' ? (action.role ?? state.role) : '',
         view: action.track === 'app' ? 'brief' : 'thesis',
-        // Design System Picker (#591): Fork now routes to the new 'design'
+        // Design System Picker (#591): App track routes to the new 'design'
         // screen first — pick a look before describing the idea. DesignPicker
         // dispatches GOTO_SCREEN: 'intake' itself (on either "Continue" or
         // "Skip"), so Intake's own logic is completely unchanged.
-        screen: 'design',
+        //
+        // Real bug (#601, customer-reported — Pathlo): the Company track has
+        // NO code path for a chosen design system to reach ANY output at all
+        // (COMPANY_VIEWS has no 'preview' — the company "landing" artifact is
+        // a fixed-template Modernist-styled component, never real generated
+        // app code). Showing the picker there implied a choice that did
+        // nothing — an honest, user-visible broken promise. Skip straight to
+        // 'intake' for the company track until #601's larger scope decision
+        // (extend the landing artifact to be real, styleable output) lands.
+        screen: action.track === 'app' ? 'design' : 'intake',
       }
     case 'START_BUILD': {
       // Only wipe generated/done when this is genuinely a NEW build (different slug).
