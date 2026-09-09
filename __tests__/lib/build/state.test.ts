@@ -79,20 +79,34 @@ describe('landing funnel (Claude Design handoff)', () => {
     expect(s.companyName).toBe('Acme')
   })
 
-  // Design System Picker (#591): PICK_TRACK now lands on 'design' (pick a
-  // look) instead of straight to 'intake' — DesignPicker itself routes on to
-  // 'intake' on Continue or Skip, so the idea seed still survives all the way
-  // into Intake either way.
-  it('full funnel: landing → start → build → PICK_TRACK(company) lands on design', () => {
+  // Design System Picker (#591, corrected by #601): the App track routes to
+  // 'design' (pick a look) before 'intake'. The Company track skips straight
+  // to 'intake' — #601 found the picker had NO effect on any company-track
+  // output (no 'preview' view exists for that track), so showing it there
+  // was an honest, user-visible broken promise (real customer report,
+  // Pathlo). Either way the idea seed survives into Intake.
+  it('full funnel: landing → start → build → PICK_TRACK(company) skips design, lands on intake (#601)', () => {
     const s = applyActions([
       { type: 'GOTO_SCREEN', screen: 'start' },
       { type: 'GOTO_SCREEN', screen: 'build' },
       { type: 'SET_IDEA', idea: 'seeded surprise idea' },
       { type: 'PICK_TRACK', track: 'company' },
     ])
-    expect(s.screen).toBe('design')
+    expect(s.screen).toBe('intake')
     expect(s.track).toBe('company')
-    expect(s.idea).toBe('seeded surprise idea') // seed survives into design → intake
+    expect(s.idea).toBe('seeded surprise idea')
+  })
+
+  it('full funnel: landing → start → build → PICK_TRACK(app) lands on design (#591)', () => {
+    const s = applyActions([
+      { type: 'GOTO_SCREEN', screen: 'start' },
+      { type: 'GOTO_SCREEN', screen: 'build' },
+      { type: 'SET_IDEA', idea: 'seeded surprise idea' },
+      { type: 'PICK_TRACK', track: 'app' },
+    ])
+    expect(s.screen).toBe('design')
+    expect(s.track).toBe('app')
+    expect(s.idea).toBe('seeded surprise idea')
   })
 })
 
@@ -104,11 +118,11 @@ describe('buildReducer — PICK_TRACK', () => {
     expect(s.screen).toBe('design')
   })
 
-  it('sets track to company and view to thesis, navigates to design (#591)', () => {
+  it('sets track to company and view to thesis, navigates straight to intake, not design (#601)', () => {
     const s = buildReducer(initialBuildState, { type: 'PICK_TRACK', track: 'company' })
     expect(s.track).toBe('company')
     expect(s.view).toBe('thesis')
-    expect(s.screen).toBe('design')
+    expect(s.screen).toBe('intake')
   })
 
   describe('#448 — company role (marketing/sales/operations)', () => {
