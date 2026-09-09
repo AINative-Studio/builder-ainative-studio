@@ -58,7 +58,7 @@ function notify(g: Gen) {
   for (const l of g.listeners) l()
 }
 
-async function runGeneration(idea: string, g: Gen, dataModel?: unknown): Promise<void> {
+async function runGeneration(idea: string, g: Gen, dataModel?: unknown, designSystemId?: string): Promise<void> {
   try {
     const res = await fetch('/api/chat-ws', {
       method: 'POST',
@@ -79,6 +79,11 @@ async function runGeneration(idea: string, g: Gen, dataModel?: unknown): Promise
         // JSON blob would pollute. Omitted (undefined) degrades server-side
         // to today's idea-only behavior.
         ...(dataModel ? { dataModel } : {}),
+        // Design System Picker (#592): the founder's explicit design-system
+        // choice from lib/build/state.ts's designSystemId (set on the new
+        // 'design' screen, #591). Omitted/'' degrades server-side to today's
+        // automatic selectTheme() behavior — never a breaking change.
+        ...(designSystemId ? { designSystemId } : {}),
       }),
     })
     if (!res.body) { g.status = 'error'; notify(g); return }
@@ -160,7 +165,7 @@ async function runGeneration(idea: string, g: Gen, dataModel?: unknown): Promise
   }
 }
 
-export function useRealPreview(idea: string, enabled: boolean, dataModel?: unknown) {
+export function useRealPreview(idea: string, enabled: boolean, dataModel?: unknown, designSystemId?: string) {
   const [, force] = useReducer((x: number) => x + 1, 0)
   const g = useMemo(() => genFor(idea || ''), [idea])
 
@@ -173,7 +178,7 @@ export function useRealPreview(idea: string, enabled: boolean, dataModel?: unkno
     if (g.status === 'idle') {
       g.status = 'generating'
       notify(g)
-      void runGeneration(idea, g, dataModel)
+      void runGeneration(idea, g, dataModel, designSystemId)
     } else {
       // Re-attached mid-flight or post-completion — sync this instance now.
       force()

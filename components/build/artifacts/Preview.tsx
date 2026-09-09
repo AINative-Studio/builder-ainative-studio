@@ -81,6 +81,7 @@ export function Preview() {
     state.idea,
     state.view === 'preview' && !!state.idea,
     state.generated?.dataModel,
+    state.designSystemId,
   )
   // Engine routing (#291): a genuinely multi-file app renders via Sandpack (real
   // bundler, resolves cross-file imports); single-file apps keep the hardened Babel

@@ -12,7 +12,7 @@ export type Screen =
                   // the builder path. Signed-in visitors skip straight to builds.
   | 'start'       // funnel step 1: "Let's get started" — Create a new company / Grow
   | 'build'       // funnel step 2: "Let's build something" — Surprise me / Build my idea
-  | 'fork' | 'intake' | 'ws' | 'pricing' | 'live'
+  | 'fork' | 'intake' | 'design' | 'ws' | 'pricing' | 'live'
   | 'login' | 'signup' | 'forgot' | 'reset' | 'account'
   | 'companies'   // "my companies" index (#253) — a founder's built companies
   | 'refer'       // Refer & Earn (#59) — referral link, copy, and stats
@@ -110,6 +110,12 @@ export interface BuildState {
   // enough AINative primitives to earn extra free-build allowance. Set from the
   // SERVER's credits response the moment the build is recorded; '' = nothing earned.
   runwayNote: string
+  // Design System Picker (#590-#595): the founder's explicit choice of one of
+  // lib/design-systems/catalog.ts's systems, made on the new 'design' screen
+  // between Intake and generation. '' = no explicit choice — codegen falls
+  // back to today's automatic selectTheme() behavior (lib/theme-system.ts),
+  // never a breaking change for a founder who skips this screen.
+  designSystemId: string
 }
 
 /** Full-bleed build overlays that can cover the workspace during autoplay (04-SCREENS §3). */
@@ -160,6 +166,7 @@ export const initialBuildState: BuildState = {
   sawPreview: false,
   pendingBuild: null,
   runwayNote: '',
+  designSystemId: '',
 }
 
 export type BuildAction =
@@ -204,13 +211,16 @@ export type BuildAction =
   | { type: 'ASK_PRIVACY' }
   | { type: 'TRIGGER_CONFLICT'; changedView: string; fromRescopeIntent?: boolean }
   /** Restore persisted build state from localStorage without clearing artifacts (#284). */
-  | { type: 'RESTORE_BUILD'; partial: Partial<Pick<BuildState, 'generated' | 'done' | 'genError' | 'builtCompany' | 'builtMVP' | 'wedgePicked' | 'answers' | 'companyName' | 'idea' | 'appSub' | 'brandTagline' | 'brandColor' | 'appChatId' | 'activePlan' | 'enrolled' | 'track' | 'role' | 'sawPreview'>> }
+  | { type: 'RESTORE_BUILD'; partial: Partial<Pick<BuildState, 'generated' | 'done' | 'genError' | 'builtCompany' | 'builtMVP' | 'wedgePicked' | 'answers' | 'companyName' | 'idea' | 'appSub' | 'brandTagline' | 'brandColor' | 'appChatId' | 'activePlan' | 'enrolled' | 'track' | 'role' | 'sawPreview' | 'designSystemId'>> }
   | { type: 'TOGGLE_RAIL' }
   | { type: 'TOGGLE_INDEX' }
   | { type: 'SET_APP_CHATID'; chatId: string }
   // Value moment (#310/#311): the Preview artifact rendered a working app. One-way.
   | { type: 'SAW_PREVIEW' }
   | { type: 'SET_ACTIVE_PLAN'; plan: ActivePlan; enrolled?: boolean }
+  // Design System Picker (#591): the founder picked a system on the 'design'
+  // screen. '' clears back to "no explicit choice" (e.g. "use the default").
+  | { type: 'PICK_DESIGN_SYSTEM'; designSystemId: string }
   // Seed the idea field before Intake mounts (funnel "Surprise me" pre-fills a
   // starter idea; does NOT start a build). Intake prefills its input from this.
   | { type: 'SET_IDEA'; idea: string }
@@ -234,7 +244,11 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
         // pick clears any stale role from a prior company attempt.
         role: action.track === 'company' ? (action.role ?? state.role) : '',
         view: action.track === 'app' ? 'brief' : 'thesis',
-        screen: 'intake',
+        // Design System Picker (#591): Fork now routes to the new 'design'
+        // screen first — pick a look before describing the idea. DesignPicker
+        // dispatches GOTO_SCREEN: 'intake' itself (on either "Continue" or
+        // "Skip"), so Intake's own logic is completely unchanged.
+        screen: 'design',
       }
     case 'START_BUILD': {
       // Only wipe generated/done when this is genuinely a NEW build (different slug).
@@ -396,6 +410,8 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
         // the caller doesn't pass an explicit flag (#241; cron itself is #243).
         enrolled: action.enrolled ?? (action.plan === 'business' || action.plan === 'enterprise' || action.plan === 'cody_vcto'),
       }
+    case 'PICK_DESIGN_SYSTEM':
+      return { ...state, designSystemId: action.designSystemId }
     case 'SET_OVERLAY':
       return { ...state, overlay: action.overlay }
     case 'RIBBON':

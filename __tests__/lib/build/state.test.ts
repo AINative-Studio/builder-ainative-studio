@@ -79,32 +79,36 @@ describe('landing funnel (Claude Design handoff)', () => {
     expect(s.companyName).toBe('Acme')
   })
 
-  it('full funnel: landing → start → build → PICK_TRACK(company) lands on intake', () => {
+  // Design System Picker (#591): PICK_TRACK now lands on 'design' (pick a
+  // look) instead of straight to 'intake' — DesignPicker itself routes on to
+  // 'intake' on Continue or Skip, so the idea seed still survives all the way
+  // into Intake either way.
+  it('full funnel: landing → start → build → PICK_TRACK(company) lands on design', () => {
     const s = applyActions([
       { type: 'GOTO_SCREEN', screen: 'start' },
       { type: 'GOTO_SCREEN', screen: 'build' },
       { type: 'SET_IDEA', idea: 'seeded surprise idea' },
       { type: 'PICK_TRACK', track: 'company' },
     ])
-    expect(s.screen).toBe('intake')
+    expect(s.screen).toBe('design')
     expect(s.track).toBe('company')
-    expect(s.idea).toBe('seeded surprise idea') // seed survives into intake
+    expect(s.idea).toBe('seeded surprise idea') // seed survives into design → intake
   })
 })
 
 describe('buildReducer — PICK_TRACK', () => {
-  it('sets track to app and view to brief, navigates to intake', () => {
+  it('sets track to app and view to brief, navigates to design (#591)', () => {
     const s = buildReducer(initialBuildState, { type: 'PICK_TRACK', track: 'app' })
     expect(s.track).toBe('app')
     expect(s.view).toBe('brief')
-    expect(s.screen).toBe('intake')
+    expect(s.screen).toBe('design')
   })
 
-  it('sets track to company and view to thesis, navigates to intake', () => {
+  it('sets track to company and view to thesis, navigates to design (#591)', () => {
     const s = buildReducer(initialBuildState, { type: 'PICK_TRACK', track: 'company' })
     expect(s.track).toBe('company')
     expect(s.view).toBe('thesis')
-    expect(s.screen).toBe('intake')
+    expect(s.screen).toBe('design')
   })
 
   describe('#448 — company role (marketing/sales/operations)', () => {
@@ -735,5 +739,34 @@ describe('buildReducer — SET_COMPANY_NAME (#396)', () => {
     const s = buildReducer(prev, { type: 'SET_COMPANY_NAME', companyName: 'B' })
     expect(s.idea).toBe('an idea')
     expect(s.track).toBe('company')
+  })
+})
+
+describe('buildReducer — PICK_DESIGN_SYSTEM (#591)', () => {
+  it('stores the chosen design system id', () => {
+    const s = buildReducer(initialBuildState, { type: 'PICK_DESIGN_SYSTEM', designSystemId: 'cody' })
+    expect(s.designSystemId).toBe('cody')
+  })
+
+  it('defaults to "" — no explicit choice, codegen falls back to auto-select', () => {
+    expect(initialBuildState.designSystemId).toBe('')
+  })
+
+  it('can be cleared back to "" (e.g. re-picking "let Cody decide")', () => {
+    const withChoice = buildReducer(initialBuildState, { type: 'PICK_DESIGN_SYSTEM', designSystemId: 'noir' })
+    const s = buildReducer(withChoice, { type: 'PICK_DESIGN_SYSTEM', designSystemId: '' })
+    expect(s.designSystemId).toBe('')
+  })
+
+  it('does not affect any other state field', () => {
+    const prev: BuildState = { ...initialBuildState, idea: 'an idea', track: 'company' }
+    const s = buildReducer(prev, { type: 'PICK_DESIGN_SYSTEM', designSystemId: 'outrun' })
+    expect(s.idea).toBe('an idea')
+    expect(s.track).toBe('company')
+  })
+
+  it('RESTORE_BUILD can hydrate a persisted designSystemId', () => {
+    const s = buildReducer(initialBuildState, { type: 'RESTORE_BUILD', partial: { designSystemId: 'ledger' } })
+    expect(s.designSystemId).toBe('ledger')
   })
 })
