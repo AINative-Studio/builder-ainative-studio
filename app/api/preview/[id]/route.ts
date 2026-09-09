@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getPreview, isPreviewStreaming, storePreview, getSSRPreview } from '@/lib/preview-store'
+import { getPreview, isPreviewStreaming, storePreview, getSSRPreview, getChatData } from '@/lib/preview-store'
+import { getDesignSystem } from '@/lib/design-systems/catalog'
+import { googleFontsUrl } from '@/lib/theme-system'
 import { validateJavaScriptCode, sanitizeForSandpack } from '@/lib/code-validator'
 import { detectRootComponent } from '@/lib/component-detector'
 import { flattenMultiFile } from '@/lib/build/flatten-multifile'
@@ -736,6 +738,16 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
 })();
 </script>`
 
+  // Design System Picker (#593): if the founder chose a system, this preview's
+  // real HTML <head> must load ITS fonts — the model's generated App.tsx can
+  // only reference font-family names inline; it has no <head> of its own to
+  // inject a <link> into (single-file mode). Falls back to the prior hardcoded
+  // Inter+Poppins for every preview that never had a chosen system.
+  const chosenPreviewSystem = getDesignSystem(getChatData(id)?.designSystemId || '')
+  const previewFontsLink = chosenPreviewSystem
+    ? `<link href="${googleFontsUrl(chosenPreviewSystem)}" rel="stylesheet">`
+    : `<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">`
+
   // Create simple HTML with the component
   const html = `
 <!DOCTYPE html>
@@ -745,10 +757,10 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Preview</title>
     ${dbTokenShim(dbToken, primitiveTokens)}
-    <!-- Google Fonts: Inter (primary) + Geist-like fallback -->
+    <!-- Google Fonts: the founder's chosen design system, or Inter+Poppins default -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    ${previewFontsLink}
     <!-- Core: React 18 -->
     <!-- React 18 from CDN -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -763,7 +775,9 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
         theme: {
           extend: {
             fontFamily: {
-              sans: ['Inter', 'Poppins', 'system-ui', 'sans-serif'],
+              sans: ${chosenPreviewSystem
+                ? JSON.stringify([chosenPreviewSystem.fonts.body.family, chosenPreviewSystem.fonts.heading.family, 'system-ui', 'sans-serif'])
+                : JSON.stringify(['Inter', 'Poppins', 'system-ui', 'sans-serif'])},
             },
             colors: {
               'brand-primary': '#5867EF',
