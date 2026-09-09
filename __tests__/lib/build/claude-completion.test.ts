@@ -239,6 +239,49 @@ describe('completeText', () => {
     const mod = await import('@/lib/build/claude-completion')
     await expect(mod.completeText({ system: 'sys', user: 'usr' })).rejects.toThrow(/Bedrock invoke failed/)
   })
+
+  // Real bug (customer-reported, 2026-09-09, Pathlo/DocumentsPanel): "Generate
+  // Product Roadmap" showed "Generating…" and then nothing ever happened — no
+  // error, no document. Root cause: completeText had NO timeout at all, so a
+  // hung upstream call left the caller's request (and its UI loading state)
+  // pending indefinitely. This locks in that a call exceeding the real
+  // timeout throws a clear, catchable error instead of hanging forever.
+  it('THE BUG: a hung completion throws COMPLETION_TIMEOUT instead of hanging forever', async () => {
+    vi.useFakeTimers()
+    process.env.CODY_USE_BEDROCK = '1'
+    process.env.AWS_BEARER_TOKEN_BEDROCK = 'tok'
+    vi.resetModules()
+
+    // A fetch that never resolves — simulates a genuinely hung upstream call.
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
+
+    const mod = await import('@/lib/build/claude-completion')
+    const promise = mod.completeText({ system: 'sys', user: 'usr' })
+    const assertion = expect(promise).rejects.toThrow('COMPLETION_TIMEOUT')
+    await vi.advanceTimersByTimeAsync(45_001)
+    await assertion
+    vi.useRealTimers()
+  })
+
+  it('does not time out a completion that resolves well within the limit', async () => {
+    vi.useFakeTimers()
+    process.env.CODY_USE_BEDROCK = '1'
+    process.env.AWS_BEARER_TOKEN_BEDROCK = 'tok'
+    vi.resetModules()
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        content: [{ type: 'text', text: 'fast result' }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+    } as unknown as Response))
+
+    const mod = await import('@/lib/build/claude-completion')
+    const result = await mod.completeText({ system: 'sys', user: 'usr' })
+    expect(result.text).toBe('fast result')
+    vi.useRealTimers()
+  })
 })
 
 // ── BedrockClient.messages.create — shape validation ────────────────────────

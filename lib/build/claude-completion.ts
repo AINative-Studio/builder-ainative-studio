@@ -59,10 +59,23 @@ export function getClaudeCompletion(): ClaudeCompletion | null {
   return null
 }
 
+// Real bug (customer-reported, 2026-09-09, Pathlo/DocumentsPanel): "Generate
+// Product Roadmap" showed "Generating…" and then nothing ever happened — no
+// error, no document, no timeout. Root cause: completeText had NO timeout at
+// all on the underlying client.messages.create() call, for either provider
+// (Bedrock has no built-in timeout option; the Anthropic SDK's default is
+// effectively unbounded for this use). A slow/hung upstream call left the
+// whole request — and the caller's UI "Generating…" state — hanging
+// indefinitely instead of failing cleanly. A hard timeout, provider-agnostic
+// via Promise.race (rather than a provider-specific option), guarantees this
+// caller-facing hang can never happen again.
+const COMPLETE_TEXT_TIMEOUT_MS = 45_000
+
 /**
  * One-shot text completion via the resolved Claude client. Returns the joined
  * text of all text blocks. Throws if no Claude path is configured (caller
- * decides how to surface it).
+ * decides how to surface it), or if the completion doesn't finish within
+ * COMPLETE_TEXT_TIMEOUT_MS (throws Error('COMPLETION_TIMEOUT')).
  */
 export async function completeText(opts: {
   system: string
@@ -74,13 +87,17 @@ export async function completeText(opts: {
   if (!c) {
     throw new Error('NO_CLAUDE_PROVIDER')
   }
-  const res = await c.client.messages.create({
+  const call = c.client.messages.create({
     model: c.model,
     max_tokens: opts.maxTokens ?? 2048,
     temperature: opts.temperature ?? 0.6,
     system: opts.system,
     messages: [{ role: 'user', content: opts.user }],
   })
+  const timeout = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error('COMPLETION_TIMEOUT')), COMPLETE_TEXT_TIMEOUT_MS)
+  })
+  const res = await Promise.race([call, timeout])
   const text = (res.content || [])
     .filter((b: any) => b.type === 'text')
     .map((b: any) => b.text)

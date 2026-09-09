@@ -45,6 +45,11 @@ export const runtime = 'nodejs'
 const ainative = new OpenAI({
   apiKey: process.env.AINATIVE_API_KEY || process.env.API_Key || process.env.ZERODB_API_KEY || '',
   baseURL: (process.env.AINATIVE_API_URL || 'https://api.ainative.studio') + '/v1',
+  // Real bug (customer-reported, 2026-09-09): the fallback path had no
+  // timeout either — a hung AINative call after an already-slow/failed
+  // primary path could leave "Generating…" stuck indefinitely with no
+  // error. 45s matches completeText's own timeout (claude-completion.ts).
+  timeout: 45_000,
 })
 const AINATIVE_MODEL = process.env.BUILD_DOC_MODEL || 'claude-sonnet-4.5'
 // 'nous-coder' is FULLY DEPRECATED, no upstream at all (core's registry hard-
