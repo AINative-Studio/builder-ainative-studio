@@ -53,6 +53,16 @@ export function MyCompanies() {
       .catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signedIn, state.activePlan])
+
+  // Real gap (customer-reported, 2026-09-09, Vamsi/Ledra+Pathlo+Voya — genuine
+  // paying Enterprise accounts): every "Manage plan" link here unconditionally
+  // opened Builder's own Stripe-portal proxy, which has no real customer to
+  // manage for Enterprise (that billing is a contract/invoice relationship on
+  // the AINative dashboard, not Stripe self-serve) — confirmed correct in
+  // Account.tsx already for the staff-admin case, but never applied here nor
+  // to real (non-staff) Enterprise subscribers. Enterprise → the real AINative
+  // dashboard; everyone else → Builder's own upgrade/cancel portal.
+  const isEnterpriseBilling = state.activePlan === 'enterprise'
   const [companies, setCompanies] = useState<Company[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [portalBusy, setPortalBusy] = useState(false)
@@ -131,9 +141,15 @@ export function MyCompanies() {
         <section className="m-account-sec">
           <div className="m-account-sec-h m-mono" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span>{companies.length} {companies.length === 1 ? 'company' : 'companies'}</span>
-            <button className="btn-ghost" data-testid="manage-billing" disabled={portalBusy} onClick={manageBilling}>
-              {portalBusy ? 'Opening…' : 'Manage plan / billing ↗'}
-            </button>
+            {isEnterpriseBilling ? (
+              <a className="btn-ghost" data-testid="manage-billing-ainative" href="https://ainative.studio/billing" target="_blank" rel="noopener noreferrer">
+                Manage on ainative.studio ↗
+              </a>
+            ) : (
+              <button className="btn-ghost" data-testid="manage-billing" disabled={portalBusy} onClick={manageBilling}>
+                {portalBusy ? 'Opening…' : 'Manage plan / billing ↗'}
+              </button>
+            )}
           </div>
           <div className="m-companies" data-testid="companies-list">
             {companies.map((c) => {
@@ -179,7 +195,11 @@ export function MyCompanies() {
                     {c.deployUrl ? (
                       <a className="btn-ghost" href={c.deployUrl} target="_blank" rel="noreferrer">View live site ↗</a>
                     ) : null}
-                    <button className="btn-ghost" data-testid={`billing-${c.slug}`} disabled={portalBusy} onClick={manageBilling}>Manage plan ↗</button>
+                    {isEnterpriseBilling || c.plan === 'enterprise' ? (
+                      <a className="btn-ghost" data-testid={`billing-${c.slug}`} href="https://ainative.studio/billing" target="_blank" rel="noopener noreferrer">Manage on ainative.studio ↗</a>
+                    ) : (
+                      <button className="btn-ghost" data-testid={`billing-${c.slug}`} disabled={portalBusy} onClick={manageBilling}>Manage plan ↗</button>
+                    )}
                   </div>
                 </div>
               )

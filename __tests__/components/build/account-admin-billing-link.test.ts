@@ -11,6 +11,13 @@ import { describe, it, expect } from 'vitest'
  * GET /api/build/subscription/status and, for an admin, replaces the
  * Stripe-portal button with a link to the real AINative platform billing
  * dashboard (ainative.studio/billing) instead of a button that can only fail.
+ *
+ * 2026-09-09 — real gap widened: a genuine PAYING Enterprise subscriber
+ * (not AINative staff — e.g. Ledra/Pathlo/Voya, screenshot-reported by
+ * Vamsi) hit the exact same dead end, because the admin-only check above
+ * never covered a real `activePlan === 'enterprise'`. Fixed by gating the
+ * dashboard link on `isEnterpriseBilling` (isAinativeAdmin OR a real
+ * enterprise plan) instead of the admin flag alone.
  */
 describe('Account screen — AINative admin billing link (2026-09-08)', () => {
   const source = fs.readFileSync(
@@ -31,7 +38,11 @@ describe('Account screen — AINative admin billing link (2026-09-08)', () => {
     expect(source).toMatch(/rel="noopener noreferrer"/)
   })
 
-  it('gates the admin link behind isAinativeAdmin, not shown unconditionally', () => {
-    expect(source).toMatch(/isAinativeAdmin \?[\s\S]{0,600}ainative\.studio\/billing/)
+  it('gates the dashboard link behind isEnterpriseBilling, not shown unconditionally', () => {
+    expect(source).toMatch(/isEnterpriseBilling \?[\s\S]{0,600}ainative\.studio\/billing/)
+  })
+
+  it('isEnterpriseBilling covers both the staff bypass AND a real enterprise subscription', () => {
+    expect(source).toMatch(/isEnterpriseBilling = isAinativeAdmin \|\| activePlan === 'enterprise'/)
   })
 })

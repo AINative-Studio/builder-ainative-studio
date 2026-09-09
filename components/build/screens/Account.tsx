@@ -157,6 +157,17 @@ export function Account() {
       .then((d) => { if (d?.admin === true) setIsAinativeAdmin(true) })
       .catch(() => {})
   }, [isGuest])
+  // Real gap (customer-reported, 2026-09-09, Vamsi/Ledra+Pathlo+Voya —
+  // genuine PAYING Enterprise accounts, not AINative staff): the admin-only
+  // check above only covers the staff bypass (rawPlan: 'admin'), so a real
+  // Enterprise SUBSCRIBER still fell into the "Manage plan / billing" Stripe-
+  // portal button below, which fails for Enterprise the same way it does for
+  // admins — Enterprise billing is a contract/invoice relationship on the
+  // AINative dashboard, not a Builder-side Stripe customer. Any account whose
+  // resolved plan is 'enterprise' (staff bypass OR a real subscription) must
+  // route to the dashboard; only pro/business/free founders get Builder's own
+  // self-serve upgrade/cancel portal.
+  const isEnterpriseBilling = isAinativeAdmin || activePlan === 'enterprise'
 
   // Existing-subscriber recognition (#251) — the same hydration Live/Pricing run.
   // Without it, an Enterprise/admin account opening Account directly saw plan
@@ -349,12 +360,12 @@ export function Account() {
           </div>
           <div className="m-sec-row">
             <span>Billing</span>
-            {isAinativeAdmin ? (
-              // AINative staff/admin: this "Enterprise" plan is a staff bypass
-              // (lib/ainative/active-plan.ts) with no real Stripe customer —
-              // Builder's Stripe-portal proxy correctly has nothing to open
-              // for this account. Route to the real AINative platform billing
-              // dashboard instead of a button that can only ever fail here.
+            {isEnterpriseBilling ? (
+              // Enterprise (staff bypass OR a real paying Enterprise
+              // subscriber): no Builder-side Stripe customer exists for this
+              // account — billing is a contract/invoice relationship on the
+              // AINative platform. Route to the real AINative dashboard
+              // instead of a button that can only ever fail here.
               <a
                 className="btn-secondary"
                 data-testid="account-ainative-billing-link"
