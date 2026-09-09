@@ -529,7 +529,15 @@ export function Live() {
           </span>
           <div className="m-live-funnel-cta">
             <span className="m-chip">✓ {PLAN_LABEL[activePlan] || activePlan}</span>
-            <button className="btn-ghost" data-testid="manage-plan" onClick={manageBilling}>Manage plan ↗</button>
+            {activePlan === 'enterprise' ? (
+              // Real gap (customer-reported, 2026-09-09, Vamsi/Ledra+Pathlo+
+              // Voya): Enterprise billing is a contract/invoice relationship
+              // on the AINative dashboard, not a Builder-side Stripe
+              // customer — Builder's own portal has nothing to open here.
+              <a className="btn-ghost" data-testid="manage-plan-ainative" href="https://ainative.studio/billing" target="_blank" rel="noopener noreferrer">Manage on ainative.studio ↗</a>
+            ) : (
+              <button className="btn-ghost" data-testid="manage-plan" onClick={manageBilling}>Manage plan ↗</button>
+            )}
           </div>
         </div>
       ) : signedIn ? (
