@@ -3,9 +3,12 @@ import { buildArtifactGraph, traceImpact, ARTIFACT_CATEGORY } from '@/lib/build/
 
 describe('artifact-graph (#234)', () => {
   describe('buildArtifactGraph', () => {
+    // design (#591, made a real tracked view 2026-09-09) is now the first
+    // App-track node — the founder's design-system choice is part of the
+    // real composition graph, not a step before it.
     it('builds a node per artifact in the App track, in composition order', () => {
       const g = buildArtifactGraph('app')
-      expect(g.nodes.map((n) => n.id).slice(0, 3)).toEqual(['brief', 'prd', 'comp'])
+      expect(g.nodes.map((n) => n.id).slice(0, 4)).toEqual(['design', 'brief', 'prd', 'comp'])
       expect(g.nodes.find((n) => n.id === 'preview')).toBeTruthy()
       // columns increase left→right
       expect(g.nodes[0].col).toBe(0)

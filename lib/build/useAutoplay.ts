@@ -28,9 +28,12 @@ type Dispatch = React.Dispatch<BuildAction>
 const BUILD_VIEWS = new Set(['swarm', 'infra', 'preview'])
 
 // Views that INTERRUPT autoplay for a user choice (Cody hands the wheel over):
-// the Wedge challenge (Company track). The user's pick resumes the flow via the
-// component's own dispatch (PICK_WEDGE → goView). Autoplay must not auto-run them.
-const INTERRUPT_VIEWS = new Set(['wedge'])
+// the Wedge challenge (Company track), and Design (App track, #591 — made a
+// real tracked step 2026-09-09, mirroring this exact pattern). The user's
+// pick/skip resumes the flow via the component's own dispatch
+// (PICK_WEDGE/PICK_DESIGN_SYSTEM/SKIP_DESIGN_SYSTEM). Autoplay must not
+// auto-run them.
+const INTERRUPT_VIEWS = new Set(['wedge', 'design'])
 
 // Ribbon narration per build view — infra-level lines that scroll in the terminal.
 const RIBBON_LINES: Record<string, string[]> = {
@@ -96,14 +99,16 @@ export function useAutoplay(state: BuildState, dispatch: Dispatch) {
       return
     }
 
-    // ── Interrupt view (Wedge): show it and HAND THE WHEEL to the user. The
-    // Wedge component resumes the flow when they pick (PICK_WEDGE → businessModel).
-    // We mark it done so autoplay doesn't loop on it, but don't advance past it —
-    // the user's pick does that.
+    // ── Interrupt view (Wedge / Design): show it and HAND THE WHEEL to the
+    // user. The Wedge/DesignPicker components resume the flow when they
+    // pick (PICK_WEDGE → businessModel; PICK_DESIGN_SYSTEM/SKIP_DESIGN_SYSTEM
+    // → brief). We mark it done so autoplay doesn't loop on it, but don't
+    // advance past it — the user's pick/skip does that.
     if (INTERRUPT_VIEWS.has(next)) {
       dispatch({ type: 'SET_OVERLAY', overlay: { kind: 'none' } })
       if (state.view !== next) dispatch({ type: 'GOTO_VIEW', view: next as ArtifactView })
       if (next === 'wedge' && !state.wedgePicked) return // wait for the user
+      if (next === 'design' && !state.designStepDone) return // wait for the user
       dispatch({ type: 'COMPLETE_ARTIFACT', view: next })
       done()
       return
@@ -229,7 +234,7 @@ export function useAutoplay(state: BuildState, dispatch: Dispatch) {
     tick,
     state.screen, state.auto, state.paused, state.idea, state.track, state.view,
     state.done, state.generated, state.genError, state.askedPrivacy, state.builtMVP,
-    state.wedgePicked,
+    state.wedgePicked, state.designStepDone,
   ])
 
   // Clear pending timers on unmount so a torn-down workspace doesn't dispatch.

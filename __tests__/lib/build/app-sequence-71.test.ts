@@ -37,9 +37,12 @@ describe('app sequence wiring (#71)', () => {
     expect(views.indexOf('sprintPlan')).toBeLessThan(views.indexOf('swarm'))
   })
 
+  // design (#591, made a real tracked view 2026-09-09) is now the first
+  // entry — the founder's design-system choice is part of the real,
+  // composed App-track sequence, not a screen shown before it.
   it('keeps the full expected App-track order', () => {
     expect([...APP_VIEWS]).toEqual([
-      'brief', 'prd', 'comp', 'dataModel', 'memoryPolicy',
+      'design', 'brief', 'prd', 'comp', 'dataModel', 'memoryPolicy',
       'agentDef', 'codingStandards', 'apiSpec', 'backlog', 'sprintPlan',
       'swarm', 'infra', 'preview',
     ])

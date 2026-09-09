@@ -12,7 +12,7 @@ export type Screen =
                   // the builder path. Signed-in visitors skip straight to builds.
   | 'start'       // funnel step 1: "Let's get started" — Create a new company / Grow
   | 'build'       // funnel step 2: "Let's build something" — Surprise me / Build my idea
-  | 'fork' | 'intake' | 'design' | 'ws' | 'pricing' | 'live'
+  | 'fork' | 'intake' | 'ws' | 'pricing' | 'live'
   | 'login' | 'signup' | 'forgot' | 'reset' | 'account'
   | 'companies'   // "my companies" index (#253) — a founder's built companies
   | 'refer'       // Refer & Earn (#59) — referral link, copy, and stats
@@ -38,7 +38,7 @@ export type ActivePlan = '' | 'pro' | 'business' | 'enterprise' | 'cody_vcto'
 
 /** Artifact ids (the `view` values), in composition order per track. */
 export const APP_VIEWS = [
-  'brief', 'prd', 'comp', 'dataModel', 'memoryPolicy',
+  'design', 'brief', 'prd', 'comp', 'dataModel', 'memoryPolicy',
   'agentDef', 'codingStandards', 'apiSpec', 'backlog', 'sprintPlan',
   'swarm', 'infra', 'preview',
 ] as const
@@ -116,6 +116,16 @@ export interface BuildState {
   // back to today's automatic selectTheme() behavior (lib/theme-system.ts),
   // never a breaking change for a founder who skips this screen.
   designSystemId: string
+  // Real bug (customer-reported, 2026-09-09): 'design' used to be a pre-flow
+  // detour shown before Intake, invisible in the top stepper, the artifact
+  // checklist, and APP_VIEWS itself — the founder had no way to see it as
+  // part of "the workflow." Now a real, tracked APP_VIEWS entry (mirrors the
+  // Company track's 'wedge' interrupt-view pattern): autoplay shows it and
+  // waits. designSystemId alone can't distinguish "not visited yet" from
+  // "visited, explicitly skipped" (both are '') — this flag is that one-shot
+  // "has the founder made a decision here" signal, set true by EITHER
+  // PICK_DESIGN_SYSTEM or an explicit skip.
+  designStepDone: boolean
 }
 
 /** Full-bleed build overlays that can cover the workspace during autoplay (04-SCREENS §3). */
@@ -167,6 +177,7 @@ export const initialBuildState: BuildState = {
   pendingBuild: null,
   runwayNote: '',
   designSystemId: '',
+  designStepDone: false,
 }
 
 export type BuildAction =
@@ -211,7 +222,7 @@ export type BuildAction =
   | { type: 'ASK_PRIVACY' }
   | { type: 'TRIGGER_CONFLICT'; changedView: string; fromRescopeIntent?: boolean }
   /** Restore persisted build state from localStorage without clearing artifacts (#284). */
-  | { type: 'RESTORE_BUILD'; partial: Partial<Pick<BuildState, 'generated' | 'done' | 'genError' | 'builtCompany' | 'builtMVP' | 'wedgePicked' | 'answers' | 'companyName' | 'idea' | 'appSub' | 'brandTagline' | 'brandColor' | 'appChatId' | 'activePlan' | 'enrolled' | 'track' | 'role' | 'sawPreview' | 'designSystemId'>> }
+  | { type: 'RESTORE_BUILD'; partial: Partial<Pick<BuildState, 'generated' | 'done' | 'genError' | 'builtCompany' | 'builtMVP' | 'wedgePicked' | 'answers' | 'companyName' | 'idea' | 'appSub' | 'brandTagline' | 'brandColor' | 'appChatId' | 'activePlan' | 'enrolled' | 'track' | 'role' | 'sawPreview' | 'designSystemId' | 'designStepDone'>> }
   | { type: 'TOGGLE_RAIL' }
   | { type: 'TOGGLE_INDEX' }
   | { type: 'SET_APP_CHATID'; chatId: string }
@@ -221,6 +232,11 @@ export type BuildAction =
   // Design System Picker (#591): the founder picked a system on the 'design'
   // screen. '' clears back to "no explicit choice" (e.g. "use the default").
   | { type: 'PICK_DESIGN_SYSTEM'; designSystemId: string }
+  // The founder explicitly skipped the design-system choice ("let Cody
+  // decide") — distinct from PICK_DESIGN_SYSTEM('') because both leave
+  // designSystemId at '', but only this marks the decision point as DONE so
+  // autoplay can advance past it instead of waiting forever.
+  | { type: 'SKIP_DESIGN_SYSTEM' }
   // Seed the idea field before Intake mounts (funnel "Surprise me" pre-fills a
   // starter idea; does NOT start a build). Intake prefills its input from this.
   | { type: 'SET_IDEA'; idea: string }
@@ -243,21 +259,22 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
         // #448: role only means anything on the company track — an app-track
         // pick clears any stale role from a prior company attempt.
         role: action.track === 'company' ? (action.role ?? state.role) : '',
-        view: action.track === 'app' ? 'brief' : 'thesis',
-        // Design System Picker (#591): App track routes to the new 'design'
-        // screen first — pick a look before describing the idea. DesignPicker
-        // dispatches GOTO_SCREEN: 'intake' itself (on either "Continue" or
-        // "Skip"), so Intake's own logic is completely unchanged.
+        // Design System Picker (#591, made a real tracked step 2026-09-09):
+        // 'design' is now the FIRST real APP_VIEWS entry (autoplay shows it
+        // as an interrupt-view, same pattern as the Company track's 'wedge')
+        // rather than a pre-flow detour screen — it's visible in the top
+        // stepper and the artifact checklist like every other artifact.
         //
         // Real bug (#601, customer-reported — Pathlo): the Company track has
         // NO code path for a chosen design system to reach ANY output at all
         // (COMPANY_VIEWS has no 'preview' — the company "landing" artifact is
         // a fixed-template Modernist-styled component, never real generated
-        // app code). Showing the picker there implied a choice that did
-        // nothing — an honest, user-visible broken promise. Skip straight to
-        // 'intake' for the company track until #601's larger scope decision
-        // (extend the landing artifact to be real, styleable output) lands.
-        screen: action.track === 'app' ? 'design' : 'intake',
+        // app code). Company track keeps starting at 'thesis', unaffected.
+        view: action.track === 'app' ? 'design' : 'thesis',
+        // Always go straight to Intake — describe the idea first, same for
+        // both tracks. The design CHOICE now happens inside the workspace
+        // once generation starts, not as a screen before Intake.
+        screen: 'intake',
       }
     case 'START_BUILD': {
       // Only wipe generated/done when this is genuinely a NEW build (different slug).
@@ -277,7 +294,12 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
         generated: isNewBuild ? {} : state.generated,
         genError: isNewBuild ? {} : state.genError,
         done: isNewBuild ? {} : state.done,
-        view: state.track === 'app' ? 'brief' : 'thesis',
+        // Design (#591) is now the first real APP_VIEWS entry — re-entering
+        // an EXISTING company (same appSub) that already finished its design
+        // step must NOT re-show it; only a genuinely new build starts there.
+        view: state.track === 'app'
+          ? (isNewBuild || !state.designStepDone ? 'design' : 'brief')
+          : 'thesis',
         // Consuming a pending build clears it (START_BUILD is the resume path).
         pendingBuild: null,
       }
@@ -420,7 +442,9 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
         enrolled: action.enrolled ?? (action.plan === 'business' || action.plan === 'enterprise' || action.plan === 'cody_vcto'),
       }
     case 'PICK_DESIGN_SYSTEM':
-      return { ...state, designSystemId: action.designSystemId }
+      return { ...state, designSystemId: action.designSystemId, designStepDone: true }
+    case 'SKIP_DESIGN_SYSTEM':
+      return { ...state, designStepDone: true }
     case 'SET_OVERLAY':
       return { ...state, overlay: action.overlay }
     case 'RIBBON':

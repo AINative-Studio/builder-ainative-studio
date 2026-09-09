@@ -17,7 +17,7 @@ export type ArtifactCategory =
 /** Category per artifact view (04-SCREENS rail groupings). */
 export const ARTIFACT_CATEGORY: Record<string, ArtifactCategory> = {
   // App
-  brief: 'Product', prd: 'Product', comp: 'Product',
+  design: 'Product', brief: 'Product', prd: 'Product', comp: 'Product',
   dataModel: 'Delivery', memoryPolicy: 'Delivery', agentDef: 'Delivery',
   codingStandards: 'Delivery', apiSpec: 'Delivery', backlog: 'Delivery',
   sprintPlan: 'Delivery', swarm: 'Delivery', infra: 'Delivery', preview: 'Delivery',

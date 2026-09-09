@@ -79,13 +79,13 @@ describe('landing funnel (Claude Design handoff)', () => {
     expect(s.companyName).toBe('Acme')
   })
 
-  // Design System Picker (#591, corrected by #601): the App track routes to
-  // 'design' (pick a look) before 'intake'. The Company track skips straight
-  // to 'intake' — #601 found the picker had NO effect on any company-track
-  // output (no 'preview' view exists for that track), so showing it there
-  // was an honest, user-visible broken promise (real customer report,
-  // Pathlo). Either way the idea seed survives into Intake.
-  it('full funnel: landing → start → build → PICK_TRACK(company) skips design, lands on intake (#601)', () => {
+  // Design System Picker (#591, made a real tracked APP_VIEWS artifact
+  // 2026-09-09): both tracks route straight to 'intake' (design is no longer
+  // a pre-flow screen) — the App track's `view` is set to 'design' so
+  // useAutoplay shows it as the first real interrupt-view once generation
+  // starts, exactly like the Company track's 'wedge'. The Company track has
+  // no design step at all (#601 — no code path for it on that track).
+  it('full funnel: landing → start → build → PICK_TRACK(company) lands on intake, view=thesis', () => {
     const s = applyActions([
       { type: 'GOTO_SCREEN', screen: 'start' },
       { type: 'GOTO_SCREEN', screen: 'build' },
@@ -93,32 +93,34 @@ describe('landing funnel (Claude Design handoff)', () => {
       { type: 'PICK_TRACK', track: 'company' },
     ])
     expect(s.screen).toBe('intake')
+    expect(s.view).toBe('thesis')
     expect(s.track).toBe('company')
     expect(s.idea).toBe('seeded surprise idea')
   })
 
-  it('full funnel: landing → start → build → PICK_TRACK(app) lands on design (#591)', () => {
+  it('full funnel: landing → start → build → PICK_TRACK(app) lands on intake, view=design (#591)', () => {
     const s = applyActions([
       { type: 'GOTO_SCREEN', screen: 'start' },
       { type: 'GOTO_SCREEN', screen: 'build' },
       { type: 'SET_IDEA', idea: 'seeded surprise idea' },
       { type: 'PICK_TRACK', track: 'app' },
     ])
-    expect(s.screen).toBe('design')
+    expect(s.screen).toBe('intake')
+    expect(s.view).toBe('design')
     expect(s.track).toBe('app')
     expect(s.idea).toBe('seeded surprise idea')
   })
 })
 
 describe('buildReducer — PICK_TRACK', () => {
-  it('sets track to app and view to brief, navigates to design (#591)', () => {
+  it('sets track to app and view to design (#591), navigates to intake', () => {
     const s = buildReducer(initialBuildState, { type: 'PICK_TRACK', track: 'app' })
     expect(s.track).toBe('app')
-    expect(s.view).toBe('brief')
-    expect(s.screen).toBe('design')
+    expect(s.view).toBe('design')
+    expect(s.screen).toBe('intake')
   })
 
-  it('sets track to company and view to thesis, navigates straight to intake, not design (#601)', () => {
+  it('sets track to company and view to thesis, navigates to intake', () => {
     const s = buildReducer(initialBuildState, { type: 'PICK_TRACK', track: 'company' })
     expect(s.track).toBe('company')
     expect(s.view).toBe('thesis')
@@ -214,12 +216,27 @@ describe('buildReducer — START_BUILD', () => {
     expect(s.brandColor).toBe('#ff0000')
   })
 
-  it('sets view to brief for app track, thesis for company track', () => {
+  // Design (#591) is now the first real APP_VIEWS entry — a genuinely new
+  // app-track build starts there, not at 'brief', so the founder sees it as
+  // part of the tracked workflow instead of a screen shown before this.
+  it('sets view to design for a NEW app-track build (design not yet done), thesis for company track', () => {
     const appState = buildReducer({ ...initialBuildState, track: 'app' }, { type: 'START_BUILD', idea: 'x', appSub: 'x' })
-    expect(appState.view).toBe('brief')
+    expect(appState.view).toBe('design')
 
     const compState = buildReducer({ ...initialBuildState, track: 'company' }, { type: 'START_BUILD', idea: 'x', appSub: 'x' })
     expect(compState.view).toBe('thesis')
+  })
+
+  it('re-entering an EXISTING app-track company that already finished design skips straight to brief', () => {
+    const prev = { ...initialBuildState, track: 'app' as const, appSub: 'same-sub', designStepDone: true }
+    const s = buildReducer(prev, { type: 'START_BUILD', idea: 'x', appSub: 'same-sub' })
+    expect(s.view).toBe('brief')
+  })
+
+  it('a NEW build (different appSub) shows design again even if a PRIOR company had finished it', () => {
+    const prev = { ...initialBuildState, track: 'app' as const, appSub: 'old-sub', designStepDone: true }
+    const s = buildReducer(prev, { type: 'START_BUILD', idea: 'x', appSub: 'new-sub' })
+    expect(s.view).toBe('design')
   })
 })
 

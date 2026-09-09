@@ -39,7 +39,7 @@ type PersistedBuildState = Pick<
   'generated' | 'done' | 'genError' | 'builtCompany' | 'builtMVP'
   | 'wedgePicked' | 'answers' | 'companyName' | 'idea' | 'appSub'
   | 'brandTagline' | 'brandColor' | 'appChatId' | 'activePlan' | 'enrolled' | 'track'
-  | 'sawPreview' | 'designSystemId'
+  | 'sawPreview' | 'designSystemId' | 'designStepDone'
 >
 
 function lsKey(slug: string) {
@@ -77,6 +77,7 @@ function saveBuildState(slug: string, state: BuildState) {
       track: state.track,
       sawPreview: state.sawPreview,
       designSystemId: state.designSystemId,
+      designStepDone: state.designStepDone,
     }
     window.localStorage.setItem(lsKey(slug), JSON.stringify(persisted))
   } catch {
@@ -115,7 +116,7 @@ export function BuildProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const q = new URLSearchParams(window.location.search)
     const scr = q.get('screen')
-    const known = ['landing', 'start', 'build', 'fork', 'intake', 'design', 'ws', 'pricing', 'live', 'login', 'signup', 'account', 'companies', 'refer']
+    const known = ['landing', 'start', 'build', 'fork', 'intake', 'ws', 'pricing', 'live', 'login', 'signup', 'account', 'companies', 'refer']
     if (scr && known.includes(scr)) {
       const company = q.get('company')
       if (company) {

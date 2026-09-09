@@ -298,10 +298,14 @@ describe('buildReducer — state transitions', () => {
 // ── trackViews ────────────────────────────────────────────────────────────────
 
 describe('trackViews — view sequence', () => {
-  it('app track: 13 views, brief first, preview last, includes swarm and infra', () => {
+  // design (#591, made a real tracked view 2026-09-09) is now the first APP
+  // view — the founder's design-system choice is part of the tracked
+  // workflow, not a screen shown before it.
+  it('app track: 14 views, design first then brief, preview last, includes swarm and infra', () => {
     const views = trackViews('app')
-    expect(views).toHaveLength(13)
-    expect(views[0]).toBe('brief')
+    expect(views).toHaveLength(14)
+    expect(views[0]).toBe('design')
+    expect(views[1]).toBe('brief')
     expect(views[views.length - 1]).toBe('preview')
     expect(views).toContain('swarm')
     expect(views).toContain('infra')
