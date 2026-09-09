@@ -55,6 +55,21 @@ describe('preview [id] route loads the chosen design system\'s real fonts (2026-
  * Both are now derived from the same real palette data (chosenPreviewSystem)
  * used everywhere else in this file, with the original literals kept only
  * as the no-system-chosen fallback.
+ *
+ * A FIRST attempt at fixing (b) shipped a second, subtler bug that evaded
+ * both tsc and the full test suite: `colors: chosenPreviewSystem ? {...} : {...}`
+ * was written directly into the tailwind.config template literal WITHOUT a
+ * `${...}` wrapper. That whole block is literal browser-side JS *source text*
+ * embedded in a <script> tag — a bare ternary there is not evaluated, it's
+ * emitted verbatim, so real served pages contained the literal broken string
+ * "colors: chosenPreviewSystem ? {" (confirmed live via a real generation +
+ * curl of the served HTML). The earlier version of this test only checked
+ * for that substring's PRESENCE, which passed whether or not it was actually
+ * wrapped in ${} — a real gap in test coverage that let a real bug ship
+ * undetected. Fixed by computing the value server-side into
+ * `previewColorsJson` (a plain JSON.stringify'd object) and interpolating it
+ * with ${}, exactly like the adjacent, already-correct fontFamily.sans line.
+ * These tests now assert on the ${} wrapper itself, not just nearby text.
  */
 describe('preview [id] route: body CSS font-family and Tailwind colors also honor the chosen system (2026-09-09 bugfix)', () => {
   const source = fs.readFileSync(
@@ -74,13 +89,21 @@ describe('preview [id] route: body CSS font-family and Tailwind colors also hono
     expect(source).toMatch(/'Inter', 'Poppins', system-ui, sans-serif/)
   })
 
-  it('the Tailwind colors block is conditional on chosenPreviewSystem, mapped from the real palette', () => {
-    const colorsIdx = source.indexOf('colors: chosenPreviewSystem ? {')
-    expect(colorsIdx).toBeGreaterThan(-1)
-    const nearby = source.slice(colorsIdx, colorsIdx + 400)
+  it('the Tailwind colors value is computed server-side and interpolated with ${}, not left as a bare in-template ternary', () => {
+    // The regression: this exact substring, unwrapped, is what shipped broken.
+    expect(source).not.toContain('colors: chosenPreviewSystem ? {')
+    // The fix: colors resolves through a real ${...} interpolation slot.
+    expect(source).toMatch(/colors:\s*\$\{previewColorsJson\}/)
+  })
+
+  it('previewColorsJson is derived from the real chosen palette via JSON.stringify, with the original literal fallback', () => {
+    const defIdx = source.indexOf('const previewColorsJson')
+    expect(defIdx).toBeGreaterThan(-1)
+    const nearby = source.slice(defIdx, defIdx + 500)
     expect(nearby).toMatch(/chosenPreviewSystem\.palette\.accent/)
     expect(nearby).toMatch(/chosenPreviewSystem\.palette\.bg/)
     expect(nearby).toMatch(/chosenPreviewSystem\.palette\.surface/)
+    expect(nearby).toMatch(/JSON\.stringify/)
   })
 
   it('falls back to the original hardcoded brand colors when no system was chosen', () => {

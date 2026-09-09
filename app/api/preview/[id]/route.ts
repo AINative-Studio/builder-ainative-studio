@@ -747,6 +747,23 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
   const previewFontsLink = chosenPreviewSystem
     ? `<link href="${googleFontsUrl(chosenPreviewSystem)}" rel="stylesheet">`
     : `<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">`
+  // Computed server-side (not inline in the tailwind.config template literal —
+  // that block is literal browser-side JS text, so a bare ternary written
+  // there without ${} is emitted verbatim instead of evaluated; see the
+  // comment at its use site below).
+  const previewColorsJson = chosenPreviewSystem
+    ? JSON.stringify({
+        'brand-primary': chosenPreviewSystem.palette.accent,
+        'dark-1': chosenPreviewSystem.palette.bg,
+        'dark-2': chosenPreviewSystem.palette.surface,
+        'dark-3': chosenPreviewSystem.palette.accent2,
+      })
+    : JSON.stringify({
+        'brand-primary': '#5867EF',
+        'dark-1': '#131726',
+        'dark-2': '#22263c',
+        'dark-3': '#31395a',
+      })
 
   // Create simple HTML with the component
   const html = `
@@ -779,26 +796,7 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
                 ? JSON.stringify([chosenPreviewSystem.fonts.body.family, chosenPreviewSystem.fonts.heading.family, 'system-ui', 'sans-serif'])
                 : JSON.stringify(['Inter', 'Poppins', 'system-ui', 'sans-serif'])},
             },
-            // Real bug (customer-reported, 2026-09-09, Ledra): this block was
-            // a pure literal with no chosenPreviewSystem branch at all, unlike
-            // fontFamily.sans right above it (#593 fixed fonts, missed this).
-            // Any generated class like bg-brand-primary/bg-dark-1 rendered
-            // AINative's generic purple/navy regardless of the chosen design
-            // system. Now derived from the same real palette data used
-            // everywhere else (lib/design-systems/catalog.ts via
-            // chosenPreviewSystem), falling back to the original literal
-            // values when no system was chosen.
-            colors: chosenPreviewSystem ? {
-              'brand-primary': chosenPreviewSystem.palette.accent,
-              'dark-1': chosenPreviewSystem.palette.bg,
-              'dark-2': chosenPreviewSystem.palette.surface,
-              'dark-3': chosenPreviewSystem.palette.accent2,
-            } : {
-              'brand-primary': '#5867EF',
-              'dark-1': '#131726',
-              'dark-2': '#22263c',
-              'dark-3': '#31395a',
-            },
+            colors: ${previewColorsJson},
             boxShadow: {
               'ds-sm': '0 2px 4px rgba(19, 23, 38, 0.1), 0 1px 2px rgba(19, 23, 38, 0.06)',
               'ds-md': '0 4px 8px rgba(19, 23, 38, 0.12), 0 2px 4px rgba(19, 23, 38, 0.08)',
