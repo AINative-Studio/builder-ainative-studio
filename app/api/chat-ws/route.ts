@@ -34,7 +34,7 @@ import { createChunkPlan, getChunkPlanSummary } from '@/lib/agent/chunk-planner'
 import { executeChunkPlan, getGenerationSummary } from '@/lib/agent/multi-pass-generator'
 import { mergeChunks, getMergeSummary } from '@/lib/agent/chunk-merger'
 import { generateAINativeFileSet } from '@/lib/ainative-file-generator'
-import { selectTheme, formatThemeForPrompt, applyThemeToPrompt, themeFromDesignSystem, formatDesignSystemExtras } from '@/lib/theme-system'
+import { selectTheme, formatThemeForPrompt, applyThemeToPrompt, themeFromDesignSystem, formatDesignSystemExtras, googleFontsUrl } from '@/lib/theme-system'
 import { getDesignSystem } from '@/lib/design-systems/catalog'
 import { parseMultiFileOutput } from '@/lib/multi-file-parser'
 import { shouldUseSandpack } from '@/lib/build/preview-engine'
@@ -887,8 +887,11 @@ export default function App() {
 
 DESIGN RULES:
 - RESPONSIVE (MANDATORY — applies to EVERY app, even a counter or a form, not just landing pages): build mobile-first for a 375px phone, then scale up with sm:/md:/lg: breakpoints. Containers: w-full max-w-* mx-auto px-4 sm:px-6 lg:px-8. Stacks: flex flex-col md:flex-row (never a fixed flex-row that overflows mobile). Grids: grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 (always start single-column). Headings: text-2xl sm:text-3xl lg:text-4xl. NEVER a fixed pixel width that exceeds 375px (no w-[600px]) — use w-full max-w-[600px]. Nothing may overflow horizontally on a phone.
-- Colors: primary bg-[${selectedTheme.primary}], dark bg-[${selectedTheme.dark}], light bg-[${selectedTheme.light}]. NEVER use bg-blue, bg-gray.
+- Colors: primary bg-[${selectedTheme.primary}], dark bg-[${selectedTheme.dark}], light bg-[${selectedTheme.light}]. NEVER use bg-blue, bg-gray, bg-slate — these hex values ARE the app's theme, not decoration; use them everywhere a color is needed.
 - ONE COHESIVE THEME (MANDATORY): pick EITHER light OR dark for the WHOLE app and hold it — body, header, sidebar, cards all in the same family. NEVER mix a light body with a dark header (reads as broken). For dashboards, prefer a cohesive DARK theme (dark bg, dark cards bg-slate-800, light text) to match the AIKit reference.
+${chosenDesignSystem ? `- FONTS (MANDATORY — this app has an explicitly chosen design system, ${chosenDesignSystem.name}): add this EXACT tag as the very first line inside the returned code's <head> equivalent (a comment at the top of the file if no HTML head exists in this output shape) so the fonts actually load: <link rel="stylesheet" href="${googleFontsUrl(chosenDesignSystem)}">. Then set heading elements (h1/h2/h3) to font-family: '${chosenDesignSystem.fonts.heading.family}' and body text to font-family: '${chosenDesignSystem.fonts.body.family}' via inline style or a style tag — Tailwind's default font classes won't reference these families, so use style={{fontFamily: "'${chosenDesignSystem.fonts.heading.family}', sans-serif"}} on headings. NEVER default to Inter or a system font when a design system is chosen.
+- CORNER RADIUS (MANDATORY): use rounded-[${chosenDesignSystem.radius}px] on buttons/cards/inputs instead of a default Tailwind radius class — apply consistently.
+- SHADOWS (MANDATORY): ${chosenDesignSystem.shadows === 'none' ? 'NO box-shadow anywhere — flat surfaces, use borders for separation' : chosenDesignSystem.shadows === 'glow' ? `colored glow shadows using ${chosenDesignSystem.palette.accent} (e.g. shadow-[0_0_24px_${chosenDesignSystem.palette.accent}55]), never gray drop-shadows` : `${chosenDesignSystem.shadows} shadows`}.` : ''}
 - NAV/SIDEBAR SPACING (MANDATORY): sidebar/nav items each on their own row — container flex flex-col space-y-1, each item block px-3 py-2 rounded-lg. NEVER mash labels together with no gap (e.g. "AnalyticsUsersReports" is a bug); one label per line, spaced.
 - Use Lucide icons: import { Search, Menu, Users, BarChart3, Settings, Bell, Star, Plus, Edit, Trash2, ArrowRight, TrendingUp, DollarSign, Zap, Shield, Activity } from 'lucide-react'
 - Cards: bg-white rounded-xl shadow-sm border border-slate-200 p-6 hover:shadow-md transition-all
