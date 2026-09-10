@@ -1,0 +1,29 @@
+<!-- @dsCard group="Components" name="Buttons & tags" subtitle="Primary, secondary, ghost, icon and tags" viewport="640x440" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Recall — Buttons & tags</title>
+<link rel="stylesheet" href="../styles.css" />
+<style>
+.demo { max-width: 640px; margin: 0 auto; padding: var(--space-6) var(--space-4) var(--space-8); }
+.demo-head { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.55; margin: var(--space-6) 0 var(--space-3); }
+.demo-head:first-child { margin-top: 0; }
+.row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-3); }
+.note { font-size: 12px; opacity: 0.6; max-width: 60ch; }
+</style>
+</head>
+<body>
+<main class="demo">
+<div class="demo-head">Buttons</div>
+<div class="row"><button type="button" class="btn btn-primary">Continue<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button><button type="button" class="btn btn-secondary">Preview</button><button type="button" class="btn btn-ghost">Learn more</button><button type="button" class="btn btn-danger">Reject</button><button type="button" class="btn btn-secondary" disabled>Disabled</button></div>
+<div class="demo-head">Icon buttons</div>
+<div class="row"><button type="button" class="btn btn-primary btn-icon" aria-label="Forward"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button><button type="button" class="btn btn-secondary btn-icon" aria-label="Forward"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button><button type="button" class="btn btn-ghost btn-icon" aria-label="Forward"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button></div>
+<div class="demo-head">Full-width</div>
+<button type="button" class="btn btn-primary btn-block">Create project<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></button>
+<div class="demo-head">Tags</div>
+<div class="row"><span class="tag tag-accent">Accent</span><span class="tag tag-accent-2">Accent 2</span><span class="tag tag-outline">Outlined</span><span class="tag tag-neutral">Neutral</span><span class="tag tag-success"><i class="status-dot" data-status="success"></i>Live</span><span class="tag tag-warning"><i class="status-dot" data-status="warning"></i>Waiting</span><span class="tag tag-error"><i class="status-dot" data-status="error"></i>Failed</span></div>
+</main></body></html>
