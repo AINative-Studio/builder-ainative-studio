@@ -142,8 +142,16 @@ export async function GET(
       // fall back to ssrHtml if there is no code to re-render.
       if (gen?.generatedCode) {
         content = gen.generatedCode
-        storePreview(id, content) // repopulate in-memory cache
-        console.log(`[Preview] Restored code from ZeroDB for ID: ${id} (re-rendering with current template)`)
+        // Real bug found live (Meridian, 2026-09-10): this repopulate call
+        // used to pass only (id, content) — designSystemId was silently
+        // dropped on every cross-replica restore (the in-memory store is
+        // per-process; a request landing on a different replica than the one
+        // that generated the app always falls through to this exact path),
+        // even though it was correctly chosen at generation time and IS now
+        // durably saved in ZeroDB (lib/zerodb-store.ts's saveGeneration).
+        // Passed through so a cross-replica restore stays design-system-correct.
+        storePreview(id, content, undefined, { designSystemId: gen.designSystemId })
+        console.log(`[Preview] Restored code from ZeroDB for ID: ${id} (re-rendering with current template)${gen.designSystemId ? `, design system: ${gen.designSystemId}` : ''}`)
       } else if (gen?.ssrHtml) {
         console.log(`[Preview] No code — serving SSR HTML from ZeroDB for ID: ${id}`)
         return new Response(gen.ssrHtml.replace(/<head([^>]*)>/i, `<head$1>${dbTokenShim(dbToken, primitiveTokens)}`), {

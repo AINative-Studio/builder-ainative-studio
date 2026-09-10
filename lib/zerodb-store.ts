@@ -89,6 +89,18 @@ export async function saveGeneration(data: {
   /** Parsed multi-file map (#333) — persisted as files_json so the Sandpack
    *  path works from the durable store, not just the live SSE stream. */
   files?: Record<string, string>
+  /**
+   * Real bug found live (Meridian, 2026-09-10): the in-memory preview store
+   * (lib/preview-store.ts) DOES carry designSystemId, but this durable ZeroDB
+   * record never did — so any request whose GET /api/preview/[id] landed on
+   * a DIFFERENT Railway replica than the one that ran the generation (the
+   * in-memory store is per-process, confirmed via this file's own multi-
+   * instance deployment) fell through to THIS restore path, which silently
+   * discarded the chosen design system even though it was correctly chosen
+   * at generation time. Persisted here so a cross-replica restore is
+   * design-system-correct too, not just code-correct.
+   */
+  designSystemId?: string
 }): Promise<boolean> {
   try {
     const row: Record<string, any> = {
@@ -103,6 +115,7 @@ export async function saveGeneration(data: {
       created_at: new Date().toISOString(),
     }
     if (data.ssrHtml) row.ssr_html = data.ssrHtml
+    if (data.designSystemId) row.design_system_id = data.designSystemId
     if (data.files && Object.keys(data.files).length > 0) {
       try {
         const filesJson = JSON.stringify(data.files)
@@ -144,6 +157,8 @@ export async function loadGeneration(chatId: string): Promise<{
   ssrHtml?: string
   /** Durable multi-file map (#333), when one was persisted. */
   files?: Record<string, string> | null
+  /** The founder's chosen design system id, when one was persisted (2026-09-10 fix). */
+  designSystemId?: string
 } | null> {
   try {
     // Use ZeroDB query endpoint with server-side filtering by chat_id
@@ -172,6 +187,7 @@ export async function loadGeneration(chatId: string): Promise<{
         generatedCode: row.generated_code,
         ssrHtml: row.ssr_html,
         files,
+        designSystemId: row.design_system_id || undefined,
       }
     }
     return null

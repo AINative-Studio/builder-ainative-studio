@@ -1592,7 +1592,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               const { saveGeneration } = await import('@/lib/zerodb-store')
               const { persistGeneration } = await import('@/lib/generation-persist')
               const pr = await persistGeneration(
-                { chatId: responseId, prompt: message, code: finalContent, model: requestedModel || DEFAULT_MODEL, status: 'degraded', valid: false },
+                { chatId: responseId, prompt: message, code: finalContent, model: requestedModel || DEFAULT_MODEL, status: 'degraded', valid: false, designSystemId: chosenDesignSystem?.id },
                 saveGeneration,
               )
               console.log(`[PERSIST] degraded path: ${pr.reason}`)
@@ -1675,7 +1675,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                 // app actually QUALIFIES for Sandpack — single-file apps (whose
                 // map is just the AX scaffold) stay lean, Babel restores them
                 // from generated_code alone.
-                { chatId: responseId, prompt: message, code: finalContent, model: requestedModel || DEFAULT_MODEL, status: 'success', valid: validation.valid, files: shouldUseSandpack(parsedFiles) ? parsedFiles : undefined },
+                { chatId: responseId, prompt: message, code: finalContent, model: requestedModel || DEFAULT_MODEL, status: 'success', valid: validation.valid, files: shouldUseSandpack(parsedFiles) ? parsedFiles : undefined, designSystemId: chosenDesignSystem?.id },
                 saveGeneration,
               )
               console.log(`[PERSIST] success path: ${pr.reason}`)

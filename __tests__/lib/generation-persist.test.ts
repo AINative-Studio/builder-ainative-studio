@@ -42,6 +42,24 @@ describe('persistGeneration (#89)', () => {
     expect(save).not.toHaveBeenCalled()
   })
 
+  /**
+   * Real bug found live (Meridian, 2026-09-10): designSystemId was never
+   * threaded through this orchestrator at all, so a chosen design system
+   * never reached the durable ZeroDB store — only the in-memory preview
+   * cache had it, which is lost on a cross-replica restore.
+   */
+  it('forwards designSystemId through to the save function when chosen', async () => {
+    const save = vi.fn().mockResolvedValue(true)
+    await persistGeneration({ ...base, designSystemId: 'cloud' }, save)
+    expect(save.mock.calls[0][0]).toMatchObject({ designSystemId: 'cloud' })
+  })
+
+  it('forwards undefined designSystemId (not a fabricated default) when none was chosen', async () => {
+    const save = vi.fn().mockResolvedValue(true)
+    await persistGeneration(base, save)
+    expect(save.mock.calls[0][0].designSystemId).toBeUndefined()
+  })
+
   it('times out (bounded) if save hangs', async () => {
     const save = vi.fn(() => new Promise<boolean>(() => {})) // never resolves
     const r = await persistGeneration(base, save, { timeoutMs: 20 })
