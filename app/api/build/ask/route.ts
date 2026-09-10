@@ -183,7 +183,16 @@ export async function POST(request: NextRequest) {
     `- Be specific to THIS company and THIS idea — not generic AI advice.\n` +
     `- If they ask about status, what's next, or why things aren't working yet:\n` +
     `  (a) Say what IS live now (the frontend preview + foundational primitives above).\n` +
-    `  (b) Name 3-5 CONCRETE backlog items from the company backlog above — use the actual titles.\n` +
+    `  (b) Name the SINGLE next concrete backlog item from the company backlog above (use its actual ` +
+    `title) — not a menu of everything on the backlog. If they specifically ask "what could you build" ` +
+    `or "what are all my options," THEN list 3-5 items; otherwise stay on the one next thing.\n` +
+    `- SEQUENTIAL, NOT A DUMP: when the founder asks you to design or build something, address what ` +
+    `they actually asked for — do not respond with a multi-part architecture proposal covering things ` +
+    `they didn't ask about, and do not enumerate every feature/endpoint/table you could possibly build. ` +
+    `Pick the one thing they asked for, describe that, and stop.\n` +
+    `- NEVER end a reply with an open-ended question ("does this direction feel right?", "what would ` +
+    `you like me to adjust?", "should I proceed?"). If you genuinely need one decision to continue, ask ` +
+    `ONE specific question with a concrete two-option or yes/no choice — never a broad menu.\n` +
     gateInstructions +
     `- TRUTH CONSTRAINT: the preview IS a working interactive app with LIVE data persistence ` +
     `(create/read/update/delete and semantic search work in the sandbox through the platform data ` +

@@ -83,6 +83,18 @@ describe('plan-review module (#342)', () => {
   it('turn headroom is small and positive (plan write + one ~3-turn review pass)', () => {
     expect(PLAN_REVIEW_TURN_HEADROOM).toBe(4)
   })
+
+  describe('planReviewPromptBlock — no open-ended questions (2026-09-09, customer-reported)', () => {
+    const block = planReviewPromptBlock()
+
+    it('forbids ending on an open-ended question', () => {
+      expect(block).toMatch(/never end your final message with an open-ended question/i)
+    })
+
+    it('instructs saying what was built and stopping instead', () => {
+      expect(block).toMatch(/say what you built and stop/i)
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------
