@@ -1627,8 +1627,15 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                   16000, selectedGenModel,
                 )
                 const obValidation = validateGeneratedCode(obRaw)
+                // #624 debug instrumentation: live verification via
+                // `railway logs` proved unreliable for confirming whether
+                // the targeted retry below is even REACHED — this
+                // unconditional line (fires regardless of adoption outcome)
+                // is the one signal that can't be silently skipped.
+                console.log(`🔍 [obedience-repair] valid=${obValidation.valid} codeLen=${obValidation.code?.length ?? 0}`)
                 if (obValidation.valid && obValidation.code && obValidation.code.length > 200) {
                   const after = checkObedience(obValidation.code, message, validRole, obedienceOptions)
+                  console.log(`🔍 [obedience-repair] after.primitiveComplianceGaps=${JSON.stringify(after.primitiveComplianceGaps)}`)
                   const improved = (ob.persistenceGap && !after.persistenceGap) ||
                     (ob.aikitGaps.length > after.aikitGaps.length) ||
                     (ob.primitiveComplianceGaps.length > after.primitiveComplianceGaps.length) ||
