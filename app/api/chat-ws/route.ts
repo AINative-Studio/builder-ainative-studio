@@ -215,7 +215,13 @@ const MODEL_CONFIG: Record<string, { provider: 'meta' | 'ainative'; modelId: str
 
 export async function POST(request: NextRequest) {
   try {
-    const { message, chatId, model: requestedModel, role: companyRole, dataModel, designSystemId } = await request.json()
+    const { message, chatId, model: requestedModel, role: companyRole, dataModel, designSystemId, landingPageOnly } = await request.json()
+    // #612 (Meridian, 2026-09-10): company-app/route.ts's marketing-copy-only
+    // landing page has no legitimate reason to call any primitive's live API,
+    // even when its underlying idea text legitimately matches one (e.g.
+    // "sales pipeline data" -> ZeroPipeline) — see obedience-gate.ts's
+    // CheckObedienceOptions doc comment for the full incident.
+    const obedienceOptions = landingPageOnly === true ? { landingPageOnly: true } : undefined
     // #448: an optional company-build role (marketing/sales/operations)
     // narrows composition toward that function's primitives. Untrusted
     // client input — validate against the real role set, default to none.
@@ -1412,7 +1418,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
           // actually-improved, so a bad pass never regresses a working app.
           if (validation.valid && finalContent) {
             try {
-              const ob = checkObedience(finalContent, message, validRole)
+              const ob = checkObedience(finalContent, message, validRole, obedienceOptions)
               const needsDecomp = shouldDecompose(finalContent, wantsMultiFile)
               const needsObedience = !ob.ok
 
@@ -1427,7 +1433,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                 )
                 const v = validateGeneratedCode(raw)
                 const multi = /\/\/\s*---\s*FILE:/.test(v.code || '')
-                const after = v.valid ? checkObedience(v.code, message, validRole) : ob
+                const after = v.valid ? checkObedience(v.code, message, validRole, obedienceOptions) : ob
                 const obeyImproved = (ob.persistenceGap && !after.persistenceGap) ||
                   (ob.aikitGaps.length > after.aikitGaps.length) ||
                   (ob.primitiveComplianceGaps.length > after.primitiveComplianceGaps.length) ||
@@ -1454,7 +1460,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                 )
                 const obValidation = validateGeneratedCode(obRaw)
                 if (obValidation.valid && obValidation.code && obValidation.code.length > 200) {
-                  const after = checkObedience(obValidation.code, message, validRole)
+                  const after = checkObedience(obValidation.code, message, validRole, obedienceOptions)
                   const improved = (ob.persistenceGap && !after.persistenceGap) ||
                     (ob.aikitGaps.length > after.aikitGaps.length) ||
                     (ob.primitiveComplianceGaps.length > after.primitiveComplianceGaps.length) ||
@@ -1506,7 +1512,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
           // file, obedience) makes recalls actionable. Never blocks the response.
           try {
             const served = finalContent || ''
-            const obFinal = checkObedience(served, message, validRole)
+            const obFinal = checkObedience(served, message, validRole, obedienceOptions)
             const dbBacked = /\/api\/db\//.test(served)
             const usedMultiFile = /\/\/\s*---\s*FILE:/.test(served)
             // Simple quality proxy in [0,1]: valid + data-backed + no obedience gaps + multi-file-when-warranted.

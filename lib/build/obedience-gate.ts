@@ -242,11 +242,36 @@ export interface ObedienceResult {
   reasons: string[]
 }
 
+/**
+ * Real bug found live (Meridian, 2026-09-10, issue #612): a Company-track
+ * landing page's underlying idea can legitimately match a real primitive's
+ * trigger keywords (Meridian's idea genuinely says "sales pipeline data" →
+ * correctly matches ZeroPipeline) even though the generation itself is
+ * `company-app/route.ts`'s marketing-copy-only page (hero/features/pricing/
+ * footer) — which has no legitimate reason to call ANY primitive's live API.
+ * The re-prompt this triggered ("call ZeroPipeline in your marketing page")
+ * pushed the model toward inventing pipeline-shaped UI in what should stay a
+ * static page, contributing to repeated truncation (confirmed live: 5
+ * straight generation attempts truncated on missing ./ui/* imports while
+ * this exact gap fired every time). `landingPageOnly` opts a caller out of
+ * ONLY the primitive-compliance check — every other gap (AIKit usage,
+ * persistence, visitor tracking, lead capture) still applies normally, since
+ * those are legitimately unconditional per this file's existing design.
+ */
+export interface CheckObedienceOptions {
+  landingPageOnly?: boolean
+}
+
 /** Inspect generated code + idea; report obedience gaps for the re-prompt. */
-export function checkObedience(code: string, idea: string, role?: CompanyRole): ObedienceResult {
+export function checkObedience(
+  code: string,
+  idea: string,
+  role?: CompanyRole,
+  options?: CheckObedienceOptions,
+): ObedienceResult {
   const persistenceGap = hasPersistenceGap(code, idea)
   const aikitGaps = findAikitGaps(code)
-  const primitiveComplianceGaps = findPrimitiveComplianceGaps(code, idea, role)
+  const primitiveComplianceGaps = options?.landingPageOnly ? [] : findPrimitiveComplianceGaps(code, idea, role)
   const visitorTrackingGap = hasVisitorTrackingGap(code)
   const fakeLeadCaptureGap = hasFakeLeadCaptureGap(code)
   const hardcodedToggleGap = hasHardcodedToggleGap(code)
