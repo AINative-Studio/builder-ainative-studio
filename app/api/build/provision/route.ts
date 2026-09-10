@@ -303,6 +303,19 @@ export async function POST(request: NextRequest) {
     zeroinvoice = { provisioned: stored, reason: stored ? undefined : 'credential_store_failed' }
   }
 
+  // #642: ServiceOS, found via a systematic gap sweep across the whole
+  // primitive catalog (2026-09-10) — real founder triggers (support,
+  // helpdesk, tickets), a real apiBase, but no runtime proxy wiring at all
+  // until now. Confirmed LIVE: GET/POST /api/tickets both work with a plain
+  // AINative JWT, no separate onboarding step. Same shape as ZeroInvoice —
+  // only the credential capture is needed here. Best-effort — a failure
+  // just leaves the Support card honestly simulated.
+  let serviceos: { provisioned: boolean; reason?: string } = { provisioned: false }
+  if (jwt) {
+    const stored = await captureFounderCredentialForProxy(request, slug, 'serviceos', jwt)
+    serviceos = { provisioned: stored, reason: stored ? undefined : 'credential_store_failed' }
+  }
+
   // #439 (child of #414/#422): also provision the company's REAL ZeroERP
   // tenant. UNLIKE every JWT-auth primitive above, ZeroERP's onboarding
   // endpoint takes no auth at all (confirmed via source: `security: []`,
@@ -374,6 +387,7 @@ export async function POST(request: NextRequest) {
     agentflowProjectId: agentflow.projectId,
     zerocrmProvisioned: zerocrm.provisioned,
     zeroinvoiceProvisioned: zeroinvoice.provisioned,
+    serviceosProvisioned: serviceos.provisioned,
     zeroerpProvisioned: zeroerp.provisioned,
     zeroerpOrgId: zeroerp.orgId,
     zeroerpInviteToken: zeroerp.inviteToken,
@@ -425,6 +439,7 @@ export async function POST(request: NextRequest) {
     agentflowProvisioned: agentflow.provisioned,
     zerocrmProvisioned: zerocrm.provisioned,
     zeroinvoiceProvisioned: zeroinvoice.provisioned,
+    serviceosProvisioned: serviceos.provisioned,
     zeroerpProvisioned: zeroerp.provisioned,
     gitProvisioned,
     gitRepoUrl: gitResult.gitRepoUrl,

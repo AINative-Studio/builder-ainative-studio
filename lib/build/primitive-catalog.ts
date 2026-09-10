@@ -981,6 +981,36 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
     'the real ZeroInvoice proxy. If the feature is invoicing, billing, or getting paid (invoice list, create-invoice ' +
     'form, paid/pending/overdue status), it MUST call GET/POST /api/primitive/zeroinvoice/invoices/ — persisting ' +
     'invoices through generic /api/db rows instead is a FAILING implementation even if the UI looks identical to the user.',
+  // #642: found via a systematic gap sweep across the whole primitive
+  // catalog (2026-09-10, following the ZeroInvoice fix) — ServiceOS
+  // (helpdesk) had real, common founder triggers (support, helpdesk,
+  // tickets) and a real apiBase, but NO runtime proxy wiring at all.
+  // Confirmed LIVE against production per docs.ainative.studio/docs/
+  // business-ops/serviceos: GET/POST /api/tickets both work with a plain
+  // AINative JWT (a real ticket was created and appeared in a subsequent
+  // list). Same founder-scoped direct-JWT-bearer shape as the other 8. Only
+  // GET/POST are independently verified here — PATCH /tickets/:id (status
+  // updates) is real and documented but this session hit an org-scoping
+  // 403 attempting to exercise it on its own test data, so the instruction
+  // below deliberately only documents the confirmed list/create surface.
+  ServiceOS: () =>
+    `call the same-origin proxy at \`/api/primitive/serviceos/{path}\` — NO Authorization header needed, the platform attaches the founder's real ServiceOS credential server-side; the path after \`serviceos/\` matches ServiceOS's own REST path exactly.\n` +
+    '  Real call shape (copy this exactly, do not paraphrase — live-verified: no separate onboarding step, the founder\'s ServiceOS tenant resolves directly from their AINative identity on first call):\n' +
+    '  ```js\n' +
+    "  // List this company's real support tickets\n" +
+    "  const res = await fetch('/api/primitive/serviceos/tickets')\n" +
+    '  const { data } = await res.json() // real tickets, not fabricated rows\n' +
+    '\n' +
+    "  // Create a new ticket\n" +
+    "  await fetch('/api/primitive/serviceos/tickets', {\n" +
+    "    method: 'POST', headers: { 'Content-Type': 'application/json' },\n" +
+    '    body: JSON.stringify({ title: ticketTitle, description: ticketDescription, priority: \'normal\' }),\n' +
+    '  })\n' +
+    '  ```\n' +
+    '  ANTI-PATTERN — FORBIDDEN: do NOT hand-roll a support-ticket/helpdesk table using /api/db tables instead of ' +
+    'calling the real ServiceOS proxy. If the feature is a helpdesk, support-ticket queue, or customer-service surface, ' +
+    'it MUST call GET/POST /api/primitive/serviceos/tickets — persisting tickets through generic /api/db rows instead ' +
+    'is a FAILING implementation even if the UI looks identical to the user.',
   // #496/#499/#500/#503/#505/#510 — these 8 use a NARROWER shape than the
   // 5 above: a fixed `/api/{slug}/{action}` route with a hard allowlist of
   // real actions (not an arbitrary-path passthrough), so the model must be
@@ -1103,6 +1133,9 @@ export const RUNTIME_PROXY_PATH_SUBSTRINGS: Record<string, string[]> = {
   // ZeroInvoice call, exactly the gap that let a live invoicing-app
   // generation silently fall back to fake /api/db rows undetected.
   ZeroInvoice: ['/api/primitive/zeroinvoice/invoices'],
+  // #642: added once ServiceOS's real direct-JWT-bearer path was confirmed
+  // live (see RUNTIME_PROXIED_PRIMITIVES's ServiceOS entry).
+  ServiceOS: ['/api/primitive/serviceos/tickets'],
   ZeroMemory: ['/api/memory/remember', '/api/memory/recall'],
   'Browser Agent': ['/api/browser-agent/extract', '/api/browser-agent/act'],
   Agent402: ['/api/agent402/capabilities', '/api/agent402/projects'],

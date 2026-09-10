@@ -57,8 +57,15 @@ const TABLE = 'builder_primitive_credentials'
  *  via a real POST that created a genuine invoice (INV-2026-0001) against
  *  production. Same direct-JWT-bearer shape as the other 6; no separate
  *  provisioning flow needed beyond capturing the founder's own JWT, which
- *  the checkout-time provision/route.ts flow already does for the others. */
-export type FounderScopedPrimitive = 'zerocommerce' | 'zeropipeline' | 'agentflow' | 'zeroforms' | 'zerocrm' | 'zerovoice' | 'zeroinvoice'
+ *  the checkout-time provision/route.ts flow already does for the others.
+ *
+ *  serviceos (#642): found via a systematic gap sweep across the whole
+ *  primitive catalog (2026-09-10) — real founder triggers (support,
+ *  helpdesk, tickets), a real apiBase, but no runtime proxy wiring at all.
+ *  Confirmed LIVE against production (docs.ainative.studio/docs/business-ops
+ *  /serviceos): GET/POST /api/tickets both work with a plain AINative JWT.
+ *  Same shape as the other 8; no separate provisioning call needed. */
+export type FounderScopedPrimitive = 'zerocommerce' | 'zeropipeline' | 'agentflow' | 'zeroforms' | 'zerocrm' | 'zerovoice' | 'zeroinvoice' | 'serviceos'
 
 interface StoredCredentialRow {
   slug: string
