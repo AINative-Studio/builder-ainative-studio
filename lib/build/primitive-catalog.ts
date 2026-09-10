@@ -944,6 +944,43 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
     '  ANTI-PATTERN — FORBIDDEN: do NOT simulate "call placed" / "SMS sent" with a local status update, a fake ' +
     'toast, or a client-side mock timer instead of calling this proxy. If the feature claims to place a real call ' +
     'or send a real text, it MUST call POST /api/primitive/zerovoice/calls/outbound or POST /api/primitive/zerovoice/sms/send.',
+  // #638/#639: ZeroInvoice was long believed to have NO runtime-callable
+  // path at all (its own OAuth 2.1+PKCE browser flow hands the founder off
+  // to ZeroInvoice's own frontend, which never returns a token to builder —
+  // confirmed as a genuine, real limitation of that ONE flow). Live-verified
+  // 2026-09-10 against production that ZeroInvoice's real backend ALSO
+  // accepts a plain AINative JWT directly (same founder-scoped, direct-
+  // JWT-bearer shape as the other 6) — a real POST created a genuine invoice
+  // (INV-2026-0001, real id/totals). Confirmed live: ZeroInvoice's collection
+  // endpoints 307-redirect without a trailing slash (a POST/PUT/DELETE would
+  // silently lose its body/method across that redirect), so the exact path
+  // shown below (with trailing slash) is REQUIRED, not stylistic — the proxy
+  // route also normalizes this server-side as a second layer of defense.
+  ZeroInvoice: () =>
+    `call the same-origin proxy at \`/api/primitive/zeroinvoice/{path}\` — NO Authorization header needed, the platform attaches the founder's real ZeroInvoice credential server-side; the path after \`zeroinvoice/\` matches ZeroInvoice's own REST path exactly, WITH a trailing slash on collection paths (\`invoices/\`, \`clients/\`, \`payments/\` — omitting it 307-redirects and can drop your request body).\n` +
+    '  Real call shape (copy this exactly, do not paraphrase — live-verified: no separate onboarding step, the founder\'s ZeroInvoice tenant resolves directly from their AINative identity on first call):\n' +
+    '  ```js\n' +
+    "  // List this company's real invoices\n" +
+    "  const res = await fetch('/api/primitive/zeroinvoice/invoices/')\n" +
+    '  const { items: invoices } = await res.json() // real invoices, not fabricated rows\n' +
+    '\n' +
+    "  // Create a client, then bill them with a real invoice\n" +
+    "  const client = await fetch('/api/primitive/zeroinvoice/clients/', {\n" +
+    "    method: 'POST', headers: { 'Content-Type': 'application/json' },\n" +
+    "    body: JSON.stringify({ name: clientName, email: clientEmail }),\n" +
+    '  }).then(r => r.json())\n' +
+    "  await fetch('/api/primitive/zeroinvoice/invoices/', {\n" +
+    "    method: 'POST', headers: { 'Content-Type': 'application/json' },\n" +
+    '    body: JSON.stringify({\n' +
+    '      client_id: client.id, invoice_date: todayISODate, due_date: dueISODate,\n' +
+    "      line_items: [{ description: itemDescription, quantity: 1, unit_price: amount, amount }],\n" +
+    '    }),\n' +
+    '  })\n' +
+    '  ```\n' +
+    '  ANTI-PATTERN — FORBIDDEN: do NOT hand-roll an invoices/billing table using /api/db tables instead of calling ' +
+    'the real ZeroInvoice proxy. If the feature is invoicing, billing, or getting paid (invoice list, create-invoice ' +
+    'form, paid/pending/overdue status), it MUST call GET/POST /api/primitive/zeroinvoice/invoices/ — persisting ' +
+    'invoices through generic /api/db rows instead is a FAILING implementation even if the UI looks identical to the user.',
   // #496/#499/#500/#503/#505/#510 — these 8 use a NARROWER shape than the
   // 5 above: a fixed `/api/{slug}/{action}` route with a hard allowlist of
   // real actions (not an arbitrary-path passthrough), so the model must be
@@ -1060,6 +1097,12 @@ export const RUNTIME_PROXY_PATH_SUBSTRINGS: Record<string, string[]> = {
   ZeroForms: ['/api/primitive/zeroforms/forms'],
   ZeroCRM: ['/api/primitive/zerocrm/deals'],
   ZeroVoice: ['/api/primitive/zerovoice/calls/outbound', '/api/primitive/zerovoice/sms/send'],
+  // #638/#639: added once ZeroInvoice's real direct-JWT-bearer path was
+  // confirmed live (see RUNTIME_PROXIED_PRIMITIVES's ZeroInvoice entry) —
+  // without this, checkObedience had no way to ever flag a missing
+  // ZeroInvoice call, exactly the gap that let a live invoicing-app
+  // generation silently fall back to fake /api/db rows undetected.
+  ZeroInvoice: ['/api/primitive/zeroinvoice/invoices'],
   ZeroMemory: ['/api/memory/remember', '/api/memory/recall'],
   'Browser Agent': ['/api/browser-agent/extract', '/api/browser-agent/act'],
   Agent402: ['/api/agent402/capabilities', '/api/agent402/projects'],

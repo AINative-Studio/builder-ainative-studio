@@ -117,6 +117,12 @@ export interface AppEntry {
   // the runtime proxy's FIRST request. Absent/false = still simulated (no
   // credential captured yet, e.g. no signed-in founder at provision time).
   zerocrmProvisioned?: boolean
+  // ZeroInvoice (#638/#639) — like ZeroCRM, needs no explicit provisioning
+  // call; its real backend resolves the founder's tenant directly from their
+  // AINative JWT on first authenticated request. Absent/false = still
+  // simulated (no credential captured yet, e.g. no signed-in founder at
+  // provision time).
+  zeroinvoiceProvisioned?: boolean
   // OpenCapStack (#427, child of #414). provisionCapTable's real companyId
   // was computed at checkout and returned once in the provision response,
   // but never durably stored — a runtime proxy has no way to know which
@@ -624,6 +630,7 @@ export async function setAppProvisioned(
     agentflowProvisioned?: boolean
     agentflowProjectId?: string
     zerocrmProvisioned?: boolean
+    zeroinvoiceProvisioned?: boolean
     zeroerpProvisioned?: boolean
     zeroerpOrgId?: string
     zeroerpInviteToken?: string

@@ -1,27 +1,33 @@
 /**
- * ZeroInvoice connect client (#418, child of #414).
+ * ZeroInvoice OAuth connect client (#418, child of #414) — powers the
+ * founder-facing "Connect ZeroInvoice" dashboard button, which sends the
+ * founder's BROWSER through ZeroInvoice's own hosted OAuth 2.1 + PKCE flow
+ * and its own account dashboard. This remains real and necessary: it is
+ * how a founder links their AINative identity to ZeroInvoice's product on
+ * ZeroInvoice's own side. ZeroInvoice's own real frontend
+ * (frontend-nextjs/app/api/auth/ainative/callback/route.ts) fully owns that
+ * callback — it exchanges the code, sets its OWN httpOnly cookies, and
+ * redirects the browser to ITS OWN /dashboard. Builder never receives a
+ * token, a callback, or any signal that this particular flow completed —
+ * this client can only fetch the real authorize URL to send the founder to,
+ * never confirm anything past that point.
  *
- * ZeroInvoice's real auth is a browser-redirect OAuth 2.1 + PKCE flow — NOT
- * a direct-JWT-bearer pattern like ZeroPipeline/ZeroCommerce/ZeroForms/
- * AgentFlow. Confirmed via direct source read
- * (AINative-Studio/ZeroInvoice's backend/app/api/auth.py::
- * ainative_oauth_authorize/ainative_oauth_callback): no headless/
- * client-credentials alternative exists — `provision/route.ts` only ever
- * has the founder's JWT server-side, never a browser, so this cannot be
- * auto-provisioned the way every other primitive in this cluster is.
- *
- * CRITICAL, real architectural difference from every other client in this
- * codebase: ZeroInvoice's own real frontend
- * (frontend-nextjs/app/api/auth/ainative/callback/route.ts, confirmed via
- * source) fully owns the OAuth callback — it exchanges the code, sets its
- * OWN httpOnly cookies, and redirects the browser to ITS OWN /dashboard.
- * Builder never receives a token, a callback, or any signal that the flow
- * completed. There is no ZeroInvoice endpoint that lets builder verify a
- * connection after the fact (checked exhaustively against the live
- * openapi.json — no webhook, no account-lookup-by-AINative-identity route
- * exists). This client can therefore only fetch the real authorize URL for
- * the founder to be sent to — it cannot confirm anything past that point,
- * and must never claim to.
+ * CORRECTION (2026-09-10, #638/#639): this doc previously claimed "no
+ * headless/client-credentials alternative exists" for calling ZeroInvoice
+ * AT ALL — that was wrong. Re-investigated against ZeroInvoice's real
+ * backend source (deps.py::get_current_user falling through to
+ * _try_ainative_token) and confirmed LIVE against production: ZeroInvoice's
+ * actual business endpoints (invoices/clients/payments) accept a plain
+ * AINative JWT directly via `Authorization: Bearer <jwt>` — the SAME
+ * direct-JWT-bearer contract ZeroPipeline/ZeroCommerce/ZeroForms/AgentFlow/
+ * ZeroCRM use. That path does NOT need this OAuth connect flow at all — see
+ * app/api/primitive/[primitive]/[...path]/route.ts's `zeroinvoice` case and
+ * lib/build/primitive-catalog.ts's ZeroInvoice RUNTIME_PROXIED_PRIMITIVES
+ * entry, wired the same way provision/route.ts captures the credential for
+ * the other founder-scoped primitives. This module's OAuth flow and that
+ * runtime proxy are two DIFFERENT, both-real integration surfaces — this
+ * one is the founder's own ZeroInvoice-hosted dashboard/account; the other
+ * is what a generated app's runtime code calls.
  *
  * Real, confirmed contract:
  *   GET /api/auth/ainative/authorize

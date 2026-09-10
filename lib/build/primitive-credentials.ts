@@ -46,8 +46,19 @@ const TABLE = 'builder_primitive_credentials'
  *  zeropipeline.ts/zerocommerce.ts/zeroforms.ts/agentflow.ts"). Unlike those 5,
  *  its credential is captured at the EXPLICIT /api/build/zerovoice provisioning
  *  action (not the checkout-time provision/route.ts flow), since ZeroVoice is
- *  deliberately opt-in (real recurring cost, #415). */
-export type FounderScopedPrimitive = 'zerocommerce' | 'zeropipeline' | 'agentflow' | 'zeroforms' | 'zerocrm' | 'zerovoice'
+ *  deliberately opt-in (real recurring cost, #415).
+ *
+ *  zeroinvoice (#638/#639): re-investigated 2026-09-10 and confirmed LIVE —
+ *  contrary to the prior finding (lib/build/zeroinvoice.ts's original doc
+ *  comment claimed no headless alternative to its OAuth 2.1+PKCE browser
+ *  flow existed), ZeroInvoice's real backend ALSO accepts a plain AINative
+ *  JWT as `Authorization: Bearer <jwt>` directly (falls through to the same
+ *  GET /v1/public/auth/me contract the other 6 primitives use) — confirmed
+ *  via a real POST that created a genuine invoice (INV-2026-0001) against
+ *  production. Same direct-JWT-bearer shape as the other 6; no separate
+ *  provisioning flow needed beyond capturing the founder's own JWT, which
+ *  the checkout-time provision/route.ts flow already does for the others. */
+export type FounderScopedPrimitive = 'zerocommerce' | 'zeropipeline' | 'agentflow' | 'zeroforms' | 'zerocrm' | 'zerovoice' | 'zeroinvoice'
 
 interface StoredCredentialRow {
   slug: string

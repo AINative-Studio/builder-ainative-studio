@@ -53,10 +53,25 @@ const PRIMITIVE_BASES: Record<FounderScopedPrimitive, string> = {
   // shape as the 5 above. Real base confirmed via live openapi.json
   // (api.ainative.studio does NOT proxy ZeroVoice at all — 404s there).
   zerovoice: process.env.ZEROVOICE_API_URL || 'https://zerovoice-production.up.railway.app/api/v1',
+  // #638/#639 — ZeroInvoice was long believed to have NO direct-JWT-bearer
+  // path (lib/build/zeroinvoice.ts's original doc comment: "no headless/
+  // client-credentials alternative exists" — its OAuth 2.1+PKCE browser flow
+  // is real, but ZeroInvoice's own frontend fully owns that callback and
+  // never returns a token to builder). Re-investigated 2026-09-10 against
+  // ZeroInvoice's actual backend source (deps.py::get_current_user falls
+  // through to _try_ainative_token, which accepts a plain AINative JWT via
+  // GET /v1/public/auth/me — the SAME contract the other 6 primitives use)
+  // and CONFIRMED LIVE against production: a real AINative JWT sent as
+  // `Authorization: Bearer <jwt>` to https://zeroinvoice.ainative.studio/api/
+  // invoices/ returned a genuine 200 with a real invoice list, and a real
+  // POST created a real invoice (INV-2026-0001, real id/totals, cleaned up
+  // after verification). The prior "impossible" finding was wrong — this IS
+  // the same founder-scoped, direct-JWT-bearer shape as the other 6.
+  zeroinvoice: process.env.ZEROINVOICE_API_URL || 'https://zeroinvoice.ainative.studio/api',
 }
 
 function isFounderScopedPrimitive(name: string): name is FounderScopedPrimitive {
-  return name === 'zerocommerce' || name === 'zeropipeline' || name === 'agentflow' || name === 'zeroforms' || name === 'zerocrm' || name === 'zerovoice'
+  return name === 'zerocommerce' || name === 'zeropipeline' || name === 'agentflow' || name === 'zeroforms' || name === 'zerocrm' || name === 'zerovoice' || name === 'zeroinvoice'
 }
 
 /** Resolve which company's founder credential this request should use.
@@ -117,8 +132,20 @@ async function forward(
   if (primitiveName === 'zerocrm' && credential.organizationId && !search.has('org_id')) {
     search.set('org_id', credential.organizationId)
   }
+  // #638/#639 — ZeroInvoice's real backend 307-redirects any collection-level
+  // path (e.g. /invoices, /clients) that lacks a trailing slash (confirmed
+  // live). A POST/PUT/DELETE following that redirect risks the body/method
+  // being dropped or the Authorization header being stripped across the
+  // redirect — a real failure mode a generated app's own fetch() would hit
+  // silently. Only append when the LAST segment has no dot (a resource id
+  // like `inv_20260910_...` needs no trailing slash, and this must never
+  // touch the other 6 primitives' real, already-correct path shapes).
+  const joinedPath = path.join('/')
+  const needsTrailingSlash =
+    primitiveName === 'zeroinvoice' && path.length === 1 && !joinedPath.endsWith('/')
+  const forwardedPath = needsTrailingSlash ? `${joinedPath}/` : joinedPath
   const searchString = search.toString()
-  const targetUrl = `${base}/${path.join('/')}${searchString ? `?${searchString}` : ''}`
+  const targetUrl = `${base}/${forwardedPath}${searchString ? `?${searchString}` : ''}`
 
   let body: string | undefined
   if (request.method !== 'GET' && request.method !== 'HEAD') {

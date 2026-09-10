@@ -69,16 +69,16 @@ async function captureFounderCredentialForProxy(
   slug: string,
   primitive: FounderScopedPrimitive,
   jwt: string,
-): Promise<void> {
+): Promise<boolean> {
   const rawToken = await getToken({ req: request, secret: process.env.AUTH_SECRET }).catch(() => null)
-  if (!rawToken?.refreshToken && !rawToken?.accessToken) return
-  await storeFounderCredential(
+  if (!rawToken?.refreshToken && !rawToken?.accessToken) return false
+  return storeFounderCredential(
     slug,
     primitive,
     jwt,
     rawToken.refreshToken as string | undefined,
     rawToken.expiresAt ? Math.max(0, Math.floor((Number(rawToken.expiresAt) - Date.now()) / 1000)) : undefined,
-  ).catch(() => {})
+  ).catch(() => false)
 }
 
 export async function POST(request: NextRequest) {
@@ -287,6 +287,22 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // #638/#639: ZeroInvoice, like ZeroCRM, needs no explicit "create a
+  // resource" provisioning call — re-investigated 2026-09-10 and confirmed
+  // LIVE that its own auth (deps.py::get_current_user falling through to
+  // _try_ainative_token) accepts a plain AINative JWT directly, and its
+  // tenant scoping comes from that JWT's own identity (a real GET/POST
+  // against /api/invoices/ 200'd immediately, no separate signup/onboarding
+  // step, no org_id needed unlike ZeroCRM). The only real work here is
+  // capturing the credential so the runtime proxy can serve this founder's
+  // ZeroInvoice account later without their browser present. Best-effort —
+  // a failure just leaves the Billing card honestly simulated.
+  let zeroinvoice: { provisioned: boolean; reason?: string } = { provisioned: false }
+  if (jwt) {
+    const stored = await captureFounderCredentialForProxy(request, slug, 'zeroinvoice', jwt)
+    zeroinvoice = { provisioned: stored, reason: stored ? undefined : 'credential_store_failed' }
+  }
+
   // #439 (child of #414/#422): also provision the company's REAL ZeroERP
   // tenant. UNLIKE every JWT-auth primitive above, ZeroERP's onboarding
   // endpoint takes no auth at all (confirmed via source: `security: []`,
@@ -357,6 +373,7 @@ export async function POST(request: NextRequest) {
     agentflowProvisioned: agentflow.provisioned,
     agentflowProjectId: agentflow.projectId,
     zerocrmProvisioned: zerocrm.provisioned,
+    zeroinvoiceProvisioned: zeroinvoice.provisioned,
     zeroerpProvisioned: zeroerp.provisioned,
     zeroerpOrgId: zeroerp.orgId,
     zeroerpInviteToken: zeroerp.inviteToken,
@@ -407,6 +424,7 @@ export async function POST(request: NextRequest) {
     formsProvisioned: forms.provisioned,
     agentflowProvisioned: agentflow.provisioned,
     zerocrmProvisioned: zerocrm.provisioned,
+    zeroinvoiceProvisioned: zeroinvoice.provisioned,
     zeroerpProvisioned: zeroerp.provisioned,
     gitProvisioned,
     gitRepoUrl: gitResult.gitRepoUrl,
