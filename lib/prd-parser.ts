@@ -11,6 +11,37 @@ export interface ParsedPRD {
 }
 
 /**
+ * Real bug found live (Meridian, 2026-09-10): all three keyword-detection
+ * passes below used a plain substring search (`lower.includes(keyword)`),
+ * which matches a trigger word appearing INSIDE an unrelated word. The
+ * 'product' keyword (meant to detect an ecommerce product-catalog page)
+ * matched "production-quality" — a phrase in company-app/route.ts's own
+ * landing-page prompt template, since 'product' is a genuine PREFIX of
+ * "production" — so every Company-track landing page request got a false
+ * "Products Page (/products)" build step and was fed into
+ * analyzeComplexity() as a 2-page app, nudging the model toward building an
+ * unrelated product-catalog page instead of the requested single-page
+ * landing page (confirmed live via Railway logs: "Pages: 2", "Creating
+ * Products Page (/products)" for a plain landing-page request).
+ *
+ * FULL word-boundary matching (`\bkeyword\b`) fixes this — unlike
+ * lib/build/primitive-catalog.ts's `matchesTrigger` (which deliberately uses
+ * only a LEADING boundary, because some of its triggers are intentional
+ * partial-word stems needing suffix flexibility, e.g. 'aggregat' matching
+ * "aggregating"), every keyword list in THIS file already lists its own
+ * singular/plural variants as separate explicit array entries (e.g. both
+ * 'product' AND 'products' appear below) — so no entry here relies on
+ * substring/suffix flexibility, and the stricter full-boundary match is safe.
+ */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function matchesKeyword(hay: string, keyword: string): boolean {
+  return new RegExp(`\\b${escapeRegExp(keyword)}\\b`, 'i').test(hay)
+}
+
+/**
  * Parse explicitly listed pages from structured PRDs
  * Handles formats like:
  * - "1. **Homepage** (/)"
@@ -79,7 +110,7 @@ export function parsePRDForBuildSteps(userMessage: string): ParsedPRD {
 
     // Find matching pages
     pagePatterns.forEach(pattern => {
-      if (pattern.keywords.some(keyword => lower.includes(keyword))) {
+      if (pattern.keywords.some(keyword => matchesKeyword(lower, keyword))) {
         pages.push({ name: pattern.name, route: pattern.route })
       }
     })
@@ -98,7 +129,7 @@ export function parsePRDForBuildSteps(userMessage: string): ParsedPRD {
   ]
 
   componentPatterns.forEach(pattern => {
-    if (pattern.keywords.some(keyword => lower.includes(keyword))) {
+    if (pattern.keywords.some(keyword => matchesKeyword(lower, keyword))) {
       components.push(pattern.name)
     }
   })
@@ -114,7 +145,7 @@ export function parsePRDForBuildSteps(userMessage: string): ParsedPRD {
   ]
 
   featurePatterns.forEach(pattern => {
-    if (pattern.keywords.some(keyword => lower.includes(keyword))) {
+    if (pattern.keywords.some(keyword => matchesKeyword(lower, keyword))) {
       features.push(pattern.name)
     }
   })
