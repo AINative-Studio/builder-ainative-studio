@@ -69,7 +69,13 @@ export async function POST(request: NextRequest) {
   try {
     const res = await fetch(`${base}/api/chat-ws`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, designSystemId }),
+      // #612 (Meridian, 2026-09-10): this route ONLY ever builds marketing
+      // copy (hero/features/pricing/footer) — never the real product — so it
+      // has no legitimate reason to call any primitive's live API, even when
+      // `idea` (embedded in `message` above) happens to match one's trigger
+      // keywords. Tells chat-ws to skip primitive-compliance re-prompting for
+      // this specific generation; every other obedience check still applies.
+      body: JSON.stringify({ message, designSystemId, landingPageOnly: true }),
       signal: AbortSignal.timeout(280_000),
     })
     if (!res.body) return Response.json({ error: 'no stream' }, { status: 502 })
