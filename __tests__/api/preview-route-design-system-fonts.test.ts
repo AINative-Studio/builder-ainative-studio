@@ -111,3 +111,28 @@ describe('preview [id] route: body CSS font-family and Tailwind colors also hono
     expect(source).toContain("'dark-1': '#131726'")
   })
 })
+
+/**
+ * Real bug found live (Meridian, 2026-09-10): the ZeroDB cross-replica
+ * restore path called `storePreview(id, content)` with ONLY 2 arguments,
+ * silently discarding designSystemId on every restore even when it was
+ * correctly chosen at generation time and durably saved (lib/zerodb-
+ * store.ts's saveGeneration, fixed alongside this). Any request whose GET
+ * /api/preview/[id] landed on a different Railway replica than the one that
+ * ran the generation (in-memory state is per-process; confirmed via real
+ * production multi-instance deployment) fell through to this exact path and
+ * silently served plain Inter/Poppins defaults.
+ */
+describe('preview [id] route: ZeroDB cross-replica restore preserves designSystemId (2026-09-10 fix)', () => {
+  const source = fs.readFileSync(
+    path.join(process.cwd(), 'app/api/preview/[id]/route.ts'),
+    'utf8',
+  )
+
+  it('the ZeroDB-restore storePreview call passes designSystemId through, not just (id, content)', () => {
+    const idx = source.indexOf('storePreview(id, content, undefined,')
+    expect(idx).toBeGreaterThan(-1)
+    const nearby = source.slice(idx, idx + 100)
+    expect(nearby).toMatch(/designSystemId:\s*gen\.designSystemId/)
+  })
+})

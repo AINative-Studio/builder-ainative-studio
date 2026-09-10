@@ -25,6 +25,19 @@ export interface PersistInput {
   /** Parsed multi-file map (#333) — persisted durably so multi-file apps can
    *  restore the Sandpack path after the live SSE stream is gone. */
   files?: Record<string, string>
+  /**
+   * Real bug found live (Meridian, 2026-09-10): the founder's chosen design
+   * system was correctly stored in the in-memory preview store, but never
+   * reached THIS durable ZeroDB path at all — so any request whose preview
+   * fetch landed on a different Railway replica than the one that ran the
+   * generation (in-memory state is per-process; confirmed via real
+   * production multi-instance deployment) fell through to the ZeroDB
+   * restore in app/api/preview/[id]/route.ts, which had nothing to restore
+   * and silently served plain Inter/Poppins defaults regardless of what was
+   * actually chosen. Threaded through here so a cross-replica restore stays
+   * design-system-correct.
+   */
+  designSystemId?: string
 }
 
 export interface PersistResult {
@@ -42,6 +55,7 @@ export type SaveFn = (data: {
   category?: string
   isShowcase?: boolean
   files?: Record<string, string>
+  designSystemId?: string
 }) => Promise<boolean>
 
 /**
@@ -73,6 +87,7 @@ export async function persistGeneration(
     // The multi-file map rides along when present (#333) — saveGeneration
     // enforces the row-size ceiling and drops it (logged) when oversized.
     files: input.files && Object.keys(input.files).length > 0 ? input.files : undefined,
+    designSystemId: input.designSystemId,
     // Surface only successful, validated, substantial generations to the showcase.
     // The showcase quality gate (isQualityApp) also requires >= 2000 chars, so
     // flagging short code as isShowcase here is misleading — it would still be
