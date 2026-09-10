@@ -64,7 +64,13 @@ export function buildFixAndDecomposePrompt(idea: string, obedienceFixes: string,
     ``,
     `CURRENT APP:`,
     '```jsx',
-    singleFileCode.slice(0, 16000),
+    // Real bug found live (Meridian, 2026-09-10, chat-ws.ts's sibling
+    // obedience-only repair pass): a real generation routinely runs
+    // 25k-32k chars, well past a 16000-char cutoff here too — told to "keep
+    // every feature" while unable to see the back half of its own code, the
+    // model re-references components it can no longer see the real import
+    // for. Matched to the same generous 32000 limit used there.
+    singleFileCode.slice(0, 32000),
     '```',
   ].join('\n')
 }
@@ -97,7 +103,10 @@ export function buildDecompositionPrompt(idea: string, singleFileCode: string): 
     ``,
     `CURRENT SINGLE-FILE APP:`,
     '```jsx',
-    singleFileCode.slice(0, 16000),
+    // Matched to the same generous 32000 limit as buildFixAndDecomposePrompt
+    // above, for the same reason (real generations routinely exceed 16000
+    // chars — see that function's comment).
+    singleFileCode.slice(0, 32000),
     '```',
   ].join('\n')
 }

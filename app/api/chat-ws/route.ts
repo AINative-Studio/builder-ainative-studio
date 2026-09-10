@@ -1453,9 +1453,25 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               } else if (needsObedience) {
                 console.log(`📏 Obedience gap → re-prompt: ${ob.reasons.join(' | ')}`)
                 safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Wiring real data + AINative components…' })}\n\n`))
+                // Real bug found live (Meridian, 2026-09-10): a real generation
+                // routinely runs 25k-32k chars (confirmed via production logs),
+                // but this repair pass truncated it to 12000 chars before
+                // showing it back to the model — well under half the actual
+                // app. Told to "keep every feature" while literally unable to
+                // see the back half of its own code (including, in the
+                // reported failures, wherever ./ui/button|input|badge/etc were
+                // originally imported), the model re-referenced components it
+                // could no longer see the real import for, producing the exact
+                // "imported local module(s) never defined" truncation this
+                // gate is supposed to catch, not cause — reproduced 4/4 times
+                // in a row on real production requests. No other "send the
+                // current app back to the model" truncation limit in this file
+                // is this low (20000/16000/10000 elsewhere for similar
+                // purposes) — raised to a matching, generous limit; a real app
+                // this large is still well within the model's context window.
                 const obRaw = await runClaudePass(
                   'You improve a working React app to follow AINative rules. Return ONLY the full corrected app in ```jsx markers. Keep every feature; do not break anything.',
-                  `${buildObediencePrompt(message, ob)}\n\nCURRENT APP:\n\`\`\`jsx\n${finalContent.slice(0, 12000)}\n\`\`\``,
+                  `${buildObediencePrompt(message, ob)}\n\nCURRENT APP:\n\`\`\`jsx\n${finalContent.slice(0, 32000)}\n\`\`\``,
                   16000, selectedGenModel,
                 )
                 const obValidation = validateGeneratedCode(obRaw)
