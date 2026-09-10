@@ -68,7 +68,10 @@ describe('chat-ws forwards landingPageOnly into every checkObedience call (2026-
   const source = fs.readFileSync(path.join(process.cwd(), 'app/api/chat-ws/route.ts'), 'utf8')
 
   it('destructures landingPageOnly from the request body', () => {
-    expect(source).toMatch(/landingPageOnly\s*\}\s*=\s*await request\.json\(\)/)
+    // 2026-09-10: `internal` (the showcase skip-opt-out, unrelated to this
+    // flag) was added after landingPageOnly in the same destructure, so the
+    // trailing `}` no longer directly follows landingPageOnly.
+    expect(source).toMatch(/landingPageOnly,\s*internal\s*\}\s*=\s*await request\.json\(\)/)
   })
 
   it('derives obedienceOptions from it, only truthy when explicitly true', () => {

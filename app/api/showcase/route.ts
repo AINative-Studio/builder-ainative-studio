@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { SEED_SHOWCASE, type ShowcaseEntry, generateSlug, generateDescription, combineAndDedupeShowcase } from '@/lib/showcase-data'
+import { SEED_SHOWCASE, type ShowcaseEntry, generateSlug, generateDescription, combineAndDedupeShowcase, extractShowcaseTitle } from '@/lib/showcase-data'
 import { getDynamicShowcase, addToShowcase } from '@/lib/showcase-store'
 import { listGenerations } from '@/lib/zerodb-store'
 // isQualityApp lives in lib/ — Next.js 15 route modules may only export HTTP
@@ -24,12 +24,22 @@ export async function GET(request: NextRequest) {
   try {
     const rows = await listGenerations(1000)
     zerodbEntries = rows
-      // Quality gate, done server-side while the code is already in hand so we
-      // don't have to ship generated_code to every client. A gallery entry must
-      // have a chatId and substantive, real-looking code. (#58)
+      // Real gap fixed 2026-09-10: `is_showcase` is already computed
+      // correctly at persist time (generation-persist.ts's persistGeneration:
+      // status==='success' && valid && length>=2000, and NOW also excludes
+      // internal/test traffic via skipShowcase) — but this route never read
+      // it, relying purely on isQualityApp's much weaker length/shape check.
+      // That let dozens of syntactically-valid-but-degraded, broken, or
+      // internal-test generations flood the public showcase (confirmed live:
+      // an App-track invoicing test that fell back to fake /api/db calls was
+      // still marked showcase-eligible here). `is_showcase === true` is now
+      // the primary gate; isQualityApp stays as an ADDITIONAL structural
+      // check (not a substitute) for the rare legacy row saved before this
+      // field existed (undefined, not explicitly true/false).
+      .filter((r: any) => r?.is_showcase === true || r?.is_showcase === undefined)
       .filter((r: any) => isQualityApp(r.generated_code || '', r.chat_id))
       .map((r: any) => {
-        const title = r.title || r.prompt?.replace(/^Build\s+(a|an)\s+/i, '').split(/[.!]/)[0]?.trim()?.split(' ').slice(0, 6).map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') || 'Untitled'
+        const title = r.title || extractShowcaseTitle(r.prompt || '')
         return {
           slug: generateSlug(title) + '-' + (r.chat_id || '').slice(0, 6),
           title,

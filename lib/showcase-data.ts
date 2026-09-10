@@ -159,6 +159,48 @@ export const SEED_SHOWCASE: ShowcaseEntry[] = [
 ]
 
 /**
+ * Extract a real, distinctive title from a generation prompt (real gap
+ * fixed 2026-09-10 — the showcase was flooded with dozens of entries
+ * literally titled "Polished, Working Web App For This" and "Polished,
+ * Production-quality Single-page Marketing LANDING PAGE", because every
+ * real generation on both tracks wraps the founder's actual idea in one of
+ * a few fixed template phrasings (lib/build/useRealPreview.ts's "Build a
+ * polished, working web app for this idea: {idea}...",
+ * company-product/route.ts's "...that actually implements this idea:
+ * {idea}...", company-app/route.ts's "...marketing LANDING PAGE for
+ * "{name}"..."), and the old title logic just took the first few words of
+ * the WHOLE prompt — which is always the generic wrapper, never the real
+ * idea. This strips each known wrapper phrase first so the extracted title
+ * reflects the actual idea/company name, not the template boilerplate.
+ */
+export function extractShowcaseTitle(prompt: string): string {
+  let text = prompt
+  // Strip each known wrapper phrasing (longest/most-specific first) so what
+  // remains is the founder's real idea text, not template boilerplate.
+  const wrappers: RegExp[] = [
+    /^Build\s+a\s+real,\s+working,\s+functional\s+application\s+for\s+"[^"]*"\s+that\s+actually\s+implements\s+this\s+idea:\s*/i,
+    /^Build\s+a\s+polished,\s+(?:working|production-quality)[^:]*for\s+this\s+idea:\s*/i,
+    /^Build\s+a\s+polished,\s+production-quality\s+single-page\s+marketing\s+landing\s+page\s+for\s+/i,
+    /^Build\s+(a|an)\s+/i,
+  ]
+  for (const re of wrappers) {
+    const stripped = text.replace(re, '')
+    if (stripped !== text) { text = stripped; break }
+  }
+  // Trailing generic instruction boilerplate ("Make it interactive and
+  // visually complete with realistic sample data.") carries no distinctive
+  // information — cut it off at the first sentence of the REMAINING text.
+  const title = text
+    .split(/[.!]/)[0]
+    .trim()
+    .split(' ')
+    .slice(0, 8)
+    .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : w))
+    .join(' ')
+  return title || 'Untitled'
+}
+
+/**
  * Generate an SEO-friendly slug from a title
  */
 export function generateSlug(title: string): string {

@@ -103,6 +103,27 @@ describe('persistGeneration (#89)', () => {
     expect(save.mock.calls[0][0].isShowcase).toBe(false)
   })
 
+  /**
+   * Real bug found live (2026-09-10): the public showcase gallery got
+   * flooded with dozens of internal verification/test generations, because
+   * nothing distinguished them from real founder traffic at persist time —
+   * every real generation goes through the SAME chat-ws -> persistGeneration
+   * path regardless of caller. skipShowcase is the explicit opt-out.
+   */
+  it('does NOT flag isShowcase when skipShowcase is set, even for otherwise-qualifying code', async () => {
+    const save = vi.fn().mockResolvedValue(true)
+    const bigValid = { ...base, code: 'x'.repeat(2000), skipShowcase: true }
+    await persistGeneration(bigValid, save)
+    expect(save.mock.calls[0][0].isShowcase).toBe(false)
+  })
+
+  it('flags isShowcase normally when skipShowcase is absent/false', async () => {
+    const save = vi.fn().mockResolvedValue(true)
+    const bigValid = { ...base, code: 'x'.repeat(2000), skipShowcase: false }
+    await persistGeneration(bigValid, save)
+    expect(save.mock.calls[0][0].isShowcase).toBe(true)
+  })
+
   it('passes the multi-file map through to save (#333)', async () => {
     const save = vi.fn().mockResolvedValue(true)
     const files = { '/src/App.tsx': 'a', '/src/components/S.tsx': 'b' }
