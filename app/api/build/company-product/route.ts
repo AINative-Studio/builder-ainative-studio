@@ -33,7 +33,17 @@ import { registerApp, resolveApp } from '@/lib/build/app-registry'
 import { logBuildOutcome } from '@/lib/build/learning'
 
 export const runtime = 'nodejs'
-export const maxDuration = 300
+// Real bug (customer-reported, Meridian, 2026-09-10, issue #629/#631): this
+// route now waits for chat-ws's 'complete' event (see the SSE loop below —
+// #629 fixed it to stop returning on the FIRST 'refresh'/'files' event,
+// which fired long before obedience-repair/closePrimitiveComplianceGap and
+// the final persist ever ran). A real generation that needs the primitive-
+// compliance retry can genuinely exceed 280s once that extra repair round-
+// trip is included — confirmed live: the OLD 280s budget aborted a real
+// Meridian generation mid-repair. chat-ws itself has no maxDuration/timeout
+// of its own, so 300s was this route's own arbitrary self-imposed ceiling,
+// not a real platform constraint. Raised well past a realistic worst case.
+export const maxDuration = 780
 
 export async function POST(request: NextRequest) {
   const b = await request.json().catch(() => null)
@@ -82,7 +92,7 @@ export async function POST(request: NextRequest) {
     const res = await fetch(`${base}/api/chat-ws`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message, designSystemId }),
-      signal: AbortSignal.timeout(280_000),
+      signal: AbortSignal.timeout(760_000),
     })
     if (!res.body) return Response.json({ error: 'no stream' }, { status: 502 })
 
