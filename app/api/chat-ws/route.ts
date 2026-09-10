@@ -205,21 +205,57 @@ async function closePrimitiveComplianceGap(
   maxAttempts = 2,
 ): Promise<{ code: string; closed: boolean }> {
   let current = code
+  // Real gap found live (issue #624 follow-up, 2026-09-10): the FIRST version
+  // of this function always asked for `\`\`\`jsx\`\`\`` single-file output —
+  // for a real product idea, the model routinely goes multi-file
+  // (`// --- FILE: ... ---` markers; confirmed live: Meridian's real product
+  // generation went through the combined fix+split adoption path, which
+  // this function was deliberately NOT wired into for exactly this reason).
+  // Detecting the input's own shape and asking for the SAME shape back
+  // (matching buildFixAndDecomposePrompt's marker format) means this retry
+  // is now safe to run on multi-file content too, instead of being scoped
+  // out of the more common case for a real product.
+  const isMultiFile = /\/\/\s*---\s*FILE:/.test(current)
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const before = checkObedience(current, message, validRole, obedienceOptions)
     if (before.primitiveComplianceGaps.length === 0) return { code: current, closed: true }
 
-    console.log(`🔌 Primitive-compliance gap still open (attempt ${attempt}/${maxAttempts}): ${before.primitiveComplianceGaps.join(', ')}`)
+    console.log(`🔌 Primitive-compliance gap still open (attempt ${attempt}/${maxAttempts}, ${isMultiFile ? 'multi-file' : 'single-file'}): ${before.primitiveComplianceGaps.join(', ')}`)
     const narrowed = narrowToPrimitiveComplianceOnly(before.primitiveComplianceGaps)
+    const fixInstructions = buildObediencePrompt(message, narrowed)
     const raw = await runClaudePass(
-      'You improve a working React app to actually call the real AINative primitive APIs it was told to use. ' +
-      'Return ONLY the full corrected app in ```jsx markers. Keep every existing feature; do not break anything.',
-      `${buildObediencePrompt(message, narrowed)}\n\nCURRENT APP:\n\`\`\`jsx\n${current.slice(0, 32000)}\n\`\`\``,
+      isMultiFile
+        ? 'You improve a working multi-file React app to actually call the real AINative primitive APIs it was told to use. ' +
+          'Return ONLY the files in the // --- FILE: … --- marker format (the SAME files, same structure). Keep every existing feature; do not break anything.'
+        : 'You improve a working React app to actually call the real AINative primitive APIs it was told to use. ' +
+          'Return ONLY the full corrected app in ```jsx markers. Keep every existing feature; do not break anything.',
+      isMultiFile
+        ? [
+            `Apply ONLY this fix to the multi-file app below (keep every feature, change nothing else):`,
+            fixInstructions,
+            '',
+            'Output EVERY file with a marker line in EXACTLY this format (nothing before the first marker):',
+            '',
+            '// --- FILE: src/App.tsx ---',
+            '<code>',
+            '// --- FILE: src/components/Sidebar.tsx ---',
+            '<code>',
+            '',
+            'CURRENT APP:',
+            current.slice(0, 32000),
+          ].join('\n')
+        : `${fixInstructions}\n\nCURRENT APP:\n\`\`\`jsx\n${current.slice(0, 32000)}\n\`\`\``,
       16000, selectedGenModel,
     )
     const validated = validateGeneratedCode(raw)
     if (!validated.valid || !validated.code || validated.code.length < 200) {
       console.log(`🔌 Primitive-compliance retry ${attempt} produced invalid/empty output — keeping prior version.`)
+      continue
+    }
+    // Multi-file in, multi-file out: reject a candidate that collapsed back
+    // to a single file (a real regression a bounded retry must never adopt).
+    if (isMultiFile && !/\/\/\s*---\s*FILE:/.test(validated.code)) {
+      console.log(`🔌 Primitive-compliance retry ${attempt} lost the multi-file structure — rejecting, keeping prior version.`)
       continue
     }
     const after = checkObedience(validated.code, message, validRole, obedienceOptions)
@@ -1503,13 +1539,24 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                 if (v.valid && multi && (v.code?.length || 0) > finalContent.length * 0.7) {
                   console.log('🔧 Combined pass produced a valid multi-file, rule-following app — adopting.')
                   finalContent = v.code; validation = v; checkpoint.record('fix+split', finalContent, true)
-                  // #624: same targeted-retry gap as the non-combined branch
-                  // below, but SCOPED OUT here deliberately — this branch
-                  // just adopted real MULTI-FILE content (`// --- FILE:`
-                  // markers), and closePrimitiveComplianceGap's single-file
-                  // `\`\`\`jsx\`\`\`` repair prompt/parser would corrupt that
-                  // file structure if run against it. Tracked as a known
-                  // scope boundary in #624 rather than risking that.
+                  // #624 follow-up: confirmed live this is the MORE common
+                  // path for a real product idea (Meridian's own real-
+                  // product build went through exactly this branch, and
+                  // ZeroPipeline/ZeroVoice/ZeroMemory stayed uncalled since
+                  // this branch was originally scoped out). Now safe to run
+                  // here too — closePrimitiveComplianceGap detects
+                  // multi-file input and asks for the SAME `// --- FILE:`
+                  // marker format back, instead of collapsing to single-file.
+                  if (after.primitiveComplianceGaps.length > 0) {
+                    const closeResult = await closePrimitiveComplianceGap(
+                      finalContent, message, validRole, obedienceOptions, selectedGenModel,
+                    )
+                    if (closeResult.code !== finalContent) {
+                      finalContent = closeResult.code
+                      validation = validateGeneratedCode(finalContent)
+                      checkpoint.record('primitive-compliance', finalContent, true)
+                    }
+                  }
                 } else if (v.valid && obeyImproved && (v.code?.length || 0) > 200) {
                   // split didn't take but the fixes did — still an improvement.
                   console.log('🔧 Combined pass fixed rules (single-file) — adopting.')
