@@ -1011,6 +1011,57 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
     'calling the real ServiceOS proxy. If the feature is a helpdesk, support-ticket queue, or customer-service surface, ' +
     'it MUST call GET/POST /api/primitive/serviceos/tickets — persisting tickets through generic /api/db rows instead ' +
     'is a FAILING implementation even if the UI looks identical to the user.',
+  // #644: found in the gap-sweep follow-up audit — Live Streaming had real,
+  // common founder triggers (stream/live/video/broadcast/webinar) and a
+  // real apiBase, but no runtime proxy wiring at all. Confirmed LIVE per
+  // docs.ainative.studio/docs/live-streaming/streams: GET/POST
+  // /api/v1/streams/ (trailing slash required — confirmed live) work with a
+  // plain AINative JWT; POST returns real ingest credentials (RTMPS URL +
+  // stream key) alongside the stream record.
+  'Live Streaming': () =>
+    `call the same-origin proxy at \`/api/primitive/livestreaming/{path}\` — NO Authorization header needed, the platform attaches the founder's real Live Streaming credential server-side; the path after \`livestreaming/\` matches the real REST path exactly, WITH a trailing slash on the streams collection path (\`api/v1/streams/\` — omitting it may not route correctly).\n` +
+    '  Real call shape (copy this exactly, do not paraphrase — live-verified: no separate onboarding step):\n' +
+    '  ```js\n' +
+    "  // List this company's real streams\n" +
+    "  const res = await fetch('/api/primitive/livestreaming/api/v1/streams/')\n" +
+    '  const { streams } = await res.json() // real streams, not fabricated rows\n' +
+    '\n' +
+    "  // Create a new stream (returns real ingest credentials to hand to a broadcaster)\n" +
+    "  await fetch('/api/primitive/livestreaming/api/v1/streams/', {\n" +
+    "    method: 'POST', headers: { 'Content-Type': 'application/json' },\n" +
+    '    body: JSON.stringify({ title: streamTitle, description: streamDescription }),\n' +
+    '  })\n' +
+    '  ```\n' +
+    '  ANTI-PATTERN — FORBIDDEN: do NOT hand-roll a fake "live stream" list or simulate a broadcast with a local status ' +
+    'flag instead of calling the real Live Streaming proxy. If the feature is streaming, broadcasting, or hosting live ' +
+    'video, it MUST call GET/POST /api/primitive/livestreaming/api/v1/streams/ — faking it with /api/db rows or ' +
+    'client-side state instead is a FAILING implementation even if the UI looks identical to the user.',
+  // #644: found in the same gap-sweep follow-up audit — Social Graph had
+  // real, common founder triggers (social/followers/friends/network) and a
+  // real apiBase, but no runtime proxy wiring at all. Confirmed LIVE per
+  // docs.ainative.studio/docs/community/social-graph: GET
+  // /api/v1/social/{user_id}/followers works with a plain AINative JWT.
+  // UNLIKE the other 10 founder-scoped primitives, this one's read paths
+  // take an EXPLICIT {user_id} — not always the founder's own identity,
+  // since a social graph is inherently about OTHER users too. The current
+  // user's own id must come from a real source (e.g. an existing auth/user
+  // context this app already has), never hardcoded or invented.
+  'Social Graph': () =>
+    `call the same-origin proxy at \`/api/primitive/socialgraph/{path}\` — NO Authorization header needed, the platform attaches the founder's real Social Graph credential server-side; the path after \`socialgraph/\` matches the real REST path exactly. NOTE: follower/following/follow paths take an explicit {user_id} — use the REAL user id from this app's own user/auth data, never a hardcoded placeholder.\n` +
+    '  Real call shape (copy this exactly, do not paraphrase — live-verified):\n' +
+    '  ```js\n' +
+    "  // List a user's real followers\n" +
+    "  const res = await fetch(`/api/primitive/socialgraph/api/v1/social/${userId}/followers`)\n" +
+    '  const { followers, total } = await res.json() // real followers, not fabricated rows\n' +
+    '\n' +
+    "  // Follow another user\n" +
+    "  await fetch(`/api/primitive/socialgraph/api/v1/social/follow/${targetUserId}`, { method: 'POST' })\n" +
+    '  ```\n' +
+    '  ANTI-PATTERN — FORBIDDEN: do NOT hand-roll a followers/following list using /api/db tables or a fake follow ' +
+    'counter instead of calling the real Social Graph proxy. If the feature is following/followers, friend requests, or ' +
+    'a social network layer, it MUST call GET /api/primitive/socialgraph/api/v1/social/{user_id}/followers and ' +
+    'POST/DELETE /api/primitive/socialgraph/api/v1/social/follow/{user_id} — persisting follows through generic ' +
+    '/api/db rows instead is a FAILING implementation even if the UI looks identical to the user.',
   // #496/#499/#500/#503/#505/#510 — these 8 use a NARROWER shape than the
   // 5 above: a fixed `/api/{slug}/{action}` route with a hard allowlist of
   // real actions (not an arbitrary-path passthrough), so the model must be
@@ -1136,6 +1187,11 @@ export const RUNTIME_PROXY_PATH_SUBSTRINGS: Record<string, string[]> = {
   // #642: added once ServiceOS's real direct-JWT-bearer path was confirmed
   // live (see RUNTIME_PROXIED_PRIMITIVES's ServiceOS entry).
   ServiceOS: ['/api/primitive/serviceos/tickets'],
+  // #644: added once Live Streaming's and Social Graph's real direct-JWT-
+  // bearer paths were confirmed live (see RUNTIME_PROXIED_PRIMITIVES's
+  // entries above for both).
+  'Live Streaming': ['/api/primitive/livestreaming/api/v1/streams'],
+  'Social Graph': ['/api/primitive/socialgraph/api/v1/social'],
   ZeroMemory: ['/api/memory/remember', '/api/memory/recall'],
   'Browser Agent': ['/api/browser-agent/extract', '/api/browser-agent/act'],
   Agent402: ['/api/agent402/capabilities', '/api/agent402/projects'],

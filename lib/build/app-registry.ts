@@ -127,6 +127,10 @@ export interface AppEntry {
   // provisioning call, tenant resolves directly from the founder's AINative
   // JWT. Absent/false = still simulated.
   serviceosProvisioned?: boolean
+  // Live Streaming, Social Graph (#644) — same shape: no explicit
+  // provisioning call needed. Absent/false = still simulated.
+  livestreamingProvisioned?: boolean
+  socialgraphProvisioned?: boolean
   // OpenCapStack (#427, child of #414). provisionCapTable's real companyId
   // was computed at checkout and returned once in the provision response,
   // but never durably stored — a runtime proxy has no way to know which
@@ -636,6 +640,8 @@ export async function setAppProvisioned(
     zerocrmProvisioned?: boolean
     zeroinvoiceProvisioned?: boolean
     serviceosProvisioned?: boolean
+    livestreamingProvisioned?: boolean
+    socialgraphProvisioned?: boolean
     zeroerpProvisioned?: boolean
     zeroerpOrgId?: string
     zeroerpInviteToken?: string
