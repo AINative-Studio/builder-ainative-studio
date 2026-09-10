@@ -133,6 +133,34 @@ describe('findMissingLocalImports — ignored import classes', () => {
     expect(findMissingLocalImports(code, { '/src/App.tsx': code })).toEqual([])
   })
 
+  /**
+   * Real bug found live (Meridian, 2026-09-10): a file the model placed
+   * INSIDE components/ itself (e.g. components/Header.tsx) correctly writes
+   * a SIBLING-relative import to the bundle — './ui/button', not
+   * './components/ui/button' — since that file's own directory already IS
+   * components/. stripLocalPrefix() only strips leading './'/'../'
+   * segments, so this became the bare spec 'ui/button', which the
+   * root-relative-only whitelist patterns never matched (they require the
+   * literal substring 'components/ui/' or 'components/aikit'). Confirmed
+   * live: register-app's completeness gate rejected 4 consecutive real
+   * generations with "imported local module(s) never defined: ./ui/button,
+   * ./ui/input, ./ui/badge...", even though those files genuinely exist in
+   * the injected shadcn/aikit bundles.
+   */
+  it('ignores sibling-relative AIKit and shadcn imports (a file already living inside components/)', () => {
+    const files = {
+      '/src/components/Header.tsx': `import { Button } from './ui/button'\nimport { MetricCard } from './aikit'\nexport default function Header(){ return <Button/> }`,
+    }
+    expect(findMissingLocalImports(files['/src/components/Header.tsx'], files)).toEqual([])
+  })
+
+  it('a genuinely missing sibling component (not ui/ or aikit) is still correctly flagged', () => {
+    const files = {
+      '/src/components/Header.tsx': `import { SearchBox } from './SearchBox'\nexport default function Header(){ return <SearchBox/> }`,
+    }
+    expect(findMissingLocalImports(files['/src/components/Header.tsx'], files)).toEqual(['./SearchBox'])
+  })
+
   it('ignores bare side-effect imports of code files', () => {
     const code = app(`import './setup'`)
     expect(findMissingLocalImports(code, { '/src/App.tsx': code })).toEqual([])
