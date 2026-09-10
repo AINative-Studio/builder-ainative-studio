@@ -300,39 +300,48 @@ export function Live() {
     // fully enforced (no landingPageOnly), registered under its own
     // {slug}-product entry so it never collides with the landing page.
     //
-    // Real bug found live: with primitive compliance ON, a genuine product
-    // generation can trigger chat-ws's own obedience-repair pass (a SECOND
-    // model call) before its first stream event, pushing total wall-clock
-    // past this route's 280s/300s server-side ceiling on a slow attempt —
-    // confirmed live: 502 "terminated" on 2 of 3 real attempts, even though
-    // the underlying Claude call itself completed (45-49k chars). Retrying
-    // transient failures (502/504/timeout — mirrors useAutoplay.ts's
-    // existing retry pattern for prose artifacts) rather than silently
-    // giving up after one attempt.
+    // Real bug found live (issue #629/#631/#633): with primitive compliance
+    // ON, a genuine product generation can trigger chat-ws's own obedience-
+    // repair pass (a SECOND model call), and Railway's edge proxy sits in
+    // FRONT of this container with its own hard request timeout around 300s
+    // that no server-side maxDuration/AbortSignal tuning can control —
+    // confirmed live: a generation that had genuinely SUCCEEDED server-side
+    // (real /api/primitive/zeropipeline + /api/primitive/zerovoice calls in
+    // the persisted code) still came back as a 502 at the 300s mark, because
+    // the route used to hold one HTTP connection open the whole time.
+    // company-product now kicks off generation as a detached background
+    // task and returns 'processing' immediately; poll resolve-app instead of
+    // racing a proxy timeout the client doesn't control.
     if (!state.productChatId && state.idea && state.appSub) {
-      const MAX_PRODUCT_ATTEMPTS = 3
-      const attemptProductBuild = (n: number) => {
-        fetch('/api/build/company-product', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            idea: state.idea, slug: state.appSub, name: company,
-            designSystemId: state.designSystemId || undefined,
-          }),
-        })
-          .then(async (r) => {
-            if (r.ok) return r.json()
-            const isTransient = r.status === 502 || r.status === 504 || r.status === 503
-            if (isTransient && n < MAX_PRODUCT_ATTEMPTS) {
-              setTimeout(() => { if (alive) attemptProductBuild(n + 1) }, 1500 * n)
-            }
-            return null
+      const productSlug = `${state.appSub}-product`
+      const MAX_POLL_ATTEMPTS = 60 // ~5 min at 5s apart — a real generation + repair round-trip can take several minutes
+      const pollForProduct = (n: number) => {
+        fetch(`/api/build/resolve-app?slug=${encodeURIComponent(productSlug)}`)
+          .then((r) => (r.ok ? r.json() : null))
+          .then((d) => {
+            if (!alive) return
+            if (d?.chatId) { dispatch({ type: 'SET_PRODUCT_CHATID', chatId: d.chatId }); return }
+            if (n < MAX_POLL_ATTEMPTS) setTimeout(() => { if (alive) pollForProduct(n + 1) }, 5000)
           })
-          .then((d) => { if (alive && d?.chatId) dispatch({ type: 'SET_PRODUCT_CHATID', chatId: d.chatId }) })
           .catch(() => {
-            if (n < MAX_PRODUCT_ATTEMPTS) setTimeout(() => { if (alive) attemptProductBuild(n + 1) }, 1500 * n)
+            if (n < MAX_POLL_ATTEMPTS) setTimeout(() => { if (alive) pollForProduct(n + 1) }, 5000)
           })
       }
-      attemptProductBuild(1)
+      fetch('/api/build/company-product', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          idea: state.idea, slug: state.appSub, name: company,
+          designSystemId: state.designSystemId || undefined,
+        }),
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (!alive) return
+          // A cached hit resolves the chatId immediately without any polling.
+          if (d?.chatId) { dispatch({ type: 'SET_PRODUCT_CHATID', chatId: d.chatId }); return }
+          if (d?.status === 'processing') pollForProduct(1)
+        })
+        .catch(() => { if (alive) pollForProduct(1) })
     }
     // The visible nightshift — the real last nightly run + morning summary.
     fetch(`/api/build/nightshift?companyId=${encodeURIComponent(companyId)}&idea=${encodeURIComponent(state.idea)}&companyName=${encodeURIComponent(company)}`)

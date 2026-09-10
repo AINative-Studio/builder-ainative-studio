@@ -13,6 +13,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
  * (unlike company-app), so primitive compliance stays fully enforced —
  * and registers it under a slug distinct from the landing page's own, so
  * the two never collide.
+ *
+ * Real bug found live (issue #629/#631/#633, 2026-09-10): this route used to
+ * hold the HTTP request open, synchronously consuming chat-ws's SSE stream
+ * until 'complete' before responding — but Railway's edge proxy sits in
+ * FRONT of this container with its own hard request timeout around 300s
+ * that no server-side maxDuration/AbortSignal tuning can control. A real
+ * generation that needs the primitive-compliance retry (#624-#627) can
+ * legitimately run past that, and a genuinely successful generation still
+ * came back as a 502 at the 300s mark. The route now kicks off generation
+ * as a DETACHED background task and returns { status: 'processing' }
+ * immediately; the caller polls /api/build/resolve-app instead.
  */
 
 const h = vi.hoisted(() => ({
@@ -33,16 +44,6 @@ function req(body: unknown) {
   return { json: async () => body, url: 'https://builder.ainative.studio/api/build/company-product' } as any
 }
 
-/**
- * Real bug found live (Meridian, 2026-09-10, issue #629): the route used to
- * break out of this SSE loop on the FIRST 'refresh'/'files' event — which
- * chat-ws fires repeatedly during mid-generation streaming, well before its
- * obedience-repair retry and final ZeroDB persist run right before the ONE
- * 'complete' event. That returned a chatId pointing at an early, unrepaired
- * draft. Fixtures now emit intermediate 'refresh'/'files' events AND a final
- * 'complete', matching chat-ws's real event order, so a regression back to
- * "stop at the first refresh" would be caught here.
- */
 function sseBody(chatId: string) {
   const encoder = new TextEncoder()
   return new ReadableStream({
@@ -56,6 +57,11 @@ function sseBody(chatId: string) {
   })
 }
 
+/** Flush the microtask queue so the detached background task's awaits settle. */
+async function flush(times = 6) {
+  for (let i = 0; i < times; i++) await Promise.resolve()
+}
+
 describe('POST /api/build/company-product', () => {
   beforeEach(() => {
     h.resolveApp.mockReset().mockResolvedValue(null)
@@ -67,15 +73,25 @@ describe('POST /api/build/company-product', () => {
     vi.restoreAllMocks()
   })
 
-  it('registers the product under a slug DISTINCT from the landing page slug', async () => {
+  it('returns processing immediately without waiting for generation to finish', async () => {
     const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({ body: sseBody('prod-chat-1') }) as any)
     vi.stubGlobal('fetch', fetchMock)
 
     const res = await POST(req({ idea: 'a sales pipeline revenue forecaster', slug: 'meridian', name: 'Meridian' }))
     const data = await res.json()
 
+    expect(data.status).toBe('processing')
     expect(data.productSlug).toBe('meridian-product')
-    expect(data.chatId).toBe('prod-chat-1')
+    expect(data.chatId).toBeUndefined()
+  })
+
+  it('registers the product (under a slug DISTINCT from the landing page slug) once the detached background task resolves', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({ body: sseBody('prod-chat-1') }) as any)
+    vi.stubGlobal('fetch', fetchMock)
+
+    await POST(req({ idea: 'a sales pipeline revenue forecaster', slug: 'meridian', name: 'Meridian' }))
+    await flush()
+
     expect(h.registerApp).toHaveBeenCalledWith(expect.objectContaining({ slug: 'meridian-product', chatId: 'prod-chat-1' }))
   })
 
@@ -84,6 +100,7 @@ describe('POST /api/build/company-product', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     await POST(req({ idea: 'a sales pipeline revenue forecaster', slug: 'meridian2', name: 'Meridian' }))
+    await flush()
 
     const [, init] = fetchMock.mock.calls[0]
     const sentBody = JSON.parse(String(init.body))
@@ -95,6 +112,7 @@ describe('POST /api/build/company-product', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     await POST(req({ idea: 'a sales pipeline revenue forecaster', slug: 'meridian3', name: 'Meridian' }))
+    await flush()
 
     const [, init] = fetchMock.mock.calls[0]
     const sentBody = JSON.parse(String(init.body))
@@ -107,13 +125,14 @@ describe('POST /api/build/company-product', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     await POST(req({ idea: 'x', slug: 'meridian4', name: 'Meridian', designSystemId: 'cloud' }))
+    await flush()
 
     const [, init] = fetchMock.mock.calls[0]
     const sentBody = JSON.parse(String(init.body))
     expect(sentBody.designSystemId).toBe('cloud')
   })
 
-  it('returns the cached chatId without calling chat-ws again when the product slug already resolves', async () => {
+  it('returns the cached chatId synchronously, without calling chat-ws again, when the product slug already resolves', async () => {
     h.resolveApp.mockResolvedValue({ chatId: 'already-built' })
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
@@ -122,7 +141,7 @@ describe('POST /api/build/company-product', () => {
     const data = await res.json()
 
     expect(data.chatId).toBe('already-built')
-    expect(data.cached).toBe(true)
+    expect(data.status).toBe('cached')
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -148,6 +167,7 @@ describe('POST /api/build/company-product', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     await POST(req({ idea: 'a sales pipeline revenue forecaster', slug: 'meridian6', name: 'Meridian' }))
+    await flush()
 
     const [, init] = fetchMock.mock.calls[0]
     const sentBody = JSON.parse(String(init.body))
@@ -159,6 +179,7 @@ describe('POST /api/build/company-product', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     await POST(req({ idea: 'a sales pipeline revenue forecaster', slug: 'meridian7', name: 'Meridian' }))
+    await flush()
 
     const [, init] = fetchMock.mock.calls[0]
     const sentBody = JSON.parse(String(init.body))
@@ -172,7 +193,7 @@ describe('POST /api/build/company-product', () => {
    * ComplianceGap retry, and before its final ZeroDB persist, both of which
    * run right before the ONE 'complete' event. Multiple intermediate
    * refresh/files events (mid-generation streaming chunks) must NOT trigger
-   * an early return — only 'complete' may.
+   * registration — only 'complete' may.
    */
   it('waits for the complete event, not just the first refresh/files event, before registering the app', async () => {
     const encoder = new TextEncoder()
@@ -180,8 +201,6 @@ describe('POST /api/build/company-product', () => {
     const body = new ReadableStream({
       start(controller) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'init', chatId: 'prod-chat-8' })}\n\n`))
-        // Several intermediate mid-generation signals, exactly like chat-ws's
-        // real throttled 'refresh' + streamed agent 'files' events.
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'refresh' })}\n\n`))
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'files', files: { '/App.tsx': 'partial' } })}\n\n`))
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'refresh' })}\n\n`))
@@ -198,8 +217,32 @@ describe('POST /api/build/company-product', () => {
 
     const res = await POST(req({ idea: 'a sales pipeline revenue forecaster', slug: 'meridian8', name: 'Meridian' }))
     const data = await res.json()
+    await flush()
 
-    expect(data.chatId).toBe('prod-chat-8')
+    expect(data.status).toBe('processing')
     expect(registeredAt).toBe('after-complete')
+  })
+
+  /**
+   * Real bug found live (issue #629/#631/#633, 2026-09-10): the OLD
+   * synchronous version returned a 502 to the caller when chat-ws's fetch
+   * failed/timed out, even when nothing else could be done about it. Now
+   * that generation is detached, a background failure must never surface as
+   * an HTTP error — the initial response has already been sent. It should
+   * just be logged (logBuildOutcome 'failure') so the caller's poll loop
+   * eventually gives up on its own, not so the (already-sent) response
+   * fails.
+   */
+  it('logs a failure outcome (does not throw) when the background generation fetch fails', async () => {
+    const fetchMock = vi.fn(async () => { throw new Error('network down') })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await POST(req({ idea: 'x', slug: 'meridian9', name: 'Meridian' }))
+    const data = await res.json()
+    await flush()
+
+    expect(data.status).toBe('processing')
+    expect(h.logBuildOutcome).toHaveBeenCalledWith(expect.objectContaining({ slug: 'meridian9-product', codeStatus: 'failure' }))
+    expect(h.registerApp).not.toHaveBeenCalled()
   })
 })
