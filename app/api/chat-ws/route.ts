@@ -228,8 +228,22 @@ async function closePrimitiveComplianceGap(
   // is now safe to run on multi-file content too, instead of being scoped
   // out of the more common case for a real product.
   const isMultiFile = /\/\/\s*---\s*FILE:/.test(current)
-  const finish = (result: { code: string; closed: boolean }) => {
-    traceComplianceRetry({
+  // Real bug found live (2026-09-10): this used to fire traceComplianceRetry
+  // WITHOUT awaiting it before returning — a genuine fire-and-forget. The
+  // three call sites below DO `await closePrimitiveComplianceGap(...)`, but
+  // that only awaits up to this function's own `return finish(...)`, not
+  // the trace write finish() kicks off. Confirmed live: a real Meridian
+  // generation logged "🔌 Primitive-compliance retry 1 closed 1 gap(s) —
+  // adopting." and the closed code WAS correctly persisted (verified via a
+  // direct ZeroDB query of the generations table — real /api/primitive/
+  // zeropipeline/deals and /api/primitive/zerovoice/... calls in the saved
+  // files), yet the trace endpoint built specifically to verify this
+  // mechanism still returned an empty array — because the unawaited POST
+  // to ZeroDB never got the chance to finish before the surrounding request
+  // wound down. Now genuinely awaited (still best-effort: traceComplianceRetry
+  // itself never throws, so a failed/slow write still can't break generation).
+  const finish = async (result: { code: string; closed: boolean }) => {
+    await traceComplianceRetry({
       chatId, branch, isMultiFile, attemptsRun,
       gapsBefore, gapsAfter: gapsAfter.length ? gapsAfter : gapsBefore,
       closed: result.closed,
@@ -1627,15 +1641,8 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                   16000, selectedGenModel,
                 )
                 const obValidation = validateGeneratedCode(obRaw)
-                // #624 debug instrumentation: live verification via
-                // `railway logs` proved unreliable for confirming whether
-                // the targeted retry below is even REACHED — this
-                // unconditional line (fires regardless of adoption outcome)
-                // is the one signal that can't be silently skipped.
-                console.log(`🔍 [obedience-repair] valid=${obValidation.valid} codeLen=${obValidation.code?.length ?? 0}`)
                 if (obValidation.valid && obValidation.code && obValidation.code.length > 200) {
                   const after = checkObedience(obValidation.code, message, validRole, obedienceOptions)
-                  console.log(`🔍 [obedience-repair] after.primitiveComplianceGaps=${JSON.stringify(after.primitiveComplianceGaps)}`)
                   const improved = (ob.persistenceGap && !after.persistenceGap) ||
                     (ob.aikitGaps.length > after.aikitGaps.length) ||
                     (ob.primitiveComplianceGaps.length > after.primitiveComplianceGaps.length) ||
