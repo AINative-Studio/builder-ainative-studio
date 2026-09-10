@@ -498,6 +498,30 @@ describe('buildReducer — SET_APP_CHATID', () => {
   })
 })
 
+// Real gap (customer-reported, Meridian, 2026-09-10, issue #620): the
+// Company track's one real generated app was always a marketing landing
+// page — productChatId is the founder's ACTUAL, functional product,
+// generated separately (via /api/build/company-product) with primitive
+// compliance fully enforced, unlike the landing page.
+describe('buildReducer — SET_PRODUCT_CHATID (#620)', () => {
+  it('defaults to empty string', () => {
+    expect(initialBuildState.productChatId).toBe('')
+  })
+
+  it('sets productChatId independently of appChatId', () => {
+    const s = buildReducer(initialBuildState, { type: 'SET_PRODUCT_CHATID', chatId: 'product-chat-xyz' })
+    expect(s.productChatId).toBe('product-chat-xyz')
+    expect(s.appChatId).toBe('')
+  })
+
+  it('setting appChatId does not affect productChatId, and vice versa', () => {
+    const s1 = buildReducer(initialBuildState, { type: 'SET_APP_CHATID', chatId: 'landing-chat' })
+    const s2 = buildReducer(s1, { type: 'SET_PRODUCT_CHATID', chatId: 'product-chat' })
+    expect(s2.appChatId).toBe('landing-chat')
+    expect(s2.productChatId).toBe('product-chat')
+  })
+})
+
 describe('buildReducer — SAW_PREVIEW (#310/#311 value moment)', () => {
   it('defaults to false and flips true on SAW_PREVIEW', () => {
     expect(initialBuildState.sawPreview).toBe(false)

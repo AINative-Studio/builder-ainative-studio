@@ -38,7 +38,7 @@ type PersistedBuildState = Pick<
   BuildState,
   'generated' | 'done' | 'genError' | 'builtCompany' | 'builtMVP'
   | 'wedgePicked' | 'answers' | 'companyName' | 'idea' | 'appSub'
-  | 'brandTagline' | 'brandColor' | 'appChatId' | 'activePlan' | 'enrolled' | 'track'
+  | 'brandTagline' | 'brandColor' | 'appChatId' | 'productChatId' | 'activePlan' | 'enrolled' | 'track'
   | 'sawPreview' | 'designSystemId' | 'designStepDone'
 >
 
@@ -72,6 +72,7 @@ function saveBuildState(slug: string, state: BuildState) {
       brandTagline: state.brandTagline,
       brandColor: state.brandColor,
       appChatId: state.appChatId,
+      productChatId: state.productChatId,
       activePlan: state.activePlan,
       enrolled: state.enrolled,
       track: state.track,
