@@ -371,4 +371,89 @@ describe('GET/POST /api/primitive/[primitive]/[...path] (#443)', () => {
       expect(json).toEqual({ error: 'primitive_unavailable', reason: 'not_provisioned' })
     })
   })
+
+  describe('ZeroInvoice (#638/#639 — re-investigated and confirmed live to support the same direct-JWT-bearer path as the other 6)', () => {
+    function invoiceReq(opts: { method?: string; search?: string; body?: string } = {}) {
+      return {
+        method: opts.method || 'GET',
+        nextUrl: new URL(`https://builder.ainative.studio/api/primitive/zeroinvoice/invoices${opts.search || ''}`),
+        headers: new Headers({}),
+        text: async () => opts.body ?? '',
+      } as any
+    }
+
+    it('is a known primitive, routed to the real ZeroInvoice host with the resolved founder token', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'zi-token' })
+      const fetchMock = vi.fn(async (url: string, init: any) => {
+        expect(String(url)).toBe('https://zeroinvoice.ainative.studio/api/invoices/')
+        expect(init.headers.Authorization).toBe('Bearer zi-token')
+        return { status: 200, text: async () => JSON.stringify({ items: [], total: 0 }), headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const res: any = await GET(invoiceReq(), ctx('zeroinvoice', ['invoices']))
+      expect(res.status).toBe(200)
+      expect(h.resolveFounderCredential).toHaveBeenCalledWith('acme', 'zeroinvoice')
+    })
+
+    // Real bug found live (2026-09-10): ZeroInvoice's actual backend 307-
+    // redirects a collection path with no trailing slash. A generated app's
+    // own fetch() following that redirect on a POST/PUT/DELETE risks the
+    // body/method being dropped or the Authorization header stripped across
+    // the redirect — a real, silent failure mode. The proxy normalizes this
+    // server-side so a generated app calling the documented path (with OR
+    // without a trailing slash) never hits that redirect at all.
+    it('appends a trailing slash to a single-segment collection path (e.g. "invoices" -> "invoices/") to avoid ZeroInvoice\'s real 307 redirect', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'zi-token' })
+      const fetchMock = vi.fn(async (url: string) => {
+        expect(String(url)).toBe('https://zeroinvoice.ainative.studio/api/clients/')
+        return { status: 200, text: async () => '{"id":"c1"}', headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      await POST(invoiceReq({ method: 'POST', body: JSON.stringify({ name: 'Acme Co' }) }), ctx('zeroinvoice', ['clients']))
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('does NOT append a trailing slash to a resource-id path (e.g. a specific invoice id)', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'zi-token' })
+      const fetchMock = vi.fn(async (url: string) => {
+        expect(String(url)).toBe('https://zeroinvoice.ainative.studio/api/invoices/inv_123')
+        return { status: 200, text: async () => '{}', headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      await GET(invoiceReq(), ctx('zeroinvoice', ['invoices', 'inv_123']))
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('other primitives never get this trailing-slash treatment — only zeroinvoice', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'tok' })
+      const fetchMock = vi.fn(async (url: string) => {
+        expect(String(url)).not.toMatch(/\/deals\/$/)
+        return { status: 200, text: async () => '{}', headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      await GET(req(), ctx('zerocrm', ['deals']))
+    })
+
+    it('401s on a missing token with no COMPANY_SLUG, same fail-closed behavior as the other primitives', async () => {
+      const res: any = await GET(invoiceReq(), ctx('zeroinvoice', ['invoices']))
+      expect(res.status).toBe(401)
+      expect(h.resolveFounderCredential).not.toHaveBeenCalled()
+    })
+
+    it('502s honestly when no ZeroInvoice credential was ever stored for this company', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: false, reason: 'not_provisioned' })
+      const res: any = await GET(invoiceReq(), ctx('zeroinvoice', ['invoices']))
+      expect(res.status).toBe(502)
+      const json = await res.json()
+      expect(json).toEqual({ error: 'primitive_unavailable', reason: 'not_provisioned' })
+    })
+  })
 })

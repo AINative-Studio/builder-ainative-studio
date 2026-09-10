@@ -84,10 +84,19 @@ describe('primitive-catalog codegen composition (#218)', () => {
     expect(block).not.toContain('https://pipeline.ainative.studio/api/v1')
   })
 
-  it('invoicing idea wires ZeroInvoice real endpoint', () => {
+  it('invoicing idea wires ZeroInvoice through the same-origin proxy, not its raw external host (#638/#639)', () => {
+    // Real bug this test used to assert AS CORRECT (2026-09-10, #638/#639):
+    // before ZeroInvoice had a RUNTIME_PROXIED_PRIMITIVES entry, it fell
+    // through to a placeholder that leaked its raw apiBase into the prompt —
+    // the model would either hallucinate a direct external fetch(), or (as
+    // confirmed live) just fall back to a fake /api/db table since it had no
+    // real instruction either way. ZeroInvoice is founder-identity-scoped
+    // (same as ZeroPipeline/ZeroCommerce/etc.) — the generated app must call
+    // the same-origin proxy, never ZeroInvoice's real host directly.
     const block = codegenCompositionBlock('an invoicing app that bills clients and gets paid', 'company')
     expect(block).toContain('ZeroInvoice')
-    expect(block).toContain('https://zeroinvoice.ainative.studio/api')
+    expect(block).toContain('/api/primitive/zeroinvoice/')
+    expect(block).not.toContain('https://zeroinvoice.ainative.studio/api')
   })
 
   it('nonprofit idea wires AINativeNGO (InstitutionOS) as a real direct-fetch target, not OpenCapStack (#302, #510)', () => {
@@ -733,6 +742,88 @@ describe('primitive-catalog additions (#410)', () => {
       `
       const gaps = findPrimitiveComplianceGaps(compliantCode, CRM_IDEA)
       expect(gaps).not.toContain('ZeroCRM')
+    })
+  })
+
+  describe('#638/#639 fix — ZeroInvoice runtime proxy (was believed to have NO callable path at all)', () => {
+    // Real finding: ZeroInvoice was long believed unwireable — its OAuth
+    // 2.1+PKCE browser flow hands the callback to ZeroInvoice's OWN frontend,
+    // which never returns a token to builder (lib/build/zeroinvoice.ts's
+    // original doc comment). A live App-track generation for an invoicing
+    // idea confirmed the resulting real-world gap: the generated code called
+    // /api/db/invoices (a fake, hand-rolled table) with ZERO ZeroInvoice
+    // calls, and checkObedience never even flagged a missing primitive,
+    // because RUNTIME_PROXY_PATH_SUBSTRINGS had no ZeroInvoice entry to check.
+    //
+    // Re-investigated against ZeroInvoice's real backend source and CONFIRMED
+    // LIVE against production: its business endpoints (invoices/clients/
+    // payments) accept a plain AINative JWT directly via `Authorization:
+    // Bearer <jwt>` — the SAME direct-JWT-bearer contract as ZeroPipeline/
+    // ZeroCommerce/ZeroForms/AgentFlow/ZeroCRM. A real POST created a genuine
+    // invoice (INV-2026-0001, real id/totals) against zeroinvoice.ainative.studio.
+    const INVOICE_IDEA = 'a freelance invoicing tool to create invoices, send them to clients, and track paid/pending status'
+
+    it('the idea selects ZeroInvoice', () => {
+      const { names } = selectPrimitives(INVOICE_IDEA, 'app')
+      expect(names).toContain('ZeroInvoice')
+    })
+
+    it('the composition block carries a literal code fence + explicit anti-pattern language for ZeroInvoice (previously had NO instruction at all)', () => {
+      const block = codegenCompositionBlock(INVOICE_IDEA, 'app')
+      expect(block).toContain('ZeroInvoice')
+      // Before this fix, ZeroInvoice fell through to the "already provisioned
+      // server-side, do NOT call directly" placeholder.
+      expect(block).not.toMatch(/ZeroInvoice[^\n]*already provisioned for this company server-side/)
+      expect(block).toMatch(/```js[\s\S]*fetch\('\/api\/primitive\/zeroinvoice\/invoices\/'\)/)
+      expect(block).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      expect(block).toMatch(/do NOT hand-roll an invoices\/billing table using \/api\/db tables/i)
+    })
+
+    it('the composition block requires the trailing slash on ZeroInvoice collection paths (confirmed live: omitting it 307-redirects and can drop the request body)', () => {
+      const block = codegenCompositionBlock(INVOICE_IDEA, 'app')
+      expect(block).toMatch(/WITH a trailing slash on collection paths/)
+    })
+
+    it('does not leak the raw external ZeroInvoice apiBase into the prompt', () => {
+      const block = codegenCompositionBlock(INVOICE_IDEA, 'app')
+      expect(block).not.toContain('zeroinvoice.ainative.studio')
+    })
+
+    it('RUNTIME_PROXY_PATH_SUBSTRINGS carries the real proxy path so the #518 compliance validator catches an unwired ZeroInvoice selection', () => {
+      expect(RUNTIME_PROXY_PATH_SUBSTRINGS.ZeroInvoice).toEqual(['/api/primitive/zeroinvoice/invoices'])
+      expect(getComplianceCheckedPrimitiveNames()).toContain('ZeroInvoice')
+    })
+
+    it('getRuntimeProxyInstruction returns the same instruction text codegenCompositionBlock injects', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroInvoice')
+      expect(instruction).toBeDefined()
+      expect(instruction).toMatch(/fetch\('\/api\/primitive\/zeroinvoice\/invoices\/'\)/)
+      expect(instruction).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      const block = codegenCompositionBlock(INVOICE_IDEA, 'app')
+      expect(block).toContain(instruction!.split('\n')[0])
+    })
+
+    it('findPrimitiveComplianceGaps (the #518 validator) flags a ZeroInvoice idea whose generated code never called the ZeroInvoice proxy (the exact live-repro shape: fake /api/db/invoices instead)', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      const brokenCode = `
+        function App() {
+          const [invoices, setInvoices] = useState([])
+          useEffect(() => { fetch('/api/db/invoices').then(r => r.json()).then(d => setInvoices(d.data)) }, [])
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(brokenCode, INVOICE_IDEA)
+      expect(gaps).toContain('ZeroInvoice')
+    })
+
+    it('findPrimitiveComplianceGaps does not flag ZeroInvoice when the real proxy IS called', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      const compliantCode = `
+        function App() {
+          useEffect(() => { fetch('/api/primitive/zeroinvoice/invoices/').then(r => r.json()).then(d => setInvoices(d.items)) }, [])
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(compliantCode, INVOICE_IDEA)
+      expect(gaps).not.toContain('ZeroInvoice')
     })
   })
 
