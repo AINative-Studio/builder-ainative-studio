@@ -34,8 +34,26 @@ describe('Live screen — real product card and company-product wiring (2026-09-
 
   it('dispatches SET_PRODUCT_CHATID on a successful response', () => {
     const idx = source.indexOf("fetch('/api/build/company-product'")
-    const nearby = source.slice(idx, idx + 700)
+    const nearby = source.slice(idx, idx + 1200)
     expect(nearby).toMatch(/SET_PRODUCT_CHATID/)
+  })
+
+  /**
+   * Real bug found live: with primitive compliance enforced, a genuine
+   * product generation can trigger chat-ws's own obedience-repair pass (a
+   * second model call), pushing wall-clock past the 280s/300s server-side
+   * ceiling on a slow attempt — confirmed live (502 "terminated" on 2 of 3
+   * real Meridian product-build attempts). Retries transient failures
+   * (502/503/504) with backoff instead of silently giving up after one try.
+   */
+  it('retries transient failures (502/503/504) instead of giving up after one attempt', () => {
+    const idx = source.indexOf('attemptProductBuild')
+    expect(idx).toBeGreaterThan(-1)
+    const nearby = source.slice(idx, idx + 1000)
+    expect(nearby).toMatch(/502/)
+    expect(nearby).toMatch(/504/)
+    expect(nearby).toMatch(/503/)
+    expect(nearby).toMatch(/MAX_PRODUCT_ATTEMPTS/)
   })
 
   it('renders a distinct "Your product" card, separate from the landing page link', () => {

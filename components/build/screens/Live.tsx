@@ -299,17 +299,40 @@ export function Live() {
     // ACTUAL product. Build that separately, with primitive compliance
     // fully enforced (no landingPageOnly), registered under its own
     // {slug}-product entry so it never collides with the landing page.
+    //
+    // Real bug found live: with primitive compliance ON, a genuine product
+    // generation can trigger chat-ws's own obedience-repair pass (a SECOND
+    // model call) before its first stream event, pushing total wall-clock
+    // past this route's 280s/300s server-side ceiling on a slow attempt —
+    // confirmed live: 502 "terminated" on 2 of 3 real attempts, even though
+    // the underlying Claude call itself completed (45-49k chars). Retrying
+    // transient failures (502/504/timeout — mirrors useAutoplay.ts's
+    // existing retry pattern for prose artifacts) rather than silently
+    // giving up after one attempt.
     if (!state.productChatId && state.idea && state.appSub) {
-      fetch('/api/build/company-product', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          idea: state.idea, slug: state.appSub, name: company,
-          designSystemId: state.designSystemId || undefined,
-        }),
-      })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => { if (alive && d?.chatId) dispatch({ type: 'SET_PRODUCT_CHATID', chatId: d.chatId }) })
-        .catch(() => {})
+      const MAX_PRODUCT_ATTEMPTS = 3
+      const attemptProductBuild = (n: number) => {
+        fetch('/api/build/company-product', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            idea: state.idea, slug: state.appSub, name: company,
+            designSystemId: state.designSystemId || undefined,
+          }),
+        })
+          .then(async (r) => {
+            if (r.ok) return r.json()
+            const isTransient = r.status === 502 || r.status === 504 || r.status === 503
+            if (isTransient && n < MAX_PRODUCT_ATTEMPTS) {
+              setTimeout(() => { if (alive) attemptProductBuild(n + 1) }, 1500 * n)
+            }
+            return null
+          })
+          .then((d) => { if (alive && d?.chatId) dispatch({ type: 'SET_PRODUCT_CHATID', chatId: d.chatId }) })
+          .catch(() => {
+            if (n < MAX_PRODUCT_ATTEMPTS) setTimeout(() => { if (alive) attemptProductBuild(n + 1) }, 1500 * n)
+          })
+      }
+      attemptProductBuild(1)
     }
     // The visible nightshift — the real last nightly run + morning summary.
     fetch(`/api/build/nightshift?companyId=${encodeURIComponent(companyId)}&idea=${encodeURIComponent(state.idea)}&companyName=${encodeURIComponent(company)}`)
