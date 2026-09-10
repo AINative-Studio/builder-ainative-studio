@@ -58,10 +58,36 @@ const RESOLVE_SUFFIXES = ['', '.tsx', '.ts', '.jsx', '.js', '/index.tsx', '/inde
  * Modules the PREVIEW RUNTIME provides even when absent from the generated
  * payload: the AIKit bundle and shadcn/ui components sandpack-preview injects,
  * and the shadcn `lib/utils` helper. Importing these is always satisfiable.
+ *
+ * Real bug found live (Meridian, 2026-09-10): a file the model placed INSIDE
+ * components/ itself (e.g. components/Header.tsx) correctly writes a
+ * SIBLING-relative import to the bundle — './ui/button', not
+ * './components/ui/button' — since stripLocalPrefix() only strips the
+ * leading './'/'../' segments, this became the bare spec 'ui/button', which
+ * the two `components/...` patterns below never matched (they require the
+ * literal substring 'components/ui/' or 'components/aikit' to be PRESENT).
+ * Confirmed live: register-app's completeness gate rejected 4 consecutive
+ * real generations with "imported local module(s) never defined:
+ * ./ui/button, ./ui/input, ./ui/badge...", even though those files
+ * genuinely exist in the injected bundle (lib/sandpack/shadcn-bundle.ts,
+ * lib/sandpack/aikit-bundle.ts) — this is the exact same import-path-depth
+ * blindness already fixed once for codegen-time injection in
+ * lib/multi-file-parser.ts's relativeComponentsPrefix(), but unfixed here in
+ * the SEPARATE gate that checks the model's own directly-written imports.
+ * Added a second alternation per bundle (bare 'ui/...' / bare 'aikit') so
+ * both the root-relative and sibling-relative forms resolve.
  */
 const RUNTIME_PROVIDED: RegExp[] = [
   /(^|\/)components\/aikit(\/|$)?/,
   /(^|\/)components\/ui\//,
+  // Sibling-relative forms only (anchored to the START of the stripped
+  // path) — a file already living inside components/ writes './aikit' or
+  // './ui/button' rather than './components/aikit'/'./components/ui/button'.
+  // Anchoring to ^ (not matching 'ui/' anywhere, e.g. a hypothetical
+  // model-authored components/dashboard/ui/Custom.tsx) keeps this narrow to
+  // the exact sibling-relative shape the bundles are actually placed at.
+  /^aikit(\/|$)/,
+  /^ui\//,
   /(^|\/)lib\/utils$/,
 ]
 
