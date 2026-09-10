@@ -14,7 +14,7 @@ import { validateGeneratedCode } from '@/lib/code-validator'
 import { validateOutput, validateFileImports } from '@/lib/build/output-validator'
 import { buildValidationFallbackComponent } from '@/lib/validation-fallback'
 import { runValidationRetryLoop, buildRepairPrompt, extractErrorWindow } from '@/lib/generation-retry'
-import { checkObedience, buildObediencePrompt } from '@/lib/build/obedience-gate'
+import { checkObedience, buildObediencePrompt, narrowToPrimitiveComplianceOnly, evaluatePrimitiveComplianceRetry } from '@/lib/build/obedience-gate'
 import { buildRagContext } from '@/lib/build/rag-context'
 import { shouldDecompose, buildDecompositionPrompt, buildFixAndDecomposePrompt } from '@/lib/build/decomposition'
 import { selectModelForComplexity, modelSelectionReport } from '@/lib/build/model-select'
@@ -175,6 +175,66 @@ async function runClaudePass(system: string, user: string, maxTokens = 16000, mo
     console.warn('[runClaudePass] AINative fallback also failed:', err?.message?.slice(0, 80))
     return ''
   }
+}
+
+/**
+ * Real gap found live (issue #624, Meridian real-product build, 2026-09-10):
+ * the general obedience-repair pass adopts its result if ANY dimension
+ * improved (AIKit hand-rolling fixed, say) even when the primitive-
+ * compliance gap — the dimension that most defines whether a real product
+ * actually DOES what its idea describes — is still wide open. Confirmed
+ * live: a repair pass correctly fixed a hand-rolled AIKitHeader but left
+ * "ZeroPipeline, ZeroVoice, ZeroMemory never called" completely unresolved,
+ * and the general "improved on ANY dimension" check adopted it anyway.
+ *
+ * This is a SEPARATE, targeted retry loop that runs AFTER the general
+ * repair pass, ONLY when primitiveComplianceGaps is still non-empty — it
+ * re-prompts with ONLY that gap (via a narrowed ObedienceResult, so
+ * buildObediencePrompt emits nothing but the primitive instructions),
+ * bounded to a small number of focused attempts so a stubborn generation
+ * can't loop forever. Adopts a candidate only when it's still valid AND the
+ * primitive gap has shrunk — never regresses a working app to chase full
+ * compliance.
+ */
+async function closePrimitiveComplianceGap(
+  code: string,
+  message: string,
+  validRole: Parameters<typeof checkObedience>[2],
+  obedienceOptions: Parameters<typeof checkObedience>[3],
+  selectedGenModel: string | undefined,
+  maxAttempts = 2,
+): Promise<{ code: string; closed: boolean }> {
+  let current = code
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const before = checkObedience(current, message, validRole, obedienceOptions)
+    if (before.primitiveComplianceGaps.length === 0) return { code: current, closed: true }
+
+    console.log(`🔌 Primitive-compliance gap still open (attempt ${attempt}/${maxAttempts}): ${before.primitiveComplianceGaps.join(', ')}`)
+    const narrowed = narrowToPrimitiveComplianceOnly(before.primitiveComplianceGaps)
+    const raw = await runClaudePass(
+      'You improve a working React app to actually call the real AINative primitive APIs it was told to use. ' +
+      'Return ONLY the full corrected app in ```jsx markers. Keep every existing feature; do not break anything.',
+      `${buildObediencePrompt(message, narrowed)}\n\nCURRENT APP:\n\`\`\`jsx\n${current.slice(0, 32000)}\n\`\`\``,
+      16000, selectedGenModel,
+    )
+    const validated = validateGeneratedCode(raw)
+    if (!validated.valid || !validated.code || validated.code.length < 200) {
+      console.log(`🔌 Primitive-compliance retry ${attempt} produced invalid/empty output — keeping prior version.`)
+      continue
+    }
+    const after = checkObedience(validated.code, message, validRole, obedienceOptions)
+    const { madeProgress, closed } = evaluatePrimitiveComplianceRetry(before.primitiveComplianceGaps, after.primitiveComplianceGaps)
+    if (madeProgress) {
+      console.log(`🔌 Primitive-compliance retry ${attempt} closed ${before.primitiveComplianceGaps.length - after.primitiveComplianceGaps.length} gap(s) — adopting.`)
+      current = validated.code
+      if (closed) return { code: current, closed: true }
+    } else {
+      console.log(`🔌 Primitive-compliance retry ${attempt} made no progress — keeping prior version, stopping.`)
+      break
+    }
+  }
+  const final = checkObedience(current, message, validRole, obedienceOptions)
+  return { code: current, closed: final.primitiveComplianceGaps.length === 0 }
 }
 
 // Fallback chains (used when Claude is unavailable)
@@ -1443,10 +1503,30 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                 if (v.valid && multi && (v.code?.length || 0) > finalContent.length * 0.7) {
                   console.log('🔧 Combined pass produced a valid multi-file, rule-following app — adopting.')
                   finalContent = v.code; validation = v; checkpoint.record('fix+split', finalContent, true)
+                  // #624: same targeted-retry gap as the non-combined branch
+                  // below, but SCOPED OUT here deliberately — this branch
+                  // just adopted real MULTI-FILE content (`// --- FILE:`
+                  // markers), and closePrimitiveComplianceGap's single-file
+                  // `\`\`\`jsx\`\`\`` repair prompt/parser would corrupt that
+                  // file structure if run against it. Tracked as a known
+                  // scope boundary in #624 rather than risking that.
                 } else if (v.valid && obeyImproved && (v.code?.length || 0) > 200) {
                   // split didn't take but the fixes did — still an improvement.
                   console.log('🔧 Combined pass fixed rules (single-file) — adopting.')
                   finalContent = v.code; validation = v; checkpoint.record('fix', finalContent, true)
+                  // #624: this outcome IS single-file (split didn't take) —
+                  // safe to apply the same targeted primitive-compliance
+                  // retry as the non-combined branch.
+                  if (after.primitiveComplianceGaps.length > 0) {
+                    const closeResult = await closePrimitiveComplianceGap(
+                      finalContent, message, validRole, obedienceOptions, selectedGenModel,
+                    )
+                    if (closeResult.code !== finalContent) {
+                      finalContent = closeResult.code
+                      validation = validateGeneratedCode(finalContent)
+                      checkpoint.record('primitive-compliance', finalContent, true)
+                    }
+                  }
                 } else {
                   console.log('🔧 Combined pass rejected — keeping original.')
                 }
@@ -1486,6 +1566,23 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                   if (improved) {
                     console.log('📏 Obedience re-prompt improved the app — adopting.')
                     finalContent = obValidation.code; validation = obValidation; checkpoint.record('obedience', finalContent, true)
+                  }
+                  // #624: the general repair above adopts on ANY dimension
+                  // improving, even when primitive compliance — the
+                  // dimension that most defines whether a real product
+                  // actually calls its primitives — is still wide open
+                  // (confirmed live: AIKit fixed, ZeroPipeline/ZeroVoice/
+                  // ZeroMemory still never called, adopted anyway). Targeted
+                  // follow-up retry, scoped to ONLY that gap.
+                  if (after.primitiveComplianceGaps.length > 0) {
+                    const closeResult = await closePrimitiveComplianceGap(
+                      finalContent, message, validRole, obedienceOptions, selectedGenModel,
+                    )
+                    if (closeResult.code !== finalContent) {
+                      finalContent = closeResult.code
+                      validation = validateGeneratedCode(finalContent)
+                      checkpoint.record('primitive-compliance', finalContent, true)
+                    }
                   }
                 }
               } else if (needsDecomp) {

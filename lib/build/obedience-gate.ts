@@ -382,3 +382,49 @@ export function buildObediencePrompt(idea: string, result: ObedienceResult): str
   parts.push('Return the corrected full app. Do not remove features.')
   return parts.join('\n')
 }
+
+/**
+ * Real gap found live (issue #624, Meridian real-product build, 2026-09-10):
+ * the general obedience-repair pass in chat-ws adopts a candidate if ANY
+ * dimension improved (e.g. AIKit hand-rolling fixed) even when
+ * primitiveComplianceGaps — the dimension that most defines whether a real
+ * product actually calls its primitives — is still wide open. Confirmed
+ * live: a repair pass correctly fixed a hand-rolled AIKitHeader but left
+ * "ZeroPipeline, ZeroVoice, ZeroMemory never called" completely unresolved,
+ * and the general improved-on-ANY-dimension check adopted it anyway.
+ *
+ * Produces a narrowed ObedienceResult carrying ONLY the still-open primitive
+ * gaps, so buildObediencePrompt(idea, narrowed) emits a re-prompt focused
+ * entirely on closing that one gap — no distracting instructions about
+ * dimensions that are already fixed.
+ */
+export function narrowToPrimitiveComplianceOnly(gaps: string[]): ObedienceResult {
+  return {
+    ok: gaps.length === 0,
+    persistenceGap: false,
+    aikitGaps: [],
+    primitiveComplianceGaps: gaps,
+    visitorTrackingGap: false,
+    fakeLeadCaptureGap: false,
+    hardcodedToggleGap: false,
+    reasons: [],
+  }
+}
+
+/**
+ * Did a targeted primitive-compliance retry make real progress? Pure
+ * decision function so the orchestration in chat-ws (which owns the actual
+ * model call) stays testable without mocking an LLM. `closed` is true only
+ * when the gap is FULLY resolved — a caller wanting a bounded retry loop
+ * should keep retrying while `!closed && madeProgress`, and stop (keep the
+ * prior version) the moment a retry makes zero progress.
+ */
+export function evaluatePrimitiveComplianceRetry(
+  beforeGaps: string[],
+  afterGaps: string[],
+): { madeProgress: boolean; closed: boolean } {
+  return {
+    madeProgress: afterGaps.length < beforeGaps.length,
+    closed: afterGaps.length === 0,
+  }
+}

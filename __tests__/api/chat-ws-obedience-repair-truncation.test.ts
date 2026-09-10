@@ -21,12 +21,27 @@ import { describe, it, expect } from 'vitest'
 describe('chat-ws obedience repair pass does not truncate real-sized generations (2026-09-10)', () => {
   const source = fs.readFileSync(path.join(process.cwd(), 'app/api/chat-ws/route.ts'), 'utf8')
 
-  it('the CURRENT APP slice sent to the obedience repair pass is at least 32000 chars, not the old 12000', () => {
-    const idx = source.indexOf('CURRENT APP:')
+  it('the CURRENT APP slice sent to the general obedience repair pass is at least 32000 chars, not the old 12000', () => {
+    // Real chat-ws.ts now has TWO "CURRENT APP:" occurrences — the general
+    // repair pass (finalContent.slice) and the #624 targeted primitive-
+    // compliance retry (current.slice, tested separately below). Anchor on
+    // the specific variable this test is actually about.
+    const idx = source.indexOf('${finalContent.slice(0, 32000)}')
     expect(idx).toBeGreaterThan(-1)
-    const nearby = source.slice(idx, idx + 200)
+    const nearby = source.slice(idx - 50, idx + 50)
     expect(nearby).toMatch(/finalContent\.slice\(0, 32000\)/)
-    expect(nearby).not.toMatch(/finalContent\.slice\(0, 12000\)/)
+    expect(source).not.toMatch(/finalContent\.slice\(0, 12000\)/)
+  })
+
+  /**
+   * #624's targeted primitive-compliance retry re-sends the CURRENT APP to
+   * the model too (a real generation is 25k-32k chars, same as the general
+   * repair pass) — it must not reintroduce the exact same undersized-cap
+   * bug this file's other test already fixed once.
+   */
+  it('the #624 targeted primitive-compliance retry also uses the full 32000-char cap, not a smaller one', () => {
+    const idx = source.indexOf('${current.slice(0, 32000)}')
+    expect(idx).toBeGreaterThan(-1)
   })
 })
 

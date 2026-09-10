@@ -9,6 +9,8 @@ import {
   hasHardcodedToggleGap,
   checkObedience,
   buildObediencePrompt,
+  narrowToPrimitiveComplianceOnly,
+  evaluatePrimitiveComplianceRetry,
 } from '@/lib/build/obedience-gate'
 
 const dataManagingApp = (dbBacked: boolean) => `
@@ -422,5 +424,75 @@ function App(){
     expect(r.hardcodedToggleGap).toBe(false)
     const prompt = buildObediencePrompt('a gallery app', r)
     expect(prompt).not.toMatch(/PERSIST THE FAVORITE\/LIKE\/SAVE TOGGLE/)
+  })
+})
+
+/**
+ * Real gap found live (issue #624, Meridian real-product build, 2026-09-10):
+ * the general obedience-repair pass in chat-ws adopts a candidate if ANY
+ * dimension improved — even when primitiveComplianceGaps, the dimension
+ * that most defines whether a real product actually calls its primitives,
+ * is still wide open. Confirmed live: a repair pass fixed a hand-rolled
+ * AIKitHeader but left "ZeroPipeline, ZeroVoice, ZeroMemory never called"
+ * completely unresolved, and the general check adopted it anyway.
+ *
+ * narrowToPrimitiveComplianceOnly + evaluatePrimitiveComplianceRetry are the
+ * pure decision logic behind chat-ws's targeted follow-up retry loop
+ * (closePrimitiveComplianceGap) — extracted here so the actual decision-
+ * making is unit-testable without mocking an LLM call.
+ */
+describe('obedience-gate: targeted primitive-compliance retry (#624)', () => {
+  describe('narrowToPrimitiveComplianceOnly', () => {
+    it('produces a result carrying ONLY the given primitive gaps, nothing else', () => {
+      const r = narrowToPrimitiveComplianceOnly(['ZeroPipeline', 'ZeroVoice'])
+      expect(r.primitiveComplianceGaps).toEqual(['ZeroPipeline', 'ZeroVoice'])
+      expect(r.persistenceGap).toBe(false)
+      expect(r.aikitGaps).toEqual([])
+      expect(r.visitorTrackingGap).toBe(false)
+      expect(r.fakeLeadCaptureGap).toBe(false)
+      expect(r.hardcodedToggleGap).toBe(false)
+    })
+
+    it('buildObediencePrompt on the narrowed result emits ONLY the primitive-compliance section', () => {
+      const r = narrowToPrimitiveComplianceOnly(['ZeroPipeline'])
+      const prompt = buildObediencePrompt('a sales pipeline app', r)
+      expect(prompt).toMatch(/YOU WERE TOLD TO CALL THESE REAL PRIMITIVES AND DID NOT: ZeroPipeline/)
+      // None of the other repair sections should appear — this must be a
+      // FOCUSED re-prompt, not a repeat of the general one.
+      expect(prompt).not.toMatch(/PERSIST REAL DATA/)
+      expect(prompt).not.toMatch(/USE AIKIT COMPONENTS/)
+      expect(prompt).not.toMatch(/FIRE THE MANDATED VISITOR-TRACKING BEACON/)
+    })
+
+    it('ok is false when gaps are non-empty, true when empty', () => {
+      expect(narrowToPrimitiveComplianceOnly(['ZeroPipeline']).ok).toBe(false)
+      expect(narrowToPrimitiveComplianceOnly([]).ok).toBe(true)
+    })
+  })
+
+  describe('evaluatePrimitiveComplianceRetry', () => {
+    it('reports progress and NOT closed when the gap shrinks but is not empty', () => {
+      const result = evaluatePrimitiveComplianceRetry(['ZeroPipeline', 'ZeroVoice'], ['ZeroPipeline'])
+      expect(result.madeProgress).toBe(true)
+      expect(result.closed).toBe(false)
+    })
+
+    it('reports progress AND closed when the gap fully resolves', () => {
+      const result = evaluatePrimitiveComplianceRetry(['ZeroPipeline'], [])
+      expect(result.madeProgress).toBe(true)
+      expect(result.closed).toBe(true)
+    })
+
+    it('reports NO progress when the gap is unchanged (the real bug this fixes: adopting a no-op retry)', () => {
+      const result = evaluatePrimitiveComplianceRetry(['ZeroPipeline', 'ZeroVoice'], ['ZeroPipeline', 'ZeroVoice'])
+      expect(result.madeProgress).toBe(false)
+      expect(result.closed).toBe(false)
+    })
+
+    it('reports NO progress (and flags it) if a retry somehow makes things WORSE', () => {
+      const result = evaluatePrimitiveComplianceRetry(['ZeroPipeline'], ['ZeroPipeline', 'ZeroVoice'])
+      expect(result.madeProgress).toBe(false)
+      expect(result.closed).toBe(false)
+    })
   })
 })
