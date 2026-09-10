@@ -36,7 +36,7 @@ export interface PrimitiveComplianceTraceRow {
   chatId: string
   /** Which adoption branch invoked the retry — helps distinguish the
    *  single-file vs multi-file code paths during live verification. */
-  branch: 'non-combined' | 'combined-single-file' | 'combined-multi-file' | 'combined-rejected-fallback'
+  branch: 'non-combined' | 'combined-single-file' | 'combined-multi-file' | 'combined-rejected-fallback' | 'non-combined-repair-invalid-fallback'
   isMultiFile: boolean
   attemptsRun: number
   gapsBefore: string[]
