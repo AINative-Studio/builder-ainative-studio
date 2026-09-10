@@ -210,7 +210,7 @@ async function closePrimitiveComplianceGap(
   // source), so its outcome is now recorded in a queryable ZeroDB row
   // instead of only a console.log line.
   chatId: string,
-  branch: 'non-combined' | 'combined-single-file' | 'combined-multi-file' | 'combined-rejected-fallback',
+  branch: 'non-combined' | 'combined-single-file' | 'combined-multi-file' | 'combined-rejected-fallback' | 'non-combined-repair-invalid-fallback',
   maxAttempts = 2,
 ): Promise<{ code: string; closed: boolean }> {
   let current = code
@@ -1694,6 +1694,28 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                       validation = validateGeneratedCode(finalContent)
                       checkpoint.record('primitive-compliance', finalContent, true)
                     }
+                  }
+                } else if (ob.primitiveComplianceGaps.length > 0) {
+                  // Real bug found live (issue #640, 2026-09-10): when the
+                  // repair pass's OWN response fails validation (obValidation
+                  // invalid, e.g. it referenced an undefined component), the
+                  // whole block above is skipped — finalContent stays at its
+                  // PRE-repair state, the exact content `ob` already flagged
+                  // as missing a primitive call, with nothing ever retrying
+                  // to close it. Confirmed live: a real ZeroInvoice-idea
+                  // generation hit exactly this path (repair produced an
+                  // "unresolved component: StatusBadge" error) and the served
+                  // app fell back to fake /api/db/invoices as a direct
+                  // result. Same shape as #636's combined-branch fix — run
+                  // the targeted retry directly on the pre-repair content.
+                  const closeResult = await closePrimitiveComplianceGap(
+                    finalContent, message, validRole, obedienceOptions, selectedGenModel,
+                    responseId, 'non-combined-repair-invalid-fallback',
+                  )
+                  if (closeResult.code !== finalContent) {
+                    finalContent = closeResult.code
+                    validation = validateGeneratedCode(finalContent)
+                    checkpoint.record('primitive-compliance', finalContent, true)
                   }
                 }
               } else if (needsDecomp) {

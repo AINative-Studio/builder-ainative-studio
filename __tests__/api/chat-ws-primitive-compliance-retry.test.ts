@@ -80,11 +80,14 @@ describe('chat-ws wires the targeted primitive-compliance retry (2026-09-10, #62
    * responseId + a distinct branch label so a real verification can query
    * /api/build/primitive-compliance-trace instead of racing a log tail.
    */
-  it('imports traceComplianceRetry and passes a distinct branch label + chatId at each of the 4 call sites', () => {
+  it('imports traceComplianceRetry and passes a distinct branch label + chatId at each of the 5 call sites', () => {
     expect(source).toMatch(/import \{ traceComplianceRetry \} from '@\/lib\/build\/primitive-compliance-trace'/)
-    const calls = [...source.matchAll(/closePrimitiveComplianceGap\(\s*finalContent, message, validRole, obedienceOptions, selectedGenModel,\s*\n\s*responseId, '(non-combined|combined-single-file|combined-multi-file|combined-rejected-fallback)',/g)]
+    const calls = [...source.matchAll(/closePrimitiveComplianceGap\(\s*finalContent, message, validRole, obedienceOptions, selectedGenModel,\s*\n\s*responseId, '(non-combined|combined-single-file|combined-multi-file|combined-rejected-fallback|non-combined-repair-invalid-fallback)',/g)]
     const branches = calls.map((m) => m[1]).sort()
-    expect(branches).toEqual(['combined-multi-file', 'combined-rejected-fallback', 'combined-single-file', 'non-combined'])
+    expect(branches).toEqual([
+      'combined-multi-file', 'combined-rejected-fallback', 'combined-single-file',
+      'non-combined', 'non-combined-repair-invalid-fallback',
+    ])
   })
 
   /**
@@ -106,6 +109,30 @@ describe('chat-ws wires the targeted primitive-compliance retry (2026-09-10, #62
     expect(nearby).toMatch(/ob\.primitiveComplianceGaps\.length > 0/)
     expect(nearby).toMatch(/closePrimitiveComplianceGap/)
     expect(nearby).toMatch(/'combined-rejected-fallback'/)
+  })
+
+  /**
+   * Real bug found live (issue #640, 2026-09-10): the NON-combined
+   * `needsObedience` branch's repair-adoption logic sits entirely inside
+   * `if (obValidation.valid && obValidation.code && obValidation.code.length
+   * > 200) { ... }` — when the repair pass's OWN response fails validation
+   * (confirmed live: the model's repair attempt referenced an undefined
+   * `StatusBadge` component), NOTHING in that block runs, so
+   * closePrimitiveComplianceGap never gets a chance either, even though
+   * `ob.primitiveComplianceGaps` (computed BEFORE the repair attempt) was
+   * already known to be non-empty. Confirmed live: a real ZeroInvoice-idea
+   * generation hit exactly this path and served fake /api/db/invoices as a
+   * direct result — the SAME class of bug #636 fixed for the combined
+   * branch's rejection outcome, but here in the non-combined branch's own
+   * repair-validation-failure outcome.
+   */
+  it('runs the targeted retry on the pre-repair content when the repair pass itself fails validation (non-combined branch)', () => {
+    const idx = source.indexOf('const obValidation = validateGeneratedCode(obRaw)')
+    expect(idx).toBeGreaterThan(-1)
+    const nearby = source.slice(idx, idx + 4500)
+    expect(nearby).toMatch(/\}\s*else if \(ob\.primitiveComplianceGaps\.length > 0\)/)
+    expect(nearby).toMatch(/closePrimitiveComplianceGap/)
+    expect(nearby).toMatch(/'non-combined-repair-invalid-fallback'/)
   })
 
   it('closePrimitiveComplianceGap calls traceComplianceRetry on every exit path via a shared finish() wrapper', () => {
