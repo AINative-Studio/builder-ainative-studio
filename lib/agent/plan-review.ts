@@ -81,5 +81,10 @@ export function planReviewPromptBlock(): string {
     '  3. Fix every problem you find with Edit.',
     `  4. Update ${PLAN_FILE} with a short "## Review" section: what you checked, what you fixed.`,
     '- Keep the whole review to at most 3 tool calls. Then STOP. Do NOT start a second review pass — one pass, fix, finish.',
+    '',
+    'NO OPEN QUESTIONS (real customer-reported gap, 2026-09-09): never end your final message with an ' +
+    'open-ended question ("what do you think?", "should I proceed?", "does this direction feel right?"). ' +
+    `If ${PLAN_FILE} is complete and you've built it, say what you built and stop — you are not waiting ` +
+    'for approval on a plan, you already committed to and executed one.',
   ].join('\n')
 }
