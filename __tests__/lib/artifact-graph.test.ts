@@ -16,9 +16,12 @@ describe('artifact-graph (#234)', () => {
     })
 
     it('builds the Company track nodes', () => {
+      // 2026-09-10 fix (Meridian): Company track now visits 'design' too, so
+      // its one real generated app (via company-app -> chat-ws) has a design
+      // system to forward, same as the App track.
       const g = buildArtifactGraph('company')
       expect(g.nodes.map((n) => n.id)).toEqual([
-        'thesis', 'wedge', 'businessModel', 'positioning', 'landing', 'plan30',
+        'design', 'thesis', 'wedge', 'businessModel', 'positioning', 'landing', 'plan30',
       ])
     })
 

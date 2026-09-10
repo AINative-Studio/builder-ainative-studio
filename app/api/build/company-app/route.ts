@@ -8,7 +8,15 @@
  * real, idea-specific landing page via the same codegen pipeline used for apps,
  * and returns the chatId. Idempotent-ish: if the slug already resolves, returns it.
  *
- * Body: { idea, slug, name, tagline, color }
+ * Real gap (customer-reported, Meridian, 2026-09-10): this route never forwarded
+ * a chosen design system to chat-ws at all, so the ONE real generated app the
+ * Company track produces always fell back to plain Inter/Poppins/#5867EF
+ * regardless of what the founder picked — the Company track previously had no
+ * Design step to pick from in the first place (see lib/build/state.ts's
+ * PICK_TRACK), so there was nothing to forward. Now accepts designSystemId and
+ * passes it straight through, same as the App track's chat-ws calls.
+ *
+ * Body: { idea, slug, name, tagline, color, designSystemId? }
  * Returns: { chatId }
  */
 
@@ -32,6 +40,7 @@ export async function POST(request: NextRequest) {
   const name = String(b?.name || slug).slice(0, 120)
   const tagline = String(b?.tagline || '').slice(0, 200)
   const color = /^#[0-9a-fA-F]{6}$/.test(String(b?.color || '')) ? String(b.color) : '#2f6d86'
+  const designSystemId = typeof b?.designSystemId === 'string' ? b.designSystemId.slice(0, 40) : undefined
 
   const base = process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin
   const message =
@@ -47,7 +56,7 @@ export async function POST(request: NextRequest) {
   try {
     const res = await fetch(`${base}/api/chat-ws`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, designSystemId }),
       signal: AbortSignal.timeout(280_000),
     })
     if (!res.body) return Response.json({ error: 'no stream' }, { status: 502 })

@@ -312,10 +312,14 @@ describe('trackViews — view sequence', () => {
     expect(views).toContain('dataModel')
   })
 
-  it('company track: 6 views, thesis first, plan30 last, includes wedge', () => {
+  // 2026-09-10 fix (Meridian): Company track now visits 'design' too, so its
+  // one real generated app (via company-app -> chat-ws) has a design system
+  // to forward, same as the App track.
+  it('company track: 7 views, design first, plan30 last, includes wedge', () => {
     const views = trackViews('company')
-    expect(views).toHaveLength(6)
-    expect(views[0]).toBe('thesis')
+    expect(views).toHaveLength(7)
+    expect(views[0]).toBe('design')
+    expect(views[1]).toBe('thesis')
     expect(views[views.length - 1]).toBe('plan30')
     expect(views).toContain('wedge')
     expect(views).toContain('businessModel')

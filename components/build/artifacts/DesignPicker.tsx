@@ -1,20 +1,33 @@
 'use client'
 
 /**
- * DesignPicker (#591, made a real tracked artifact 2026-09-09) — the App
- * track's first real APP_VIEWS entry. Mirrors artifacts/Wedge.tsx's exact
- * interrupt-view pattern: shown by useAutoplay when 'design' is next in the
- * sequence, hands the wheel to the founder, and resumes once they pick a
+ * DesignPicker (#591, made a real tracked artifact 2026-09-09) — the first
+ * real entry in BOTH APP_VIEWS and COMPANY_VIEWS. Mirrors artifacts/Wedge.tsx's
+ * exact interrupt-view pattern: shown by useAutoplay when 'design' is next in
+ * the sequence, hands the wheel to the founder, and resumes once they pick a
  * system (PICK_DESIGN_SYSTEM) or explicitly skip (SKIP_DESIGN_SYSTEM).
  *
  * Real bug this fixes (customer-reported, 2026-09-09): the picker used to be
  * a screen shown BEFORE Intake, invisible in the top stepper, the artifact
  * checklist, and APP_VIEWS itself — the founder had no way to see the design
  * choice as part of "the workflow." It's now a real, tracked, visible step.
+ *
+ * Extended to the Company track (2026-09-10, Meridian bug): that track's one
+ * real generated app (the landing page, via /api/build/company-app ->
+ * chat-ws) never had a design system to forward. Both tracks' first real
+ * view id after 'design' differs (App: 'brief', Company: 'thesis') — the
+ * "Keep building" button below must resolve that per-track, not hardcode
+ * the App track's value.
  */
 
 import { useBuild } from '@/contexts/build-context'
 import { DESIGN_SYSTEMS, getDesignSystem } from '@/lib/design-systems/catalog'
+import type { ArtifactView } from '@/lib/build/state'
+
+const NEXT_VIEW_AFTER_DESIGN: Record<'app' | 'company', ArtifactView> = {
+  app: 'brief',
+  company: 'thesis',
+}
 
 export function DesignPicker() {
   const { state, dispatch, goView } = useBuild()
@@ -29,7 +42,7 @@ export function DesignPicker() {
             ? <>Building {state.companyName || 'your app'} in <strong>{chosen.name}</strong> — {chosen.direction.toLowerCase()}.</>
             : <>Got it — I&apos;ll pick a look that fits your idea.</>}
         </p>
-        <button className="btn-primary" onClick={() => goView('brief')}>Keep building →</button>
+        <button className="btn-primary" onClick={() => goView(NEXT_VIEW_AFTER_DESIGN[state.track])}>Keep building →</button>
       </div>
     )
   }

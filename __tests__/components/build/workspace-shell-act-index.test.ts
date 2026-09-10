@@ -43,30 +43,34 @@ describe('currentActIndex — App track (Idea=0, Design=1, Build MVP=2, Launch=3
   })
 })
 
-describe('currentActIndex — Company track (Idea=0, Build MVP=1, Launch=2, Company=3, Live=4) — unchanged by #591', () => {
+describe('currentActIndex — Company track (Idea=0, Build MVP=1, Launch=2, Company=3, Live=4)', () => {
   it('fork/intake is Idea(0)', () => {
     expect(currentActIndex(s({ screen: 'fork', track: 'company' }))).toBe(0)
   })
 
-  it('pricing screen shows Launch(2)', () => {
-    expect(currentActIndex(s({ screen: 'pricing', track: 'company' }))).toBe(2)
+  // Real gap (customer-reported, Meridian, 2026-09-10): the Company track's
+  // one real generated app (the landing page, via company-app -> chat-ws)
+  // never had a design system to forward — the track had no Design step at
+  // all. It now visits 'design' too (see PICK_TRACK's comment), same as the
+  // App track. COMPANY_ACT_LABELS has no dedicated "Design" label, so this
+  // reads as still Idea(0) rather than jumping ahead to Build MVP.
+  it('still on the Design interrupt-view (designStepDone=false) shows Idea(0), not Build MVP', () => {
+    expect(currentActIndex(s({ screen: 'ws', track: 'company', designStepDone: false, builtCompany: false }))).toBe(0)
   })
 
-  it('company not yet built shows Company(3)', () => {
-    expect(currentActIndex(s({ screen: 'ws', track: 'company', builtCompany: false }))).toBe(3)
+  it('pricing screen shows Launch(2) regardless of design state', () => {
+    expect(currentActIndex(s({ screen: 'pricing', track: 'company', designStepDone: false }))).toBe(2)
   })
 
-  it('company built shows Live(4) even without screen=live', () => {
-    expect(currentActIndex(s({ screen: 'ws', track: 'company', builtCompany: true }))).toBe(4)
+  it('design done, company not yet built shows Company(3)', () => {
+    expect(currentActIndex(s({ screen: 'ws', track: 'company', designStepDone: true, builtCompany: false }))).toBe(3)
+  })
+
+  it('design done, company built shows Live(4) even without screen=live', () => {
+    expect(currentActIndex(s({ screen: 'ws', track: 'company', designStepDone: true, builtCompany: true }))).toBe(4)
   })
 
   it('live screen always shows Live(4)', () => {
     expect(currentActIndex(s({ screen: 'live', track: 'company' }))).toBe(4)
-  })
-
-  it('is never affected by designStepDone (no such act on this track)', () => {
-    const withDesignFalse = currentActIndex(s({ screen: 'ws', track: 'company', designStepDone: false, builtCompany: false }))
-    const withDesignTrue = currentActIndex(s({ screen: 'ws', track: 'company', designStepDone: true, builtCompany: false }))
-    expect(withDesignFalse).toBe(withDesignTrue)
   })
 })

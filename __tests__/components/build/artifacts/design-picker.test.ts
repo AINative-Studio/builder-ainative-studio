@@ -33,8 +33,14 @@ describe('DesignPicker artifact body (2026-09-09)', () => {
     expect(source).toMatch(/state\.designStepDone/)
   })
 
-  it('the confirmed state advances via goView, not a screen navigation', () => {
-    expect(source).toMatch(/goView\('brief'\)/)
+  it('the confirmed state advances via goView, resolved per-track (app: brief, company: thesis)', () => {
+    // 2026-09-10 fix (Meridian): the Company track now visits 'design' too,
+    // and its first real view after it is 'thesis', not the App track's
+    // 'brief' — hardcoding 'brief' here would send a Company-track founder
+    // to a view id that doesn't exist on that track.
+    expect(source).toMatch(/goView\(NEXT_VIEW_AFTER_DESIGN\[state\.track\]\)/)
+    expect(source).toMatch(/app:\s*'brief'/)
+    expect(source).toMatch(/company:\s*'thesis'/)
   })
 })
 
