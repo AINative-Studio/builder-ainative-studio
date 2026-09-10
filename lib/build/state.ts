@@ -87,6 +87,16 @@ export interface BuildState {
   brandTagline: string     // generated brand tagline (FIX-1)
   brandColor: string       // generated brand accent color hex (FIX-1)
   appChatId: string        // the generated running app's chatId (served at /build/{slug}) (FIX-2)
+  // Real gap (customer-reported, Meridian, 2026-09-10, issue #620): the ONE
+  // real app a Company-track build got was always a marketing landing page
+  // (appChatId, via /api/build/company-app) — never the founder's ACTUAL
+  // product (e.g. Meridian's idea is a sales-pipeline revenue forecaster,
+  // but nothing ever called ZeroPipeline or did any forecasting). This is
+  // the founder's real, functional product — via /api/build/company-product,
+  // the same real chat-ws codegen engine the App track uses, with primitive
+  // compliance fully enforced (unlike the landing page's landingPageOnly
+  // exemption). '' = not yet built.
+  productChatId: string
   generated: Record<string, unknown>  // view -> generated artifact content (from /api/build/artifact)
   genError: Record<string, string>     // view -> error message when generation failed
   overlay: Overlay         // full-bleed build overlay currently showing (Act-2 "watch Cody build")
@@ -164,6 +174,7 @@ export const initialBuildState: BuildState = {
   brandTagline: '',
   brandColor: '#2f6d86',
   appChatId: '',
+  productChatId: '',
   generated: {},
   genError: {},
   overlay: { kind: 'none' },
@@ -222,10 +233,11 @@ export type BuildAction =
   | { type: 'ASK_PRIVACY' }
   | { type: 'TRIGGER_CONFLICT'; changedView: string; fromRescopeIntent?: boolean }
   /** Restore persisted build state from localStorage without clearing artifacts (#284). */
-  | { type: 'RESTORE_BUILD'; partial: Partial<Pick<BuildState, 'generated' | 'done' | 'genError' | 'builtCompany' | 'builtMVP' | 'wedgePicked' | 'answers' | 'companyName' | 'idea' | 'appSub' | 'brandTagline' | 'brandColor' | 'appChatId' | 'activePlan' | 'enrolled' | 'track' | 'role' | 'sawPreview' | 'designSystemId' | 'designStepDone'>> }
+  | { type: 'RESTORE_BUILD'; partial: Partial<Pick<BuildState, 'generated' | 'done' | 'genError' | 'builtCompany' | 'builtMVP' | 'wedgePicked' | 'answers' | 'companyName' | 'idea' | 'appSub' | 'brandTagline' | 'brandColor' | 'appChatId' | 'productChatId' | 'activePlan' | 'enrolled' | 'track' | 'role' | 'sawPreview' | 'designSystemId' | 'designStepDone'>> }
   | { type: 'TOGGLE_RAIL' }
   | { type: 'TOGGLE_INDEX' }
   | { type: 'SET_APP_CHATID'; chatId: string }
+  | { type: 'SET_PRODUCT_CHATID'; chatId: string }
   // Value moment (#310/#311): the Preview artifact rendered a working app. One-way.
   | { type: 'SAW_PREVIEW' }
   | { type: 'SET_ACTIVE_PLAN'; plan: ActivePlan; enrolled?: boolean }
@@ -436,6 +448,8 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
       return { ...state, indexOpen: !state.indexOpen, railOpen: false }
     case 'SET_APP_CHATID':
       return { ...state, appChatId: action.chatId }
+    case 'SET_PRODUCT_CHATID':
+      return { ...state, productChatId: action.chatId }
     case 'SAW_PREVIEW':
       // One-way: once the founder has seen a working preview, the value moment
       // has happened for good (a NEW build doesn't un-see it — the flag is about

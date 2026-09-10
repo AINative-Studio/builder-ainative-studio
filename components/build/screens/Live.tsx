@@ -294,6 +294,23 @@ export function Live() {
         .then((d) => { if (alive && d?.chatId) { setAppReady(true); dispatch({ type: 'SET_APP_CHATID', chatId: d.chatId }) } })
         .catch(() => {})
     }
+    // Real gap (customer-reported, Meridian, 2026-09-10, issue #620): the
+    // landing page above is marketing copy — it was never the founder's
+    // ACTUAL product. Build that separately, with primitive compliance
+    // fully enforced (no landingPageOnly), registered under its own
+    // {slug}-product entry so it never collides with the landing page.
+    if (!state.productChatId && state.idea && state.appSub) {
+      fetch('/api/build/company-product', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          idea: state.idea, slug: state.appSub, name: company,
+          designSystemId: state.designSystemId || undefined,
+        }),
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => { if (alive && d?.chatId) dispatch({ type: 'SET_PRODUCT_CHATID', chatId: d.chatId }) })
+        .catch(() => {})
+    }
     // The visible nightshift — the real last nightly run + morning summary.
     fetch(`/api/build/nightshift?companyId=${encodeURIComponent(companyId)}&idea=${encodeURIComponent(state.idea)}&companyName=${encodeURIComponent(company)}`)
       .then((r) => (r.ok ? r.json() : null))
@@ -590,6 +607,34 @@ export function Live() {
         </div>
       )}
       {planStatus && <p className="m-mono m-domain-status" style={{ padding: '0 var(--m-pad, 24px)' }}>{planStatus}</p>}
+
+      {/* Real product card (issue #620, customer-reported, Meridian, 2026-09-10):
+          the masthead link above is the marketing LANDING PAGE — this is the
+          founder's ACTUAL, functional product (real primitives, real data),
+          built separately via /api/build/company-product. Distinct, honestly
+          labeled card so a founder never confuses the two, and never assumes
+          "live" (the landing page) means their real idea is implemented. */}
+      <div className="m-live-card" style={{ margin: '0 var(--m-pad, 24px) 16px' }} data-testid="product-card">
+        <div className="m-mono m-live-card-h">Your product</div>
+        <p className="m-live-card-body">
+          {state.productChatId
+            ? `${company}'s real, working product — built to actually do what your idea describes.`
+            : 'Cody is building the real, working product behind your idea — not just the landing page above.'}
+        </p>
+        {state.productChatId ? (
+          <a
+            className="btn-primary"
+            data-testid="product-live-link"
+            href={`/build/${state.appSub}-product`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Open your product →
+          </a>
+        ) : (
+          <span className="m-mono m-muted" data-testid="product-building">building your product…</span>
+        )}
+      </div>
 
       {/* RLHF pulse (#332): rate the built company once it's live. One rating
           per generation (keyed by chatId/slug), dismissible, never blocking. */}
