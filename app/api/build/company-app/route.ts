@@ -43,12 +43,25 @@ export async function POST(request: NextRequest) {
   const designSystemId = typeof b?.designSystemId === 'string' ? b.designSystemId.slice(0, 40) : undefined
 
   const base = process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin
+  // Real bug (customer-reported, Meridian, 2026-09-10): this exact template
+  // used to say "primary BRAND color" — 'brand' was (wrongly) a ZeroCommerce
+  // trigger word in lib/build/primitive-catalog.ts, so EVERY Company-track
+  // landing page falsely matched ecommerce and got steered toward building
+  // an unrelated storefront instead of the requested page (confirmed
+  // reproducible 4/4 attempts; the 'brand' trigger itself was removed as the
+  // primary fix, but rewording here too so this template stops relying on a
+  // word that happened to collide with primitive-selection vocabulary).
+  // "single-page marketing LANDING PAGE" also technically matches Content
+  // Workflow's 'marketing' trigger — lower-severity (a much closer-fit
+  // primitive than ZeroCommerce was), left as "marketing" since that's an
+  // accurate, load-bearing description of what's being built, not swapped
+  // out reflexively.
   const message =
     `Build a polished, production-quality single-page marketing LANDING PAGE for "${name}"` +
     (tagline ? ` (tagline: "${tagline}")` : '') +
     ` — a real company for this idea: ${idea}. ` +
     `Include: a hero with the value prop and a "Get early access" CTA, a 3-feature section, ` +
-    `a how-it-works section, pricing (3 tiers), and a footer. Use ${color} as the primary brand color. ` +
+    `a how-it-works section, pricing (3 tiers), and a footer. Use ${color} as the main accent color. ` +
     `Make it visually distinctive and specific to this company, with realistic copy — not a generic template.`
 
   // Kick codegen; read the SSE stream only far enough to get the chatId. Generation

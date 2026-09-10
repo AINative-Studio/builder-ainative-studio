@@ -171,7 +171,15 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     purpose: 'Headless ecommerce: product catalog, semantic product search, Stripe checkout',
     url: `${DOCS}/business-ops/zerocommerce`,
     apiBase: 'https://zerocommerce.ainative.studio/api/v1',
-    triggers: ['ecommerce', 'e-commerce', 'shop', 'store', 'sell products', 'products', 'catalog', 'checkout', 'cart', 'retail', 'dtc', 'merch', 'coffee', 'brand', 'goods', 'inventory', 'orders'] },
+    // 'brand' removed (customer-reported, Meridian, 2026-09-10): too generic
+    // a word to signal ecommerce specifically — every company has "a brand"
+    // (brand color, brand voice, brand identity), and it false-matched
+    // company-app/route.ts's own hardcoded "primary brand color" prompt
+    // phrase on EVERY Company-track landing page, wrongly steering codegen
+    // toward an unrelated ecommerce app. Word-boundary matching (below)
+    // doesn't help here since 'brand' genuinely appears as a whole word —
+    // the fix is removing it as a trigger, not tightening the match.
+    triggers: ['ecommerce', 'e-commerce', 'shop', 'store', 'sell products', 'products', 'catalog', 'checkout', 'cart', 'retail', 'dtc', 'merch', 'coffee', 'goods', 'inventory', 'orders'] },
   { name: 'ZeroVoice', category: 'business-ops',
     purpose: 'Programmable telephony (Twilio): calls, SMS, IVR, recording + transcription, DNC/TCPA',
     url: `${DOCS}/zerovoice/overview`,
@@ -611,14 +619,41 @@ function isFoundationalOnTrack(primitive: CatalogPrimitive, track: 'app' | 'comp
   return false
 }
 
+// Real bug (customer-reported, Meridian, 2026-09-10): the trigger match used
+// to be a plain substring search — `hay.includes(t)` matches ANY occurrence,
+// including a trigger word appearing INSIDE an unrelated word AFTER it (e.g.
+// 'orders' inside "borders"/"disorders"). A leading word-boundary (`\b`,
+// START only) blocks that class while still letting a trigger match its own
+// natural suffix continuations, which several triggers rely on intentionally
+// (e.g. 'scrape' must still match "scrapes"/"scraping", 'aggregat' — already
+// a deliberate partial stem in this catalog — must still match "aggregating").
+// A trailing `\b` was tried first and broke exactly that: "a tool that
+// scrapes competitor prices" stopped matching Browser Agent's 'scrape'
+// trigger, a real regression caught by primitive-catalog-codegen.test.ts.
+// This does NOT catch a trigger appearing as a PREFIX of an unrelated word
+// (e.g. 'cart' inside "cartography") — no such case has actually occurred in
+// this catalog's real trigger list; if one ever does, fix that trigger word
+// specifically rather than tightening this regex further, since a trailing
+// boundary demonstrably breaks legitimate suffix matches.
+// ZeroCommerce's 'brand' trigger was simply too generic on its own (a whole,
+// standalone word in company-app/route.ts's "primary brand color" prompt) —
+// no regex fixes that; it was removed as a trigger entirely, below.
+// Escapes regex metacharacters so a trigger containing them (there are none
+// today, but a future one might) can't break the pattern.
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+function matchesTrigger(hay: string, trigger: string): boolean {
+  return new RegExp(`\\b${escapeRegExp(trigger)}`, 'i').test(hay)
+}
+
 export function scorePrimitives(
   idea: string,
   track: 'app' | 'company' = 'company',
   role?: CompanyRole,
 ): PrimitiveScore[] {
-  const hay = ` ${(idea || '').toLowerCase()} `
+  const hay = (idea || '').toLowerCase()
   return CATALOG.map((primitive) => {
-    const matched = primitive.triggers.filter((t) => hay.includes(` ${t}`) || hay.includes(`${t} `) || hay.includes(t))
+    const matched = primitive.triggers.filter((t) => matchesTrigger(hay, t))
     let score = matched.length
     if (isFoundationalOnTrack(primitive, track, idea)) score += 0.5 // floor so substrate always ranks
     // On the company track, the "run a company" business-ops layer is the whole
