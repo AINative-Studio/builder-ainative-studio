@@ -38,6 +38,16 @@ export interface PersistInput {
    * design-system-correct.
    */
   designSystemId?: string
+  /**
+   * Real gap fixed 2026-09-10: an explicit opt-out so verification/test
+   * traffic (fired against the same real generation path as any founder's)
+   * never enters the public showcase gallery, regardless of how good the
+   * output looks. The showcase was flooded with dozens of internal test
+   * generations because nothing distinguished them from real founder
+   * traffic at persist time. Defaults to false (unset = normal, showcase-
+   * eligible behavior) — never changes anything else about the generation.
+   */
+  skipShowcase?: boolean
 }
 
 export interface PersistResult {
@@ -93,7 +103,7 @@ export async function persistGeneration(
     // flagging short code as isShowcase here is misleading — it would still be
     // filtered out. Aligning both thresholds keeps the intent consistent.
     // Degraded/errored builds are held back regardless of size. (builder#89/#58)
-    isShowcase: input.status === 'success' && input.valid && input.code.length >= 2000,
+    isShowcase: !input.skipShowcase && input.status === 'success' && input.valid && input.code.length >= 2000,
   }).then(
     (ok): PersistResult => ({ saved: ok, reason: ok ? 'saved' : 'error' }),
     (): PersistResult => ({ saved: false, reason: 'error' }),

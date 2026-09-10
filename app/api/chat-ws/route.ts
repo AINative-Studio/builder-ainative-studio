@@ -348,7 +348,19 @@ const MODEL_CONFIG: Record<string, { provider: 'meta' | 'ainative'; modelId: str
 
 export async function POST(request: NextRequest) {
   try {
-    const { message, chatId, model: requestedModel, role: companyRole, dataModel, designSystemId, landingPageOnly } = await request.json()
+    const { message, chatId, model: requestedModel, role: companyRole, dataModel, designSystemId, landingPageOnly, internal } = await request.json()
+    // Real gap fixed 2026-09-10: the public showcase gallery got flooded with
+    // dozens of internal verification/test generations (live-fired to confirm
+    // primitive-proxy fixes), because every real generation persists through
+    // the SAME path regardless of who/what is calling it — there was no way
+    // to mark a request as "don't showcase this." `internal: true` is an
+    // explicit, narrow opt-out for exactly that: verification tooling and
+    // future test traffic can set it so a generation persists (still fully
+    // usable/previewable) but never enters the public showcase. Untrusted
+    // client input in principle, but the worst a malicious caller gains is
+    // keeping THEIR OWN generation out of the showcase — never a way to
+    // affect anyone else's, so no validation/auth needed here.
+    const skipShowcase = internal === true
     // #612 (Meridian, 2026-09-10): company-app/route.ts's marketing-copy-only
     // landing page has no legitimate reason to call any primitive's live API,
     // even when its underlying idea text legitimately matches one (e.g.
@@ -1822,7 +1834,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               const { saveGeneration } = await import('@/lib/zerodb-store')
               const { persistGeneration } = await import('@/lib/generation-persist')
               const pr = await persistGeneration(
-                { chatId: responseId, prompt: message, code: finalContent, model: requestedModel || DEFAULT_MODEL, status: 'degraded', valid: false, designSystemId: chosenDesignSystem?.id },
+                { chatId: responseId, prompt: message, code: finalContent, model: requestedModel || DEFAULT_MODEL, status: 'degraded', valid: false, designSystemId: chosenDesignSystem?.id, skipShowcase },
                 saveGeneration,
               )
               console.log(`[PERSIST] degraded path: ${pr.reason}`)
@@ -1905,7 +1917,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                 // app actually QUALIFIES for Sandpack — single-file apps (whose
                 // map is just the AX scaffold) stay lean, Babel restores them
                 // from generated_code alone.
-                { chatId: responseId, prompt: message, code: finalContent, model: requestedModel || DEFAULT_MODEL, status: 'success', valid: validation.valid, files: shouldUseSandpack(parsedFiles) ? parsedFiles : undefined, designSystemId: chosenDesignSystem?.id },
+                { chatId: responseId, prompt: message, code: finalContent, model: requestedModel || DEFAULT_MODEL, status: 'success', valid: validation.valid, files: shouldUseSandpack(parsedFiles) ? parsedFiles : undefined, designSystemId: chosenDesignSystem?.id, skipShowcase },
                 saveGeneration,
               )
               console.log(`[PERSIST] success path: ${pr.reason}`)
