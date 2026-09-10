@@ -31,8 +31,84 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyPrimitiveProxyToken } from '@/lib/build/primitive-proxy-token'
 import { resolveFounderCredential, type FounderScopedPrimitive } from '@/lib/build/primitive-credentials'
+import { resolveApp, setAppContentWorkflowTwinId } from '@/lib/build/app-registry'
+import { createDefaultTwin } from '@/lib/build/content-workflow'
 
 export const runtime = 'nodejs'
+
+// #644 gap-analysis follow-up — Content Workflow's real auth is X-API-Key,
+// NOT the direct-JWT-bearer contract every founder-scoped primitive above
+// uses (confirmed live: Builder's own service-level AINATIVE_API_KEY —
+// the same key already used for ZeroDB REST calls — works directly against
+// https://api.ainative.studio/api/v1/public/content/calendar, no per-
+// founder credential capture needed at all). Every calendar entry also
+// requires a twin_id (an AI persona) the generated app has no way to know;
+// one is auto-provisioned per company on first real call and cached on the
+// app-registry entry (lib/build/content-workflow.ts's doc has the full
+// story). Handled as an early, separate branch in forward() rather than
+// squeezed into the founder-credential flow, since the auth model and
+// provisioning shape are both genuinely different.
+const CONTENT_WORKFLOW_BASE = process.env.CONTENT_WORKFLOW_API_URL || 'https://api.ainative.studio/api/v1/public'
+
+async function forwardContentWorkflow(request: NextRequest, path: string[], slug: string): Promise<NextResponse> {
+  const apiKey = process.env.AINATIVE_API_KEY || ''
+  if (!apiKey) {
+    return NextResponse.json({ error: 'primitive_unavailable', reason: 'service_key_not_configured' }, { status: 502 })
+  }
+
+  const app = await resolveApp(slug).catch(() => null)
+  let twinId = app?.contentWorkflowTwinId
+
+  // Lazily auto-provision ONE twin per company on first real call — a
+  // generated app's own code never creates or manages twin_id itself.
+  if (!twinId) {
+    const created = await createDefaultTwin(app?.name || slug)
+    if (!created.ok || !created.twinId) {
+      return NextResponse.json(
+        { error: 'primitive_unavailable', reason: created.reason || 'twin_provisioning_failed' },
+        { status: 502 },
+      )
+    }
+    twinId = created.twinId
+    await setAppContentWorkflowTwinId(slug, twinId).catch(() => {})
+  }
+
+  let body: string | undefined
+  let parsedBody: any
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    body = await request.text().catch(() => undefined)
+    if (body) {
+      try { parsedBody = JSON.parse(body) } catch { parsedBody = undefined }
+    }
+  }
+  // Inject twin_id server-side for calendar writes — never override a
+  // caller-supplied twin_id if one is already present (mirrors the
+  // ZeroCRM org_id injection pattern below).
+  if (parsedBody && typeof parsedBody === 'object' && !parsedBody.twin_id) {
+    parsedBody.twin_id = twinId
+    body = JSON.stringify(parsedBody)
+  }
+
+  const targetUrl = `${CONTENT_WORKFLOW_BASE}/${path.join('/')}${request.nextUrl.search}`
+  try {
+    const res = await fetch(targetUrl, {
+      method: request.method,
+      headers: {
+        'X-API-Key': apiKey,
+        'Content-Type': request.headers.get('content-type') || 'application/json',
+      },
+      body,
+      signal: AbortSignal.timeout(20000),
+    })
+    const text = await res.text().catch(() => '')
+    return new NextResponse(text, {
+      status: res.status,
+      headers: { 'Content-Type': res.headers.get('content-type') || 'application/json' },
+    })
+  } catch {
+    return NextResponse.json({ error: 'primitive_unreachable' }, { status: 502 })
+  }
+}
 
 const PRIMITIVE_BASES: Record<FounderScopedPrimitive, string> = {
   zerocommerce: process.env.ZEROCOMMERCE_API_URL || 'https://zerocommerce.ainative.studio/api/v1',
@@ -140,6 +216,17 @@ async function forward(
   params: Promise<{ primitive: string; path: string[] }>,
 ): Promise<NextResponse> {
   const { primitive: primitiveName, path } = await params
+
+  // Content Workflow: same auth/routing (COMPANY_SLUG env or signed token)
+  // as every other primitive below, but a completely different credential
+  // model (service key + auto-provisioned twin, not a founder JWT) — see
+  // forwardContentWorkflow's doc comment above.
+  if (primitiveName === 'contentworkflow') {
+    const slug = resolveSlug(request)
+    if (!slug) return UNAUTHORIZED('missing_or_invalid_token')
+    return forwardContentWorkflow(request, path, slug)
+  }
+
   if (!isFounderScopedPrimitive(primitiveName)) {
     return NextResponse.json({ error: 'unknown_primitive' }, { status: 404 })
   }

@@ -1062,6 +1062,37 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
     'a social network layer, it MUST call GET /api/primitive/socialgraph/api/v1/social/{user_id}/followers and ' +
     'POST/DELETE /api/primitive/socialgraph/api/v1/social/follow/{user_id} — persisting follows through generic ' +
     '/api/db rows instead is a FAILING implementation even if the UI looks identical to the user.',
+  // #644 gap-analysis follow-up: Content Workflow had real, common founder
+  // triggers (content/marketing/social/blog/posts/campaigns) and a real
+  // apiBase, but no runtime proxy wiring at all. UNLIKE the 10 primitives
+  // above, its real auth is Builder's own service key (X-API-Key), not a
+  // per-founder JWT — no Authorization header needed from generated code
+  // either way, since the proxy attaches whichever credential this
+  // primitive actually needs server-side. Confirmed LIVE against
+  // production: a real AI twin/persona was created (POST /twins), and a
+  // real calendar entry was scheduled against it (POST /content/calendar),
+  // both cleaned up after verification. The proxy auto-creates ONE twin per
+  // company and injects its twin_id automatically — generated code never
+  // needs to create, know, or supply a twin_id itself.
+  'Content Workflow': () =>
+    `call the same-origin proxy at \`/api/primitive/contentworkflow/{path}\` — NO Authorization header or twin_id needed, the platform attaches this company's own credential AND its auto-provisioned AI twin server-side; the path after \`contentworkflow/\` matches the real REST path exactly.\n` +
+    '  Real call shape (copy this exactly, do not paraphrase — live-verified: no separate twin-creation step, the platform provisions one automatically on first call):\n' +
+    '  ```js\n' +
+    "  // List this company's real scheduled/published content\n" +
+    "  const res = await fetch('/api/primitive/contentworkflow/content/calendar')\n" +
+    '  const posts = await res.json() // real scheduled posts, not fabricated rows\n' +
+    '\n' +
+    "  // Schedule a new post (twin_id is injected server-side — do not add it yourself)\n" +
+    "  await fetch('/api/primitive/contentworkflow/content/calendar', {\n" +
+    "    method: 'POST', headers: { 'Content-Type': 'application/json' },\n" +
+    '    body: JSON.stringify({ title: postTitle, platform: \'instagram\', scheduled_at: isoDateTime, script: postBody }),\n' +
+    '  })\n' +
+    '  ```\n' +
+    '  ANTI-PATTERN — FORBIDDEN: do NOT hand-roll a content-calendar or post-scheduling table using /api/db tables ' +
+    'instead of calling the real Content Workflow proxy. If the feature is scheduling social posts, a content ' +
+    'calendar, or multi-platform publishing, it MUST call GET/POST /api/primitive/contentworkflow/content/calendar — ' +
+    'persisting scheduled posts through generic /api/db rows instead is a FAILING implementation even if the UI ' +
+    'looks identical to the user.',
   // #496/#499/#500/#503/#505/#510 — these 8 use a NARROWER shape than the
   // 5 above: a fixed `/api/{slug}/{action}` route with a hard allowlist of
   // real actions (not an arbitrary-path passthrough), so the model must be
@@ -1192,6 +1223,10 @@ export const RUNTIME_PROXY_PATH_SUBSTRINGS: Record<string, string[]> = {
   // entries above for both).
   'Live Streaming': ['/api/primitive/livestreaming/api/v1/streams'],
   'Social Graph': ['/api/primitive/socialgraph/api/v1/social'],
+  // #644 gap-analysis follow-up: added once Content Workflow's real
+  // service-key-authenticated path was confirmed live (see
+  // RUNTIME_PROXIED_PRIMITIVES's Content Workflow entry above).
+  'Content Workflow': ['/api/primitive/contentworkflow/content/calendar'],
   ZeroMemory: ['/api/memory/remember', '/api/memory/recall'],
   'Browser Agent': ['/api/browser-agent/extract', '/api/browser-agent/act'],
   Agent402: ['/api/agent402/capabilities', '/api/agent402/projects'],
