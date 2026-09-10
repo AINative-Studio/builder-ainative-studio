@@ -16,10 +16,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 const h = vi.hoisted(() => ({
   verifyPrimitiveProxyToken: vi.fn(),
   resolveFounderCredential: vi.fn(),
+  resolveApp: vi.fn(),
+  setAppContentWorkflowTwinId: vi.fn(),
+  createDefaultTwin: vi.fn(),
 }))
 
 vi.mock('@/lib/build/primitive-proxy-token', () => ({ verifyPrimitiveProxyToken: h.verifyPrimitiveProxyToken }))
 vi.mock('@/lib/build/primitive-credentials', () => ({ resolveFounderCredential: h.resolveFounderCredential }))
+vi.mock('@/lib/build/app-registry', () => ({
+  resolveApp: h.resolveApp,
+  setAppContentWorkflowTwinId: h.setAppContentWorkflowTwinId,
+}))
+vi.mock('@/lib/build/content-workflow', () => ({ createDefaultTwin: h.createDefaultTwin }))
 
 import { GET, POST } from '@/app/api/primitive/[primitive]/[...path]/route'
 
@@ -42,6 +50,11 @@ const origCompanySlug = process.env.COMPANY_SLUG
 beforeEach(() => {
   vi.clearAllMocks()
   delete process.env.COMPANY_SLUG
+  // Real production shape: setAppContentWorkflowTwinId always returns a
+  // Promise (forwardContentWorkflow calls .catch() on it best-effort) —
+  // give it a resolved default so tests that don't care about this call
+  // specifically don't have to stub it themselves.
+  h.setAppContentWorkflowTwinId.mockResolvedValue(true)
 })
 afterEach(() => {
   if (origCompanySlug === undefined) delete process.env.COMPANY_SLUG
@@ -592,6 +605,112 @@ describe('GET/POST /api/primitive/[primitive]/[...path] (#443)', () => {
       expect(res.status).toBe(502)
       const json = await res.json()
       expect(json).toEqual({ error: 'primitive_unavailable', reason: 'not_provisioned' })
+    })
+  })
+
+  describe('Content Workflow (#644 follow-up — service-key auth + auto-provisioned twin, NOT founder-JWT-bearer)', () => {
+    function cwReq(opts: { method?: string; body?: string; search?: string } = {}) {
+      return {
+        method: opts.method || 'GET',
+        nextUrl: new URL(`https://builder.ainative.studio/api/primitive/contentworkflow/content/calendar${opts.search || ''}`),
+        headers: new Headers({}),
+        text: async () => opts.body ?? '',
+      } as any
+    }
+
+    const origApiKey = process.env.AINATIVE_API_KEY
+
+    afterEach(() => {
+      if (origApiKey === undefined) delete process.env.AINATIVE_API_KEY
+      else process.env.AINATIVE_API_KEY = origApiKey
+    })
+
+    it('uses the service-level AINATIVE_API_KEY (X-API-Key), never a founder credential lookup', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      process.env.AINATIVE_API_KEY = 'sk_service_key'
+      h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'c1', contentWorkflowTwinId: 'twin-123' })
+      const fetchMock = vi.fn(async (url: string, init: any) => {
+        expect(String(url)).toBe('https://api.ainative.studio/api/v1/public/content/calendar')
+        expect(init.headers['X-API-Key']).toBe('sk_service_key')
+        expect(init.headers.Authorization).toBeUndefined()
+        return { status: 200, text: async () => '[]', headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const res: any = await GET(cwReq(), ctx('contentworkflow', ['content', 'calendar']))
+      expect(res.status).toBe(200)
+      expect(h.resolveFounderCredential).not.toHaveBeenCalled()
+    })
+
+    it('lazily auto-provisions ONE twin when the company has none yet, and persists it', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      process.env.AINATIVE_API_KEY = 'sk_service_key'
+      h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'c1', name: 'Acme Co' }) // no contentWorkflowTwinId yet
+      h.createDefaultTwin.mockResolvedValue({ ok: true, twinId: 'new-twin-456' })
+      const fetchMock = vi.fn(async () => ({ status: 200, text: async () => '[]', headers: new Headers({ 'content-type': 'application/json' }) }) as unknown as Response)
+      vi.stubGlobal('fetch', fetchMock)
+
+      await GET(cwReq(), ctx('contentworkflow', ['content', 'calendar']))
+      expect(h.createDefaultTwin).toHaveBeenCalledWith('Acme Co')
+      expect(h.setAppContentWorkflowTwinId).toHaveBeenCalledWith('acme', 'new-twin-456')
+    })
+
+    it('does NOT re-provision a twin when one is already cached on the app-registry entry', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      process.env.AINATIVE_API_KEY = 'sk_service_key'
+      h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'c1', contentWorkflowTwinId: 'existing-twin' })
+      const fetchMock = vi.fn(async () => ({ status: 200, text: async () => '[]', headers: new Headers({ 'content-type': 'application/json' }) }) as unknown as Response)
+      vi.stubGlobal('fetch', fetchMock)
+
+      await GET(cwReq(), ctx('contentworkflow', ['content', 'calendar']))
+      expect(h.createDefaultTwin).not.toHaveBeenCalled()
+    })
+
+    it('injects the cached twin_id into a POST body, never overriding a caller-supplied twin_id', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      process.env.AINATIVE_API_KEY = 'sk_service_key'
+      h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'c1', contentWorkflowTwinId: 'cached-twin' })
+      const fetchMock = vi.fn(async (_url: string, init: any) => {
+        const body = JSON.parse(init.body)
+        expect(body.twin_id).toBe('cached-twin')
+        expect(body.title).toBe('New post')
+        return { status: 201, text: async () => '{}', headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      await POST(
+        cwReq({ method: 'POST', body: JSON.stringify({ title: 'New post', platform: 'instagram' }) }),
+        ctx('contentworkflow', ['content', 'calendar']),
+      )
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('502s honestly when twin auto-provisioning fails', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      process.env.AINATIVE_API_KEY = 'sk_service_key'
+      h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'c1' })
+      h.createDefaultTwin.mockResolvedValue({ ok: false, reason: 'network_error' })
+
+      const res: any = await GET(cwReq(), ctx('contentworkflow', ['content', 'calendar']))
+      expect(res.status).toBe(502)
+      const json = await res.json()
+      expect(json).toEqual({ error: 'primitive_unavailable', reason: 'network_error' })
+    })
+
+    it('401s on a missing token with no COMPANY_SLUG, same fail-closed behavior as the other primitives', async () => {
+      process.env.AINATIVE_API_KEY = 'sk_service_key'
+      const res: any = await GET(cwReq(), ctx('contentworkflow', ['content', 'calendar']))
+      expect(res.status).toBe(401)
+      expect(h.resolveApp).not.toHaveBeenCalled()
+    })
+
+    it('502s honestly when AINATIVE_API_KEY is not configured', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      delete process.env.AINATIVE_API_KEY
+      const res: any = await GET(cwReq(), ctx('contentworkflow', ['content', 'calendar']))
+      expect(res.status).toBe(502)
+      const json = await res.json()
+      expect(json.reason).toBe('service_key_not_configured')
     })
   })
 })

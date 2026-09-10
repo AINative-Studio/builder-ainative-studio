@@ -1011,6 +1011,75 @@ describe('primitive-catalog additions (#410)', () => {
     })
   })
 
+  describe('#644 fix — Content Workflow runtime proxy (service-key auth, not founder-JWT-bearer)', () => {
+    const CONTENT_IDEA = 'a social media content scheduler where I can plan posts, write captions, and publish across platforms'
+
+    it('the idea selects Content Workflow', () => {
+      const { names } = selectPrimitives(CONTENT_IDEA, 'app')
+      expect(names).toContain('Content Workflow')
+    })
+
+    it('the composition block carries a literal code fence + explicit anti-pattern language for Content Workflow (previously had NO instruction at all)', () => {
+      const block = codegenCompositionBlock(CONTENT_IDEA, 'app')
+      expect(block).toContain('Content Workflow')
+      expect(block).not.toMatch(/Content Workflow[^\n]*already provisioned for this company server-side/)
+      expect(block).toMatch(/```js[\s\S]*fetch\('\/api\/primitive\/contentworkflow\/content\/calendar'\)/)
+      expect(block).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      expect(block).toMatch(/do NOT hand-roll a content-calendar or post-scheduling table/i)
+    })
+
+    it('tells the model no Authorization header or twin_id is needed (both are injected server-side)', () => {
+      const block = codegenCompositionBlock(CONTENT_IDEA, 'app')
+      const line = block.split('\n').find((l) => l.startsWith('- Content Workflow'))
+      expect(line).toBeDefined()
+      expect(line).toMatch(/NO Authorization header or twin_id needed/)
+    })
+
+    it('does not leak the raw external apiBase into the Content Workflow line specifically', () => {
+      const block = codegenCompositionBlock(CONTENT_IDEA, 'app')
+      const line = block.split('\n').find((l) => l.startsWith('- Content Workflow'))
+      expect(line).toBeDefined()
+      expect(line).not.toMatch(/To use:[^|]*https:\/\/api\.ainative\.studio(?!\/api\/primitive)/)
+    })
+
+    it('RUNTIME_PROXY_PATH_SUBSTRINGS carries the real proxy path so the #518 compliance validator catches an unwired Content Workflow selection', () => {
+      expect(RUNTIME_PROXY_PATH_SUBSTRINGS['Content Workflow']).toEqual(['/api/primitive/contentworkflow/content/calendar'])
+      expect(getComplianceCheckedPrimitiveNames()).toContain('Content Workflow')
+    })
+
+    it('getRuntimeProxyInstruction returns the same instruction text codegenCompositionBlock injects', () => {
+      const instruction = getRuntimeProxyInstruction('Content Workflow')
+      expect(instruction).toBeDefined()
+      expect(instruction).toMatch(/fetch\('\/api\/primitive\/contentworkflow\/content\/calendar'\)/)
+      expect(instruction).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      const block = codegenCompositionBlock(CONTENT_IDEA, 'app')
+      expect(block).toContain(instruction!.split('\n')[0])
+    })
+
+    it('findPrimitiveComplianceGaps (the #518 validator) flags a Content Workflow idea whose generated code never called the proxy', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      const brokenCode = `
+        function App() {
+          const [posts, setPosts] = useState([])
+          useEffect(() => { fetch('/api/db/posts').then(r => r.json()).then(d => setPosts(d.data)) }, [])
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(brokenCode, CONTENT_IDEA)
+      expect(gaps).toContain('Content Workflow')
+    })
+
+    it('findPrimitiveComplianceGaps does not flag Content Workflow when the real proxy IS called', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      const compliantCode = `
+        function App() {
+          useEffect(() => { fetch('/api/primitive/contentworkflow/content/calendar').then(r => r.json()).then(setPosts) }, [])
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(compliantCode, CONTENT_IDEA)
+      expect(gaps).not.toContain('Content Workflow')
+    })
+  })
+
   describe('#529 ZeroPipeline — strengthened proactively on pattern-match (not yet directly confirmed by a live sweep)', () => {
     // #529: ZeroPipeline shares the identical original-5 provenance, plain-
     // prose instruction shape, and RUNTIME_PROXY_PATH_SUBSTRINGS gap as the

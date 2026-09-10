@@ -131,6 +131,15 @@ export interface AppEntry {
   // provisioning call needed. Absent/false = still simulated.
   livestreamingProvisioned?: boolean
   socialgraphProvisioned?: boolean
+  // Content Workflow (#644 follow-up) — UNLIKE every founder-scoped
+  // primitive above, this uses Builder's own service-level AINATIVE_API_KEY
+  // (X-API-Key auth, not a per-founder JWT), so there is no
+  // FounderScopedPrimitive credential to capture. The only thing that needs
+  // durable, per-company storage is the auto-provisioned AI twin/persona id
+  // every calendar entry requires — created lazily on first real proxy call
+  // (see the runtime proxy route's contentworkflow case) and cached here so
+  // it's never recreated on every request.
+  contentWorkflowTwinId?: string
   // OpenCapStack (#427, child of #414). provisionCapTable's real companyId
   // was computed at checkout and returned once in the provision response,
   // but never durably stored — a runtime proxy has no way to know which
@@ -430,6 +439,21 @@ export async function setAppZeroInvoiceConnectClicked(slug: string): Promise<boo
   return registerApp({
     ...existing,
     zeroinvoiceConnectClickedAt: new Date().toISOString(),
+  })
+}
+
+/**
+ * Persist the auto-provisioned Content Workflow AI twin id for a company
+ * (#644 follow-up) — best-effort, idempotent (a re-set just overwrites with
+ * the same value in practice, since the caller only sets this once per
+ * company, right after successfully creating a twin).
+ */
+export async function setAppContentWorkflowTwinId(slug: string, twinId: string): Promise<boolean> {
+  const existing = await resolveApp(slug)
+  if (!existing) return false
+  return registerApp({
+    ...existing,
+    contentWorkflowTwinId: twinId,
   })
 }
 
