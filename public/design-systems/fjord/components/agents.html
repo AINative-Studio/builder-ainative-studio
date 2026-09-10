@@ -1,0 +1,24 @@
+<!-- @dsCard group="AI primitives" name="Agents, runs & streams" subtitle="Agent cards, run timeline, streaming response, tool chips" viewport="640x620" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Fjord — Agents, runs & streams</title>
+<link rel="stylesheet" href="../styles.css" />
+<style>
+.demo { max-width: 640px; margin: 0 auto; padding: var(--space-6) var(--space-4) var(--space-8); }
+.demo-head { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.55; margin: var(--space-6) 0 var(--space-3); }
+.demo-head:first-child { margin-top: 0; }
+.row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-3); }
+.note { font-size: 12px; opacity: 0.6; max-width: 60ch; }
+</style>
+</head>
+<body>
+<main class="demo">
+<div class="grid-2"><div><div class="demo-head">Agents</div><div style="display:grid;gap:8px"><div class="agent"><div class="agent-avatar">PL</div><div class="agent-body"><div class="agent-name">Planner</div><div class="agent-role">Supervisor · claude-sonnet</div></div><span class="agent-state"><i class="status-dot" data-status="running"></i>running</span></div><div class="agent"><div class="agent-avatar alt sm">RS</div><div class="agent-body"><div class="agent-name">Researcher</div><div class="agent-role">Worker · 3 tools</div></div><span class="agent-state"><i class="status-dot" data-status="success"></i>done</span></div></div></div><div><div class="demo-head">Run timeline</div><div class="run"><div class="run-step" data-status="success" style="--i:0"><i class="status-dot" data-status="success"></i><div><div class="run-step-title">Observe</div><div class="run-step-detail">Read 3 tickets</div></div><span class="run-step-time">0.4s</span></div><div class="run-step" data-status="success" style="--i:1"><i class="status-dot" data-status="success"></i><div><div class="run-step-title">Reason</div><div class="run-step-detail">Plan · 2 branches</div></div><span class="run-step-time">1.8s</span></div><div class="run-step" data-status="running" style="--i:2"><i class="status-dot" data-status="running"></i><div><div class="run-step-title">Act</div><div class="run-step-detail"><span class="tool" data-state="running">zerodb.query</span></div></div><span class="run-step-time">…</span></div><div class="run-step" style="--i:3"><i class="status-dot" data-status="waiting"></i><div><div class="run-step-title">Approve</div><div class="run-step-detail">Human gate</div></div><span class="run-step-time">—</span></div></div></div></div>
+<div class="demo-head">Streaming response</div><div class="msg"><div class="msg-from"><i class="status-dot" data-status="running"></i>Agent · streaming</div><div class="stream"><span class="stream-chunk" style="--i:0">Found 3 similar tickets. </span><span class="stream-chunk" style="--i:1">Two were resolved by a config change; </span><span class="stream-chunk" style="--i:2">the third is still open. </span><span class="stream-chunk" style="--i:3">Drafting a reply</span><span class="stream-cursor"></span></div></div>
+<div class="demo-head">Tool & model chips</div><div style="display:flex;flex-wrap:wrap;gap:8px"><span class="tool" data-state="done">claude-sonnet<span class="tool-ms">412ms</span></span><span class="tool" data-state="running">gpt-5-mini</span><span class="tool" data-state="done">zerodb.vector.search<span class="tool-ms">38ms</span></span><span class="tool" data-state="blocked">stripe.refund</span><span class="tool" data-state="error">crm.update</span></div>
+</main></body></html>
