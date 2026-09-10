@@ -282,6 +282,12 @@ export function Live() {
         body: JSON.stringify({
           idea: state.idea, slug: state.appSub, name: company,
           tagline: state.brandTagline, color: state.brandColor,
+          // Real gap (customer-reported, Meridian, 2026-09-10): the Company
+          // track's one real generated app never forwarded a chosen design
+          // system at all — it silently fell back to plain Inter/Poppins
+          // defaults regardless of what the founder picked on the (now
+          // shared, see PICK_TRACK) Design step.
+          designSystemId: state.designSystemId || undefined,
         }),
       })
         .then((r) => (r.ok ? r.json() : null))

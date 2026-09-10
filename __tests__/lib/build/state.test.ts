@@ -83,9 +83,11 @@ describe('landing funnel (Claude Design handoff)', () => {
   // 2026-09-09): both tracks route straight to 'intake' (design is no longer
   // a pre-flow screen) — the App track's `view` is set to 'design' so
   // useAutoplay shows it as the first real interrupt-view once generation
-  // starts, exactly like the Company track's 'wedge'. The Company track has
-  // no design step at all (#601 — no code path for it on that track).
-  it('full funnel: landing → start → build → PICK_TRACK(company) lands on intake, view=thesis', () => {
+  // starts, exactly like the Company track's 'wedge'. Company track ALSO
+  // visits 'design' now (fixed 2026-09-10, Meridian bug — see PICK_TRACK's
+  // comment): its one real generated app (via company-app -> chat-ws) needs
+  // a chosen system to forward, same as the App track.
+  it('full funnel: landing → start → build → PICK_TRACK(company) lands on intake, view=design', () => {
     const s = applyActions([
       { type: 'GOTO_SCREEN', screen: 'start' },
       { type: 'GOTO_SCREEN', screen: 'build' },
@@ -93,7 +95,7 @@ describe('landing funnel (Claude Design handoff)', () => {
       { type: 'PICK_TRACK', track: 'company' },
     ])
     expect(s.screen).toBe('intake')
-    expect(s.view).toBe('thesis')
+    expect(s.view).toBe('design')
     expect(s.track).toBe('company')
     expect(s.idea).toBe('seeded surprise idea')
   })
@@ -120,10 +122,10 @@ describe('buildReducer — PICK_TRACK', () => {
     expect(s.screen).toBe('intake')
   })
 
-  it('sets track to company and view to thesis, navigates to intake', () => {
+  it('sets track to company and view to design too (2026-09-10 fix — Meridian), navigates to intake', () => {
     const s = buildReducer(initialBuildState, { type: 'PICK_TRACK', track: 'company' })
     expect(s.track).toBe('company')
-    expect(s.view).toBe('thesis')
+    expect(s.view).toBe('design')
     expect(s.screen).toBe('intake')
   })
 
@@ -219,18 +221,26 @@ describe('buildReducer — START_BUILD', () => {
   // Design (#591) is now the first real APP_VIEWS entry — a genuinely new
   // app-track build starts there, not at 'brief', so the founder sees it as
   // part of the tracked workflow instead of a screen shown before this.
-  it('sets view to design for a NEW app-track build (design not yet done), thesis for company track', () => {
+  // Company track ALSO starts at 'design' now (fixed 2026-09-10, Meridian bug
+  // — its one real generated app needs a chosen system to forward too).
+  it('sets view to design for a NEW build on EITHER track (design not yet done)', () => {
     const appState = buildReducer({ ...initialBuildState, track: 'app' }, { type: 'START_BUILD', idea: 'x', appSub: 'x' })
     expect(appState.view).toBe('design')
 
     const compState = buildReducer({ ...initialBuildState, track: 'company' }, { type: 'START_BUILD', idea: 'x', appSub: 'x' })
-    expect(compState.view).toBe('thesis')
+    expect(compState.view).toBe('design')
   })
 
   it('re-entering an EXISTING app-track company that already finished design skips straight to brief', () => {
     const prev = { ...initialBuildState, track: 'app' as const, appSub: 'same-sub', designStepDone: true }
     const s = buildReducer(prev, { type: 'START_BUILD', idea: 'x', appSub: 'same-sub' })
     expect(s.view).toBe('brief')
+  })
+
+  it('re-entering an EXISTING company-track build that already finished design skips straight to thesis', () => {
+    const prev = { ...initialBuildState, track: 'company' as const, appSub: 'same-sub', designStepDone: true }
+    const s = buildReducer(prev, { type: 'START_BUILD', idea: 'x', appSub: 'same-sub' })
+    expect(s.view).toBe('thesis')
   })
 
   it('a NEW build (different appSub) shows design again even if a PRIOR company had finished it', () => {
@@ -379,14 +389,16 @@ describe('buildReducer — MVP_DONE / COMPANY_DONE', () => {
 
   // #398: autoplay's live walk-through leaves `view` on the LAST artifact
   // (plan30) once generation finishes — COMPANY_DONE must reset it to the
-  // FIRST artifact (thesis) so re-entering the workspace lands the founder
-  // at the top of the artifacts list, not the bottom.
-  it('COMPANY_DONE resets view to the first company-track artifact (thesis), regardless of where autoplay left it', () => {
+  // FIRST artifact so re-entering the workspace lands the founder at the top
+  // of the artifacts list, not the bottom. That first artifact is 'design'
+  // now (2026-09-10 fix — Meridian), not 'thesis', since Company track visits
+  // the Design step too.
+  it('COMPANY_DONE resets view to the first company-track artifact (design), regardless of where autoplay left it', () => {
     const s = buildReducer(
       { ...initialBuildState, track: 'company', building: true, view: 'plan30' },
       { type: 'COMPANY_DONE' },
     )
-    expect(s.view).toBe('thesis')
+    expect(s.view).toBe('design')
   })
 })
 
@@ -627,9 +639,14 @@ describe('trackViews', () => {
   })
 
   it('COMPANY_VIEWS contains expected artifact ids', () => {
+    expect(COMPANY_VIEWS).toContain('design')
     expect(COMPANY_VIEWS).toContain('thesis')
     expect(COMPANY_VIEWS).toContain('landing')
     expect(COMPANY_VIEWS).toContain('plan30')
+  })
+
+  it('design is the FIRST entry in COMPANY_VIEWS (2026-09-10 fix — Meridian)', () => {
+    expect(COMPANY_VIEWS[0]).toBe('design')
   })
 })
 

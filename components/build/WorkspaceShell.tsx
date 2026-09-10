@@ -170,8 +170,13 @@ export function currentActIndex(state: ReturnType<typeof useBuild>['state']): nu
   if (state.screen === 'fork' || state.screen === 'intake') return 0
   if (state.screen === 'live') return 4
   if (state.track === 'company') {
-    // Company: Idea(0) Build MVP(1) Launch(2) Company(3) Live(4)
+    // Company: Idea(0) Build MVP(1) Launch(2) Company(3) Live(4). Company's
+    // act bar has no dedicated "Design" label (COMPANY_ACT_LABELS, unlike the
+    // App track) — the Design interrupt-view (now also visited on this track,
+    // see PICK_TRACK's comment) reads as still "Idea" rather than jumping
+    // ahead to Build MVP before a choice is made.
     if (state.screen === 'pricing') return 2
+    if (!state.designStepDone) return 0
     return state.builtCompany ? 4 : 3
   }
   // App: Idea(0) Design(1) Build MVP(2) Launch(3) Live(4). Real bug

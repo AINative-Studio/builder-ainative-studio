@@ -43,7 +43,7 @@ export const APP_VIEWS = [
   'swarm', 'infra', 'preview',
 ] as const
 export const COMPANY_VIEWS = [
-  'thesis', 'wedge', 'businessModel', 'positioning', 'landing', 'plan30',
+  'design', 'thesis', 'wedge', 'businessModel', 'positioning', 'landing', 'plan30',
 ] as const
 export const SHARED_LATE_VIEWS = ['pipeline', 'rescope-intent', 'conflict', 'graph'] as const
 
@@ -265,12 +265,18 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
         // rather than a pre-flow detour screen — it's visible in the top
         // stepper and the artifact checklist like every other artifact.
         //
-        // Real bug (#601, customer-reported — Pathlo): the Company track has
-        // NO code path for a chosen design system to reach ANY output at all
-        // (COMPANY_VIEWS has no 'preview' — the company "landing" artifact is
-        // a fixed-template Modernist-styled component, never real generated
-        // app code). Company track keeps starting at 'thesis', unaffected.
-        view: action.track === 'app' ? 'design' : 'thesis',
+        // #601 (Pathlo) originally routed Company track straight past 'design'
+        // to 'thesis', reasoning the picker had no code path to any output on
+        // that track (COMPANY_VIEWS's 'landing' artifact is a fixed-template
+        // card, never real generated app code — still true). That reasoning
+        // missed a SEPARATE real generated app: Live.tsx calls
+        // /api/build/company-app (which calls chat-ws) to build the actual
+        // deployed landing page at /build/{slug} — and that path never had a
+        // design system to forward, so it silently fell back to plain
+        // Inter/Poppins defaults (customer-reported, Meridian, 2026-09-10).
+        // Company track now visits 'design' too — the choice reaches the
+        // real generated app via company-app's designSystemId forwarding.
+        view: 'design',
         // Always go straight to Intake — describe the idea first, same for
         // both tracks. The design CHOICE now happens inside the workspace
         // once generation starts, not as a screen before Intake.
@@ -294,12 +300,14 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
         generated: isNewBuild ? {} : state.generated,
         genError: isNewBuild ? {} : state.genError,
         done: isNewBuild ? {} : state.done,
-        // Design (#591) is now the first real APP_VIEWS entry — re-entering
-        // an EXISTING company (same appSub) that already finished its design
-        // step must NOT re-show it; only a genuinely new build starts there.
-        view: state.track === 'app'
-          ? (isNewBuild || !state.designStepDone ? 'design' : 'brief')
-          : 'thesis',
+        // Design (#591, extended to Company track for the real generated
+        // landing page — see PICK_TRACK's comment) is the first entry on
+        // BOTH tracks — re-entering an EXISTING company (same appSub) that
+        // already finished its design step must NOT re-show it; only a
+        // genuinely new build starts there.
+        view: isNewBuild || !state.designStepDone
+          ? 'design'
+          : (state.track === 'app' ? 'brief' : 'thesis'),
         // Consuming a pending build clears it (START_BUILD is the resume path).
         pendingBuild: null,
       }

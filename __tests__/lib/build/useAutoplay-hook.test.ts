@@ -137,7 +137,7 @@ describe('useAutoplay — track complete (hook body)', () => {
 
   it('does NOT dispatch MVP_DONE for company track', () => {
     const allDone: Record<string, string> = {
-      thesis: 'done', wedge: 'done', businessModel: 'done',
+      design: 'done', thesis: 'done', wedge: 'done', businessModel: 'done',
       positioning: 'done', landing: 'done', plan30: 'done',
     }
     const dispatch = vi.fn()
@@ -193,7 +193,8 @@ describe('useAutoplay — wedge interrupt (hook body)', () => {
   it('dispatches COMPLETE_ARTIFACT for wedge when wedgePicked is set', () => {
     const state = wsState({
       track: 'company',
-      done: { thesis: 'done' },
+      done: { design: 'done', thesis: 'done' },
+      designStepDone: true,
       view: 'wedge',
       wedgePicked: 'eng',
     })
@@ -209,7 +210,8 @@ describe('useAutoplay — wedge interrupt (hook body)', () => {
   it('does NOT dispatch COMPLETE_ARTIFACT for wedge when wedgePicked is empty', () => {
     const state = wsState({
       track: 'company',
-      done: { thesis: 'done' },
+      done: { design: 'done', thesis: 'done' },
+      designStepDone: true,
       view: 'wedge',
       wedgePicked: '',
     })
