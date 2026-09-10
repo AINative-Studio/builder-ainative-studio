@@ -85,8 +85,30 @@ export async function POST(request: NextRequest) {
   // chatId already registered under this slug is the real collision signal —
   // the SAME chatId means this is just a regeneration of the founder's own
   // existing build, which must keep its original slug.
+  //
+  // Real gap found live (Meridian, 2026-09-10): this check was purely
+  // chatId-based with no owner-awareness at all — even the SLUG'S OWN,
+  // AUTHENTICATED OWNER regenerating their own company (e.g. after fixing a
+  // codegen bug and re-running the build) got auto-suffixed to "{slug}-2"
+  // instead of updating their real, live slug in place, because the new
+  // generation always has a different chatId than the old one. An
+  // authenticated caller whose session email matches the existing entry's
+  // REAL, RECORDED ownerEmail may now overwrite their own slug with a new
+  // chatId. Deliberately requires a real match — an entry with NO owner
+  // recorded is NOT treated as safe to reuse (an earlier version of this fix
+  // did that and broke a real safety property this route already had:
+  // "chatId mismatch alone is the correct, sufficient collision signal" for
+  // an anonymous/unclaimed slug, since "no owner recorded" doesn't mean
+  // "nobody's build" — it may just mean a guest build. A caller who is not
+  // the confirmed owner still gets the original safe auto-suffix behavior.
   const requestedOwner = await resolveApp(requestedSlug).catch(() => null)
-  const slug = requestedOwner && requestedOwner.chatId !== chatId
+  const callerEmail = await auth()
+    .then((s) => ((s as any)?.user?.email as string | undefined)?.trim().toLowerCase())
+    .catch(() => undefined)
+  const callerIsOwner =
+    !!requestedOwner && !!requestedOwner.ownerEmail && !!callerEmail &&
+    requestedOwner.ownerEmail.toLowerCase() === callerEmail
+  const slug = requestedOwner && requestedOwner.chatId !== chatId && !callerIsOwner
     ? await firstFreeSlug(requestedSlug)
     : requestedSlug
 
