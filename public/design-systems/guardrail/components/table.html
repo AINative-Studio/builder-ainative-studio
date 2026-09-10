@@ -1,0 +1,26 @@
+<!-- @dsCard group="Components" name="Table" subtitle="Data table with themed header and row rules" viewport="640x300" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Guardrail — Table</title>
+<link rel="stylesheet" href="../styles.css" />
+<style>
+.demo { max-width: 640px; margin: 0 auto; padding: var(--space-6) var(--space-4) var(--space-8); }
+.demo-head { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.55; margin: var(--space-6) 0 var(--space-3); }
+.demo-head:first-child { margin-top: 0; }
+.row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-3); }
+.note { font-size: 12px; opacity: 0.6; max-width: 60ch; }
+</style>
+</head>
+<body>
+<main class="demo">
+<table class="table"><thead><tr><th>Run</th><th>Agent</th><th>Status</th><th class="num">Cost</th></tr></thead><tbody>
+<tr><td class="mono">run_c02e</td><td>Planner</td><td><span class="tag tag-success"><i class="status-dot" data-status="success"></i>Done</span></td><td class="num">$0.084</td></tr>
+<tr><td class="mono">run_c02f</td><td>Researcher</td><td><span class="tag tag-accent"><i class="status-dot" data-status="running"></i>Running</span></td><td class="num">$0.021</td></tr>
+<tr><td class="mono">run_c030</td><td>Reviewer</td><td><span class="tag tag-error"><i class="status-dot" data-status="error"></i>Failed</span></td><td class="num">$0.003</td></tr>
+</tbody></table>
+</main></body></html>
