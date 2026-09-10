@@ -82,10 +82,34 @@ const PRIMITIVE_BASES: Record<FounderScopedPrimitive, string> = {
   // — not yet independently re-verified, so treat PATCH/DELETE as
   // documented-but-unconfirmed until a real update/close is exercised live.
   serviceos: process.env.SERVICEOS_API_URL || 'https://helpdesk.ainative.studio/api',
+  // #644 gap-analysis follow-up — Live Streaming was flagged as a confirmed
+  // real gap: real, common founder triggers (stream/live/video/broadcast),
+  // real apiBase, but no runtime proxy at all. Confirmed LIVE against
+  // production per docs.ainative.studio/docs/live-streaming/streams:
+  // GET https://api.ainative.studio/api/v1/streams/ (trailing slash matters
+  // — the real backend serves under it) 200'd with real production stream
+  // data (28 real streams). Same founder-scoped direct-JWT-bearer shape as
+  // the other 8. Deliberately did NOT create a live test stream against this
+  // host during verification — the listed data is real production content,
+  // not a sandbox.
+  livestreaming: process.env.LIVE_STREAMING_API_URL || 'https://api.ainative.studio',
+  // #644 gap-analysis follow-up — Social Graph was flagged as a confirmed
+  // real gap: real, common founder triggers (social/followers/friends/
+  // network), real apiBase, but no runtime proxy at all. Confirmed LIVE
+  // against production per docs.ainative.studio/docs/community/social-graph:
+  // GET /api/v1/social/{user_id}/followers 200'd with a real empty-list
+  // response. Same founder-scoped direct-JWT-bearer shape as the other 9 —
+  // NOTE the {user_id} path segment is the AUTHENTICATED user's own id
+  // (resolved server-side by Social Graph from the JWT itself for write
+  // ops like follow/unfollow; for read ops like followers/following the
+  // caller supplies whichever user_id they want to look up, which may be
+  // a DIFFERENT user than the founder — this is a public social graph, not
+  // founder-private data like the other 9 primitives).
+  socialgraph: process.env.SOCIAL_GRAPH_API_URL || 'https://api.ainative.studio',
 }
 
 function isFounderScopedPrimitive(name: string): name is FounderScopedPrimitive {
-  return name === 'zerocommerce' || name === 'zeropipeline' || name === 'agentflow' || name === 'zeroforms' || name === 'zerocrm' || name === 'zerovoice' || name === 'zeroinvoice' || name === 'serviceos'
+  return name === 'zerocommerce' || name === 'zeropipeline' || name === 'agentflow' || name === 'zeroforms' || name === 'zerocrm' || name === 'zerovoice' || name === 'zeroinvoice' || name === 'serviceos' || name === 'livestreaming' || name === 'socialgraph'
 }
 
 /** Resolve which company's founder credential this request should use.

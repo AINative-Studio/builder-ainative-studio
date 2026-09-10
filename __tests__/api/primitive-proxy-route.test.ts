@@ -512,4 +512,86 @@ describe('GET/POST /api/primitive/[primitive]/[...path] (#443)', () => {
       expect(json).toEqual({ error: 'primitive_unavailable', reason: 'not_provisioned' })
     })
   })
+
+  describe('Live Streaming (#644 — found via the gap-sweep follow-up audit, confirmed live)', () => {
+    function streamsReq(opts: { method?: string; body?: string } = {}) {
+      return {
+        method: opts.method || 'GET',
+        nextUrl: new URL('https://builder.ainative.studio/api/primitive/livestreaming/api/v1/streams'),
+        headers: new Headers({}),
+        text: async () => opts.body ?? '',
+      } as any
+    }
+
+    it('is a known primitive, routed to the real Live Streaming host with the resolved founder token', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'ls-token' })
+      const fetchMock = vi.fn(async (url: string, init: any) => {
+        expect(String(url)).toBe('https://api.ainative.studio/api/v1/streams')
+        expect(init.headers.Authorization).toBe('Bearer ls-token')
+        return { status: 200, text: async () => JSON.stringify({ streams: [], total: 0 }), headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const res: any = await GET(streamsReq(), ctx('livestreaming', ['api', 'v1', 'streams']))
+      expect(res.status).toBe(200)
+      expect(h.resolveFounderCredential).toHaveBeenCalledWith('acme', 'livestreaming')
+    })
+
+    it('401s on a missing token with no COMPANY_SLUG, same fail-closed behavior as the other primitives', async () => {
+      const res: any = await GET(streamsReq(), ctx('livestreaming', ['api', 'v1', 'streams']))
+      expect(res.status).toBe(401)
+      expect(h.resolveFounderCredential).not.toHaveBeenCalled()
+    })
+
+    it('502s honestly when no Live Streaming credential was ever stored for this company', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: false, reason: 'not_provisioned' })
+      const res: any = await GET(streamsReq(), ctx('livestreaming', ['api', 'v1', 'streams']))
+      expect(res.status).toBe(502)
+      const json = await res.json()
+      expect(json).toEqual({ error: 'primitive_unavailable', reason: 'not_provisioned' })
+    })
+  })
+
+  describe('Social Graph (#644 — found via the gap-sweep follow-up audit, confirmed live)', () => {
+    function socialReq() {
+      return {
+        method: 'GET',
+        nextUrl: new URL('https://builder.ainative.studio/api/primitive/socialgraph/api/v1/social/user-123/followers'),
+        headers: new Headers({}),
+        text: async () => '',
+      } as any
+    }
+
+    it('is a known primitive, routed to the real Social Graph host with the resolved founder token', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'sg-token' })
+      const fetchMock = vi.fn(async (url: string, init: any) => {
+        expect(String(url)).toBe('https://api.ainative.studio/api/v1/social/user-123/followers')
+        expect(init.headers.Authorization).toBe('Bearer sg-token')
+        return { status: 200, text: async () => JSON.stringify({ followers: [], total: 0 }), headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const res: any = await GET(socialReq(), ctx('socialgraph', ['api', 'v1', 'social', 'user-123', 'followers']))
+      expect(res.status).toBe(200)
+      expect(h.resolveFounderCredential).toHaveBeenCalledWith('acme', 'socialgraph')
+    })
+
+    it('401s on a missing token with no COMPANY_SLUG, same fail-closed behavior as the other primitives', async () => {
+      const res: any = await GET(socialReq(), ctx('socialgraph', ['api', 'v1', 'social', 'user-123', 'followers']))
+      expect(res.status).toBe(401)
+      expect(h.resolveFounderCredential).not.toHaveBeenCalled()
+    })
+
+    it('502s honestly when no Social Graph credential was ever stored for this company', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: false, reason: 'not_provisioned' })
+      const res: any = await GET(socialReq(), ctx('socialgraph', ['api', 'v1', 'social', 'user-123', 'followers']))
+      expect(res.status).toBe(502)
+      const json = await res.json()
+      expect(json).toEqual({ error: 'primitive_unavailable', reason: 'not_provisioned' })
+    })
+  })
 })

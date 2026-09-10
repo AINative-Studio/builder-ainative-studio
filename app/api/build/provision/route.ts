@@ -316,6 +316,21 @@ export async function POST(request: NextRequest) {
     serviceos = { provisioned: stored, reason: stored ? undefined : 'credential_store_failed' }
   }
 
+  // #644: Live Streaming and Social Graph, found in the same gap-sweep
+  // follow-up audit — both real, common founder triggers, both confirmed
+  // LIVE, no separate provisioning call needed for either. Best-effort — a
+  // failure just leaves the relevant card honestly simulated.
+  let livestreaming: { provisioned: boolean; reason?: string } = { provisioned: false }
+  if (jwt) {
+    const stored = await captureFounderCredentialForProxy(request, slug, 'livestreaming', jwt)
+    livestreaming = { provisioned: stored, reason: stored ? undefined : 'credential_store_failed' }
+  }
+  let socialgraph: { provisioned: boolean; reason?: string } = { provisioned: false }
+  if (jwt) {
+    const stored = await captureFounderCredentialForProxy(request, slug, 'socialgraph', jwt)
+    socialgraph = { provisioned: stored, reason: stored ? undefined : 'credential_store_failed' }
+  }
+
   // #439 (child of #414/#422): also provision the company's REAL ZeroERP
   // tenant. UNLIKE every JWT-auth primitive above, ZeroERP's onboarding
   // endpoint takes no auth at all (confirmed via source: `security: []`,
@@ -388,6 +403,8 @@ export async function POST(request: NextRequest) {
     zerocrmProvisioned: zerocrm.provisioned,
     zeroinvoiceProvisioned: zeroinvoice.provisioned,
     serviceosProvisioned: serviceos.provisioned,
+    livestreamingProvisioned: livestreaming.provisioned,
+    socialgraphProvisioned: socialgraph.provisioned,
     zeroerpProvisioned: zeroerp.provisioned,
     zeroerpOrgId: zeroerp.orgId,
     zeroerpInviteToken: zeroerp.inviteToken,
@@ -440,6 +457,8 @@ export async function POST(request: NextRequest) {
     zerocrmProvisioned: zerocrm.provisioned,
     zeroinvoiceProvisioned: zeroinvoice.provisioned,
     serviceosProvisioned: serviceos.provisioned,
+    livestreamingProvisioned: livestreaming.provisioned,
+    socialgraphProvisioned: socialgraph.provisioned,
     zeroerpProvisioned: zeroerp.provisioned,
     gitProvisioned,
     gitRepoUrl: gitResult.gitRepoUrl,

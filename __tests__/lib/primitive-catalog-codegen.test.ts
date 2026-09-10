@@ -895,6 +895,122 @@ describe('primitive-catalog additions (#410)', () => {
     })
   })
 
+  describe('#644 fix — Live Streaming runtime proxy (found via the gap-sweep follow-up audit)', () => {
+    const STREAM_IDEA = 'a live streaming platform where creators can go live, broadcast video, and chat with viewers'
+
+    it('the idea selects Live Streaming', () => {
+      const { names } = selectPrimitives(STREAM_IDEA, 'app')
+      expect(names).toContain('Live Streaming')
+    })
+
+    it('the composition block carries a literal code fence + explicit anti-pattern language for Live Streaming (previously had NO instruction at all)', () => {
+      const block = codegenCompositionBlock(STREAM_IDEA, 'app')
+      expect(block).toContain('Live Streaming')
+      expect(block).not.toMatch(/Live Streaming[^\n]*already provisioned for this company server-side/)
+      expect(block).toMatch(/```js[\s\S]*fetch\('\/api\/primitive\/livestreaming\/api\/v1\/streams\/'\)/)
+      expect(block).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      expect(block).toMatch(/do NOT hand-roll a fake "live stream" list/i)
+    })
+
+    it('does not leak the raw external host into the prompt for the Live Streaming line specifically', () => {
+      const block = codegenCompositionBlock(STREAM_IDEA, 'app')
+      const line = block.split('\n').find((l) => l.startsWith('- Live Streaming'))
+      expect(line).toBeDefined()
+      expect(line).not.toMatch(/To use:[^|]*https:\/\/api\.ainative\.studio(?!\/api\/primitive)/)
+    })
+
+    it('RUNTIME_PROXY_PATH_SUBSTRINGS carries the real proxy path so the #518 compliance validator catches an unwired Live Streaming selection', () => {
+      expect(RUNTIME_PROXY_PATH_SUBSTRINGS['Live Streaming']).toEqual(['/api/primitive/livestreaming/api/v1/streams'])
+      expect(getComplianceCheckedPrimitiveNames()).toContain('Live Streaming')
+    })
+
+    it('getRuntimeProxyInstruction returns the same instruction text codegenCompositionBlock injects', () => {
+      const instruction = getRuntimeProxyInstruction('Live Streaming')
+      expect(instruction).toBeDefined()
+      expect(instruction).toMatch(/fetch\('\/api\/primitive\/livestreaming\/api\/v1\/streams\/'\)/)
+      expect(instruction).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      const block = codegenCompositionBlock(STREAM_IDEA, 'app')
+      expect(block).toContain(instruction!.split('\n')[0])
+    })
+
+    it('findPrimitiveComplianceGaps (the #518 validator) flags a Live Streaming idea whose generated code never called the proxy', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      const brokenCode = `
+        function App() {
+          const [streams, setStreams] = useState([])
+          useEffect(() => { fetch('/api/db/streams').then(r => r.json()).then(d => setStreams(d.data)) }, [])
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(brokenCode, STREAM_IDEA)
+      expect(gaps).toContain('Live Streaming')
+    })
+
+    it('findPrimitiveComplianceGaps does not flag Live Streaming when the real proxy IS called', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      const compliantCode = `
+        function App() {
+          useEffect(() => { fetch('/api/primitive/livestreaming/api/v1/streams/').then(r => r.json()).then(d => setStreams(d.streams)) }, [])
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(compliantCode, STREAM_IDEA)
+      expect(gaps).not.toContain('Live Streaming')
+    })
+  })
+
+  describe('#644 fix — Social Graph runtime proxy (found via the gap-sweep follow-up audit)', () => {
+    const SOCIAL_IDEA = 'a social app where users can follow each other and see a list of their followers and following'
+
+    it('the idea selects Social Graph', () => {
+      const { names } = selectPrimitives(SOCIAL_IDEA, 'app')
+      expect(names).toContain('Social Graph')
+    })
+
+    it('the composition block carries a literal code fence + explicit anti-pattern language for Social Graph (previously had NO instruction at all)', () => {
+      const block = codegenCompositionBlock(SOCIAL_IDEA, 'app')
+      expect(block).toContain('Social Graph')
+      expect(block).not.toMatch(/Social Graph[^\n]*already provisioned for this company server-side/)
+      expect(block).toMatch(/```js[\s\S]*fetch\(`\/api\/primitive\/socialgraph\/api\/v1\/social\/\$\{userId\}\/followers`\)/)
+      expect(block).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      expect(block).toMatch(/do NOT hand-roll a followers\/following list/i)
+    })
+
+    it('RUNTIME_PROXY_PATH_SUBSTRINGS carries the real proxy path so the #518 compliance validator catches an unwired Social Graph selection', () => {
+      expect(RUNTIME_PROXY_PATH_SUBSTRINGS['Social Graph']).toEqual(['/api/primitive/socialgraph/api/v1/social'])
+      expect(getComplianceCheckedPrimitiveNames()).toContain('Social Graph')
+    })
+
+    it('getRuntimeProxyInstruction returns the same instruction text codegenCompositionBlock injects', () => {
+      const instruction = getRuntimeProxyInstruction('Social Graph')
+      expect(instruction).toBeDefined()
+      expect(instruction).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      const block = codegenCompositionBlock(SOCIAL_IDEA, 'app')
+      expect(block).toContain(instruction!.split('\n')[0])
+    })
+
+    it('findPrimitiveComplianceGaps (the #518 validator) flags a Social Graph idea whose generated code never called the proxy', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      const brokenCode = `
+        function App() {
+          const [followers, setFollowers] = useState([])
+          useEffect(() => { fetch('/api/db/followers').then(r => r.json()).then(d => setFollowers(d.data)) }, [])
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(brokenCode, SOCIAL_IDEA)
+      expect(gaps).toContain('Social Graph')
+    })
+
+    it('findPrimitiveComplianceGaps does not flag Social Graph when the real proxy IS called', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      const compliantCode = `
+        function App() {
+          useEffect(() => { fetch(\`/api/primitive/socialgraph/api/v1/social/\${userId}/followers\`).then(r => r.json()).then(d => setFollowers(d.followers)) }, [])
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(compliantCode, SOCIAL_IDEA)
+      expect(gaps).not.toContain('Social Graph')
+    })
+  })
+
   describe('#529 ZeroPipeline — strengthened proactively on pattern-match (not yet directly confirmed by a live sweep)', () => {
     // #529: ZeroPipeline shares the identical original-5 provenance, plain-
     // prose instruction shape, and RUNTIME_PROXY_PATH_SUBSTRINGS gap as the

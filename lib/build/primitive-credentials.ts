@@ -64,8 +64,14 @@ const TABLE = 'builder_primitive_credentials'
  *  helpdesk, tickets), a real apiBase, but no runtime proxy wiring at all.
  *  Confirmed LIVE against production (docs.ainative.studio/docs/business-ops
  *  /serviceos): GET/POST /api/tickets both work with a plain AINative JWT.
- *  Same shape as the other 8; no separate provisioning call needed. */
-export type FounderScopedPrimitive = 'zerocommerce' | 'zeropipeline' | 'agentflow' | 'zeroforms' | 'zerocrm' | 'zerovoice' | 'zeroinvoice' | 'serviceos'
+ *  Same shape as the other 8; no separate provisioning call needed.
+ *
+ *  livestreaming, socialgraph (#644): found in the same gap sweep's
+ *  follow-up audit — both real, common founder triggers, both confirmed
+ *  LIVE against production with a plain AINative JWT (streams/ 200'd with
+ *  real production data; social/{user_id}/followers 200'd with a real
+ *  empty-list response). No separate provisioning call needed for either. */
+export type FounderScopedPrimitive = 'zerocommerce' | 'zeropipeline' | 'agentflow' | 'zeroforms' | 'zerocrm' | 'zerovoice' | 'zeroinvoice' | 'serviceos' | 'livestreaming' | 'socialgraph'
 
 interface StoredCredentialRow {
   slug: string
