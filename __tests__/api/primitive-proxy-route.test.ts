@@ -456,4 +456,60 @@ describe('GET/POST /api/primitive/[primitive]/[...path] (#443)', () => {
       expect(json).toEqual({ error: 'primitive_unavailable', reason: 'not_provisioned' })
     })
   })
+
+  describe('ServiceOS (#642 — found via a systematic gap sweep, confirmed live to support the same direct-JWT-bearer path)', () => {
+    function ticketsReq(opts: { method?: string; body?: string } = {}) {
+      return {
+        method: opts.method || 'GET',
+        nextUrl: new URL('https://builder.ainative.studio/api/primitive/serviceos/tickets'),
+        headers: new Headers({}),
+        text: async () => opts.body ?? '',
+      } as any
+    }
+
+    it('is a known primitive, routed to the real ServiceOS host with the resolved founder token', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'so-token' })
+      const fetchMock = vi.fn(async (url: string, init: any) => {
+        expect(String(url)).toBe('https://helpdesk.ainative.studio/api/tickets')
+        expect(init.headers.Authorization).toBe('Bearer so-token')
+        return { status: 200, text: async () => JSON.stringify({ success: true, data: { items: [], total: 0 } }), headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const res: any = await GET(ticketsReq(), ctx('serviceos', ['tickets']))
+      expect(res.status).toBe(200)
+      expect(h.resolveFounderCredential).toHaveBeenCalledWith('acme', 'serviceos')
+    })
+
+    it('forwards a real ticket creation POST', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'so-token' })
+      const fetchMock = vi.fn(async (url: string, init: any) => {
+        expect(String(url)).toBe('https://helpdesk.ainative.studio/api/tickets')
+        expect(init.method).toBe('POST')
+        expect(JSON.parse(init.body)).toEqual({ title: 'Cannot log in', priority: 'normal' })
+        return { status: 201, text: async () => '{"success":true}', headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      await POST(ticketsReq({ method: 'POST', body: JSON.stringify({ title: 'Cannot log in', priority: 'normal' }) }), ctx('serviceos', ['tickets']))
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('401s on a missing token with no COMPANY_SLUG, same fail-closed behavior as the other primitives', async () => {
+      const res: any = await GET(ticketsReq(), ctx('serviceos', ['tickets']))
+      expect(res.status).toBe(401)
+      expect(h.resolveFounderCredential).not.toHaveBeenCalled()
+    })
+
+    it('502s honestly when no ServiceOS credential was ever stored for this company', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: false, reason: 'not_provisioned' })
+      const res: any = await GET(ticketsReq(), ctx('serviceos', ['tickets']))
+      expect(res.status).toBe(502)
+      const json = await res.json()
+      expect(json).toEqual({ error: 'primitive_unavailable', reason: 'not_provisioned' })
+    })
+  })
 })

@@ -123,6 +123,10 @@ export interface AppEntry {
   // simulated (no credential captured yet, e.g. no signed-in founder at
   // provision time).
   zeroinvoiceProvisioned?: boolean
+  // ServiceOS (#642) — same shape as ZeroInvoice/ZeroCRM: no explicit
+  // provisioning call, tenant resolves directly from the founder's AINative
+  // JWT. Absent/false = still simulated.
+  serviceosProvisioned?: boolean
   // OpenCapStack (#427, child of #414). provisionCapTable's real companyId
   // was computed at checkout and returned once in the provision response,
   // but never durably stored — a runtime proxy has no way to know which
@@ -631,6 +635,7 @@ export async function setAppProvisioned(
     agentflowProjectId?: string
     zerocrmProvisioned?: boolean
     zeroinvoiceProvisioned?: boolean
+    serviceosProvisioned?: boolean
     zeroerpProvisioned?: boolean
     zeroerpOrgId?: string
     zeroerpInviteToken?: string

@@ -68,10 +68,24 @@ const PRIMITIVE_BASES: Record<FounderScopedPrimitive, string> = {
   // after verification). The prior "impossible" finding was wrong — this IS
   // the same founder-scoped, direct-JWT-bearer shape as the other 6.
   zeroinvoice: process.env.ZEROINVOICE_API_URL || 'https://zeroinvoice.ainative.studio/api',
+  // #642 — ServiceOS (helpdesk) was flagged in a systematic gap sweep
+  // (2026-09-10, following #638/#639's ZeroInvoice fix) as having real,
+  // common founder triggers (support/helpdesk/tickets/customer service) but
+  // no runtime proxy at all. Confirmed LIVE against production, per docs.
+  // ainative.studio/docs/business-ops/serviceos: GET /api/tickets and POST
+  // /api/tickets both work with a plain AINative JWT (a real ticket was
+  // created — row_id eff5ef13-93cf-48db-9426-ea973032e1b0 — and appeared in
+  // a subsequent list). Same founder-scoped direct-JWT-bearer shape as the
+  // other 7. Generic passthrough here has only verified GET/POST; PATCH
+  // /tickets/:id is real and documented (confirmed via docs) but this
+  // session hit an org-scoping 403 attempting to close its own test ticket
+  // — not yet independently re-verified, so treat PATCH/DELETE as
+  // documented-but-unconfirmed until a real update/close is exercised live.
+  serviceos: process.env.SERVICEOS_API_URL || 'https://helpdesk.ainative.studio/api',
 }
 
 function isFounderScopedPrimitive(name: string): name is FounderScopedPrimitive {
-  return name === 'zerocommerce' || name === 'zeropipeline' || name === 'agentflow' || name === 'zeroforms' || name === 'zerocrm' || name === 'zerovoice' || name === 'zeroinvoice'
+  return name === 'zerocommerce' || name === 'zeropipeline' || name === 'agentflow' || name === 'zeroforms' || name === 'zerocrm' || name === 'zerovoice' || name === 'zeroinvoice' || name === 'serviceos'
 }
 
 /** Resolve which company's founder credential this request should use.

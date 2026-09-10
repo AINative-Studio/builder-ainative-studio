@@ -827,6 +827,74 @@ describe('primitive-catalog additions (#410)', () => {
     })
   })
 
+  describe('#642 fix — ServiceOS runtime proxy (found via a systematic gap sweep across the whole catalog)', () => {
+    // Real finding (2026-09-10, following the ZeroInvoice #638/#639 fix): a
+    // systematic cross-reference of every catalog primitive against
+    // RUNTIME_PROXIED_PRIMITIVES/RUNTIME_PROXY_PATH_SUBSTRINGS turned up 12
+    // primitives with a real apiBase but no runtime proxy at all. ServiceOS
+    // was the first confirmed-live genuine gap among them: real, common
+    // founder triggers (support/helpdesk/tickets), and GET/POST /api/tickets
+    // both work with a plain AINative JWT (a real ticket was created and
+    // appeared in a subsequent list against production).
+    const SUPPORT_IDEA = 'a customer support helpdesk with a ticket queue for handling complaints and requests'
+
+    it('the idea selects ServiceOS', () => {
+      const { names } = selectPrimitives(SUPPORT_IDEA, 'app')
+      expect(names).toContain('ServiceOS')
+    })
+
+    it('the composition block carries a literal code fence + explicit anti-pattern language for ServiceOS (previously had NO instruction at all)', () => {
+      const block = codegenCompositionBlock(SUPPORT_IDEA, 'app')
+      expect(block).toContain('ServiceOS')
+      expect(block).not.toMatch(/ServiceOS[^\n]*already provisioned for this company server-side/)
+      expect(block).toMatch(/```js[\s\S]*fetch\('\/api\/primitive\/serviceos\/tickets'\)/)
+      expect(block).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      expect(block).toMatch(/do NOT hand-roll a support-ticket\/helpdesk table using \/api\/db tables/i)
+    })
+
+    it('does not leak the raw external ServiceOS apiBase into the prompt', () => {
+      const block = codegenCompositionBlock(SUPPORT_IDEA, 'app')
+      expect(block).not.toContain('helpdesk.ainative.studio')
+    })
+
+    it('RUNTIME_PROXY_PATH_SUBSTRINGS carries the real proxy path so the #518 compliance validator catches an unwired ServiceOS selection', () => {
+      expect(RUNTIME_PROXY_PATH_SUBSTRINGS.ServiceOS).toEqual(['/api/primitive/serviceos/tickets'])
+      expect(getComplianceCheckedPrimitiveNames()).toContain('ServiceOS')
+    })
+
+    it('getRuntimeProxyInstruction returns the same instruction text codegenCompositionBlock injects', () => {
+      const instruction = getRuntimeProxyInstruction('ServiceOS')
+      expect(instruction).toBeDefined()
+      expect(instruction).toMatch(/fetch\('\/api\/primitive\/serviceos\/tickets'\)/)
+      expect(instruction).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      const block = codegenCompositionBlock(SUPPORT_IDEA, 'app')
+      expect(block).toContain(instruction!.split('\n')[0])
+    })
+
+    it('findPrimitiveComplianceGaps (the #518 validator) flags a ServiceOS idea whose generated code never called the ServiceOS proxy', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      const brokenCode = `
+        function App() {
+          const [tickets, setTickets] = useState([])
+          useEffect(() => { fetch('/api/db/tickets').then(r => r.json()).then(d => setTickets(d.data)) }, [])
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(brokenCode, SUPPORT_IDEA)
+      expect(gaps).toContain('ServiceOS')
+    })
+
+    it('findPrimitiveComplianceGaps does not flag ServiceOS when the real proxy IS called', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      const compliantCode = `
+        function App() {
+          useEffect(() => { fetch('/api/primitive/serviceos/tickets').then(r => r.json()).then(d => setTickets(d.data)) }, [])
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(compliantCode, SUPPORT_IDEA)
+      expect(gaps).not.toContain('ServiceOS')
+    })
+  })
+
   describe('#529 ZeroPipeline — strengthened proactively on pattern-match (not yet directly confirmed by a live sweep)', () => {
     // #529: ZeroPipeline shares the identical original-5 provenance, plain-
     // prose instruction shape, and RUNTIME_PROXY_PATH_SUBSTRINGS gap as the
