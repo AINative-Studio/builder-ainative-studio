@@ -20,7 +20,7 @@ describe('Live screen — real product card and company-product wiring (2026-09-
   it('calls /api/build/company-product when productChatId is not yet set', () => {
     const idx = source.indexOf("fetch('/api/build/company-product'")
     expect(idx).toBeGreaterThan(-1)
-    const nearby = source.slice(idx - 200, idx + 500)
+    const nearby = source.slice(idx - 1500, idx + 500)
     expect(nearby).toMatch(/!state\.productChatId/)
   })
 
@@ -32,28 +32,39 @@ describe('Live screen — real product card and company-product wiring (2026-09-
     expect(nearby).toMatch(/designSystemId:\s*state\.designSystemId/)
   })
 
-  it('dispatches SET_PRODUCT_CHATID on a successful response', () => {
+  it('dispatches SET_PRODUCT_CHATID on a successful (cached) response', () => {
     const idx = source.indexOf("fetch('/api/build/company-product'")
-    const nearby = source.slice(idx, idx + 1200)
+    const nearby = source.slice(idx, idx + 1500)
     expect(nearby).toMatch(/SET_PRODUCT_CHATID/)
   })
 
   /**
-   * Real bug found live: with primitive compliance enforced, a genuine
-   * product generation can trigger chat-ws's own obedience-repair pass (a
-   * second model call), pushing wall-clock past the 280s/300s server-side
-   * ceiling on a slow attempt — confirmed live (502 "terminated" on 2 of 3
-   * real Meridian product-build attempts). Retries transient failures
-   * (502/503/504) with backoff instead of silently giving up after one try.
+   * Real bug found live (issue #629/#631/#633, 2026-09-10): with primitive
+   * compliance enforced, a genuine product generation can trigger chat-ws's
+   * own obedience-repair pass (a second model call), and Railway's edge
+   * proxy sits in FRONT of this container with its own hard request timeout
+   * around 300s that no server-side maxDuration/AbortSignal tuning can
+   * control — confirmed live: a generation that had genuinely SUCCEEDED
+   * server-side (real primitive proxy calls in the persisted code) still
+   * came back as a 502 at the 300s mark, because this held one HTTP
+   * connection open the whole time. company-product now returns
+   * 'processing' immediately and runs generation as a detached background
+   * task; the client polls resolve-app instead of racing a proxy timeout it
+   * doesn't control.
    */
-  it('retries transient failures (502/503/504) instead of giving up after one attempt', () => {
-    const idx = source.indexOf('attemptProductBuild')
+  it('polls resolve-app for the product slug when the response is "processing"', () => {
+    const idx = source.indexOf('pollForProduct')
     expect(idx).toBeGreaterThan(-1)
-    const nearby = source.slice(idx, idx + 1000)
-    expect(nearby).toMatch(/502/)
-    expect(nearby).toMatch(/504/)
-    expect(nearby).toMatch(/503/)
-    expect(nearby).toMatch(/MAX_PRODUCT_ATTEMPTS/)
+    const nearby = source.slice(idx, idx + 1500)
+    expect(nearby).toMatch(/\/api\/build\/resolve-app\?slug=/)
+    expect(nearby).toMatch(/SET_PRODUCT_CHATID/)
+  })
+
+  it('starts polling only after the POST reports status "processing"', () => {
+    const idx = source.indexOf("fetch('/api/build/company-product'")
+    const nearby = source.slice(idx, idx + 1500)
+    expect(nearby).toMatch(/d\?\.status === 'processing'/)
+    expect(nearby).toMatch(/pollForProduct\(1\)/)
   })
 
   it('renders a distinct "Your product" card, separate from the landing page link', () => {

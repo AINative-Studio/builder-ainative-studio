@@ -24,8 +24,29 @@
  * at /build/{slug}-product independently of /build/{slug}'s landing page.
  * Idempotent-ish: if that slug already resolves, returns the existing chatId.
  *
+ * Real bug found live (issue #629/#631/#633, 2026-09-10): this route used to
+ * hold the HTTP request open, synchronously consuming chat-ws's SSE stream
+ * until 'complete' before responding. A real generation that needs the
+ * primitive-compliance retry (#624-#627) can legitimately run past 300s once
+ * that extra repair round-trip is included — and Railway's edge proxy sits
+ * in FRONT of this container with its own hard request timeout that no
+ * amount of raising this route's own maxDuration/AbortSignal can control
+ * (confirmed live: a real Meridian generation that had genuinely SUCCEEDED
+ * server-side — obedience-repair adopted, ZeroDB persist confirmed, real
+ * /api/primitive/zeropipeline + /api/primitive/zerovoice calls in the saved
+ * code — still came back to the caller as a 502 "upstream error" at exactly
+ * the 300s mark). Holding one HTTP connection open for a job whose real
+ * duration this route doesn't control is the wrong shape for this platform.
+ *
+ * Now decoupled: this route kicks off the chat-ws generation as a DETACHED
+ * background task (this container is a persistent Railway service, not
+ * serverless — an unawaited async task keeps running after the response is
+ * sent, as long as the process itself stays up) and returns immediately with
+ * { status: 'processing', productSlug }. The caller polls
+ * GET /api/build/resolve-app?slug={productSlug} until it resolves a chatId.
+ *
  * Body: { idea, slug, name, designSystemId? }
- * Returns: { chatId, productSlug }
+ * Returns: { status: 'processing' | 'cached', productSlug, chatId? }
  */
 
 import { NextRequest } from 'next/server'
@@ -33,17 +54,52 @@ import { registerApp, resolveApp } from '@/lib/build/app-registry'
 import { logBuildOutcome } from '@/lib/build/learning'
 
 export const runtime = 'nodejs'
-// Real bug (customer-reported, Meridian, 2026-09-10, issue #629/#631): this
-// route now waits for chat-ws's 'complete' event (see the SSE loop below —
-// #629 fixed it to stop returning on the FIRST 'refresh'/'files' event,
-// which fired long before obedience-repair/closePrimitiveComplianceGap and
-// the final persist ever ran). A real generation that needs the primitive-
-// compliance retry can genuinely exceed 280s once that extra repair round-
-// trip is included — confirmed live: the OLD 280s budget aborted a real
-// Meridian generation mid-repair. chat-ws itself has no maxDuration/timeout
-// of its own, so 300s was this route's own arbitrary self-imposed ceiling,
-// not a real platform constraint. Raised well past a realistic worst case.
-export const maxDuration = 780
+
+async function runProductGeneration(
+  base: string, message: string, designSystemId: string | undefined,
+  productSlug: string, idea: string, name: string,
+): Promise<void> {
+  try {
+    const res = await fetch(`${base}/api/chat-ws`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, designSystemId }),
+      signal: AbortSignal.timeout(780_000),
+    })
+    if (!res.body) throw new Error('no stream')
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = '', chatId: string | null = null, completed = false
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const events = buf.split('\n\n'); buf = events.pop() || ''
+      for (const ev of events) {
+        const line = ev.split('\n').find((l) => l.startsWith('data:'))
+        if (!line) continue
+        let p: any; try { p = JSON.parse(line.slice(5).trim()) } catch { continue }
+        if (p.type === 'init' && p.chatId) chatId = p.chatId
+        // Wait for 'complete' (both chat-ws's degraded and success paths
+        // emit it), not the first 'refresh'/'files' — those fire repeatedly
+        // during mid-generation streaming, well before obedience-repair /
+        // closePrimitiveComplianceGap and the final ZeroDB persist run.
+        if (p.type === 'complete') completed = true
+      }
+      if (chatId && completed) break
+    }
+    if (!chatId) throw new Error('no chatId')
+
+    await registerApp({ slug: productSlug, chatId, name, track: 'company' })
+    logBuildOutcome({
+      slug: productSlug, idea, brand: name, track: 'company', chatId,
+      codeStatus: completed ? 'success' : 'partial', converted: false,
+    }).catch(() => {})
+  } catch (e: any) {
+    logBuildOutcome({ slug: productSlug, idea, brand: name, track: 'company', codeStatus: 'failure', converted: false }).catch(() => {})
+    console.warn(`[company-product] background generation failed for ${productSlug}:`, e?.message || e)
+  }
+}
 
 export async function POST(request: NextRequest) {
   const b = await request.json().catch(() => null)
@@ -57,7 +113,7 @@ export async function POST(request: NextRequest) {
 
   // Already built? return the existing chatId (don't regenerate).
   const existing = await resolveApp(productSlug).catch(() => null)
-  if (existing?.chatId) return Response.json({ chatId: existing.chatId, productSlug, cached: true })
+  if (existing?.chatId) return Response.json({ chatId: existing.chatId, productSlug, status: 'cached' })
 
   const name = String(b?.name || slug).slice(0, 120)
   const designSystemId = typeof b?.designSystemId === 'string' ? b.designSystemId.slice(0, 40) : undefined
@@ -88,54 +144,11 @@ export async function POST(request: NextRequest) {
     `commerce, voice, etc.) and call their real APIs, not a hand-rolled substitute. ` +
     `Make it visually distinctive and specific to this company, with realistic data — not a generic template.`
 
-  try {
-    const res = await fetch(`${base}/api/chat-ws`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, designSystemId }),
-      signal: AbortSignal.timeout(760_000),
-    })
-    if (!res.body) return Response.json({ error: 'no stream' }, { status: 502 })
+  // Detached: NOT awaited. This container is a persistent Railway service
+  // (not serverless), so this keeps running after the response below is
+  // sent, bounded only by its own AbortSignal.timeout — decoupling this
+  // route's response time from the real, unpredictable generation duration.
+  void runProductGeneration(base, message, designSystemId, productSlug, idea, name)
 
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buf = '', chatId: string | null = null, completed = false
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buf += decoder.decode(value, { stream: true })
-      const events = buf.split('\n\n'); buf = events.pop() || ''
-      for (const ev of events) {
-        const line = ev.split('\n').find((l) => l.startsWith('data:'))
-        if (!line) continue
-        let p: any; try { p = JSON.parse(line.slice(5).trim()) } catch { continue }
-        if (p.type === 'init' && p.chatId) chatId = p.chatId
-        // Real bug (customer-reported, Meridian, 2026-09-10, issue #629): this
-        // loop used to break on the FIRST 'refresh'/'files' event, which fires
-        // repeatedly on every mid-generation chunk (chat-ws throttles partial
-        // 'refresh' events every 500ms, and streams intermediate agent 'files'
-        // too) — long before chat-ws's obedience-repair / closePrimitiveCompl-
-        // ianceGap retry or its final ZeroDB persist ever run (those all sit
-        // right before the ONE 'complete' event, much later in chat-ws). This
-        // route registered the app and returned a chatId pointing at that
-        // early, unrepaired, sometimes not-yet-persisted draft — explaining
-        // why the served product never showed a real primitive call: it was
-        // never given the chance. Wait for 'complete' (both the degraded and
-        // success paths emit it) so the caller only ever sees the FINAL,
-        // fully-repaired, fully-persisted generation.
-        if (p.type === 'complete') completed = true
-      }
-      if (chatId && completed) break
-    }
-    if (!chatId) return Response.json({ error: 'no chatId' }, { status: 502 })
-
-    await registerApp({ slug: productSlug, chatId, name, track: 'company' })
-    logBuildOutcome({
-      slug: productSlug, idea, brand: name, track: 'company', chatId,
-      codeStatus: completed ? 'success' : 'partial', converted: false,
-    }).catch(() => {})
-    return Response.json({ chatId, productSlug })
-  } catch (e: any) {
-    logBuildOutcome({ slug: productSlug, idea, brand: name, track: 'company', codeStatus: 'failure', converted: false }).catch(() => {})
-    return Response.json({ error: 'generation_failed', detail: String(e?.message || e).slice(0, 120) }, { status: 502 })
-  }
+  return Response.json({ status: 'processing', productSlug })
 }
