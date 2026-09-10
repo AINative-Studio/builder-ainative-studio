@@ -47,7 +47,7 @@ export interface DesignSystem {
   }
   radius: number
   shadows: 'none' | 'soft' | 'hard' | 'glow' | 'neu'
-  imageTreatment: 'none' | 'grayscale' | 'duotone' | 'halftone'
+  imageTreatment: 'none' | 'grayscale' | 'duotone' | 'halftone' | 'cool' | 'contrast' | 'phosphor' | 'warm'
   /** True when this system is tied to a specific AINative primitive's identity
    *  rather than a general-purpose aesthetic (real theme.json field). */
   brandBound: boolean

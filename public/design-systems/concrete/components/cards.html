@@ -1,0 +1,26 @@
+<!-- @dsCard group="Components" name="Cards" subtitle="Content cards and elevation steps" viewport="640x360" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Concrete — Cards</title>
+<link rel="stylesheet" href="../styles.css" />
+<style>
+.demo { max-width: 640px; margin: 0 auto; padding: var(--space-6) var(--space-4) var(--space-8); }
+.demo-head { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.55; margin: var(--space-6) 0 var(--space-3); }
+.demo-head:first-child { margin-top: 0; }
+.row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-3); }
+.note { font-size: 12px; opacity: 0.6; max-width: 60ch; }
+</style>
+</head>
+<body>
+<main class="demo">
+<div class="grid-3">
+<div class="card"><span class="card-kicker">Template</span><div class="card-title">Landing page</div><p class="card-body">Hero, features, pricing and a footer, wired to your content.</p><div class="card-meta">Updated today</div></div>
+<div class="card elev-md"><span class="card-kicker">Template</span><div class="card-title">Agent console</div><p class="card-body">Runs, traces, memory and a composer.</p><div class="card-meta">Elevated</div></div>
+<div class="card"><figure class="grayscale"><img src="../../../assets/photo.jpg" alt="" style="aspect-ratio: 4/3; object-fit: cover" /></figure><div class="card-title">With imagery</div><div class="card-meta">Photo treatment applied</div></div>
+</div>
+</main></body></html>
