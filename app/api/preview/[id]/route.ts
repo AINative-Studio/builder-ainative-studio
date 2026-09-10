@@ -1301,6 +1301,25 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
         .filter(([name, comp]) => !comp)
         .map(([name]) => name);
 
+      // Real bug found live (Dispatch, 2026-09-11, customer-reported): this
+      // destructure only ever created BLOCK-SCOPED consts in the setup
+      // script — never assigned onto window. The compiled APP runs in a
+      // SEPARATE global-scope <script> tag (same architectural fact #197
+      // already fixed for Recharts a few lines above — see that fix's own
+      // "CRITICAL: the compiled app runs in a SEPARATE global-scope
+      // <script>" comment), so Card/Button/Input/Label/Dialog/etc. were
+      // genuinely undefined the instant a generated component (e.g.
+      // Dispatch's Customers()) referenced them as JSX tags — a real
+      // ReferenceError-class throw, not a hallucinated-import problem.
+      // Confirmed live: Customers() (uses Card/CardContent/Button/Dialog/
+      // DialogContent/Label/Input/Separator) rendered as a completely blank,
+      // empty area; Schedule() (uses none of these) rendered correctly.
+      // Same fix as #197: copy every real (non-falsy) shadcn component onto
+      // window, mirroring _rechartsGlobals exactly.
+      Object.keys(allComponents).forEach(function(k) {
+        if (allComponents[k] && !window[k]) window[k] = allComponents[k];
+      });
+
       console.log('[Preview] Shadcn components loaded:', {
         Button: !!Button,
         Card: !!Card,

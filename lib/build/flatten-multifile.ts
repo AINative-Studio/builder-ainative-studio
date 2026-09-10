@@ -69,10 +69,70 @@ function baseName(path: string): string {
   return path.replace(/\.[jt]sx?$/, '').split('/').pop() || path
 }
 
-/** Strip ALL import statements and leading `export ` keywords from a file body. */
+/**
+ * Package names whose imported bindings are ACTUALLY pre-bound as bare
+ * globals by the preview scaffold before this flattened code runs (confirmed
+ * via app/api/preview/[id]/route.ts: React/hooks are assigned onto `window`
+ * directly; `lucide-react` icon names are bound via a `_getIcon` walk; the
+ * fixed `recharts` chart-component names are destructured from
+ * `window.Recharts`). Stripping an import from one of these is genuinely
+ * safe — the names it would have bound already exist by the time this code
+ * executes.
+ */
+const GLOBALLY_PROVIDED_PACKAGES = new Set(['react', 'react-dom', 'lucide-react', 'recharts'])
+
+/**
+ * Real bug found live (Dispatch, 2026-09-11): stripImportsAndExports used to
+ * strip EVERY import line unconditionally, including named imports from
+ * arbitrary external packages (e.g. `import { Card, Button, Dialog, Input }
+ * from '@radix-ui/react-dialog'` — a real generation's hallucinated import,
+ * naming shadcn/ui-style components @radix-ui/react-dialog doesn't actually
+ * export). The doc comment's claim that "external imports are already
+ * provided as globals" is only true for GLOBALLY_PROVIDED_PACKAGES above —
+ * everything else has NOTHING backing those names. The flattened code then
+ * referenced Card/Button/Dialog/etc. as bare, wholly undeclared identifiers,
+ * threw at render, and the ErrorBoundary swallowed it into the degraded
+ * "Refining your app" state — the real UI never painted, matching the
+ * customer-reported "basic UI components are missing."
+ *
+ * Fixed the same way #308 already handles a DANGLING local import (a
+ * generator-side mistake this flattener can't correct, but CAN degrade
+ * gracefully from): any named import from a package NOT in
+ * GLOBALLY_PROVIDED_PACKAGES gets each of its named bindings replaced with a
+ * harmless stub (a no-op component for PascalCase names, `undefined` for
+ * anything else) instead of silently vanishing — better a missing/blank
+ * section than the whole app throwing before anything renders.
+ */
 function stripImportsAndExports(code: string): string {
-  return code
+  const stubs: string[] = []
+  const stubbed = new Set<string>()
+
+  const withStubbedExternals = code.replace(
+    /^\s*import\s+(?:(\w+)\s*,\s*)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"];?\s*$/gm,
+    (full, defaultName: string | undefined, named: string, pkg: string) => {
+      if (GLOBALLY_PROVIDED_PACKAGES.has(pkg) || pkg.startsWith('./') || pkg.startsWith('../')) return full
+      const names = [
+        ...(defaultName ? [defaultName] : []),
+        ...named.split(',').map((n) => n.trim().split(/\s+as\s+/).pop()!.trim()).filter(Boolean),
+      ]
+      for (const name of names) {
+        if (stubbed.has(name)) continue
+        stubbed.add(name)
+        stubs.push(
+          /^[A-Z]/.test(name)
+            ? `function ${name}(props){ return (props && props.children) || null; } // stub: '${pkg}' import not backed by the preview scaffold`
+            : `const ${name} = undefined; // stub: '${pkg}' import not backed by the preview scaffold`,
+        )
+      }
+      return ''
+    },
+  )
+
+  const stripped = withStubbedExternals
     // whole import lines (single and multi-line handled by the `from '...'` anchor)
+    // — local/relative and now-stubbed-external ones are already gone above;
+    // this still needs to remove the GLOBALLY_PROVIDED_PACKAGES imports and
+    // any bare default-only import this session's regex above didn't match.
     .replace(/^\s*import\s+[^\n]*?from\s*['"][^'"]+['"];?\s*$/gm, '')
     .replace(/^\s*import\s+['"][^'"]+['"];?\s*$/gm, '')
     // `export default function X` → `function X` ; `export default X` dropped later
@@ -82,6 +142,8 @@ function stripImportsAndExports(code: string): string {
     // a trailing `export default Foo;` line (component already defined above)
     .replace(/^\s*export\s+default\s+\w+\s*;?\s*$/gm, '')
     .trim()
+
+  return stubs.length ? [...stubs, stripped].join('\n') : stripped
 }
 
 /** Does the App code import any LOCAL (relative) modules? */

@@ -78,6 +78,65 @@ describe('flatten-multifile (#308)', () => {
     expect(out).not.toMatch(/import\s+Cart\s+from/) // import removed → no throw
   })
 
+  /**
+   * Real bug found live (Dispatch, 2026-09-11, customer-reported): a real
+   * generation imported shadcn/ui-style components from '@radix-ui/react-
+   * dialog' — a package that genuinely exports Dialog/DialogContent/etc. but
+   * NOT Card/CardContent/Button/Label/Input/Separator. The OLD
+   * stripImportsAndExports silently deleted the ENTIRE import line
+   * unconditionally (same treatment as react/recharts/lucide-react, which
+   * really ARE pre-bound globals) — leaving Card/Button/Input/Label/
+   * Separator as bare, wholly undeclared identifiers used throughout the
+   * JSX. React threw on render; the ErrorBoundary caught it into the
+   * degraded "Refining your app" state, and the real UI never painted —
+   * confirmed live via browser_validate against the deployed preview
+   * (assertion failed: no working UI rendered). This is the customer's
+   * exact "basic UI components are missing" report.
+   */
+  it('stubs named imports from a package NOT actually backed by preview globals (Dispatch/@radix-ui bug)', () => {
+    const radixImport = [
+      '// --- FILE: src/App.tsx ---',
+      "import Header from './components/Header'",
+      "import { Card, CardContent, Separator, Button, Dialog, DialogContent, Label, Input } from '@radix-ui/react-dialog'",
+      'export default function App(){ return (<div><Header/><Card><CardContent><Input/><Label>Name</Label><Button>Go</Button></CardContent></Card></div>) }',
+      '// --- FILE: src/components/Header.tsx ---',
+      'export default function Header(){ return <header>H</header> }',
+    ].join('\n')
+    const out = flattenMultiFile(radixImport)
+    // The import line itself must be gone (it would throw — the package
+    // really doesn't export these names) — but every name it WOULD have
+    // bound must now be a real, defined stub, not silently missing.
+    expect(out).not.toMatch(/from\s*['"]@radix-ui\/react-dialog['"]/)
+    expect(out).toMatch(/function Card\b/)
+    expect(out).toMatch(/function CardContent\b/)
+    expect(out).toMatch(/function Button\b/)
+    expect(out).toMatch(/function Input\b/)
+    expect(out).toMatch(/function Label\b/)
+    expect(out).toMatch(/stub:.*@radix-ui\/react-dialog/)
+    // A real parse must succeed — no ReferenceError-class failure at runtime.
+    expect(() => babelParse(out, { sourceType: 'module', plugins: ['jsx', 'typescript'] })).not.toThrow()
+  })
+
+  it('does NOT stub imports from packages the preview scaffold genuinely backs (react, recharts, lucide-react)', () => {
+    const safeImports = [
+      '// --- FILE: src/App.tsx ---',
+      "import Header from './components/Header'",
+      "import React from 'react'",
+      "import { BarChart, Bar } from 'recharts'",
+      "import { Home, Settings } from 'lucide-react'",
+      'export default function App(){ return (<div><Header/><BarChart><Bar/></BarChart></div>) }',
+      '// --- FILE: src/components/Header.tsx ---',
+      'export default function Header(){ return <header>H</header> }',
+    ].join('\n')
+    const out = flattenMultiFile(safeImports)
+    expect(out).not.toMatch(/from\s*['"]react['"]/)
+    expect(out).not.toMatch(/from\s*['"]recharts['"]/)
+    expect(out).not.toMatch(/from\s*['"]lucide-react['"]/)
+    // No stub function generated for these — the real preview scaffold
+    // genuinely provides BarChart/Bar/Home/Settings as pre-bound globals.
+    expect(out).not.toMatch(/stub:/)
+  })
+
   it('handles transitive local imports (App→Grid→Card)', () => {
     const nested = [
       '// --- FILE: src/App.tsx ---',
