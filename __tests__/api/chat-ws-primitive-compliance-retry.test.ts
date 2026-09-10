@@ -38,7 +38,7 @@ describe('chat-ws wires the targeted primitive-compliance retry (2026-09-10, #62
   it('defines closePrimitiveComplianceGap as a bounded retry loop (maxAttempts default 2)', () => {
     const idx = source.indexOf('async function closePrimitiveComplianceGap')
     expect(idx).toBeGreaterThan(-1)
-    const nearby = source.slice(idx, idx + 400)
+    const nearby = source.slice(idx, idx + 900)
     expect(nearby).toMatch(/maxAttempts = 2/)
   })
 
@@ -70,5 +70,27 @@ describe('chat-ws wires the targeted primitive-compliance retry (2026-09-10, #62
     expect(multiFileIdx).toBeGreaterThan(-1)
     const nearbyMultiFile = source.slice(multiFileIdx, multiFileIdx + 900)
     expect(nearbyMultiFile).toMatch(/closePrimitiveComplianceGap/)
+  })
+
+  /**
+   * Durable tracing (#624 follow-up): live verification via `railway logs`
+   * proved unreliable — the CLI showed no evidence the retry had run for a
+   * real generation, even after the retry was confirmed correct by source
+   * inspection and passing unit tests. Each call site now passes
+   * responseId + a distinct branch label so a real verification can query
+   * /api/build/primitive-compliance-trace instead of racing a log tail.
+   */
+  it('imports traceComplianceRetry and passes a distinct branch label + chatId at each of the 3 call sites', () => {
+    expect(source).toMatch(/import \{ traceComplianceRetry \} from '@\/lib\/build\/primitive-compliance-trace'/)
+    const calls = [...source.matchAll(/closePrimitiveComplianceGap\(\s*finalContent, message, validRole, obedienceOptions, selectedGenModel,\s*\n\s*responseId, '(non-combined|combined-single-file|combined-multi-file)',/g)]
+    const branches = calls.map((m) => m[1]).sort()
+    expect(branches).toEqual(['combined-multi-file', 'combined-single-file', 'non-combined'])
+  })
+
+  it('closePrimitiveComplianceGap calls traceComplianceRetry on every exit path via a shared finish() wrapper', () => {
+    const idx = source.indexOf('async function closePrimitiveComplianceGap')
+    const nearby = source.slice(idx, idx + 2500)
+    expect(nearby).toMatch(/const finish = \(result:/)
+    expect(nearby).toMatch(/traceComplianceRetry\(\{/)
   })
 })
