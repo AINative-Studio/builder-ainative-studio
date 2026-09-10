@@ -135,3 +135,61 @@ describe('multi-file import injection: no cross-module duplicates (#64)', () => 
     expect((app.match(/import[^\n]*\bLineChart\b/g) || []).length).toBe(1)
   })
 })
+
+/**
+ * Real bug (customer-reported, "agentis", 2026-09-10): injectMissingImports
+ * always wrote the SAME hardcoded 'from ./components/aikit' into EVERY file,
+ * regardless of where that file actually lives in the tree. That's only
+ * correct for a file at the project root (e.g. /src/App.tsx) — a file the
+ * model placed INSIDE components/ itself needs a SIBLING import ('./aikit'),
+ * not another './components/' hop. The exact reported error:
+ * "Could not find module in path: './components/aikit' relative to
+ * '/components/Header.tsx'" — Sandpack was looking for a nonexistent nested
+ * components/components/aikit. Now computed per-file from that file's own
+ * path depth (parseMultiFileOutput passes each file's real path through).
+ */
+describe('multi-file import injection: components/ import path resolves per-file depth (2026-09-10)', () => {
+  it('a file living INSIDE components/ gets a sibling import, not another components/ hop', () => {
+    const raw = [
+      '// --- FILE: /src/App.tsx ---',
+      "import React from 'react'",
+      "import Header from './components/Header'",
+      'export default function App(){ return <Header/>; }',
+      '// --- FILE: /src/components/Header.tsx ---',
+      "import React from 'react'",
+      'export default function Header(){ return <AIKitHeader title="App"/>; }',
+    ].join('\n')
+    const files = parseMultiFileOutput(raw)
+    const header = files['/src/components/Header.tsx']
+    expect(header).toBeDefined()
+    expect(header).toMatch(/from ['"]\.\/aikit['"]/)
+    expect(header).not.toMatch(/from ['"]\.\/components\/aikit['"]/)
+  })
+
+  it('a root-level file still gets the original ./components/aikit path', () => {
+    const raw = [
+      '// --- FILE: /src/App.tsx ---',
+      "import React from 'react'",
+      'export default function App(){ return <AIKitHeader title="App"/>; }',
+    ].join('\n')
+    const files = parseMultiFileOutput(raw)
+    const app = files['/src/App.tsx']
+    expect(app).toMatch(/from ['"]\.\/components\/aikit['"]/)
+  })
+
+  it('an @/components/ alias inside a components/-nested file also resolves to a sibling import', () => {
+    const raw = [
+      '// --- FILE: /src/App.tsx ---',
+      "import React from 'react'",
+      "import Header from './components/Header'",
+      'export default function App(){ return <Header/>; }',
+      '// --- FILE: /src/components/Header.tsx ---',
+      "import React from 'react'",
+      "import { Button } from '@/components/ui/button'",
+      'export default function Header(){ return <Button/>; }',
+    ].join('\n')
+    const files = parseMultiFileOutput(raw)
+    const header = files['/src/components/Header.tsx']
+    expect(header).toMatch(/from ['"]\.\/ui\/button['"]/)
+  })
+})

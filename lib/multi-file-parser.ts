@@ -54,7 +54,7 @@ export function parseMultiFileOutput(rawOutput: string, userPrompt?: string): Re
   // injection happen here — downstream of it (builder#64).
   for (const [path, content] of Object.entries(files)) {
     if (path.endsWith('.tsx') || path.endsWith('.jsx')) {
-      files[path] = sanitizeForSandpack(injectMissingImports(content))
+      files[path] = sanitizeForSandpack(injectMissingImports(content, path))
     }
   }
 
@@ -184,9 +184,38 @@ function collectImportedNames(code: string): Set<string> {
   return names
 }
 
-function injectMissingImports(code: string): string {
+/**
+ * Real bug (customer-reported, 2026-09-10, "agentis"): every generated file
+ * got the SAME hardcoded relative import — 'from ./components/aikit' — no
+ * matter where in the tree that file actually lives. That's only correct for
+ * a file at the project root (e.g. /src/App.tsx). A file the model placed
+ * INSIDE components/ itself (e.g. /src/components/Header.tsx, or the bare
+ * /components/Header.tsx this bug was reported from) needs a SIBLING import
+ * ('./aikit'), not another './components/' hop — the literal broken path
+ * produced was './components/aikit' relative to '/components/Header.tsx',
+ * i.e. looking for a nonexistent nested components/components/aikit.
+ * Computed here once per file from its own path's directory depth, applied
+ * to every place this module writes a 'components/'-relative import path
+ * (the @/ alias rewrites below, and the AIKit auto-injection further down).
+ */
+function relativeComponentsPrefix(filePath: string): string {
+  const dir = filePath.replace(/^\//, '').split('/').slice(0, -1)
+  const idx = dir.lastIndexOf('components')
+  // The file's own directory IS (or is inside) components/ — sibling import.
+  if (idx !== -1) {
+    const hops = dir.length - 1 - idx
+    return hops === 0 ? './' : '../'.repeat(hops)
+  }
+  // The file lives elsewhere in the tree (src/, src/pages/, etc.) — descend
+  // into components/ from here, same as the project-root case.
+  return './components/'
+}
+
+function injectMissingImports(code: string, filePath = '/src/App.tsx'): string {
+  const componentsPrefix = relativeComponentsPrefix(filePath)
+
   // Fix @/components/ alias to relative paths (Sandpack doesn't support aliases)
-  code = code.replace(/from ['"]@\/components\//g, "from './components/")
+  code = code.replace(/from ['"]@\/components\//g, `from '${componentsPrefix}`)
   code = code.replace(/from ['"]@\/lib\//g, "from './lib/")
 
   // Fix any remaining @/ aliases (e.g. @/utils, @/hooks, @/types)
@@ -205,7 +234,7 @@ function injectMissingImports(code: string): string {
     new RegExp(`<${c}[\\s/>]`).test(code) && !alreadyImported.has(c)
   )
   if (usedAikit.length > 0) {
-    imports.push(`import { ${usedAikit.join(', ')} } from './components/aikit'`)
+    imports.push(`import { ${usedAikit.join(', ')} } from '${componentsPrefix}aikit'`)
     usedAikit.forEach(c => alreadyImported.add(c))
   }
 
