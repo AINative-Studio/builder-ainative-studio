@@ -44,7 +44,7 @@ describe('chat-ws wires the targeted primitive-compliance retry (2026-09-10, #62
 
   it('detects multi-file input and asks for the SAME marker-format output back, not a single-file collapse', () => {
     const idx = source.indexOf('async function closePrimitiveComplianceGap')
-    const nearby = source.slice(idx, idx + 4500)
+    const nearby = source.slice(idx, idx + 6500)
     expect(nearby).toMatch(/isMultiFile\s*=\s*\/\\\/\\\/\\s\*---\\s\*FILE:\//)
     expect(nearby).toMatch(/FILE: src\/App\.tsx/)
     // Rejects a candidate that lost the multi-file structure — never
@@ -89,8 +89,14 @@ describe('chat-ws wires the targeted primitive-compliance retry (2026-09-10, #62
 
   it('closePrimitiveComplianceGap calls traceComplianceRetry on every exit path via a shared finish() wrapper', () => {
     const idx = source.indexOf('async function closePrimitiveComplianceGap')
-    const nearby = source.slice(idx, idx + 2500)
-    expect(nearby).toMatch(/const finish = \(result:/)
-    expect(nearby).toMatch(/traceComplianceRetry\(\{/)
+    const nearby = source.slice(idx, idx + 4000)
+    // finish() is async and AWAITS the trace write (2026-09-10 fix): the
+    // earlier fire-and-forget version returned before traceComplianceRetry's
+    // POST had finished, so a real generation's trace row was routinely lost
+    // even though the retry itself ran and closed a real gap (confirmed live
+    // against Meridian: retry adopted, ZeroDB generation row had the real
+    // primitive calls, but the trace endpoint still came back empty).
+    expect(nearby).toMatch(/const finish = async \(result:/)
+    expect(nearby).toMatch(/await traceComplianceRetry\(\{/)
   })
 })
