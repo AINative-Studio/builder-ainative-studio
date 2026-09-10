@@ -1,0 +1,31 @@
+<!-- @dsCard group="Components" name="Forms" subtitle="Inputs, radios and the segmented control" viewport="640x420" -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Chrome — Forms</title>
+<link rel="stylesheet" href="../styles.css" />
+<style>
+.demo { max-width: 640px; margin: 0 auto; padding: var(--space-6) var(--space-4) var(--space-8); }
+.demo-head { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.55; margin: var(--space-6) 0 var(--space-3); }
+.demo-head:first-child { margin-top: 0; }
+.row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-3); }
+.note { font-size: 12px; opacity: 0.6; max-width: 60ch; }
+</style>
+</head>
+<body>
+<main class="demo">
+<div class="grid-2">
+<div class="field"><label for="n">Project name</label><input id="n" class="input" placeholder="e.g. Northwind" /></div>
+<div class="field"><label for="e">Owner email</label><input id="e" class="input" value="ana@ainative.studio" /></div>
+</div>
+<div class="demo-head">Description</div>
+<textarea class="input" placeholder="What are you building?"></textarea>
+<div class="demo-head">Visibility</div>
+<div class="row" style="gap: var(--space-4)"><label class="radio"><input type="radio" name="v" checked /><span class="dot"></span>Private</label><label class="radio"><input type="radio" name="v" /><span class="dot"></span>Team</label><label class="radio"><input type="radio" name="v" /><span class="dot"></span>Public</label></div>
+<div class="demo-head">Model</div>
+<div class="seg"><label class="seg-opt"><input type="radio" name="f" checked />Fast</label><label class="seg-opt"><input type="radio" name="f" />Balanced</label><label class="seg-opt"><input type="radio" name="f" />Reasoning</label></div>
+</main></body></html>
