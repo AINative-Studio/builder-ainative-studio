@@ -15,6 +15,7 @@ import { validateOutput, validateFileImports } from '@/lib/build/output-validato
 import { buildValidationFallbackComponent } from '@/lib/validation-fallback'
 import { runValidationRetryLoop, buildRepairPrompt, extractErrorWindow } from '@/lib/generation-retry'
 import { checkObedience, buildObediencePrompt, narrowToPrimitiveComplianceOnly, evaluatePrimitiveComplianceRetry } from '@/lib/build/obedience-gate'
+import { traceComplianceRetry } from '@/lib/build/primitive-compliance-trace'
 import { buildRagContext } from '@/lib/build/rag-context'
 import { shouldDecompose, buildDecompositionPrompt, buildFixAndDecomposePrompt } from '@/lib/build/decomposition'
 import { selectModelForComplexity, modelSelectionReport } from '@/lib/build/model-select'
@@ -202,9 +203,20 @@ async function closePrimitiveComplianceGap(
   validRole: Parameters<typeof checkObedience>[2],
   obedienceOptions: Parameters<typeof checkObedience>[3],
   selectedGenModel: string | undefined,
+  // #624 follow-up: chatId + branch are for durable tracing ONLY (see
+  // lib/build/primitive-compliance-trace.ts's doc comment) — live
+  // verification via `railway logs` proved unreliable (no evidence the
+  // retry even ran for a real generation, despite correct, unit-tested
+  // source), so its outcome is now recorded in a queryable ZeroDB row
+  // instead of only a console.log line.
+  chatId: string,
+  branch: 'non-combined' | 'combined-single-file' | 'combined-multi-file',
   maxAttempts = 2,
 ): Promise<{ code: string; closed: boolean }> {
   let current = code
+  let attemptsRun = 0
+  let gapsBefore: string[] = []
+  let gapsAfter: string[] = []
   // Real gap found live (issue #624 follow-up, 2026-09-10): the FIRST version
   // of this function always asked for `\`\`\`jsx\`\`\`` single-file output —
   // for a real product idea, the model routinely goes multi-file
@@ -216,9 +228,19 @@ async function closePrimitiveComplianceGap(
   // is now safe to run on multi-file content too, instead of being scoped
   // out of the more common case for a real product.
   const isMultiFile = /\/\/\s*---\s*FILE:/.test(current)
+  const finish = (result: { code: string; closed: boolean }) => {
+    traceComplianceRetry({
+      chatId, branch, isMultiFile, attemptsRun,
+      gapsBefore, gapsAfter: gapsAfter.length ? gapsAfter : gapsBefore,
+      closed: result.closed,
+    }).catch(() => {})
+    return result
+  }
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    attemptsRun = attempt
     const before = checkObedience(current, message, validRole, obedienceOptions)
-    if (before.primitiveComplianceGaps.length === 0) return { code: current, closed: true }
+    gapsBefore = before.primitiveComplianceGaps
+    if (before.primitiveComplianceGaps.length === 0) return finish({ code: current, closed: true })
 
     console.log(`🔌 Primitive-compliance gap still open (attempt ${attempt}/${maxAttempts}, ${isMultiFile ? 'multi-file' : 'single-file'}): ${before.primitiveComplianceGaps.join(', ')}`)
     const narrowed = narrowToPrimitiveComplianceOnly(before.primitiveComplianceGaps)
@@ -259,18 +281,19 @@ async function closePrimitiveComplianceGap(
       continue
     }
     const after = checkObedience(validated.code, message, validRole, obedienceOptions)
+    gapsAfter = after.primitiveComplianceGaps
     const { madeProgress, closed } = evaluatePrimitiveComplianceRetry(before.primitiveComplianceGaps, after.primitiveComplianceGaps)
     if (madeProgress) {
       console.log(`🔌 Primitive-compliance retry ${attempt} closed ${before.primitiveComplianceGaps.length - after.primitiveComplianceGaps.length} gap(s) — adopting.`)
       current = validated.code
-      if (closed) return { code: current, closed: true }
+      if (closed) return finish({ code: current, closed: true })
     } else {
       console.log(`🔌 Primitive-compliance retry ${attempt} made no progress — keeping prior version, stopping.`)
       break
     }
   }
   const final = checkObedience(current, message, validRole, obedienceOptions)
-  return { code: current, closed: final.primitiveComplianceGaps.length === 0 }
+  return finish({ code: current, closed: final.primitiveComplianceGaps.length === 0 })
 }
 
 // Fallback chains (used when Claude is unavailable)
@@ -1550,6 +1573,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                   if (after.primitiveComplianceGaps.length > 0) {
                     const closeResult = await closePrimitiveComplianceGap(
                       finalContent, message, validRole, obedienceOptions, selectedGenModel,
+                      responseId, 'combined-multi-file',
                     )
                     if (closeResult.code !== finalContent) {
                       finalContent = closeResult.code
@@ -1567,6 +1591,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                   if (after.primitiveComplianceGaps.length > 0) {
                     const closeResult = await closePrimitiveComplianceGap(
                       finalContent, message, validRole, obedienceOptions, selectedGenModel,
+                      responseId, 'combined-single-file',
                     )
                     if (closeResult.code !== finalContent) {
                       finalContent = closeResult.code
@@ -1624,6 +1649,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                   if (after.primitiveComplianceGaps.length > 0) {
                     const closeResult = await closePrimitiveComplianceGap(
                       finalContent, message, validRole, obedienceOptions, selectedGenModel,
+                      responseId, 'non-combined',
                     )
                     if (closeResult.code !== finalContent) {
                       finalContent = closeResult.code
