@@ -33,12 +33,24 @@ function req(body: unknown) {
   return { json: async () => body, url: 'https://builder.ainative.studio/api/build/company-product' } as any
 }
 
+/**
+ * Real bug found live (Meridian, 2026-09-10, issue #629): the route used to
+ * break out of this SSE loop on the FIRST 'refresh'/'files' event — which
+ * chat-ws fires repeatedly during mid-generation streaming, well before its
+ * obedience-repair retry and final ZeroDB persist run right before the ONE
+ * 'complete' event. That returned a chatId pointing at an early, unrepaired
+ * draft. Fixtures now emit intermediate 'refresh'/'files' events AND a final
+ * 'complete', matching chat-ws's real event order, so a regression back to
+ * "stop at the first refresh" would be caught here.
+ */
 function sseBody(chatId: string) {
   const encoder = new TextEncoder()
   return new ReadableStream({
     start(controller) {
       controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'init', chatId })}\n\n`))
       controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'refresh' })}\n\n`))
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'files', files: {} })}\n\n`))
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'complete', chatId })}\n\n`))
       controller.close()
     },
   })
@@ -151,5 +163,43 @@ describe('POST /api/build/company-product', () => {
     const [, init] = fetchMock.mock.calls[0]
     const sentBody = JSON.parse(String(init.body))
     expect(sentBody.message.toLowerCase()).not.toMatch(/\bmatch(ing)?\b/)
+  })
+
+  /**
+   * Real bug found live (Meridian, 2026-09-10, issue #629): breaking on the
+   * FIRST 'refresh'/'files' event registered the app against an early,
+   * unrepaired draft — before chat-ws's obedience-repair / closePrimitive-
+   * ComplianceGap retry, and before its final ZeroDB persist, both of which
+   * run right before the ONE 'complete' event. Multiple intermediate
+   * refresh/files events (mid-generation streaming chunks) must NOT trigger
+   * an early return — only 'complete' may.
+   */
+  it('waits for the complete event, not just the first refresh/files event, before registering the app', async () => {
+    const encoder = new TextEncoder()
+    let registeredAt: 'too-early' | 'after-complete' | null = null
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'init', chatId: 'prod-chat-8' })}\n\n`))
+        // Several intermediate mid-generation signals, exactly like chat-ws's
+        // real throttled 'refresh' + streamed agent 'files' events.
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'refresh' })}\n\n`))
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'files', files: { '/App.tsx': 'partial' } })}\n\n`))
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'refresh' })}\n\n`))
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'complete', chatId: 'prod-chat-8' })}\n\n`))
+        controller.close()
+      },
+    })
+    h.registerApp.mockImplementation(async () => {
+      registeredAt = 'after-complete'
+      return true
+    })
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({ body }) as any)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await POST(req({ idea: 'a sales pipeline revenue forecaster', slug: 'meridian8', name: 'Meridian' }))
+    const data = await res.json()
+
+    expect(data.chatId).toBe('prod-chat-8')
+    expect(registeredAt).toBe('after-complete')
   })
 })

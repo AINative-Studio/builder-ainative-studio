@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
 
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
-    let buf = '', chatId: string | null = null, sawRefresh = false
+    let buf = '', chatId: string | null = null, completed = false
     for (;;) {
       const { done, value } = await reader.read()
       if (done) break
@@ -99,16 +99,29 @@ export async function POST(request: NextRequest) {
         if (!line) continue
         let p: any; try { p = JSON.parse(line.slice(5).trim()) } catch { continue }
         if (p.type === 'init' && p.chatId) chatId = p.chatId
-        if (p.type === 'refresh' || p.type === 'files') sawRefresh = true
+        // Real bug (customer-reported, Meridian, 2026-09-10, issue #629): this
+        // loop used to break on the FIRST 'refresh'/'files' event, which fires
+        // repeatedly on every mid-generation chunk (chat-ws throttles partial
+        // 'refresh' events every 500ms, and streams intermediate agent 'files'
+        // too) — long before chat-ws's obedience-repair / closePrimitiveCompl-
+        // ianceGap retry or its final ZeroDB persist ever run (those all sit
+        // right before the ONE 'complete' event, much later in chat-ws). This
+        // route registered the app and returned a chatId pointing at that
+        // early, unrepaired, sometimes not-yet-persisted draft — explaining
+        // why the served product never showed a real primitive call: it was
+        // never given the chance. Wait for 'complete' (both the degraded and
+        // success paths emit it) so the caller only ever sees the FINAL,
+        // fully-repaired, fully-persisted generation.
+        if (p.type === 'complete') completed = true
       }
-      if (chatId && sawRefresh) break
+      if (chatId && completed) break
     }
     if (!chatId) return Response.json({ error: 'no chatId' }, { status: 502 })
 
     await registerApp({ slug: productSlug, chatId, name, track: 'company' })
     logBuildOutcome({
       slug: productSlug, idea, brand: name, track: 'company', chatId,
-      codeStatus: sawRefresh ? 'success' : 'partial', converted: false,
+      codeStatus: completed ? 'success' : 'partial', converted: false,
     }).catch(() => {})
     return Response.json({ chatId, productSlug })
   } catch (e: any) {
