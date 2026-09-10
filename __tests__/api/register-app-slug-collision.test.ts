@@ -114,6 +114,52 @@ describe('POST /api/build/register-app — slug collision handling', () => {
     expect(json.slug).toBe('shared-name-2')
   })
 
+  /**
+   * Real gap found live (Meridian, 2026-09-10): the slug's own AUTHENTICATED
+   * OWNER regenerating their own company (a new chatId every time) got
+   * auto-suffixed to "{slug}-2" instead of updating their real, live slug —
+   * this route had no way to recognize "this IS the same founder redeploying
+   * their own build," only "same chatId as before."
+   */
+  it('lets the AUTHENTICATED, CONFIRMED owner overwrite their own slug with a new chatId', async () => {
+    h.resolveApp.mockImplementation(async (slug: string) =>
+      slug === 'meridian'
+        ? { slug: 'meridian', chatId: 'old-chat', ownerEmail: 'admin@ainative.studio', name: 'Meridian', track: 'company' }
+        : null,
+    )
+    h.auth.mockResolvedValue({ user: { email: 'admin@ainative.studio' } })
+    const res = await POST(req({ slug: 'meridian', chatId: 'new-chat', name: 'Meridian', track: 'company' }))
+    const json = await res.json()
+    expect(json.slug).toBe('meridian')
+    expect(json.slugChanged).toBeNull()
+    expect(h.registerApp).toHaveBeenCalledWith(expect.objectContaining({ slug: 'meridian', chatId: 'new-chat' }))
+  })
+
+  it('does NOT let a DIFFERENT authenticated user overwrite someone else\'s owned slug', async () => {
+    h.resolveApp.mockImplementation(async (slug: string) =>
+      slug === 'meridian'
+        ? { slug: 'meridian', chatId: 'old-chat', ownerEmail: 'founder@example.com', name: 'Meridian', track: 'company' }
+        : null,
+    )
+    h.auth.mockResolvedValue({ user: { email: 'someone-else@example.com' } })
+    const res = await POST(req({ slug: 'meridian', chatId: 'new-chat', name: 'Meridian', track: 'company' }))
+    const json = await res.json()
+    expect(json.slug).toBe('meridian-2')
+    expect(json.slugChanged).toBe('meridian-2')
+  })
+
+  it('does NOT let an UNAUTHENTICATED caller overwrite an owned slug, even if they pass a matching email claim elsewhere', async () => {
+    h.resolveApp.mockImplementation(async (slug: string) =>
+      slug === 'meridian'
+        ? { slug: 'meridian', chatId: 'old-chat', ownerEmail: 'admin@ainative.studio', name: 'Meridian', track: 'company' }
+        : null,
+    )
+    h.auth.mockResolvedValue(null) // no session at all
+    const res = await POST(req({ slug: 'meridian', chatId: 'new-chat', name: 'Meridian', track: 'company' }))
+    const json = await res.json()
+    expect(json.slug).toBe('meridian-2')
+  })
+
   it('never fails registration when the collision check itself throws', async () => {
     h.resolveApp.mockRejectedValue(new Error('zerodb timeout'))
     const res = await POST(req({ slug: 'acme', chatId: 'chat-1', name: 'Acme', track: 'app' }))
