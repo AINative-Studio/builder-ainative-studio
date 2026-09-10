@@ -80,11 +80,32 @@ describe('chat-ws wires the targeted primitive-compliance retry (2026-09-10, #62
    * responseId + a distinct branch label so a real verification can query
    * /api/build/primitive-compliance-trace instead of racing a log tail.
    */
-  it('imports traceComplianceRetry and passes a distinct branch label + chatId at each of the 3 call sites', () => {
+  it('imports traceComplianceRetry and passes a distinct branch label + chatId at each of the 4 call sites', () => {
     expect(source).toMatch(/import \{ traceComplianceRetry \} from '@\/lib\/build\/primitive-compliance-trace'/)
-    const calls = [...source.matchAll(/closePrimitiveComplianceGap\(\s*finalContent, message, validRole, obedienceOptions, selectedGenModel,\s*\n\s*responseId, '(non-combined|combined-single-file|combined-multi-file)',/g)]
+    const calls = [...source.matchAll(/closePrimitiveComplianceGap\(\s*finalContent, message, validRole, obedienceOptions, selectedGenModel,\s*\n\s*responseId, '(non-combined|combined-single-file|combined-multi-file|combined-rejected-fallback)',/g)]
     const branches = calls.map((m) => m[1]).sort()
-    expect(branches).toEqual(['combined-multi-file', 'combined-single-file', 'non-combined'])
+    expect(branches).toEqual(['combined-multi-file', 'combined-rejected-fallback', 'combined-single-file', 'non-combined'])
+  })
+
+  /**
+   * Real bug found live (issue #636, 2026-09-10): the combined fix+split
+   * branch has a THIRD outcome besides single-file/multi-file adoption —
+   * rejection (the repair candidate was invalid, too short, or not an
+   * improvement). That branch used to just log "Combined pass rejected —
+   * keeping original." and stop, leaving finalContent at its PRE-repair
+   * state — exactly the content `ob` already flagged as having primitive-
+   * compliance gaps — with nothing ever retrying to close them. Confirmed
+   * live: a real Meridian generation hit exactly this path (a catastrophic
+   * syntax error in the combined-pass output caused rejection) and the
+   * served app ended up with zero real primitive calls as a direct result.
+   */
+  it('the combined pass rejection fallback also runs the targeted retry on the pre-repair content', () => {
+    const idx = source.indexOf("console.log('🔧 Combined pass rejected — keeping original.')")
+    expect(idx).toBeGreaterThan(-1)
+    const nearby = source.slice(idx, idx + 2000)
+    expect(nearby).toMatch(/ob\.primitiveComplianceGaps\.length > 0/)
+    expect(nearby).toMatch(/closePrimitiveComplianceGap/)
+    expect(nearby).toMatch(/'combined-rejected-fallback'/)
   })
 
   it('closePrimitiveComplianceGap calls traceComplianceRetry on every exit path via a shared finish() wrapper', () => {

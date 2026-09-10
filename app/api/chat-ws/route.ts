@@ -210,7 +210,7 @@ async function closePrimitiveComplianceGap(
   // source), so its outcome is now recorded in a queryable ZeroDB row
   // instead of only a console.log line.
   chatId: string,
-  branch: 'non-combined' | 'combined-single-file' | 'combined-multi-file',
+  branch: 'non-combined' | 'combined-single-file' | 'combined-multi-file' | 'combined-rejected-fallback',
   maxAttempts = 2,
 ): Promise<{ code: string; closed: boolean }> {
   let current = code
@@ -1615,6 +1615,30 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                   }
                 } else {
                   console.log('🔧 Combined pass rejected — keeping original.')
+                  // Real bug found live (issue #636, 2026-09-10): rejection
+                  // used to just keep the ORIGINAL finalContent — the exact
+                  // content `ob` already flagged as having primitive-
+                  // compliance gaps — with nothing ever retrying to close
+                  // them. Confirmed live: a real Meridian generation hit
+                  // this exact path (combined pass produced a catastrophic
+                  // syntax error and was rejected) and the served app ended
+                  // up with zero real primitive calls, because nothing
+                  // downstream of this branch ever got another chance to
+                  // fix it. Run the same targeted retry the other two
+                  // combined-branch outcomes already get, directly on the
+                  // pre-repair content, so a rejected repair attempt doesn't
+                  // silently forfeit primitive compliance entirely.
+                  if (ob.primitiveComplianceGaps.length > 0) {
+                    const closeResult = await closePrimitiveComplianceGap(
+                      finalContent, message, validRole, obedienceOptions, selectedGenModel,
+                      responseId, 'combined-rejected-fallback',
+                    )
+                    if (closeResult.code !== finalContent) {
+                      finalContent = closeResult.code
+                      validation = validateGeneratedCode(finalContent)
+                      checkpoint.record('primitive-compliance', finalContent, true)
+                    }
+                  }
                 }
               } else if (needsObedience) {
                 console.log(`📏 Obedience gap → re-prompt: ${ob.reasons.join(' | ')}`)
