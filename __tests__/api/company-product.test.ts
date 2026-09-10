@@ -118,4 +118,38 @@ describe('POST /api/build/company-product', () => {
     const res = await POST(req({ name: 'Meridian' }))
     expect(res.status).toBe(400)
   })
+
+  /**
+   * Real bug found live (Meridian, 2026-09-10): the FIRST draft of this
+   * route's prompt said "the ACTUAL PRODUCT" — the whole word 'product' —
+   * which lib/prd-parser.ts's keyword detector (correctly, per #615's fix)
+   * still caught, because this time 'product' was genuinely, literally
+   * present as a standalone word, not a substring-of-another-word false
+   * positive. Confirmed live: this produced a real "Products Page
+   * (/products)" build step and a 2-page complexity score for what should
+   * be a plain single-surface generation. Reworded to avoid the word
+   * 'product' (and 'match'/'matching', the two-sided-marketplace
+   * primitive's own trigger) entirely.
+   */
+  it("does not use the word 'product' anywhere in the generated prompt (self-inflicted false-trigger guard)", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({ body: sseBody('prod-chat-6') }) as any)
+    vi.stubGlobal('fetch', fetchMock)
+
+    await POST(req({ idea: 'a sales pipeline revenue forecaster', slug: 'meridian6', name: 'Meridian' }))
+
+    const [, init] = fetchMock.mock.calls[0]
+    const sentBody = JSON.parse(String(init.body))
+    expect(sentBody.message.toLowerCase()).not.toMatch(/\bproduct\b/)
+  })
+
+  it("does not use the word 'match'/'matching' anywhere (would false-trigger the marketplace primitive)", async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({ body: sseBody('prod-chat-7') }) as any)
+    vi.stubGlobal('fetch', fetchMock)
+
+    await POST(req({ idea: 'a sales pipeline revenue forecaster', slug: 'meridian7', name: 'Meridian' }))
+
+    const [, init] = fetchMock.mock.calls[0]
+    const sentBody = JSON.parse(String(init.body))
+    expect(sentBody.message.toLowerCase()).not.toMatch(/\bmatch(ing)?\b/)
+  })
 })

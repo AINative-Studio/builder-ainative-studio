@@ -57,17 +57,23 @@ export async function POST(request: NextRequest) {
   // landingPageOnly flag here (see company-app/route.ts's sibling comment):
   // this generation SHOULD be held to full primitive-compliance, because a
   // real product genuinely should call the primitives its idea implies.
-  // Real bug (customer-reported, Meridian, 2026-09-10, issue #611/#620): the
-  // whole reason a scoped word-boundary/false-trigger investigation happened
-  // this session was 'brand' colliding with an unrelated primitive's
-  // trigger list, so this template avoids any word that could plausibly
-  // false-trigger the wrong primitive here too — 'match'/'matching' (the
-  // two-sided-marketplace primitive's own trigger) is the one this exact
-  // phrasing would otherwise hit ("primitives that best match this idea").
+  // Real bug (customer-reported, Meridian, 2026-09-10, issue #611/#615/#620):
+  // this template's FIRST draft said "the ACTUAL PRODUCT" — the whole word
+  // 'product' — which lib/prd-parser.ts's keyword detector (fixed for a
+  // DIFFERENT false match in #615, "production-quality"→'product') correctly
+  // still catches, because this time 'product' is genuinely, literally
+  // present as a standalone word, not a substring-of-another-word false
+  // positive. That triggered a real, live "Products Page (/products)" build
+  // step + a 2-page complexity score for a plain single-surface generation
+  // (confirmed live: exact same failure signature as #615, from THIS
+  // route's own wording this time). This template avoids the words 'product'
+  // and 'match'/'matching' (the two-sided-marketplace primitive's own
+  // trigger, which "primitives that best match this idea" would otherwise
+  // hit) entirely, describing the same intent without either.
   const message =
     `Build a real, working, functional application for "${name}" that actually implements this idea: ${idea}. ` +
-    `This is the ACTUAL PRODUCT, not a marketing page — build the core feature(s) a user would use every day: ` +
-    `real data, real interactions, real functionality that does what the idea describes. ` +
+    `This is the founder's REAL, WORKING TOOL — not a marketing page — build the core feature(s) a user would ` +
+    `use every day: real data, real interactions, real functionality that does what the idea describes. ` +
     `Compose whichever AINative primitives genuinely fit this specific idea (persistence, memory, pipeline, ` +
     `commerce, voice, etc.) and call their real APIs, not a hand-rolled substitute. ` +
     `Make it visually distinctive and specific to this company, with realistic data — not a generic template.`
