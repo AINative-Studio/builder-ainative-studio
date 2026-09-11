@@ -12,7 +12,23 @@ import { hasFounderCredential, type FounderScopedPrimitive } from '@/lib/build/p
 // Sucrase removed — builds were failing. Using client-side Babel.
 // The key fix is using models that produce COMPLETE code (not maverick 512-tok)
 
-const FOUNDER_SCOPED_PRIMITIVES: FounderScopedPrimitive[] = ['zerocommerce', 'zeropipeline', 'agentflow', 'zeroforms']
+// Real bug found live (Dispatch, 2026-09-11): this list only ever had the
+// original 4 founder-scoped primitives (#443) — every one added since
+// (zerocrm #414/#655, zerovoice #522, zeroinvoice #638/#639, serviceos #642,
+// livestreaming/socialgraph #644) was missing, so the preview iframe could
+// NEVER mint a proxy token for them, regardless of whether the company
+// actually has a real credential captured. Confirmed live: Dispatch's
+// zeropipeline call itself 401'd for an unrelated reason (no credential was
+// ever captured for this specific company), but any company that DOES have
+// e.g. a real serviceos/zerovoice credential would hit this exact same
+// silent 401 in preview — the missing entry, not a credential problem.
+// Keep this in sync with FounderScopedPrimitive's real union (all 10
+// members — contentworkflow is deliberately excluded: it uses Builder's own
+// service key, not a founder credential, so it needs no preview token).
+export const FOUNDER_SCOPED_PRIMITIVES: FounderScopedPrimitive[] = [
+  'zerocommerce', 'zeropipeline', 'agentflow', 'zeroforms', 'zerocrm',
+  'zerovoice', 'zeroinvoice', 'serviceos', 'livestreaming', 'socialgraph',
+]
 
 /**
  * Per-app data token (#331): when the embedder passes ?slug=, mint the signed
