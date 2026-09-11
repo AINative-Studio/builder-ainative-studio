@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { dbTokenShim } from '@/app/api/preview/[id]/route'
+import { dbTokenShim, FOUNDER_SCOPED_PRIMITIVES } from '@/app/api/preview/[id]/route'
+import type { FounderScopedPrimitive } from '@/lib/build/primitive-credentials'
 
 /**
  * dbTokenShim — the inline script injected into every generated app's HTML
@@ -123,5 +124,49 @@ describe('dbTokenShim — generated apps get the right header on the right path'
 
   it('with no token and no primitive tokens, the shim script is empty (no-op)', () => {
     expect(dbTokenShim('')).toBe('')
+  })
+})
+
+/**
+ * Real bug found live (Dispatch, 2026-09-11): FOUNDER_SCOPED_PRIMITIVES
+ * (the list of primitives the preview route mints a proxy token for) only
+ * ever had the original 4 entries (#443) — every founder-scoped primitive
+ * added since (zerocrm #414/#655, zerovoice #522, zeroinvoice #638/#639,
+ * serviceos #642, livestreaming/socialgraph #644) was silently missing, so
+ * a real generated app calling e.g. ServiceOS from inside the shared
+ * preview iframe got a 401 even for a company with a genuinely captured
+ * ServiceOS credential — confirmed live: Dispatch's own
+ * /api/primitive/zeropipeline/deals call 401'd from inside the preview
+ * iframe. This test fails automatically the next time a founder-scoped
+ * primitive is added to FounderScopedPrimitive but not to this list, so
+ * the same silent-401 class of bug can't recur unnoticed.
+ */
+describe('FOUNDER_SCOPED_PRIMITIVES stays in sync with FounderScopedPrimitive', () => {
+  it('includes every current founder-scoped primitive (confirmed live-callable via /api/primitive/{name}/...)', () => {
+    // Kept in sync manually with lib/build/primitive-credentials.ts's
+    // FounderScopedPrimitive union — contentworkflow is the one deliberate
+    // exception (it uses Builder's own service key, not a founder
+    // credential, so it needs no preview-iframe proxy token at all).
+    const expected: FounderScopedPrimitive[] = [
+      'zerocommerce', 'zeropipeline', 'agentflow', 'zeroforms', 'zerocrm',
+      'zerovoice', 'zeroinvoice', 'serviceos', 'livestreaming', 'socialgraph',
+    ]
+    expect([...FOUNDER_SCOPED_PRIMITIVES].sort()).toEqual([...expected].sort())
+  })
+
+  it('mints a real primitive-proxy token shim for a primitive added after the original 4 (e.g. serviceos)', async () => {
+    expect(FOUNDER_SCOPED_PRIMITIVES).toContain('serviceos')
+    const html = dbTokenShim('real-db-token', { serviceos: 'real-serviceos-token' })
+    const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/)
+    const scriptBody = scriptMatch![1]
+    const captured: { headers?: Headers } = {}
+    ;(window as any).fetch = vi.fn(async (_input: any, init?: RequestInit) => {
+      captured.headers = new Headers(init?.headers)
+      return new Response('{}')
+    })
+    // eslint-disable-next-line no-new-func
+    new Function(scriptBody).call(window)
+    await window.fetch('/api/primitive/serviceos/tickets')
+    expect(captured.headers?.get('x-ainative-primitive-token')).toBe('real-serviceos-token')
   })
 })
