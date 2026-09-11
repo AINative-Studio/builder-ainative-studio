@@ -40,7 +40,8 @@ export async function executeChunkPlan(
   plan: ChunkPlan,
   client: OpenAI,
   modelId: string,
-  onProgress: ProgressCallback
+  onProgress: ProgressCallback,
+  chatId?: string,
 ): Promise<GeneratedChunk[]> {
   const chunks: GeneratedChunk[] = []
   const totalPhases = plan.phases.length
@@ -122,7 +123,7 @@ export async function executeChunkPlan(
     source: 'multi-pass-generator',
     totalPhases: chunks.length,
     successCount,
-  }).catch(() => {})
+  }, chatId).catch(() => {})
 
   return chunks
 }
