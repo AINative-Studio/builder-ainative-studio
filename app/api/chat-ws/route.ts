@@ -944,7 +944,8 @@ export async function POST(request: NextRequest) {
                 })}\n\n`))
 
                 console.log(`   [Phase ${phase}/${totalPhases}] ${message}`)
-              }
+              },
+              responseId,
             )
 
             // Log generation summary
@@ -1784,7 +1785,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               fakeLeadCaptureGap: obFinal.fakeLeadCaptureGap,
               hardcodedToggleGap: obFinal.hardcodedToggleGap,
               bytes: served.length,
-            })
+            }, responseId)
           } catch (memErr: any) {
             console.warn('[ZeroMemory] consolidate error (non-fatal):', memErr?.message || memErr)
           }

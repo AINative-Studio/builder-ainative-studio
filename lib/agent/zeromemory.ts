@@ -29,6 +29,16 @@ export async function recallPastPerformance(userPrompt: string): Promise<string>
         query: userPrompt,
         limit: 3,
         tags: ['builder', 'rlhf'],
+        // Hybrid vector + graph traversal (Refs #3426) — live-verified by
+        // core 2026-09-10 (docs/guides/CODE_TRIGGERS_MEMORY.md): finds
+        // contextually relevant prior builds that plain vector similarity
+        // misses (e.g. a prior build that used the same PRIMITIVE for a
+        // differently-worded idea). Same response shape either way
+        // ({results: [...]}), so this is a pure quality upgrade with no
+        // caller-visible change. Builder previously only ever did flat
+        // vector search here — the whole point of recallPastPerformance's
+        // own "cross-product learning" doc comment.
+        use_graph: true,
       }),
       signal: AbortSignal.timeout(3000),
     })
@@ -59,12 +69,26 @@ export async function recallPastPerformance(userPrompt: string): Promise<string>
 /**
  * Store a successful (or failed) generation as a searchable memory
  * for cross-product learning. Fire-and-forget.
+ *
+ * `entityId` (added alongside the use_graph recall upgrade, builder#674):
+ * pass the generation's own chatId here so this memory is attributable to
+ * a real entity, not just a floating text blob. This is a bigger win than
+ * it looks — ZeroMemory's remember() ALREADY runs entity extraction on the
+ * content and auto-relates every extracted entity to entity_id via /relate
+ * (see core's ZeroMemory.remember, "Relate each extracted entity to the
+ * memory's primary entity") whenever entity_id is set. So passing the
+ * chatId here gets the real Context Graph benefit — this company's build
+ * genuinely linked to whatever primitives/technologies got extracted from
+ * its own generation record — for free, with no separate /relate call
+ * needed on Builder's side. Optional and additive: omitting it keeps
+ * today's exact behavior (a memory with no entity_id, same as before).
  */
 export async function storeGenerationMemory(
   prompt: string,
   success: boolean,
   quality: number,
-  metadata?: Record<string, any>
+  metadata?: Record<string, any>,
+  entityId?: string,
 ): Promise<void> {
   try {
     const { apiUrl, apiKey } = getMemoryConfig()
@@ -77,6 +101,7 @@ export async function storeGenerationMemory(
         content: `Builder generation: "${prompt.slice(0, 200)}" — ${success ? 'succeeded' : 'failed'}, quality=${quality.toFixed(2)}`,
         tags: ['builder', 'generation', success ? 'success' : 'failure', 'rlhf'],
         importance: success ? 0.4 : 0.7,
+        ...(entityId ? { entity_id: entityId } : {}),
         metadata: {
           prompt: prompt.slice(0, 500),
           success,

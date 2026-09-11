@@ -519,7 +519,7 @@ export async function runOrchestratorAgent(
     model,
     totalTime: metrics.totalTime,
     totalTokens: metrics.tokenUsage?.total?.totalTokens,
-  }).catch(() => {})
+  }, chatId || sessionId).catch(() => {})
 
   return {
     designSpec: designResult.output,
