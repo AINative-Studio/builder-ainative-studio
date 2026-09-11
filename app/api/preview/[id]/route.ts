@@ -5,6 +5,7 @@ import { googleFontsUrl } from '@/lib/theme-system'
 import { validateJavaScriptCode, sanitizeForSandpack } from '@/lib/code-validator'
 import { detectRootComponent } from '@/lib/component-detector'
 import { flattenMultiFile } from '@/lib/build/flatten-multifile'
+import { dedupeProvidedComponents } from '@/lib/build/dedupe-provided-components'
 import { mintAppDataToken } from '@/lib/build/app-data-token'
 import { mintPrimitiveProxyToken } from '@/lib/build/primitive-proxy-token'
 import { hasFounderCredential, type FounderScopedPrimitive } from '@/lib/build/primitive-credentials'
@@ -442,41 +443,15 @@ export async function GET(
   }
 
   // Remove duplicate component declarations (they're already loaded from /shadcn-components.js + /aikit-components.js)
-  // This prevents "Identifier has already been declared" errors when injecting compiled code
-  const shadcnComponents = [
-    // shadcn
-    'Button', 'Card', 'CardHeader', 'CardTitle', 'CardDescription', 'CardContent', 'CardFooter',
-    'Input', 'Label', 'Badge', 'Avatar', 'AvatarImage', 'AvatarFallback',
-    'Table', 'TableHeader', 'TableBody', 'TableRow', 'TableHead', 'TableCell', 'Separator',
-    'Dialog', 'DialogContent', 'DialogHeader', 'DialogTitle', 'DialogDescription', 'DialogFooter',
-    'Select', 'SelectTrigger', 'SelectValue', 'SelectContent', 'SelectItem',
-    'Tabs', 'TabsList', 'TabsTrigger', 'TabsContent', 'Progress', 'Checkbox',
-    'Accordion', 'AccordionItem', 'AccordionTrigger', 'AccordionContent',
-    'Alert', 'AlertTitle', 'AlertDescription', 'Popover', 'PopoverTrigger', 'PopoverContent',
-    // AIKit
-    'MetricCard', 'AIKitPriceCard', 'AIKitRating', 'AgentCard', 'SwarmView', 'SafetyBadge',
-    'GuardrailPanel', 'ChatBubble', 'StreamingIndicator', 'CodeDisplay', 'TokenUsageBar',
-    'ConnectionStatus', 'AIKitHeader', 'AIKitSidebar', 'AIKitTable', 'AIKitTimeline',
-    'AIKitBanner', 'AIKitAvatar', 'Skeleton', 'SkeletonCard', 'EmptyState',
-    'AIKitProductCard', 'AIKitPagination', 'AIKitBreadcrumb', 'AIKitStepper',
-    'VideoPlayer', 'StreamingText', 'MediaGallery', 'AgentTimeline',
-  ];
-
-  // Remove "Available Shadcn components" comment and everything after it
-  componentCode = componentCode.replace(/\/\/\s*Available\s+Shadcn\s+components[\s\S]*/gi, '')
-
-  // Remove individual component declarations
-  shadcnComponents.forEach(comp => {
-    // Remove const declarations like: const Button = ({ children }) => ...
-    const constPattern = new RegExp(`const\\s+${comp}\\s*=\\s*\\([^)]*\\)\\s*=>\\s*[\\s\\S]*?(?=\\n(?:const|function|class|let|var|$))`, 'g');
-    componentCode = componentCode.replace(constPattern, '');
-
-    // Remove function declarations like: function Button() { ... }
-    const funcPattern = new RegExp(`function\\s+${comp}\\s*\\([^)]*\\)\\s*\\{[\\s\\S]*?\\n\\}`, 'g');
-    componentCode = componentCode.replace(funcPattern, '');
-  });
-
-  componentCode = componentCode.trim()
+  // This prevents "Identifier has already been declared" errors when injecting compiled code.
+  //
+  // Real bug found live (Dispatch, 2026-09-11, customer-reported: "basic UI
+  // components are missing") and fixed in lib/build/dedupe-provided-components.ts
+  // (see its doc comment for the full story — a non-brace-balanced regex
+  // consumed an entire real component's body because a single-line external-
+  // import stub happened to share one of these names). Extracted there so
+  // the fix has real unit test coverage instead of living only inline here.
+  componentCode = dedupeProvidedComponents(componentCode)
 
   // AX-5 ENFORCEMENT: Convert extra <h1> tags to <h2> (single h1 rule)
   let h1Idx = 0
