@@ -194,11 +194,19 @@ export async function POST(request: NextRequest) {
   // we have the founder's JWT (ZeroPipeline is JWT-auth, auto-provisions the org).
   // Best-effort — a failure just leaves the Pipeline card honestly simulated (the
   // gap is tracked in AINative-Studio/ZeroPipeline). Anonymous founders skip this.
-  let pipeline: { provisioned: boolean; pipelineId?: string; reason?: string } = { provisioned: false }
+  let pipeline: { provisioned: boolean; pipelineId?: string; reason?: string; credentialCaptured?: boolean } = { provisioned: false }
   if (jwt) {
     const zp = await provisionPipeline(jwt, slug, String(existing.name || b?.name || slug))
-    pipeline = { provisioned: zp.ok, pipelineId: zp.pipelineId, reason: zp.ok ? undefined : zp.reason }
-    if (zp.ok) await captureFounderCredentialForProxy(request, slug, 'zeropipeline', jwt)
+    // credentialCaptured tracked SEPARATELY from provisioned: the real
+    // ZeroPipeline org/pipeline can be created successfully while the
+    // credential capture step (needed for the preview-iframe/runtime proxy
+    // to ever call it back) silently fails — the old code discarded this
+    // return value entirely, so a real capture failure was indistinguishable
+    // from success in the response. Confirmed live (dispatch, 2026-09-11):
+    // pipelineProvisioned:true with zero zeropipeline rows ever written to
+    // builder_primitive_credentials.
+    const credentialCaptured = zp.ok ? await captureFounderCredentialForProxy(request, slug, 'zeropipeline', jwt) : false
+    pipeline = { provisioned: zp.ok, pipelineId: zp.pipelineId, reason: zp.ok ? undefined : zp.reason, credentialCaptured }
   }
 
   // #417 (child of #414): also provision the company's REAL ZeroCommerce store
@@ -450,6 +458,7 @@ export async function POST(request: NextRequest) {
     plan: plan || null,
     created: true,
     pipelineProvisioned: pipeline.provisioned,
+    pipelineCredentialCaptured: pipeline.credentialCaptured,
     commerceProvisioned: commerce.provisioned,
     capstackProvisioned: capstack.provisioned,
     formsProvisioned: forms.provisioned,
