@@ -820,6 +820,35 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
     }
   }
 
+  // Fix /api/db RESPONSE-ENVELOPE UNWRAP (builder#671): /api/db/{table}'s real
+  // response is NEVER a bare array — success is `{ data: [...], total, ... }`,
+  // an error is `{ error, detail }` — yet the model routinely writes
+  // `.then(data => setX(data))`, passing the whole envelope straight into
+  // state. The correct pattern (`setX(data.data || [])`) is already in this
+  // app's own system prompt (lib/professional-prompt.ts's `.data || []`
+  // example) — this is a real, live-confirmed prompt-ADHERENCE gap, not a
+  // documentation gap (found live: Ember Box's generated ember-box-product
+  // app, both its ember_ratings AND ember_sauces loads had this exact bug,
+  // crashing the whole app on load with "TypeError: ratings is not iterable"
+  // the moment either table was empty/nonexistent — the NORMAL first-run
+  // state for a freshly generated app, not an edge case). Scoped tightly to
+  // GET /api/db/{table} (no ?filter=/?search=, which have their own,
+  // already-different shapes) and only rewrites a bare `setter(ident)` call
+  // that never already accesses `ident.data` anywhere in the same statement.
+  {
+    const dbFetchThenSetter =
+      /fetch\(\s*(['"`])\/api\/db\/[^'"`?]+\1\s*\)\s*\.then\(\s*(\w+)\s*=>\s*\2\.json\(\)\s*\)\s*\.then\(\s*(\w+)\s*=>\s*(\w+)\(\s*\3\s*\)\s*\)/g
+    fixedCode = fixedCode.replace(dbFetchThenSetter, (full, _q, _respIdent, dataIdent, setterName) => {
+      // Already unwrapped somewhere in this exact statement? Leave it alone.
+      if (new RegExp(`${dataIdent}\\s*\\.\\s*data\\b`).test(full)) return full
+      fixes.push(`Unwrapped /api/db response envelope before ${setterName}() — the route never returns a bare array (#671)`)
+      return full.replace(
+        new RegExp(`${setterName}\\(\\s*${dataIdent}\\s*\\)`),
+        `${setterName}(Array.isArray(${dataIdent}?.data) ? ${dataIdent}.data : [])`,
+      )
+    })
+  }
+
   return { code: fixedCode, fixes }
 }
 
