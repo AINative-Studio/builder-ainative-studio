@@ -44,7 +44,7 @@ import { provisionProject } from '@/lib/build/agentflow'
 import { provisionZeroERPTenant } from '@/lib/build/zeroerp'
 import { provisionZeroDbViaMcp, isMcpProvisionEnabled } from '@/lib/build/mcp-provision'
 import { provisionCompanyRepo } from '@/lib/git/company-repo'
-import { storeFounderCredential, fetchOrganizationId, type FounderScopedPrimitive } from '@/lib/build/primitive-credentials'
+import { storeFounderCredential, fetchOrganizationId, hasFounderCredential, type FounderScopedPrimitive } from '@/lib/build/primitive-credentials'
 import { resolveStoredApp } from '@/lib/build/ready-gate'
 
 export const runtime = 'nodejs'
@@ -99,6 +99,62 @@ export async function captureFounderCredentialForProxy(
   return stored
 }
 
+/**
+ * Backfill missing founder-scoped credentials for an ALREADY-provisioned
+ * company (issue #660 follow-up, found live 2026-09-11 verifying #664's
+ * getToken-gate fix): a company that hit the getToken-null bug before #664
+ * shipped is stuck forever on the idempotent-return path below, which never
+ * re-attempts credential capture — `zerodbProjectId` already being set short-
+ * circuits past all provisioning logic on every subsequent call, so fixing
+ * the underlying bug alone doesn't repair a company already broken by it
+ * (confirmed live: dispatch, provisioned before #664, still has zero
+ * zeropipeline credential rows after the fix deployed). This re-attempts
+ * ONLY the primitives genuinely missing a credential — every provision call
+ * involved is either a cheap credential-only capture (zerocrm, zeroinvoice,
+ * serviceos, livestreaming, socialgraph — no resource creation at all) or
+ * genuinely idempotent (zeropipeline uses an Idempotency-Key; the others are
+ * simple get-or-create records) — so this is safe to run on every idempotent
+ * hit, not just once. Best-effort and silent: never blocks or slows down the
+ * cached response beyond this one pass.
+ */
+export async function backfillMissingCredentials(request: NextRequest, slug: string, name: string, jwt: string | undefined): Promise<void> {
+  if (!jwt) return
+  const need = async (p: FounderScopedPrimitive) => !(await hasFounderCredential(slug, p).catch(() => true))
+
+  if (await need('zeropipeline')) {
+    const zp = await provisionPipeline(jwt, slug, name)
+    if (zp.ok) await captureFounderCredentialForProxy(request, slug, 'zeropipeline', jwt)
+  }
+  if (await need('zerocommerce')) {
+    const zc = await provisionStore(jwt, slug, name)
+    if (zc.ok) await captureFounderCredentialForProxy(request, slug, 'zerocommerce', jwt)
+  }
+  if (await need('zeroforms')) {
+    const zf = await provisionForm(jwt, slug, name)
+    if (zf.ok) await captureFounderCredentialForProxy(request, slug, 'zeroforms', jwt)
+  }
+  if (await need('agentflow')) {
+    const af = await provisionProject(jwt, slug, name)
+    if (af.ok) await captureFounderCredentialForProxy(request, slug, 'agentflow', jwt)
+  }
+  if (await need('zerocrm')) {
+    const orgId = await fetchOrganizationId(jwt)
+    if (orgId) {
+      const rawToken = await getToken({ req: request, secret: process.env.AUTH_SECRET }).catch(() => null)
+      await storeFounderCredential(
+        slug, 'zerocrm', jwt,
+        rawToken?.refreshToken as string | undefined,
+        rawToken?.expiresAt ? Math.max(0, Math.floor((Number(rawToken.expiresAt) - Date.now()) / 1000)) : undefined,
+        orgId,
+      ).catch(() => false)
+    }
+  }
+  if (await need('zeroinvoice')) await captureFounderCredentialForProxy(request, slug, 'zeroinvoice', jwt)
+  if (await need('serviceos')) await captureFounderCredentialForProxy(request, slug, 'serviceos', jwt)
+  if (await need('livestreaming')) await captureFounderCredentialForProxy(request, slug, 'livestreaming', jwt)
+  if (await need('socialgraph')) await captureFounderCredentialForProxy(request, slug, 'socialgraph', jwt)
+}
+
 export async function POST(request: NextRequest) {
   const b = await request.json().catch(() => null)
   const slug = String(b?.slug || '').replace(/[^a-z0-9_-]/gi, '').slice(0, 40)
@@ -141,6 +197,10 @@ export async function POST(request: NextRequest) {
       trialExpiresAt = new Date(anchor + TRIAL_WINDOW_MS).toISOString()
       await setAppProvisioned(slug, { trialExpiresAt, provisionedAt: existing.provisionedAt }).catch(() => {})
     }
+    // #660/#664 follow-up: repair any founder-scoped credential this company
+    // never got (e.g. provisioned before #664's getToken-gate fix shipped) —
+    // see backfillMissingCredentials's doc comment. Never blocks the response.
+    await backfillMissingCredentials(request, slug, String(existing.name || b?.name || slug), jwt).catch(() => {})
     return Response.json({
       ok: true,
       zerodbProjectId: existing.zerodbProjectId,
