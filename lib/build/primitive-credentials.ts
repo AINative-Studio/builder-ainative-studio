@@ -191,7 +191,28 @@ export async function storeFounderCredential(
   }
 }
 
-/** Latest stored row for {slug, primitive}, or null if none/misconfigured. */
+/**
+ * Latest stored row for {slug, primitive}, or null if none/misconfigured.
+ *
+ * Real gap found live (dispatch, 2026-09-11): a company has TWO registry
+ * slugs — the landing page ({slug}) and its real working product
+ * ({slug}-product, #620) — but /api/build/provision only ever provisions and
+ * captures credentials against the LANDING PAGE slug. The product's actual
+ * generated code, the one that genuinely calls these primitives, is served
+ * under the -product slug — so hasFounderCredential/resolveFounderCredential
+ * always missed a credential that was, in fact, already captured for this
+ * exact company, just under its sibling slug. Confirmed live: dispatch's
+ * zeropipeline credential existed under slug 'dispatch', but
+ * 'dispatch-product' (the code that actually calls /api/primitive/
+ * zeropipeline/deals) still 401'd with missing_or_invalid_token.
+ *
+ * Fixed by falling back to the base slug (strip the -product suffix) when
+ * the -product slug itself has no row — both surfaces belong to the SAME
+ * founder identity, so sharing one credential between them is correct, not
+ * a workaround. Never the other direction (a landing-page lookup does NOT
+ * fall back to a -product row) since only -product is a derived/sibling
+ * slug of a real base company, never the reverse.
+ */
 async function resolveStoredRow(slug: string, primitive: FounderScopedPrimitive): Promise<StoredCredentialRow | null> {
   if (!configured() || !slug || !primitive) return null
   try {
@@ -199,13 +220,26 @@ async function resolveStoredRow(slug: string, primitive: FounderScopedPrimitive)
     if (!res.ok) return null
     const data = JSON.parse(await res.text())
     const rows = Array.isArray(data) ? data : data.data || data.rows || []
-    const matches = rows
+    const allRows: StoredCredentialRow[] = rows
       .map((r: { row_data?: StoredCredentialRow }) => r.row_data)
-      .filter((rd: StoredCredentialRow | undefined): rd is StoredCredentialRow =>
-        rd?.slug === slug && rd?.primitive === primitive && !!rd?.encryptedToken)
-    if (!matches.length) return null
-    matches.sort((a: StoredCredentialRow, b: StoredCredentialRow) => (b.createdAt || '').localeCompare(a.createdAt || ''))
-    return matches[0]
+      .filter((rd: StoredCredentialRow | undefined): rd is StoredCredentialRow => !!rd?.slug && !!rd?.primitive && !!rd?.encryptedToken)
+
+    const bestMatch = (targetSlug: string): StoredCredentialRow | null => {
+      const matches = allRows.filter((rd) => rd.slug === targetSlug && rd.primitive === primitive)
+      if (!matches.length) return null
+      matches.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+      return matches[0]
+    }
+
+    const direct = bestMatch(slug)
+    if (direct) return direct
+
+    const PRODUCT_SUFFIX = '-product'
+    if (slug.endsWith(PRODUCT_SUFFIX)) {
+      const baseSlug = slug.slice(0, -PRODUCT_SUFFIX.length)
+      if (baseSlug) return bestMatch(baseSlug)
+    }
+    return null
   } catch {
     return null
   }
@@ -273,8 +307,14 @@ export async function resolveFounderCredential(
     return { ok: false, reason: 'refresh_failed' }
   }
 
+  // Persist back to row.slug (the slug the row was actually found under),
+  // NOT the input `slug` parameter — resolveStoredRow's -product fallback
+  // (#660 follow-up) means a lookup for 'acme-product' can resolve a row
+  // stored under 'acme'. Writing the refreshed pair back under the wrong
+  // slug would fork the two surfaces into separate, diverging credential
+  // lineages instead of keeping them unified.
   await storeFounderCredential(
-    slug,
+    row.slug,
     primitive,
     refreshed.accessToken,
     refreshed.refreshToken || refreshToken,
