@@ -70,15 +70,26 @@ async function captureFounderCredentialForProxy(
   primitive: FounderScopedPrimitive,
   jwt: string,
 ): Promise<boolean> {
-  const rawToken = await getToken({ req: request, secret: process.env.AUTH_SECRET }).catch(() => null)
-  if (!rawToken?.refreshToken && !rawToken?.accessToken) return false
-  return storeFounderCredential(
+  const rawToken = await getToken({ req: request, secret: process.env.AUTH_SECRET }).catch((e) => {
+    console.warn(`[provision] captureFounderCredentialForProxy(${slug}, ${primitive}): getToken threw:`, e?.message || e)
+    return null
+  })
+  if (!rawToken?.refreshToken && !rawToken?.accessToken) {
+    console.warn(`[provision] captureFounderCredentialForProxy(${slug}, ${primitive}): getToken returned neither refreshToken nor accessToken (rawToken keys: ${rawToken ? Object.keys(rawToken).join(',') : 'null'})`)
+    return false
+  }
+  const stored = await storeFounderCredential(
     slug,
     primitive,
     jwt,
     rawToken.refreshToken as string | undefined,
     rawToken.expiresAt ? Math.max(0, Math.floor((Number(rawToken.expiresAt) - Date.now()) / 1000)) : undefined,
-  ).catch(() => false)
+  ).catch((e) => {
+    console.warn(`[provision] captureFounderCredentialForProxy(${slug}, ${primitive}): storeFounderCredential threw:`, e?.message || e)
+    return false
+  })
+  if (!stored) console.warn(`[provision] captureFounderCredentialForProxy(${slug}, ${primitive}): storeFounderCredential returned false`)
+  return stored
 }
 
 export async function POST(request: NextRequest) {
