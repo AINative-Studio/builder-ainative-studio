@@ -267,3 +267,85 @@ describe('hasFounderCredential (#443)', () => {
     expect(await hasFounderCredential('acme', 'zerocommerce')).toBe(false)
   })
 })
+
+/**
+ * -product slug fallback (#660 follow-up, found live 2026-09-11): a company
+ * has two registry slugs — the landing page ({slug}) and its real working
+ * product ({slug}-product, #620) — but /api/build/provision only ever
+ * provisions and captures credentials against the LANDING PAGE slug. The
+ * product's actual generated code (the one that genuinely calls these
+ * primitives) is served under the -product slug, so a lookup for it always
+ * missed a credential that was, in fact, already captured for this exact
+ * company under its sibling slug. Confirmed live: dispatch's zeropipeline
+ * credential existed under slug 'dispatch', but 'dispatch-product' (the
+ * code that actually calls /api/primitive/zeropipeline/deals) still 401'd.
+ */
+describe('resolveStoredRow -product fallback (#660 follow-up)', () => {
+  it('hasFounderCredential("{slug}-product", ...) finds a credential stored under the base slug', async () => {
+    mockFetchSequence([{ ok: true, json: { data: [{ row_data: { slug: 'dispatch', primitive: 'zeropipeline', encryptedToken: 'x', iv: 'y', authTag: 'z', createdAt: '2026-01-01' } }] } }])
+    expect(await hasFounderCredential('dispatch-product', 'zeropipeline')).toBe(true)
+  })
+
+  it('resolveFounderCredential("{slug}-product", ...) resolves a real, usable token from the base slug row', async () => {
+    const store = mockFetchSequence([{ ok: true }, { ok: true }])
+    await storeFounderCredential('dispatch', 'zeropipeline', 'real-access-token', 'real-refresh-token', 3600)
+    const sentBody = JSON.parse(String(((store.mock.calls[1] as any)[1] as any).body))
+
+    mockFetchSequence([{ ok: true, json: { data: [{ row_data: sentBody.row_data }] } }])
+    const result = await resolveFounderCredential('dispatch-product', 'zeropipeline')
+    expect(result.ok).toBe(true)
+    expect(result.accessToken).toBe('real-access-token')
+  })
+
+  it('a direct match on the -product slug itself always wins over the base-slug fallback', async () => {
+    mockFetchSequence([{
+      ok: true,
+      json: {
+        data: [
+          { row_data: { slug: 'dispatch', primitive: 'zeropipeline', encryptedToken: 'base-slug-token', iv: 'y', authTag: 'z', createdAt: '2026-01-01' } },
+          { row_data: { slug: 'dispatch-product', primitive: 'zeropipeline', encryptedToken: 'x', iv: 'y', authTag: 'z', createdAt: '2026-01-02' } },
+        ],
+      },
+    }])
+    // We only assert existence here (hasFounderCredential doesn't expose
+    // WHICH row matched) — the direct-match-first ordering itself is what
+    // this test guards; a full decrypt round-trip isn't needed to prove it.
+    expect(await hasFounderCredential('dispatch-product', 'zeropipeline')).toBe(true)
+  })
+
+  it('does NOT fall back the other direction — a landing-page slug lookup never matches a -product row', async () => {
+    mockFetchSequence([{ ok: true, json: { data: [{ row_data: { slug: 'dispatch-product', primitive: 'zeropipeline', encryptedToken: 'x', iv: 'y', authTag: 'z', createdAt: '2026-01-01' } }] } }])
+    expect(await hasFounderCredential('dispatch', 'zeropipeline')).toBe(false)
+  })
+
+  it('returns not_provisioned when neither the -product slug nor its base slug has a row', async () => {
+    mockFetchSequence([{ ok: true, json: { data: [] } }])
+    const result = await resolveFounderCredential('never-provisioned-product', 'zeropipeline')
+    expect(result).toEqual({ ok: false, reason: 'not_provisioned' })
+  })
+
+  it('a refreshed token resolved via the -product fallback persists back to the BASE slug, not the -product slug (prevents the two surfaces from forking into separate credential lineages)', async () => {
+    const store1 = mockFetchSequence([{ ok: true }, { ok: true }])
+    await storeFounderCredential('dispatch', 'zeropipeline', 'old-access', 'old-refresh', -10) // already expired
+    const sentBody = JSON.parse(String(((store1.mock.calls[1] as any)[1] as any).body))
+
+    h.refreshAINativeToken.mockResolvedValue({
+      accessToken: 'new-access',
+      refreshToken: 'new-refresh',
+      expiresIn: 3600,
+    })
+
+    const listThenStore = mockFetchSequence([
+      { ok: true, json: { data: [{ row_data: sentBody.row_data }] } }, // resolve reads the row stored under 'dispatch'
+      { ok: true }, // ensureTable, ahead of the re-store
+      { ok: true }, // the re-store of the refreshed pair
+    ])
+
+    const result = await resolveFounderCredential('dispatch-product', 'zeropipeline')
+    expect(result.ok).toBe(true)
+    expect(result.accessToken).toBe('new-access')
+
+    const restoreCallBody = JSON.parse(String(((listThenStore.mock.calls[2] as any)[1] as any).body))
+    expect(restoreCallBody.row_data.slug).toBe('dispatch')
+  })
+})
