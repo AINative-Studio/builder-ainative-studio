@@ -30,6 +30,10 @@ const h = vi.hoisted(() => ({
   resolveApp: vi.fn(async (): Promise<{ chatId: string } | null> => null),
   registerApp: vi.fn(async () => true),
   logBuildOutcome: vi.fn(async () => {}),
+  recordPendingProductGeneration: vi.fn(async () => {}),
+  markProductGenerationRegistered: vi.fn(async () => {}),
+  resolvePendingProductGeneration: vi.fn(async (): Promise<{ productSlug: string; chatId: string; status: 'pending' | 'registered'; createdAt: string } | null> => null),
+  loadGeneration: vi.fn(async (): Promise<{ generatedCode: string; prompt: string } | null> => null),
 }))
 
 vi.mock('@/lib/build/app-registry', () => ({
@@ -37,6 +41,12 @@ vi.mock('@/lib/build/app-registry', () => ({
   registerApp: h.registerApp,
 }))
 vi.mock('@/lib/build/learning', () => ({ logBuildOutcome: h.logBuildOutcome }))
+vi.mock('@/lib/build/product-generation-state', () => ({
+  recordPendingProductGeneration: h.recordPendingProductGeneration,
+  markProductGenerationRegistered: h.markProductGenerationRegistered,
+  resolvePendingProductGeneration: h.resolvePendingProductGeneration,
+}))
+vi.mock('@/lib/zerodb-store', () => ({ loadGeneration: h.loadGeneration }))
 
 import { POST } from '@/app/api/build/company-product/route'
 
@@ -67,6 +77,10 @@ describe('POST /api/build/company-product', () => {
     h.resolveApp.mockReset().mockResolvedValue(null)
     h.registerApp.mockReset().mockResolvedValue(true)
     h.logBuildOutcome.mockReset().mockResolvedValue(undefined)
+    h.recordPendingProductGeneration.mockReset().mockResolvedValue(undefined)
+    h.markProductGenerationRegistered.mockReset().mockResolvedValue(undefined)
+    h.resolvePendingProductGeneration.mockReset().mockResolvedValue(null)
+    h.loadGeneration.mockReset().mockResolvedValue(null)
   })
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -244,5 +258,103 @@ describe('POST /api/build/company-product', () => {
     expect(data.status).toBe('processing')
     expect(h.logBuildOutcome).toHaveBeenCalledWith(expect.objectContaining({ slug: 'meridian9-product', codeStatus: 'failure' }))
     expect(h.registerApp).not.toHaveBeenCalled()
+  })
+
+  /**
+   * Registration durability (issue #660 follow-up, found live): chat-ws's own
+   * saveGeneration() is awaited before it emits 'complete', so a chatId's
+   * generated code is durably persisted in `generations` the moment 'init'
+   * is seen — well before this route's background task would go on to call
+   * registerApp() after observing 'complete'. A Railway redeploy kills that
+   * background task's container anywhere in between, orphaning a genuinely
+   * successful generation: real code sitting in `generations`, never linked
+   * to productSlug. Confirmed live against a real Dispatch product
+   * generation (chat_id WpyFu_-dMZ6s8SVdMfSxR): correct, primitive-wired
+   * code, safely persisted, but registerApp never ran.
+   */
+  describe('registration-durability recovery', () => {
+    it('records a pending {productSlug -> chatId} link as soon as chatId is known, before waiting for complete', async () => {
+      const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({ body: sseBody('prod-chat-10') }) as any)
+      vi.stubGlobal('fetch', fetchMock)
+
+      await POST(req({ idea: 'x', slug: 'orphan1', name: 'Orphan' }))
+      await flush()
+
+      expect(h.recordPendingProductGeneration).toHaveBeenCalledWith('orphan1-product', 'prod-chat-10')
+    })
+
+    it('recovers an orphaned generation: finds a pending chatId whose code already persisted, registers it WITHOUT starting a new generation', async () => {
+      h.resolvePendingProductGeneration.mockResolvedValue({
+        productSlug: 'orphan2-product', chatId: 'orphaned-chat-1', status: 'pending', createdAt: new Date().toISOString(),
+      })
+      h.loadGeneration.mockResolvedValue({ generatedCode: '// --- FILE: src/App.tsx ---\nreal code here', prompt: 'x' })
+      const fetchMock = vi.fn()
+      vi.stubGlobal('fetch', fetchMock)
+
+      const res = await POST(req({ idea: 'x', slug: 'orphan2', name: 'Orphan' }))
+      const data = await res.json()
+
+      expect(data.status).toBe('recovered')
+      expect(data.chatId).toBe('orphaned-chat-1')
+      expect(data.productSlug).toBe('orphan2-product')
+      expect(h.registerApp).toHaveBeenCalledWith(expect.objectContaining({ slug: 'orphan2-product', chatId: 'orphaned-chat-1' }))
+      expect(h.markProductGenerationRegistered).toHaveBeenCalledWith('orphan2-product', 'orphaned-chat-1')
+      // The costly part (a fresh chat-ws generation) must NOT be re-run —
+      // the whole point is not wasting an already-succeeded generation.
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('a pending attempt that is still genuinely fresh (well within the generation window) with no persisted code yet returns processing, without starting a duplicate generation', async () => {
+      h.resolvePendingProductGeneration.mockResolvedValue({
+        productSlug: 'orphan3-product', chatId: 'still-running-chat', status: 'pending', createdAt: new Date().toISOString(),
+      })
+      h.loadGeneration.mockResolvedValue(null)
+      const fetchMock = vi.fn()
+      vi.stubGlobal('fetch', fetchMock)
+
+      const res = await POST(req({ idea: 'x', slug: 'orphan3', name: 'Orphan' }))
+      const data = await res.json()
+
+      expect(data.status).toBe('processing')
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(h.registerApp).not.toHaveBeenCalled()
+    })
+
+    it('a pending attempt old enough to be genuinely dead (past the generation window) with no persisted code falls through to a fresh generation', async () => {
+      const longAgo = new Date(Date.now() - 20 * 60 * 1000).toISOString() // 20 minutes ago
+      h.resolvePendingProductGeneration.mockResolvedValue({
+        productSlug: 'orphan4-product', chatId: 'truly-dead-chat', status: 'pending', createdAt: longAgo,
+      })
+      h.loadGeneration.mockResolvedValue(null)
+      const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({ body: sseBody('fresh-retry-chat') }) as any)
+      vi.stubGlobal('fetch', fetchMock)
+
+      const res = await POST(req({ idea: 'x', slug: 'orphan4', name: 'Orphan' }))
+      const data = await res.json()
+      await flush()
+
+      expect(data.status).toBe('processing')
+      expect(fetchMock).toHaveBeenCalled()
+      expect(h.registerApp).toHaveBeenCalledWith(expect.objectContaining({ slug: 'orphan4-product', chatId: 'fresh-retry-chat' }))
+    })
+
+    it('a pending record already marked registered is ignored by the recovery check (resolveApp\'s own cache already covers it)', async () => {
+      h.resolvePendingProductGeneration.mockResolvedValue({
+        productSlug: 'orphan5-product', chatId: 'already-done-chat', status: 'registered', createdAt: new Date().toISOString(),
+      })
+      const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({ body: sseBody('should-not-matter') }) as any)
+      vi.stubGlobal('fetch', fetchMock)
+
+      const res = await POST(req({ idea: 'x', slug: 'orphan5', name: 'Orphan' }))
+      const data = await res.json()
+
+      // resolveApp (the existing cache check) returned null in this test, so
+      // a 'registered' pending record with no matching app-registry entry is
+      // an inconsistent state this route doesn't try to special-case — it
+      // just proceeds normally (starts a fresh generation), same as if no
+      // pending record existed at all.
+      expect(data.status).toBe('processing')
+      expect(fetchMock).toHaveBeenCalled()
+    })
   })
 })

@@ -45,13 +45,39 @@
  * { status: 'processing', productSlug }. The caller polls
  * GET /api/build/resolve-app?slug={productSlug} until it resolves a chatId.
  *
+ * REGISTRATION DURABILITY (issue #660 follow-up, found live investigating why
+ * a real account's 20 companies never got a working product despite this
+ * generation genuinely succeeding, repeatedly): chat-ws's own saveGeneration()
+ * call is awaited BEFORE it emits 'complete' — so a generated app's code is
+ * durably persisted in the `generations` table the moment this route's reader
+ * loop even sees a chatId, well before the loop would go on to observe
+ * 'complete' and call registerApp(). But a Railway redeploy kills this
+ * detached task's container mid-loop, ANY time after 'init' — meaning the
+ * expensive, already-succeeded generation can be silently orphaned: real
+ * code sitting in `generations`, never linked to productSlug, so
+ * /build/{productSlug} 404s forever and a fresh POST here would otherwise
+ * regenerate from scratch. Confirmed live: exactly this happened to a real
+ * Dispatch product generation.
+ *
+ * Fixed by writing a durable {productSlug -> chatId} pending record the
+ * MOMENT chatId is known (lib/build/product-generation-state.ts), and, on
+ * every POST, checking for a prior pending attempt FIRST: if its generation
+ * is already sitting complete in `generations`, finish registration
+ * immediately instead of paying for a new generation.
+ *
  * Body: { idea, slug, name, designSystemId? }
- * Returns: { status: 'processing' | 'cached', productSlug, chatId? }
+ * Returns: { status: 'processing' | 'cached' | 'recovered', productSlug, chatId? }
  */
 
 import { NextRequest } from 'next/server'
 import { registerApp, resolveApp } from '@/lib/build/app-registry'
 import { logBuildOutcome } from '@/lib/build/learning'
+import {
+  recordPendingProductGeneration,
+  markProductGenerationRegistered,
+  resolvePendingProductGeneration,
+} from '@/lib/build/product-generation-state'
+import { loadGeneration } from '@/lib/zerodb-store'
 
 export const runtime = 'nodejs'
 
@@ -69,7 +95,7 @@ async function runProductGeneration(
 
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
-    let buf = '', chatId: string | null = null, completed = false
+    let buf = '', chatId: string | null = null, completed = false, recordedPending = false
     for (;;) {
       const { done, value } = await reader.read()
       if (done) break
@@ -79,7 +105,17 @@ async function runProductGeneration(
         const line = ev.split('\n').find((l) => l.startsWith('data:'))
         if (!line) continue
         let p: any; try { p = JSON.parse(line.slice(5).trim()) } catch { continue }
-        if (p.type === 'init' && p.chatId) chatId = p.chatId
+        if (p.type === 'init' && p.chatId) {
+          chatId = p.chatId
+          // Write the durable link as soon as chatId is known — NOT awaited
+          // in the hot loop's control flow beyond this one call, so a
+          // container death anywhere after this point is recoverable on the
+          // next request for this productSlug (see doc comment above).
+          if (!recordedPending) {
+            recordedPending = true
+            void recordPendingProductGeneration(productSlug, p.chatId)
+          }
+        }
         // Wait for 'complete' (both chat-ws's degraded and success paths
         // emit it), not the first 'refresh'/'files' — those fire repeatedly
         // during mid-generation streaming, well before obedience-repair /
@@ -91,6 +127,7 @@ async function runProductGeneration(
     if (!chatId) throw new Error('no chatId')
 
     await registerApp({ slug: productSlug, chatId, name, track: 'company' })
+    await markProductGenerationRegistered(productSlug, chatId)
     logBuildOutcome({
       slug: productSlug, idea, brand: name, track: 'company', chatId,
       codeStatus: completed ? 'success' : 'partial', converted: false,
@@ -114,6 +151,36 @@ export async function POST(request: NextRequest) {
   // Already built? return the existing chatId (don't regenerate).
   const existing = await resolveApp(productSlug).catch(() => null)
   if (existing?.chatId) return Response.json({ chatId: existing.chatId, productSlug, status: 'cached' })
+
+  // Recover an orphaned prior attempt (registration-durability gap, #660):
+  // a previous call's background task may have gotten a chatId, had its
+  // generation genuinely succeed and persist, and then died (e.g. a deploy)
+  // before ever calling registerApp. Check for that BEFORE starting a brand
+  // new, costly generation.
+  const pending = await resolvePendingProductGeneration(productSlug).catch(() => null)
+  if (pending?.chatId && pending.status === 'pending') {
+    const gen = await loadGeneration(pending.chatId).catch(() => null)
+    if (gen?.generatedCode) {
+      const name = String(b?.name || slug).slice(0, 120)
+      const registered = await registerApp({ slug: productSlug, chatId: pending.chatId, name, track: 'company' })
+      if (registered) {
+        await markProductGenerationRegistered(productSlug, pending.chatId)
+        return Response.json({ chatId: pending.chatId, productSlug, status: 'recovered' })
+      }
+    }
+    // Generation not actually done yet. Two possibilities: it's still
+    // genuinely in-flight on this or another live process (chat-ws's own
+    // AbortSignal.timeout is 780s), or the process that recorded this
+    // pending attempt died before chat-ws itself ever finished/persisted —
+    // truly orphaned, not just slow. Give the real in-flight case its full
+    // window; only past it treat the attempt as dead and fall through to
+    // start a genuinely fresh generation (never poll forever with no exit).
+    const ageMs = Date.now() - new Date(pending.createdAt).getTime()
+    const STILL_PLAUSIBLY_RUNNING_MS = 780_000 + 60_000
+    if (!gen?.generatedCode && ageMs < STILL_PLAUSIBLY_RUNNING_MS) {
+      return Response.json({ status: 'processing', productSlug })
+    }
+  }
 
   const name = String(b?.name || slug).slice(0, 120)
   const designSystemId = typeof b?.designSystemId === 'string' ? b.designSystemId.slice(0, 40) : undefined
