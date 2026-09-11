@@ -64,26 +64,33 @@ const PAID_PLANS = new Set(['launch', 'company', 'pro', 'business', 'enterprise'
  * present. Best-effort — a storage failure just means the proxy has nothing
  * to serve for this company/primitive; it never blocks provisioning itself.
  */
-async function captureFounderCredentialForProxy(
+export async function captureFounderCredentialForProxy(
   request: NextRequest,
   slug: string,
   primitive: FounderScopedPrimitive,
   jwt: string,
 ): Promise<boolean> {
+  // Real bug found live (triage, 2026-09-11, via the pipelineCredentialCaptured
+  // diagnostic added for this exact investigation): getToken() returned null
+  // for every real request tested, and this function used to treat that as a
+  // hard failure and bail out entirely — even though `jwt` (the caller's
+  // already-resolved session.accessToken from auth()) is the only credential
+  // this call actually needs to store. zerocrm's sibling block never had this
+  // bug because it never gates on getToken() succeeding; it only reads
+  // rawToken as an OPTIONAL source for a refresh token, exactly like this
+  // should. getToken()'s only real purpose here is to opportunistically grab
+  // a refresh token for later use — its absence must never block capture of
+  // the access token we already have.
   const rawToken = await getToken({ req: request, secret: process.env.AUTH_SECRET }).catch((e) => {
-    console.warn(`[provision] captureFounderCredentialForProxy(${slug}, ${primitive}): getToken threw:`, e?.message || e)
+    console.warn(`[provision] captureFounderCredentialForProxy(${slug}, ${primitive}): getToken threw (non-fatal, refresh token just won't be captured):`, e?.message || e)
     return null
   })
-  if (!rawToken?.refreshToken && !rawToken?.accessToken) {
-    console.warn(`[provision] captureFounderCredentialForProxy(${slug}, ${primitive}): getToken returned neither refreshToken nor accessToken (rawToken keys: ${rawToken ? Object.keys(rawToken).join(',') : 'null'})`)
-    return false
-  }
   const stored = await storeFounderCredential(
     slug,
     primitive,
     jwt,
-    rawToken.refreshToken as string | undefined,
-    rawToken.expiresAt ? Math.max(0, Math.floor((Number(rawToken.expiresAt) - Date.now()) / 1000)) : undefined,
+    rawToken?.refreshToken as string | undefined,
+    rawToken?.expiresAt ? Math.max(0, Math.floor((Number(rawToken.expiresAt) - Date.now()) / 1000)) : undefined,
   ).catch((e) => {
     console.warn(`[provision] captureFounderCredentialForProxy(${slug}, ${primitive}): storeFounderCredential threw:`, e?.message || e)
     return false
