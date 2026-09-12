@@ -104,6 +104,14 @@ export async function recallPastPerformance(userPrompt: string): Promise<string>
         // silently break cross-product learning by hiding every OTHER
         // session's memories from this recall.
         allow_cross_namespace: true,
+        // Temporal context expansion (Refs #3427, builder#686 item 1) — for
+        // each matched memory, also fetch its 2 nearest neighbors by
+        // created_at (same response shape, just more entries in `memories`).
+        // A bare match like "used ZeroPipeline" is often thin on its own;
+        // its neighbors (what came right before/after in that prior build)
+        // frequently carry the actual reasoning/outcome detail that makes
+        // the recalled context genuinely useful rather than a one-line echo.
+        expand_context: 2,
       }),
       signal: AbortSignal.timeout(3000),
     })
@@ -258,6 +266,39 @@ export async function completeDecisionTrace(traceId: string, outcome: string, su
       headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({ outcome: outcome.slice(0, 500), success }),
       signal: AbortSignal.timeout(5000),
+    }).catch(() => {})
+  } catch {
+    // Best-effort — never block the caller's real work
+  }
+}
+
+/**
+ * Auto-extract memories from a real conversation transcript (builder#686,
+ * item 2) — POST /process (core: app/api/v1/endpoints/zeromemory.py,
+ * ProcessConversationRequest, Refs #2960). Builder's ask/route.ts (the "Ask
+ * Cody anything" Live-dashboard chat) already has full, real multi-turn
+ * transcripts (buildMessagesWithHistory's exact {role, content}[] shape
+ * matches /process's expected input) and never ran this — every real
+ * exchange with a founder was a missed opportunity to auto-extract durable
+ * facts/preferences instead of only ever writing the raw Q&A pair.
+ *
+ * `namespace` is REQUIRED by the real endpoint (Refs #2960 — no silent
+ * global fallback for writes) — pass the same `session:{entityId}` shape
+ * storeGenerationMemory already established for consistency.
+ */
+export async function processConversation(
+  messages: Array<{ role: string; content: string }>,
+  entityId: string,
+): Promise<void> {
+  if (!messages.length || !entityId) return
+  try {
+    const { apiUrl, apiKey } = getMemoryConfig()
+    if (!apiKey) return
+    await fetch(`${apiUrl}/api/v1/public/memory/v2/process`, {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages, entity_id: entityId, namespace: `session:${entityId}` }),
+      signal: AbortSignal.timeout(8000),
     }).catch(() => {})
   } catch {
     // Best-effort — never block the caller's real work

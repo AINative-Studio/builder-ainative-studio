@@ -65,6 +65,21 @@ describe('recallPastPerformance', () => {
     expect(body.allow_cross_namespace).toBe(true)
   })
 
+  it('sends expand_context: 2 on every recall call (builder#686 item 1 — temporal neighbor expansion)', async () => {
+    const fetchMock = vi.fn(async (_url?: string, _init?: RequestInit) => ({
+      ok: true,
+      json: async () => ({ results: [] }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { recallPastPerformance } = await import('@/lib/agent/zeromemory')
+    await recallPastPerformance('build a CRM for florists')
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    const body = JSON.parse(String(init.body))
+    expect(body.expand_context).toBe(2)
+  })
+
   it('never sends entity_id or a namespace of its own — recall must stay unscoped for cross-product learning', async () => {
     const fetchMock = vi.fn(async (_url?: string, _init?: RequestInit) => ({ ok: true, json: async () => ({ results: [] }) }))
     vi.stubGlobal('fetch', fetchMock)
@@ -390,5 +405,63 @@ describe('completeDecisionTrace', () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('down') }))
     const { completeDecisionTrace } = await import('@/lib/agent/zeromemory')
     await expect(completeDecisionTrace('trace-1', 'outcome', false)).resolves.toBeUndefined()
+  })
+})
+
+// builder#686 item 2: auto-extract memories from real conversation
+// transcripts via POST /process (core: ProcessConversationRequest, Refs
+// #2960 — namespace is REQUIRED, no silent global fallback for writes).
+describe('processConversation', () => {
+  it('POSTs to /process with messages, entity_id, and a session namespace', async () => {
+    const fetchMock = vi.fn(async (_url?: string, _init?: RequestInit) => ({ ok: true, json: async () => ({}) }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { processConversation } = await import('@/lib/agent/zeromemory')
+    const messages = [
+      { role: 'user', content: 'How do I add auth?' },
+      { role: 'assistant', content: 'Use ZeroDB-backed sessions.' },
+    ]
+    await processConversation(messages, 'owner::slug')
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/api/v1/public/memory/v2/process')
+    const body = JSON.parse(String(init.body))
+    expect(body.messages).toEqual(messages)
+    expect(body.entity_id).toBe('owner::slug')
+    expect(body.namespace).toBe('session:owner::slug')
+  })
+
+  it('is a no-op when there are no messages', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { processConversation } = await import('@/lib/agent/zeromemory')
+    await processConversation([], 'owner::slug')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('is a no-op when entityId is empty', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { processConversation } = await import('@/lib/agent/zeromemory')
+    await processConversation([{ role: 'user', content: 'hi' }], '')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('returns without calling fetch when no API key is configured', async () => {
+    process.env.ZERODB_API_KEY = ''
+    process.env.AINATIVE_API_KEY = ''
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { processConversation } = await import('@/lib/agent/zeromemory')
+    await processConversation([{ role: 'user', content: 'hi' }], 'owner::slug')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('never throws when the call fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('down') }))
+    const { processConversation } = await import('@/lib/agent/zeromemory')
+    await expect(
+      processConversation([{ role: 'user', content: 'hi' }], 'owner::slug'),
+    ).resolves.toBeUndefined()
   })
 })
