@@ -23,6 +23,26 @@ function BrandPanel() {
   )
 }
 
+/**
+ * #651 — persistent exit from the auth flow. Before this, login/signup/forgot
+ * had no path back to the landing page short of the browser back button or
+ * retyping the URL. The logo and the explicit back control both go straight
+ * to 'landing' — a plain GOTO_SCREEN dispatch, never a signIn/register call,
+ * so no session is ever created by clicking either.
+ */
+function AuthHeader({ go }: { go: (s: Screen) => void }) {
+  return (
+    <div className="m-auth-header m-mono" data-testid="auth-header">
+      <button className="m-auth-logo" data-testid="auth-logo-home" onClick={() => go('landing')}>
+        BUILDER
+      </button>
+      <button className="m-back" data-testid="auth-back-home" onClick={() => go('landing')}>
+        ← Back to site
+      </button>
+    </div>
+  )
+}
+
 export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'forgot' | 'reset'> }) {
   const { state, dispatch } = useBuild()
   const go = (s: Screen) => dispatch({ type: 'GOTO_SCREEN', screen: s })
@@ -215,6 +235,7 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
       <div className="modernist m-auth">
         <BrandPanel />
         <main className="m-auth-form" data-testid="auth-verify-panel">
+          <AuthHeader go={go} />
           <p className="m-auth-chip m-mono">✓ Account created</p>
           <h1 className="m-artifact m-auth-h">Check your email to verify</h1>
           <p className="m-sub">
@@ -239,6 +260,7 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
     <div className="modernist m-auth">
       <BrandPanel />
       <main className="m-auth-form">
+        <AuthHeader go={go} />
         {mode === 'reset' && <p className="m-auth-chip m-mono">✓ Link sent to your email</p>}
         {/* Auth wall (#dashboard-ux): when the founder was gated here by submitting
             an idea, greet them with the named company so registration reads as the
