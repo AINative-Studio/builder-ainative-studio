@@ -52,7 +52,22 @@ export type ArtifactView =
   | (typeof COMPANY_VIEWS)[number]
   | (typeof SHARED_LATE_VIEWS)[number]
 
-export type WedgeChoice = '' | 'support' | 'eng' | 'sales'
+// #668: the wedge interrupt used to present 3 hardcoded, always-B2B-SaaS
+// options ("Customer support" / "Engineering onboarding" / "Sales
+// enablement") regardless of the founder's actual idea — nonsensical for,
+// say, a consumer hot-sauce subscription box. WedgeChoice is now a plain
+// confirm/regenerate signal; the actual idea-specific content lives in
+// WedgeDraft, drafted via the SAME real /api/build/artifact mechanism every
+// other prose artifact already uses (ARTIFACT_PROMPTS.wedge — which existed
+// and was idea-aware the whole time, but was never actually called for this
+// view since 'wedge' is an INTERRUPT_VIEW, not a GENERATED_VIEW).
+export type WedgeChoice = '' | 'confirmed'
+export interface WedgeDraft {
+  headline: string
+  segment: string
+  motion: string
+  proofPlan: string
+}
 export type PrivacyAnswer = 'raw' | 'embeddings-only'
 
 export interface PendingQuestion {
@@ -74,6 +89,12 @@ export interface BuildState {
   done: Record<string, string>   // artifactId -> status string; drives breadcrumb/rail
   nudgeState: Record<string, 'accepted' | 'dismissed' | undefined>
   wedgePicked: WedgeChoice
+  // #668: the real, idea-derived wedge Cody drafted (headline/segment/motion/
+  // proofPlan) — null until the draft fetch (kicked off by useAutoplay, the
+  // same real /api/build/artifact mechanism every other prose artifact uses)
+  // resolves. Wedge.tsx shows a loading state until this is set.
+  wedgeDraft: WedgeDraft | null
+  wedgeDraftError: string
   builtMVP: boolean
   builtCompany: boolean
   propagating: boolean
@@ -161,6 +182,8 @@ export const initialBuildState: BuildState = {
   done: {},
   nudgeState: {},
   wedgePicked: '',
+  wedgeDraft: null,
+  wedgeDraftError: '',
   builtMVP: false,
   builtCompany: false,
   propagating: false,
@@ -221,7 +244,10 @@ export type BuildAction =
   | { type: 'TAKE_THE_WHEEL' }
   | { type: 'KEEP_GOING' }
   | { type: 'NUDGE'; view: string; state: 'accepted' | 'dismissed' }
-  | { type: 'PICK_WEDGE'; choice: WedgeChoice }
+  | { type: 'PICK_WEDGE' }
+  | { type: 'WEDGE_DRAFT_READY'; draft: WedgeDraft }
+  | { type: 'WEDGE_DRAFT_FAIL'; error: string }
+  | { type: 'WEDGE_DRAFT_RETRY' }
   | { type: 'MVP_DONE' }
   | { type: 'COMPANY_DONE' }
   | { type: 'PICK_PLAN'; plan: Plan }
@@ -405,7 +431,14 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
     case 'NUDGE':
       return { ...state, nudgeState: { ...state.nudgeState, [action.view]: action.state } }
     case 'PICK_WEDGE':
-      return { ...state, wedgePicked: action.choice }
+      return { ...state, wedgePicked: 'confirmed' }
+    case 'WEDGE_DRAFT_READY':
+      return { ...state, wedgeDraft: action.draft, wedgeDraftError: '' }
+    case 'WEDGE_DRAFT_FAIL':
+      return { ...state, wedgeDraftError: action.error }
+    case 'WEDGE_DRAFT_RETRY':
+      // Let useAutoplay's effect see wedgeDraft go back to null and re-fetch.
+      return { ...state, wedgeDraft: null, wedgeDraftError: '' }
     case 'MVP_DONE':
       return { ...state, builtMVP: true, building: false }
     case 'COMPANY_DONE':

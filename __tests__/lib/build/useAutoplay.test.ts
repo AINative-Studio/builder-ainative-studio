@@ -158,9 +158,9 @@ describe('buildReducer — state transitions', () => {
     expect(s.pendingQ?.opts[1].v).toBe('embeddings-only')
   })
 
-  it('PICK_WEDGE sets wedgePicked', () => {
-    const s = buildReducer(wsState(), { type: 'PICK_WEDGE', choice: 'eng' })
-    expect(s.wedgePicked).toBe('eng')
+  it('PICK_WEDGE sets wedgePicked (#668: plain confirm signal, no choice payload)', () => {
+    const s = buildReducer(wsState(), { type: 'PICK_WEDGE' })
+    expect(s.wedgePicked).toBe('confirmed')
   })
 
   it('TAKE_THE_WHEEL sets auto=false', () => {
