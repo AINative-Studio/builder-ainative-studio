@@ -36,8 +36,16 @@
 const GITEA_BASE_URL = (process.env.GITEA_BASE_URL || '').replace(/\/+$/, '')
 const GITEA_ADMIN_TOKEN = process.env.GITEA_ADMIN_TOKEN || ''
 
-/** Default per-call timeout (ms). Gitea create ops are fast; keep them time-boxed. */
-const TIMEOUT_MS = 15000
+/**
+ * Default per-call timeout (ms). Gitea create ops are fast; keep them
+ * time-boxed. Bumped from 15s (#698 follow-up) — a real chat-triggered edit
+ * call chains several of these sequentially (getBranch pre-flight,
+ * getDefaultBranchSha, create branch, push files, re-fetch branch, create
+ * PR), and 15s per call was tight enough that a live production request
+ * genuinely hit "operation was aborted due to timeout" on ordinary Gitea
+ * latency, not a hung/broken call. Matches task-git-sync.ts's own 30s.
+ */
+const TIMEOUT_MS = 30000
 
 /** True only when both the Gitea host and an admin token are configured. */
 export function configured(): boolean {
