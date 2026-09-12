@@ -109,6 +109,30 @@ export function validateFileMap(files: FileMap): { valid: boolean; reason?: stri
   return { valid: true }
 }
 
+/**
+ * Real gap found live (git-provisioning audit): EVERY company git-provisioned
+ * so far (3/3 real Gitea repos checked in production — dispatch, triage,
+ * ember-box) silently never got its repo recorded on the registry, because
+ * both provision/route.ts and register-app/route.ts gate git-provisioning on
+ * `stored.files && Object.keys(stored.files).length > 0` — and `.files` (the
+ * MULTI-FILE map, only populated for Sandpack-routed generations) is null for
+ * a plain single-file app, which is the majority case. `.code` (the flat
+ * single-file source) was sitting right there, unused, the whole time.
+ *
+ * Normalizes a resolveStoredApp() result into a real FileMap either way:
+ * the genuine multi-file map when one exists, or a synthetic single-entry
+ * map (`{'App.tsx': code}`) built from the flat code string otherwise — which
+ * satisfies validateFileMap's entry-file requirement and lets every
+ * generated app, not just multi-file ones, actually get git-provisioned.
+ * Returns null only when there's truly no code at all to commit.
+ */
+export function toFileMapForCommit(stored: { code: string; files: Record<string, string> | null } | null): FileMap | null {
+  if (!stored) return null
+  if (stored.files && Object.keys(stored.files).length > 0) return stored.files
+  if (stored.code && stored.code.trim()) return { 'App.tsx': stored.code }
+  return null
+}
+
 // ---------------------------------------------------------------------------
 // Gitea contents API — push files to a repo
 // ---------------------------------------------------------------------------
