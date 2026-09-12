@@ -1068,7 +1068,10 @@
 .m-auth-statement { font-weight: 500; font-size: 34px; line-height: 1.2; margin: 14px 0; }
 .m-auth-subhead { font-size: 15px; line-height: 1.6; opacity: 0.9; max-width: 40ch; }
 .m-auth-domain { margin-top: auto; font-size: 11px; opacity: 0.7; }
-.m-auth-form { padding: 56px 44px; display: flex; flex-direction: column; justify-content: center; max-width: 440px; }
+.m-auth-form { position: relative; padding: 96px 44px 56px; display: flex; flex-direction: column; justify-content: center; max-width: 440px; }
+.m-auth-header { position: absolute; top: 24px; left: 44px; right: 44px; display: flex; align-items: center; justify-content: space-between; }
+.m-auth-logo { background: none; border: 0; cursor: pointer; font-family: var(--font-mono); font-weight: 700; font-size: 13px; letter-spacing: 0.04em; color: var(--text); padding: 0; }
+.m-auth-logo:hover { opacity: 0.7; }
 .m-auth-chip { color: var(--success); font-size: 12px; margin-bottom: 12px; }
 .m-auth-h { font-weight: 500; font-size: 32px; margin: 0 0 6px; }
 .m-auth-fields { display: flex; flex-direction: column; gap: 14px; margin: 22px 0; }
@@ -1408,8 +1411,9 @@
 @media (max-width: 760px) {
   .m-auth { grid-template-columns: 1fr; min-height: 0; }
   .m-auth-brand { padding: 28px 24px; }
-  .m-auth-form { padding: 32px 24px; max-width: none; }
+  .m-auth-form { padding: 72px 24px 32px; max-width: none; }
   .m-auth-statement { font-size: 26px; }
+  .m-auth-header { top: 20px; left: 24px; right: 24px; }
 
   .m-pricing { padding: 32px 20px; }
   .m-tiers { grid-template-columns: 1fr; }
