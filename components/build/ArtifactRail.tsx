@@ -6,11 +6,26 @@
  * count and a link to the full Artifact Graph. Built from the REAL artifacts in
  * the current build (buildArtifactGraph on the active track + done map). Clicking
  * a done artifact jumps to it.
+ *
+ * #652 — categories are a nested accordion by default (collapsed, so a large
+ * finished project stays scannable), but force fully expanded while Cody is
+ * actively driving the build (state.auto), so new output is never rendered
+ * inside a section the founder hasn't opened. A founder who explicitly
+ * collapses a category mid-run is never overridden again for the rest of
+ * that run; the resulting layout persists per-project across visits.
  */
 
+import { useEffect, useState } from 'react'
 import { useBuild } from '@/contexts/build-context'
 import { buildArtifactGraph, type ArtifactCategory } from '@/lib/build/artifact-graph'
 import type { ArtifactView } from '@/lib/build/state'
+import {
+  loadCollapsedCategories,
+  saveCollapsedCategories,
+  hasExplicitOverrideThisRun,
+  markExplicitOverrideThisRun,
+  isCategoryExpanded,
+} from '@/lib/build/artifact-rail-prefs'
 
 const CATEGORY_ORDER: ArtifactCategory[] = [
   'Thesis', 'Product', 'Delivery', 'Brand & Distribution', 'Operations', 'Sales & Revenue',
@@ -18,7 +33,28 @@ const CATEGORY_ORDER: ArtifactCategory[] = [
 
 export function ArtifactRail() {
   const { state, dispatch, goView } = useBuild()
+  const slug = state.appSub || ''
+  const [collapsed, setCollapsed] = useState<string[]>(() => loadCollapsedCategories(slug))
+  const [overridden, setOverridden] = useState(() => hasExplicitOverrideThisRun(slug))
+
+  // Re-hydrate when the active project changes (the rail persists across a
+  // WorkspaceShell that can outlive a single project's lifetime).
+  useEffect(() => {
+    setCollapsed(loadCollapsedCategories(slug))
+    setOverridden(hasExplicitOverrideThisRun(slug))
+  }, [slug])
+
   if (!state.railOpen) return null
+
+  const toggleCategory = (cat: string) => {
+    const next = collapsed.includes(cat) ? collapsed.filter((c) => c !== cat) : [...collapsed, cat]
+    setCollapsed(next)
+    saveCollapsedCategories(slug, next)
+    if (state.auto && !overridden) {
+      markExplicitOverrideThisRun(slug)
+      setOverridden(true)
+    }
+  }
 
   const g = buildArtifactGraph(state.track, state.done)
   const doneNodes = g.nodes.filter((n) => n.done)
@@ -38,10 +74,22 @@ export function ArtifactRail() {
         {CATEGORY_ORDER.filter((c) => byCat.has(c)).map((cat) => {
           const nodes = byCat.get(cat)!
           const doneInCat = nodes.filter((n) => n.done).length
+          const expanded = isCategoryExpanded(cat, collapsed, state.auto, overridden)
           return (
             <div key={cat} className="m-rail-group">
-              <div className="m-rail-cat m-mono">{cat} <span className="m-rail-cat-count">{doneInCat}/{nodes.length}</span></div>
-              {nodes.map((n) => (
+              <button
+                className="m-rail-cat m-mono m-rail-cat-toggle"
+                data-testid={`rail-cat-toggle-${cat}`}
+                aria-expanded={expanded}
+                onClick={() => toggleCategory(cat)}
+              >
+                <span className="m-rail-cat-label">
+                  <span className={`m-rail-caret ${expanded ? 'is-open' : ''}`} aria-hidden="true">▸</span>
+                  {cat}
+                </span>
+                <span className="m-rail-cat-count">{doneInCat}/{nodes.length}</span>
+              </button>
+              {expanded && nodes.map((n) => (
                 <button
                   key={n.id}
                   className={`m-rail-item ${n.done ? 'is-done' : 'is-upcoming'} ${state.view === n.id ? 'is-current' : ''}`}
