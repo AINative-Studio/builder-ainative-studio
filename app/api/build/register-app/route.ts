@@ -175,6 +175,12 @@ export async function POST(request: NextRequest) {
     color: b.color ? String(b.color).slice(0, 9) : existing?.color,
     track,
     deployUrl: target?.url || existing?.deployUrl,
+    // #660: persist the founder's original idea so a LATER page load/new tab/
+    // returning visit can hydrate it server-side (see resolveApp's new `idea`
+    // field) instead of only ever trusting client-only reducer state, which a
+    // fresh load never has. Only ever set from a real client-supplied value —
+    // never overwritten with '' by a later regeneration call that omits it.
+    idea: b.idea ? String(b.idea).trim().slice(0, 3000) : existing?.idea,
   })
 
   // Auto-enroll EVERY registered company (free or paid) into the nightly

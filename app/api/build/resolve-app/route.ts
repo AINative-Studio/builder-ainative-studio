@@ -13,6 +13,13 @@
  *
  * Returns: { slug, chatId } | { slug, chatId: null } (404 if never resolved
  * — kept 200 either way so a poll loop doesn't have to special-case status)
+ *
+ * `idea` (#660, additive): also returns the founder's original idea when the
+ * registry has one, so Live.tsx can hydrate client-only `state.idea` on a
+ * fresh page load/new tab/returning visit — without this, its real-product-
+ * generation trigger silently never fires because it gates on that in-memory-
+ * only field. Existing callers that destructure only `{chatId}` are
+ * unaffected by this extra field.
  */
 
 import { NextRequest } from 'next/server'
@@ -24,5 +31,5 @@ export async function GET(request: NextRequest) {
   const slug = new URL(request.url).searchParams.get('slug') || ''
   if (!slug) return Response.json({ error: 'slug required' }, { status: 400 })
   const entry = await resolveApp(slug).catch(() => null)
-  return Response.json({ slug, chatId: entry?.chatId ?? null })
+  return Response.json({ slug, chatId: entry?.chatId ?? null, idea: entry?.idea || null })
 }

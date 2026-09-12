@@ -155,6 +155,7 @@ export function Preview() {
     const registerBody = JSON.stringify({
       slug: state.appSub, chatId, name: state.companyName,
       tagline: state.brandTagline, color: state.brandColor, track: state.track,
+      idea: state.idea,
     })
     const tryRegister = () =>
       fetch('/api/build/register-app', {

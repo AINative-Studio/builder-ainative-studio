@@ -52,4 +52,22 @@ describe('GET /api/build/resolve-app', () => {
     const data = await res.json()
     expect(data.chatId).toBeNull()
   })
+
+  // #660: Live.tsx hydrates client-only state.idea from this endpoint on a
+  // fresh page load — a new tab/reload/returning visit never has it in
+  // memory, so without this the real-product-generation trigger silently
+  // never fires. Additive field, existing chatId-only callers unaffected.
+  it('also returns the registry idea when one is recorded', async () => {
+    h.resolveApp.mockResolvedValue({ chatId: 'real-chat-id', idea: 'A hot sauce subscription box' } as any)
+    const res = await GET(req('https://builder.ainative.studio/api/build/resolve-app?slug=ember-box'))
+    const data = await res.json()
+    expect(data.idea).toBe('A hot sauce subscription box')
+  })
+
+  it('returns idea: null when the registry entry has no idea recorded', async () => {
+    h.resolveApp.mockResolvedValue({ chatId: 'real-chat-id' } as any)
+    const res = await GET(req('https://builder.ainative.studio/api/build/resolve-app?slug=ember-box'))
+    const data = await res.json()
+    expect(data.idea).toBeNull()
+  })
 })
