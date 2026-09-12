@@ -101,7 +101,7 @@ export async function POST(request: NextRequest) {
     }
     if (!chatId) return Response.json({ error: 'no chatId' }, { status: 502 })
 
-    await registerApp({ slug, chatId, name, tagline, color, track: 'company' })
+    await registerApp({ slug, chatId, name, tagline, color, track: 'company', idea })
     // #270: capture the IDEA → generated app for the recursive learning loop, with
     // converted:false initially. subscription/verify flips it converted on payment.
     // Fire-and-forget — must never slow or fail the build request path.

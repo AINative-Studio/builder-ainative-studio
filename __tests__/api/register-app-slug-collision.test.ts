@@ -35,6 +35,12 @@ vi.mock('@/lib/build/seed-check', () => ({ checkSeededData: h.checkSeededData })
 vi.mock('@/lib/git/company-repo', () => ({
   commitRegeneration: h.commitRegeneration,
   provisionCompanyRepo: h.provisionCompanyRepo,
+  toFileMapForCommit: (stored: { code: string; files: Record<string, string> | null } | null) => {
+    if (!stored) return null
+    if (stored.files && Object.keys(stored.files).length > 0) return stored.files
+    if (stored.code && stored.code.trim()) return { 'App.tsx': stored.code }
+    return null
+  },
 }))
 vi.mock('@/lib/build/instant-db', () => ({ BUILDER_WORKSPACE_ID: 'builder-ws-default' }))
 vi.mock('@/lib/build/loop-enrollment', () => ({ enrollCompany: h.enrollCompany, isEnrolled: h.isEnrolled }))
@@ -169,5 +175,44 @@ describe('POST /api/build/register-app — slug collision handling', () => {
     // Falls back to the requested slug (fail-open — a broken lookup must
     // never block a real registration).
     expect(json.slug).toBe('acme')
+  })
+})
+
+// #660: idea is now persisted at registration so a LATER page load (fresh
+// tab, bookmark, returning founder) can hydrate it server-side via
+// resolve-app instead of only ever trusting client-only reducer state —
+// without this, Live.tsx's real-product-generation trigger silently never
+// fired for a founder who left and came back.
+describe('POST /api/build/register-app — idea persistence (#660)', () => {
+  beforeEach(() => {
+    Object.values(h).forEach((fn) => fn.mockReset())
+    h.checkAppReady.mockResolvedValue({ checked: true, ok: true })
+    h.deployPersistent.mockResolvedValue({ url: 'https://builder.ainative.studio/build/ember-box', dnsPointable: false })
+    h.resolveStoredApp.mockResolvedValue(null)
+    h.registerApp.mockResolvedValue(true)
+    h.auth.mockResolvedValue(null)
+    h.enrollCompany.mockResolvedValue(true)
+    h.isEnrolled.mockResolvedValue(false)
+  })
+
+  it('persists a real idea passed on the request', async () => {
+    h.resolveApp.mockResolvedValue(null)
+    await POST(req({ slug: 'ember-box', chatId: 'chat-1', name: 'Ember Box', track: 'company', idea: 'A hot sauce subscription box' }))
+    expect(h.registerApp).toHaveBeenCalledWith(expect.objectContaining({ idea: 'A hot sauce subscription box' }))
+  })
+
+  it('carries forward the existing idea on a regeneration call that omits it', async () => {
+    h.resolveApp.mockResolvedValue({ slug: 'ember-box', chatId: 'chat-1', name: 'Ember Box', track: 'company', idea: 'A hot sauce subscription box' })
+    await POST(req({ slug: 'ember-box', chatId: 'chat-1', name: 'Ember Box v2', track: 'company' }))
+    expect(h.registerApp).toHaveBeenCalledWith(expect.objectContaining({ idea: 'A hot sauce subscription box' }))
+  })
+
+  it('trims and caps idea length', async () => {
+    h.resolveApp.mockResolvedValue(null)
+    const longIdea = 'x'.repeat(4000)
+    await POST(req({ slug: 'acme', chatId: 'chat-1', name: 'Acme', track: 'app', idea: `  ${longIdea}  ` }))
+    const call = h.registerApp.mock.calls[0][0]
+    expect(call.idea.length).toBe(3000)
+    expect(call.idea.startsWith(' ')).toBe(false)
   })
 })

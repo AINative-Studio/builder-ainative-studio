@@ -27,6 +27,15 @@ export interface AppEntry {
   tagline?: string
   color?: string
   track?: string
+  // The founder's original idea text (#660). Never persisted anywhere durable
+  // before this — Live.tsx's real-product-generation trigger
+  // (POST /api/build/company-product) gates on client-only `state.idea`,
+  // which a fresh page load/new tab/returning visit never has, so product
+  // generation silently never fired for any real company. Set at first
+  // registration (register-app/company-app/company-product all know it),
+  // so a later Live.tsx mount can hydrate it from here instead of only
+  // ever trusting in-memory reducer state.
+  idea?: string
   // Owner association (#253) — the AINative account email that built/claimed this
   // company. Set from the signed-in session at registration/plan/provision time.
   // Enables the "my companies" index (listAppsForOwner) so a founder can find their

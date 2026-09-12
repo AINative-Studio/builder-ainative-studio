@@ -126,7 +126,7 @@ async function runProductGeneration(
     }
     if (!chatId) throw new Error('no chatId')
 
-    await registerApp({ slug: productSlug, chatId, name, track: 'company' })
+    await registerApp({ slug: productSlug, chatId, name, track: 'company', idea })
     await markProductGenerationRegistered(productSlug, chatId)
     logBuildOutcome({
       slug: productSlug, idea, brand: name, track: 'company', chatId,
@@ -162,7 +162,7 @@ export async function POST(request: NextRequest) {
     const gen = await loadGeneration(pending.chatId).catch(() => null)
     if (gen?.generatedCode) {
       const name = String(b?.name || slug).slice(0, 120)
-      const registered = await registerApp({ slug: productSlug, chatId: pending.chatId, name, track: 'company' })
+      const registered = await registerApp({ slug: productSlug, chatId: pending.chatId, name, track: 'company', idea })
       if (registered) {
         await markProductGenerationRegistered(productSlug, pending.chatId)
         return Response.json({ chatId: pending.chatId, productSlug, status: 'recovered' })

@@ -254,6 +254,29 @@ export function Live() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Hydrate idea/appSub from the SERVER registry when a fresh mount has neither
+  // (#660). A new tab, a bookmark, a page reload, or a returning founder days
+  // later all arrive with state.idea/state.appSub empty — client-only reducer
+  // state, never re-hydrated from anywhere before this. The effect below (real
+  // landing-page + real-product generation triggers) gates on both fields
+  // being non-empty, so on every one of those fresh-load cases it silently
+  // never fired — confirmed live: 20/20 real companies on the account owner's
+  // own account had never once had product generation run. resolveApp's
+  // `idea` field (persisted at registration, see app-registry.ts) is the
+  // durable source this hydrates from.
+  useEffect(() => {
+    if (state.idea || !companyId) return
+    let alive = true
+    fetch(`/api/build/resolve-app?slug=${encodeURIComponent(companyId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!alive || !d?.idea) return
+        dispatch({ type: 'RESTORE_BUILD', partial: { idea: d.idea, appSub: d.slug || companyId } })
+      })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [companyId, state.idea, dispatch])
+
   // Real business-systems state for this company (honest zero-state for a fresh
   // company; real counts when its ZeroDB has data). Never fabricated.
   // idea is passed so the systems route can select primitives for this specific company (#288).
@@ -349,7 +372,13 @@ export function Live() {
       .then((d) => { if (alive && d) setNightshift(d) })
       .catch(() => { /* honest: no card if unavailable */ })
     return () => { alive = false }
-  }, [companyId])
+    // #660: re-run once idea/appSub become known — either populated at mount
+    // (the original build session) or hydrated moments later by the effect
+    // above (a fresh page load/new tab/returning visit). Every fetch this
+    // effect fires is a safe, idempotent GET or an already-guarded
+    // (!state.appChatId / !state.productChatId) generation POST, so a
+    // second fire once hydration lands is harmless, not wasteful churn.
+  }, [companyId, state.idea, state.appSub])
 
   // Custom domain (#240): read the purchased domain off the app-registry entry so
   // the dashboard shows "Live at {domain}". If a fulfillment just completed
