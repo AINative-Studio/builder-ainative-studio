@@ -41,6 +41,18 @@ export function MyCompanies() {
   const { state, dispatch } = useBuild()
   const { status } = useSession()
   const signedIn = status === 'authenticated'
+  // Delete affordance (#649) — the founder-facing gap this session's audit
+  // found: the real soft-delete primitive (setAppLifecycle, resolveApp
+  // already treats 'deleted' as a real 404) has existed since #57, but the
+  // only UI control for it (DangerZone in Account.tsx) only ever acts on
+  // whatever company happens to be "active" in the current client-side
+  // reducer state — not reachable for a company the founder is just
+  // browsing here. Reuses the same typed-confirmation pattern + the same
+  // /api/build/danger endpoint (now ownership-checked server-side, #649).
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const [deleteConfirmText, setDeleteConfirmText] = useState('')
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   // Existing-subscriber recognition (#251): hydrate the account plan so
   // companies without a per-company subscription carry the founder's real plan
@@ -93,6 +105,40 @@ export function MyCompanies() {
     url.searchParams.set('screen', 'live')
     url.searchParams.set('company', c.slug)
     window.location.href = url.toString()
+  }
+
+  // Delete a company (#649). Requires the founder to type its exact name —
+  // the same server-enforced guard DangerZone already uses. On success,
+  // optimistically drops it from the local list (an honest state — the
+  // registry entry really is soft-deleted, resolveApp will 404 it).
+  const deleteCompany = async (c: Company) => {
+    if (deleteBusy) return
+    setDeleteBusy(true)
+    setDeleteError(null)
+    try {
+      const r = await fetch('/api/build/danger', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'delete', companyId: c.slug, companyName: c.name,
+          slug: c.slug, track: c.track === 'app' ? 'app' : 'company',
+          confirm: deleteConfirmText.trim(),
+        }),
+      })
+      const d = await r.json().catch(() => null)
+      if (r.ok && d?.ok) {
+        setCompanies((prev) => (prev || []).filter((x) => x.slug !== c.slug))
+        setDeleteTarget(null)
+        setDeleteConfirmText('')
+      } else {
+        setDeleteError(
+          d?.error === 'not_owner' ? 'You are not the owner of this company.' : (d?.error || 'Could not delete — please try again.'),
+        )
+      }
+    } catch {
+      setDeleteError('Could not delete — please try again.')
+    } finally {
+      setDeleteBusy(false)
+    }
   }
 
   // Manage plan/billing — open the real Stripe customer portal (#253).
@@ -200,7 +246,54 @@ export function MyCompanies() {
                     ) : (
                       <button className="btn-ghost" data-testid={`billing-${c.slug}`} disabled={portalBusy} onClick={manageBilling}>Manage plan ↗</button>
                     )}
+                    <button
+                      className="btn-ghost m-danger-link"
+                      data-testid={`delete-${c.slug}`}
+                      disabled={deleteBusy}
+                      onClick={() => {
+                        setDeleteTarget(deleteTarget === c.slug ? null : c.slug)
+                        setDeleteConfirmText('')
+                        setDeleteError(null)
+                      }}
+                    >
+                      Delete
+                    </button>
                   </div>
+
+                  {deleteTarget === c.slug && (
+                    <div className="m-danger-confirm" data-testid={`delete-confirm-${c.slug}`}>
+                      <label className="m-field-l" htmlFor={`delete-confirm-input-${c.slug}`}>
+                        Type <strong>{c.name}</strong> to delete it permanently
+                      </label>
+                      <input
+                        id={`delete-confirm-input-${c.slug}`}
+                        data-testid={`delete-confirm-input-${c.slug}`}
+                        type="text"
+                        value={deleteConfirmText}
+                        onChange={(e) => setDeleteConfirmText(e.target.value)}
+                        autoComplete="off"
+                      />
+                      <div className="m-settings-actions">
+                        <button
+                          className="btn-danger"
+                          data-testid={`delete-confirm-submit-${c.slug}`}
+                          disabled={deleteBusy || deleteConfirmText.trim().toLowerCase() !== c.name.trim().toLowerCase()}
+                          onClick={() => deleteCompany(c)}
+                        >
+                          {deleteBusy ? 'Deleting…' : 'Delete permanently'}
+                        </button>
+                        <button
+                          className="btn-ghost"
+                          data-testid={`delete-confirm-cancel-${c.slug}`}
+                          disabled={deleteBusy}
+                          onClick={() => { setDeleteTarget(null); setDeleteConfirmText(''); setDeleteError(null) }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                      {deleteError && <p className="m-mono is-err" data-testid={`delete-error-${c.slug}`}>{deleteError}</p>}
+                    </div>
+                  )}
                 </div>
               )
             })}
