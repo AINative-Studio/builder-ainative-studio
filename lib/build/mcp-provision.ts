@@ -19,6 +19,28 @@
  *
  * This module owns ONLY the ZeroDB build-time seam (phase-1 goal: one primitive
  * end-to-end). Run-time ops (GTM/ZeroVoice/etc.) are later phases.
+ *
+ * ENABLE_MCP_PROVISION default (#612, 2026-09-11 re-verify): deliberately LEFT
+ * OFF (default-disabled) even though mcp.ainative.studio is now confirmed
+ * LIVE — this is wired into the REAL checkout path (app/api/build/provision/
+ * route.ts), so flipping the default changes production behavior for every
+ * company provisioned, not just this catalog's data. Two unresolved unknowns
+ * make that unsafe to flip blind in this pass: (1) `getMcpServer('zerodb')`
+ * now points at the authoritative name `zerodb-memory-mcp`, but whether that
+ * server actually exposes `zerodb_create_project`/`zerodb_create_table` (the
+ * tools this module calls) is unconfirmed — the gateway's auth middleware
+ * 401s identically with or without a real server name, so it can't be
+ * confirmed without an authenticated GET /v1/mcp/servers or a real MCP key,
+ * neither available in this environment; (2) this module's tool contract was
+ * written against the FULL 69-tool ZeroDB surface, while the authoritative
+ * list's `zerodb-memory-mcp` may be the narrower ZeroMemory-flavored server
+ * (see the REALITY CHECK above primitive-catalog.ts's MCP_SERVERS for the
+ * tool-count discrepancy this surfaced). The design already fails closed on
+ * either unknown (a missing tool ⇒ `create_project_failed`/`no_project_id`,
+ * never a thrown error or a broken build) — but "fails closed safely" is not
+ * the same as "confirmed to work," so the flag stays off pending a real,
+ * authenticated verification of this exact tool contract against the exact
+ * corrected URL.
  */
 
 import { logger } from '../logger'

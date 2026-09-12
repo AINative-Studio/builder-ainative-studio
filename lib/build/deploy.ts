@@ -89,10 +89,17 @@ export const RESERVED_SUBDOMAINS = new Set([
   'zerodb', 'zeroinvoice', 'zeropipeline', 'zerowarranty',
   // Re-verified against the live Railway API across all workspace projects
   // (2026-09-01) — no new hosted-service labels found beyond the above.
-  // Hosted primitive MCP gateway labels (core#6667) — documented at
-  // mcp.ainative.studio/{server} but not yet DNS-provisioned with their own
-  // record; currently ride the wildcard and MUST stay reserved so they never
-  // get treated as a company slug and rewritten into /build/{label}.
+  // Hosted primitive MCP gateway labels (core#6667). #612 re-verify
+  // (2026-09-11): mcp.ainative.studio now has its OWN dedicated DNS/routing —
+  // confirmed live via curl: a genuine unknown wildcard slug 301-redirects to
+  // builder.ainative.studio/build/{slug} (this app's own fallback), while
+  // mcp.ainative.studio itself returns a direct 200/401 JSON response from
+  // core's backend (x-api-auth-docs, railway-hikari) with NO redirect to
+  // builder at all — it does NOT currently ride this wildcard. Kept reserved
+  // here anyway as defense-in-depth: if that dedicated record were ever
+  // removed, `mcp` (and its documented per-server sub-paths) must still never
+  // fall through and get treated as a company slug rewritten into
+  // /build/{label}.
   'mcp', 'strapi', 'prd-generator', 'sequential-thinking', 'design-system',
   'gtm', 'opencapstack', 'google-ads', 'meta-ads', 'dataforseo',
 ])

@@ -20,13 +20,19 @@ describe('primitive-catalog MCP metadata (#73)', () => {
     expect(CATALOG_SIZE).toBe(CATALOG.length)
   })
 
-  it('does NOT add mcpUrl/mcpTools to ZeroMemory/ZeroVoice/Content Workflow (#534)', () => {
-    // mcp.ainative.studio is confirmed DEAD (live curl: real 404 on every
-    // tested path, served by builder's own SPA catch-all, not an MCP
-    // handler) — Refs core#6667, still open. Asserting these fields would
-    // claim a capability that doesn't exist, the same bug class fixed for
-    // OpenCapStack in #429/#413. No stdio-npm alternative is known to exist
-    // for these three, unlike ZeroDB's real `ainative-zerodb-mcp-server`.
+  it('does NOT add mcpUrl/mcpTools to ZeroMemory/ZeroVoice/Content Workflow (#612)', () => {
+    // #612 (2026-09-11): mcp.ainative.studio is confirmed LIVE (real
+    // structured backend JSON from railway-hikari on every path tested, not
+    // an HTML 404 — Refs core#6667). These three still don't get a distinct
+    // mcpUrl here: ZeroMemory's real registered gateway name
+    // (`zerodb-memory-mcp`) is the SAME path as full ZeroDB's mcpUrl above,
+    // and its real tool count/split is unconfirmed (this gateway's auth
+    // middleware 401s identically for real and fake server names, so an
+    // unauthenticated curl can't resolve the split — see the REALITY CHECK
+    // comment above MCP_SERVERS in primitive-catalog.ts); ZeroVoice and
+    // Content Workflow (Strapi) are registered under MCP_SERVERS with their
+    // real bare names but likewise have unconfirmed tool counts. No fields
+    // are asserted here without a live authenticated confirmation.
     expect(getPrimitive('ZeroMemory')?.mcpUrl).toBeUndefined()
     expect(getPrimitive('ZeroMemory')?.mcpTools).toBeUndefined()
     expect(getPrimitive('ZeroVoice')?.mcpUrl).toBeUndefined()
@@ -48,13 +54,13 @@ describe('primitive-catalog MCP metadata (#73)', () => {
     expect(commerce?.apiBase).toBe('https://zerocommerce.ainative.studio/api/v1')
   })
 
-  it('getMcpOperablePrimitives returns only primitives with a real mcpUrl (#534: ZeroDB only)', () => {
+  it('getMcpOperablePrimitives returns only primitives with a real mcpUrl (#612: ZeroDB only)', () => {
     // ZeroDB is the only catalog primitive still carrying an mcpUrl. Its field
-    // still points at the same dead MCP_BASE host as everything else (not yet
-    // corrected here — out of scope for #534, which only removed the fields
-    // proven to have NO real backing at all); ZeroDB's genuinely live MCP path
-    // is the separate stdio wiring in lib/agent/agent-runtime.ts, which does
-    // not consult this catalog field.
+    // now points at the real, live, authoritative registered gateway name
+    // `zerodb-memory-mcp` (corrected #612 — was bare `zerodb`, which was never
+    // a real registered path). ZeroDB's genuinely-exercised-in-production MCP
+    // path is still the separate stdio wiring in lib/agent/agent-runtime.ts,
+    // which does not consult this catalog field at all (Tier 2 follow-up).
     const operable = getMcpOperablePrimitives()
     expect(operable.map((p) => p.name)).toEqual(['ZeroDB'])
     expect(operable.every((p) => !!p.mcpUrl)).toBe(true)
@@ -75,26 +81,47 @@ describe('primitive-catalog MCP metadata (#73)', () => {
     expect(isMcpOperable('nonexistent primitive')).toBe(false)
   })
 
-  it('MCP_SERVERS still lists the documented (but unverified/dead) fleet ids + transports', () => {
-    // #534: MCP_SERVERS is a separate array from the catalog's mcpUrl fields
-    // and intentionally keeps every documented server id discoverable — but
-    // see the REALITY CHECK comment above this array: every `transport:
-    // 'http'` entry points at the confirmed-dead mcp.ainative.studio host
-    // (core#6667). This test only asserts the array's shape, not reachability.
+  it('MCP_SERVERS lists the authoritative fleet ids + transports (#612: gateway confirmed LIVE)', () => {
+    // #612 (2026-09-11): mcp.ainative.studio is confirmed LIVE (real
+    // structured backend JSON from railway-hikari, not an HTML 404 — Refs
+    // core#6667). MCP_SERVERS keeps every documented/authoritative server id
+    // discoverable, including the `meta-ads-mcp` and `zerodb-memory-mcp`
+    // entries added in this pass. See the REALITY CHECK comment above this
+    // array for the live-curl matrix and the caveat that the gateway's auth
+    // middleware makes an unauthenticated request 401 identically for a real
+    // vs. fake server name — this test asserts the array's shape (ids/
+    // transports/urls), not that every specific tool count has been
+    // authenticated-confirmed.
     const ids = MCP_SERVERS.map((s) => s.id)
-    for (const id of ['zerodb', 'memory', 'prd-generator', 'sequential-thinking', 'design-system', 'strapi', 'zerovoice', 'gtm', 'opencapstack']) {
+    for (const id of ['zerodb', 'memory', 'zerodb-memory-mcp', 'meta-ads-mcp', 'prd-generator', 'sequential-thinking', 'design-system', 'strapi', 'zerovoice', 'gtm', 'opencapstack']) {
       expect(ids).toContain(id)
     }
-    // ZeroDB is labeled as the full 69-tool HTTP server, though that HTTP path
-    // is unverified/dead — its real live wiring is the separate stdio path in
-    // lib/agent/agent-runtime.ts, not this entry.
+    // ZeroDB's url now points at the real authoritative registered name
+    // `zerodb-memory-mcp` (corrected #612 — was bare `zerodb`, never a real
+    // registered path); its genuinely-exercised-in-production MCP wiring is
+    // still the separate stdio path in lib/agent/agent-runtime.ts, not this
+    // entry (Tier 2 follow-up to bridge them).
     const zerodb = getMcpServer('zerodb')
     expect(zerodb?.tools).toBe(69)
     expect(zerodb?.transport).toBe('http')
     expect(zerodb?.primitive).toBe('ZeroDB')
+    expect(zerodb?.url).toContain('/zerodb-memory-mcp')
+    // `memory` also resolves to the same authoritative combined server.
+    expect(getMcpServer('memory')?.url).toContain('/zerodb-memory-mcp')
+    // The authoritative name is also directly selectable under its own id.
+    expect(getMcpServer('zerodb-memory-mcp')?.url).toContain('/zerodb-memory-mcp')
+    // meta-ads-mcp was missing from this array entirely — now present.
+    const metaAds = getMcpServer('meta-ads-mcp')
+    expect(metaAds?.transport).toBe('http')
+    expect(metaAds?.tools).toBe(3)
+    // strapi/zerovoice/prd-generator/sequential-thinking/design-system already
+    // matched their authoritative bare names — no rename needed.
+    expect(getMcpServer('strapi')?.url).toContain('/strapi')
+    expect(getMcpServer('zerovoice')?.url).toContain('/zerovoice')
     // GTM is stdio (npx).
     expect(getMcpServer('gtm')?.transport).toBe('stdio')
-    // OpenCapStack is stdio too (npx @opencapstack/mcp-server) — #413.
+    // OpenCapStack is stdio too (npx @opencapstack/mcp-server) — #413. It is
+    // NOT one of the 8 authoritative mcp.ainative.studio servers.
     const opencapstack = getMcpServer('opencapstack')
     expect(opencapstack?.transport).toBe('stdio')
     expect(opencapstack?.tools).toBe(27)
