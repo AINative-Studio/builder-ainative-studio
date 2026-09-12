@@ -26,6 +26,7 @@ import OpenAI from 'openai'
 import { getClaudeCompletion } from '@/lib/build/claude-completion'
 import { resolveApp } from '@/lib/build/app-registry'
 import { toSlug } from '@/lib/build/slug'
+import { RESERVED_SUBDOMAINS } from '@/lib/build/deploy'
 
 export const runtime = 'nodejs'
 
@@ -50,10 +51,16 @@ const SYSTEM =
   'not the raw idea text. Also give a one-line tagline and a hex brand accent color. ' +
   'Return ONLY minified JSON: {"name","tagline","color"}'
 
-/** Real registry check — true only when a DIFFERENT, already-registered
- *  company holds this slug. Fail-open (false) on any lookup error, since a
- *  registry hiccup must never block naming a brand-new company. */
+/** Registry + reserved-subdomain check — true when a DIFFERENT, already-
+ *  registered company holds this slug, OR the slug is a reserved/infra
+ *  subdomain (RESERVED_SUBDOMAINS, e.g. "insyteful", "api", "builder") that
+ *  must never be handed out as a company's own {slug}.ainative.studio host.
+ *  Fail-open (false) on a registry lookup error — an infra hiccup must never
+ *  block naming a brand-new company — but the reserved-list check itself is
+ *  a pure in-memory lookup, so it always applies regardless of registry
+ *  health. */
 async function slugTaken(slug: string): Promise<boolean> {
+  if (RESERVED_SUBDOMAINS.has(slug)) return true
   try {
     return Boolean(await resolveApp(slug))
   } catch {

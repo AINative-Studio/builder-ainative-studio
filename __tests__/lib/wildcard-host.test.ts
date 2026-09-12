@@ -36,7 +36,8 @@ describe('wildcardSlugFromHost', () => {
     // These are real *.ainative.studio apps — must never be rewritten to /build/*.
     for (const sub of ['zerodb', 'chat', 'live', 'aikit', 'agentflow', 'ocean',
                        'community', 'dothack', 'wwmaa', 'zeroinvoice', 'pipeline',
-                       'zeropipeline', 'memory', 'agency', 'pillsense', 'boardlens']) {
+                       'zeropipeline', 'memory', 'agency', 'pillsense', 'boardlens',
+                       'insyteful']) {
       expect(wildcardSlugFromHost(`${sub}.ainative.studio`, HOST)).toBeNull()
     }
   })

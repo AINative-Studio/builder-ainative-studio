@@ -86,7 +86,7 @@ export const RESERVED_SUBDOMAINS = new Set([
   'hack', 'helpdesk', 'insurance-agent', 'live', 'memory', 'mif', 'ngo', 'ocean',
   'oceanapi', 'pillsense', 'pipeline', 'properstack', 'publicfounders', 'qnn',
   'qui', 'sc-builders', 'specbook', 'surgeonmatch', 'winning-careers', 'wwmaa',
-  'zerodb', 'zeroinvoice', 'zeropipeline', 'zerowarranty',
+  'zerodb', 'zeroinvoice', 'zeropipeline', 'zerowarranty', 'insyteful',
   // Re-verified against the live Railway API across all workspace projects
   // (2026-09-01) — no new hosted-service labels found beyond the above.
   // Hosted primitive MCP gateway labels (core#6667). #612 re-verify
