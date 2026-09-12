@@ -147,6 +147,27 @@ export function hasVisitorTrackingGap(code: string): boolean {
 }
 
 /**
+ * AX compliance (agent-accessibility, prompt-only per lib/professional-prompt.ts's
+ * 10-item checklist — never code-enforced before this). Audited live: real
+ * generations scored ~1/10 against that checklist, because nothing here ever
+ * re-prompted on a miss the way persistence/AIKit/primitive gaps already do.
+ *
+ * Scoped to the SINGLE cheapest, most foundational, unconditional item: the
+ * root `<main aria-label="...">` landmark (checklist item 1) — everything
+ * else in the checklist (nav/section landmarks, data-agent-* attributes, the
+ * hidden manifest, JSON-LD) nests inside this one root, and it's the one
+ * check regex-detectable with no false-positive risk across every shape of
+ * generated app (single-file or multi-file, any layout). Deliberately NOT
+ * attempting the full 8-item checklist in one pass — see this file's own
+ * "Conservative — a false 'no gap' is fine" philosophy; the remaining items
+ * need their own scoped follow-up (tracked separately, not each guessed at
+ * here with regexes prone to false positives on legitimately simple apps).
+ */
+export function hasAxLandmarkGap(code: string): boolean {
+  return !/<main[^>]*\baria-label\s*=/.test(code || '')
+}
+
+/**
  * AIKit patterns the model tends to hand-roll. Each entry: a regex that matches a
  * HAND-ROLLED version in the generated code, and the AIKit component to use instead.
  * We only flag when the AIKit component is NOT already imported/used.
@@ -239,6 +260,8 @@ export interface ObedienceResult {
   /** Real bug (found live): a favorite/like/save toggle on a hardcoded array
    *  — genuine interaction silently lost on reload. */
   hardcodedToggleGap: boolean
+  /** AX compliance: no root `<main aria-label>` landmark (checklist item 1). */
+  axLandmarkGap: boolean
   reasons: string[]
 }
 
@@ -275,6 +298,7 @@ export function checkObedience(
   const visitorTrackingGap = hasVisitorTrackingGap(code)
   const fakeLeadCaptureGap = hasFakeLeadCaptureGap(code)
   const hardcodedToggleGap = hasHardcodedToggleGap(code)
+  const axLandmarkGap = hasAxLandmarkGap(code)
   const reasons: string[] = []
   if (persistenceGap) {
     reasons.push('App manages user records but hardcodes data — must persist via /api/db.')
@@ -294,7 +318,10 @@ export function checkObedience(
   if (hardcodedToggleGap) {
     reasons.push('A favorite/like/save toggle on a hardcoded list resets on reload — must persist via /api/db.')
   }
-  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, visitorTrackingGap, fakeLeadCaptureGap, hardcodedToggleGap, reasons }
+  if (axLandmarkGap) {
+    reasons.push('No root <main aria-label="..."> landmark — required so AI agents can parse and navigate the page.')
+  }
+  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, visitorTrackingGap, fakeLeadCaptureGap, hardcodedToggleGap, axLandmarkGap, reasons }
 }
 
 /**
@@ -379,6 +406,15 @@ export function buildObediencePrompt(idea: string, result: ObedienceResult): str
       '',
     )
   }
+  if (result.axLandmarkGap) {
+    parts.push(
+      '7) ADD THE ROOT AX LANDMARK — the outermost element the component returns must be',
+      '   <main aria-label="{App Name} - {one-line page description}"> wrapping everything else.',
+      '   Example: <main aria-label="Scorch - hot sauce subscription dashboard">...</main>',
+      '   This is required so AI agents can parse and navigate the page. Do not change anything else about the layout.',
+      '',
+    )
+  }
   parts.push('Return the corrected full app. Do not remove features.')
   return parts.join('\n')
 }
@@ -407,6 +443,7 @@ export function narrowToPrimitiveComplianceOnly(gaps: string[]): ObedienceResult
     visitorTrackingGap: false,
     fakeLeadCaptureGap: false,
     hardcodedToggleGap: false,
+    axLandmarkGap: false,
     reasons: [],
   }
 }

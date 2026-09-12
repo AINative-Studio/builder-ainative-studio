@@ -1585,7 +1585,8 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                   (ob.primitiveComplianceGaps.length > after.primitiveComplianceGaps.length) ||
                   (ob.visitorTrackingGap && !after.visitorTrackingGap) ||
                   (ob.fakeLeadCaptureGap && !after.fakeLeadCaptureGap) ||
-                  (ob.hardcodedToggleGap && !after.hardcodedToggleGap)
+                  (ob.hardcodedToggleGap && !after.hardcodedToggleGap) ||
+                  (ob.axLandmarkGap && !after.axLandmarkGap)
                 if (v.valid && multi && (v.code?.length || 0) > finalContent.length * 0.7) {
                   console.log('🔧 Combined pass produced a valid multi-file, rule-following app — adopting.')
                   finalContent = v.code; validation = v; checkpoint.record('fix+split', finalContent, true)
@@ -1685,7 +1686,8 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                     (ob.primitiveComplianceGaps.length > after.primitiveComplianceGaps.length) ||
                     (ob.visitorTrackingGap && !after.visitorTrackingGap) ||
                     (ob.fakeLeadCaptureGap && !after.fakeLeadCaptureGap) ||
-                    (ob.hardcodedToggleGap && !after.hardcodedToggleGap)
+                    (ob.hardcodedToggleGap && !after.hardcodedToggleGap) ||
+                    (ob.axLandmarkGap && !after.axLandmarkGap)
                   if (improved) {
                     console.log('📏 Obedience re-prompt improved the app — adopting.')
                     finalContent = obValidation.code; validation = obValidation; checkpoint.record('obedience', finalContent, true)
@@ -1784,6 +1786,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               visitorTrackingGap: obFinal.visitorTrackingGap,
               fakeLeadCaptureGap: obFinal.fakeLeadCaptureGap,
               hardcodedToggleGap: obFinal.hardcodedToggleGap,
+              axLandmarkGap: obFinal.axLandmarkGap,
               bytes: served.length,
             }, responseId)
           } catch (memErr: any) {
