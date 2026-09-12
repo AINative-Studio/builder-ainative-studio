@@ -10,9 +10,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
  * Context Graph structure for free, no separate call needed on Builder's
  * side).
  *
- * recall stays intentionally UNSCOPED (no entity_id/namespace) — its whole
- * purpose is cross-product learning from OTHER companies' past builds,
- * which requires the shared pool, not per-company isolation.
+ * recall stays intentionally UNSCOPED (no entity_id/namespace of its own) —
+ * its whole purpose is cross-product learning from OTHER companies' past
+ * builds. storeGenerationMemory now writes each generation into a real
+ * `session:{chatId}` namespace instead of the implicit global pool (item 3
+ * of #674's adoption gap), so recall explicitly sends
+ * allow_cross_namespace: true to keep searching across every session's
+ * memories rather than silently narrowing to just its own.
  */
 
 const originalEnv = { ...process.env }
@@ -46,7 +50,22 @@ describe('recallPastPerformance', () => {
     expect(body.query).toBe('build a CRM for florists')
   })
 
-  it('never sends entity_id or a per-company namespace — recall must stay unscoped for cross-product learning', async () => {
+  it('sends allow_cross_namespace: true on every recall call, so per-session-namespaced memories are still found', async () => {
+    const fetchMock = vi.fn(async (_url?: string, _init?: RequestInit) => ({
+      ok: true,
+      json: async () => ({ results: [] }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { recallPastPerformance } = await import('@/lib/agent/zeromemory')
+    await recallPastPerformance('build a CRM for florists')
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    const body = JSON.parse(String(init.body))
+    expect(body.allow_cross_namespace).toBe(true)
+  })
+
+  it('never sends entity_id or a namespace of its own — recall must stay unscoped for cross-product learning', async () => {
     const fetchMock = vi.fn(async (_url?: string, _init?: RequestInit) => ({ ok: true, json: async () => ({ results: [] }) }))
     vi.stubGlobal('fetch', fetchMock)
 
@@ -105,7 +124,19 @@ describe('storeGenerationMemory', () => {
     expect(body.entity_id).toBe('chat-abc123')
   })
 
-  it('omits entity_id entirely when no chatId is passed (exact pre-existing behavior preserved)', async () => {
+  it('namespaces the memory to session:{chatId} when a chatId is passed (#674 item 3)', async () => {
+    const fetchMock = vi.fn(async (_url?: string, _init?: RequestInit) => ({ ok: true, json: async () => ({}) }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { storeGenerationMemory } = await import('@/lib/agent/zeromemory')
+    await storeGenerationMemory('build a florist CRM', true, 0.8, { source: 'test' }, 'chat-abc123')
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    const body = JSON.parse(String(init.body))
+    expect(body.namespace).toBe('session:chat-abc123')
+  })
+
+  it('omits entity_id and namespace entirely when no chatId is passed (exact pre-existing behavior preserved)', async () => {
     const fetchMock = vi.fn(async (_url?: string, _init?: RequestInit) => ({ ok: true, json: async () => ({}) }))
     vi.stubGlobal('fetch', fetchMock)
 
@@ -115,6 +146,7 @@ describe('storeGenerationMemory', () => {
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
     const body = JSON.parse(String(init.body))
     expect('entity_id' in body).toBe(false)
+    expect('namespace' in body).toBe(false)
   })
 
   it('never throws when the remember call fails', async () => {
@@ -137,5 +169,6 @@ describe('storeGenerationMemory', () => {
     expect(body.metadata.dbBacked).toBe(true)
     expect(body.metadata.multiFile).toBe(false)
     expect(body.entity_id).toBe('chat-2')
+    expect(body.namespace).toBe('session:chat-2')
   })
 })
