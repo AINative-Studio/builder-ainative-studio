@@ -39,6 +39,14 @@ export async function recallPastPerformance(userPrompt: string): Promise<string>
         // vector search here — the whole point of recallPastPerformance's
         // own "cross-product learning" doc comment.
         use_graph: true,
+        // storeGenerationMemory now writes each generation's memory into a
+        // per-session namespace (builder#674, item 3) instead of the one
+        // implicit 'global' pool. recallPastPerformance's whole purpose is
+        // learning from OTHER builds' memories, so it must explicitly search
+        // across all namespaces — otherwise the namespace scoping above would
+        // silently break cross-product learning by hiding every OTHER
+        // session's memories from this recall.
+        allow_cross_namespace: true,
       }),
       signal: AbortSignal.timeout(3000),
     })
@@ -82,6 +90,14 @@ export async function recallPastPerformance(userPrompt: string): Promise<string>
  * its own generation record — for free, with no separate /relate call
  * needed on Builder's side. Optional and additive: omitting it keeps
  * today's exact behavior (a memory with no entity_id, same as before).
+ *
+ * Namespace (builder#674, item 3): every call site already passes a real
+ * chatId/sessionId as `entityId` — reused here as a `session:{entityId}`
+ * ZeroMemory namespace (core's own valid namespace kinds, verified against
+ * core/src/backend/app/services/memory/zeromemory.py's _validate_namespace:
+ * 'global' | 'project:<id>' | 'session:<id>') instead of every company's
+ * generation memory landing in the one implicit 'global' pool. No new
+ * plumbing needed — omitting entityId keeps today's exact 'global' behavior.
  */
 export async function storeGenerationMemory(
   prompt: string,
@@ -101,7 +117,7 @@ export async function storeGenerationMemory(
         content: `Builder generation: "${prompt.slice(0, 200)}" — ${success ? 'succeeded' : 'failed'}, quality=${quality.toFixed(2)}`,
         tags: ['builder', 'generation', success ? 'success' : 'failure', 'rlhf'],
         importance: success ? 0.4 : 0.7,
-        ...(entityId ? { entity_id: entityId } : {}),
+        ...(entityId ? { entity_id: entityId, namespace: `session:${entityId}` } : {}),
         metadata: {
           prompt: prompt.slice(0, 500),
           success,
