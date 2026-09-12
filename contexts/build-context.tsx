@@ -9,7 +9,7 @@
 import { createContext, useContext, useReducer, useEffect, useCallback, useMemo, type ReactNode } from 'react'
 import {
   buildReducer, initialBuildState, trackViews, countWoven,
-  type BuildState, type BuildAction, type ArtifactView, type Track, type CompanyRole,
+  type BuildState, type BuildAction, type ArtifactView, type Track, type CompanyRole, type Screen,
   APP_VIEWS, COMPANY_VIEWS, SHARED_LATE_VIEWS,
 } from '@/lib/build/state'
 import { PRIMITIVE_MAP, TOTAL_PRIMITIVES } from '@/lib/build/primitives'
@@ -17,6 +17,7 @@ import { useAutoplay } from '@/lib/build/useAutoplay'
 import { trackEvent } from '@/components/analytics/google-analytics'
 import { captureAttribution } from '@/lib/build/attribution'
 import { savePendingBuild, loadPendingBuild, clearPendingBuild } from '@/lib/build/pending-build'
+import { saveActiveBuild, loadActiveBuild, clearActiveBuild } from '@/lib/build/active-build'
 
 interface BuildContextValue {
   state: BuildState
@@ -163,6 +164,23 @@ export function BuildProvider({ children }: { children: ReactNode }) {
     else clearPendingBuild()
   }, [state.pendingBuild])
 
+  // Resume an in-progress build with no URL params at all (#669) — the deep-link
+  // restore below only fires with ?screen=&company= already in the URL, which a
+  // bare reload/new-tab of /build never has. Unconditional, once on mount: if a
+  // pointer says a build was in flight, hydrate its full per-slug state (same
+  // loadBuildState this file already persists via saveBuildState) and jump
+  // straight back to where the founder left off, skipping the landing screen.
+  useEffect(() => {
+    if (state.screen !== 'landing') return
+    const pointer = loadActiveBuild()
+    if (!pointer) return
+    const saved = loadBuildState(pointer.slug)
+    if (!saved) { clearActiveBuild(); return }
+    dispatch({ type: 'RESTORE_BUILD', partial: saved })
+    dispatch({ type: 'GOTO_SCREEN', screen: pointer.screen as Screen })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Persist build state to localStorage whenever meaningful fields change (#284).
   // Guard: only write when there's an actual company slug to key on.
   useEffect(() => {
@@ -177,6 +195,24 @@ export function BuildProvider({ children }: { children: ReactNode }) {
     state.appChatId, state.activePlan, state.enrolled, state.track,
     state.sawPreview,
   ])
+
+  // Maintain the #669 resume pointer alongside the per-slug persist above: while
+  // a build is genuinely in flight (a slug exists, not yet on the landing/auth
+  // screens), keep the pointer fresh so an unconditional reload/new-tab can find
+  // it. Once the build reaches its terminal 'live' screen, registerApp() has
+  // already run and my-companies covers the founder from here on — clear it so
+  // a finished build doesn't keep yanking a later, deliberate visit to a fresh
+  // landing/new-company flow back into the old one.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const slug = state.appSub
+    const noResumeScreens = new Set(['landing', 'login', 'signup', 'forgot', 'reset', 'live'])
+    if (!slug || noResumeScreens.has(state.screen)) {
+      clearActiveBuild()
+      return
+    }
+    saveActiveBuild({ slug, screen: state.screen })
+  }, [state.appSub, state.screen])
 
   // Encode current workspace view in the URL so a refresh restores position (#285).
   // Only encode when on the workspace screen to avoid cluttering other screens.
