@@ -131,19 +131,35 @@ export async function saveGeneration(data: {
       }
     }
 
+    // Real bug found live (builder#673): this call passed NO retry options,
+    // so a single transient 401/429/5xx or timeout meant the generation's
+    // code was NEVER durably persisted — permanently, since nothing else
+    // ever retries this write. Confirmed live: chili-crate-product's real,
+    // successful generation existed only in the in-memory preview store;
+    // the durable `generations` table had zero rows for it, hours later.
+    // One retry (zerodbRequest's own built-in backoff) turns a single
+    // transient failure into a successful save instead of a silent, total
+    // loss of the generation.
     const result = await zerodbRequest(
       'POST',
       `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/rows`,
-      { row_data: row }
+      { row_data: row },
+      { retries: 1 },
     )
 
     if (result) {
       console.log(`[ZeroDB] Saved generation ${data.chatId} (${data.codeLength} chars)`)
       return true
     }
+    // Loud, not console.warn: a generation that reaches here is genuinely
+    // unrecoverable — no other path in this codebase ever retries this
+    // specific write, so this is the last chance to make the loss visible
+    // (builder#673's "silently and permanently loses the generation's
+    // durable copy, with zero retry and zero alerting").
+    console.error(`[ZeroDB] PERSIST FAILURE — generation ${data.chatId} (${data.codeLength} chars) was NOT saved to the durable store after retry. This generation exists only in-memory and will be lost on restart/replica-switch.`)
     return false
   } catch (e) {
-    console.warn('[ZeroDB] Save failed:', e)
+    console.error(`[ZeroDB] PERSIST FAILURE (threw) — generation ${data.chatId} (${data.codeLength} chars) was NOT saved:`, e)
     return false
   }
 }
