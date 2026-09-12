@@ -1586,7 +1586,9 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                   (ob.visitorTrackingGap && !after.visitorTrackingGap) ||
                   (ob.fakeLeadCaptureGap && !after.fakeLeadCaptureGap) ||
                   (ob.hardcodedToggleGap && !after.hardcodedToggleGap) ||
-                  (ob.axLandmarkGap && !after.axLandmarkGap)
+                  (ob.axLandmarkGap && !after.axLandmarkGap) ||
+                  (ob.axManifestGap && !after.axManifestGap) ||
+                  (ob.axJsonLdGap && !after.axJsonLdGap)
                 if (v.valid && multi && (v.code?.length || 0) > finalContent.length * 0.7) {
                   console.log('🔧 Combined pass produced a valid multi-file, rule-following app — adopting.')
                   finalContent = v.code; validation = v; checkpoint.record('fix+split', finalContent, true)
@@ -1687,7 +1689,9 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                     (ob.visitorTrackingGap && !after.visitorTrackingGap) ||
                     (ob.fakeLeadCaptureGap && !after.fakeLeadCaptureGap) ||
                     (ob.hardcodedToggleGap && !after.hardcodedToggleGap) ||
-                    (ob.axLandmarkGap && !after.axLandmarkGap)
+                    (ob.axLandmarkGap && !after.axLandmarkGap) ||
+                    (ob.axManifestGap && !after.axManifestGap) ||
+                    (ob.axJsonLdGap && !after.axJsonLdGap)
                   if (improved) {
                     console.log('📏 Obedience re-prompt improved the app — adopting.')
                     finalContent = obValidation.code; validation = obValidation; checkpoint.record('obedience', finalContent, true)
@@ -1787,6 +1791,8 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               fakeLeadCaptureGap: obFinal.fakeLeadCaptureGap,
               hardcodedToggleGap: obFinal.hardcodedToggleGap,
               axLandmarkGap: obFinal.axLandmarkGap,
+              axManifestGap: obFinal.axManifestGap,
+              axJsonLdGap: obFinal.axJsonLdGap,
               bytes: served.length,
             }, responseId)
             // Context Graph (builder#684): explicitly relate this generation's

@@ -168,6 +168,27 @@ export function hasAxLandmarkGap(code: string): boolean {
 }
 
 /**
+ * AX compliance, follow-up (builder#687, items 5+6 of the 10-item checklist):
+ * the hidden agent action manifest (`data-agent-manifest="true"`) and JSON-LD
+ * structured data (`<script type="application/ld+json">`). Both are, like the
+ * root landmark, single-presence checks with no idea-gating needed — every
+ * generated app can carry one hidden manifest block and one JSON-LD block
+ * regardless of what it does, so these are unconditional and low-false-
+ * positive-risk, matching hasAxLandmarkGap's precedent. Deliberately still
+ * NOT attempting the remaining items (nav/section landmarks are a coverage
+ * claim across possibly-many elements, data-agent-* likewise — those need a
+ * different, coverage-style check design, not a single presence/absence
+ * regex) — tracked separately.
+ */
+export function hasAxManifestGap(code: string): boolean {
+  return !/data-agent-manifest\s*=\s*["']true["']/.test(code || '')
+}
+
+export function hasAxJsonLdGap(code: string): boolean {
+  return !/<script[^>]*\btype\s*=\s*["']application\/ld\+json["']/.test(code || '')
+}
+
+/**
  * AIKit patterns the model tends to hand-roll. Each entry: a regex that matches a
  * HAND-ROLLED version in the generated code, and the AIKit component to use instead.
  * We only flag when the AIKit component is NOT already imported/used.
@@ -262,6 +283,10 @@ export interface ObedienceResult {
   hardcodedToggleGap: boolean
   /** AX compliance: no root `<main aria-label>` landmark (checklist item 1). */
   axLandmarkGap: boolean
+  /** AX compliance: no hidden agent action manifest (checklist item 5). */
+  axManifestGap: boolean
+  /** AX compliance: no JSON-LD structured data (checklist item 6). */
+  axJsonLdGap: boolean
   reasons: string[]
 }
 
@@ -299,6 +324,8 @@ export function checkObedience(
   const fakeLeadCaptureGap = hasFakeLeadCaptureGap(code)
   const hardcodedToggleGap = hasHardcodedToggleGap(code)
   const axLandmarkGap = hasAxLandmarkGap(code)
+  const axManifestGap = hasAxManifestGap(code)
+  const axJsonLdGap = hasAxJsonLdGap(code)
   const reasons: string[] = []
   if (persistenceGap) {
     reasons.push('App manages user records but hardcodes data — must persist via /api/db.')
@@ -321,7 +348,13 @@ export function checkObedience(
   if (axLandmarkGap) {
     reasons.push('No root <main aria-label="..."> landmark — required so AI agents can parse and navigate the page.')
   }
-  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, visitorTrackingGap, fakeLeadCaptureGap, hardcodedToggleGap, axLandmarkGap, reasons }
+  if (axManifestGap) {
+    reasons.push('No hidden agent action manifest (data-agent-manifest="true") — required so agents can discover available actions.')
+  }
+  if (axJsonLdGap) {
+    reasons.push('No JSON-LD structured data (<script type="application/ld+json">) — required so agents can parse what the app does.')
+  }
+  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, visitorTrackingGap, fakeLeadCaptureGap, hardcodedToggleGap, axLandmarkGap, axManifestGap, axJsonLdGap, reasons }
 }
 
 /**
@@ -415,6 +448,30 @@ export function buildObediencePrompt(idea: string, result: ObedienceResult): str
       '',
     )
   }
+  if (result.axManifestGap) {
+    parts.push(
+      '8) ADD A HIDDEN AGENT ACTION MANIFEST — a hidden block listing the page\'s real interactive elements, so an',
+      '   agent can discover what it can do without guessing at the DOM:',
+      '   <div hidden data-agent-manifest="true" aria-hidden="true">',
+      '     <script type="application/json" dangerouslySetInnerHTML={{ __html: JSON.stringify({',
+      '       actions: [{ id: "add", type: "button", selector: \'[data-agent-action="add"]\', description: "Add a new item" }],',
+      '       sections: [{ id: "list", selector: \'[data-agent-context="items-list"]\', description: "The main list" }]',
+      '     }) }} />',
+      '   </div>',
+      '   List the app\'s REAL actions/sections, not the example above verbatim.',
+      '',
+    )
+  }
+  if (result.axJsonLdGap) {
+    parts.push(
+      '9) ADD JSON-LD STRUCTURED DATA — a hidden Schema.org block describing what this app is:',
+      '   <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify({',
+      '     "@context": "https://schema.org", "@type": "SoftwareApplication",',
+      '     "name": "{App Name}", "description": "{one-line description}"',
+      '   }) }} />',
+      '',
+    )
+  }
   parts.push('Return the corrected full app. Do not remove features.')
   return parts.join('\n')
 }
@@ -444,6 +501,8 @@ export function narrowToPrimitiveComplianceOnly(gaps: string[]): ObedienceResult
     fakeLeadCaptureGap: false,
     hardcodedToggleGap: false,
     axLandmarkGap: false,
+    axManifestGap: false,
+    axJsonLdGap: false,
     reasons: [],
   }
 }
