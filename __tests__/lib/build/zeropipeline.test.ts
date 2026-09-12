@@ -160,3 +160,98 @@ describe('provisionPipeline (#243)', () => {
     expect(calls[0]).toBe('builder-company:same-slug')
   })
 })
+
+/**
+ * #721 — ZeroPipeline's "Idempotency-Key" header is NOT actually honored as
+ * an idempotency key by the real backend (confirmed live): a repeat POST
+ * with the same pipeline name returns a genuine 409 conflict_error, not the
+ * original 201's body. This makes any re-provision attempt against a
+ * company whose pipeline already exists fail, even though the pipeline is
+ * demonstrably fine — blocking builder#720's credential-repair pass for
+ * exactly this reason. On this specific conflict, falls back to a real
+ * GET /pipelines lookup by name (ZeroPipeline's list endpoint doesn't
+ * support server-side name filtering either — confirmed live, a `?name=`
+ * param is silently ignored — so this matches client-side) and treats
+ * finding the existing pipeline as success.
+ */
+describe('provisionPipeline 409-conflict fallback (#721)', () => {
+  function mockFetchSequence(responses: Array<{ ok: boolean; status?: number; json?: any }>) {
+    let i = 0
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    const fn = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url: String(url), init })
+      const r = responses[Math.min(i, responses.length - 1)]
+      i++
+      return { ok: r.ok, status: r.status ?? (r.ok ? 200 : 500), json: async () => (r.json ?? {}) } as unknown as Response
+    })
+    vi.stubGlobal('fetch', fn)
+    return { fn, calls }
+  }
+
+  it('on a 409 conflict_error, looks up the existing pipeline by name and returns it as a real success', async () => {
+    const { calls } = mockFetchSequence([
+      { ok: false, status: 409, json: { error_code: 'conflict_error', message: "Pipeline with name 'Dispatch — Sales' already exists" } },
+      { ok: true, json: { items: [{ id: 'existing-pipeline-id', name: 'Dispatch — Sales', deleted_at: null }] } },
+    ])
+
+    const result = await provisionPipeline('jwt', 'dispatch', 'Dispatch')
+
+    expect(result.ok).toBe(true)
+    expect(result.pipelineId).toBe('existing-pipeline-id')
+    expect(result.status).toBe(409)
+    expect(calls).toHaveLength(2)
+    expect(calls[0].init?.method).toBe('POST')
+    expect(calls[1].init?.method).toBeUndefined() // the fallback lookup is a plain GET
+  })
+
+  it('a soft-deleted pipeline with the same name is never matched (deleted_at is set)', async () => {
+    mockFetchSequence([
+      { ok: false, status: 409, json: { error_code: 'conflict_error', message: "Pipeline with name 'Dispatch — Sales' already exists" } },
+      { ok: true, json: { items: [{ id: 'stale-deleted-id', name: 'Dispatch — Sales', deleted_at: '2026-01-01T00:00:00Z' }] } },
+    ])
+
+    const result = await provisionPipeline('jwt', 'dispatch', 'Dispatch')
+    expect(result.ok).toBe(false)
+    expect(result.status).toBe(409)
+  })
+
+  it('if the fallback lookup finds no matching pipeline, the original 409 failure is surfaced honestly', async () => {
+    mockFetchSequence([
+      { ok: false, status: 409, json: { error_code: 'conflict_error', message: "Pipeline with name 'Ghost Co — Sales' already exists" } },
+      { ok: true, json: { items: [{ id: 'unrelated-id', name: 'Some Other Pipeline', deleted_at: null }] } },
+    ])
+
+    const result = await provisionPipeline('jwt', 'ghost-co', 'Ghost Co')
+    expect(result.ok).toBe(false)
+    expect(result.status).toBe(409)
+  })
+
+  it('if the fallback lookup call itself fails, the original 409 failure is surfaced honestly (never throws)', async () => {
+    mockFetchSequence([
+      { ok: false, status: 409, json: { error_code: 'conflict_error', message: 'already exists' } },
+      { ok: false, status: 500, json: {} },
+    ])
+
+    const result = await provisionPipeline('jwt', 'co', 'Company')
+    expect(result.ok).toBe(false)
+    expect(result.status).toBe(409)
+  })
+
+  it('a 409 that is NOT a conflict_error (some other real 409 shape) never triggers the fallback lookup', async () => {
+    const { calls } = mockFetchSequence([
+      { ok: false, status: 409, json: { error_code: 'some_other_error', message: 'unexpected' } },
+    ])
+
+    const result = await provisionPipeline('jwt', 'co', 'Company')
+    expect(result.ok).toBe(false)
+    expect(calls).toHaveLength(1) // no fallback GET fired
+  })
+
+  it('a genuinely different error status (e.g. 500) is never treated as the conflict case', async () => {
+    const { calls } = mockFetchSequence([{ ok: false, status: 500, json: { message: 'server error' } }])
+
+    const result = await provisionPipeline('jwt', 'co', 'Company')
+    expect(result.ok).toBe(false)
+    expect(calls).toHaveLength(1)
+  })
+})
