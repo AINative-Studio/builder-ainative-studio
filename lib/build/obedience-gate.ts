@@ -241,25 +241,39 @@ export function hasAxSectionLabelGap(code: string): boolean {
  * `data-agent-action`/`data-agent-context` on interactive elements. This is
  * explicitly a COVERAGE claim (per the issue's own framing), not a single
  * presence/absence check — "on ALL interactive elements" can't be verified
- * exactly with a regex without false-positives on legitimately decorative
- * buttons/links. Conservative compromise: count real interactive elements
- * (<button>, and <a> with an href that isn't just "#") vs. how many carry
- * ANY of the three data-agent-* markers, and only flag a gap when there are
- * several interactive elements and NONE of them are tagged — i.e. the
- * pattern is entirely absent from the app, not merely incomplete. A
- * genuinely partial gap (3 of 5 buttons tagged) is judged not worth
- * re-prompting over — it's real coverage, just imperfect, and chasing 100%
- * risks the same false-positive/thrash-on-a-legitimately-fine-app failure
- * mode this file's own design philosophy warns against.
+ * exactly with a regex without demanding 100% and risking false-positive
+ * thrash on legitimately decorative controls (a toast's "×" dismiss, a
+ * disclosure caret). Real coverage-ratio check, not mere presence:
+ *
+ *   - Count real interactive elements: <button> and <a> with a genuine
+ *     href (not just "#"). Each element is counted once, regardless of how
+ *     many data-agent-* attributes it carries (a single element tagged with
+ *     all three must not inflate the count vs. one tagged with one).
+ *   - Require at least AX_AGENT_ATTR_COVERAGE_THRESHOLD (50%) of them to
+ *     carry at least one data-agent-* marker. The required count rounds DOWN
+ *     (Math.floor), the more forgiving direction for an odd element count —
+ *     e.g. 3 elements need only 1 tagged, 5 need only 2 — so a small app
+ *     isn't unfairly penalized by a rounding choice that happens to work
+ *     against it.
+ *   - Too little interactive surface (<2 elements) is never judged at all —
+ *     a one-button app has nothing meaningful to measure coverage against.
  */
+export const AX_AGENT_ATTR_COVERAGE_THRESHOLD = 0.5
+
+/** True when `tag` (a single opening element like `<button ...>`) carries at least one data-agent-* marker. */
+function elementHasAgentMarker(tag: string): boolean {
+  return /data-agent-(role|action|context)\s*=/i.test(tag)
+}
+
 export function hasAxAgentAttributesGap(code: string): boolean {
   const src = code || ''
-  const interactiveCount =
-    (src.match(/<button\b/gi) || []).length +
-    (src.match(/<a\b[^>]*\bhref\s*=\s*["'](?!#["'])[^"']+["']/gi) || []).length
-  if (interactiveCount < 2) return false // too little interactive surface to judge coverage at all
-  const taggedCount = (src.match(/data-agent-(role|action|context)\s*=/gi) || []).length
-  return taggedCount === 0
+  const buttonTags = src.match(/<button\b[^>]*>/gi) || []
+  const linkTags = (src.match(/<a\b[^>]*>/gi) || []).filter((tag) => /\bhref\s*=\s*["'](?!#["'])[^"']+["']/.test(tag))
+  const interactiveTags = [...buttonTags, ...linkTags]
+  if (interactiveTags.length < 2) return false // too little interactive surface to judge coverage at all
+  const taggedCount = interactiveTags.filter(elementHasAgentMarker).length
+  const requiredCount = Math.floor(interactiveTags.length * AX_AGENT_ATTR_COVERAGE_THRESHOLD)
+  return taggedCount < requiredCount
 }
 
 /**
@@ -635,7 +649,8 @@ export function buildObediencePrompt(idea: string, result: ObedienceResult): str
       '    real buttons and links so an agent can discover what it can do without guessing at the DOM:',
       '    <button data-agent-role="button" data-agent-action="add-item">Add</button>',
       '    <a href="/settings" data-agent-role="link" data-agent-context="settings">Settings</a>',
-      '    You do not need every single element — tag the primary/real actions a user (or agent) would take.',
+      '    Tag at least HALF of your real buttons/links (rounded down) — you do not need literally every element,',
+      '    but a handful tagged out of many is not enough. Prioritize the primary/real actions a user would take.',
       '',
     )
   }

@@ -641,9 +641,33 @@ describe('obedience-gate: AX agent attribute coverage (builder#687 item 4)', () 
     expect(hasAxAgentAttributesGap(code)).toBe(true)
   })
 
-  it('does NOT flag once at least one data-agent-* marker exists (partial coverage is not chased to 100%)', () => {
+  it('REAL COVERAGE RATIO, not mere presence: 1 of 4 tagged is below the 50% (floor) bar and IS flagged', () => {
+    const code = 'function App(){ return <><button data-agent-action="add">Add</button><button onClick={b}>Remove</button><button onClick={c}>Edit</button><a href="/settings">Settings</a></> }'
+    // 4 interactive elements, floor(4*0.5)=2 required, only 1 tagged -> gap.
+    expect(hasAxAgentAttributesGap(code)).toBe(true)
+  })
+
+  it('does NOT flag once at least the required ratio is met (2 of 4 tagged meets the floor(4*0.5)=2 bar)', () => {
+    const code = 'function App(){ return <><button data-agent-action="add">Add</button><button data-agent-action="remove">Remove</button><button onClick={c}>Edit</button><a href="/settings">Settings</a></> }'
+    expect(hasAxAgentAttributesGap(code)).toBe(false)
+  })
+
+  it('partial coverage below 50% is NOT excused just because something is tagged (old "any tag anywhere" behavior is gone)', () => {
+    const code = 'function App(){ return <><button data-agent-action="add">Add</button><button onClick={b}>Remove</button><button onClick={c}>Edit</button><button onClick={d}>Cancel</button><a href="/settings">Settings</a></> }'
+    // 5 elements, floor(5*0.5)=2 required, only 1 tagged -> still a gap.
+    expect(hasAxAgentAttributesGap(code)).toBe(true)
+  })
+
+  it('rounds the required count DOWN for odd totals — 3 elements need only 1 tagged, not 2', () => {
     const code = 'function App(){ return <><button data-agent-action="add">Add</button><button onClick={b}>Remove</button><a href="/settings">Settings</a></> }'
     expect(hasAxAgentAttributesGap(code)).toBe(false)
+  })
+
+  it('a single element carrying ALL THREE markers still counts as exactly one tagged element, not three', () => {
+    const code = 'function App(){ return <><button data-agent-role="button" data-agent-action="add" data-agent-context="items">Add</button><button onClick={b}>Remove</button><button onClick={c}>Edit</button><button onClick={d}>Cancel</button></> }'
+    // 4 elements, floor(4*0.5)=2 required; only 1 element is actually tagged
+    // (despite carrying 3 attributes) -> still a gap, not incorrectly "3 tagged".
+    expect(hasAxAgentAttributesGap(code)).toBe(true)
   })
 
   it('a bare href="#" link does not count toward the interactive-element threshold', () => {
@@ -656,6 +680,12 @@ describe('obedience-gate: AX agent attribute coverage (builder#687 item 4)', () 
     expect(r.axAgentAttributesGap).toBe(true)
     expect(r.reasons.some((x) => x.includes('data-agent'))).toBe(true)
     expect(buildObediencePrompt('anything', r)).toMatch(/TAG INTERACTIVE ELEMENTS FOR AGENTS/)
+  })
+
+  it('buildObediencePrompt states the coverage expectation, not just "tag some elements"', () => {
+    const code = 'function App(){ return <><button onClick={a}>Add</button><button onClick={b}>Remove</button></> }'
+    const r = checkObedience(code, 'anything')
+    expect(buildObediencePrompt('anything', r)).toMatch(/at least HALF/i)
   })
 })
 
