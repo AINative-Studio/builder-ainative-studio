@@ -281,10 +281,22 @@ export async function provisionCompanyRepo(
 // Branch operations (#356 GIT-3 — task→branch mapping)
 // ---------------------------------------------------------------------------
 
-/** A minimal branch reference returned by Gitea. */
+/**
+ * A minimal branch reference returned by Gitea.
+ *
+ * Real bug found live (#582 investigation): Gitea's actual branches API
+ * response shape (confirmed directly, GET /repos/{org}/{repo}/branches/main
+ * against production) nests the commit hash under `commit.id`, NOT
+ * `commit.sha` — every read of `.commit.sha` below was silently returning
+ * undefined, always. getDefaultBranchSha in particular used this as the
+ * REAL base ref for every task-branch creation call, so createTaskBranch
+ * (and therefore the entire task-resolver.ts pipeline the nightly loop
+ * ALSO depends on) had never actually succeeded creating a branch against
+ * an existing repo — it always fell through to `if (!defaultSha) return null`.
+ */
 export interface GiteaBranch {
   name: string
-  commit: { sha: string; url?: string }
+  commit: { id: string; sha?: string; url?: string }
 }
 
 /**
@@ -307,11 +319,11 @@ export async function getDefaultBranchSha(org: string, repo: string): Promise<st
     if (masterRes.status === 404) return null
     if (!masterRes.ok) return null
     const master = (await masterRes.json()) as GiteaBranch
-    return master.commit?.sha || null
+    return master.commit?.id || master.commit?.sha || null
   }
   if (!res.ok) return null
   const branch = (await res.json()) as GiteaBranch
-  return branch.commit?.sha || null
+  return branch.commit?.id || branch.commit?.sha || null
 }
 
 /**
