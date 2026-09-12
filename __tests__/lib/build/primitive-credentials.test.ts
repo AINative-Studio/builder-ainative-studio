@@ -168,6 +168,75 @@ describe('storeFounderCredential + resolveFounderCredential (#443)', () => {
   })
 })
 
+/**
+ * forceRefresh (#443/#664 follow-up) — the reactive backstop the runtime
+ * proxy calls after the REAL primitive itself returns a 401 (a stronger,
+ * ground-truth signal than shouldRefreshToken's expiresAt estimate, which is
+ * often just an ASSUMED value — see provision/route.ts's fix — since core's
+ * real login response never actually returns expires_in).
+ */
+describe('resolveFounderCredential forceRefresh option (#443/#664 follow-up)', () => {
+  it('skips the proactive expiry check entirely and attempts a real refresh when forceRefresh is true, even for a token that looks fresh', async () => {
+    const store1 = mockFetchSequence([{ ok: true }, { ok: true }])
+    // expiresIn: 3600 -> stored as "not near expiry" by the proactive check.
+    await storeFounderCredential('acme', 'zeropipeline', 'old-access', 'old-refresh', 3600)
+    const sentBody = JSON.parse(String(((store1.mock.calls[1] as any)[1] as any).body))
+
+    h.refreshAINativeToken.mockResolvedValue({
+      accessToken: 'new-access',
+      refreshToken: 'new-refresh',
+      expiresIn: 3600,
+    })
+    mockFetchSequence([
+      { ok: true, json: { data: [{ row_data: sentBody.row_data }] } }, // resolve reads the "fresh-looking" row
+      { ok: true }, // ensureTable, ahead of the re-store
+      { ok: true }, // the re-store of the refreshed pair
+    ])
+
+    const result = await resolveFounderCredential('acme', 'zeropipeline', { forceRefresh: true })
+    expect(h.refreshAINativeToken).toHaveBeenCalledWith('old-refresh')
+    expect(result.ok).toBe(true)
+    expect(result.accessToken).toBe('new-access')
+  })
+
+  it('without forceRefresh, the same "fresh-looking" token is returned as-is — no refresh attempt at all', async () => {
+    const store1 = mockFetchSequence([{ ok: true }, { ok: true }])
+    await storeFounderCredential('acme', 'zeropipeline', 'old-access', 'old-refresh', 3600)
+    const sentBody = JSON.parse(String(((store1.mock.calls[1] as any)[1] as any).body))
+    mockFetchSequence([{ ok: true, json: { data: [{ row_data: sentBody.row_data }] } }])
+
+    const result = await resolveFounderCredential('acme', 'zeropipeline')
+    expect(h.refreshAINativeToken).not.toHaveBeenCalled()
+    expect(result.ok).toBe(true)
+    expect(result.accessToken).toBe('old-access')
+  })
+
+  it('with forceRefresh, a credential with no refresh token at all (the 25 real broken rows this whole fix responds to) returns the SAME stale token, never throws', async () => {
+    const store1 = mockFetchSequence([{ ok: true }, { ok: true }])
+    // No refresh token captured at all — exactly the real, confirmed-live state
+    // of every founder-scoped credential stored before this fix.
+    await storeFounderCredential('acme', 'zeropipeline', 'old-access', undefined, undefined)
+    const sentBody = JSON.parse(String(((store1.mock.calls[1] as any)[1] as any).body))
+    mockFetchSequence([{ ok: true, json: { data: [{ row_data: sentBody.row_data }] } }])
+
+    const result = await resolveFounderCredential('acme', 'zeropipeline', { forceRefresh: true })
+    expect(h.refreshAINativeToken).not.toHaveBeenCalled()
+    expect(result.ok).toBe(true)
+    expect(result.accessToken).toBe('old-access') // unchanged — the caller's job to notice and stop retrying
+  })
+
+  it('with forceRefresh, a genuinely revoked refresh token still fails closed (refresh_failed), never a stale fallback', async () => {
+    const store1 = mockFetchSequence([{ ok: true }, { ok: true }])
+    await storeFounderCredential('acme', 'zeropipeline', 'old-access', 'old-refresh', 3600)
+    const sentBody = JSON.parse(String(((store1.mock.calls[1] as any)[1] as any).body))
+    h.refreshAINativeToken.mockResolvedValue(null)
+    mockFetchSequence([{ ok: true, json: { data: [{ row_data: sentBody.row_data }] } }])
+
+    const result = await resolveFounderCredential('acme', 'zeropipeline', { forceRefresh: true })
+    expect(result).toEqual({ ok: false, reason: 'refresh_failed' })
+  })
+})
+
 describe('organizationId (#414 — ZeroCRM support)', () => {
   it('round-trips organizationId through store + resolve', async () => {
     const store = mockFetchSequence([{ ok: true }, { ok: true }])

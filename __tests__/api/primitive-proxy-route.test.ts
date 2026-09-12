@@ -713,4 +713,87 @@ describe('GET/POST /api/primitive/[primitive]/[...path] (#443)', () => {
       expect(json.reason).toBe('service_key_not_configured')
     })
   })
+
+  /**
+   * Reactive 401-refresh backstop (#443/#664 follow-up) — found live
+   * 2026-09-12 while verifying primitives actually work end-to-end: EVERY
+   * real stored founder-scoped credential (25/25, across every company) has
+   * no expiresAt/refresh token at all, so the proactive expiry check never
+   * had anything to act on and the primitive's own 401 was the first real
+   * signal a token had expired. This retries ONCE with a forced refresh
+   * before giving up, never loops, never fabricates a success.
+   */
+  describe('reactive 401-refresh backstop (#443/#664 follow-up)', () => {
+    it('on a real 401 from the primitive, retries once with a forced refresh and returns the retry\'s response on success', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockImplementation(async (_slug: string, _p: string, opts?: any) => {
+        if (opts?.forceRefresh) return { ok: true, accessToken: 'refreshed-token' }
+        return { ok: true, accessToken: 'stale-token' }
+      })
+      const calls: string[] = []
+      const fetchMock = vi.fn(async (_url: string, init: any) => {
+        const token = init.headers.Authorization
+        calls.push(token)
+        if (token === 'Bearer stale-token') {
+          return { status: 401, text: async () => JSON.stringify({ error: 'authentication_error' }), headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+        }
+        return { status: 200, text: async () => JSON.stringify({ deals: [] }), headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const res: any = await GET(req(), ctx('zeropipeline', ['pipelines']))
+      expect(res.status).toBe(200)
+      expect(calls).toEqual(['Bearer stale-token', 'Bearer refreshed-token'])
+      expect(h.resolveFounderCredential).toHaveBeenCalledWith('acme', 'zeropipeline', { forceRefresh: true })
+    })
+
+    it('never retries when the initial call already succeeds', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'good-token' })
+      const fetchMock = vi.fn(async () => ({ status: 200, text: async () => '{}', headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response))
+      vi.stubGlobal('fetch', fetchMock)
+
+      await GET(req(), ctx('zeropipeline', ['pipelines']))
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(h.resolveFounderCredential).toHaveBeenCalledTimes(1)
+    })
+
+    it('when the forced refresh yields the SAME token (no refresh token was ever captured), gives up honestly with the original 401 — never loops', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'stale-token' })
+      const fetchMock = vi.fn(async () => ({ status: 401, text: async () => JSON.stringify({ error: 'authentication_error' }), headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response))
+      vi.stubGlobal('fetch', fetchMock)
+
+      const res: any = await GET(req(), ctx('zeropipeline', ['pipelines']))
+      expect(res.status).toBe(401)
+      // Called exactly once for the primitive fetch, since resolveFounderCredential
+      // returned the identical token both times — no second real request fired.
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('when the forced refresh itself fails (refresh token revoked), the original 401 is returned honestly', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockImplementation(async (_slug: string, _p: string, opts?: any) => {
+        if (opts?.forceRefresh) return { ok: false, reason: 'refresh_failed' }
+        return { ok: true, accessToken: 'stale-token' }
+      })
+      const fetchMock = vi.fn(async () => ({ status: 401, text: async () => JSON.stringify({ error: 'authentication_error' }), headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response))
+      vi.stubGlobal('fetch', fetchMock)
+
+      const res: any = await GET(req(), ctx('zeropipeline', ['pipelines']))
+      expect(res.status).toBe(401)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('a non-401 error status (e.g. 403 permission denied) is returned as-is, no refresh attempted', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'good-token' })
+      const fetchMock = vi.fn(async () => ({ status: 403, text: async () => JSON.stringify({ error: 'forbidden' }), headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response))
+      vi.stubGlobal('fetch', fetchMock)
+
+      const res: any = await GET(req(), ctx('zeropipeline', ['pipelines']))
+      expect(res.status).toBe(403)
+      expect(h.resolveFounderCredential).toHaveBeenCalledTimes(1)
+    })
+  })
 })

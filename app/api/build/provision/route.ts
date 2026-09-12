@@ -26,7 +26,6 @@
  */
 
 import { NextRequest } from 'next/server'
-import { getToken } from 'next-auth/jwt'
 import { auth } from '@/app/(auth)/auth'
 import { resolveApp, setAppProvisioned, setAppOwner } from '@/lib/build/app-registry'
 import { deployPersistent } from '@/lib/build/deploy'
@@ -64,6 +63,49 @@ const PAID_PLANS = new Set(['launch', 'company', 'pro', 'business', 'enterprise'
  * present. Best-effort — a storage failure just means the proxy has nothing
  * to serve for this company/primitive; it never blocks provisioning itself.
  */
+/**
+ * Fallback expiry when the session carries none (#443/#664 follow-up):
+ * core's real /v1/auth/login response has no `expires_in` field at all
+ * (confirmed live via a direct call — access_token/refresh_token are both
+ * present, expires_in is simply absent), so authenticateWithAINative's
+ * `expiresIn` is always undefined and the session never gets a real
+ * `expiresAt`. Without SOME assumed expiry, shouldRefreshToken(undefined)
+ * always returns false and proactive refresh never engages — a stored
+ * credential just silently, permanently stops working the moment its
+ * (unknown-lifetime) access token actually expires. 45 minutes is a
+ * deliberately conservative floor under typical short-lived JWT lifespans
+ * (commonly 60 min) — refreshing a bit early is harmless (a cheap extra
+ * refresh call); refreshing too late (assuming a token lives longer than it
+ * does) is what caused this bug in the first place.
+ */
+const ASSUMED_TOKEN_LIFETIME_SECONDS = 45 * 60
+
+/**
+ * #443: a founder-scoped primitive (ZeroCommerce, AgentFlow, …) has no
+ * separate service credential builder can hold after provisioning — the
+ * resource is scoped to the founder's own AINative identity. Durably store
+ * their refreshable token now, while the session is live, so the runtime
+ * proxy (app/api/primitive/[primitive]/[...path]/route.ts) can serve the
+ * DEPLOYED app on this founder's behalf later without needing their browser
+ * present. Best-effort — a storage failure just means the proxy has nothing
+ * to serve for this company/primitive; it never blocks provisioning itself.
+ */
+/** Shared session-backed resolution of {refreshToken, expiresInSeconds} —
+ *  see captureFounderCredentialForProxy's doc comment for why this replaced
+ *  the broken getToken() read. Used by every founder-scoped primitive's
+ *  credential capture, including zerocrm's sibling blocks below (which had
+ *  the identical getToken() bug — confirmed live via the same 0/25
+ *  expiry+refresh-token rows this whole fix is responding to). */
+async function resolveRefreshableFields(): Promise<{ refreshToken: string | undefined; expiresInSeconds: number }> {
+  const session = await auth().catch(() => null)
+  const refreshToken = (session as any)?.refreshToken as string | undefined
+  const sessionExpiresAt = (session as any)?.expiresAt as number | undefined
+  const expiresInSeconds = sessionExpiresAt
+    ? Math.max(0, Math.floor((sessionExpiresAt - Date.now()) / 1000))
+    : ASSUMED_TOKEN_LIFETIME_SECONDS
+  return { refreshToken, expiresInSeconds }
+}
+
 export async function captureFounderCredentialForProxy(
   request: NextRequest,
   slug: string,
@@ -72,25 +114,23 @@ export async function captureFounderCredentialForProxy(
 ): Promise<boolean> {
   // Real bug found live (triage, 2026-09-11, via the pipelineCredentialCaptured
   // diagnostic added for this exact investigation): getToken() returned null
-  // for every real request tested, and this function used to treat that as a
-  // hard failure and bail out entirely — even though `jwt` (the caller's
-  // already-resolved session.accessToken from auth()) is the only credential
-  // this call actually needs to store. zerocrm's sibling block never had this
-  // bug because it never gates on getToken() succeeding; it only reads
-  // rawToken as an OPTIONAL source for a refresh token, exactly like this
-  // should. getToken()'s only real purpose here is to opportunistically grab
-  // a refresh token for later use — its absence must never block capture of
-  // the access token we already have.
-  const rawToken = await getToken({ req: request, secret: process.env.AUTH_SECRET }).catch((e) => {
-    console.warn(`[provision] captureFounderCredentialForProxy(${slug}, ${primitive}): getToken threw (non-fatal, refresh token just won't be captured):`, e?.message || e)
-    return null
-  })
+  // for every real request tested — #664 fixed the resulting hard-failure gate,
+  // but that left refreshToken/expiresAt structurally uncapturable (getToken()
+  // was the only place they were ever read from). Confirmed live 2026-09-12:
+  // 25/25 real stored credentials across every company/primitive have NEITHER
+  // field, and every one of them was already returning a genuine 401 from the
+  // real primitive backend (not a builder-side gate) — the access token had
+  // simply expired with no way to refresh it. auth()'s session is the proven-
+  // working path (it's already how `jwt` itself gets resolved by every caller
+  // of this function) — session.refreshToken/expiresAt (added alongside
+  // accessToken in the session callback) replace the broken getToken() read.
+  const { refreshToken, expiresInSeconds } = await resolveRefreshableFields()
   const stored = await storeFounderCredential(
     slug,
     primitive,
     jwt,
-    rawToken?.refreshToken as string | undefined,
-    rawToken?.expiresAt ? Math.max(0, Math.floor((Number(rawToken.expiresAt) - Date.now()) / 1000)) : undefined,
+    refreshToken,
+    expiresInSeconds,
   ).catch((e) => {
     console.warn(`[provision] captureFounderCredentialForProxy(${slug}, ${primitive}): storeFounderCredential threw:`, e?.message || e)
     return false
@@ -140,11 +180,11 @@ export async function backfillMissingCredentials(request: NextRequest, slug: str
   if (await need('zerocrm')) {
     const orgId = await fetchOrganizationId(jwt)
     if (orgId) {
-      const rawToken = await getToken({ req: request, secret: process.env.AUTH_SECRET }).catch(() => null)
+      const { refreshToken, expiresInSeconds } = await resolveRefreshableFields()
       await storeFounderCredential(
         slug, 'zerocrm', jwt,
-        rawToken?.refreshToken as string | undefined,
-        rawToken?.expiresAt ? Math.max(0, Math.floor((Number(rawToken.expiresAt) - Date.now()) / 1000)) : undefined,
+        refreshToken,
+        expiresInSeconds,
         orgId,
       ).catch(() => false)
     }
@@ -358,13 +398,13 @@ export async function POST(request: NextRequest) {
   if (jwt) {
     const orgId = await fetchOrganizationId(jwt)
     if (orgId) {
-      const rawToken = await getToken({ req: request, secret: process.env.AUTH_SECRET }).catch(() => null)
+      const { refreshToken, expiresInSeconds } = await resolveRefreshableFields()
       const stored = await storeFounderCredential(
         slug,
         'zerocrm',
         jwt,
-        rawToken?.refreshToken as string | undefined,
-        rawToken?.expiresAt ? Math.max(0, Math.floor((Number(rawToken.expiresAt) - Date.now()) / 1000)) : undefined,
+        refreshToken,
+        expiresInSeconds,
         orgId,
       ).catch(() => false)
       zerocrm = { provisioned: stored, reason: stored ? undefined : 'credential_store_failed' }

@@ -1,40 +1,46 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 /**
- * captureFounderCredentialForProxy (app/api/build/provision/route.ts) — real
- * bug found live (triage, 2026-09-11), traced via the pipelineCredentialCaptured
- * diagnostic added for this exact investigation: this function used to treat
- * getToken() returning null as a hard failure and bail out entirely —
- * `if (!rawToken?.refreshToken && !rawToken?.accessToken) return false` —
- * even though `jwt` (the caller's already-resolved session.accessToken from
- * auth()) is the only credential this function actually needs to store.
- * Confirmed live: getToken() returned null for every real provision request
- * tested, so captureFounderCredentialForProxy always returned false and
- * builder_primitive_credentials never got a row for zeropipeline (or
- * zeroinvoice/serviceos/livestreaming/socialgraph, all of which share this
- * same helper) — despite provisionPipeline itself succeeding
- * (pipelineProvisioned:true) and the real ZeroDB write path itself working
- * fine when tested directly.
+ * captureFounderCredentialForProxy (app/api/build/provision/route.ts) —
  *
- * zerocrm's sibling block (a separate, standalone call a few lines below in
- * provision/route.ts) never had this bug, because it only reads getToken()'s
- * result as an OPTIONAL source for a refresh token — it never gates on
- * getToken() succeeding at all.
+ * ORIGINAL bug (#664, fixed): this function used to treat getToken()
+ * returning null as a hard failure and bail out entirely, even though `jwt`
+ * (the caller's already-resolved session.accessToken from auth()) is the
+ * only credential this function actually needs to store.
+ *
+ * FOLLOW-UP bug (this fix, found live 2026-09-12 while verifying primitives
+ * actually work end-to-end): #664's fix left refreshToken/expiresAt
+ * structurally uncapturable — getToken() was the ONLY place they were ever
+ * read from, and getToken() is confirmed to return null for every real
+ * request in this deployment. Confirmed live: 25/25 real stored credentials
+ * across every company/primitive have neither field, and every one already
+ * genuinely 401s from the real primitive backend (not a builder-side gate)
+ * — the access token had simply expired with nothing to refresh it, and
+ * nothing ever will again, since shouldRefreshToken(undefined) never
+ * triggers a refresh attempt.
+ *
+ * The fix: read refreshToken/expiresAt from auth()'s session instead (the
+ * session callback in app/(auth)/auth.ts now exposes both, mirroring
+ * accessToken) — auth() is the PROVEN-WORKING path (it's already how `jwt`
+ * itself gets resolved by every caller). A conservative 45-minute assumed
+ * expiry is used when the session carries no real expiresAt at all (core's
+ * real /v1/auth/login response has no expires_in field — confirmed via a
+ * direct call — so a real expiry is often simply unavailable).
  */
 
+const ASSUMED_TOKEN_LIFETIME_SECONDS = 45 * 60
+
 const h = vi.hoisted(() => ({
-  getToken: vi.fn<(...args: any[]) => Promise<any>>(),
   storeFounderCredential: vi.fn(async (..._args: any[]) => true),
   hasFounderCredential: vi.fn<(...args: any[]) => Promise<boolean>>(),
   fetchOrganizationId: vi.fn<(...args: any[]) => Promise<string | undefined>>(),
-  auth: vi.fn(async () => null),
+  auth: vi.fn(async () => null as any),
   provisionPipeline: vi.fn<(...args: any[]) => Promise<any>>(),
   provisionStore: vi.fn<(...args: any[]) => Promise<any>>(),
   provisionForm: vi.fn<(...args: any[]) => Promise<any>>(),
   provisionProject: vi.fn<(...args: any[]) => Promise<any>>(),
 }))
 
-vi.mock('next-auth/jwt', () => ({ getToken: h.getToken }))
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
 vi.mock('@/lib/build/primitive-credentials', () => ({
   storeFounderCredential: h.storeFounderCredential,
@@ -75,15 +81,15 @@ function fakeRequest(): any {
 
 describe('captureFounderCredentialForProxy', () => {
   beforeEach(() => {
-    h.getToken.mockReset()
+    h.auth.mockReset().mockResolvedValue(null)
     h.storeFounderCredential.mockReset().mockResolvedValue(true)
   })
   afterEach(() => {
     vi.restoreAllMocks()
   })
 
-  it('still stores the credential using the already-resolved jwt when getToken returns null (the real triage regression)', async () => {
-    h.getToken.mockResolvedValue(null)
+  it('stores the credential with the assumed fallback expiry when the session carries no expiresAt (core never returns expires_in)', async () => {
+    h.auth.mockResolvedValue({ accessToken: 'real-jwt-access-token' })
 
     const result = await captureFounderCredentialForProxy(fakeRequest(), 'triage', 'zeropipeline', 'real-jwt-access-token')
 
@@ -93,12 +99,12 @@ describe('captureFounderCredentialForProxy', () => {
       'zeropipeline',
       'real-jwt-access-token',
       undefined,
-      undefined,
+      ASSUMED_TOKEN_LIFETIME_SECONDS,
     )
   })
 
-  it('still stores the credential when getToken throws entirely', async () => {
-    h.getToken.mockRejectedValue(new Error('decode failed'))
+  it('still stores the credential (with the fallback expiry) when auth() throws entirely', async () => {
+    h.auth.mockRejectedValue(new Error('session decode failed'))
 
     const result = await captureFounderCredentialForProxy(fakeRequest(), 'triage', 'zeropipeline', 'real-jwt-access-token')
 
@@ -108,13 +114,13 @@ describe('captureFounderCredentialForProxy', () => {
       'zeropipeline',
       'real-jwt-access-token',
       undefined,
-      undefined,
+      ASSUMED_TOKEN_LIFETIME_SECONDS,
     )
   })
 
-  it('opportunistically includes the refresh token and computed expiry when getToken DOES succeed', async () => {
+  it('uses the REAL refresh token and computed expiry when the session actually carries them', async () => {
     const futureExpiry = Date.now() + 3600_000
-    h.getToken.mockResolvedValue({ accessToken: 'raw-access', refreshToken: 'real-refresh-token', expiresAt: futureExpiry })
+    h.auth.mockResolvedValue({ accessToken: 'real-jwt-access-token', refreshToken: 'real-refresh-token', expiresAt: futureExpiry })
 
     await captureFounderCredentialForProxy(fakeRequest(), 'acme', 'zerocommerce', 'real-jwt-access-token')
 
@@ -127,8 +133,18 @@ describe('captureFounderCredentialForProxy', () => {
     expect(call[4]).toBeLessThanOrEqual(3600)
   })
 
-  it('returns false when storeFounderCredential itself fails, even though getToken succeeded', async () => {
-    h.getToken.mockResolvedValue({ accessToken: 'raw-access' })
+  it('falls back to the assumed expiry when the session has a refresh token but no expiresAt', async () => {
+    h.auth.mockResolvedValue({ accessToken: 'real-jwt-access-token', refreshToken: 'real-refresh-token' })
+
+    await captureFounderCredentialForProxy(fakeRequest(), 'acme', 'zerocommerce', 'real-jwt-access-token')
+
+    const call = h.storeFounderCredential.mock.calls[0]
+    expect(call[3]).toBe('real-refresh-token')
+    expect(call[4]).toBe(ASSUMED_TOKEN_LIFETIME_SECONDS)
+  })
+
+  it('returns false when storeFounderCredential itself fails, even though auth() succeeded', async () => {
+    h.auth.mockResolvedValue({ accessToken: 'real-jwt-access-token' })
     h.storeFounderCredential.mockResolvedValue(false)
 
     const result = await captureFounderCredentialForProxy(fakeRequest(), 'triage', 'zeropipeline', 'real-jwt-access-token')
@@ -137,7 +153,7 @@ describe('captureFounderCredentialForProxy', () => {
   })
 
   it('returns false (never throws) when storeFounderCredential itself throws', async () => {
-    h.getToken.mockResolvedValue(null)
+    h.auth.mockResolvedValue(null)
     h.storeFounderCredential.mockRejectedValue(new Error('zerodb down'))
 
     const result = await captureFounderCredentialForProxy(fakeRequest(), 'triage', 'zeropipeline', 'real-jwt-access-token')
@@ -159,7 +175,7 @@ describe('captureFounderCredentialForProxy', () => {
  */
 describe('backfillMissingCredentials', () => {
   beforeEach(() => {
-    h.getToken.mockReset().mockResolvedValue(null)
+    h.auth.mockReset().mockResolvedValue(null)
     h.storeFounderCredential.mockReset().mockResolvedValue(true)
     h.hasFounderCredential.mockReset().mockResolvedValue(false)
     h.fetchOrganizationId.mockReset().mockResolvedValue('org-123')
@@ -179,14 +195,14 @@ describe('backfillMissingCredentials', () => {
     expect(h.storeFounderCredential).not.toHaveBeenCalled()
   })
 
-  it('re-attempts zeropipeline when its credential is missing (the real dispatch regression)', async () => {
+  it('re-attempts zeropipeline when its credential is missing (the real dispatch regression) and stores it with the fallback expiry', async () => {
     h.hasFounderCredential.mockImplementation(async (_slug: string, primitive: string) => primitive !== 'zeropipeline')
 
     await backfillMissingCredentials(fakeRequest(), 'dispatch', 'Dispatch', 'real-jwt')
 
     expect(h.provisionPipeline).toHaveBeenCalledWith('real-jwt', 'dispatch', 'Dispatch')
     expect(h.storeFounderCredential).toHaveBeenCalledWith(
-      'dispatch', 'zeropipeline', 'real-jwt', undefined, undefined,
+      'dispatch', 'zeropipeline', 'real-jwt', undefined, ASSUMED_TOKEN_LIFETIME_SECONDS,
     )
   })
 

@@ -119,6 +119,12 @@ declare module 'next-auth' {
       id: string
       type: UserType
     } & DefaultSession['user']
+    accessToken?: string
+    /** Real AINative refresh token, when the sign-in flow captured one
+     *  (#443/#664 follow-up — see the `session` callback's doc comment). */
+    refreshToken?: string
+    /** Real AINative access-token expiry (ms epoch), when known. */
+    expiresAt?: number
   }
 
   interface User {
@@ -269,6 +275,28 @@ export const {
         // Pass access token to session for API calls
         if (token.accessToken) {
           (session as any).accessToken = token.accessToken
+        }
+        // #443/#664 follow-up: getToken() (next-auth/jwt) was confirmed live
+        // to return null for EVERY real request in this deployment (#664) —
+        // captureFounderCredentialForProxy's only working credential source
+        // is this already-proven session.accessToken. But that fix left
+        // refreshToken/expiresAt structurally uncapturable (getToken() was
+        // the only place they were ever read from), so EVERY founder-scoped
+        // primitive credential (ZeroPipeline/ZeroCRM/ZeroInvoice/ServiceOS/
+        // Social Graph/Live Streaming — confirmed live, 25/25 stored rows
+        // across every real company) has neither a refresh token nor an
+        // expiry, and silently, permanently stops working the moment its
+        // initial access token naturally expires (no proactive refresh ever
+        // fires with no expiry to compare against, and the primitive proxy
+        // has no reactive retry either). Exposing both here — via the same
+        // `auth()`-backed session path that already works for accessToken —
+        // gives provision/route.ts a real, working source for both fields
+        // instead of the broken getToken() path.
+        if (token.refreshToken) {
+          (session as any).refreshToken = token.refreshToken
+        }
+        if (token.expiresAt) {
+          (session as any).expiresAt = token.expiresAt
         }
         // Expose the user's default workspace on the session.
         if (token.workspaceId) {
