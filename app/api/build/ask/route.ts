@@ -34,6 +34,7 @@ import {
   buildMessagesWithHistory,
 } from '@/lib/build/chat-store'
 import { resolveApp } from '@/lib/build/app-registry'
+import { processConversation } from '@/lib/agent/zeromemory'
 
 export const runtime = 'nodejs'
 
@@ -230,7 +231,15 @@ export async function POST(request: NextRequest) {
 
   /** Persist the completed exchange (best-effort; never blocks the response). */
   const persist = (answer: string) => {
-    if (scopeKey && answer) void saveExchange(scopeKey, question, answer, companyProjectId)
+    if (scopeKey && answer) {
+      void saveExchange(scopeKey, question, answer, companyProjectId)
+      // builder#686 item 2: auto-extract durable facts/preferences from the
+      // real exchange, not just the raw Q&A save above.
+      void processConversation(
+        [...messages, { role: 'assistant', content: answer }],
+        scopeKey,
+      )
+    }
   }
 
   const claude = getClaudeCompletion()
