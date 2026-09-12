@@ -138,13 +138,26 @@ export function isAgentFallbackEnabled(env: NodeJS.ProcessEnv = process.env): bo
  * the epic shipped the MCP client + catalog but the AGENT never received a
  * single MCP server — its tools were only Write/Edit).
  *
- * REALITY CHECK (2026-08-27): the catalog's hosted HTTP fleet
- * (mcp.ainative.studio/*) does not exist — that hostname is swallowed by the
- * builder's own wildcard-subdomain routing. The REAL AINative MCP servers are
- * STDIO npm packages; the flagship is `ainative-zerodb-mcp-server` (the
+ * REALITY CHECK (2026-08-27; CORRECTED #612, 2026-09-11): this comment
+ * previously claimed the catalog's hosted HTTP fleet (mcp.ainative.studio/*)
+ * "does not exist" — that was WRONG. Re-verified live today via direct curl:
+ * mcp.ainative.studio is a real, live, hosted MCP Streamable-HTTP gateway
+ * with its OWN dedicated DNS/routing (returns real structured backend JSON
+ * from railway-hikari; does NOT fall through to builder's wildcard-subdomain
+ * routing at all — see lib/build/deploy.ts's RESERVED_SUBDOMAINS comment for
+ * the curl evidence). See lib/build/primitive-catalog.ts's MCP_SERVERS for
+ * the corrected, authoritative server-name list.
+ *
+ * That correction does NOT change what this function actually does: the
+ * spawned agent below still gets its MCP tools via STDIO npm packages, not
+ * the hosted HTTP gateway. The flagship is `ainative-zerodb-mcp-server` (the
  * 69-tool ZeroDB surface), installed as a direct dependency so the spawn is
  * warm on Railway. The agent gets it via a Claude-Code-compatible stdio
  * --mcp-config, and `mcp__zerodb` extends allowedTools at the server level.
+ * Bridging this stdio path to the now-confirmed-live HTTP gateway (via
+ * `lib/mcp/ainative-mcp-client.ts`'s `AiNativeMcpClient`) is real, valuable
+ * follow-up work, but a bigger architectural change than this pass scoped —
+ * left untouched here deliberately.
  *
  * REALITY CHECK (2026-09-05, builder#534 re-scope): the live per-instance MCP
  * HOSTING catalog (GET /api/v1/public/mcp/catalog — a DIFFERENT, working
