@@ -121,6 +121,19 @@ export function computeSyncedUrl(currentUrl: string, screen: string): string | n
   return changed ? url.toString() : null
 }
 
+/**
+ * Screens the deep-link (?screen=) restore effect will honor. A screen
+ * missing here silently no-ops on a direct URL load — found live (#651
+ * follow-up) for 'forgot'/'reset': the Auth screen's own in-app
+ * GOTO_SCREEN('forgot') navigation worked fine, but a bookmarked or shared
+ * ?screen=forgot URL always landed on 'landing' instead, since this
+ * allowlist (not the reducer) is what gates deep-link restoration.
+ */
+export const KNOWN_DEEP_LINK_SCREENS = [
+  'landing', 'start', 'build', 'fork', 'intake', 'ws', 'pricing', 'live',
+  'login', 'signup', 'forgot', 'reset', 'account', 'companies', 'refer',
+]
+
 export function BuildProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(buildReducer, initialBuildState)
 
@@ -145,8 +158,7 @@ export function BuildProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const q = new URLSearchParams(window.location.search)
     const scr = q.get('screen')
-    const known = ['landing', 'start', 'build', 'fork', 'intake', 'ws', 'pricing', 'live', 'login', 'signup', 'account', 'companies', 'refer']
-    if (scr && known.includes(scr)) {
+    if (scr && KNOWN_DEEP_LINK_SCREENS.includes(scr)) {
       const company = q.get('company')
       if (company) {
         // Attempt to restore persisted build state for this company BEFORE
