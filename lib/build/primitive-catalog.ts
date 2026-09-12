@@ -683,9 +683,16 @@ export interface PrimitiveScore {
  */
 function isFoundationalOnTrack(primitive: CatalogPrimitive, track: 'app' | 'company', idea: string): boolean {
   if (primitive.name === 'OpenCapStack' && track === 'company') {
-    const hay = ` ${(idea || '').toLowerCase()} `
+    // #611 follow-up: this used the same plain-substring bug the rest of
+    // this file's matching was hardened against — AINativeNGO's triggers
+    // include genuinely generic words ('grant', 'impact', 'institution',
+    // 'foundation'), so "the app will impact how teams work" or "a strong
+    // institution of trust" would have falsely read as a nonprofit idea.
+    // Reuses the same hardened matchesTrigger() the rest of scorePrimitives
+    // already uses, instead of a second, separately-drifting substring check.
+    const hay = (idea || '').toLowerCase()
     const ngo = CATALOG.find((p) => p.name === 'AINativeNGO')
-    const isNonprofitIdea = ngo?.triggers.some((t) => hay.includes(` ${t}`) || hay.includes(`${t} `) || hay.includes(t)) ?? false
+    const isNonprofitIdea = ngo?.triggers.some((t) => matchesTrigger(hay, t)) ?? false
     return !isNonprofitIdea
   }
   if (primitive.foundational === true) return true

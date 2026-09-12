@@ -306,6 +306,20 @@ describe('primitive-catalog additions (#410)', () => {
       expect(names).not.toContain('AINativeNGO')
     })
 
+    it('#611 follow-up: a trigger word embedded inside an unrelated word never falsely reads as nonprofit', () => {
+      // 'grant' is a real AINativeNGO trigger. "aren't guaranteed" contains it
+      // as a pure substring (guaranTEED... no — 'grant' inside "immiGRANT" is
+      // the real case: an idea about immigrant communities should not read as
+      // nonprofit just because 'grant' is a substring of 'immigrant'). This is
+      // the exact bug class #611 fixed elsewhere in this file (plain substring
+      // matching with no word-boundary enforcement) — isFoundationalOnTrack's
+      // separate nonprofit carve-out check used the same unfixed pattern until
+      // this follow-up reused the file's own hardened matchesTrigger().
+      const { names } = selectPrimitives('a startup cap table tool for immigrant-owned small businesses', 'company')
+      expect(names).toContain('OpenCapStack')
+      expect(names).not.toContain('AINativeNGO')
+    })
+
     it('is a real direct-fetch target via its runtime proxy, not framed as already-provisioned (#510 fix — was in RUNTIME_PROXIED_PRIMITIVES gap)', () => {
       const block = codegenCompositionBlock('a startup cap table and equity management tool', 'company')
       expect(block).toContain('OpenCapStack')
