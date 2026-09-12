@@ -11,6 +11,10 @@ import {
   hasAxManifestGap,
   hasAxJsonLdGap,
   hasAxSkipNavGap,
+  hasAxNavLabelGap,
+  hasAxSectionLabelGap,
+  hasAxAgentAttributesGap,
+  hasAxComplexWidgetRoleGap,
   checkObedience,
   buildObediencePrompt,
   narrowToPrimitiveComplianceOnly,
@@ -561,6 +565,131 @@ describe('obedience-gate: AX skip-navigation link (builder#687 item 8)', () => {
     const present = checkObedience('function App(){ return <a href="#main-content" data-agent-action="skip-nav">Skip</a><main id="main-content">hi</main> }', 'anything')
     expect(present.axSkipNavGap).toBe(false)
     expect(buildObediencePrompt('anything', present)).not.toMatch(/ADD A SKIP-NAVIGATION LINK/)
+  })
+})
+
+describe('obedience-gate: AX nav label (builder#687 item 2)', () => {
+  it('does NOT flag an app with no <nav> at all — a simple app legitimately has none', () => {
+    expect(hasAxNavLabelGap('function App(){ return <main aria-label="App"><div>hi</div></main> }')).toBe(false)
+  })
+
+  it('flags a <nav> with no aria-label', () => {
+    expect(hasAxNavLabelGap('function App(){ return <nav><a href="/">Home</a></nav> }')).toBe(true)
+  })
+
+  it('does NOT flag a <nav> that has aria-label', () => {
+    expect(hasAxNavLabelGap('function App(){ return <nav aria-label="Main navigation"><a href="/">Home</a></nav> }')).toBe(false)
+  })
+
+  it('flags if ANY of multiple <nav> elements is missing aria-label', () => {
+    const code = 'function App(){ return <><nav aria-label="Main">...</nav><nav><a href="/2">2</a></nav></> }'
+    expect(hasAxNavLabelGap(code)).toBe(true)
+  })
+
+  it('does NOT flag when ALL <nav> elements have aria-label', () => {
+    const code = 'function App(){ return <><nav aria-label="Main">...</nav><nav aria-label="Pagination">...</nav></> }'
+    expect(hasAxNavLabelGap(code)).toBe(false)
+  })
+
+  it('checkObedience surfaces axNavLabelGap and a reason string only when a nav is actually present', () => {
+    const noNav = checkObedience('function App(){ return <main aria-label="App"><div>hi</div></main> }', 'a counter')
+    expect(noNav.axNavLabelGap).toBe(false)
+
+    const unlabeledNav = checkObedience('function App(){ return <nav><a href="/">Home</a></nav> }', 'a dashboard')
+    expect(unlabeledNav.axNavLabelGap).toBe(true)
+    expect(unlabeledNav.reasons.some((x) => x.includes('<nav>'))).toBe(true)
+  })
+
+  it('buildObediencePrompt includes the nav-label instruction when this gap fires, omits it otherwise', () => {
+    const missing = checkObedience('function App(){ return <nav><a href="/">Home</a></nav> }', 'anything')
+    expect(buildObediencePrompt('anything', missing)).toMatch(/LABEL YOUR <nav>/)
+
+    const present = checkObedience('function App(){ return <nav aria-label="Main"><a href="/">Home</a></nav> }', 'anything')
+    expect(present.axNavLabelGap).toBe(false)
+    expect(buildObediencePrompt('anything', present)).not.toMatch(/LABEL YOUR <nav>/)
+  })
+})
+
+describe('obedience-gate: AX section label (builder#687 item 3)', () => {
+  it('does NOT flag an app with no <section> at all', () => {
+    expect(hasAxSectionLabelGap('function App(){ return <div>hi</div> }')).toBe(false)
+  })
+
+  it('flags a <section> with no aria-label', () => {
+    expect(hasAxSectionLabelGap('function App(){ return <section><div>hi</div></section> }')).toBe(true)
+  })
+
+  it('does NOT flag a <section> that has aria-label', () => {
+    expect(hasAxSectionLabelGap('function App(){ return <section aria-label="Recent activity"><div>hi</div></section> }')).toBe(false)
+  })
+
+  it('checkObedience + buildObediencePrompt wire through correctly', () => {
+    const r = checkObedience('function App(){ return <section><div>hi</div></section> }', 'anything')
+    expect(r.axSectionLabelGap).toBe(true)
+    expect(r.reasons.some((x) => x.includes('<section>'))).toBe(true)
+    expect(buildObediencePrompt('anything', r)).toMatch(/LABEL YOUR <section>/)
+  })
+})
+
+describe('obedience-gate: AX agent attribute coverage (builder#687 item 4)', () => {
+  it('does NOT flag an app with too little interactive surface to judge coverage (< 2 interactive elements)', () => {
+    expect(hasAxAgentAttributesGap('function App(){ return <button>Go</button> }')).toBe(false)
+  })
+
+  it('flags an app with several real interactive elements and NO data-agent-* markers anywhere', () => {
+    const code = 'function App(){ return <><button onClick={a}>Add</button><button onClick={b}>Remove</button><a href="/settings">Settings</a></> }'
+    expect(hasAxAgentAttributesGap(code)).toBe(true)
+  })
+
+  it('does NOT flag once at least one data-agent-* marker exists (partial coverage is not chased to 100%)', () => {
+    const code = 'function App(){ return <><button data-agent-action="add">Add</button><button onClick={b}>Remove</button><a href="/settings">Settings</a></> }'
+    expect(hasAxAgentAttributesGap(code)).toBe(false)
+  })
+
+  it('a bare href="#" link does not count toward the interactive-element threshold', () => {
+    expect(hasAxAgentAttributesGap('function App(){ return <><button onClick={a}>Go</button><a href="#">x</a></> }')).toBe(false)
+  })
+
+  it('checkObedience + buildObediencePrompt wire through correctly', () => {
+    const code = 'function App(){ return <><button onClick={a}>Add</button><button onClick={b}>Remove</button></> }'
+    const r = checkObedience(code, 'anything')
+    expect(r.axAgentAttributesGap).toBe(true)
+    expect(r.reasons.some((x) => x.includes('data-agent'))).toBe(true)
+    expect(buildObediencePrompt('anything', r)).toMatch(/TAG INTERACTIVE ELEMENTS FOR AGENTS/)
+  })
+})
+
+describe('obedience-gate: AX complex widget roles (builder#687 item 7)', () => {
+  it('does NOT flag an app with no tab-like or live-status pattern at all', () => {
+    expect(hasAxComplexWidgetRoleGap('function App(){ return <div>hi</div> }')).toBe(false)
+  })
+
+  it('flags a tab-like widget (activeTab state + buttons) with no tablist/tab roles', () => {
+    const code = 'function App(){ const [activeTab,setActiveTab]=useState(0); return <button onClick={()=>setActiveTab(1)}>Tab</button> }'
+    expect(hasAxComplexWidgetRoleGap(code)).toBe(true)
+  })
+
+  it('does NOT flag a tab-like widget that already has tablist/tab roles', () => {
+    const code = 'function App(){ const [activeTab,setActiveTab]=useState(0); return <div role="tablist"><button role="tab" onClick={()=>setActiveTab(1)}>Tab</button></div> }'
+    expect(hasAxComplexWidgetRoleGap(code)).toBe(false)
+  })
+
+  it('flags a loading/spinner pattern with no status role or aria-live', () => {
+    const code = 'function App(){ const [isLoading,setIsLoading]=useState(true); return <div className="animate-spin">Loading...</div> }'
+    expect(hasAxComplexWidgetRoleGap(code)).toBe(true)
+  })
+
+  it('does NOT flag a loading pattern that already has role="status" or aria-live', () => {
+    const code = 'function App(){ const [isLoading,setIsLoading]=useState(true); return <div role="status" className="animate-spin">Loading...</div> }'
+    expect(hasAxComplexWidgetRoleGap(code)).toBe(false)
+  })
+
+  it('checkObedience + buildObediencePrompt wire through correctly', () => {
+    const code = 'function App(){ const [activeTab,setActiveTab]=useState(0); return <button onClick={()=>setActiveTab(1)}>Tab</button> }'
+    const r = checkObedience(code, 'anything')
+    expect(r.axComplexWidgetRoleGap).toBe(true)
+    expect(r.reasons.some((x) => x.includes('complex widget'))).toBe(true)
+    expect(buildObediencePrompt('anything', r)).toMatch(/ADD ARIA ROLES TO YOUR COMPLEX WIDGET/)
   })
 })
 
