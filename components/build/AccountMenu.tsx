@@ -196,7 +196,11 @@ export function AccountMenu({ session, open, onOpenChange, onScreen }: AccountMe
         onScreen('signup')
         break
       case 'logout':
-        signOut()
+        // #650: a bare signOut() redirects back to the CURRENT url (next-auth's
+        // default), which for this SPA is whatever ?screen= the user was on —
+        // an authenticated-only screen with no session, landing on the wrong
+        // page. Force the public landing screen instead.
+        signOut({ callbackUrl: '/build?screen=landing', redirect: true })
         break
     }
   }

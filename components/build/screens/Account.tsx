@@ -311,7 +311,7 @@ export function Account() {
         <button
           className="btn-ghost"
           data-testid="account-sign-out"
-          onClick={() => signOut()}
+          onClick={() => signOut({ callbackUrl: '/build?screen=landing', redirect: true })}
         >
           Sign out
         </button>
@@ -417,7 +417,7 @@ export function Account() {
             <button
               className="btn-ghost"
               data-testid="account-sign-out-all"
-              onClick={() => signOut()}
+              onClick={() => signOut({ callbackUrl: '/build?screen=landing', redirect: true })}
             >
               Sign out all
             </button>
