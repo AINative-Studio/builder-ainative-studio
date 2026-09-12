@@ -196,7 +196,7 @@ describe('useAutoplay — wedge interrupt (hook body)', () => {
       done: { design: 'done', thesis: 'done' },
       designStepDone: true,
       view: 'wedge',
-      wedgePicked: 'eng',
+      wedgePicked: 'confirmed',
     })
     const dispatch = vi.fn()
     useAutoplay(state, dispatch)
@@ -221,6 +221,142 @@ describe('useAutoplay — wedge interrupt (hook body)', () => {
     expect(dispatch).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: 'COMPLETE_ARTIFACT', view: 'wedge' }),
     )
+  })
+})
+
+// ── Wedge draft fetch (#668) ─────────────────────────────────────────────────
+// The wedge interrupt used to show 3 hardcoded, always-B2B-SaaS options
+// regardless of the founder's idea. The real fix: fetch the SAME idea-aware
+// ARTIFACT_PROMPTS.wedge every other prose artifact already uses (it existed
+// and was correct the whole time — 'wedge' being an INTERRUPT_VIEW just meant
+// the fetch never fired for it).
+describe('useAutoplay — wedge draft fetch (hook body, #668)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('fetches a real, idea-derived wedge draft when entering wedge with no draft yet', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ content: { headline: 'h', segment: 's', motion: 'm', proofPlan: 'p' } }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const state = wsState({
+      track: 'company',
+      done: { design: 'done', thesis: 'done' },
+      designStepDone: true,
+      view: 'wedge',
+      wedgePicked: '',
+      wedgeDraft: null,
+      idea: 'a hot sauce subscription box',
+    })
+    const dispatch = vi.fn()
+    useAutoplay(state, dispatch)
+    ;(globalThis as any).__triggerEffect?.(0)
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/build/artifact',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('"view":"wedge"'),
+      }),
+    )
+    const sentBody = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(sentBody.idea).toBe('a hot sauce subscription box')
+
+    // Let the fetch promise chain resolve before asserting the dispatch.
+    await new Promise((r) => setTimeout(r, 0))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(dispatch).toHaveBeenCalledWith({
+      type: 'WEDGE_DRAFT_READY',
+      draft: { headline: 'h', segment: 's', motion: 'm', proofPlan: 'p' },
+    })
+  })
+
+  it('does NOT re-fetch when a draft already exists', () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const state = wsState({
+      track: 'company',
+      done: { design: 'done', thesis: 'done' },
+      designStepDone: true,
+      view: 'wedge',
+      wedgePicked: '',
+      wedgeDraft: { headline: 'h', segment: 's', motion: 'm', proofPlan: 'p' },
+    })
+    const dispatch = vi.fn()
+    useAutoplay(state, dispatch)
+    ;(globalThis as any).__triggerEffect?.(0)
+
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('does NOT re-fetch when a draft error already exists (waits for WEDGE_DRAFT_RETRY instead)', () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const state = wsState({
+      track: 'company',
+      done: { design: 'done', thesis: 'done' },
+      designStepDone: true,
+      view: 'wedge',
+      wedgePicked: '',
+      wedgeDraft: null,
+      wedgeDraftError: 'provider timeout',
+    })
+    const dispatch = vi.fn()
+    useAutoplay(state, dispatch)
+    ;(globalThis as any).__triggerEffect?.(0)
+
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('dispatches WEDGE_DRAFT_FAIL when the fetch response is not ok', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: async () => ({ error: 'generation_unavailable' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const state = wsState({
+      track: 'company',
+      done: { design: 'done', thesis: 'done' },
+      designStepDone: true,
+      view: 'wedge',
+      wedgePicked: '',
+      wedgeDraft: null,
+    })
+    const dispatch = vi.fn()
+    useAutoplay(state, dispatch)
+    ;(globalThis as any).__triggerEffect?.(0)
+
+    await new Promise((r) => setTimeout(r, 0))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(dispatch).toHaveBeenCalledWith({ type: 'WEDGE_DRAFT_FAIL', error: 'generation_unavailable' })
+  })
+
+  it('dispatches WEDGE_DRAFT_FAIL (never throws) when the fetch itself rejects', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('network down'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const state = wsState({
+      track: 'company',
+      done: { design: 'done', thesis: 'done' },
+      designStepDone: true,
+      view: 'wedge',
+      wedgePicked: '',
+      wedgeDraft: null,
+    })
+    const dispatch = vi.fn()
+    useAutoplay(state, dispatch)
+    ;(globalThis as any).__triggerEffect?.(0)
+
+    await new Promise((r) => setTimeout(r, 0))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(dispatch).toHaveBeenCalledWith({ type: 'WEDGE_DRAFT_FAIL', error: 'network down' })
   })
 })
 

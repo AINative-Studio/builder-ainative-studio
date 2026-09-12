@@ -366,10 +366,32 @@ describe('buildReducer — NUDGE', () => {
   })
 })
 
-describe('buildReducer — PICK_WEDGE', () => {
-  it('sets wedgePicked', () => {
-    const s = buildReducer(initialBuildState, { type: 'PICK_WEDGE', choice: 'eng' })
-    expect(s.wedgePicked).toBe('eng')
+describe('buildReducer — PICK_WEDGE (#668: plain confirm signal, real content lives in wedgeDraft)', () => {
+  it('sets wedgePicked to confirmed', () => {
+    const s = buildReducer(initialBuildState, { type: 'PICK_WEDGE' })
+    expect(s.wedgePicked).toBe('confirmed')
+  })
+})
+
+describe('buildReducer — WEDGE_DRAFT_READY / WEDGE_DRAFT_FAIL / WEDGE_DRAFT_RETRY (#668)', () => {
+  const draft = { headline: 'Own the local hot sauce subscriber', segment: 'Hot-sauce enthusiasts in the Southwest', motion: 'Instagram + farmers market sampling', proofPlan: '50 paying subscribers in 30 days' }
+
+  it('WEDGE_DRAFT_READY stores the real idea-derived draft and clears any prior error', () => {
+    const s = buildReducer({ ...initialBuildState, wedgeDraftError: 'prior failure' }, { type: 'WEDGE_DRAFT_READY', draft })
+    expect(s.wedgeDraft).toEqual(draft)
+    expect(s.wedgeDraftError).toBe('')
+  })
+
+  it('WEDGE_DRAFT_FAIL records the error without touching any existing draft', () => {
+    const s = buildReducer({ ...initialBuildState, wedgeDraft: draft }, { type: 'WEDGE_DRAFT_FAIL', error: 'provider timeout' })
+    expect(s.wedgeDraftError).toBe('provider timeout')
+    expect(s.wedgeDraft).toEqual(draft)
+  })
+
+  it('WEDGE_DRAFT_RETRY clears both the draft and the error so useAutoplay refetches', () => {
+    const s = buildReducer({ ...initialBuildState, wedgeDraft: draft, wedgeDraftError: 'provider timeout' }, { type: 'WEDGE_DRAFT_RETRY' })
+    expect(s.wedgeDraft).toBeNull()
+    expect(s.wedgeDraftError).toBe('')
   })
 })
 

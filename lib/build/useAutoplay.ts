@@ -67,6 +67,10 @@ const HANDOFF_MS = 550       // pause between views so the user can register pro
 export function useAutoplay(state: BuildState, dispatch: Dispatch) {
   const busy = useRef(false)
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
+  // Guards the wedge-draft fetch (#668) against firing more than once per
+  // draft attempt — this effect re-runs on every `tick`/state dependency
+  // change, but the fetch itself is a one-shot per null-draft window.
+  const wedgeFetching = useRef(false)
   // A tick counter that we bump whenever a step finishes. Because `busy` is a
   // ref (no re-render), resetting it alone would NOT re-run the effect to pick
   // up the next view — bumping this state does. `tick` is in the dep array.
@@ -107,6 +111,31 @@ export function useAutoplay(state: BuildState, dispatch: Dispatch) {
     if (INTERRUPT_VIEWS.has(next)) {
       dispatch({ type: 'SET_OVERLAY', overlay: { kind: 'none' } })
       if (state.view !== next) dispatch({ type: 'GOTO_VIEW', view: next as ArtifactView })
+      // #668: draft the REAL, idea-specific wedge (the same ARTIFACT_PROMPTS.wedge
+      // this route already correctly generates for every other founder, just never
+      // actually fetched for this interrupt view before) as soon as we land here,
+      // so Wedge.tsx has real content instead of a hardcoded B2B-SaaS menu.
+      if (next === 'wedge' && !state.wedgeDraft && !state.wedgeDraftError && !wedgeFetching.current) {
+        wedgeFetching.current = true
+        fetch('/api/build/artifact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ view: 'wedge', idea: state.idea, track: state.track, companyName: state.companyName || undefined }),
+        })
+          .then(async (res) => {
+            const data = await res.json().catch(() => null)
+            wedgeFetching.current = false
+            if (res.ok && data?.content?.headline) {
+              dispatch({ type: 'WEDGE_DRAFT_READY', draft: data.content })
+            } else {
+              dispatch({ type: 'WEDGE_DRAFT_FAIL', error: data?.error || `HTTP ${res.status}` })
+            }
+          })
+          .catch((e) => {
+            wedgeFetching.current = false
+            dispatch({ type: 'WEDGE_DRAFT_FAIL', error: e instanceof Error ? e.message : String(e) })
+          })
+      }
       if (next === 'wedge' && !state.wedgePicked) return // wait for the user
       if (next === 'design' && !state.designStepDone) return // wait for the user
       dispatch({ type: 'COMPLETE_ARTIFACT', view: next })
@@ -234,7 +263,7 @@ export function useAutoplay(state: BuildState, dispatch: Dispatch) {
     tick,
     state.screen, state.auto, state.paused, state.idea, state.track, state.view,
     state.done, state.generated, state.genError, state.askedPrivacy, state.builtMVP,
-    state.wedgePicked, state.designStepDone,
+    state.wedgePicked, state.designStepDone, state.wedgeDraft, state.wedgeDraftError,
   ])
 
   // Clear pending timers on unmount so a torn-down workspace doesn't dispatch.
