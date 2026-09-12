@@ -236,7 +236,7 @@ export async function createBranchForTask(
     return {
       ok: true,
       branchName: branch.name,
-      branchSha: branch.commit?.sha,
+      branchSha: branch.commit?.id || branch.commit?.sha,
     }
   } catch (err) {
     console.error(`[task-git-sync] createBranchForTask failed:`, err)
@@ -305,7 +305,7 @@ export async function commitTaskChanges(opts: TaskCommitOpts): Promise<TaskGitRe
     const result: TaskGitResult = {
       ok: true,
       branchName,
-      branchSha: updatedBranch?.commit?.sha,
+      branchSha: updatedBranch?.commit?.id || updatedBranch?.commit?.sha,
     }
 
     // Optionally create PR
