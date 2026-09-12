@@ -5,7 +5,7 @@ import { nanoid } from 'nanoid'
 import * as Sentry from '@sentry/nextjs'
 import { verifyAndEnhancePrompt } from '@/lib/component-verifier'
 import { PROFESSIONAL_SYSTEM_PROMPT } from '@/lib/professional-prompt'
-import { codegenCompositionBlock } from '@/lib/build/primitive-catalog'
+import { codegenCompositionBlock, selectPrimitives } from '@/lib/build/primitive-catalog'
 import { dataModelContextBlock } from '@/lib/build/data-model-context'
 import { multiFileEmphasis, multiFileUserDirective, ideaWarrantsMultiFile } from '@/lib/build/multifile-emphasis'
 import { enhancePromptWithMockData } from '@/lib/mock-data-generator'
@@ -19,7 +19,7 @@ import { traceComplianceRetry } from '@/lib/build/primitive-compliance-trace'
 import { buildRagContext } from '@/lib/build/rag-context'
 import { shouldDecompose, buildDecompositionPrompt, buildFixAndDecomposePrompt } from '@/lib/build/decomposition'
 import { selectModelForComplexity, modelSelectionReport } from '@/lib/build/model-select'
-import { recallPastPerformance, storeGenerationMemory } from '@/lib/agent/zeromemory'
+import { recallPastPerformance, storeGenerationMemory, relateEntityToPrimitives } from '@/lib/agent/zeromemory'
 import { buildVerifyPrompt, buildVerifyAgentOptions } from '@/lib/agent/verify-loop'
 import { getWorktreeTestFailure, clearWorktreeTestResult } from '@/lib/agent/test-runner'
 import { GenerationCheckpoint, resolveDegradation } from '@/lib/generation-checkpoint'
@@ -1789,6 +1789,14 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               axLandmarkGap: obFinal.axLandmarkGap,
               bytes: served.length,
             }, responseId)
+            // Context Graph (builder#684): explicitly relate this generation's
+            // entity to every primitive it actually selected (the SAME
+            // selectPrimitives() call codegenCompositionBlock used to build the
+            // prompt) — a reliable, authoritative edge set, independent of
+            // whatever the auto-entity-extractor happens to recognize in the
+            // free-text memory content above. Fire-and-forget, never blocks.
+            const { names: usedPrimitiveNames } = selectPrimitives(message, 'company', validRole)
+            relateEntityToPrimitives(responseId, usedPrimitiveNames).catch(() => {})
           } catch (memErr: any) {
             console.warn('[ZeroMemory] consolidate error (non-fatal):', memErr?.message || memErr)
           }

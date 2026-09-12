@@ -172,3 +172,110 @@ describe('storeGenerationMemory', () => {
     expect(body.namespace).toBe('session:chat-2')
   })
 })
+
+// Context Graph (builder#684) — explicit {entity} --uses--> {primitive} edges,
+// independent of whatever the auto-entity-extractor recognizes in remember()'s
+// free-text content. relateEntityToPrimitives calls the real POST /relate
+// endpoint once per primitive (confirmed against core source: no batch form
+// exists); graphNeighborsOf queries GET /graph/{entity_id} back.
+describe('relateEntityToPrimitives', () => {
+  it('calls /relate once per primitive with subject=entityId, predicate=uses', async () => {
+    const fetchMock = vi.fn(async (_url?: string, _init?: RequestInit) => ({ ok: true, json: async () => ({}) }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { relateEntityToPrimitives } = await import('@/lib/agent/zeromemory')
+    await relateEntityToPrimitives('chat-abc', ['ZeroPipeline', 'ZeroVoice'])
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const bodies = fetchMock.mock.calls.map((c: any) => JSON.parse(String(c[1].body)))
+    expect(bodies).toContainEqual({ subject: 'chat-abc', predicate: 'uses', object: 'ZeroPipeline', confidence: 0.9 })
+    expect(bodies).toContainEqual({ subject: 'chat-abc', predicate: 'uses', object: 'ZeroVoice', confidence: 0.9 })
+    for (const [url] of fetchMock.mock.calls) {
+      expect(url).toContain('/api/v1/public/memory/v2/relate')
+    }
+  })
+
+  it('is a no-op when there are no primitives to relate', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { relateEntityToPrimitives } = await import('@/lib/agent/zeromemory')
+    await relateEntityToPrimitives('chat-abc', [])
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('is a no-op when entityId is empty', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { relateEntityToPrimitives } = await import('@/lib/agent/zeromemory')
+    await relateEntityToPrimitives('', ['ZeroPipeline'])
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('never throws when a relate call fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network down') }))
+    const { relateEntityToPrimitives } = await import('@/lib/agent/zeromemory')
+    await expect(relateEntityToPrimitives('chat-abc', ['ZeroPipeline'])).resolves.toBeUndefined()
+  })
+
+  it('returns without calling fetch when no API key is configured', async () => {
+    process.env.ZERODB_API_KEY = ''
+    process.env.AINATIVE_API_KEY = ''
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { relateEntityToPrimitives } = await import('@/lib/agent/zeromemory')
+    await relateEntityToPrimitives('chat-abc', ['ZeroPipeline'])
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('graphNeighborsOf', () => {
+  it('queries GET /graph/{entity_id} and maps relationships', async () => {
+    const fetchMock = vi.fn(async (_url?: string, _init?: RequestInit) => ({
+      ok: true,
+      json: async () => ({ relationships: [{ subject: 'chat-abc', relationship_type: 'uses', object: 'ZeroPipeline' }] }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { graphNeighborsOf } = await import('@/lib/agent/zeromemory')
+    const result = await graphNeighborsOf('chat-abc')
+
+    expect(result).toEqual([{ subject: 'chat-abc', predicate: 'uses', object: 'ZeroPipeline' }])
+    const [url] = fetchMock.mock.calls[0] as [string]
+    expect(url).toContain('/api/v1/public/memory/v2/graph/chat-abc')
+  })
+
+  it('handles a bare-array response shape too', async () => {
+    const fetchMock = vi.fn(async (_url?: string, _init?: RequestInit) => ({
+      ok: true,
+      json: async () => ([{ subject: 'a', predicate: 'uses', object: 'b' }]),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { graphNeighborsOf } = await import('@/lib/agent/zeromemory')
+    const result = await graphNeighborsOf('a')
+    expect(result).toEqual([{ subject: 'a', predicate: 'uses', object: 'b' }])
+  })
+
+  it('returns [] on a non-ok response, never throws', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false })))
+    const { graphNeighborsOf } = await import('@/lib/agent/zeromemory')
+    await expect(graphNeighborsOf('chat-abc')).resolves.toEqual([])
+  })
+
+  it('returns [] when entityId is empty, without calling fetch', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { graphNeighborsOf } = await import('@/lib/agent/zeromemory')
+    expect(await graphNeighborsOf('')).toEqual([])
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('returns [] when no API key is configured', async () => {
+    process.env.ZERODB_API_KEY = ''
+    process.env.AINATIVE_API_KEY = ''
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { graphNeighborsOf } = await import('@/lib/agent/zeromemory')
+    expect(await graphNeighborsOf('chat-abc')).toEqual([])
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
