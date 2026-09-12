@@ -37,6 +37,7 @@ import { runCoverage } from '@/lib/build/coverage-runner'
 import { updateTask, type BuildTask } from '@/lib/build/task-store'
 import { deployCompanyFromGitea, companyDeployEnabled } from '@/lib/build/company-deploy'
 import { BUILDER_WORKSPACE_ID } from '@/lib/build/instant-db'
+import { startDecisionTrace, addTraceStep, completeDecisionTrace } from '@/lib/agent/zeromemory'
 
 export const COVERAGE_FLOOR = 80
 
@@ -101,8 +102,17 @@ export function decideOutcomeFromCoverage(
  * result AND records it via updateTask so the founder sees the real reason.
  */
 export async function resolveTask(scopeKey: string, task: BuildTask, slug: string): Promise<ResolveTaskResult> {
+  // Decision Trace (builder#685) — a real, queryable record of THIS task's
+  // reasoning, connecting #670's backlog/BuildTask rows to the actual work
+  // an agent did and why. Best-effort throughout: a trace-call failure
+  // (traceId stays null) never affects the real resolution outcome below —
+  // every addTraceStep/completeDecisionTrace call is itself a no-op when
+  // traceId is null.
+  const traceId = await startDecisionTrace(`Resolve backlog task: ${task.title}`, scopeKey)
+
   const fail = async (reason: string): Promise<ResolveTaskResult> => {
     await updateTask(scopeKey, task.id, { stage: 'failed', output: reason })
+    if (traceId) await completeDecisionTrace(traceId, reason, false)
     return { ok: false, stage: 'failed', reason }
   }
 
@@ -118,9 +128,25 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
     return fail('Could not read the company’s current repo state from Gitea.')
   }
 
+  if (traceId) {
+    await addTraceStep(
+      traceId,
+      `Read the company's current Gitea repo (${Object.keys(existingFiles).length} files) to ground the implementation in the real, current app state.`,
+      'read_repo',
+    )
+  }
+
   const implemented = await implementTask({ title: task.title, detail: task.detail }, existingFiles)
   if (!implemented.ok || !implemented.files) {
     return fail(implemented.reason || 'Implementation step failed with no reason given.')
+  }
+
+  if (traceId) {
+    await addTraceStep(
+      traceId,
+      `Implemented "${task.title}" — LLM produced ${Object.keys(implemented.files).length} changed/new file(s).`,
+      'implement',
+    )
   }
 
   const gitResult = await commitTaskWithPR({
@@ -133,12 +159,24 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
     return fail(`Could not commit the implementation: ${gitResult.reason || 'unknown git-sync failure'}.`)
   }
 
+  if (traceId) {
+    await addTraceStep(traceId, `Committed the implementation and opened a real PR.`, 'commit_pr', gitResult.prUrl ? [gitResult.prUrl] : undefined)
+  }
+
   // Merge the changed files over the existing tree so coverage runs against
   // the FULL app state, not just the diff (a changed component might import
   // an unchanged one — the test suite needs the whole picture).
   const fullTree = { ...existingFiles, ...implemented.files }
   const coverage = await runCoverage(fullTree)
   const outcome = decideOutcomeFromCoverage(coverage)
+
+  if (traceId) {
+    await addTraceStep(
+      traceId,
+      `Ran real coverage verification: ${coverage.coveragePercent ?? 'not testable'}${typeof coverage.coveragePercent === 'number' ? '%' : ''} — decided stage '${outcome.stage}'.`,
+      'verify_coverage',
+    )
+  }
 
   // #468 — auto-merge + redeploy on a genuinely completed, coverage-verified
   // task. Best-effort: a merge/deploy hiccup must never downgrade an already
@@ -171,6 +209,10 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
     : outcome.reason || 'Coverage verification failed.'
 
   await updateTask(scopeKey, task.id, { stage: outcome.stage, output })
+
+  if (traceId) {
+    await completeDecisionTrace(traceId, output, outcome.stage === 'completed')
+  }
 
   return {
     ok: outcome.stage === 'completed',
