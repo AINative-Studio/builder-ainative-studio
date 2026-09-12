@@ -36,6 +36,7 @@ import {
 import { resolveApp } from '@/lib/build/app-registry'
 import { processConversation } from '@/lib/agent/zeromemory'
 import { detectEditIntent } from '@/lib/build/edit-intent'
+import { ensureChatSummary } from '@/lib/build/chat-summary'
 
 export const runtime = 'nodejs'
 
@@ -322,5 +323,13 @@ export async function GET(request: NextRequest) {
   if (!scopeKey) return Response.json({ turns: [] })
   const companyProjectId = await resolveCompanyProjectId(companyId)
   const turns = await loadChatWithFallback(scopeKey, undefined, companyProjectId).catch(() => [])
-  return Response.json({ turns })
+
+  // Chat handoff summary (#608): "where we left off" for a returning founder,
+  // regenerated only when enough new turns warrant it (ensureChatSummary is
+  // internally best-effort — never throws, never blocks the thread load).
+  const companyName = String(params.get('companyName') || 'the company').slice(0, 120)
+  const idea = String(params.get('idea') || '').slice(0, 3000)
+  const summaryResult = await ensureChatSummary(scopeKey, companyName, idea, turns).catch(() => null)
+
+  return Response.json({ turns, summary: summaryResult?.summary || null })
 }

@@ -56,6 +56,8 @@ export function Live() {
   // Whether the persisted conversation has been loaded yet (#52) — gates the
   // honest empty state so we don't flash "ask me anything" before hydration.
   const [chatLoaded, setChatLoaded] = useState(false)
+  // #608: "where we left off" handoff summary for a returning founder.
+  const [chatSummary, setChatSummary] = useState<string | null>(null)
   const [asking, setAsking] = useState(false)
   // Real bug (customer-reported, 2026-09-08): the chat log now scrolls
   // internally (app/modernist.css .m-chat-log) instead of overflowing the
@@ -469,7 +471,8 @@ export function Live() {
   useEffect(() => {
     let alive = true
     setChatLoaded(false)
-    fetch(`/api/build/ask?companyId=${encodeURIComponent(companyId)}`)
+    const qs = new URLSearchParams({ companyId, companyName: company, idea: state.idea || '' })
+    fetch(`/api/build/ask?${qs.toString()}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (!alive) return
@@ -481,10 +484,14 @@ export function Live() {
               .map((t) => ({ role: t.role === 'user' ? 'user' : 'cody', text: String(t.text) })),
           )
         }
+        // #608: "where we left off" handoff summary — a returning founder sees
+        // this instead of having to re-read/re-explain the raw chat history.
+        if (d?.summary) setChatSummary(String(d.summary))
         setChatLoaded(true)
       })
       .catch(() => { if (alive) setChatLoaded(true) })
     return () => { alive = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId])
 
   const ask = async () => {
@@ -1018,6 +1025,15 @@ export function Live() {
         <div className="m-live-col m-live-col-chat">
           <div className="m-live-card m-chat">
             <div className="m-mono m-live-card-h"><span className="m-glyph">◇</span> Ask Cody anything</div>
+            {/* #608: "where we left off" handoff — a returning founder sees this
+                instead of re-reading/re-explaining the raw chat history. Only
+                shown once the thread has genuinely loaded, alongside real turns. */}
+            {chatLoaded && chatSummary && chat.length > 0 && (
+              <div className="m-chat-summary" data-testid="chat-summary">
+                <span className="m-mono">SINCE YOU WERE LAST HERE</span>
+                <p>{chatSummary}</p>
+              </div>
+            )}
             <div className="m-chat-log" data-testid="chat-log" ref={chatLogRef}>
               {/* Honest empty state (#52): shown only once the persisted thread has
                   loaded and is genuinely empty — a brand-new company, no fake history. */}

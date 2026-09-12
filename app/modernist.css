@@ -1048,6 +1048,10 @@
    its sticky column (#484) specifically so a flex child CAN shrink and
    scroll internally — overflow-y was the missing piece that actually uses it.
    .m-chat-input keeps flex-shrink:0 so Send never gets squeezed out either. */
+/* #608: "where we left off" handoff summary above the live chat thread. */
+.m-chat-summary { background: var(--color-surface); border-left: 2px solid var(--color-accent); padding: 8px 10px; margin-bottom: 10px; flex-shrink: 0; }
+.m-chat-summary > span { font-size: 10px; letter-spacing: 0.04em; color: var(--text-body-60, #7d7979); }
+.m-chat-summary p { font-size: 13px; line-height: 1.5; margin: 4px 0 0; color: var(--text-body-85); }
 .m-chat-log { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px; }
 .m-chat-user { align-self: flex-end; background: var(--color-surface); padding: 8px 12px; font-size: 13px; max-width: 80%; }
 .m-chat-cody { font-size: 13px; color: var(--text-body-85); line-height: 1.5; }
