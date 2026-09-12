@@ -7,6 +7,7 @@ import {
   hasVisitorTrackingGap,
   hasFakeLeadCaptureGap,
   hasHardcodedToggleGap,
+  hasAxLandmarkGap,
   checkObedience,
   buildObediencePrompt,
   narrowToPrimitiveComplianceOnly,
@@ -218,9 +219,9 @@ function App(){
 })
 
 describe('obedience-gate: checkObedience + prompt', () => {
-  it('ok:true when no gaps (including the mandated visitor beacon)', () => {
+  it('ok:true when no gaps (including the mandated visitor beacon + AX landmark)', () => {
     const r = checkObedience(
-      "function App(){ useEffect(()=>{fetch('/api/db/visitors',{method:'POST'})},[]); return <div>hi</div>}",
+      "function App(){ useEffect(()=>{fetch('/api/db/visitors',{method:'POST'})},[]); return <main aria-label=\"Counter app\"><div>hi</div></main>}",
       'a counter',
     )
     expect(r.ok).toBe(true)
@@ -424,6 +425,55 @@ function App(){
     expect(r.hardcodedToggleGap).toBe(false)
     const prompt = buildObediencePrompt('a gallery app', r)
     expect(prompt).not.toMatch(/PERSIST THE FAVORITE\/LIKE\/SAVE TOGGLE/)
+  })
+})
+
+// AX compliance (agent-accessibility, builder AX audit): lib/professional-prompt.ts's
+// 10-item checklist was prompt-only with zero code-level enforcement — real
+// generations scored ~1/10 against it. This is the first item made unconditional
+// and code-enforced, matching hasVisitorTrackingGap's precedent: every generated
+// app has exactly one top-level render, so the root <main aria-label> landmark is
+// unconditional, not idea-gated.
+describe('obedience-gate: AX root landmark (agent-accessibility)', () => {
+  it('flags an app with no <main> element at all', () => {
+    expect(hasAxLandmarkGap('function App(){ return <div>hi</div> }')).toBe(true)
+  })
+
+  it('flags a <main> with no aria-label', () => {
+    expect(hasAxLandmarkGap('function App(){ return <main><div>hi</div></main> }')).toBe(true)
+  })
+
+  it('does NOT flag a <main> that has an aria-label', () => {
+    expect(hasAxLandmarkGap('function App(){ return <main aria-label="Scorch dashboard"><div>hi</div></main> }')).toBe(false)
+  })
+
+  it('does NOT flag when aria-label appears with other attributes in any order', () => {
+    expect(hasAxLandmarkGap('function App(){ return <main className="app" aria-label="Scorch dashboard" data-x="1"><div>hi</div></main> }')).toBe(false)
+  })
+
+  it('is unconditional — flags even a plain counter with no data-management idea at all', () => {
+    const r = checkObedience('function App(){ return <div>0</div> }', 'a counter')
+    expect(r.axLandmarkGap).toBe(true)
+  })
+
+  it('checkObedience surfaces axLandmarkGap and a reason string', () => {
+    const r = checkObedience('function App(){ return <div>hi</div> }', 'anything')
+    expect(r.axLandmarkGap).toBe(true)
+    expect(r.reasons.some((x) => x.includes('<main aria-label'))).toBe(true)
+  })
+
+  it('buildObediencePrompt includes the real <main aria-label> shape when this gap fires', () => {
+    const r = checkObedience('function App(){ return <div>hi</div> }', 'anything')
+    const prompt = buildObediencePrompt('anything', r)
+    expect(prompt).toMatch(/ADD THE ROOT AX LANDMARK/)
+    expect(prompt).toMatch(/<main aria-label=/)
+  })
+
+  it('buildObediencePrompt omits the AX section when the landmark is already present', () => {
+    const r = checkObedience('function App(){ return <main aria-label="App"><div>hi</div></main> }', 'anything')
+    expect(r.axLandmarkGap).toBe(false)
+    const prompt = buildObediencePrompt('anything', r)
+    expect(prompt).not.toMatch(/ADD THE ROOT AX LANDMARK/)
   })
 })
 
