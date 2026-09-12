@@ -35,6 +35,7 @@ import {
 } from '@/lib/build/chat-store'
 import { resolveApp } from '@/lib/build/app-registry'
 import { processConversation } from '@/lib/agent/zeromemory'
+import { detectEditIntent } from '@/lib/build/edit-intent'
 
 export const runtime = 'nodejs'
 
@@ -145,6 +146,29 @@ export async function POST(request: NextRequest) {
   const { plan: activePlan } = await resolveActivePlan().catch(() => ({ plan: '' as const }))
   const paid = Boolean(activePlan)
 
+  // Real "edit an already-deployed app from chat" capability (#582). Requires
+  // the company to be git-provisioned (paid + provisioned, see #689) — the
+  // same hard requirement resolveTask itself enforces. Fires as a DETACHED
+  // background task (never awaited here) so this reply stays fast — the real
+  // outcome (PR opened, merged, or an honest failure) lands in the founder's
+  // own Tasks panel, already rendered on the Live dashboard, not a second
+  // silent channel. Gated on companyId being a real registry entry, not the
+  // ask-only `idea` param, so a stray edit-shaped question with no company
+  // context never triggers a wasted implement+commit attempt.
+  let editTriggered = false
+  if (companyId && detectEditIntent(question)) {
+    const app = await resolveApp(companyId).catch(() => null)
+    if (app?.gitOrg) {
+      editTriggered = true
+      const base = process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin
+      void fetch(`${base}/api/build/edit-app`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companyId, request: question }),
+      }).catch(() => {})
+    }
+  }
+
   // Fetch backlog so Cody can cite real items (not invented ones)
   const backlogBlock = companyId
     ? await fetchBacklogSummary(companyId, idea, companyName, track, paid)
@@ -203,9 +227,22 @@ export async function POST(request: NextRequest) {
     `- REAL EDITING CAPABILITIES ON THIS DASHBOARD — do not invent workflows beyond these, even if ` +
     `they sound plausible for a product like this:\n` +
     `  * There is NO in-chat file upload. This chat is text-only.\n` +
+    (editTriggered
+      ? `  * REAL EDIT IN PROGRESS: this founder's message IS a change request, and it has just been ` +
+        `dispatched as a REAL tracked task — the exact same pipeline (implement → commit → coverage-` +
+        `verify → auto-merge/redeploy) the nightly loop uses. Confirm this in first person, tell them ` +
+        `it will show up in their Tasks panel below with real progress, and that it typically takes a ` +
+        `few minutes (a real LLM implementation + a real coverage-gated merge, not instant). Do NOT say ` +
+        `"I'll wire that next" as a vague future promise — the work has genuinely already started.\n`
+      : `  * REAL EDIT CAPABILITY (#582): a founder's genuine change request ("change the headline to X", ` +
+        `"add a dark mode toggle") CAN be dispatched as a real tracked task that implements, commits, ` +
+        `coverage-verifies, and auto-merges the change into the live app — but ONLY once the company is ` +
+        `git-provisioned (requires a paid plan). If this founder is not yet provisioned and asks for a ` +
+        `change, tell them honestly that real edits need a paid plan first (do not claim the edit already ` +
+        `happened), and that meanwhile they can keep iterating for free by regenerating from the workspace.\n`) +
     `  * There IS a real logo upload: "Logo & brand" in the Website & app section (Build Ops) lets ` +
     `the founder upload their own logo/brand mark (PNG/JPG/WebP/SVG, up to 2MB) and it is saved to ` +
-    `their company. There is still NO in-dashboard editor for the landing page component itself.\n` +
+    `their company.\n` +
     `  * IMPORTANT HONEST LIMIT: an uploaded logo is saved to the founder's account but is NOT yet ` +
     `automatically pushed into an ALREADY-DEPLOYED company's live generated site — that requires the ` +
     `founder's next real regeneration/redeploy to pick it up, and is not guaranteed today. Say this ` +
