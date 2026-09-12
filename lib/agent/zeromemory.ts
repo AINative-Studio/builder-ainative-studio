@@ -14,6 +14,63 @@ function getMemoryConfig() {
 }
 
 /**
+ * Explicitly relate a generation's entity to each primitive it composed
+ * (builder#684). #675/#683 already get entity attribution "for free" via
+ * `entity_id` on /remember (server-side auto-extraction + auto-relate), but
+ * that only relates whatever the extractor happens to recognize in the
+ * memory's free-text content — not the AUTHORITATIVE list of primitives this
+ * specific generation actually selected (lib/build/primitive-catalog.ts's
+ * selectPrimitives, the same source codegenCompositionBlock uses to build
+ * the prompt). This calls the real POST /relate endpoint directly so the
+ * Context Graph carries an explicit, reliable
+ * {chatId} --uses--> {primitiveName} edge for every selected primitive,
+ * queryable back via GET /graph/{entity_id} (relateEntityToPrimitives's
+ * sibling, graphNeighborsOf below).
+ *
+ * Fire-and-forget, one call per primitive (the real API has no batch form).
+ * Best-effort: a failed relate never blocks or fails generation.
+ */
+export async function relateEntityToPrimitives(entityId: string, primitiveNames: string[]): Promise<void> {
+  if (!entityId || !primitiveNames.length) return
+  const { apiUrl, apiKey } = getMemoryConfig()
+  if (!apiKey) return
+  await Promise.all(
+    primitiveNames.map((name) =>
+      fetch(`${apiUrl}/api/v1/public/memory/v2/relate`, {
+        method: 'POST',
+        headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subject: entityId, predicate: 'uses', object: name, confidence: 0.9 }),
+        signal: AbortSignal.timeout(5000),
+      }).catch(() => {}),
+    ),
+  )
+}
+
+/**
+ * Query the Context Graph for everything related to an entity (builder#684)
+ * — e.g. `graphNeighborsOf(companySlug)` after relateEntityToPrimitives has
+ * run for it returns the primitives that company genuinely uses. Returns []
+ * on any failure or when unconfigured; never throws.
+ */
+export async function graphNeighborsOf(entityId: string, limit = 50): Promise<Array<{ subject: string; predicate: string; object: string }>> {
+  if (!entityId) return []
+  try {
+    const { apiUrl, apiKey } = getMemoryConfig()
+    if (!apiKey) return []
+    const res = await fetch(
+      `${apiUrl}/api/v1/public/memory/v2/graph/${encodeURIComponent(entityId)}?limit=${limit}`,
+      { headers: { 'x-api-key': apiKey }, signal: AbortSignal.timeout(5000) },
+    )
+    if (!res.ok) return []
+    const data = await res.json()
+    const rels = Array.isArray(data) ? data : data?.relationships || []
+    return rels.map((r: any) => ({ subject: r.subject, predicate: r.predicate ?? r.relationship_type, object: r.object }))
+  } catch {
+    return []
+  }
+}
+
+/**
  * Recall past performance data for similar prompts.
  * Returns a string of past learnings to inject as context, or empty string.
  */
