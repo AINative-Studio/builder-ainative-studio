@@ -277,16 +277,37 @@ async function forward(
     body = await request.text().catch(() => undefined)
   }
 
-  try {
-    const res = await fetch(targetUrl, {
+  const callPrimitive = (accessToken: string) =>
+    fetch(targetUrl, {
       method: request.method,
       headers: {
-        Authorization: `Bearer ${credential.accessToken}`,
+        Authorization: `Bearer ${accessToken}`,
         'Content-Type': request.headers.get('content-type') || 'application/json',
       },
       body,
       signal: AbortSignal.timeout(20000),
     })
+
+  try {
+    let res = await callPrimitive(credential.accessToken)
+    // #443/#664 follow-up: reactive backstop. Confirmed live (2026-09-12) that
+    // EVERY stored founder-scoped credential across every real company has no
+    // expiresAt/refresh token at all (the getToken()-based capture path was
+    // silently broken — see provision/route.ts's fix), so the primitive's OWN
+    // 401 is often the FIRST real signal the token has expired — the proactive
+    // check above never had anything to act on. One forced-refresh retry: if
+    // the real primitive itself rejects the credential, try a real refresh
+    // (skips the proactive expiry estimate entirely) and retry ONCE with
+    // whatever token comes back. If the refresh yields the identical token
+    // (no refresh token was ever captured — the 25 already-broken credentials
+    // from before this fix), the retry legitimately 401s again and we stop —
+    // never loop, never fabricate a success.
+    if (res.status === 401) {
+      const refreshed = await resolveFounderCredential(slug, primitiveName, { forceRefresh: true })
+      if (refreshed.ok && refreshed.accessToken && refreshed.accessToken !== credential.accessToken) {
+        res = await callPrimitive(refreshed.accessToken)
+      }
+    }
     const text = await res.text().catch(() => '')
     // Forward the real primitive's response verbatim (status + body) — the
     // credential itself is never included in any response we send back.

@@ -264,6 +264,7 @@ export interface ResolvedCredential {
 export async function resolveFounderCredential(
   slug: string,
   primitive: FounderScopedPrimitive,
+  options?: { forceRefresh?: boolean },
 ): Promise<ResolvedCredential> {
   const row = await resolveStoredRow(slug, primitive)
   if (!row) return { ok: false, reason: 'not_provisioned' }
@@ -275,7 +276,15 @@ export async function resolveFounderCredential(
     return { ok: false, reason: 'decrypt_failed' }
   }
 
-  if (!shouldRefreshToken(row.expiresAt)) {
+  // forceRefresh (#443/#664 follow-up): the reactive backstop in the runtime
+  // proxy calls this with forceRefresh:true after the PRIMITIVE ITSELF
+  // (not our own proactive check) returns a real 401 — a stronger, ground-
+  // truth signal than shouldRefreshToken's expiresAt estimate, which can be
+  // wrong (a credential stored before this fix has no real expiresAt at all
+  // and falls back to an ASSUMED lifetime; even a correctly-captured one is
+  // still just an estimate). Skips the proactive check and goes straight to
+  // attempting a real refresh.
+  if (!options?.forceRefresh && !shouldRefreshToken(row.expiresAt)) {
     return { ok: true, accessToken, organizationId: row.organizationId }
   }
 
