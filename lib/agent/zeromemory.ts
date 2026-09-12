@@ -189,3 +189,77 @@ export async function storeGenerationMemory(
     // Best-effort — never block generation
   }
 }
+
+/**
+ * Decision Traces (builder#685) — a real, structured record of an agent's
+ * reasoning + tool calls per task, mounted at
+ * /api/v1/public/memory/v2/traces/* (core: app/api/v1/endpoints/
+ * memory_traces.py, Refs #2110). This is the missing link #670 found: the
+ * founder-visible backlog and the real BuildTask/nightly-loop pipeline are
+ * connected (createTask), but nothing records WHY the agent made a given
+ * generation or task-resolution decision — Decision Traces is exactly that,
+ * already built and live, just never called from Builder.
+ *
+ * Kept deliberately thin and best-effort, matching every other helper in
+ * this file: a failed trace call must never block or fail the real
+ * generation/task work it's describing.
+ */
+
+/** Begin a trace. Returns the real trace_id, or null on any failure. */
+export async function startDecisionTrace(task: string, sessionId: string): Promise<string | null> {
+  if (!task || !sessionId) return null
+  try {
+    const { apiUrl, apiKey } = getMemoryConfig()
+    if (!apiKey) return null
+    const res = await fetch(`${apiUrl}/api/v1/public/memory/v2/traces/start`, {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task: task.slice(0, 500), session_id: sessionId }),
+      signal: AbortSignal.timeout(5000),
+    })
+    if (!res.ok) return null
+    const data = await res.json()
+    return data?.trace_id || null
+  } catch {
+    return null
+  }
+}
+
+/** Record one reasoning step within a trace. Best-effort, never throws. */
+export async function addTraceStep(
+  traceId: string,
+  thought: string,
+  action: string,
+  observations?: string[],
+): Promise<void> {
+  if (!traceId || !thought || !action) return
+  try {
+    const { apiUrl, apiKey } = getMemoryConfig()
+    if (!apiKey) return
+    await fetch(`${apiUrl}/api/v1/public/memory/v2/traces/${encodeURIComponent(traceId)}/step`, {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ thought: thought.slice(0, 1000), action: action.slice(0, 200), observations }),
+      signal: AbortSignal.timeout(5000),
+    }).catch(() => {})
+  } catch {
+    // Best-effort — never block the caller's real work
+  }
+}
+
+/** Mark a trace complete with its outcome. Best-effort, never throws. */
+export async function completeDecisionTrace(traceId: string, outcome: string, success: boolean): Promise<void> {
+  if (!traceId) return
+  try {
+    const { apiUrl, apiKey } = getMemoryConfig()
+    if (!apiKey) return
+    await fetch(`${apiUrl}/api/v1/public/memory/v2/traces/${encodeURIComponent(traceId)}/complete`, {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ outcome: outcome.slice(0, 500), success }),
+      signal: AbortSignal.timeout(5000),
+    }).catch(() => {})
+  } catch {
+    // Best-effort — never block the caller's real work
+  }
+}

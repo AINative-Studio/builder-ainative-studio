@@ -279,3 +279,116 @@ describe('graphNeighborsOf', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 })
+
+// Decision Traces (builder#685) — real POST .../traces/start, .../{id}/step,
+// .../{id}/complete, confirmed against core source
+// (app/api/v1/endpoints/memory_traces.py, Refs #2110).
+describe('startDecisionTrace', () => {
+  it('POSTs to /traces/start with task + session_id and returns the real trace_id', async () => {
+    const fetchMock = vi.fn(async (_url?: string, _init?: RequestInit) => ({
+      ok: true,
+      json: async () => ({ trace_id: 'trace-xyz', task: 'Resolve task', session_id: 'owner::slug' }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { startDecisionTrace } = await import('@/lib/agent/zeromemory')
+    const traceId = await startDecisionTrace('Resolve task', 'owner::slug')
+
+    expect(traceId).toBe('trace-xyz')
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/api/v1/public/memory/v2/traces/start')
+    const body = JSON.parse(String(init.body))
+    expect(body).toEqual({ task: 'Resolve task', session_id: 'owner::slug' })
+  })
+
+  it('returns null on a non-ok response, never throws', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false })))
+    const { startDecisionTrace } = await import('@/lib/agent/zeromemory')
+    await expect(startDecisionTrace('task', 'session')).resolves.toBeNull()
+  })
+
+  it('returns null when task or sessionId is empty, without calling fetch', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { startDecisionTrace } = await import('@/lib/agent/zeromemory')
+    expect(await startDecisionTrace('', 'session')).toBeNull()
+    expect(await startDecisionTrace('task', '')).toBeNull()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('returns null when no API key is configured', async () => {
+    process.env.ZERODB_API_KEY = ''
+    process.env.AINATIVE_API_KEY = ''
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { startDecisionTrace } = await import('@/lib/agent/zeromemory')
+    expect(await startDecisionTrace('task', 'session')).toBeNull()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('never throws when the call fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('down') }))
+    const { startDecisionTrace } = await import('@/lib/agent/zeromemory')
+    await expect(startDecisionTrace('task', 'session')).resolves.toBeNull()
+  })
+})
+
+describe('addTraceStep', () => {
+  it('POSTs to /traces/{id}/step with thought, action, and observations', async () => {
+    const fetchMock = vi.fn(async (_url?: string, _init?: RequestInit) => ({ ok: true, json: async () => ({}) }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { addTraceStep } = await import('@/lib/agent/zeromemory')
+    await addTraceStep('trace-xyz', 'Read the repo', 'read_repo', ['file1.ts'])
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/api/v1/public/memory/v2/traces/trace-xyz/step')
+    const body = JSON.parse(String(init.body))
+    expect(body).toEqual({ thought: 'Read the repo', action: 'read_repo', observations: ['file1.ts'] })
+  })
+
+  it('is a no-op when traceId, thought, or action is empty', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { addTraceStep } = await import('@/lib/agent/zeromemory')
+    await addTraceStep('', 'thought', 'action')
+    await addTraceStep('trace-1', '', 'action')
+    await addTraceStep('trace-1', 'thought', '')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('never throws when the call fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('down') }))
+    const { addTraceStep } = await import('@/lib/agent/zeromemory')
+    await expect(addTraceStep('trace-1', 'thought', 'action')).resolves.toBeUndefined()
+  })
+})
+
+describe('completeDecisionTrace', () => {
+  it('POSTs to /traces/{id}/complete with outcome and success', async () => {
+    const fetchMock = vi.fn(async (_url?: string, _init?: RequestInit) => ({ ok: true, json: async () => ({}) }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { completeDecisionTrace } = await import('@/lib/agent/zeromemory')
+    await completeDecisionTrace('trace-xyz', 'Merged to main.', true)
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/api/v1/public/memory/v2/traces/trace-xyz/complete')
+    const body = JSON.parse(String(init.body))
+    expect(body).toEqual({ outcome: 'Merged to main.', success: true })
+  })
+
+  it('is a no-op when traceId is empty', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { completeDecisionTrace } = await import('@/lib/agent/zeromemory')
+    await completeDecisionTrace('', 'outcome', true)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('never throws when the call fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('down') }))
+    const { completeDecisionTrace } = await import('@/lib/agent/zeromemory')
+    await expect(completeDecisionTrace('trace-1', 'outcome', false)).resolves.toBeUndefined()
+  })
+})

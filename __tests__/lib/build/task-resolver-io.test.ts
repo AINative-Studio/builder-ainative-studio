@@ -19,6 +19,9 @@ const h = vi.hoisted(() => ({
   updateTask: vi.fn(),
   deployCompanyFromGitea: vi.fn(),
   companyDeployEnabled: vi.fn(),
+  startDecisionTrace: vi.fn(),
+  addTraceStep: vi.fn(),
+  completeDecisionTrace: vi.fn(),
 }))
 
 vi.mock('@/lib/git/gitea-client', () => ({ fetchRepoFiles: h.fetchRepoFiles, mergeTaskPR: h.mergeTaskPR }))
@@ -32,6 +35,11 @@ vi.mock('@/lib/build/company-deploy', () => ({
   companyDeployEnabled: h.companyDeployEnabled,
 }))
 vi.mock('@/lib/build/instant-db', () => ({ BUILDER_WORKSPACE_ID: 'builder-ws-default' }))
+vi.mock('@/lib/agent/zeromemory', () => ({
+  startDecisionTrace: h.startDecisionTrace,
+  addTraceStep: h.addTraceStep,
+  completeDecisionTrace: h.completeDecisionTrace,
+}))
 
 import { resolveTask } from '@/lib/build/task-resolver'
 import type { BuildTask } from '@/lib/build/task-store'
@@ -52,6 +60,9 @@ beforeEach(() => {
   h.mergeTaskPR.mockResolvedValue(false)
   h.companyDeployEnabled.mockReturnValue(false)
   h.setAppRailwayService.mockResolvedValue(true)
+  h.startDecisionTrace.mockResolvedValue('trace-1')
+  h.addTraceStep.mockResolvedValue(undefined)
+  h.completeDecisionTrace.mockResolvedValue(undefined)
 })
 
 describe('resolveTask — end-to-end orchestration', () => {
@@ -302,5 +313,67 @@ describe('resolveTask — end-to-end orchestration', () => {
     const result = await resolveTask('owner::slug', TASK, 'slug')
     expect(result.ok).toBe(true)
     expect(result.stage).toBe('completed')
+  })
+})
+
+// Decision Traces (builder#685) — connects #670's real BuildTask rows to a
+// structured, queryable record of WHY the agent made each resolution
+// decision, not just the final stage.
+describe('resolveTask — Decision Trace (#685)', () => {
+  it('starts a trace naming the task, scoped to the task scopeKey', async () => {
+    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.fetchRepoFiles.mockResolvedValue({})
+    h.implementTask.mockResolvedValue({ ok: true, files: { 'a.ts': 'x' } })
+    h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/1' })
+    h.runCoverage.mockResolvedValue({ coveragePercent: 90, testable: true, passed: true })
+
+    await resolveTask('owner::slug', TASK, 'slug')
+    expect(h.startDecisionTrace).toHaveBeenCalledWith(expect.stringContaining(TASK.title), 'owner::slug')
+  })
+
+  it('records a step for each real pipeline stage on a full success', async () => {
+    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.fetchRepoFiles.mockResolvedValue({ 'existing.ts': 'x' })
+    h.implementTask.mockResolvedValue({ ok: true, files: { 'a.ts': 'x' } })
+    h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/1' })
+    h.runCoverage.mockResolvedValue({ coveragePercent: 90, testable: true, passed: true })
+
+    await resolveTask('owner::slug', TASK, 'slug')
+    const actions = h.addTraceStep.mock.calls.map((c: any[]) => c[2])
+    expect(actions).toEqual(['read_repo', 'implement', 'commit_pr', 'verify_coverage'])
+  })
+
+  it('completes the trace with success:true on a completed task', async () => {
+    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.fetchRepoFiles.mockResolvedValue({})
+    h.implementTask.mockResolvedValue({ ok: true, files: { 'a.ts': 'x' } })
+    h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/1' })
+    h.runCoverage.mockResolvedValue({ coveragePercent: 90, testable: true, passed: true })
+
+    await resolveTask('owner::slug', TASK, 'slug')
+    expect(h.completeDecisionTrace).toHaveBeenCalledWith('trace-1', expect.any(String), true)
+  })
+
+  it('completes the trace with success:false and the real reason on failure', async () => {
+    h.resolveApp.mockResolvedValue({ gitOrg: undefined })
+
+    await resolveTask('owner::slug', TASK, 'slug')
+    expect(h.completeDecisionTrace).toHaveBeenCalledWith('trace-1', expect.stringMatching(/not git-provisioned/i), false)
+  })
+
+  it('never fails task resolution when startDecisionTrace itself fails (returns null)', async () => {
+    h.startDecisionTrace.mockResolvedValue(null)
+    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.fetchRepoFiles.mockResolvedValue({})
+    h.implementTask.mockResolvedValue({ ok: true, files: { 'a.ts': 'x' } })
+    h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/1' })
+    h.runCoverage.mockResolvedValue({ coveragePercent: 90, testable: true, passed: true })
+
+    const result = await resolveTask('owner::slug', TASK, 'slug')
+    expect(result.ok).toBe(true)
+    expect(result.stage).toBe('completed')
+    // No trace id → every subsequent trace call is correctly skipped, not called with null.
+    expect(h.addTraceStep).not.toHaveBeenCalled()
+    expect(h.completeDecisionTrace).not.toHaveBeenCalled()
   })
 })
