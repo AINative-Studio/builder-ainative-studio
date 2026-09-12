@@ -15,7 +15,7 @@ import { registerApp, resolveApp, type AppEntry } from '@/lib/build/app-registry
 import { deployPersistent } from '@/lib/build/deploy'
 import { checkAppReady, resolveStoredApp } from '@/lib/build/ready-gate'
 import { checkSeededData, type SeededDataCheck } from '@/lib/build/seed-check'
-import { commitRegeneration, provisionCompanyRepo } from '@/lib/git/company-repo'
+import { commitRegeneration, provisionCompanyRepo, toFileMapForCommit } from '@/lib/git/company-repo'
 import { BUILDER_WORKSPACE_ID } from '@/lib/build/instant-db'
 import { enrollCompany, isEnrolled } from '@/lib/build/loop-enrollment'
 
@@ -201,12 +201,19 @@ export async function POST(request: NextRequest) {
   let gitCommitted = false
   try {
     const stored = await resolveStoredApp(chatId)
-    if (stored?.files && Object.keys(stored.files).length > 0) {
+    // Real gap found live: EVERY real generated app that only has flat `.code`
+    // (a single-file app — the majority case) used to be silently skipped
+    // here because the old guard only ever checked `.files` (the multi-file
+    // map, populated only for Sandpack-routed generations). toFileMapForCommit
+    // falls back to a synthetic single-entry map so single-file apps get
+    // git-provisioned/committed too, not just multi-file ones.
+    const fileMap = toFileMapForCommit(stored)
+    if (fileMap) {
       if (existing?.gitRepoId) {
         // Existing repo → commit regeneration
         gitCommitted = await commitRegeneration({
           slug,
-          files: stored.files,
+          files: fileMap,
           taskLabel: b.taskLabel,
         })
       } else if (existing?.zerodbProjectId) {
@@ -214,7 +221,7 @@ export async function POST(request: NextRequest) {
         const git = await provisionCompanyRepo({
           workspaceId: BUILDER_WORKSPACE_ID,
           slug,
-          files: stored.files,
+          files: fileMap,
         })
         gitCommitted = git.ok
       }

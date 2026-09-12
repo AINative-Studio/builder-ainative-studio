@@ -43,7 +43,7 @@ import { provisionForm } from '@/lib/build/zeroforms'
 import { provisionProject } from '@/lib/build/agentflow'
 import { provisionZeroERPTenant } from '@/lib/build/zeroerp'
 import { provisionZeroDbViaMcp, isMcpProvisionEnabled } from '@/lib/build/mcp-provision'
-import { provisionCompanyRepo } from '@/lib/git/company-repo'
+import { provisionCompanyRepo, toFileMapForCommit } from '@/lib/git/company-repo'
 import { storeFounderCredential, fetchOrganizationId, hasFounderCredential, type FounderScopedPrimitive } from '@/lib/build/primitive-credentials'
 import { resolveStoredApp } from '@/lib/build/ready-gate'
 
@@ -506,11 +506,18 @@ export async function POST(request: NextRequest) {
   let gitResult: { gitRepoUrl?: string; gitRepoId?: string; gitOrg?: string; reason?: string } = {}
   try {
     const stored = await resolveStoredApp(existing.chatId)
-    if (stored?.files && Object.keys(stored.files).length > 0) {
+    // Real gap found live: EVERY real generated app that only has flat `.code`
+    // (a single-file app — the majority case) used to be silently skipped here
+    // because the old guard only ever checked `.files` (the multi-file map,
+    // populated only for Sandpack-routed generations). toFileMapForCommit
+    // falls back to a synthetic single-entry map so single-file apps get
+    // git-provisioned too, not just multi-file ones.
+    const fileMap = toFileMapForCommit(stored)
+    if (fileMap) {
       const git = await provisionCompanyRepo({
         workspaceId: BUILDER_WORKSPACE_ID,
         slug,
-        files: stored.files,
+        files: fileMap,
       })
       gitProvisioned = git.ok
       gitResult = git

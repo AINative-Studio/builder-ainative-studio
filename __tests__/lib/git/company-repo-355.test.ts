@@ -3,6 +3,7 @@ import {
   formatCommitMessage,
   buildCommitPlan,
   validateFileMap,
+  toFileMapForCommit,
   type FileMap,
 } from '@/lib/git/company-repo'
 
@@ -180,6 +181,43 @@ describe('company-repo (#355 GIT-2)', () => {
     it('validateFileMap handles files with only whitespace content', () => {
       const result = validateFileMap({ 'App.tsx': '   ' })
       expect(result.valid).toBe(true) // Content validation is separate
+    })
+  })
+
+  // Real gap found live (git-provisioning audit): every real generated app
+  // checked in production (3/3: dispatch, triage, ember-box) that was git-
+  // provisioned via the old `stored.files && stored.files.length > 0` guard
+  // was silently SKIPPED — because a single-file app (the majority case)
+  // never populates `.files` (the multi-file map only Sandpack-routed
+  // generations get), even though `.code` (the flat source) was right there.
+  describe('toFileMapForCommit (pure) — single-file git-provisioning gap', () => {
+    it('returns the real multi-file map when one exists', () => {
+      const files = { 'App.tsx': 'a', 'utils.ts': 'b' }
+      expect(toFileMapForCommit({ code: 'ignored', files })).toBe(files)
+    })
+
+    it('falls back to a synthetic single-entry App.tsx map when files is null (THE BUG)', () => {
+      const result = toFileMapForCommit({ code: 'export default function App(){}', files: null })
+      expect(result).toEqual({ 'App.tsx': 'export default function App(){}' })
+    })
+
+    it('falls back to a synthetic single-entry map when files is an empty object', () => {
+      const result = toFileMapForCommit({ code: 'export default function App(){}', files: {} })
+      expect(result).toEqual({ 'App.tsx': 'export default function App(){}' })
+    })
+
+    it('the synthetic fallback map passes validateFileMap (has a real entry file)', () => {
+      const result = toFileMapForCommit({ code: 'export default function App(){}', files: null })
+      expect(validateFileMap(result!).valid).toBe(true)
+    })
+
+    it('returns null when there is no code at all to commit', () => {
+      expect(toFileMapForCommit({ code: '', files: null })).toBeNull()
+      expect(toFileMapForCommit({ code: '   ', files: null })).toBeNull()
+    })
+
+    it('returns null when stored itself is null', () => {
+      expect(toFileMapForCommit(null)).toBeNull()
     })
   })
 
