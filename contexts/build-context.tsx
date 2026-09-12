@@ -94,6 +94,33 @@ const VALID_VIEWS = new Set<string>([
   ...APP_VIEWS, ...COMPANY_VIEWS, ...SHARED_LATE_VIEWS,
 ])
 
+/** Screens with no per-company build context — the URL-sync effect (#648)
+ *  clears any stale `company`/`view` params when landing on one of these, so
+ *  the deep-link-restore effect never re-triggers a stale company's
+ *  START_BUILD on a later reload from an unrelated screen like My Portfolio. */
+const SCREENS_WITHOUT_COMPANY_CONTEXT = new Set(['landing', 'start', 'login', 'signup', 'forgot', 'reset', 'account', 'companies', 'refer'])
+
+/**
+ * Pure decision for the #648 URL-sync effect: given the current URL and the
+ * screen the app is actually on, what should the URL become? Returns null
+ * when no change is needed (avoids a needless history.replaceState call).
+ * Exported so the actual bug (a stale ?screen=/?company= surviving a client-
+ * side navigation) is unit-testable without mounting the full BuildProvider.
+ */
+export function computeSyncedUrl(currentUrl: string, screen: string): string | null {
+  const url = new URL(currentUrl)
+  let changed = false
+  if (url.searchParams.get('screen') !== screen) {
+    url.searchParams.set('screen', screen)
+    changed = true
+  }
+  if (SCREENS_WITHOUT_COMPANY_CONTEXT.has(screen)) {
+    if (url.searchParams.has('company')) { url.searchParams.delete('company'); changed = true }
+    if (url.searchParams.has('view')) { url.searchParams.delete('view'); changed = true }
+  }
+  return changed ? url.toString() : null
+}
+
 export function BuildProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(buildReducer, initialBuildState)
 
@@ -226,6 +253,29 @@ export function BuildProvider({ children }: { children: ReactNode }) {
       window.history.replaceState({}, '', url.toString())
     }
   }, [state.screen, state.view])
+
+  // Keep ?screen= in sync with the CURRENT screen (#648) — this used to only
+  // ever be set once, whatever screen was in the URL at the very first
+  // navigation (e.g. the auth redirect's own ?screen=login), and never
+  // updated again as the founder moved through the app client-side (My
+  // Portfolio, Live, etc. all navigate via GOTO_SCREEN, never touching the
+  // URL). A reload re-ran the one-shot deep-link-restore effect above against
+  // that stale, ORIGINAL screen — so a founder who had long since moved to My
+  // Portfolio got bounced back to whatever screen they'd first landed on
+  // (confirmed live: reload from My Portfolio landed back on the login
+  // screen).
+  //
+  // Also clears the stale `company` (+ `view`) params when the current
+  // screen doesn't need them: the deep-link-restore effect above
+  // unconditionally calls START_BUILD whenever `?company=` is present,
+  // REGARDLESS of `?screen=`'s value — so a leftover `?company={slug}` from
+  // an earlier Live/workspace visit would silently re-trigger that company's
+  // build restore on a reload from an unrelated screen like My Portfolio.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const next = computeSyncedUrl(window.location.href, state.screen)
+    if (next) window.history.replaceState({}, '', next)
+  }, [state.screen])
 
   // GA4 funnel steps 2 & 3 — build_started (entered the workspace/build) and
   // build_completed (landed on Live). Keyed on the transition so each fires once.
