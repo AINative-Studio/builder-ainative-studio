@@ -329,7 +329,13 @@ export async function commitTaskChanges(opts: TaskCommitOpts): Promise<TaskGitRe
     return result
   } catch (err) {
     console.error(`[task-git-sync] commitTaskChanges failed:`, err)
-    return { ok: false, reason: 'commit_error' }
+    // Real gap found live (#698 follow-up): this generic 'commit_error' masked
+    // the actual thrown reason (e.g. createTaskPR's real
+    // "gitea createTaskPR ... failed: 4xx/5xx" message) behind a useless
+    // constant string, making live failures like this one unnecessarily hard
+    // to diagnose. Include the real message when there is one.
+    const detail = err instanceof Error ? err.message : String(err)
+    return { ok: false, reason: detail ? `commit_error: ${detail}` : 'commit_error' }
   }
 }
 
