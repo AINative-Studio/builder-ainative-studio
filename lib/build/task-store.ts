@@ -392,8 +392,25 @@ export async function listTasks(
 
 /**
  * Update a task's stage and/or output by id within a scope. Best-effort: returns
- * true on success, false on any failure (never throws). Uses ZeroDB's row update
- * filtered by {scope_key, id} so a task is only mutated within its own company.
+ * true on success, false on any failure (never throws).
+ *
+ * Real bug found live (issue #698 follow-up, discovered verifying #582's
+ * edit-app pipeline end-to-end): the real ZeroDB rows API does not support a
+ * bulk `PUT .../rows` filtered by an arbitrary combination of row_data keys —
+ * confirmed directly: `{filters: {scope_key, id}}` against a row that
+ * genuinely has both fields returns 0 matches (only `scope_key` alone
+ * matches), and the bulk PUT verb on `.../rows` (no row id in the path)
+ * returns a real 405. Every resolveTask() stage transition (todo →
+ * in_progress → completed/failed) was therefore silently never persisted —
+ * a task could genuinely succeed (real PR merged, real redeploy) and still
+ * show as 'todo' forever in the founder's own Tasks panel.
+ *
+ * Fixed: query by `scope_key` alone (confirmed working — this is what
+ * listTasks already does), find the matching row by `id` in application
+ * code, then PUT the FULL merged row_data to the real per-row endpoint
+ * `.../rows/{row_id}` (confirmed working directly against production) —
+ * that endpoint replaces the whole row_data, so unrelated fields are
+ * preserved by merging into the existing row first.
  */
 export async function updateTask(
   scopeKey: string,
@@ -401,20 +418,30 @@ export async function updateTask(
   patch: { stage?: string; output?: string; taskId?: string | null },
 ): Promise<boolean> {
   if (!scopeKey || !id) return false
-  const row_data: Record<string, unknown> = { updated_at: new Date().toISOString() }
-  if (patch.stage != null) row_data.stage = normalizeStage(patch.stage)
-  if (patch.output != null) row_data.output = String(patch.output).slice(0, 8000)
-  if (patch.taskId !== undefined) row_data.task_id = patch.taskId
+  const patchFields: Record<string, unknown> = { updated_at: new Date().toISOString() }
+  if (patch.stage != null) patchFields.stage = normalizeStage(patch.stage)
+  if (patch.output != null) patchFields.output = String(patch.output).slice(0, 8000)
+  if (patch.taskId !== undefined) patchFields.task_id = patch.taskId
   // Nothing to change beyond the timestamp → treat as a no-op success.
-  if (Object.keys(row_data).length === 1) return true
+  if (Object.keys(patchFields).length === 1) return true
   try {
     const result = await zerodbRequest(
-      'PUT',
-      `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/rows`,
-      { filters: { scope_key: scopeKey, id }, row_data },
+      'POST',
+      `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/query`,
+      { filters: { scope_key: scopeKey }, limit: MAX_LOAD_TASKS },
       { retries: 1 },
     )
-    return !!result
+    const rows: any[] = result?.data || []
+    const row = rows.find((r) => r?.row_data?.id === id)
+    if (!row?.row_id) return false
+    const merged = { ...row.row_data, ...patchFields }
+    const updated = await zerodbRequest(
+      'PUT',
+      `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/rows/${row.row_id}`,
+      { row_data: merged },
+      { retries: 1 },
+    )
+    return !!updated
   } catch (e) {
     console.warn('[task-store] updateTask failed:', (e as Error)?.name || e)
     return false
