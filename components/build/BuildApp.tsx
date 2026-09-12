@@ -19,6 +19,17 @@ import { Account } from '@/components/build/screens/Account'
 import { MyCompanies } from '@/components/build/screens/MyCompanies'
 import { ReferEarn } from '@/components/build/screens/ReferEarn'
 
+/**
+ * #650: screens that require a real session — a guest session still counts
+ * (isGuestSession callers treat it as "signed in, anonymously"), so the only
+ * disqualifying state is next-auth's 'unauthenticated' (no session at all).
+ */
+export const PROTECTED_SCREENS = new Set(['account', 'companies'])
+
+export function isProtectedScreenLocked(status: string, screen: string): boolean {
+  return status === 'unauthenticated' && PROTECTED_SCREENS.has(screen)
+}
+
 function ScreenRouter() {
   const { state, dispatch } = useBuild()
   const { status } = useSession()
@@ -54,6 +65,21 @@ function ScreenRouter() {
       .catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, state.screen])
+
+  // #650: nothing previously bounced an unauthenticated visitor OFF a
+  // protected screen — a stale client render (post sign-out redirect race,
+  // or the back button after logout) could show Account/My Portfolio with
+  // no real session behind it.
+  useEffect(() => {
+    if (isProtectedScreenLocked(status, state.screen)) {
+      dispatch({ type: 'GOTO_SCREEN', screen: 'landing' })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, state.screen])
+
+  if (isProtectedScreenLocked(status, state.screen)) {
+    return <Landing />
+  }
 
   switch (state.screen) {
     case 'landing': return <Landing />
