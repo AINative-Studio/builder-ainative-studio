@@ -8,6 +8,8 @@ import {
   hasFakeLeadCaptureGap,
   hasHardcodedToggleGap,
   hasAxLandmarkGap,
+  hasAxManifestGap,
+  hasAxJsonLdGap,
   checkObedience,
   buildObediencePrompt,
   narrowToPrimitiveComplianceOnly,
@@ -219,9 +221,10 @@ function App(){
 })
 
 describe('obedience-gate: checkObedience + prompt', () => {
-  it('ok:true when no gaps (including the mandated visitor beacon + AX landmark)', () => {
+  it('ok:true when no gaps (including the mandated visitor beacon + AX landmark/manifest/JSON-LD)', () => {
     const r = checkObedience(
-      "function App(){ useEffect(()=>{fetch('/api/db/visitors',{method:'POST'})},[]); return <main aria-label=\"Counter app\"><div>hi</div></main>}",
+      "function App(){ useEffect(()=>{fetch('/api/db/visitors',{method:'POST'})},[]); return <main aria-label=\"Counter app\">" +
+      "<div hidden data-agent-manifest=\"true\"></div><script type=\"application/ld+json\"></script><div>hi</div></main>}",
       'a counter',
     )
     expect(r.ok).toBe(true)
@@ -474,6 +477,56 @@ describe('obedience-gate: AX root landmark (agent-accessibility)', () => {
     expect(r.axLandmarkGap).toBe(false)
     const prompt = buildObediencePrompt('anything', r)
     expect(prompt).not.toMatch(/ADD THE ROOT AX LANDMARK/)
+  })
+})
+
+describe('obedience-gate: AX agent manifest (builder#687 item 5)', () => {
+  it('flags an app with no data-agent-manifest at all', () => {
+    expect(hasAxManifestGap('function App(){ return <div>hi</div> }')).toBe(true)
+  })
+
+  it('does NOT flag an app that has the hidden manifest block', () => {
+    expect(hasAxManifestGap('function App(){ return <div hidden data-agent-manifest="true"></div> }')).toBe(false)
+  })
+
+  it('checkObedience surfaces axManifestGap and a reason string', () => {
+    const r = checkObedience('function App(){ return <div>hi</div> }', 'anything')
+    expect(r.axManifestGap).toBe(true)
+    expect(r.reasons.some((x) => x.includes('agent action manifest'))).toBe(true)
+  })
+
+  it('buildObediencePrompt includes the manifest shape when this gap fires, omits it when already present', () => {
+    const missing = checkObedience('function App(){ return <div>hi</div> }', 'anything')
+    expect(buildObediencePrompt('anything', missing)).toMatch(/ADD A HIDDEN AGENT ACTION MANIFEST/)
+
+    const present = checkObedience('function App(){ return <div hidden data-agent-manifest="true"></div> }', 'anything')
+    expect(present.axManifestGap).toBe(false)
+    expect(buildObediencePrompt('anything', present)).not.toMatch(/ADD A HIDDEN AGENT ACTION MANIFEST/)
+  })
+})
+
+describe('obedience-gate: AX JSON-LD structured data (builder#687 item 6)', () => {
+  it('flags an app with no JSON-LD script at all', () => {
+    expect(hasAxJsonLdGap('function App(){ return <div>hi</div> }')).toBe(true)
+  })
+
+  it('does NOT flag an app that has a JSON-LD script tag', () => {
+    expect(hasAxJsonLdGap('function App(){ return <script type="application/ld+json">{}</script> }')).toBe(false)
+  })
+
+  it('checkObedience surfaces axJsonLdGap and a reason string', () => {
+    const r = checkObedience('function App(){ return <div>hi</div> }', 'anything')
+    expect(r.axJsonLdGap).toBe(true)
+    expect(r.reasons.some((x) => x.includes('JSON-LD'))).toBe(true)
+  })
+
+  it('buildObediencePrompt includes the JSON-LD shape when this gap fires, omits it when already present', () => {
+    const missing = checkObedience('function App(){ return <div>hi</div> }', 'anything')
+    expect(buildObediencePrompt('anything', missing)).toMatch(/ADD JSON-LD STRUCTURED DATA/)
+
+    const present = checkObedience('function App(){ return <script type="application/ld+json">{}</script> }', 'anything')
+    expect(present.axJsonLdGap).toBe(false)
+    expect(buildObediencePrompt('anything', present)).not.toMatch(/ADD JSON-LD STRUCTURED DATA/)
   })
 })
 
