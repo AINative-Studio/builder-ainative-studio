@@ -389,6 +389,12 @@ export function Account() {
 
       <section className="m-account-sec" data-testid="account-usage-section">
         <h2 className="m-mono m-account-sec-h">Usage this month</h2>
+        {/* #653: nothing previously stated that current plans price on usage,
+            not seats — phrased as true of current plans (not a permanent
+            commitment) per the issue's own copy-durability constraint. */}
+        <p className="m-mono m-usage-pricing-note" data-testid="account-usage-pricing-note">
+          Current plans bill on usage, not seats — add teammates at no extra cost.
+        </p>
         {meters && meters.length > 0 ? (
           <>
             <div className="m-meters">

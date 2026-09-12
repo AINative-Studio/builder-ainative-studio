@@ -179,6 +179,12 @@ export function Pricing() {
         </button>
       )}
       <p className="m-reassure m-mono">You own 100% of everything I build. Cancel anytime.</p>
+      {/* #653: stated as a claim, not buried in fine print — current plans price
+          on usage, not seats. Phrased as true of current plans (not a permanent
+          commitment), per the issue's copy-durability constraint. */}
+      <p className="m-reassure m-mono" data-testid="pricing-usage-based-note">
+        Every plan bills on usage, not seats — add teammates at no extra cost.
+      </p>
       {/* #324 GR-15 — honest runway line: only shown when the server says a bonus applied. */}
       {runway && (
         <p className="m-cody-line" data-testid="ecosystem-runway-pricing">
