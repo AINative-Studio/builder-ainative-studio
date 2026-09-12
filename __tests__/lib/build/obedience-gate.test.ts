@@ -10,6 +10,7 @@ import {
   hasAxLandmarkGap,
   hasAxManifestGap,
   hasAxJsonLdGap,
+  hasAxSkipNavGap,
   checkObedience,
   buildObediencePrompt,
   narrowToPrimitiveComplianceOnly,
@@ -221,10 +222,10 @@ function App(){
 })
 
 describe('obedience-gate: checkObedience + prompt', () => {
-  it('ok:true when no gaps (including the mandated visitor beacon + AX landmark/manifest/JSON-LD)', () => {
+  it('ok:true when no gaps (including the mandated visitor beacon + AX landmark/manifest/JSON-LD/skip-nav)', () => {
     const r = checkObedience(
-      "function App(){ useEffect(()=>{fetch('/api/db/visitors',{method:'POST'})},[]); return <main aria-label=\"Counter app\">" +
-      "<div hidden data-agent-manifest=\"true\"></div><script type=\"application/ld+json\"></script><div>hi</div></main>}",
+      "function App(){ useEffect(()=>{fetch('/api/db/visitors',{method:'POST'})},[]); return <><a href=\"#main-content\" data-agent-action=\"skip-nav\">Skip to main content</a><main id=\"main-content\" aria-label=\"Counter app\">" +
+      "<div hidden data-agent-manifest=\"true\"></div><script type=\"application/ld+json\"></script><div>hi</div></main></>}",
       'a counter',
     )
     expect(r.ok).toBe(true)
@@ -527,6 +528,39 @@ describe('obedience-gate: AX JSON-LD structured data (builder#687 item 6)', () =
     const present = checkObedience('function App(){ return <script type="application/ld+json">{}</script> }', 'anything')
     expect(present.axJsonLdGap).toBe(false)
     expect(buildObediencePrompt('anything', present)).not.toMatch(/ADD JSON-LD STRUCTURED DATA/)
+  })
+})
+
+describe('obedience-gate: AX skip-navigation link (builder#687 item 8)', () => {
+  it('flags an app with no skip-nav link at all', () => {
+    expect(hasAxSkipNavGap('function App(){ return <main id="main-content">hi</main> }')).toBe(true)
+  })
+
+  it('flags a skip-nav link with no matching target id (dangling link)', () => {
+    expect(hasAxSkipNavGap('function App(){ return <a href="#main-content" data-agent-action="skip-nav">Skip</a><div>hi</div> }')).toBe(true)
+  })
+
+  it('does NOT flag a real skip-nav link with a matching target id', () => {
+    expect(hasAxSkipNavGap('function App(){ return <a href="#main-content" data-agent-action="skip-nav">Skip</a><main id="main-content">hi</main> }')).toBe(false)
+  })
+
+  it('also accepts the plain "Skip to main content" text pattern without the data-agent-action marker', () => {
+    expect(hasAxSkipNavGap('function App(){ return <a href="#content">Skip to main content</a><main id="content">hi</main> }')).toBe(false)
+  })
+
+  it('checkObedience surfaces axSkipNavGap and a reason string', () => {
+    const r = checkObedience('function App(){ return <div>hi</div> }', 'anything')
+    expect(r.axSkipNavGap).toBe(true)
+    expect(r.reasons.some((x) => x.includes('skip-navigation'))).toBe(true)
+  })
+
+  it('buildObediencePrompt includes the skip-nav shape when this gap fires, omits it when already present', () => {
+    const missing = checkObedience('function App(){ return <div>hi</div> }', 'anything')
+    expect(buildObediencePrompt('anything', missing)).toMatch(/ADD A SKIP-NAVIGATION LINK/)
+
+    const present = checkObedience('function App(){ return <a href="#main-content" data-agent-action="skip-nav">Skip</a><main id="main-content">hi</main> }', 'anything')
+    expect(present.axSkipNavGap).toBe(false)
+    expect(buildObediencePrompt('anything', present)).not.toMatch(/ADD A SKIP-NAVIGATION LINK/)
   })
 })
 
