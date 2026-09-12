@@ -138,4 +138,68 @@ describe('persistGeneration (#89)', () => {
     await persistGeneration({ ...base, files: {} }, save)
     expect(save.mock.calls[1][0].files).toBeUndefined()
   })
+
+  /**
+   * Real bug found live (builder#673): when the awaited race lost to its own
+   * timeout (or the underlying save genuinely failed), the generation's code
+   * was simply never persisted — permanently. Nothing else in the codebase
+   * ever retried this write. Confirmed live: a real, successful generation
+   * (chili-crate-product) existed only in the in-memory preview store; the
+   * durable `generations` table had zero rows for it, hours later.
+   *
+   * Fixed by kicking off a detached background retry (never awaited by the
+   * caller) whenever the fast path doesn't succeed. These tests use tiny
+   * retryDelaysMs so real timers can be awaited directly rather than faked.
+   */
+  describe('background persist retry (#673)', () => {
+    it('does NOT retry in the background when the fast path already succeeded', async () => {
+      const save = vi.fn().mockResolvedValue(true)
+      await persistGeneration(base, save, { retryDelaysMs: [5] })
+      await new Promise((r) => setTimeout(r, 20))
+      expect(save).toHaveBeenCalledTimes(1)
+    })
+
+    it('retries in the background after a fast-path timeout, and a later success is NOT lost', async () => {
+      let callCount = 0
+      const save = vi.fn(() => {
+        callCount++
+        if (callCount === 1) return new Promise<boolean>(() => {}) // hangs past the race timeout
+        return Promise.resolve(true) // background retry succeeds
+      })
+      const r = await persistGeneration(base, save, { timeoutMs: 10, retryDelaysMs: [5, 10] })
+      expect(r).toEqual({ saved: false, reason: 'timeout' }) // caller's fast-path result is unaffected
+      // Give the background retry loop time to run its first (5ms) attempt.
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      expect(save.mock.calls.length).toBeGreaterThanOrEqual(2)
+    })
+
+    it('retries in the background after a fast-path error (save returned false)', async () => {
+      const save = vi.fn()
+        .mockResolvedValueOnce(false) // fast path
+        .mockResolvedValueOnce(true) // first background retry
+      await persistGeneration(base, save, { retryDelaysMs: [5, 10, 20] })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(save).toHaveBeenCalledTimes(2)
+    })
+
+    it('gives up after exhausting all background retries (never retries forever)', async () => {
+      const save = vi.fn().mockResolvedValue(false)
+      await persistGeneration(base, save, { retryDelaysMs: [2, 2, 2] })
+      // fast path (1 call) + 3 background retries (3 calls) = 4 total
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(save).toHaveBeenCalledTimes(4)
+      // No further calls after the retries are exhausted.
+      const countAfterExhaustion = save.mock.calls.length
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      expect(save).toHaveBeenCalledTimes(countAfterExhaustion)
+    })
+
+    it('background retry never throws even when save keeps rejecting', async () => {
+      const save = vi.fn().mockRejectedValue(new Error('zerodb down'))
+      const r = await persistGeneration(base, save, { retryDelaysMs: [2, 2] })
+      expect(r.saved).toBe(false)
+      // The unawaited background retry chain must not produce an unhandled rejection.
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+  })
 })

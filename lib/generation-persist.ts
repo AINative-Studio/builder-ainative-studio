@@ -75,11 +75,28 @@ export type SaveFn = (data: {
  * - Skips truly-empty code (nothing to restore).
  * - Bounds the await so a slow ZeroDB write can't hang the SSE stream.
  * - `isShowcase` only for valid, substantial code.
+ *
+ * Real bug found live (builder#673): when this raced past its own timeout
+ * (or the underlying save genuinely failed), the generation's code was
+ * simply never persisted — permanently. Nothing else in the codebase ever
+ * retries this write. Confirmed live: a real, successful generation
+ * (chili-crate-product) existed only in the in-memory preview store; the
+ * durable `generations` table had zero rows for it, hours later.
+ *
+ * Fixed WITHOUT lengthening the awaited window (that directly extends how
+ * long a founder waits mid-stream for 'complete'): on a timeout/error
+ * outcome, kick off a detached, unawaited background retry with its own
+ * longer budget (this container is a persistent Railway service, not
+ * serverless, so it keeps running after this function — and the response —
+ * returns; same pattern already proven for company-product's own
+ * registration-durability fix, #660/#661). The caller's fast path is
+ * unaffected either way; the background attempt is the actual fix for the
+ * "permanently lost" failure mode, not an alternative to it.
  */
 export async function persistGeneration(
   input: PersistInput,
   save: SaveFn,
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; retryDelaysMs?: number[] } = {},
 ): Promise<PersistResult> {
   const code = (input.code || '').trim()
   if (code.length === 0) {
@@ -87,7 +104,7 @@ export async function persistGeneration(
   }
 
   const timeoutMs = opts.timeoutMs ?? 8_000
-  const savePromise = save({
+  const saveArgs = {
     chatId: input.chatId,
     prompt: input.prompt,
     generatedCode: input.code,
@@ -104,7 +121,9 @@ export async function persistGeneration(
     // filtered out. Aligning both thresholds keeps the intent consistent.
     // Degraded/errored builds are held back regardless of size. (builder#89/#58)
     isShowcase: !input.skipShowcase && input.status === 'success' && input.valid && input.code.length >= 2000,
-  }).then(
+  }
+
+  const savePromise = save(saveArgs).then(
     (ok): PersistResult => ({ saved: ok, reason: ok ? 'saved' : 'error' }),
     (): PersistResult => ({ saved: false, reason: 'error' }),
   )
@@ -113,5 +132,39 @@ export async function persistGeneration(
     setTimeout(() => resolve({ saved: false, reason: 'timeout' }), timeoutMs)
   })
 
-  return Promise.race([savePromise, timeoutPromise])
+  const result = await Promise.race([savePromise, timeoutPromise])
+
+  if (!result.saved) {
+    // Best-effort background recovery — never awaited, never blocks the
+    // caller. Bounded retry loop of its own (separate from saveGeneration's
+    // internal zerodbRequest retry) so a genuinely down ZeroDB doesn't spin
+    // forever; logs loudly on final failure since that's the last chance to
+    // surface a truly, permanently lost generation.
+    void backgroundPersistRetry(input.chatId, saveArgs, save, opts.retryDelaysMs ?? [5_000, 15_000, 30_000])
+  }
+
+  return result
+}
+
+async function backgroundPersistRetry(
+  chatId: string,
+  saveArgs: Parameters<SaveFn>[0],
+  save: SaveFn,
+  delaysMs: number[],
+): Promise<void> {
+  const attempts = delaysMs.length
+  for (let i = 0; i < attempts; i++) {
+    await new Promise((resolve) => setTimeout(resolve, delaysMs[i]))
+    try {
+      const ok = await save(saveArgs)
+      if (ok) {
+        console.log(`[PERSIST] background retry ${i + 1}/${attempts} succeeded for ${chatId} — generation recovered`)
+        return
+      }
+      console.warn(`[PERSIST] background retry ${i + 1}/${attempts} failed for ${chatId}`)
+    } catch (e) {
+      console.warn(`[PERSIST] background retry ${i + 1}/${attempts} threw for ${chatId}:`, e)
+    }
+  }
+  console.error(`[PERSIST] PERMANENT LOSS — generation ${chatId} was never durably persisted after the initial attempt + ${attempts} background retries. It exists only in the in-memory preview store (if that replica is still alive) and will be lost on restart/replica-switch.`)
 }
