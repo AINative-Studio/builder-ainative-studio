@@ -138,6 +138,35 @@ export function buildMessagesWithHistory(
   return messages
 }
 
+/**
+ * Real bug found live (#704 follow-up, investigating #608): a company that
+ * has its own dedicated per-project ZeroDB project (#400) can genuinely lack
+ * a table that exists in the shared platform project — confirmed live,
+ * `build_chat` 404'd in a real, paid, provisioned company's own project even
+ * after being created in the shared one. Every write there silently no-op'd
+ * (appendChatTurn's own catch treats a null zerodbRequest result as a benign
+ * failure), so #52's "conversation survives reload" promise silently failed
+ * for exactly the paid companies #400 was built for.
+ *
+ * Auto-creates the table (idempotent — a real 409/"already exists" from a
+ * race is swallowed) and retries the ORIGINAL request once on a 404,
+ * confined to this one module rather than a wider refactor across every
+ * lib/build/*-store.ts file (each has its own duplicated zerodbRequest;
+ * tracked as its own follow-up, not attempted here).
+ */
+async function ensureTableExists(projectId: string, tableName: string): Promise<void> {
+  try {
+    await fetch(`${ZERODB_API}/v1/projects/${projectId}/database/tables`, {
+      method: 'POST',
+      headers: { 'X-API-Key': getApiKey(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ table_name: tableName, schema_definition: {} }),
+      signal: AbortSignal.timeout(12_000),
+    })
+  } catch {
+    // Best-effort — the retried request below will surface any real failure.
+  }
+}
+
 async function zerodbRequest(
   method: string,
   path: string,
@@ -148,7 +177,12 @@ async function zerodbRequest(
   const timeoutMs = opts.timeoutMs ?? 12_000
   const retries = opts.retries ?? 0
   let lastErr: unknown = null
-  for (let attempt = 0; attempt <= retries; attempt++) {
+  let autoCreateAttempted = false
+  // <= retries normal attempts, PLUS one extra pass reserved for the
+  // auto-create-and-retry path — decoupled from the caller's own retry
+  // budget so a caller passing retries:0 (the common case) still gets the
+  // one legitimate retry a genuine 404-then-create warrants.
+  for (let attempt = 0; attempt <= retries + 1; attempt++) {
     try {
       const res = await fetch(url, {
         method,
@@ -157,6 +191,16 @@ async function zerodbRequest(
         signal: AbortSignal.timeout(timeoutMs),
       })
       if (!res.ok) {
+        // Table missing in THIS project (e.g. a company's own #400 project
+        // never got it) — create it once and retry this exact call.
+        if (res.status === 404 && !autoCreateAttempted) {
+          autoCreateAttempted = true
+          const match = path.match(/\/projects\/([^/]+)\/database\/tables\/([^/]+)/)
+          if (match) {
+            await ensureTableExists(match[1], match[2])
+            continue
+          }
+        }
         if (attempt < retries && (res.status === 401 || res.status === 429 || res.status >= 500)) continue
         return null
       }

@@ -200,6 +200,63 @@ describe('appendChatTurn (#52)', () => {
   })
 })
 
+/**
+ * Real bug found live (#704 follow-up, investigating #608): a company with
+ * its own dedicated #400 ZeroDB project can genuinely lack build_chat even
+ * though it exists in the shared platform project — confirmed live against
+ * a real, paid, provisioned company. Every write there silently no-op'd.
+ */
+describe('appendChatTurn — auto-creates a missing table on 404 (#704 follow-up)', () => {
+  beforeEach(() => { process.env.ZERODB_API_KEY = 'k' })
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+  it('creates the table and retries the original write when it 404s once', async () => {
+    let rowPostCount = 0
+    const fn = vi.fn(async (url: string, init?: any) => {
+      const u = String(url)
+      if (u.endsWith('/database/tables') && init?.method === 'POST') {
+        return { ok: true, status: 200, json: async () => ({}), text: async () => '' }
+      }
+      if (u.endsWith('/database/tables/build_chat/rows') && init?.method === 'POST') {
+        rowPostCount++
+        if (rowPostCount === 1) return { ok: false, status: 404, json: async () => ({}), text: async () => '' }
+        return { ok: true, status: 200, json: async () => ({ row_id: 'r1' }), text: async () => '' }
+      }
+      return { ok: false, status: 500, json: async () => ({}), text: async () => '' }
+    })
+    vi.stubGlobal('fetch', fn)
+
+    const ok = await appendChatTurn('a::b', { role: 'user', text: 'hi' }, 'company-project-id')
+    expect(ok).toBe(true)
+    expect(rowPostCount).toBe(2) // the original 404 + the successful retry
+
+    const createCall = fn.mock.calls.find((c) => String(c[0]).endsWith('/database/tables'))
+    expect(createCall).toBeDefined()
+    const createBody = JSON.parse(createCall![1].body)
+    expect(createBody.table_name).toBe('build_chat')
+
+    const [createUrl] = createCall!
+    expect(String(createUrl)).toContain('/projects/company-project-id/database/tables')
+  })
+
+  it('only attempts auto-create ONCE — a second 404 after the retry gives up honestly', async () => {
+    const fn = vi.fn(async (url: string, init?: any) => {
+      const u = String(url)
+      if (u.endsWith('/database/tables') && init?.method === 'POST') {
+        return { ok: true, status: 200, json: async () => ({}), text: async () => '' }
+      }
+      // Always 404s, even after the "create" — a genuinely broken/unwritable table.
+      return { ok: false, status: 404, json: async () => ({}), text: async () => '' }
+    })
+    vi.stubGlobal('fetch', fn)
+
+    const ok = await appendChatTurn('a::b', { role: 'user', text: 'hi' }, 'company-project-id')
+    expect(ok).toBe(false)
+    const rowPostCalls = fn.mock.calls.filter((c) => String(c[0]).endsWith('/rows') && c[1]?.method === 'POST')
+    expect(rowPostCalls).toHaveLength(2) // original + the one retry, never an infinite loop
+  })
+})
+
 describe('saveExchange (#52)', () => {
   beforeEach(() => { process.env.ZERODB_API_KEY = 'k' })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
