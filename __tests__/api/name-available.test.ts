@@ -85,4 +85,26 @@ describe('POST /api/build/name-available', () => {
     const data = await res.json()
     expect(data.slug).toBe('dwello-two')
   })
+
+  it('a reserved/infra subdomain is unavailable even with no registry row', async () => {
+    h.resolveApp.mockResolvedValue(null)
+    const res = await POST(req({ name: 'Insyteful', chatId: 'chat-1' }))
+    const data = await res.json()
+    expect(data.available).toBe(false)
+    expect(data.reserved).toBe(true)
+    expect(data.slug).toBe('insyteful')
+    // Reserved-list check is a pure in-memory lookup — it must short-circuit
+    // before ever touching the registry.
+    expect(h.resolveApp).not.toHaveBeenCalled()
+  })
+
+  it('a reserved subdomain is unavailable even for the founder\'s OWN chatId', async () => {
+    // Unlike an ordinary taken name, a reserved label is never available —
+    // there is no "this is my own company" exception, since it must never
+    // resolve as ANY company's subdomain.
+    const res = await POST(req({ name: 'builder', chatId: 'chat-1' }))
+    const data = await res.json()
+    expect(data.available).toBe(false)
+    expect(data.reserved).toBe(true)
+  })
 })

@@ -145,4 +145,21 @@ describe('POST /api/build/brand — name uniqueness', () => {
     const res = await POST(req({ idea: '', track: 'app' }))
     expect(res.status).toBe(400)
   })
+
+  it('treats a reserved/infra subdomain the model proposes as taken and re-prompts', async () => {
+    // "Insyteful" and "Builder" are reserved infra labels (RESERVED_SUBDOMAINS)
+    // even though nothing is registered under them — the model must never be
+    // allowed to hand out a real customer's own subdomain or an AINative infra
+    // host as a brand-new company's slug.
+    const claude = fakeClaude(['Builder', 'Roostly'])
+    h.getClaudeCompletion.mockReturnValue(claude)
+    h.resolveApp.mockResolvedValue(null) // registry has nothing — the reserved list is the only blocker
+
+    const res = await POST(req({ idea: 'A home-rental marketplace', track: 'company' }))
+    const json = await res.json()
+
+    expect(json.name).toBe('Roostly') // NOT "Builder"
+    expect(json.slug).not.toBe('builder')
+    expect(claude.client.messages.create).toHaveBeenCalledTimes(2)
+  })
 })
