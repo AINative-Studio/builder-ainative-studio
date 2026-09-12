@@ -377,40 +377,86 @@ describe('updateTask (#55)', () => {
   beforeEach(() => { process.env.ZERODB_API_KEY = 'k' })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
-  it('PUTs a stage change filtered by {scope_key, id} and returns true', async () => {
-    const fn = mockFetch(() => ({ ok: true, json: () => ({ updated: 1 }) }))
+  /**
+   * Real bug found live (#698 follow-up): the real ZeroDB rows API does not
+   * support a bulk PUT .../rows filtered by {scope_key, id} together — only
+   * scope_key alone matches; adding id to the SAME filter object returns 0
+   * rows even for a task confirmed to exist with that exact pair (confirmed
+   * directly against production). updateTask now queries by scope_key alone
+   * (the same call shape listTasks already uses, confirmed working), finds
+   * the matching row by id in application code, then PUTs the full merged
+   * row_data to the real per-row endpoint .../rows/{row_id}.
+   */
+  function mockUpdateFlow(opts: {
+    existingRow?: { row_id: string; row_data: Record<string, unknown> } | null
+    putOk?: boolean
+  }) {
+    const fn = vi.fn(async (url: string, init?: any) => {
+      const u = String(url)
+      if (u.endsWith('/query') && init?.method === 'POST') {
+        const data = opts.existingRow ? [opts.existingRow] : []
+        return { ok: true, status: 200, json: async () => ({ data }), text: async () => '' } as any
+      }
+      if (/\/rows\/[^/]+$/.test(u) && init?.method === 'PUT') {
+        return { ok: opts.putOk !== false, status: opts.putOk !== false ? 200 : 500, json: async () => ({ ok: true }), text: async () => '' } as any
+      }
+      return { ok: false, status: 404, json: async () => ({}), text: async () => '' } as any
+    })
+    vi.stubGlobal('fetch', fn)
+    return fn
+  }
+
+  it('queries by scope_key, finds the row by id, then PUTs to the real per-row endpoint', async () => {
+    const fn = mockUpdateFlow({
+      existingRow: { row_id: 'row-abc', row_data: { id: 't1', stage: 'todo', scope_key: 'a::b', title: 'x' } },
+    })
     const ok = await updateTask('a::b', 't1', { stage: 'completed' })
     expect(ok).toBe(true)
-    const [url, init] = fn.mock.calls[0]
-    expect(url).toContain('/database/tables/build_tasks/rows')
-    expect(init.method).toBe('PUT')
-    const body = JSON.parse(init.body)
-    expect(body.filters).toEqual({ scope_key: 'a::b', id: 't1' })
-    expect(body.row_data.stage).toBe('completed')
-    expect(typeof body.row_data.updated_at).toBe('string')
+
+    const queryCall = fn.mock.calls.find((c) => String(c[0]).endsWith('/query'))!
+    const queryBody = JSON.parse(queryCall[1].body)
+    expect(queryBody.filters).toEqual({ scope_key: 'a::b' })
+
+    const putCall = fn.mock.calls.find((c) => /\/rows\/row-abc$/.test(String(c[0])))!
+    expect(putCall[1].method).toBe('PUT')
+    const putBody = JSON.parse(putCall[1].body)
+    expect(putBody.row_data.stage).toBe('completed')
+    expect(putBody.row_data.title).toBe('x') // unrelated fields preserved via merge
+    expect(typeof putBody.row_data.updated_at).toBe('string')
   })
 
   it('normalizes a loose stage on update', async () => {
-    const fn = mockFetch(() => ({ ok: true, json: () => ({}) }))
+    const fn = mockUpdateFlow({
+      existingRow: { row_id: 'row-abc', row_data: { id: 't1', stage: 'todo', scope_key: 'a::b' } },
+    })
     await updateTask('a::b', 't1', { stage: 'running' })
-    expect(JSON.parse(fn.mock.calls[0][1].body).row_data.stage).toBe('in_progress')
+    const putCall = fn.mock.calls.find((c) => /\/rows\/row-abc$/.test(String(c[0])))!
+    expect(JSON.parse(putCall[1].body).row_data.stage).toBe('in_progress')
   })
 
   it('rejects a blank scope or id without calling fetch', async () => {
-    const fn = mockFetch(() => ({ ok: true }))
+    const fn = mockUpdateFlow({ existingRow: null })
     expect(await updateTask('', 't1', { stage: 'todo' })).toBe(false)
     expect(await updateTask('a::b', '', { stage: 'todo' })).toBe(false)
     expect(fn).not.toHaveBeenCalled()
   })
 
   it('is a no-op success when the patch has nothing to change', async () => {
-    const fn = mockFetch(() => ({ ok: true }))
+    const fn = mockUpdateFlow({ existingRow: null })
     expect(await updateTask('a::b', 't1', {})).toBe(true)
     expect(fn).not.toHaveBeenCalled()
   })
 
-  it('returns false (never throws) on a non-ok response', async () => {
-    mockFetch(() => ({ ok: false, status: 500 }))
+  it('returns false when no row matches the given id within the scope', async () => {
+    mockUpdateFlow({ existingRow: null })
+    expect(await updateTask('a::b', 't1', { stage: 'failed' })).toBe(false)
+  })
+
+  it('returns false (never throws) when the PUT itself fails', async () => {
+    mockUpdateFlow({
+      existingRow: { row_id: 'row-abc', row_data: { id: 't1', stage: 'todo', scope_key: 'a::b' } },
+      putOk: false,
+    })
     expect(await updateTask('a::b', 't1', { stage: 'failed' })).toBe(false)
   })
 
