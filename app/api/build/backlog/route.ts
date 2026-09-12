@@ -20,6 +20,9 @@
 import { NextRequest } from 'next/server'
 import { selectPrimitives } from '@/lib/build/primitive-catalog'
 import { resolveApp } from '@/lib/build/app-registry'
+import { auth } from '@/app/(auth)/auth'
+import { deriveOwnerKey, chatScopeKey } from '@/lib/build/chat-store'
+import { createTask, listTasks } from '@/lib/build/task-store'
 
 export const runtime = 'nodejs'
 
@@ -94,6 +97,34 @@ export async function GET(request: NextRequest) {
       blockedBy,
       primitive: prim.name,
     })
+  }
+
+  // Wire "queued" into REAL tracked work (#670) — until now, telling a founder
+  // an item is "actively queued for the next nightly loop" was never literally
+  // true: this endpoint only ever computed strings, with no code path that
+  // created a BuildTask row runTaskResolutions() (the real nightly loop) would
+  // ever pick up. Only do this once an item is genuinely eligible to run (paid
+  // plan + domain — the same gate the message already claims), and only for a
+  // signed-in founder with a real company scope. Best-effort + idempotent:
+  // never blocks the response, and skips items that already have a task with
+  // the same title in this scope so re-asking "what's next?" doesn't create
+  // duplicate tasks every call.
+  if (blockedStatus === 'queued' && companyId) {
+    const session = await auth().catch(() => null)
+    if (session) {
+      const scopeKey = chatScopeKey(deriveOwnerKey(session as any), companyId)
+      const existing = await listTasks(scopeKey).catch(() => [])
+      const existingTitles = new Set(existing.map((t) => t.title))
+      for (const item of queued) {
+        if (existingTitles.has(item.title)) continue
+        void createTask(scopeKey, {
+          title: item.title,
+          detail: item.primitive ? `Primitive: ${item.primitive}` : undefined,
+          stage: 'todo',
+          source: 'cody',
+        })
+      }
+    }
   }
 
   // Conversion gate message — Cody cites this to explain the path to a real app.
