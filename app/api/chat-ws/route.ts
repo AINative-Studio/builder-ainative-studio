@@ -1588,7 +1588,8 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                   (ob.hardcodedToggleGap && !after.hardcodedToggleGap) ||
                   (ob.axLandmarkGap && !after.axLandmarkGap) ||
                   (ob.axManifestGap && !after.axManifestGap) ||
-                  (ob.axJsonLdGap && !after.axJsonLdGap)
+                  (ob.axJsonLdGap && !after.axJsonLdGap) ||
+                  (ob.axSkipNavGap && !after.axSkipNavGap)
                 if (v.valid && multi && (v.code?.length || 0) > finalContent.length * 0.7) {
                   console.log('🔧 Combined pass produced a valid multi-file, rule-following app — adopting.')
                   finalContent = v.code; validation = v; checkpoint.record('fix+split', finalContent, true)
@@ -1691,7 +1692,8 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                     (ob.hardcodedToggleGap && !after.hardcodedToggleGap) ||
                     (ob.axLandmarkGap && !after.axLandmarkGap) ||
                     (ob.axManifestGap && !after.axManifestGap) ||
-                    (ob.axJsonLdGap && !after.axJsonLdGap)
+                    (ob.axJsonLdGap && !after.axJsonLdGap) ||
+                    (ob.axSkipNavGap && !after.axSkipNavGap)
                   if (improved) {
                     console.log('📏 Obedience re-prompt improved the app — adopting.')
                     finalContent = obValidation.code; validation = obValidation; checkpoint.record('obedience', finalContent, true)
@@ -1793,6 +1795,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               axLandmarkGap: obFinal.axLandmarkGap,
               axManifestGap: obFinal.axManifestGap,
               axJsonLdGap: obFinal.axJsonLdGap,
+              axSkipNavGap: obFinal.axSkipNavGap,
               bytes: served.length,
             }, responseId)
             // Context Graph (builder#684): explicitly relate this generation's

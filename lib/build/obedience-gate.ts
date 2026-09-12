@@ -184,6 +184,26 @@ export function hasAxManifestGap(code: string): boolean {
   return !/data-agent-manifest\s*=\s*["']true["']/.test(code || '')
 }
 
+/**
+ * AX compliance, follow-up (builder#687 item 8): a skip-navigation link that
+ * genuinely targets a real landmark. Deliberately checks BOTH halves — a
+ * dangling skip-link with no real target is worse than none at all (false
+ * accessibility theater an agent/screen-reader user would trust and then
+ * hit a dead anchor), so this only passes when a real `href="#someId"` (or
+ * the `data-agent-action="skip-nav"` marker) AND a matching `id="someId"`
+ * both appear in the code. Single-presence-of-a-pair check, same
+ * low-false-positive shape as the manifest/JSON-LD checks above.
+ */
+export function hasAxSkipNavGap(code: string): boolean {
+  const src = code || ''
+  const skipLinkMatch = src.match(/<a[^>]*\bhref\s*=\s*["']#([\w-]+)["'][^>]*(?:data-agent-action\s*=\s*["']skip-nav["']|>[\s\S]{0,40}skip to main)/i)
+    || src.match(/<a[^>]*\bdata-agent-action\s*=\s*["']skip-nav["'][^>]*\bhref\s*=\s*["']#([\w-]+)["']/i)
+  if (!skipLinkMatch) return true
+  const targetId = skipLinkMatch[1]
+  const hasTarget = new RegExp(`\\bid\\s*=\\s*["']${targetId}["']`).test(src)
+  return !hasTarget
+}
+
 export function hasAxJsonLdGap(code: string): boolean {
   return !/<script[^>]*\btype\s*=\s*["']application\/ld\+json["']/.test(code || '')
 }
@@ -287,6 +307,8 @@ export interface ObedienceResult {
   axManifestGap: boolean
   /** AX compliance: no JSON-LD structured data (checklist item 6). */
   axJsonLdGap: boolean
+  /** AX compliance: no skip-nav link to a real landmark (checklist item 8). */
+  axSkipNavGap: boolean
   reasons: string[]
 }
 
@@ -326,6 +348,7 @@ export function checkObedience(
   const axLandmarkGap = hasAxLandmarkGap(code)
   const axManifestGap = hasAxManifestGap(code)
   const axJsonLdGap = hasAxJsonLdGap(code)
+  const axSkipNavGap = hasAxSkipNavGap(code)
   const reasons: string[] = []
   if (persistenceGap) {
     reasons.push('App manages user records but hardcodes data — must persist via /api/db.')
@@ -354,7 +377,10 @@ export function checkObedience(
   if (axJsonLdGap) {
     reasons.push('No JSON-LD structured data (<script type="application/ld+json">) — required so agents can parse what the app does.')
   }
-  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, visitorTrackingGap, fakeLeadCaptureGap, hardcodedToggleGap, axLandmarkGap, axManifestGap, axJsonLdGap, reasons }
+  if (axSkipNavGap) {
+    reasons.push('No skip-navigation link to a real landmark — a link that does not target a real id="..." is worse than none at all.')
+  }
+  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, visitorTrackingGap, fakeLeadCaptureGap, hardcodedToggleGap, axLandmarkGap, axManifestGap, axJsonLdGap, axSkipNavGap, reasons }
 }
 
 /**
@@ -472,6 +498,17 @@ export function buildObediencePrompt(idea: string, result: ObedienceResult): str
       '',
     )
   }
+  if (result.axSkipNavGap) {
+    parts.push(
+      '10) ADD A SKIP-NAVIGATION LINK — as the FIRST element returned, before anything else, AND make sure it',
+      '    targets a real id that actually exists elsewhere in the same file:',
+      '    <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4',
+      '    focus:z-50 focus:bg-white focus:px-4 focus:py-2" data-agent-action="skip-nav">Skip to main content</a>',
+      '    ... then somewhere in the real content: <main id="main-content" aria-label="...">',
+      '    A skip-link with no matching id is worse than none — do not add the link without also adding the id.',
+      '',
+    )
+  }
   parts.push('Return the corrected full app. Do not remove features.')
   return parts.join('\n')
 }
@@ -503,6 +540,7 @@ export function narrowToPrimitiveComplianceOnly(gaps: string[]): ObedienceResult
     axLandmarkGap: false,
     axManifestGap: false,
     axJsonLdGap: false,
+    axSkipNavGap: false,
     reasons: [],
   }
 }
