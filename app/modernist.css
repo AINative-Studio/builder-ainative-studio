@@ -252,6 +252,19 @@
 .m-ribbon-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .m-ribbon-caret { color: var(--color-accent); }
 
+/* Usage-based pricing nudge (#653) — a thin strip, not a panel, shown while
+   Cody is actively driving the build. Sits between the terminal ribbon and
+   the 3-column workspace body; never competes with the artifact rail's own
+   fixed-width side drawer (#652). */
+.m-pricing-nudge {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 8px 44px; font-size: 12px; line-height: 1.5;
+  background: var(--track-100, var(--color-accent-100)); border-bottom: 2px solid var(--color-divider);
+  color: var(--color-text);
+}
+.m-pricing-nudge-dismiss { background: none; border: 0; cursor: pointer; color: var(--text-muted); font-size: 13px; padding: 2px 4px; flex-shrink: 0; }
+.m-pricing-nudge-dismiss:hover { color: var(--color-text); }
+
 /* Full-bleed build overlay in the center panel */
 .m-overlay { padding: 44px 56px; }
 .m-overlay-pill {
@@ -1095,6 +1108,7 @@
 .m-profile-plan { margin-left: auto; background: var(--color-accent-100); color: var(--color-accent-700); }
 .m-account-sec { padding: 24px 0; border-bottom: 1px solid var(--color-divider); }
 .m-account-sec-h { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-body-70); margin: 0 0 14px; }
+.m-usage-pricing-note { font-size: 12px; color: var(--text-body-70); margin: -6px 0 14px; }
 .m-meters { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .m-meter-top { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 5px; }
 .m-meter-l { color: var(--text-body-70); }

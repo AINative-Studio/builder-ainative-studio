@@ -13,6 +13,7 @@ import { APP_ACT_LABELS, COMPANY_ACT_LABELS } from '@/lib/build/acts'
 import type { Screen } from '@/lib/build/state'
 import { BuildOverlays } from '@/components/build/BuildOverlays'
 import { TerminalRibbon } from '@/components/build/TerminalRibbon'
+import { PricingNudge } from '@/components/build/PricingNudge'
 import { DecisionModal } from '@/components/build/DecisionModal'
 import { ArtifactRail } from '@/components/build/ArtifactRail'
 import { AccountMenu } from '@/components/build/AccountMenu'
@@ -152,6 +153,7 @@ export function WorkspaceShell({
       <IndexPanel />
       <PathBreadcrumb />
       <TerminalRibbon />
+      <PricingNudge />
       <div className={`m-ws-body ${state.tablet ? 'is-tablet' : ''}`}>
         {feed && !state.tablet && <aside className="m-feed">{feed}</aside>}
         <main className="m-center">
