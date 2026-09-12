@@ -130,4 +130,53 @@ describe('dedupeProvidedComponents', () => {
     const out = dedupeProvidedComponents(code)
     expect(out).not.toMatch(/Available Shadcn components/)
   })
+
+  /**
+   * Real bug found live (Habanero Hub, 2026-09-11): the preview scaffold's
+   * own setup script pre-declares ~180 Lucide icon names as plain top-level
+   * `const`s (app/api/preview/[id]/route.ts's "Create all common icon
+   * constants" block) — these were never added to
+   * SCAFFOLD_PROVIDED_COMPONENTS, which only ever covered shadcn/AIKit
+   * names. A generated app that hand-rolls its own fallback component using
+   * one of these ~180 reserved names (reasonable: the model has no way to
+   * know these specific names are pre-declared elsewhere) crashes the WHOLE
+   * app with a real `SyntaxError: Identifier 'X' has already been declared`
+   * — even though the setup script and the compiled app script can't
+   * actually read each other's values, a top-level const/let in either one
+   * still occupies the SAME shared global lexical scope, so redeclaring the
+   * same name anywhere throws regardless. Confirmed live: DollarSign,
+   * exactly this shape, crashed the app before ANY component (and therefore
+   * no primitive call) ever ran.
+   */
+  it('removes a hand-rolled icon-name redeclaration that collides with the scaffold-provided Lucide icon consts (the real Habanero Hub bug)', () => {
+    const code = [
+      "const Button = ({ children, onClick, disabled }) => <button onClick={onClick} disabled={disabled}>{children}</button>;",
+      "const DollarSign = ({ className }) => <span className={className}>$</span>;",
+      "const Truck = ({ className }) => <span className={className}>🚚</span>;",
+      "const Clock = ({ className }) => <span className={className}>🕒</span>;",
+      "",
+      "export default function Orders() {",
+      "  const [orders, setOrders] = useState([]);",
+      "  return (",
+      "    <div>",
+      "      <DollarSign className=\"w-5 h-5 text-green-400\" />",
+      "      {orders.map(o => <div key={o.id}>{o.name}</div>)}",
+      "    </div>",
+      "  );",
+      "}",
+    ].join('\n')
+    const out = dedupeProvidedComponents(code)
+    expect(out).not.toMatch(/const DollarSign\s*=/)
+    // The real component and its real logic must survive completely intact.
+    expect(out).toMatch(/function Orders\(\)/)
+    expect(out).toMatch(/const \[orders, setOrders\] = useState\(\[\]\);/)
+    expect(out).toMatch(/orders\.map/)
+    expect(() => babelParse(out, { sourceType: 'module', plugins: ['jsx', 'typescript'] })).not.toThrow()
+  })
+
+  it('SCAFFOLD_PROVIDED_COMPONENTS includes the real pre-declared Lucide icon names from the preview scaffold', () => {
+    for (const name of ['DollarSign', 'Truck', 'Clock', 'Search', 'ChevronDown', 'AlertTriangle', 'CheckCircle2']) {
+      expect(SCAFFOLD_PROVIDED_COMPONENTS).toContain(name)
+    }
+  })
 })

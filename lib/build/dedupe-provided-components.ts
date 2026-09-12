@@ -45,6 +45,44 @@ export const SCAFFOLD_PROVIDED_COMPONENTS = [
   'AIKitBanner', 'AIKitAvatar', 'Skeleton', 'SkeletonCard', 'EmptyState',
   'AIKitProductCard', 'AIKitPagination', 'AIKitBreadcrumb', 'AIKitStepper',
   'VideoPlayer', 'StreamingText', 'MediaGallery', 'AgentTimeline',
+  // Lucide icons (builder#676) — the preview scaffold pre-declares ~180 of
+  // these as plain top-level `const`s in its own setup script (see
+  // app/api/preview/[id]/route.ts's "Create all common icon constants"
+  // block). Even though that script and the compiled app script can't read
+  // each other's bindings (they're separate <script> tags), a top-level
+  // `const`/`let` in EITHER one still occupies the SAME shared global
+  // lexical scope — redeclaring the same identifier anywhere else throws a
+  // real `SyntaxError: Identifier '...' has already been declared`, crashing
+  // the whole app before it ever renders. Real bug found live (Habanero Hub,
+  // 2026-09-11): the model wrote its own `const DollarSign = ({className}) =>
+  // <span>$</span>` fallback (reasonable — DollarSign isn't a shadcn/AIKit
+  // name) with no way to know this name was already reserved by the hidden
+  // setup script, and the whole app crashed with "Identifier 'DollarSign'
+  // has already been declared" before any component — and therefore no
+  // primitive call — ever ran.
+  'Search', 'Menu', 'X', 'ChevronDown', 'ChevronRight', 'ChevronLeft', 'ChevronUp',
+  'Home', 'Settings', 'Users', 'BarChart3', 'FileText', 'Bell', 'Mail', 'Star', 'Heart',
+  'ShoppingCart', 'Plus', 'Minus', 'Edit', 'Edit2', 'Pencil', 'Trash2', 'Eye', 'EyeOff',
+  'Check', 'AlertCircle', 'Info', 'HelpCircle', 'ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown',
+  'ExternalLink', 'Download', 'Upload', 'Share2', 'Filter', 'Calendar', 'Clock', 'MapPin',
+  'Phone', 'Globe', 'Lock', 'Unlock', 'Shield', 'Zap', 'TrendingUp', 'TrendingDown', 'Activity',
+  'DollarSign', 'CreditCard', 'Package', 'Truck', 'Gift', 'Sun', 'Moon', 'Laptop', 'Smartphone',
+  'Code', 'Terminal', 'GitBranch', 'Send', 'MessageSquare', 'MessageCircle', 'Bookmark', 'Tag',
+  'Copy', 'Save', 'RefreshCw', 'MoreHorizontal', 'MoreVertical', 'Layers', 'Layout', 'Grid',
+  'List', 'Target', 'Award', 'Sparkles', 'Rocket', 'Building2', 'Briefcase', 'BookOpen', 'Bot',
+  'Brain', 'LogOut', 'LogIn', 'UserPlus', 'Users2', 'FolderOpen', 'File', 'Box', 'Inbox',
+  'CircleDot', 'Wand2', 'Palette', 'Lightbulb', 'Newspaper', 'GraduationCap', 'Hexagon',
+  'Maximize', 'Minimize', 'Maximize2', 'Minimize2', 'Play', 'Pause', 'SkipForward', 'SkipBack',
+  'Volume2', 'VolumeX', 'Mic', 'MicOff', 'Camera', 'Video', 'Image', 'Music', 'Wifi', 'Cloud',
+  'Database', 'Server', 'HardDrive', 'Monitor', 'Cpu', 'Github', 'Twitter', 'Linkedin',
+  'Facebook', 'Instagram', 'Youtube', 'Hash', 'AtSign', 'Paperclip', 'Link', 'Clipboard',
+  'Printer', 'RotateCcw', 'Move', 'Grip', 'Table2', 'Trophy', 'Flag', 'Flame', 'Brush', 'Pen',
+  'Network', 'Workflow', 'Route', 'Compass', 'Navigation', 'UserMinus', 'UserCheck',
+  'FolderClosed', 'FilePlus', 'FileCheck', 'FileX', 'Boxes', 'Archive', 'Circle', 'Square',
+  'Triangle', 'Octagon', 'Pentagon', 'Crosshair', 'MousePointer', 'Fingerprint', 'QrCode',
+  'ScanLine', 'CircuitBoard', 'Headphones', 'AlertTriangle', 'CheckCircle', 'CheckCircle2',
+  'XCircle', 'MinusCircle', 'PlusCircle', 'ArrowUpRight', 'ArrowDownRight', 'ChevronFirst',
+  'ChevronLast', 'Repeat', 'Shuffle', 'SlidersHorizontal', 'Cog', 'Gear',
 ]
 
 /**
