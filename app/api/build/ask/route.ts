@@ -267,12 +267,26 @@ export async function POST(request: NextRequest) {
   // ("make it cheaper", "and add auth") resolve against real context (#52).
   const messages = buildMessagesWithHistory(history, question)
 
-  /** Persist the completed exchange (best-effort; never blocks the response). */
-  const persist = (answer: string) => {
+  /**
+   * Persist the completed exchange. Real bug found live (#608 investigation):
+   * this used to fire saveExchange with `void` (never awaited) immediately
+   * before `return Response.json(...)` — with almost no wall-clock time
+   * between the call firing and the handler function returning, the save
+   * was silently lost on every single real request (confirmed live: 0 rows
+   * ever landed in build_chat despite dozens of real POST /api/build/ask
+   * calls, all returning 200 with a real answer). AWAIT the save itself —
+   * it's a single fast ZeroDB POST, and correctness of the founder's own
+   * conversation history matters enough to spend the extra latency on.
+   * processConversation (builder#686, cross-turn fact extraction) stays
+   * fire-and-forget — it's a genuinely optional enrichment, not required
+   * for the exchange itself to be durably saved.
+   */
+  const persist = async (answer: string) => {
     if (scopeKey && answer) {
-      void saveExchange(scopeKey, question, answer, companyProjectId)
-      // builder#686 item 2: auto-extract durable facts/preferences from the
-      // real exchange, not just the raw Q&A save above.
+      // saveExchange/appendChatTurn already catch their own errors internally
+      // and resolve to false rather than reject — this catch is defense in
+      // depth, so a truly unexpected throw still can't break the chat reply.
+      await saveExchange(scopeKey, question, answer, companyProjectId).catch(() => {})
       void processConversation(
         [...messages, { role: 'assistant', content: answer }],
         scopeKey,
@@ -289,7 +303,7 @@ export async function POST(request: NextRequest) {
         messages,
       })
       const answer = (res.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n').trim()
-      if (answer) { persist(answer); return Response.json({ answer, provider: claude.provider, model }) }
+      if (answer) { await persist(answer); return Response.json({ answer, provider: claude.provider, model }) }
     } catch (e: any) {
       console.warn(`[build/ask] ${claude.provider} failed: ${e?.message?.slice(0, 80)}`)
     }
@@ -302,7 +316,7 @@ export async function POST(request: NextRequest) {
       messages: [{ role: 'system', content: system }, ...messages],
     })
     const answer = res.choices?.[0]?.message?.content?.trim()
-    if (answer) { persist(answer); return Response.json({ answer, provider: 'ainative', model: tier.ainativeModel }) }
+    if (answer) { await persist(answer); return Response.json({ answer, provider: 'ainative', model: tier.ainativeModel }) }
   } catch (e: any) {
     console.warn(`[build/ask] ainative failed: ${e?.message?.slice(0, 80)}`)
   }
