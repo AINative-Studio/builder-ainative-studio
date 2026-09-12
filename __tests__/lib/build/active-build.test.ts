@@ -56,7 +56,6 @@ describe('active-build (#669)', () => {
 
   it('never throws on save even if localStorage is unavailable', () => {
     const original = window.localStorage.setItem
-    // @ts-expect-error simulating a private-mode/quota failure
     window.localStorage.setItem = () => { throw new Error('quota exceeded') }
     expect(() => saveActiveBuild({ slug: 'x', screen: 'ws' })).not.toThrow()
     window.localStorage.setItem = original
