@@ -1589,7 +1589,11 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                   (ob.axLandmarkGap && !after.axLandmarkGap) ||
                   (ob.axManifestGap && !after.axManifestGap) ||
                   (ob.axJsonLdGap && !after.axJsonLdGap) ||
-                  (ob.axSkipNavGap && !after.axSkipNavGap)
+                  (ob.axSkipNavGap && !after.axSkipNavGap) ||
+                  (ob.axNavLabelGap && !after.axNavLabelGap) ||
+                  (ob.axSectionLabelGap && !after.axSectionLabelGap) ||
+                  (ob.axAgentAttributesGap && !after.axAgentAttributesGap) ||
+                  (ob.axComplexWidgetRoleGap && !after.axComplexWidgetRoleGap)
                 if (v.valid && multi && (v.code?.length || 0) > finalContent.length * 0.7) {
                   console.log('🔧 Combined pass produced a valid multi-file, rule-following app — adopting.')
                   finalContent = v.code; validation = v; checkpoint.record('fix+split', finalContent, true)
@@ -1693,7 +1697,11 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                     (ob.axLandmarkGap && !after.axLandmarkGap) ||
                     (ob.axManifestGap && !after.axManifestGap) ||
                     (ob.axJsonLdGap && !after.axJsonLdGap) ||
-                    (ob.axSkipNavGap && !after.axSkipNavGap)
+                    (ob.axSkipNavGap && !after.axSkipNavGap) ||
+                    (ob.axNavLabelGap && !after.axNavLabelGap) ||
+                    (ob.axSectionLabelGap && !after.axSectionLabelGap) ||
+                    (ob.axAgentAttributesGap && !after.axAgentAttributesGap) ||
+                    (ob.axComplexWidgetRoleGap && !after.axComplexWidgetRoleGap)
                   if (improved) {
                     console.log('📏 Obedience re-prompt improved the app — adopting.')
                     finalContent = obValidation.code; validation = obValidation; checkpoint.record('obedience', finalContent, true)
@@ -1796,6 +1804,10 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               axManifestGap: obFinal.axManifestGap,
               axJsonLdGap: obFinal.axJsonLdGap,
               axSkipNavGap: obFinal.axSkipNavGap,
+              axNavLabelGap: obFinal.axNavLabelGap,
+              axSectionLabelGap: obFinal.axSectionLabelGap,
+              axAgentAttributesGap: obFinal.axAgentAttributesGap,
+              axComplexWidgetRoleGap: obFinal.axComplexWidgetRoleGap,
               bytes: served.length,
             }, responseId)
             // Context Graph (builder#684): explicitly relate this generation's

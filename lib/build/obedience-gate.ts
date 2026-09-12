@@ -209,6 +209,86 @@ export function hasAxJsonLdGap(code: string): boolean {
 }
 
 /**
+ * AX compliance, follow-up (builder#687 item 2): every `<nav>` element must
+ * carry `aria-label`. CONDITIONAL, unlike the root main landmark — a
+ * legitimately simple single-section app (a plain counter, a single-form
+ * tool) may have no `<nav>` at all, and that's fine; this only fires once
+ * the app has ALREADY chosen to render navigation without labeling it.
+ * Matches every opening `<nav` tag individually rather than a single
+ * presence/absence check, since a multi-file app can render more than one.
+ */
+export function hasAxNavLabelGap(code: string): boolean {
+  const src = code || ''
+  const navTags = src.match(/<nav\b[^>]*>/gi) || []
+  if (navTags.length === 0) return false
+  return navTags.some((tag) => !/\baria-label\s*=/.test(tag))
+}
+
+/**
+ * AX compliance, follow-up (builder#687 item 3): every `<section>` element
+ * must carry `aria-label`. Same conditional shape as hasAxNavLabelGap — an
+ * app with no `<section>` elements at all has nothing to flag.
+ */
+export function hasAxSectionLabelGap(code: string): boolean {
+  const src = code || ''
+  const sectionTags = src.match(/<section\b[^>]*>/gi) || []
+  if (sectionTags.length === 0) return false
+  return sectionTags.some((tag) => !/\baria-label\s*=/.test(tag))
+}
+
+/**
+ * AX compliance, follow-up (builder#687 item 4): `data-agent-role`/
+ * `data-agent-action`/`data-agent-context` on interactive elements. This is
+ * explicitly a COVERAGE claim (per the issue's own framing), not a single
+ * presence/absence check — "on ALL interactive elements" can't be verified
+ * exactly with a regex without false-positives on legitimately decorative
+ * buttons/links. Conservative compromise: count real interactive elements
+ * (<button>, and <a> with an href that isn't just "#") vs. how many carry
+ * ANY of the three data-agent-* markers, and only flag a gap when there are
+ * several interactive elements and NONE of them are tagged — i.e. the
+ * pattern is entirely absent from the app, not merely incomplete. A
+ * genuinely partial gap (3 of 5 buttons tagged) is judged not worth
+ * re-prompting over — it's real coverage, just imperfect, and chasing 100%
+ * risks the same false-positive/thrash-on-a-legitimately-fine-app failure
+ * mode this file's own design philosophy warns against.
+ */
+export function hasAxAgentAttributesGap(code: string): boolean {
+  const src = code || ''
+  const interactiveCount =
+    (src.match(/<button\b/gi) || []).length +
+    (src.match(/<a\b[^>]*\bhref\s*=\s*["'](?!#["'])[^"']+["']/gi) || []).length
+  if (interactiveCount < 2) return false // too little interactive surface to judge coverage at all
+  const taggedCount = (src.match(/data-agent-(role|action|context)\s*=/gi) || []).length
+  return taggedCount === 0
+}
+
+/**
+ * AX compliance, follow-up (builder#687 item 7): ARIA roles on complex
+ * widgets. Rather than trying to detect every possible "complex widget"
+ * shape (high false-positive risk per this file's own philosophy), this
+ * targets the two patterns already regex-detected elsewhere in this exact
+ * file for OTHER reasons — a tab-like widget (matched by the stepper AIKit
+ * pattern's shape: numbered/active-state controls) and a live status/
+ * loading region — since both are common in generated dashboards and both
+ * have a well-known, unambiguous correct ARIA role with no legitimate
+ * reason to omit it once the pattern is already present.
+ */
+export function hasAxComplexWidgetRoleGap(code: string): boolean {
+  const src = code || ''
+  // Tab-like widget: multiple sibling buttons driving an `activeTab`/
+  // `currentTab`-style state, with no tablist/tab roles anywhere.
+  const looksLikeTabs = /(activeTab|currentTab|selectedTab)/i.test(src) && /<button\b/i.test(src)
+  const hasTabRoles = /\brole\s*=\s*["']tab(list)?["']/i.test(src)
+  if (looksLikeTabs && !hasTabRoles) return true
+  // Live status/loading region: a spinner/loading UI with no status role
+  // and no aria-live — a screen reader/agent gets no signal anything changed.
+  const looksLikeLiveStatus = /(loading|isLoading|spinner)/i.test(src) && /(animate-spin|Loading\.\.\.|Loading…)/i.test(src)
+  const hasStatusSignal = /\brole\s*=\s*["']status["']|\baria-live\s*=/i.test(src)
+  if (looksLikeLiveStatus && !hasStatusSignal) return true
+  return false
+}
+
+/**
  * AIKit patterns the model tends to hand-roll. Each entry: a regex that matches a
  * HAND-ROLLED version in the generated code, and the AIKit component to use instead.
  * We only flag when the AIKit component is NOT already imported/used.
@@ -309,6 +389,14 @@ export interface ObedienceResult {
   axJsonLdGap: boolean
   /** AX compliance: no skip-nav link to a real landmark (checklist item 8). */
   axSkipNavGap: boolean
+  /** AX compliance: a <nav> element with no aria-label (checklist item 2). */
+  axNavLabelGap: boolean
+  /** AX compliance: a <section> element with no aria-label (checklist item 3). */
+  axSectionLabelGap: boolean
+  /** AX compliance: interactive elements with no data-agent-* markers at all (checklist item 4). */
+  axAgentAttributesGap: boolean
+  /** AX compliance: a complex widget (tabs/live-status) missing its ARIA role (checklist item 7). */
+  axComplexWidgetRoleGap: boolean
   reasons: string[]
 }
 
@@ -349,6 +437,10 @@ export function checkObedience(
   const axManifestGap = hasAxManifestGap(code)
   const axJsonLdGap = hasAxJsonLdGap(code)
   const axSkipNavGap = hasAxSkipNavGap(code)
+  const axNavLabelGap = hasAxNavLabelGap(code)
+  const axSectionLabelGap = hasAxSectionLabelGap(code)
+  const axAgentAttributesGap = hasAxAgentAttributesGap(code)
+  const axComplexWidgetRoleGap = hasAxComplexWidgetRoleGap(code)
   const reasons: string[] = []
   if (persistenceGap) {
     reasons.push('App manages user records but hardcodes data — must persist via /api/db.')
@@ -380,7 +472,19 @@ export function checkObedience(
   if (axSkipNavGap) {
     reasons.push('No skip-navigation link to a real landmark — a link that does not target a real id="..." is worse than none at all.')
   }
-  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, visitorTrackingGap, fakeLeadCaptureGap, hardcodedToggleGap, axLandmarkGap, axManifestGap, axJsonLdGap, axSkipNavGap, reasons }
+  if (axNavLabelGap) {
+    reasons.push('A <nav> element has no aria-label — required so agents can distinguish multiple navigation regions.')
+  }
+  if (axSectionLabelGap) {
+    reasons.push('A <section> element has no aria-label — required so agents can identify each major content block.')
+  }
+  if (axAgentAttributesGap) {
+    reasons.push('No data-agent-role/data-agent-action/data-agent-context markers anywhere despite real interactive elements — agents cannot discover what they can click.')
+  }
+  if (axComplexWidgetRoleGap) {
+    reasons.push('A complex widget (tabs or a live status/loading region) is missing its ARIA role — agents/screen readers get no signal about its behavior.')
+  }
+  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, visitorTrackingGap, fakeLeadCaptureGap, hardcodedToggleGap, axLandmarkGap, axManifestGap, axJsonLdGap, axSkipNavGap, axNavLabelGap, axSectionLabelGap, axAgentAttributesGap, axComplexWidgetRoleGap, reasons }
 }
 
 /**
@@ -509,6 +613,41 @@ export function buildObediencePrompt(idea: string, result: ObedienceResult): str
       '',
     )
   }
+  if (result.axNavLabelGap) {
+    parts.push(
+      '11) LABEL YOUR <nav> ELEMENT(S) — every <nav> must carry aria-label describing what it navigates:',
+      '    <nav aria-label="Main navigation">...</nav>   <nav aria-label="Pagination">...</nav>',
+      '    Do not add a <nav> that was not already there — only label the ones that already exist.',
+      '',
+    )
+  }
+  if (result.axSectionLabelGap) {
+    parts.push(
+      '12) LABEL YOUR <section> ELEMENT(S) — every <section> must carry aria-label describing that block:',
+      '    <section aria-label="Recent activity">...</section>',
+      '    Do not add a <section> that was not already there — only label the ones that already exist.',
+      '',
+    )
+  }
+  if (result.axAgentAttributesGap) {
+    parts.push(
+      '13) TAG INTERACTIVE ELEMENTS FOR AGENTS — add data-agent-role/data-agent-action/data-agent-context to your',
+      '    real buttons and links so an agent can discover what it can do without guessing at the DOM:',
+      '    <button data-agent-role="button" data-agent-action="add-item">Add</button>',
+      '    <a href="/settings" data-agent-role="link" data-agent-context="settings">Settings</a>',
+      '    You do not need every single element — tag the primary/real actions a user (or agent) would take.',
+      '',
+    )
+  }
+  if (result.axComplexWidgetRoleGap) {
+    parts.push(
+      '14) ADD ARIA ROLES TO YOUR COMPLEX WIDGET — a tab-like control or a live status/loading region has no role:',
+      '    Tabs:   <div role="tablist"><button role="tab" aria-selected={isActive}>...</button></div>',
+      '    Status: <div role="status" aria-live="polite">Loading…</div>',
+      '    Only add the role to the pattern that already exists — do not invent a new widget.',
+      '',
+    )
+  }
   parts.push('Return the corrected full app. Do not remove features.')
   return parts.join('\n')
 }
@@ -541,6 +680,10 @@ export function narrowToPrimitiveComplianceOnly(gaps: string[]): ObedienceResult
     axManifestGap: false,
     axJsonLdGap: false,
     axSkipNavGap: false,
+    axNavLabelGap: false,
+    axSectionLabelGap: false,
+    axAgentAttributesGap: false,
+    axComplexWidgetRoleGap: false,
     reasons: [],
   }
 }
