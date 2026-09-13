@@ -35,12 +35,13 @@ test.describe('Full onboarding → generation → provisioning (real account)', 
   // The Company track drafts 7 real documents (design, thesis, wedge,
   // businessModel, positioning, landing, plan30 — lib/build/state.ts's
   // COMPANY_VIEWS) via real LLM calls before it ever reaches app generation.
-  // Confirmed live (2026-09-13, two separate real runs): all 7 documents
-  // alone consistently take the full 7+ minutes before app generation even
-  // starts. 20 minutes covers that plus a real app build (which can itself
-  // run the cody-cli agent to its own 240s timeout before falling back —
-  // see the design-memory PR's finding this session) and provisioning.
-  test.setTimeout(1_200_000)
+  // Confirmed live (2026-09-13, multiple real runs): all 7 documents alone
+  // consistently take 7+ minutes, and the two CONCURRENT app generations
+  // that follow (company-app + company-product, each a full agent-timeout →
+  // fallback → validation → repair cycle contending for the same LLM
+  // capacity) can themselves take 8+ minutes. Sum of every step's own
+  // timeout below is ~30 minutes worst case — 35 minutes total, with margin.
+  test.setTimeout(2_100_000)
 
   async function login(page: Page) {
     await page.goto(`${BASE_URL}/build?screen=login`, { waitUntil: 'domcontentloaded' })
@@ -58,6 +59,20 @@ test.describe('Full onboarding → generation → provisioning (real account)', 
   }
 
   test('real founder path: idea → generation → Live → Provision cloud → real primitive status', async ({ page }) => {
+    // Direct network visibility into /api/build/company-app — server-side
+    // Railway logs alone left it ambiguous whether this route was ever even
+    // called on a run vs. called-but-still-running, since it only logs on
+    // failure. This confirms definitively.
+    page.on('response', (res) => {
+      if (res.url().includes('/api/build/company-app')) {
+        console.log(`[company-app response] status=${res.status()} url=${res.url()}`)
+        res.json().then((b) => console.log(`[company-app body] ${JSON.stringify(b)}`)).catch(() => {})
+      }
+      if (res.url().includes('/api/build/resolve-app')) {
+        res.json().then((b) => console.log(`[resolve-app poll] ${JSON.stringify(b)}`)).catch(() => {})
+      }
+    })
+
     await login(page)
 
     // Real authenticated re-entry into the funnel: My Companies → "+ New
@@ -193,11 +208,21 @@ test.describe('Full onboarding → generation → provisioning (real account)', 
     // link's own real "ready" signal (appReady — the same state gating its
     // text between "building your site…" and the live URL) before
     // attempting to provision.
-    // Confirmed live: this real landing-page generation can genuinely take
-    // over a minute (Railway logs showed a real 30K+ char app + showcase
-    // entry landing shortly after a 60s wait here timed out) — a real,
-    // substantial LLM generation, not a hang. 3 minutes of margin.
-    await expect(page.getByText('building your site…')).toBeHidden({ timeout: 180_000 })
+    // Confirmed live (2026-09-13, multiple real runs): company-app and
+    // company-product ALWAYS fire concurrently (both mount-time fetches in
+    // Live.tsx's same effect) — each running its own full real cody-cli-
+    // agent-timeout(240s) → Bedrock-fallback → validation → possible
+    // obedience-repair cycle, genuinely contending for the same underlying
+    // LLM capacity. Confirmed via direct ZeroDB queries: two apparently-
+    // "stuck" generations from an earlier run (never resolved within 4
+    // minutes) were later confirmed to have genuinely succeeded and
+    // registered — just much slower than a single isolated generation. This
+    // is real, load-bearing production behavior (every Company-track
+    // founder's dashboard mount triggers this same dual generation), not a
+    // test artifact. Confirmed live: one real run's registration landed at
+    // the ~8min mark, missing an 8-minute wait here by mere seconds — 10
+    // minutes of real margin.
+    await expect(page.getByText('building your site…')).toBeHidden({ timeout: 600_000 })
 
     // Before provisioning: every founder-scoped primitive should read
     // "Planned" (not silently claiming to be live with no real credential).
@@ -215,8 +240,13 @@ test.describe('Full onboarding → generation → provisioning (real account)', 
     // DesignPicker/Wedge confirm-button issue.
     const provisionBtn = page.getByRole('button', { name: /Provision cloud/i })
     await expect(provisionBtn).toBeVisible({ timeout: 10_000 })
+    // Confirmed live: the click genuinely lands and provisionCompany() genuinely
+    // starts (button flips to "Provisioning…", a real busy state) well within
+    // 60s — but the real call itself (a ZeroDB project create + up to 6 real
+    // founder-scoped primitive credential captures, per provision/route.ts)
+    // can take longer than that to actually resolve. 3 minutes of margin.
     const [provisionResponse] = await Promise.all([
-      page.waitForResponse((res) => res.url().includes('/api/build/provision') && res.request().method() === 'POST', { timeout: 60_000 }),
+      page.waitForResponse((res) => res.url().includes('/api/build/provision') && res.request().method() === 'POST', { timeout: 180_000 }),
       provisionBtn.click(),
     ])
     const provisionBody = await provisionResponse.json().catch(() => null)
@@ -230,9 +260,20 @@ test.describe('Full onboarding → generation → provisioning (real account)', 
     await expect(page.getByRole('button', { name: /Cloud provisioned/i })).toBeVisible({ timeout: 15_000 })
 
     // After provisioning: at least one system should now read "Live" — a real
-    // status change driven by a real credential, not fabricated.
-    const liveAfter = await grid.locator('[data-testid="system-status-badge"][data-status="live"]').count()
-    expect(liveAfter).toBeGreaterThan(0)
+    // status change driven by a real credential, not fabricated. Real gap
+    // found live: provisionCompany() (Live.tsx) fires the systems-grid
+    // refresh (GET /api/build/systems) as a SEPARATE, unawaited fetch AFTER
+    // setProvision() already resolved — so the "Cloud provisioned" button
+    // text and the honest "Pipeline & Invoices read live data" banner (both
+    // driven by the synchronous provision state) can be visible well before
+    // the systems grid's own badges have actually re-rendered from their
+    // independent refetch. Wait on that real network response explicitly,
+    // not just the button text.
+    await page.waitForResponse((res) => res.url().includes('/api/build/systems') && res.status() === 200, { timeout: 30_000 }).catch(() => {})
+    await expect(async () => {
+      const liveAfter = await grid.locator('[data-testid="system-status-badge"][data-status="live"]').count()
+      expect(liveAfter).toBeGreaterThan(0)
+    }).toPass({ timeout: 15_000 })
 
     await page.screenshot({ path: 'e2e/screenshots/full-onboarding-provisioned.png', fullPage: true })
   })

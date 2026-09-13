@@ -559,9 +559,19 @@ export async function migrateGuestCompanies(
  * error or when unconfigured, so the surface degrades gracefully.
  */
 export async function listAppsForOwner(ownerEmail: string): Promise<AppEntry[]> {
+  const result = await listAppsForOwnerWithStatus(ownerEmail)
+  return result.apps
+}
+
+/** Same as listAppsForOwner(), but reports whether the underlying read
+ *  genuinely succeeded — see listAllAppsWithStatus()'s doc comment for why
+ *  this distinction matters (a real DB outage must never look like "you
+ *  have zero companies"). */
+export async function listAppsForOwnerWithStatus(ownerEmail: string): Promise<{ apps: AppEntry[]; ok: boolean }> {
   const email = (ownerEmail || '').trim().toLowerCase()
-  if (!configured() || !email) return []
-  return (await listAllApps()).filter((e) => (e.ownerEmail || '').toLowerCase() === email)
+  if (!configured() || !email) return { apps: [], ok: false }
+  const result = await listAllAppsWithStatus()
+  return { apps: result.apps.filter((e) => (e.ownerEmail || '').toLowerCase() === email), ok: result.ok }
 }
 
 /**
@@ -571,10 +581,32 @@ export async function listAppsForOwner(ownerEmail: string): Promise<AppEntry[]> 
  * caller applies its own filters (has ownerEmail, not deleted, inactive N days).
  */
 export async function listAllApps(): Promise<AppEntry[]> {
-  if (!configured()) return []
+  const result = await listAllAppsWithStatus()
+  return result.apps
+}
+
+/**
+ * Same real read as listAllApps(), but tells the caller WHETHER the empty
+ * result is genuine (no rows) or the read itself failed (real bug found
+ * live, 2026-09-13: core#7395 — Builder's own ZeroDB project started
+ * returning 403 "not scoped to this project" on every call, platform-wide,
+ * and this same read's own `if (!res.ok) return []` silently presented that
+ * outage as "you have zero companies" — a real founder (arif@8genc.com)
+ * reported their projects had "disappeared," when in fact the read itself
+ * was failing, not returning a genuine empty list).
+ *
+ * Callers that must not lie to a founder about their own data (my-companies)
+ * should use this instead of listAllApps() and surface `ok:false` as a real
+ * error state, never as "you have no companies."
+ */
+export async function listAllAppsWithStatus(): Promise<{ apps: AppEntry[]; ok: boolean }> {
+  if (!configured()) return { apps: [], ok: false }
   try {
     const res = await fetch(`${rowsUrl()}?limit=1000`, { headers: headers(), signal: AbortSignal.timeout(20000) })
-    if (!res.ok) return []
+    if (!res.ok) {
+      console.error(`[app-registry] listAllApps failed: ${res.status} ${await res.text().catch(() => '')}`.slice(0, 300))
+      return { apps: [], ok: false }
+    }
     const data = JSON.parse(await res.text())
     const rows = Array.isArray(data) ? data : data.data || data.rows || []
     const entries: AppEntry[] = rows
@@ -586,10 +618,13 @@ export async function listAllApps(): Promise<AppEntry[]> {
       const prev = latest.get(e.slug)
       if (!prev || (e.createdAt || '').localeCompare(prev.createdAt || '') > 0) latest.set(e.slug, e)
     }
-    return Array.from(latest.values())
-      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
-  } catch {
-    return []
+    return {
+      apps: Array.from(latest.values()).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')),
+      ok: true,
+    }
+  } catch (e) {
+    console.error('[app-registry] listAllApps threw:', e)
+    return { apps: [], ok: false }
   }
 }
 
