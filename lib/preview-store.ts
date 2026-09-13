@@ -131,6 +131,47 @@ export function getChatData(id: string): ChatData | undefined {
   return chatStore.get(id)
 }
 
+/**
+ * Durable-fallback chat data lookup (chat persistence fix, 2026-09-13).
+ *
+ * getChatData() above is in-memory only — a per-process Map wiped on every
+ * redeploy/restart, and this is a multi-instance deployment, so a request
+ * landing on a different replica than the one that ran the generation always
+ * saw an empty entry too. That's the real cause of "conversations aren't
+ * persisting": /api/chats/[chatId] returned 404, and chat-ws's own
+ * "continuation" lookup silently lost all prior turns, even though every
+ * turn's prompt + generated_code already exists durably in ZeroDB (saveGeneration
+ * appends a new row per turn; see zerodb-store.ts's loadChatHistory).
+ *
+ * Checks memory first (fast path, no network). On a miss, reconstructs from
+ * ZeroDB and repopulates the in-memory store so subsequent reads on THIS
+ * replica are fast too — same pattern app/api/preview/[id]/route.ts already
+ * uses for getPreview()/loadGeneration().
+ */
+export async function getChatDataDurable(id: string): Promise<ChatData | undefined> {
+  const inMemory = chatStore.get(id)
+  if (inMemory) return inMemory
+  if (!id) return undefined
+
+  try {
+    const { loadChatHistory } = await import('./zerodb-store')
+    const history = await loadChatHistory(id)
+    if (!history) return undefined
+
+    const restored: ChatData = {
+      preview: '',
+      messages: history.messages,
+      createdAt: history.createdAt,
+      name: history.name,
+      designSystemId: history.designSystemId,
+    }
+    chatStore.set(id, restored)
+    return restored
+  } catch {
+    return undefined
+  }
+}
+
 export function getAINativeFiles(id: string): Record<string, string> | undefined {
   return chatStore.get(id)?.ainativeFiles
 }

@@ -214,6 +214,67 @@ export async function loadGeneration(chatId: string): Promise<{
 }
 
 /**
+ * Load the full turn-by-turn history for one chat thread from the durable
+ * `generations` table (builder chat persistence fix, 2026-09-13).
+ *
+ * Real gap: saveGeneration already appends one row per turn (prompt +
+ * generated_code) for a given chat_id — it's genuinely durable — but nothing
+ * ever read back MORE than the single latest row (loadGeneration uses
+ * limit: 1). So the moment the in-memory lib/preview-store.ts Map was empty
+ * (any redeploy, restart, or a request landing on a different Railway
+ * replica than the one that ran the generation — this is a multi-instance
+ * deployment), a chat's message history and continuation context vanished
+ * even though every turn's data still existed in ZeroDB. This reconstructs
+ * the same `messages` shape lib/preview-store.ts's ChatData carries, oldest
+ * row first, from the durable rows that already exist.
+ */
+export async function loadChatHistory(chatId: string): Promise<{
+  messages: Array<{ id: string; role: 'user' | 'assistant'; content: string }>
+  createdAt: string
+  name?: string
+  designSystemId?: string
+} | null> {
+  if (!chatId) return null
+  try {
+    const result = await zerodbRequest(
+      'POST',
+      `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/query`,
+      { filters: { chat_id: chatId }, limit: 100 },
+      { retries: 1 },
+    )
+    const rows: any[] = result?.data || []
+    const parsed = rows
+      .map((r) => r.row_data || r)
+      .filter((rd) => rd && rd.chat_id === chatId)
+      .sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')))
+    if (!parsed.length) return null
+
+    const messages: Array<{ id: string; role: 'user' | 'assistant'; content: string }> = []
+    parsed.forEach((rd, i) => {
+      if (rd.prompt) {
+        messages.push({ id: `${chatId}-user-${i}`, role: 'user', content: String(rd.prompt) })
+      }
+      if (rd.generated_code) {
+        messages.push({ id: `${chatId}-assistant-${i}`, role: 'assistant', content: String(rd.generated_code) })
+      }
+    })
+    if (!messages.length) return null
+
+    const first = parsed[0]
+    const last = parsed[parsed.length - 1]
+    return {
+      messages,
+      createdAt: String(first.created_at || new Date().toISOString()),
+      name: first.title || (first.prompt ? String(first.prompt).slice(0, 50) : undefined),
+      designSystemId: last.design_system_id || undefined,
+    }
+  } catch (e) {
+    console.warn('[ZeroDB] loadChatHistory failed:', (e as Error)?.name || e)
+    return null
+  }
+}
+
+/**
  * List showcase entries from ZeroDB
  */
 export async function listShowcaseEntries(limit = 50): Promise<any[]> {

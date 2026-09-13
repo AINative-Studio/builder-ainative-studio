@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
-import { getPreview, getChatData } from '@/lib/preview-store'
+import { getPreview, getChatDataDurable } from '@/lib/preview-store'
 import { getChatOwnership } from '@/lib/db/queries'
 
 export async function GET(
@@ -39,8 +39,10 @@ export async function GET(
     // For our LLAMA implementation, we need to construct the response
     // that matches what the frontend expects with demoUrl
 
-    // Check if we have chat data stored for this chat
-    const chatData = getChatData(chatId)
+    // Check if we have chat data stored for this chat — falls back to the
+    // durable ZeroDB history when this replica's in-memory store missed
+    // (redeploy, restart, or a different replica served the generation).
+    const chatData = await getChatDataDurable(chatId)
 
     if (chatData) {
       // We have local chat data, return it in the expected format
