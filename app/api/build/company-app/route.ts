@@ -16,16 +16,115 @@
  * PICK_TRACK), so there was nothing to forward. Now accepts designSystemId and
  * passes it straight through, same as the App track's chat-ws calls.
  *
+ * REGISTRATION NEVER HAPPENING (found live, 2026-09-13, verifying Cody composes
+ * AINative primitives correctly): this route used to hold the HTTP request
+ * open, synchronously consuming chat-ws's SSE stream until chatId+refresh
+ * before responding, bounded by its own 280s AbortSignal.timeout. Once the
+ * cody-cli agent became the primary generation path (CODY_AGENT_PRIMARY=1),
+ * a real generation routinely spends its own 240s wall-clock limit on a
+ * failing agent attempt (#350) BEFORE falling back to Bedrock — pushing the
+ * real end-to-end duration past this route's 280s abort. Confirmed live: many
+ * real, successful generations (verified via the showcase entries chat-ws's
+ * OWN persist path creates, independent of this route surviving) NEVER
+ * produced a builder_app_registry row — the abort fired before chatId+refresh
+ * was ever observed, so registerApp() was never reached, even though the
+ * generation itself succeeded. This is the exact same bug class
+ * company-product/route.ts documents fixing (its own doc comment: "Railway's
+ * edge proxy... has its own hard request timeout that no amount of raising
+ * this route's own maxDuration/AbortSignal can control") — that route was
+ * fixed; this one, its older sibling, never was.
+ *
+ * Fixed the same way: kick off generation as a DETACHED background task (this
+ * container is a persistent Railway service, not serverless — an unawaited
+ * async task keeps running after the response is sent) and return
+ * immediately with { status: 'processing' }. The caller polls
+ * GET /api/build/resolve-app?slug={slug} until it resolves a chatId — see
+ * components/build/screens/Live.tsx's existing company-product poll loop,
+ * mirrored here for company-app. Reuses lib/build/product-generation-state.ts
+ * as-is (it's genuinely generic — keyed on a plain slug/chatId pair, nothing
+ * product-specific) for the same registration-durability guarantee across a
+ * mid-generation redeploy.
+ *
  * Body: { idea, slug, name, tagline, color, designSystemId? }
- * Returns: { chatId }
+ * Returns: { status: 'processing' } | { chatId, cached: true } | { chatId, status: 'recovered' }
  */
 
 import { NextRequest } from 'next/server'
 import { registerApp, resolveApp } from '@/lib/build/app-registry'
 import { logBuildOutcome } from '@/lib/build/learning'
+import {
+  recordPendingProductGeneration,
+  markProductGenerationRegistered,
+  resolvePendingProductGeneration,
+} from '@/lib/build/product-generation-state'
+import { loadGeneration } from '@/lib/zerodb-store'
 
 export const runtime = 'nodejs'
-export const maxDuration = 300
+
+async function runLandingPageGeneration(
+  base: string, message: string, designSystemId: string | undefined,
+  slug: string, idea: string, name: string, tagline: string, color: string,
+): Promise<void> {
+  try {
+    const res = await fetch(`${base}/api/chat-ws`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      // #612 (Meridian, 2026-09-10): this route ONLY ever builds marketing
+      // copy (hero/features/pricing/footer) — never the real product — so it
+      // has no legitimate reason to call any primitive's live API, even when
+      // `idea` (embedded in `message` above) happens to match one's trigger
+      // keywords. Tells chat-ws to skip primitive-compliance re-prompting for
+      // this specific generation; every other obedience check still applies.
+      body: JSON.stringify({ message, designSystemId, landingPageOnly: true }),
+      signal: AbortSignal.timeout(780_000),
+    })
+    if (!res.body) throw new Error('no stream')
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = '', chatId: string | null = null, completed = false, recordedPending = false
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const events = buf.split('\n\n'); buf = events.pop() || ''
+      for (const ev of events) {
+        const line = ev.split('\n').find((l) => l.startsWith('data:'))
+        if (!line) continue
+        let p: any; try { p = JSON.parse(line.slice(5).trim()) } catch { continue }
+        if (p.type === 'init' && p.chatId) {
+          chatId = p.chatId
+          // Write the durable link as soon as chatId is known — same
+          // registration-durability guarantee as company-product/route.ts:
+          // a container death anywhere after this point is recoverable on
+          // the next request for this slug.
+          if (!recordedPending) {
+            recordedPending = true
+            void recordPendingProductGeneration(slug, p.chatId)
+          }
+        }
+        // Wait for 'complete' (both chat-ws's degraded and success paths
+        // emit it), not the first 'refresh'/'files' — those fire repeatedly
+        // during mid-generation streaming, well before the final ZeroDB persist.
+        if (p.type === 'complete') completed = true
+      }
+      if (chatId && completed) break
+    }
+    if (!chatId) throw new Error('no chatId')
+
+    await registerApp({ slug, chatId, name, tagline, color, track: 'company', idea })
+    await markProductGenerationRegistered(slug, chatId)
+    // #270: capture the IDEA → generated app for the recursive learning loop, with
+    // converted:false initially. subscription/verify flips it converted on payment.
+    // Fire-and-forget — must never slow or fail the build request path.
+    logBuildOutcome({
+      slug, idea, brand: name, track: 'company', chatId,
+      codeStatus: completed ? 'success' : 'partial', converted: false,
+    }).catch(() => {})
+  } catch (e: any) {
+    logBuildOutcome({ slug, idea, brand: name, track: 'company', codeStatus: 'failure', converted: false }).catch(() => {})
+    console.warn(`[company-app] background generation failed for ${slug}:`, e?.message || e)
+  }
+}
 
 export async function POST(request: NextRequest) {
   const b = await request.json().catch(() => null)
@@ -36,6 +135,38 @@ export async function POST(request: NextRequest) {
   // Already built? return the existing chatId (don't regenerate).
   const existing = await resolveApp(slug).catch(() => null)
   if (existing?.chatId) return Response.json({ chatId: existing.chatId, cached: true })
+
+  // Recover an orphaned prior attempt (same registration-durability gap
+  // company-product/route.ts closed, #660 follow-up): a previous call's
+  // background task may have gotten a chatId, had its generation genuinely
+  // succeed and persist, and then died (e.g. a deploy) before ever calling
+  // registerApp. Check for that BEFORE starting a brand new, costly generation.
+  const pending = await resolvePendingProductGeneration(slug).catch(() => null)
+  if (pending?.chatId && pending.status === 'pending') {
+    const gen = await loadGeneration(pending.chatId).catch(() => null)
+    if (gen?.generatedCode) {
+      const name = String(b?.name || slug).slice(0, 120)
+      const tagline = String(b?.tagline || '').slice(0, 200)
+      const color = /^#[0-9a-fA-F]{6}$/.test(String(b?.color || '')) ? String(b.color) : '#2f6d86'
+      const registered = await registerApp({ slug, chatId: pending.chatId, name, tagline, color, track: 'company', idea })
+      if (registered) {
+        await markProductGenerationRegistered(slug, pending.chatId)
+        return Response.json({ chatId: pending.chatId, status: 'recovered' })
+      }
+    }
+    // Generation not actually done yet. Two possibilities: it's still
+    // genuinely in-flight on this or another live process (chat-ws's own
+    // AbortSignal.timeout is 780s), or the process that recorded this
+    // pending attempt died before chat-ws itself ever finished/persisted —
+    // truly orphaned, not just slow. Give the real in-flight case its full
+    // window; only past it treat the attempt as dead and fall through to
+    // start a genuinely fresh generation (never poll forever with no exit).
+    const ageMs = Date.now() - new Date(pending.createdAt).getTime()
+    const STILL_PLAUSIBLY_RUNNING_MS = 780_000 + 60_000
+    if (!gen?.generatedCode && ageMs < STILL_PLAUSIBLY_RUNNING_MS) {
+      return Response.json({ status: 'processing' })
+    }
+  }
 
   const name = String(b?.name || slug).slice(0, 120)
   const tagline = String(b?.tagline || '').slice(0, 200)
@@ -64,56 +195,13 @@ export async function POST(request: NextRequest) {
     `a how-it-works section, pricing (3 tiers), and a footer. Use ${color} as the main accent color. ` +
     `Make it visually distinctive and specific to this company, with realistic copy — not a generic template.`
 
-  // Kick codegen; read the SSE stream only far enough to get the chatId. Generation
-  // continues server-side and populates the preview store (durable via ZeroDB).
-  try {
-    const res = await fetch(`${base}/api/chat-ws`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      // #612 (Meridian, 2026-09-10): this route ONLY ever builds marketing
-      // copy (hero/features/pricing/footer) — never the real product — so it
-      // has no legitimate reason to call any primitive's live API, even when
-      // `idea` (embedded in `message` above) happens to match one's trigger
-      // keywords. Tells chat-ws to skip primitive-compliance re-prompting for
-      // this specific generation; every other obedience check still applies.
-      body: JSON.stringify({ message, designSystemId, landingPageOnly: true }),
-      signal: AbortSignal.timeout(280_000),
-    })
-    if (!res.body) return Response.json({ error: 'no stream' }, { status: 502 })
+  // Detached: NOT awaited. This container is a persistent Railway service
+  // (not serverless), so this keeps running after the response below is
+  // sent, bounded only by its own AbortSignal.timeout — decoupling this
+  // route's response time from the real, unpredictable generation duration
+  // (which can now legitimately exceed the cody-cli agent's own 240s
+  // timeout before it falls back to Bedrock).
+  void runLandingPageGeneration(base, message, designSystemId, slug, idea, name, tagline, color)
 
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buf = '', chatId: string | null = null, sawRefresh = false
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buf += decoder.decode(value, { stream: true })
-      const events = buf.split('\n\n'); buf = events.pop() || ''
-      for (const ev of events) {
-        const line = ev.split('\n').find((l) => l.startsWith('data:'))
-        if (!line) continue
-        let p: any; try { p = JSON.parse(line.slice(5).trim()) } catch { continue }
-        if (p.type === 'init' && p.chatId) chatId = p.chatId
-        if (p.type === 'refresh' || p.type === 'files') sawRefresh = true
-      }
-      // We have the id and at least one refresh → register and return; generation
-      // finishes server-side and /build/{slug} re-renders from the durable store.
-      if (chatId && sawRefresh) break
-    }
-    if (!chatId) return Response.json({ error: 'no chatId' }, { status: 502 })
-
-    await registerApp({ slug, chatId, name, tagline, color, track: 'company', idea })
-    // #270: capture the IDEA → generated app for the recursive learning loop, with
-    // converted:false initially. subscription/verify flips it converted on payment.
-    // Fire-and-forget — must never slow or fail the build request path.
-    logBuildOutcome({
-      slug, idea, brand: name, track: 'company', chatId,
-      codeStatus: sawRefresh ? 'success' : 'partial', converted: false,
-    }).catch(() => {})
-    return Response.json({ chatId })
-  } catch (e: any) {
-    // Record the failed build too — the non-converting/broken ideas are exactly
-    // what Cody must learn from. Best-effort, never rethrows.
-    logBuildOutcome({ slug, idea, brand: name, track: 'company', codeStatus: 'failure', converted: false }).catch(() => {})
-    return Response.json({ error: 'generation_failed', detail: String(e?.message || e).slice(0, 120) }, { status: 502 })
-  }
+  return Response.json({ status: 'processing' })
 }
