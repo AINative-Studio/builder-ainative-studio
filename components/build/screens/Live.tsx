@@ -305,7 +305,31 @@ export function Live() {
       .catch(() => {})
     // Company track has no /preview app — generate a REAL landing-page app for it
     // once, so the prod URL /build/{slug} actually shows something. Register it.
+    //
+    // Real bug fixed live (2026-09-13): company-app used to hold this HTTP
+    // request open until the generation finished, bounded by its own 280s
+    // timeout — but a real generation can now legitimately exceed that once
+    // the cody-cli agent's own 240s wall-clock limit (#350) is spent on a
+    // failing attempt before falling back. The abort fired before
+    // registration ever ran, so appReady silently never flipped even though
+    // the generation succeeded (confirmed live: real showcase entries with
+    // no corresponding app-registry row). company-app now mirrors
+    // company-product's own fix below exactly: detached background
+    // generation, 'processing' returned immediately, poll resolve-app.
     if (!state.appChatId && state.idea && state.appSub) {
+      const MAX_APP_POLL_ATTEMPTS = 60 // ~5 min at 5s apart — matches company-product's own budget
+      const pollForApp = (n: number) => {
+        fetch(`/api/build/resolve-app?slug=${encodeURIComponent(state.appSub)}`)
+          .then((r) => (r.ok ? r.json() : null))
+          .then((d) => {
+            if (!alive) return
+            if (d?.chatId) { setAppReady(true); dispatch({ type: 'SET_APP_CHATID', chatId: d.chatId }); return }
+            if (n < MAX_APP_POLL_ATTEMPTS) setTimeout(() => { if (alive) pollForApp(n + 1) }, 5000)
+          })
+          .catch(() => {
+            if (n < MAX_APP_POLL_ATTEMPTS) setTimeout(() => { if (alive) pollForApp(n + 1) }, 5000)
+          })
+      }
       fetch('/api/build/company-app', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -320,8 +344,13 @@ export function Live() {
         }),
       })
         .then((r) => (r.ok ? r.json() : null))
-        .then((d) => { if (alive && d?.chatId) { setAppReady(true); dispatch({ type: 'SET_APP_CHATID', chatId: d.chatId }) } })
-        .catch(() => {})
+        .then((d) => {
+          if (!alive) return
+          // A cached/recovered hit resolves the chatId immediately, no polling.
+          if (d?.chatId) { setAppReady(true); dispatch({ type: 'SET_APP_CHATID', chatId: d.chatId }); return }
+          if (d?.status === 'processing') pollForApp(1)
+        })
+        .catch(() => { if (alive) pollForApp(1) })
     }
     // Real gap (customer-reported, Meridian, 2026-09-10, issue #620): the
     // landing page above is marketing copy — it was never the founder's
