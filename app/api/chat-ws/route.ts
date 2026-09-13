@@ -9,7 +9,7 @@ import { codegenCompositionBlock, selectPrimitives } from '@/lib/build/primitive
 import { dataModelContextBlock } from '@/lib/build/data-model-context'
 import { multiFileEmphasis, multiFileUserDirective, ideaWarrantsMultiFile } from '@/lib/build/multifile-emphasis'
 import { enhancePromptWithMockData } from '@/lib/mock-data-generator'
-import { updatePreviewPartial, storePreview, getChatData } from '@/lib/preview-store'
+import { updatePreviewPartial, storePreview, getChatDataDurable } from '@/lib/preview-store'
 import { validateGeneratedCode } from '@/lib/code-validator'
 import { validateOutput, validateFileImports } from '@/lib/build/output-validator'
 import { buildValidationFallbackComponent } from '@/lib/validation-fallback'
@@ -395,10 +395,15 @@ export async function POST(request: NextRequest) {
       // best-effort — never block generation on auth resolution
     }
 
-    // Get previous messages if this is a continuation
+    // Get previous messages if this is a continuation — falls back to the
+    // durable ZeroDB history when this replica's in-memory store missed it
+    // (chat persistence fix, 2026-09-13). Without this, a continuation whose
+    // request landed on a different replica than the one that generated the
+    // prior turns silently lost all context and answered as a fresh
+    // conversation, with nothing surfaced to the user.
     let previousMessages: Array<{ role: 'user' | 'assistant', content: string }> = []
     if (chatId) {
-      const chatData = getChatData(chatId)
+      const chatData = await getChatDataDurable(chatId)
       if (chatData && chatData.messages) {
         previousMessages = chatData.messages.map(msg => ({
           role: msg.role,

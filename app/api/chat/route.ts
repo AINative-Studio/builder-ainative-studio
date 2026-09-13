@@ -60,11 +60,13 @@ export async function POST(request: NextRequest) {
       console.warn('Failed to get active prompt version, using default:', error)
     }
 
-    // Get previous messages if this is a continuation of an existing chat
+    // Get previous messages if this is a continuation of an existing chat —
+    // falls back to the durable ZeroDB history when this replica's in-memory
+    // store missed it (chat persistence fix, 2026-09-13).
     let previousMessages: Array<{ role: 'user' | 'assistant', content: string }> = []
     if (chatId) {
-      const { getChatData } = await import('@/lib/preview-store')
-      const chatData = getChatData(chatId)
+      const { getChatDataDurable } = await import('@/lib/preview-store')
+      const chatData = await getChatDataDurable(chatId)
       if (chatData && chatData.messages) {
         previousMessages = chatData.messages.map(msg => ({
           role: msg.role,

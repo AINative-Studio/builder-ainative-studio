@@ -21,7 +21,7 @@ import {
 
 function mockFetchSequence(responses: Array<{ ok: boolean; json?: any }>) {
   let i = 0
-  const fn = vi.fn(async () => {
+  const fn = vi.fn(async (_url?: string, _init?: RequestInit) => {
     const r = responses[Math.min(i, responses.length - 1)]
     i++
     return { ok: r.ok, json: async () => (r.json ?? {}) } as unknown as Response

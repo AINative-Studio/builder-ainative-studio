@@ -8,8 +8,21 @@ export async function GET(
   try {
     const { chatId } = await params
 
-    // Get the stored preview content
-    const content = getPreview(chatId)
+    // Get the stored preview content — in-memory first, falling back to the
+    // durable ZeroDB record when this replica's Map missed it (chat
+    // persistence fix, 2026-09-13: see lib/preview-store.ts's
+    // getChatDataDurable doc comment for why the in-memory-only store lost
+    // data on redeploy/restart/replica-switch).
+    let content = getPreview(chatId)
+    if (!content) {
+      try {
+        const { loadGeneration } = await import('@/lib/zerodb-store')
+        const gen = await loadGeneration(chatId)
+        if (gen?.generatedCode) content = gen.generatedCode
+      } catch {
+        // Best-effort — the 404 below still fires if this also fails.
+      }
+    }
 
     if (!content) {
       return NextResponse.json(
