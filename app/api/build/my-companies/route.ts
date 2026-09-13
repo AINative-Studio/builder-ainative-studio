@@ -10,11 +10,21 @@
  * founder owns — the ZeroDB project id, the custom domain, the deploy URL — not
  * locked black boxes.
  *
- * Returns: { companies: Array<{ slug, name, plan, ... }> } | { error }
+ * Returns: { companies: Array<{ slug, name, plan, ... }>, ok: true } |
+ *          { companies: [], ok: false, error: 'registry_unavailable' } | { error }
+ *
+ * Real bug found live (2026-09-13, core#7395): a real ZeroDB outage (the
+ * registry read failing) used to come back through this same code path as
+ * `{ companies: [] }` — indistinguishable from a founder who genuinely has
+ * no companies yet. A real founder (arif@8genc.com) reported their projects
+ * had "disappeared" from the dashboard; the actual cause was a platform-wide
+ * database outage, not their data being lost. `ok` now tells the client
+ * which one it actually is, so the UI can show an honest "couldn't load
+ * your companies right now" state instead of a false empty one.
  */
 
 import { auth } from '@/app/(auth)/auth'
-import { listAppsForOwner } from '@/lib/build/app-registry'
+import { listAppsForOwnerWithStatus } from '@/lib/build/app-registry'
 
 export const runtime = 'nodejs'
 
@@ -25,7 +35,13 @@ export async function GET() {
   const email = (session as any)?.user?.email as string | undefined
   if (!email) return Response.json({ error: 'not signed in' }, { status: 401 })
 
-  const apps = await listAppsForOwner(email).catch(() => [])
+  const { apps, ok } = await listAppsForOwnerWithStatus(email).catch(() => ({ apps: [], ok: false }))
+  if (!ok) {
+    return Response.json(
+      { companies: [], ok: false, error: 'registry_unavailable' },
+      { status: 503 },
+    )
+  }
   const companies = apps.map((e) => ({
     slug: e.slug,
     name: e.name || e.slug,
@@ -45,5 +61,5 @@ export async function GET() {
     liveUrl: `${APP}/build?screen=live&company=${encodeURIComponent(e.slug)}`,
   }))
 
-  return Response.json({ companies })
+  return Response.json({ companies, ok: true })
 }

@@ -78,6 +78,15 @@ export function MyCompanies() {
   const [companies, setCompanies] = useState<Company[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [portalBusy, setPortalBusy] = useState(false)
+  // Real bug found live (2026-09-13, core#7395): a real registry-read outage
+  // (ZeroDB returning errors) used to come back through this same fetch as
+  // an empty companies array — indistinguishable from a founder who
+  // genuinely has none yet. A real founder (arif@8genc.com) reported their
+  // projects had "disappeared"; the actual cause was a platform-wide
+  // database outage, not lost data. /api/build/my-companies now reports
+  // `ok:false` on a real failure (503) instead of masquerading as empty —
+  // this tracks that so the UI can show an honest "couldn't load" state.
+  const [loadError, setLoadError] = useState(false)
 
   useEffect(() => {
     if (status === 'loading') return
@@ -91,9 +100,14 @@ export function MyCompanies() {
     migrateGuestWork()
       .catch(() => null)
       .then(() => fetch('/api/build/my-companies'))
-      .then((r) => (r.ok ? r.json() : { companies: [] }))
-      .then((d) => { if (alive) setCompanies(Array.isArray(d?.companies) ? d.companies : []) })
-      .catch(() => { if (alive) setCompanies([]) })
+      .then(async (r) => {
+        const d = await r.json().catch(() => null)
+        // A real registry outage (503, ok:false) is NOT the same as a
+        // genuinely empty list — never silently show "no companies" for it.
+        if (!r.ok || d?.ok === false) { if (alive) setLoadError(true); return }
+        if (alive) setCompanies(Array.isArray(d?.companies) ? d.companies : [])
+      })
+      .catch(() => { if (alive) setLoadError(true) })
       .finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }
   }, [signedIn, status])
@@ -178,6 +192,14 @@ export function MyCompanies() {
         </section>
       ) : loading ? (
         <section className="m-account-sec"><p className="m-mono m-muted">Loading your companies…</p></section>
+      ) : loadError ? (
+        <section className="m-account-sec" data-testid="companies-load-error">
+          <p className="m-live-card-body">
+            Couldn&apos;t load your companies right now — this looks like a temporary issue on our end, not lost data.
+            Your companies are still there.
+          </p>
+          <button className="btn-primary" onClick={() => window.location.reload()}>Try again →</button>
+        </section>
       ) : !companies || companies.length === 0 ? (
         <section className="m-account-sec" data-testid="companies-empty">
           <p className="m-live-card-body">No companies yet. Build one and it&apos;ll show up here — yours to manage, on your own ZeroDB project and domain.</p>
