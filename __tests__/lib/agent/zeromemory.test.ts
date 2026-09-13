@@ -465,3 +465,139 @@ describe('processConversation', () => {
     ).resolves.toBeUndefined()
   })
 })
+
+/**
+ * reflectOnEntity / getEntityProfile (builder#693) — "what Cody has learned."
+ * Real POST /reflect/{entity_id}?namespace=... and POST /profile, confirmed
+ * live against production (core Refs #2960).
+ */
+describe('reflectOnEntity', () => {
+  it('POSTs to /reflect/{entity_id} with namespace as a query param', async () => {
+    const fetchMock = vi.fn(async (_url?: string, _init?: RequestInit) => ({
+      ok: true,
+      json: async () => ({ entity_id: 'owner::acme', insights: [{ type: 'preference', content: 'likes blue' }], memories_reviewed: 5 }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { reflectOnEntity } = await import('@/lib/agent/zeromemory')
+    const result = await reflectOnEntity('owner::acme')
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/api/v1/public/memory/v2/reflect/owner%3A%3Aacme')
+    expect(url).toContain('namespace=session%3Aowner%3A%3Aacme')
+    expect((init as RequestInit).method).toBe('POST')
+    expect(result).toEqual({
+      entityId: 'owner::acme',
+      insights: [{ type: 'preference', content: 'likes blue' }],
+      memoriesReviewed: 5,
+      message: undefined,
+    })
+  })
+
+  it('surfaces the real "not enough memories" message honestly, never fabricating insights', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ entity_id: 'owner::acme', insights: [], memories_reviewed: 1, message: 'Not enough memories to reflect (need 3+)' }),
+    })))
+    const { reflectOnEntity } = await import('@/lib/agent/zeromemory')
+    const result = await reflectOnEntity('owner::acme')
+    expect(result?.insights).toEqual([])
+    expect(result?.memoriesReviewed).toBe(1)
+    expect(result?.message).toBe('Not enough memories to reflect (need 3+)')
+  })
+
+  it('is a no-op returning null when entityId is empty', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { reflectOnEntity } = await import('@/lib/agent/zeromemory')
+    expect(await reflectOnEntity('')).toBeNull()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('returns null (never throws) on a non-ok response', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) })))
+    const { reflectOnEntity } = await import('@/lib/agent/zeromemory')
+    expect(await reflectOnEntity('owner::acme')).toBeNull()
+  })
+
+  it('returns null (never throws) when the call fails outright', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('down') }))
+    const { reflectOnEntity } = await import('@/lib/agent/zeromemory')
+    await expect(reflectOnEntity('owner::acme')).resolves.toBeNull()
+  })
+
+  it('returns null when no API key is configured', async () => {
+    process.env.ZERODB_API_KEY = ''
+    process.env.AINATIVE_API_KEY = ''
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { reflectOnEntity } = await import('@/lib/agent/zeromemory')
+    expect(await reflectOnEntity('owner::acme')).toBeNull()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('getEntityProfile', () => {
+  it('POSTs to /profile with entity_id in the body', async () => {
+    const fetchMock = vi.fn(async (_url?: string, _init?: RequestInit) => ({
+      ok: true,
+      json: async () => ({
+        entity_id: 'owner::acme',
+        preferences: ['likes blue'],
+        behaviors: ['prefers async code'],
+        facts: ['building a fintech company called Ledgerly'],
+        summary: 'A founder who likes blue and async code, building Ledgerly.',
+        memory_count: 7,
+        last_interaction: '2026-09-12T23:40:02Z',
+      }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { getEntityProfile } = await import('@/lib/agent/zeromemory')
+    const result = await getEntityProfile('owner::acme')
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/api/v1/public/memory/v2/profile')
+    expect((init as RequestInit).method).toBe('POST')
+    const body = JSON.parse(String((init as RequestInit).body))
+    expect(body).toEqual({ entity_id: 'owner::acme' })
+
+    expect(result).toEqual({
+      entityId: 'owner::acme',
+      preferences: ['likes blue'],
+      behaviors: ['prefers async code'],
+      facts: ['building a fintech company called Ledgerly'],
+      summary: 'A founder who likes blue and async code, building Ledgerly.',
+      memoryCount: 7,
+      lastInteraction: '2026-09-12T23:40:02Z',
+    })
+  })
+
+  it('returns a real all-empty shape (never fabricated) for an entity with no profile yet', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ entity_id: 'owner::brand-new', preferences: [], behaviors: [], facts: [], summary: null, memory_count: 0, last_interaction: null }),
+    })))
+    const { getEntityProfile } = await import('@/lib/agent/zeromemory')
+    const result = await getEntityProfile('owner::brand-new')
+    expect(result?.summary).toBeNull()
+    expect(result?.memoryCount).toBe(0)
+    expect(result?.preferences).toEqual([])
+  })
+
+  it('is a no-op returning null when entityId is empty', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { getEntityProfile } = await import('@/lib/agent/zeromemory')
+    expect(await getEntityProfile('')).toBeNull()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('returns null (never throws) on a non-ok response or thrown error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) })))
+    const { getEntityProfile } = await import('@/lib/agent/zeromemory')
+    expect(await getEntityProfile('owner::acme')).toBeNull()
+  })
+})

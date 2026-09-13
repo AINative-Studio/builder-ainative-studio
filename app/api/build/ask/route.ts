@@ -37,6 +37,7 @@ import { resolveApp } from '@/lib/build/app-registry'
 import { processConversation } from '@/lib/agent/zeromemory'
 import { detectEditIntent } from '@/lib/build/edit-intent'
 import { ensureChatSummary } from '@/lib/build/chat-summary'
+import { ensureCompanyProfile } from '@/lib/build/company-profile'
 
 export const runtime = 'nodejs'
 
@@ -345,5 +346,12 @@ export async function GET(request: NextRequest) {
   const idea = String(params.get('idea') || '').slice(0, 3000)
   const summaryResult = await ensureChatSummary(scopeKey, companyName, idea, turns).catch(() => null)
 
-  return Response.json({ turns, summary: summaryResult?.summary || null })
+  // "What Cody has learned" (#693): a synthesized profile of real founder-Cody
+  // memories, reflected only when enough new ones have accumulated
+  // (ensureCompanyProfile is internally best-effort — never throws, never
+  // blocks the thread load). Independent of the chat summary above — this
+  // reads from ZeroMemory's own synthesis, not the raw turn history.
+  const profileResult = await ensureCompanyProfile(scopeKey).catch(() => null)
+
+  return Response.json({ turns, summary: summaryResult?.summary || null, profile: profileResult })
 }
