@@ -107,9 +107,26 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
     if (state.appSub) { go('live'); return }
     try {
       const r = await fetch('/api/build/my-companies')
-      const d = r.ok ? await r.json() : null
+      const d = await r.json().catch(() => null)
+      // Real bug found live (2026-09-13, core#7395): a real registry-read
+      // failure (d?.ok === false, or a non-ok response) used to be treated
+      // identically to "this account genuinely has no companies yet" —
+      // routing a returning founder with real, existing companies straight
+      // into the "Don't build from scratch" new-user funnel during an
+      // infrastructure hiccup, tempting them into starting a duplicate
+      // build. Land on My Companies instead, which now shows its own honest
+      // "couldn't load right now" state (MyCompanies.tsx) rather than a
+      // false empty list — never silently assume zero companies from a
+      // failed read.
+      if (!r.ok || d?.ok === false) { go('companies'); return }
       if (Array.isArray(d?.companies) && d.companies.length > 0) { go('companies'); return }
-    } catch { /* fall through to the new-user path */ }
+    } catch {
+      // A thrown fetch is the same real-failure case — land on My
+      // Companies so its own honest error state can render, not the
+      // new-user funnel.
+      go('companies')
+      return
+    }
     go('fork')
   }
 
