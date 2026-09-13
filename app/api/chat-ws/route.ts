@@ -26,7 +26,7 @@ import { GenerationCheckpoint, resolveDegradation } from '@/lib/generation-check
 import { stripGradients } from '@/lib/gradient-blocker'
 import { fetchContextualImages, formatImagesForPrompt, getFallbackImages } from '@/lib/services/unsplash.service'
 import { extractComponentCode } from '@/lib/agent/component-generation-tool'
-import { addComponentToMemory, formatMemoryForPrompt } from '@/lib/services/memory.service'
+import { recordComponent, formatDesignMemoryForPrompt } from '@/lib/build/design-memory'
 import { runOrchestratorAgent } from '@/lib/agent/subagents'
 import { useSubagents as resolveUseSubagents } from '@/lib/agent/generation-mode'
 import { parsePRDForBuildSteps } from '@/lib/prd-parser'
@@ -527,7 +527,11 @@ export async function POST(request: NextRequest) {
           // Build enhanced system prompt with theme + images + memory context
           // applyThemeToPrompt replaces THEME_PRIMARY/SECONDARY/ACCENT/DARK placeholders
           // so all code examples in the prompt use the actual selected theme colors
-          const memoryContext = formatMemoryForPrompt(responseId)
+          // Keyed on the real, stable `chatId` (not `responseId`, which falls back to
+          // a fresh nanoid() on a thread's first call and so can never round-trip
+          // anything written under it) — see design-memory.ts's own doc comment for
+          // the full history of why this replaced lib/services/memory.service.ts.
+          const memoryContext = await formatDesignMemoryForPrompt(chatId || '')
           const themedPrompt = applyThemeToPrompt(PROFESSIONAL_SYSTEM_PROMPT, selectedTheme)
           // #218: inject real AINative-primitive wiring into the CODEGEN prompt so
           // generated apps COMPOSE real endpoints (ZeroCommerce/ZeroInvoice/etc.)
@@ -1958,8 +1962,10 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               console.warn('[PERSIST] success save failed:', e?.message || e)
             }
 
-            // Save to conversation memory for context
-            addComponentToMemory(responseId, message, finalContent)
+            // Save to design memory for context (real ZeroDB persistence, keyed
+            // on the real chatId — see design-memory.ts's doc comment). Fire-
+            // and-forget: a slow/failed write must never delay the response.
+            if (chatId) void recordComponent(chatId, message, finalContent)
 
             // Send a clean conversational message to the chat (without code)
             // Make it context-aware based on what the user actually requested
