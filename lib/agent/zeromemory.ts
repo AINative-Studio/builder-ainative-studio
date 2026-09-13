@@ -304,3 +304,99 @@ export async function processConversation(
     // Best-effort — never block the caller's real work
   }
 }
+
+/**
+ * "What Cody has learned" reflection/profile (builder#693). Real gap this
+ * closes: /api/build/ask's own persist() already calls processConversation
+ * (above) with `scopeKey` as the entity — chatScopeKey(ownerKey, slug), the
+ * same STABLE per-founder-per-company identity #608's chat-summary and
+ * saveExchange persist real Q&A history under (not the ephemeral per-
+ * generation id storeGenerationMemory uses in chat-ws). That auto-extracts
+ * real facts from every real Q&A exchange into memories under `scopeKey` —
+ * exactly what reflectOnEntity below needs to synthesize from. No new
+ * memory-writing call was needed; the accumulation side already existed,
+ * only the synthesis (reflect) and readback (profile) sides were missing.
+ */
+export interface ReflectionResult {
+  entityId: string
+  insights: Array<Record<string, unknown>>
+  memoriesReviewed: number
+  message?: string
+}
+
+/**
+ * Real POST /reflect (core: app/services/memory/zeromemory.py `reflect()`,
+ * Refs #2960) — synthesizes an entity's raw memories into insights via an
+ * LLM call, server-side. Requires 3+ memories under `entityId` or the real
+ * endpoint returns an honest empty result ("Not enough memories to reflect
+ * (need 3+)") rather than an error — surfaced here as-is (insights: [],
+ * memoriesReviewed < 3) so the caller can decide what to show, never
+ * fabricated as a real synthesis.
+ */
+export async function reflectOnEntity(entityId: string): Promise<ReflectionResult | null> {
+  if (!entityId) return null
+  try {
+    const { apiUrl, apiKey } = getMemoryConfig()
+    if (!apiKey) return null
+    const res = await fetch(
+      `${apiUrl}/api/v1/public/memory/v2/reflect/${encodeURIComponent(entityId)}?namespace=${encodeURIComponent(`session:${entityId}`)}`,
+      { method: 'POST', headers: { 'x-api-key': apiKey }, signal: AbortSignal.timeout(25000) },
+    )
+    if (!res.ok) return null
+    const data = await res.json().catch(() => null)
+    if (!data) return null
+    return {
+      entityId: String(data.entity_id || entityId),
+      insights: Array.isArray(data.insights) ? data.insights : [],
+      memoriesReviewed: Number(data.memories_reviewed) || 0,
+      message: typeof data.message === 'string' ? data.message : undefined,
+    }
+  } catch {
+    return null
+  }
+}
+
+export interface EntityProfile {
+  entityId: string
+  preferences: string[]
+  behaviors: string[]
+  facts: string[]
+  summary: string | null
+  memoryCount: number
+  lastInteraction: string | null
+}
+
+/**
+ * Real GET-equivalent POST /profile (core: `get_profile()`) — reads back the
+ * entity's synthesized profile (built by the most recent reflectOnEntity
+ * call), or a real, honest all-empty shape with the true memory_count when
+ * no profile has been generated yet. Never fabricates preferences/behaviors/
+ * facts that don't exist server-side.
+ */
+export async function getEntityProfile(entityId: string): Promise<EntityProfile | null> {
+  if (!entityId) return null
+  try {
+    const { apiUrl, apiKey } = getMemoryConfig()
+    if (!apiKey) return null
+    const res = await fetch(`${apiUrl}/api/v1/public/memory/v2/profile`, {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entity_id: entityId }),
+      signal: AbortSignal.timeout(10000),
+    })
+    if (!res.ok) return null
+    const data = await res.json().catch(() => null)
+    if (!data) return null
+    return {
+      entityId: String(data.entity_id || entityId),
+      preferences: Array.isArray(data.preferences) ? data.preferences : [],
+      behaviors: Array.isArray(data.behaviors) ? data.behaviors : [],
+      facts: Array.isArray(data.facts) ? data.facts : [],
+      summary: typeof data.summary === 'string' ? data.summary : null,
+      memoryCount: Number(data.memory_count) || 0,
+      lastInteraction: typeof data.last_interaction === 'string' ? data.last_interaction : null,
+    }
+  } catch {
+    return null
+  }
+}

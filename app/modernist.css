@@ -1070,6 +1070,8 @@
 .m-chat-summary { background: var(--color-surface); border-left: 2px solid var(--color-accent); padding: 8px 10px; margin-bottom: 10px; flex-shrink: 0; }
 .m-chat-summary > span { font-size: 10px; letter-spacing: 0.04em; color: var(--text-body-60, #7d7979); }
 .m-chat-summary p { font-size: 13px; line-height: 1.5; margin: 4px 0 0; color: var(--text-body-85); }
+.m-profile-facts { margin: 6px 0 0; padding-left: 16px; font-size: 12px; line-height: 1.6; color: var(--text-body-85); }
+.m-profile-facts li { margin: 0; }
 .m-chat-log { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px; }
 .m-chat-user { align-self: flex-end; background: var(--color-surface); padding: 8px 12px; font-size: 13px; max-width: 80%; }
 .m-chat-cody { font-size: 13px; color: var(--text-body-85); line-height: 1.5; }

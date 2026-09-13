@@ -58,6 +58,10 @@ export function Live() {
   const [chatLoaded, setChatLoaded] = useState(false)
   // #608: "where we left off" handoff summary for a returning founder.
   const [chatSummary, setChatSummary] = useState<string | null>(null)
+  // #693: "what Cody has learned" — synthesized ZeroMemory profile.
+  const [companyProfile, setCompanyProfile] = useState<{
+    summary: string | null; preferences: string[]; behaviors: string[]; facts: string[]
+  } | null>(null)
   const [asking, setAsking] = useState(false)
   // Real bug (customer-reported, 2026-09-08): the chat log now scrolls
   // internally (app/modernist.css .m-chat-log) instead of overflowing the
@@ -487,6 +491,18 @@ export function Live() {
         // #608: "where we left off" handoff summary — a returning founder sees
         // this instead of having to re-read/re-explain the raw chat history.
         if (d?.summary) setChatSummary(String(d.summary))
+        // #693: "what Cody has learned" — a synthesized ZeroMemory profile.
+        // Only set when there's something real to show (a summary, or at
+        // least one preference/behavior/fact) — never render an all-empty
+        // card while memories are still accumulating.
+        if (d?.profile && (d.profile.summary || d.profile.preferences?.length || d.profile.behaviors?.length || d.profile.facts?.length)) {
+          setCompanyProfile({
+            summary: d.profile.summary || null,
+            preferences: Array.isArray(d.profile.preferences) ? d.profile.preferences : [],
+            behaviors: Array.isArray(d.profile.behaviors) ? d.profile.behaviors : [],
+            facts: Array.isArray(d.profile.facts) ? d.profile.facts : [],
+          })
+        }
         setChatLoaded(true)
       })
       .catch(() => { if (alive) setChatLoaded(true) })
@@ -1032,6 +1048,22 @@ export function Live() {
               <div className="m-chat-summary" data-testid="chat-summary">
                 <span className="m-mono">SINCE YOU WERE LAST HERE</span>
                 <p>{chatSummary}</p>
+              </div>
+            )}
+            {/* #693: "what Cody has learned" — a synthesized ZeroMemory profile
+                built from real founder-Cody exchanges. Independent of the raw
+                chat summary above (that's the last conversation; this is an
+                accumulated read on the founder/company overall). Only shown
+                once real content exists — never an empty placeholder card. */}
+            {chatLoaded && companyProfile && (
+              <div className="m-chat-summary" data-testid="company-profile">
+                <span className="m-mono">WHAT CODY HAS LEARNED</span>
+                {companyProfile.summary && <p>{companyProfile.summary}</p>}
+                {companyProfile.facts.length > 0 && (
+                  <ul className="m-profile-facts" data-testid="company-profile-facts">
+                    {companyProfile.facts.slice(0, 5).map((f, i) => <li key={i}>{f}</li>)}
+                  </ul>
+                )}
               </div>
             )}
             <div className="m-chat-log" data-testid="chat-log" ref={chatLogRef}>

@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   resolveApp: vi.fn(),
   loadChatWithFallback: vi.fn(),
   ensureChatSummary: vi.fn(),
+  ensureCompanyProfile: vi.fn(),
 }))
 
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
@@ -24,6 +25,10 @@ vi.mock('@/lib/build/chat-store', () => ({
   buildMessagesWithHistory: (history: any[], q: string) => [...history, { role: 'user', content: q }],
 }))
 vi.mock('@/lib/build/chat-summary', () => ({ ensureChatSummary: h.ensureChatSummary }))
+// #693: /api/build/ask's GET now also calls ensureCompanyProfile — mocked
+// here (a no-op resolving null) purely to keep this file's own scope on
+// chat-summary behavior, never a real network call regardless of test env.
+vi.mock('@/lib/build/company-profile', () => ({ ensureCompanyProfile: h.ensureCompanyProfile }))
 
 import { GET } from '@/app/api/build/ask/route'
 
@@ -35,6 +40,7 @@ beforeEach(() => {
   Object.values(h).forEach((fn) => fn.mockReset())
   h.auth.mockResolvedValue(null)
   h.resolveApp.mockResolvedValue(null)
+  h.ensureCompanyProfile.mockResolvedValue(null)
 })
 
 describe('GET /api/build/ask — chat summary (#608)', () => {
