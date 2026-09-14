@@ -20,6 +20,11 @@
  * generation trigger silently never fires because it gates on that in-memory-
  * only field. Existing callers that destructure only `{chatId}` are
  * unaffected by this extra field.
+ *
+ * `commsMode` (#743, additive): the founder's persisted comms-cadence
+ * selection ('agile' default | 'pairProgramming'), so the dashboard's mode
+ * selector can hydrate its current value on load instead of always showing
+ * the default. Existing callers unaffected by this extra field.
  */
 
 import { NextRequest } from 'next/server'
@@ -31,5 +36,10 @@ export async function GET(request: NextRequest) {
   const slug = new URL(request.url).searchParams.get('slug') || ''
   if (!slug) return Response.json({ error: 'slug required' }, { status: 400 })
   const entry = await resolveApp(slug).catch(() => null)
-  return Response.json({ slug, chatId: entry?.chatId ?? null, idea: entry?.idea || null })
+  return Response.json({
+    slug,
+    chatId: entry?.chatId ?? null,
+    idea: entry?.idea || null,
+    commsMode: entry?.commsMode || 'agile',
+  })
 }

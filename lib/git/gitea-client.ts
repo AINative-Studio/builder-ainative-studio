@@ -526,6 +526,91 @@ export async function mergeTaskPR(
 }
 
 // ---------------------------------------------------------------------------
+// Commit activity (#743 — pair-programming comms digest)
+// ---------------------------------------------------------------------------
+
+/** A minimal commit reference returned by Gitea's commit-list endpoint. */
+export interface GiteaCommit {
+  sha: string
+  html_url: string
+  commit: {
+    message: string
+    author: { name?: string; email?: string; date?: string }
+    committer: { name?: string; email?: string; date?: string }
+  }
+}
+
+/**
+ * Default page size when paginating getCommitsSince(). Kept small — a daily
+ * digest only needs recent activity, not a repo's full history, and each
+ * page is a real network round-trip.
+ */
+const COMMITS_PAGE_SIZE = 50
+/** Hard cap on pages fetched per call, so a pathologically busy repo (or a
+ *  `sinceIso` far in the past) can't hang the digest cron. */
+const MAX_COMMITS_PAGES = 10
+
+/**
+ * List commits on the default branch at/after `sinceIso` (#743, pair-
+ * programming digest). Returns [] when unconfigured, the repo doesn't exist
+ * (404), or the repo is empty (409 — Gitea's real EmptyRepository response for
+ * a freshly auto-inited repo with no commits yet) — a company with a
+ * provisioned-but-still-empty repo is a normal state, not an error.
+ * THROWS on a genuine API failure (auth/server error) so a real outage is
+ * visible rather than silently read as "no activity."
+ *
+ * VERIFIED LIVE (2026-09-14) against the real Gitea instance at
+ * git.ainative.studio (version 1.22.6, confirmed via GET /api/v1/version and
+ * the real swagger spec at /swagger.v1.json): unlike GitHub's commits API,
+ * Gitea's `GET /repos/{owner}/{repo}/commits` has NO `since`/`until` query
+ * parameter at all — the only filters are `sha` (branch/ref), `path`, `page`,
+ * `limit`, and `not`. So this does the filtering CLIENT-SIDE: it pages through
+ * commits (newest-first, Gitea's default order) with `stat=false&
+ * verification=false&files=false` (speedup flags the swagger spec documents,
+ * since a digest only needs sha/message/author/date), stopping as soon as it
+ * sees a commit strictly OLDER than `sinceIso` — no need to page through the
+ * repo's full history for a delta that's usually a handful of commits.
+ */
+export async function getCommitsSince(
+  org: string,
+  repo: string,
+  sinceIso: string,
+): Promise<GiteaCommit[]> {
+  if (!configured() || !org || !repo || !sinceIso) return []
+  const repoName = repoNameForSlug(repo)
+  const sinceMs = Date.parse(sinceIso)
+  if (Number.isNaN(sinceMs)) return []
+
+  const results: GiteaCommit[] = []
+  for (let page = 1; page <= MAX_COMMITS_PAGES; page++) {
+    const res = await giteaFetch(
+      `/repos/${encodeURIComponent(org)}/${encodeURIComponent(repoName)}/commits` +
+        `?stat=false&verification=false&files=false&page=${page}&limit=${COMMITS_PAGE_SIZE}`,
+      { method: 'GET' },
+    )
+    if (res.status === 404) return []
+    // 409 = EmptyRepository (Gitea's real response for a repo with no commits yet).
+    if (res.status === 409) return []
+    if (!res.ok) throw new Error(`gitea getCommitsSince ${org}/${repoName} failed: ${res.status}`)
+    const commits = (await res.json()) as GiteaCommit[]
+    if (!Array.isArray(commits) || commits.length === 0) break
+
+    let hitOlder = false
+    for (const c of commits) {
+      const dateStr = c.commit?.author?.date || c.commit?.committer?.date
+      const ts = dateStr ? Date.parse(dateStr) : NaN
+      if (!Number.isNaN(ts) && ts < sinceMs) {
+        hitOlder = true
+        break
+      }
+      results.push(c)
+    }
+    if (hitOlder || commits.length < COMMITS_PAGE_SIZE) break
+  }
+  return results
+}
+
+// ---------------------------------------------------------------------------
 // Repo file fetch (#373/#374 — read a company's CURRENT generated app before
 // implementing a backlog task against it, and before coverage-verifying the
 // result)

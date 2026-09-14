@@ -250,13 +250,30 @@ export interface AppEntry {
   // Founder-facing "don't proactively contact me" opt-out (#742). Covers any
   // automated outreach Cody initiates on its own initiative (nightly-loop
   // comms outreach today; #743's agile-standup/pair-programming digest email
-  // is expected to check this same field once it lands). Absent/false =
-  // proactive outreach is allowed (opt-out, not opt-in — matches every other
-  // default-on automation in this registry, e.g. `enrolled`). Does NOT affect
-  // outreach the founder explicitly triggers themselves (e.g. company-comms
-  // used from a founder-initiated chat action).
+  // checks this same field — see runCommsDigestSweep in
+  // app/api/cron/comms-digest). Absent/false = proactive outreach is allowed
+  // (opt-out, not opt-in — matches every other default-on automation in this
+  // registry, e.g. `enrolled`). Does NOT affect outreach the founder
+  // explicitly triggers themselves (e.g. company-comms used from a
+  // founder-initiated chat action).
   commsOptOut?: boolean
   commsOptOutAt?: string
+  // Founder-facing comms cadence mode (#743). Absent/'agile' = the default:
+  // Cody emails a morning "yesterday / today / blockers" standup, grounded in
+  // the nightly loop's own real per-company results (see the #743 cron for
+  // where this is read). 'pairProgramming' switches the digest to a
+  // GitHub-style commit/PR activity summary sourced from the company's Gitea
+  // repo instead. Every enrolled company gets ONE of these by default — no
+  // opt-in required (per the issue's explicit "ideally it's set in agile mode
+  // by default").
+  commsMode?: 'agile' | 'pairProgramming'
+  // Delta marker for the pair-programming digest (#743): the last time a
+  // comms digest was successfully SENT for this company, so the next run's
+  // getCommitsSince() call is a true delta (only new activity) rather than
+  // always re-summarizing the repo's entire history. Updated by the cron
+  // AFTER a successful sendCompanyEmail — never advanced on a failed send, so
+  // a transient failure doesn't silently drop that day's activity.
+  lastDigestAt?: string
   createdAt: string
 }
 
@@ -406,6 +423,39 @@ export async function setAppZeroVoice(
     zerovoiceNumberId: fields.numberId,
     zerovoiceE164: fields.e164,
   })
+}
+
+/**
+ * Persist a founder's chosen comms cadence mode (#743) — the dashboard
+ * "Agile standup" / "Pair programming" selector. Same shape as
+ * setAppZeroVoice: its own setter rather than growing setAppProvisioned's
+ * checkout-batch param bag. Idempotent (no-op success) when already set to
+ * the same mode, so re-selecting the current mode never appends a churn row.
+ * No-op (false) if the slug isn't registered or the mode is invalid.
+ */
+export async function setAppCommsMode(
+  slug: string,
+  mode: 'agile' | 'pairProgramming',
+): Promise<boolean> {
+  if (mode !== 'agile' && mode !== 'pairProgramming') return false
+  const existing = await resolveApp(slug)
+  if (!existing) return false
+  if ((existing.commsMode || 'agile') === mode) return true
+  return registerApp({ ...existing, commsMode: mode })
+}
+
+/**
+ * Record a successful comms-digest send (#743) — advances `lastDigestAt` so
+ * the NEXT pair-programming digest's getCommitsSince() call is a true delta.
+ * Called ONLY after sendCompanyEmail() actually succeeds — never advanced on
+ * a failed send, so a transient failure doesn't silently drop that day's
+ * activity from the following digest.
+ */
+export async function setAppLastDigestAt(slug: string, atIso: string): Promise<boolean> {
+  if (!atIso) return false
+  const existing = await resolveApp(slug)
+  if (!existing) return false
+  return registerApp({ ...existing, lastDigestAt: atIso })
 }
 
 /**
