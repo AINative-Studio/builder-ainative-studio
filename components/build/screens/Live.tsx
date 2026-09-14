@@ -138,6 +138,14 @@ export function Live() {
   // confirmed not provisioned" — needed so neither the auto-provision trigger
   // nor the 4th CTA state (below) fires/flashes before the real status is known.
   const [provision, setProvision] = useState<{ provisioned: boolean; busy: boolean; checked: boolean; projectId?: string }>({ provisioned: false, busy: false, checked: false })
+  // #748: whether the most recent provision attempt (auto or manual) hit the
+  // transient "not registered yet" state — this company's own landing-page
+  // app (a detached background generation) hasn't finished registering, so
+  // /api/build/provision genuinely has nothing to attach a cloud project to
+  // yet. Distinct from a real failure: surfaced as "still finishing setup"
+  // rather than implying anything is broken, since auto-provision is already
+  // retrying with backoff in the background.
+  const [provisionPending, setProvisionPending] = useState(false)
   // Real visitor count (#483/#563) — was a permanent, hardcoded 0 with the copy
   // "Cody grows these nightly," but nothing ever grew it. Now reads the real
   // count of pageview beacons the generated landing page fires on mount.
@@ -704,9 +712,19 @@ export function Live() {
   // Provision the persistent cloud for this company (#243): a real per-company
   // ZeroDB project + persistent deploy target. Requires an account (the project
   // is owned by the founder). Refreshes the systems grid to read real data after.
-  const provisionCompany = async () => {
-    if (provision.busy || provision.provisioned) return
-    if (!signedIn) { dispatch({ type: 'GOTO_SCREEN', screen: 'signup' }); return }
+  //
+  // #748 follow-up (found via real Playwright verification against prod, not
+  // assumed): a BRAND-NEW company's registry row (builder_app_registry, keyed
+  // by chatId) is written by the DETACHED background /api/build/company-app
+  // generation this same screen kicks off — which can take real minutes (its
+  // own poll budget is ~5 min). /api/build/provision 404s with reason
+  // 'not_registered' until that lands. This is a TRANSIENT state, not a real
+  // failure — the auto-provision effect below must retry through it rather
+  // than giving up after one attempt, or a founder on a genuinely fresh
+  // company falls back to a banner whose CTA also just silently fails.
+  const provisionCompany = async (): Promise<'ok' | 'not_registered' | 'error'> => {
+    if (provision.busy || provision.provisioned) return 'ok'
+    if (!signedIn) { dispatch({ type: 'GOTO_SCREEN', screen: 'signup' }); return 'error' }
     setProvision((p) => ({ ...p, busy: true }))
     try {
       const res = await fetch('/api/build/provision', {
@@ -716,16 +734,21 @@ export function Live() {
       const d = await res.json().catch(() => null)
       if (d?.ok) {
         setProvision({ provisioned: true, busy: false, checked: true, projectId: d.zerodbProjectId })
+        setProvisionPending(false)
         // Re-read systems now that they point at the real provisioned project.
         fetch(`/api/build/systems?companyId=${encodeURIComponent(companyId)}&idea=${encodeURIComponent(state.idea || '')}`)
           .then((r) => (r.ok ? r.json() : null))
           .then((s) => { if (s?.systems) setSystems(s.systems) })
           .catch(() => {})
-      } else {
-        setProvision((p) => ({ ...p, busy: false, checked: true }))
+        return 'ok'
       }
+      setProvision((p) => ({ ...p, busy: false, checked: true }))
+      const notRegistered = d?.reason === 'not_registered'
+      setProvisionPending(notRegistered)
+      return notRegistered ? 'not_registered' : 'error'
     } catch {
       setProvision((p) => ({ ...p, busy: false, checked: true }))
+      return 'error'
     }
   }
 
@@ -734,20 +757,44 @@ export function Live() {
   // incident: an admin-created company ("Clearpath") had a live, reachable
   // dashboard but was NEVER provisioned — no owner, no ZeroDB project, no
   // primitives, no auth — because provisioning only ever happened via that one
-  // manual button. Fires once, automatically, the first time we know for sure
-  // (via the GET above, `checked: true`) that a SIGNED-IN founder's real,
-  // registered company (`companyId` resolved) is not yet provisioned.
+  // manual button. Fires the first time we know for sure (via the GET above,
+  // `checked: true`) that a SIGNED-IN founder's company is not yet
+  // provisioned, and RETRIES with backoff on a 'not_registered' response
+  // (real, live-observed race: a brand-new company's registry row is written
+  // by the detached background company-app generation this screen kicks off,
+  // which can take real minutes — the first auto-provision attempt landing
+  // before that completes must not be treated as a permanent failure).
   // Idempotent by construction: provisionCompany() itself no-ops when
   // `provision.busy || provision.provisioned`, and /api/build/provision's own
   // handler short-circuits on `existing.zerodbProjectId` — so calling this
-  // more than once (re-render, re-mount, StrictMode double-invoke) is safe.
-  const autoProvisionAttempted = useRef(false)
+  // more than once (re-render, re-mount, StrictMode double-invoke, or a
+  // retry) is safe.
+  const autoProvisionAttemptsRef = useRef(0)
+  const autoProvisionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const MAX_AUTO_PROVISION_ATTEMPTS = 8 // ~1min + 2+3+4+5+6+7+8min backoff ≈ covers company-app's ~5min budget with margin
   useEffect(() => {
     if (!signedIn || !companyId) return
     if (!provision.checked || provision.provisioned || provision.busy) return
-    if (autoProvisionAttempted.current) return
-    autoProvisionAttempted.current = true
-    provisionCompany()
+    if (autoProvisionTimerRef.current) return // a retry is already scheduled
+    if (autoProvisionAttemptsRef.current >= MAX_AUTO_PROVISION_ATTEMPTS) return
+
+    const attempt = async () => {
+      autoProvisionAttemptsRef.current += 1
+      const result = await provisionCompany()
+      if (result === 'not_registered' && autoProvisionAttemptsRef.current < MAX_AUTO_PROVISION_ATTEMPTS) {
+        // Linear backoff (1min, 2min, 3min, …) — company-app generation is a
+        // real background LLM+deploy pipeline, not a fast operation.
+        autoProvisionTimerRef.current = setTimeout(() => {
+          autoProvisionTimerRef.current = null
+          attempt()
+        }, autoProvisionAttemptsRef.current * 60_000)
+      }
+    }
+    attempt()
+
+    return () => {
+      if (autoProvisionTimerRef.current) { clearTimeout(autoProvisionTimerRef.current); autoProvisionTimerRef.current = null }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signedIn, companyId, provision.checked, provision.provisioned, provision.busy])
 
@@ -828,9 +875,11 @@ export function Live() {
         <div className="m-live-funnel is-provisioning" data-testid="provisioning-banner">
           <span>
             <strong>{company} is yours — setting it up now.</strong>{' '}
-            {provision.busy || !provision.checked
-              ? "Cody is provisioning your real cloud (database, primitives) — this happens automatically, no action needed."
-              : "Nothing's been provisioned yet. Click below to set up your real database and primitives now — this normally happens automatically."}
+            {provisionPending
+              ? "Still finishing your company's initial build — cloud setup will pick up automatically the moment that's done. No action needed."
+              : provision.busy || !provision.checked
+                ? "Cody is provisioning your real cloud (database, primitives) — this happens automatically, no action needed."
+                : "Nothing's been provisioned yet. Click below to set up your real database and primitives now — this normally happens automatically."}
           </span>
           <div className="m-live-funnel-cta">
             <button
@@ -839,7 +888,7 @@ export function Live() {
               onClick={provisionCompany}
               disabled={provision.busy}
             >
-              {provision.busy ? 'Provisioning…' : 'Provision cloud now →'}
+              {provision.busy ? 'Provisioning…' : provisionPending ? 'Try again →' : 'Provision cloud now →'}
             </button>
           </div>
         </div>
