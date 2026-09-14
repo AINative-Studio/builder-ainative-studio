@@ -33,6 +33,8 @@ import { GrowthPanel } from '@/components/build/GrowthPanel'
 import { WebsitePanel } from '@/components/build/WebsitePanel'
 import { FeedbackPulse } from '@/components/build/FeedbackPulse'
 import { ZeroInvoiceConnect } from '@/components/build/ZeroInvoiceConnect'
+import { UPLOAD_ACCEPT_ATTR } from '@/lib/build/media-upload'
+import { DOCUMENT_UPLOAD_ACCEPT_ATTR } from '@/lib/build/document-upload'
 
 /** Display label for an active paid tier (#241). */
 const PLAN_LABEL: Record<ActivePlan, string> = {
@@ -45,7 +47,13 @@ const PLAN_META_VALUE: Record<string, number> = {
   pro: 49, launch: 49, business: 149, company: 149, enterprise: 999, cody_vcto: 4999,
 }
 
-interface ChatLine { role: 'user' | 'cody'; text: string }
+/** A file attached to a chat turn (#741) — mirrors lib/build/chat-store.ts's
+ *  ChatAttachment shape (kept independent since this is a client component). */
+interface ChatAttachment { fileId: string; url: string; contentType: string; fileName: string }
+interface ChatLine { role: 'user' | 'cody'; text: string; attachments?: ChatAttachment[] }
+/** An attachment mid-upload or ready-to-send in the composer, before the
+ *  message is sent (#741). */
+interface PendingAttachment extends ChatAttachment { uploading?: boolean; error?: string }
 
 export function Live() {
   const { state, dispatch } = useBuild()
@@ -53,6 +61,12 @@ export function Live() {
   const [msg, setMsg] = useState('')
   const [enrolled, setEnrolled] = useState(false)
   const [chat, setChat] = useState<ChatLine[]>([])
+  // Chat attachments (#741): files picked/uploaded in the composer, attached
+  // to the NEXT sent message. Uploaded immediately on selection so the
+  // founder sees a real preview/chip before hitting Send.
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([])
+  const [attachError, setAttachError] = useState('')
+  const attachInputRef = useRef<HTMLInputElement>(null)
   // Whether the persisted conversation has been loaded yet (#52) — gates the
   // honest empty state so we don't flash "ask me anything" before hydration.
   const [chatLoaded, setChatLoaded] = useState(false)
@@ -539,17 +553,71 @@ export function Live() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId])
 
+  // Attach a file to the chat (#741): upload IMMEDIATELY on selection (via the
+  // real, auth-gated /api/build/ask/attachment route — same storage as the
+  // Media/Documents panels) so the composer shows a real chip/preview before
+  // Send, rather than deferring the upload to send-time.
+  const onAttachChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // allow re-picking the same file
+    if (!file) return
+    setAttachError('')
+    const tempId = `pending-${Date.now()}`
+    setPendingAttachments((list) => [
+      ...list,
+      { fileId: tempId, url: '', contentType: file.type, fileName: file.name, uploading: true },
+    ])
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      fd.append('companyId', companyId)
+      const res = await fetch('/api/build/ask/attachment', { method: 'POST', body: fd })
+      const d = await res.json().catch(() => null)
+      if (res.status === 401) {
+        setAttachError('You’ll need to sign in before I can take attachments.')
+        setPendingAttachments((list) => list.filter((a) => a.fileId !== tempId))
+        return
+      }
+      if (!res.ok || !d?.fileId) {
+        setAttachError(d?.message || 'I couldn’t attach that file — try again.')
+        setPendingAttachments((list) => list.filter((a) => a.fileId !== tempId))
+        return
+      }
+      setPendingAttachments((list) =>
+        list.map((a) => (a.fileId === tempId ? { fileId: d.fileId, url: d.url, contentType: d.contentType, fileName: d.fileName } : a)),
+      )
+    } catch {
+      setAttachError('Connection hiccup — try attaching again.')
+      setPendingAttachments((list) => list.filter((a) => a.fileId !== tempId))
+    }
+  }
+
+  const removeAttachment = (fileId: string) => {
+    setPendingAttachments((list) => list.filter((a) => a.fileId !== fileId))
+  }
+
   const ask = async () => {
     const q = msg.trim()
-    if (!q || asking) return
-    setChat((c) => [...c, { role: 'user', text: q }])
+    const ready = pendingAttachments.filter((a) => !a.uploading && a.fileId && a.url)
+    if ((!q && ready.length === 0) || asking) return
+    if (pendingAttachments.some((a) => a.uploading)) return // still uploading — wait
+    const attachmentsForTurn: ChatAttachment[] = ready.map(({ fileId, url, contentType, fileName }) => ({ fileId, url, contentType, fileName }))
+    setChat((c) => [...c, { role: 'user', text: q, attachments: attachmentsForTurn.length > 0 ? attachmentsForTurn : undefined }])
     setMsg('')
+    setPendingAttachments([])
     setAsking(true)
     try {
       const res = await fetch('/api/build/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: q, idea: state.idea, companyName: company, track: state.track, companyId }),
+        body: JSON.stringify({
+          question: q,
+          idea: state.idea,
+          companyName: company,
+          track: state.track,
+          companyId,
+          attachments: attachmentsForTurn.length > 0 ? attachmentsForTurn : undefined,
+        }),
       })
       const data = await res.json().catch(() => null)
       setChat((c) => [...c, { role: 'cody', text: data?.answer || "I couldn't reach my brain just now — try again in a moment." }])
@@ -1103,19 +1171,61 @@ export function Live() {
               )}
               {chat.map((line, i) =>
                 line.role === 'user'
-                  ? <p key={i} className="m-chat-user">{line.text}</p>
+                  ? (
+                    <div key={i} className="m-chat-user-turn">
+                      {line.text && <p className="m-chat-user">{line.text}</p>}
+                      {line.attachments && line.attachments.length > 0 && (
+                        <div className="m-chat-attachments" data-testid="chat-sent-attachments">
+                          {line.attachments.map((a) => (
+                            <span key={a.fileId} className="m-chip">{a.fileName}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
                   : <p key={i} className="m-chat-cody"><span className="m-glyph">◇</span> {line.text}</p>
               )}
               {asking && <p className="m-chat-cody m-mono"><span className="m-glyph">◇</span> thinking…</p>}
             </div>
+            {/* Attachment chips (#741) — real preview before Send, not a fire-and-forget. */}
+            {pendingAttachments.length > 0 && (
+              <div className="m-chat-attachments" data-testid="chat-attachments">
+                {pendingAttachments.map((a) => (
+                  <span key={a.fileId} className="m-chip" data-testid="chat-attachment-chip">
+                    {a.uploading ? `Uploading ${a.fileName}…` : a.fileName}
+                    <button
+                      type="button"
+                      aria-label={`Remove ${a.fileName}`}
+                      onClick={() => removeAttachment(a.fileId)}
+                    >×</button>
+                  </span>
+                ))}
+              </div>
+            )}
+            {attachError && <p className="m-chat-attach-error" data-testid="chat-attach-error">{attachError}</p>}
             <div className="m-chat-input">
+              <input
+                ref={attachInputRef}
+                type="file"
+                data-testid="chat-attach-input"
+                accept={`${UPLOAD_ACCEPT_ATTR},${DOCUMENT_UPLOAD_ACCEPT_ATTR}`}
+                onChange={onAttachChange}
+                style={{ display: 'none' }}
+              />
+              <button
+                type="button"
+                className="m-chat-attach-btn"
+                data-testid="chat-attach"
+                aria-label="Attach a file"
+                onClick={() => attachInputRef.current?.click()}
+              >📎</button>
               <input
                 value={msg}
                 onChange={(e) => setMsg(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && ask()}
                 placeholder="Message Cody…"
               />
-              <button className="btn-primary" onClick={ask} disabled={asking}>Send</button>
+              <button className="btn-primary" onClick={ask} disabled={asking || pendingAttachments.some((a) => a.uploading)}>Send</button>
             </div>
           </div>
         </div>

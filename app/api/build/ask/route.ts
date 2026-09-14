@@ -32,6 +32,7 @@ import {
   loadChatWithFallback,
   saveExchange,
   buildMessagesWithHistory,
+  type ChatAttachment,
 } from '@/lib/build/chat-store'
 import { resolveApp } from '@/lib/build/app-registry'
 import { processConversation } from '@/lib/agent/zeromemory'
@@ -39,6 +40,8 @@ import { detectEditIntent } from '@/lib/build/edit-intent'
 import { ensureChatSummary } from '@/lib/build/chat-summary'
 import { ensureCompanyProfile } from '@/lib/build/company-profile'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
+import { fetchFileDownload } from '@/lib/build/media-schedule'
+import { resolveAttachmentBlocks, type ChatAttachmentRef } from '@/lib/build/chat-attachment'
 
 export const runtime = 'nodejs'
 
@@ -122,10 +125,46 @@ async function fetchBacklogSummary(companyId: string, idea: string, companyName:
   }
 }
 
+/**
+ * Fetch + base64-encode an attachment's image bytes for a real Anthropic
+ * multimodal content block (#741). Resolves the file's presigned download URL
+ * via `fetchFileDownload` (the SAME resolver the media/documents serve routes
+ * use — presigns expire, so this must be looked up fresh per request, never
+ * cached) then fetches the bytes directly. Returns null on any failure (a
+ * stale fileId, an expired/broken presign, a transient network error) so the
+ * caller can degrade to an honest text mention instead of losing the request.
+ * Real I/O, kept out of lib/build/chat-attachment.ts so that module stays a
+ * pure, network-free unit under test.
+ */
+async function resolveImageBase64(attachment: ChatAttachmentRef): Promise<string | null> {
+  try {
+    const download = await fetchFileDownload(attachment.fileId)
+    if (!download?.url) return null
+    const res = await fetch(download.url, { signal: AbortSignal.timeout(15_000) })
+    if (!res.ok) return null
+    const bytes = new Uint8Array(await res.arrayBuffer())
+    if (bytes.byteLength === 0) return null
+    return Buffer.from(bytes).toString('base64')
+  } catch {
+    return null
+  }
+}
+
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null)
   const question = String(body?.question || '').trim()
-  if (!question) return Response.json({ error: 'question required' }, { status: 400 })
+  const attachments: ChatAttachment[] = Array.isArray(body?.attachments)
+    ? body.attachments
+        .filter((a: any) => a && a.fileId && a.url && a.contentType && a.fileName)
+        .slice(0, 5)
+        .map((a: any) => ({
+          fileId: String(a.fileId).slice(0, 200),
+          url: String(a.url).slice(0, 500),
+          contentType: String(a.contentType).slice(0, 100),
+          fileName: String(a.fileName).slice(0, 200),
+        }))
+    : []
+  if (!question && attachments.length === 0) return Response.json({ error: 'question required' }, { status: 400 })
 
   const idea = String(body?.idea || '').slice(0, 3000)
   const companyName = String(body?.companyName || 'the company').slice(0, 120)
@@ -229,7 +268,12 @@ export async function POST(request: NextRequest) {
     `domain, real user authentication, production backend hardening, and 24/7 autonomous ops.\n` +
     `- REAL EDITING CAPABILITIES ON THIS DASHBOARD — do not invent workflows beyond these, even if ` +
     `they sound plausible for a product like this:\n` +
-    `  * There is NO in-chat file upload. This chat is text-only.\n` +
+    `  * There IS a real in-chat file upload (#741): the attach button next to this chat lets the ` +
+    `founder share an image or reference document directly in the conversation. Uploaded images are ` +
+    `sent to you as real image content, so you genuinely see them — describe what you actually see, ` +
+    `don't guess. Uploaded documents (PDF/DOC/DOCX/TXT/MD/CSV) are NOT yet text-extracted for you — you ` +
+    `know the file's name and type, but not its contents; ask the founder to paste or describe the ` +
+    `relevant part if you need specifics. This chat is otherwise plain text.\n` +
     (editTriggered
       ? `  * REAL EDIT IN PROGRESS: this founder's message IS a change request, and it has just been ` +
         `dispatched as a REAL tracked task — the exact same pipeline (implement → commit → coverage-` +
@@ -265,9 +309,18 @@ export async function POST(request: NextRequest) {
 
   const tier = modelsForTier(await resolveTier())
 
+  // Real multimodal content (#741): resolve any attachments on THIS turn into
+  // Anthropic content blocks — images become real base64 image blocks (Cody
+  // actually sees them), documents become an honest text mention (name/type
+  // only, no content). Only ever resolves the CURRENT turn's attachments —
+  // history turns stay plain text (see buildMessagesWithHistory's docblock).
+  const attachmentBlocks = attachments.length > 0
+    ? await resolveAttachmentBlocks(attachments, resolveImageBase64)
+    : []
+
   // Conversation window: prior turns + the current question, so follow-ups
   // ("make it cheaper", "and add auth") resolve against real context (#52).
-  const messages = buildMessagesWithHistory(history, question)
+  const messages = buildMessagesWithHistory(history, question, undefined, attachmentBlocks)
 
   /**
    * Persist the completed exchange. Real bug found live (#608 investigation):
@@ -283,14 +336,28 @@ export async function POST(request: NextRequest) {
    * fire-and-forget — it's a genuinely optional enrichment, not required
    * for the exchange itself to be durably saved.
    */
+  // appendChatTurn requires non-empty text — a founder who sends ONLY an
+  // attachment (no typed question) still needs a persisted user turn, so fall
+  // back to a short honest placeholder rather than silently dropping the turn.
+  const persistedQuestion = question || (attachments.length > 0 ? '[Sent an attachment]' : question)
+
   const persist = async (answer: string) => {
     if (scopeKey && answer) {
       // saveExchange/appendChatTurn already catch their own errors internally
       // and resolve to false rather than reject — this catch is defense in
       // depth, so a truly unexpected throw still can't break the chat reply.
-      await saveExchange(scopeKey, question, answer, companyProjectId).catch(() => {})
+      await saveExchange(scopeKey, persistedQuestion, answer, companyProjectId, attachments).catch(() => {})
+      // processConversation (fact extraction) expects plain-text message
+      // content — flatten any multimodal blocks from this turn to their text
+      // portion (image bytes carry nothing extractable as a durable memory).
+      const textMessages = messages.map((m) => ({
+        role: m.role,
+        content: Array.isArray(m.content)
+          ? m.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n')
+          : m.content,
+      }))
       void processConversation(
-        [...messages, { role: 'assistant', content: answer }],
+        [...textMessages, { role: 'assistant', content: answer }],
         scopeKey,
       )
     }
@@ -311,11 +378,28 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Fallback: AINative chat-completions
+  // Fallback: AINative chat-completions. This path uses OpenAI's
+  // chat-completions message shape, not Anthropic's — an Anthropic
+  // `{type: 'image', source: {...}}` block would be meaningless here, so
+  // multimodal turns degrade to their text content only (the question text +
+  // an honest mention that an image was attached) rather than sending a
+  // malformed request. Real image content only ever reaches the primary
+  // Claude path above; this fallback firing on a multimodal turn is already a
+  // degraded path (the primary provider failed), so losing image vision here
+  // (while keeping the text/mentions) is an acceptable, honest trade-off.
+  const fallbackMessages = messages.map((m) => ({
+    role: m.role,
+    content: Array.isArray(m.content)
+      ? m.content
+          .map((b) => (b.type === 'text' ? b.text : '[an image was attached — not visible on this fallback path]'))
+          .join('\n')
+          .trim() || '[an image was attached — not visible on this fallback path]'
+      : m.content,
+  }))
   try {
     const res = await ainative.chat.completions.create({
       model: tier.ainativeModel, max_tokens: 600, temperature: 0.7,
-      messages: [{ role: 'system', content: system }, ...messages],
+      messages: [{ role: 'system', content: system }, ...fallbackMessages],
     })
     const answer = res.choices?.[0]?.message?.content?.trim()
     if (answer) { await persist(answer); return Response.json({ answer, provider: 'ainative', model: tier.ainativeModel }) }

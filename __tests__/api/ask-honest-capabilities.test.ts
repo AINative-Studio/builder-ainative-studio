@@ -78,12 +78,21 @@ describe('POST /api/build/ask — honest capability grounding', () => {
     vi.restoreAllMocks()
   })
 
-  it('the system prompt tells Cody there is no in-chat file upload', async () => {
+  it('the system prompt tells Cody in-chat file upload is real (#741), not that it does not exist', async () => {
     const claude = fakeClaude('Honest answer.')
     h.getClaudeCompletion.mockReturnValue(claude)
     await POST(req({ question: 'Can you update the logo?', idea: 'a social crossposting tool', companyName: 'Beacon', track: 'company' }))
     const system = String(claude.create.mock.calls[0][0].system)
-    expect(system).toMatch(/no in-chat file upload/i)
+    expect(system).toMatch(/real in-chat file upload/i)
+    expect(system).not.toMatch(/no in-chat file upload/i)
+  })
+
+  it('the system prompt is honest that uploaded documents are not yet text-extracted', async () => {
+    const claude = fakeClaude('Honest answer.')
+    h.getClaudeCompletion.mockReturnValue(claude)
+    await POST(req({ question: 'Can you update the logo?', idea: 'a social crossposting tool', companyName: 'Beacon', track: 'company' }))
+    const system = String(claude.create.mock.calls[0][0].system)
+    expect(system).toMatch(/not yet text-extracted/i)
   })
 
   it('the system prompt tells Cody a real logo upload exists (#492)', async () => {
