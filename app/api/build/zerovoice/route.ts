@@ -33,15 +33,15 @@
 import { NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { auth } from '@/app/(auth)/auth'
-import { getPlanStatus } from '@/lib/ainative/plan'
+import { getPlanStatus, isPaidTier } from '@/lib/ainative/plan'
 import { resolveApp, setAppZeroVoice } from '@/lib/build/app-registry'
 import { provisionZeroVoiceNumber, zeroVoiceProvisionEnabled } from '@/lib/build/zerovoice'
 import { storeFounderCredential } from '@/lib/build/primitive-credentials'
 
 export const runtime = 'nodejs'
 
-// Same set provision/route.ts already gates real provisioning behind.
-const PAID_PLANS = new Set(['launch', 'company', 'pro', 'business', 'enterprise', 'cody_vcto'])
+// #762: the paid-tier test now lives in ONE place (lib/ainative/plan.ts's
+// isPaidTier) instead of a Set copy-pasted across four routes.
 
 /**
  * #522: mirrors provision/route.ts's captureFounderCredentialForProxy exactly
@@ -79,16 +79,29 @@ export async function POST(request: NextRequest) {
   const token = (session as any)?.accessToken
   if (!token) return Response.json({ ok: false, reason: 'signin' })
 
+  // #762: the tier is resolved from core's /api/v1/auth/me (the single
+  // authoritative source), NOT the separate, intermittently-60s
+  // /api/v1/subscription endpoint whose timeouts used to silently demote real
+  // paying Enterprise customers to 'hobbyist' and reject them here.
   let tier = 'hobbyist'
+  let tierResolved = false
   try {
     const status = await getPlanStatus(token)
     tier = status.tier || 'hobbyist'
-  } catch {
+    tierResolved = true
+  } catch (err) {
     // Fail closed to the un-paid default — never grant a real, billed
-    // resource on an unresolved tier lookup.
+    // resource on an unresolved tier lookup — but say so out loud, and
+    // report it distinctly below rather than as a plain entitlement gap.
+    console.error(
+      `[zerovoice] tier lookup threw for slug "${slug}" — failing closed. ` +
+        `This is NOT proof the user is unpaid: ${err instanceof Error ? err.message : String(err)}`,
+    )
   }
-  if (!PAID_PLANS.has(tier)) {
-    return Response.json({ ok: false, reason: 'tier', tier })
+  if (!isPaidTier(tier)) {
+    // `unverified` tells the founder (and Cody) the difference between "your
+    // plan doesn't include this" and "we couldn't check your plan right now".
+    return Response.json({ ok: false, reason: 'tier', tier, unverified: !tierResolved })
   }
 
   const app = await resolveApp(slug).catch(() => null)

@@ -11,9 +11,8 @@
  */
 
 import { auth } from '@/app/(auth)/auth'
+import { fetchCorePlanIdentity } from '@/lib/ainative/resolve-plan'
 import type { ActivePlan } from '@/lib/build/state'
-
-const CORE = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 
 // Map core plan ids → Builder ActivePlan. hobbyist/free are NOT a paid tier.
 const PLAN_MAP: Record<string, ActivePlan> = {
@@ -59,42 +58,41 @@ export async function resolveActivePlan(): Promise<ResolvedPlan> {
   const session = await auth().catch(() => null)
   const token = (session as any)?.accessToken as string | undefined
   if (!token) return NONE
+  return resolveActivePlanForToken(token)
+}
 
-  try {
-    const res = await fetch(`${CORE}/api/v1/auth/me`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(15000),
-    })
-    if (!res.ok) return { ...NONE, signedIn: true, verified: false }
-    const me = await res.json().catch(() => null)
-    const inner = me?.data || me || {}
+/**
+ * Same resolution, for a caller that ALREADY holds the access token (#762).
+ *
+ * This is the ONE authoritative tier source in Builder. `lib/ainative/plan.ts`'s
+ * getPlanStatus() now routes through here instead of reading core's separate
+ * `GET /api/v1/subscription` endpoint, which was the #762 bug: that endpoint
+ * intermittently takes >20s (measured live: 60.1s, vs /auth/me's 0.09s), blew
+ * past ainativeFetch's timeout, and landed in a bare `catch { tier = 'hobbyist' }`
+ * — silently demoting a real, paying Enterprise customer and blocking them from
+ * ZeroVoice provisioning, with nothing in the logs to distinguish a core outage
+ * from a genuine Hobbyist account.
+ */
+export async function resolveActivePlanForToken(token: string): Promise<ResolvedPlan> {
+  if (!token) return NONE
 
-    // Staff bypass (#309): admins get full Builder access (⇒ enterprise).
-    const role = String(inner.role || me?.role || '').toUpperCase()
-    const isAdmin = role === 'ADMIN' || role === 'SUPERUSER' ||
-      inner.is_superuser === true || inner.is_admin === true
-    if (isAdmin) {
-      return {
-        plan: 'enterprise', rawPlan: 'admin', signedIn: true, admin: true,
-        email: inner.email || me?.email || null, trialExpiresAt: null, verified: true,
-      }
-    }
+  const identity = await fetchCorePlanIdentity(token)
+  if (!identity.verified) return { ...NONE, signedIn: true, verified: false }
 
-    // #309: read the tier from every field core might expose it under.
-    const raw = String(
-      inner.plan || inner.subscription_tier || inner.tier ||
-      inner.subscription?.tier || me?.plan || ''
-    ).toLowerCase()
+  if (identity.admin) {
     return {
-      plan: PLAN_MAP[raw] || '',
-      rawPlan: raw || null,
-      signedIn: true,
-      admin: false,
-      email: inner.email || me?.email || null,
-      trialExpiresAt: inner.trial_expires_at || me?.trial_expires_at || null,
-      verified: true,
+      plan: 'enterprise', rawPlan: 'admin', signedIn: true, admin: true,
+      email: identity.email, trialExpiresAt: null, verified: true,
     }
-  } catch {
-    return { ...NONE, signedIn: true, verified: false }
+  }
+
+  return {
+    plan: PLAN_MAP[identity.rawPlan ?? ''] || '',
+    rawPlan: identity.rawPlan,
+    signedIn: true,
+    admin: false,
+    email: identity.email,
+    trialExpiresAt: identity.trialExpiresAt,
+    verified: true,
   }
 }

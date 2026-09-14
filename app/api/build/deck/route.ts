@@ -35,18 +35,18 @@ import { DOCUMENT_PROMPTS, type DocGenContext } from '@/lib/build/document-promp
 import { completeText } from '@/lib/build/claude-completion'
 import { buildDeckModel, deckToText, type DeckArtifacts, type DeckBrand } from '@/lib/build/deck-model'
 import { deckToPptx, deckFileName } from '@/lib/build/deck-pptx'
+import { isPaidTier } from '@/lib/ainative/plan'
 import { logger } from '@/lib/logger'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-/** Plans that unlock the paid pitch-deck export. Any paid tier qualifies. */
-const PAID_PLANS = new Set(['pro', 'business', 'enterprise', 'cody_vcto'])
-
-/** Is this company on a paid plan (per the persisted app-registry entry)? */
+/** Is this company on a paid plan (per the persisted app-registry entry)?
+ *  #762: paid-tier membership comes from the ONE shared predicate in
+ *  lib/ainative/plan.ts, so this route can't drift from the others. */
 function isPaid(plan: string | undefined): boolean {
   if (process.env.DECK_DISABLE_PAYWALL === '1') return true
-  return PAID_PLANS.has(String(plan || '').toLowerCase().trim())
+  return isPaidTier(plan)
 }
 
 /** Resolve the durable documents scope key from the SERVER session + company slug. */

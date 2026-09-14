@@ -18,14 +18,14 @@
 
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
-import { getPlanStatus } from '@/lib/ainative/plan'
+import { getPlanStatus, isPaidTier } from '@/lib/ainative/plan'
 import { resolveApp, setAppGrowthAdTest } from '@/lib/build/app-registry'
 import { createAdTestCampaign, growthAdTestingEnabled, growthAdTestingCredentialConfigured } from '@/lib/build/ad-testing'
 
 export const runtime = 'nodejs'
 
 // Same set provision/route.ts already gates real provisioning behind.
-const PAID_PLANS = new Set(['launch', 'company', 'pro', 'business', 'enterprise', 'cody_vcto'])
+// #762: paid-tier membership now lives in lib/ainative/plan.ts's isPaidTier.
 
 const DEFAULT_DAILY_BUDGET_USD = 5
 const MAX_DAILY_BUDGET_USD = 25
@@ -52,15 +52,22 @@ export async function POST(request: NextRequest) {
   if (!token) return Response.json({ ok: false, reason: 'signin' })
 
   let tier = 'hobbyist'
+  let tierResolved = false
   try {
     const status = await getPlanStatus(token)
     tier = status.tier || 'hobbyist'
-  } catch {
+    tierResolved = true
+  } catch (err) {
     // Fail closed to the un-paid default — never grant a real ad campaign
-    // creation on an unresolved tier lookup.
+    // creation on an unresolved tier lookup — but log it (#762): a core
+    // failure must never masquerade as a genuine entitlement gap.
+    console.error(
+      `[growth/ad-test] tier lookup threw for slug "${slug}" — failing closed. ` +
+        `NOT proof the user is unpaid: ${err instanceof Error ? err.message : String(err)}`,
+    )
   }
-  if (!PAID_PLANS.has(tier)) {
-    return Response.json({ ok: false, reason: 'tier', tier })
+  if (!isPaidTier(tier)) {
+    return Response.json({ ok: false, reason: 'tier', tier, unverified: !tierResolved })
   }
 
   const app = await resolveApp(slug).catch(() => null)

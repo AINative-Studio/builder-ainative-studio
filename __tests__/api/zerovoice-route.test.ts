@@ -34,7 +34,12 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
-vi.mock('@/lib/ainative/plan', () => ({ getPlanStatus: h.getPlanStatus }))
+// Only getPlanStatus is stubbed — isPaidTier is the REAL predicate, so these
+// tests exercise the actual paid-tier membership the route gates on (#762).
+vi.mock('@/lib/ainative/plan', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/ainative/plan')>()),
+  getPlanStatus: h.getPlanStatus,
+}))
 vi.mock('@/lib/build/app-registry', () => ({
   resolveApp: h.resolveApp,
   setAppZeroVoice: h.setAppZeroVoice,
@@ -93,7 +98,8 @@ describe('POST /api/build/zerovoice (#415)', () => {
     h.getPlanStatus.mockResolvedValue({ tier: 'hobbyist' })
     const res: any = await POST(postReq({ slug: 'acme' }))
     const json = await res.json()
-    expect(json).toEqual({ ok: false, reason: 'tier', tier: 'hobbyist' })
+    // `unverified: false` — this is a REAL entitlement gap, genuinely resolved.
+    expect(json).toEqual({ ok: false, reason: 'tier', tier: 'hobbyist', unverified: false })
     expect(h.provisionZeroVoiceNumber).not.toHaveBeenCalled()
   })
 
@@ -104,6 +110,36 @@ describe('POST /api/build/zerovoice (#415)', () => {
     expect(json.ok).toBe(false)
     expect(json.reason).toBe('tier')
     expect(h.provisionZeroVoiceNumber).not.toHaveBeenCalled()
+  })
+
+  it('#762: a FAILED tier lookup is reported as unverified, not as a real entitlement gap', async () => {
+    // The live bug: a core-side failure produced a response identical to a
+    // genuine Hobbyist rejection, so nobody — founder or Cody — could tell that
+    // a paying Enterprise customer was being wrongly denied.
+    h.getPlanStatus.mockRejectedValue(new Error('core unreachable'))
+    const res: any = await POST(postReq({ slug: 'acme' }))
+    const json = await res.json()
+    expect(json.unverified).toBe(true)
+    expect(h.provisionZeroVoiceNumber).not.toHaveBeenCalled()
+  })
+
+  it('#762: a real paying Enterprise founder is NOT rejected on tier', async () => {
+    h.getPlanStatus.mockResolvedValue({ tier: 'enterprise' })
+    h.provisionZeroVoiceNumber.mockResolvedValue({ ok: true, numberId: 'n1', e164: '+18005551234' })
+    const res: any = await POST(postReq({ slug: 'acme' }))
+    const json = await res.json()
+    expect(json.ok).toBe(true)
+    expect(h.provisionZeroVoiceNumber).toHaveBeenCalled()
+  })
+
+  it('#762: business and cody_vcto are paid tiers and pass the gate', async () => {
+    for (const tier of ['business', 'cody_vcto']) {
+      h.provisionZeroVoiceNumber.mockClear()
+      h.getPlanStatus.mockResolvedValue({ tier })
+      h.provisionZeroVoiceNumber.mockResolvedValue({ ok: true, numberId: 'n1', e164: '+18005551234' })
+      const res: any = await POST(postReq({ slug: 'acme' }))
+      expect((await res.json()).ok, `${tier} must be paid`).toBe(true)
+    }
   })
 
   it('404s when the company does not exist', async () => {

@@ -16,7 +16,7 @@
 
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
-import { getPlanStatus } from '@/lib/ainative/plan'
+import { getPlanStatus, isPaidTier } from '@/lib/ainative/plan'
 import { resolveApp } from '@/lib/build/app-registry'
 import { growthAdTestingEnabled } from '@/lib/build/ad-testing'
 
@@ -24,7 +24,7 @@ export const runtime = 'nodejs'
 
 const CORE = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 const APP = process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio'
-const PAID_PLANS = new Set(['launch', 'company', 'pro', 'business', 'enterprise', 'cody_vcto'])
+// #762: paid-tier membership now lives in lib/ainative/plan.ts's isPaidTier.
 
 export async function POST(request: NextRequest) {
   if (!growthAdTestingEnabled()) {
@@ -45,14 +45,21 @@ export async function POST(request: NextRequest) {
   if (!token) return Response.json({ ok: false, reason: 'signin' })
 
   let tier = 'hobbyist'
+  let tierResolved = false
   try {
     const status = await getPlanStatus(token)
     tier = status.tier || 'hobbyist'
-  } catch {
-    // Fail closed — never let an unresolved tier lookup grant a real charge.
+    tierResolved = true
+  } catch (err) {
+    // Fail closed — never let an unresolved tier lookup grant a real charge —
+    // but log it (#762) so an outage is never mistaken for an unpaid account.
+    console.error(
+      `[growth/ad-budget-checkout] tier lookup threw — failing closed. ` +
+        `NOT proof the user is unpaid: ${err instanceof Error ? err.message : String(err)}`,
+    )
   }
-  if (!PAID_PLANS.has(tier)) {
-    return Response.json({ ok: false, reason: 'tier', tier })
+  if (!isPaidTier(tier)) {
+    return Response.json({ ok: false, reason: 'tier', tier, unverified: !tierResolved })
   }
 
   const app = await resolveApp(slug).catch(() => null)
