@@ -134,32 +134,32 @@ describe('resolveAgentModel (builder#99 — cody model mapping)', () => {
 // green run here means the packages are actually present at the paths the
 // wiring expects, not just that the gating logic is internally consistent.
 describe('buildAgentMcpWiring (builder#534 — real multi-server MCP wiring)', () => {
-  it('wires all three servers when a ZeroDB-family key is present and packages are installed', () => {
+  it('wires all three ZeroDB-family servers (plus company-comms) when a ZeroDB-family key is present and packages are installed', () => {
     const out = buildAgentMcpWiring(env({ ZERODB_API_KEY: 'zk-123' }))
     expect(out.configJson).not.toBeNull()
     expect(out.allowedTools.sort()).toEqual(
-      ['mcp__browser-agent', 'mcp__sequential-thinking', 'mcp__zerodb'].sort(),
+      ['mcp__browser-agent', 'mcp__company-comms', 'mcp__sequential-thinking', 'mcp__zerodb'].sort(),
     )
     const parsed = JSON.parse(out.configJson as string)
     expect(Object.keys(parsed.mcpServers).sort()).toEqual(
-      ['browser-agent', 'sequential-thinking', 'zerodb'].sort(),
+      ['browser-agent', 'company-comms', 'sequential-thinking', 'zerodb'].sort(),
     )
   })
 
-  it('falls back through AINATIVE_API_KEY for all three servers', () => {
+  it('falls back through AINATIVE_API_KEY for all three ZeroDB-family servers', () => {
     const out = buildAgentMcpWiring(env({ AINATIVE_API_KEY: 'ak-123' }))
     expect(out.allowedTools.sort()).toEqual(
-      ['mcp__browser-agent', 'mcp__sequential-thinking', 'mcp__zerodb'].sort(),
+      ['mcp__browser-agent', 'mcp__company-comms', 'mcp__sequential-thinking', 'mcp__zerodb'].sort(),
     )
   })
 
-  it('is inert (no config, no tools) with no key at all — fails closed, never throws', () => {
+  it('wires only company-comms with no key at all — #733 server has no key gate, unlike the others', () => {
     const out = buildAgentMcpWiring(env({}))
-    expect(out.configJson).toBeNull()
-    expect(out.allowedTools).toEqual([])
+    expect(out.configJson).not.toBeNull()
+    expect(out.allowedTools).toEqual(['mcp__company-comms'])
   })
 
-  it('CODY_AGENT_MCP=0 disables ALL servers at once (single kill switch)', () => {
+  it('CODY_AGENT_MCP=0 disables ALL servers at once (single kill switch), including company-comms', () => {
     const out = buildAgentMcpWiring(env({ ZERODB_API_KEY: 'zk-123', CODY_AGENT_MCP: '0' }))
     expect(out.configJson).toBeNull()
     expect(out.allowedTools).toEqual([])
@@ -224,9 +224,9 @@ describe('buildAgentMcpWiring (builder#534 — real multi-server MCP wiring)', (
       expect(parsed.mcpServers.zeropipeline).toBeDefined()
     })
 
-    it('is independent of the ZeroDB-family key — wires with ONLY ZEROPIPELINE_API_KEY set', () => {
+    it('is independent of the ZeroDB-family key — wires with ONLY ZEROPIPELINE_API_KEY set (plus company-comms, which has no key gate)', () => {
       const out = buildAgentMcpWiring(env({ ZEROPIPELINE_API_KEY: 'zp-123' }))
-      expect(out.allowedTools).toEqual(['mcp__zeropipeline'])
+      expect(out.allowedTools.sort()).toEqual(['mcp__company-comms', 'mcp__zeropipeline'].sort())
     })
 
     it('does not wire zeropipeline when ZEROPIPELINE_API_KEY is absent, even with other keys present', () => {
@@ -288,11 +288,50 @@ describe('buildAgentMcpWiring (builder#534 — real multi-server MCP wiring)', (
       expect(out.configJson).toBeNull()
     })
 
-    it('wires alongside the other three servers when all four keys are present', () => {
+    it('wires alongside the other servers when all keys are present (company-comms always wires)', () => {
       const out = buildAgentMcpWiring(env({ ZERODB_API_KEY: 'zk-123', ZEROPIPELINE_API_KEY: 'zp-123' }))
       expect(out.allowedTools.sort()).toEqual(
-        ['mcp__browser-agent', 'mcp__sequential-thinking', 'mcp__zerodb', 'mcp__zeropipeline'].sort(),
+        ['mcp__browser-agent', 'mcp__company-comms', 'mcp__sequential-thinking', 'mcp__zerodb', 'mcp__zeropipeline'].sort(),
       )
+    })
+  })
+
+  // #733 — company-comms wires Cody's own founder/customer-outreach tools
+  // (contact_founder_for_feedback / send_project_update_email) into the
+  // agent loop. Unlike the other local-file server (zeropipeline), it has NO
+  // API-key gate: its real auth lives server-side in the /api/build/
+  // company-comms + /api/build/company-email routes it calls over HTTP, so
+  // it's always wired (subject only to the CODY_AGENT_MCP=0 kill switch).
+  describe('company-comms MCP server (#733)', () => {
+    it('wires unconditionally — no required env key', () => {
+      const out = buildAgentMcpWiring(env({}))
+      expect(out.allowedTools).toContain('mcp__company-comms')
+    })
+
+    it('resolves to the local repo file, not a node_modules package', () => {
+      const out = buildAgentMcpWiring(env({}))
+      const parsed = JSON.parse(out.configJson as string)
+      expect(parsed.mcpServers['company-comms'].type).toBe('stdio')
+      expect(parsed.mcpServers['company-comms'].command).toBe(process.execPath)
+      expect(parsed.mcpServers['company-comms'].args[0]).toMatch(/lib\/agent\/mcp-servers\/company-comms-mcp-server\.mjs$/)
+      expect(parsed.mcpServers['company-comms'].args[0]).not.toMatch(/node_modules/)
+    })
+
+    it('passes NEXT_PUBLIC_APP_URL through, defaulting to the production builder host', () => {
+      const out = buildAgentMcpWiring(env({}))
+      const parsed = JSON.parse(out.configJson as string)
+      expect(parsed.mcpServers['company-comms'].env.NEXT_PUBLIC_APP_URL).toBe('https://builder.ainative.studio')
+    })
+
+    it('honors an explicit NEXT_PUBLIC_APP_URL override', () => {
+      const out = buildAgentMcpWiring(env({ NEXT_PUBLIC_APP_URL: 'https://staging.example.com' }))
+      const parsed = JSON.parse(out.configJson as string)
+      expect(parsed.mcpServers['company-comms'].env.NEXT_PUBLIC_APP_URL).toBe('https://staging.example.com')
+    })
+
+    it('CODY_AGENT_MCP=0 disables company-comms along with every other server', () => {
+      const out = buildAgentMcpWiring(env({ CODY_AGENT_MCP: '0' }))
+      expect(out.allowedTools).not.toContain('mcp__company-comms')
     })
   })
 })
