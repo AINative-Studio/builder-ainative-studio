@@ -16,6 +16,7 @@ import { buildDailyReport, dailyReportTitle } from '@/lib/build/document-prompts
 import { runMediaRoutines } from '@/lib/build/media-routine'
 import { runTaskResolutions } from '@/lib/build/task-resolution-loop'
 import { resolveApp } from '@/lib/build/app-registry'
+import { runNightlyCommsOutreach } from '@/lib/build/comms-policy'
 import { logger } from '@/lib/logger'
 
 export const dynamic = 'force-dynamic'
@@ -38,11 +39,26 @@ export async function GET(request: NextRequest) {
     let mediaGenerated = 0
     let tasksAttempted = 0
     let tasksCompleted = 0
+    let commsSent = 0
     for (const e of enrolled) {
       const r = await runNightlyLoop({
         companyId: e.companyId, companyName: e.companyName, track: e.track, goal: e.goal,
       })
       await recordRun(e.companyId, r.taskId, r.status)
+
+      // Founder comms outreach (#742) — the policy layer that decides
+      // whether tonight's run is worth proactively emailing the founder
+      // about at all. Runs the SAME decision (real signal, frequency cap,
+      // opt-out) regardless of the swarm-dispatch outcome above; see
+      // lib/build/comms-policy.ts for the full policy writeup. Best-effort:
+      // a comms hiccup must never break the rest of this company's pipeline
+      // or the loop over other companies.
+      try {
+        const comms = await runNightlyCommsOutreach(e.companyId, e.companyName, r)
+        if (comms.status === 'sent') commsSent += 1
+      } catch (err) {
+        logger.warn('Nightly comms outreach failed', { companyId: e.companyId, err: (err as Error)?.message })
+      }
 
       // Event trail (#340): when an Auto Mode run is ACTIVE for this company,
       // append this dispatch to its recentEvents ring so the founder's Live
@@ -167,8 +183,8 @@ export async function GET(request: NextRequest) {
     }
 
     const dispatched = results.filter((r) => r.status === 'dispatched').length
-    logger.info('Nightly autonomous loop complete', { dispatched, total: results.length, reportsWritten, mediaGenerated, tasksAttempted, tasksCompleted })
-    return NextResponse.json({ ok: true, enrolled: enrolled.length, dispatched, reportsWritten, mediaGenerated, tasksAttempted, tasksCompleted, results })
+    logger.info('Nightly autonomous loop complete', { dispatched, total: results.length, reportsWritten, mediaGenerated, tasksAttempted, tasksCompleted, commsSent })
+    return NextResponse.json({ ok: true, enrolled: enrolled.length, dispatched, reportsWritten, mediaGenerated, tasksAttempted, tasksCompleted, commsSent, results })
   } catch (error) {
     logger.error('Nightly autonomous loop failed', error as Error)
     return NextResponse.json({ error: 'Nightly loop failed' }, { status: 500 })

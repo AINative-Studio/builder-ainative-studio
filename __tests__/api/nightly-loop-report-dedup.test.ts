@@ -28,6 +28,7 @@ const h = vi.hoisted(() => ({
   runMediaRoutines: vi.fn(),
   runTaskResolutions: vi.fn(),
   resolveApp: vi.fn(),
+  runNightlyCommsOutreach: vi.fn(),
 }))
 
 vi.mock('@/lib/build/loop-enrollment', () => ({ listEnrolled: h.listEnrolled, recordRun: h.recordRun }))
@@ -38,6 +39,7 @@ vi.mock('@/lib/build/document-store', () => ({ createDocument: h.createDocument,
 vi.mock('@/lib/build/media-routine', () => ({ runMediaRoutines: h.runMediaRoutines }))
 vi.mock('@/lib/build/task-resolution-loop', () => ({ runTaskResolutions: h.runTaskResolutions }))
 vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/comms-policy', () => ({ runNightlyCommsOutreach: h.runNightlyCommsOutreach }))
 vi.mock('@/lib/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }))
 
 import { GET } from '@/app/api/build/nightly-loop/route'
@@ -68,6 +70,7 @@ describe('GET /api/build/nightly-loop', () => {
     h.runMediaRoutines.mockResolvedValue({ generated: 0 })
     h.runTaskResolutions.mockResolvedValue({ attempted: 0, completed: 0 })
     h.resolveApp.mockResolvedValue({ slug: 'beacon', tagline: 'Guiding growth', color: '#1e88e5' })
+    h.runNightlyCommsOutreach.mockResolvedValue({ status: 'skipped', reason: 'no_genuine_update' })
   })
   afterEach(() => { vi.restoreAllMocks() })
 
@@ -144,5 +147,41 @@ describe('GET /api/build/nightly-loop', () => {
     const data = await res.json()
     expect(res.status).toBe(200)
     expect(data.reportsWritten).toBe(0)
+  })
+
+  // --- #742: nightly-loop → comms-policy wiring ---
+
+  it('calls the comms outreach policy once per enrolled company with the real run result', async () => {
+    await GET(req())
+    expect(h.runNightlyCommsOutreach).toHaveBeenCalledTimes(1)
+    expect(h.runNightlyCommsOutreach).toHaveBeenCalledWith(
+      'beacon',
+      'Beacon',
+      expect.objectContaining({ status: 'dispatched', taskId: 'task-1' }),
+    )
+  })
+
+  it('surfaces commsSent in the response when the policy actually sends', async () => {
+    h.runNightlyCommsOutreach.mockResolvedValue({ status: 'sent', emailId: 'email-1' })
+    const res = await GET(req())
+    const data = await res.json()
+    expect(data.commsSent).toBe(1)
+  })
+
+  it('reports commsSent:0 when the policy honestly skips (no genuine update, opt-out, rate limit, etc.)', async () => {
+    h.runNightlyCommsOutreach.mockResolvedValue({ status: 'skipped', reason: 'opted_out' })
+    const res = await GET(req())
+    const data = await res.json()
+    expect(data.commsSent).toBe(0)
+  })
+
+  it('a comms-policy failure never breaks the rest of the nightly loop', async () => {
+    h.runNightlyCommsOutreach.mockRejectedValue(new Error('comms policy exploded'))
+    const res = await GET(req())
+    const data = await res.json()
+    expect(res.status).toBe(200)
+    expect(data.commsSent).toBe(0)
+    // The rest of the pipeline still ran for this company.
+    expect(data.reportsWritten).toBe(1)
   })
 })
