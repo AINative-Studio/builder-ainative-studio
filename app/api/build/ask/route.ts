@@ -188,6 +188,21 @@ export async function POST(request: NextRequest) {
   const { plan: activePlan } = await resolveActivePlan().catch(() => ({ plan: '' as const }))
   const paid = Boolean(activePlan)
 
+  // #748: resolve the company's registry entry ONCE, unconditionally, so its
+  // real provisioning fields (gitOrg, zerodbProjectId, plan) are always in
+  // scope for BOTH the edit-intent check below AND the honest-provisioning-
+  // status system-prompt block (provisioningInstructions) further down. Before
+  // this fix, resolveApp(companyId) was only ever called INSIDE the
+  // detectEditIntent branch — a founder who simply asked "is my company set
+  // up?" never triggered it, so the data Cody needed to answer honestly was
+  // never fetched for that turn at all. Confirmed root cause of the false "I
+  // don't have a way to check your git provisioning status" answer (issue
+  // #748) — the data was resolvable, just never resolved for that question
+  // shape. Best-effort: any resolution failure yields null, which the honest-
+  // status block below treats the same as "not provisioned" (never as "must
+  // be live" — the safe default is to under-claim, not over-claim).
+  const app = companyId ? await resolveApp(companyId).catch(() => null) : null
+
   // Real "edit an already-deployed app from chat" capability (#582). Requires
   // the company to be git-provisioned (paid + provisioned, see #689) — the
   // same hard requirement resolveTask itself enforces. Fires as a DETACHED
@@ -198,18 +213,23 @@ export async function POST(request: NextRequest) {
   // ask-only `idea` param, so a stray edit-shaped question with no company
   // context never triggers a wasted implement+commit attempt.
   let editTriggered = false
-  if (companyId && detectEditIntent(question)) {
-    const app = await resolveApp(companyId).catch(() => null)
-    if (app?.gitOrg) {
-      editTriggered = true
-      const base = process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin
-      void fetch(`${base}/api/build/edit-app`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ companyId, request: question }),
-      }).catch(() => {})
-    }
+  if (companyId && app?.gitOrg && detectEditIntent(question)) {
+    editTriggered = true
+    const base = process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin
+    void fetch(`${base}/api/build/edit-app`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ companyId, request: question }),
+    }).catch(() => {})
   }
+
+  // #748: whether this company has been REALLY provisioned (a real ZeroDB
+  // project exists) — the single source of truth the honest-status system-
+  // prompt block below reasons from. A brand-new company with only an
+  // idea-generation registry row (no zerodbProjectId/gitOrg/plan set) reads
+  // as unprovisioned here, same as the real "Clearpath" row that triggered
+  // this issue.
+  const isProvisioned = Boolean(app?.zerodbProjectId)
 
   // Fetch backlog so Cody can cite real items (not invented ones)
   const backlogBlock = companyId
@@ -238,6 +258,31 @@ export async function POST(request: NextRequest) {
       `a plan: frame that honestly as "when you're ready to make it real" — never imply a small ` +
       `edit requires payment. Do NOT promise free future backend feature work.\n`
 
+  // #748: honest provisioning-status grounding. Real incident: an admin-
+  // created company ("Clearpath") had a real registry row but NO owner, NO
+  // ZeroDB project, NO primitives, NO auth — provisioning only ever happens
+  // via the separate /api/build/provision endpoint, never automatically. Cody
+  // still claimed "the data layer is fully functional" and "next up in the
+  // queue is authentication," and when asked directly whether git
+  // provisioning had run, said "I don't have a way to check your git
+  // provisioning status from this chat" — FALSE, since `app` (resolved just
+  // above) already carries that answer. This block is the fix: it puts the
+  // REAL provisioning state in front of Cody explicitly, with an unambiguous
+  // instruction never to claim otherwise.
+  const provisioningInstructions = isProvisioned
+    ? `- PROVISIONING STATUS: this company IS provisioned — it has a real per-company cloud project ` +
+      `(ZeroDB project id on file). You CAN and MUST answer questions about provisioning/setup status ` +
+      `directly and confidently; never say you "don't have a way to check" — you do, and it says live.\n`
+    : `- PROVISIONING STATUS: this company has NOT been provisioned yet — there is no per-company ZeroDB ` +
+      `project, no primitive resources, and no real authentication wired up for it yet. If asked about ` +
+      `setup/provisioning/git status, or whether data/auth/primitives are live, say so PLAINLY: nothing ` +
+      `has been provisioned yet, and mention it happens automatically once the founder engages with this ` +
+      `dashboard (auto-provisioning), or can be triggered right now from the "Provision cloud" control in ` +
+      `Website & infrastructure. NEVER say "I don't have a way to check" — you DO have this data, it's ` +
+      `simply telling you setup hasn't run yet. NEVER claim the data layer, ZeroMemory context, auth, or ` +
+      `any primitive is "fully functional," "handling context," "next in the queue," or otherwise live — ` +
+      `none of that is true until provisioning actually completes.\n`
+
   const system =
     `You are Cody, the AI co-founder who just built and now operates "${companyName}", ` +
     `an AI-native ${track === 'app' ? 'product' : 'company'} built on AINative primitives.\n\n` +
@@ -261,11 +306,17 @@ export async function POST(request: NextRequest) {
     `you like me to adjust?", "should I proceed?"). If you genuinely need one decision to continue, ask ` +
     `ONE specific question with a concrete two-option or yes/no choice — never a broad menu.\n` +
     gateInstructions +
+    provisioningInstructions +
     `- TRUTH CONSTRAINT: the preview IS a working interactive app with LIVE data persistence ` +
     `(create/read/update/delete and semantic search work in the sandbox through the platform data ` +
     `layer). NEVER claim data persistence, interactivity, or the data layer are "not live yet" or ` +
     `"only come with a plan" — that is false and destroys trust. What a plan actually adds: own ` +
-    `domain, real user authentication, production backend hardening, and 24/7 autonomous ops.\n` +
+    `domain, real user authentication, production backend hardening, and 24/7 autonomous ops. ` +
+    `IMPORTANT DISTINCTION per the PROVISIONING STATUS above: this preview-sandbox persistence is ` +
+    `separate from the company's OWN permanent per-company cloud project (auth, dedicated ZeroDB ` +
+    `project, primitives) — never conflate the two. If this company is not yet provisioned, it is ` +
+    `still true the preview works, but false that a permanent per-company backend, auth, or primitive ` +
+    `connections are live — say exactly that when asked, don't blur the two claims together.\n` +
     `- REAL EDITING CAPABILITIES ON THIS DASHBOARD — do not invent workflows beyond these, even if ` +
     `they sound plausible for a product like this:\n` +
     `  * There IS a real in-chat file upload (#741): the attach button next to this chat lets the ` +

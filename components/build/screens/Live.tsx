@@ -133,8 +133,11 @@ export function Live() {
   const [zeroInvoiceConfirmedAt, setZeroInvoiceConfirmedAt] = useState<string | null>(null)
   // Persistent-cloud provisioning (#243): once a company is provisioned it has
   // its own real ZeroDB project + persistent deploy target, and the systems grid
-  // reads real per-company data.
-  const [provision, setProvision] = useState<{ provisioned: boolean; busy: boolean; projectId?: string }>({ provisioned: false, busy: false })
+  // reads real per-company data. `checked` (#748) distinguishes "we haven't
+  // heard back from GET /api/build/provision yet" from "we asked, and it's
+  // confirmed not provisioned" — needed so neither the auto-provision trigger
+  // nor the 4th CTA state (below) fires/flashes before the real status is known.
+  const [provision, setProvision] = useState<{ provisioned: boolean; busy: boolean; checked: boolean; projectId?: string }>({ provisioned: false, busy: false, checked: false })
   // Real visitor count (#483/#563) — was a permanent, hardcoded 0 with the copy
   // "Cody grows these nightly," but nothing ever grew it. Now reads the real
   // count of pageview beacons the generated landing page fires on mount.
@@ -335,11 +338,11 @@ export function Live() {
     fetch(`/api/build/provision?slug=${encodeURIComponent(companyId)}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (!alive || !d) return
-        setProvision((p) => ({ ...p, provisioned: !!d.provisioned, projectId: d.zerodbProjectId || undefined }))
-        if (d.deployUrl) setDeployUrl(String(d.deployUrl))
+        if (!alive) return
+        setProvision((p) => ({ ...p, provisioned: !!d?.provisioned, checked: true, projectId: d?.zerodbProjectId || undefined }))
+        if (d?.deployUrl) setDeployUrl(String(d.deployUrl))
       })
-      .catch(() => {})
+      .catch(() => { if (alive) setProvision((p) => ({ ...p, checked: true })) })
     // Company track has no /preview app — generate a REAL landing-page app for it
     // once, so the prod URL /build/{slug} actually shows something. Register it.
     //
@@ -712,19 +715,41 @@ export function Live() {
       })
       const d = await res.json().catch(() => null)
       if (d?.ok) {
-        setProvision({ provisioned: true, busy: false, projectId: d.zerodbProjectId })
+        setProvision({ provisioned: true, busy: false, checked: true, projectId: d.zerodbProjectId })
         // Re-read systems now that they point at the real provisioned project.
         fetch(`/api/build/systems?companyId=${encodeURIComponent(companyId)}&idea=${encodeURIComponent(state.idea || '')}`)
           .then((r) => (r.ok ? r.json() : null))
           .then((s) => { if (s?.systems) setSystems(s.systems) })
           .catch(() => {})
       } else {
-        setProvision((p) => ({ ...p, busy: false }))
+        setProvision((p) => ({ ...p, busy: false, checked: true }))
       }
     } catch {
-      setProvision((p) => ({ ...p, busy: false }))
+      setProvision((p) => ({ ...p, busy: false, checked: true }))
     }
   }
+
+  // #748: auto-provision on first real engagement, so a founder never needs to
+  // find the "Provision cloud" button buried in the infrastructure card. Real
+  // incident: an admin-created company ("Clearpath") had a live, reachable
+  // dashboard but was NEVER provisioned — no owner, no ZeroDB project, no
+  // primitives, no auth — because provisioning only ever happened via that one
+  // manual button. Fires once, automatically, the first time we know for sure
+  // (via the GET above, `checked: true`) that a SIGNED-IN founder's real,
+  // registered company (`companyId` resolved) is not yet provisioned.
+  // Idempotent by construction: provisionCompany() itself no-ops when
+  // `provision.busy || provision.provisioned`, and /api/build/provision's own
+  // handler short-circuits on `existing.zerodbProjectId` — so calling this
+  // more than once (re-render, re-mount, StrictMode double-invoke) is safe.
+  const autoProvisionAttempted = useRef(false)
+  useEffect(() => {
+    if (!signedIn || !companyId) return
+    if (!provision.checked || provision.provisioned || provision.busy) return
+    if (autoProvisionAttempted.current) return
+    autoProvisionAttempted.current = true
+    provisionCompany()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signedIn, companyId, provision.checked, provision.provisioned, provision.busy])
 
   // FIX-5: per-project brand color so every company's dashboard looks distinct,
   // not identical. Falls back to the track accent.
@@ -761,11 +786,21 @@ export function Live() {
         </div>
       </header>
 
-      {/* Upgrade path (#207 · #252). Three states, always giving an OBVIOUS next
-          step to paid — the gap the founder hit ("couldn't figure out how to pay"):
+      {/* Upgrade path (#207 · #252 · #748). FOUR states, always giving an OBVIOUS
+          next step (the gap the founder hit — "couldn't figure out how to pay",
+          and later "never got provisioned at all"):
             1. On a paid plan → "On {plan}" + Manage plan.
-            2. Signed in, unpaid → trial countdown + a real Upgrade button → Pricing (Stripe).
-            3. Anonymous → claim/sign-up (then they return here and can upgrade). */}
+            2. Signed in, unpaid, NOT YET PROVISIONED → honest "setting up" state
+               (#748) — distinct from state 3 below, which wrongly assumed a
+               trial (and therefore provisioning) already existed. Auto-
+               provisioning (see the effect above) should clear this quickly for
+               almost everyone; this is the defensive fallback for whatever
+               window it takes, or for the rare case auto-provisioning itself
+               fails, so the founder ALWAYS has a real next step instead of
+               copy/a CTA built on a false assumption.
+            3. Signed in, unpaid, provisioned → trial countdown + a real Upgrade
+               button → Pricing (Stripe).
+            4. Anonymous → claim/sign-up (then they return here and can upgrade). */}
       {activePlan ? (
         <div className="m-live-funnel is-plan">
           <span>
@@ -787,6 +822,25 @@ export function Live() {
             ) : (
               <button className="btn-ghost" data-testid="manage-plan" onClick={manageBilling}>Manage plan ↗</button>
             )}
+          </div>
+        </div>
+      ) : signedIn && !provision.provisioned ? (
+        <div className="m-live-funnel is-provisioning" data-testid="provisioning-banner">
+          <span>
+            <strong>{company} is yours — setting it up now.</strong>{' '}
+            {provision.busy || !provision.checked
+              ? "Cody is provisioning your real cloud (database, primitives) — this happens automatically, no action needed."
+              : "Nothing's been provisioned yet. Click below to set up your real database and primitives now — this normally happens automatically."}
+          </span>
+          <div className="m-live-funnel-cta">
+            <button
+              className="btn-primary"
+              data-testid="provision-now-cta"
+              onClick={provisionCompany}
+              disabled={provision.busy}
+            >
+              {provision.busy ? 'Provisioning…' : 'Provision cloud now →'}
+            </button>
           </div>
         </div>
       ) : signedIn ? (
