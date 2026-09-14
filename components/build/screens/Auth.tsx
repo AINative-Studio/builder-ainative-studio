@@ -11,6 +11,7 @@ import { trackMeta } from '@/components/analytics/meta-pixel'
 import { migrateGuestWork } from '@/lib/build/guest-migration'
 import { getRefCode } from '@/lib/build/attribution'
 import { decideLimitAction } from '@/lib/build/value-moment'
+import { toE164 } from '@/lib/build/otp'
 
 function BrandPanel() {
   return (
@@ -55,6 +56,17 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
   // dead-ending the founder. `verifyEmail` holds the address the resend targets.
   const [verifyEmail, setVerifyEmail] = useState<string | null>(null)
   const [resendNote, setResendNote] = useState<string | null>(null)
+  // #734 — phone capture + OTP verification, signup only. Mirrors the
+  // verifyEmail/resendNote/resendVerification shape above exactly:
+  // `phone` is the raw input; `verifyPhone` (set once an OTP has been sent)
+  // holds the E.164-normalized number the code was sent to and gates final
+  // signup submission until `phoneVerified` becomes true; `otpNote` mirrors
+  // `resendNote`'s inline status-message role.
+  const [phone, setPhone] = useState('')
+  const [verifyPhone, setVerifyPhone] = useState<string | null>(null)
+  const [phoneVerified, setPhoneVerified] = useState(false)
+  const [otpCode, setOtpCode] = useState('')
+  const [otpNote, setOtpNote] = useState<string | null>(null)
 
   const copy = {
     login: { h: 'Welcome back', sub: 'Log in to your workspace.', cta: 'Log in' },
@@ -162,20 +174,95 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
     }
   }
 
+  // #734 — send a phone OTP (signup only). Mirrors resendVerification's shape:
+  // fetch, surface an inline note, never throw past the caller. On success,
+  // enters the verify-phone state (verifyPhone set) which renders the code
+  // input and gates final signup submission.
+  const submitOtp = async () => {
+    const normalized = toE164(phone)
+    if (!normalized) { setError('Enter a valid phone number.'); return }
+    setBusy(true); setError(null); setOtpNote(null)
+    try {
+      const res = await fetch('/api/build/register', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'send-otp', phone: normalized }),
+      })
+      const d = await res.json().catch(() => null)
+      if (d?.ok) {
+        setVerifyPhone(normalized)
+        setOtpNote('Code sent — enter it below.')
+      } else if (d?.reason === 'not_configured') {
+        // Honest infra gap (see lib/build/otp.ts) — phone verification isn't
+        // live yet in this environment. Don't dead-end the founder: let them
+        // continue without phone verification rather than block signup on
+        // an SMS path that cannot actually send today.
+        setVerifyPhone(null)
+        setPhoneVerified(true)
+        setOtpNote(null)
+      } else if (d?.reason?.startsWith('rate_limited')) {
+        setError('Too many codes requested — try again in a bit.')
+      } else {
+        setError('Could not send the verification code — try again.')
+      }
+    } catch {
+      setError('Network error — try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // #734 — verify the submitted OTP code. On success, marks phoneVerified so
+  // submit() can proceed with the actual registration call.
+  const confirmOtp = async () => {
+    if (!verifyPhone || !otpCode) return
+    setBusy(true); setError(null); setOtpNote(null)
+    try {
+      const res = await fetch('/api/build/register', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'verify-otp', phone: verifyPhone, code: otpCode, email }),
+      })
+      const d = await res.json().catch(() => null)
+      if (d?.ok) {
+        setPhoneVerified(true)
+        setVerifyPhone(null)
+        setOtpNote(null)
+      } else {
+        const reason = d?.reason
+        setError(
+          reason === 'expired' ? 'That code expired — request a new one.'
+          : reason === 'already_used' ? 'That code was already used — request a new one.'
+          : 'Incorrect code — try again.',
+        )
+      }
+    } catch {
+      setError('Network error — try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const submit = async () => {
     setError(null); setResendNote(null)
     if (mode === 'forgot' || mode === 'reset') { setError('Password reset is coming soon — contact support.'); return }
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { setError('Enter a valid email.'); return }
     if (password.length < 8) { setError('Password must be at least 8 characters.'); return }
+    // #734 — gate final signup submission on phone verification completing,
+    // once a phone number has been entered at all. A founder who never typed
+    // a phone (or whose only path was the not_configured fallback above,
+    // which sets phoneVerified:true directly) is unaffected.
+    if (mode === 'signup' && phone.trim() && !phoneVerified) {
+      setError('Verify your phone number to continue.'); return
+    }
     setBusy(true)
     try {
       if (mode === 'signup') {
         // Register against CORE (carries the gclid from the ad-landing cookie so the
         // eventual paid conversion attributes to the Google Ads click). New /build
         // surface — NOT the legacy (auth) actions.
+        const normalizedPhone = phone.trim() ? toE164(phone) : null
         const res = await fetch('/api/build/register', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password }),
+          body: JSON.stringify({ email, password, phone: normalizedPhone || undefined }),
         })
         const d = await res.json().catch(() => null)
         if (!d?.ok) {
@@ -299,6 +386,34 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
             <label className="m-field"><span className="m-mono m-field-l">{mode === 'reset' ? 'New password' : 'Password'}</span>
               <input type="password" data-testid="auth-password" placeholder="••••••••" value={password}
                 onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submit()} /></label>
+          )}
+          {/* #734 — phone input, signup only. Not required: an empty phone never
+              blocks submit() (see the phoneVerified gate above), so this is an
+              opt-in verification step rather than a hard signup requirement. */}
+          {mode === 'signup' && !verifyPhone && (
+            <label className="m-field"><span className="m-mono m-field-l">Phone (optional)</span>
+              <input type="tel" data-testid="auth-phone" placeholder="+1 555 000 1111" value={phone}
+                onChange={(e) => { setPhone(e.target.value); setPhoneVerified(false) }}
+                onKeyDown={(e) => e.key === 'Enter' && phone.trim() && submitOtp()} /></label>
+          )}
+          {mode === 'signup' && phone.trim() && !verifyPhone && !phoneVerified && (
+            <button className="btn-ghost" data-testid="auth-send-otp" onClick={submitOtp} disabled={busy} type="button">
+              {busy ? 'Sending…' : 'Send verification code →'}
+            </button>
+          )}
+          {mode === 'signup' && phoneVerified && (
+            <p className="m-mono" data-testid="auth-phone-verified" style={{ color: '#1f7a3d' }}>✓ Phone verified</p>
+          )}
+          {mode === 'signup' && verifyPhone && (
+            <label className="m-field"><span className="m-mono m-field-l">Verification code</span>
+              <input type="text" inputMode="numeric" data-testid="auth-otp-code" placeholder="6-digit code" value={otpCode}
+                onChange={(e) => setOtpCode(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && confirmOtp()} /></label>
+          )}
+          {otpNote && <p className="m-mono" data-testid="auth-otp-note" style={{ color: '#1f7a3d' }}>{otpNote}</p>}
+          {mode === 'signup' && verifyPhone && (
+            <button className="btn-ghost" data-testid="auth-verify-otp" onClick={confirmOtp} disabled={busy || !otpCode} type="button">
+              {busy ? 'Verifying…' : 'Verify code →'}
+            </button>
           )}
         </div>
         {error && <p className="m-mono m-auth-error" style={{ color: '#e5451f' }}>{error}</p>}
