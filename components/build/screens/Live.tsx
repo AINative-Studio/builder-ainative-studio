@@ -35,6 +35,7 @@ import { FeedbackPulse } from '@/components/build/FeedbackPulse'
 import { ZeroInvoiceConnect } from '@/components/build/ZeroInvoiceConnect'
 import { UPLOAD_ACCEPT_ATTR } from '@/lib/build/media-upload'
 import { DOCUMENT_UPLOAD_ACCEPT_ATTR } from '@/lib/build/document-upload'
+import { useHeaderHeightVar } from '@/lib/build/useHeaderHeightVar'
 
 /** Display label for an active paid tier (#241). */
 const PLAN_LABEL: Record<ActivePlan, string> = {
@@ -804,8 +805,18 @@ export function Live() {
     ? ({ ['--m-brand' as string]: state.brandColor } as React.CSSProperties)
     : undefined
 
+  // #754: the chat rail below is `position: sticky` and needs to know the
+  // REAL, dynamic height of everything rendered above `.m-live-grid`
+  // (masthead + funnel/provisioning banner + product card + hero metrics —
+  // several states, several real heights) rather than assume a hardcoded
+  // constant. `headerRef` wraps that whole block; `containerRef` (the outer
+  // `.m-live` element) receives the measured height as `--live-header-h`,
+  // which the sticky CSS reads instead of a literal px value.
+  const { headerRef, containerRef } = useHeaderHeightVar<HTMLDivElement, HTMLDivElement>()
+
   return (
-    <div className="modernist m-live" data-track="company" style={brandStyle}>
+    <div className="modernist m-live" data-track="company" style={brandStyle} ref={containerRef}>
+      <div ref={headerRef}>
       <header className="m-live-masthead" style={brandStyle ? { background: 'var(--m-brand)' } : undefined}>
         <span className="m-mono m-live-tag">Company Track · shipped</span>
         <h1 className="m-artifact m-live-h">{company} is live.</h1>
@@ -994,6 +1005,7 @@ export function Live() {
         </div>
         <p className="m-mono m-metric-note">Live from day one — Cody grows these nightly.</p>
       </div>
+    </div>
 
       <div className={`m-live-grid ${state.tablet ? 'is-tablet' : ''}`}>
         {/* LEFT — Cody status + upsell */}
