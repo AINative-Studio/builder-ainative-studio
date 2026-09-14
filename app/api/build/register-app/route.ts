@@ -18,6 +18,7 @@ import { checkSeededData, type SeededDataCheck } from '@/lib/build/seed-check'
 import { commitRegeneration, provisionCompanyRepo, toFileMapForCommit } from '@/lib/git/company-repo'
 import { BUILDER_WORKSPACE_ID } from '@/lib/build/instant-db'
 import { enrollCompany, isEnrolled } from '@/lib/build/loop-enrollment'
+import { sendWelcomeEmail } from '@/lib/build/company-email'
 
 export const runtime = 'nodejs'
 
@@ -199,6 +200,20 @@ export async function POST(request: NextRequest) {
         return enrollCompany({ companyId: slug, companyName, track, ownerKey: ownerEmail })
       })
       .catch(() => {})
+  }
+
+  // Welcome email from Cody (#758): fire exactly once, at a genuinely FIRST
+  // registration — `!existing` is the real "brand-new company" signal (see
+  // the comment above `existing` itself: it's null on a fresh slug and set
+  // on every regeneration of an already-registered one), deliberately
+  // separate from the auto-enroll guard above, since enrolling and
+  // welcoming are logically different events. Requires a real recipient
+  // (`ownerEmail`) — an anonymous registration has nowhere to send it and is
+  // silently skipped, not queued. Best-effort, matching the auto-enroll
+  // call immediately above: a Resend hiccup must never fail registration
+  // itself.
+  if (ok && !existing && ownerEmail) {
+    sendWelcomeEmail(companyName, ownerEmail, slug).catch(() => {})
   }
 
   // #349: Git commit for regeneration. If the company already has a git repo,
