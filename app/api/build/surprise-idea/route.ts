@@ -43,12 +43,35 @@
  * a known mislabeling bug upstream in core's Model Catalog API, not a real
  * pricing signal — the pricing figures above are the real per-token numbers
  * from that same catalog response.)
+ *
+ * PER-USER REPETITION FIX (issue #755, 2026-09-14): live production testing
+ * showed the LLM path itself is healthy (0/7 real calls fell back — the
+ * static pool is NOT the cause of the reported repetition), but a real
+ * founder clicking "Surprise me" repeatedly in one sitting saw near-duplicate
+ * ideas ("A field service management platform that automates scheduling and
+ * invoicing..." three times in a row). Root cause: `recentPrimitiveHistory`
+ * below is process-scoped (shared across ALL users on one replica, a no-op
+ * across replicas) AND only steers toward underrepresented PRIMITIVE
+ * CATEGORIES, not away from similar idea CONCEPTS — two ideas can trivially
+ * invoke the same primitive while reading as near-duplicates. Fix: the client
+ * (BuildStart.tsx) now tracks the actual idea TEXT it has shown this founder
+ * this session and sends it as `recentIdeas` in the POST body; this route
+ * passes that real per-session history into buildSurpriseIdeaPrompt, which
+ * quotes it back to the model as concrete negative examples. The process-
+ * scoped primitive-category steer is kept alongside it (still useful for
+ * catalog coverage) — the two signals are complementary, not redundant.
  */
 
 import { NextRequest } from 'next/server'
 import OpenAI from 'openai'
 import { CATALOG, selectPrimitives } from '@/lib/build/primitive-catalog'
-import { buildSurpriseIdeaPrompt, sanitizeSurpriseIdea, isUsableSurpriseIdea, RECENT_HISTORY_WINDOW } from '@/lib/build/surprise-idea-generator'
+import {
+  buildSurpriseIdeaPrompt,
+  sanitizeSurpriseIdea,
+  isUsableSurpriseIdea,
+  RECENT_HISTORY_WINDOW,
+  RECENT_IDEA_TEXT_WINDOW,
+} from '@/lib/build/surprise-idea-generator'
 import { pickSurpriseIdea } from '@/lib/build/surprise-ideas'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
 
@@ -85,10 +108,24 @@ function recordHistory(names: string[]): void {
   }
 }
 
+/** Parse+validate the client-supplied per-session idea history. Defensive
+ *  against a missing/malformed body — this is a best-effort steering signal,
+ *  never something that should turn a malformed request into a 400; an
+ *  absent or bad `recentIdeas` just means the concept-similarity steer sits
+ *  out for this call, same as a cold session. */
+function parseRecentIdeas(body: unknown): string[] {
+  const raw = (body as { recentIdeas?: unknown } | null)?.recentIdeas
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+    .map((s) => s.trim().slice(0, 400))
+    .slice(-RECENT_IDEA_TEXT_WINDOW)
+}
+
 /** One real model call. Returns null on any failure — timeout, network error,
  *  empty/unusable completion — so the caller falls through to the static pool. */
-async function generateIdea(): Promise<string | null> {
-  const { system, user } = buildSurpriseIdeaPrompt(CATALOG, recentPrimitiveHistory)
+async function generateIdea(recentIdeas: string[]): Promise<string | null> {
+  const { system, user } = buildSurpriseIdeaPrompt(CATALOG, recentPrimitiveHistory, recentIdeas)
   try {
     const model = process.env.SURPRISE_IDEA_MODEL || 'llama-4-maverick-17b-128e'
     const res = await llama.chat.completions.create(
@@ -111,8 +148,10 @@ async function generateIdea(): Promise<string | null> {
   }
 }
 
-export async function POST(_request: NextRequest) {
-  const idea = await generateIdea()
+export async function POST(request: NextRequest) {
+  const body = await request.json().catch(() => null)
+  const recentIdeas = parseRecentIdeas(body)
+  const idea = await generateIdea(recentIdeas)
 
   if (idea) {
     // Track which REAL primitives this generation actually surfaces (company

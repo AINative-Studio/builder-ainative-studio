@@ -28,6 +28,13 @@ import type { CatalogPrimitive } from './primitive-catalog'
  *  steered away from a primitive it hasn't seen in a very long time. */
 export const RECENT_HISTORY_WINDOW = 8
 
+/** How many of the founder's own recently-shown idea TEXTS (this session)
+ *  get quoted back to the model as explicit negative examples. Small on
+ *  purpose — a founder clicking "Surprise me" 3-4 times in one sitting is
+ *  the case #755 reports; beyond that the prompt would spend more tokens on
+ *  "don't repeat this" than on grounding the model in the real catalog. */
+export const RECENT_IDEA_TEXT_WINDOW = 5
+
 /**
  * Given the primitives surfaced by the last N generations (most-recent last,
  * same convention as an append-only log), return the catalog's primitive
@@ -71,11 +78,25 @@ export const SURPRISE_IDEA_SYSTEM_PROMPT =
 /**
  * Build the user-turn prompt: the real catalog for grounding, plus an
  * explicit steer toward the underrepresented primitives so repeated clicks
- * actually explore the catalog instead of drifting back to the same handful.
+ * actually explore the catalog instead of drifting back to the same handful,
+ * PLUS (issue #755) an explicit steer away from idea CONCEPT similarity using
+ * the actual prior idea text shown to THIS founder in THIS session.
+ *
+ * The primitive-category steer alone is not enough: two structurally
+ * different ideas can trivially call for the same primitive (any CRM-
+ * adjacent idea invokes ZeroPipeline) while still reading as near-duplicates
+ * to a founder — same vertical, same business shape. `recentIdeaTexts` closes
+ * that gap by quoting the founder's own recently-shown ideas back to the
+ * model as concrete negative examples, not just a category proxy.
+ *
+ * `recentIdeaTexts` is genuinely per-session (sent by the client, which
+ * tracks what it has actually shown this founder — see BuildStart.tsx's
+ * `recentIdeasRef`), unlike `recentHistory` which is process-scoped.
  */
 export function buildSurpriseIdeaPrompt(
   catalog: Pick<CatalogPrimitive, 'name' | 'purpose'>[],
   recentHistory: string[][],
+  recentIdeaTexts: string[] = [],
 ): { system: string; user: string; steerTowards: string[] } {
   const steerTowards = underrepresentedPrimitives(catalog, recentHistory)
   // Cap the steer list at a handful of names in the prompt itself — the model
@@ -83,6 +104,19 @@ export function buildSurpriseIdeaPrompt(
   // underrepresented name (could be most of the catalog on a cold start)
   // would dilute the steer into "everything," which is no steer at all.
   const steerSample = steerTowards.slice(0, 6)
+
+  const priorIdeas = recentIdeaTexts
+    .filter((s) => typeof s === 'string' && s.trim().length > 0)
+    .slice(-RECENT_IDEA_TEXT_WINDOW)
+
+  const avoidClause =
+    priorIdeas.length > 0
+      ? `\n\nAvoid repeating or closely resembling any of these ideas already shown to this same founder this session ` +
+        `(different vertical, different business model shape — not just different wording of the same concept):\n` +
+        priorIdeas.map((idea) => `- ${idea}`).join('\n') +
+        `\n`
+      : ''
+
   const user =
     `REAL PRIMITIVE CATALOG (the only real capabilities that exist — do not invent others):\n${catalogListing(catalog)}\n\n` +
     `Invent ONE new idea that would plausibly compose 2-4 of these real primitives together. ` +
@@ -90,7 +124,8 @@ export function buildSurpriseIdeaPrompt(
     `in recent "Surprise me" picks, so lean toward covering NEW ground rather than the usual suspects): ` +
     `${steerSample.join(', ')}.\n` +
     `The idea must still read as a normal, plausible business — do not force an unnatural mash-up just to hit ` +
-    `every primitive on the steer list.`
+    `every primitive on the steer list.` +
+    avoidClause
   return { system: SURPRISE_IDEA_SYSTEM_PROMPT, user, steerTowards: steerSample }
 }
 
