@@ -11,10 +11,11 @@
  * - Support for both light and dark mode tokens
  */
 
-import { getMCPClient, type DesignTokensResponse } from '../mcp/design-system-client'
+import { getMCPClient, type DesignTokensResponse, type DesignTokens } from '../mcp/design-system-client'
 import { validateOrFallback, DEFAULT_DESIGN_TOKENS } from '../validators/design-tokens.validator'
 import { cacheGet, cacheSet, cacheDelete } from '../redis'
 import { logger } from '../logger'
+import type { DesignSystem } from '../design-systems/types'
 
 const CACHE_TTL_SECONDS = 24 * 60 * 60 // 24 hours
 const CACHE_KEY_PREFIX = 'design-tokens:'
@@ -202,6 +203,67 @@ export async function getActiveDesignTokens(userId: string): Promise<DesignToken
   // Placeholder implementation - returns null until user design tokens are implemented
   logger.info('Getting active design tokens for user (not yet implemented)', { userId })
   return null
+}
+
+/**
+ * Adapt a Design System Picker catalog entry (#590, `lib/design-systems/
+ * catalog.ts` — real, live palette/font/radius data) into the
+ * `DesignTokensResponse` shape this service's `formatTokensForPrompt` /
+ * `generateCSSVariables` already consume (builder#751).
+ *
+ * `extractDesignTokens`'s MCP path (`design-system-client.ts`) depends on
+ * `DESIGN_SYSTEM_MCP_URL`, which is never set anywhere in this repo and
+ * defaults to an unreachable `http://localhost:8001/extract` — every call
+ * through that path fails and silently falls back to `DEFAULT_DESIGN_TOKENS`,
+ * a generic blue/purple palette with NO relation to whatever the founder
+ * actually picked. This function deliberately bypasses that dead dependency
+ * entirely: it builds a real `DesignTokensResponse` directly from the
+ * catalog's own real data, so `buildSystemPromptWithTokens`/
+ * `formatTokensForPrompt` can inject the founder's ACTUAL chosen colors
+ * without ever touching the unreachable MCP client.
+ *
+ * Only `light` is populated from the catalog system's own palette (whether
+ * that system's `band` is 'light' or 'dark' — a dark-band system's own
+ * colors ARE its intended look, not a "dark mode variant" of some other
+ * light system). `dark` is omitted rather than fabricated: the catalog has
+ * no separate light/dark pair per system (see `types.ts`'s own doc comment
+ * on not inventing values a source system doesn't have).
+ */
+export function tokensFromDesignSystem(system: DesignSystem): DesignTokensResponse {
+  const { palette, fonts, radius } = system
+  const light: DesignTokens = {
+    colors: {
+      primary: palette.accent,
+      secondary: palette.accent2,
+      accent: palette.accent2,
+      background: palette.bg,
+      foreground: palette.text,
+      muted: palette.surface,
+    },
+    typography: {
+      fontFamily: `"${fonts.body.family}", sans-serif`,
+      sizes: {
+        xs: '0.75rem',
+        sm: '0.875rem',
+        base: '1rem',
+        lg: '1.125rem',
+        xl: '1.25rem',
+        '2xl': '1.5rem',
+        '3xl': '1.875rem',
+      },
+    },
+    spacing: {
+      baseUnit: '4px',
+      scale: [0, 4, 8, 12, 16, 24, 32, 48, 64, 96],
+    },
+    borderRadius: {
+      sm: `${radius}px`,
+      md: `${radius}px`,
+      lg: `${radius}px`,
+    },
+  }
+
+  return { light }
 }
 
 /**

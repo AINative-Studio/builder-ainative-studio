@@ -60,6 +60,25 @@ describe('persistGeneration (#89)', () => {
     expect(save.mock.calls[0][0].designSystemId).toBeUndefined()
   })
 
+  /**
+   * Design conformance persistence (#751): the post-generation conformance
+   * check result (lib/build/design-conformance.ts) must survive past the
+   * live SSE stream the same way designSystemId already does, so a
+   * dashboard reading a past generation's row (not just a founder watching
+   * it build live) can see it too.
+   */
+  it('forwards designConformanceStatus through to the save function when computed', async () => {
+    const save = vi.fn().mockResolvedValue(true)
+    await persistGeneration({ ...base, designConformanceStatus: 'pass' }, save)
+    expect(save.mock.calls[0][0]).toMatchObject({ designConformanceStatus: 'pass' })
+  })
+
+  it('forwards undefined designConformanceStatus when no design system was chosen', async () => {
+    const save = vi.fn().mockResolvedValue(true)
+    await persistGeneration(base, save)
+    expect(save.mock.calls[0][0].designConformanceStatus).toBeUndefined()
+  })
+
   it('times out (bounded) if save hangs', async () => {
     const save = vi.fn(() => new Promise<boolean>(() => {})) // never resolves
     const r = await persistGeneration(base, save, { timeoutMs: 20 })

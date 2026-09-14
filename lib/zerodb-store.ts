@@ -101,6 +101,12 @@ export async function saveGeneration(data: {
    * design-system-correct too, not just code-correct.
    */
   designSystemId?: string
+  /** Post-generation design conformance result (builder#751) — whether the
+   *  generated code actually used the chosen design system's real palette.
+   *  See lib/build/design-conformance.ts. Persisted alongside designSystemId
+   *  so a dashboard reading a past generation's row (not just a founder
+   *  watching it build live over SSE) can surface it too. */
+  designConformanceStatus?: 'pass' | 'partial' | 'fail'
 }): Promise<boolean> {
   try {
     const row: Record<string, any> = {
@@ -116,6 +122,7 @@ export async function saveGeneration(data: {
     }
     if (data.ssrHtml) row.ssr_html = data.ssrHtml
     if (data.designSystemId) row.design_system_id = data.designSystemId
+    if (data.designConformanceStatus) row.design_conformance_status = data.designConformanceStatus
     if (data.files && Object.keys(data.files).length > 0) {
       try {
         const filesJson = JSON.stringify(data.files)
@@ -175,6 +182,8 @@ export async function loadGeneration(chatId: string): Promise<{
   files?: Record<string, string> | null
   /** The founder's chosen design system id, when one was persisted (2026-09-10 fix). */
   designSystemId?: string
+  /** Post-generation design conformance result, when one was persisted (builder#751). */
+  designConformanceStatus?: 'pass' | 'partial' | 'fail'
 } | null> {
   try {
     // Use ZeroDB query endpoint with server-side filtering by chat_id
@@ -204,6 +213,7 @@ export async function loadGeneration(chatId: string): Promise<{
         ssrHtml: row.ssr_html,
         files,
         designSystemId: row.design_system_id || undefined,
+        designConformanceStatus: row.design_conformance_status || undefined,
       }
     }
     return null
@@ -233,6 +243,7 @@ export async function loadChatHistory(chatId: string): Promise<{
   createdAt: string
   name?: string
   designSystemId?: string
+  designConformanceStatus?: 'pass' | 'partial' | 'fail'
 } | null> {
   if (!chatId) return null
   try {
@@ -267,6 +278,7 @@ export async function loadChatHistory(chatId: string): Promise<{
       createdAt: String(first.created_at || new Date().toISOString()),
       name: first.title || (first.prompt ? String(first.prompt).slice(0, 50) : undefined),
       designSystemId: last.design_system_id || undefined,
+      designConformanceStatus: last.design_conformance_status || undefined,
     }
   } catch (e) {
     console.warn('[ZeroDB] loadChatHistory failed:', (e as Error)?.name || e)

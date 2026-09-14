@@ -341,6 +341,46 @@ describe('useRealPreview — designSystemId wiring (#592)', () => {
   })
 })
 
+// ── Design conformance wiring (#751) ─────────────────────────────────────────
+
+describe('useRealPreview — designConformance wiring (#751)', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('captures designConformance from the complete event and exposes it', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(sseResponse([
+        sseEvent({ type: 'init', chatId: 'chat-conform' }),
+        sseEvent({ type: 'files', files: { '/App.tsx': 'export default function App(){return null}' } }),
+        sseEvent({ type: 'complete', chatId: 'chat-conform', demo: '/preview/chat-conform', designConformance: { status: 'pass', score: 0.75 } }),
+      ]))
+      // files were already captured from the SSE `files` event above, so the
+      // hook skips the rehydrate fetch — next call is previewHasContent.
+      .mockResolvedValueOnce({ ok: true, text: async () => 'x'.padEnd(900) } as unknown as Response)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useRealPreview('Build a synthwave app', true, undefined, 'outrun'))
+    await waitFor(() => expect(result.current.status).toBe('ready'), { timeout: 3000 })
+
+    expect(result.current.designConformance).toEqual({ status: 'pass', score: 0.75 })
+  })
+
+  it('leaves designConformance null when the complete event omits it (no design system chosen)', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(sseResponse([
+        sseEvent({ type: 'init', chatId: 'chat-no-conform' }),
+        sseEvent({ type: 'complete', chatId: 'chat-no-conform', demo: '/preview/chat-no-conform' }),
+      ]))
+      .mockResolvedValueOnce(filesNotFound())
+      .mockResolvedValueOnce({ ok: true, text: async () => 'x'.padEnd(900) } as unknown as Response)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useRealPreview('Build a todo app', true))
+    await waitFor(() => expect(result.current.status).toBe('ready'), { timeout: 3000 })
+
+    expect(result.current.designConformance).toBeNull()
+  })
+})
+
 // ── SSE event parsing ────────────────────────────────────────────────────────
 
 describe('useRealPreview — SSE event parsing', () => {

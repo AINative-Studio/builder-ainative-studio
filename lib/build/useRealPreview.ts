@@ -28,11 +28,21 @@ import { useEffect, useMemo, useReducer } from 'react'
 
 type Status = 'idle' | 'generating' | 'ready' | 'error'
 
+/** Post-generation design conformance result (#751) — surfaced from the
+ *  chat-ws 'complete' SSE event so a founder-visible indicator (Live
+ *  dashboard) can show whether the generated app actually used their chosen
+ *  design system's real colors, not just a value silently logged server-side. */
+export interface DesignConformanceSummary {
+  status: 'pass' | 'partial' | 'fail'
+  score: number
+}
+
 interface Gen {
   chatId: string | null
   status: Status
   files: Record<string, string> | null
   refreshKey: number
+  designConformance: DesignConformanceSummary | null
   listeners: Set<() => void>
 }
 
@@ -48,7 +58,7 @@ export function __resetRealPreviewGens(): void {
 function genFor(idea: string): Gen {
   let g = gens.get(idea)
   if (!g) {
-    g = { chatId: null, status: 'idle', files: null, refreshKey: 0, listeners: new Set() }
+    g = { chatId: null, status: 'idle', files: null, refreshKey: 0, designConformance: null, listeners: new Set() }
     gens.set(idea, g)
   }
   return g
@@ -123,6 +133,12 @@ async function runGeneration(idea: string, g: Gen, dataModel?: unknown, designSy
         } else if (payload.type === 'error') {
           g.status = 'error'
           notify(g)
+        } else if (payload.type === 'complete' && payload.designConformance) {
+          // #751: real post-generation check result, when a design system was
+          // explicitly chosen — surfaced so Preview can show a founder-visible
+          // indicator instead of this being a silently-logged server value.
+          g.designConformance = payload.designConformance
+          notify(g)
         }
       }
     }
@@ -192,7 +208,7 @@ export function useRealPreview(idea: string, enabled: boolean, dataModel?: unkno
 
   const previewUrl = g.chatId && g.status === 'ready' ? `/api/preview/${g.chatId}?r=${g.refreshKey}` : null
   // `files` is exposed so Preview.tsx can route a multi-file app to Sandpack (#291).
-  return { previewUrl, status: g.status, chatId: g.chatId, files: g.files }
+  return { previewUrl, status: g.status, chatId: g.chatId, files: g.files, designConformance: g.designConformance }
 }
 
 /**
