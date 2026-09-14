@@ -903,8 +903,23 @@
    the viewport, leaving a large empty gray region below it as the founder
    scrolled. An explicit height (not just max-height) gives the column real
    size to fill, so the chat log genuinely occupies the sticky rail. */
-.m-live-col.m-live-col-chat { position: sticky; top: 12px; align-self: start; height: calc(100vh - 24px); max-height: calc(100vh - 24px); }
-.m-live-col.m-live-col-chat > .m-chat { min-height: 0; height: 100%; max-height: calc(100vh - 24px); }
+/* #754: `calc(100vh - 24px)` assumed only ~24px of chrome sits above the
+   sticky grid. In reality the masthead + funnel/provisioning banner (4 real
+   states, #748) + product card + hero metrics sit above it — several hundred
+   px, and the banner height varies by account state — so the column
+   genuinely overflowed the viewport. A second hardcoded constant would just
+   move the bug to the next banner-height change (exactly how #484 → #754
+   happened), so `--live-header-h` is set at RUNTIME by useHeaderHeightVar
+   (measuring the real header block via ResizeObserver, see Live.tsx) instead
+   of guessed here. The `0px` fallback keeps this safe pre-hydration/SSR. */
+.m-live-col.m-live-col-chat {
+  position: sticky;
+  top: calc(var(--live-header-h, 0px) + 12px);
+  align-self: start;
+  height: calc(100vh - var(--live-header-h, 0px) - 24px);
+  max-height: calc(100vh - var(--live-header-h, 0px) - 24px);
+}
+.m-live-col.m-live-col-chat > .m-chat { min-height: 0; height: 100%; max-height: calc(100vh - var(--live-header-h, 0px) - 24px); }
 .m-live-grid.is-tablet .m-live-col-chat { position: static; height: auto; max-height: none; }
 .m-live-grid.is-tablet .m-live-col-chat > .m-chat { height: auto; max-height: none; }
 /* On tablet, order the chat rail FIRST so the founder can talk to Cody immediately
