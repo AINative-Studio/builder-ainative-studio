@@ -8,6 +8,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react'
+import { StreamingMessage } from '@ainative/ai-kit'
 import { useBuild } from '@/contexts/build-context'
 import { trackEvent } from '@/components/analytics/google-analytics'
 import { trackMeta } from '@/components/analytics/meta-pixel'
@@ -55,6 +56,28 @@ interface ChatLine { role: 'user' | 'cody'; text: string; attachments?: ChatAtta
 /** An attachment mid-upload or ready-to-send in the composer, before the
  *  message is sent (#741). */
 interface PendingAttachment extends ChatAttachment { uploading?: boolean; error?: string }
+
+/**
+ * Style overrides passed directly to `@ainative/ai-kit`'s StreamingMessage
+ * (#760). StreamingMessage ships opinionated inline defaults — a tinted
+ * background, 16px padding, a 4px role-colored left border, and an 8px
+ * bottom margin (see node_modules/@ainative/ai-kit/dist/index.mjs) — all
+ * meant for a standalone chat-bubble UI. Builder's `.m-chat-cody` look is
+ * flat inline text with no card chrome, so those defaults are neutralized
+ * here via the `style` prop (which the component spreads LAST, after its
+ * own inline styles, so this wins) rather than fought with CSS specificity.
+ * Defined once at module scope so the object identity is stable across
+ * renders (StreamingMessage's own effects depend on `style` only implicitly
+ * via re-render, but a stable reference avoids any needless prop churn).
+ */
+const AIKIT_MESSAGE_STYLE_OVERRIDE: React.CSSProperties = {
+  background: 'transparent',
+  border: 'none',
+  borderLeft: 'none',
+  padding: 0,
+  margin: 0,
+  gap: 0,
+}
 
 export function Live() {
   const { state, dispatch } = useBuild()
@@ -1361,9 +1384,38 @@ export function Live() {
                       )}
                     </div>
                   )
-                  : <p key={i} className="m-chat-cody"><span className="m-glyph">◇</span> {line.text}</p>
+                  : (
+                    <div key={i} className="m-chat-cody-turn">
+                      <span className="m-glyph">◇</span>
+                      <StreamingMessage
+                        role="assistant"
+                        content={line.text}
+                        streamingState="complete"
+                        enableMarkdown={false}
+                        showStreamingIndicator={false}
+                        className="m-chat-cody-aikit"
+                        style={AIKIT_MESSAGE_STYLE_OVERRIDE}
+                        testId={`chat-cody-message-${i}`}
+                      />
+                    </div>
+                  )
               )}
-              {asking && <p className="m-chat-cody m-mono"><span className="m-glyph">◇</span> thinking…</p>}
+              {asking && (
+                <div className="m-chat-cody-turn m-mono">
+                  <span className="m-glyph">◇</span>
+                  <StreamingMessage
+                    role="assistant"
+                    content="thinking…"
+                    streamingState="streaming"
+                    enableMarkdown={false}
+                    showStreamingIndicator={false}
+                    animationType="none"
+                    className="m-chat-cody-aikit"
+                    style={AIKIT_MESSAGE_STYLE_OVERRIDE}
+                    testId="chat-cody-thinking"
+                  />
+                </div>
+              )}
             </div>
             {/* Attachment chips (#741) — real preview before Send, not a fire-and-forget. */}
             {pendingAttachments.length > 0 && (

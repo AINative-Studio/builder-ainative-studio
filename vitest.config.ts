@@ -5,6 +5,12 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    // #760: force @ainative/ai-kit through Vite's own transform/resolve
+    // pipeline (where the alias below applies) instead of Node's native ESM
+    // loader, which Vitest otherwise uses for real node_modules dependencies
+    // in the 'node' environment and which fails on the package's own bad
+    // bare-directory import of react-syntax-highlighter's prism styles.
+    server: { deps: { inline: [/@ainative\/ai-kit/] } },
     // Only this project's own tests. Without an explicit include/exclude,
     // vitest globs the whole tree — including leftover subagent git worktrees
     // under .claude/worktrees/ that contain entirely different projects, which
@@ -48,8 +54,24 @@ export default defineConfig({
     },
   },
   resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './'),
-    },
+    alias: [
+      { find: '@', replacement: path.resolve(__dirname, './') },
+      // #760: @ainative/ai-kit@0.2.0's ESM build (dist/index.mjs) imports
+      // 'react-syntax-highlighter/dist/cjs/styles/prism' as a bare directory
+      // specifier, which Node's own ESM resolver (used by Vitest, unlike
+      // Next/webpack's looser resolution) refuses to resolve without an
+      // explicit '/index.js'. Any test that transitively imports Live.tsx
+      // (which now imports @ainative/ai-kit for StreamingMessage) hits this.
+      // A regex find matches the specifier regardless of which nested
+      // node_modules copy of react-syntax-highlighter resolves it (pnpm
+      // hoists @ainative/ai-kit's own copy under its own .pnpm entry).
+      // Works around the upstream package's packaging bug without patching
+      // node_modules; safe to remove once @ainative/ai-kit publishes a
+      // fixed build with an explicit subpath.
+      {
+        find: /^react-syntax-highlighter\/dist\/cjs\/styles\/prism$/,
+        replacement: path.resolve(__dirname, 'node_modules/react-syntax-highlighter/dist/cjs/styles/prism/index.js'),
+      },
+    ],
   },
 })

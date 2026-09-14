@@ -17,6 +17,13 @@
  *
  * Reached via the deterministic deep-link /build?screen=live&company=<slug>
  * (used by other Live E2E specs), which reload preserves.
+ *
+ * #760: Cody's response turns now render through @ainative/ai-kit's
+ * StreamingMessage inside a `.m-chat-cody-turn` wrapper (was a bare
+ * `<p className="m-chat-cody">`) — locators below were updated to match;
+ * the composer's message input is also now scoped by placeholder text since
+ * #741's hidden file-attach `<input>` shares the same `.m-chat-input`
+ * container, making the old bare `input` tag selector ambiguous.
  */
 import { test, expect, type Page, type Route } from '@playwright/test'
 
@@ -71,7 +78,11 @@ async function gotoLive(page: Page, company: string) {
 }
 
 async function sendMessage(page: Page, text: string) {
-  const input = page.locator('.m-chat-input input')
+  // Scoped to the placeholder text, not just '.m-chat-input input' — #741
+  // added a hidden file-attach <input type="file"> inside the same
+  // .m-chat-input container, so the bare tag selector now matches two
+  // elements and fails Playwright's strict-mode uniqueness check.
+  const input = page.getByPlaceholder('Message Cody…')
   await input.fill(text)
   await input.press('Enter')
 }
@@ -94,18 +105,18 @@ test.describe('Cody chat persistence + memory (#52)', () => {
     // 1) Send a message — user + Cody turns render.
     await sendMessage(page, 'What should we build first?')
     await expect(page.locator('.m-chat-user').filter({ hasText: 'What should we build first?' })).toBeVisible({ timeout: 15_000 })
-    await expect(page.locator('.m-chat-cody').filter({ hasText: /Fresh start/i })).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('.m-chat-cody-turn').filter({ hasText: /Fresh start/i })).toBeVisible({ timeout: 15_000 })
 
     // 2) RELOAD — the prior conversation is restored from the store (not empty).
     await page.reload({ waitUntil: 'domcontentloaded' })
     await expect(page.getByTestId('chat-log')).toBeVisible({ timeout: 15_000 })
     await expect(page.locator('.m-chat-user').filter({ hasText: 'What should we build first?' })).toBeVisible({ timeout: 15_000 })
-    await expect(page.locator('.m-chat-cody').filter({ hasText: /Fresh start/i })).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('.m-chat-cody-turn').filter({ hasText: /Fresh start/i })).toBeVisible({ timeout: 15_000 })
     // Empty-state prompt must NOT be shown when history exists.
     await expect(page.getByTestId('chat-log').getByText(/Ask me anything/i)).toHaveCount(0)
 
     // 3) FOLLOW-UP — the server received prior context; the answer proves memory.
     await sendMessage(page, 'Make it cheaper')
-    await expect(page.locator('.m-chat-cody').filter({ hasText: /Building on our \d+ earlier messages/i })).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('.m-chat-cody-turn').filter({ hasText: /Building on our \d+ earlier messages/i })).toBeVisible({ timeout: 15_000 })
   })
 })
