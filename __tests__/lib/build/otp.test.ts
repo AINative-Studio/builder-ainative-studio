@@ -119,9 +119,12 @@ describe('sendOtp — the honest not_configured path (default env)', () => {
     expect(result.ok).toBe(false)
     expect(result.reason).toBe('not_configured')
     expect(result.expiresAt).toBeTruthy()
-    // The code WAS stored (a real POST to the otp table happened) — this is
-    // real logic, not a stub; only the external SMS call is skipped.
-    expect(fn).toHaveBeenCalledTimes(1)
+    // The code WAS stored (real POSTs to the otp table happened) — this is
+    // real logic, not a stub; only the external SMS call is skipped. Two
+    // calls: an idempotent ensure-table create, then the actual row insert
+    // (see ensureOtpTable — a brand-new table 404s on first write otherwise,
+    // the same class of bug this codebase already hit on build_documents).
+    expect(fn).toHaveBeenCalledTimes(2)
   })
 
   it('returns invalid_phone for an empty phone', async () => {

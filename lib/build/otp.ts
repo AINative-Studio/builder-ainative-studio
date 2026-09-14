@@ -117,8 +117,32 @@ interface OtpRow {
   consumedAt?: string
 }
 
+/**
+ * Ensure the `builder_otp_codes` ZeroDB table exists before writing to it.
+ * This codebase has hit this exact class of bug twice before on a
+ * brand-new table (build_media, build_documents — see document-store.ts's
+ * own ensureTable doc comment) — a new table 404s on its very first write
+ * until something creates it. Best-effort, idempotent (ZeroDB no-ops on an
+ * existing table), never throws — the real write's own result stays
+ * authoritative either way.
+ */
+async function ensureOtpTable(): Promise<void> {
+  try {
+    await fetch(`${AINATIVE_API}/api/v1/projects/${PROJECT_ID}/database/tables`, {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({ table_name: OTP_TABLE }),
+      signal: AbortSignal.timeout(5000),
+    })
+  } catch {
+    // Table might already exist, or the create call itself failed — either
+    // way, fall through to the real write and let ITS result be authoritative.
+  }
+}
+
 async function insertOtpRow(row: OtpRow): Promise<boolean> {
   if (!configured()) return false
+  await ensureOtpTable()
   try {
     const res = await fetch(rowsUrl(), {
       method: 'POST',
