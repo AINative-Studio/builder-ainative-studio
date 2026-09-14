@@ -60,6 +60,12 @@ export function Live() {
   const proof = useLiveProof()
   const [msg, setMsg] = useState('')
   const [enrolled, setEnrolled] = useState(false)
+  // Founder-facing comms cadence mode (#743): 'agile' (default — a morning
+  // standup email) or 'pairProgramming' (a Gitea commit-activity digest).
+  // Hydrated from the registry below; optimistic-then-persist on change,
+  // same shape as enrollNightly().
+  const [commsMode, setCommsMode] = useState<'agile' | 'pairProgramming'>('agile')
+  const [commsModeSaving, setCommsModeSaving] = useState(false)
   const [chat, setChat] = useState<ChatLine[]>([])
   // Chat attachments (#741): files picked/uploaded in the composer, attached
   // to the NEXT sent message. Uploaded immediately on selection so the
@@ -296,6 +302,23 @@ export function Live() {
       .catch(() => {})
     return () => { alive = false }
   }, [companyId, state.idea, dispatch])
+
+  // Hydrate the persisted comms-mode selection (#743) so a returning founder
+  // sees their real saved choice, not always the default. Separate from the
+  // idea-hydration effect above (that one gates on !state.idea; this needs to
+  // run regardless, on every mount for this company).
+  useEffect(() => {
+    if (!companyId) return
+    let alive = true
+    fetch(`/api/build/resolve-app?slug=${encodeURIComponent(companyId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!alive) return
+        if (d?.commsMode === 'agile' || d?.commsMode === 'pairProgramming') setCommsMode(d.commsMode)
+      })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [companyId])
 
   // Real business-systems state for this company (honest zero-state for a fresh
   // company; real counts when its ZeroDB has data). Never fabricated.
@@ -653,6 +676,28 @@ export function Live() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePlan])
 
+  // Persist a comms-mode change (#743) — optimistic-then-persist, same shape
+  // as enrollNightly(). Requires sign-in (the route 401s for guest/anon).
+  const changeCommsMode = async (mode: 'agile' | 'pairProgramming') => {
+    if (!signedIn || mode === commsMode || commsModeSaving) return
+    const previous = commsMode
+    setCommsMode(mode) // optimistic
+    setCommsModeSaving(true)
+    try {
+      const res = await fetch('/api/build/comms-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug: companyId, mode }),
+      })
+      const d = await res.json().catch(() => null)
+      if (!res.ok || !d?.ok) setCommsMode(previous) // revert on a real failure
+    } catch {
+      setCommsMode(previous) // revert — the request never landed
+    } finally {
+      setCommsModeSaving(false)
+    }
+  }
+
   // Provision the persistent cloud for this company (#243): a real per-company
   // ZeroDB project + persistent deploy target. Requires an account (the project
   // is owned by the founder). Refreshes the systems grid to read real data after.
@@ -864,6 +909,24 @@ export function Live() {
             ) : (
               <p className="m-live-card-body">Nightly, I evaluate the company, pick the highest-leverage task, and run it. You&apos;ll get a morning summary.</p>
             )}
+            {/* Comms cadence mode (#743): how Cody emails the founder every
+                morning — "Agile standup" (yesterday/today/blockers, the
+                default) or "Pair programming" (a Gitea commit digest). */}
+            <div className="m-live-comms-mode" data-testid="comms-mode-selector">
+              <label className="m-mono m-live-comms-mode-label" htmlFor="comms-mode-select">
+                Morning email from Cody
+              </label>
+              <select
+                id="comms-mode-select"
+                data-testid="comms-mode-select"
+                value={commsMode}
+                disabled={!signedIn || commsModeSaving}
+                onChange={(ev) => changeCommsMode(ev.target.value as 'agile' | 'pairProgramming')}
+              >
+                <option value="agile">Agile standup</option>
+                <option value="pairProgramming">Pair programming</option>
+              </select>
+            </div>
             <div className="m-live-card-actions">
               <button className="btn-ghost" onClick={openGraph}>Open the artifact graph →</button>
               <button className="btn-ghost" onClick={rescopeWedge}>Re-scope the wedge ⚠</button>

@@ -1,0 +1,48 @@
+name: Comms Digest (Agile / Pair Programming)
+
+# Fires Cody's founder-facing email cadence daily (#743): for each enrolled
+# company, sends either an "agile standup" (yesterday/today/blockers, grounded
+# in the nightly loop's real daily report) or a "pair programming" digest
+# (real Gitea commit activity), depending on the founder's dashboard setting.
+#
+# TIMING: the user's spec is "7AM PST" (Cody "lives in a US West data
+# center"). GitHub Actions cron is fixed-UTC only — it cannot itself observe
+# DST — so we pick ONE fixed UTC offset and accept the same seasonal drift
+# winback-email.yml already lives with:
+#   - PST (UTC-8, Nov–Mar)      → 15:00 UTC = 7:00am PST  (exact)
+#   - PDT (UTC-7, Mar–Nov)      → 15:00 UTC = 8:00am PDT  (1hr late)
+# We chose 15:00 UTC (rather than 14:00) so the cron is EXACT during standard
+# time (PST, the offset literally named in the spec) and drifts only 1hr
+# LATE (never early) during daylight time — a founder gets their standup a
+# little later in summer, never before they'd reasonably be up.
+#
+# This runs SEVERAL HOURS after nightly-loop.yml (07:00 UTC), so the agile
+# mode's daily report has had time to be generated and durably persisted
+# before this digest reads it.
+
+on:
+  schedule:
+    - cron: '0 15 * * *'
+  workflow_dispatch: {} # allow manual trigger
+
+jobs:
+  send-comms-digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send comms digest emails
+        run: |
+          echo "Triggering comms digest sweep…"
+          code=$(curl -sS -o /tmp/resp.json -w "%{http_code}" \
+            "https://builder.ainative.studio/api/cron/comms-digest?send=true" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            --max-time 280)
+          echo "HTTP $code"
+          cat /tmp/resp.json
+          echo
+          if [ "$code" != "200" ]; then
+            echo "::error::Comms digest sweep returned HTTP $code"
+            exit 1
+          fi
+          sent=$(cat /tmp/resp.json | jq -r '.sent // 0')
+          failed=$(cat /tmp/resp.json | jq -r '.failed // 0')
+          echo "Sent: $sent, Failed: $failed"

@@ -70,4 +70,20 @@ describe('GET /api/build/resolve-app', () => {
     const data = await res.json()
     expect(data.idea).toBeNull()
   })
+
+  // #743: Live.tsx's comms-mode selector hydrates its current value from this
+  // endpoint. Additive field, existing callers unaffected.
+  it('defaults commsMode to agile when the registry entry has none recorded', async () => {
+    h.resolveApp.mockResolvedValue({ chatId: 'real-chat-id' } as any)
+    const res = await GET(req('https://builder.ainative.studio/api/build/resolve-app?slug=ember-box'))
+    const data = await res.json()
+    expect(data.commsMode).toBe('agile')
+  })
+
+  it('returns the registry commsMode when pairProgramming was chosen', async () => {
+    h.resolveApp.mockResolvedValue({ chatId: 'real-chat-id', commsMode: 'pairProgramming' } as any)
+    const res = await GET(req('https://builder.ainative.studio/api/build/resolve-app?slug=ember-box'))
+    const data = await res.json()
+    expect(data.commsMode).toBe('pairProgramming')
+  })
 })

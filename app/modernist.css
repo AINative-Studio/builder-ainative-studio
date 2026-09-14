@@ -299,6 +299,19 @@
 .m-metric-note { font-size: 10px; color: var(--text-faint); margin-top: 10px; }
 .m-live-card-actions { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
 
+/* Comms cadence mode selector (#743) — "Agile standup" / "Pair programming". */
+.m-live-comms-mode { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
+.m-live-comms-mode-label { font-size: 10px; color: var(--text-faint); }
+.m-live-comms-mode select {
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1.5px solid var(--neutral-line);
+  background: var(--surface, #fff);
+  color: var(--text-body-70);
+  cursor: pointer;
+}
+.m-live-comms-mode select:disabled { opacity: 0.5; cursor: not-allowed; }
+
 /* ============================================================================
    Workspace chrome: actbar buttons, account chip, artifact rail, index (#235)
    ============================================================================ */
