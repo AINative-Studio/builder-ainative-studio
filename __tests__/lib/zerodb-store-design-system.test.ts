@@ -98,3 +98,66 @@ describe('loadGeneration rehydrates designSystemId (2026-09-10 fix)', () => {
     expect(gen?.designSystemId).toBeUndefined()
   })
 })
+
+/**
+ * Design conformance persistence (#751) — mirrors designSystemId's own
+ * cross-replica durability fix above: the post-generation conformance
+ * result must survive in the SAME durable row, not just live in the
+ * in-memory preview store or an SSE event nobody stored.
+ */
+describe('saveGeneration persists designConformanceStatus (#751)', () => {
+  it('writes design_conformance_status when a conformance check was computed', async () => {
+    const ok = await saveGeneration({ ...baseGen, designConformanceStatus: 'partial' })
+    expect(ok).toBe(true)
+    const row = lastRowData()
+    expect(row.design_conformance_status).toBe('partial')
+  })
+
+  it('omits design_conformance_status when no design system was chosen', async () => {
+    const ok = await saveGeneration({ ...baseGen })
+    expect(ok).toBe(true)
+    const row = lastRowData()
+    expect(row.design_conformance_status).toBeUndefined()
+  })
+})
+
+describe('loadGeneration rehydrates designConformanceStatus (#751)', () => {
+  it('returns the persisted designConformanceStatus', async () => {
+    fetchMock.mockResolvedValueOnce(
+      okResponse({
+        data: [
+          {
+            row_data: {
+              chat_id: 'chat-meridian',
+              prompt: 'build meridian',
+              generated_code: 'export default function App(){}',
+              code_length: 33,
+              design_conformance_status: 'fail',
+            },
+          },
+        ],
+      }),
+    )
+    const gen = await loadGeneration('chat-meridian')
+    expect(gen?.designConformanceStatus).toBe('fail')
+  })
+
+  it('returns undefined designConformanceStatus when none was persisted', async () => {
+    fetchMock.mockResolvedValueOnce(
+      okResponse({
+        data: [
+          {
+            row_data: {
+              chat_id: 'chat-meridian',
+              prompt: 'build meridian',
+              generated_code: 'export default function App(){}',
+              code_length: 33,
+            },
+          },
+        ],
+      }),
+    )
+    const gen = await loadGeneration('chat-meridian')
+    expect(gen?.designConformanceStatus).toBeUndefined()
+  })
+})

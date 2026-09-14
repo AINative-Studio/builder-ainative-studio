@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { livePreviewLabel, shouldShowShareUrl } from '@/components/build/artifacts/Preview'
+import { livePreviewLabel, shouldShowShareUrl, designConformanceLabel } from '@/components/build/artifacts/Preview'
 
 /**
  * Real, live bug found via E2E verification against production (Playwright,
@@ -56,5 +56,38 @@ describe('shouldShowShareUrl (pure)', () => {
     expect(shouldShowShareUrl(null, true, 'my-company')).toBe(false)
     expect(shouldShowShareUrl('chat-1', true, null)).toBe(false)
     expect(shouldShowShareUrl(undefined, true, undefined)).toBe(false)
+  })
+})
+
+/**
+ * Design conformance badge label (#751) — surfaces the real post-generation
+ * check result (lib/build/design-conformance.ts) as a founder-visible
+ * indicator, not a value silently logged server-side with no consumer.
+ */
+describe('designConformanceLabel (pure)', () => {
+  it('shows nothing while the app is not ready yet, even with a result already in hand', () => {
+    expect(designConformanceLabel('generating', { status: 'pass', score: 1 })).toBeNull()
+    expect(designConformanceLabel('idle', { status: 'fail', score: 0 })).toBeNull()
+  })
+
+  it('shows nothing when no design system was chosen (conformance is null/undefined)', () => {
+    expect(designConformanceLabel('ready', null)).toBeNull()
+    expect(designConformanceLabel('ready', undefined)).toBeNull()
+  })
+
+  it('shows a positive label for status=pass', () => {
+    expect(designConformanceLabel('ready', { status: 'pass', score: 1 })).toBe('Matches your design system')
+  })
+
+  it('shows a partial label for status=partial', () => {
+    expect(designConformanceLabel('ready', { status: 'partial', score: 0.3 })).toBe('Partially matches your design system')
+  })
+
+  it('shows a negative label for status=fail', () => {
+    expect(designConformanceLabel('ready', { status: 'fail', score: 0 })).toBe("Doesn't match your design system")
+  })
+
+  it('shows nothing on error status even with a result present', () => {
+    expect(designConformanceLabel('error', { status: 'pass', score: 1 })).toBeNull()
   })
 })

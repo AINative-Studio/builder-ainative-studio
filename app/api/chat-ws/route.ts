@@ -37,6 +37,8 @@ import { mergeChunks, getMergeSummary } from '@/lib/agent/chunk-merger'
 import { generateAINativeFileSet } from '@/lib/ainative-file-generator'
 import { selectTheme, formatThemeForPrompt, applyThemeToPrompt, themeFromDesignSystem, formatDesignSystemExtras, googleFontsUrl } from '@/lib/theme-system'
 import { getDesignSystem } from '@/lib/design-systems/catalog'
+import { tokensFromDesignSystem, formatTokensForPrompt } from '@/lib/services/design-tokens.service'
+import { checkDesignConformance } from '@/lib/build/design-conformance'
 import { parseMultiFileOutput } from '@/lib/multi-file-parser'
 import { shouldUseSandpack } from '@/lib/build/preview-engine'
 import { storeFiles as storeFilesV2 } from '@/lib/preview-store-v2'
@@ -539,6 +541,24 @@ export async function POST(request: NextRequest) {
           // the full history of why this replaced lib/services/memory.service.ts.
           const memoryContext = await formatDesignMemoryForPrompt(chatId || '')
           const themedPrompt = applyThemeToPrompt(PROFESSIONAL_SYSTEM_PROMPT, selectedTheme)
+          // Real design-token pipeline reconnection (#751): lib/services/design-
+          // tokens.service.ts's formatTokensForPrompt (already built, tested, but
+          // previously wired ONLY into app/api/chat/route.ts — NOT this live
+          // founder-facing path) now reaches actual generation. Fed from
+          // tokensFromDesignSystem(chosenDesignSystem) — the SAME real catalog
+          // data (lib/design-systems/catalog.ts) already used above by
+          // themeFromDesignSystem, adapted into the richer DesignTokensResponse
+          // shape (typography family, border-radius, foreground/background/muted)
+          // that formatTokensForPrompt expects. Deliberately NOT routed through
+          // design-tokens.service.ts's extractDesignTokens/MCP path — that
+          // depends on DESIGN_SYSTEM_MCP_URL, unset everywhere in this repo and
+          // defaulting to an unreachable http://localhost:8001/extract. This is
+          // additive (appended alongside the existing themePrompt/extras below,
+          // never replacing them) so an unchosen/legacy request's prompt is
+          // byte-for-byte unchanged.
+          const designTokenBlock = chosenDesignSystem
+            ? '\n\n' + formatTokensForPrompt(tokensFromDesignSystem(chosenDesignSystem))
+            : ''
           // #218: inject real AINative-primitive wiring into the CODEGEN prompt so
           // generated apps COMPOSE real endpoints (ZeroCommerce/ZeroInvoice/etc.)
           // instead of regenerating business logic. #288 shipped the selection
@@ -568,7 +588,7 @@ export async function POST(request: NextRequest) {
           // #532: keep the generated app's schema consistent with the dataModel
           // artifact the founder already reviewed (when one was passed through).
           if (dataModelBlock) console.log(`🗂️  Data model context injected (${dataModelBlock.length} chars from founder's reviewed artifact)`)
-          const enhancedSystemPrompt = themedPrompt + themePrompt + imagePrompt + memoryContext + compositionBlock + fileStructureBlock + ragBlock + dataModelBlock
+          const enhancedSystemPrompt = themedPrompt + themePrompt + designTokenBlock + imagePrompt + memoryContext + compositionBlock + fileStructureBlock + ragBlock + dataModelBlock
 
           // ============================================================
           // CLAUDE AGENT PATH — headless Claude Code agent via SSE
@@ -1115,7 +1135,7 @@ INTERACTIVITY (MANDATORY — the app must WORK, not just look good):
 - If the app persists data (todos, invoices, contacts, notes, anything the user adds/saves) it MUST use /api/db (see DATA/PERSISTENCE) — NOT just in-memory. In-memory state is only acceptable for a purely presentational page.
 - Self-check before finishing: does every button have an onClick? does every input have onChange? can the user actually add/edit/filter/delete? If not, wire it up.
 
-OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually polished with realistic sample data, and every control functional.`
+OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually polished with realistic sample data, and every control functional.${designTokenBlock}`
 
             const _primaryClaude = getPrimaryClaudeClient()
             const _claudeLabel = _primaryClaude?.provider === 'bedrock'
@@ -1946,6 +1966,20 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               files: parsedFiles
             })}\n\n`))
 
+            // Design conformance check (#751): given the founder's ACTUAL chosen
+            // design system (not just what was injected into the prompt), scan
+            // the ACTUAL generated code for whether its real palette colors show
+            // up — the real gap this issue exists to close, since nothing ever
+            // checked this before. Only meaningful when a system was explicitly
+            // chosen; skipped (undefined) for the automatic selectTheme() path,
+            // which has no founder-committed palette to hold the model to.
+            const designConformance = chosenDesignSystem
+              ? checkDesignConformance(chosenDesignSystem, finalContent)
+              : undefined
+            if (designConformance) {
+              console.log(`🎯 ${designConformance.summary}`)
+            }
+
             // Persist to ZeroDB (#89) — awaited before 'complete' (but after the
             // preview is already sent), so a slow/cut request still saves and
             // /preview/<id> can restore it after memory eviction. Bounded 8s so a
@@ -1960,7 +1994,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                 // app actually QUALIFIES for Sandpack — single-file apps (whose
                 // map is just the AX scaffold) stay lean, Babel restores them
                 // from generated_code alone.
-                { chatId: responseId, prompt: message, code: finalContent, model: requestedModel || DEFAULT_MODEL, status: 'success', valid: validation.valid, files: shouldUseSandpack(parsedFiles) ? parsedFiles : undefined, designSystemId: chosenDesignSystem?.id, skipShowcase },
+                { chatId: responseId, prompt: message, code: finalContent, model: requestedModel || DEFAULT_MODEL, status: 'success', valid: validation.valid, files: shouldUseSandpack(parsedFiles) ? parsedFiles : undefined, designSystemId: chosenDesignSystem?.id, designConformanceStatus: designConformance?.status, skipShowcase },
                 saveGeneration,
               )
               console.log(`[PERSIST] success path: ${pr.reason}`)
@@ -2006,11 +2040,16 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               content: conversationalMessage
             })}\n\n`))
 
-            // Send completion event
+            // Send completion event — designConformance (#751) surfaces the
+            // real post-generation check result to any live consumer of this
+            // stream (e.g. useRealPreview → a founder-visible Live dashboard
+            // badge), not just a silently-logged value nobody reads. Omitted
+            // entirely when no design system was explicitly chosen.
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({
               type: 'complete',
               chatId: responseId,
-              demo: `/preview/${responseId}`
+              demo: `/preview/${responseId}`,
+              ...(designConformance ? { designConformance: { status: designConformance.status, score: designConformance.score } } : {}),
             })}\n\n`))
 
             // Persist + RLHF logging + SSR build (fire-and-forget, non-blocking)

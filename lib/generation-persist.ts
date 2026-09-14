@@ -39,6 +39,17 @@ export interface PersistInput {
    */
   designSystemId?: string
   /**
+   * Post-generation design conformance result (builder#751): whether the
+   * ACTUAL generated code used the chosen design system's real palette, per
+   * `lib/build/design-conformance.ts`'s `checkDesignConformance`. Threaded
+   * through the same durable path as `designSystemId` so the result survives
+   * past the live SSE stream (e.g. for a dashboard reading a past
+   * generation's row, not just the founder who was watching it build live).
+   * Undefined when no design system was explicitly chosen — there's no
+   * founder-committed palette to check conformance against.
+   */
+  designConformanceStatus?: 'pass' | 'partial' | 'fail'
+  /**
    * Real gap fixed 2026-09-10: an explicit opt-out so verification/test
    * traffic (fired against the same real generation path as any founder's)
    * never enters the public showcase gallery, regardless of how good the
@@ -66,6 +77,7 @@ export type SaveFn = (data: {
   isShowcase?: boolean
   files?: Record<string, string>
   designSystemId?: string
+  designConformanceStatus?: 'pass' | 'partial' | 'fail'
 }) => Promise<boolean>
 
 /**
@@ -115,6 +127,7 @@ export async function persistGeneration(
     // enforces the row-size ceiling and drops it (logged) when oversized.
     files: input.files && Object.keys(input.files).length > 0 ? input.files : undefined,
     designSystemId: input.designSystemId,
+    designConformanceStatus: input.designConformanceStatus,
     // Surface only successful, validated, substantial generations to the showcase.
     // The showcase quality gate (isQualityApp) also requires >= 2000 chars, so
     // flagging short code as isShowcase here is misleading — it would still be
