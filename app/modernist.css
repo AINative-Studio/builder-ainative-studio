@@ -1104,6 +1104,20 @@
 .m-chat-user { align-self: flex-end; background: var(--color-surface); padding: 8px 12px; font-size: 13px; max-width: 80%; }
 .m-chat-cody { font-size: 13px; color: var(--text-body-85); line-height: 1.5; }
 .m-chat-cody .m-glyph { color: var(--color-accent); }
+/* #760: Cody's response, rendered via @ainative/ai-kit's StreamingMessage
+   (replaces the hand-rolled <p className="m-chat-cody"> for the assistant
+   side only — user turns are unchanged, see .m-chat-user-turn below).
+   StreamingMessage's own card chrome (background/border/padding) is
+   neutralized via the `style` prop passed at the call site
+   (AIKIT_MESSAGE_STYLE_OVERRIDE in Live.tsx); this block matches the
+   remaining text look to the original .m-chat-cody rule so the swap is
+   visually a no-op except for the fixed overlap. */
+.m-chat-cody-turn { display: flex; align-items: flex-start; gap: 6px; font-size: 13px; color: var(--text-body-85); line-height: 1.5; }
+.m-chat-cody-turn .m-glyph { color: var(--color-accent); flex-shrink: 0; }
+.m-chat-cody-turn .m-chat-cody-aikit { flex: 1; min-width: 0; font-family: inherit; }
+.m-chat-cody-turn .m-chat-cody-aikit .streaming-message-header { display: none; }
+.m-chat-cody-turn .m-chat-cody-aikit .message-content { font-size: 13px; color: var(--text-body-85); line-height: 1.5; }
+.m-chat-cody-turn .m-chat-cody-aikit .message-metadata { display: none; }
 .m-chat-input { display: flex; gap: 6px; flex-shrink: 0; }
 .m-chat-input input { flex: 1; padding: 9px 10px; border: 1.5px solid var(--neutral-line); font-family: var(--font-body); font-size: 13px; }
 /* Chat attachments (#741) — attach button + upload-preview chips in the composer. */
