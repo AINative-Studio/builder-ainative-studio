@@ -16,6 +16,8 @@
  * (ainative.studio/intelligence) — now pointed at each user's company.
  */
 
+import { getAinativeApiKey } from '@/lib/build/env-keys'
+
 /**
  * Read lazily, not cached at module scope: a top-level const freezes whatever
  * the env was at first import, which broke tests setting AINATIVE_API_KEY
@@ -28,7 +30,7 @@ function ainativeApi(): string {
   return process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 }
 function apiKey(): string {
-  return process.env.AINATIVE_API_KEY || process.env.ZERODB_API_KEY || ''
+  return getAinativeApiKey()
 }
 
 export interface NightlyRunInput {

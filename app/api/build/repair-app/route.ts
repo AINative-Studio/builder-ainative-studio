@@ -31,13 +31,14 @@ import { isRenderable, extractRenderableCode } from '@/lib/code-validator'
 import { storePreview } from '@/lib/preview-store'
 import { storeFiles } from '@/lib/preview-store-v2'
 import { saveGeneration } from '@/lib/zerodb-store'
+import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
 
 const ainativeBaseURL = (process.env.AINATIVE_API_URL || 'https://api.ainative.studio') + '/v1'
 const ainativeClient = new OpenAI({
-  apiKey: process.env.AINATIVE_API_KEY || process.env.API_Key || process.env.ZERODB_API_KEY || '',
+  apiKey: getAinativeApiKey(),
   baseURL: ainativeBaseURL,
   maxRetries: 0,
 })

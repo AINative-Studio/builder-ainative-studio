@@ -6,6 +6,8 @@
  * intelligence-loop feedback.
  */
 
+import { getAinativeApiKey } from '@/lib/build/env-keys'
+
 export interface AgentRunData {
   chatId: string
   userId: string
@@ -65,7 +67,7 @@ async function ensureAgentRunsTable(baseUrl: string, projectId: string, apiKey: 
  * Fire-and-forget — callers should `.catch()` to avoid unhandled rejections.
  */
 export async function logAgentRun(data: AgentRunData): Promise<void> {
-  const apiKey = process.env.ZERODB_API_KEY || process.env.AINATIVE_API_KEY || ''
+  const apiKey = getAinativeApiKey()
   const projectId = process.env.ZERODB_PROJECT_ID || '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
   if (!apiKey) {
     console.warn('[AgentRuns] No API key — skipping log')

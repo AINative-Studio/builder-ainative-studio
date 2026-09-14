@@ -50,11 +50,12 @@ import OpenAI from 'openai'
 import { CATALOG, selectPrimitives } from '@/lib/build/primitive-catalog'
 import { buildSurpriseIdeaPrompt, sanitizeSurpriseIdea, isUsableSurpriseIdea, RECENT_HISTORY_WINDOW } from '@/lib/build/surprise-idea-generator'
 import { pickSurpriseIdea } from '@/lib/build/surprise-ideas'
+import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 export const runtime = 'nodejs'
 
 const llama = new OpenAI({
-  apiKey: process.env.AINATIVE_API_KEY || process.env.API_Key || process.env.ZERODB_API_KEY || '',
+  apiKey: getAinativeApiKey(),
   baseURL: (process.env.AINATIVE_API_URL || 'https://api.ainative.studio') + '/v1',
 })
 

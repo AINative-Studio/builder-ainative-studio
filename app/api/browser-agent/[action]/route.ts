@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyAppDataToken } from '@/lib/build/app-data-token'
+import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 /**
  * Browser Agent proxy (#499) — the runtime-callable path for a generated
@@ -36,7 +37,7 @@ import { verifyAppDataToken } from '@/lib/build/app-data-token'
 export const runtime = 'nodejs'
 
 const BROWSER_AGENT_API = process.env.BROWSER_AGENT_API_URL || 'https://api.ainative.studio/api/v1/public/browser'
-const API_KEY = process.env.ZERODB_API_KEY || process.env.AINATIVE_API_KEY || ''
+const API_KEY = getAinativeApiKey()
 
 const UNAUTHORIZED = () =>
   NextResponse.json({ error: 'invalid or missing app data token' }, { status: 401 })

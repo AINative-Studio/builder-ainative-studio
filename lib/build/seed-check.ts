@@ -32,6 +32,8 @@ export interface SeededDataCheck {
   detail: string
 }
 
+import { getAinativeApiKey } from '@/lib/build/env-keys'
+
 const ZERODB_API = 'https://api.ainative.studio/api'
 const SHARED_PROJECT_ID = '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
 
@@ -110,7 +112,7 @@ export async function checkSeededData(
   if (allTables.length === 0) {
     return { ...base, checked: true, detail: 'not data-backed (no /api/db references)' }
   }
-  const apiKey = process.env.ZERODB_API_KEY || process.env.AINATIVE_API_KEY || ''
+  const apiKey = getAinativeApiKey()
   if (!apiKey) {
     return { ...base, detail: 'no ZeroDB key — cannot verify (fail-open)' }
   }

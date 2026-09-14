@@ -21,6 +21,7 @@ import { getPlanStatus } from '@/lib/ainative/plan'
 import { deriveOwnerKey, chatScopeKey } from '@/lib/build/chat-store'
 import { createTask, stageFromSwarmStatus } from '@/lib/build/task-store'
 import { codingStandardsContextBlock } from '@/lib/build/coding-standards'
+import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 export const runtime = 'nodejs'
 
@@ -75,7 +76,7 @@ export async function POST(request: NextRequest) {
   // Try the real platform agent-swarm. If it 403s (gating) or 5xxs (core#6422),
   // degrade honestly — never fabricate a live run.
   try {
-    const key = process.env.AINATIVE_API_KEY || process.env.API_Key || process.env.ZERODB_API_KEY || ''
+    const key = getAinativeApiKey()
     const res = await fetch(`${SWARM_BASE}/tasks`, {
       method: 'POST',
       headers: {

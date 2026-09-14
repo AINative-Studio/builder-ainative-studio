@@ -16,6 +16,7 @@
  */
 
 import { appendRecentEvent, type AutoRunEvent } from '@/lib/build/auto-run-activity'
+import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 /** Reuses the SAME table as the nightly loop (#207); Auto Mode rows carry kind: 'auto'. */
 const TABLE = 'builder_loop_enrollments'
@@ -26,7 +27,7 @@ function apiBase(): string {
   return process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 }
 function apiKey(): string {
-  return process.env.AINATIVE_API_KEY || process.env.ZERODB_API_KEY || ''
+  return getAinativeApiKey()
 }
 function projectId(): string {
   return process.env.ZERODB_PROJECT_ID || ''

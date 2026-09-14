@@ -18,11 +18,13 @@
  * tested with no network. NEVER logs row contents (a founder's data is private).
  */
 
+import { getAinativeApiKey } from '@/lib/build/env-keys'
+
 const AINATIVE_API = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 
 /** The Builder admin key that can read the company projects filed under the Builder workspace. */
 function exportApiKey(): string {
-  return process.env.AINATIVE_API_KEY || process.env.ZERODB_API_KEY || ''
+  return getAinativeApiKey()
 }
 
 /** Max rows fetched per table (defends payload + memory on a large export). */

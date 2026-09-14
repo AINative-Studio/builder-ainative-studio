@@ -38,6 +38,8 @@
  * history → messages) so the pure core can be unit-tested without a network.
  */
 
+import { getAinativeApiKey } from '@/lib/build/env-keys'
+
 const ZERODB_API = process.env.ZERODB_API_URL || 'https://api.ainative.studio/api'
 /** The shared platform project every unprovisioned company's chat lives in,
  *  and where every provisioned company's OLD (pre-#400) history still lives. */
@@ -68,7 +70,7 @@ export const DEFAULT_HISTORY_TURNS = 12
 export const MAX_LOAD_TURNS = 100
 
 function getApiKey(): string {
-  return process.env.ZERODB_API_KEY || process.env.AINATIVE_API_KEY || process.env.API_Key || ''
+  return getAinativeApiKey()
 }
 
 /**

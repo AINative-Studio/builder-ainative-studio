@@ -14,12 +14,14 @@
  * separate top-level `claim_token` field), so we parse it out here.
  */
 
+import { getAinativeApiKey } from '@/lib/build/env-keys'
+
 const AINATIVE_API = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 
 /** The Builder server's own AINative key (admin@ainative.studio identity). Owns the
  *  AINative Builder workspace, so it's the identity that can re-parent an
  *  admin-owned project into that workspace. */
-const BUILDER_API_KEY = process.env.AINATIVE_API_KEY || process.env.ZERODB_API_KEY || ''
+const BUILDER_API_KEY = getAinativeApiKey()
 
 /**
  * The AINative Builder workspace (core Organization) id — the single home for every

@@ -6,10 +6,11 @@
  */
 
 import { logger } from '../logger'
+import { getAinativeApiKey } from '../build/env-keys'
 
 function getMemoryConfig() {
   const apiUrl = process.env.AINATIVE_API_URL || process.env.NEXT_PUBLIC_API_BASE || 'https://api.ainative.studio'
-  const apiKey = process.env.ZERODB_API_KEY || process.env.AINATIVE_API_KEY || ''
+  const apiKey = getAinativeApiKey()
   return { apiUrl, apiKey }
 }
 

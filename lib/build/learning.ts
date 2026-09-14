@@ -16,8 +16,10 @@
  * with .catch(). No new PII is captured (idea + public brand only, no user email).
  */
 
+import { getAinativeApiKey } from '@/lib/build/env-keys'
+
 const AINATIVE_API = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
-const API_KEY = process.env.AINATIVE_API_KEY || process.env.ZERODB_API_KEY || ''
+const API_KEY = getAinativeApiKey()
 const PROJECT_ID = process.env.ZERODB_PROJECT_ID || ''
 const TABLE = 'builder_learning'
 

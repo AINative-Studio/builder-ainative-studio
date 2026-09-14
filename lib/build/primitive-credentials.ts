@@ -29,9 +29,10 @@
 import { encryptToken, decryptToken } from '@/lib/services/credentials.service'
 import { refreshAINativeToken, shouldRefreshToken } from '@/lib/auth/tokenRefresh'
 import { ainativeFetch } from '@/lib/ainative/client'
+import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 const AINATIVE_API = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
-const API_KEY = process.env.AINATIVE_API_KEY || process.env.ZERODB_API_KEY || ''
+const API_KEY = getAinativeApiKey()
 const PROJECT_ID = process.env.ZERODB_PROJECT_ID || ''
 const TABLE = 'builder_primitive_credentials'
 

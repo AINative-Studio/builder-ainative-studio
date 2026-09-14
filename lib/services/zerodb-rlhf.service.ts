@@ -7,8 +7,10 @@
  * Refs #42
  */
 
+import { getAinativeApiKey } from '@/lib/build/env-keys'
+
 const API_URL = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
-const API_KEY = process.env.ZERODB_API_KEY || process.env.AINATIVE_API_KEY || ''
+const API_KEY = getAinativeApiKey()
 const PROJECT_ID = process.env.ZERODB_PROJECT_ID || '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
 
 const TRAINING_TABLE = 'rlhf_training_data'
