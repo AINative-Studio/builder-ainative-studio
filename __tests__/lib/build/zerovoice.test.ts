@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
-import { provisionZeroVoiceNumber, zeroVoiceProvisionEnabled } from '@/lib/build/zerovoice'
+import {
+  provisionZeroVoiceNumber,
+  zeroVoiceProvisionEnabled,
+  sendZeroVoiceSms,
+  makeZeroVoiceCall,
+} from '@/lib/build/zerovoice'
 
 /**
  * lib/build/zerovoice — ZeroVoice provisioning client (#415).
@@ -165,5 +170,151 @@ describe('provisionZeroVoiceNumber (#415)', () => {
     const result = await provisionZeroVoiceNumber('jwt', 'my-co')
     expect(result.ok).toBe(false)
     expect((result.reason ?? '').length).toBeLessThanOrEqual(160)
+  })
+})
+
+describe('sendZeroVoiceSms (#733)', () => {
+  it('returns { ok: false, reason: "no_jwt" } when jwt is empty', async () => {
+    const fn = mockFetch(() => ({ ok: true }))
+    const result = await sendZeroVoiceSms('', '+15550001111', '+15550002222', 'hi')
+    expect(result).toEqual({ ok: false, reason: 'no_jwt' })
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('returns { ok: false, reason: "no_from_number" } when fromE164 is empty', async () => {
+    const fn = mockFetch(() => ({ ok: true }))
+    const result = await sendZeroVoiceSms('jwt', '', '+15550002222', 'hi')
+    expect(result).toEqual({ ok: false, reason: 'no_from_number' })
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('returns { ok: false, reason: "no_to_number" } when toE164 is empty', async () => {
+    const fn = mockFetch(() => ({ ok: true }))
+    const result = await sendZeroVoiceSms('jwt', '+15550001111', '', 'hi')
+    expect(result).toEqual({ ok: false, reason: 'no_to_number' })
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('returns { ok: false, reason: "empty_body" } when body is blank', async () => {
+    const fn = mockFetch(() => ({ ok: true }))
+    const result = await sendZeroVoiceSms('jwt', '+15550001111', '+15550002222', '   ')
+    expect(result).toEqual({ ok: false, reason: 'empty_body' })
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('sends the real request shape and returns the sid on success', async () => {
+    const fn = mockFetch((url) => {
+      expect(url).toContain('/sms/send')
+      return { ok: true, status: 201, json: { sid: 'SMxxxx', status: 'queued' } }
+    })
+    const result = await sendZeroVoiceSms('jwt', '+15550001111', '+15550002222', 'hello there')
+    expect(result).toEqual({ ok: true, sid: 'SMxxxx', status: 201 })
+    const call = fn.mock.calls[0]
+    const sentBody = JSON.parse((call[1] as RequestInit).body as string)
+    expect(sentBody).toEqual({ from_number: '+15550001111', to_number: '+15550002222', body: 'hello there' })
+    expect((call[1] as RequestInit).headers).toMatchObject({ Authorization: 'Bearer jwt' })
+  })
+
+  it('falls back to id or message_sid when sid is absent', async () => {
+    mockFetch(() => ({ ok: true, json: { id: 'msg-123' } }))
+    const result = await sendZeroVoiceSms('jwt', '+15550001111', '+15550002222', 'hi')
+    expect(result).toEqual({ ok: true, sid: 'msg-123', status: 200 })
+  })
+
+  it('returns the real failure reason on a non-2xx response', async () => {
+    mockFetch(() => ({ ok: false, status: 400, json: { message: 'Invalid from_number' } }))
+    const result = await sendZeroVoiceSms('jwt', '+15550001111', '+15550002222', 'hi')
+    expect(result.ok).toBe(false)
+    expect(result.status).toBe(400)
+    expect(result.reason).toContain('Invalid from_number')
+  })
+
+  it('returns { ok: false, reason: "send_response_missing_sid" } on a malformed success response', async () => {
+    mockFetch(() => ({ ok: true, json: { message: 'ok but no sid' } }))
+    const result = await sendZeroVoiceSms('jwt', '+15550001111', '+15550002222', 'hi')
+    expect(result).toEqual({ ok: false, reason: 'send_response_missing_sid', status: 200 })
+  })
+
+  it('never throws when fetch throws a network error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('Connection refused') }))
+    const result = await sendZeroVoiceSms('jwt', '+15550001111', '+15550002222', 'hi')
+    expect(result.ok).toBe(false)
+    expect(result.reason).toContain('Connection refused')
+  })
+})
+
+describe('makeZeroVoiceCall (#733)', () => {
+  it('returns { ok: false, reason: "no_jwt" } when jwt is empty', async () => {
+    const fn = mockFetch(() => ({ ok: true }))
+    const result = await makeZeroVoiceCall('', '+15550001111', '+15550002222')
+    expect(result).toEqual({ ok: false, reason: 'no_jwt' })
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('returns { ok: false, reason: "no_from_number" } when fromE164 is empty', async () => {
+    const fn = mockFetch(() => ({ ok: true }))
+    const result = await makeZeroVoiceCall('jwt', '', '+15550002222')
+    expect(result).toEqual({ ok: false, reason: 'no_from_number' })
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('returns { ok: false, reason: "no_to_number" } when toE164 is empty', async () => {
+    const fn = mockFetch(() => ({ ok: true }))
+    const result = await makeZeroVoiceCall('jwt', '+15550001111', '')
+    expect(result).toEqual({ ok: false, reason: 'no_to_number' })
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('sends the real request shape and returns the callId on success', async () => {
+    const fn = mockFetch((url) => {
+      expect(url).toContain('/calls/outbound')
+      return {
+        ok: true,
+        status: 201,
+        json: { id: 'CAxxxx', from_number: '+15550001111', to_number: '+15550002222', direction: 'outbound', status: 'queued' },
+      }
+    })
+    const result = await makeZeroVoiceCall('jwt', '+15550001111', '+15550002222')
+    expect(result).toEqual({ ok: true, callId: 'CAxxxx', status: 201 })
+    const call = fn.mock.calls[0]
+    const sentBody = JSON.parse((call[1] as RequestInit).body as string)
+    expect(sentBody).toEqual({ from_number: '+15550001111', to_number: '+15550002222' })
+  })
+
+  it('passes record:true through when requested', async () => {
+    const fn = mockFetch(() => ({ ok: true, json: { id: 'CAxxxx' } }))
+    await makeZeroVoiceCall('jwt', '+15550001111', '+15550002222', { record: true })
+    const call = fn.mock.calls[0]
+    const sentBody = JSON.parse((call[1] as RequestInit).body as string)
+    expect(sentBody.record).toBe(true)
+  })
+
+  it('omits record from the body when not requested', async () => {
+    const fn = mockFetch(() => ({ ok: true, json: { id: 'CAxxxx' } }))
+    await makeZeroVoiceCall('jwt', '+15550001111', '+15550002222')
+    const call = fn.mock.calls[0]
+    const sentBody = JSON.parse((call[1] as RequestInit).body as string)
+    expect(sentBody).not.toHaveProperty('record')
+  })
+
+  it('returns the real failure reason on a non-2xx response', async () => {
+    mockFetch(() => ({ ok: false, status: 402, json: { message: 'Insufficient account balance' } }))
+    const result = await makeZeroVoiceCall('jwt', '+15550001111', '+15550002222')
+    expect(result.ok).toBe(false)
+    expect(result.status).toBe(402)
+    expect(result.reason).toContain('Insufficient account balance')
+  })
+
+  it('returns { ok: false, reason: "call_response_missing_id" } on a malformed success response', async () => {
+    mockFetch(() => ({ ok: true, json: { message: 'ok but no id' } }))
+    const result = await makeZeroVoiceCall('jwt', '+15550001111', '+15550002222')
+    expect(result).toEqual({ ok: false, reason: 'call_response_missing_id', status: 200 })
+  })
+
+  it('never throws when fetch throws a network error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('Connection refused') }))
+    const result = await makeZeroVoiceCall('jwt', '+15550001111', '+15550002222')
+    expect(result.ok).toBe(false)
+    expect(result.reason).toContain('Connection refused')
   })
 })

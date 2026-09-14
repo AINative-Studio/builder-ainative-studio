@@ -170,3 +170,124 @@ export async function provisionZeroVoiceNumber(
     return { ok: false, reason: String(e?.message || e).slice(0, 160) }
   }
 }
+
+export interface ZeroVoiceSmsResult {
+  ok: boolean
+  sid?: string
+  reason?: string
+  status?: number
+}
+
+export interface ZeroVoiceCallResult {
+  ok: boolean
+  callId?: string
+  reason?: string
+  status?: number
+}
+
+/**
+ * Send a real SMS through ZeroVoice on a company's behalf (#733, child of
+ * #414). Real, confirmed contract (verified live against ZeroVoice's own
+ * openapi.json):
+ *   POST /api/v1/sms/send
+ *   body: { from_number, to_number, body, media_urls?, status_callback_url?,
+ *           metadata? }
+ *   → 2xx response body carries the created message (its id/sid field name
+ *     is read defensively below since the live schema wasn't pinned down to
+ *     one literal key in the audit — see the id/sid/message_sid fallback).
+ *
+ * `fromE164` MUST be one of the company's own provisioned ZeroVoice numbers
+ * (never a shared/arbitrary number) — enforcing that is the caller's job
+ * (see app/api/build/company-comms/route.ts, which resolves it from the
+ * registry rather than trusting client input). This function itself never
+ * throws and never fabricates success: any missing field, non-2xx response,
+ * or network error surfaces as a structured `{ok:false, reason}`, mirroring
+ * `provisionZeroVoiceNumber`'s own error-handling style exactly.
+ */
+export async function sendZeroVoiceSms(
+  jwt: string,
+  fromE164: string,
+  toE164: string,
+  body: string,
+): Promise<ZeroVoiceSmsResult> {
+  if (!jwt) return { ok: false, reason: 'no_jwt' }
+  if (!fromE164) return { ok: false, reason: 'no_from_number' }
+  if (!toE164) return { ok: false, reason: 'no_to_number' }
+  if (!body || !body.trim()) return { ok: false, reason: 'empty_body' }
+
+  try {
+    const res = await fetch(`${ZV_BASE}/sms/send`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from_number: fromE164, to_number: toE164, body }),
+      signal: AbortSignal.timeout(20000),
+    })
+    const data = await res.json().catch(() => null)
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        reason: String(data?.message || data?.detail || data?.error || res.status).slice(0, 160),
+      }
+    }
+    const sid = data?.sid || data?.id || data?.message_sid
+    if (!sid) {
+      return { ok: false, reason: 'send_response_missing_sid', status: res.status }
+    }
+    return { ok: true, sid: String(sid), status: res.status }
+  } catch (e: any) {
+    return { ok: false, reason: String(e?.message || e).slice(0, 160) }
+  }
+}
+
+/**
+ * Place a real outbound call through ZeroVoice on a company's behalf (#733,
+ * child of #414). Real, confirmed contract (verified live against
+ * ZeroVoice's own openapi.json):
+ *   POST /api/v1/calls/outbound
+ *   body: { from_number, to_number, record?, status_callback_url?,
+ *           queue_id?, metadata? }
+ *   → { id, from_number, to_number, direction, status, started_at,
+ *       ended_at, ... }
+ *
+ * Same constraints as sendZeroVoiceSms: `fromE164` must be the company's own
+ * provisioned ZeroVoice number (caller's responsibility to enforce), never
+ * throws, never fabricates success.
+ */
+export async function makeZeroVoiceCall(
+  jwt: string,
+  fromE164: string,
+  toE164: string,
+  opts?: { record?: boolean },
+): Promise<ZeroVoiceCallResult> {
+  if (!jwt) return { ok: false, reason: 'no_jwt' }
+  if (!fromE164) return { ok: false, reason: 'no_from_number' }
+  if (!toE164) return { ok: false, reason: 'no_to_number' }
+
+  try {
+    const res = await fetch(`${ZV_BASE}/calls/outbound`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from_number: fromE164,
+        to_number: toE164,
+        ...(opts?.record ? { record: true } : {}),
+      }),
+      signal: AbortSignal.timeout(20000),
+    })
+    const data = await res.json().catch(() => null)
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        reason: String(data?.message || data?.detail || data?.error || res.status).slice(0, 160),
+      }
+    }
+    if (!data?.id) {
+      return { ok: false, reason: 'call_response_missing_id', status: res.status }
+    }
+    return { ok: true, callId: String(data.id), status: res.status }
+  } catch (e: any) {
+    return { ok: false, reason: String(e?.message || e).slice(0, 160) }
+  }
+}

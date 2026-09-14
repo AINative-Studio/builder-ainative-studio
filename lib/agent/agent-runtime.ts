@@ -326,6 +326,35 @@ const MCP_SERVER_SPECS: McpServerSpec[] = [
       }
     },
   },
+  {
+    // #733 (child of #414) — closes the "Cody can provision comms channels
+    // but never actually uses them" gap: ZeroVoice number provisioning
+    // (#415/#522) and the growth module's own Resend integration
+    // (lib/growth/winback-email.ts) were both real and live, but nothing in
+    // the agent's own tool-calling loop could invoke either one for a live,
+    // provisioned company. Framed as founder/customer OUTREACH tools (share
+    // a status update, ask for feedback), not bare send_sms/send_email
+    // primitives — see contact_founder_for_feedback / send_project_update_email's
+    // own descriptions in the server file. Local repo file (not an npm
+    // package), same `entry` variant ZeroPipeline's server uses — it calls
+    // THIS app's own /api/build/company-comms + /api/build/company-email
+    // routes over HTTP (its own already-correct founder-credential
+    // resolution + provisioning checks), never a direct ZeroVoice/Resend
+    // call from inside the standalone child process.
+    name: 'company-comms',
+    entry: 'lib/agent/mcp-servers/company-comms-mcp-server.mjs',
+    // No API key gate: unlike the flat-env-var servers above, this server's
+    // real auth lives server-side in the routes it calls (founder-credential
+    // resolution for SMS/voice; RESEND_API_KEY for email) — those already
+    // fail closed with an honest reason when unconfigured, so gating wiring
+    // here on an env var would just add a second, redundant check. Always
+    // wired (subject to the CODY_AGENT_MCP=0 kill switch below) so a
+    // misconfigured environment fails at the TOOL CALL with an honest
+    // {ok:false, reason}, not by silently never offering the tool at all.
+    buildEnv: (env) => ({
+      NEXT_PUBLIC_APP_URL: env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio',
+    }),
+  },
 ]
 
 /**

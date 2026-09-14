@@ -14,13 +14,13 @@
 
 import { listAllApps, type AppEntry } from '@/lib/build/app-registry'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
+import { sendViaResend as sendViaResendShared } from '@/lib/build/resend-client'
 
 const AINATIVE_API = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 const API_KEY = getAinativeApiKey()
 const PROJECT_ID = process.env.ZERODB_PROJECT_ID || ''
 const EMAILS_TABLE = 'builder_emails'
 
-const RESEND_API_KEY = process.env.RESEND_API_KEY || ''
 const FROM = process.env.WINBACK_FROM || 'Cody at AINative <cody@ainative.studio>'
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio'
 
@@ -210,20 +210,12 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string))
 }
 
-/** Send one email via Resend's HTTP API. Returns true on 2xx. */
+/** Send one email via Resend's HTTP API (#733: now the shared low-level
+ *  client in lib/build/resend-client.ts, not a duplicate inline fetch).
+ *  Returns true on 2xx. */
 async function sendViaResend(to: string, subject: string, html: string, text: string): Promise<boolean> {
-  if (!RESEND_API_KEY) return false
-  try {
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: FROM, to, subject, html, text }),
-      signal: AbortSignal.timeout(20000),
-    })
-    return res.ok
-  } catch {
-    return false
-  }
+  const result = await sendViaResendShared(FROM, to, subject, html, text)
+  return result.ok
 }
 
 // ---------------------------------------------------------------------------
