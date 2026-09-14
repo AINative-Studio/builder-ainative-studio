@@ -27,6 +27,7 @@
 
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
+import { isPaidTier } from '@/lib/ainative/plan'
 import { resolveApp, setAppProvisioned, setAppOwner } from '@/lib/build/app-registry'
 import { deployPersistent } from '@/lib/build/deploy'
 import {
@@ -51,7 +52,7 @@ export const maxDuration = 60
 
 // Plans that unlock a PERMANENT project + real provisioning (#207/#241). A
 // permanent (sk_) key requires one of these — provisioning is PAID-gated.
-const PAID_PLANS = new Set(['launch', 'company', 'pro', 'business', 'enterprise', 'cody_vcto'])
+// #762: paid-tier membership now lives in lib/ainative/plan.ts's isPaidTier.
 
 /**
  * #443: a founder-scoped primitive (ZeroCommerce, AgentFlow, …) has no
@@ -214,7 +215,7 @@ export async function POST(request: NextRequest) {
   // survives. The plan is read from the server-verified registry entry, NEVER the
   // request body.
   const plan = String(existing.plan || '')
-  const isPaid = PAID_PLANS.has(plan)
+  const isPaid = isPaidTier(plan)
 
   // Founder's JWT (used ONLY for a permanent, paid provision + ZeroPipeline —
   // NEVER for a tmp_ trial, so an unpaid signed-in user can't mint a permanent key).

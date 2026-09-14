@@ -34,7 +34,11 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
-vi.mock('@/lib/ainative/plan', () => ({ getPlanStatus: h.getPlanStatus }))
+// isPaidTier stays REAL so the route's actual paid-tier gate is exercised (#762).
+vi.mock('@/lib/ainative/plan', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/ainative/plan')>()),
+  getPlanStatus: h.getPlanStatus,
+}))
 vi.mock('@/lib/build/app-registry', () => ({
   resolveApp: h.resolveApp,
   setAppGrowthAdTest: h.setAppGrowthAdTest,
@@ -100,7 +104,8 @@ describe('POST /api/build/growth/ad-test (#449)', () => {
     h.getPlanStatus.mockResolvedValue({ tier: 'hobbyist' })
     const res: any = await POST(postReq({ slug: 'acme' }))
     const json = await res.json()
-    expect(json).toEqual({ ok: false, reason: 'tier', tier: 'hobbyist' })
+    // `unverified: false` — a REAL entitlement gap, genuinely resolved (#762).
+    expect(json).toEqual({ ok: false, reason: 'tier', tier: 'hobbyist', unverified: false })
     expect(h.createAdTestCampaign).not.toHaveBeenCalled()
   })
 
