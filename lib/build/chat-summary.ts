@@ -25,6 +25,7 @@
 
 import { getClaudeCompletion } from '@/lib/build/claude-completion'
 import type { ChatTurn } from '@/lib/build/chat-store'
+import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 const ZERODB_API = process.env.ZERODB_API_URL || 'https://api.ainative.studio/api'
 const PROJECT_ID = process.env.ZERODB_PROJECT_ID || '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
@@ -42,7 +43,7 @@ export interface ChatSummary {
 }
 
 function getApiKey(): string {
-  return process.env.ZERODB_API_KEY || process.env.AINATIVE_API_KEY || process.env.API_Key || ''
+  return getAinativeApiKey()
 }
 
 async function zerodbRequest(method: string, path: string, body?: unknown): Promise<any> {

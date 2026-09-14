@@ -46,6 +46,7 @@ import { cleanupWorktree } from '@/lib/agent/worktree-manager'
 import { logAgentRun } from '@/lib/services/agent-runs.service'
 import { isQuotaError, QUOTA_USER_MESSAGE } from '@/lib/quota-error'
 import { getBedrockClient, isBedrockEnabled } from '@/lib/bedrock-client'
+import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 // Log model configuration on first module load
 logModelConfiguration()
@@ -70,7 +71,7 @@ const metaClient = new OpenAI({
 // Use AINATIVE_API_URL to override (e.g. for direct core access)
 const ainativeBaseURL = (process.env.AINATIVE_API_URL || 'https://api.ainative.studio') + '/v1'
 const ainativeClient = new OpenAI({
-  apiKey: process.env.AINATIVE_API_KEY || process.env.API_Key || process.env.ZERODB_API_KEY || '',
+  apiKey: getAinativeApiKey(),
   baseURL: ainativeBaseURL,
   maxRetries: 0,
 })

@@ -14,11 +14,12 @@
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { setAppDomain } from '@/lib/build/app-registry'
+import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 export const runtime = 'nodejs'
 
 const CORE = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
-const KEY = process.env.AINATIVE_API_KEY || process.env.ZERODB_API_KEY || ''
+const KEY = getAinativeApiKey()
 const APP = process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio'
 
 export async function GET(request: NextRequest) {

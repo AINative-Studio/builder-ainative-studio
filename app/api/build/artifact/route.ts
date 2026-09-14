@@ -28,6 +28,7 @@ import { getPlanStatus } from '@/lib/ainative/plan'
 import { modelsForTier } from '@/lib/build/tier-models'
 import { loadCoreProfile } from '@/lib/build/profile'
 import { languageInstruction, normalizeLanguage, DEFAULT_CONTENT_LANGUAGE } from '@/lib/build/content-language'
+import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 export const runtime = 'nodejs'
 
@@ -70,7 +71,7 @@ function makeCapturingFetch(): { fetch: typeof fetch; box: { body: string | null
 }
 
 const AINATIVE_BASE_URL = (process.env.AINATIVE_API_URL || 'https://api.ainative.studio') + '/v1'
-const AINATIVE_API_KEY = process.env.AINATIVE_API_KEY || process.env.API_Key || process.env.ZERODB_API_KEY || ''
+const AINATIVE_API_KEY = getAinativeApiKey()
 // 'nous-coder' is FULLY DEPRECATED with no upstream at all (core's model
 // registry hard-fails it: "NousCoder is a deprecated model with no available
 // upstream" — confirmed live in production logs during #360 stress testing,

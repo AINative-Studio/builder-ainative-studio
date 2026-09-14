@@ -27,11 +27,12 @@ import { getClaudeCompletion } from '@/lib/build/claude-completion'
 import { resolveApp } from '@/lib/build/app-registry'
 import { toSlug } from '@/lib/build/slug'
 import { RESERVED_SUBDOMAINS } from '@/lib/build/deploy'
+import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 export const runtime = 'nodejs'
 
 const ainative = new OpenAI({
-  apiKey: process.env.AINATIVE_API_KEY || process.env.API_Key || process.env.ZERODB_API_KEY || '',
+  apiKey: getAinativeApiKey(),
   baseURL: (process.env.AINATIVE_API_URL || 'https://api.ainative.studio') + '/v1',
 })
 

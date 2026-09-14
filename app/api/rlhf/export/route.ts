@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
+import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 /**
  * RLHF Training Data Export — /api/rlhf/export
@@ -39,7 +40,7 @@ export async function GET(request: NextRequest) {
     // path /api/v1/projects/{id}/database/tables/{table}/rows, x-api-key auth,
     // response shape data[].row_data. The old api.zerodb.ai/query/Bearer
     // contract never matched the live API and silently returned empty (#60).
-    const apiKey = process.env.ZERODB_API_KEY || process.env.AINATIVE_API_KEY || ''
+    const apiKey = getAinativeApiKey()
     const projectId = process.env.ZERODB_PROJECT_ID || '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
 
     if (!apiKey || !projectId) {

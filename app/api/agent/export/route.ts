@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
+import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 /**
  * Agent Runs Export — /api/agent/export (builder#57)
@@ -25,7 +26,7 @@ export async function GET(request: NextRequest) {
     const limit = Math.min(parseInt(url.searchParams.get('limit') || '1000'), 10000)
     const modelFilter = url.searchParams.get('model')
 
-    const apiKey = process.env.ZERODB_API_KEY || process.env.AINATIVE_API_KEY || ''
+    const apiKey = getAinativeApiKey()
     const projectId =
       process.env.ZERODB_PROJECT_ID || '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
 

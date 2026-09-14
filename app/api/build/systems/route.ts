@@ -13,6 +13,7 @@
 import { NextRequest } from 'next/server'
 import { buildSystems } from '@/lib/build/business-systems'
 import { resolveApp } from '@/lib/build/app-registry'
+import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 export const runtime = 'nodejs'
 
@@ -67,7 +68,7 @@ export async function GET(request: NextRequest) {
  */
 async function readProvisionedCounts(projectId: string): Promise<Counts> {
   const api = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
-  const key = process.env.AINATIVE_API_KEY || process.env.ZERODB_API_KEY || ''
+  const key = getAinativeApiKey()
   const out: Counts = {}
   if (!key) return out
 

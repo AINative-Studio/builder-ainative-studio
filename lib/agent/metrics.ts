@@ -11,6 +11,7 @@
 
 import { logger } from '../logger'
 import { getZeroDBClient } from '../mcp/zerodb-client'
+import { getAinativeApiKey } from '../build/env-keys'
 
 /**
  * Token usage information per agent
@@ -366,7 +367,7 @@ export class MetricsCollector {
     // Wire agent run into AINative intelligence loop (Refs builder#40)
     try {
       const apiUrl = process.env.AINATIVE_API_URL || process.env.NEXT_PUBLIC_API_BASE || 'https://api.ainative.studio'
-      const apiKey = process.env.ZERODB_API_KEY || process.env.AINATIVE_API_KEY || ''
+      const apiKey = getAinativeApiKey()
       if (apiKey) {
         fetch(`${apiUrl}/api/v1/public/memory/v2/remember`, {
           method: 'POST',

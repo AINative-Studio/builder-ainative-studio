@@ -18,11 +18,12 @@
 import { NextRequest } from 'next/server'
 import { reportConversion, gclidFromRequest } from '@/lib/build/conversions'
 import { reportMetaConversion, fbcFromRequest, fbpFromRequest } from '@/lib/build/meta-capi'
+import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 export const runtime = 'nodejs'
 
 const AINATIVE_API = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
-const API_KEY = process.env.AINATIVE_API_KEY || process.env.ZERODB_API_KEY || ''
+const API_KEY = getAinativeApiKey()
 const PROJECT_ID = process.env.ZERODB_PROJECT_ID || ''
 const TABLE = 'builder_leads'
 

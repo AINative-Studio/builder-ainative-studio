@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyAppDataToken } from '@/lib/build/app-data-token'
+import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 /**
  * Agent402 proxy (#500) — the runtime-callable path for a generated app to
@@ -52,7 +53,7 @@ import { verifyAppDataToken } from '@/lib/build/app-data-token'
 export const runtime = 'nodejs'
 
 const AGENT402_API = process.env.AGENT402_API_URL || 'https://agent-402-production.up.railway.app'
-const API_KEY = process.env.ZERODB_API_KEY || process.env.AINATIVE_API_KEY || ''
+const API_KEY = getAinativeApiKey()
 
 const UNAUTHORIZED = () =>
   NextResponse.json({ error: 'invalid or missing app data token' }, { status: 401 })

@@ -36,6 +36,7 @@ import { BUILDER_WORKSPACE_ID } from '@/lib/build/instant-db'
 import { deriveOwnerKey } from '@/lib/build/chat-store'
 import { creditReferrerOnSubscribe } from '@/lib/build/referral'
 import { enrollCompany, isEnrolled } from '@/lib/build/loop-enrollment'
+import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 // Monthly $ value per plan — the conversion value sent to Google Ads.
 const PLAN_VALUE: Record<string, number> = { pro: 49, launch: 49, business: 149, company: 149, enterprise: 999, cody_vcto: 4999 }
@@ -43,7 +44,7 @@ const PLAN_VALUE: Record<string, number> = { pro: 49, launch: 49, business: 149,
 export const runtime = 'nodejs'
 
 const CORE = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
-const KEY = process.env.AINATIVE_API_KEY || process.env.ZERODB_API_KEY || ''
+const KEY = getAinativeApiKey()
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null)

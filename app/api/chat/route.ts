@@ -10,13 +10,14 @@ import { enhancePromptWithMockData } from '@/lib/mock-data-generator'
 import { logGeneration, getActivePromptVersion } from '@/lib/services/rlhf.service'
 import { buildEnhancedPrompt } from '@/lib/services/prompt-builder.service'
 import { getActiveDesignTokens } from '@/lib/services/design-tokens.service'
+import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 // Use Meta API locally when META_API_KEY is set, AINative API in production
 const isLocal = (process.env.NODE_ENV === 'development' || process.env.USE_META_API === 'true') && !!process.env.META_API_KEY
 
 // LLAMA Configuration using OpenAI SDK directly
 const llama = new OpenAI({
-  apiKey: isLocal ? (process.env.META_API_KEY || '') : (process.env.AINATIVE_API_KEY || process.env.API_Key || process.env.ZERODB_API_KEY || ''),
+  apiKey: isLocal ? (process.env.META_API_KEY || '') : getAinativeApiKey(),
   baseURL: isLocal
     ? (process.env.META_BASE_URL || 'https://api.llama.com/compat/v1')
     : (process.env.AINATIVE_API_URL || 'https://api.ainative.studio') + '/v1',

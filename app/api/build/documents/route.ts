@@ -39,11 +39,12 @@ import {
   type DocType,
 } from '@/lib/build/document-store'
 import { DOCUMENT_PROMPTS, isGeneratableDocType, type DocGenContext } from '@/lib/build/document-prompts'
+import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 export const runtime = 'nodejs'
 
 const ainative = new OpenAI({
-  apiKey: process.env.AINATIVE_API_KEY || process.env.API_Key || process.env.ZERODB_API_KEY || '',
+  apiKey: getAinativeApiKey(),
   baseURL: (process.env.AINATIVE_API_URL || 'https://api.ainative.studio') + '/v1',
   // Real bug (customer-reported, 2026-09-09): the fallback path had no
   // timeout either — a hung AINative call after an already-slow/failed
