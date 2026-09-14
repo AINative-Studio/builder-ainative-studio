@@ -6,6 +6,7 @@ import {
   isUsableSurpriseIdea,
   SURPRISE_IDEA_SYSTEM_PROMPT,
   RECENT_HISTORY_WINDOW,
+  RECENT_IDEA_TEXT_WINDOW,
 } from '@/lib/build/surprise-idea-generator'
 import { CATALOG } from '@/lib/build/primitive-catalog'
 
@@ -87,6 +88,55 @@ describe('buildSurpriseIdeaPrompt', () => {
   it('never instructs the model to name internal primitives inside the idea sentence itself', () => {
     const { system } = buildSurpriseIdeaPrompt(CATALOG, [])
     expect(system).toMatch(/never mention the platform/i)
+  })
+
+  // #755: the real per-user repetition fix — concept-similarity steer using
+  // actual prior idea TEXT from this founder's own session, not just the
+  // process-scoped primitive-category proxy.
+  it('omits the avoid-repeating clause entirely when there is no prior idea text (cold session)', () => {
+    const { user } = buildSurpriseIdeaPrompt(CATALOG, [], [])
+    expect(user).not.toMatch(/avoid repeating/i)
+  })
+
+  it('quotes real prior idea text back into the prompt as explicit negative examples', () => {
+    const priorIdea = 'A field service management platform that automates scheduling and invoicing for tradespeople.'
+    const { user } = buildSurpriseIdeaPrompt(CATALOG, [], [priorIdea])
+    expect(user).toMatch(/avoid repeating or closely resembling/i)
+    expect(user).toContain(priorIdea)
+  })
+
+  it('includes every idea across sequential calls building up a real session history (the per-user case #755 requires)', () => {
+    // Simulate 3 consecutive "Surprise me" clicks in one sitting: each call's
+    // prompt must carry the REAL text of every idea already shown this
+    // session, not a primitive-category proxy — this is the non-negotiable
+    // per-user constraint from the issue.
+    const idea1 = 'A field service management platform that automates scheduling and invoicing for tradespeople.'
+    const idea2 = 'A field service management platform that automates work order forms and technician dispatch.'
+    const call2 = buildSurpriseIdeaPrompt(CATALOG, [], [idea1])
+    expect(call2.user).toContain(idea1)
+
+    const call3 = buildSurpriseIdeaPrompt(CATALOG, [], [idea1, idea2])
+    expect(call3.user).toContain(idea1)
+    expect(call3.user).toContain(idea2)
+  })
+
+  it('only sends the most recent RECENT_IDEA_TEXT_WINDOW prior ideas, dropping older ones', () => {
+    const ideas = Array.from({ length: RECENT_IDEA_TEXT_WINDOW + 3 }, (_, i) => `Idea number ${i} about a fake business.`)
+    const { user } = buildSurpriseIdeaPrompt(CATALOG, [], ideas)
+    expect(user).not.toContain(ideas[0])
+    expect(user).toContain(ideas[ideas.length - 1])
+  })
+
+  it('ignores blank/empty entries in the prior-idea array rather than surfacing them as fake negative examples', () => {
+    const { user } = buildSurpriseIdeaPrompt(CATALOG, [], ['', '   ', 'A real idea about a real business that does real things.'])
+    expect(user).toContain('A real idea about a real business that does real things.')
+  })
+
+  it('keeps the primitive-category steer alongside the concept-similarity steer — both signals present together', () => {
+    const priorIdea = 'A cap-table tool for SAFEs.'
+    const { user } = buildSurpriseIdeaPrompt(CATALOG, [], [priorIdea])
+    expect(user).toMatch(/UNDERREPRESENTED/)
+    expect(user).toContain(priorIdea)
   })
 })
 

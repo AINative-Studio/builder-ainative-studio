@@ -26,6 +26,12 @@ import { pickSurpriseIdea } from '@/lib/build/surprise-ideas'
  *  client enforces its own timeout independent of the route's own. */
 const SURPRISE_IDEA_CLIENT_TIMEOUT_MS = 10000
 
+/** How many of this session's recently-shown ideas to send the server as
+ *  negative examples — mirrors RECENT_IDEA_TEXT_WINDOW server-side; kept
+ *  small so the request body stays tiny and the prompt isn't dominated by
+ *  "don't repeat this" over real catalog grounding. */
+const RECENT_IDEAS_SENT = 5
+
 export function BuildStart() {
   const { dispatch, pickTrack } = useBuild()
   const [role, setRole] = useState<CompanyRole>('')
@@ -33,6 +39,13 @@ export function BuildStart() {
   // Tracks the last-shown idea (across clicks in this mount, not persisted)
   // purely so the static-pool fallback can avoid an immediate back-to-back repeat.
   const lastIdeaRef = useRef<string | null>(null)
+  // #755: the last several idea TEXTS shown to THIS founder in THIS session
+  // (not persisted beyond the mount — a real session-scoped signal, unlike
+  // the server's process-scoped primitive-category history). Sent back to
+  // POST /api/build/surprise-idea as `recentIdeas` so the prompt can quote
+  // them as concrete negative examples — fixes the same founder clicking
+  // "Surprise me" repeatedly and seeing near-duplicate ideas.
+  const recentIdeasRef = useRef<string[]>([])
 
   const goIntake = () => {
     window.scrollTo(0, 0)
@@ -58,7 +71,15 @@ export function BuildStart() {
     try {
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), SURPRISE_IDEA_CLIENT_TIMEOUT_MS)
-      const res = await fetch('/api/build/surprise-idea', { method: 'POST', signal: controller.signal })
+      const res = await fetch('/api/build/surprise-idea', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // #755: send the real ideas already shown THIS founder this session
+        // so the server can steer away from repeating them, not just a
+        // primitive-category proxy shared across all users.
+        body: JSON.stringify({ recentIdeas: recentIdeasRef.current }),
+        signal: controller.signal,
+      })
       clearTimeout(timer)
       const json = res.ok ? await res.json().catch(() => null) : null
       idea = typeof json?.idea === 'string' && json.idea.trim() ? json.idea : pickSurpriseIdea(lastIdeaRef.current)
@@ -68,6 +89,7 @@ export function BuildStart() {
       idea = pickSurpriseIdea(lastIdeaRef.current)
     }
     lastIdeaRef.current = idea
+    recentIdeasRef.current = [...recentIdeasRef.current, idea].slice(-RECENT_IDEAS_SENT)
     setIsSurprising(false)
     dispatch({ type: 'SET_IDEA', idea })
     goIntake()
