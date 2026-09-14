@@ -54,6 +54,16 @@ function resolveProjectId(projectId?: string): string {
   return trimmed || SHARED_PROJECT_ID
 }
 
+/** A file the founder attached to a chat turn (#741) — a stable reference to
+ *  an already-uploaded file, never the raw bytes (those live in ZeroDB file
+ *  storage, fetched on demand when a turn needs to be sent to Claude). */
+export interface ChatAttachment {
+  fileId: string
+  url: string
+  contentType: string
+  fileName: string
+}
+
 /** A single persisted chat turn. */
 export interface ChatTurn {
   /** 'user' = the founder; 'assistant' = Cody. */
@@ -62,6 +72,8 @@ export interface ChatTurn {
   text: string
   /** ISO timestamp the turn was created (used for ordering). */
   createdAt: string
+  /** Files the founder attached to this turn (#741) — user turns only. */
+  attachments?: ChatAttachment[]
 }
 
 /** How many recent turns to feed Claude as conversational memory. */
@@ -107,6 +119,15 @@ export function chatScopeKey(ownerKey: string, companySlug: string): string {
   return `${ownerKey}::${slug}`
 }
 
+/** A single Anthropic multimodal content block this module can produce for the
+ *  CURRENT turn's attachments (#741) — an image as a base64 source, or a plain
+ *  text block noting a non-image document exists. Kept minimal/local rather
+ *  than depending on the Anthropic SDK's own types, since this module has no
+ *  I/O and no SDK dependency. */
+export type ChatContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+
 /**
  * Turn stored history + the new question into the `messages` array for Claude,
  * giving Cody memory of the last N turns.
@@ -117,6 +138,11 @@ export function chatScopeKey(ownerKey: string, companySlug: string): string {
  * - Always appends the current question last as a 'user' turn.
  * - Collapses any accidental leading 'assistant' turn (Anthropic requires the
  *   first message to be 'user').
+ * - Older turns are always plain text (#741): re-fetching and re-encoding a
+ *   past turn's attachment bytes on every single follow-up would be wasteful
+ *   I/O for context that's already served its purpose once. Only the CURRENT
+ *   turn's attachments (via `currentContentBlocks`) become real multimodal
+ *   image blocks — see resolveAttachmentContent in app/api/build/ask/route.ts.
  *
  * Pure — no I/O — so history/window logic is unit-testable.
  */
@@ -124,7 +150,8 @@ export function buildMessagesWithHistory(
   history: ChatTurn[],
   question: string,
   maxTurns: number = DEFAULT_HISTORY_TURNS,
-): { role: 'user' | 'assistant'; content: string }[] {
+  currentContentBlocks?: ChatContentBlock[],
+): { role: 'user' | 'assistant'; content: string | ChatContentBlock[] }[] {
   const recent = (Array.isArray(history) ? history : [])
     .filter((t) => t && (t.role === 'user' || t.role === 'assistant') && String(t.text || '').trim())
     .slice(-Math.max(0, maxTurns))
@@ -134,9 +161,19 @@ export function buildMessagesWithHistory(
   // assistant turns that would violate that (e.g. a truncated window).
   while (recent.length && recent[0].role === 'assistant') recent.shift()
 
-  const messages = [...recent]
+  const messages: { role: 'user' | 'assistant'; content: string | ChatContentBlock[] }[] = [...recent]
   const q = String(question || '').trim()
-  if (q) messages.push({ role: 'user', content: q })
+  const blocks = Array.isArray(currentContentBlocks) ? currentContentBlocks.filter(Boolean) : []
+  if (blocks.length > 0) {
+    // Real multimodal turn: text block (question, possibly empty when the
+    // founder only sent an attachment) followed by the attachment blocks.
+    const content: ChatContentBlock[] = []
+    if (q) content.push({ type: 'text', text: q })
+    content.push(...blocks)
+    if (content.length > 0) messages.push({ role: 'user', content })
+  } else if (q) {
+    messages.push({ role: 'user', content: q })
+  }
   return messages
 }
 
@@ -225,17 +262,21 @@ async function zerodbRequest(
  */
 export async function appendChatTurn(
   scopeKey: string,
-  turn: { role: 'user' | 'assistant'; text: string },
+  turn: { role: 'user' | 'assistant'; text: string; attachments?: ChatAttachment[] },
   projectId?: string,
 ): Promise<boolean> {
   const text = String(turn?.text || '').trim()
   if (!scopeKey || !text || (turn.role !== 'user' && turn.role !== 'assistant')) return false
   try {
+    const attachments = Array.isArray(turn.attachments)
+      ? turn.attachments.filter((a) => a && a.fileId && a.url)
+      : undefined
     const row = {
       scope_key: scopeKey,
       role: turn.role,
       text,
       created_at: new Date().toISOString(),
+      ...(attachments && attachments.length > 0 ? { attachments } : {}),
     }
     const result = await zerodbRequest(
       'POST',
@@ -258,8 +299,9 @@ export async function saveExchange(
   question: string,
   answer: string,
   projectId?: string,
+  attachments?: ChatAttachment[],
 ): Promise<boolean> {
-  const uOk = await appendChatTurn(scopeKey, { role: 'user', text: question }, projectId)
+  const uOk = await appendChatTurn(scopeKey, { role: 'user', text: question, attachments }, projectId)
   const aOk = await appendChatTurn(scopeKey, { role: 'assistant', text: answer }, projectId)
   return uOk && aOk
 }
@@ -287,11 +329,24 @@ export async function loadChat(
     const turns: ChatTurn[] = rows
       .map((r) => r.row_data || r)
       .filter((rd) => rd && (rd.role === 'user' || rd.role === 'assistant') && rd.text)
-      .map((rd) => ({
-        role: rd.role as 'user' | 'assistant',
-        text: String(rd.text),
-        createdAt: String(rd.created_at || ''),
-      }))
+      .map((rd) => {
+        const attachments = Array.isArray(rd.attachments)
+          ? rd.attachments
+              .filter((a: any) => a && a.fileId && a.url)
+              .map((a: any) => ({
+                fileId: String(a.fileId),
+                url: String(a.url),
+                contentType: String(a.contentType || ''),
+                fileName: String(a.fileName || ''),
+              }))
+          : undefined
+        return {
+          role: rd.role as 'user' | 'assistant',
+          text: String(rd.text),
+          createdAt: String(rd.created_at || ''),
+          ...(attachments && attachments.length > 0 ? { attachments } : {}),
+        }
+      })
     // Oldest-first for natural display + correct history windowing.
     turns.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     return turns.slice(-cap)

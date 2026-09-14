@@ -10,6 +10,7 @@ import {
   DEFAULT_HISTORY_TURNS,
   MAX_LOAD_TURNS,
   type ChatTurn,
+  type ChatAttachment,
 } from '@/lib/build/chat-store'
 
 /**
@@ -146,6 +147,108 @@ describe('buildMessagesWithHistory (#52)', () => {
       { role: 'user', content: 'hi' },
       { role: 'user', content: 'yo' },
     ])
+  })
+})
+
+// ---------- #741: chat attachments carried through content-block building ----------
+describe('buildMessagesWithHistory — attachments (#741)', () => {
+  const imageBlock = { type: 'image' as const, source: { type: 'base64' as const, media_type: 'image/png', data: 'AAAA' } }
+
+  it('builds a real multimodal content array for the CURRENT turn when content blocks are given', () => {
+    const msgs = buildMessagesWithHistory([], 'what is this?', undefined, [imageBlock])
+    expect(msgs).toEqual([
+      { role: 'user', content: [{ type: 'text', text: 'what is this?' }, imageBlock] },
+    ])
+  })
+
+  it('omits the text block when the question is blank but an attachment was sent', () => {
+    const msgs = buildMessagesWithHistory([], '', undefined, [imageBlock])
+    expect(msgs).toEqual([{ role: 'user', content: [imageBlock] }])
+  })
+
+  it('keeps prior history as plain text even when the CURRENT turn is multimodal', () => {
+    const history = [turn('user', 'q1'), turn('assistant', 'a1')]
+    const msgs = buildMessagesWithHistory(history, 'q2', undefined, [imageBlock])
+    expect(msgs[0]).toEqual({ role: 'user', content: 'q1' })
+    expect(msgs[1]).toEqual({ role: 'assistant', content: 'a1' })
+    expect(Array.isArray(msgs[2].content)).toBe(true)
+  })
+
+  it('falls back to plain string content when no content blocks are given (unchanged pre-#741 behavior)', () => {
+    const msgs = buildMessagesWithHistory([], 'hello', undefined, [])
+    expect(msgs).toEqual([{ role: 'user', content: 'hello' }])
+    expect(buildMessagesWithHistory([], 'hello')).toEqual([{ role: 'user', content: 'hello' }])
+  })
+
+  it('ignores a falsy/undefined entry in the content blocks array defensively', () => {
+    const msgs = buildMessagesWithHistory([], 'hi', undefined, [imageBlock, null as any])
+    expect(msgs[0].content).toEqual([{ type: 'text', text: 'hi' }, imageBlock])
+  })
+})
+
+describe('appendChatTurn / loadChat — attachments round-trip (#741)', () => {
+  beforeEach(() => { process.env.ZERODB_API_KEY = 'k' })
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+  const attachment: ChatAttachment = { fileId: 'f-1', url: '/api/build/media/upload?id=f-1', contentType: 'image/png', fileName: 'photo.png' }
+
+  it('persists attachments on the row when present', async () => {
+    let seenRow: any = null
+    const fn = mockFetch((_url, init) => { seenRow = JSON.parse(init.body).row_data; return { ok: true, json: () => ({ id: 'r1' }) } })
+    const ok = await appendChatTurn('a::b', { role: 'user', text: 'see this', attachments: [attachment] })
+    expect(ok).toBe(true)
+    expect(fn).toHaveBeenCalledTimes(1)
+    expect(seenRow.attachments).toEqual([attachment])
+  })
+
+  it('omits the attachments field entirely when there are none (no schema bloat on ordinary turns)', async () => {
+    let seenRow: any = null
+    mockFetch((_url, init) => { seenRow = JSON.parse(init.body).row_data; return { ok: true, json: () => ({ id: 'r1' }) } })
+    await appendChatTurn('a::b', { role: 'user', text: 'hi' })
+    expect(seenRow.attachments).toBeUndefined()
+  })
+
+  it('filters out malformed attachment entries (missing fileId/url)', async () => {
+    let seenRow: any = null
+    mockFetch((_url, init) => { seenRow = JSON.parse(init.body).row_data; return { ok: true, json: () => ({ id: 'r1' }) } })
+    await appendChatTurn('a::b', { role: 'user', text: 'hi', attachments: [attachment, { fileId: '', url: '', contentType: '', fileName: '' }] })
+    expect(seenRow.attachments).toEqual([attachment])
+  })
+
+  it('saveExchange carries attachments through to the user turn only', async () => {
+    const rows: any[] = []
+    mockFetch((_url, init) => { rows.push(JSON.parse(init.body).row_data); return { ok: true } })
+    await saveExchange('a::b', 'question', 'answer', undefined, [attachment])
+    expect(rows[0].attachments).toEqual([attachment])
+    expect(rows[1].attachments).toBeUndefined()
+  })
+
+  it('loadChat reads attachments back off a persisted row', async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () => ({
+        data: [{ row_data: { role: 'user', text: 'see this', created_at: '1', attachments: [attachment] } }],
+      }),
+    }))
+    const turns = await loadChat('a::b')
+    expect(turns).toEqual([{ role: 'user', text: 'see this', createdAt: '1', attachments: [attachment] }])
+  })
+
+  it('loadChat tolerates a row with no attachments field (pre-#741 rows)', async () => {
+    mockFetch(() => ({ ok: true, json: () => ({ data: [{ row_data: { role: 'user', text: 'old', created_at: '1' } }] }) }))
+    const turns = await loadChat('a::b')
+    expect(turns[0].attachments).toBeUndefined()
+  })
+
+  it('loadChat drops malformed attachment entries from a persisted row', async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () => ({
+        data: [{ row_data: { role: 'user', text: 'x', created_at: '1', attachments: [attachment, { fileId: '', url: '' }] } }],
+      }),
+    }))
+    const turns = await loadChat('a::b')
+    expect(turns[0].attachments).toEqual([attachment])
   })
 })
 

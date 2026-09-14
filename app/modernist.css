@@ -1078,6 +1078,16 @@
 .m-chat-cody .m-glyph { color: var(--color-accent); }
 .m-chat-input { display: flex; gap: 6px; flex-shrink: 0; }
 .m-chat-input input { flex: 1; padding: 9px 10px; border: 1.5px solid var(--neutral-line); font-family: var(--font-body); font-size: 13px; }
+/* Chat attachments (#741) — attach button + upload-preview chips in the composer. */
+.m-chat-attach-btn { flex-shrink: 0; padding: 9px 10px; border: 1.5px solid var(--neutral-line); background: var(--color-surface); font-size: 14px; cursor: pointer; line-height: 1; }
+.m-chat-attach-btn:hover { border-color: var(--color-accent); }
+.m-chat-attachments { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; flex-shrink: 0; }
+.m-chat-attachments .m-chip { display: inline-flex; align-items: center; gap: 6px; }
+.m-chat-attachments .m-chip button { background: none; border: 0; padding: 0; cursor: pointer; color: var(--text-muted); font-size: 13px; line-height: 1; }
+.m-chat-attach-error { font-size: 11px; color: #b42318; margin: -4px 0 8px; flex-shrink: 0; }
+.m-chat-user-turn { align-self: flex-end; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: 80%; }
+.m-chat-user-turn .m-chat-user { align-self: stretch; max-width: none; }
+.m-chat-user-turn .m-chat-attachments { justify-content: flex-end; margin-bottom: 0; }
 .m-live-footprint { text-align: center; padding: 16px; font-size: 11px; color: var(--text-muted); background: var(--color-surface); }
 
 /* ============================================================================
