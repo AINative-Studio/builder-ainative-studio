@@ -247,6 +247,16 @@ export interface AppEntry {
   logoUrl?: string
   logoFileId?: string
   logoUpdatedAt?: string
+  // Founder-facing "don't proactively contact me" opt-out (#742). Covers any
+  // automated outreach Cody initiates on its own initiative (nightly-loop
+  // comms outreach today; #743's agile-standup/pair-programming digest email
+  // is expected to check this same field once it lands). Absent/false =
+  // proactive outreach is allowed (opt-out, not opt-in — matches every other
+  // default-on automation in this registry, e.g. `enrolled`). Does NOT affect
+  // outreach the founder explicitly triggers themselves (e.g. company-comms
+  // used from a founder-initiated chat action).
+  commsOptOut?: boolean
+  commsOptOutAt?: string
   createdAt: string
 }
 
@@ -289,6 +299,26 @@ export async function setAppLogo(
     logoUrl,
     logoFileId: fields.logoFileId,
     logoUpdatedAt: new Date().toISOString(),
+  })
+}
+
+/**
+ * Set (or clear) a founder's "don't proactively contact me" preference (#742).
+ * Appends an updated row carrying the existing entry plus the new commsOptOut
+ * flag, so resolveApp() (latest-wins) surfaces it and any automated-outreach
+ * caller (nightly-loop comms policy today, #743's digest cron in future) can
+ * check it before sending. Idempotent: no-op success (true) when already at
+ * the requested value (no churn row). No-op (false) if the slug isn't
+ * registered.
+ */
+export async function setAppCommsOptOut(slug: string, optOut: boolean): Promise<boolean> {
+  const existing = await resolveApp(slug)
+  if (!existing) return false
+  if ((existing.commsOptOut ?? false) === optOut) return true
+  return registerApp({
+    ...existing,
+    commsOptOut: optOut,
+    commsOptOutAt: new Date().toISOString(),
   })
 }
 
