@@ -105,12 +105,20 @@ async function searchOneAvailableNumber(
       body: JSON.stringify({ country: countryCode, number_type: type, limit: 1 }),
       signal: AbortSignal.timeout(15000),
     })
-    if (!res.ok) return null
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      console.error(`[zerovoice] search failed status=${res.status} body=${body.slice(0, 500)}`)
+      return null
+    }
     const data = await res.json().catch(() => null)
     const first = Array.isArray(data?.available_numbers) ? data.available_numbers[0] : null
     const phoneNumber = first?.phone_number
+    if (!phoneNumber) {
+      console.warn(`[zerovoice] search returned 2xx but no usable number: ${JSON.stringify(data).slice(0, 500)}`)
+    }
     return typeof phoneNumber === 'string' && phoneNumber ? phoneNumber : null
-  } catch {
+  } catch (e: any) {
+    console.error(`[zerovoice] search threw: ${String(e?.message || e).slice(0, 300)}`)
     return null
   }
 }
