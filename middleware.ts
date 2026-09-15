@@ -383,8 +383,11 @@ export const config = {
      *   apple-icon (these have NO extension, so the ext-list below misses them —
      *   without this, /opengraph-image was auth-redirected to /login and social
      *   crawlers got "/login" instead of the OG image → black default preview).
-     * - static asset extensions (.png/.svg/.ico/.json/.webmanifest/.txt/.xml)
+     * - static asset extensions (.png/.svg/.ico/.json/.webmanifest/.txt/.xml/.mp3/.wav/.ogg)
+     *   mp3/wav/ogg added for the landing page's ambient audio (public/audio/*)
+     *   — without this, an anonymous visitor's <audio> requests 307-redirected
+     *   to /login instead of serving the file (confirmed live 2026-09-14).
      */
-    '/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|manifest.json|opengraph-image|twitter-image|icon|apple-icon|.*\\.(?:png|jpg|jpeg|svg|gif|ico|webmanifest|txt|xml|json|css|js|woff2?)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|manifest.json|opengraph-image|twitter-image|icon|apple-icon|.*\\.(?:png|jpg|jpeg|svg|gif|ico|webmanifest|txt|xml|json|css|js|woff2?|mp3|wav|ogg)$).*)',
   ],
 }
