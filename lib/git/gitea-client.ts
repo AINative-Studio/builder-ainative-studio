@@ -611,6 +611,88 @@ export async function getCommitsSince(
 }
 
 // ---------------------------------------------------------------------------
+// Issue creation (#744 — inbound SMS → real Gitea issue)
+// ---------------------------------------------------------------------------
+
+/** A minimal issue reference returned by Gitea's issue-creation endpoint. */
+export interface GiteaIssue {
+  id: number
+  number: number
+  title: string
+  body?: string
+  state: string
+  html_url: string
+}
+
+/** Honest result of createIssue — never throws (see createIssue's doc). */
+export interface CreateIssueResult {
+  ok: boolean
+  issueNumber?: number
+  url?: string
+  reason?: string
+}
+
+/**
+ * Create an issue in a company's Gitea repo (#744 — a founder texts Cody a
+ * quick feature idea while on the go, and it becomes a real tracked issue).
+ *
+ * Real, confirmed contract (checked directly against the live git.ainative.studio
+ * instance's own swagger spec, version 1.22.6 — same instance getCommitsSince()
+ * above already verified live): `POST /repos/{owner}/{repo}/issues` takes a
+ * `CreateIssueOption` body. Unlike GitHub's issues API, Gitea's real schema
+ * takes `labels` as an array of INTEGER label IDs (not strings) — this
+ * function deliberately does not support labels at all, to avoid a caller
+ * passing string labels that would silently fail Gitea's validation. The
+ * created issue is returned with the standard Gitea `Issue` shape — the
+ * fields we surface here (id/number/title/body/state/html_url) are the same
+ * subset every other *Issue/*PullRequest type in this file already exposes.
+ *
+ * Mirrors createRepo/createTaskPR's own style exactly: never throws — any
+ * failure (unconfigured, invalid input, non-ok response, thrown network
+ * error) surfaces as an honest `{ok:false, reason}` so a caller on an
+ * autonomous/webhook path (the #744 SMS-to-issue webhook) can degrade
+ * gracefully instead of crashing the request that triggered it.
+ *
+ * NOT idempotent by design — Gitea's issues API has no natural dedupe key
+ * (unlike a branch name or a PR's head→base pair), and a caller retrying
+ * after a failure should get a fresh honest attempt rather than this client
+ * silently swallowing a possible duplicate-detection responsibility it can't
+ * actually fulfill correctly.
+ */
+export async function createIssue(
+  org: string,
+  repo: string,
+  title: string,
+  body: string,
+): Promise<CreateIssueResult> {
+  if (!configured()) return { ok: false, reason: 'not_configured' }
+  if (!org) return { ok: false, reason: 'no_org' }
+  const repoName = repoNameForSlug(repo)
+  if (!repoName) return { ok: false, reason: 'no_repo' }
+  const cleanTitle = String(title || '').trim()
+  if (!cleanTitle) return { ok: false, reason: 'no_title' }
+
+  try {
+    const res = await giteaFetch(
+      `/repos/${encodeURIComponent(org)}/${encodeURIComponent(repoName)}/issues`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ title: cleanTitle, body: body || '' }),
+      },
+    )
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      return { ok: false, reason: `gitea createIssue ${org}/${repoName} failed: ${res.status} ${text}`.slice(0, 300) }
+    }
+    const issue = (await res.json()) as GiteaIssue
+    if (!issue?.number) return { ok: false, reason: 'create_response_missing_number' }
+    return { ok: true, issueNumber: issue.number, url: issue.html_url }
+  } catch (e) {
+    return { ok: false, reason: `createIssue threw: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300) }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Repo file fetch (#373/#374 — read a company's CURRENT generated app before
 // implementing a backlog task against it, and before coverage-verifying the
 // result)

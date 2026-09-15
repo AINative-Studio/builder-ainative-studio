@@ -941,6 +941,40 @@ export async function claimCompanyProject(
   }
 }
 
+/**
+ * Reverse-lookup a company by its own ZeroVoice inbound number (#744 — SMS to
+ * Cody becomes a real Gitea issue). `e164` is the SMS webhook's `To` field
+ * (the company's own provisioned number, set via setAppZeroVoice).
+ *
+ * QUERY STRATEGY: this table (builder_app_registry) is read everywhere else
+ * in this file via the plain rows endpoint + a full client-side scan/collapse
+ * (see listAllAppsWithStatus, resolveApp) — there is no evidence this table's
+ * read path supports a server-side `filters` query the way the separate
+ * `/database/tables/{table}/query` endpoint does for other tables in this
+ * codebase (document-store.ts, task-store.ts, etc. — and even THAT endpoint's
+ * `filters` only reliably matches TOP-LEVEL indexed fields; document-store.ts
+ * found live that filtering on an arbitrary row_data field like `id` silently
+ * returns zero rows). Rather than risk the same silent-empty-result failure
+ * mode against an unconfirmed filter key, this reuses the SAME real,
+ * already-working listAllAppsWithStatus() read (latest-wins per slug) and
+ * matches client-side — identical approach to listAppsForOwner() above.
+ *
+ * Returns null on no match, on an empty e164, or if the underlying read
+ * itself fails (never fabricates a match). Never returns a soft-deleted
+ * company (matches resolveApp()'s own contract) — a Gitea issue must never
+ * be filed against a company the founder deleted.
+ */
+export async function resolveAppByZeroVoiceNumber(e164: string): Promise<AppEntry | null> {
+  const number = (e164 || '').trim()
+  if (!number) return null
+  const { apps, ok } = await listAllAppsWithStatus()
+  if (!ok) return null
+  const match = apps.find(
+    (a) => a.zerovoiceE164 === number && (a.lifecycleStatus || 'active') !== 'deleted',
+  )
+  return match || null
+}
+
 /** Resolve a slug to its most recent app entry (chatId + brand), or null. */
 export async function resolveApp(slug: string): Promise<AppEntry | null> {
   if (!configured() || !slug) return null
