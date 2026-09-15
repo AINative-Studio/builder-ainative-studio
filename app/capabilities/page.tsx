@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { AppHeader } from '@/components/shared/app-header'
+import { PublicNav } from '@/components/shared/public-nav'
+import { PublicFooter } from '@/components/shared/public-footer'
 import { CAPABILITIES } from '@/lib/build/capabilities'
 
 const PAGE_URL = 'https://builder.ainative.studio/capabilities'
@@ -52,55 +53,53 @@ const faqJsonLd = {
  */
 export default function CapabilitiesPage() {
   return (
-    <div className="min-h-screen bg-background">
+    <div className="modernist" style={{ minHeight: '100vh' }}>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(itemListJsonLd) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }} />
-      <AppHeader />
-      <main className="mx-auto max-w-4xl px-4 py-12">
-        <div className="mb-10">
-          <p className="text-xs font-mono uppercase tracking-wide text-muted-foreground">AINative Builder</p>
-          <h1 className="mt-2 text-3xl font-semibold text-foreground">What can I build?</h1>
-          <p className="mt-3 max-w-2xl text-muted-foreground">
+      <PublicNav />
+      <main style={{ maxWidth: 900, margin: '0 auto', padding: '48px 24px' }}>
+        <div style={{ marginBottom: 40 }}>
+          <p className="m-eyebrow">AINative Builder</p>
+          <h1 className="m-h1" style={{ fontSize: 34, margin: '8px 0 12px' }}>What can I build?</h1>
+          <p style={{ maxWidth: 640, color: 'var(--text-muted)' }}>
             Describe an idea and Cody builds it on real AINative products — each one included,
             with no extra signup, key, or subscription. Here’s what’s available, in plain English.
           </p>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div style={{ display: 'grid', gap: 2, gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', background: 'var(--color-divider)' }}>
           {CAPABILITIES.map((c) => (
-            <div key={c.product} className="rounded-xl border border-border bg-card p-5">
-              <div className="flex items-baseline justify-between gap-2">
-                <h2 className="text-lg font-semibold text-foreground">{c.product}</h2>
-                <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+            <div key={c.product} style={{ background: 'var(--color-bg)', padding: 20 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+                <h2 style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, fontSize: 17 }}>{c.product}</h2>
+                <span className="m-mono" style={{ fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--success)' }}>
                   included
                 </span>
               </div>
-              <p className="mt-2 text-sm text-foreground/90">{c.build}</p>
-              <ul className="mt-3 space-y-1 text-sm text-muted-foreground">
+              <p style={{ marginTop: 8, fontSize: 14 }}>{c.build}</p>
+              <ul style={{ marginTop: 12, display: 'grid', gap: 4, fontSize: 14, color: 'var(--text-muted)', listStyle: 'none', padding: 0 }}>
                 {c.examples.map((ex) => (
-                  <li key={ex} className="flex gap-2">
-                    <span aria-hidden>→</span>
+                  <li key={ex} style={{ display: 'flex', gap: 8 }}>
+                    <span aria-hidden style={{ color: 'var(--color-accent)' }}>→</span>
                     <span>{ex}</span>
                   </li>
                 ))}
               </ul>
-              <p className="mt-3 text-xs text-muted-foreground">
-                <span className="font-medium text-foreground/70">Replaces:</span> {c.replaces}
+              <p className="m-mono" style={{ marginTop: 12, fontSize: 11, color: 'var(--text-muted)' }}>
+                <span style={{ fontWeight: 600 }}>Replaces:</span> {c.replaces}
               </p>
             </div>
           ))}
         </div>
 
-        <div className="mt-12 rounded-xl border border-border bg-muted/40 p-6 text-center">
-          <p className="text-foreground">Got an idea? You don’t need to pick a product — just describe what you want.</p>
-          <Link
-            href="/build"
-            className="mt-4 inline-block rounded-lg bg-primary px-6 py-2.5 text-sm font-semibold text-primary-foreground"
-          >
+        <div style={{ marginTop: 48, background: 'var(--color-surface)', borderTop: '4px solid var(--color-accent)', padding: 32, textAlign: 'center' }}>
+          <p>Got an idea? You don’t need to pick a product — just describe what you want.</p>
+          <Link href="/build" className="btn-primary" style={{ textDecoration: 'none', marginTop: 16, display: 'inline-flex' }}>
             Start building →
           </Link>
         </div>
       </main>
+      <PublicFooter />
     </div>
   )
 }

@@ -2,6 +2,8 @@ import { Metadata } from 'next'
 import Link from 'next/link'
 import { SEED_SHOWCASE, SHOWCASE_CATEGORIES, type ShowcaseEntry } from '@/lib/showcase-data'
 import { ShowcaseGalleryClient } from './showcase-client'
+import { PublicNav } from '@/components/shared/public-nav'
+import { PublicFooter } from '@/components/shared/public-footer'
 
 export const metadata: Metadata = {
   title: 'Showcase — AI-Generated React Apps | AINative Builder',
@@ -28,30 +30,30 @@ function ShowcaseCard({ entry }: { entry: ShowcaseEntry }) {
       href={href}
       target={isDynamic ? '_blank' : undefined}
       rel={isDynamic ? 'noopener noreferrer' : undefined}
-      className="group block bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden hover:shadow-lg hover:border-blue-300 dark:hover:border-blue-700 transition-all duration-200"
+      className="group"
+      style={{ display: 'block', background: 'var(--color-bg)', border: '1.5px solid var(--color-divider)', overflow: 'hidden' }}
       data-agent-role="content"
       data-agent-context={`showcase entry: ${entry.title}`}
     >
-      <div className="aspect-video bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-800 dark:to-gray-900 relative overflow-hidden">
+      <div style={{ aspectRatio: '16/9', background: 'var(--color-surface)', position: 'relative', overflow: 'hidden' }}>
         {/* Branded placeholder sits BEHIND everything, so it shows through while
             the live preview loads (and if it fails). */}
-        <div className="absolute inset-0 flex items-center justify-center">
-          <span className="text-5xl font-bold text-blue-300/60 dark:text-gray-700 select-none">
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <span style={{ fontSize: 48, fontFamily: 'var(--font-heading)', fontWeight: 800, color: 'var(--neutral-line)', userSelect: 'none' }}>
             {(entry.title || '?').charAt(0).toUpperCase()}
           </span>
         </div>
         {entry.chatId ? (
           // Dynamic app: render the ACTUAL generated app as a live, non-interactive
           // thumbnail. Scaled to 1/2.5 and pinned so the full app fits the card.
-          <div className="absolute inset-0 z-[1] pointer-events-none overflow-hidden">
+          <div style={{ position: 'absolute', inset: 0, zIndex: 1, pointerEvents: 'none', overflow: 'hidden' }}>
             <iframe
               src={`/api/preview/${entry.chatId}`}
               title={`Live preview of ${entry.title}`}
               loading="lazy"
               tabIndex={-1}
               aria-hidden="true"
-              className="origin-top-left border-0"
-              style={{ width: '250%', height: '250%', transform: 'scale(0.4)' }}
+              style={{ transformOrigin: 'top left', border: 0, width: '250%', height: '250%', transform: 'scale(0.4)' }}
             />
           </div>
         ) : (
@@ -60,32 +62,32 @@ function ShowcaseCard({ entry }: { entry: ShowcaseEntry }) {
           <img
             src={`/showcase-thumbnails/${entry.slug}.png`}
             alt={`Preview of ${entry.title}`}
-            className="w-full h-full object-cover object-top relative z-[1]"
+            style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top', position: 'relative', zIndex: 1 }}
             loading="lazy"
           />
         )}
-        <div className="absolute inset-0 bg-transparent group-hover:bg-black/5 transition-colors z-[2]" />
+        <div style={{ position: 'absolute', inset: 0, zIndex: 2 }} className="group-hover:bg-black/5" />
         {entry.featured && (
-          <span className="absolute top-3 right-3 bg-blue-600 text-white text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wider z-10">
+          <span className="m-mono" style={{ position: 'absolute', top: 12, right: 12, background: 'var(--color-accent)', color: '#fff', fontSize: 10, fontWeight: 700, padding: '3px 8px', textTransform: 'uppercase', letterSpacing: '.06em', zIndex: 10 }}>
             Featured
           </span>
         )}
       </div>
-      <div className="p-5">
-        <div className="flex items-center gap-2 mb-2">
-          <span className="text-[11px] font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded-full">
+      <div style={{ padding: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <span className="m-mono" style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--color-accent)', textTransform: 'uppercase', letterSpacing: '.06em' }}>
             {category?.label || entry.category}
           </span>
         </div>
-        <h3 className="font-semibold text-gray-900 dark:text-white group-hover:text-blue-600 transition-colors mb-1">
+        <h3 style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, marginBottom: 4 }}>
           {entry.title}
         </h3>
-        <p className="text-sm text-gray-500 dark:text-gray-400 line-clamp-2">
+        <p style={{ fontSize: 14, color: 'var(--text-muted)', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
           {entry.description}
         </p>
-        <div className="mt-3 flex flex-wrap gap-1.5">
+        <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {entry.tags.slice(0, 3).map(tag => (
-            <span key={tag} className="text-[10px] text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded">
+            <span key={tag} className="m-mono" style={{ fontSize: 10, color: 'var(--text-faint)', border: '1px solid var(--color-divider)', padding: '2px 6px' }}>
               {tag}
             </span>
           ))}
@@ -123,39 +125,34 @@ export default async function ShowcasePage() {
   const all = SEED_SHOWCASE
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-black" data-agent-role="application" data-agent-context="showcase gallery of AI-generated React apps">
-      <header className="bg-white dark:bg-gray-950 border-b border-gray-200 dark:border-gray-800" data-agent-role="navigation">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <nav className="flex items-center gap-3 text-sm text-gray-500 mb-4" aria-label="Breadcrumb">
-            <Link href="/" className="hover:text-gray-900 dark:hover:text-white transition-colors">Home</Link>
+    <div className="modernist" style={{ minHeight: '100vh' }} data-agent-role="application" data-agent-context="showcase gallery of AI-generated React apps">
+      <PublicNav />
+      <header data-agent-role="navigation">
+        <div style={{ maxWidth: 1200, margin: '0 auto', padding: '48px 24px 40px' }}>
+          <nav className="m-mono" style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }} aria-label="Breadcrumb">
+            <Link href="/" style={{ color: 'inherit' }}>Home</Link>
             <span>/</span>
-            <span className="text-gray-900 dark:text-white font-medium">Showcase</span>
+            <span style={{ color: 'var(--color-text)', fontWeight: 600 }}>Showcase</span>
           </nav>
-          <h1 className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white mb-3">
-            AI App Showcase
-          </h1>
-          <p className="text-lg text-gray-600 dark:text-gray-400 max-w-2xl">
+          <h1 className="m-h1" style={{ fontSize: 40, margin: '0 0 12px' }}>AI App Showcase</h1>
+          <p style={{ fontSize: 17, color: 'var(--text-muted)', maxWidth: 640 }}>
             Production-ready React applications generated entirely by AI in seconds.
             Each app was built with a single prompt using AINative Builder.
           </p>
-          <div className="mt-4">
-            <Link
-              href="/"
-              className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-medium px-5 py-2.5 rounded-lg transition-colors"
-              aria-label="Try building your own app"
-            >
+          <div style={{ marginTop: 16 }}>
+            <Link href="/" className="btn-primary" style={{ textDecoration: 'none' }} aria-label="Try building your own app">
               Build Your Own
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
+              <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
             </Link>
           </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10" data-agent-role="content">
+      <main style={{ maxWidth: 1200, margin: '0 auto', padding: '0 24px 64px' }} data-agent-role="content">
         {/* Featured — top 5 curated with screenshots */}
-        <section aria-label="Featured apps" className="mb-12">
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-6">Featured</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <section aria-label="Featured apps" style={{ marginBottom: 48 }}>
+          <h2 style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, fontSize: 20, marginBottom: 24 }}>Featured</h2>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 24 }}>
             {featured.map(entry => (
               <ShowcaseCard key={entry.slug} entry={entry} />
             ))}
@@ -164,48 +161,43 @@ export default async function ShowcasePage() {
 
         {/* ALL generated apps — live preview thumbnails, filterable by category */}
         <section aria-label="All generated apps">
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+          <h2 style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, fontSize: 20, marginBottom: 8 }}>
             All Generated Apps
           </h2>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+          <p style={{ fontSize: 14, color: 'var(--text-muted)', marginBottom: 24 }}>
             Every app below was built with a single prompt — click to view the live preview
           </p>
           <ShowcaseGalleryClient />
         </section>
 
         {/* CTA to build your own */}
-        <section aria-label="Build your own" className="mt-12 text-center py-12 bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800">
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-3">
-            Build Your Own App
-          </h2>
-          <p className="text-gray-500 dark:text-gray-400 mb-6 max-w-md mx-auto">
+        <section aria-label="Build your own" style={{ marginTop: 48, textAlign: 'center', padding: '48px 24px', background: 'var(--color-surface)', borderTop: '4px solid var(--color-accent)' }}>
+          <h2 className="m-h1" style={{ fontSize: 28, margin: '0 auto 12px' }}>Build Your Own App</h2>
+          <p style={{ color: 'var(--text-muted)', marginBottom: 24, maxWidth: 400, marginInline: 'auto' }}>
             Describe any app in plain English and get production-ready React code in seconds.
           </p>
-          <Link
-            href="/"
-            className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-medium px-6 py-3 rounded-lg transition-colors"
-          >
+          <Link href="/" className="btn-primary" style={{ textDecoration: 'none' }}>
             Start Building
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
+            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
           </Link>
         </section>
 
         {/* SEO content */}
-        <section className="mt-16 prose prose-gray dark:prose-invert max-w-none" aria-label="About the showcase">
-          <h2>What is AINative Builder?</h2>
+        <section className="m-artifact" style={{ marginTop: 64, fontSize: 16, lineHeight: 1.7, color: 'var(--color-text)' }} aria-label="About the showcase">
+          <h2 style={{ fontSize: 24, fontWeight: 500 }}>What is AINative Builder?</h2>
           <p>
             AINative Builder is an AI-powered application builder that generates production-ready
             React components from natural language prompts. Describe what you want — a dashboard,
             landing page, chat interface, or any web application — and get working code in seconds.
           </p>
-          <h3>How are these apps generated?</h3>
+          <h3 style={{ fontSize: 19, fontWeight: 500 }}>How are these apps generated?</h3>
           <p>
             Every app in this showcase was generated by a single prompt. The AI analyzes your
             requirements, selects appropriate components (Tailwind CSS, Lucide icons, Recharts,
             shadcn/ui), generates complete React code, and renders it in a live preview — all
             within seconds.
           </p>
-          <h3>Can I use these in my projects?</h3>
+          <h3 style={{ fontSize: 19, fontWeight: 500 }}>Can I use these in my projects?</h3>
           <p>
             Yes! All generated code is yours to use. Export any project as a complete Next.js
             application with a single click. The generated code uses modern React patterns,
@@ -214,11 +206,7 @@ export default async function ShowcasePage() {
         </section>
       </main>
 
-      <footer className="border-t border-gray-200 dark:border-gray-800 py-8 mt-12" data-agent-role="navigation">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-sm text-gray-500">
-          Built with AINative Builder
-        </div>
-      </footer>
+      <PublicFooter />
 
       {/* JSON-LD structured data for SEO */}
       <script

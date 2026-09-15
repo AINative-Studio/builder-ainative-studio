@@ -55,8 +55,8 @@ export function HelpAskBox() {
   }
 
   return (
-    <div className="text-left" data-agent-role="ask">
-      <form onSubmit={onSubmit} className="flex flex-col sm:flex-row gap-3">
+    <div style={{ textAlign: 'left' }} data-agent-role="ask">
+      <form onSubmit={onSubmit} style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
         <label htmlFor="help-question" className="sr-only">
           Ask anything about AINative Builder
         </label>
@@ -67,42 +67,47 @@ export function HelpAskBox() {
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           placeholder="Ask anything about AINative Builder…"
-          className="flex-1 rounded-md border border-input bg-background px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-ring"
+          style={{
+            flex: '1 1 240px', border: '1.5px solid var(--neutral-line)', background: '#fff',
+            padding: '12px 16px', fontSize: 15, fontFamily: 'var(--font-body)', color: 'var(--color-text)',
+          }}
           autoComplete="off"
         />
         <button
           type="submit"
           disabled={loading || !question.trim()}
-          className="inline-flex items-center justify-center rounded-md bg-primary px-6 py-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+          className="btn-primary"
+          style={{ opacity: loading || !question.trim() ? 0.5 : 1 }}
         >
           {loading ? 'Asking…' : 'Ask'}
         </button>
       </form>
 
       {error && (
-        <p role="alert" className="mt-4 text-sm text-destructive">
+        <p role="alert" style={{ marginTop: 16, fontSize: 14, color: 'var(--color-accent-700)' }}>
           {error}
         </p>
       )}
 
       {result && (
         <div
-          className="mt-6 border rounded-lg p-6 bg-muted/30"
+          style={{ marginTop: 24, border: '1.5px solid var(--color-divider)', padding: 24, background: 'var(--color-surface)' }}
           data-agent-role="answer"
           aria-live="polite"
         >
-          <p className="leading-relaxed whitespace-pre-wrap">{result.answer}</p>
+          <p style={{ lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{result.answer}</p>
           {result.sources && result.sources.length > 0 && (
-            <div className="mt-4 pt-4 border-t border-border">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+            <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1.5px solid var(--color-divider)' }}>
+              <p className="m-mono" style={{ fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--text-muted)', marginBottom: 8 }}>
                 Grounded in
               </p>
-              <ul className="flex flex-wrap gap-2">
+              <ul style={{ display: 'flex', flexWrap: 'wrap', gap: 8, listStyle: 'none', padding: 0 }}>
                 {result.sources.map((s) => (
                   <li key={s.id}>
                     <a
                       href={`#${s.id}`}
-                      className="text-xs rounded-full border px-3 py-1 text-muted-foreground hover:text-foreground hover:border-foreground/40 transition-colors"
+                      className="m-mono"
+                      style={{ fontSize: 11, border: '1.5px solid var(--neutral-line)', padding: '4px 12px', color: 'var(--text-muted)', textDecoration: 'none' }}
                     >
                       {s.question}
                     </a>

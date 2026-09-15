@@ -9,7 +9,7 @@
  */
 
 import { useState } from 'react'
-import { AppHeader } from '@/components/shared/app-header'
+import { PublicNav } from '@/components/shared/public-nav'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { EvidenceGallery } from '@/components/evidence/evidence-gallery'
 import { EvidenceTimeline } from '@/components/evidence/evidence-timeline'
@@ -20,15 +20,15 @@ export default function EvidencePage() {
   const [, setSelected] = useState<Evidence | null>(null)
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-black">
-      <AppHeader />
+    <div className="modernist" style={{ minHeight: '100vh' }}>
+      <PublicNav />
       <div className="container mx-auto max-w-6xl px-4 py-8">
         <div className="mb-6">
           <div className="flex items-center gap-2">
-            <ShieldCheck className="h-6 w-6 text-primary" />
-            <h1 className="text-3xl font-bold">Evidence</h1>
+            <ShieldCheck className="h-6 w-6" style={{ color: 'var(--color-accent)' }} />
+            <h1 className="m-h1" style={{ fontSize: 30, margin: 0 }}>Evidence</h1>
           </div>
-          <p className="mt-1 text-muted-foreground">
+          <p style={{ marginTop: 4, color: 'var(--text-muted)' }}>
             Automated proof for every claim — test runs, builds, coverage and
             deployments. Verify before you trust.
           </p>

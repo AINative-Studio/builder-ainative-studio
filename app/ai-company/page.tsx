@@ -1,8 +1,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { AppHeader } from '@/components/shared/app-header'
+import { PublicNav } from '@/components/shared/public-nav'
+import { PublicFooter } from '@/components/shared/public-footer'
 
 // Category landing page targeting the non-branded demand Polsia is weak on:
 // "AI that runs your company", "AI that builds your company", "AI co-founder".
@@ -72,68 +71,69 @@ const faqJsonLd = {
 
 export default function AICompanyPage() {
   return (
-    <div className="min-h-screen bg-background">
+    <div className="modernist" style={{ minHeight: '100vh' }}>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faqJsonLd) }} />
-      <AppHeader />
+      <PublicNav />
       <main>
-        <section className="container mx-auto px-4 py-16 text-center max-w-4xl">
-          <Badge variant="secondary" className="mb-4">AI-native company builder</Badge>
-          <h1 className="text-4xl md:text-5xl font-bold mb-6 leading-tight">
-            The AI that builds <span className="text-primary">AND</span> runs your company
+        <section style={{ maxWidth: 900, margin: '0 auto', padding: '64px 24px', textAlign: 'center' }}>
+          <p className="m-eyebrow" style={{ marginBottom: 16 }}>AI-native company builder</p>
+          <h1 className="m-h1" style={{ margin: '0 auto 20px' }}>
+            The AI that builds <span style={{ color: 'var(--color-accent)' }}>AND</span> runs your company
           </h1>
-          <p className="text-xl text-muted-foreground mb-8 max-w-2xl mx-auto">
+          <p style={{ fontSize: 19, color: 'var(--text-muted)', marginBottom: 32, maxWidth: 640, marginInline: 'auto' }}>
             Describe an idea. Cody, your AI co-founder, composes a real running product and an
             operating AI-native company from real primitives — then runs it 24/7 while you sleep.
             You own 100%.
           </p>
-          <Button asChild size="lg"><Link href="/build">Build your company free →</Link></Button>
+          <Link href="/build" className="btn-primary" style={{ textDecoration: 'none' }}>Build your company free →</Link>
         </section>
 
-        <section className="container mx-auto px-4 pb-16 max-w-4xl">
-          <h2 className="text-2xl font-bold mb-8 text-center">How it works</h2>
-          <div className="grid gap-6 md:grid-cols-2">
+        <section style={{ maxWidth: 900, margin: '0 auto', padding: '0 24px 64px' }}>
+          <h2 className="m-h1" style={{ fontSize: 28, textAlign: 'center', margin: '0 auto 32px' }}>How it works</h2>
+          <div style={{ display: 'grid', gap: 2, gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', background: 'var(--color-divider)' }}>
             {STEPS.map(([h, d], i) => (
-              <div key={h} className="border rounded-lg p-6">
-                <div className="text-sm text-muted-foreground mb-2">Step {i + 1}</div>
-                <h3 className="font-semibold text-lg mb-2">{h}</h3>
-                <p className="text-muted-foreground leading-relaxed">{d}</p>
+              <div key={h} style={{ background: 'var(--color-bg)', padding: 24, borderTop: '4px solid var(--color-divider)' }}>
+                <div className="m-mono" style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '.08em' }}>Step {i + 1}</div>
+                <h3 style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, fontSize: 18, marginBottom: 8 }}>{h}</h3>
+                <p style={{ color: 'var(--text-muted)', lineHeight: 1.6 }}>{d}</p>
               </div>
             ))}
           </div>
         </section>
 
-        <section className="container mx-auto px-4 pb-16 max-w-4xl">
-          <h2 className="text-2xl font-bold mb-8 text-center">Why AINative wins</h2>
-          <div className="grid gap-6 md:grid-cols-2">
+        <section style={{ maxWidth: 900, margin: '0 auto', padding: '0 24px 64px' }}>
+          <h2 className="m-h1" style={{ fontSize: 28, textAlign: 'center', margin: '0 auto 32px' }}>Why AINative wins</h2>
+          <div style={{ display: 'grid', gap: 2, gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', background: 'var(--color-divider)' }}>
             {DIFFERENTIATORS.map(([h, d]) => (
-              <div key={h} className="border rounded-lg p-6">
-                <h3 className="font-semibold text-lg mb-2">{h}</h3>
-                <p className="text-muted-foreground leading-relaxed">{d}</p>
+              <div key={h} style={{ background: 'var(--color-bg)', padding: 24, borderTop: '4px solid var(--color-accent)' }}>
+                <h3 style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, fontSize: 18, marginBottom: 8 }}>{h}</h3>
+                <p style={{ color: 'var(--text-muted)', lineHeight: 1.6 }}>{d}</p>
               </div>
             ))}
           </div>
         </section>
 
-        <section className="container mx-auto px-4 pb-16 max-w-3xl">
-          <h2 className="text-2xl font-bold mb-8 text-center">Frequently asked questions</h2>
-          <div className="space-y-6">
+        <section style={{ maxWidth: 720, margin: '0 auto', padding: '0 24px 64px' }}>
+          <h2 className="m-h1" style={{ fontSize: 28, textAlign: 'center', margin: '0 auto 32px' }}>Frequently asked questions</h2>
+          <div style={{ display: 'grid', gap: 24 }}>
             {faqJsonLd.mainEntity.map((item) => (
-              <div key={item.name} className="border rounded-lg p-6">
-                <h3 className="font-semibold text-lg mb-3">{item.name}</h3>
-                <p className="text-muted-foreground leading-relaxed">{item.acceptedAnswer.text}</p>
+              <div key={item.name} style={{ borderBottom: '2px solid var(--color-divider)', paddingBottom: 24 }}>
+                <h3 style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, fontSize: 18, marginBottom: 12 }}>{item.name}</h3>
+                <p style={{ color: 'var(--text-muted)', lineHeight: 1.6 }}>{item.acceptedAnswer.text}</p>
               </div>
             ))}
           </div>
         </section>
 
-        <section className="border-t bg-muted/30">
-          <div className="container mx-auto px-4 py-16 text-center max-w-2xl">
-            <h2 className="text-3xl font-bold mb-4">Stop building from scratch</h2>
-            <p className="text-muted-foreground mb-8">Describe your idea. Cody builds the company and runs it — on real primitives you own.</p>
-            <Button asChild size="lg"><Link href="/build">Build your company free →</Link></Button>
+        <section style={{ borderTop: '2px solid var(--color-divider)', background: 'var(--color-surface)' }}>
+          <div style={{ maxWidth: 640, margin: '0 auto', padding: '64px 24px', textAlign: 'center' }}>
+            <h2 className="m-h1" style={{ fontSize: 32, margin: '0 auto 16px' }}>Stop building from scratch</h2>
+            <p style={{ color: 'var(--text-muted)', marginBottom: 32 }}>Describe your idea. Cody builds the company and runs it — on real primitives you own.</p>
+            <Link href="/build" className="btn-primary" style={{ textDecoration: 'none' }}>Build your company free →</Link>
           </div>
         </section>
       </main>
+      <PublicFooter />
     </div>
   )
 }

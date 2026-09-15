@@ -11,8 +11,8 @@
 
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { Button } from '@/components/ui/button'
-import { AppHeader } from '@/components/shared/app-header'
+import { PublicNav } from '@/components/shared/public-nav'
+import { PublicFooter } from '@/components/shared/public-footer'
 
 // Founder direction: the story is dated August 2025 (top byline + footer).
 const PUBLISHED_DATE = '2025-08-24'
@@ -131,7 +131,7 @@ const personJsonLd = {
 
 export default function AboutPage() {
   return (
-    <div className="min-h-screen bg-background">
+    <div className="modernist" style={{ minHeight: '100vh' }}>
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(articleJsonLd) }}
@@ -145,21 +145,14 @@ export default function AboutPage() {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(personJsonLd) }}
       />
 
-      <AppHeader />
+      <PublicNav />
 
-      <main id="about-story" className="container mx-auto px-4 py-16 max-w-3xl">
+      <main id="about-story" style={{ maxWidth: 720, margin: '0 auto', padding: '64px 24px' }}>
         {/* Dateline + byline */}
-        <header className="mb-12">
-          <p className="text-sm text-muted-foreground uppercase tracking-widest mb-3 font-medium">
-            Founder Story
-          </p>
-          <h1
-            className="text-4xl md:text-5xl leading-tight mb-6"
-            style={{ fontFamily: 'var(--font-newsreader), Georgia, serif', fontWeight: 500 }}
-          >
-            Why I Built AINative Builder
-          </h1>
-          <p className="text-muted-foreground text-sm">
+        <header style={{ marginBottom: 48 }}>
+          <p className="m-eyebrow" style={{ marginBottom: 12 }}>Founder Story</p>
+          <h1 className="m-h1">Why I Built AINative Builder</h1>
+          <p className="m-mono" style={{ fontSize: 12, color: 'var(--text-muted)' }}>
             By {AUTHOR_NAME}&nbsp;&mdash;&nbsp;
             {new Date(PUBLISHED_DATE).toLocaleDateString('en-US', {
               year: 'numeric',
@@ -169,18 +162,12 @@ export default function AboutPage() {
           </p>
         </header>
 
-        {/* Article body — Newsreader serif for editorial prose */}
-        <article
-          className="space-y-8 text-lg leading-relaxed"
-          style={{ fontFamily: 'var(--font-newsreader), Georgia, serif' }}
-        >
+        {/* Article body — Newsreader serif (m-artifact) for editorial prose */}
+        <article className="m-artifact" style={{ fontSize: 18, lineHeight: 1.7, color: 'var(--color-text)' }}>
           {/* FINAL founder narrative (Toby, 2026-08-27): IdeaMarket → Techstars
               Tulsa → AINative, tightened around idea-to-customer. */}
           <section aria-label="From IdeaMarket to AINative">
-            <h2
-              className="text-2xl mb-4"
-              style={{ fontFamily: 'var(--font-newsreader), Georgia, serif', fontWeight: 500 }}
-            >
+            <h2 className="m-artifact" style={{ fontSize: 26, fontWeight: 500, marginBottom: 16 }}>
               From IdeaMarket to AINative.
             </h2>
 
@@ -238,13 +225,10 @@ export default function AboutPage() {
             <p className="mt-6">That became the catalyst for AINative.</p>
           </section>
 
-          <hr className="border-border" />
+          <hr style={{ border: 0, borderTop: '2px solid var(--color-divider)', margin: '32px 0' }} />
 
           <section aria-label="The real gap">
-            <h2
-              className="text-2xl mb-4"
-              style={{ fontFamily: 'var(--font-newsreader), Georgia, serif', fontWeight: 500 }}
-            >
+            <h2 className="m-artifact" style={{ fontSize: 26, fontWeight: 500, marginBottom: 16 }}>
               The real gap isn&apos;t idea-to-code. It&apos;s idea-to-customer.
             </h2>
 
@@ -315,17 +299,11 @@ export default function AboutPage() {
           </section>
 
           {/* Signed byline */}
-          <footer className="pt-4">
-            <p
-              className="text-xl"
-              style={{
-                fontFamily: 'var(--font-newsreader), Georgia, serif',
-                fontStyle: 'italic',
-              }}
-            >
+          <footer style={{ paddingTop: 16 }}>
+            <p className="m-artifact" style={{ fontSize: 20, fontStyle: 'italic' }}>
               &mdash; {AUTHOR_NAME}
             </p>
-            <p className="text-sm text-muted-foreground mt-1">
+            <p className="m-mono" style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
               Founder, {ORG_NAME}&nbsp;&bull;&nbsp;
               {new Date(PUBLISHED_DATE).toLocaleDateString('en-US', {
                 year: 'numeric',
@@ -336,56 +314,18 @@ export default function AboutPage() {
         </article>
 
         {/* CTA */}
-        <div className="mt-16 pt-8 border-t border-border text-center">
-          <p className="text-muted-foreground mb-6 text-base">
+        <div style={{ marginTop: 64, paddingTop: 32, borderTop: '2px solid var(--color-divider)', textAlign: 'center' }}>
+          <p style={{ color: 'var(--text-muted)', marginBottom: 24, fontSize: 16 }}>
             Ready to build your company with Cody?
           </p>
-          <div className="flex flex-col sm:flex-row gap-3 justify-center">
-            <Button asChild size="lg">
-              <Link href="/build">Start Building Free</Link>
-            </Button>
-            <Button asChild size="lg" variant="outline">
-              <Link href="/compare/polsia">How we compare</Link>
-            </Button>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center' }}>
+            <Link href="/build" className="btn-primary" style={{ textDecoration: 'none' }}>Start Building Free</Link>
+            <Link href="/compare/polsia" className="btn-secondary" style={{ textDecoration: 'none' }}>How we compare</Link>
           </div>
         </div>
       </main>
 
-      {/* Page-level footer with nav links */}
-      <footer className="border-t border-border mt-8 py-8" data-agent-role="navigation">
-        <div className="container mx-auto px-4 max-w-3xl">
-          <nav
-            className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-muted-foreground justify-center"
-            aria-label="Footer navigation"
-          >
-            <Link href="/" className="hover:text-foreground transition-colors">
-              Home
-            </Link>
-            <Link href="/build" className="hover:text-foreground transition-colors">
-              Builder
-            </Link>
-            <Link href="/showcase" className="hover:text-foreground transition-colors">
-              Showcase
-            </Link>
-            <Link href="/guides" className="hover:text-foreground transition-colors">
-              Guides
-            </Link>
-            <Link href="/templates" className="hover:text-foreground transition-colors">
-              Templates
-            </Link>
-            <Link
-              href="/about"
-              className="hover:text-foreground transition-colors font-medium text-foreground"
-              aria-current="page"
-            >
-              About
-            </Link>
-          </nav>
-          <p className="text-center text-xs text-muted-foreground mt-4">
-            &copy; {new Date().getFullYear()} {ORG_NAME}. All rights reserved.
-          </p>
-        </div>
-      </footer>
+      <PublicFooter />
     </div>
   )
 }
