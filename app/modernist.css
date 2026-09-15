@@ -1297,12 +1297,23 @@
   padding: 20px 32px; position: sticky; top: 0; z-index: 40;
   background: var(--color-bg); border-bottom: 2px solid var(--color-divider);
 }
+.modernist .m-land-nav-actions { display: flex; align-items: center; gap: 22px; }
 .modernist .m-land-signin {
   background: none; border: 0; padding: 0; cursor: pointer;
   font-family: var(--font-heading); font-size: 13px; letter-spacing: 0.06em;
   text-transform: uppercase; color: var(--color-text); text-decoration: underline;
 }
 .modernist .m-land-signin:hover { color: var(--color-accent-700); }
+
+/* sound toggle (Cody beam-down sequence has ambient audio, #740) */
+.modernist .m-land-sound {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--text-body-70);
+  display: flex; align-items: center; gap: 8px;
+}
+.modernist .m-land-sound-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); flex: none; }
+.modernist .m-land-sound-dot.is-on { background: var(--color-accent); }
 .modernist .m-land-foot {
   display: flex; gap: 24px; flex-wrap: wrap; justify-content: center; padding: 22px;
   border-top: 2px solid var(--color-divider); font-size: 12px; letter-spacing: 0.05em;
@@ -1327,6 +1338,78 @@
 .modernist .m-land-beat-center {
   position: absolute; inset: 0; display: flex; flex-direction: column;
   align-items: center; justify-content: center; text-align: center; padding: 0 24px;
+}
+
+/* Cody-beam-down sequence (#740) — persists across beats 1-2: a small ship
+   descends, a tractor-beam cone opens, an 8-bit Cody sprite hops down through
+   it and lands. Driven entirely by scroll-progress-derived inline transforms
+   from the component; these classes hold only the static shape + the looping
+   "idle" animations (hop bounce, shadow squash, glow pulse) that play once
+   Cody has landed. */
+.modernist .m-land-cody-layer {
+  position: absolute; inset: 0; display: grid; grid-template-columns: minmax(0,1.1fr) minmax(0,.9fr);
+  gap: 4vw; padding: 0 8vw; pointer-events: none; z-index: 3;
+}
+.modernist .m-land-cody-stage {
+  position: relative; height: calc(100vh - 42px); display: flex;
+  align-items: flex-end; justify-content: center; overflow: hidden;
+}
+.modernist .m-land-ship {
+  position: absolute; top: 0; left: 50%; width: min(44vw, 420px);
+  transform: translateX(-50%); transition: transform .12s linear; z-index: 2; pointer-events: none;
+}
+.modernist .m-land-ship-hull {
+  position: relative; height: 72px; border-radius: 0 0 50% 50% / 0 0 100% 100%;
+  background: radial-gradient(ellipse at 50% 0%, #2a2740 0%, #14141f 55%, #0b0b12 100%);
+  box-shadow: inset 0 -3px 0 rgba(124,107,255,.85), inset 0 -14px 24px rgba(124,107,255,.25), 0 18px 40px rgba(124,107,255,.35);
+}
+.modernist .m-land-ship-glow {
+  position: absolute; left: 50%; bottom: 8px; width: 28%; height: 14px; transform: translateX(-50%);
+  border-radius: 50%; background: radial-gradient(ellipse at center, #ffffff 0%, #d9d4ff 35%, rgba(124,107,255,0) 75%);
+  filter: blur(1px);
+}
+.modernist .m-land-ship-lights { position: absolute; left: 14%; right: 14%; bottom: 24px; display: flex; justify-content: space-between; }
+.modernist .m-land-ship-light { width: 6px; height: 6px; border-radius: 50%; background: #c4bcff; box-shadow: 0 0 8px #7c6bff; }
+.modernist .m-land-beam {
+  position: absolute; top: 0; bottom: 6vh; left: 50%; width: min(48vw, 460px); transform: translateX(-50%);
+  background: linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(226,222,255,.7) 50%, rgba(196,188,255,.3) 100%);
+  clip-path: polygon(42% 0, 58% 0, 100% 100%, 0 100%);
+  transition: opacity .25s ease-out;
+}
+.modernist .m-land-cody-wrap { position: relative; width: min(16vw, 170px); margin-bottom: 14vh; transition: transform .12s linear; }
+.modernist .m-land-cody-glow {
+  position: absolute; left: 50%; bottom: -6vh; width: 220%; height: 36vh; transform: translateX(-50%);
+  background: radial-gradient(ellipse at 50% 100%, rgba(124,107,255,.35), rgba(124,107,255,0) 65%);
+  pointer-events: none; animation: m-cody-glow 2.4s ease-in-out infinite;
+}
+@keyframes m-cody-glow { 0%, 100% { opacity: .55; } 50% { opacity: .9; } }
+.modernist .m-land-cody-sprite {
+  position: relative; animation: m-cody-bounce 4.2s cubic-bezier(.4,0,.6,1) infinite;
+  transform-origin: 50% 100%;
+  filter: drop-shadow(0 0 14px rgba(124,107,255,.7)) drop-shadow(0 0 40px rgba(124,107,255,.35));
+}
+.modernist .m-land-cody-sprite img { display: block; width: 100%; aspect-ratio: 1/1; object-fit: contain; image-rendering: pixelated; background: transparent; }
+@keyframes m-cody-bounce {
+  0% { transform: translate(0,0) scale(1.08,.92); }
+  12% { transform: translate(-10%,-40%) scale(.96,1.06) rotate(-4deg); }
+  24%, 26% { transform: translate(-18%,0) scale(1.1,.9); }
+  40% { transform: translate(4%,-55%) scale(.94,1.08) rotate(5deg); }
+  54%, 56% { transform: translate(22%,0) scale(1.1,.9); }
+  70% { transform: translate(14%,-30%) scale(.97,1.05) rotate(-3deg); }
+  82% { transform: translate(0,0) scale(1.08,.92); }
+  90% { transform: translate(0,-8%) scale(1,1); }
+  100% { transform: translate(0,0) scale(1.08,.92); }
+}
+.modernist .m-land-cody-pool {
+  position: relative; height: 12px; margin: 10px auto 0; width: 80%; border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(196,188,255,.95), rgba(124,107,255,0) 70%);
+  animation: m-cody-shadow 4.2s cubic-bezier(.4,0,.6,1) infinite;
+}
+@keyframes m-cody-shadow {
+  0%, 24%, 26%, 54%, 56%, 82%, 100% { transform: scaleX(1); opacity: .9; }
+  12% { transform: translateX(-10%) scaleX(.55); opacity: .35; }
+  40% { transform: translateX(4%) scaleX(.45); opacity: .25; }
+  70% { transform: translateX(14%) scaleX(.65); opacity: .45; }
 }
 
 /* the four "Builder is your team" rules */
@@ -1513,6 +1596,11 @@
   /* The 64vh photo cannot share a 100vh pinned beat with the copy stack —
      drop it on phones so the rules stay readable. */
   .modernist .m-land-beat2-photo { display: none; }
+  /* Cody-beam sequence needs the right-column real estate the 1.1fr/.9fr
+     grid gives it on desktop; on phones the copy already stacks full-width,
+     so the decorative ship/beam/sprite has nowhere correct to sit — drop it
+     rather than overlay it on the text. */
+  .modernist .m-land-cody-layer { display: none; }
 }
 
 /* Account screens (#338). */
