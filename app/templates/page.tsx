@@ -10,7 +10,8 @@ import { CustomizeDialog } from '@/components/templates/customize-dialog'
 import { Button } from '@/components/ui/button'
 import { Plus, Loader2 } from 'lucide-react'
 import Link from 'next/link'
-import { AppHeader } from '@/components/shared/app-header'
+import { PublicNav } from '@/components/shared/public-nav'
+import { PublicFooter } from '@/components/shared/public-footer'
 
 export default function TemplatesPage() {
   const router = useRouter()
@@ -114,23 +115,21 @@ export default function TemplatesPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <AppHeader />
-      <div className="container mx-auto px-4 py-8">
+    <div className="modernist" style={{ minHeight: '100vh' }}>
+      <PublicNav />
+      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '32px 24px' }}>
         {/* Header */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
+        <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 16, marginBottom: 32 }}>
           <div>
-            <h1 className="text-4xl font-bold mb-2">Template Gallery</h1>
-            <p className="text-muted-foreground">
+            <h1 className="m-h1" style={{ fontSize: 34, margin: '0 0 8px' }}>Template Gallery</h1>
+            <p style={{ color: 'var(--text-muted)' }}>
               Browse and use pre-built templates to jumpstart your projects
             </p>
           </div>
-          <Button asChild>
-            <Link href="/templates/submit">
-              <Plus className="w-4 h-4 mr-1" />
-              Submit Template
-            </Link>
-          </Button>
+          <Link href="/templates/submit" className="btn-primary" style={{ textDecoration: 'none' }}>
+            <Plus className="w-4 h-4 mr-1" />
+            Submit Template
+          </Link>
         </div>
 
         {/* Filters */}
@@ -189,17 +188,18 @@ export default function TemplatesPage() {
             )}
           </>
         ) : (
-          <div className="text-center py-20">
-            <p className="text-xl text-muted-foreground mb-4">No templates found</p>
-            <p className="text-sm text-muted-foreground">
+          <div style={{ textAlign: 'center', padding: '80px 0' }}>
+            <p style={{ fontSize: 20, color: 'var(--text-muted)', marginBottom: 16 }}>No templates found</p>
+            <p style={{ fontSize: 14, color: 'var(--text-muted)' }}>
               Try adjusting your filters or{' '}
-              <Link href="/templates/submit" className="text-primary hover:underline">
+              <Link href="/templates/submit" style={{ color: 'var(--color-accent)' }}>
                 submit your own template
               </Link>
             </p>
           </div>
         )}
       </div>
+      <PublicFooter />
 
       {/* Preview Modal */}
       <PreviewModal

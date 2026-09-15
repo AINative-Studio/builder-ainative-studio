@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { Badge } from '@/components/ui/badge'
-import { AppHeader } from '@/components/shared/app-header'
+import { PublicNav } from '@/components/shared/public-nav'
+import { PublicFooter } from '@/components/shared/public-footer'
 import { GUIDES } from '@/lib/data/seo-guides'
 
 const BASE_URL = 'https://builder.ainative.studio'
@@ -36,13 +36,6 @@ export const metadata: Metadata = {
   },
 }
 
-const categoryColor: Record<string, string> = {
-  Tutorial: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
-  Comparison: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
-  Concept: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
-  'Best Practices': 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
-}
-
 export default function GuidesIndexPage() {
   // ItemList structured data helps search engines understand the article hub.
   const itemListJsonLd = {
@@ -58,23 +51,19 @@ export default function GuidesIndexPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="modernist" style={{ minHeight: '100vh' }}>
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(itemListJsonLd) }}
       />
-      <AppHeader />
+      <PublicNav />
 
-      <main className="container mx-auto px-4 py-12 max-w-4xl">
+      <main style={{ maxWidth: 900, margin: '0 auto', padding: '48px 24px' }}>
         {/* Header */}
-        <div className="mb-10 text-center">
-          <Badge variant="secondary" className="mb-4">
-            Guides &amp; Tutorials
-          </Badge>
-          <h1 className="text-4xl md:text-5xl font-bold mb-4">
-            Learn to build apps with AI
-          </h1>
-          <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+        <div style={{ marginBottom: 40, textAlign: 'center' }}>
+          <p className="m-eyebrow" style={{ marginBottom: 16 }}>Guides &amp; Tutorials</p>
+          <h1 className="m-h1" style={{ margin: '0 auto 16px' }}>Learn to build apps with AI</h1>
+          <p style={{ fontSize: 17, color: 'var(--text-muted)', maxWidth: 640, marginInline: 'auto' }}>
             In-depth guides on building SaaS with AI, comparing AI app builders,
             optimizing for AI agents (AX), and making AI-generated apps rank in
             search.
@@ -82,42 +71,39 @@ export default function GuidesIndexPage() {
         </div>
 
         {/* Article grid */}
-        <div className="grid gap-6 sm:grid-cols-2">
+        <div style={{ display: 'grid', gap: 2, gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', background: 'var(--color-divider)' }}>
           {GUIDES.map((guide) => (
             <Link
               key={guide.slug}
               href={`/guides/${guide.slug}`}
-              className="group flex flex-col rounded-lg border p-6 hover:border-primary hover:shadow-sm transition-all"
+              style={{ display: 'flex', flexDirection: 'column', background: 'var(--color-bg)', padding: 24, textDecoration: 'none', color: 'inherit', borderTop: '4px solid var(--color-divider)' }}
             >
-              <div className="mb-3 flex items-center gap-3">
-                <span
-                  className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                    categoryColor[guide.category] ?? ''
-                  }`}
-                >
+              <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span className="m-mono" style={{ fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--color-accent)' }}>
                   {guide.category}
                 </span>
-                <span className="text-xs text-muted-foreground">
+                <span className="m-mono" style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                   {guide.readTimeMinutes} min read
                 </span>
               </div>
-              <h2 className="text-xl font-semibold mb-2 group-hover:text-primary transition-colors">
+              <h2 style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, fontSize: 19, marginBottom: 8 }}>
                 {guide.title}
               </h2>
-              <p className="text-sm text-muted-foreground leading-relaxed flex-1">
+              <p style={{ fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.6, flex: 1 }}>
                 {guide.excerpt}
               </p>
-              <div className="mt-4 flex flex-wrap gap-2">
+              <div style={{ marginTop: 16, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {guide.tags.slice(0, 3).map((tag) => (
-                  <Badge key={tag} variant="outline" className="text-xs">
+                  <span key={tag} className="m-mono" style={{ fontSize: 10.5, border: '1.5px solid var(--neutral-line)', padding: '3px 8px' }}>
                     {tag}
-                  </Badge>
+                  </span>
                 ))}
               </div>
             </Link>
           ))}
         </div>
       </main>
+      <PublicFooter />
     </div>
   )
 }

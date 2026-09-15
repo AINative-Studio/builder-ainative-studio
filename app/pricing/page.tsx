@@ -11,8 +11,8 @@
 import type { Metadata } from 'next'
 import { PRICING_TIERS } from '@/lib/build/pricing-tiers'
 import Link from 'next/link'
-import { Button } from '@/components/ui/button'
-import { AppHeader } from '@/components/shared/app-header'
+import { PublicNav } from '@/components/shared/public-nav'
+import { PublicFooter } from '@/components/shared/public-footer'
 
 // ── Tier data (canonical source: components/build/screens/Pricing.tsx) ────────
 // Replicated as plain objects so this SSR page has NO client-component imports.
@@ -145,7 +145,7 @@ const productJsonLd = {
 
 export default function PricingPage() {
   return (
-    <div className="min-h-screen bg-background">
+    <div className="modernist" style={{ minHeight: '100vh' }}>
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(faqPageJsonLd) }}
@@ -155,152 +155,108 @@ export default function PricingPage() {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(productJsonLd) }}
       />
 
-      <AppHeader />
+      <PublicNav />
 
-      <main id="pricing-main" className="container mx-auto px-4 py-16 max-w-5xl">
+      <main id="pricing-main" style={{ maxWidth: 1080, margin: '0 auto', padding: '64px 24px' }}>
         {/* Hero */}
-        <header className="text-center mb-16">
-          <p className="text-sm text-muted-foreground uppercase tracking-widest mb-3 font-medium">
-            Pricing
-          </p>
-          <h1 className="text-4xl md:text-5xl font-semibold leading-tight mb-6">
-            Build your company with Cody
-          </h1>
-          <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
+        <header style={{ textAlign: 'center', marginBottom: 64 }}>
+          <p className="m-eyebrow" style={{ marginBottom: 12 }}>Pricing</p>
+          <h1 className="m-h1" style={{ margin: '0 auto 20px' }}>Build your company with Cody</h1>
+          <p style={{ color: 'var(--text-muted)', fontSize: 18, maxWidth: 640, margin: '0 auto' }}>
             Start free. Cody builds your real app on open primitives you own. Upgrade when you
             want him to run the company around it — 24/7, autonomously. No revenue share.
           </p>
         </header>
 
         {/* Tier cards */}
-        <section aria-label="Pricing tiers" className="mb-20">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6" data-testid="pricing-tiers">
+        <section aria-label="Pricing tiers" style={{ marginBottom: 80 }}>
+          <div
+            style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 2, background: 'var(--color-divider)' }}
+            data-testid="pricing-tiers"
+          >
             {PRICING_TIERS.map((tier) => (
               <div
                 key={tier.id}
                 id={tier.id}
-                className={[
-                  'rounded-2xl border p-8 flex flex-col',
-                  tier.featured
-                    ? 'border-foreground bg-foreground text-background shadow-lg'
-                    : 'border-border bg-card text-card-foreground',
-                ].join(' ')}
+                style={{
+                  padding: 32,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  background: tier.featured ? 'var(--ink)' : 'var(--color-bg)',
+                  color: tier.featured ? '#f3f2f2' : 'var(--color-text)',
+                  borderTop: tier.featured ? '4px solid var(--color-accent)' : '4px solid var(--color-divider)',
+                }}
                 data-testid={`tier-${tier.id}`}
               >
                 {tier.featured && (
-                  <p className="text-xs font-semibold uppercase tracking-widest mb-4 opacity-70">
+                  <p className="m-mono" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '.12em', marginBottom: 16, color: 'var(--color-accent)' }}>
                     Most popular
                   </p>
                 )}
-                <div className="mb-2">
-                  <span className="text-sm font-medium uppercase tracking-wider opacity-60">
+                <div style={{ marginBottom: 8 }}>
+                  <span className="m-mono" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '.08em', opacity: 0.7 }}>
                     {tier.name}
                   </span>
                 </div>
-                <div className="mb-2" data-testid={`price-${tier.id}`}>
+                <div style={{ marginBottom: 8 }} data-testid={`price-${tier.id}`}>
                   {tier.monthly === 0 ? (
-                    <span className="text-4xl font-bold">Free</span>
+                    <span style={{ fontFamily: 'var(--font-heading)', fontSize: 36, fontWeight: 800 }}>Free</span>
                   ) : (
                     <>
-                      <span className="text-4xl font-bold">${tier.monthly}</span>
-                      <span className="text-base opacity-60">/mo</span>
+                      <span style={{ fontFamily: 'var(--font-heading)', fontSize: 36, fontWeight: 800 }}>${tier.monthly}</span>
+                      <span style={{ fontSize: 15, opacity: 0.7 }}>/mo</span>
                     </>
                   )}
                 </div>
-                <p className="text-sm opacity-70 mb-6">{tier.tagline}</p>
+                <p style={{ fontSize: 14, opacity: 0.8, marginBottom: 24 }}>{tier.tagline}</p>
 
-                <ul className="space-y-3 mb-8 flex-1">
+                <ul style={{ display: 'grid', gap: 12, marginBottom: 32, flex: 1, listStyle: 'none', padding: 0 }}>
                   {tier.features.map((f) => (
-                    <li key={f} className="flex items-start gap-2 text-sm">
-                      <span aria-hidden="true" className="mt-0.5 shrink-0">✓</span>
+                    <li key={f} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 14 }}>
+                      <span aria-hidden="true" style={{ color: 'var(--color-accent)', flexShrink: 0 }}>✓</span>
                       {f}
                     </li>
                   ))}
                 </ul>
 
-                <Button
-                  asChild
-                  size="lg"
-                  variant={tier.featured ? 'secondary' : 'default'}
-                  className="w-full"
+                <Link
+                  href="/build"
+                  className={tier.featured ? 'btn-primary' : 'btn-secondary'}
+                  style={{ textDecoration: 'none', justifyContent: 'center', width: '100%' }}
                   data-testid={`cta-${tier.id}`}
                 >
-                  <Link href="/build">
-                    {tier.monthly === 0 ? 'Start Free' : `Get ${tier.name}`}
-                  </Link>
-                </Button>
+                  {tier.monthly === 0 ? 'Start Free' : `Get ${tier.name}`}
+                </Link>
               </div>
             ))}
           </div>
 
-          <p className="text-center text-sm text-muted-foreground mt-6">
+          <p className="m-mono" style={{ textAlign: 'center', fontSize: 12, color: 'var(--text-muted)', marginTop: 24 }}>
             You own 100% of everything Cody builds. Cancel anytime.
           </p>
         </section>
 
         {/* FAQ */}
-        <section aria-label="Frequently asked questions" className="max-w-2xl mx-auto mb-16">
-          <h2 className="text-2xl font-semibold mb-8 text-center">Frequently asked questions</h2>
-          <dl className="space-y-6">
+        <section aria-label="Frequently asked questions" style={{ maxWidth: 640, margin: '0 auto 64px' }}>
+          <h2 className="m-h1" style={{ fontSize: 28, textAlign: 'center', margin: '0 auto 32px' }}>Frequently asked questions</h2>
+          <dl style={{ display: 'grid', gap: 24 }}>
             {faqEntries.map(({ q, a }) => (
-              <div key={q} className="border-b border-border pb-6 last:border-0 last:pb-0">
-                <dt className="font-medium mb-2">{q}</dt>
-                <dd className="text-muted-foreground text-sm leading-relaxed">{a}</dd>
+              <div key={q} style={{ borderBottom: '2px solid var(--color-divider)', paddingBottom: 24 }}>
+                <dt style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, marginBottom: 8 }}>{q}</dt>
+                <dd style={{ color: 'var(--text-muted)', fontSize: 14, lineHeight: 1.6 }}>{a}</dd>
               </div>
             ))}
           </dl>
         </section>
 
         {/* Bottom CTA */}
-        <div className="text-center pt-8 border-t border-border">
-          <p className="text-muted-foreground mb-6">Ready to meet Cody?</p>
-          <Button asChild size="lg">
-            <Link href="/build">Start Building Free</Link>
-          </Button>
+        <div style={{ textAlign: 'center', paddingTop: 32, borderTop: '2px solid var(--color-divider)' }}>
+          <p style={{ color: 'var(--text-muted)', marginBottom: 24 }}>Ready to meet Cody?</p>
+          <Link href="/build" className="btn-primary" style={{ textDecoration: 'none' }}>Start Building Free</Link>
         </div>
       </main>
 
-      {/* Footer nav — mirror pattern from /about */}
-      <footer className="border-t border-border mt-8 py-8" data-agent-role="navigation">
-        <div className="container mx-auto px-4 max-w-5xl">
-          <nav
-            className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-muted-foreground justify-center"
-            aria-label="Footer navigation"
-          >
-            <Link href="/" className="hover:text-foreground transition-colors">
-              Home
-            </Link>
-            <Link href="/build" className="hover:text-foreground transition-colors">
-              Builder
-            </Link>
-            <Link href="/showcase" className="hover:text-foreground transition-colors">
-              Showcase
-            </Link>
-            <Link href="/guides" className="hover:text-foreground transition-colors">
-              Guides
-            </Link>
-            <Link href="/templates" className="hover:text-foreground transition-colors">
-              Templates
-            </Link>
-            <Link href="/compare/polsia" className="hover:text-foreground transition-colors">
-              Compare
-            </Link>
-            <Link href="/about" className="hover:text-foreground transition-colors">
-              About
-            </Link>
-            <Link
-              href="/pricing"
-              className="hover:text-foreground transition-colors font-medium text-foreground"
-              aria-current="page"
-            >
-              Pricing
-            </Link>
-          </nav>
-          <p className="text-center text-xs text-muted-foreground mt-4">
-            &copy; {new Date().getFullYear()} {ORG_NAME}. All rights reserved.
-          </p>
-        </div>
-      </footer>
+      <PublicFooter />
     </div>
   )
 }

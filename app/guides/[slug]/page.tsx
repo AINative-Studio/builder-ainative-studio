@@ -1,9 +1,8 @@
 import { notFound } from 'next/navigation'
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { AppHeader } from '@/components/shared/app-header'
+import { PublicNav } from '@/components/shared/public-nav'
+import { PublicFooter } from '@/components/shared/public-footer'
 import { GUIDES, GUIDE_SLUGS, getGuideBySlug } from '@/lib/data/seo-guides'
 import { sectionAnchors } from '@/lib/help/stuck-search'
 import { ImStuck } from '@/components/help/ImStuck'
@@ -125,7 +124,7 @@ export default async function GuidePage({ params }: PageProps) {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="modernist" style={{ minHeight: '100vh' }}>
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(articleJsonLd) }}
@@ -138,31 +137,26 @@ export default async function GuidePage({ params }: PageProps) {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
       />
-      <AppHeader />
+      <PublicNav />
 
-      <main className="container mx-auto px-4 py-12 max-w-3xl">
+      <main style={{ maxWidth: 720, margin: '0 auto', padding: '48px 24px' }}>
         {/* Breadcrumb */}
-        <nav className="text-sm text-muted-foreground mb-8" aria-label="Breadcrumb">
-          <Link href="/guides" className="hover:text-foreground transition-colors">
-            Guides
-          </Link>
-          <span className="mx-2">/</span>
-          <span className="text-foreground">{guide.title}</span>
+        <nav className="m-mono" style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 32 }} aria-label="Breadcrumb">
+          <Link href="/guides" style={{ color: 'inherit' }}>Guides</Link>
+          <span style={{ margin: '0 8px' }}>/</span>
+          <span style={{ color: 'var(--color-text)' }}>{guide.title}</span>
         </nav>
 
         {/* Header */}
         <article>
-          <header className="mb-8">
-            <div className="flex flex-wrap items-center gap-3 mb-4">
-              <Badge variant="secondary">{guide.category}</Badge>
-              <span className="text-sm text-muted-foreground">
+          <header style={{ marginBottom: 32 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+              <span className="m-mono" style={{ fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--color-accent)' }}>{guide.category}</span>
+              <span className="m-mono" style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                 {guide.readTimeMinutes} min read
               </span>
-              <span className="text-sm text-muted-foreground">·</span>
-              <time
-                className="text-sm text-muted-foreground"
-                dateTime={guide.dateModified}
-              >
+              <span style={{ color: 'var(--text-faint)' }}>·</span>
+              <time className="m-mono" style={{ fontSize: 12, color: 'var(--text-muted)' }} dateTime={guide.dateModified}>
                 Updated{' '}
                 {new Date(guide.dateModified).toLocaleDateString('en-US', {
                   year: 'numeric',
@@ -171,38 +165,30 @@ export default async function GuidePage({ params }: PageProps) {
                 })}
               </time>
             </div>
-            <h1 className="text-4xl font-bold mb-4 leading-tight">{guide.title}</h1>
-            <p className="text-lg text-muted-foreground leading-relaxed">
+            <h1 className="m-h1" style={{ margin: '0 0 16px' }}>{guide.title}</h1>
+            <p style={{ fontSize: 17, color: 'var(--text-muted)', lineHeight: 1.6 }}>
               {guide.intro}
             </p>
           </header>
 
           {/* Body sections */}
-          <div className="space-y-10">
+          <div style={{ display: 'grid', gap: 40 }}>
             {guide.sections.map((section, i) => (
-              <section key={section.heading} id={anchors[i]} className="scroll-mt-24">
-                <h2 className="text-2xl font-bold mb-4">{section.heading}</h2>
-                <div className="space-y-4">
+              <section key={section.heading} id={anchors[i]} style={{ scrollMarginTop: 96 }}>
+                <h2 style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, fontSize: 24, marginBottom: 16 }}>{section.heading}</h2>
+                <div style={{ display: 'grid', gap: 16 }}>
                   {section.paragraphs.map((para, i) => (
-                    <p
-                      key={i}
-                      className="text-muted-foreground leading-relaxed"
-                    >
+                    <p key={i} style={{ color: 'var(--text-muted)', lineHeight: 1.7 }}>
                       {para}
                     </p>
                   ))}
                 </div>
                 {section.bullets && section.bullets.length > 0 && (
-                  <ul className="mt-4 space-y-2">
+                  <ul style={{ marginTop: 16, display: 'grid', gap: 8, listStyle: 'none', padding: 0 }}>
                     {section.bullets.map((bullet) => (
-                      <li key={bullet} className="flex gap-3">
-                        <span
-                          aria-hidden
-                          className="mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-xs"
-                        >
-                          ✓
-                        </span>
-                        <span className="text-muted-foreground">{bullet}</span>
+                      <li key={bullet} style={{ display: 'flex', gap: 12 }}>
+                        <span aria-hidden style={{ color: 'var(--color-accent)', flexShrink: 0 }}>✓</span>
+                        <span style={{ color: 'var(--text-muted)' }}>{bullet}</span>
                       </li>
                     ))}
                   </ul>
@@ -212,30 +198,24 @@ export default async function GuidePage({ params }: PageProps) {
           </div>
 
           {/* CTA */}
-          <div className="border-t mt-12 pt-10 text-center">
-            <h2 className="text-2xl font-bold mb-3">Start building with AI</h2>
-            <p className="text-muted-foreground mb-6">
+          <div style={{ borderTop: '2px solid var(--color-divider)', marginTop: 48, paddingTop: 40, textAlign: 'center' }}>
+            <h2 className="m-h1" style={{ fontSize: 26, margin: '0 auto 12px' }}>Start building with AI</h2>
+            <p style={{ color: 'var(--text-muted)', marginBottom: 24 }}>
               Turn a prompt into a production-ready app in seconds with AINative
               Builder.
             </p>
-            <Button asChild size="lg">
-              <Link href="/">Try AINative Builder Free</Link>
-            </Button>
+            <Link href="/" className="btn-primary" style={{ textDecoration: 'none' }}>Try AINative Builder Free</Link>
           </div>
 
           {/* FAQ */}
           {guide.faqs.length > 0 && (
-            <section className="border-t mt-12 pt-10">
-              <h2 className="text-2xl font-bold mb-6">Frequently asked questions</h2>
-              <div className="space-y-6">
+            <section style={{ borderTop: '2px solid var(--color-divider)', marginTop: 48, paddingTop: 40 }}>
+              <h2 className="m-h1" style={{ fontSize: 26, margin: '0 0 24px' }}>Frequently asked questions</h2>
+              <div style={{ display: 'grid', gap: 24 }}>
                 {guide.faqs.map((faq, i) => (
-                  <div
-                    key={faq.question}
-                    id={faqAnchors[i]}
-                    className="border rounded-lg p-6 scroll-mt-24"
-                  >
-                    <h3 className="font-semibold text-lg mb-3">{faq.question}</h3>
-                    <p className="text-muted-foreground leading-relaxed">
+                  <div key={faq.question} id={faqAnchors[i]} style={{ border: '1.5px solid var(--color-divider)', padding: 24, scrollMarginTop: 96 }}>
+                    <h3 style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, fontSize: 18, marginBottom: 12 }}>{faq.question}</h3>
+                    <p style={{ color: 'var(--text-muted)', lineHeight: 1.6 }}>
                       {faq.answer}
                     </p>
                   </div>
@@ -247,20 +227,20 @@ export default async function GuidePage({ params }: PageProps) {
 
         {/* Related guides — internal linking for SEO */}
         {relatedGuides.length > 0 && (
-          <section className="border-t mt-12 pt-10">
-            <h2 className="text-xl font-bold mb-6">Related guides</h2>
-            <div className="grid gap-4 sm:grid-cols-3">
+          <section style={{ borderTop: '2px solid var(--color-divider)', marginTop: 48, paddingTop: 40 }}>
+            <h2 style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, fontSize: 20, marginBottom: 24 }}>Related guides</h2>
+            <div style={{ display: 'grid', gap: 2, gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', background: 'var(--color-divider)' }}>
               {relatedGuides.map((rel) => (
                 <Link
                   key={rel.slug}
                   href={`/guides/${rel.slug}`}
-                  className="rounded-lg border p-4 hover:border-primary hover:shadow-sm transition-all"
+                  style={{ background: 'var(--color-bg)', padding: 16, textDecoration: 'none', color: 'inherit' }}
                 >
-                  <Badge variant="secondary" className="mb-2 text-xs">
+                  <span className="m-mono" style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--color-accent)', display: 'block', marginBottom: 8 }}>
                     {rel.category}
-                  </Badge>
-                  <h3 className="font-semibold mb-1">{rel.title}</h3>
-                  <p className="text-sm text-muted-foreground line-clamp-2">
+                  </span>
+                  <h3 style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, marginBottom: 4 }}>{rel.title}</h3>
+                  <p style={{ fontSize: 13, color: 'var(--text-muted)', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
                     {rel.excerpt}
                   </p>
                 </Link>
@@ -271,10 +251,11 @@ export default async function GuidePage({ params }: PageProps) {
 
         {/* "I'm stuck" jump-to-answer (#321) — searches the FULL guides/FAQ
             catalog, not just this article, and deep-links into the answer. */}
-        <section className="border-t mt-12 pt-10" aria-label="Stuck? Find the answer">
+        <section style={{ borderTop: '2px solid var(--color-divider)', marginTop: 48, paddingTop: 40 }} aria-label="Stuck? Find the answer">
           <ImStuck />
         </section>
       </main>
+      <PublicFooter />
     </div>
   )
 }

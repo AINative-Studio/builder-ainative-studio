@@ -1,8 +1,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { AppHeader } from '@/components/shared/app-header'
+import { PublicNav } from '@/components/shared/public-nav'
+import { PublicFooter } from '@/components/shared/public-footer'
 
 // Crawlable index for the /compare/[competitor] pages. Keeps the "X alternative"
 // SEO intent reachable from a single hub and reinforces the pivot positioning:
@@ -93,52 +92,46 @@ const itemListJsonLd = {
 
 export default function CompareIndexPage() {
   return (
-    <div className="min-h-screen bg-background">
+    <div className="modernist" style={{ minHeight: '100vh' }}>
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(itemListJsonLd) }}
       />
-      <AppHeader />
+      <PublicNav />
 
       <main>
         {/* Hero */}
-        <section className="container mx-auto px-4 py-16 text-center max-w-4xl">
-          <Badge variant="secondary" className="mb-4">
-            Comparisons
-          </Badge>
-          <h1 className="text-4xl md:text-5xl font-bold mb-6 leading-tight">
-            How AINative Builder compares
-          </h1>
-          <p className="text-xl text-muted-foreground mb-8 max-w-2xl mx-auto">
+        <section style={{ maxWidth: 900, margin: '0 auto', padding: '64px 24px', textAlign: 'center' }}>
+          <p className="m-eyebrow" style={{ marginBottom: 16 }}>Comparisons</p>
+          <h1 className="m-h1" style={{ margin: '0 auto 20px' }}>How AINative Builder compares</h1>
+          <p style={{ fontSize: 19, color: 'var(--text-muted)', marginBottom: 32, maxWidth: 640, marginInline: 'auto' }}>
             Most tools either generate code or run a company you already have. AINative does
             both — Cody, your AI co-founder, builds the product AND the operating company on real,
             open primitives you own, then runs it 24/7. See how it stacks up.
           </p>
-          <Button asChild size="lg">
-            <Link href="/build">Build your company free →</Link>
-          </Button>
+          <Link href="/build" className="btn-primary" style={{ textDecoration: 'none' }}>Build your company free →</Link>
         </section>
 
         {/* Comparison list */}
-        <section className="container mx-auto px-4 pb-16 max-w-4xl">
-          <h2 className="text-2xl font-bold mb-8 text-center">Side-by-side comparisons</h2>
-          <ul className="grid gap-6 md:grid-cols-2">
+        <section style={{ maxWidth: 900, margin: '0 auto', padding: '0 24px 64px' }}>
+          <h2 className="m-h1" style={{ fontSize: 28, textAlign: 'center', margin: '0 auto 32px' }}>Side-by-side comparisons</h2>
+          <ul style={{ display: 'grid', gap: 2, gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', background: 'var(--color-divider)', listStyle: 'none', padding: 0, margin: 0 }}>
             {COMPARE_TARGETS.map((t) => (
               <li key={t.slug}>
                 <Link
                   href={`/compare/${t.slug}`}
-                  className="block h-full border rounded-lg p-6 transition-colors hover:border-primary hover:bg-muted/30"
+                  style={{ display: 'block', height: '100%', background: 'var(--color-bg)', padding: 24, textDecoration: 'none', color: 'inherit', borderTop: '4px solid var(--color-divider)' }}
                 >
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="font-semibold text-lg">
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12 }}>
+                    <h3 style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, fontSize: 18 }}>
                       AINative Builder vs {t.name}
                     </h3>
-                    <Badge variant="outline">
+                    <span className="m-mono" style={{ fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '.06em', border: '1.5px solid var(--neutral-line)', padding: '3px 8px', whiteSpace: 'nowrap' }}>
                       {t.kind === 'company' ? 'Runs your company' : 'Code generator'}
-                    </Badge>
+                    </span>
                   </div>
-                  <p className="text-muted-foreground leading-relaxed">{t.blurb}</p>
-                  <span className="mt-4 inline-block text-primary font-medium">
+                  <p style={{ color: 'var(--text-muted)', lineHeight: 1.6 }}>{t.blurb}</p>
+                  <span className="m-mono" style={{ marginTop: 16, display: 'inline-block', color: 'var(--color-accent)', fontSize: 12, textTransform: 'uppercase', letterSpacing: '.06em' }}>
                     Compare AINative vs {t.name} →
                   </span>
                 </Link>
@@ -148,31 +141,28 @@ export default function CompareIndexPage() {
         </section>
 
         {/* Category context — keeps non-branded intent reachable */}
-        <section className="container mx-auto px-4 pb-16 max-w-3xl text-center">
-          <h2 className="text-2xl font-bold mb-4">Looking for the bigger picture?</h2>
-          <p className="text-muted-foreground mb-6 leading-relaxed">
+        <section style={{ maxWidth: 720, margin: '0 auto', padding: '0 24px 64px', textAlign: 'center' }}>
+          <h2 className="m-h1" style={{ fontSize: 28, margin: '0 auto 16px' }}>Looking for the bigger picture?</h2>
+          <p style={{ color: 'var(--text-muted)', marginBottom: 24, lineHeight: 1.6 }}>
             These comparisons focus on individual tools. If you want to understand the category —
             an AI that builds AND runs your company autonomously — start here.
           </p>
-          <Button asChild variant="outline" size="lg">
-            <Link href="/ai-company">See what an AI co-founder can do →</Link>
-          </Button>
+          <Link href="/ai-company" className="btn-secondary" style={{ textDecoration: 'none' }}>See what an AI co-founder can do →</Link>
         </section>
 
         {/* Bottom CTA */}
-        <section className="border-t bg-muted/30">
-          <div className="container mx-auto px-4 py-16 text-center max-w-2xl">
-            <h2 className="text-3xl font-bold mb-4">Ready to switch?</h2>
-            <p className="text-muted-foreground mb-8">
+        <section style={{ borderTop: '2px solid var(--color-divider)', background: 'var(--color-surface)' }}>
+          <div style={{ maxWidth: 640, margin: '0 auto', padding: '64px 24px', textAlign: 'center' }}>
+            <h2 className="m-h1" style={{ fontSize: 32, margin: '0 auto 16px' }}>Ready to switch?</h2>
+            <p style={{ color: 'var(--text-muted)', marginBottom: 32 }}>
               Describe an idea and watch Cody build a real, production-ready company on primitives
               you own — then run it while you sleep.
             </p>
-            <Button asChild size="lg">
-              <Link href="/build">Build your company free →</Link>
-            </Button>
+            <Link href="/build" className="btn-primary" style={{ textDecoration: 'none' }}>Build your company free →</Link>
           </div>
         </section>
       </main>
+      <PublicFooter />
     </div>
   )
 }
