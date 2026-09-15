@@ -793,7 +793,25 @@
 .m-tier-save { font-size: 11px; color: var(--track-700); font-family: var(--font-mono); margin: -2px 0 12px; min-height: 14px; }
 .m-billing-note { font-size: 11px; color: var(--text-muted); font-style: italic; margin: 6px 0 22px; }
 
-.m-tiers { grid-template-columns: repeat(3, 1fr); }
+/* Public /pricing page's own 4-card tier grid (lib/build/pricing-tiers.ts'
+   PRICING_TIERS, a separate data source from .m-tiers' workspace TIERS but
+   also currently 4 items) — same orphan-column bug as .m-tiers below, fixed
+   the same way. Kept as its own class rather than reusing .m-tiers since the
+   two tier lists are logically independent and shouldn't silently share a
+   layout rule that assumes the same item count. */
+.m-tiers-responsive { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 900px) and (min-width: 761px) {
+  .m-tiers-responsive { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .m-tiers-responsive { grid-template-columns: 1fr; }
+}
+
+/* 4 real tiers everywhere this is used (workspace Pricing screen's TIERS,
+   and the public /pricing page's PRICING_TIERS) — was hardcoded to 3
+   columns, which left the 4th tier orphaned alone in column 1 with two
+   empty grid cells beside it. Confirmed live on /pricing, 2026-09-15. */
+.m-tiers { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .m-tier { background: var(--color-bg); padding: 28px 22px; position: relative; display: flex; flex-direction: column; }
 .m-tier-stripe { position: absolute; top: 0; left: 0; right: 0; height: 5px; background: var(--neutral-line); }
 .m-tier.is-featured .m-tier-stripe { background: var(--color-accent); }
@@ -1303,7 +1321,7 @@
   font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-muted);
   border-left: 2px solid var(--color-divider); padding-left: 12px;
 }
-.modernist .m-land-nav-actions { display: flex; align-items: center; gap: 22px; }
+.modernist .m-land-nav-actions { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; justify-content: flex-end; }
 .modernist .m-land-signin {
   background: none; border: 0; padding: 0; cursor: pointer;
   font-family: var(--font-heading); font-size: 13px; letter-spacing: 0.06em;
@@ -1597,6 +1615,22 @@
   /* Legibility floor (#339) — labels >=12px, instructional copy >=14px. */
   .m-field-l { font-size: 12px; }
   .m-helper { font-size: 14px; }
+
+  /* PublicNav (about/pricing/compare/guides/help/etc.) packs the brand block
+     plus up to 4 links plus sign-in into one row — confirmed live overflow
+     at 390px (2026-09-15), the landing page itself never hit this since it
+     only has 2 nav actions. Wrap onto a second line and drop the "by
+     AINative" sublabel (redundant once BUILDER is already shown) rather
+     than truncate or horizontally scroll. */
+  .modernist .m-land-nav { padding: 14px 16px; row-gap: 10px; }
+  .modernist .m-land-brand-by { display: none; }
+  .modernist .m-land-nav-actions { gap: 14px 16px; }
+}
+
+/* 2x2 tablet layout for the 4-tier grid — a straight 4-col-to-1-col jump at
+   760px skips a reasonable mid-width layout. */
+@media (max-width: 900px) and (min-width: 761px) {
+  .m-tiers { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 /* Front door + landing beat 2 stacks (#337). */

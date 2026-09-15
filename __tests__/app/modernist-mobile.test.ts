@@ -94,3 +94,54 @@ describe('modernist.css phone breakpoints (#334–#339)', () => {
     expect(tsx).toMatch(/m-land-beat2-photo/)
   })
 })
+
+describe('4-tier pricing grids never orphan the 4th card (2026-09-15)', () => {
+  /**
+   * Real bug found live on /pricing: both .m-tiers (workspace Pricing.tsx,
+   * 4 real tiers) and the public page's own grid used a column count that
+   * didn't match the real 4-item list (3 columns, or `auto-fit` which
+   * resolved to 3 at common widths) — the 4th tier wrapped alone onto a new
+   * row with empty grid cells beside it.
+   */
+  it('.m-tiers uses exactly 4 base columns (matches TIERS.length in Pricing.tsx)', () => {
+    expect(css).toMatch(/\.m-tiers\s*\{\s*grid-template-columns:\s*repeat\(4,/)
+  })
+
+  it('.m-tiers-responsive (public /pricing page) also uses exactly 4 base columns', () => {
+    expect(css).toMatch(/\.m-tiers-responsive\s*\{\s*grid-template-columns:\s*repeat\(4,/)
+  })
+
+  it('both tier grids collapse to 2 columns at tablet width and 1 at phone width', () => {
+    expect(inBlock(760, /\.m-tiers\s*\{[^}]*grid-template-columns:\s*1fr\b/)).toBe(true)
+    // `[\s\S]` instead of `.`+`s` flag — this repo's ts target doesn't support `s`.
+    expect(css).toMatch(/@media \(max-width: 900px\) and \(min-width: 761px\)\s*\{[\s\S]*?\.m-tiers\s*\{[^}]*grid-template-columns:\s*repeat\(2,/)
+    expect(css).toMatch(/@media \(max-width: 900px\) and \(min-width: 761px\)\s*\{[\s\S]*?\.m-tiers-responsive\s*\{[^}]*grid-template-columns:\s*repeat\(2,/)
+    expect(css).toMatch(/@media \(max-width: 760px\)\s*\{[\s\S]*?\.m-tiers-responsive\s*\{[^}]*grid-template-columns:\s*1fr\b/)
+  })
+
+  it('the app/pricing page uses the fixed-column class, not the old auto-fit grid', () => {
+    const tsx = readFileSync(join(__dirname, '../../app/pricing/page.tsx'), 'utf8')
+    expect(tsx).not.toMatch(/repeat\(auto-fit/)
+    expect(tsx).toMatch(/m-tiers-responsive/)
+  })
+})
+
+describe('PublicNav does not overflow at phone widths (2026-09-15)', () => {
+  /**
+   * Real bug found live: PublicNav (about/pricing/compare/guides/help/etc.)
+   * packs the brand block + up to 4 links + sign-in into one unwrapping flex
+   * row. The landing page's own nav never hit this (only 2 actions), but
+   * PublicNav's extra links overflowed the viewport at 390px.
+   */
+  it('.m-land-nav-actions wraps instead of overflowing', () => {
+    expect(css).toMatch(/\.m-land-nav-actions\s*\{[^}]*flex-wrap:\s*wrap/)
+  })
+
+  it('the "by AINative" sublabel is hidden at phone width to make room', () => {
+    expect(inBlock(760, /\.m-land-brand-by\s*\{[^}]*display:\s*none/)).toBe(true)
+  })
+
+  it('the nav row itself gets tighter padding at phone width', () => {
+    expect(inBlock(760, /\.m-land-nav\s*\{[^}]*padding:\s*14px 16px/)).toBe(true)
+  })
+})

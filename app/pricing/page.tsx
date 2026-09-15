@@ -171,7 +171,8 @@ export default function PricingPage() {
         {/* Tier cards */}
         <section aria-label="Pricing tiers" style={{ marginBottom: 80 }}>
           <div
-            style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 2, background: 'var(--color-divider)' }}
+            className="m-tiers-responsive"
+            style={{ display: 'grid', gap: 2, background: 'var(--color-divider)' }}
             data-testid="pricing-tiers"
           >
             {PRICING_TIERS.map((tier) => (
