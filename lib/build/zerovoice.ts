@@ -75,7 +75,12 @@ async function findExistingNumber(jwt: string): Promise<ExistingNumber | null> {
     const res = await fetch(`${ZV_BASE}/numbers/list?limit=1`, {
       method: 'GET',
       headers: { Authorization: `Bearer ${jwt}` },
-      signal: AbortSignal.timeout(15000),
+      // ZeroVoice's own AINative-token fallback (its #612 fix) can now make
+      // up to 3 real attempts against core with backoff (0.5s + 1.5s) before
+      // answering — worst case ~26s. 15s here would abort before ZeroVoice
+      // even finishes retrying, surfacing OUR OWN timeout as a false
+      // "search threw" failure instead of the real, honest upstream answer.
+      signal: AbortSignal.timeout(30000),
     })
     if (!res.ok) return null
     const data = await res.json().catch(() => null)
@@ -103,7 +108,10 @@ async function searchOneAvailableNumber(
       method: 'POST',
       headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ country: countryCode, number_type: type, limit: 1 }),
-      signal: AbortSignal.timeout(15000),
+      // Same real reason as findExistingNumber's timeout above — ZeroVoice's
+      // own AINative-verify fallback (#612) can legitimately take ~26s worst
+      // case with its own retries before answering.
+      signal: AbortSignal.timeout(30000),
     })
     if (!res.ok) {
       const body = await res.text().catch(() => '')
@@ -163,7 +171,10 @@ export async function provisionZeroVoiceNumber(
       method: 'POST',
       headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone_number: phoneNumber, friendly_name: slug || undefined }),
-      signal: AbortSignal.timeout(20000),
+      // Same real reason as findExistingNumber/searchOneAvailableNumber's
+      // timeouts above — ZeroVoice's own AINative-verify fallback (#612) can
+      // legitimately take ~26s worst case with its own retries.
+      signal: AbortSignal.timeout(35000),
     })
     const data = await res.json().catch(() => null)
     if (!res.ok) {
@@ -228,7 +239,10 @@ export async function sendZeroVoiceSms(
       method: 'POST',
       headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ from_number: fromE164, to_number: toE164, body }),
-      signal: AbortSignal.timeout(20000),
+      // Same real reason as findExistingNumber/searchOneAvailableNumber's
+      // timeouts above — ZeroVoice's own AINative-verify fallback (#612) can
+      // legitimately take ~26s worst case with its own retries.
+      signal: AbortSignal.timeout(35000),
     })
     const data = await res.json().catch(() => null)
     if (!res.ok) {
@@ -281,7 +295,10 @@ export async function makeZeroVoiceCall(
         to_number: toE164,
         ...(opts?.record ? { record: true } : {}),
       }),
-      signal: AbortSignal.timeout(20000),
+      // Same real reason as findExistingNumber/searchOneAvailableNumber's
+      // timeouts above — ZeroVoice's own AINative-verify fallback (#612) can
+      // legitimately take ~26s worst case with its own retries.
+      signal: AbortSignal.timeout(35000),
     })
     const data = await res.json().catch(() => null)
     if (!res.ok) {
