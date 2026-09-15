@@ -62,7 +62,12 @@ export function Landing() {
   const { status } = useSession()
   const [progress, setProgress] = useState(0)
   const [tickerIdx, setTickerIdx] = useState(0)
-  const [soundOn, setSoundOn] = useState(false)
+  // Sound defaults ON (matches the reference design's soundDefault prop) —
+  // real playback still can't start until a genuine user gesture happens
+  // (browser autoplay policy, not a preference), but the toggle should read
+  // "on" from the first render so the visitor sees sound as the default and
+  // has to opt OUT, not in.
+  const [soundOn, setSoundOn] = useState(true)
   const [audioRunning, setAudioRunning] = useState(false)
   const stageRef = useRef<HTMLDivElement>(null)
 
@@ -72,7 +77,7 @@ export function Landing() {
   const beamPlayedRef = useRef(false)
   const landPlayedRef = useRef(false)
   const armedRef = useRef(false)
-  const soundOnRef = useRef(false)
+  const soundOnRef = useRef(true)
   const fadeRafRef = useRef<number | null>(null)
   const mountedRef = useRef(true)
 
@@ -154,18 +159,26 @@ export function Landing() {
     el.play().catch(() => {})
   }
 
-  // Sound starts opt-in only: arm on the visitor's first scroll/gesture so a
-  // real user activation exists (autoplay policies block audio otherwise),
-  // then start ambient audio automatically once that happens.
+  // Sound defaults ON — a real browser can't actually start audio before a
+  // genuine user gesture (autoplay policy, not a preference), so this arms on
+  // the visitor's first scroll/gesture and starts playback right then,
+  // silently, with no separate opt-in click required.
+  //
+  // A tap/click on the sound toggle button ITSELF must never be treated as
+  // this generic arm gesture — real bug, confirmed live: pointerdown bubbles
+  // to window and fires well before React's onClick handler runs, so a
+  // visitor's very first interaction being "turn sound off" would otherwise
+  // have startAudio() fire first (from this listener), racing/clobbering the
+  // toggle's own intent. Skip entirely when the event originated on the
+  // toggle — it already calls startAudio()/stopAudio() itself.
   useEffect(() => {
     const evs: (keyof WindowEventMap)[] = ['wheel', 'touchstart', 'scroll', 'pointerdown', 'keydown']
-    const tryStart = () => {
+    const tryStart = (e: Event) => {
       if (armedRef.current) return
+      if (e.target instanceof Element && e.target.closest('[data-testid="landing-sound-toggle"]')) return
       armedRef.current = true
-      setSoundOn(true)
-      soundOnRef.current = true
       startAudio()
-      evs.forEach((e) => window.removeEventListener(e, tryStart))
+      evs.forEach((ev) => window.removeEventListener(ev, tryStart))
     }
     evs.forEach((e) => window.addEventListener(e, tryStart, { passive: true }))
     return () => evs.forEach((e) => window.removeEventListener(e, tryStart))

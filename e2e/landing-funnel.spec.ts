@@ -85,3 +85,38 @@ test.describe('Landing funnel — alternate paths', () => {
     await expect(page.getByText("Let's get started.")).toBeVisible()
   })
 })
+
+test.describe('Landing sound toggle (defaults ON, real click race, 2026-09-15)', () => {
+  test('sound reads on by default (opt-out) before any gesture', async ({ page }) => {
+    await gotoLanding(page)
+    const toggle = page.getByTestId('landing-sound-toggle')
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    await expect(toggle).toContainText('Sound')
+    await expect(toggle).not.toContainText('Sound off')
+  })
+
+  test('clicking the toggle as the FIRST interaction correctly turns sound off — a real click dispatches pointerdown before React\'s onClick, which used to race the arm-listener and silently fail to toggle', async ({ page }) => {
+    await gotoLanding(page)
+    const toggle = page.getByTestId('landing-sound-toggle')
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    await expect(toggle).toContainText('Sound off')
+
+    // Scrolling afterward must not silently re-enable an explicit "off".
+    const viewportH = page.viewportSize()!.height
+    await page.evaluate((h) => window.scrollTo(0, h * 4 * 0.1), viewportH)
+    await page.waitForTimeout(300)
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  test('scrolling without touching the toggle starts audio automatically', async ({ page }) => {
+    await gotoLanding(page)
+    const toggle = page.getByTestId('landing-sound-toggle')
+    await expect(toggle).toContainText('Sound · tap to start')
+
+    const viewportH = page.viewportSize()!.height
+    await page.evaluate((h) => window.scrollTo(0, h * 4 * 0.1), viewportH)
+    await page.waitForTimeout(500)
+    await expect(toggle).toContainText('Sound on')
+  })
+})
