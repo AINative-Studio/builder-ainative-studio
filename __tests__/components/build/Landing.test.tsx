@@ -93,14 +93,20 @@ describe('Landing — new scrollytelling design', () => {
     expect(sprite.src).toContain('ainative-8bit-cody-transparent-512.png')
   })
 
-  it('sound starts off, and the toggle flips its label/dot state', () => {
+  it('sound defaults ON (opt-out, not opt-in) — real playback still awaits a genuine gesture, and the toggle can turn it off', () => {
     render(<Landing />)
     const toggle = host.querySelector('[data-testid="landing-sound-toggle"]') as HTMLButtonElement
-    expect(toggle.textContent).toContain('Sound off')
-    expect(toggle.getAttribute('aria-pressed')).toBe('false')
-
-    act(() => { toggle.click() })
+    // Default reads as "on" immediately, before any gesture — playback itself
+    // is honestly labeled as pending ("tap to start") since a real browser
+    // can't autoplay audio without one, but the PREFERENCE is on by default.
+    expect(toggle.textContent).toContain('Sound')
+    expect(toggle.textContent).not.toContain('Sound off')
     expect(toggle.getAttribute('aria-pressed')).toBe('true')
+
+    // The visitor can still explicitly opt out.
+    act(() => { toggle.click() })
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+    expect(toggle.textContent).toContain('Sound off')
   })
 
   it('footer legal links point to the real ainative.studio pages', () => {
@@ -152,8 +158,10 @@ describe('Landing — new scrollytelling design', () => {
     })
 
     render(<Landing />)
-    const toggle = host.querySelector('[data-testid="landing-sound-toggle"]') as HTMLButtonElement
-    act(() => { toggle.click() })
+    // Sound now defaults ON — real playback starts from the visitor's first
+    // scroll/gesture (the arm-listener), not from clicking the toggle (which
+    // would now turn a default-on sound OFF). Simulate that first gesture.
+    act(() => { window.dispatchEvent(new Event('scroll')) })
 
     const drone = created[0] // first Audio() constructed is the drone loop
     expect(drone).toBeTruthy()
