@@ -110,4 +110,59 @@ describe('Landing — new scrollytelling design', () => {
     expect(html).toContain('href="https://ainative.studio/privacy"')
     expect(html).toContain('href="https://ainative.studio/acceptable-use"')
   })
+
+  it('the volume fade survives a first rAF timestamp that arrives before performance.now(), instead of silently dying (real bug, 2026-09-14)', () => {
+    // jsdom genuinely enforces HTMLMediaElement.volume's [0,1] range (throws
+    // IndexSizeError outside it) — the same real constraint that broke this
+    // live. The throw happens INSIDE the rAF callback, which React/the
+    // browser swallow as an uncaught async error rather than propagating
+    // synchronously to the caller — so "doesn't throw" is not a strong
+    // enough assertion. The real, user-visible consequence was: the thrown
+    // frame never schedules its next rAF, so the fade loop dies and the
+    // drone stays silent forever. That observable end-state is what this
+    // test actually pins down.
+    //
+    // rAF timestamps mark frame START, which can arrive fractionally BEFORE
+    // the performance.now() captured mid-frame in startAudio(). Simulate that
+    // exact race on the FIRST frame only: it fires with a timestamp 0.1ms
+    // earlier than "now" reported at call time. Later frames advance real
+    // time normally so a healthy fade can actually reach its target.
+    // `new Audio(...)` elements aren't appended to the DOM, so capture the
+    // drone instance directly off the real global Audio constructor.
+    const created: HTMLAudioElement[] = []
+    const RealAudio = window.Audio
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(window as any).Audio = class extends RealAudio {
+      constructor(src?: string) { super(src); created.push(this as unknown as HTMLAudioElement) }
+    }
+
+    // `performance.now()` is captured as `start` INSIDE startAudio(), which
+    // only runs once the toggle is clicked — but other code (React's own
+    // scheduler, etc.) genuinely calls performance.now() before that point,
+    // so a single mockReturnValueOnce(...) lands on the WRONG call. Mock it
+    // to always return a fixed value instead, so `start` is deterministic
+    // regardless of how many earlier calls happen first.
+    const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(1000)
+    let first = true
+    const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+      const t = first ? 999.9 : 100000 // second+ frame: far enough past `start` to hit k=1
+      first = false
+      cb(t)
+      return 1
+    })
+
+    render(<Landing />)
+    const toggle = host.querySelector('[data-testid="landing-sound-toggle"]') as HTMLButtonElement
+    act(() => { toggle.click() })
+
+    const drone = created[0] // first Audio() constructed is the drone loop
+    expect(drone).toBeTruthy()
+    // A dead-on-first-frame fade leaves volume stuck at (or near) 0. A
+    // healthy fade reaches its 0.6 target once later frames advance time.
+    expect(drone.volume).toBeCloseTo(0.6, 5)
+
+    rafSpy.mockRestore()
+    nowSpy.mockRestore()
+    window.Audio = RealAudio
+  })
 })
