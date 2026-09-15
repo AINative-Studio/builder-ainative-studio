@@ -94,15 +94,30 @@ async function findExistingNumber(jwt: string): Promise<ExistingNumber | null> {
 }
 
 /**
- * Search for one available number matching the requested country/type, and
- * return its purchasable phone_number string. Null on any failure or an
- * empty result set — never throws.
+ * Real result of a number search — distinguishes a genuine empty result
+ * (ZeroVoice answered, no numbers matched) from an auth/infra failure (a
+ * non-2xx response or a thrown/aborted request). Collapsing these into the
+ * same "no numbers found" outcome was a real bug: a live 401 from
+ * ZeroVoice's own auth layer (confirmed live, 2026-09-14 — see ZeroVoice#612)
+ * was silently reported to founders as "no available numbers," masking a
+ * real, fixable auth failure as if it were a genuine inventory gap.
+ */
+interface SearchResult {
+  phoneNumber: string | null
+  /** Present only when the search itself failed (not a genuine empty result). */
+  failureReason?: string
+}
+
+/**
+ * Search for one available number matching the requested country/type.
+ * Never throws — a failure is reported via `failureReason`, distinct from a
+ * genuine empty result (`phoneNumber: null`, no `failureReason`).
  */
 async function searchOneAvailableNumber(
   jwt: string,
   countryCode: string,
   type: 'local' | 'toll_free' | 'mobile',
-): Promise<string | null> {
+): Promise<SearchResult> {
   try {
     const res = await fetch(`${ZV_BASE}/numbers/search`, {
       method: 'POST',
@@ -116,7 +131,7 @@ async function searchOneAvailableNumber(
     if (!res.ok) {
       const body = await res.text().catch(() => '')
       console.error(`[zerovoice] search failed status=${res.status} body=${body.slice(0, 500)}`)
-      return null
+      return { phoneNumber: null, failureReason: `search_failed_${res.status}` }
     }
     const data = await res.json().catch(() => null)
     const first = Array.isArray(data?.available_numbers) ? data.available_numbers[0] : null
@@ -124,10 +139,10 @@ async function searchOneAvailableNumber(
     if (!phoneNumber) {
       console.warn(`[zerovoice] search returned 2xx but no usable number: ${JSON.stringify(data).slice(0, 500)}`)
     }
-    return typeof phoneNumber === 'string' && phoneNumber ? phoneNumber : null
+    return { phoneNumber: typeof phoneNumber === 'string' && phoneNumber ? phoneNumber : null }
   } catch (e: any) {
     console.error(`[zerovoice] search threw: ${String(e?.message || e).slice(0, 300)}`)
-    return null
+    return { phoneNumber: null, failureReason: `search_threw` }
   }
 }
 
@@ -161,10 +176,13 @@ export async function provisionZeroVoiceNumber(
     return { ok: true, numberId: existing.id, e164: existing.e164 }
   }
 
-  const phoneNumber = await searchOneAvailableNumber(jwt, countryCode, type)
-  if (!phoneNumber) {
-    return { ok: false, reason: 'no_available_numbers' }
+  const searchResult = await searchOneAvailableNumber(jwt, countryCode, type)
+  if (!searchResult.phoneNumber) {
+    // Preserve the real reason when the search itself failed (auth/infra) —
+    // never report a genuine failure as if it were an honest empty result.
+    return { ok: false, reason: searchResult.failureReason || 'no_available_numbers' }
   }
+  const phoneNumber = searchResult.phoneNumber
 
   try {
     const res = await fetch(`${ZV_BASE}/numbers/purchase`, {

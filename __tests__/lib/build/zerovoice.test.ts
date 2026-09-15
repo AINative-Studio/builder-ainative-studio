@@ -14,13 +14,14 @@ import {
  * mocked — no real number is ever purchased by these tests.
  */
 
-function mockFetch(impl: (url: string, init?: RequestInit) => { ok: boolean; status?: number; json?: object }) {
+function mockFetch(impl: (url: string, init?: RequestInit) => { ok: boolean; status?: number; json?: object; text?: string }) {
   const fn = vi.fn(async (url: string, init?: RequestInit) => {
     const r = impl(String(url), init)
     return {
       ok: r.ok,
       status: r.status ?? (r.ok ? 200 : 500),
       json: async () => (r.json ?? {}),
+      text: async () => (r.text ?? JSON.stringify(r.json ?? {})),
     } as unknown as Response
   })
   vi.stubGlobal('fetch', fn)
@@ -113,6 +114,22 @@ describe('provisionZeroVoiceNumber (#415)', () => {
     })
     const result = await provisionZeroVoiceNumber('jwt', 'my-co')
     expect(result).toEqual({ ok: false, reason: 'no_available_numbers' })
+  })
+
+  it('reports the REAL failure reason (not a fabricated "no_available_numbers") when the search itself fails with a real error', async () => {
+    // Real bug found live (2026-09-14, ZeroVoice#612): a genuine 401 from
+    // ZeroVoice's own auth layer was being silently reported to founders as
+    // "no available numbers," masking a real, fixable auth/infra failure as
+    // if it were an honest empty inventory result.
+    mockFetch((url) => {
+      if (url.includes('/numbers/list')) return { ok: true, json: { items: [] } }
+      if (url.includes('/numbers/search')) return { ok: false, status: 401, text: '{"error":"Could not validate credentials"}' }
+      throw new Error(`unexpected call: ${url}`)
+    })
+    const result = await provisionZeroVoiceNumber('jwt', 'my-co')
+    expect(result.ok).toBe(false)
+    expect(result.reason).toBe('search_failed_401')
+    expect(result.reason).not.toBe('no_available_numbers')
   })
 
   it('returns { ok: false } with the real reason on a purchase failure', async () => {
