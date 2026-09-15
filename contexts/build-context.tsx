@@ -6,7 +6,7 @@
  * screen. Ported from the prototype's logic layer.
  */
 
-import { createContext, useContext, useReducer, useEffect, useCallback, useMemo, type ReactNode } from 'react'
+import { createContext, useContext, useReducer, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react'
 import {
   buildReducer, initialBuildState, trackViews, countWoven,
   type BuildState, type BuildAction, type ArtifactView, type Track, type CompanyRole, type Screen,
@@ -283,8 +283,33 @@ export function BuildProvider({ children }: { children: ReactNode }) {
   // REGARDLESS of `?screen=`'s value — so a leftover `?company={slug}` from
   // an earlier Live/workspace visit would silently re-trigger that company's
   // build restore on a reload from an unrelated screen like My Portfolio.
+  //
+  // #761: this effect and the deep-link-restore effect above both run in the
+  // SAME first-commit effect flush, but this one closes over `state.screen`
+  // from the render that was just committed — which is always the reducer's
+  // `initialBuildState.screen` ('landing') on a fresh mount, because the
+  // restore effect's dispatches (RESTORE_BUILD/PICK_TRACK/START_BUILD/
+  // GOTO_SCREEN) haven't been applied to `state` yet; they only land in the
+  // NEXT commit. Since 'landing' is in SCREENS_WITHOUT_COMPANY_CONTEXT,
+  // computeSyncedUrl stripped `?company=`/`?view=` from the URL on that very
+  // first pass — before the real screen ('live') was ever reflected in
+  // `state` — and once gone, the second pass (which correctly sees
+  // screen==='live') has no way to put `company` back, since this effect
+  // only removes/sets `screen`, never restores a dropped param. A founder's
+  // deep link would render correctly for that session (the reducer dispatches
+  // still landed in `state` — Live.tsx never saw the wrong company) but a
+  // SUBSEQUENT hard reload had nothing left in the URL to restore from, so it
+  // silently fell back to the default company. Skip this effect's first-ever
+  // run entirely: the deep-link-restore effect above is the sole authority on
+  // what the URL should look like on initial mount, and this one's job is
+  // only to react to screen changes that happen AFTER hydration.
+  const urlSyncMounted = useRef(false)
   useEffect(() => {
     if (typeof window === 'undefined') return
+    if (!urlSyncMounted.current) {
+      urlSyncMounted.current = true
+      return
+    }
     const next = computeSyncedUrl(window.location.href, state.screen)
     if (next) window.history.replaceState({}, '', next)
   }, [state.screen])
