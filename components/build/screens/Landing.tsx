@@ -117,7 +117,14 @@ export function Landing() {
     const start = performance.now()
     const fade = (t: number) => {
       if (!mountedRef.current) return
-      const k = Math.min(1, (t - start) / 2500)
+      // rAF timestamps mark frame START, which can arrive fractionally
+      // BEFORE the performance.now() captured above mid-frame — an
+      // unclamped lower bound let k go slightly negative on the very first
+      // tick, and HTMLMediaElement.volume throws outside [0,1], which
+      // silently killed the whole fade (confirmed live: a real
+      // uncaught pageerror on volume=-0.000096 broke ambient audio
+      // entirely, 2026-09-14).
+      const k = Math.max(0, Math.min(1, (t - start) / 2500))
       drone.volume = target * k
       fadeRafRef.current = k < 1 ? requestAnimationFrame(fade) : null
     }
@@ -132,7 +139,7 @@ export function Landing() {
     const start = performance.now()
     const fade = (t: number) => {
       if (!mountedRef.current) return
-      const k = Math.min(1, (t - start) / 600)
+      const k = Math.max(0, Math.min(1, (t - start) / 600))
       drone.volume = startVol * (1 - k)
       if (k < 1) { fadeRafRef.current = requestAnimationFrame(fade) }
       else { fadeRafRef.current = null; drone.pause(); setAudioRunning(false) }
@@ -220,7 +227,12 @@ export function Landing() {
 
       {/* top nav */}
       <div className="m-land-nav">
-        <div className="m-land-title" style={{ fontSize: 22 }}>BUILDER</div>
+        <div className="m-land-brand">
+          <img className="m-land-brand-icon" alt="" aria-hidden="true"
+            src="https://ainative.studio/mediakit/logos/ainative-studio-logo-mark-primary.svg" />
+          <div className="m-land-title" style={{ fontSize: 22 }}>BUILDER</div>
+          <span className="m-land-brand-by m-mono">by AINative</span>
+        </div>
         <div className="m-land-nav-actions">
           <button onClick={toggleSound} className="m-land-sound" data-testid="landing-sound-toggle" aria-pressed={soundOn}>
             <span className={`m-land-sound-dot${soundOn && audioRunning ? ' is-on' : ''}`} />

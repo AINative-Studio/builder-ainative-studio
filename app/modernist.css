@@ -1297,6 +1297,12 @@
   padding: 20px 32px; position: sticky; top: 0; z-index: 40;
   background: var(--color-bg); border-bottom: 2px solid var(--color-divider);
 }
+.modernist .m-land-brand { display: flex; align-items: center; gap: 12px; }
+.modernist .m-land-brand-icon { width: 28px; height: 28px; flex: none; }
+.modernist .m-land-brand-by {
+  font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-muted);
+  border-left: 2px solid var(--color-divider); padding-left: 12px;
+}
 .modernist .m-land-nav-actions { display: flex; align-items: center; gap: 22px; }
 .modernist .m-land-signin {
   background: none; border: 0; padding: 0; cursor: pointer;
