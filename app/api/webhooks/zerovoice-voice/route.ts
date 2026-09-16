@@ -45,6 +45,14 @@ export interface CallTurnPayload {
   To?: string
   SpeechResult?: string | null
   Turn?: number
+  /** "inbound" | "outbound" — 2026-09-16, real fix for outbound calls Cody
+   *  places itself (see ZeroVoice's companion fix). On an outbound call, To
+   *  is the CALLEE (never the company's own number) and From is the
+   *  company's — the reverse of an inbound call's shape. */
+  Direction?: string
+  /** Why Cody is calling, set only for an outbound call (see
+   *  lib/build/zerovoice.ts's makeZeroVoiceCall `purpose` option). */
+  CallPurpose?: string | null
   [key: string]: unknown
 }
 
@@ -99,19 +107,37 @@ export async function handleInboundCallTurn(payload: CallTurnPayload): Promise<C
   const from = String(payload.From || '').trim()
   const speech = payload.SpeechResult != null ? String(payload.SpeechResult).trim() : ''
   const turn = Number(payload.Turn) || 1
+  const isOutbound = payload.Direction === 'outbound'
+  const callPurpose = payload.CallPurpose ? String(payload.CallPurpose).trim() : ''
 
   if (!to) {
     console.error('[zerovoice-voice-webhook] rejected: missing To number', { CallSid: payload.CallSid })
     return { say: "Sorry, I'm not able to take this call right now.", hangup: true }
   }
 
-  const app = await resolveAppByZeroVoiceNumber(to).catch((e) => {
+  // Real fix (2026-09-16): on an OUTBOUND call (Cody calling someone), `To`
+  // is the CALLEE — never the company's own ZeroVoice number — while `From`
+  // is the company's number. The reverse of an inbound call's shape.
+  const companyNumber = isOutbound ? from : to
+  const app = await resolveAppByZeroVoiceNumber(companyNumber).catch((e) => {
     console.error('[zerovoice-voice-webhook] resolveAppByZeroVoiceNumber threw:', e)
     return null
   })
   if (!app) {
-    console.error(`[zerovoice-voice-webhook] no company matched inbound number ${to} — never answering on behalf of a fallback company`)
+    console.error(`[zerovoice-voice-webhook] no company matched ${isOutbound ? 'outbound caller' : 'inbound'} number ${companyNumber} — never answering on behalf of a fallback company`)
     return { say: "Sorry, this number isn't set up yet. Goodbye.", hangup: true }
+  }
+
+  if (turn === 1 && !speech && isOutbound) {
+    // First turn of a call Cody placed itself: open with the real reason,
+    // not the generic inbound greeting — this is backwards for a call Cody
+    // initiated (the callee didn't ask Cody anything yet).
+    return {
+      say: callPurpose
+        ? `Hi, this is Cody, calling on behalf of ${app.name || app.slug}. ${callPurpose}`
+        : `Hi, this is Cody, calling on behalf of ${app.name || app.slug}.`,
+      hangup: false,
+    }
   }
 
   if (turn === 1 && !speech) {
