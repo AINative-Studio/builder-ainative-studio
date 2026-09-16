@@ -31,37 +31,26 @@
  */
 
 import { NextRequest } from 'next/server'
-import { getToken } from 'next-auth/jwt'
 import { auth } from '@/app/(auth)/auth'
 import { getPlanStatus, isPaidTier } from '@/lib/ainative/plan'
 import { resolveApp, setAppZeroVoice } from '@/lib/build/app-registry'
 import { provisionZeroVoiceNumber, zeroVoiceProvisionEnabled } from '@/lib/build/zerovoice'
-import { storeFounderCredential } from '@/lib/build/primitive-credentials'
+import { captureFounderCredentialForProxy } from '@/app/api/build/provision/route'
 
 export const runtime = 'nodejs'
 
 // #762: the paid-tier test now lives in ONE place (lib/ainative/plan.ts's
 // isPaidTier) instead of a Set copy-pasted across four routes.
 
-/**
- * #522: mirrors provision/route.ts's captureFounderCredentialForProxy exactly
- * — durably store the founder's refreshable token now, while their session is
- * live, so the runtime proxy can serve the DEPLOYED app on this founder's
- * behalf later without needing their browser present. Best-effort — a storage
- * failure just means the proxy has nothing to serve for this company; it
- * never blocks the (already-successful) number purchase itself.
- */
-async function captureFounderCredentialForProxy(request: NextRequest, slug: string, jwt: string): Promise<void> {
-  const rawToken = await getToken({ req: request, secret: process.env.AUTH_SECRET }).catch(() => null)
-  if (!rawToken?.refreshToken && !rawToken?.accessToken) return
-  await storeFounderCredential(
-    slug,
-    'zerovoice',
-    jwt,
-    rawToken.refreshToken as string | undefined,
-    rawToken.expiresAt ? Math.max(0, Math.floor((Number(rawToken.expiresAt) - Date.now()) / 1000)) : undefined,
-  ).catch(() => {})
-}
+// #777: this route used to have its own copy of credential capture, built on
+// next-auth's getToken() reading refreshToken/expiresAt straight off the raw
+// JWT cookie. That read returns null for every real request in this app (the
+// exact bug provision/route.ts's captureFounderCredentialForProxy was fixed
+// for on 2026-09-11/12 — see its own doc comment) — and this route's local
+// copy silently `return`ed on that null with NO logging, so 100% of ZeroVoice
+// credential captures fleet-wide failed invisibly. Fixed by reusing
+// provision/route.ts's already-correct, auth()-session-based implementation
+// directly instead of maintaining a second, drifted copy of the same logic.
 
 export async function POST(request: NextRequest) {
   if (!zeroVoiceProvisionEnabled()) {
@@ -116,7 +105,7 @@ export async function POST(request: NextRequest) {
     // have a number but no captured credential yet — capture it now that the
     // founder's session is live again, so the runtime proxy has something to
     // serve. Idempotent (storeFounderCredential just appends a fresh row).
-    await captureFounderCredentialForProxy(request, slug, token)
+    await captureFounderCredentialForProxy(request, slug, 'zerovoice', token).catch(() => {})
     return Response.json({ ok: true, numberId: app.zerovoiceNumberId, e164: app.zerovoiceE164 })
   }
 
@@ -126,7 +115,7 @@ export async function POST(request: NextRequest) {
   }
 
   await setAppZeroVoice(slug, { numberId: result.numberId, e164: result.e164 }).catch(() => {})
-  await captureFounderCredentialForProxy(request, slug, token)
+  await captureFounderCredentialForProxy(request, slug, 'zerovoice', token).catch(() => {})
 
   return Response.json({ ok: true, numberId: result.numberId, e164: result.e164 })
 }
