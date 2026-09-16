@@ -22,9 +22,25 @@ interface RefreshResult {
 
 /**
  * Check if a token should be refreshed (within 5 min of expiry).
+ *
+ * Real bug fixed live (#792, found investigating #778): a credential row
+ * with NO stored `expiresAt` at all used to return `false` here — "assume
+ * it's fine forever" — meaning it was NEVER proactively refreshed no matter
+ * how old it actually was. This exactly matches every credential captured
+ * before the #443/#664 fix started actually populating `expiresAt` (that
+ * fix's own doc comment: "25/25 real stored credentials across every
+ * company/primitive have NEITHER field"). Confirmed live: Fieldko's stored
+ * `zerocrm` credential was genuinely dead (core's own `/api/v1/auth/me`
+ * returned `401 AUTH_TOKEN_INVALID` when called with it directly) yet
+ * `resolveFounderCredential` (no forceRefresh) happily returned it as if it
+ * were valid. A missing `expiresAt` means "we don't know" — the safe
+ * default is to assume a refresh IS needed, not that the token is eternal,
+ * matching the same conservative-refresh philosophy provision/route.ts's
+ * own `ASSUMED_TOKEN_LIFETIME_SECONDS` fallback already uses for this exact
+ * "core's real response has no expires_in field" gap.
  */
 export function shouldRefreshToken(expiresAt: number | undefined): boolean {
-  if (!expiresAt) return false
+  if (!expiresAt) return true
   return Date.now() >= expiresAt - REFRESH_BUFFER_MS
 }
 
