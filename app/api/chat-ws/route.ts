@@ -245,10 +245,29 @@ async function closePrimitiveComplianceGap(
   // to ZeroDB never got the chance to finish before the surrounding request
   // wound down. Now genuinely awaited (still best-effort: traceComplianceRetry
   // itself never throws, so a failed/slow write still can't break generation).
+  // Real bug fixed live (#786, found while verifying #774/#785's Stripe
+  // primitive didn't regress ZeroCommerce): `gapsAfter` was only ever
+  // assigned INSIDE the retry loop body (line ~301, on a candidate that
+  // passed validation). The post-loop fallback return
+  // (`finish({ code: current, closed: final.primitiveComplianceGaps.length
+  // === 0 })`) computes `closed` from a FRESH `final` check, but never
+  // touched `gapsAfter` — so `finish`'s own `gapsAfter.length ? gapsAfter :
+  // gapsBefore` fallback silently substituted the STALE pre-retry gap list
+  // for display. Confirmed live: a real, genuinely fully-compliant
+  // generation (verified directly against the saved code — it called every
+  // one of ZeroCommerce/ZeroPipeline/ZeroVoice/Content Workflow/ZeroMemory)
+  // still showed `closed:true` alongside `gapsAfter` listing all 5 as still
+  // open — self-contradictory, and misleading for the exact trace endpoint
+  // built specifically so live verification doesn't require guessing (#624).
+  // Fixed by always deriving BOTH `closed` and `gapsAfter` from the same
+  // fresh compliance check right before calling `finish`, so the two can
+  // never disagree — the stale fallback in `finish` itself is now
+  // unreachable (gapsAfter is always freshly set beforehand) but left as a
+  // defensive default rather than removed outright.
   const finish = async (result: { code: string; closed: boolean }) => {
     await traceComplianceRetry({
       chatId, branch, isMultiFile, attemptsRun,
-      gapsBefore, gapsAfter: gapsAfter.length ? gapsAfter : gapsBefore,
+      gapsBefore, gapsAfter,
       closed: result.closed,
     }).catch(() => {})
     return result
@@ -257,7 +276,10 @@ async function closePrimitiveComplianceGap(
     attemptsRun = attempt
     const before = checkObedience(current, message, validRole, obedienceOptions)
     gapsBefore = before.primitiveComplianceGaps
-    if (before.primitiveComplianceGaps.length === 0) return finish({ code: current, closed: true })
+    if (before.primitiveComplianceGaps.length === 0) {
+      gapsAfter = before.primitiveComplianceGaps // already zero — explicit rather than relying on the [] default
+      return finish({ code: current, closed: true })
+    }
 
     console.log(`🔌 Primitive-compliance gap still open (attempt ${attempt}/${maxAttempts}, ${isMultiFile ? 'multi-file' : 'single-file'}): ${before.primitiveComplianceGaps.join(', ')}`)
     const narrowed = narrowToPrimitiveComplianceOnly(before.primitiveComplianceGaps)
@@ -310,6 +332,7 @@ async function closePrimitiveComplianceGap(
     }
   }
   const final = checkObedience(current, message, validRole, obedienceOptions)
+  gapsAfter = final.primitiveComplianceGaps // #786: the real fix — always freshly set from the SAME check `closed` derives from
   return finish({ code: current, closed: final.primitiveComplianceGaps.length === 0 })
 }
 

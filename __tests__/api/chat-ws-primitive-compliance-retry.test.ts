@@ -44,7 +44,7 @@ describe('chat-ws wires the targeted primitive-compliance retry (2026-09-10, #62
 
   it('detects multi-file input and asks for the SAME marker-format output back, not a single-file collapse', () => {
     const idx = source.indexOf('async function closePrimitiveComplianceGap')
-    const nearby = source.slice(idx, idx + 6500)
+    const nearby = source.slice(idx, idx + 7500)
     expect(nearby).toMatch(/isMultiFile\s*=\s*\/\\\/\\\/\\s\*---\\s\*FILE:\//)
     expect(nearby).toMatch(/FILE: src\/App\.tsx/)
     // Rejects a candidate that lost the multi-file structure — never
@@ -137,7 +137,7 @@ describe('chat-ws wires the targeted primitive-compliance retry (2026-09-10, #62
 
   it('closePrimitiveComplianceGap calls traceComplianceRetry on every exit path via a shared finish() wrapper', () => {
     const idx = source.indexOf('async function closePrimitiveComplianceGap')
-    const nearby = source.slice(idx, idx + 4000)
+    const nearby = source.slice(idx, idx + 5000)
     // finish() is async and AWAITS the trace write (2026-09-10 fix): the
     // earlier fire-and-forget version returned before traceComplianceRetry's
     // POST had finished, so a real generation's trace row was routinely lost
@@ -146,5 +146,41 @@ describe('chat-ws wires the targeted primitive-compliance retry (2026-09-10, #62
     // primitive calls, but the trace endpoint still came back empty).
     expect(nearby).toMatch(/const finish = async \(result:/)
     expect(nearby).toMatch(/await traceComplianceRetry\(\{/)
+  })
+
+  /**
+   * Real bug found live (#786, 2026-09-16): `finish`'s trace record used to
+   * fall back to the STALE `gapsBefore` for `gapsAfter` whenever the loop's
+   * own `gapsAfter` variable was never (re)assigned before the post-loop
+   * fallback path returned — producing a self-contradictory trace
+   * (`closed:true` alongside a `gapsAfter` list showing the pre-retry gaps
+   * as still open) for a generation confirmed, by reading the actual saved
+   * code, to be fully compliant. Fixed by always deriving `gapsAfter` from
+   * the SAME fresh compliance check `closed` is computed from, immediately
+   * before every `finish(...)` call — never from a stale loop-local variable
+   * or a `gapsBefore` substitution.
+   */
+  it('#786: gapsAfter is derived from a FRESH compliance check immediately before the fallback finish() call, never left stale', () => {
+    const idx = source.indexOf('async function closePrimitiveComplianceGap')
+    const fnBody = source.slice(idx)
+    const finishDefIdx = fnBody.indexOf('const finish = async (result:')
+    expect(finishDefIdx).toBeGreaterThan(-1)
+    const finishBody = fnBody.slice(finishDefIdx, finishDefIdx + 400)
+    // The stale gapsBefore fallback must be GONE from finish() itself —
+    // gapsAfter must always already be fresh by the time finish() runs.
+    expect(finishBody).not.toMatch(/gapsAfter\.length \? gapsAfter : gapsBefore/)
+    expect(finishBody).toMatch(/gapsAfter,?\s*\n/)
+
+    // The final post-loop fallback must assign gapsAfter from the SAME
+    // `final` check `closed` is computed from, before calling finish().
+    const finalIdx = fnBody.indexOf('const final = checkObedience(')
+    expect(finalIdx).toBeGreaterThan(-1)
+    const finalBlock = fnBody.slice(finalIdx, finalIdx + 300)
+    expect(finalBlock).toMatch(/gapsAfter = final\.primitiveComplianceGaps/)
+    // The gapsAfter assignment must come BEFORE the finish() call that uses it.
+    const finishCallIdx = finalBlock.indexOf('return finish(')
+    const gapsAfterAssignIdx = finalBlock.indexOf('gapsAfter = final.primitiveComplianceGaps')
+    expect(gapsAfterAssignIdx).toBeGreaterThan(-1)
+    expect(finishCallIdx).toBeGreaterThan(gapsAfterAssignIdx)
   })
 })
