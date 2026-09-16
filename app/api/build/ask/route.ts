@@ -474,6 +474,27 @@ export async function askCody(params: AskCodyParams): Promise<AskCodyResult | { 
       `any primitive is "fully functional," "handling context," "next in the queue," or otherwise live — ` +
       `none of that is true until provisioning actually completes.\n`
 
+  // #780: the #748 pattern above (ground Cody on general cloud-provisioning
+  // status) had a real, primitive-specific blind spot for ZeroVoice. Real
+  // incident: a founder TEXTED Fieldko's real, live ZeroVoice number asking
+  // whether it could handle two-way SMS — Cody's reply, sent back over that
+  // SAME number, said ZeroVoice "isn't wired into this company yet." Self-
+  // contradicting in the most direct way possible: the founder's own message
+  // and Cody's own reply both proved the opposite. `app.zerovoiceProvisioned`/
+  // `app.zerovoiceE164` (lib/build/app-registry.ts) already carry the real
+  // answer — this block puts it in front of Cody explicitly, the same way
+  // provisioningInstructions does for general cloud provisioning.
+  const zerovoiceInstructions = app?.zerovoiceProvisioned && app?.zerovoiceE164
+    ? `- ZEROVOICE STATUS: this company HAS a real, live ZeroVoice phone number (${app.zerovoiceE164}) — ` +
+      `SMS and voice are ALREADY wired up and working. If asked whether this company can text/call, or ` +
+      `whether ZeroVoice is connected, answer YES confidently and reference the real number. NEVER say ` +
+      `ZeroVoice "isn't wired into this company yet" or that it's part of a future build-out — that is ` +
+      `false whenever this line is shown to you.\n`
+    : `- ZEROVOICE STATUS: this company has NOT provisioned a ZeroVoice phone number yet — there is no ` +
+      `real SMS/calling capability live. If asked about texting/calling/telephony, say so plainly and ` +
+      `point at the "Get a phone number" action in Website & infrastructure (paid plans only). Do not ` +
+      `imply a number already exists.\n`
+
   const system =
     `You are Cody, the AI co-founder who just built and now operates "${companyName}", ` +
     `an AI-native ${track === 'app' ? 'product' : 'company'} built on AINative primitives.\n\n` +
@@ -496,8 +517,21 @@ export async function askCody(params: AskCodyParams): Promise<AskCodyResult | { 
     `- NEVER end a reply with an open-ended question ("does this direction feel right?", "what would ` +
     `you like me to adjust?", "should I proceed?"). If you genuinely need one decision to continue, ask ` +
     `ONE specific question with a concrete two-option or yes/no choice — never a broad menu.\n` +
+    `- PRIMITIVE DISAMBIGUATION (#773): the catalog above lists BOTH foundational substrate every ` +
+    `company gets (OpenCapStack, ZeroDB, ZeroMemory, AI Kit, Agent Cloud — present regardless of what ` +
+    `this specific question is about) AND idea-matched business-ops primitives. When the founder asks ` +
+    `about a SPECIFIC capability, answer with the primitive whose own listed purpose actually names that ` +
+    `capability — never a foundational primitive just because it sounds finance/business-adjacent. ` +
+    `Concretely: a question about PAYMENTS, STRIPE, CHECKOUT, or GETTING PAID is answered by ZeroInvoice, ` +
+    `ZeroCommerce, or the standalone bring-your-own-Stripe primitive — NEVER OpenCapStack (that is cap ` +
+    `table/equity/SAFEs/vesting, unrelated to processing a payment, even though it is finance-adjacent ` +
+    `and always present for this company). Real incident this fixes: Cody named OpenCapStack for a plain ` +
+    `"can I connect my own Stripe account" question, twice, in the same conversation where it had ` +
+    `already correctly identified ZeroInvoice/ZeroCommerce as Stripe-capable — read each primitive's ` +
+    `actual listed purpose before naming it, don't pattern-match on the topic being finance-shaped.\n` +
     gateInstructions +
     provisioningInstructions +
+    zerovoiceInstructions +
     `- TRUTH CONSTRAINT: the preview IS a working interactive app with LIVE data persistence ` +
     `(create/read/update/delete and semantic search work in the sandbox through the platform data ` +
     `layer). NEVER claim data persistence, interactivity, or the data layer are "not live yet" or ` +
