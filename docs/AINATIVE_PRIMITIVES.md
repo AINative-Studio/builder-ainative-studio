@@ -141,6 +141,7 @@ When a user says *"build me a [business]"*, map needs to primitives and WIRE the
 | customers / leads / sales pipeline | **ZeroPipeline** |
 | invoice / bill / get paid | **ZeroInvoice** (Stripe + QuickBooks built-in) |
 | sell products online | **ZeroCommerce** |
+| take payments with MY OWN existing Stripe account | **Stripe** (bring-your-own-key, #774 — no invoicing/catalog assumption; secret key saved via the company's own Secrets manager) |
 | call / text customers | **ZeroVoice** |
 | persist any data | **ZeroDB** / **Instant DB** (zero-setup) |
 | equity / fundraising / cap table | **OpenCapStack** |

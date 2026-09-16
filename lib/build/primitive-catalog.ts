@@ -188,6 +188,41 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     url: `${DOCS}/business-ops/zeroinvoice`,
     apiBase: 'https://zeroinvoice.ainative.studio/api',
     triggers: ['invoice', 'invoicing', 'bill', 'billing', 'get paid', 'payments', 'quickbooks', 'accounts receivable', 'subscriptions'] },
+  // #774: a founder directly asked "can I integrate stripe my stripe account
+  // for payments?" — a real, common ask distinct from every existing
+  // payments-adjacent primitive above, each of which assumes a specific
+  // shape (invoicing, an ecommerce product catalog, or the Developer
+  // Program's marketplace-payout Stripe Connect). This is the generic
+  // bring-your-own-key path: no assumption about what the rest of the
+  // product looks like. Deliberately NO overlap with ZeroInvoice/
+  // ZeroCommerce's existing triggers (invoice/billing/payments/checkout
+  // already route there, correctly) — this only matches when a founder
+  // names Stripe/their own account specifically, so primitive selection
+  // doesn't get muddier for the common "I want to get paid" case those two
+  // already serve well.
+  //
+  // No `apiBase`/runtime proxy: unlike every other founder-scoped primitive,
+  // there's no AINative-hosted Stripe service to call through — this is the
+  // founder's OWN external Stripe account. The real mechanism already
+  // exists and needs no new infrastructure: the founder pastes their own
+  // sk_live_/sk_test_ secret key into the company's real Secrets manager
+  // (app/api/build/secrets/route.ts, Website & infrastructure → Secrets on
+  // the Live dashboard — a real Railway service variable on their own
+  // deployed app, already built for #63), and the generated app's own
+  // server-side code calls the real Stripe SDK directly with
+  // process.env.STRIPE_SECRET_KEY. See STRIPE_SETUP_INSTRUCTIONS below for
+  // the exact founder-facing steps Cody should give, and
+  // RUNTIME_PROXIED_PRIMITIVES's Stripe entry for the exact code shape.
+  { name: 'Stripe', category: 'business-ops',
+    purpose: 'Bring your own Stripe account: real payment intents/checkout using your own secret key, no assumption about invoicing or a product catalog',
+    url: 'https://stripe.com/docs/api',
+    // Sets `sdk` purely so codegenCompositionBlock's `wireable` filter
+    // (requires apiBase || sdk) includes this primitive at all — the actual
+    // instruction shown to the model comes from RUNTIME_PROXIED_PRIMITIVES's
+    // Stripe entry below (checked FIRST, ahead of the generic "import its
+    // SDK" fallback this field would otherwise trigger), not this string.
+    sdk: 'stripe',
+    triggers: ['my own stripe', 'my stripe account', 'connect stripe', 'bring my own stripe', 'existing stripe account', 'stripe api key', 'stripe secret key'] },
   { name: 'ZeroCommerce', category: 'business-ops',
     purpose: 'Headless ecommerce: product catalog, semantic product search, Stripe checkout',
     url: `${DOCS}/business-ops/zerocommerce`,
@@ -1062,6 +1097,35 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
     'the real ZeroInvoice proxy. If the feature is invoicing, billing, or getting paid (invoice list, create-invoice ' +
     'form, paid/pending/overdue status), it MUST call GET/POST /api/primitive/zeroinvoice/invoices/ — persisting ' +
     'invoices through generic /api/db rows instead is a FAILING implementation even if the UI looks identical to the user.',
+  // #774: genuinely different mechanism from every other entry in this map —
+  // there is no AINative-hosted Stripe service to proxy through, because
+  // this is the founder's OWN external Stripe account. The founder saves
+  // their own sk_live_/sk_test_ secret key via the company's real Secrets
+  // manager (app/api/build/secrets/route.ts — Website & infrastructure →
+  // Secrets on the Live dashboard, already built for #63); the generated
+  // app's server-side code then calls the real Stripe Node SDK directly
+  // with process.env.STRIPE_SECRET_KEY. Never a client-side call (the
+  // secret key must never reach the browser) and never a same-origin
+  // /api/primitive/ proxy (Builder never sees or stores this key at all —
+  // it lives only in the founder's own deployed Railway service).
+  Stripe: () =>
+    `use the real Stripe Node SDK directly, server-side, with \`process.env.STRIPE_SECRET_KEY\` — this is the founder's OWN Stripe account, saved as a real secret via the company's Secrets manager (Website & infrastructure → Secrets on the Live dashboard). NEVER a same-origin \`/api/primitive/\` proxy (there is no AINative-hosted Stripe service — Builder never sees this key), and NEVER a client-side Stripe call (the secret key must never reach the browser).\n` +
+    '  Real call shape (copy this exactly, do not paraphrase — a real server-side route handler, e.g. app/api/checkout/route.ts):\n' +
+    '  ```js\n' +
+    "  import Stripe from 'stripe'\n" +
+    "  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)\n" +
+    '\n' +
+    '  // Create a real Checkout Session for the current cart/order\n' +
+    '  const session = await stripe.checkout.sessions.create({\n' +
+    "    mode: 'payment',\n" +
+    '    line_items: [{ price_data: { currency: \'usd\', product_data: { name: itemName }, unit_amount: amountInCents }, quantity: 1 }],\n' +
+    "    success_url: `${baseUrl}/success?session_id={CHECKOUT_SESSION_ID}`,\n" +
+    "    cancel_url: `${baseUrl}/cancel`,\n" +
+    '  })\n' +
+    '  // Redirect the founder\'s customer to session.url\n' +
+    '  ```\n' +
+    "  If STRIPE_SECRET_KEY is not yet set, tell the founder plainly: \"Add your Stripe secret key in Website & infrastructure → Secrets, then I can wire this up\" — never fabricate a checkout flow or a fake success state while the key is missing.\n" +
+    '  ANTI-PATTERN — FORBIDDEN: do NOT hand-roll a fake "payment successful" state, a client-side-only card form with no real charge, or an unrelated /api/db table pretending to be a payment ledger. If the feature is "take a real payment with my own Stripe account," it MUST call the real stripe.checkout.sessions.create (or stripe.paymentIntents.create) API — anything else is a FAILING implementation even if the UI looks identical to the user.',
   // #642: found via a systematic gap sweep across the whole primitive
   // catalog (2026-09-10, following the ZeroInvoice fix) — ServiceOS
   // (helpdesk) had real, common founder triggers (support, helpdesk,
@@ -1296,6 +1360,11 @@ export const RUNTIME_PROXY_PATH_SUBSTRINGS: Record<string, string[]> = {
   // ZeroInvoice call, exactly the gap that let a live invoicing-app
   // generation silently fall back to fake /api/db rows undetected.
   ZeroInvoice: ['/api/primitive/zeroinvoice/invoices'],
+  // #774: not a proxy path (there is no AINative-hosted Stripe service) —
+  // the real, greppable signal is a genuine Stripe SDK call shape instead.
+  // Either literal string here is sufficient proof the real SDK was called,
+  // not a hand-rolled fake success state.
+  Stripe: ['stripe.checkout.sessions.create', 'stripe.paymentIntents.create'],
   // #642: added once ServiceOS's real direct-JWT-bearer path was confirmed
   // live (see RUNTIME_PROXIED_PRIMITIVES's ServiceOS entry).
   ServiceOS: ['/api/primitive/serviceos/tickets'],
@@ -1363,10 +1432,22 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
   for (const p of wireable) {
     if (seen.has(p.name)) continue
     seen.add(p.name)
-    const how = !p.apiBase
-      ? `import its SDK \`${p.sdk}\``
-      : RUNTIME_PROXIED_PRIMITIVES[p.name]
-        ? RUNTIME_PROXIED_PRIMITIVES[p.name](p.apiBase)
+    // #774: a rich RUNTIME_PROXIED_PRIMITIVES instruction always wins over
+    // the generic fallbacks below, regardless of whether the primitive has
+    // an apiBase — Stripe (bring-your-own-key, no AINative-hosted service to
+    // proxy through) has neither an apiBase NOR an AINative sdk, but still
+    // needs its own precise, literal call-shape instruction rather than
+    // silently falling through to the plain "import its SDK" line (which
+    // would have no `p.sdk` value to show) or being excluded from the
+    // composition block entirely (this function's own `wireable` filter
+    // already required `p.apiBase || p.sdk` to include a primitive at all —
+    // Stripe sets `sdk: 'stripe'` purely to pass that filter; this branch
+    // order is what makes sure ITS instruction, not the generic one, is
+    // what actually reaches the model).
+    const how = RUNTIME_PROXIED_PRIMITIVES[p.name]
+      ? RUNTIME_PROXIED_PRIMITIVES[p.name](p.apiBase || '')
+      : !p.apiBase
+        ? `import its SDK \`${p.sdk}\``
         : `it was already provisioned for this company server-side at setup time — the generated app does NOT call \`${p.apiBase}\` directly (no key ships to the browser); build the UI/logic assuming that data/action already exists, and persist any app-side records it produces through the ZeroDB proxy below`
     // #314/#315: carry the plain-English "already included — no extra key/cost —
     // replaces {commercial tool}" framing so the generated app proactively tells
