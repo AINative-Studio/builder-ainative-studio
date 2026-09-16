@@ -15,9 +15,11 @@
  * message.
  *
  * Body: { slug: string, action: 'sms' | 'call', to: string, body?: string,
- *         record?: boolean }
+ *         record?: boolean, purpose?: string }
  *   - action 'sms' requires `body` (the message text).
- *   - action 'call' accepts an optional `record` flag.
+ *   - action 'call' accepts an optional `record` flag and an optional
+ *     `purpose` (why Cody is calling) — passed through to ZeroVoice so Cody
+ *     opens the call with an actual reason instead of a generic greeting.
  * Returns: { ok: true, sid } | { ok: true, callId } | { ok: false, reason }
  *
  * Fails closed at every step, matching this codebase's established pattern
@@ -74,7 +76,8 @@ export async function POST(request: NextRequest) {
 
   // action === 'call'
   const record = body?.record === true
-  const result = await makeZeroVoiceCall(cred.accessToken, app.zerovoiceE164, to, { record })
+  const purpose = typeof body?.purpose === 'string' ? body.purpose.trim() : undefined
+  const result = await makeZeroVoiceCall(cred.accessToken, app.zerovoiceE164, to, { record, purpose })
   if (!result.ok) return Response.json({ ok: false, reason: result.reason || 'call_failed', status: result.status })
   return Response.json({ ok: true, callId: result.callId })
 }

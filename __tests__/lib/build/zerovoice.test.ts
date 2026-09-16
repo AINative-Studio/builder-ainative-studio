@@ -405,6 +405,22 @@ describe('makeZeroVoiceCall (#733)', () => {
     expect(sentBody).not.toHaveProperty('record')
   })
 
+  it('passes purpose through as metadata.cody_call_purpose (2026-09-16 — outbound call opening line)', async () => {
+    const fn = mockFetch(() => ({ ok: true, json: { id: 'CAxxxx' } }))
+    await makeZeroVoiceCall('jwt', '+15550001111', '+15550002222', { purpose: 'confirm your appointment' })
+    const call = fn.mock.calls[0]
+    const sentBody = JSON.parse((call[1] as RequestInit).body as string)
+    expect(sentBody.metadata).toEqual({ cody_call_purpose: 'confirm your appointment' })
+  })
+
+  it('omits metadata from the body when no purpose is given', async () => {
+    const fn = mockFetch(() => ({ ok: true, json: { id: 'CAxxxx' } }))
+    await makeZeroVoiceCall('jwt', '+15550001111', '+15550002222')
+    const call = fn.mock.calls[0]
+    const sentBody = JSON.parse((call[1] as RequestInit).body as string)
+    expect(sentBody).not.toHaveProperty('metadata')
+  })
+
   it('returns the real failure reason on a non-2xx response', async () => {
     mockFetch(() => ({ ok: false, status: 402, json: { message: 'Insufficient account balance' } }))
     const result = await makeZeroVoiceCall('jwt', '+15550001111', '+15550002222')

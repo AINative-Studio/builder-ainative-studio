@@ -55,7 +55,7 @@ function req(body: unknown, headers: Record<string, string> = {}) {
   } as any
 }
 
-const callPayload = (overrides: Partial<{ From: string; To: string; SpeechResult: string | null; Turn: number; CallSid: string }> = {}) => ({
+const callPayload = (overrides: Partial<{ From: string; To: string; SpeechResult: string | null; Turn: number; CallSid: string; Direction: string; CallPurpose: string | null }> = {}) => ({
   From: '+15550001111',
   To: '+15559998888',
   SpeechResult: null,
@@ -115,6 +115,45 @@ describe('handleInboundCallTurn — real conversation via askCody', () => {
     expect(result.hangup).toBe(false)
     expect(result.say).toContain('Acme')
     expect(askCody).not.toHaveBeenCalled()
+  })
+
+  it('resolves the company via From (not To) on an outbound call Cody placed itself — real bug: To is the callee, never the company number', async () => {
+    resolveAppByZeroVoiceNumber.mockResolvedValue(acmeApp())
+    const { handleInboundCallTurn } = await import('@/app/api/webhooks/zerovoice-voice/route')
+    // On an outbound call, To=the callee, From=the company's own number.
+    await handleInboundCallTurn(callPayload({
+      Turn: 1, SpeechResult: null, Direction: 'outbound',
+      From: '+15559998888', To: '+15550001111',
+    }))
+
+    expect(resolveAppByZeroVoiceNumber).toHaveBeenCalledWith('+15559998888')
+  })
+
+  it('opens an outbound call with the real purpose, not the generic inbound greeting', async () => {
+    resolveAppByZeroVoiceNumber.mockResolvedValue(acmeApp())
+    const { handleInboundCallTurn } = await import('@/app/api/webhooks/zerovoice-voice/route')
+    const result = await handleInboundCallTurn(callPayload({
+      Turn: 1, SpeechResult: null, Direction: 'outbound',
+      From: '+15559998888', To: '+15550001111',
+      CallPurpose: 'confirm your appointment tomorrow at 3pm',
+    }))
+
+    expect(result.hangup).toBe(false)
+    expect(result.say).toContain('Acme')
+    expect(result.say).toContain('confirm your appointment tomorrow at 3pm')
+    expect(askCody).not.toHaveBeenCalled()
+  })
+
+  it('opens an outbound call with a generic-but-honest line when no purpose was set', async () => {
+    resolveAppByZeroVoiceNumber.mockResolvedValue(acmeApp())
+    const { handleInboundCallTurn } = await import('@/app/api/webhooks/zerovoice-voice/route')
+    const result = await handleInboundCallTurn(callPayload({
+      Turn: 1, SpeechResult: null, Direction: 'outbound',
+      From: '+15559998888', To: '+15550001111', CallPurpose: null,
+    }))
+
+    expect(result.say).toContain('Acme')
+    expect(result.say).not.toContain('What can I help you with')
   })
 
   it('calls askCody with the transcribed speech on a real turn and speaks back the real answer', async () => {

@@ -382,7 +382,16 @@ export async function makeZeroVoiceCall(
   jwt: string,
   fromE164: string,
   toE164: string,
-  opts?: { record?: boolean },
+  opts?: {
+    record?: boolean
+    /** Why Cody is calling (e.g. "confirm tomorrow's appointment"), 2026-
+     *  09-16. Stored in ZeroVoice's Call.call_metadata under
+     *  `cody_call_purpose`, read back by CallSid when the callee answers —
+     *  lets Cody open with an actual reason instead of the generic inbound
+     *  "what can I help you with?" greeting, which is backwards for a call
+     *  Cody placed itself. */
+    purpose?: string
+  },
 ): Promise<ZeroVoiceCallResult> {
   if (!jwt) return { ok: false, reason: 'no_jwt' }
   if (!fromE164) return { ok: false, reason: 'no_from_number' }
@@ -396,6 +405,7 @@ export async function makeZeroVoiceCall(
         from_number: fromE164,
         to_number: toE164,
         ...(opts?.record ? { record: true } : {}),
+        ...(opts?.purpose ? { metadata: { cody_call_purpose: opts.purpose.slice(0, 500) } } : {}),
       }),
       // Same real reason as findExistingNumber/searchOneAvailableNumber's
       // timeouts above — ZeroVoice's own AINative-verify fallback (#612) can
