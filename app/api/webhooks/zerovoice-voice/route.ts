@@ -73,6 +73,16 @@ const MAX_SPOKEN_CHARS = 600
  *  loop with Cody. After this many turns, Cody wraps up and says goodbye. */
 const MAX_TURNS = 12
 
+/** Real bug found live (2026-09-16): loading the FULL shared conversation
+ *  history (dashboard/SMS/voice all share one persisted thread) meant every
+ *  call turn re-sent more accumulated context to the LLM than the last,
+ *  pushing per-turn latency up until a real call timed out mid-conversation
+ *  (measured: 4.7s → 6s → 7.6s → 12s+ timeout). A live caller needs a fast
+ *  reply every turn, not the whole history — 6 turns (3 prior exchanges) is
+ *  enough for real short-term continuity within a single call without
+ *  letting prompt size (and therefore latency) grow unbounded. */
+const MAX_VOICE_HISTORY_TURNS = 6
+
 const CRED_FALLBACK_ORDER: FounderScopedPrimitive[] = [
   'zerovoice', 'zerocrm', 'zeroinvoice', 'serviceos', 'zerocommerce',
   'zeropipeline', 'agentflow', 'zeroforms', 'livestreaming', 'socialgraph',
@@ -147,6 +157,14 @@ export async function handleInboundCallTurn(payload: CallTurnPayload): Promise<C
     scopeKey,
     tier,
     baseUrl,
+    // Real bug found live (2026-09-16): a real call timed out mid-
+    // conversation because every turn re-sent the FULL shared history
+    // (default cap 100 turns) to the LLM, and turn latency climbed with it
+    // (4.7s → 6s → 7.6s → 12s+ timeout) against both a live caller and
+    // Twilio's own hard 15s webhook-response ceiling. Voice needs a much
+    // tighter window than dashboard/SMS — enough for real short-term
+    // continuity within this call, not the whole persisted thread.
+    historyLimit: MAX_VOICE_HISTORY_TURNS,
   }).catch((e) => {
     console.error('[zerovoice-voice-webhook] askCody threw:', e)
     return null

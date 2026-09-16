@@ -176,6 +176,16 @@ export interface AskCodyParams {
    *  (the SMS webhook) has no request to read one from, so it passes
    *  NEXT_PUBLIC_APP_URL / the production origin explicitly instead. */
   baseUrl: string
+  /** Max prior turns to load as context (default: chat-store's own
+   *  MAX_LOAD_TURNS, 100). Real bug found live (2026-09-16): a voice call
+   *  shares the SAME persisted conversation thread as the dashboard/SMS, so
+   *  a long-running phone call kept re-sending more and more accumulated
+   *  history to the LLM on every turn — turn latency climbed 4.7s → 6s →
+   *  7.6s → 12s+ (timed out) purely from growing prompt size, against a
+   *  live caller who is waiting in real time and against Twilio's own hard
+   *  15s webhook-response ceiling. The voice webhook passes a small cap
+   *  here; dashboard/SMS omit this and keep the full default. */
+  historyLimit?: number
 }
 
 export interface AskCodyResult {
@@ -196,12 +206,12 @@ export interface AskCodyResult {
  * session at all.
  */
 export async function askCody(params: AskCodyParams): Promise<AskCodyResult | { error: string; status: number }> {
-  const { question, idea, companyName, track, companyId, scopeKey, tier: tierName, baseUrl } = params
+  const { question, idea, companyName, track, companyId, scopeKey, tier: tierName, baseUrl, historyLimit } = params
   const attachments = params.attachments || []
   if (!question && attachments.length === 0) return { error: 'question required', status: 400 }
 
   const companyProjectId = await resolveCompanyProjectId(companyId)
-  const history = scopeKey ? await loadChatWithFallback(scopeKey, undefined, companyProjectId).catch(() => []) : []
+  const history = scopeKey ? await loadChatWithFallback(scopeKey, historyLimit, companyProjectId).catch(() => []) : []
 
   // Get the actual primitives selected for this company's idea
   const { names: primitiveNames } = selectPrimitives(idea, track)
