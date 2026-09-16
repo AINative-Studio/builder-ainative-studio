@@ -841,6 +841,83 @@ describe('primitive-catalog additions (#410)', () => {
     })
   })
 
+  describe('#774 — Stripe bring-your-own-key primitive (no AINative-hosted service to proxy through)', () => {
+    // Real finding: a founder directly asked "can I integrate stripe my
+    // stripe account for payments?" and no existing primitive fit — every
+    // payments-adjacent one (ZeroInvoice, ZeroCommerce) assumes a specific
+    // product shape (invoicing, an ecommerce catalog). This primitive is
+    // deliberately narrow-triggered so it never competes with those two for
+    // the common "I want to get paid" case they already serve well.
+    const STRIPE_IDEA = 'I want to connect my own Stripe account for payments'
+
+    it('a founder naming their own Stripe account selects the Stripe primitive', () => {
+      const { names } = selectPrimitives(STRIPE_IDEA, 'app')
+      expect(names).toContain('Stripe')
+    })
+
+    it('generic invoicing/payments language alone does NOT select Stripe — that stays ZeroInvoice/ZeroCommerce territory', () => {
+      const invoiceOnly = selectPrimitives('a freelance invoicing tool to bill clients and get paid', 'app')
+      expect(invoiceOnly.names).not.toContain('Stripe')
+      const commerceOnly = selectPrimitives('an online store with checkout for handmade goods', 'app')
+      expect(commerceOnly.names).not.toContain('Stripe')
+    })
+
+    it('the composition block carries a literal Stripe SDK code fence + explicit anti-pattern language, never a same-origin proxy path', () => {
+      const block = codegenCompositionBlock(STRIPE_IDEA, 'app')
+      expect(block).toContain('Stripe')
+      expect(block).not.toMatch(/Stripe[^\n]*\/api\/primitive\/stripe\//)
+      expect(block).toMatch(/```js[\s\S]*stripe\.checkout\.sessions\.create/)
+      expect(block).toMatch(/process\.env\.STRIPE_SECRET_KEY/)
+      expect(block).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      expect(block).toMatch(/do NOT hand-roll a fake "payment successful" state/i)
+    })
+
+    it('tells Cody to point the founder at the real Secrets manager when the key is missing, never fabricate a checkout flow', () => {
+      const block = codegenCompositionBlock(STRIPE_IDEA, 'app')
+      expect(block).toMatch(/Website & infrastructure → Secrets/)
+      expect(block).toMatch(/never fabricate a checkout flow/i)
+    })
+
+    it('never instructs a client-side Stripe call — the secret key must never reach the browser', () => {
+      const block = codegenCompositionBlock(STRIPE_IDEA, 'app')
+      expect(block).toMatch(/NEVER a client-side Stripe call/)
+    })
+
+    it('RUNTIME_PROXY_PATH_SUBSTRINGS carries a real, greppable SDK-call signal (not a proxy path) so the #518 compliance validator can still catch an unwired selection', () => {
+      expect(RUNTIME_PROXY_PATH_SUBSTRINGS.Stripe).toEqual(['stripe.checkout.sessions.create', 'stripe.paymentIntents.create'])
+      expect(getComplianceCheckedPrimitiveNames()).toContain('Stripe')
+    })
+
+    it('getRuntimeProxyInstruction returns the same instruction text codegenCompositionBlock injects', () => {
+      const instruction = getRuntimeProxyInstruction('Stripe')
+      expect(instruction).toBeDefined()
+      expect(instruction).toMatch(/stripe\.checkout\.sessions\.create/)
+      const block = codegenCompositionBlock(STRIPE_IDEA, 'app')
+      expect(block).toContain(instruction!.split('\n')[0])
+    })
+
+    it('findPrimitiveComplianceGaps flags a Stripe idea whose generated code never called the real Stripe SDK', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      const brokenCode = `
+        function Checkout() {
+          const [paid, setPaid] = useState(false)
+          const handlePay = () => setPaid(true) // fake success, no real charge
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(brokenCode, STRIPE_IDEA)
+      expect(gaps).toContain('Stripe')
+    })
+
+    it('findPrimitiveComplianceGaps does not flag Stripe when the real SDK IS called', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      const compliantCode = `
+        const session = await stripe.checkout.sessions.create({ mode: 'payment', line_items })
+      `
+      const gaps = findPrimitiveComplianceGaps(compliantCode, STRIPE_IDEA)
+      expect(gaps).not.toContain('Stripe')
+    })
+  })
+
   describe('#642 fix — ServiceOS runtime proxy (found via a systematic gap sweep across the whole catalog)', () => {
     // Real finding (2026-09-10, following the ZeroInvoice #638/#639 fix): a
     // systematic cross-reference of every catalog primitive against
