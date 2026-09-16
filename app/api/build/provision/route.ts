@@ -632,5 +632,8 @@ export async function GET(request: NextRequest) {
     plan: entry.plan || null,
     deployUrl: entry.deployUrl || null,
     provisionedAt: entry.provisionedAt || null,
+    // 2026-09-16: surfaced so the dashboard's ZeroVoiceConnect card can show
+    // an already-provisioned number without a second round-trip fetch.
+    zerovoiceE164: entry.zerovoiceE164 || null,
   })
 }

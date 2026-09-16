@@ -4,6 +4,8 @@ import {
   zeroVoiceProvisionEnabled,
   sendZeroVoiceSms,
   makeZeroVoiceCall,
+  configureSmsRelay,
+  configureVoiceRelay,
 } from '@/lib/build/zerovoice'
 
 /**
@@ -255,6 +257,95 @@ describe('sendZeroVoiceSms (#733)', () => {
   it('never throws when fetch throws a network error', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('Connection refused') }))
     const result = await sendZeroVoiceSms('jwt', '+15550001111', '+15550002222', 'hi')
+    expect(result.ok).toBe(false)
+    expect(result.reason).toContain('Connection refused')
+  })
+})
+
+describe('configureSmsRelay (2026-09-16 — real conversation follow-up)', () => {
+  it('returns { ok: false, reason: "no_jwt" } when jwt is empty', async () => {
+    const fn = mockFetch(() => ({ ok: true }))
+    const result = await configureSmsRelay('', 'num-1', 'https://x.test/hook', 'secret')
+    expect(result).toEqual({ ok: false, reason: 'no_jwt' })
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('returns { ok: false, reason: "no_number_id" } when numberId is empty', async () => {
+    const fn = mockFetch(() => ({ ok: true }))
+    const result = await configureSmsRelay('jwt', '', 'https://x.test/hook', 'secret')
+    expect(result).toEqual({ ok: false, reason: 'no_number_id' })
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('PUTs the real relay config with enabled:true and returns ok on success', async () => {
+    const fn = mockFetch((url) => {
+      expect(url).toContain('/numbers/num-1/sms-relay')
+      return { ok: true, status: 200, json: {} }
+    })
+    const result = await configureSmsRelay('jwt', 'num-1', 'https://builder.ainative.studio/api/webhooks/zerovoice-sms', 's3cr3t')
+    expect(result).toEqual({ ok: true, status: 200 })
+    const call = fn.mock.calls[0]
+    expect((call[1] as RequestInit).method).toBe('PUT')
+    const sentBody = JSON.parse((call[1] as RequestInit).body as string)
+    expect(sentBody).toEqual({
+      webhook_url: 'https://builder.ainative.studio/api/webhooks/zerovoice-sms',
+      webhook_secret: 's3cr3t',
+      enabled: true,
+    })
+  })
+
+  it('returns the real failure reason on a non-2xx response', async () => {
+    mockFetch(() => ({ ok: false, status: 400, json: { message: 'Invalid webhook_url' } }))
+    const result = await configureSmsRelay('jwt', 'num-1', 'https://x.test/hook', 'secret')
+    expect(result.ok).toBe(false)
+    expect(result.status).toBe(400)
+    expect(result.reason).toContain('Invalid webhook_url')
+  })
+
+  it('never throws when fetch throws a network error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('Connection refused') }))
+    const result = await configureSmsRelay('jwt', 'num-1', 'https://x.test/hook', 'secret')
+    expect(result.ok).toBe(false)
+    expect(result.reason).toContain('Connection refused')
+  })
+})
+
+describe('configureVoiceRelay (2026-09-16 — real two-way voice)', () => {
+  it('returns { ok: false, reason: "no_jwt" } when jwt is empty', async () => {
+    const fn = mockFetch(() => ({ ok: true }))
+    const result = await configureVoiceRelay('', 'num-1', 'https://x.test/hook', 'secret')
+    expect(result).toEqual({ ok: false, reason: 'no_jwt' })
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('PUTs the real relay config with enabled:true and returns ok on success', async () => {
+    const fn = mockFetch((url) => {
+      expect(url).toContain('/numbers/num-1/voice-relay')
+      return { ok: true, status: 200, json: {} }
+    })
+    const result = await configureVoiceRelay('jwt', 'num-1', 'https://builder.ainative.studio/api/webhooks/zerovoice-voice', 's3cr3t')
+    expect(result).toEqual({ ok: true, status: 200 })
+    const call = fn.mock.calls[0]
+    expect((call[1] as RequestInit).method).toBe('PUT')
+    const sentBody = JSON.parse((call[1] as RequestInit).body as string)
+    expect(sentBody).toEqual({
+      webhook_url: 'https://builder.ainative.studio/api/webhooks/zerovoice-voice',
+      webhook_secret: 's3cr3t',
+      enabled: true,
+    })
+  })
+
+  it('returns the real failure reason on a non-2xx response', async () => {
+    mockFetch(() => ({ ok: false, status: 400, json: { message: 'Invalid webhook_url' } }))
+    const result = await configureVoiceRelay('jwt', 'num-1', 'https://x.test/hook', 'secret')
+    expect(result.ok).toBe(false)
+    expect(result.status).toBe(400)
+    expect(result.reason).toContain('Invalid webhook_url')
+  })
+
+  it('never throws when fetch throws a network error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('Connection refused') }))
+    const result = await configureVoiceRelay('jwt', 'num-1', 'https://x.test/hook', 'secret')
     expect(result.ok).toBe(false)
     expect(result.reason).toContain('Connection refused')
   })

@@ -34,6 +34,7 @@ import { GrowthPanel } from '@/components/build/GrowthPanel'
 import { WebsitePanel } from '@/components/build/WebsitePanel'
 import { FeedbackPulse } from '@/components/build/FeedbackPulse'
 import { ZeroInvoiceConnect } from '@/components/build/ZeroInvoiceConnect'
+import { ZeroVoiceConnect } from '@/components/build/ZeroVoiceConnect'
 import { UPLOAD_ACCEPT_ATTR } from '@/lib/build/media-upload'
 import { DOCUMENT_UPLOAD_ACCEPT_ATTR } from '@/lib/build/document-upload'
 import { useHeaderHeightVar } from '@/lib/build/useHeaderHeightVar'
@@ -137,6 +138,7 @@ export function Live() {
   // preview subdirectory. We read it from the provision status and prefer it over the
   // hardcoded /build/{slug} path so a wildcarded company shows its own subdomain.
   const [deployUrl, setDeployUrl] = useState<string | null>(null)
+  const [zerovoiceE164, setZerovoiceE164] = useState<string | null>(null)
   const [appReady, setAppReady] = useState<boolean>(!!state.appChatId)
   const [domainOpen, setDomainOpen] = useState(false)
   // Purchased custom domain (#240), read from the app-registry entry. When set,
@@ -373,6 +375,7 @@ export function Live() {
         if (!alive) return
         setProvision((p) => ({ ...p, provisioned: !!d?.provisioned, checked: true, projectId: d?.zerodbProjectId || undefined }))
         if (d?.deployUrl) setDeployUrl(String(d.deployUrl))
+        if (d?.zerovoiceE164) setZerovoiceE164(String(d.zerovoiceE164))
       })
       .catch(() => { if (alive) setProvision((p) => ({ ...p, checked: true })) })
     // Company track has no /preview app — generate a REAL landing-page app for it
@@ -1194,6 +1197,16 @@ export function Live() {
               confirmedAt={zeroInvoiceConfirmedAt}
               onRequireAuth={() => dispatch({ type: 'GOTO_SCREEN', screen: 'signup' })}
             />
+            {/* Get a phone number (2026-09-16) — the real backend
+                (/api/build/zerovoice, correctly tier-gated to ANY paid plan)
+                existed with no dashboard entry point at all until now. */}
+            <ZeroVoiceConnect
+              companyId={companyId}
+              signedIn={signedIn}
+              isPaidPlan={!!activePlan}
+              e164={zerovoiceE164}
+              onRequireAuth={() => dispatch({ type: 'GOTO_SCREEN', screen: 'signup' })}
+            />
           </div>
           {/* Real, stateful Tasks/Backlog (#55) — replaces the hardcoded tonight
               array. Persisted per {owner, company}; surfaces real swarm task_ids
@@ -1242,7 +1255,10 @@ export function Live() {
                   of the current version. See <WebsitePanel /> below. */}
             </div>
             {provision.provisioned && (
-              <p className="m-mono m-metric-note">Own ZeroDB project · Pipeline & Invoices read live data. Helpdesk & Voice still simulated.</p>
+              <p className="m-mono m-metric-note">
+                Own ZeroDB project · Pipeline & Invoices read live data.
+                {zerovoiceE164 ? ' Voice/SMS is real — see ZeroVoice below.' : ' Helpdesk & Voice still simulated.'}
+              </p>
             )}
           </div>
           {/* Deploy version history + one-click rollback (#62) — each deploy of the
