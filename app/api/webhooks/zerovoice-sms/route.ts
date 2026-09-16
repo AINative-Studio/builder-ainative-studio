@@ -47,7 +47,7 @@ import { timingSafeEqual } from 'crypto'
 import { resolveAppByZeroVoiceNumber } from '@/lib/build/app-registry'
 import { createIssue } from '@/lib/git/gitea-client'
 import { sendZeroVoiceSms } from '@/lib/build/zerovoice'
-import { resolveFounderCredential } from '@/lib/build/primitive-credentials'
+import { resolveFounderCredential, type FounderScopedPrimitive, type ResolvedCredential } from '@/lib/build/primitive-credentials'
 import { deriveOwnerKey, chatScopeKey } from '@/lib/build/chat-store'
 import { detectEditIntent } from '@/lib/build/edit-intent'
 import { askCody } from '@/app/api/build/ask/route'
@@ -118,10 +118,26 @@ export async function handleInboundSms(payload: InboundSmsPayload): Promise<SmsC
   // company at provisioning time, #522) — this is what lets the SMS
   // transport resolve the SAME real account tier and dispatch a real edit
   // task the dashboard chat would, with no browser session available here.
-  // Any FounderScopedPrimitive credential works — they're all the same
-  // underlying AINative identity token; 'zerovoice' is simply the one this
-  // company definitely has (it owns a ZeroVoice number).
-  const cred = await resolveFounderCredential(app.slug, 'zerovoice')
+  //
+  // Real gap found live (2026-09-15): a company's zerovoice number does NOT
+  // imply a stored 'zerovoice' credential row — /api/build/zerovoice's own
+  // capture path can fail independently of number provisioning (confirmed:
+  // fieldko had rows for zerocrm/zeroinvoice/serviceos/livestreaming/
+  // socialgraph but genuinely none for zerovoice). Every FounderScopedPrimitive
+  // credential is the SAME underlying AINative identity token though — so try
+  // 'zerovoice' first (the natural fit) and fall through to any other
+  // primitive this company has actually captured a credential for, rather
+  // than failing the whole conversation over which specific primitive name
+  // happened to capture first.
+  const CRED_FALLBACK_ORDER: FounderScopedPrimitive[] = [
+    'zerovoice', 'zerocrm', 'zeroinvoice', 'serviceos', 'zerocommerce',
+    'zeropipeline', 'agentflow', 'zeroforms', 'livestreaming', 'socialgraph',
+  ]
+  let cred: ResolvedCredential = { ok: false, reason: 'not_provisioned' }
+  for (const primitive of CRED_FALLBACK_ORDER) {
+    const attempt = await resolveFounderCredential(app.slug, primitive)
+    if (attempt.ok) { cred = attempt; break }
+  }
   let tier = 'hobbyist'
   if (cred.ok && cred.accessToken) {
     tier = await getPlanStatus(cred.accessToken).then((s) => s.tier || 'hobbyist').catch(() => 'hobbyist')
