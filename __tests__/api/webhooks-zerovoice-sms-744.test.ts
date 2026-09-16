@@ -164,6 +164,26 @@ describe('handleInboundSms — real conversation via askCody (#744 follow-up)', 
     expect(createIssue).not.toHaveBeenCalled()
   })
 
+  it('falls back to any OTHER captured primitive credential when zerovoice itself was never provisioned (real gap found live 2026-09-15)', async () => {
+    resolveAppByZeroVoiceNumber.mockResolvedValue(acmeApp())
+    // zerovoice itself has no row (a real, confirmed production gap), but the
+    // company DOES have a zerocrm credential — same underlying AINative
+    // identity token, so it must still be usable to send Cody's reply.
+    resolveFounderCredential.mockImplementation(async (_slug: string, primitive: string) => {
+      if (primitive === 'zerocrm') return { ok: true, accessToken: 'zerocrm-jwt' }
+      return { ok: false, reason: 'not_provisioned' }
+    })
+    getPlanStatus.mockResolvedValue({ tier: 'pro' })
+    askCody.mockResolvedValue({ answer: 'Got it.', provider: 'anthropic', model: 'claude' })
+    sendZeroVoiceSms.mockResolvedValue({ ok: true, sid: 'SMabc' })
+
+    const { handleInboundSms } = await import('@/app/api/webhooks/zerovoice-sms/route')
+    const result = await handleInboundSms(smsPayload())
+
+    expect(result.ok).toBe(true)
+    expect(sendZeroVoiceSms).toHaveBeenCalledWith('zerocrm-jwt', '+15559998888', '+15550001111', expect.any(String))
+  })
+
   it('falls back to the founder\'s stored plan when no live credential can be resolved', async () => {
     resolveAppByZeroVoiceNumber.mockResolvedValue(acmeApp())
     resolveFounderCredential.mockResolvedValue({ ok: false, reason: 'not_provisioned' })
