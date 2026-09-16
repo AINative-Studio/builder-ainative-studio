@@ -24,7 +24,11 @@ const EDIT_VERBS = [
   'increase', 'decrease', 'hide', 'show', 'disable', 'enable',
 ]
 
-const QUESTION_STARTERS = /^(what|why|how|when|where|who|is|are|can|could|should|do|does|did)\b/i
+/** Exported (#774, Gap 2) so ask/route.ts's own "is this a plain question"
+ *  check (whether to require a real filed Gitea issue before Cody uses
+ *  promise language) agrees with this module's definition instead of
+ *  drifting from a second, independently-maintained copy. */
+export const QUESTION_STARTERS = /^(what|why|how|when|where|who|is|are|can|could|should|do|does|did)\b/i
 
 export function detectEditIntent(question: string): boolean {
   const q = String(question || '').trim().toLowerCase()

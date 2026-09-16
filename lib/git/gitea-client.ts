@@ -692,6 +692,55 @@ export async function createIssue(
   }
 }
 
+export interface ListIssuesResult {
+  ok: boolean
+  issues?: GiteaIssue[]
+  reason?: string
+}
+
+/**
+ * List issues in a company's Gitea repo (#774, Gap 2 — grounding Cody's
+ * "I'll wire that" / "it's in the queue" claims in the founder's own REAL
+ * backlog instead of a synthetic, always-the-same list). Real, confirmed
+ * contract: `GET /repos/{owner}/{repo}/issues?state={state}&limit={limit}`
+ * (same Gitea instance/version as createIssue above). Sorted by Gitea's own
+ * default (most-recently-updated first), which is what "recently closed" /
+ * "currently open" framing needs.
+ *
+ * Mirrors createIssue's contract exactly: never throws — any failure
+ * (unconfigured, no repo, non-ok response, thrown network error) surfaces as
+ * an honest `{ok:false, reason}` so a caller building a system-prompt
+ * grounding block can degrade to "no real backlog data" rather than crash
+ * the whole chat turn.
+ */
+export async function listIssues(
+  org: string,
+  repo: string,
+  opts?: { state?: 'open' | 'closed' | 'all'; limit?: number },
+): Promise<ListIssuesResult> {
+  if (!configured()) return { ok: false, reason: 'not_configured' }
+  if (!org) return { ok: false, reason: 'no_org' }
+  const repoName = repoNameForSlug(repo)
+  if (!repoName) return { ok: false, reason: 'no_repo' }
+
+  const state = opts?.state || 'all'
+  const limit = Math.min(Math.max(1, opts?.limit ?? 20), 50)
+
+  try {
+    const res = await giteaFetch(
+      `/repos/${encodeURIComponent(org)}/${encodeURIComponent(repoName)}/issues?state=${state}&limit=${limit}&type=issues`,
+    )
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      return { ok: false, reason: `gitea listIssues ${org}/${repoName} failed: ${res.status} ${text}`.slice(0, 300) }
+    }
+    const issues = (await res.json()) as GiteaIssue[]
+    return { ok: true, issues: Array.isArray(issues) ? issues : [] }
+  } catch (e) {
+    return { ok: false, reason: `listIssues threw: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300) }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Repo file fetch (#373/#374 — read a company's CURRENT generated app before
 // implementing a backlog task against it, and before coverage-verifying the

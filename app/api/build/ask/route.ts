@@ -20,7 +20,7 @@
 
 import { NextRequest } from 'next/server'
 import OpenAI from 'openai'
-import { getClaudeCompletion } from '@/lib/build/claude-completion'
+import { getClaudeCompletion, completeText } from '@/lib/build/claude-completion'
 import { auth } from '@/app/(auth)/auth'
 import { getPlanStatus } from '@/lib/ainative/plan'
 import { resolveActivePlan } from '@/lib/ainative/active-plan'
@@ -36,7 +36,8 @@ import {
 } from '@/lib/build/chat-store'
 import { resolveApp } from '@/lib/build/app-registry'
 import { processConversation } from '@/lib/agent/zeromemory'
-import { detectEditIntent } from '@/lib/build/edit-intent'
+import { detectEditIntent, QUESTION_STARTERS } from '@/lib/build/edit-intent'
+import { createIssue, listIssues } from '@/lib/git/gitea-client'
 import { ensureChatSummary } from '@/lib/build/chat-summary'
 import { ensureCompanyProfile } from '@/lib/build/company-profile'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
@@ -96,8 +97,22 @@ export async function resolveCompanyProjectId(companyId: string): Promise<string
 
 /** Fetch a compact backlog summary for this company to ground Cody's answers.
  *  Plan-aware: a PAID founder's queue is framed as work-in-queue (their plan
- *  covers it) — the conversion-gate line is only included for free accounts. */
-async function fetchBacklogSummary(companyId: string, idea: string, companyName: string, track: string, paid: boolean): Promise<string> {
+ *  covers it) — the conversion-gate line is only included for free accounts.
+ *
+ *  #774 (Gap 2): also surfaces the company's REAL Gitea issues (open +
+ *  recently closed) when it's git-provisioned, so "it's in the queue"/
+ *  "already built" claims are grounded in the SAME system of record the
+ *  nightly loop and the SMS-to-issue path (#744) already use — not only the
+ *  synthetic, idea-derived primitive list /api/build/backlog computes.
+ *  Real gap this closes: that synthetic list never changes based on what a
+ *  founder has actually asked for or what's genuinely been done — a founder
+ *  who'd been told "I'll wire that" for a specific request had no way to see
+ *  whether it was real. Best-effort and additive: an unconfigured/unreachable
+ *  Gitea, or a company with no repo yet, silently omits this section rather
+ *  than blocking or degrading the rest of the backlog grounding.
+ */
+async function fetchBacklogSummary(companyId: string, idea: string, companyName: string, track: string, paid: boolean, gitOrg?: string): Promise<string> {
+  let synthetic = ''
   try {
     const base = process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio'
     const url = new URL('/api/build/backlog', base)
@@ -106,22 +121,107 @@ async function fetchBacklogSummary(companyId: string, idea: string, companyName:
     url.searchParams.set('companyName', companyName)
     url.searchParams.set('track', track)
     const r = await fetch(url.toString(), { signal: AbortSignal.timeout(4000) })
-    if (!r.ok) return ''
-    const d = await r.json().catch(() => null)
-    if (!d) return ''
-
-    const builtNames = d.built?.map((b: any) => b.title).join('; ') || ''
-    const queuedNames = (d.queued || []).slice(0, 5).map((q: any) => q.title).join('; ')
-    return (
-      `COMPANY BACKLOG:\n` +
-      `Built & live now: ${builtNames}\n` +
-      (paid
-        ? `In the queue (covered by the founder's plan — next runs pick these up): ${queuedNames}`
-        : `Queued (part of the paid build-out): ${queuedNames}\n` +
-          `Conversion gate: ${d.gate || ''}`)
-    )
+    const d = r.ok ? await r.json().catch(() => null) : null
+    if (d) {
+      const builtNames = d.built?.map((b: any) => b.title).join('; ') || ''
+      const queuedNames = (d.queued || []).slice(0, 5).map((q: any) => q.title).join('; ')
+      synthetic =
+        `COMPANY BACKLOG:\n` +
+        `Built & live now: ${builtNames}\n` +
+        (paid
+          ? `In the queue (covered by the founder's plan — next runs pick these up): ${queuedNames}`
+          : `Queued (part of the paid build-out): ${queuedNames}\n` +
+            `Conversion gate: ${d.gate || ''}`)
+    }
   } catch {
-    return ''
+    // Fall through — the Gitea section below is independent of this succeeding.
+  }
+
+  let giteaSection = ''
+  if (gitOrg) {
+    const result = await listIssues(gitOrg, companyId, { state: 'all', limit: 15 }).catch(() => null)
+    if (result?.ok && result.issues) {
+      const open = result.issues.filter((i) => i.state === 'open').slice(0, 8)
+      const closed = result.issues.filter((i) => i.state === 'closed').slice(0, 5)
+      if (open.length || closed.length) {
+        giteaSection =
+          `\n\nREAL TRACKED REQUESTS (this company's own Gitea repo — the actual system of record ` +
+          `for "I'll wire that"/"it's queued" claims):\n` +
+          (open.length ? `Open — genuinely not done yet: ${open.map((i) => `#${i.number} ${i.title}`).join('; ')}\n` : '') +
+          (closed.length ? `Recently closed — genuinely shipped: ${closed.map((i) => `#${i.number} ${i.title}`).join('; ')}` : '')
+      }
+    }
+  }
+
+  return synthetic + giteaSection
+}
+
+/** A single, cheap word-boundary check for whether `question` reads as a
+ *  plain question — the exact same filter detectEditIntent already applies
+ *  (QUESTION_STARTERS/trailing `?`), reused here rather than re-derived so
+ *  the two heuristics can never silently disagree. */
+function looksLikePlainQuestion(question: string): boolean {
+  const q = question.trim().toLowerCase()
+  if (!q) return true
+  return QUESTION_STARTERS.test(q) || q.endsWith('?')
+}
+
+/** Cap the classifier's own timeout well under the caller's overall request
+ *  budget — a slow/hung classifier call must never be the reason a chat
+ *  reply itself times out. Failing this check just means no issue gets
+ *  filed for THIS message (the honest, safe default), never a crash. */
+const CLASSIFIER_TIMEOUT_MS = 6_000
+
+/**
+ * #774 (Gap 2): does `question` read as a genuine feature/change request,
+ * even though detectEditIntent's deliberately-conservative imperative-verb
+ * match didn't fire? Two layers:
+ *
+ *  1. Deterministic heuristic (no LLM call): ANY non-question message that
+ *     reaches here already passed detectEditIntent's own "not a question"
+ *     filter without matching an edit verb — e.g. a bare topic phrase like
+ *     "The stripe integration". Conservative on its own would under-fire on
+ *     genuine requests phrased as statements-with-more-words; ambitious on
+ *     its own would over-fire on plain conversational remarks ("that makes
+ *     sense", "thanks"). So the heuristic here is intentionally narrow: it
+ *     only auto-qualifies a SHORT message (<= 6 words) with no verb at all
+ *     detectEditIntent would recognize — the exact "The stripe integration"
+ *     shape from the real incident — and defers everything longer/more
+ *     conversational to the classifier below.
+ *  2. Secondary classifier (single cheap Claude call): for anything the
+ *     heuristic didn't already resolve, ask a real, narrowly-scoped
+ *     yes/no question. Bounded timeout; any failure (timeout, no provider
+ *     configured, malformed response) is treated as "no" — the safe
+ *     default is under-filing (Cody just doesn't get to say "it's queued"
+ *     for an ambiguous remark), never over-filing junk issues into a
+ *     founder's real repo.
+ */
+async function isLikelyChangeRequest(question: string): Promise<boolean> {
+  const q = question.trim()
+  if (!q || looksLikePlainQuestion(q)) return false
+
+  const wordCount = q.split(/\s+/).length
+  if (wordCount <= 6) return true
+
+  try {
+    const result = await Promise.race([
+      completeText({
+        system:
+          'You classify a single message from a startup founder to their AI co-founder. ' +
+          'Answer with EXACTLY one word: YES if the message is a genuine feature request, change request, ' +
+          'or something the founder wants built/fixed/added — even if phrased as a topic or statement rather ' +
+          'than a command (e.g. "the stripe integration", "dark mode would be nice", "my checkout is broken"). ' +
+          'Answer NO if it is a plain question, small talk, an acknowledgment, or unrelated to requesting work.',
+        user: q,
+        maxTokens: 5,
+        temperature: 0,
+      }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), CLASSIFIER_TIMEOUT_MS)),
+    ])
+    if (!result) return false
+    return /^yes/i.test(result.text.trim())
+  } catch {
+    return false
   }
 }
 
@@ -256,6 +356,50 @@ export async function askCody(params: AskCodyParams): Promise<AskCodyResult | { 
     }).catch(() => {})
   }
 
+  // #774 (Gap 2): a paid, git-provisioned founder's message that ISN'T an
+  // imperative edit (detectEditIntent correctly stayed conservative — a
+  // topic phrase like "The stripe integration" is not a command) and ISN'T a
+  // plain question either is exactly the shape of message a founder sends
+  // as a genuine feature/change request in conversational language. Before
+  // this fix, gateInstructions unconditionally told Cody to respond to
+  // EVERY such message with "I'll wire that next — it's in the queue" —
+  // pure scripted confidence, with nothing real ever dispatched. Real
+  // incident: a founder said "The stripe integration" (following an earlier
+  // exchange), Cody said "I'll have this wired in the next run," and zero
+  // task was created anywhere.
+  //
+  // Fixed with two layers, deliberately combined rather than either alone:
+  //  1. A cheap, deterministic heuristic (no extra LLM call) — the same
+  //     "not a plain question" filter detectEditIntent already uses. This
+  //     guarantees the promise can never be made hollow again for the
+  //     obvious case (any non-question message), independent of whether a
+  //     classifier call succeeds or times out.
+  //  2. A secondary, single-purpose classifier call for genuinely ambiguous
+  //     phrasing the heuristic's blunt filter might still miss (e.g. a
+  //     complaint or an aside that isn't obviously a request) — ONLY run
+  //     when the heuristic didn't already resolve it, to bound the extra
+  //     latency/cost to the cases that actually need it.
+  // Either path files a REAL Gitea issue in the company's own repo before
+  // the system prompt is built, so `realWorkFiledThisTurn` can gate whether
+  // "I'll wire that"/"it's in the queue" language is actually true this turn.
+  let realWorkFiledThisTurn: { issueNumber: number; title: string } | null = null
+  if (companyId && app?.gitOrg && paid && !editTriggered) {
+    const looksLikeAGenuineRequest = await isLikelyChangeRequest(question)
+    if (looksLikeAGenuineRequest) {
+      const title = question.length > 80 ? `${question.slice(0, 79)}…` : question
+      const created = await createIssue(
+        app.gitOrg,
+        companyId,
+        title,
+        `${question}\n\n---\nFiled automatically from a founder chat message (#774) — Cody said or was about to say ` +
+          `this is queued/being worked on, so a real tracked issue backs that claim.`,
+      ).catch(() => null)
+      if (created?.ok && created.issueNumber) {
+        realWorkFiledThisTurn = { issueNumber: created.issueNumber, title }
+      }
+    }
+  }
+
   // #748: whether this company has been REALLY provisioned (a real ZeroDB
   // project exists) — the single source of truth the honest-status system-
   // prompt block below reasons from. A brand-new company with only an
@@ -266,7 +410,7 @@ export async function askCody(params: AskCodyParams): Promise<AskCodyResult | { 
 
   // Fetch backlog so Cody can cite real items (not invented ones)
   const backlogBlock = companyId
-    ? await fetchBacklogSummary(companyId, idea, companyName, track, paid)
+    ? await fetchBacklogSummary(companyId, idea, companyName, track, paid, app?.gitOrg)
     : ''
 
   // Build the catalog block for context
@@ -276,14 +420,28 @@ export async function askCody(params: AskCodyParams): Promise<AskCodyResult | { 
   // including paying Enterprise accounts, and including free founders who still
   // have build credits and CAN iterate right now. A paying founder is never
   // pitched; a free founder is told what they can do NOW for free first.
+  //
+  // #774 (Gap 2): the paid-tier "I'll wire that next — it's in the queue"
+  // line used to be unconditional — said for EVERY change/feature message,
+  // whether or not anything was actually dispatched. Now conditioned on
+  // realWorkFiledThisTurn (a real Gitea issue genuinely filed THIS turn, see
+  // isLikelyChangeRequest above) OR editTriggered (a real background
+  // implement-task genuinely dispatched THIS turn) — Cody is only allowed to
+  // claim "it's queued" when one of those actually happened just now.
+  const realWorkHappenedThisTurn = editTriggered || Boolean(realWorkFiledThisTurn)
   const gateInstructions = paid
     ? `- The founder is on a PAID AINative plan (${activePlan}) — their plan already covers the build-out. ` +
       `NEVER pitch a subscription, plan, or purchase, and never say work is "gated". ` +
-      `When they ask for a change or feature: confirm you're on it in first person ` +
-      `("I'll wire that next — it's in the queue for tonight's run"), name the concrete backlog items ` +
-      `it maps to, and point at the real levers they already have (Auto Mode, the nightly loop, ` +
-      `regenerating the app from the workspace). A custom domain is OPTIONAL — mention it only if ` +
-      `they ask about domains.\n`
+      (realWorkHappenedThisTurn
+        ? `When they ask for a change or feature: confirm you're on it in first person ` +
+          `("I'll wire that next — it's in the queue for tonight's run"), name the concrete backlog items ` +
+          `it maps to, and point at the real levers they already have (Auto Mode, the nightly loop, ` +
+          `regenerating the app from the workspace).${realWorkFiledThisTurn ? ` A real tracked issue (#${realWorkFiledThisTurn.issueNumber}) was just filed in their company repo for this — you may reference it directly.` : ''}\n`
+        : `If they ask for a change or feature and no real task was just dispatched for it (you'll know because ` +
+          `neither an edit task nor a tracked issue was created this turn), do NOT say "I'll wire that" or "it's ` +
+          `queued" — those claims are ONLY true when real work was just dispatched. Instead say you've noted it and ` +
+          `will follow up, or ask one specific clarifying question if the request is genuinely unclear.\n`) +
+      `A custom domain is OPTIONAL — mention it only if they ask about domains.\n`
     : `- The founder is on the FREE tier. They can still iterate NOW at no cost: updating and ` +
       `regenerating the app preview from the workspace uses their free build allowance — say so ` +
       `plainly when they ask for a change, and tell them to make the change from the workspace. ` +
