@@ -1,12 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 /**
- * #744 — inbound SMS → real Gitea issue. Covers: the webhook's shared-secret
- * auth (rejects missing/wrong/no-secret-configured), the resolve→createIssue
- * orchestration (happy path with the right org/title/body, no-match no-op,
- * missing-git-repo no-op, a downstream Gitea failure surfaced honestly), and
- * the optional confirmation SMS (best-effort, never blocks the already-
- * successful issue creation).
+ * #744 + real-conversation follow-up (2026-09-16) — inbound SMS is now a
+ * real two-way conversation with Cody via the same askCody() pipeline the
+ * dashboard chat modal uses, not a one-shot "text becomes an issue" action.
+ * Covers: the webhook's shared-secret auth (rejects missing/wrong/no-secret-
+ * configured), scope/tier resolution from the company's stored ownerEmail +
+ * founder credential (no live session available for a text), the askCody
+ * happy path (real reply texted back, no forced issue filing), and the
+ * honest fallback when askCody itself is unavailable (still logs a Gitea
+ * issue so the founder's message isn't silently dropped).
  */
 
 const h = vi.hoisted(() => ({
@@ -14,8 +17,19 @@ const h = vi.hoisted(() => ({
   createIssue: vi.fn(),
   sendZeroVoiceSms: vi.fn(),
   resolveFounderCredential: vi.fn(),
+  detectEditIntent: vi.fn(),
+  askCody: vi.fn(),
+  getPlanStatus: vi.fn(),
 }))
-const { resolveAppByZeroVoiceNumber, createIssue, sendZeroVoiceSms, resolveFounderCredential } = h
+const {
+  resolveAppByZeroVoiceNumber,
+  createIssue,
+  sendZeroVoiceSms,
+  resolveFounderCredential,
+  detectEditIntent,
+  askCody,
+  getPlanStatus,
+} = h
 
 vi.mock('@/lib/build/app-registry', () => ({
   resolveAppByZeroVoiceNumber: h.resolveAppByZeroVoiceNumber,
@@ -29,6 +43,15 @@ vi.mock('@/lib/build/zerovoice', () => ({
 vi.mock('@/lib/build/primitive-credentials', () => ({
   resolveFounderCredential: h.resolveFounderCredential,
 }))
+vi.mock('@/lib/build/edit-intent', () => ({
+  detectEditIntent: h.detectEditIntent,
+}))
+vi.mock('@/app/api/build/ask/route', () => ({
+  askCody: h.askCody,
+}))
+vi.mock('@/lib/ainative/plan', () => ({
+  getPlanStatus: h.getPlanStatus,
+}))
 
 const ORIGINAL_ENV = process.env
 
@@ -39,6 +62,9 @@ beforeEach(() => {
   createIssue.mockReset()
   sendZeroVoiceSms.mockReset()
   resolveFounderCredential.mockReset()
+  detectEditIntent.mockReset().mockReturnValue(false)
+  askCody.mockReset()
+  getPlanStatus.mockReset()
 })
 afterEach(() => {
   process.env = ORIGINAL_ENV
@@ -57,6 +83,20 @@ const smsPayload = (overrides: Partial<{ From: string; To: string; Body: string;
   To: '+15559998888',
   Body: 'Add a dark mode toggle please',
   MessageSid: 'SMxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+  ...overrides,
+})
+
+const acmeApp = (overrides: Record<string, unknown> = {}) => ({
+  slug: 'acme',
+  name: 'Acme',
+  chatId: 'chat-1',
+  idea: 'A CRM for plumbers',
+  track: 'company',
+  gitOrg: 'ws-acme-workspace',
+  gitRepoId: '123',
+  zerovoiceE164: '+15559998888',
+  ownerEmail: 'founder@acme.test',
+  createdAt: '2026-08-01T00:00:00Z',
   ...overrides,
 })
 
@@ -91,32 +131,51 @@ describe('POST /api/webhooks/zerovoice-sms — auth (#744)', () => {
   })
 })
 
-describe('handleInboundSms orchestration (#744)', () => {
-  it('happy path: resolves the company, creates the issue with the right org/title/body, sends confirmation', async () => {
-    resolveAppByZeroVoiceNumber.mockResolvedValue({
-      slug: 'acme',
-      chatId: 'chat-1',
-      gitOrg: 'ws-acme-workspace',
-      gitRepoId: '123',
-      zerovoiceE164: '+15559998888',
-      createdAt: '2026-08-01T00:00:00Z',
-    })
-    createIssue.mockResolvedValue({ ok: true, issueNumber: 42, url: 'https://git.example/ws-acme-workspace/acme/issues/42' })
+describe('handleInboundSms — real conversation via askCody (#744 follow-up)', () => {
+  it('happy path: resolves the company, derives scope from ownerEmail, calls askCody, texts back the real reply', async () => {
+    resolveAppByZeroVoiceNumber.mockResolvedValue(acmeApp())
     resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'jwt-token' })
+    getPlanStatus.mockResolvedValue({ tier: 'pro' })
+    askCody.mockResolvedValue({ answer: 'Sure — dark mode is on my list, I can start now.', provider: 'anthropic', model: 'claude' })
     sendZeroVoiceSms.mockResolvedValue({ ok: true, sid: 'SMabc' })
 
     const { handleInboundSms } = await import('@/app/api/webhooks/zerovoice-sms/route')
     const result = await handleInboundSms(smsPayload())
 
     expect(result.ok).toBe(true)
-    expect(result.issueNumber).toBe(42)
-    expect(createIssue).toHaveBeenCalledWith(
-      'ws-acme-workspace',
-      'acme',
-      expect.stringContaining('Add a dark mode toggle please'),
-      expect.stringContaining('Add a dark mode toggle please'),
+    expect(askCody).toHaveBeenCalledWith(
+      expect.objectContaining({
+        question: 'Add a dark mode toggle please',
+        idea: 'A CRM for plumbers',
+        companyName: 'Acme',
+        track: 'company',
+        companyId: 'acme',
+        scopeKey: 'founder@acme.test::acme',
+        tier: 'pro',
+      }),
     )
-    expect(sendZeroVoiceSms).toHaveBeenCalledWith('jwt-token', '+15559998888', '+15550001111', expect.stringContaining('#42'))
+    expect(sendZeroVoiceSms).toHaveBeenCalledWith(
+      'jwt-token',
+      '+15559998888',
+      '+15550001111',
+      expect.stringContaining('Sure — dark mode'),
+    )
+    // A genuine reply was sent — this is no longer a blanket "always file an issue" action.
+    expect(createIssue).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the founder\'s stored plan when no live credential can be resolved', async () => {
+    resolveAppByZeroVoiceNumber.mockResolvedValue(acmeApp())
+    resolveFounderCredential.mockResolvedValue({ ok: false, reason: 'not_provisioned' })
+    askCody.mockResolvedValue({ answer: 'Got it.', provider: 'anthropic', model: 'claude' })
+
+    const { handleInboundSms } = await import('@/app/api/webhooks/zerovoice-sms/route')
+    await handleInboundSms(smsPayload())
+
+    expect(getPlanStatus).not.toHaveBeenCalled()
+    expect(askCody).toHaveBeenCalledWith(expect.objectContaining({ tier: 'hobbyist' }))
+    // No credential means no reply can be sent back — logged, not thrown.
+    expect(sendZeroVoiceSms).not.toHaveBeenCalled()
   })
 
   it('no-op with an honest reason when no company matches the inbound number — never a fallback company', async () => {
@@ -125,74 +184,7 @@ describe('handleInboundSms orchestration (#744)', () => {
     const result = await handleInboundSms(smsPayload())
     expect(result.ok).toBe(false)
     expect(result.reason).toBe('no_matching_company')
-    expect(createIssue).not.toHaveBeenCalled()
-  })
-
-  it('no-op with an honest reason when the matched company has no provisioned Gitea repo', async () => {
-    resolveAppByZeroVoiceNumber.mockResolvedValue({
-      slug: 'acme',
-      chatId: 'chat-1',
-      zerovoiceE164: '+15559998888',
-      createdAt: '2026-08-01T00:00:00Z',
-      // no gitOrg/gitRepoId
-    })
-    const { handleInboundSms } = await import('@/app/api/webhooks/zerovoice-sms/route')
-    const result = await handleInboundSms(smsPayload())
-    expect(result.ok).toBe(false)
-    expect(result.reason).toBe('no_git_repo')
-    expect(createIssue).not.toHaveBeenCalled()
-  })
-
-  it('surfaces a downstream Gitea failure honestly rather than silently dropping it', async () => {
-    resolveAppByZeroVoiceNumber.mockResolvedValue({
-      slug: 'acme',
-      chatId: 'chat-1',
-      gitOrg: 'ws-acme-workspace',
-      gitRepoId: '123',
-      createdAt: '2026-08-01T00:00:00Z',
-    })
-    createIssue.mockResolvedValue({ ok: false, reason: 'gitea createIssue failed: 500' })
-    const { handleInboundSms } = await import('@/app/api/webhooks/zerovoice-sms/route')
-    const result = await handleInboundSms(smsPayload())
-    expect(result.ok).toBe(false)
-    expect(result.reason).toContain('failed')
-  })
-
-  it('a failed confirmation SMS does not undo or mask the successful issue creation', async () => {
-    resolveAppByZeroVoiceNumber.mockResolvedValue({
-      slug: 'acme',
-      chatId: 'chat-1',
-      gitOrg: 'ws-acme-workspace',
-      gitRepoId: '123',
-      zerovoiceE164: '+15559998888',
-      createdAt: '2026-08-01T00:00:00Z',
-    })
-    createIssue.mockResolvedValue({ ok: true, issueNumber: 7, url: 'https://git.example/x/y/issues/7' })
-    resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'jwt-token' })
-    sendZeroVoiceSms.mockRejectedValue(new Error('network blip'))
-
-    const { handleInboundSms } = await import('@/app/api/webhooks/zerovoice-sms/route')
-    const result = await handleInboundSms(smsPayload())
-    expect(result.ok).toBe(true)
-    expect(result.issueNumber).toBe(7)
-  })
-
-  it('skips the confirmation SMS gracefully when no founder credential is available', async () => {
-    resolveAppByZeroVoiceNumber.mockResolvedValue({
-      slug: 'acme',
-      chatId: 'chat-1',
-      gitOrg: 'ws-acme-workspace',
-      gitRepoId: '123',
-      zerovoiceE164: '+15559998888',
-      createdAt: '2026-08-01T00:00:00Z',
-    })
-    createIssue.mockResolvedValue({ ok: true, issueNumber: 9, url: 'https://git.example/x/y/issues/9' })
-    resolveFounderCredential.mockResolvedValue({ ok: false, reason: 'not_provisioned' })
-
-    const { handleInboundSms } = await import('@/app/api/webhooks/zerovoice-sms/route')
-    const result = await handleInboundSms(smsPayload())
-    expect(result.ok).toBe(true)
-    expect(sendZeroVoiceSms).not.toHaveBeenCalled()
+    expect(askCody).not.toHaveBeenCalled()
   })
 
   it('rejects a payload missing the To field before ever resolving a company', async () => {
@@ -202,20 +194,80 @@ describe('handleInboundSms orchestration (#744)', () => {
     expect(result.reason).toBe('missing_to')
     expect(resolveAppByZeroVoiceNumber).not.toHaveBeenCalled()
   })
-})
 
-describe('titleFromSmsBody / issueBodyFromSms (pure, #744)', () => {
-  it('truncates a long SMS body sensibly for the title, but keeps the full text in the body', async () => {
-    const { titleFromSmsBody, issueBodyFromSms } = await import('@/app/api/webhooks/zerovoice-sms/route')
-    const longBody = 'x'.repeat(200)
-    const title = titleFromSmsBody(longBody)
-    expect(title.length).toBeLessThanOrEqual(80)
-    const body = issueBodyFromSms(longBody, '+1555', '2026-09-14T00:00:00Z')
-    expect(body).toContain(longBody)
+  it('treats an empty body as a no-op — nothing for Cody to reply to', async () => {
+    resolveAppByZeroVoiceNumber.mockResolvedValue(acmeApp())
+    const { handleInboundSms } = await import('@/app/api/webhooks/zerovoice-sms/route')
+    const result = await handleInboundSms(smsPayload({ Body: '' }))
+    expect(result.ok).toBe(false)
+    expect(result.reason).toBe('empty_body')
+    expect(askCody).not.toHaveBeenCalled()
   })
 
-  it('falls back to a generic title for an empty body', async () => {
-    const { titleFromSmsBody } = await import('@/app/api/webhooks/zerovoice-sms/route')
-    expect(titleFromSmsBody('')).toBe('Feature idea via SMS')
+  it('reports a real change request (detectEditIntent match) via editTriggered, same signal the dashboard uses', async () => {
+    resolveAppByZeroVoiceNumber.mockResolvedValue(acmeApp())
+    resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'jwt-token' })
+    getPlanStatus.mockResolvedValue({ tier: 'pro' })
+    detectEditIntent.mockReturnValue(true)
+    askCody.mockResolvedValue({ answer: 'On it — building dark mode now.', provider: 'anthropic', model: 'claude' })
+    sendZeroVoiceSms.mockResolvedValue({ ok: true, sid: 'SMabc' })
+
+    const { handleInboundSms } = await import('@/app/api/webhooks/zerovoice-sms/route')
+    const result = await handleInboundSms(smsPayload())
+
+    expect(result.editTriggered).toBe(true)
+    // The actual dispatch is askCody's own internal concern (same as the dashboard) —
+    // this webhook itself never files a separate, blanket issue.
+    expect(createIssue).not.toHaveBeenCalled()
+  })
+
+  it('falls back to filing a Gitea issue so the founder\'s message is never silently dropped when askCody is unavailable', async () => {
+    resolveAppByZeroVoiceNumber.mockResolvedValue(acmeApp())
+    resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'jwt-token' })
+    getPlanStatus.mockResolvedValue({ tier: 'pro' })
+    askCody.mockResolvedValue({ error: 'unavailable', status: 503 })
+    createIssue.mockResolvedValue({ ok: true, issueNumber: 42, url: 'https://git.example/ws-acme-workspace/acme/issues/42' })
+    sendZeroVoiceSms.mockResolvedValue({ ok: true, sid: 'SMabc' })
+
+    const { handleInboundSms } = await import('@/app/api/webhooks/zerovoice-sms/route')
+    const result = await handleInboundSms(smsPayload())
+
+    expect(result.ok).toBe(false)
+    expect(result.reason).toBe('fallback_logged')
+    expect(result.issueNumber).toBe(42)
+    expect(createIssue).toHaveBeenCalledWith(
+      'ws-acme-workspace',
+      'acme',
+      expect.stringContaining('Add a dark mode toggle please'),
+      expect.stringContaining('Add a dark mode toggle please'),
+    )
+    // The founder still gets *some* honest reply, not silence.
+    expect(sendZeroVoiceSms).toHaveBeenCalledWith('jwt-token', '+15559998888', '+15550001111', expect.any(String))
+  })
+
+  it('does not send a reply when the company has no ZeroVoice number to send from', async () => {
+    resolveAppByZeroVoiceNumber.mockResolvedValue(acmeApp({ zerovoiceE164: undefined }))
+    resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'jwt-token' })
+    getPlanStatus.mockResolvedValue({ tier: 'pro' })
+    askCody.mockResolvedValue({ answer: 'Got it.', provider: 'anthropic', model: 'claude' })
+
+    const { handleInboundSms } = await import('@/app/api/webhooks/zerovoice-sms/route')
+    await handleInboundSms(smsPayload())
+
+    expect(sendZeroVoiceSms).not.toHaveBeenCalled()
+  })
+
+  it('a thrown askCody error does not crash the webhook — falls back honestly', async () => {
+    resolveAppByZeroVoiceNumber.mockResolvedValue(acmeApp())
+    resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'jwt-token' })
+    getPlanStatus.mockResolvedValue({ tier: 'pro' })
+    askCody.mockRejectedValue(new Error('network blip'))
+    createIssue.mockResolvedValue({ ok: true, issueNumber: 9, url: 'https://git.example/x/y/issues/9' })
+    sendZeroVoiceSms.mockResolvedValue({ ok: true, sid: 'SMabc' })
+
+    const { handleInboundSms } = await import('@/app/api/webhooks/zerovoice-sms/route')
+    const result = await handleInboundSms(smsPayload())
+    expect(result.ok).toBe(false)
+    expect(result.reason).toBe('fallback_logged')
   })
 })
