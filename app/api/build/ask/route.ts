@@ -150,32 +150,56 @@ async function resolveImageBase64(attachment: ChatAttachmentRef): Promise<string
   }
 }
 
-export async function POST(request: NextRequest) {
-  const body = await request.json().catch(() => null)
-  const question = String(body?.question || '').trim()
-  const attachments: ChatAttachment[] = Array.isArray(body?.attachments)
-    ? body.attachments
-        .filter((a: any) => a && a.fileId && a.url && a.contentType && a.fileName)
-        .slice(0, 5)
-        .map((a: any) => ({
-          fileId: String(a.fileId).slice(0, 200),
-          url: String(a.url).slice(0, 500),
-          contentType: String(a.contentType).slice(0, 100),
-          fileName: String(a.fileName).slice(0, 200),
-        }))
-    : []
-  if (!question && attachments.length === 0) return Response.json({ error: 'question required' }, { status: 400 })
+export interface AskCodyParams {
+  question: string
+  attachments?: ChatAttachment[]
+  idea: string
+  companyName: string
+  track: 'app' | 'company'
+  companyId: string
+  /** Pre-resolved conversation scope key (owner + company). The dashboard
+   *  route derives this from the browser session; a non-browser caller
+   *  (e.g. the SMS webhook, #744 follow-up) has no session to read but CAN
+   *  derive the identical key from the company registry's own ownerEmail
+   *  (deriveOwnerKey's authenticated-user branch is just the lowercased
+   *  email) — passing it in here is what lets a founder's text message and
+   *  dashboard chat share the SAME persisted conversation thread. */
+  scopeKey: string
+  /** Pre-resolved account tier (hobbyist/pro/business/…). Same reasoning as
+   *  scopeKey — resolveTier() reads the browser session; a caller with no
+   *  session resolves the tier itself (e.g. from the company's own stored
+   *  `plan`) and passes it through. */
+  tier: string
+  /** Origin to dispatch a real edit task against (POST {baseUrl}/api/build/edit-app),
+   *  when this turn's question matches detectEditIntent. The dashboard route
+   *  derives this from the incoming request's own URL; a non-HTTP caller
+   *  (the SMS webhook) has no request to read one from, so it passes
+   *  NEXT_PUBLIC_APP_URL / the production origin explicitly instead. */
+  baseUrl: string
+}
 
-  const idea = String(body?.idea || '').slice(0, 3000)
-  const companyName = String(body?.companyName || 'the company').slice(0, 120)
-  const track = body?.track === 'app' ? 'app' : 'company'
-  // chatId wins over companyId as the scope identifier when present (#52) so a
-  // company with multiple build threads keeps them distinct; falls back to slug.
-  const companyId = String(body?.chatId || body?.companyId || '').slice(0, 80)
+export interface AskCodyResult {
+  answer: string
+  provider: string
+  model: string
+}
 
-  // Resolve the persistent conversation scope (owner from session + company) and
-  // load recent history so Cody has memory of the last few turns (#52).
-  const scopeKey = await resolveScopeKey(companyId)
+/**
+ * Core "ask Cody" logic — model call, system-prompt construction, history,
+ * and persistence. Extracted from POST (2026-09-16, SMS-conversation
+ * follow-up to #744) so a non-browser transport (the inbound-SMS webhook)
+ * can have the SAME real conversation with Cody a founder gets on the
+ * dashboard — same system prompt, same backlog grounding, same persisted
+ * history — instead of a separate, narrower one-shot action. Every
+ * session-derived input (scopeKey, tier) is a parameter here, never
+ * resolved internally, so this function has no dependency on a browser
+ * session at all.
+ */
+export async function askCody(params: AskCodyParams): Promise<AskCodyResult | { error: string; status: number }> {
+  const { question, idea, companyName, track, companyId, scopeKey, tier: tierName, baseUrl } = params
+  const attachments = params.attachments || []
+  if (!question && attachments.length === 0) return { error: 'question required', status: 400 }
+
   const companyProjectId = await resolveCompanyProjectId(companyId)
   const history = scopeKey ? await loadChatWithFallback(scopeKey, undefined, companyProjectId).catch(() => []) : []
 
@@ -215,8 +239,7 @@ export async function POST(request: NextRequest) {
   let editTriggered = false
   if (companyId && app?.gitOrg && detectEditIntent(question)) {
     editTriggered = true
-    const base = process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin
-    void fetch(`${base}/api/build/edit-app`, {
+    void fetch(`${baseUrl}/api/build/edit-app`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ companyId, request: question }),
@@ -358,7 +381,7 @@ export async function POST(request: NextRequest) {
     `- Keep it to 2-4 sentences for simple questions; up to 6 sentences for status/next-steps questions.\n` +
     `- No fluff, no disclaimers. Run it 24/7 via the nightly autonomous loop.`
 
-  const tier = modelsForTier(await resolveTier())
+  const tier = modelsForTier(tierName)
 
   // Real multimodal content (#741): resolve any attachments on THIS turn into
   // Anthropic content blocks — images become real base64 image blocks (Cody
@@ -423,7 +446,7 @@ export async function POST(request: NextRequest) {
         messages,
       })
       const answer = (res.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n').trim()
-      if (answer) { await persist(answer); return Response.json({ answer, provider: claude.provider, model }) }
+      if (answer) { await persist(answer); return { answer, provider: claude.provider, model } }
     } catch (e: any) {
       console.warn(`[build/ask] ${claude.provider} failed: ${e?.message?.slice(0, 80)}`)
     }
@@ -453,12 +476,55 @@ export async function POST(request: NextRequest) {
       messages: [{ role: 'system', content: system }, ...fallbackMessages],
     })
     const answer = res.choices?.[0]?.message?.content?.trim()
-    if (answer) { await persist(answer); return Response.json({ answer, provider: 'ainative', model: tier.ainativeModel }) }
+    if (answer) { await persist(answer); return { answer, provider: 'ainative', model: tier.ainativeModel } }
   } catch (e: any) {
     console.warn(`[build/ask] ainative failed: ${e?.message?.slice(0, 80)}`)
   }
 
-  return Response.json({ error: 'unavailable' }, { status: 503 })
+  return { error: 'unavailable', status: 503 }
+}
+
+export async function POST(request: NextRequest) {
+  const body = await request.json().catch(() => null)
+  const question = String(body?.question || '').trim()
+  const attachments: ChatAttachment[] = Array.isArray(body?.attachments)
+    ? body.attachments
+        .filter((a: any) => a && a.fileId && a.url && a.contentType && a.fileName)
+        .slice(0, 5)
+        .map((a: any) => ({
+          fileId: String(a.fileId).slice(0, 200),
+          url: String(a.url).slice(0, 500),
+          contentType: String(a.contentType).slice(0, 100),
+          fileName: String(a.fileName).slice(0, 200),
+        }))
+    : []
+  if (!question && attachments.length === 0) return Response.json({ error: 'question required' }, { status: 400 })
+
+  const idea = String(body?.idea || '').slice(0, 3000)
+  const companyName = String(body?.companyName || 'the company').slice(0, 120)
+  const track = body?.track === 'app' ? 'app' : 'company'
+  // chatId wins over companyId as the scope identifier when present (#52) so a
+  // company with multiple build threads keeps them distinct; falls back to slug.
+  const companyId = String(body?.chatId || body?.companyId || '').slice(0, 80)
+
+  const scopeKey = await resolveScopeKey(companyId)
+  const tier = await resolveTier()
+  // request.url is only actually read when an edit gets dispatched
+  // (editTriggered inside askCody) — a real NextRequest always has a valid
+  // absolute url, but resolve it defensively so a malformed/mocked request
+  // can never crash a plain Q&A turn that was never going to use it.
+  let baseUrl = process.env.NEXT_PUBLIC_APP_URL || ''
+  if (!baseUrl) {
+    try {
+      baseUrl = new URL(request.url).origin
+    } catch {
+      baseUrl = ''
+    }
+  }
+
+  const result = await askCody({ question, attachments, idea, companyName, track, companyId, scopeKey, tier, baseUrl })
+  if ('error' in result) return Response.json({ error: result.error }, { status: result.status })
+  return Response.json(result)
 }
 
 /**
