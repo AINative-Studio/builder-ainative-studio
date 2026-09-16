@@ -34,7 +34,7 @@ import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { getPlanStatus, isPaidTier } from '@/lib/ainative/plan'
 import { resolveApp, setAppZeroVoice } from '@/lib/build/app-registry'
-import { provisionZeroVoiceNumber, zeroVoiceProvisionEnabled } from '@/lib/build/zerovoice'
+import { provisionZeroVoiceNumber, zeroVoiceProvisionEnabled, configureSmsRelay, configureVoiceRelay } from '@/lib/build/zerovoice'
 import { captureFounderCredentialForProxy } from '@/app/api/build/provision/route'
 
 export const runtime = 'nodejs'
@@ -51,6 +51,31 @@ export const runtime = 'nodejs'
 // credential captures fleet-wide failed invisibly. Fixed by reusing
 // provision/route.ts's already-correct, auth()-session-based implementation
 // directly instead of maintaining a second, drifted copy of the same logic.
+
+/**
+ * Best-effort: configure this number's inbound SMS + voice relay to Builder's
+ * webhooks, so a real two-way Cody conversation (2026-09-16, #744 follow-up)
+ * works the moment the number exists — never a manual, out-of-band step
+ * again (the real gap that left Fieldko's number working only because it had
+ * been configured by hand in a prior debugging session). Never blocks or
+ * fails the provisioning response itself — an unreachable ZeroVoice relay
+ * config call just means relay isn't configured yet; the number purchase
+ * already succeeded and is real.
+ */
+async function configureRelaysForNumber(token: string, numberId: string): Promise<void> {
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio'
+  const secret = process.env.ZEROVOICE_SMS_WEBHOOK_SECRET || ''
+  if (!secret) {
+    console.error('[zerovoice] ZEROVOICE_SMS_WEBHOOK_SECRET is unset — skipping relay auto-configuration (fails closed, never configures an unauthenticated relay target)')
+    return
+  }
+  const [smsResult, voiceResult] = await Promise.all([
+    configureSmsRelay(token, numberId, `${baseUrl}/api/webhooks/zerovoice-sms`, secret).catch((e) => ({ ok: false, reason: String(e) })),
+    configureVoiceRelay(token, numberId, `${baseUrl}/api/webhooks/zerovoice-voice`, secret).catch((e) => ({ ok: false, reason: String(e) })),
+  ])
+  if (!smsResult.ok) console.error(`[zerovoice] SMS relay auto-configuration failed for number ${numberId}:`, smsResult.reason)
+  if (!voiceResult.ok) console.error(`[zerovoice] Voice relay auto-configuration failed for number ${numberId}:`, voiceResult.reason)
+}
 
 export async function POST(request: NextRequest) {
   if (!zeroVoiceProvisionEnabled()) {
@@ -101,11 +126,13 @@ export async function POST(request: NextRequest) {
   // provisionZeroVoiceNumber, but short-circuits before even hitting the
   // real API when we already know the answer from our own registry).
   if (app.zerovoiceProvisioned && app.zerovoiceNumberId && app.zerovoiceE164) {
-    // Best-effort backfill: a company provisioned before #522 shipped may
-    // have a number but no captured credential yet — capture it now that the
-    // founder's session is live again, so the runtime proxy has something to
-    // serve. Idempotent (storeFounderCredential just appends a fresh row).
+    // Best-effort backfill: a company provisioned before #522/relay-auto-
+    // config shipped may have a number but no captured credential or relay
+    // config yet — (re-)do both now that the founder's session is live
+    // again. Both are idempotent (storeFounderCredential appends a fresh
+    // row; the relay PUT simply overwrites the existing config).
     await captureFounderCredentialForProxy(request, slug, 'zerovoice', token).catch(() => {})
+    await configureRelaysForNumber(token, app.zerovoiceNumberId)
     return Response.json({ ok: true, numberId: app.zerovoiceNumberId, e164: app.zerovoiceE164 })
   }
 
@@ -116,6 +143,7 @@ export async function POST(request: NextRequest) {
 
   await setAppZeroVoice(slug, { numberId: result.numberId, e164: result.e164 }).catch(() => {})
   await captureFounderCredentialForProxy(request, slug, 'zerovoice', token).catch(() => {})
+  await configureRelaysForNumber(token, result.numberId)
 
   return Response.json({ ok: true, numberId: result.numberId, e164: result.e164 })
 }

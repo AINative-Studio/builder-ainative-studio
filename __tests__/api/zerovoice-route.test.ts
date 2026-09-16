@@ -35,6 +35,8 @@ const h = vi.hoisted(() => ({
   provisionZeroVoiceNumber: vi.fn(),
   zeroVoiceProvisionEnabled: vi.fn(() => true),
   captureFounderCredentialForProxy: vi.fn(async () => true),
+  configureSmsRelay: vi.fn(async (): Promise<{ ok: boolean; reason?: string }> => ({ ok: true })),
+  configureVoiceRelay: vi.fn(async (): Promise<{ ok: boolean; reason?: string }> => ({ ok: true })),
 }))
 
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
@@ -51,6 +53,8 @@ vi.mock('@/lib/build/app-registry', () => ({
 vi.mock('@/lib/build/zerovoice', () => ({
   provisionZeroVoiceNumber: h.provisionZeroVoiceNumber,
   zeroVoiceProvisionEnabled: h.zeroVoiceProvisionEnabled,
+  configureSmsRelay: h.configureSmsRelay,
+  configureVoiceRelay: h.configureVoiceRelay,
 }))
 // #777: the shared, already-correct capture implementation from
 // provision/route.ts — this route no longer has its own copy.
@@ -69,12 +73,15 @@ const PROVISIONED = { ...UNPROVISIONED, zerovoiceProvisioned: true, zerovoiceNum
 
 beforeEach(() => {
   vi.clearAllMocks()
+  process.env.ZEROVOICE_SMS_WEBHOOK_SECRET = 'test-shared-secret'
   h.zeroVoiceProvisionEnabled.mockReturnValue(true)
   h.auth.mockResolvedValue({ accessToken: 'tok', user: { email: 'f@x.com' } })
   h.getPlanStatus.mockResolvedValue({ tier: 'pro' })
   h.resolveApp.mockResolvedValue(UNPROVISIONED)
   h.setAppZeroVoice.mockResolvedValue(true)
   h.captureFounderCredentialForProxy.mockResolvedValue(true)
+  h.configureSmsRelay.mockResolvedValue({ ok: true })
+  h.configureVoiceRelay.mockResolvedValue({ ok: true })
 })
 
 describe('POST /api/build/zerovoice (#415)', () => {
@@ -218,6 +225,40 @@ describe('POST /api/build/zerovoice (#415)', () => {
     it('never throws when the shared capture implementation itself fails (best-effort, does not block the real response)', async () => {
       h.captureFounderCredentialForProxy.mockRejectedValue(new Error('storage blip'))
       h.provisionZeroVoiceNumber.mockResolvedValue({ ok: true, numberId: 'num-new', e164: '+15559998888' })
+      const res: any = await POST(postReq({ slug: 'acme' }))
+      const json = await res.json()
+      expect(json).toEqual({ ok: true, numberId: 'num-new', e164: '+15559998888' })
+    })
+  })
+
+  describe('SMS + voice relay auto-configuration (2026-09-16 — real conversation follow-up)', () => {
+    it('configures both relays with the real webhook URLs and shared secret after a fresh purchase', async () => {
+      h.provisionZeroVoiceNumber.mockResolvedValue({ ok: true, numberId: 'num-new', e164: '+15559998888' })
+      await POST(postReq({ slug: 'acme' }))
+      expect(h.configureSmsRelay).toHaveBeenCalledWith('tok', 'num-new', expect.stringContaining('/api/webhooks/zerovoice-sms'), 'test-shared-secret')
+      expect(h.configureVoiceRelay).toHaveBeenCalledWith('tok', 'num-new', expect.stringContaining('/api/webhooks/zerovoice-voice'), 'test-shared-secret')
+    })
+
+    it('also (re-)configures both relays on the already-provisioned short-circuit — idempotent backfill', async () => {
+      h.resolveApp.mockResolvedValue(PROVISIONED)
+      await POST(postReq({ slug: 'acme' }))
+      expect(h.configureSmsRelay).toHaveBeenCalledWith('tok', 'num-existing', expect.any(String), 'test-shared-secret')
+      expect(h.configureVoiceRelay).toHaveBeenCalledWith('tok', 'num-existing', expect.any(String), 'test-shared-secret')
+    })
+
+    it('skips relay configuration entirely (never configures an unauthenticated target) when the shared secret is unset', async () => {
+      delete process.env.ZEROVOICE_SMS_WEBHOOK_SECRET
+      h.provisionZeroVoiceNumber.mockResolvedValue({ ok: true, numberId: 'num-new', e164: '+15559998888' })
+      const res: any = await POST(postReq({ slug: 'acme' }))
+      expect((await res.json()).ok).toBe(true)
+      expect(h.configureSmsRelay).not.toHaveBeenCalled()
+      expect(h.configureVoiceRelay).not.toHaveBeenCalled()
+    })
+
+    it('never blocks or fails the real provisioning response when relay configuration itself fails', async () => {
+      h.provisionZeroVoiceNumber.mockResolvedValue({ ok: true, numberId: 'num-new', e164: '+15559998888' })
+      h.configureSmsRelay.mockRejectedValue(new Error('network blip'))
+      h.configureVoiceRelay.mockResolvedValue({ ok: false, reason: 'timeout' })
       const res: any = await POST(postReq({ slug: 'acme' }))
       const json = await res.json()
       expect(json).toEqual({ ok: true, numberId: 'num-new', e164: '+15559998888' })

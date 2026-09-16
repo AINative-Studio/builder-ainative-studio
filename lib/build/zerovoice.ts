@@ -208,6 +208,90 @@ export async function provisionZeroVoiceNumber(
   }
 }
 
+export interface ZeroVoiceRelayConfigResult {
+  ok: boolean
+  reason?: string
+  status?: number
+}
+
+/**
+ * Configure a provisioned number's inbound-SMS relay (ZeroVoice#616) so every
+ * inbound text is forwarded to Builder's webhook for a real Cody conversation
+ * (2026-09-16, #744 follow-up).
+ *
+ * Real gap this closes: Builder had NO code path that ever called this API —
+ * the sms-relay config on any already-working company (e.g. Fieldko) was set
+ * by hand via direct API calls in a prior debugging session, not by product
+ * code. Every NEW company's number would silently never relay SMS at all
+ * without this. Called automatically right after a successful purchase (see
+ * app/api/build/zerovoice/route.ts) so this is never a manual step again.
+ *
+ * PUT /api/v1/numbers/{numberId}/sms-relay
+ * body: { webhook_url, webhook_secret, enabled }
+ */
+export async function configureSmsRelay(
+  jwt: string,
+  numberId: string,
+  webhookUrl: string,
+  webhookSecret: string,
+): Promise<ZeroVoiceRelayConfigResult> {
+  if (!jwt) return { ok: false, reason: 'no_jwt' }
+  if (!numberId) return { ok: false, reason: 'no_number_id' }
+  if (!webhookUrl) return { ok: false, reason: 'no_webhook_url' }
+
+  try {
+    const res = await fetch(`${ZV_BASE}/numbers/${encodeURIComponent(numberId)}/sms-relay`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ webhook_url: webhookUrl, webhook_secret: webhookSecret, enabled: true }),
+      signal: AbortSignal.timeout(20000),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => null)
+      return { ok: false, status: res.status, reason: String(data?.message || data?.detail || res.status).slice(0, 160) }
+    }
+    return { ok: true, status: res.status }
+  } catch (e: any) {
+    return { ok: false, reason: String(e?.message || e).slice(0, 160) }
+  }
+}
+
+/**
+ * Configure a provisioned number's inbound-CALL relay (2026-09-16, call
+ * counterpart to configureSmsRelay/#616) so a founder can call their
+ * company's number and have a real, turn-by-turn voice conversation with
+ * Cody, using the same webhook-relay pattern as SMS.
+ *
+ * PUT /api/v1/numbers/{numberId}/voice-relay
+ * body: { webhook_url, webhook_secret, enabled }
+ */
+export async function configureVoiceRelay(
+  jwt: string,
+  numberId: string,
+  webhookUrl: string,
+  webhookSecret: string,
+): Promise<ZeroVoiceRelayConfigResult> {
+  if (!jwt) return { ok: false, reason: 'no_jwt' }
+  if (!numberId) return { ok: false, reason: 'no_number_id' }
+  if (!webhookUrl) return { ok: false, reason: 'no_webhook_url' }
+
+  try {
+    const res = await fetch(`${ZV_BASE}/numbers/${encodeURIComponent(numberId)}/voice-relay`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ webhook_url: webhookUrl, webhook_secret: webhookSecret, enabled: true }),
+      signal: AbortSignal.timeout(20000),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => null)
+      return { ok: false, status: res.status, reason: String(data?.message || data?.detail || res.status).slice(0, 160) }
+    }
+    return { ok: true, status: res.status }
+  } catch (e: any) {
+    return { ok: false, reason: String(e?.message || e).slice(0, 160) }
+  }
+}
+
 export interface ZeroVoiceSmsResult {
   ok: boolean
   sid?: string
