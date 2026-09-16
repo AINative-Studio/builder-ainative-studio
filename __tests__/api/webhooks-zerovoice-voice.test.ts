@@ -138,6 +138,22 @@ describe('handleInboundCallTurn — real conversation via askCody', () => {
     expect(result.hangup).toBe(false)
   })
 
+  it('caps conversation history sent per turn — real bug found live: unbounded shared history made turns slower and slower until a real call timed out', async () => {
+    resolveAppByZeroVoiceNumber.mockResolvedValue(acmeApp())
+    resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'jwt-token' })
+    getPlanStatus.mockResolvedValue({ tier: 'pro' })
+    askCody.mockResolvedValue({ answer: 'Got it.', provider: 'anthropic', model: 'claude' })
+
+    const { handleInboundCallTurn } = await import('@/app/api/webhooks/zerovoice-voice/route')
+    await handleInboundCallTurn(callPayload({ Turn: 2, SpeechResult: 'hi' }))
+
+    const call = askCody.mock.calls[0][0]
+    expect(call.historyLimit).toBeGreaterThan(0)
+    // A live caller needs a fast reply every turn — this must stay small,
+    // nowhere near the shared dashboard/SMS default of 100 full turns.
+    expect(call.historyLimit).toBeLessThanOrEqual(10)
+  })
+
   it('caps the spoken reply length so a call never sits through an overlong monologue', async () => {
     resolveAppByZeroVoiceNumber.mockResolvedValue(acmeApp())
     resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'jwt-token' })
