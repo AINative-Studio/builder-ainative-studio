@@ -246,6 +246,15 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next()
     }
 
+    // Terms of Service + Privacy Policy (#794) — MUST be public/unauthenticated.
+    // Twilio's A2P 10DLC carrier review resolves these URLs directly (no login)
+    // to verify Cody's SMS campaign; before this allowlist entry both paths fell
+    // through to the auth gate below and 307'd to /login, which is part of why
+    // the campaign was rejected (errors 30882/30908, see #781/ZeroVoice#626).
+    if (pathname.startsWith('/terms') || pathname.startsWith('/privacy')) {
+      return NextResponse.next()
+    }
+
     // /billing is an SPA-internal screen; the route catches direct navigation
     // and redirects to /build?screen=account. Allow anonymously so the redirect
     // works before the auth gate at /build (#76).

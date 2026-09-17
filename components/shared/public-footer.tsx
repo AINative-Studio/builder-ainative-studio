@@ -4,6 +4,11 @@
  * set, plus a `homeLabel`-configurable "current page" convention isn't
  * needed here — every page links out uniformly, mirroring Landing's own
  * footer verbatim).
+ *
+ * Terms/Privacy now point at Builder's OWN pages (#794), not ainative.studio's
+ * — Twilio's A2P 10DLC carrier review needs a public legal page for the actual
+ * product sending Cody's SMS messages, and builder.ainative.studio had none of
+ * its own until app/terms + app/privacy were added.
  */
 export function PublicFooter() {
   return (
@@ -11,9 +16,9 @@ export function PublicFooter() {
       <a href="/showcase">Showcase</a>
       <a href="/capabilities">What can I build?</a>
       <a href="/about">About</a>
-      <a href="https://ainative.studio/terms">Terms</a>
+      <a href="/terms">Terms</a>
       <a href="https://ainative.studio/acceptable-use">Acceptable use</a>
-      <a href="https://ainative.studio/privacy">Privacy</a>
+      <a href="/privacy">Privacy</a>
       <span>Support: <a href="mailto:support@ainative.studio">support@ainative.studio</a></span>
     </div>
   )
