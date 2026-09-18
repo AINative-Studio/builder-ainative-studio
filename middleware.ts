@@ -273,6 +273,14 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next()
     }
 
+    // /reset-password (#7698) — the landing page for the link in core's password
+    // reset email, which redirects into the SPA's 'reset' screen carrying the
+    // token. MUST be anonymous: a founder resetting their password is by
+    // definition logged out, so gating it behind auth makes every reset link dead.
+    if (pathname === '/reset-password') {
+      return NextResponse.next()
+    }
+
     // Category landing pages (non-branded SEO/AEO targets Polsia is weak on) —
     // "AI that runs your company", "autonomous company builder", "AI co-founder".
     // MUST be crawlable + viewable without an account, else they 307→/login and

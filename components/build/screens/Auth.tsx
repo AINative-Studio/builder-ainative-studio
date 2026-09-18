@@ -2,7 +2,7 @@
 
 /** Auth screens (#227) — two-column, alert-red brand panel + form. 04-SCREENS Auth. */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { signIn } from 'next-auth/react'
 import { useBuild } from '@/contexts/build-context'
 import type { Screen } from '@/lib/build/state'
@@ -67,6 +67,22 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
   const [phoneVerified, setPhoneVerified] = useState(false)
   const [otpCode, setOtpCode] = useState('')
   const [otpNote, setOtpNote] = useState<string | null>(null)
+  // #7698 — real password reset (this used to be a "coming soon" stub that
+  // never called anything). `resetSent` switches the forgot screen into a
+  // neutral "check your email" confirmation — core deliberately does not reveal
+  // whether the account exists, so neither do we. `resetDone` confirms the final
+  // token exchange succeeded and points the founder back at log in.
+  const [resetSent, setResetSent] = useState(false)
+  const [resetDone, setResetDone] = useState(false)
+  // Token from the emailed link (…/reset-password?token=…), forwarded into the
+  // SPA by app/reset-password/page.tsx. Read once on mount rather than at submit
+  // time, because build-context keeps ?screen= in sync with the current screen
+  // and can rewrite the URL out from under a later read.
+  const [resetToken, setResetToken] = useState('')
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get('token')
+    if (t) setResetToken(t)
+  }, [])
 
   const copy = {
     login: { h: 'Welcome back', sub: 'Log in to your workspace.', cta: 'Log in' },
@@ -241,9 +257,54 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
     }
   }
 
+  // #7698 — request a reset email from core via the Builder proxy, which passes
+  // app:'builder' so the email is Builder-branded and its link returns here
+  // instead of ainative.studio. Core answers the same way whether or not the
+  // account exists, so the confirmation below is deliberately neutral.
+  const submitForgot = async () => {
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { setError('Enter a valid email.'); return }
+    setBusy(true); setError(null)
+    try {
+      const res = await fetch('/api/auth/forgot-password', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      })
+      const d = await res.json().catch(() => null)
+      if (d?.ok) setResetSent(true)
+      else setError(d?.error || 'Could not send the reset email — try again.')
+    } catch {
+      setError('Network error — try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // #7698 — final step: exchange the emailed token + the new password via the
+  // same proxy (core POST /auth/reset-password). A missing token means the
+  // founder reached this screen without a real reset link.
+  const submitReset = async () => {
+    if (!resetToken) { setError('This reset link is missing its token — request a new one.'); return }
+    if (password.length < 8) { setError('Password must be at least 8 characters.'); return }
+    setBusy(true); setError(null)
+    try {
+      const res = await fetch('/api/auth/forgot-password', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reset', token: resetToken, password }),
+      })
+      const d = await res.json().catch(() => null)
+      if (d?.ok) setResetDone(true)
+      else setError(d?.error || 'That reset link is invalid or has expired.')
+    } catch {
+      setError('Network error — try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const submit = async () => {
     setError(null); setResendNote(null)
-    if (mode === 'forgot' || mode === 'reset') { setError('Password reset is coming soon — contact support.'); return }
+    if (mode === 'forgot') { await submitForgot(); return }
+    if (mode === 'reset') { await submitReset(); return }
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { setError('Enter a valid email.'); return }
     if (password.length < 8) { setError('Password must be at least 8 characters.'); return }
     // #734 — gate final signup submission on phone verification completing,
@@ -355,6 +416,51 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
               ← Back to log in
             </button>
           </div>
+        </main>
+      </div>
+    )
+  }
+
+  // #7698 — reset-link-sent confirmation. Mirrors the verify-email panel above.
+  // The copy is deliberately conditional-neutral ("if an account exists"): core
+  // does not reveal whether the address is registered, and this screen must not
+  // become the account-enumeration oracle core carefully avoids being.
+  if (resetSent) {
+    return (
+      <div className="modernist m-auth">
+        <BrandPanel />
+        <main className="m-auth-form" data-testid="auth-reset-sent-panel">
+          <AuthHeader go={go} />
+          <p className="m-auth-chip m-mono">✓ Link sent to your email</p>
+          <h1 className="m-artifact m-auth-h">Check your email</h1>
+          <p className="m-sub">
+            If an account exists for <strong data-testid="auth-reset-sent-email">{email}</strong>, we sent it a
+            password reset link. It expires in an hour.
+          </p>
+          <div className="m-auth-links m-mono">
+            <button className="btn-ghost" data-testid="auth-reset-sent-back" onClick={() => { setResetSent(false); go('login') }}>
+              ← Back to log in
+            </button>
+          </div>
+        </main>
+      </div>
+    )
+  }
+
+  // #7698 — password successfully changed. Nothing is signed in here: core
+  // invalidates the reset token and the founder logs in with the new password.
+  if (resetDone) {
+    return (
+      <div className="modernist m-auth">
+        <BrandPanel />
+        <main className="m-auth-form" data-testid="auth-reset-done-panel">
+          <AuthHeader go={go} />
+          <p className="m-auth-chip m-mono">✓ Password updated</p>
+          <h1 className="m-artifact m-auth-h">You're all set</h1>
+          <p className="m-sub">Your password has been changed. Log in with your new password to continue.</p>
+          <button className="btn-primary" data-testid="auth-reset-done-login" onClick={() => { setResetDone(false); go('login') }}>
+            Log in →
+          </button>
         </main>
       </div>
     )
