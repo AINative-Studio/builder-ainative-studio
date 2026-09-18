@@ -4,7 +4,8 @@
  * AINative core is a full OAuth2.1/OIDC provider (see ~/core/src/backend/app):
  *   - GET  /oauth/authorize   (PKCE S256 enforced)
  *   - POST /v1/oauth/token    (authorization_code | refresh_token)
- *   - GET  /oauth/userinfo    (OIDC: sub, email, name, plan, organization_id)
+ *   - GET  /oauth/userinfo    (OIDC: sub, email, name, plan, organization_id,
+ *                              organizations[] — full org membership list)
  *
  * The builder registers as an OAuth client (client_id in core KNOWN_CLIENTS /
  * oauth_clients). This module only builds/validates the flow; the route
@@ -107,6 +108,14 @@ export async function exchangeCodeForTokens(
   return res.json()
 }
 
+/** One org membership entry from /oauth/userinfo's `organizations` list. */
+export interface OAuthUserOrganization {
+  id: string
+  name?: string
+  role?: string
+  is_default?: boolean
+}
+
 export interface OAuthUserInfo {
   sub: string
   email?: string
@@ -115,8 +124,23 @@ export interface OAuthUserInfo {
   given_name?: string
   family_name?: string
   plan?: string
-  /** Primary workspace (Organization). Full list via /api/v1/workspaces. */
+  /**
+   * Primary workspace (Organization) per a DIFFERENT resolver
+   * (resolve_user_organization_id, core refs #5730/#5233) than the
+   * `organizations` list below. On this endpoint specifically,
+   * `organizations[0]` is NOT guaranteed to equal this scalar — do not
+   * assume they match. Prefer `organizations` when it's present.
+   */
   organization_id?: string
+  /**
+   * Full org membership list (core #7666), entries of
+   * {id, name, role, is_default}, ordered
+   * `COALESCE(is_default, false) DESC, created_at ASC` — so
+   * `organizations[0]` is the account's real, deterministic default org.
+   * Optional/absent on older core deployments; callers must fall back to
+   * `organization_id` when it's missing.
+   */
+  organizations?: OAuthUserOrganization[]
   account_id?: string
 }
 
@@ -130,6 +154,30 @@ export async function fetchUserInfo(accessToken: string): Promise<OAuthUserInfo>
     throw new Error(`AINative userinfo failed (${res.status}): ${text}`)
   }
   return res.json()
+}
+
+/**
+ * Resolve "which org should this OAuth login land in" from userinfo alone.
+ *
+ * Builder has no server-side visibility into the client-only
+ * `ainative.activeWorkspaceId` (localStorage, set by the workspace switcher —
+ * see components/workspace-switcher.tsx) at callback time: it's never
+ * mirrored to a cookie, so a route handler can't read it. Absent that signal,
+ * the account's own ordered default is the only trustworthy choice:
+ *   1. `organizations[0]` — real, deterministically ordered default
+ *      (is_default first, then oldest). Preferred whenever the array is
+ *      present, even if empty (an empty array is a legitimate "no orgs yet"
+ *      case, not a signal to fall back to the scalar).
+ *   2. `organization_id` — legacy scalar, only used when `organizations` is
+ *      entirely absent (older core deployment that hasn't shipped #7666 yet).
+ *
+ * Refs builder#796, core#7666.
+ */
+export function resolveDefaultOrganizationId(info: OAuthUserInfo): string {
+  if (info.organizations) {
+    return info.organizations[0]?.id ?? ''
+  }
+  return info.organization_id ?? ''
 }
 
 export function isOAuthConfigured(): boolean {

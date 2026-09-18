@@ -3,6 +3,7 @@ import { cookies } from 'next/headers'
 import {
   exchangeCodeForTokens,
   fetchUserInfo,
+  resolveDefaultOrganizationId,
 } from '@/lib/auth/ainative-oauth'
 import { signIn } from '@/app/(auth)/auth'
 
@@ -52,7 +53,16 @@ export async function GET(request: NextRequest) {
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token ?? '',
       expiresIn: String(tokens.expires_in ?? ''),
-      workspaceId: info.organization_id ?? '',
+      // Builder has no server-side signal for "which company was the user
+      // last working in" (that's client-only localStorage — see
+      // resolveDefaultOrganizationId's doc comment), so this is only ever a
+      // fallback candidate: the `ainative-oauth` provider's authorize()
+      // re-resolves the authoritative default from /api/v1/workspaces and
+      // only falls back to this value if that call fails. Even as a
+      // fallback it must not be the raw, differently-ordered
+      // `organization_id` scalar (builder#796) — resolve the account's real
+      // ordered default from `organizations[]` instead.
+      workspaceId: resolveDefaultOrganizationId(info),
     })
 
     const res = NextResponse.redirect(new URL('/', url.origin))
