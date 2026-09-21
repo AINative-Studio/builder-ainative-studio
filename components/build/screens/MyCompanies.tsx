@@ -185,6 +185,18 @@ export function MyCompanies() {
         </div>
       </header>
 
+      {state.deepLinkNotFound && (
+        <section className="m-account-sec" data-testid="deep-link-not-found">
+          <p className="m-live-card-body">
+            We couldn&apos;t find a company called &ldquo;{state.deepLinkNotFound}&rdquo; — the link may be out of
+            date, or the company may have been renamed or deleted. Here are your real companies below.
+          </p>
+          <button className="btn-secondary" onClick={() => dispatch({ type: 'RESTORE_BUILD', partial: { deepLinkNotFound: null } })}>
+            Dismiss
+          </button>
+        </section>
+      )}
+
       {!signedIn ? (
         <section className="m-account-sec" data-testid="companies-signin">
           <p className="m-live-card-body">Sign in to see the companies you&apos;ve built — pick any one back up, manage its plan and domain, on your own database.</p>

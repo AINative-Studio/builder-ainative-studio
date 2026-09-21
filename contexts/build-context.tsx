@@ -134,6 +134,25 @@ export const KNOWN_DEEP_LINK_SCREENS = [
   'login', 'signup', 'forgot', 'reset', 'account', 'companies', 'refer',
 ]
 
+/**
+ * Pure decision for the deep-link existence check: given /api/build/resolve-app's
+ * response for a ?company= slug, does this slug actually resolve to a real,
+ * registered company? Exported so the actual bug (a stale/typo'd/renamed slug
+ * being trusted blindly, surfacing later as an opaque "company not found" deep
+ * inside an unrelated feature like connect-domain) is unit-testable without
+ * mounting the full BuildProvider (which OOMs jsdom via useAutoplay, see
+ * build-context-url-sync-mount-race.test.ts's own note on this).
+ *
+ * `chatId: null` is resolve-app's own established "never registered" signal
+ * (see its doc comment) — but a company can legitimately have no `idea` yet
+ * either (mid-registration), so both must be absent to call it not-found;
+ * a real company with a chatId but no idea saved yet must NOT false-positive.
+ */
+export function isDeepLinkCompanyNotFound(resolveAppResponse: { chatId?: string | null; idea?: string | null } | null): boolean {
+  if (!resolveAppResponse) return false // network/parse failure — fail open, don't flag a real company as missing
+  return resolveAppResponse.chatId === null && !resolveAppResponse.idea
+}
+
 export function BuildProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(buildReducer, initialBuildState)
 
@@ -172,6 +191,30 @@ export function BuildProvider({ children }: { children: ReactNode }) {
         const track: Track = q.get('track') === 'app' ? 'app' : 'company'
         dispatch({ type: 'PICK_TRACK', track })
         dispatch({ type: 'START_BUILD', idea: company, appSub: company, companyName: company })
+
+        // Real bug fixed: a ?company= slug that doesn't match any registered
+        // company (a stale bookmark, a typo, a renamed/deleted company) used
+        // to be trusted blindly — START_BUILD sets state.idea to the raw
+        // company string itself, which then defeats Live.tsx's own
+        // idea-hydration effect (it only runs `if (!state.idea)`, so it never
+        // gets a chance to notice the slug is fake). Nothing ever independently
+        // confirmed the company was real until some OTHER slug-scoped call
+        // (e.g. /api/build/connect-domain) 404'd deep inside a feature, with
+        // no context for the founder about why. Skip this check when a local
+        // cache already exists (`saved`, above) — that's strong evidence the
+        // company is real from a prior successful session on this device;
+        // only bother the network for the case that actually needs it.
+        if (!saved) {
+          fetch(`/api/build/resolve-app?slug=${encodeURIComponent(company)}`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => {
+              if (isDeepLinkCompanyNotFound(d)) {
+                dispatch({ type: 'RESTORE_BUILD', partial: { deepLinkNotFound: company } })
+                dispatch({ type: 'GOTO_SCREEN', screen: 'companies' })
+              }
+            })
+            .catch(() => {})
+        }
 
         // Restore view position within workspace if one was encoded (#285).
         const viewParam = q.get('view')

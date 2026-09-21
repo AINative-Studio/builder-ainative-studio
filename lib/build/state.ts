@@ -103,6 +103,14 @@ export interface BuildState {
   answers: { privacy?: PrivacyAnswer; [k: string]: string | undefined }
   companyName: string
   appSub: string           // staging subdomain, e.g. {appSub}.ainative.studio
+  // A ?company= deep link whose slug turned out not to resolve to any real,
+  // registered company (a stale bookmark, a typo, a renamed/deleted company).
+  // Set once the deep-link effect's existence check comes back negative;
+  // MyCompanies shows this as an honest banner instead of silently landing
+  // the founder on a broken session where every slug-scoped call 404s (the
+  // real bug: "company not found" errors deep inside features like
+  // connect-domain, with nothing at the point of entry explaining why).
+  deepLinkNotFound: string | null
   tablet: boolean
   idea: string             // the founder's raw idea (from intake) — drives all generation
   brandTagline: string     // generated brand tagline (FIX-1)
@@ -192,6 +200,7 @@ export const initialBuildState: BuildState = {
   answers: {},
   companyName: '',
   appSub: '',
+  deepLinkNotFound: null,
   tablet: false,
   idea: '',
   brandTagline: '',
@@ -259,7 +268,7 @@ export type BuildAction =
   | { type: 'ASK_PRIVACY' }
   | { type: 'TRIGGER_CONFLICT'; changedView: string; fromRescopeIntent?: boolean }
   /** Restore persisted build state from localStorage without clearing artifacts (#284). */
-  | { type: 'RESTORE_BUILD'; partial: Partial<Pick<BuildState, 'generated' | 'done' | 'genError' | 'builtCompany' | 'builtMVP' | 'wedgePicked' | 'answers' | 'companyName' | 'idea' | 'appSub' | 'brandTagline' | 'brandColor' | 'appChatId' | 'productChatId' | 'activePlan' | 'enrolled' | 'track' | 'role' | 'sawPreview' | 'designSystemId' | 'designStepDone'>> }
+  | { type: 'RESTORE_BUILD'; partial: Partial<Pick<BuildState, 'generated' | 'done' | 'genError' | 'builtCompany' | 'builtMVP' | 'wedgePicked' | 'answers' | 'companyName' | 'idea' | 'appSub' | 'brandTagline' | 'brandColor' | 'appChatId' | 'productChatId' | 'activePlan' | 'enrolled' | 'track' | 'role' | 'sawPreview' | 'designSystemId' | 'designStepDone' | 'deepLinkNotFound'>> }
   | { type: 'TOGGLE_RAIL' }
   | { type: 'TOGGLE_INDEX' }
   | { type: 'SET_APP_CHATID'; chatId: string }
