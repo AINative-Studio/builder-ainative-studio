@@ -1664,6 +1664,7 @@ export interface ParseGateResult {
     | 'object_as_child'
     | 'undefined_reference'
     | 'missing_local_import'
+    | 'duplicate_landmark'
     | 'generated_tests_failed'
     | 'unedited_scaffold'
   /** Human-readable error (the validator's message), when ok === false. */

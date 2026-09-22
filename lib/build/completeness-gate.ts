@@ -368,3 +368,183 @@ export function findUndeclaredJsxComponents(
     return []
   }
 }
+
+/**
+ * DUPLICATE-LANDMARK DETECTOR (builder#816, repro: `agentive-product`,
+ * issue #815) — a narrow, deterministic DOM-SHAPE check for a bug class the
+ * parse/completeness gates above structurally cannot see: two elements that
+ * are each individually syntactically valid, both fully resolve their
+ * imports, and both parse fine, yet BOTH render simultaneously-visible
+ * duplicate UI for the same structural role (confirmed live via
+ * `document.querySelectorAll('aside').length === 2`: a real desktop sidebar
+ * `data-agent-context="sidebar"` plus a "mobile" drawer
+ * `data-agent-context="sidebar-mobile"` that had no `fixed`/`absolute`
+ * positioning and no hide/off-canvas class at all — so it sat inline and
+ * visible on every viewport, not just mobile).
+ *
+ * The codegen pipeline's own agent-manifest pattern (lib/professional-
+ * prompt.ts) already tags structural elements with `data-agent-context`, and
+ * that same attribute is the cheapest deterministic signal available: a
+ * landmark ROLE (sidebar/header/main-content/nav) should have exactly ONE
+ * simultaneously-visible instance. A second instance of the SAME role is only
+ * legitimate when it is genuinely, verifiably hidden by a real Tailwind
+ * hide/off-canvas class — two elements sharing a role is not inherently wrong
+ * (a correctly-built responsive drawer looks exactly like this), so this only
+ * flags a duplicate that has NO such class on it at all.
+ *
+ * Deliberately STATIC (string/regex scan over the already-flattened source,
+ * the exact artifact the preview renders — mirrors the FLATTENED-PARSE gate
+ * in ready-gate.ts) rather than a headless render: resolving whether a
+ * Tailwind class ACTUALLY hides the element at a given breakpoint would
+ * require real CSS resolution (a genuinely flaky, render-dependent check this
+ * repo has deliberately moved away from — see the committee/aerosol gate
+ * history). Instead this approximates conservatively: does the extra
+ * instance carry ANY class/attribute from the known hide/off-canvas
+ * vocabulary at all? A real off-canvas drawer always uses at least one of
+ * these (that's the only way Tailwind expresses "hidden until toggled"), so
+ * this never false-flags a correctly-built drawer, and it exactly catches the
+ * #815 shape (zero such indicators present).
+ *
+ * Only meaningful with a files map / FILE-marker blob — same as
+ * findUndeclaredJsxComponents, this needs a single flattened view of "what
+ * will actually render together," which the caller is expected to pass
+ * pre-flattened (ready-gate.ts uses flattenMultiFile before calling this).
+ */
+
+/** data-agent-context landmark roles that must have exactly one VISIBLE instance. */
+const SINGULAR_LANDMARK_ROLES = ['sidebar', 'header', 'main-content', 'nav', 'footer']
+
+/**
+ * Reduce a data-agent-context value to its base landmark role, so
+ * "sidebar-mobile" / "sidebar_mobile" / "mobile-sidebar" / "sidebar" all
+ * group under "sidebar". Only matches a KNOWN role — an app-specific value
+ * like "revenue-chart" or "agent-42" never collides with anything.
+ */
+function baseLandmarkRole(contextValue: string): string | null {
+  const v = contextValue.toLowerCase()
+  const segments = v.split(/[-_]/)
+  for (const role of SINGULAR_LANDMARK_ROLES) {
+    if (v === role) return role
+    // "main-content" is itself two segments — match it as a whole two-segment
+    // pair before falling through to single-segment matching, so a value like
+    // "main-content-mobile" groups under "main-content" and a lone "content"
+    // segment elsewhere never falsely matches it.
+    if (role === 'main-content' && /(?:^|[-_])main[-_]content(?:[-_]|$)/.test(v)) return role
+    if (role === 'main-content') continue
+    // role as a whole hyphen/underscore-delimited segment, anywhere in the
+    // value (sidebar-mobile, mobile-sidebar, sidebar_desktop) — not a
+    // substring match (e.g. a value like "podcastheader" must not match
+    // "header", and "aside" must not match "sidebar").
+    if (segments.includes(role)) return role
+  }
+  return null
+}
+
+/**
+ * Real Tailwind hide / off-canvas indicators. Deliberately broad (breakpoint-
+ * prefixed `hidden`, `sr-only`, transform-based off-canvas, inert/aria-hidden,
+ * conditional-render markers) — this is a conservative allow-list: ANY of
+ * these present is enough to treat the element as a legitimate second
+ * instance, since a false "this is fine" (missing a real bug) is much
+ * cheaper here than a false "this is broken" (blocking a correctly-built
+ * responsive drawer from shipping at all).
+ */
+const HIDE_OR_OFFCANVAS_INDICATORS = [
+  /(?:^|[\s"'`])hidden(?:[\s"'`]|$)/, // bare `hidden` utility/attribute
+  /(?:^|[\s"'`])(?:sm|md|lg|xl|2xl):hidden(?:[\s"'`]|$)/, // breakpoint-hidden
+  /(?:^|[\s"'`])sr-only(?:[\s"'`]|$)/,
+  /-translate-x-(?:full|\[[^\]]+\])/, // slid off-canvas horizontally
+  /-translate-y-(?:full|\[[^\]]+\])/, // slid off-canvas vertically
+  /\btranslate-x-0\b[\s\S]{0,80}(?:md|lg|xl):-translate-x-full/, // toggled-open drawer whose CLOSED state is off-canvas at a breakpoint
+  /\baria-hidden\s*=\s*["']true["']/,
+  /\binert\b/,
+  /\bopacity-0\b/,
+  /\bpointer-events-none\b/,
+  /\bfixed\b[\s\S]{0,120}\bz-(?:40|50|\[)/, // overlay drawer pattern: fixed + high z-index
+]
+
+/** Does this opening tag's attributes carry ANY real hide/off-canvas signal? */
+function hasHideOrOffCanvasIndicator(openingTag: string): boolean {
+  return HIDE_OR_OFFCANVAS_INDICATORS.some((re) => re.test(openingTag))
+}
+
+/** One `data-agent-context="value"` match with its full opening tag for class inspection. */
+interface LandmarkMatch {
+  value: string
+  openingTag: string
+}
+
+/** Find every element carrying a data-agent-context attribute, with its full opening tag. */
+function findLandmarkElements(content: string): LandmarkMatch[] {
+  const out: LandmarkMatch[] = []
+  // Match a full opening tag `<Tag ...>` (non-greedy, no nested `<`/`>` inside
+  // attribute values we care about — generated JSX attributes don't nest raw
+  // angle brackets), then confirm it carries data-agent-context.
+  const tagRe = /<[A-Za-z][\w.]*(?:\s[^<>]*)?>/g
+  for (const m of content.matchAll(tagRe)) {
+    const tag = m[0]
+    const ctx = tag.match(/data-agent-context\s*=\s*(?:["']([^"']*)["']|\{['"`]([^'"`]*)['"`]\})/)
+    if (!ctx) continue
+    const value = ctx[1] ?? ctx[2] ?? ''
+    if (!value) continue
+    out.push({ value, openingTag: tag })
+  }
+  return out
+}
+
+/** One flagged duplicate-landmark problem. */
+export interface DuplicateLandmark {
+  /** The landmark role that appears more than once (e.g. 'sidebar'). */
+  role: string
+  /** The data-agent-context values found for this role, in source order. */
+  contextValues: string[]
+}
+
+/**
+ * THE DUPLICATE-LANDMARK DETECTOR. Given the flattened/concatenated source
+ * (the SAME artifact the preview renders, so duplicates across files are only
+ * evaluated once genuinely simultaneously renderable), returns the singular
+ * landmark roles that have more than one instance where at least one extra
+ * instance has NO hide/off-canvas indicator — i.e. would render permanently
+ * visible alongside the first. Empty array means either no duplicates, or
+ * every duplicate is a verifiably-hidden legitimate responsive variant.
+ *
+ * Never throws — pure detector, fail-open on its own failure like its
+ * siblings in this file.
+ */
+export function findDuplicateLandmarkElements(code: string): DuplicateLandmark[] {
+  try {
+    const src = code || ''
+    if (!src.trim()) return []
+
+    const landmarks = findLandmarkElements(src)
+    if (landmarks.length < 2) return []
+
+    // Group by base role, tracking whether EVERY instance beyond the first
+    // real (non-hidden) one lacks a hide/off-canvas indicator.
+    const byRole = new Map<string, LandmarkMatch[]>()
+    for (const lm of landmarks) {
+      const role = baseLandmarkRole(lm.value)
+      if (!role) continue
+      const list = byRole.get(role) ?? []
+      list.push(lm)
+      byRole.set(role, list)
+    }
+
+    const problems: DuplicateLandmark[] = []
+    for (const [role, instances] of byRole) {
+      if (instances.length < 2) continue
+      // How many instances render with no verifiable hide/off-canvas signal?
+      const visibleCount = instances.filter((i) => !hasHideOrOffCanvasIndicator(i.openingTag)).length
+      // Legitimate: exactly one instance is ever simultaneously visible (the
+      // rest are provably hidden — a correctly-built responsive drawer).
+      if (visibleCount > 1) {
+        problems.push({ role, contextValues: instances.map((i) => i.value) })
+      }
+    }
+    return problems
+  } catch {
+    // Pure detector must never block on its own failure — fail-open.
+    return []
+  }
+}
