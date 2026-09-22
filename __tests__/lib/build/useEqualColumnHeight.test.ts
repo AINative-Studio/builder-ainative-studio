@@ -1,14 +1,26 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 /**
- * Hook-level tests for useEqualColumnHeight.ts (#805) — the real structural
- * fix for the 4th recurrence of the Live dashboard's grey-region-on-scroll
- * bug (#484, #754, #803). `.m-live-grid` uses align-items:start, so the left
- * and middle columns are never equal height; whichever is shorter exposes
- * the grid's own grey divider background below it. This hook measures both
- * columns' real rendered height (scrollHeight) at runtime and writes the
- * taller one as a shared `--live-col-min-h` custom property both columns
- * read as a min-height floor.
+ * Hook-level tests for useEqualColumnHeight.ts (#805, extended by #842) —
+ * the real structural fix for the recurring Live dashboard grey-region-on-
+ * scroll bug (#484, #754, #803, #810/#812, #842). `.m-live-grid` uses
+ * align-items:start, so the left and middle columns are never equal height;
+ * whichever is shorter exposes the grid's own grey divider background below
+ * it. This hook measures both columns' real rendered height (scrollHeight)
+ * at runtime and writes the taller one as a shared `--live-col-min-h`
+ * custom property both columns read as a min-height floor.
+ *
+ * #842: the chat column also needs this shared var (its own sticky/height-
+ * capped box moved to an inner wrapper so the outer `.m-live-col-chat` can
+ * cover the full grid cell), but it's a SIBLING of the left/middle columns
+ * this hook measures, and CSS custom properties only inherit to
+ * descendants — so writing the var on the left/middle elements themselves
+ * (the original #805 behavior) never reaches it. The hook now accepts an
+ * optional `writeRef` pointing at a real ancestor of all three columns
+ * (Live.tsx passes the same `containerRef` useHeaderHeightVar already
+ * writes `--live-header-h` to); when omitted, it falls back to writing on
+ * the left column itself, preserving the original #805 behavior for any
+ * other caller.
  *
  * Follows the same test harness as useHeaderHeightVar.test.ts: this repo's
  * vitest config runs in the `node` environment (no jsdom), so React's
@@ -69,15 +81,18 @@ describe('useEqualColumnHeight (#805)', () => {
     delete (globalThis as any).ResizeObserver
   })
 
-  it('writes the TALLER column\'s scrollHeight to both columns as the shared min-height var', () => {
+  it('writes the TALLER column\'s scrollHeight to the left column as the shared min-height var (no writeRef given)', () => {
     const { leftColRef, middleColRef } = useEqualColumnHeight()
     leftColRef.current = fakeCol(600) as any
     middleColRef.current = fakeCol(1400) as any
 
     ;(globalThis as any).__triggerLayoutEffect(0)
 
+    // #842: with no writeRef, the var is written only on the left column
+    // (the fallback target) — it does NOT also land on the middle column's
+    // own inline style, since a real ancestor is what should carry it when
+    // other siblings (like the chat column) also need to read it.
     expect((leftColRef.current as any).__styleProps[LIVE_COL_MIN_HEIGHT_VAR]).toBe('1400px')
-    expect((middleColRef.current as any).__styleProps[LIVE_COL_MIN_HEIGHT_VAR]).toBe('1400px')
   })
 
   it('picks the left column\'s height when it is the taller one', () => {
@@ -88,7 +103,21 @@ describe('useEqualColumnHeight (#805)', () => {
     ;(globalThis as any).__triggerLayoutEffect(0)
 
     expect((leftColRef.current as any).__styleProps[LIVE_COL_MIN_HEIGHT_VAR]).toBe('2000px')
-    expect((middleColRef.current as any).__styleProps[LIVE_COL_MIN_HEIGHT_VAR]).toBe('2000px')
+  })
+
+  it('#842: writes the shared min-height var onto a passed writeRef (a real ancestor) instead of the columns themselves, so a sibling column can inherit it too', () => {
+    const writeRef = { current: fakeCol(0) }
+    const { leftColRef, middleColRef } = useEqualColumnHeight(undefined, writeRef as any)
+    leftColRef.current = fakeCol(600) as any
+    middleColRef.current = fakeCol(1400) as any
+
+    ;(globalThis as any).__triggerLayoutEffect(0)
+
+    expect((writeRef.current as any).__styleProps[LIVE_COL_MIN_HEIGHT_VAR]).toBe('1400px')
+    // Left/middle columns themselves are not written to directly anymore —
+    // only measured from.
+    expect((leftColRef.current as any).__styleProps[LIVE_COL_MIN_HEIGHT_VAR]).toBeUndefined()
+    expect((middleColRef.current as any).__styleProps[LIVE_COL_MIN_HEIGHT_VAR]).toBeUndefined()
   })
 
   it('resets minHeight before measuring, so a shrinking column (accordion collapse) can shrink the shared max back down', () => {
@@ -135,7 +164,6 @@ describe('useEqualColumnHeight (#805)', () => {
     capturedCallback?.()
 
     expect((left as any).__styleProps[LIVE_COL_MIN_HEIGHT_VAR]).toBe('1200px')
-    expect((middle as any).__styleProps[LIVE_COL_MIN_HEIGHT_VAR]).toBe('1200px')
   })
 
   it('disconnects the ResizeObserver on cleanup (no leaked observers across unmounts)', () => {

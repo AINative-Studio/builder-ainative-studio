@@ -28,6 +28,18 @@
  * pattern) and writes the taller of the two as a shared `min-height` custom
  * property both columns read — so neither can ever be shorter than the
  * other, regardless of what content either one gains in the future.
+ *
+ * #842: the chat column (`.m-live-col-chat`) now ALSO reads this shared
+ * `min-height` var (its own sticky/height-capped box moved to an inner
+ * wrapper, see modernist.css and Live.tsx) so it can cover the full grid
+ * cell too. But `--live-col-min-h` was previously written only as an
+ * INLINE style on the left/middle column elements themselves — CSS custom
+ * properties inherit to DESCENDANTS, not siblings, so the chat column
+ * (a sibling of both) never actually received it. Writing the var on an
+ * ANCESTOR of all three columns instead (`writeRef` — pass the same
+ * `containerRef` used by useHeaderHeightVar, which already wraps the whole
+ * `.m-live-grid`) makes it visible to every column via normal inheritance,
+ * with no change needed to the measurement logic itself.
  */
 import { useLayoutEffect, useRef, type RefObject } from 'react'
 
@@ -35,6 +47,7 @@ export const LIVE_COL_MIN_HEIGHT_VAR = '--live-col-min-h'
 
 export function useEqualColumnHeight<E extends HTMLElement = HTMLDivElement>(
   varName: string = LIVE_COL_MIN_HEIGHT_VAR,
+  writeRef?: RefObject<HTMLElement | null>,
 ): {
   leftColRef: RefObject<E | null>
   middleColRef: RefObject<E | null>
@@ -46,6 +59,10 @@ export function useEqualColumnHeight<E extends HTMLElement = HTMLDivElement>(
     const leftEl = leftColRef.current
     const middleEl = middleColRef.current
     if (!leftEl || !middleEl) return
+    // Falls back to the left column itself when no shared ancestor is
+    // given, preserving the original (left/middle-only) behavior for any
+    // other caller of this hook.
+    const target = writeRef?.current ?? leftEl
 
     const apply = () => {
       // Reset to auto first so a shrinking column (a collapsed accordion
@@ -55,8 +72,7 @@ export function useEqualColumnHeight<E extends HTMLElement = HTMLDivElement>(
       leftEl.style.minHeight = ''
       middleEl.style.minHeight = ''
       const h = Math.max(leftEl.scrollHeight, middleEl.scrollHeight)
-      leftEl.style.setProperty(varName, `${h}px`)
-      middleEl.style.setProperty(varName, `${h}px`)
+      target.style.setProperty(varName, `${h}px`)
     }
 
     apply()
@@ -68,7 +84,7 @@ export function useEqualColumnHeight<E extends HTMLElement = HTMLDivElement>(
     ro.observe(leftEl)
     ro.observe(middleEl)
     return () => ro.disconnect()
-  }, [varName])
+  }, [varName, writeRef])
 
   return { leftColRef, middleColRef }
 }
