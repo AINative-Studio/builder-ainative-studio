@@ -992,6 +992,15 @@
 /* On tablet, order the chat rail FIRST so the founder can talk to Cody immediately
    instead of scrolling past the whole systems stack. */
 .m-live-grid.is-tablet .m-live-col-chat { order: -1; }
+/* #844 follow-up: fills the flat, contentless space that used to trail below
+   the sticky chat card once a founder scrolled the (much taller) middle
+   column past it — real data (visitors/waitlist/nightshift/ZeroMemory
+   profile), reformatted as a compact summary, not a new fetch. */
+.m-glance-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.m-glance-list li { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.m-glance-k { font-size: 11px; color: var(--text-body-70); }
+.m-glance-v { font-size: 13px; color: var(--text-body-85, var(--text-body-70)); text-align: right; }
+.m-glance-facts { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: var(--text-body-70); line-height: 1.6; }
 .m-live-card { background: var(--color-bg); padding: 18px; }
 /* #485: primary weight for genuinely actionable/status cards (nightly run,
    auto-mode-running) vs the flat default every other card (settings, docs,

@@ -1542,6 +1542,51 @@ export function Live() {
             </div>
           </div>
           </div>
+          {/* #844 follow-up: the chat column must fill the full grid-cell
+              height (the #842 grey-gap fix), but the chat card itself is
+              short and sticky-pinned near the top — everything below it used
+              to be a long stretch of flat, contentless background once a
+              founder scrolled the (much taller) middle column past it. Fill
+              it with a real "at a glance" summary instead of leaving it
+              empty — every field here is data this screen already fetches
+              elsewhere (visitors/waitlist hero metrics, nightshift status,
+              the ZeroMemory profile), just not otherwise shown in this
+              column. */}
+          <div className="m-live-card m-live-glance" data-testid="live-at-a-glance">
+            <div className="m-mono m-live-card-h"><span className="m-glyph">◇</span> At a glance</div>
+            <ul className="m-glance-list">
+              <li>
+                <span className="m-mono m-glance-k">Status</span>
+                <span className="m-glance-v">{onWatch ? 'Cody is on watch' : 'Preview mode'}</span>
+              </li>
+              <li>
+                <span className="m-mono m-glance-k">Nightly loop</span>
+                <span className="m-glance-v">{nightshift?.hasRun ? 'ran overnight' : enrolled ? 'scheduled tonight' : 'not enrolled'}</span>
+              </li>
+              <li>
+                <span className="m-mono m-glance-k">Visitors</span>
+                <span className="m-glance-v">{visitors ?? '—'}</span>
+              </li>
+              <li>
+                <span className="m-mono m-glance-k">Waitlist</span>
+                <span className="m-glance-v">{waitlistCount ?? '—'}</span>
+              </li>
+              {trial?.trial && trial.trialExpiresAt && (
+                <li>
+                  <span className="m-mono m-glance-k">Trial</span>
+                  <span className="m-glance-v">{trial.trialExpired ? 'expired' : `ends ${new Date(trial.trialExpiresAt).toLocaleDateString()}`}</span>
+                </li>
+              )}
+            </ul>
+            {companyProfile?.facts && companyProfile.facts.length > 0 && (
+              <>
+                <p className="m-mono m-metric-note" style={{ marginTop: 12 }}>What Cody has learned</p>
+                <ul className="m-glance-facts">
+                  {companyProfile.facts.slice(0, 3).map((f, i) => <li key={i}>{f}</li>)}
+                </ul>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
