@@ -692,7 +692,14 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
     // — include it with NO isTSX/allExtensions opts (v8's preset-typescript
     // rejects those; JSX is handled by the react preset). This strips types so
     // they don't throw "Unexpected token" and render a blank Syntax Error.
-    var _compiled = Babel.transform(_src, {presets:[['react', {runtime:'classic'}], 'typescript'], parserOpts:{errorRecovery:true}}).code;
+    // filename: a real regression, confirmed live (every TSX preview platform-
+    // wide started rendering blank) -- the unpinned unpkg @babel/standalone
+    // build now REQUIRES filename to be set for the typescript preset to run
+    // at all ("[BABEL] unknown file: Preset ... requires a filename to be
+    // set"), where older versions didn't. The exact filename value is
+    // arbitrary (nothing reads it back) as long as it has a TSX-recognized
+    // extension.
+    var _compiled = Babel.transform(_src, {filename: 'app.tsx', presets:[['react', {runtime:'classic'}], 'typescript'], parserOpts:{errorRecovery:true}}).code;
     // Strip any remaining import/export statements that would crash in a script tag
     _compiled = _compiled.replace(/^import\\s+.*$/gm, '').replace(/^export\\s+(default\\s+)?/gm, '');
     // Inject compiled JS as a new script tag — runs in GLOBAL scope
@@ -781,7 +788,14 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
     <!-- React 18 from CDN -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Pinned (was unpinned -- caused a real, platform-wide regression: a
+         newer @babel/standalone release started requiring a filename option
+         for the typescript preset, which broke every TSX preview with no
+         warning until this exact version was traced down live). Also fixed
+         at the call site below with an explicit filename option, so an
+         unrelated future Babel change is defended twice, not just by
+         staying pinned forever. -->
+    <script src="https://unpkg.com/@babel/standalone@7.29.9/babel.min.js"></script>
     <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.min.js"></script>
     <script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
     <script src="https://unpkg.com/recharts@2.15.0/umd/Recharts.js"></script>

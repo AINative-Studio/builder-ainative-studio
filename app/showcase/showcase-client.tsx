@@ -45,7 +45,13 @@ function buildPreviewHtml(code: string): string {
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<!-- Pinned (was unpinned -- caused a real, platform-wide regression: a newer
+     @babel/standalone release started requiring a filename option for the
+     typescript preset, breaking every TSX preview with no warning until this
+     exact version was traced down live). Also fixed at the call site below
+     with an explicit filename option -- see app/api/preview/[id]/route.ts's
+     own fix for this same regression. -->
+<script src="https://unpkg.com/@babel/standalone@7.29.9/babel.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>body{font-family:Inter,system-ui,sans-serif;margin:0;overflow:hidden}*{box-sizing:border-box}</style>
 </head><body>
@@ -240,7 +246,14 @@ const cn = (...args) => args.filter(Boolean).join(' ');
 try {
   // Compile JSX with Babel, then execute with all globals available
   var _src = ${JSON.stringify(cleanCode)};
-  var _compiled = Babel.transform(_src, {presets:[['react',{runtime:'classic'}], 'typescript'], parserOpts:{errorRecovery:true}}).code;
+  // filename: a real regression, confirmed live -- the unpinned unpkg
+  // @babel/standalone build now REQUIRES filename for the typescript preset
+  // to run at all ("[BABEL] unknown file: Preset ... requires a filename to
+  // be set"), where older versions didn't. Value is arbitrary as long as it
+  // has a TSX-recognized extension. See app/api/preview/[id]/route.ts's own
+  // fix for this exact same regression (this showcase preview is a sibling
+  // Babel-in-browser compile path with the identical unpinned-CDN exposure).
+  var _compiled = Babel.transform(_src, {filename: 'app.tsx', presets:[['react',{runtime:'classic'}], 'typescript'], parserOpts:{errorRecovery:true}}).code;
   // Execute in a function scope with all component globals
   var _fn = new Function(
     'React','useState','useEffect','useCallback','useMemo','useRef','Fragment',
