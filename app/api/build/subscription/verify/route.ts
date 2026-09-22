@@ -12,6 +12,20 @@
  * account (tmp_ → PERMANENT) so it stops being a 72h throwaway. This is best-effort
  * and never fails the checkout confirmation.
  *
+ * #813: this is also the REAL paid-conversion follow-through point — a founder
+ * paying should not have to separately discover a manual "Provision cloud" or
+ * "Start Auto Mode" button. Once paid is verified we: (1) provision the
+ * company's dedicated Railway deploy service if it doesn't have one yet
+ * (#243/#389, see deployCompanyFromGitea below — this in turn is what unlocks
+ * the Secrets UI, #819), and (2) for loop-eligible plans, enroll + fire ONE
+ * immediate autonomous-loop dispatch so a real backlog task exists from day
+ * one rather than waiting on the next nightly cron tick. Both are gated by
+ * pure decision functions in lib/build/live-vs-planned.ts
+ * (shouldProvisionDeployService / shouldStartInitialRun) so "when do we act"
+ * is unit-testable without mocking Railway or the agent swarm, and both are
+ * idempotent — never a second billable service, never a duplicate enrollment
+ * or dispatch on a retried verify call.
+ *
  * Body: { session_id, slug? }
  * Returns: { ok, paid, plan, planName, enrolled, claimed? } | { error }
  *
@@ -36,6 +50,8 @@ import { BUILDER_WORKSPACE_ID } from '@/lib/build/instant-db'
 import { deriveOwnerKey } from '@/lib/build/chat-store'
 import { creditReferrerOnSubscribe } from '@/lib/build/referral'
 import { enrollCompany, isEnrolled } from '@/lib/build/loop-enrollment'
+import { runNightlyLoop } from '@/lib/build/autonomous-loop'
+import { shouldProvisionDeployService, shouldStartInitialRun } from '@/lib/build/live-vs-planned'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 // Monthly $ value per plan — the conversion value sent to Google Ads.
@@ -92,18 +108,31 @@ export async function POST(request: NextRequest) {
       // call here would double- (or N-times-) enroll the company, making the
       // nightly loop process it more than once per run. Best-effort — must never
       // block or fail checkout confirmation.
+      //
+      // #813: enrollment alone only writes a row — nothing ever fired the FIRST
+      // real dispatch (runNightlyLoop), so a freshly-enrolled company sat with a
+      // real enrollment but a genuinely EMPTY backlog until the next nightly cron
+      // tick (up to 24h away, or never, if the cron itself is misconfigured).
+      // Mirror what the manual "Start Auto Mode" button already does
+      // (app/api/build/auto-mode/route.ts POST start): enroll, THEN fire one
+      // immediate dispatch so a real backlog task exists from day one.
+      // shouldStartInitialRun() (lib/build/live-vs-planned.ts) is the pure gate —
+      // only fires on a genuinely paid, loop-eligible, NOT-already-enrolled
+      // company, so a retried verify call never double-dispatches.
       if (enrolled) {
         resolveApp(slug)
           .then(async (entry) => {
             if (!entry) return
-            if (await isEnrolled(slug)) return
+            const wasEnrolled = await isEnrolled(slug)
+            if (!shouldStartInitialRun({ paid: true, planUnlocksLoop: enrolled, alreadyEnrolled: wasEnrolled })) return
             const track = entry.track === 'company' ? 'company' : 'app'
-            return enrollCompany({
-              companyId: slug,
-              companyName: entry.name || slug,
-              track,
-              ownerKey: entry.ownerEmail ? entry.ownerEmail.trim().toLowerCase() : undefined,
-            })
+            const companyName = entry.name || slug
+            const ownerKey = entry.ownerEmail ? entry.ownerEmail.trim().toLowerCase() : undefined
+            await enrollCompany({ companyId: slug, companyName, track, ownerKey })
+            // Best-effort first dispatch — a swarm/API hiccup must never fail
+            // checkout confirmation; the enrollment above still lets the nightly
+            // cron pick the company up on its next tick either way.
+            await runNightlyLoop({ companyId: slug, companyName, track }).catch(() => {})
           })
           .catch(() => {})
       }
@@ -174,8 +203,13 @@ export async function POST(request: NextRequest) {
     if (slug && companyDeployEnabled()) {
       try {
         const entry = await resolveApp(slug).catch(() => null)
-        if (entry?.chatId) {
-          const alreadyProvisioned = Boolean(entry.railwayServiceId)
+        const alreadyProvisioned = Boolean(entry?.railwayServiceId)
+        const shouldProvision = shouldProvisionDeployService({
+          paid: true,
+          alreadyProvisioned,
+          hasChatId: Boolean(entry?.chatId),
+        })
+        if (entry && shouldProvision) {
           const dep = await deployCompanyFromGitea(entry.workspaceId || BUILDER_WORKSPACE_ID, slug, alreadyProvisioned)
           if (dep.ok && dep.serviceName) {
             await setAppRailwayService(slug, {
