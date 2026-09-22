@@ -43,8 +43,17 @@ const RESUME_KEY = 'ainative:domain-purchase-resume'
 // so the connect resumes after they authenticate and land back on Live (#53).
 const BYO_RESUME_KEY = 'ainative:domain-connect-resume'
 
-export function DomainModal({ brand, slug, keywords, open, onClose, onRequireAuth }: {
+export function DomainModal({ brand, slug, appSubReady, keywords, open, onClose, onRequireAuth }: {
   brand: string; slug?: string; keywords?: string; open: boolean; onClose: () => void
+  // #817: whether `slug` is a CONFIRMED real company slug, not just Live's
+  // best-effort companyId (which falls back to a slugified companyName before
+  // the real appSub is known — e.g. during a fresh deep-link mount). Optional
+  // (defaults to true) so other/older callers that always pass a real slug
+  // keep working unchanged; Live.tsx passes `!!state.appSub` explicitly. All
+  // of the BYO connect-domain calls below (which resolve a real company by
+  // exact slug match, #817) are gated on this so none of them can ever fire
+  // against a not-yet-confirmed fallback slug.
+  appSubReady?: boolean
   // Optional so Live compiles without wiring it. When provided, a signed-out Buy
   // routes into auth (e.g. dispatch GOTO_SCREEN 'signup'); when absent we fall back
   // to next-auth's hosted sign-in page. Either way the pick is persisted to resume.
@@ -52,6 +61,10 @@ export function DomainModal({ brand, slug, keywords, open, onClose, onRequireAut
 }) {
   const { status: sessionStatus } = useSession()
   const signedIn = sessionStatus === 'authenticated'
+  // #817: default true so callers that don't pass appSubReady (none currently
+  // do besides Live) behave exactly as before — only Live's explicit `false`
+  // during the deep-link restore window actually holds requests back.
+  const slugReady = appSubReady !== false
 
   const [loading, setLoading] = useState(false)
   const [configured, setConfigured] = useState(true)
@@ -240,6 +253,9 @@ export function DomainModal({ brand, slug, keywords, open, onClose, onRequireAut
   // if so, hydrate the BYO panel with its current status so re-opening shows it (#53).
   useEffect(() => {
     if (!open) return
+    // #817: never fire this slug-scoped lookup against a not-yet-confirmed
+    // slug — wait for the caller's real appSub to be known.
+    if (!slugReady) return
     const sl = slug || brand
     if (!sl) return
     let cancelled = false
@@ -255,7 +271,7 @@ export function DomainModal({ brand, slug, keywords, open, onClose, onRequireAut
       })
       .catch(() => {})
     return () => { cancelled = true }
-  }, [open, slug, brand])
+  }, [open, slug, brand, slugReady])
 
   // Poll the connect status while a BYO domain is pending/verifying. TLS issues
   // asynchronously (minutes → ~1h), so we keep polling and only flip to 'live' when
@@ -263,6 +279,9 @@ export function DomainModal({ brand, slug, keywords, open, onClose, onRequireAut
   useEffect(() => {
     if (!open || tab !== 'byo' || !byoDomain) return
     if (byoStatus !== 'pending' && byoStatus !== 'verifying') return
+    // #817: same guard as the re-open lookup above — don't poll a slug that
+    // isn't confirmed real yet.
+    if (!slugReady) return
     const sl = slug || brand
     let stop = false
     const poll = async () => {
@@ -278,7 +297,7 @@ export function DomainModal({ brand, slug, keywords, open, onClose, onRequireAut
     }
     const id = setInterval(poll, 15000)
     return () => { stop = true; clearInterval(id) }
-  }, [open, tab, byoDomain, byoStatus, slug, brand])
+  }, [open, tab, byoDomain, byoStatus, slug, brand, slugReady])
 
   // Route a signed-out founder into auth so the connect RESUMES on return. Mirrors
   // onBuy's auth-gating so the BYO Connect button never dead-ends with just a message
@@ -297,6 +316,15 @@ export function DomainModal({ brand, slug, keywords, open, onClose, onRequireAut
     if (!d || byoBusy) return
     // Anonymous founder → route to sign-in (with resume) instead of a dead message.
     if (!signedIn) { routeToAuthForByo(d); return }
+    // #817: this resolves the company by an EXACT slug match server-side — never
+    // send it a slug that isn't confirmed real yet (the fallback Live.tsx can
+    // still be computing during a fresh deep-link mount). In practice this
+    // window closes well before a founder can click Connect, but guard the
+    // click itself too rather than relying solely on the effects above.
+    if (!slugReady) {
+      setByoMsg('Still loading this company — try again in a moment.')
+      return
+    }
     setByoBusy(true); setByoMsg(null)
     try {
       const res = await fetch('/api/build/connect-domain', {
@@ -327,7 +355,7 @@ export function DomainModal({ brand, slug, keywords, open, onClose, onRequireAut
     } finally {
       setByoBusy(false)
     }
-  }, [byoInput, byoBusy, slug, brand, signedIn, routeToAuthForByo])
+  }, [byoInput, byoBusy, slug, brand, signedIn, slugReady, routeToAuthForByo])
 
   // Auto-fire the resumed BYO connect once the input is pre-filled from the stash
   // and we're authenticated (#53). Guarded so it runs a single time per resume.
