@@ -176,3 +176,70 @@ export function shouldStartInitialRun(input: InitialRunDecisionInput): boolean {
   if (input.alreadyEnrolled) return false
   return true
 }
+
+/** Input for {@link classifyBackfillCandidate} (#841). */
+export interface BackfillCandidateInput {
+  /**
+   * Core's plan lookup succeeded and gave an unambiguous answer. False means
+   * "we could not check" (timeout/5xx/ambiguous email match) — NEVER the same
+   * as "not paid". See lib/ainative/admin-plan-lookup.ts.
+   */
+  planVerified: boolean
+  /** The account is on a genuinely paid tier (isPaidTier over core's plan). */
+  paid: boolean
+  /** That paid tier unlocks the nightly loop — Business+ (planUnlocks().nightlyLoop). */
+  planUnlocksLoop: boolean
+  /** A real, enabled row already exists in builder_loop_enrollments. */
+  alreadyEnrolled: boolean
+  /** The registry row carries an ownerEmail we can attribute a plan to. */
+  hasOwnerEmail: boolean
+}
+
+/**
+ * Why a company was or wasn't picked up by the #841 backfill sweep. Every
+ * company in the registry lands in exactly one of these buckets, and the sweep
+ * reports all of them — a skip is never silent.
+ *
+ *  - 'enroll'            → genuinely paid, loop-eligible, not yet enrolled. ACT.
+ *  - 'already_enrolled'  → the fix already happened (or the founder self-served).
+ *  - 'paid_not_loop_tier'→ REALLY paying, but on a tier that does not include the
+ *                          nightly loop (Pro is rank 1; the loop is Business+).
+ *                          Deliberately NOT enrolled: doing so would hand every
+ *                          Pro customer billable swarm dispatches they never
+ *                          bought. Reported separately because this is a
+ *                          PRODUCT decision for a human, not a bug to auto-fix.
+ *  - 'not_paid'          → confirmed free/unpaid. Correctly out of scope.
+ *  - 'no_owner_email'    → anonymous build; there is no account to attribute.
+ *  - 'unverifiable'      → core could not be asked. Fails CLOSED (skip + log),
+ *                          so a core outage can never mass-enroll companies.
+ */
+export type BackfillDisposition =
+  | 'enroll'
+  | 'already_enrolled'
+  | 'paid_not_loop_tier'
+  | 'not_paid'
+  | 'no_owner_email'
+  | 'unverifiable'
+
+/**
+ * Decide what the #841 backfill should do with ONE company. Pure, so the
+ * safety rules that guard real customer dispatches are unit-testable without
+ * mocking ZeroDB, core, or the agent swarm.
+ *
+ * Order matters: the cheap structural skips come first, then the fail-closed
+ * verification gate, and only a fully-confirmed company can reach 'enroll'.
+ * `alreadyEnrolled` is checked before any paid reasoning so an already-correct
+ * company is inert no matter what core says — that is what makes re-running
+ * the sweep idempotent.
+ */
+export function classifyBackfillCandidate(
+  input: BackfillCandidateInput,
+): BackfillDisposition {
+  if (!input.hasOwnerEmail) return 'no_owner_email'
+  if (input.alreadyEnrolled) return 'already_enrolled'
+  // Fail closed: "couldn't verify" must never be read as "go ahead".
+  if (!input.planVerified) return 'unverifiable'
+  if (!input.paid) return 'not_paid'
+  if (!input.planUnlocksLoop) return 'paid_not_loop_tier'
+  return 'enroll'
+}
