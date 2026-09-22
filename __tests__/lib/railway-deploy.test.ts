@@ -225,6 +225,44 @@ describe('#835 — operational gate does not require a shared source', () => {
 })
 
 /**
+ * #835 — token precedence. Railway injects a PROJECT-scoped RAILWAY_TOKEN into
+ * every running container which is NOT authorized for these account-level
+ * queries ("Not Authorized", confirmed live); the ACCOUNT-scoped
+ * RAILWAY_API_TOKEN we set is. So RAILWAY_API_TOKEN must win.
+ */
+describe('#835 — Railway token precedence', () => {
+  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  })
+
+  it('prefers the account-scoped RAILWAY_API_TOKEN over the injected RAILWAY_TOKEN', async () => {
+    vi.stubEnv('RAILWAY_DEPLOY_ENABLED', 'true')
+    vi.stubEnv('RAILWAY_TOKEN', 'injected-project-token')
+    vi.stubEnv('RAILWAY_API_TOKEN', 'account-token')
+    vi.stubEnv('RAILWAY_COMPANY_PROJECT_ID', 'proj-123')
+    vi.stubEnv('RAILWAY_COMPANY_ENVIRONMENT_ID', 'env-123')
+
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(gql({ variables: {} }))
+    await listServiceVariables('svc-existing')
+
+    const headers = (fetchMock.mock.calls[0]?.[1] as any)?.headers || {}
+    expect(headers.Authorization).toBe('Bearer account-token')
+  })
+
+  it('falls back to RAILWAY_TOKEN when no API token is set', () => {
+    vi.stubEnv('RAILWAY_DEPLOY_ENABLED', 'true')
+    vi.stubEnv('RAILWAY_API_TOKEN', '')
+    vi.stubEnv('RAILWAY_TOKEN', 'only-token')
+    vi.stubEnv('RAILWAY_COMPANY_PROJECT_ID', 'proj-123')
+    expect(railwayApiConfigured()).toBe(true)
+  })
+})
+
+/**
  * #835 — the environment id the operational calls need. RAILWAY_COMPANY_ENVIRONMENT_ID
  * is not set in production, so without a fallback every call would fail
  * 'no_environment' even once the gate is fixed. Builder runs INSIDE the company

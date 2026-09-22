@@ -53,9 +53,24 @@
 const RAILWAY_API_URL =
   process.env.RAILWAY_API_URL || 'https://backboard.railway.com/graphql/v2'
 
-/** Service-account token for the Railway GraphQL API. */
+/**
+ * Service-account token for the Railway GraphQL API.
+ *
+ * RAILWAY_API_TOKEN FIRST (#835). Railway injects its own PROJECT-scoped
+ * RAILWAY_TOKEN into every running container — we never set it, and it is NOT
+ * authorized for the account-level queries this module makes: with it, the
+ * company `variables` query fails "Not Authorized" (confirmed live against the
+ * deployed service). The ACCOUNT-scoped RAILWAY_API_TOKEN we do set answers the
+ * same query successfully. This mirrors the token-type split company-deploy.ts
+ * already documents for `railway link`, where the project-scoped token likewise
+ * fails while the account-scoped one works.
+ *
+ * Preferring the injected token here meant that even with the gate fixed, every
+ * operational call failed at the API instead of at the gate. RAILWAY_TOKEN is
+ * kept as a fallback for envs that set it deliberately (and for tests).
+ */
 function railwayToken(): string {
-  return process.env.RAILWAY_TOKEN || process.env.RAILWAY_API_TOKEN || ''
+  return process.env.RAILWAY_API_TOKEN || process.env.RAILWAY_TOKEN || ''
 }
 
 /**
