@@ -31,6 +31,7 @@ import { DocumentsPanel } from '@/components/build/DocumentsPanel'
 import { MediaPanel } from '@/components/build/MediaPanel'
 import { AutoModePanel } from '@/components/build/AutoModePanel'
 import { GrowthPanel } from '@/components/build/GrowthPanel'
+import { WaitlistPanel } from '@/components/build/WaitlistPanel'
 import { WebsitePanel } from '@/components/build/WebsitePanel'
 import { FeedbackPulse } from '@/components/build/FeedbackPulse'
 import { ZeroInvoiceConnect } from '@/components/build/ZeroInvoiceConnect'
@@ -184,6 +185,18 @@ export function Live() {
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => { if (alive) setVisitors(typeof d?.visitors === 'number' ? d.visitors : 0) })
       .catch(() => { if (alive) setVisitors(0) })
+    return () => { alive = false }
+  }, [companyId])
+  // Real waitlist count (#844) — was a permanent, hardcoded 0 even though the
+  // hero form already correctly persisted every real signup; nothing ever
+  // read it back. Mirrors the visitors fetch above verbatim.
+  const [waitlistCount, setWaitlistCount] = useState<number | null>(null)
+  useEffect(() => {
+    let alive = true
+    fetch(`/api/build/waitlist?slug=${encodeURIComponent(companyId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (alive) setWaitlistCount(Array.isArray(d?.entries) ? d.entries.length : 0) })
+      .catch(() => { if (alive) setWaitlistCount(0) })
     return () => { alive = false }
   }, [companyId])
   const { status: sessionStatus } = useSession()
@@ -1033,15 +1046,19 @@ export function Live() {
           before any column content) — see #486. */}
       <div className="m-live-hero-metrics" data-testid="hero-metrics">
         <div className="m-metric-rows">
-          {/* Real visitor count (#483/#563) — the generated landing page's own
-              pageview beacon, read back from this company's ZeroDB project.
-              Waitlist/revenue remain an honest zero-state — no capture
-              mechanism exists yet for either (tracked separately). */}
+          {/* Real visitor + waitlist counts (#483/#563, #844) — the generated
+              landing page's own pageview beacon and hero waitlist form, read
+              back from this company's ZeroDB project. Revenue remains an
+              honest zero-state — no capture mechanism exists yet (tracked
+              separately). */}
           <div className="m-metric">
             <span className="m-metric-v m-artifact" data-testid="hero-metric-visitors">{visitors ?? '—'}</span>
             <span className="m-metric-l m-mono">visitors</span>
           </div>
-          <div className="m-metric"><span className="m-metric-v m-artifact">0</span><span className="m-metric-l m-mono">waitlist</span></div>
+          <div className="m-metric">
+            <span className="m-metric-v m-artifact" data-testid="hero-metric-waitlist">{waitlistCount ?? '—'}</span>
+            <span className="m-metric-l m-mono">waitlist</span>
+          </div>
           <div className="m-metric"><span className="m-metric-v m-artifact">$0</span><span className="m-metric-l m-mono">revenue</span></div>
         </div>
         <p className="m-mono m-metric-note">Live from day one — Cody grows these nightly.</p>
@@ -1264,6 +1281,11 @@ export function Live() {
               unlocked={gates.growth}
               onUpgrade={goUpgrade}
             />
+            {/* #844: the real signal growth activity is FOR — a founder asked
+                "where do I see who joined the waitlist" and there was no
+                answer. The hero form already persisted every real signup;
+                this is the missing read side. */}
+            <WaitlistPanel companyId={companyId} />
             <AutoModePanel
               companyId={companyId}
               companyName={company}
@@ -1519,6 +1541,51 @@ export function Live() {
               <button className="btn-primary" onClick={ask} disabled={asking || pendingAttachments.some((a) => a.uploading)}>Send</button>
             </div>
           </div>
+          </div>
+          {/* #844 follow-up: the chat column must fill the full grid-cell
+              height (the #842 grey-gap fix), but the chat card itself is
+              short and sticky-pinned near the top — everything below it used
+              to be a long stretch of flat, contentless background once a
+              founder scrolled the (much taller) middle column past it. Fill
+              it with a real "at a glance" summary instead of leaving it
+              empty — every field here is data this screen already fetches
+              elsewhere (visitors/waitlist hero metrics, nightshift status,
+              the ZeroMemory profile), just not otherwise shown in this
+              column. */}
+          <div className="m-live-card m-live-glance" data-testid="live-at-a-glance">
+            <div className="m-mono m-live-card-h"><span className="m-glyph">◇</span> At a glance</div>
+            <ul className="m-glance-list">
+              <li>
+                <span className="m-mono m-glance-k">Status</span>
+                <span className="m-glance-v">{onWatch ? 'Cody is on watch' : 'Preview mode'}</span>
+              </li>
+              <li>
+                <span className="m-mono m-glance-k">Nightly loop</span>
+                <span className="m-glance-v">{nightshift?.hasRun ? 'ran overnight' : enrolled ? 'scheduled tonight' : 'not enrolled'}</span>
+              </li>
+              <li>
+                <span className="m-mono m-glance-k">Visitors</span>
+                <span className="m-glance-v">{visitors ?? '—'}</span>
+              </li>
+              <li>
+                <span className="m-mono m-glance-k">Waitlist</span>
+                <span className="m-glance-v">{waitlistCount ?? '—'}</span>
+              </li>
+              {trial?.trial && trial.trialExpiresAt && (
+                <li>
+                  <span className="m-mono m-glance-k">Trial</span>
+                  <span className="m-glance-v">{trial.trialExpired ? 'expired' : `ends ${new Date(trial.trialExpiresAt).toLocaleDateString()}`}</span>
+                </li>
+              )}
+            </ul>
+            {companyProfile?.facts && companyProfile.facts.length > 0 && (
+              <>
+                <p className="m-mono m-metric-note" style={{ marginTop: 12 }}>What Cody has learned</p>
+                <ul className="m-glance-facts">
+                  {companyProfile.facts.slice(0, 3).map((f, i) => <li key={i}>{f}</li>)}
+                </ul>
+              </>
+            )}
           </div>
         </div>
       </div>

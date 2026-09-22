@@ -54,11 +54,14 @@ export default async function AppSubdirPage({ params }: Props) {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: '#fff' }}>
-      <header style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 18px', borderBottom: '2px solid #d7d3d3', background: '#151312', color: '#fff' }}>
-        <span style={{ width: 22, height: 22, background: color, display: 'inline-block' }} />
-        <strong style={{ fontFamily: 'Georgia, serif' }}>{entry.name || slug}</strong>
-        {entry.tagline && <span style={{ color: '#cfc9c4', fontSize: 13 }}>· {entry.tagline}</span>}
-        <a href="/build" style={{ marginLeft: 'auto', color: '#ec3013', fontFamily: 'ui-monospace, monospace', fontSize: 12, textDecoration: 'none' }}>
+      {/* #844 follow-up: this used to repeat the company name + tagline right
+          above the generated app's OWN header, which shows the same name/
+          tagline again — a real founder saw this as a "double navigation"
+          bar. This strip is pure platform attribution now (a visitor needs
+          to know they can build their own here, not a second brand bar) —
+          the generated app's own header is the only real nav. */}
+      <header style={{ display: 'flex', alignItems: 'center', padding: '4px 18px', borderBottom: '1px solid #2a2725', background: '#151312' }}>
+        <a href="/build" style={{ marginLeft: 'auto', color: '#ec3013', fontFamily: 'ui-monospace, monospace', fontSize: 11, textDecoration: 'none' }}>
           built on AINative ↗
         </a>
       </header>

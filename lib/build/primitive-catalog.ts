@@ -1504,7 +1504,17 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
     `        body: JSON.stringify({ email, joinedAt: new Date().toISOString() }) }).catch(() => {});\n` +
     `      setSubmitted(true); setEmail('') }\n` +
     `  Keep whatever success UI you'd naturally build (toast/alert/inline message) — only the persistence is\n` +
-    `  mandatory; best-effort, a failed save must never block the visitor-facing success state.\n\n` +
+    `  mandatory; best-effort, a failed save must never block the visitor-facing success state.\n` +
+    `- NO FAKE OR DEAD BUTTONS (real gap fix — found live on a real founder's landing page: a top-nav "Sign In"\n` +
+    `  button whose only handler was \`onClick={() => alert('Sign In')}\`, and a SECOND "Get Early Access" button\n` +
+    `  with no onClick/href at all): every button/link that LOOKS clickable MUST do something real when clicked.\n` +
+    `  - Do NOT add a "Sign In" / "Log In" button unless this app track has a real auth flow wired up — if it\n` +
+    `    doesn't, OMIT the button entirely rather than faking it with alert() or a no-op.\n` +
+    `  - Do NOT add any CTA-shaped button (Get Started, Get Early Access, Join Now, Sign Up, …) with no\n` +
+    `    onClick/href — either wire it to a real action (submit the waitlist form above, scroll to a real\n` +
+    `    section, persist via /api/db) or don't render it.\n` +
+    `  A visitor clicking a button that does nothing — or worse, gets a native browser alert() dialog — is a\n` +
+    `  worse experience than no button at all.\n\n` +
     `Rules:\n` +
     `1. Import \`@ainative/ai-kit-core\` (and its React bindings) for UI primitives — do NOT rebuild chat, tables, product cards, or dashboards from scratch when an AI Kit component exists.\n` +
     `2. Persist through /api/db (above) — this is MANDATORY when the app saves any records. The generated app runs in the browser, so it does NOT have AINATIVE_API_KEY; NEVER put a Bearer key or secret in app code, and NEVER fetch() a primitive's apiBase directly unless this block explicitly said to. Each primitive above tells you EXACTLY how to call it under "To use:" — follow that literally (same-origin proxy path and method, no Authorization header for proxied primitives, a Bearer key only for ZeroDB/Instant DB via /api/db). For any primitive listed above framed as "already provisioned for this company server-side," treat its capability as already set up by the platform — build the UI around it, don't call its API from generated code.\n` +

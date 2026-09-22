@@ -107,6 +107,57 @@ export function hasFakeLeadCaptureGap(code: string): boolean {
 }
 
 /**
+ * Real, live bug found on a real founder's live landing page (#844, agentive/
+ * amador@selfpreneur.com): a top-nav "Sign In" button whose ONLY handler was
+ * `onClick={() => alert('Sign In')}` — Cody-generated placeholder code that
+ * was never wired to a real auth flow. A real visitor clicking it got a
+ * native browser dialog and nothing else; they could not sign in at all. A
+ * SECOND button on the same page ("Get Early Access" in the top nav, distinct
+ * from the real, working hero-section waitlist form) had no onClick/action
+ * attribute whatsoever — clicking it did nothing, silently.
+ *
+ * These are the same class of defect as the lead-capture gap above (a
+ * CTA-shaped control that LOOKS interactive but has no real behavior behind
+ * it), just for buttons instead of forms. A button whose only handler body is
+ * a bare `alert(...)` call, or a button/anchor with CTA-shaped text
+ * ("sign in", "log in", "get started", "get early access", "join", "sign up")
+ * and no click handler / href at all, is always a defect — there is no
+ * legitimate reason for either shape in generated code.
+ */
+const CTA_BUTTON_TEXT = /sign\s*in|log\s*in|get\s*started|get\s*early\s*access|join\s*(now|waitlist)?|sign\s*up/i
+
+function hasAlertOnlyHandler(code: string): boolean {
+  // onClick={() => alert('...')} / onClick={function(){ alert('...') }} with
+  // nothing else in the handler body (a real handler calling alert() as part
+  // of a larger flow, e.g. after a real fetch(), is NOT flagged).
+  return /onClick=\{(?:\(\)\s*=>|function\s*\([^)]*\))\s*\{?\s*alert\([^)]*\)\s*;?\s*\}?\s*\}/.test(code)
+}
+
+function hasNoOpCtaButton(code: string): boolean {
+  // A <button>/<a> whose visible text matches a CTA phrase, scanned within a
+  // small window for an onClick/href — absent means genuinely no behavior.
+  const tagPattern = /<(button|a)\b([^>]*)>([^<]{0,60})<\/\1>/gi
+  let match: RegExpExecArray | null
+  while ((match = tagPattern.exec(code))) {
+    const [, , attrs, text] = match
+    if (!CTA_BUTTON_TEXT.test(text)) continue
+    const hasHandler = /onClick=|href=|data-agent-action=/.test(attrs)
+    if (!hasHandler) return true
+  }
+  return false
+}
+
+/**
+ * True when the app has a CTA-shaped button that either (a) fires nothing but
+ * a bare alert() or (b) has no click handler/href at all. Unconditional like
+ * visitor tracking and lead capture — any generated app can have a nav with
+ * Sign In / Get Started / Get Early Access buttons regardless of its idea.
+ */
+export function hasFakeButtonGap(code: string): boolean {
+  return hasAlertOnlyHandler(code) || hasNoOpCtaButton(code)
+}
+
+/**
  * Real, live bug found live (same investigation as #566): a "favorite this
  * gallery item" toggle on a HARDCODED array (`useState([{...}, {...}])`, an
  * item-level boolean flipped via `.map()` inside the setter) is genuine user
@@ -392,6 +443,9 @@ export interface ObedienceResult {
   /** Real bug (found live, 4/4 recent generations): an email/waitlist capture
    *  form that never persists what it captures. */
   fakeLeadCaptureGap: boolean
+  /** Real bug (found live, #844): a CTA-shaped button (Sign In, Get Early
+   *  Access, …) whose only behavior is a bare alert(), or no handler at all. */
+  fakeButtonGap: boolean
   /** Real bug (found live): a favorite/like/save toggle on a hardcoded array
    *  — genuine interaction silently lost on reload. */
   hardcodedToggleGap: boolean
@@ -446,6 +500,7 @@ export function checkObedience(
   const primitiveComplianceGaps = options?.landingPageOnly ? [] : findPrimitiveComplianceGaps(code, idea, role)
   const visitorTrackingGap = hasVisitorTrackingGap(code)
   const fakeLeadCaptureGap = hasFakeLeadCaptureGap(code)
+  const fakeButtonGap = hasFakeButtonGap(code)
   const hardcodedToggleGap = hasHardcodedToggleGap(code)
   const axLandmarkGap = hasAxLandmarkGap(code)
   const axManifestGap = hasAxManifestGap(code)
@@ -467,6 +522,9 @@ export function checkObedience(
   }
   if (fakeLeadCaptureGap) {
     reasons.push('Email/waitlist capture form never persists the email it collects — must save via /api/db.')
+  }
+  if (fakeButtonGap) {
+    reasons.push('A CTA-shaped button (Sign In, Get Early Access, …) fires only alert() or has no handler at all — wire it to a real action or remove it.')
   }
   if (visitorTrackingGap) {
     reasons.push('Landing/home page never fires the mandated visitor-tracking beacon (POST /api/db/visitors on mount).')
@@ -498,7 +556,7 @@ export function checkObedience(
   if (axComplexWidgetRoleGap) {
     reasons.push('A complex widget (tabs or a live status/loading region) is missing its ARIA role — agents/screen readers get no signal about its behavior.')
   }
-  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, visitorTrackingGap, fakeLeadCaptureGap, hardcodedToggleGap, axLandmarkGap, axManifestGap, axJsonLdGap, axSkipNavGap, axNavLabelGap, axSectionLabelGap, axAgentAttributesGap, axComplexWidgetRoleGap, reasons }
+  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, visitorTrackingGap, fakeLeadCaptureGap, fakeButtonGap, hardcodedToggleGap, axLandmarkGap, axManifestGap, axJsonLdGap, axSkipNavGap, axNavLabelGap, axSectionLabelGap, axAgentAttributesGap, axComplexWidgetRoleGap, reasons }
 }
 
 /**
@@ -663,6 +721,18 @@ export function buildObediencePrompt(idea: string, result: ObedienceResult): str
       '',
     )
   }
+  if (result.fakeButtonGap) {
+    parts.push(
+      '15) FIX YOUR FAKE/DEAD BUTTONS — a CTA-shaped button (Sign In, Get Started, Get Early Access, …) either',
+      '    fires only alert(...) or has no onClick/href at all. Every button must do something real:',
+      '    - "Sign In" with no real auth flow in this app: REMOVE the button rather than fake it.',
+      '    - A CTA that should submit data: wire it to the same /api/db proxy the rest of the app uses.',
+      '    - A CTA that should link somewhere real (e.g. scroll to the real waitlist form, navigate to a real',
+      '      section): give it a real onClick or href, not a placeholder.',
+      '    Never leave a button that looks clickable but does nothing when a real visitor clicks it.',
+      '',
+    )
+  }
   parts.push('Return the corrected full app. Do not remove features.')
   return parts.join('\n')
 }
@@ -690,6 +760,7 @@ export function narrowToPrimitiveComplianceOnly(gaps: string[]): ObedienceResult
     primitiveComplianceGaps: gaps,
     visitorTrackingGap: false,
     fakeLeadCaptureGap: false,
+    fakeButtonGap: false,
     hardcodedToggleGap: false,
     axLandmarkGap: false,
     axManifestGap: false,
