@@ -10,6 +10,8 @@ import {
   findMissingJsxImports,
   checkJsxImportsResolved,
   validateFileImports,
+  findUnwiredDuplicateSidebar,
+  checkNoUnwiredDuplicateSidebar,
 } from '@/lib/build/output-validator'
 
 /**
@@ -159,8 +161,8 @@ describe('validateOutput (aggregate)', () => {
     `
     const result = validateOutput(code)
     expect(result.passed).toBe(true)
-    expect(result.checks).toHaveLength(3)
-    expect(result.summary).toMatch(/All 3 output-validation checks passed/)
+    expect(result.checks).toHaveLength(4)
+    expect(result.summary).toMatch(/All 4 output-validation checks passed/)
   })
 
   it('never fabricates a pass — aggregates every real violation', () => {
@@ -174,7 +176,7 @@ describe('validateOutput (aggregate)', () => {
     expect(failedNames).toEqual(
       expect.arrayContaining(['no-unsafe-dangerous-html', 'no-secret-logging', 'single-h1'])
     )
-    expect(result.summary).toMatch(/3\/3 output-validation checks failed/)
+    expect(result.summary).toMatch(/3\/4 output-validation checks failed/)
   })
 
   it('is a pure function — same input always produces the same result', () => {
@@ -393,5 +395,110 @@ describe('validateFileImports (multi-file aggregate)', () => {
   it('is a pure function — same input always produces the same result', () => {
     const files = { '/src/App.tsx': `export default () => <Card />` }
     expect(validateFileImports(files)).toEqual(validateFileImports(files))
+  })
+})
+
+/**
+ * #815 — real, live-confirmed bug on /build/agentive-product: Cody generated
+ * TWO real <aside> elements — the correct desktop sidebar (data-agent-context
+ * ="sidebar") and a second "mobile" drawer (data-agent-context="sidebar-mobile")
+ * with className="translate-x-0" and nothing else — no fixed/absolute
+ * positioning, no -translate-x-full off-canvas default, no responsive
+ * breakpoint hide class. It rendered permanently visible at every viewport
+ * width, right next to the real sidebar. `document.querySelectorAll('aside').
+ * length === 2` confirmed via direct DOM query in the live preview iframe.
+ */
+describe('findUnwiredDuplicateSidebar', () => {
+  it('reproduces the exact #815 shape: mobile drawer with className="translate-x-0" and nothing else', () => {
+    const code = `
+      <aside data-agent-context="sidebar" className="flex flex-col bg-[#131726] text-white transition-all duration-300 sticky top-0 h-screen w-64">
+        Desktop nav
+      </aside>
+      <aside data-agent-context="sidebar-mobile" className="translate-x-0">
+        Mobile nav
+      </aside>
+    `
+    const findings = findUnwiredDuplicateSidebar(code)
+    expect(findings).toHaveLength(1)
+    expect(findings[0]).toMatch(/sidebar-mobile/)
+    expect(findings[0]).toMatch(/no off-canvas wiring/)
+  })
+
+  it('passes a correctly-wired mobile drawer: fixed + translate toggle + md:hidden', () => {
+    const code = `
+      <aside data-agent-context="sidebar" className="hidden md:flex md:flex-col bg-[#131726] text-white sticky top-0 h-screen w-64">
+        Desktop nav
+      </aside>
+      <aside
+        data-agent-context="sidebar-mobile"
+        className={\`fixed inset-y-0 left-0 z-50 w-64 bg-[#131726] text-white transition-transform duration-300 md:hidden \${mobileNavOpen ? 'translate-x-0' : '-translate-x-full'}\`}
+      >
+        Mobile nav
+      </aside>
+    `
+    expect(findUnwiredDuplicateSidebar(code)).toEqual([])
+  })
+
+  it('passes a responsive-only variant: fixed positioning + md:hidden with no translate class', () => {
+    const code = `
+      <aside data-agent-context="sidebar" className="hidden md:flex w-64">Desktop</aside>
+      <aside data-agent-context="sidebar-mobile" className="fixed inset-y-0 left-0 z-50 w-64 md:hidden">Mobile</aside>
+    `
+    expect(findUnwiredDuplicateSidebar(code)).toEqual([])
+  })
+
+  it('does not flag overlay positioning alone with no hide/show class at all', () => {
+    const code = `
+      <aside data-agent-context="sidebar" className="w-64">Desktop</aside>
+      <aside data-agent-context="sidebar-mobile" className="fixed inset-y-0 left-0 z-50 w-64">Mobile</aside>
+    `
+    const findings = findUnwiredDuplicateSidebar(code)
+    expect(findings).toHaveLength(1)
+    expect(findings[0]).toMatch(/sidebar-mobile/)
+  })
+
+  it('does not flag a single sidebar with no duplicate at all', () => {
+    const code = `<aside data-agent-context="sidebar" className="w-64 sticky top-0 h-screen">Nav</aside>`
+    expect(findUnwiredDuplicateSidebar(code)).toEqual([])
+  })
+
+  it('returns empty for code with no sidebar-role elements', () => {
+    const code = `<div className="flex"><main>Content</main></div>`
+    expect(findUnwiredDuplicateSidebar(code)).toEqual([])
+  })
+
+  it('never flags the primary "sidebar" role itself, even if unstyled', () => {
+    const code = `
+      <aside data-agent-context="sidebar" className="">Desktop</aside>
+      <aside data-agent-context="sidebar-mobile" className="fixed -translate-x-full md:hidden">Mobile</aside>
+    `
+    expect(findUnwiredDuplicateSidebar(code)).toEqual([])
+  })
+
+  it('is a pure function — same input always produces the same result', () => {
+    const code = `
+      <aside data-agent-context="sidebar" className="w-64">Desktop</aside>
+      <aside data-agent-context="sidebar-mobile" className="translate-x-0">Mobile</aside>
+    `
+    expect(findUnwiredDuplicateSidebar(code)).toEqual(findUnwiredDuplicateSidebar(code))
+  })
+})
+
+describe('checkNoUnwiredDuplicateSidebar', () => {
+  it('passes with just a name when there is no duplicate-sidebar bug', () => {
+    const code = `<aside data-agent-context="sidebar" className="w-64">Nav</aside>`
+    const result = checkNoUnwiredDuplicateSidebar(code)
+    expect(result).toEqual({ name: 'no-unwired-duplicate-sidebar', passed: true })
+  })
+
+  it('fails with reason and details referencing #815 on the exact bug shape', () => {
+    const code = `
+      <aside data-agent-context="sidebar" className="w-64">Desktop</aside>
+      <aside data-agent-context="sidebar-mobile" className="translate-x-0">Mobile</aside>
+    `
+    const result = checkNoUnwiredDuplicateSidebar(code)
+    expect(result.passed).toBe(false)
+    expect(result.reason).toMatch(/#815/)
+    expect(result.details).toHaveLength(1)
   })
 })
