@@ -143,14 +143,23 @@ export async function POST(request: NextRequest) {
   const idea = String(b?.idea || '').trim().slice(0, 3000)
   const slug = String(b?.slug || '').slice(0, 40)
   if (!idea || !slug) return Response.json({ error: 'idea and slug required' }, { status: 400 })
+  // Real gap: a generation that registered a chatId but whose CODE failed
+  // server-side validation (e.g. "Identifier 'X' has already been declared")
+  // serves a real, honest "this build needs another pass" error page with a
+  // real Regenerate button — but that button had nowhere to actually force a
+  // fresh attempt, since the cache check below always short-circuited back
+  // to the SAME broken chatId forever. `force` bypasses that cache so a
+  // genuinely failed generation can actually be retried.
+  const force = b?.force === true
 
   // Distinct slug from the landing page's own — never collides in
   // app-registry, and gives the product its own durable /build/{slug} entry.
   const productSlug = `${slug}-product`.slice(0, 40)
 
-  // Already built? return the existing chatId (don't regenerate).
+  // Already built? return the existing chatId (don't regenerate) — unless
+  // the caller explicitly asked to force a fresh attempt (see above).
   const existing = await resolveApp(productSlug).catch(() => null)
-  if (existing?.chatId) return Response.json({ chatId: existing.chatId, productSlug, status: 'cached' })
+  if (existing?.chatId && !force) return Response.json({ chatId: existing.chatId, productSlug, status: 'cached' })
 
   // Recover an orphaned prior attempt (registration-durability gap, #660):
   // a previous call's background task may have gotten a chatId, had its
