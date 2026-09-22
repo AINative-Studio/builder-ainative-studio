@@ -922,20 +922,18 @@
    exact same symptom by a different mechanism. Giving the column its own
    --color-bg background (matching every .m-live-card's own background)
    makes that stretched space read as intentional blank space, not a gap. */
-.m-live-col:not(.m-live-col-chat) { min-height: var(--live-col-min-h, 0); background: var(--color-bg); }
 /* #842 (5th recurrence of the grey-region-on-scroll bug — see the long
-   comment block below for the full mechanism): the chat column now ALSO
-   gets the full-cell-height background treatment, matching the other two
-   columns exactly. This is safe to apply unconditionally because — as of
-   this fix — `.m-live-col-chat` (this element) is no longer the sticky,
-   viewport-capped box itself; that responsibility moved to the
-   `.m-live-col-chat-sticky` wrapper INSIDE it (see Live.tsx). This outer
-   element is now a plain grid item like its siblings, so it can size to
-   the real grid-cell height (via the same runtime-measured
-   --live-col-min-h as the left/middle columns) and paint a real background
-   across that whole height — no more transparent box that only covers a
-   sticky-shrunk sliver of the cell. */
-.m-live-col.m-live-col-chat { min-height: var(--live-col-min-h, 0); background: var(--color-bg); }
+   comment block below for the full mechanism): this now applies to ALL
+   THREE columns, including the chat column — previously excluded via
+   `:not(.m-live-col-chat)` because that column was itself the sticky,
+   viewport-capped box, so a background here would only have covered its
+   own short sticky box, not the tall grid cell behind it. As of this fix,
+   `.m-live-col-chat` (this element) is no longer sticky or height-capped —
+   that responsibility moved to the `.m-live-col-chat-sticky` wrapper INSIDE
+   it (see Live.tsx) — so it's now a plain grid item like its siblings,
+   free to size to the real grid-cell height (via the same runtime-measured
+   --live-col-min-h) and paint a real background across that whole height. */
+.m-live-col { min-height: var(--live-col-min-h, 0); background: var(--color-bg); }
 
 /* Chat is the PRIMARY interaction with Cody — keep it above the fold (#dashboard-ux).
    The middle column is very tall (systems/tasks/infra/versions/website/docs/media/
