@@ -1,10 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   railwayDeployEnabled,
+  railwayApiConfigured,
   ensureCompanyService,
   findCompanyService,
   serviceNameForSlug,
   companyProjectId,
+  listServiceVariables,
+  listDeployments,
+  redeployDeployment,
+  redeployCurrent,
+  upsertServiceVariable,
+  deleteServiceVariable,
+  createCustomDomain,
+  getCustomDomainStatus,
 } from '@/lib/build/railway-deploy'
 import { deployRailwayService } from '@/lib/build/deploy'
 
@@ -31,6 +40,19 @@ function enableRailway() {
   vi.stubEnv('RAILWAY_COMPANY_PROJECT_ID', 'proj-123')
   vi.stubEnv('RAILWAY_COMPANY_ENVIRONMENT_ID', 'env-123')
   vi.stubEnv('RAILWAY_COMPANY_SOURCE_IMAGE', 'ghcr.io/ainative/company-runtime:latest')
+}
+
+/** Enabled + authenticated + scoped to a project, but NO shared source image/repo —
+ *  this is EXACTLY production's shape (#835): companies are provisioned by
+ *  deployCompanyFromGitea(), which needs no shared source, so neither
+ *  RAILWAY_COMPANY_SOURCE_IMAGE nor _REPO is ever set. */
+function enableRailwayWithoutSource() {
+  vi.stubEnv('RAILWAY_DEPLOY_ENABLED', 'true')
+  vi.stubEnv('RAILWAY_TOKEN', 'test-token')
+  vi.stubEnv('RAILWAY_COMPANY_PROJECT_ID', 'proj-123')
+  vi.stubEnv('RAILWAY_COMPANY_ENVIRONMENT_ID', 'env-123')
+  vi.stubEnv('RAILWAY_COMPANY_SOURCE_IMAGE', '')
+  vi.stubEnv('RAILWAY_COMPANY_SOURCE_REPO', '')
 }
 
 describe('railwayDeployEnabled — cost gate', () => {
@@ -62,7 +84,9 @@ describe('railwayDeployEnabled — cost gate', () => {
     vi.stubEnv('RAILWAY_DEPLOY_ENABLED', 'true')
     vi.stubEnv('RAILWAY_TOKEN', 'test-token')
     vi.stubEnv('RAILWAY_COMPANY_PROJECT_ID', 'proj-123')
-    // no SOURCE_IMAGE / SOURCE_REPO
+    // no SOURCE_IMAGE / SOURCE_REPO — nothing to create a service FROM, so the
+    // creation gate stays shut. (#835: the API gate is separately true here; see
+    // the '#835 — operational gate' block.)
     expect(railwayDeployEnabled()).toBe(false)
   })
 
@@ -74,6 +98,205 @@ describe('railwayDeployEnabled — cost gate', () => {
   it('defaults the company project to AINative Studio - Production', () => {
     vi.unstubAllEnvs()
     expect(companyProjectId()).toBe('47539617-ae34-4a52-a010-a88d875f347e')
+  })
+})
+
+/**
+ * #835 — operational functions must NOT require the shared-source config.
+ *
+ * The production bug: every company provisioned by the current per-company path
+ * (deployCompanyFromGitea) has a real railwayServiceId but there is no shared
+ * source image/repo configured, so railwayDeployEnabled() was false and EVERY
+ * operational call — secrets, domains, versions, redeploy — returned
+ * reason:'disabled' for a genuinely provisioned company. Only service CREATION
+ * needs a source; operating on an existing service does not.
+ */
+describe('#835 — operational gate does not require a shared source', () => {
+  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  })
+
+  it('railwayApiConfigured is TRUE with no image/repo (production shape)', () => {
+    enableRailwayWithoutSource()
+    expect(railwayApiConfigured()).toBe(true)
+    // …while the CREATION gate stays false, because there is nothing to create from.
+    expect(railwayDeployEnabled()).toBe(false)
+  })
+
+  it('railwayApiConfigured still requires the flag, a token and a project', () => {
+    enableRailwayWithoutSource()
+    vi.stubEnv('RAILWAY_DEPLOY_ENABLED', 'false')
+    expect(railwayApiConfigured()).toBe(false)
+
+    enableRailwayWithoutSource()
+    vi.stubEnv('RAILWAY_TOKEN', '')
+    vi.stubEnv('RAILWAY_API_TOKEN', '')
+    expect(railwayApiConfigured()).toBe(false)
+  })
+
+  it('is false by default (no env at all) — still inert, still cost-safe', () => {
+    expect(railwayApiConfigured()).toBe(false)
+  })
+
+  it('listServiceVariables REACHES Railway with no image/repo configured', async () => {
+    enableRailwayWithoutSource()
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(gql({ variables: { COMPANY_SLUG: 'triage', API_KEY: 'sk_x' } }))
+
+    const res = await listServiceVariables('svc-existing')
+    expect(res.ok).toBe(true)
+    expect(res.reason).toBeUndefined()
+    expect(res.variables).toEqual({ COMPANY_SLUG: 'triage', API_KEY: 'sk_x' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('listDeployments / redeployDeployment / redeployCurrent work with no source', async () => {
+    enableRailwayWithoutSource()
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValue(
+      gql({
+        deployments: { edges: [{ node: { id: 'dep-1', status: 'SUCCESS', createdAt: '2026-09-01T00:00:00Z', meta: {} } }] },
+        deploymentRedeploy: { id: 'dep-2', status: 'BUILDING' },
+      }),
+    )
+
+    const list = await listDeployments('svc-existing')
+    expect(list.ok).toBe(true)
+    expect(list.deployments?.[0]?.id).toBe('dep-1')
+
+    const redeploy = await redeployDeployment('dep-1')
+    expect(redeploy.ok).toBe(true)
+
+    const current = await redeployCurrent('svc-existing')
+    expect(current.ok).toBe(true)
+    expect(current.fromDeploymentId).toBe('dep-1')
+  })
+
+  it('variable upsert/delete reach Railway with no source configured', async () => {
+    enableRailwayWithoutSource()
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValue(gql({ variableUpsert: true, variableDelete: true }))
+
+    expect(await upsertServiceVariable('svc-existing', 'STRIPE_KEY', 'sk_live_x')).toEqual({ ok: true })
+    expect(await deleteServiceVariable('svc-existing', 'STRIPE_KEY')).toEqual({ ok: true })
+  })
+
+  it('custom-domain create/status work with no source configured (#53)', async () => {
+    enableRailwayWithoutSource()
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(
+      gql({ customDomainCreate: { id: 'cd-1', domain: 'myco.com', status: 'WAITING', dnsRecords: [] } }),
+    )
+    const created = await createCustomDomain('svc-existing', 'myco.com')
+    expect(created.ok).toBe(true)
+    expect(created.id).toBe('cd-1')
+
+    fetchMock.mockResolvedValueOnce(
+      gql({ domains: { customDomains: [{ id: 'cd-1', domain: 'myco.com', status: 'ACTIVE', certificateStatus: 'ISSUED', dnsRecords: [] }] } }),
+    )
+    const status = await getCustomDomainStatus('svc-existing', 'myco.com')
+    expect(status.ok).toBe(true)
+    expect(status.status).toBe('live')
+  })
+
+  it('ensureCompanyService ALONE still requires a source — no billable create without one', async () => {
+    enableRailwayWithoutSource()
+    const res = await ensureCompanyService('acme', 'zpid-1')
+    expect(res).toEqual({ ok: false, reason: 'disabled' })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('an UNPROVISIONED company still fails honestly — no false "available"', async () => {
+    enableRailwayWithoutSource()
+    // Empty serviceId: the company has no dedicated service. Must be a real
+    // no_service reason with NO Railway call — never a misleading ok:true.
+    expect(await listServiceVariables('')).toEqual({ ok: false, reason: 'no_service' })
+    expect(await listDeployments('')).toEqual({ ok: false, reason: 'no_service' })
+    expect(await redeployCurrent('')).toEqual({ ok: false, reason: 'no_service' })
+    expect(await upsertServiceVariable('', 'API_KEY', 'v')).toEqual({ ok: false, reason: 'no_service' })
+    expect(await deleteServiceVariable('', 'API_KEY')).toEqual({ ok: false, reason: 'no_service' })
+    expect(await createCustomDomain('', 'myco.com')).toEqual({ ok: false, reason: 'no_service' })
+    expect(await getCustomDomainStatus('', 'myco.com')).toEqual({ ok: false, reason: 'no_service' })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * #835 — the environment id the operational calls need. RAILWAY_COMPANY_ENVIRONMENT_ID
+ * is not set in production, so without a fallback every call would fail
+ * 'no_environment' even once the gate is fixed. Builder runs INSIDE the company
+ * project, so Railway's own injected RAILWAY_ENVIRONMENT_ID is that project's
+ * production environment — but only when builder's project IS the company project.
+ */
+describe('#835 — company environment id resolution', () => {
+  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  })
+
+  it("falls back to builder's own env id when it runs in the company project", async () => {
+    vi.stubEnv('RAILWAY_DEPLOY_ENABLED', 'true')
+    vi.stubEnv('RAILWAY_TOKEN', 'test-token')
+    vi.stubEnv('RAILWAY_COMPANY_PROJECT_ID', 'proj-123')
+    vi.stubEnv('RAILWAY_COMPANY_ENVIRONMENT_ID', '') // production's real shape
+    vi.stubEnv('RAILWAY_PROJECT_ID', 'proj-123')     // builder runs in that same project
+    vi.stubEnv('RAILWAY_ENVIRONMENT_ID', 'env-prod')
+
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(gql({ variables: { COMPANY_SLUG: 'triage' } }))
+
+    const res = await listServiceVariables('svc-existing')
+    expect(res.ok).toBe(true)
+    // The derived env id is what actually went to Railway.
+    const body = String(fetchMock.mock.calls[0]?.[1]?.body || '')
+    expect(body).toContain('env-prod')
+  })
+
+  it('an explicit RAILWAY_COMPANY_ENVIRONMENT_ID still wins', async () => {
+    vi.stubEnv('RAILWAY_DEPLOY_ENABLED', 'true')
+    vi.stubEnv('RAILWAY_TOKEN', 'test-token')
+    vi.stubEnv('RAILWAY_COMPANY_PROJECT_ID', 'proj-123')
+    vi.stubEnv('RAILWAY_COMPANY_ENVIRONMENT_ID', 'env-explicit')
+    vi.stubEnv('RAILWAY_PROJECT_ID', 'proj-123')
+    vi.stubEnv('RAILWAY_ENVIRONMENT_ID', 'env-prod')
+
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(gql({ variables: {} }))
+    await listServiceVariables('svc-existing')
+    const body = String(fetchMock.mock.calls[0]?.[1]?.body || '')
+    expect(body).toContain('env-explicit')
+    expect(body).not.toContain('env-prod')
+  })
+
+  it('does NOT borrow an env id from a DIFFERENT project', async () => {
+    vi.stubEnv('RAILWAY_DEPLOY_ENABLED', 'true')
+    vi.stubEnv('RAILWAY_TOKEN', 'test-token')
+    vi.stubEnv('RAILWAY_COMPANY_PROJECT_ID', 'proj-companies')
+    vi.stubEnv('RAILWAY_COMPANY_ENVIRONMENT_ID', '')
+    vi.stubEnv('RAILWAY_PROJECT_ID', 'proj-somewhere-else')
+    vi.stubEnv('RAILWAY_ENVIRONMENT_ID', 'env-unrelated')
+
+    const res = await listServiceVariables('svc-existing')
+    expect(res).toEqual({ ok: false, reason: 'no_environment' })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('stays empty off-Railway (local/test) — inert, unchanged behaviour', async () => {
+    vi.stubEnv('RAILWAY_DEPLOY_ENABLED', 'true')
+    vi.stubEnv('RAILWAY_TOKEN', 'test-token')
+    vi.stubEnv('RAILWAY_COMPANY_PROJECT_ID', 'proj-123')
+    vi.stubEnv('RAILWAY_COMPANY_ENVIRONMENT_ID', '')
+    vi.stubEnv('RAILWAY_PROJECT_ID', '')
+    vi.stubEnv('RAILWAY_ENVIRONMENT_ID', '')
+
+    const res = await listServiceVariables('svc-existing')
+    expect(res).toEqual({ ok: false, reason: 'no_environment' })
+    expect(fetch).not.toHaveBeenCalled()
   })
 })
 
