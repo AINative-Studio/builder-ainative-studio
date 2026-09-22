@@ -908,6 +908,15 @@
 /* Let the last card in each column absorb the extra height so the grid reads full
    and intentional on desktop — no empty white quadrants (#257). */
 .m-live-col > .m-live-card:last-child { flex: 1; }
+/* #805 (4th recurrence of the grey-region-on-scroll bug): .m-live-grid's
+   align-items:start means the left/middle columns are never equal height —
+   whichever is shorter exposes this grid's own grey divider background below
+   it once the founder scrolls past its end. useEqualColumnHeight measures
+   both columns' real rendered height at runtime and writes the taller one
+   here as a shared floor, mirroring --live-header-h's own runtime-measured
+   (not hardcoded) approach. Not applied to .m-live-col-chat — that column's
+   height is intentionally capped to the viewport instead (see below). */
+.m-live-col:not(.m-live-col-chat) { min-height: var(--live-col-min-h, 0); }
 
 /* Chat is the PRIMARY interaction with Cody — keep it above the fold (#dashboard-ux).
    The middle column is very tall (systems/tasks/infra/versions/website/docs/media/

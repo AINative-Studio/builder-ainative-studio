@@ -38,6 +38,7 @@ import { ZeroVoiceConnect } from '@/components/build/ZeroVoiceConnect'
 import { UPLOAD_ACCEPT_ATTR } from '@/lib/build/media-upload'
 import { DOCUMENT_UPLOAD_ACCEPT_ATTR } from '@/lib/build/document-upload'
 import { useHeaderHeightVar } from '@/lib/build/useHeaderHeightVar'
+import { useEqualColumnHeight } from '@/lib/build/useEqualColumnHeight'
 import { CollapsibleSection } from '@/components/build/CollapsibleSection'
 
 /** Display label for an active paid tier (#241). */
@@ -841,6 +842,13 @@ export function Live() {
   // which the sticky CSS reads instead of a literal px value.
   const { headerRef, containerRef } = useHeaderHeightVar<HTMLDivElement, HTMLDivElement>()
 
+  // #805 (4th recurrence of the grey-region-on-scroll bug, after #484/#754/
+  // #803): the left and middle columns of .m-live-grid size independently
+  // (align-items:start) and are never equal height, so whichever is shorter
+  // exposes the grid's own grey divider background below it. Measures both
+  // columns' real rendered height and forces them to a shared floor.
+  const { leftColRef, middleColRef } = useEqualColumnHeight<HTMLDivElement>()
+
   return (
     <div className="modernist m-live" data-track="company" style={brandStyle} ref={containerRef}>
       <div ref={headerRef}>
@@ -1036,7 +1044,7 @@ export function Live() {
 
       <div className={`m-live-grid ${state.tablet ? 'is-tablet' : ''}`}>
         {/* LEFT — Cody status + upsell */}
-        <div className="m-live-col">
+        <div className="m-live-col" ref={leftColRef}>
           {/* #485: primary weight — this is the one status card in column 1
               a founder should actually read first, vs onboarding/upsell below. */}
           <div className="m-live-card m-live-card--primary">
@@ -1214,14 +1222,15 @@ export function Live() {
         </div>
 
         {/* MIDDLE — tonight + infra. Each section is a real, independently
-            collapsible accordion (#803) so this column's rendered height
-            stays bounded/predictable — the structural fix for the recurring
-            grey-region-on-scroll bug (#484, #754, and again): the middle
-            column's height only ever grew as sections were added over time,
-            against the right column's fixed viewport-capped sticky height.
+            collapsible accordion (#803) so a founder can shrink this column's
+            rendered height on demand. This alone did not end the recurring
+            grey-region-on-scroll bug (#484, #754, #803, #805) — the middle
+            and left columns are still sized independently (align-items:start)
+            with no shared floor, so whichever is shorter exposes grey below
+            it; useEqualColumnHeight (above) is the actual structural fix.
             Sections default OPEN; a founder's collapse choice persists per
             project (lib/build/live-section-prefs.ts). */}
-        <div className="m-live-col">
+        <div className="m-live-col" ref={middleColRef}>
           {/* Real, stateful Tasks/Backlog (#55) — replaces the hardcoded tonight
               array. Persisted per {owner, company}; surfaces real swarm task_ids
               and the nightly loop's Recurring task. */}
