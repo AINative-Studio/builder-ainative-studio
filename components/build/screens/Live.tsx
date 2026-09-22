@@ -847,7 +847,13 @@ export function Live() {
   // (align-items:start) and are never equal height, so whichever is shorter
   // exposes the grid's own grey divider background below it. Measures both
   // columns' real rendered height and forces them to a shared floor.
-  const { leftColRef, middleColRef } = useEqualColumnHeight<HTMLDivElement>()
+  // #842 (5th recurrence): pass `containerRef` (the outer `.m-live` element,
+  // already used by useHeaderHeightVar above) as the write target so the
+  // shared --live-col-min-h var reaches the chat column too, via normal
+  // CSS custom-property inheritance from a real ancestor — writing it only
+  // on the left/middle columns (siblings of the chat column) never reached
+  // it. See useEqualColumnHeight's own comment for the full mechanism.
+  const { leftColRef, middleColRef } = useEqualColumnHeight<HTMLDivElement>(undefined, containerRef)
 
   return (
     <div className="modernist m-live" data-track="company" style={brandStyle} ref={containerRef}>
@@ -1231,6 +1237,48 @@ export function Live() {
             Sections default OPEN; a founder's collapse choice persists per
             project (lib/build/live-section-prefs.ts). */}
         <div className="m-live-col" ref={middleColRef}>
+          {/* Growth (#449, #822, #843) — everything that grows the company: a
+              real, funded Meta ad-test campaign, Auto Mode (#58, the paid
+              autonomous run), and auto-generated on-brand media (#54, Auto
+              Image/Auto Video + founder photo uploads). Leads the middle
+              column — a founder asked for Growth to be the FIRST accordion,
+              not the last, since it's the primary lever for validating
+              product/market fit (real signups/ad performance) rather than
+              just continuing to build. These three previously sat split
+              across two different accordion sections — Auto Image/Auto
+              Video/Auto Mode were structurally trapped inside "Website &
+              infrastructure" (behind a plain, non-collapsible "Growth" text
+              label that only looked like a section boundary), while the real
+              "Growth" CollapsibleSection held just the ad-campaign panel.
+              Paid-gated per-panel (any paid plan for ad campaigns, Business+
+              for Auto Mode) — does not touch #67 systems / #52 chat / #55
+              Tasks / #62 Versions / #64 Documents / #65 masthead / #51 video. */}
+          <CollapsibleSection slug={companyId} sectionId="growth" title="Growth">
+            {/* #843: automated ad testing leads the section — it's the highest-
+                leverage, most-actionable growth lever (a real, funded Meta
+                ad-test campaign) and a founder asked for it first, not buried
+                after media generation and Auto Mode. */}
+            <GrowthPanel
+              companyId={companyId}
+              companyName={company}
+              unlocked={gates.growth}
+              onUpgrade={goUpgrade}
+            />
+            <AutoModePanel
+              companyId={companyId}
+              companyName={company}
+              track={state.track}
+              unlocked={gates.nightlyLoop}
+              onUpgrade={goUpgrade}
+            />
+            <MediaPanel
+              companyId={companyId}
+              companyName={company}
+              brandTagline={state.brandTagline}
+              brandColor={state.brandColor}
+              idea={state.idea}
+            />
+          </CollapsibleSection>
           {/* Real, stateful Tasks/Backlog (#55) — replaces the hardcoded tonight
               array. Persisted per {owner, company}; surfaces real swarm task_ids
               and the nightly loop's Recurring task. */}
@@ -1330,50 +1378,26 @@ export function Live() {
               onExportUpgrade={goUpgrade}
             />
           </CollapsibleSection>
-          {/* Growth (#449, #822) — everything that grows the company: auto-
-              generated on-brand media (#54, Auto Image/Auto Video + founder
-              photo uploads), Auto Mode (#58, the paid autonomous run), and
-              funding a real Meta ad-test campaign. These three previously sat
-              split across two different accordion sections — Auto Image/
-              Auto Video/Auto Mode were structurally trapped inside "Website &
-              infrastructure" (behind a plain, non-collapsible "Growth" text
-              label that only looked like a section boundary), while the real
-              "Growth" CollapsibleSection held just the ad-campaign panel.
-              Confirmed live: a founder reported "currently only one feature
-              under the Growth section" — this was that exact split. Moved
-              here so every growth-lever panel is under the one real,
-              collapsible "Growth" section. Paid-gated per-panel (any paid
-              plan for ad campaigns, Business+ for Auto Mode) — does not touch
-              #67 systems / #52 chat / #55 Tasks / #62 Versions / #64
-              Documents / #65 masthead / #51 video. */}
-          <CollapsibleSection slug={companyId} sectionId="growth" title="Growth">
-            <MediaPanel
-              companyId={companyId}
-              companyName={company}
-              brandTagline={state.brandTagline}
-              brandColor={state.brandColor}
-              idea={state.idea}
-            />
-            <AutoModePanel
-              companyId={companyId}
-              companyName={company}
-              track={state.track}
-              unlocked={gates.nightlyLoop}
-              onUpgrade={goUpgrade}
-            />
-            <GrowthPanel
-              companyId={companyId}
-              companyName={company}
-              unlocked={gates.growth}
-              onUpgrade={goUpgrade}
-            />
-          </CollapsibleSection>
         </div>
 
-        {/* RIGHT — Ask Cody anything. Sticky rail (m-live-col-chat) so the chat —
-            the primary way to talk to Cody — stays above the fold as the founder
-            scrolls the tall middle column, and moves to the top on tablet. */}
+        {/* RIGHT — Ask Cody anything. #842 (5th recurrence of the grey-region-on-
+            scroll bug): `.m-live-col-chat` used to be BOTH the grid item (which
+            needs to span the full, tall grid-cell height so its background
+            covers the cell — the #810/#812 mechanism) AND the sticky-positioned,
+            viewport-capped box (which must stay SHORT and pinned near the top).
+            One element can't be both: giving the short sticky box a background
+            only paints its own shrunk box, not the full grid cell behind it, so
+            .m-live-grid's own grey divider background always showed through the
+            uncovered remainder — confirmed live (~2400px of exposed grey on a
+            real account with a tall header stack). Splitting the two roles across
+            two elements fixes this structurally: `.m-live-col-chat` (outer) is now
+            a plain, non-sticky grid item that gets the SAME min-height + background
+            treatment as the other two columns (#805/#810/#812) so it always covers
+            its full cell; `.m-live-col-chat-sticky` (inner) carries the sticky
+            positioning + viewport-relative height, so the chat card still stays
+            pinned near the top as the founder scrolls the tall middle column. */}
         <div className="m-live-col m-live-col-chat">
+          <div className="m-live-col-chat-sticky">
           <div className="m-live-card m-chat">
             <div className="m-mono m-live-card-h"><span className="m-glyph">◇</span> Ask Cody anything</div>
             {/* #608: "where we left off" handoff — a returning founder sees this
@@ -1494,6 +1518,7 @@ export function Live() {
               />
               <button className="btn-primary" onClick={ask} disabled={asking || pendingAttachments.some((a) => a.uploading)}>Send</button>
             </div>
+          </div>
           </div>
         </div>
       </div>

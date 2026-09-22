@@ -35,6 +35,8 @@ export const PRICING_TIERS = [
     featured: true,
     features: [
       'Cody builds your app + company',
+      'The nightly autonomous loop + real agent swarm',
+      'Sales pipeline · invoicing · helpdesk · voice',
       '1M tokens · 50K API calls · 10 GB storage',
       'Real generation (Claude Sonnet 4.5)',
       'Custom domain available',
@@ -48,8 +50,6 @@ export const PRICING_TIERS = [
     featured: false,
     features: [
       'Everything in Pro',
-      'The nightly autonomous loop',
-      'Sales pipeline · invoicing · helpdesk · voice',
       '5M tokens · 150K API calls · 50 GB storage',
     ],
   },

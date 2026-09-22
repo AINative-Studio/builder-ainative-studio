@@ -922,7 +922,18 @@
    exact same symptom by a different mechanism. Giving the column its own
    --color-bg background (matching every .m-live-card's own background)
    makes that stretched space read as intentional blank space, not a gap. */
-.m-live-col:not(.m-live-col-chat) { min-height: var(--live-col-min-h, 0); background: var(--color-bg); }
+/* #842 (5th recurrence of the grey-region-on-scroll bug — see the long
+   comment block below for the full mechanism): this now applies to ALL
+   THREE columns, including the chat column — previously excluded via
+   `:not(.m-live-col-chat)` because that column was itself the sticky,
+   viewport-capped box, so a background here would only have covered its
+   own short sticky box, not the tall grid cell behind it. As of this fix,
+   `.m-live-col-chat` (this element) is no longer sticky or height-capped —
+   that responsibility moved to the `.m-live-col-chat-sticky` wrapper INSIDE
+   it (see Live.tsx) — so it's now a plain grid item like its siblings,
+   free to size to the real grid-cell height (via the same runtime-measured
+   --live-col-min-h) and paint a real background across that whole height. */
+.m-live-col { min-height: var(--live-col-min-h, 0); background: var(--color-bg); }
 
 /* Chat is the PRIMARY interaction with Cody — keep it above the fold (#dashboard-ux).
    The middle column is very tall (systems/tasks/infra/versions/website/docs/media/
@@ -945,16 +956,39 @@
    happened), so `--live-header-h` is set at RUNTIME by useHeaderHeightVar
    (measuring the real header block via ResizeObserver, see Live.tsx) instead
    of guessed here. The `0px` fallback keeps this safe pre-hydration/SSR. */
-.m-live-col.m-live-col-chat {
+/* #842 (5th recurrence — root cause finally isolated): `.m-live-col-chat`
+   used to be BOTH the grid item (needs to span the FULL, tall grid-cell
+   height so a background can cover the cell — the #805/#810/#812
+   mechanism) AND the sticky, viewport-capped box (needs to stay SHORT and
+   pinned near the top). Those two requirements are fundamentally
+   incompatible on one element: confirmed live that a sticky element with
+   an explicit `height`/`max-height` always renders at that short height
+   REGARDLESS of `align-self: stretch` or a `min-height` floor — so no
+   amount of CSS tuning on a single element can make its own painted
+   background cover the full ~2750px cell while it's simultaneously capped
+   to a ~300px sticky box. That's why the earlier `max(calc(...), 420px)`
+   floor idea (tried and explicitly held back before this fix) could not
+   have worked: even a much larger floor only changes the sticky box's own
+   short height, never the ~2400px+ of grid cell behind it that a short
+   sticky box structurally cannot cover.
+   The fix: split the two roles across two elements. `.m-live-col-chat`
+   (this element, the grid item) is no longer sticky and no longer height-
+   capped — it behaves exactly like its siblings above. The sticky
+   positioning and viewport-relative height move to `.m-live-col-chat-sticky`,
+   a wrapper INSIDE it around just the chat card, so the chat still stays
+   pinned near the top of the viewport as the founder scrolls, while the
+   grid cell behind it is always fully covered by the outer element's own
+   background. */
+.m-live-col-chat-sticky {
   position: sticky;
   top: calc(var(--live-header-h, 0px) + 12px);
-  align-self: start;
   height: calc(100vh - var(--live-header-h, 0px) - 24px);
   max-height: calc(100vh - var(--live-header-h, 0px) - 24px);
 }
-.m-live-col.m-live-col-chat > .m-chat { min-height: 0; height: 100%; max-height: calc(100vh - var(--live-header-h, 0px) - 24px); }
-.m-live-grid.is-tablet .m-live-col-chat { position: static; height: auto; max-height: none; }
-.m-live-grid.is-tablet .m-live-col-chat > .m-chat { height: auto; max-height: none; }
+.m-live-col-chat-sticky > .m-chat { min-height: 0; height: 100%; max-height: calc(100vh - var(--live-header-h, 0px) - 24px); }
+.m-live-grid.is-tablet .m-live-col-chat { min-height: 0; }
+.m-live-grid.is-tablet .m-live-col-chat-sticky { position: static; height: auto; max-height: none; }
+.m-live-grid.is-tablet .m-live-col-chat-sticky > .m-chat { height: auto; max-height: none; }
 /* On tablet, order the chat rail FIRST so the founder can talk to Cody immediately
    instead of scrolling past the whole systems stack. */
 .m-live-grid.is-tablet .m-live-col-chat { order: -1; }
@@ -1619,8 +1653,18 @@
 @media (max-width: 900px) {
   .m-ws-body { grid-template-columns: 1fr; }
   .m-live-grid { grid-template-columns: 1fr; }
-  .m-live-col.m-live-col-chat { position: static; height: auto; max-height: none; order: -1; }
-  .m-live-col.m-live-col-chat > .m-chat { height: auto; max-height: none; }
+  /* #842: the sticky/height-capped box moved from .m-live-col-chat itself to
+     the inner .m-live-col-chat-sticky wrapper — the mobile-collapse reset
+     (no sticky, no viewport-relative height, chat flows to the top of the
+     single-column stack) needs to target that inner wrapper now. The outer
+     column itself also needs its min-height floor cleared here, otherwise a
+     tall desktop-measured --live-col-min-h would force extra blank space
+     into the single-column mobile stack (min-height doesn't apply per-cell
+     the same way once the grid is 1 column, but the var can still be
+     stale/oversized from a wider viewport at the moment of a resize). */
+  .m-live-col.m-live-col-chat { min-height: 0; order: -1; }
+  .m-live-col-chat-sticky { position: static; height: auto; max-height: none; }
+  .m-live-col-chat-sticky > .m-chat { height: auto; max-height: none; }
   .m-live-masthead { padding: 16px; }
   .m-live-funnel { padding: 10px 20px; }
   .m-center { padding: 28px 20px; }

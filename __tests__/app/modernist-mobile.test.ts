@@ -56,7 +56,11 @@ describe('modernist.css phone breakpoints (#334–#339)', () => {
   it('#336 — workspace + Live grids collapse via a real media query, not only .is-tablet', () => {
     expect(inBlock(900, /\.m-ws-body\s*\{[^}]*grid-template-columns:\s*1fr\b/)).toBe(true)
     expect(inBlock(900, /\.m-live-grid\s*\{[^}]*grid-template-columns:\s*1fr\b/)).toBe(true)
-    expect(inBlock(900, /\.m-live-col\.m-live-col-chat\s*\{[^}]*position:\s*static[^}]*order:\s*-1/)).toBe(true)
+    // #842: the sticky/height-capped reset moved from .m-live-col-chat
+    // itself to the inner .m-live-col-chat-sticky wrapper (see
+    // app/modernist.css); the outer column still carries `order: -1`.
+    expect(inBlock(900, /\.m-live-col-chat-sticky\s*\{[^}]*position:\s*static/)).toBe(true)
+    expect(inBlock(900, /\.m-live-col\.m-live-col-chat\s*\{[^}]*order:\s*-1/)).toBe(true)
     // The .is-tablet JS path stays for compat (build-context matchMedia dispatch).
     expect(css).toMatch(/\.m-ws-body\.is-tablet\s*\{\s*grid-template-columns:\s*1fr/)
     expect(css).toMatch(/\.m-live-grid\.is-tablet\s*\{\s*grid-template-columns:\s*1fr/)

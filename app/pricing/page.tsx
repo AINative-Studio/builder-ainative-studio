@@ -28,7 +28,7 @@ const ORG_URL = 'https://ainative.studio'
 export const metadata: Metadata = {
   title: 'Pricing — AINative Builder | Free, Pro $49/mo, Business $199/mo',
   description:
-    'AINative Builder pricing: start free, then Pro at $49/month (Cody builds your real app) or Business at $199/month (Cody runs your company 24/7). No revenue share. You own 100%.',
+    'AINative Builder pricing: start free, then Pro at $49/month — Cody builds your real app AND runs it 24/7 with the nightly autonomous loop and real agent swarm. Business ($199/mo) adds higher usage limits. No revenue share. You own 100%.',
   keywords: [
     'AINative Builder pricing',
     'Cody AI builder price',
@@ -41,7 +41,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'AINative Builder Pricing — Free, Pro $49/mo, Business $199/mo',
     description:
-      'Start free. Upgrade to Pro ($49/mo) for a real app Cody builds, or Business ($199/mo) for autonomous 24/7 operations. No revenue share.',
+      'Start free. Upgrade to Pro ($49/mo) for a real app Cody builds AND runs autonomously 24/7. Business ($199/mo) adds higher usage limits. No revenue share.',
     type: 'website',
   },
   alternates: {
@@ -58,11 +58,11 @@ const faqEntries = [
   },
   {
     q: 'What is included in the Pro plan?',
-    a: 'Pro ($49/month) includes real app generation by Cody (Claude Sonnet 4.5), 1M tokens, 50K API calls, 10 GB storage, and a custom domain option.',
+    a: 'Pro ($49/month) includes real app generation by Cody (Claude Sonnet 4.5), the nightly autonomous loop and real agent swarm — Cody runs your sales pipeline, invoicing, helpdesk, and voice — 1M tokens, 50K API calls, 10 GB storage, and a custom domain option.',
   },
   {
     q: 'What does the Business plan add?',
-    a: 'Business ($199/month) adds the nightly autonomous loop — Cody runs your sales pipeline, invoicing, helpdesk, and voice — plus 5M tokens, 150K API calls, and 50 GB storage.',
+    a: 'Business ($199/month) adds higher usage limits on top of everything in Pro — 5M tokens, 150K API calls, and 50 GB storage.',
   },
   {
     q: 'Do you take a revenue share?',
@@ -118,7 +118,7 @@ const productJsonLd = {
         priceCurrency: 'USD',
         unitCode: 'MON',
       },
-      description: 'Cody builds your real app and company. 1M tokens, 50K API calls, custom domain.',
+      description: 'Cody builds your real app and company, then runs it 24/7: nightly autonomous loop, real agent swarm, CRM, invoicing, helpdesk, voice. 1M tokens, 50K API calls, custom domain.',
       url: `${PAGE_URL}#pro`,
       availability: 'https://schema.org/InStock',
     },
@@ -134,7 +134,7 @@ const productJsonLd = {
         unitCode: 'MON',
       },
       description:
-        'Cody runs your company 24/7: autonomous loop, CRM, invoicing, helpdesk, voice. 5M tokens, 150K API calls.',
+        'Everything in Pro, with higher usage limits: 5M tokens, 150K API calls.',
       url: `${PAGE_URL}#business`,
       availability: 'https://schema.org/InStock',
     },
