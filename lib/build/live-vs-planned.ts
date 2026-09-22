@@ -104,3 +104,75 @@ export function countSystemStatuses(
   }
   return { live, planned, total: systems.length }
 }
+
+/**
+ * Paid-conversion follow-through decision (#813/#819/#821).
+ *
+ * Pure utility — no imports, no side effects, fully testable. Decides whether a
+ * VERIFIED-PAID checkout should trigger the two real follow-through actions a
+ * founder expects the moment they pay: (1) provisioning the company's dedicated
+ * deploy service, and (2) kicking off an initial autonomous-loop run so a real
+ * backlog exists from day one, instead of leaving the founder waiting on a
+ * manual "Start Auto Mode" click or the next nightly cron tick (which could be
+ * up to 24h away, or simply never happen if the cron itself is broken).
+ *
+ * Both decisions are idempotency gates, not the side-effecting calls themselves
+ * (see app/api/build/subscription/verify/route.ts, which calls the real
+ * deployCompanyFromGitea / runNightlyLoop functions guarded by these). Kept
+ * separate from those I/O functions so the "when do we act" logic is testable
+ * without mocking Railway or the agent swarm.
+ */
+
+/** Input for {@link shouldProvisionDeployService}. */
+export interface ProvisionDecisionInput {
+  /** Core's Stripe-session verification result — never trust an unverified paid flag. */
+  paid: boolean
+  /** The company already has a persisted railwayServiceId. */
+  alreadyProvisioned: boolean
+  /** The company has progressed far enough (a real chatId) to have deployable content. */
+  hasChatId: boolean
+}
+
+/**
+ * Whether THIS verify call should attempt to provision (or redeploy) the
+ * company's dedicated Railway service.
+ *
+ * Provisioning a NEW service only happens for a genuinely, verifiably paid
+ * company that has real content to deploy — never for a company still mid
+ * generation (no chatId yet). An already-provisioned company still returns
+ * true so the caller redeploys current content (idempotent — never a second
+ * billable service; see deployCompanyFromGitea's alreadyProvisioned contract).
+ */
+export function shouldProvisionDeployService(input: ProvisionDecisionInput): boolean {
+  if (!input.paid) return false
+  if (!input.hasChatId) return false
+  return true
+}
+
+/** Input for {@link shouldStartInitialRun}. */
+export interface InitialRunDecisionInput {
+  /** Core's Stripe-session verification result — never trust an unverified paid flag. */
+  paid: boolean
+  /** The verified plan unlocks the autonomous loop (Business+ — see planUnlocks().nightlyLoop). */
+  planUnlocksLoop: boolean
+  /** The company is ALREADY enrolled in the loop store (a prior verify call, or the manual "Hire the swarm" button). */
+  alreadyEnrolled: boolean
+}
+
+/**
+ * Whether THIS verify call should fire the initial autonomous-loop dispatch
+ * (enroll + one immediate runNightlyLoop, mirroring what the manual "Start Auto
+ * Mode" button already does) so a real backlog task exists from day one.
+ *
+ * Guarded by alreadyEnrolled to stay idempotent — a webhook/verify retry (page
+ * refresh, duplicate confirmation) must never enroll or dispatch twice; the
+ * loop-enrollment store has no dedup of its own (see loop-enrollment.ts),
+ * so this decision is the ONLY thing standing between a retried request and a
+ * company enrolled (and dispatched) N times.
+ */
+export function shouldStartInitialRun(input: InitialRunDecisionInput): boolean {
+  if (!input.paid) return false
+  if (!input.planUnlocksLoop) return false
+  if (input.alreadyEnrolled) return false
+  return true
+}

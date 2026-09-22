@@ -17,6 +17,8 @@ import {
   systemBadge,
   planFramingLine,
   countSystemStatuses,
+  shouldProvisionDeployService,
+  shouldStartInitialRun,
   STATUS_BADGE,
   type SystemStatus,
 } from '@/lib/build/live-vs-planned'
@@ -254,5 +256,59 @@ describe('SystemStatus type', () => {
     for (const s of states) {
       expect(STATUS_BADGE[s]).toBeDefined()
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// shouldProvisionDeployService (#813) — pure gate for the paid-conversion
+// Railway provisioning trigger.
+// ---------------------------------------------------------------------------
+
+describe('shouldProvisionDeployService', () => {
+  it('never provisions an unpaid company, even with a chatId', () => {
+    expect(shouldProvisionDeployService({ paid: false, alreadyProvisioned: false, hasChatId: true })).toBe(false)
+  })
+
+  it('never provisions a paid company with no chatId (not fully created yet)', () => {
+    expect(shouldProvisionDeployService({ paid: true, alreadyProvisioned: false, hasChatId: false })).toBe(false)
+  })
+
+  it('provisions a paid company with a chatId and no existing service', () => {
+    expect(shouldProvisionDeployService({ paid: true, alreadyProvisioned: false, hasChatId: true })).toBe(true)
+  })
+
+  it('still returns true for an ALREADY-provisioned company (caller redeploys, never double-provisions)', () => {
+    expect(shouldProvisionDeployService({ paid: true, alreadyProvisioned: true, hasChatId: true })).toBe(true)
+  })
+
+  it('unpaid + already-provisioned is still false (paid is the hard gate)', () => {
+    expect(shouldProvisionDeployService({ paid: false, alreadyProvisioned: true, hasChatId: true })).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// shouldStartInitialRun (#813) — pure gate for the paid-conversion initial
+// autonomous-loop dispatch, so a real backlog exists from day one.
+// ---------------------------------------------------------------------------
+
+describe('shouldStartInitialRun', () => {
+  it('never dispatches for an unpaid session', () => {
+    expect(shouldStartInitialRun({ paid: false, planUnlocksLoop: true, alreadyEnrolled: false })).toBe(false)
+  })
+
+  it('never dispatches for a plan that does not unlock the loop (below Business)', () => {
+    expect(shouldStartInitialRun({ paid: true, planUnlocksLoop: false, alreadyEnrolled: false })).toBe(false)
+  })
+
+  it('never dispatches for an already-enrolled company (idempotent — no double dispatch on retry)', () => {
+    expect(shouldStartInitialRun({ paid: true, planUnlocksLoop: true, alreadyEnrolled: true })).toBe(false)
+  })
+
+  it('dispatches for a paid, loop-eligible, not-yet-enrolled company', () => {
+    expect(shouldStartInitialRun({ paid: true, planUnlocksLoop: true, alreadyEnrolled: false })).toBe(true)
+  })
+
+  it('unpaid + not-yet-enrolled + loop-eligible is still false (paid is the hard gate)', () => {
+    expect(shouldStartInitialRun({ paid: false, planUnlocksLoop: true, alreadyEnrolled: false })).toBe(false)
   })
 })

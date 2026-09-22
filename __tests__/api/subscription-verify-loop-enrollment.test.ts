@@ -27,6 +27,7 @@ const h = vi.hoisted(() => ({
   resolveApp: vi.fn(),
   enrollCompany: vi.fn(async () => true),
   isEnrolled: vi.fn(async () => false),
+  runNightlyLoop: vi.fn(async () => ({ companyId: 'acme', briefing: null, taskId: 'task-1', status: 'dispatched', detail: 'task queued for the swarm' })),
 }))
 
 vi.mock('@/lib/build/company-deploy', () => ({
@@ -63,6 +64,9 @@ vi.mock('@/lib/build/loop-enrollment', () => ({
   enrollCompany: h.enrollCompany,
   isEnrolled: h.isEnrolled,
 }))
+vi.mock('@/lib/build/autonomous-loop', () => ({
+  runNightlyLoop: h.runNightlyLoop,
+}))
 vi.mock('@/app/(auth)/auth', () => ({ auth: vi.fn(async () => null) }))
 
 import { POST } from '@/app/api/build/subscription/verify/route'
@@ -98,6 +102,7 @@ describe('POST /api/build/subscription/verify — #464 real loop-enrollment brid
     h.resolveApp.mockReset()
     h.enrollCompany.mockReset().mockResolvedValue(true)
     h.isEnrolled.mockReset().mockResolvedValue(false)
+    h.runNightlyLoop.mockReset().mockResolvedValue({ companyId: 'acme', briefing: null, taskId: 'task-1', status: 'dispatched', detail: 'task queued for the swarm' })
   })
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -118,6 +123,61 @@ describe('POST /api/build/subscription/verify — #464 real loop-enrollment brid
       track: 'app',
       ownerKey: 'founder@acme.com', // normalized: trim + lowercase
     })
+  })
+
+  // #813 — a paid conversion must not just write an enrollment row; it must fire
+  // the SAME first-dispatch the manual "Start Auto Mode" button uses, so a real
+  // backlog task exists immediately rather than waiting on the next cron tick.
+  it('#813 — fires ONE immediate runNightlyLoop dispatch right after enrolling a freshly-enrolled Business+ company', async () => {
+    ;(fetch as any).mockResolvedValue(coreVerify('business'))
+    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', name: 'Acme', track: 'app', ownerEmail: 'Founder@Acme.com' })
+    await POST(req({ session_id: 'cs_test', slug: 'acme' }))
+    await flush()
+    expect(h.runNightlyLoop).toHaveBeenCalledTimes(1)
+    expect(h.runNightlyLoop).toHaveBeenCalledWith({ companyId: 'acme', companyName: 'Acme', track: 'app' })
+  })
+
+  it('#813 — does NOT fire a second dispatch for an ALREADY-enrolled company (idempotent on retry/refresh)', async () => {
+    h.isEnrolled.mockResolvedValue(true)
+    ;(fetch as any).mockResolvedValue(coreVerify('business'))
+    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', name: 'Acme' })
+    await POST(req({ session_id: 'cs_test', slug: 'acme' }))
+    await flush()
+    expect(h.enrollCompany).not.toHaveBeenCalled()
+    expect(h.runNightlyLoop).not.toHaveBeenCalled()
+  })
+
+  it('#813 — does NOT dispatch for a non-loop-eligible (pro) plan', async () => {
+    ;(fetch as any).mockResolvedValue(coreVerify('pro'))
+    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', name: 'Acme' })
+    await POST(req({ session_id: 'cs_test', slug: 'acme' }))
+    await flush()
+    expect(h.runNightlyLoop).not.toHaveBeenCalled()
+  })
+
+  it('#813 — never fails checkout confirmation when runNightlyLoop rejects (best-effort dispatch)', async () => {
+    h.runNightlyLoop.mockRejectedValue(new Error('agent swarm unavailable'))
+    ;(fetch as any).mockResolvedValue(coreVerify('business'))
+    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', name: 'Acme' })
+    const res = await POST(req({ session_id: 'cs_test', slug: 'acme' }))
+    const json = await res.json()
+    await flush()
+    expect(res.status).toBe(200)
+    expect(json.ok).toBe(true)
+    expect(json.paid).toBe(true)
+    // The enrollment itself must still have gone through even though the dispatch failed.
+    expect(h.enrollCompany).toHaveBeenCalled()
+  })
+
+  it('#813 — the enrollment write always happens BEFORE the dispatch is attempted', async () => {
+    const order: string[] = []
+    h.enrollCompany.mockImplementation(async () => { order.push('enroll'); return true })
+    h.runNightlyLoop.mockImplementation(async () => { order.push('dispatch'); return { companyId: 'acme', briefing: null, taskId: 't-1', status: 'dispatched', detail: '' } })
+    ;(fetch as any).mockResolvedValue(coreVerify('business'))
+    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', name: 'Acme' })
+    await POST(req({ session_id: 'cs_test', slug: 'acme' }))
+    await flush()
+    expect(order).toEqual(['enroll', 'dispatch'])
   })
 
   it('enrolls an Enterprise-plan company too', async () => {
@@ -206,6 +266,8 @@ describe('POST /api/build/subscription/verify — #464 real loop-enrollment brid
     expect(res.status).toBe(200)
     expect(json.ok).toBe(true)
     expect(json.paid).toBe(true)
+    // enrollCompany threw, so the dispatch that would follow it never ran.
+    expect(h.runNightlyLoop).not.toHaveBeenCalled()
   })
 
   it('never fails checkout confirmation when isEnrolled rejects', async () => {
