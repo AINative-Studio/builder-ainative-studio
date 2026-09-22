@@ -165,6 +165,42 @@ describe('POST /api/build/company-product', () => {
   })
 
   /**
+   * Real gap found live (2026-09-21): a generation that registered a chatId
+   * but whose CODE failed server-side validation (e.g. "Identifier 'X' has
+   * already been declared") serves a real, honest error page with a real
+   * "Regenerate this app" button — but the cache check above always
+   * short-circuited back to the SAME broken chatId forever, since it only
+   * checks whether the slug resolves at all, never whether that resolution
+   * is actually good code. `force: true` bypasses the cache so a genuinely
+   * failed generation can be retried instead of being permanently stuck.
+   */
+  it('force:true bypasses the cache and starts a fresh generation even though the slug already resolves', async () => {
+    h.resolveApp.mockResolvedValue({ chatId: 'broken-chat-id' })
+    h.resolvePendingProductGeneration.mockResolvedValue(null)
+    const fetchMock = vi.fn(async () => new Response(sseBody('fresh-chat-id'), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await POST(req({ idea: 'x', slug: 'meridian6', name: 'Meridian', force: true }))
+    const data = await res.json()
+
+    expect(data.status).toBe('processing')
+    expect(fetchMock).toHaveBeenCalled()
+  })
+
+  it('without force, the same already-resolving slug still returns cached and never calls chat-ws (unchanged default behavior)', async () => {
+    h.resolveApp.mockResolvedValue({ chatId: 'broken-chat-id' })
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await POST(req({ idea: 'x', slug: 'meridian7', name: 'Meridian' }))
+    const data = await res.json()
+
+    expect(data.status).toBe('cached')
+    expect(data.chatId).toBe('broken-chat-id')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  /**
    * Real bug found live (Meridian, 2026-09-10): the FIRST draft of this
    * route's prompt said "the ACTUAL PRODUCT" — the whole word 'product' —
    * which lib/prd-parser.ts's keyword detector (correctly, per #615's fix)

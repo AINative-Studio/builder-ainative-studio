@@ -131,10 +131,17 @@ export async function POST(request: NextRequest) {
   const idea = String(b?.idea || '').trim().slice(0, 3000)
   const slug = String(b?.slug || '').slice(0, 40)
   if (!idea || !slug) return Response.json({ error: 'idea and slug required' }, { status: 400 })
+  // Real gap (same as company-product/route.ts's own force param): a
+  // generation that registered a chatId but whose CODE failed server-side
+  // validation serves a real, honest error page with a real Regenerate
+  // button — that button had nowhere to force a fresh attempt, since this
+  // cache check always short-circuited back to the SAME broken chatId.
+  const force = b?.force === true
 
-  // Already built? return the existing chatId (don't regenerate).
+  // Already built? return the existing chatId (don't regenerate) — unless
+  // the caller explicitly asked to force a fresh attempt (see above).
   const existing = await resolveApp(slug).catch(() => null)
-  if (existing?.chatId) return Response.json({ chatId: existing.chatId, cached: true })
+  if (existing?.chatId && !force) return Response.json({ chatId: existing.chatId, cached: true })
 
   // Recover an orphaned prior attempt (same registration-durability gap
   // company-product/route.ts closed, #660 follow-up): a previous call's

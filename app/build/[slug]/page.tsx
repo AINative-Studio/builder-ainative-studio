@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { resolveApp } from '@/lib/build/app-registry'
+import { StandalonePreviewRegenerate } from '@/components/build/StandalonePreviewRegenerate'
 
 /**
  * /build/{slug} (#207 · FIX-2) — the REAL, shareable URL for a generated company
@@ -59,6 +60,7 @@ export default async function AppSubdirPage({ params }: Props) {
         style={{ flex: 1, border: 0, width: '100%' }}
         sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
       />
+      <StandalonePreviewRegenerate slug={slug} idea={entry.idea} track={entry.track} name={entry.name} />
     </div>
   )
 }
