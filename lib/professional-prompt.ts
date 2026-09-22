@@ -539,9 +539,37 @@ Section headers: centered, with Badge label above h2, subtitle below.
 - Section headers: centered, with badge/label above title, subtitle below
 
 ### Sidebar Dashboard Layout
-- Fixed sidebar (w-64) with dark bg-[THEME_DARK], white text, icon + label nav items
+- Desktop sidebar (w-64) with dark bg-[THEME_DARK], white text, icon + label nav items — \`hidden md:flex md:flex-col\` so it never renders on mobile.
 - Active item: bg-white/10 or bg-[THEME_PRIMARY] with rounded-lg
 - Main content area with top header bar and scrollable content
+
+**If you also build a SEPARATE mobile off-canvas drawer** (rather than reusing the same sidebar with responsive classes), it MUST be a real slide-in overlay, not a second static sidebar. A drawer that is always visible, or visible on desktop too, is a CRITICAL bug — it is the #1 real defect this rubric exists to prevent. Use exactly this pattern, wired to real \`useState\` open/close, not a hardcoded class:
+
+\`\`\`jsx
+const [mobileNavOpen, setMobileNavOpen] = useState(false)
+
+{/* Backdrop — only rendered/visible while open, sits below the drawer, above content */}
+<div
+  className={\`fixed inset-0 z-40 bg-black/50 transition-opacity duration-300 md:hidden \${mobileNavOpen ? 'opacity-100' : 'pointer-events-none opacity-0'}\`}
+  onClick={() => setMobileNavOpen(false)}
+  aria-hidden="true"
+/>
+
+{/* Mobile drawer — fixed + off-canvas by default + only exists below md */}
+<aside
+  data-agent-context="sidebar-mobile"
+  className={\`fixed inset-y-0 left-0 z-50 w-64 bg-[THEME_DARK] text-white transition-transform duration-300 md:hidden \${mobileNavOpen ? 'translate-x-0' : '-translate-x-full'}\`}
+>
+  {/* same nav items as the desktop sidebar */}
+</aside>
+\`\`\`
+
+Hard requirements for this pattern — every one of these, no exceptions:
+- \`fixed inset-y-0 left-0\` (or \`absolute\` inside a positioned ancestor) — it must overlay the page, never sit inline in the flex/grid flow like a second column.
+- Off-canvas by default via \`-translate-x-full\`, toggled to \`translate-x-0\` ONLY when real state says it's open. Never ship a drawer whose class is hardcoded to \`translate-x-0\`.
+- \`md:hidden\` (or the equivalent breakpoint used elsewhere in the app) on BOTH the drawer and its backdrop, so neither renders once the desktop sidebar takes over.
+- A backdrop/overlay (\`fixed inset-0\`) that closes the drawer on click, with a higher z-index than page content but lower than the drawer itself (e.g. backdrop \`z-40\`, drawer \`z-50\`).
+- The desktop sidebar carries \`hidden md:flex\` (or \`md:block\`) — the two sidebars are mutually exclusive by breakpoint, never both visible at once.
 
 ## FUNCTIONALITY REQUIREMENTS
 
@@ -647,6 +675,23 @@ AIKitSidebar + AIKitHeader → MetricCard grid with sparklines → Charts sectio
   </div>
 </nav>
 \`\`\`
+
+### WRONG: Mobile sidebar with no off-canvas classes (permanently visible, real regression)
+\`\`\`jsx
+<aside data-agent-context="sidebar" className="flex flex-col bg-[#131726] text-white sticky top-0 h-screen w-64">...</aside>
+<aside data-agent-context="sidebar-mobile" className="translate-x-0">...</aside>
+\`\`\`
+This renders TWO sidebars side by side at every viewport width. No \`fixed\`, no \`-translate-x-full\`, no \`md:hidden\` — the "mobile" one is just a second permanent sidebar.
+
+### CORRECT: Desktop sidebar hidden below md, mobile drawer off-canvas until opened
+\`\`\`jsx
+<aside data-agent-context="sidebar" className="hidden md:flex md:flex-col bg-[#131726] text-white sticky top-0 h-screen w-64">...</aside>
+<aside
+  data-agent-context="sidebar-mobile"
+  className={\`fixed inset-y-0 left-0 z-50 w-64 bg-[#131726] text-white transition-transform duration-300 md:hidden \${mobileNavOpen ? 'translate-x-0' : '-translate-x-full'}\`}
+>...</aside>
+\`\`\`
+See the full pattern (with backdrop + toggle state) under DESIGN PATTERNS → Sidebar Dashboard Layout above.
 
 ### WRONG: Flat, boring metric card
 \`\`\`jsx

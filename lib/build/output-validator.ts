@@ -25,6 +25,16 @@
  * imported). It runs on the full multi-file payload rather than a single code
  * string, so it is a separate exported function rather than a 4th entry in
  * validateOutput()'s single-string aggregate.
+ *
+ * #815 added a 5th rule (findUnwiredDuplicateSidebar): a generated app with
+ * more than one "sidebar"-rooted data-agent-context element (e.g. the
+ * desktop sidebar plus a hand-rolled mobile drawer) where a non-primary one
+ * has no real off-canvas wiring (fixed/absolute positioning + a
+ * -translate-x-full/hidden default) — so it renders permanently visible at
+ * every viewport width instead of being toggled open. This IS part of
+ * validateOutput()'s single-string aggregate (unlike rule 4) because the bug
+ * shape is plain-text detectable regardless of whether the payload ends up
+ * single-file or multi-file.
  */
 
 import type { StandardsCheck, StandardsResult } from './coding-standards'
@@ -158,6 +168,7 @@ export function validateOutput(code: string): StandardsResult {
     checkNoUnsafeDangerousHtml(code),
     checkNoSecretLogging(code),
     checkSingleH1(code),
+    checkNoUnwiredDuplicateSidebar(code),
   ]
 
   const passed = checks.every((c) => c.passed)
@@ -316,4 +327,98 @@ export function validateFileImports(files: Record<string, string>): StandardsRes
     : `${failedChecks.length}/${checks.length} file(s) use JSX components with no import: ${failedChecks.map((c) => c.name).join(', ')}`
 
   return { passed, checks, summary }
+}
+
+// ---------------------------------------------------------------------------
+// Rule 5 (#815): a hand-rolled mobile off-canvas sidebar that renders
+// permanently visible instead of being toggled off-canvas.
+//
+// Repro (real, /build/agentive-product): the generated app had TWO real
+// <aside> elements — the correct desktop sidebar (data-agent-context=
+// "sidebar") and a second, separate "mobile" drawer (data-agent-context=
+// "sidebar-mobile") with className="translate-x-0" and nothing else. No
+// `fixed`/`absolute` positioning, no `-translate-x-full` off-canvas default,
+// no responsive breakpoint hide class — so it rendered inline, at every
+// viewport width, right next to the real sidebar.
+//
+// This is a cheap, deterministic, string/regex scan — not a browser render,
+// not a visual diff (that's #816's job, a separate full visual-regression
+// system this rule does not attempt to replace). It only recognizes the
+// EXACT bug shape: a second element sharing a "sidebar" agent-context role
+// that has no hide/show wiring at all. Detection + visibility only, matching
+// #366/#384's precedent — never blocks or auto-fixes the response.
+// ---------------------------------------------------------------------------
+
+/** Matches a JSX opening tag carrying data-agent-context="sidebar*" and
+ *  captures the role suffix (empty for the plain "sidebar" tag, e.g.
+ *  "-mobile" for "sidebar-mobile") plus that tag's own className value.
+ *  Deliberately permissive about attribute order — data-agent-context and
+ *  className may appear in either order across generated code. */
+const SIDEBAR_TAG_PATTERN =
+  /<[A-Za-z][\w.]*[^>]*\bdata-agent-context=["']sidebar([\w-]*)["'][^>]*>/g
+
+/** Pulls the className value out of a single opening-tag match, whether it
+ *  comes before or after data-agent-context, as a plain string or a
+ *  template-literal expression (checked as raw text — no JS evaluation). */
+function extractClassNameFromTag(tag: string): string {
+  const m = tag.match(/\bclassName=(?:\{?\s*)["'`]([^"'`]*)["'`]/)
+  return m ? m[1] : ''
+}
+
+/** True when a className string carries real off-canvas wiring: fixed/absolute
+ *  positioning together with EITHER a translate-based hide-by-default class
+ *  or a responsive `hidden`/breakpoint-hidden class. A className built from a
+ *  template literal (e.g. \`... \${open ? 'translate-x-0' : '-translate-x-full'}\`)
+ *  still matches because we scan the raw captured text, not a resolved value —
+ *  the literal branch strings appear verbatim in the source. */
+function hasOffCanvasWiring(className: string): boolean {
+  const hasOverlayPositioning = /\b(fixed|absolute)\b/.test(className)
+  const hasTranslateHide = /-translate-x-full|-translate-x-\[|translateX\(-?100%?\)/.test(className)
+  const hasResponsiveHide = /\b(?:hidden\b|[a-z]{2,3}:hidden\b|[a-z]{2,3}:-translate-x-full)/.test(className)
+  return hasOverlayPositioning && (hasTranslateHide || hasResponsiveHide)
+}
+
+/**
+ * PURE. Scans a generated multi-file payload (concatenated) for a duplicate
+ * sidebar-role bug: more than one element carries a "sidebar"-rooted
+ * data-agent-context, and at least one of the non-primary ones has no real
+ * off-canvas wiring (see hasOffCanvasWiring). Returns a human-readable finding
+ * per offending tag, or [] when there's zero or one sidebar-role element, or
+ * every extra one is correctly wired.
+ */
+export function findUnwiredDuplicateSidebar(code: string): string[] {
+  const tags: { role: string; className: string; raw: string }[] = []
+  let m: RegExpExecArray | null
+  SIDEBAR_TAG_PATTERN.lastIndex = 0
+  while ((m = SIDEBAR_TAG_PATTERN.exec(code)) !== null) {
+    tags.push({ role: `sidebar${m[1]}`, className: extractClassNameFromTag(m[0]), raw: m[0].slice(0, 120) })
+  }
+  if (tags.length < 2) return []
+
+  const findings: string[] = []
+  for (const tag of tags) {
+    // The plain "sidebar" role is treated as the primary/desktop one and
+    // never flagged — only its secondary siblings (sidebar-mobile, etc.).
+    if (tag.role === 'sidebar') continue
+    if (!hasOffCanvasWiring(tag.className)) {
+      findings.push(
+        `data-agent-context="${tag.role}" has no off-canvas wiring (className: "${tag.className || '(empty)'}") — ` +
+        `needs fixed/absolute positioning + a -translate-x-full/hidden default`
+      )
+    }
+  }
+  return findings
+}
+
+export function checkNoUnwiredDuplicateSidebar(code: string): StandardsCheck {
+  const findings = findUnwiredDuplicateSidebar(code)
+  if (findings.length === 0) {
+    return { name: 'no-unwired-duplicate-sidebar', passed: true }
+  }
+  return {
+    name: 'no-unwired-duplicate-sidebar',
+    passed: false,
+    reason: `${findings.length} sidebar-role element(s) with no off-canvas hide/show wiring — renders permanently visible (#815)`,
+    details: findings,
+  }
 }
