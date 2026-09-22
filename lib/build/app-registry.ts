@@ -977,23 +977,41 @@ export async function resolveAppByZeroVoiceNumber(e164: string): Promise<AppEntr
 
 /** Resolve a slug to its most recent app entry (chatId + brand), or null. */
 export async function resolveApp(slug: string): Promise<AppEntry | null> {
-  if (!configured() || !slug) return null
+  const { entry } = await resolveAppVerified(slug)
+  return entry
+}
+
+/**
+ * Same resolution as `resolveApp`, plus whether this answer is a REAL,
+ * confirmed result vs. a fallback after an upstream failure (#807/#832).
+ *
+ * `resolveApp`'s plain `null` return is ambiguous by design for its many
+ * existing callers (most just want "do I have a usable entry or not," and
+ * failing closed to null/not-found is the right default for them). But a
+ * caller deciding whether to REDIRECT a founder away from a screen because
+ * their company "doesn't exist" needs to tell "confirmed gone" apart from
+ * "the registry fetch timed out" — collapsing those bounced a real,
+ * signed-in customer off their own company's dashboard back to the
+ * companies list on nothing more than a transient upstream hiccup.
+ */
+export async function resolveAppVerified(slug: string): Promise<{ entry: AppEntry | null; verified: boolean }> {
+  if (!configured() || !slug) return { entry: null, verified: true }
   try {
     const res = await fetch(`${rowsUrl()}?limit=1000`, { headers: headers(), signal: AbortSignal.timeout(20000) })
-    if (!res.ok) return null
+    if (!res.ok) return { entry: null, verified: false }
     const data = JSON.parse(await res.text())
     const rows = Array.isArray(data) ? data : data.data || data.rows || []
     const matches = rows
       .map((r: { row_data?: AppEntry }) => r.row_data)
       .filter((rd: AppEntry | undefined): rd is AppEntry => rd?.slug === slug && !!rd?.chatId)
-    if (!matches.length) return null
+    if (!matches.length) return { entry: null, verified: true }
     matches.sort((a: AppEntry, b: AppEntry) => (b.createdAt || '').localeCompare(a.createdAt || ''))
     const latest = matches[0]
     // A soft-deleted company (#57 Danger Zone) is treated as gone — the /build/{slug}
     // route then 404s honestly instead of serving a deleted app.
-    if (latest.lifecycleStatus === 'deleted') return null
-    return latest
+    if (latest.lifecycleStatus === 'deleted') return { entry: null, verified: true }
+    return { entry: latest, verified: true }
   } catch {
-    return null
+    return { entry: null, verified: false }
   }
 }
