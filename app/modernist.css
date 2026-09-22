@@ -915,8 +915,14 @@
    both columns' real rendered height at runtime and writes the taller one
    here as a shared floor, mirroring --live-header-h's own runtime-measured
    (not hardcoded) approach. Not applied to .m-live-col-chat — that column's
-   height is intentionally capped to the viewport instead (see below). */
-.m-live-col:not(.m-live-col-chat) { min-height: var(--live-col-min-h, 0); }
+   height is intentionally capped to the viewport instead (see below).
+   min-height alone stretches the column's BOX to the shared floor but the
+   newly-added empty space has no fill of its own — .m-live-grid's own
+   grey (--color-divider) background still shows through it, which is the
+   exact same symptom by a different mechanism. Giving the column its own
+   --color-bg background (matching every .m-live-card's own background)
+   makes that stretched space read as intentional blank space, not a gap. */
+.m-live-col:not(.m-live-col-chat) { min-height: var(--live-col-min-h, 0); background: var(--color-bg); }
 
 /* Chat is the PRIMARY interaction with Cody — keep it above the fold (#dashboard-ux).
    The middle column is very tall (systems/tasks/infra/versions/website/docs/media/
