@@ -14,11 +14,17 @@ import { buildMenuItems } from '@/components/build/AccountMenu'
  *
  * We test `buildMenuItems` (a pure function) for:
  *   1. Item count and ordering are stable.
- *   2. Guest state: only help is enabled; portfolio/credits/billing/settings carry
- *      a badge and are disabled; refer is disabled with badge; auth row = 'Sign up / Log in'.
- *   3. Authed state: portfolio/credits/billing/settings/help are enabled;
- *      refer is still disabled (not built); bottom row = 'Log out'.
+ *   2. Guest state: only help + refer are enabled; portfolio/credits/billing/
+ *      settings carry a badge and are disabled; auth row = 'Sign up / Log in'.
+ *   3. Authed state: portfolio/credits/billing/settings/help/refer are enabled;
+ *      bottom row = 'Log out'.
  *   4. Exact id/label/glyph contracts so routing never silently drifts.
+ *
+ * Real bug fixed (2026-09-21): `refer` stayed hardcoded disabled/"Soon" long
+ * after #59 shipped a real, working Refer & Earn screen with its own working
+ * entry point on Account.tsx — this menu item was simply never updated to
+ * match, so clicking it did nothing while the identical feature worked fine
+ * one click away. See components/build/AccountMenu.tsx's `refer` item comment.
  *
  * Coverage target ≥80% on components/build/AccountMenu.tsx (pure logic only —
  * React hooks / DOM interactions are covered by the Playwright E2E).
@@ -79,12 +85,12 @@ describe('buildMenuItems — guest session', () => {
     expect(menuById(true, 'help')!.enabled).toBe(true)
   })
 
-  it('refer is disabled for guest (not built yet)', () => {
-    expect(menuById(true, 'refer')!.enabled).toBe(false)
+  it('refer is enabled for guest (real, working screen — not gated on auth)', () => {
+    expect(menuById(true, 'refer')!.enabled).toBe(true)
   })
 
-  it('refer carries a badge for guest', () => {
-    expect(menuById(true, 'refer')!.badge).toBeTruthy()
+  it('refer carries no badge for guest (shipped, not "coming soon")', () => {
+    expect(menuById(true, 'refer')!.badge).toBeUndefined()
   })
 
   it('auth item label is "Sign up / Log in" for guest', () => {
@@ -131,12 +137,12 @@ describe('buildMenuItems — authenticated session', () => {
     expect(menuById(false, 'help')!.enabled).toBe(true)
   })
 
-  it('refer is disabled for authenticated user (feature not shipped)', () => {
-    expect(menuById(false, 'refer')!.enabled).toBe(false)
+  it('refer is enabled for authenticated user (real, shipped screen)', () => {
+    expect(menuById(false, 'refer')!.enabled).toBe(true)
   })
 
-  it('refer carries a badge for authenticated user', () => {
-    expect(menuById(false, 'refer')!.badge).toBeTruthy()
+  it('refer carries no badge for authenticated user', () => {
+    expect(menuById(false, 'refer')!.badge).toBeUndefined()
   })
 
   it('logout item label is "Log out" for authenticated user', () => {
@@ -192,5 +198,9 @@ describe('buildMenuItems — no spurious badges on authed items', () => {
 
   it('help has no badge', () => {
     expect(authedItems.find((i) => i.id === 'help')!.badge).toBeUndefined()
+  })
+
+  it('refer has no badge when authenticated', () => {
+    expect(authedItems.find((i) => i.id === 'refer')!.badge).toBeUndefined()
   })
 })

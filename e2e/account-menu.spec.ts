@@ -90,10 +90,16 @@ test.describe('#56 AccountMenu — guest surface', () => {
     await expect(page.getByTestId('account-menu-badge-help')).not.toBeAttached()
   })
 
-  test('refer item is present and shows "Soon" badge', async ({ page }) => {
+  test('refer item is present, enabled, and has no badge (real, shipped feature)', async ({ page }) => {
     await page.getByTestId('account-menu-trigger').click()
     await expect(page.getByTestId('account-menu-item-refer')).toBeVisible()
-    await expect(page.getByTestId('account-menu-badge-refer')).toBeVisible()
+    await expect(page.getByTestId('account-menu-badge-refer')).not.toBeAttached()
+  })
+
+  test('clicking Refer & Earn navigates to the real refer screen', async ({ page }) => {
+    await page.getByTestId('account-menu-trigger').click()
+    await page.getByTestId('account-menu-item-refer').click()
+    await expect(page).toHaveURL(/screen=refer/)
   })
 
   test('auth row shows "Sign up / Log in" for guest (not "Log out")', async ({ page }) => {

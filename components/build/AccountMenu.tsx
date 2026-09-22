@@ -7,11 +7,11 @@
  * chip with a proper popover menu. Items are auth-state-aware:
  *
  *   GUEST  → Portfolio (greyed, badge), Credits (greyed), Billing (greyed),
- *             Settings (greyed), Help & Docs, Refer & Earn (coming soon),
+ *             Settings (greyed), Help & Docs, Refer & Earn,
  *             divider, Sign up / Log in CTA.
  *
  *   AUTHED → Portfolio, Credits, Billing, Settings, Help & Docs,
- *             Refer & Earn (coming soon), divider, identity + Logout.
+ *             Refer & Earn, divider, identity + Logout.
  *
  * Design: matches .modernist chrome — no Lucide icons, typographic glyphs
  * only, 0-radius, 2px dividers, IBM Plex Mono for metadata.
@@ -88,9 +88,15 @@ export function buildMenuItems(isGuest: boolean): MenuItem[] {
       id: 'refer',
       label: 'Refer & Earn',
       glyph: '⇢',
-      // Coming soon (#59) — render but disabled for all users.
-      enabled: false,
-      badge: 'Soon',
+      // Real bug fixed: this stayed hardcoded disabled/"coming soon" long
+      // after #59 actually shipped a real, working Refer & Earn screen
+      // (components/build/screens/ReferEarn.tsx, a real /api/build/referral
+      // endpoint, real credit tracking) with its own working entry point on
+      // the Account page (Account.tsx's "Refer & Earn" card, Learn more →/
+      // Get your link →, both correctly dispatching GOTO_SCREEN('refer')).
+      // This menu item was simply never updated to match — clicking it did
+      // nothing while the identical feature worked fine one click away.
+      enabled: true,
     },
     // Sentinel: determines whether bottom row is Sign up/Log in or Logout.
     {
@@ -190,7 +196,7 @@ export function AccountMenu({ session, open, onOpenChange, onScreen }: AccountMe
         window.open('/help', '_blank', 'noopener,noreferrer')
         break
       case 'refer':
-        // #59 not yet built — disabled, badge="Soon", no-op.
+        onScreen('refer')
         break
       case 'auth':
         onScreen('signup')
