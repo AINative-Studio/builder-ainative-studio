@@ -45,7 +45,7 @@ function req(body: unknown) {
 beforeEach(() => {
   Object.values(h).forEach((fn) => fn.mockReset())
   h.auth.mockResolvedValue(null)
-  h.resolveActivePlan.mockResolvedValue({ plan: '' })
+  h.resolveActivePlan.mockResolvedValue({ plan: '', verified: true })
   h.loadChatWithFallback.mockResolvedValue([])
   h.saveExchange.mockResolvedValue(true)
   h.processConversation.mockResolvedValue(undefined)

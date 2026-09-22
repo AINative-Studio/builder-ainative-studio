@@ -319,7 +319,22 @@ export async function askCody(params: AskCodyParams): Promise<AskCodyResult | { 
 
   // Plan-aware voice (Greg Rose feedback 2026-08-27): resolve the account's real
   // plan BEFORE building the prompt/backlog framing — see gateInstructions below.
-  const { plan: activePlan } = await resolveActivePlan().catch(() => ({ plan: '' as const }))
+  //
+  // #830: this used to be `resolveActivePlan().catch(() => ({ plan: '' as const }))`,
+  // which discarded `verified` on ANY error and collapsed "couldn't confirm the
+  // plan this turn" into the exact same shape as "confirmed unpaid" — the precise
+  // anti-pattern lib/ainative/active-plan.ts's own doc comment warns every caller
+  // against (the #762 bug class: a transient core /auth/me hiccup silently
+  // demoted a real Enterprise founder). Confirmed live: a real paying customer
+  // (agentive) asked Cody "what's next" and was told "you're on the free tier."
+  // resolveActivePlan() already fails safely internally (auth() itself is
+  // caught, returning NONE with verified:true for "no session") — the extra
+  // .catch() here only fired on a genuine internal error, and threw away the
+  // one signal (`verified`) that exists specifically so callers don't do this.
+  // auto-mode/route.ts's checkGate() gets this right; mirrored here.
+  const { plan: activePlan, verified: planVerified } = await resolveActivePlan().catch(
+    () => ({ plan: '' as const, verified: false }),
+  )
   const paid = Boolean(activePlan)
 
   // #748: resolve the company's registry entry ONCE, unconditionally, so its
@@ -429,7 +444,17 @@ export async function askCody(params: AskCodyParams): Promise<AskCodyResult | { 
   // implement-task genuinely dispatched THIS turn) — Cody is only allowed to
   // claim "it's queued" when one of those actually happened just now.
   const realWorkHappenedThisTurn = editTriggered || Boolean(realWorkFiledThisTurn)
-  const gateInstructions = paid
+  const gateInstructions = !planVerified
+    ? // #830: the plan genuinely could not be confirmed this turn (a transient
+      // verification failure, not a real answer) — never assert either "paid"
+      // or "free tier" when this is true, since either claim has a real chance
+      // of being flatly wrong for whoever is actually asking.
+      `- Your account/plan status could not be confirmed for this message (a temporary check, not a real ` +
+      `answer about their account). Do NOT say they're on the free tier, do NOT say a plan is required, and do ` +
+      `NOT assume they're unpaid. If it's relevant to their question, say plan/billing status isn't available ` +
+      `right now and to check the Account screen or refresh — otherwise just answer their actual question and ` +
+      `don't bring up plans/billing at all.\n`
+    : paid
     ? `- The founder is on a PAID AINative plan (${activePlan}) — their plan already covers the build-out. ` +
       `NEVER pitch a subscription, plan, or purchase, and never say work is "gated". ` +
       (realWorkHappenedThisTurn
