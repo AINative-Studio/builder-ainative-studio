@@ -197,7 +197,7 @@ export function GrowthPanel({ companyId, companyName, unlocked, onUpgrade }: Pro
             ))}
           </select>
           <p className="m-mono m-metric-note" data-testid="growth-cost">
-            {unlocked ? 'included on your plan' : 'Paid plan required'}
+            {unlocked ? '(This Feature Is Included In Your Plan)' : 'Paid plan required'}
           </p>
           <button className="btn-primary" data-testid="growth-fund" onClick={fund} disabled={busy}>
             {busy ? 'Starting checkout…' : unlocked ? 'FUND TEST CAMPAIGN' : 'FUND TEST CAMPAIGN ↗'}
