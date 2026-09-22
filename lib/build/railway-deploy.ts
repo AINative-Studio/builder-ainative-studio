@@ -14,12 +14,24 @@
  *   3. serviceDomainCreate — mint a *.up.railway.app domain so the app is reachable
  *      and a custom domain (#240) can CNAME onto it.
  *
- * COST SAFETY: creating a service provisions real, billable hosting. This module
- * therefore NEVER runs unless (a) railwayDeployEnabled() is true (RAILWAY_DEPLOY_ENABLED
- * === 'true' AND a token AND the project id are configured) and (b) the caller has
- * already verified payment. The verify route + deploy.ts enforce (b); this module
- * enforces (a) so it is inert by default (e.g. in tests / preview envs), returning a
- * structured { ok:false, reason } instead of hitting the API.
+ * COST SAFETY: creating a service provisions real, billable hosting. That CREATION
+ * path therefore NEVER runs unless (a) railwayDeployEnabled() is true
+ * (RAILWAY_DEPLOY_ENABLED === 'true' AND a token AND the project id AND a shared
+ * source image/repo are configured) and (b) the caller has already verified payment.
+ * The verify route + deploy.ts enforce (b); this module enforces (a) so it is inert
+ * by default (e.g. in tests / preview envs), returning a structured
+ * { ok:false, reason } instead of hitting the API.
+ *
+ * TWO GATES, DELIBERATELY (#835): the functions below split into
+ *  - ensureCompanyService() — CREATES a new (billable) service from the shared
+ *    source, so it needs railwayDeployEnabled() including the image/repo check;
+ *  - everything else (variables, custom domains, deployment list/redeploy) — only
+ *    OPERATES on a service that ALREADY exists, whose id the caller resolved from
+ *    the app registry. Those need railwayApiConfigured() (flag + token + project id)
+ *    and nothing more. Requiring image/repo there was a real production bug: every
+ *    company provisioned by the current per-company path (deployCompanyFromGitea,
+ *    see the #381 note below) has a real service but no shared source configured,
+ *    so its Secrets/Domains/Versions panels all reported reason:'disabled'.
  *
  * IDEMPOTENCY: this module does NOT itself dedupe across calls (it has no persistence);
  * the app-registry is the source of truth. Callers MUST check for an existing
@@ -41,9 +53,24 @@
 const RAILWAY_API_URL =
   process.env.RAILWAY_API_URL || 'https://backboard.railway.com/graphql/v2'
 
-/** Service-account token for the Railway GraphQL API. */
+/**
+ * Service-account token for the Railway GraphQL API.
+ *
+ * RAILWAY_API_TOKEN FIRST (#835). Railway injects its own PROJECT-scoped
+ * RAILWAY_TOKEN into every running container — we never set it, and it is NOT
+ * authorized for the account-level queries this module makes: with it, the
+ * company `variables` query fails "Not Authorized" (confirmed live against the
+ * deployed service). The ACCOUNT-scoped RAILWAY_API_TOKEN we do set answers the
+ * same query successfully. This mirrors the token-type split company-deploy.ts
+ * already documents for `railway link`, where the project-scoped token likewise
+ * fails while the account-scoped one works.
+ *
+ * Preferring the injected token here meant that even with the gate fixed, every
+ * operational call failed at the API instead of at the gate. RAILWAY_TOKEN is
+ * kept as a fallback for envs that set it deliberately (and for tests).
+ */
 function railwayToken(): string {
-  return process.env.RAILWAY_TOKEN || process.env.RAILWAY_API_TOKEN || ''
+  return process.env.RAILWAY_API_TOKEN || process.env.RAILWAY_TOKEN || ''
 }
 
 /**
@@ -58,10 +85,32 @@ export function companyProjectId(): string {
   )
 }
 
-/** The environment (id) new company services deploy into. Defaults to the project's
- *  production environment; overridable via RAILWAY_COMPANY_ENVIRONMENT_ID. */
+/**
+ * The environment (id) company services live in. Overridable via
+ * RAILWAY_COMPANY_ENVIRONMENT_ID.
+ *
+ * Fallback (#835): Railway injects RAILWAY_ENVIRONMENT_ID into every service it
+ * runs — for builder, that is the production environment of the very project
+ * companyProjectId() names (builder and the per-company services are deployed
+ * side by side in "AINative Studio - Production", and company-deploy.ts links
+ * each company with `-p companyProjectId() -e production`). So when the explicit
+ * override is absent, builder's own environment id IS the company environment id,
+ * and deriving it beats returning '' and failing every call with 'no_environment'.
+ *
+ * Only used as a fallback so an explicit override still wins, and it stays empty
+ * off-Railway (tests, local dev), keeping those envs inert as before. GUARDED: an
+ * environment id only identifies an environment WITHIN its project, so the fallback
+ * applies only when builder's own project IS the company project — otherwise we'd
+ * be pointing company calls at an environment of an unrelated project.
+ */
 function companyEnvironmentId(): string {
-  return process.env.RAILWAY_COMPANY_ENVIRONMENT_ID || ''
+  const explicit = process.env.RAILWAY_COMPANY_ENVIRONMENT_ID
+  if (explicit) return explicit
+  const ownProject = process.env.RAILWAY_PROJECT_ID || ''
+  if (ownProject && ownProject === companyProjectId()) {
+    return process.env.RAILWAY_ENVIRONMENT_ID || ''
+  }
+  return ''
 }
 
 /**
@@ -79,16 +128,34 @@ function companySource(): { image?: string; repo?: string } {
 }
 
 /**
- * Whether per-company Railway provisioning is enabled + fully configured. When this
- * is false the module is INERT: ensureCompanyService() returns { ok:false,
- * reason:'disabled' } WITHOUT touching Railway, so no cost is ever incurred by
- * default (tests, preview, or any env that hasn't explicitly opted in + supplied a
- * source + token). This is the primary cost guard.
+ * Whether we can talk to Railway's API about services in the company project at
+ * all: explicitly enabled, a token to authenticate with, and a project to scope
+ * to. This is what every OPERATIONAL function needs — the ones that read or
+ * mutate a service the caller ALREADY resolved (its variables, its custom
+ * domains, its deployments). None of them create anything billable, and none of
+ * them need a source image/repo, because they never build a service from source.
+ *
+ * When false these functions stay INERT ({ ok:false, reason:'disabled' }, no
+ * fetch), so tests/preview/unconfigured envs never reach the real API.
  */
-export function railwayDeployEnabled(): boolean {
+export function railwayApiConfigured(): boolean {
   if (process.env.RAILWAY_DEPLOY_ENABLED !== 'true') return false
   if (!railwayToken()) return false
   if (!companyProjectId()) return false
+  return true
+}
+
+/**
+ * Whether per-company Railway provisioning from the SHARED SOURCE is enabled +
+ * fully configured — railwayApiConfigured() PLUS a source (image/repo) to create
+ * a new service from. This is the primary COST guard, and it gates exactly one
+ * function: ensureCompanyService(), the only one that creates a new (billable)
+ * service. Operational calls on an existing service use railwayApiConfigured()
+ * instead (#835) — they were previously blocked by this source check even though
+ * they have no source to need.
+ */
+export function railwayDeployEnabled(): boolean {
+  if (!railwayApiConfigured()) return false
   const src = companySource()
   if (!src.image && !src.repo) return false
   return true
@@ -152,7 +219,7 @@ export function serviceNameForSlug(slug: string): string {
  * serviceId or null. Best-effort: returns null on any error.
  */
 export async function findCompanyService(slug: string): Promise<string | null> {
-  if (!railwayDeployEnabled()) return null
+  if (!railwayApiConfigured()) return null
   const name = serviceNameForSlug(slug)
   try {
     const data = await railwayQuery(
@@ -397,7 +464,7 @@ export async function createCustomDomain(
   environmentId?: string,
   cnameTarget?: string,
 ): Promise<CustomDomainResult> {
-  if (!railwayDeployEnabled()) return { ok: false, reason: 'disabled' }
+  if (!railwayApiConfigured()) return { ok: false, reason: 'disabled' }
   if (!serviceId) return { ok: false, reason: 'no_service' }
   const host = normalizeDomain(domain)
   if (!isValidCustomDomain(host)) return { ok: false, reason: 'bad_domain' }
@@ -451,7 +518,7 @@ export async function getCustomDomainStatus(
   environmentId?: string,
   cnameTarget?: string,
 ): Promise<CustomDomainResult> {
-  if (!railwayDeployEnabled()) return { ok: false, reason: 'disabled' }
+  if (!railwayApiConfigured()) return { ok: false, reason: 'disabled' }
   if (!serviceId) return { ok: false, reason: 'no_service' }
   const host = normalizeDomain(domain)
   const envId = environmentId || companyEnvironmentId()
@@ -672,7 +739,7 @@ export async function listDeployments(
   environmentId?: string,
   limit = 20,
 ): Promise<DeploymentsResult> {
-  if (!railwayDeployEnabled()) return { ok: false, reason: 'disabled' }
+  if (!railwayApiConfigured()) return { ok: false, reason: 'disabled' }
   if (!serviceId) return { ok: false, reason: 'no_service' }
   const envId = environmentId || companyEnvironmentId()
   const cap = Math.min(Math.max(1, limit), 50)
@@ -725,7 +792,7 @@ export interface RedeployResult {
  *                      rollback target — see isRollbackTarget()).
  */
 export async function redeployDeployment(deploymentId: string): Promise<RedeployResult> {
-  if (!railwayDeployEnabled()) return { ok: false, reason: 'disabled' }
+  if (!railwayApiConfigured()) return { ok: false, reason: 'disabled' }
   if (!deploymentId) return { ok: false, reason: 'no_deployment' }
   try {
     const data = await railwayQuery(
@@ -848,7 +915,7 @@ export async function redeployCurrent(
   serviceId: string,
   environmentId?: string,
 ): Promise<RedeployCurrentResult> {
-  if (!railwayDeployEnabled()) return { ok: false, reason: 'disabled' }
+  if (!railwayApiConfigured()) return { ok: false, reason: 'disabled' }
   if (!serviceId) return { ok: false, reason: 'no_service' }
 
   const list = await listDeployments(serviceId, environmentId).catch(
@@ -959,7 +1026,7 @@ export async function listServiceVariables(
   serviceId: string,
   environmentId?: string,
 ): Promise<SecretsListResult> {
-  if (!railwayDeployEnabled()) return { ok: false, reason: 'disabled' }
+  if (!railwayApiConfigured()) return { ok: false, reason: 'disabled' }
   if (!serviceId) return { ok: false, reason: 'no_service' }
   const envId = environmentId || companyEnvironmentId()
   if (!envId) return { ok: false, reason: 'no_environment' }
@@ -996,7 +1063,7 @@ export async function upsertServiceVariable(
   value: string,
   environmentId?: string,
 ): Promise<SecretMutationResult> {
-  if (!railwayDeployEnabled()) return { ok: false, reason: 'disabled' }
+  if (!railwayApiConfigured()) return { ok: false, reason: 'disabled' }
   if (!serviceId) return { ok: false, reason: 'no_service' }
   if (!isValidSecretName(name)) return { ok: false, reason: 'bad_name' }
   if (isReservedSecretName(name)) return { ok: false, reason: 'reserved' }
@@ -1032,7 +1099,7 @@ export async function deleteServiceVariable(
   name: string,
   environmentId?: string,
 ): Promise<SecretMutationResult> {
-  if (!railwayDeployEnabled()) return { ok: false, reason: 'disabled' }
+  if (!railwayApiConfigured()) return { ok: false, reason: 'disabled' }
   if (!serviceId) return { ok: false, reason: 'no_service' }
   if (!isValidSecretName(name)) return { ok: false, reason: 'bad_name' }
   if (isReservedSecretName(name)) return { ok: false, reason: 'reserved' }

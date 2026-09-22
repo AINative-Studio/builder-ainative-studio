@@ -30,7 +30,7 @@ import {
   checkDnsRecord,
   normalizeDomain,
   isValidCustomDomain,
-  railwayDeployEnabled,
+  railwayApiConfigured,
   type CustomDomainResult,
 } from '@/lib/build/railway-deploy'
 
@@ -87,7 +87,7 @@ export async function POST(request: NextRequest) {
     })
   }
 
-  if (!railwayDeployEnabled()) {
+  if (!railwayApiConfigured()) {
     // Provisioning exists but the connect path isn't enabled in this env — honest, no fake success.
     return Response.json({ ok: false, reason: 'disabled', detail: 'Custom-domain connect is not enabled in this environment.' })
   }
@@ -127,7 +127,7 @@ export async function GET(request: NextRequest) {
   const svc = railwayServiceFor(app)
   if (!svc) return Response.json({ ok: false, needs_provision: true })
 
-  if (!railwayDeployEnabled()) {
+  if (!railwayApiConfigured()) {
     // Can't reach Railway — fall back to the last persisted status honestly.
     return Response.json({ ok: true, domain, status: app.byoDomainStatus || 'pending', connected: !!app.byoDomain })
   }

@@ -21,7 +21,7 @@ const h = vi.hoisted(() => ({
   createCustomDomain: vi.fn(),
   getCustomDomainStatus: vi.fn(),
   checkDnsRecord: vi.fn(async () => false),
-  railwayDeployEnabled: vi.fn(() => true),
+  railwayApiConfigured: vi.fn(() => true),
 }))
 
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
@@ -36,7 +36,7 @@ vi.mock('@/lib/build/railway-deploy', async () => {
     createCustomDomain: h.createCustomDomain,
     getCustomDomainStatus: h.getCustomDomainStatus,
     checkDnsRecord: h.checkDnsRecord,
-    railwayDeployEnabled: h.railwayDeployEnabled,
+    railwayApiConfigured: h.railwayApiConfigured,
   }
 })
 
@@ -56,7 +56,7 @@ const PROVISIONED = {
 
 beforeEach(() => {
   h.auth.mockResolvedValue({ accessToken: 'tok', user: { email: 'f@x.com' } })
-  h.railwayDeployEnabled.mockReturnValue(true)
+  h.railwayApiConfigured.mockReturnValue(true)
   h.checkDnsRecord.mockResolvedValue(false)
 })
 afterEach(() => vi.clearAllMocks())
