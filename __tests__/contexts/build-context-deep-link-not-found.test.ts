@@ -39,4 +39,24 @@ describe('isDeepLinkCompanyNotFound', () => {
   it('fails open (does not flag) on a network/parse failure — never wrongly tells a founder their real company is missing', () => {
     expect(isDeepLinkCompanyNotFound(null)).toBe(false)
   })
+
+  // #807/#832: a SECOND, distinct way the old { chatId: null, idea: null }
+  // shape could false-positive — not a stale/drifted slug this time, but a
+  // genuine upstream failure INSIDE resolveApp (registry fetch timeout/
+  // error) for a real, correctly-slugged company. Reproduced live: a signed-
+  // in customer's "Open dashboard" click for their own real company bounced
+  // back to the companies screen. `verified` distinguishes the two cases.
+  describe('verified field (#807/#832)', () => {
+    it('does NOT flag { chatId: null, idea: null, verified: false } — an unconfirmed failure, not a real miss', () => {
+      expect(isDeepLinkCompanyNotFound({ chatId: null, idea: null, verified: false })).toBe(false)
+    })
+
+    it('still flags { chatId: null, idea: null, verified: true } — a real, confirmed miss', () => {
+      expect(isDeepLinkCompanyNotFound({ chatId: null, idea: null, verified: true })).toBe(true)
+    })
+
+    it('still flags { chatId: null, idea: null } with verified omitted — back-compat with older callers/fixtures', () => {
+      expect(isDeepLinkCompanyNotFound({ chatId: null, idea: null })).toBe(true)
+    })
+  })
 })

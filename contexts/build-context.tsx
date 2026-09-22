@@ -147,9 +147,20 @@ export const KNOWN_DEEP_LINK_SCREENS = [
  * (see its doc comment) — but a company can legitimately have no `idea` yet
  * either (mid-registration), so both must be absent to call it not-found;
  * a real company with a chatId but no idea saved yet must NOT false-positive.
+ *
+ * `verified` (#807/#832): resolve-app's `chatId: null` is ALSO what a genuine
+ * upstream failure inside resolveApp looks like (registry fetch timeout/
+ * error) — structurally identical to a real miss before this field existed.
+ * Real, reproduced incident: a signed-in customer clicked "Open dashboard"
+ * for their own real, existing company and was bounced straight back to the
+ * companies screen on exactly this ambiguity. `verified` must be explicitly
+ * true before a null response is trusted as a confirmed not-found; missing/
+ * false fails open (never flag a real company as missing on an unconfirmed
+ * answer) — same reasoning as lib/ainative/active-plan.ts's `verified` field.
  */
-export function isDeepLinkCompanyNotFound(resolveAppResponse: { chatId?: string | null; idea?: string | null } | null): boolean {
+export function isDeepLinkCompanyNotFound(resolveAppResponse: { chatId?: string | null; idea?: string | null; verified?: boolean } | null): boolean {
   if (!resolveAppResponse) return false // network/parse failure — fail open, don't flag a real company as missing
+  if (resolveAppResponse.verified === false) return false // resolveApp itself failed — fail open, not a confirmed miss
   return resolveAppResponse.chatId === null && !resolveAppResponse.idea
 }
 

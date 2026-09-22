@@ -14,6 +14,22 @@
  * Returns: { slug, chatId } | { slug, chatId: null } (404 if never resolved
  * — kept 200 either way so a poll loop doesn't have to special-case status)
  *
+ * `verified` (#807/#832, additive): true when this response reflects a REAL
+ * answer from the registry, false when `resolveApp` itself failed (upstream
+ * timeout/error) and `chatId: null` is a "couldn't check" default, not a
+ * confirmed miss. Real, reproduced incident: a signed-in customer clicked
+ * "Open dashboard" for their own real, existing company and was bounced
+ * straight back to the companies screen — `contexts/build-context.tsx`'s
+ * `isDeepLinkCompanyNotFound` (correctly, given the old response shape)
+ * cannot tell "this company doesn't exist" apart from "resolveApp's own
+ * ?limit=1000 registry fetch timed out/errored" — both serialized as the
+ * identical `{ chatId: null, idea: null }`. Same anti-pattern class as #830
+ * (an internal failure silently collapsed into a confirmed-negative
+ * answer). Existing callers that only read `chatId`/`idea` are unaffected;
+ * `isDeepLinkCompanyNotFound` now requires `verified: true` before treating
+ * a null response as a real miss.
+ *
+
  * `idea` (#660, additive): also returns the founder's original idea when the
  * registry has one, so Live.tsx can hydrate client-only `state.idea` on a
  * fresh page load/new tab/returning visit — without this, its real-product-
@@ -28,18 +44,19 @@
  */
 
 import { NextRequest } from 'next/server'
-import { resolveApp } from '@/lib/build/app-registry'
+import { resolveAppVerified } from '@/lib/build/app-registry'
 
 export const runtime = 'nodejs'
 
 export async function GET(request: NextRequest) {
   const slug = new URL(request.url).searchParams.get('slug') || ''
   if (!slug) return Response.json({ error: 'slug required' }, { status: 400 })
-  const entry = await resolveApp(slug).catch(() => null)
+  const { entry, verified } = await resolveAppVerified(slug).catch(() => ({ entry: null, verified: false }))
   return Response.json({
     slug,
     chatId: entry?.chatId ?? null,
     idea: entry?.idea || null,
     commsMode: entry?.commsMode || 'agile',
+    verified,
   })
 }
