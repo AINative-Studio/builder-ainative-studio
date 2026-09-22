@@ -1,6 +1,15 @@
 import type { Metadata } from 'next'
 import { BuildApp } from '@/components/build/BuildApp'
 
+// This page has no real server-rendered content — BuildApp is a client
+// component that fetches everything (company data, live status) itself.
+// Without an explicit directive, Next.js treats this as a fully static page
+// and serves the HTML shell (which references a specific JS bundle hash)
+// with `Cache-Control: s-maxage=31536000` for up to a year, so a real
+// deploy's new bundle can be masked behind a stale cached shell (#818).
+// Force per-request rendering so the shell always reflects the latest deploy.
+export const dynamic = 'force-dynamic'
+
 export const metadata: Metadata = {
   title: 'Build a company with Cody',
   description:
