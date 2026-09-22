@@ -219,7 +219,7 @@ export function AutoModePanel({ companyId, companyName, track = 'company', unloc
           </select>
 
           <p className="m-mono m-metric-note" data-testid="auto-mode-cost">
-            {creditCostLabel(duration)} · {unlocked ? 'included on your plan' : 'Business plan required'}
+            {creditCostLabel(duration)} · {unlocked ? '(This Feature Is Included In Your Plan)' : 'Business plan required'}
           </p>
 
           <button

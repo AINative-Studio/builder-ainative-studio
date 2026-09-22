@@ -1231,6 +1231,48 @@ export function Live() {
             Sections default OPEN; a founder's collapse choice persists per
             project (lib/build/live-section-prefs.ts). */}
         <div className="m-live-col" ref={middleColRef}>
+          {/* Growth (#449, #822, #843) — everything that grows the company: a
+              real, funded Meta ad-test campaign, Auto Mode (#58, the paid
+              autonomous run), and auto-generated on-brand media (#54, Auto
+              Image/Auto Video + founder photo uploads). Leads the middle
+              column — a founder asked for Growth to be the FIRST accordion,
+              not the last, since it's the primary lever for validating
+              product/market fit (real signups/ad performance) rather than
+              just continuing to build. These three previously sat split
+              across two different accordion sections — Auto Image/Auto
+              Video/Auto Mode were structurally trapped inside "Website &
+              infrastructure" (behind a plain, non-collapsible "Growth" text
+              label that only looked like a section boundary), while the real
+              "Growth" CollapsibleSection held just the ad-campaign panel.
+              Paid-gated per-panel (any paid plan for ad campaigns, Business+
+              for Auto Mode) — does not touch #67 systems / #52 chat / #55
+              Tasks / #62 Versions / #64 Documents / #65 masthead / #51 video. */}
+          <CollapsibleSection slug={companyId} sectionId="growth" title="Growth">
+            {/* #843: automated ad testing leads the section — it's the highest-
+                leverage, most-actionable growth lever (a real, funded Meta
+                ad-test campaign) and a founder asked for it first, not buried
+                after media generation and Auto Mode. */}
+            <GrowthPanel
+              companyId={companyId}
+              companyName={company}
+              unlocked={gates.growth}
+              onUpgrade={goUpgrade}
+            />
+            <AutoModePanel
+              companyId={companyId}
+              companyName={company}
+              track={state.track}
+              unlocked={gates.nightlyLoop}
+              onUpgrade={goUpgrade}
+            />
+            <MediaPanel
+              companyId={companyId}
+              companyName={company}
+              brandTagline={state.brandTagline}
+              brandColor={state.brandColor}
+              idea={state.idea}
+            />
+          </CollapsibleSection>
           {/* Real, stateful Tasks/Backlog (#55) — replaces the hardcoded tonight
               array. Persisted per {owner, company}; surfaces real swarm task_ids
               and the nightly loop's Recurring task. */}
@@ -1328,44 +1370,6 @@ export function Live() {
               brandColor={state.brandColor}
               canExportDeck={activePlan !== ''}
               onExportUpgrade={goUpgrade}
-            />
-          </CollapsibleSection>
-          {/* Growth (#449, #822) — everything that grows the company: auto-
-              generated on-brand media (#54, Auto Image/Auto Video + founder
-              photo uploads), Auto Mode (#58, the paid autonomous run), and
-              funding a real Meta ad-test campaign. These three previously sat
-              split across two different accordion sections — Auto Image/
-              Auto Video/Auto Mode were structurally trapped inside "Website &
-              infrastructure" (behind a plain, non-collapsible "Growth" text
-              label that only looked like a section boundary), while the real
-              "Growth" CollapsibleSection held just the ad-campaign panel.
-              Confirmed live: a founder reported "currently only one feature
-              under the Growth section" — this was that exact split. Moved
-              here so every growth-lever panel is under the one real,
-              collapsible "Growth" section. Paid-gated per-panel (any paid
-              plan for ad campaigns, Business+ for Auto Mode) — does not touch
-              #67 systems / #52 chat / #55 Tasks / #62 Versions / #64
-              Documents / #65 masthead / #51 video. */}
-          <CollapsibleSection slug={companyId} sectionId="growth" title="Growth">
-            <MediaPanel
-              companyId={companyId}
-              companyName={company}
-              brandTagline={state.brandTagline}
-              brandColor={state.brandColor}
-              idea={state.idea}
-            />
-            <AutoModePanel
-              companyId={companyId}
-              companyName={company}
-              track={state.track}
-              unlocked={gates.nightlyLoop}
-              onUpgrade={goUpgrade}
-            />
-            <GrowthPanel
-              companyId={companyId}
-              companyName={company}
-              unlocked={gates.growth}
-              onUpgrade={goUpgrade}
             />
           </CollapsibleSection>
         </div>
