@@ -30,6 +30,7 @@
  */
 
 import { getAinativeApiKey } from '@/lib/build/env-keys'
+import { resolveCompanyZerodbKey } from '@/lib/build/company-zerodb-credentials'
 
 const ZERODB_API = process.env.ZERODB_API_URL || 'https://api.ainative.studio/api'
 const SHARED_PROJECT_ID = process.env.ZERODB_PROJECT_ID || '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
@@ -38,13 +39,17 @@ function getApiKey(): string {
   return getAinativeApiKey()
 }
 
-async function queryVisitorRows(projectId: string, filters: Record<string, unknown>): Promise<any[] | null> {
+async function queryVisitorRows(
+  projectId: string,
+  filters: Record<string, unknown>,
+  apiKey: string,
+): Promise<any[] | null> {
   try {
     const res = await fetch(
       `${ZERODB_API}/v1/projects/${projectId}/database/tables/visitors/query`,
       {
         method: 'POST',
-        headers: { 'X-API-Key': getApiKey(), 'Content-Type': 'application/json' },
+        headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
         body: JSON.stringify({ filters, limit: 500 }),
         signal: AbortSignal.timeout(10_000),
       },
@@ -69,17 +74,36 @@ async function queryVisitorRows(projectId: string, filters: Record<string, unkno
  * in the SHARED project (used when `projectId` is absent): matches only rows
  * whose recorded `path` contains this exact chatId, so one company's count
  * never includes another unprovisioned company's visitors.
+ *
+ * KEY SCOPING (#806): the per-project branch used to query a company's OWN
+ * project with the SHARED service key, which ZeroDB rejects
+ * (403 API_KEY_PROJECT_MISMATCH) — so every provisioned company's count read a
+ * permanent 0 regardless of real traffic, the 403 swallowed by the
+ * fail-toward-0 policy. It now resolves that project's OWN stored key
+ * (company-zerodb-credentials.ts). A company provisioned BEFORE that store
+ * existed has no key and still reads 0 — unchanged from today's behavior, and
+ * still honest (0 is never fabricated) — but it is now a diagnosable,
+ * one-re-provision-away state rather than a structural dead end. The shared
+ * key is NEVER used against a per-company project.
  */
 export async function countVisitors(
   projectId: string | undefined | null,
   chatId?: string | undefined | null,
 ): Promise<number> {
+  if (projectId && projectId !== SHARED_PROJECT_ID) {
+    const key = await resolveCompanyZerodbKey(projectId).catch(() => ({ ok: false } as const))
+    if (!key.ok || !key.apiKey) return 0
+    const rows = await queryVisitorRows(projectId, {}, key.apiKey)
+    return rows ? rows.length : 0
+  }
   if (projectId) {
-    const rows = await queryVisitorRows(projectId, {})
+    // The company's project IS the shared project — the shared key is the
+    // correctly-scoped key for it.
+    const rows = await queryVisitorRows(projectId, {}, getApiKey())
     return rows ? rows.length : 0
   }
   if (!chatId) return 0
-  const rows = await queryVisitorRows(SHARED_PROJECT_ID, {})
+  const rows = await queryVisitorRows(SHARED_PROJECT_ID, {}, getApiKey())
   if (!rows) return 0
   const matching = rows.filter((r) => {
     const path = String(r?.row_data?.path || r?.path || '')
