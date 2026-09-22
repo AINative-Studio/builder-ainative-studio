@@ -6,6 +6,7 @@ import {
   findPrimitiveComplianceGaps,
   hasVisitorTrackingGap,
   hasFakeLeadCaptureGap,
+  hasFakeButtonGap,
   hasHardcodedToggleGap,
   hasAxLandmarkGap,
   hasAxManifestGap,
@@ -222,6 +223,77 @@ function App(){
     expect(r.fakeLeadCaptureGap).toBe(false)
     const prompt = buildObediencePrompt('a landing page', r)
     expect(prompt).not.toMatch(/PERSIST THE EMAIL\/WAITLIST CAPTURE FORM/)
+  })
+})
+
+describe('obedience-gate: hasFakeButtonGap (#844)', () => {
+  const FAKE_SIGN_IN_ALERT = `
+function App(){
+  return (<nav><button onClick={() => alert('Sign In')}>Sign In</button></nav>)
+}`
+
+  const NO_OP_NAV_CTA = `
+function App(){
+  return (<nav><button className="btn">Get Early Access</button></nav>)
+}`
+
+  const REAL_AUTH_LINK = `
+function App(){
+  return (<nav><a href="/login">Sign In</a></nav>)
+}`
+
+  const REAL_CTA_HANDLER = `
+function App(){
+  const scrollToWaitlist = () => document.getElementById('waitlist')?.scrollIntoView()
+  return (<nav><button onClick={scrollToWaitlist}>Get Early Access</button></nav>)
+}`
+
+  const ALERT_INSIDE_REAL_FLOW = `
+function App(){
+  const handleSubmit = async () => {
+    const res = await fetch('/api/db/waitlist', { method: 'POST' })
+    if (!res.ok) alert('Something went wrong')
+  }
+  return (<button onClick={handleSubmit}>Sign Up</button>)
+}`
+
+  it('THE BUG: flags a "Sign In" button whose only handler is alert() (the real agentive repro)', () => {
+    expect(hasFakeButtonGap(FAKE_SIGN_IN_ALERT)).toBe(true)
+  })
+
+  it('THE BUG: flags a "Get Early Access" nav button with no handler at all (the real agentive repro)', () => {
+    expect(hasFakeButtonGap(NO_OP_NAV_CTA)).toBe(true)
+  })
+
+  it('does NOT flag a real auth link (href to a real route)', () => {
+    expect(hasFakeButtonGap(REAL_AUTH_LINK)).toBe(false)
+  })
+
+  it('does NOT flag a CTA wired to a real handler', () => {
+    expect(hasFakeButtonGap(REAL_CTA_HANDLER)).toBe(false)
+  })
+
+  it('does NOT flag alert() used as error handling inside a real async flow', () => {
+    expect(hasFakeButtonGap(ALERT_INSIDE_REAL_FLOW)).toBe(false)
+  })
+
+  it('does NOT flag an app with no CTA-shaped buttons at all', () => {
+    expect(hasFakeButtonGap('function App(){return <div>hi</div>}')).toBe(false)
+  })
+
+  it('checkObedience surfaces fakeButtonGap and a reason string', () => {
+    const r = checkObedience(FAKE_SIGN_IN_ALERT, 'a community platform')
+    expect(r.fakeButtonGap).toBe(true)
+    expect(r.reasons.some((x) => x.includes('CTA-shaped button'))).toBe(true)
+    const prompt = buildObediencePrompt('a community platform', r)
+    expect(prompt).toMatch(/FIX YOUR FAKE\/DEAD BUTTONS/)
+  })
+
+  it('buildObediencePrompt omits the fake-button section when there is none', () => {
+    const r = checkObedience(REAL_CTA_HANDLER, 'a community platform')
+    expect(r.fakeButtonGap).toBe(false)
+    const prompt = buildObediencePrompt('a community platform', r)
+    expect(prompt).not.toMatch(/FIX YOUR FAKE\/DEAD BUTTONS/)
   })
 })
 

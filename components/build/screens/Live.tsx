@@ -31,6 +31,7 @@ import { DocumentsPanel } from '@/components/build/DocumentsPanel'
 import { MediaPanel } from '@/components/build/MediaPanel'
 import { AutoModePanel } from '@/components/build/AutoModePanel'
 import { GrowthPanel } from '@/components/build/GrowthPanel'
+import { WaitlistPanel } from '@/components/build/WaitlistPanel'
 import { WebsitePanel } from '@/components/build/WebsitePanel'
 import { FeedbackPulse } from '@/components/build/FeedbackPulse'
 import { ZeroInvoiceConnect } from '@/components/build/ZeroInvoiceConnect'
@@ -184,6 +185,18 @@ export function Live() {
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => { if (alive) setVisitors(typeof d?.visitors === 'number' ? d.visitors : 0) })
       .catch(() => { if (alive) setVisitors(0) })
+    return () => { alive = false }
+  }, [companyId])
+  // Real waitlist count (#844) — was a permanent, hardcoded 0 even though the
+  // hero form already correctly persisted every real signup; nothing ever
+  // read it back. Mirrors the visitors fetch above verbatim.
+  const [waitlistCount, setWaitlistCount] = useState<number | null>(null)
+  useEffect(() => {
+    let alive = true
+    fetch(`/api/build/waitlist?slug=${encodeURIComponent(companyId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (alive) setWaitlistCount(Array.isArray(d?.entries) ? d.entries.length : 0) })
+      .catch(() => { if (alive) setWaitlistCount(0) })
     return () => { alive = false }
   }, [companyId])
   const { status: sessionStatus } = useSession()
@@ -1033,15 +1046,19 @@ export function Live() {
           before any column content) — see #486. */}
       <div className="m-live-hero-metrics" data-testid="hero-metrics">
         <div className="m-metric-rows">
-          {/* Real visitor count (#483/#563) — the generated landing page's own
-              pageview beacon, read back from this company's ZeroDB project.
-              Waitlist/revenue remain an honest zero-state — no capture
-              mechanism exists yet for either (tracked separately). */}
+          {/* Real visitor + waitlist counts (#483/#563, #844) — the generated
+              landing page's own pageview beacon and hero waitlist form, read
+              back from this company's ZeroDB project. Revenue remains an
+              honest zero-state — no capture mechanism exists yet (tracked
+              separately). */}
           <div className="m-metric">
             <span className="m-metric-v m-artifact" data-testid="hero-metric-visitors">{visitors ?? '—'}</span>
             <span className="m-metric-l m-mono">visitors</span>
           </div>
-          <div className="m-metric"><span className="m-metric-v m-artifact">0</span><span className="m-metric-l m-mono">waitlist</span></div>
+          <div className="m-metric">
+            <span className="m-metric-v m-artifact" data-testid="hero-metric-waitlist">{waitlistCount ?? '—'}</span>
+            <span className="m-metric-l m-mono">waitlist</span>
+          </div>
           <div className="m-metric"><span className="m-metric-v m-artifact">$0</span><span className="m-metric-l m-mono">revenue</span></div>
         </div>
         <p className="m-mono m-metric-note">Live from day one — Cody grows these nightly.</p>
@@ -1264,6 +1281,11 @@ export function Live() {
               unlocked={gates.growth}
               onUpgrade={goUpgrade}
             />
+            {/* #844: the real signal growth activity is FOR — a founder asked
+                "where do I see who joined the waitlist" and there was no
+                answer. The hero form already persisted every real signup;
+                this is the missing read side. */}
+            <WaitlistPanel companyId={companyId} />
             <AutoModePanel
               companyId={companyId}
               companyName={company}
