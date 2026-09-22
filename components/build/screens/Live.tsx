@@ -1329,13 +1329,24 @@ export function Live() {
               canExportDeck={activePlan !== ''}
               onExportUpgrade={goUpgrade}
             />
-            {/* Auto-generated ON-BRAND media (#54) — Auto Image + Auto Video, each with
-                a Once/Daily/Weekly/Monthly schedule, run on OWNED core Multimodal /
-                Content-Workflow primitives with assets stored in the company's own
-                ZeroDB. Shows last-generated + next run; inert + honest when media creds
-                aren't set. A new, distinct section — does not touch #67 systems / #52
-                chat / #55 Tasks / #62 Versions / #64 Documents / #65 masthead / #51 video. */}
-            <div className="m-mono m-website-section-h" data-testid="section-growth" style={{ marginTop: 4 }}>Growth</div>
+          </CollapsibleSection>
+          {/* Growth (#449, #822) — everything that grows the company: auto-
+              generated on-brand media (#54, Auto Image/Auto Video + founder
+              photo uploads), Auto Mode (#58, the paid autonomous run), and
+              funding a real Meta ad-test campaign. These three previously sat
+              split across two different accordion sections — Auto Image/
+              Auto Video/Auto Mode were structurally trapped inside "Website &
+              infrastructure" (behind a plain, non-collapsible "Growth" text
+              label that only looked like a section boundary), while the real
+              "Growth" CollapsibleSection held just the ad-campaign panel.
+              Confirmed live: a founder reported "currently only one feature
+              under the Growth section" — this was that exact split. Moved
+              here so every growth-lever panel is under the one real,
+              collapsible "Growth" section. Paid-gated per-panel (any paid
+              plan for ad campaigns, Business+ for Auto Mode) — does not touch
+              #67 systems / #52 chat / #55 Tasks / #62 Versions / #64
+              Documents / #65 masthead / #51 video. */}
+          <CollapsibleSection slug={companyId} sectionId="growth" title="Growth">
             <MediaPanel
               companyId={companyId}
               companyName={company}
@@ -1343,15 +1354,6 @@ export function Live() {
               brandColor={state.brandColor}
               idea={state.idea}
             />
-            {/* Auto Mode (#58) — user-set autonomous run duration ("Cody works
-                nonstop. You choose how long."). Duration selector + START/STOP wired
-                to the REAL loop (/api/build/auto-mode → bounded swarm dispatch over the
-                window), with live progress (time remaining / tasks dispatched / current
-                activity). Paid-gated (Business+, same unlock as the nightly loop) with a
-                transparent credit cost, agent-triggerable, and inert+honest when the loop
-                isn't configured. A NEW, distinct section — does not touch #67 systems /
-                #52 chat / #55 Tasks / #62 Versions / #64 Documents / #65 masthead / #51
-                video / #54 media. */}
             <AutoModePanel
               companyId={companyId}
               companyName={company}
@@ -1359,14 +1361,6 @@ export function Live() {
               unlocked={gates.nightlyLoop}
               onUpgrade={goUpgrade}
             />
-          </CollapsibleSection>
-          {/* Growth (#449) — fund a real, automated Meta ad-test campaign run
-              from AINative's own ad account (the founder never touches Meta
-              directly). Paid-gated (any paid plan). A NEW, distinct section —
-              does not touch #67 systems / #52 chat / #55 Tasks / #62 Versions
-              / #64 Documents / #65 masthead / #51 video / #54 media / #58
-              Auto Mode. */}
-          <CollapsibleSection slug={companyId} sectionId="growth" title="Growth">
             <GrowthPanel
               companyId={companyId}
               companyName={company}
