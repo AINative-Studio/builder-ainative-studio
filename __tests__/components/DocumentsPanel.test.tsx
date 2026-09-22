@@ -145,3 +145,76 @@ describe('DocumentsPanel — VIEW failure handling (real bug: "View does nothing
     expect(host.querySelector('[data-testid="document-view-error"]')).toBeNull()
   })
 })
+
+/**
+ * #820 — the empty-state "generate starter docs" action is a real, working
+ * capability but used to read as a purely passive `<p>` with a `btn-secondary`
+ * button group identical in weight to unrelated actions (Export pitch deck,
+ * Upload a document). It should now carry real visual priority: `btn-primary`
+ * buttons plus a short "Cody can build these for you" framing line, and
+ * clicking one must still fire the real generate() request.
+ */
+describe('DocumentsPanel — empty-state starter-doc CTA is visually prioritized (#820)', () => {
+  const originalFetch = global.fetch
+  afterEach(() => {
+    global.fetch = originalFetch
+    unmount()
+  })
+
+  const EMPTY_LIST = {
+    documents: [],
+    counts: { all: 0, document: 0, report: 0 },
+    kinds: [{ kind: 'all', label: 'All' }, { kind: 'document', label: 'Documents' }, { kind: 'report', label: 'Reports' }],
+  }
+
+  it('renders the starter-doc buttons as btn-primary with a framing hint above them when empty', async () => {
+    global.fetch = vi.fn(async () => ({ ok: true, json: async () => EMPTY_LIST } as any))
+    render(<DocumentsPanel companyId="beacon" idea="an idea" companyName="Beacon" track="app" />)
+    await flush()
+
+    const hint = host.querySelector('[data-testid="documents-generate-hint"]')
+    expect(hint).toBeTruthy()
+    expect(hint!.textContent).toMatch(/cody can build these for you/i)
+
+    const group = host.querySelector('[data-testid="documents-generate"]')
+    expect(group).toBeTruthy()
+    const buttons = group!.querySelectorAll('button')
+    expect(buttons.length).toBeGreaterThan(0)
+    buttons.forEach((b) => {
+      expect(b.className).toContain('btn-primary')
+      expect(b.className).not.toContain('btn-secondary')
+    })
+  })
+
+  it('clicking a primary starter-doc button still fires the real generate() request', async () => {
+    let generatePosted: any = null
+    global.fetch = vi.fn(async (url: any, init?: any) => {
+      const u = String(url)
+      if (init?.method === 'POST') {
+        generatePosted = JSON.parse(init.body)
+        return { ok: true, json: async () => ({ document: { id: 'd1', kind: 'document', type: 'research', typeLabel: 'Research', title: 'Research', createdAt: new Date().toISOString() } }) } as any
+      }
+      return { ok: true, json: async () => EMPTY_LIST } as any
+    })
+    render(<DocumentsPanel companyId="beacon" idea="an idea" companyName="Beacon" track="app" />)
+    await flush()
+
+    const btn = host.querySelector('[data-testid="documents-generate-research"]') as HTMLButtonElement
+    expect(btn).toBeTruthy()
+    act(() => { btn.click() })
+    await flush()
+
+    expect(generatePosted).toMatchObject({ companyId: 'beacon', generate: true, type: 'research', idea: 'an idea', companyName: 'Beacon', track: 'app' })
+  })
+
+  it('the Export pitch deck and Upload document actions remain btn-secondary (no regression)', async () => {
+    global.fetch = vi.fn(async () => ({ ok: true, json: async () => EMPTY_LIST } as any))
+    render(<DocumentsPanel companyId="beacon" idea="an idea" companyName="Beacon" track="app" />)
+    await flush()
+
+    const deckBtn = host.querySelector('[data-testid="deck-export-btn"]') as HTMLButtonElement
+    const uploadBtn = host.querySelector('[data-testid="document-upload-btn"]') as HTMLButtonElement
+    expect(deckBtn.className).toContain('btn-secondary')
+    expect(uploadBtn.className).toContain('btn-secondary')
+  })
+})
