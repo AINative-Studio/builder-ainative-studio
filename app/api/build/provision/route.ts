@@ -20,6 +20,14 @@
  *
  * SECURITY: the raw sk_/tmp_ api_key is returned to THIS caller (server-side) but is
  * NOT written into the shared registry — only project_id + keyKind + claim token are.
+ * It IS persisted ENCRYPTED in its own scoped store (#806/#844,
+ * lib/build/company-zerodb-credentials.ts), because it is the only key actually
+ * scoped to this company's project: until that store existed the key was minted and
+ * discarded, so every later /api/db call and visitor read used the shared service key
+ * and got a real 403 API_KEY_PROJECT_MISMATCH — losing real waitlist signups behind
+ * the generated app's own `.catch(() => {})` success UI. Deliberately NOT in
+ * builder_app_registry (read broadly, whole rows returned) — same trust boundary as
+ * builder_primitive_credentials.
  *
  * Body: { slug, name?, plan? }
  * Returns: { ok, zerodbProjectId, keyKind, created, claimable, deployUrl, dnsPointable } | { ok:false, reason }
@@ -45,6 +53,7 @@ import { provisionZeroERPTenant } from '@/lib/build/zeroerp'
 import { provisionZeroDbViaMcp, isMcpProvisionEnabled } from '@/lib/build/mcp-provision'
 import { provisionCompanyRepo, toFileMapForCommit } from '@/lib/git/company-repo'
 import { storeFounderCredential, fetchOrganizationId, hasFounderCredential, type FounderScopedPrimitive } from '@/lib/build/primitive-credentials'
+import { storeCompanyZerodbKey } from '@/lib/build/company-zerodb-credentials'
 import { resolveStoredApp } from '@/lib/build/ready-gate'
 
 export const runtime = 'nodejs'
@@ -306,6 +315,24 @@ export async function POST(request: NextRequest) {
     return Response.json(
       { ok: false, reason: 'provision_failed', detail: prov.reason, status: prov.status },
       { status: 502 },
+    )
+  }
+
+  // #806/#844: persist the project-scoped data-plane key THIS provision just minted,
+  // encrypted, in its own scoped store. Without this the key is discarded here and
+  // every later runtime call against this company's own ZeroDB project falls back to
+  // the shared service key — which ZeroDB rejects with a real 403
+  // API_KEY_PROJECT_MISMATCH, silently dropping real waitlist/visitor data. A storage
+  // failure is surfaced (zerodbKeyStored:false) rather than swallowed, and never
+  // blocks provisioning — but it does mean that company's data calls will fail closed
+  // until it is re-provisioned, which is the honest outcome.
+  const zerodbKeyStored = prov.apiKey
+    ? await storeCompanyZerodbKey(prov.projectId, prov.apiKey, { slug, keyKind: prov.keyKind }).catch(() => false)
+    : false
+  if (!zerodbKeyStored) {
+    console.warn(
+      `[provision] ${slug}: project-scoped ZeroDB key NOT stored for project ${prov.projectId}` +
+        `${prov.apiKey ? '' : ' (instant-db returned no api_key)'} — /api/db calls for this company will fail closed`,
     )
   }
 
@@ -583,6 +610,9 @@ export async function POST(request: NextRequest) {
     expiresAt: trialExpiresAt || null,
     plan: plan || null,
     created: true,
+    // #806/#844: whether this company's own project-scoped data key was durably
+    // stored. false ⇒ its /api/db reads/writes will fail closed until re-provisioned.
+    zerodbKeyStored,
     pipelineProvisioned: pipeline.provisioned,
     pipelineCredentialCaptured: pipeline.credentialCaptured,
     commerceProvisioned: commerce.provisioned,

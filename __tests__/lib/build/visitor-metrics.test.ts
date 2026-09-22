@@ -1,5 +1,26 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+
+/**
+ * #806 addendum: the per-project branch must use the key actually SCOPED to
+ * that company's project. It used the SHARED service key, which ZeroDB rejects
+ * (403 API_KEY_PROJECT_MISMATCH) — so every provisioned company's visitor count
+ * read a permanent 0 regardless of real traffic, the 403 swallowed by the
+ * fail-toward-0 policy. resolveCompanyZerodbKey is mocked here so these tests
+ * exercise the counting logic; the real key store has its own suite in
+ * __tests__/lib/build/company-zerodb-credentials.test.ts.
+ */
+const h = vi.hoisted(() => ({ resolveCompanyZerodbKey: vi.fn() }))
+vi.mock('@/lib/build/company-zerodb-credentials', () => ({
+  resolveCompanyZerodbKey: h.resolveCompanyZerodbKey,
+}))
+
 import { countVisitors } from '@/lib/build/visitor-metrics'
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  // Default: the company HAS a real stored, project-scoped key.
+  h.resolveCompanyZerodbKey.mockResolvedValue({ ok: true, apiKey: 'sk_company_scoped_key' })
+})
 
 /**
  * #483/#563 — the real read side behind the Live dashboard's "visitors" hero
@@ -40,6 +61,20 @@ describe('countVisitors', () => {
     vi.stubGlobal('fetch', fetchMock)
     expect(await countVisitors('proj-1', 'irrelevant-chat-id')).toBe(2)
     expect(String(fetchMock.mock.calls[0][0])).toContain('/projects/proj-1/')
+    // #806: with the company's OWN key, not the shared service key.
+    expect(h.resolveCompanyZerodbKey).toHaveBeenCalledWith('proj-1')
+    expect(fetchMock.mock.calls[0][1].headers['X-API-Key']).toBe('sk_company_scoped_key')
+  })
+
+  // ---- #806: the shared service key is NOT scoped to per-company projects. ----
+  it('#806: a provisioned company with NO stored key reads 0 and never calls ZeroDB with the wrong key', async () => {
+    h.resolveCompanyZerodbKey.mockResolvedValue({ ok: false, reason: 'not_stored' })
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await countVisitors('legacy-proj', 'chat-1')).toBe(0)
+    // The whole point: it must not retry with the shared key against a project
+    // that key isn't scoped to (that produced the silent 403 this fixes).
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   // ---- THE REAL BUG: unprovisioned company (no projectId) falls back to the

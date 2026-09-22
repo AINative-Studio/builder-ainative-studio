@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyAppDataToken } from '@/lib/build/app-data-token'
+import { resolveCompanyZerodbKey } from '@/lib/build/company-zerodb-credentials'
 
 /**
  * ZeroDB Proxy API — lets a generated app do CRUD without exposing an API key.
@@ -16,11 +17,26 @@ import { verifyAppDataToken } from '@/lib/build/app-data-token'
  * ONLY for the legacy/unprovisioned case (documented). This closes the cross-tenant
  * IDOR (a caller can't target another company by naming its slug — they'd need that
  * company's unguessable signed token).
+ *
+ * KEY SCOPING (#806/#844, confirmed live on BOTH the read and write paths): resolving
+ * the right PROJECT was never enough — every call here also used one shared,
+ * service-wide ZERODB_API_KEY, which ZeroDB rejects against a per-company project:
+ *   403 {"error_code":"API_KEY_PROJECT_MISMATCH"}
+ * So for every provisioned company, reads returned nothing and writes (real waitlist
+ * signups) were silently lost behind the generated app's `.catch(() => {})` success UI.
+ * resolveScope() now resolves BOTH the project AND the key actually scoped to it:
+ * the shared key ONLY for the shared/legacy project (which it IS correctly scoped to),
+ * and the per-company key stored at provision time (company-zerodb-credentials.ts)
+ * otherwise. Same fail-closed posture as resolveProject: an unresolvable per-company
+ * key is a real error surfaced honestly (502), NEVER a fallback to the shared key —
+ * falling back would re-create the cross-tenant mis-scoping and the silent data loss.
  */
 
 const ZERODB_API = 'https://api.ainative.studio/api'
 const SHARED_PROJECT_ID = process.env.ZERODB_PROJECT_ID || '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
-const API_KEY = process.env.ZERODB_API_KEY || ''
+/** The SHARED project's own key — correct for SHARED_PROJECT_ID, wrong for every
+ *  per-company project (see KEY SCOPING above). Never used outside that project. */
+const SHARED_API_KEY = process.env.ZERODB_API_KEY || ''
 
 /**
  * Resolve the ZeroDB project for THIS request from the per-app data token (#331).
@@ -30,7 +46,7 @@ const API_KEY = process.env.ZERODB_API_KEY || ''
  * apps generated before tokens) — but a PRESENT-but-INVALID token FAILS CLOSED (null)
  * so a forged token never silently reads the shared pool. Callers treat null as 401.
  */
-function resolveProject(request: NextRequest): { projectId: string } | null {
+function resolveProject(request: NextRequest): { projectId: string; shared: boolean } | null {
   const auth = request.headers.get('authorization') || ''
   const bearer = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : ''
   const token =
@@ -40,11 +56,41 @@ function resolveProject(request: NextRequest): { projectId: string } | null {
     ''
   if (!token) {
     // No token at all → legacy/unprovisioned app → shared project (documented).
-    return { projectId: SHARED_PROJECT_ID }
+    return { projectId: SHARED_PROJECT_ID, shared: true }
   }
   const payload = verifyAppDataToken(token)
   if (!payload) return null // present but invalid/forged → FAIL CLOSED
-  return { projectId: payload.projectId }
+  // A token can legitimately name the shared project too (an app provisioned
+  // against the shared pool) — that's still the shared key's own project.
+  return { projectId: payload.projectId, shared: payload.projectId === SHARED_PROJECT_ID }
+}
+
+/** A fully-resolved request scope: the project AND the key genuinely scoped to it. */
+interface DbScope {
+  projectId: string
+  apiKey: string
+}
+
+/**
+ * Resolve {projectId, apiKey} for this request, or a structured failure.
+ * - invalid/forged token        → { unauthorized: true }        → 401 (#331, unchanged)
+ * - shared/legacy project       → the shared service key        → unchanged behavior
+ * - per-company project         → that project's OWN stored key → the #806/#844 fix
+ * - per-company, no stored key  → { keyReason }                 → 502, FAIL CLOSED
+ */
+async function resolveScope(
+  request: NextRequest,
+): Promise<{ scope?: DbScope; unauthorized?: boolean; keyReason?: string }> {
+  const project = resolveProject(request)
+  if (!project) return { unauthorized: true }
+  if (project.shared) {
+    return { scope: { projectId: project.projectId, apiKey: SHARED_API_KEY } }
+  }
+  const resolved = await resolveCompanyZerodbKey(project.projectId)
+  if (!resolved.ok || !resolved.apiKey) {
+    return { keyReason: resolved.reason || 'not_stored' }
+  }
+  return { scope: { projectId: project.projectId, apiKey: resolved.apiKey } }
 }
 
 /**
@@ -96,11 +142,11 @@ function normalizeBody(json: any): any {
   return json
 }
 
-async function zerodbFetch(method: string, path: string, body?: any) {
+async function zerodbFetch(apiKey: string, method: string, path: string, body?: any) {
   const res = await fetch(`${ZERODB_API}${path}`, {
     method,
     headers: {
-      'X-API-Key': API_KEY,
+      'X-API-Key': apiKey,
       'Content-Type': 'application/json',
     },
     body: body ? JSON.stringify(body) : undefined,
@@ -114,11 +160,11 @@ async function zerodbFetch(method: string, path: string, body?: any) {
 }
 
 // Ensure table exists (auto-create on first use)
-async function ensureTable(table: string, projectId: string) {
+async function ensureTable(table: string, projectId: string, apiKey: string) {
   try {
     await fetch(`${ZERODB_API}/v1/projects/${projectId}/database/tables`, {
       method: 'POST',
-      headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
+      headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({ table_name: table }),
       signal: AbortSignal.timeout(5000),
     })
@@ -131,14 +177,34 @@ async function ensureTable(table: string, projectId: string) {
 const UNAUTHORIZED = () =>
   NextResponse.json({ error: 'invalid or missing app data token' }, { status: 401 })
 
+/**
+ * 502 for a company whose project-scoped key can't be resolved (#806/#844).
+ * FAIL CLOSED and say so plainly — the alternative (retrying with the shared
+ * service key) is the exact mis-scoping that silently dropped real data.
+ * `not_stored` is expected for a company provisioned BEFORE this fix shipped:
+ * it keeps failing, as it does today, but now with an honest, diagnosable
+ * reason instead of an opaque ZeroDB 403.
+ */
+const KEY_UNAVAILABLE = (reason: string) =>
+  NextResponse.json(
+    {
+      error: 'project data key unavailable',
+      reason,
+      detail:
+        "This company's ZeroDB project has no stored project-scoped API key, so the request cannot be authorized against it. Re-provision the company to mint and store one.",
+    },
+    { status: 502 },
+  )
+
 // GET /api/db/{table} — list or query rows
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ table: string }> }
 ) {
-  const scope = resolveProject(request)
-  if (!scope) return UNAUTHORIZED()
-  const PROJECT_ID = scope.projectId
+  const resolved = await resolveScope(request)
+  if (resolved.unauthorized) return UNAUTHORIZED()
+  if (!resolved.scope) return KEY_UNAVAILABLE(resolved.keyReason || 'not_stored')
+  const { projectId: PROJECT_ID, apiKey: API_KEY } = resolved.scope
   const { table } = await params
   const searchParams = request.nextUrl.searchParams
   const limit = searchParams.get('limit') || '50'
@@ -154,7 +220,7 @@ export async function GET(
   // project's vector store (namespace = table), so the app must have stored vectors.
   if (search) {
     const threshold = searchParams.get('threshold')
-    return zerodbFetch('POST', `/v1/projects/${PROJECT_ID}/embeddings/search`, {
+    return zerodbFetch(API_KEY, 'POST', `/v1/projects/${PROJECT_ID}/embeddings/search`, {
       query: search,
       limit: parseInt(limit),
       namespace: table,
@@ -166,7 +232,7 @@ export async function GET(
     // Query with filter
     try {
       const filters = JSON.parse(filter)
-      return zerodbFetch('POST', `/v1/projects/${PROJECT_ID}/database/tables/${table}/query`, {
+      return zerodbFetch(API_KEY, 'POST', `/v1/projects/${PROJECT_ID}/database/tables/${table}/query`, {
         filters,
         limit: parseInt(limit),
       })
@@ -175,7 +241,7 @@ export async function GET(
     }
   }
 
-  return zerodbFetch('GET', `/v1/projects/${PROJECT_ID}/database/tables/${table}/rows?limit=${limit}`)
+  return zerodbFetch(API_KEY, 'GET', `/v1/projects/${PROJECT_ID}/database/tables/${table}/rows?limit=${limit}`)
 }
 
 // POST /api/db/{table} — insert row(s)
@@ -183,14 +249,15 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ table: string }> }
 ) {
-  const scope = resolveProject(request)
-  if (!scope) return UNAUTHORIZED()
-  const PROJECT_ID = scope.projectId
+  const resolved = await resolveScope(request)
+  if (resolved.unauthorized) return UNAUTHORIZED()
+  if (!resolved.scope) return KEY_UNAVAILABLE(resolved.keyReason || 'not_stored')
+  const { projectId: PROJECT_ID, apiKey: API_KEY } = resolved.scope
   const { table } = await params
   const body = await request.json()
 
   // Auto-create table on first insert
-  await ensureTable(table, PROJECT_ID)
+  await ensureTable(table, PROJECT_ID, API_KEY)
 
   // FIRST-WRITE RACE (verified live 2026-08-27): ZeroDB's table create is slow /
   // eventually consistent, so the very first insert into a brand-new table can
@@ -207,7 +274,7 @@ export async function POST(
   const insertWithRetry = async (row: unknown) => {
     let res = await insertOnce(row)
     if (res.status === 404) {
-      await ensureTable(table, PROJECT_ID)
+      await ensureTable(table, PROJECT_ID, API_KEY)
       await new Promise((r) => setTimeout(r, 1500))
       res = await insertOnce(row)
     }
@@ -238,9 +305,10 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ table: string }> }
 ) {
-  const scope = resolveProject(request)
-  if (!scope) return UNAUTHORIZED()
-  const PROJECT_ID = scope.projectId
+  const resolved = await resolveScope(request)
+  if (resolved.unauthorized) return UNAUTHORIZED()
+  if (!resolved.scope) return KEY_UNAVAILABLE(resolved.keyReason || 'not_stored')
+  const { projectId: PROJECT_ID, apiKey: API_KEY } = resolved.scope
   const { table } = await params
   const rowId = request.nextUrl.searchParams.get('id')
   if (!rowId) {
@@ -248,7 +316,7 @@ export async function PUT(
   }
 
   const body = await request.json()
-  return zerodbFetch('PUT', `/v1/projects/${PROJECT_ID}/database/tables/${table}/rows/${rowId}`, {
+  return zerodbFetch(API_KEY, 'PUT', `/v1/projects/${PROJECT_ID}/database/tables/${table}/rows/${rowId}`, {
     row_data: body,
   })
 }
@@ -258,14 +326,15 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ table: string }> }
 ) {
-  const scope = resolveProject(request)
-  if (!scope) return UNAUTHORIZED()
-  const PROJECT_ID = scope.projectId
+  const resolved = await resolveScope(request)
+  if (resolved.unauthorized) return UNAUTHORIZED()
+  if (!resolved.scope) return KEY_UNAVAILABLE(resolved.keyReason || 'not_stored')
+  const { projectId: PROJECT_ID, apiKey: API_KEY } = resolved.scope
   const { table } = await params
   const rowId = request.nextUrl.searchParams.get('id')
   if (!rowId) {
     return NextResponse.json({ error: 'id parameter required' }, { status: 400 })
   }
 
-  return zerodbFetch('DELETE', `/v1/projects/${PROJECT_ID}/database/tables/${table}/rows/${rowId}`)
+  return zerodbFetch(API_KEY, 'DELETE', `/v1/projects/${PROJECT_ID}/database/tables/${table}/rows/${rowId}`)
 }
