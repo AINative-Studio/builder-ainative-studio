@@ -5,6 +5,7 @@ import { googleFontsUrl } from '@/lib/theme-system'
 import { validateJavaScriptCode, sanitizeForSandpack } from '@/lib/code-validator'
 import { detectRootComponent } from '@/lib/component-detector'
 import { flattenMultiFile } from '@/lib/build/flatten-multifile'
+import { convertTemplateLiteralAttrsToConcat } from '@/lib/build/template-literal-to-concat'
 import { dedupeProvidedComponents } from '@/lib/build/dedupe-provided-components'
 import { mintAppDataToken } from '@/lib/build/app-data-token'
 import { mintPrimitiveProxyToken } from '@/lib/build/primitive-proxy-token'
@@ -565,33 +566,15 @@ export async function GET(
   // CRITICAL FIX: Convert template literals with interpolations to string concatenation
   // This prevents Babel from choking on ${} expressions in template literals
   // Example: className={`w-10 h-10 ${color} rounded`} -> className={`w-10 h-10 ` + color + ` rounded`}
-  const templateLiteralRegex = /(className|style)=\{`([^`]*)`\}/g
-  componentCode = componentCode.replace(templateLiteralRegex, (_match, attr, content) => {
-    // Check if the content contains interpolations ${...}
-    if (content.includes('${')) {
-      // Split by ${...} expressions and convert to string concatenation
-      const parts = content.split(/(\$\{[^}]+\})/)
-      const convertedParts = parts.map((part: string) => {
-        if (part.startsWith('${') && part.endsWith('}')) {
-          // This is an interpolation like ${variable}
-          return part.slice(2, -1).trim()
-        } else if (part) {
-          // This is a string literal part
-          // Collapse multiple spaces but preserve leading/trailing spaces
-          const cleaned = part.replace(/\s+/g, ' ')
-          return cleaned ? `"${cleaned}"` : ''
-        }
-        return ''
-      }).filter((p: string) => p !== '')
-
-      // Join with + operator
-      return `${attr}={${convertedParts.join(' + ')}}`
-    } else {
-      // No interpolation, just clean up whitespace
-      const singleLine = content.replace(/\s+/g, ' ').trim()
-      return `${attr}={\`${singleLine}\`}`
-    }
-  })
+  //
+  // Extracted to lib/build/template-literal-to-concat.ts (real, live bug fix,
+  // agentive-product/#844 follow-up): the inline version here used to join
+  // interpolated expressions with a bare `+`, with no parentheses — when the
+  // interpolation was a ternary (`${x ? a : b}`, an extremely common
+  // conditional-class pattern), `+`'s tighter precedence than `?:` silently
+  // discarded the ENTIRE static class string whenever it was non-empty. See
+  // that module's doc comment for the full real-world repro.
+  componentCode = convertTemplateLiteralAttrsToConcat(componentCode)
 
   // DISABLED: This quote-escaping logic was causing Babel syntax errors
   // by incorrectly escaping JSX attribute values like className="..."
