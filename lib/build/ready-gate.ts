@@ -23,7 +23,11 @@
 import { getPreview } from '@/lib/preview-store'
 import { getFiles as getFilesV2 } from '@/lib/preview-store-v2'
 import { isRenderable, type ParseGateResult } from '@/lib/code-validator'
-import { findMissingLocalImports, findUndeclaredJsxComponents } from '@/lib/build/completeness-gate'
+import {
+  findMissingLocalImports,
+  findUndeclaredJsxComponents,
+  findDuplicateLandmarkElements,
+} from '@/lib/build/completeness-gate'
 import { flattenMultiFile } from '@/lib/build/flatten-multifile'
 import { getWorktreeTestFailure } from '@/lib/agent/test-runner'
 import { isScaffoldApp } from '@/lib/agent/worktree-manager'
@@ -171,8 +175,9 @@ export async function checkAppReady(chatId: string): Promise<ReadyCheck> {
   // on valid TS syntax (aerosol 154:30 "Missing semicolon"), reporting a
   // "truncation" that isn't one. Include 'typescript' so this gate only ever
   // blocks GENUINE structural breakage (unbalanced JSX/braces), never TS syntax.
+  const flattened = flattenMultiFile(stored.code)
   try {
-    babelParse(flattenMultiFile(stored.code), {
+    babelParse(flattened, {
       sourceType: 'module',
       plugins: ['jsx', 'typescript'],
     })
@@ -183,6 +188,33 @@ export async function checkAppReady(chatId: string): Promise<ReadyCheck> {
       ok: false,
       reason: 'syntax_error',
       error: `Truncated/unbalanced generation (flattened parse): ${msg}`,
+    }
+  }
+
+  // DUPLICATE-LANDMARK GATE (#816, agentive-product repro / issue #815): the
+  // parse and completeness gates above are all syntax/import-resolution
+  // checks — none of them can see that two SEPARATE, individually valid
+  // elements both claim the same structural landmark role (e.g. two <aside>
+  // elements both data-agent-context="sidebar"/"sidebar-mobile") and would
+  // render SIMULTANEOUSLY VISIBLE, because nothing before this point ever
+  // reasons about the combined rendered shape. Run the detector on the SAME
+  // flattened artifact the syntax check above just proved parses — that is
+  // the exact DOM the preview will produce, so duplicates across separate
+  // source files are only flagged once genuinely co-rendered. Deterministic,
+  // no render step: a duplicate is only flagged when the extra instance
+  // carries NO real Tailwind hide/off-canvas indicator at all, so a
+  // correctly-built responsive drawer (which always uses one) never false-
+  // blocks. Same 422 retry path as every other structural gate here.
+  const duplicateLandmarks = findDuplicateLandmarkElements(flattened)
+  if (duplicateLandmarks.length > 0) {
+    const summary = duplicateLandmarks
+      .map((d) => `${d.role} (${d.contextValues.join(', ')})`)
+      .join('; ')
+    return {
+      checked: true,
+      ok: false,
+      reason: 'duplicate_landmark',
+      error: `Duplicate structural landmark(s) with no hide/off-canvas class — would render simultaneously visible: ${summary}`,
     }
   }
 
