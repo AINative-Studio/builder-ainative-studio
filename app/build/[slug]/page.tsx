@@ -11,6 +11,14 @@ import { StandalonePreviewRegenerate } from '@/components/build/StandalonePrevie
 
 export const runtime = 'nodejs'
 
+// resolveApp() reads live per-slug company/app data on every request, and
+// the rendered shell embeds that app's current chatId/color/name — without
+// an explicit directive Next.js can still apply its default long-lived
+// static caching (`s-maxage=31536000`) to this route, serving a stale
+// resolution after a deploy or an app update (#818). Force per-request
+// rendering so this always reflects the latest data.
+export const dynamic = 'force-dynamic'
+
 interface Props { params: Promise<{ slug: string }> }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
