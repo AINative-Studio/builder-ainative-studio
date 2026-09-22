@@ -31,18 +31,24 @@ const TIERS = [
     priceId: 'price_1U8TOwDP3OaRv4TyeJfzIRd4', // live $20/mo AINative Starter (core#6615 / core PR #6617)
     priceIdYearly: '', // TODO(#258): create Stripe yearly price ($200/yr) and set its price_… here
     features: ['~80 builds/mo (1000 requests)', 'Fast generation (Claude Haiku 4.5)', 'Shareable live URL', 'AINative primitives included'] },
+  // #841: the nightly autonomous loop (Auto Mode) and the real agent swarm
+  // were previously listed as Business/Enterprise-only — confirmed live this
+  // was never the intended product decision (a real Pro customer expected
+  // Auto Mode to work on Pro and it didn't). Both are Pro+ now, same as every
+  // other paid tier — see lib/build/state.ts's planUnlocks() (the actual
+  // gate this copy must stay honest about).
   { id: 'pro', name: 'Pro', monthly: 49, tagline: 'Build it for real.', plan: 'launch' as const, featured: true,
     priceId: 'price_1TGUVdDP3OaRv4TyMwk7nnp1',
     priceIdYearly: '', // TODO(#258): create Stripe yearly price ($490/yr) and set its price_… here
-    features: ['Cody builds your app + company', '1M tokens · 50K API · 10GB', 'Real generation (Claude Sonnet 4.5)', 'Custom domain available'] },
+    features: ['Cody builds your app + company', 'The nightly autonomous loop + real agent swarm', '1M tokens · 50K API · 10GB', 'Real generation (Claude Sonnet 4.5)', 'Custom domain available'] },
   { id: 'business', name: 'Business', monthly: 149, tagline: 'Cody runs it 24/7.', plan: 'company' as const,
     priceId: 'price_1TGUVeDP3OaRv4TyaqQG6lVT',
     priceIdYearly: '', // TODO(#258): create Stripe yearly price ($1,490/yr) and set its price_… here
-    features: ['Everything in Pro', 'The nightly autonomous loop', 'Sales pipeline · invoicing · helpdesk · voice', '5M tokens · 150K API · 50GB'] },
+    features: ['Everything in Pro', 'Sales pipeline · invoicing · helpdesk · voice', '5M tokens · 150K API · 50GB'] },
   { id: 'enterprise', name: 'Enterprise', monthly: 999, tagline: 'Full agent-swarm autonomy.', plan: 'company' as const,
     priceId: 'price_1Ti31LDP3OaRv4TytcjLbFPh',
     priceIdYearly: '', // TODO(#258): create Stripe yearly price ($9,990/yr) and set its price_… here
-    features: ['Everything in Business', 'Real agent swarm executes builds', '20M tokens · 200GB · SSO', 'Priority support'] },
+    features: ['Everything in Business', '20M tokens · 200GB · SSO', 'Priority support'] },
 ]
 
 // Yearly = 10× monthly (2 months free). Kept as a constant so the discount copy and

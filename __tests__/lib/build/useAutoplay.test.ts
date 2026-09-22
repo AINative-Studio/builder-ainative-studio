@@ -221,13 +221,13 @@ describe('buildReducer — state transitions', () => {
     expect(s.railOpen).toBe(false)
   })
 
-  it('SET_ACTIVE_PLAN sets activePlan and auto-enrolls business+', () => {
+  it('SET_ACTIVE_PLAN sets activePlan and auto-enrolls pro+ (#841 — was business+)', () => {
     const sBusiness = buildReducer(wsState(), { type: 'SET_ACTIVE_PLAN', plan: 'business' })
     expect(sBusiness.activePlan).toBe('business')
     expect(sBusiness.enrolled).toBe(true)
 
     const sPro = buildReducer(wsState(), { type: 'SET_ACTIVE_PLAN', plan: 'pro' })
-    expect(sPro.enrolled).toBe(false)
+    expect(sPro.enrolled).toBe(true)
   })
 
   it('SET_APP_CHATID sets appChatId', () => {
@@ -372,6 +372,9 @@ describe('countWoven — primitive counting', () => {
 })
 
 // ── planUnlocks ────────────────────────────────────────────────────────────────
+// #841: nightlyLoop and swarm are Pro+ now (were Business+/Enterprise+) — a
+// real Pro customer expected Auto Mode to work and it didn't. See the fuller
+// suite + rationale in __tests__/lib/build/state.test.ts.
 
 describe('planUnlocks — plan gating', () => {
   it('no plan: all locked', () => {
@@ -381,18 +384,18 @@ describe('planUnlocks — plan gating', () => {
     expect(u.swarm).toBe(false)
   })
 
-  it('pro: customDomain only', () => {
+  it('pro: everything unlocked (#841 — was customDomain only)', () => {
     const u = planUnlocks('pro')
     expect(u.customDomain).toBe(true)
-    expect(u.nightlyLoop).toBe(false)
-    expect(u.swarm).toBe(false)
+    expect(u.nightlyLoop).toBe(true)
+    expect(u.swarm).toBe(true)
   })
 
-  it('business: customDomain + nightlyLoop', () => {
+  it('business: everything unlocked', () => {
     const u = planUnlocks('business')
     expect(u.customDomain).toBe(true)
     expect(u.nightlyLoop).toBe(true)
-    expect(u.swarm).toBe(false)
+    expect(u.swarm).toBe(true)
   })
 
   it('enterprise: all unlocked', () => {

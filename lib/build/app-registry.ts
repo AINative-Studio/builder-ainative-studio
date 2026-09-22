@@ -714,14 +714,18 @@ export async function listAllAppsWithStatus(): Promise<{ apps: AppEntry[]; ok: b
  * Persist the active subscription plan on a company (#241), mirroring
  * setAppDomain. Appends an updated row carrying the existing chatId + brand
  * (and any domain/provisioning) plus the new plan, so resolveApp() (latest-wins)
- * surfaces it. `enrolled` is set for Business+ tiers — auto-enrollment intent into
- * the nightly loop (the cron itself is #243). No-op (false) if slug isn't registered.
+ * surfaces it. `enrolled` is set for Pro+ tiers (#841 — was Business+) —
+ * auto-enrollment intent into the nightly loop (the cron itself is #243).
+ * No-op (false) if slug isn't registered.
  */
 export async function setAppPlan(slug: string, plan: string): Promise<boolean> {
   const existing = await resolveApp(slug)
   if (!existing) return false
-  // Business and Enterprise auto-enroll into the nightly improvement loop.
-  const enrolled = plan === 'business' || plan === 'enterprise' || plan === 'cody_vcto'
+  // #841: Pro and up auto-enroll into the nightly improvement loop (was
+  // Business+ only) — `plan` here is core's real raw plan_id (confirmed live
+  // against GET /api/v1/public/pricing/plans: pro/business/enterprise/
+  // cody__your_virtual_cto), same value subscription/verify/route.ts checks.
+  const enrolled = plan === 'pro' || plan === 'business' || plan === 'enterprise' || plan === 'cody_vcto' || plan === 'cody__your_virtual_cto'
   return registerApp({ ...existing, plan, enrolled })
 }
 

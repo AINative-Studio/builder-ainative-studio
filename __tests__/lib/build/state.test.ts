@@ -567,11 +567,13 @@ describe('buildReducer — SAW_PREVIEW (#310/#311 value moment)', () => {
   })
 })
 
+// #841: nightlyLoop (and therefore auto-enrollment) is Pro+ now, not
+// Business+ — a real Pro customer expected this to work and it didn't.
 describe('buildReducer — SET_ACTIVE_PLAN', () => {
-  it('sets activePlan to pro and auto-enrolls based on tier', () => {
+  it('sets activePlan to pro and auto-enrolls (#841 — was NOT auto-enrolled)', () => {
     const s = buildReducer(initialBuildState, { type: 'SET_ACTIVE_PLAN', plan: 'pro' })
     expect(s.activePlan).toBe('pro')
-    expect(s.enrolled).toBe(false) // pro does NOT auto-enroll
+    expect(s.enrolled).toBe(true)
   })
 
   it('auto-enrolls on business tier', () => {
@@ -697,6 +699,10 @@ describe('trackViews', () => {
 })
 
 // ---------- planUnlocks ----------
+// #841: nightlyLoop and swarm were previously gated at Business+/Enterprise+
+// — confirmed live this was never the intended product decision (a real Pro
+// customer expected Auto Mode to work on Pro and it didn't). Every paid tier
+// now unlocks the same feature set; only usage limits differ above Pro.
 describe('planUnlocks', () => {
   it('returns all false for no plan', () => {
     const u = planUnlocks('')
@@ -705,38 +711,40 @@ describe('planUnlocks', () => {
     expect(u.swarm).toBe(false)
   })
 
-  it('pro: customDomain only', () => {
+  it('pro: everything unlocked (#841 — was customDomain only)', () => {
     const u = planUnlocks('pro')
     expect(u.customDomain).toBe(true)
-    expect(u.nightlyLoop).toBe(false)
-    expect(u.swarm).toBe(false)
+    expect(u.nightlyLoop).toBe(true)
+    expect(u.swarm).toBe(true)
   })
 
-  it('business: customDomain + nightlyLoop', () => {
+  it('business: everything unlocked', () => {
     const u = planUnlocks('business')
     expect(u.customDomain).toBe(true)
     expect(u.nightlyLoop).toBe(true)
-    expect(u.swarm).toBe(false)
+    expect(u.swarm).toBe(true)
   })
 
-  it('enterprise: all three unlocked', () => {
+  it('enterprise: everything unlocked', () => {
     const u = planUnlocks('enterprise')
     expect(u.customDomain).toBe(true)
     expect(u.nightlyLoop).toBe(true)
     expect(u.swarm).toBe(true)
   })
 
-  it('cody_vcto: all three unlocked (top tier)', () => {
+  it('cody_vcto: everything unlocked (top tier)', () => {
     const u = planUnlocks('cody_vcto')
     expect(u.customDomain).toBe(true)
     expect(u.nightlyLoop).toBe(true)
     expect(u.swarm).toBe(true)
   })
 
-  it('tiers are cumulative — enterprise has everything business has', () => {
+  it('tiers are cumulative — enterprise has everything business has, business has everything pro has', () => {
+    const pro = planUnlocks('pro')
     const biz = planUnlocks('business')
     const ent = planUnlocks('enterprise')
-    for (const key of Object.keys(biz) as (keyof typeof biz)[]) {
+    for (const key of Object.keys(pro) as (keyof typeof pro)[]) {
+      if (pro[key]) expect(biz[key]).toBe(true)
       if (biz[key]) expect(ent[key]).toBe(true)
     }
   })

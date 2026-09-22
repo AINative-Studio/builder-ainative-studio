@@ -255,7 +255,7 @@ describe('setAppPlan', () => {
     expect(ok).toBe(false)
   })
 
-  it('writes the plan with enrolled=false for the "pro" tier', async () => {
+  it('writes the plan with enrolled=true for the "pro" tier (#841 — was false)', async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValueOnce(rowsResponse([row('acme')]))
     fetchMock.mockResolvedValueOnce(okResponse())
@@ -264,7 +264,7 @@ describe('setAppPlan', () => {
     const postCall = fetchMock.mock.calls.find((c: any[]) => c[1]?.method === 'POST')
     const body = JSON.parse(String(postCall?.[1]?.body || '{}'))
     expect(body.row_data.plan).toBe('pro')
-    expect(body.row_data.enrolled).toBe(false)
+    expect(body.row_data.enrolled).toBe(true)
   })
 
   it('sets enrolled=true for the "business" plan (auto-enroll into nightly loop)', async () => {
