@@ -367,20 +367,29 @@ export function DocumentsPanel({
               ? `No reports yet. Each night Cody appends a dated operational report for ${companyName || 'your company'} — what the swarm did, metrics, and next actions.`
               : `No documents yet. As ${companyName || 'your company'} evolves, Cody builds a library — Research, Product Roadmap, Mission and Market Research — each grounded in your idea.`}
           </p>
-          {/* Offer to generate the durable starter docs (never auto-faked). */}
+          {/* Offer to generate the durable starter docs (never auto-faked). This is
+              the obvious, useful next step when the library is empty — give it real
+              visual priority (btn-primary + a short framing line) instead of blending
+              in with the unrelated secondary actions above (Export pitch deck, Upload
+              a document). See #820. */}
           {tab !== 'report' && missingStarters.length > 0 && idea && (
-            <div className="m-infra-btns" data-testid="documents-generate">
-              {missingStarters.map((s) => (
-                <button
-                  key={s.type}
-                  className="btn-secondary"
-                  data-testid={`documents-generate-${s.type}`}
-                  disabled={generating != null}
-                  onClick={() => generate(s.type)}
-                >
-                  {generating === s.type ? 'Generating…' : `Generate ${s.label}`}
-                </button>
-              ))}
+            <div data-testid="documents-generate-cta">
+              <p className="m-mono m-task-meta" data-testid="documents-generate-hint">
+                Cody can build these for you:
+              </p>
+              <div className="m-infra-btns" data-testid="documents-generate">
+                {missingStarters.map((s) => (
+                  <button
+                    key={s.type}
+                    className="btn-primary"
+                    data-testid={`documents-generate-${s.type}`}
+                    disabled={generating != null}
+                    onClick={() => generate(s.type)}
+                  >
+                    {generating === s.type ? 'Generating…' : `Generate ${s.label}`}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </div>
