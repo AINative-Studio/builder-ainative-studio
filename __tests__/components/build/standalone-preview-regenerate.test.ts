@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { planRegenerate, baseSlugOf } from '@/components/build/StandalonePreviewRegenerate'
+import { planRegenerate, baseSlugOf, isAcceptedPreviewMessageOrigin } from '@/components/build/StandalonePreviewRegenerate'
 
 /**
  * Real gap found live (2026-09-21): a founder's real product build
@@ -70,5 +70,30 @@ describe('planRegenerate', () => {
     const plan = planRegenerate({ slug: 'a company/weird', idea: undefined, track: undefined })
     if (plan.kind !== 'redirect') throw new Error('expected redirect')
     expect(plan.url).toBe('/build?screen=live&company=a%20company%2Fweird')
+  })
+})
+
+/**
+ * Real bug fixed live 2026-09-22, found ONLY by a real Playwright click (an
+ * API-level check of the same fix would never have caught this): the
+ * standalone page's iframe includes `allow-same-origin` in its sandbox
+ * attribute (unlike Preview.tsx's dashboard iframe, which doesn't), so it
+ * posts messages with the real page origin, not "null". The original check
+ * (`e.origin !== 'null'`) silently discarded every real message — confirmed
+ * live: clicking "Regenerate" flipped the button's own inline-script text to
+ * "Rebuilding…" (the iframe's own script ran fine) but the parent page never
+ * received the message at all, so no rebuild was ever actually triggered.
+ */
+describe('isAcceptedPreviewMessageOrigin', () => {
+  it('accepts "null" (a sandboxed iframe WITHOUT allow-same-origin — e.g. Preview.tsx\'s dashboard iframe)', () => {
+    expect(isAcceptedPreviewMessageOrigin('null', 'https://builder.ainative.studio')).toBe(true)
+  })
+
+  it('accepts the real page origin (a sandboxed iframe WITH allow-same-origin — the standalone page\'s own iframe)', () => {
+    expect(isAcceptedPreviewMessageOrigin('https://builder.ainative.studio', 'https://builder.ainative.studio')).toBe(true)
+  })
+
+  it('rejects a genuinely different origin (never trust an arbitrary cross-origin postMessage)', () => {
+    expect(isAcceptedPreviewMessageOrigin('https://evil.example.com', 'https://builder.ainative.studio')).toBe(false)
   })
 })

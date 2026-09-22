@@ -61,14 +61,29 @@ export function planRegenerate(props: RegenerateProps):
   }
 }
 
+/**
+ * Real bug fixed live (confirmed via a real Playwright click, not just an
+ * API-level check): `Preview.tsx`'s iframe (the in-dashboard preview) is
+ * sandboxed WITHOUT allow-same-origin, so it posts with origin "null" —
+ * that's the pattern this check originally, wrongly, assumed applied
+ * everywhere. But the STANDALONE page's own iframe explicitly DOES include
+ * allow-same-origin (see app/build/[slug]/page.tsx), so it posts with the
+ * real page origin instead. A human clicking "Regenerate" saw the button's
+ * own inline script correctly flip its text to "Rebuilding…", but nothing
+ * else ever happened — this check silently discarded the real message on
+ * every single click. Exported so this exact regression is unit-testable
+ * without mounting the component or faking a MessageEvent.
+ */
+export function isAcceptedPreviewMessageOrigin(messageOrigin: string, pageOrigin: string): boolean {
+  return messageOrigin === 'null' || messageOrigin === pageOrigin
+}
+
 export function StandalonePreviewRegenerate({ slug, idea, track, name }: RegenerateProps) {
   const [status, setStatus] = useState<'idle' | 'working' | 'done' | 'error'>('idle')
 
   useEffect(() => {
     function onPreviewMessage(e: MessageEvent) {
-      // A sandboxed (no allow-same-origin) iframe posts with origin "null" —
-      // mirrors Preview.tsx's own origin check for the same message shape.
-      if (e.origin !== 'null') return
+      if (!isAcceptedPreviewMessageOrigin(e.origin, window.location.origin)) return
       const data = e.data as { type?: string; action?: string } | null
       if (!data || data.type !== 'ainative-preview-nav') return
       if (data.action === 'home') {
