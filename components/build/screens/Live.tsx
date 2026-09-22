@@ -1504,7 +1504,23 @@ export function Live() {
         </p>
       )}
 
-      <DomainModal brand={state.appSub || companyId} slug={companyId} keywords={[state.idea, state.brandTagline].filter(Boolean).join(' ')} open={domainOpen} onClose={() => setDomainOpen(false)} onRequireAuth={() => { setDomainOpen(false); dispatch({ type: 'GOTO_SCREEN', screen: 'signup' }) }} />
+      <DomainModal
+        brand={state.appSub || companyId}
+        slug={companyId}
+        // #817: DomainModal's connect-domain calls must never fire against the
+        // slugified-companyName FALLBACK inside companyId — only against the
+        // reducer's own real appSub once it's actually known. On a fresh deep
+        // link (/build?screen=live&company=X) there's a window before the
+        // hydration effects above settle where companyId still resolves via
+        // that fallback; a customer hit "company not found" from exactly this
+        // path. appSubReady tells DomainModal a confirmed slug exists, not just
+        // that companyId happens to be non-empty.
+        appSubReady={!!state.appSub}
+        keywords={[state.idea, state.brandTagline].filter(Boolean).join(' ')}
+        open={domainOpen}
+        onClose={() => setDomainOpen(false)}
+        onRequireAuth={() => { setDomainOpen(false); dispatch({ type: 'GOTO_SCREEN', screen: 'signup' }) }}
+      />
     </div>
   )
 }
