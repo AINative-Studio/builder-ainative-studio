@@ -63,8 +63,10 @@ const PAID_PROVISIONED_APP = { gitOrg: 'ws-acme', zerodbProjectId: 'proj-1', pla
 beforeEach(() => {
   Object.values(h).forEach((fn) => fn.mockReset())
   h.auth.mockResolvedValue(null)
-  // paid=true — resolveActivePlan resolves to a real plan string.
-  h.resolveActivePlan.mockResolvedValue({ plan: 'pro' })
+  // paid=true, verified=true — resolveActivePlan resolves to a real,
+  // CONFIRMED plan (#830: verified must be true or gateInstructions falls
+  // through to the "couldn't confirm" framing instead of paid/free).
+  h.resolveActivePlan.mockResolvedValue({ plan: 'pro', verified: true })
   h.loadChatWithFallback.mockResolvedValue([])
   h.saveExchange.mockResolvedValue(true)
   h.processConversation.mockResolvedValue(undefined)
@@ -145,7 +147,7 @@ describe('POST /api/build/ask — real-work grounding for "I\'ll wire that" (#77
   })
 
   it('never files an issue for a free-tier founder', async () => {
-    h.resolveActivePlan.mockResolvedValue({ plan: '' })
+    h.resolveActivePlan.mockResolvedValue({ plan: '', verified: true })
     h.resolveApp.mockResolvedValue(PAID_PROVISIONED_APP)
 
     await POST(req({ question: 'The stripe integration', idea: 'a field service company', companyId: 'acme' }))

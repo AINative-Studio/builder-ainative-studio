@@ -60,7 +60,7 @@ const DOC_ATTACHMENT = { fileId: 'f-2', url: '/api/build/documents/upload?id=f-2
 beforeEach(() => {
   Object.values(h).forEach((fn) => fn.mockReset())
   h.auth.mockResolvedValue(null)
-  h.resolveActivePlan.mockResolvedValue({ plan: '' })
+  h.resolveActivePlan.mockResolvedValue({ plan: '', verified: true })
   h.resolveApp.mockResolvedValue(null)
   h.loadChatWithFallback.mockResolvedValue([])
   h.saveExchange.mockResolvedValue(true)
