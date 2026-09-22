@@ -1089,6 +1089,24 @@
 .m-website-section { padding: 12px 0; border-top: 1px solid var(--neutral-line); }
 .m-website-section:first-of-type { border-top: 0; padding-top: 0; }
 .m-website-section-h { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-body-70); margin: 0 0 6px; }
+
+/* Collapsible middle-column section (#803) — bounds the Live dashboard's
+   middle-column height so it doesn't only ever grow as sections are added
+   (root cause of the recurring grey-region-on-scroll bug, #484/#754). Caret/
+   toggle visual language mirrors the existing artifact-rail accordion
+   (m-rail-cat-toggle/m-rail-caret) so this doesn't introduce a second pattern. */
+.m-collapse { margin-bottom: 2px; }
+.m-collapse-toggle {
+  width: 100%; display: flex; align-items: center; gap: 8px;
+  padding: 10px var(--m-pad, 24px); border: 0; background: none; cursor: pointer;
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--text-body-70); text-align: left;
+}
+.m-collapse-toggle:hover { color: var(--color-text); }
+.m-collapse-caret { display: inline-block; transition: transform 0.15s ease; }
+.m-collapse-caret.is-open { transform: rotate(90deg); }
+.m-collapse-title { flex: 1; }
+.m-collapse-body { padding: 0 0 4px; }
 .m-website-sub { font-size: 11.5px; color: var(--text-muted); line-height: 1.5; margin: 0 0 10px; }
 .m-secret-add { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .m-secret-input { flex: 1 1 120px; min-width: 0; font-family: var(--font-mono); font-size: 12px; padding: 6px 8px; border: 1px solid var(--neutral-line); background: var(--color-bg); }

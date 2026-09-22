@@ -38,6 +38,7 @@ import { ZeroVoiceConnect } from '@/components/build/ZeroVoiceConnect'
 import { UPLOAD_ACCEPT_ATTR } from '@/lib/build/media-upload'
 import { DOCUMENT_UPLOAD_ACCEPT_ATTR } from '@/lib/build/document-upload'
 import { useHeaderHeightVar } from '@/lib/build/useHeaderHeightVar'
+import { CollapsibleSection } from '@/components/build/CollapsibleSection'
 
 /** Display label for an active paid tier (#241). */
 const PLAN_LABEL: Record<ActivePlan, string> = {
@@ -1117,10 +1118,12 @@ export function Live() {
               {activePlan ? `✓ On ${PLAN_LABEL[activePlan] || activePlan}` : 'Upgrade to hire the swarm →'}
             </button>
           </div>
-        </div>
-
-        {/* MIDDLE — business systems + tonight + infra */}
-        <div className="m-live-col">
+          {/* Business systems (#803): moved here from the middle column, below
+              the swarm card — the middle column's ever-growing height (as more
+              sections were added over time, against the right column's fixed
+              viewport-capped sticky height) was the real cause of a grey region
+              appearing/growing as the founder scrolled, a bug that's recurred
+              3x (#484, #754, and again) from different specific triggers. */}
           <div className="m-live-card">
             <div className="m-mono m-live-card-h">Business systems</div>
             {/* Total savings vs stand-alone SaaS (#dashboard-ux): sum the comparable
@@ -1208,145 +1211,160 @@ export function Live() {
               onRequireAuth={() => dispatch({ type: 'GOTO_SCREEN', screen: 'signup' })}
             />
           </div>
+        </div>
+
+        {/* MIDDLE — tonight + infra. Each section is a real, independently
+            collapsible accordion (#803) so this column's rendered height
+            stays bounded/predictable — the structural fix for the recurring
+            grey-region-on-scroll bug (#484, #754, and again): the middle
+            column's height only ever grew as sections were added over time,
+            against the right column's fixed viewport-capped sticky height.
+            Sections default OPEN; a founder's collapse choice persists per
+            project (lib/build/live-section-prefs.ts). */}
+        <div className="m-live-col">
           {/* Real, stateful Tasks/Backlog (#55) — replaces the hardcoded tonight
               array. Persisted per {owner, company}; surfaces real swarm task_ids
               and the nightly loop's Recurring task. */}
-          <TasksPanel companyId={companyId} />
-          <div className="m-live-card">
-            <div className="m-mono m-live-card-h">Website & infrastructure</div>
-            <p className="m-mono m-infra-urls">
-              {customDomain && (
-                <><strong>live at: <a href={liveHref} target="_blank" rel="noreferrer">{customDomain}</a></strong><br /></>
-              )}
-              prod: {prodLabel}
-            </p>
-            <div className="m-infra-btns">
-              <a className="btn-secondary" href={liveHref} target="_blank" rel="noreferrer">View site ↗</a>
-              <button className="btn-secondary" onClick={() => setDomainOpen(true)}>
-                {customDomain ? 'Add another domain' : 'Get a custom domain'}
-              </button>
-              {/* Claim the free {slug}.ainative.studio subdomain (#78) — paid-gated.
-                  Until claimed the site is shared via the /build/{slug} path only, and
-                  the subdomain does not resolve. Once claimed, links use the subdomain. */}
-              {!subdomainClaimed && (
+          <CollapsibleSection slug={companyId} sectionId="tasks" title="Tonight">
+            <TasksPanel companyId={companyId} />
+          </CollapsibleSection>
+          <CollapsibleSection slug={companyId} sectionId="infra" title="Website & infrastructure">
+            <div className="m-live-card">
+              <p className="m-mono m-infra-urls">
+                {customDomain && (
+                  <><strong>live at: <a href={liveHref} target="_blank" rel="noreferrer">{customDomain}</a></strong><br /></>
+                )}
+                prod: {prodLabel}
+              </p>
+              <div className="m-infra-btns">
+                <a className="btn-secondary" href={liveHref} target="_blank" rel="noreferrer">View site ↗</a>
+                <button className="btn-secondary" onClick={() => setDomainOpen(true)}>
+                  {customDomain ? 'Add another domain' : 'Get a custom domain'}
+                </button>
+                {/* Claim the free {slug}.ainative.studio subdomain (#78) — paid-gated.
+                    Until claimed the site is shared via the /build/{slug} path only, and
+                    the subdomain does not resolve. Once claimed, links use the subdomain. */}
+                {!subdomainClaimed && (
+                  <button
+                    className="btn-secondary"
+                    onClick={claimSubdomainAction}
+                    disabled={claiming}
+                    data-testid="claim-subdomain-cta"
+                    title={activePlan
+                      ? `Claim ${companyId}.ainative.studio for this company`
+                      : 'Upgrade to a paid plan to claim your subdomain'}
+                  >
+                    {claiming ? 'Claiming…' : activePlan ? 'Claim subdomain' : 'Claim subdomain (upgrade)'}
+                  </button>
+                )}
+                {/* Provision the real per-company cloud (#243): own ZeroDB project + persistent host. */}
                 <button
                   className="btn-secondary"
-                  onClick={claimSubdomainAction}
-                  disabled={claiming}
-                  data-testid="claim-subdomain-cta"
-                  title={activePlan
-                    ? `Claim ${companyId}.ainative.studio for this company`
-                    : 'Upgrade to a paid plan to claim your subdomain'}
+                  onClick={provisionCompany}
+                  disabled={provision.busy || provision.provisioned}
+                  title={provision.provisioned ? 'This company has its own ZeroDB project' : 'Create a real per-company ZeroDB project + persistent deploy'}
                 >
-                  {claiming ? 'Claiming…' : activePlan ? 'Claim subdomain' : 'Claim subdomain (upgrade)'}
+                  {provision.provisioned ? '✓ Cloud provisioned' : provision.busy ? 'Provisioning…' : 'Provision cloud'}
                 </button>
+                {/* Redeploy moved into the Website & app panel (#63) — the disabled
+                    "Redeploy · soon" placeholder is now a real, health-checked redeploy
+                    of the current version. See <WebsitePanel /> below. */}
+              </div>
+              {provision.provisioned && (
+                <p className="m-mono m-metric-note">
+                  Own ZeroDB project · Pipeline & Invoices read live data.
+                  {zerovoiceE164 ? ' Voice/SMS is real — see ZeroVoice below.' : ' Helpdesk & Voice still simulated.'}
+                </p>
               )}
-              {/* Provision the real per-company cloud (#243): own ZeroDB project + persistent host. */}
-              <button
-                className="btn-secondary"
-                onClick={provisionCompany}
-                disabled={provision.busy || provision.provisioned}
-                title={provision.provisioned ? 'This company has its own ZeroDB project' : 'Create a real per-company ZeroDB project + persistent deploy'}
-              >
-                {provision.provisioned ? '✓ Cloud provisioned' : provision.busy ? 'Provisioning…' : 'Provision cloud'}
-              </button>
-              {/* Redeploy moved into the Website & app panel (#63) — the disabled
-                  "Redeploy · soon" placeholder is now a real, health-checked redeploy
-                  of the current version. See <WebsitePanel /> below. */}
             </div>
-            {provision.provisioned && (
-              <p className="m-mono m-metric-note">
-                Own ZeroDB project · Pipeline & Invoices read live data.
-                {zerovoiceE164 ? ' Voice/SMS is real — see ZeroVoice below.' : ' Helpdesk & Voice still simulated.'}
-              </p>
-            )}
-          </div>
-          {/* Deploy version history + one-click rollback (#62) — each deploy of the
-              company app is a version (message + SHA + timestamp, CURRENT badge on
-              the live one); REVERT rolls the live site back via Railway with a
-              confirmation + honest rolling-back → validating → live status. A new,
-              distinct section — does not touch #67 systems / #55 Tasks / #52 chat. */}
-          {/* #378: no visual grouping existed between the dev/build-ops panels below
-              and the business-ops/growth panels further down — a founder said they
-              visually "blend together." Section labels reuse the existing
-              .m-website-section-h mono-caps treatment already used inside
-              WebsitePanel, so this doesn't introduce a new visual language. */}
-          <div className="m-mono m-website-section-h" data-testid="section-build-ops" style={{ marginTop: 4 }}>Build ops</div>
-          <VersionsPanel companyId={companyId} />
-          {/* Website / App management (#63) — Redeploy the current version
-              (health-checked "redeploying → validating → live", finishing the old
-              disabled "Redeploy · soon" placeholder), runtime Secrets (view/add/
-              edit/delete masked env vars, owner-only), and Database Download (export
-              the company's OWN ZeroDB data as JSON/CSV — "you own 100%"). Owner-only
-              ops are gated on a paid plan. A NEW, distinct section — does not touch
-              #67 systems / #52 chat / #55 Tasks / #62 Versions / #64 Documents / #65
-              masthead / #51 video / #54 media / #58 auto-mode. Manage Domain (#53),
-              Versions (#62) and Tasks (#55) keep their own panels — linked, not duplicated. */}
-          <WebsitePanel
-            companyId={companyId}
-            canManage={signedIn && !!activePlan}
-            onRequireUpgrade={goUpgrade}
-          />
-          {/* Persistent Documents library (#64) — the company's durable Documents
-              (Research / Product Roadmap / Mission / Market Research) + time-series
-              Reports (the daily/nightly operational report). Persisted per
-              {owner, company}; VIEW renders structured markdown. A new, distinct
-              section — does not touch #67 systems / #52 chat / #55 Tasks / #62
-              Versions / #65 masthead. */}
-          <div className="m-mono m-website-section-h" data-testid="section-business-ops" style={{ marginTop: 4 }}>Business ops</div>
-          <DocumentsPanel
-            companyId={companyId}
-            idea={state.idea}
-            companyName={company}
-            track={state.track}
-            brandTagline={state.brandTagline}
-            brandColor={state.brandColor}
-            canExportDeck={activePlan !== ''}
-            onExportUpgrade={goUpgrade}
-          />
-          {/* Auto-generated ON-BRAND media (#54) — Auto Image + Auto Video, each with
-              a Once/Daily/Weekly/Monthly schedule, run on OWNED core Multimodal /
-              Content-Workflow primitives with assets stored in the company's own
-              ZeroDB. Shows last-generated + next run; inert + honest when media creds
-              aren't set. A new, distinct section — does not touch #67 systems / #52
-              chat / #55 Tasks / #62 Versions / #64 Documents / #65 masthead / #51 video. */}
-          <div className="m-mono m-website-section-h" data-testid="section-growth" style={{ marginTop: 4 }}>Growth</div>
-          <MediaPanel
-            companyId={companyId}
-            companyName={company}
-            brandTagline={state.brandTagline}
-            brandColor={state.brandColor}
-            idea={state.idea}
-          />
-          {/* Auto Mode (#58) — user-set autonomous run duration ("Cody works
-              nonstop. You choose how long."). Duration selector + START/STOP wired
-              to the REAL loop (/api/build/auto-mode → bounded swarm dispatch over the
-              window), with live progress (time remaining / tasks dispatched / current
-              activity). Paid-gated (Business+, same unlock as the nightly loop) with a
-              transparent credit cost, agent-triggerable, and inert+honest when the loop
-              isn't configured. A NEW, distinct section — does not touch #67 systems /
-              #52 chat / #55 Tasks / #62 Versions / #64 Documents / #65 masthead / #51
-              video / #54 media. */}
-          <AutoModePanel
-            companyId={companyId}
-            companyName={company}
-            track={state.track}
-            unlocked={gates.nightlyLoop}
-            onUpgrade={goUpgrade}
-          />
-
+            {/* Deploy version history + one-click rollback (#62) — each deploy of the
+                company app is a version (message + SHA + timestamp, CURRENT badge on
+                the live one); REVERT rolls the live site back via Railway with a
+                confirmation + honest rolling-back → validating → live status. A new,
+                distinct section — does not touch #67 systems / #55 Tasks / #52 chat. */}
+            {/* #378: no visual grouping existed between the dev/build-ops panels below
+                and the business-ops/growth panels further down — a founder said they
+                visually "blend together." Section labels reuse the existing
+                .m-website-section-h mono-caps treatment already used inside
+                WebsitePanel, so this doesn't introduce a new visual language. */}
+            <div className="m-mono m-website-section-h" data-testid="section-build-ops" style={{ marginTop: 4 }}>Build ops</div>
+            <VersionsPanel companyId={companyId} />
+            {/* Website / App management (#63) — Redeploy the current version
+                (health-checked "redeploying → validating → live", finishing the old
+                disabled "Redeploy · soon" placeholder), runtime Secrets (view/add/
+                edit/delete masked env vars, owner-only), and Database Download (export
+                the company's OWN ZeroDB data as JSON/CSV — "you own 100%"). Owner-only
+                ops are gated on a paid plan. A NEW, distinct section — does not touch
+                #67 systems / #52 chat / #55 Tasks / #62 Versions / #64 Documents / #65
+                masthead / #51 video / #54 media / #58 auto-mode. Manage Domain (#53),
+                Versions (#62) and Tasks (#55) keep their own panels — linked, not duplicated. */}
+            <WebsitePanel
+              companyId={companyId}
+              canManage={signedIn && !!activePlan}
+              onRequireUpgrade={goUpgrade}
+            />
+            {/* Persistent Documents library (#64) — the company's durable Documents
+                (Research / Product Roadmap / Mission / Market Research) + time-series
+                Reports (the daily/nightly operational report). Persisted per
+                {owner, company}; VIEW renders structured markdown. A new, distinct
+                section — does not touch #67 systems / #52 chat / #55 Tasks / #62
+                Versions / #65 masthead. */}
+            <div className="m-mono m-website-section-h" data-testid="section-business-ops" style={{ marginTop: 4 }}>Business ops</div>
+            <DocumentsPanel
+              companyId={companyId}
+              idea={state.idea}
+              companyName={company}
+              track={state.track}
+              brandTagline={state.brandTagline}
+              brandColor={state.brandColor}
+              canExportDeck={activePlan !== ''}
+              onExportUpgrade={goUpgrade}
+            />
+            {/* Auto-generated ON-BRAND media (#54) — Auto Image + Auto Video, each with
+                a Once/Daily/Weekly/Monthly schedule, run on OWNED core Multimodal /
+                Content-Workflow primitives with assets stored in the company's own
+                ZeroDB. Shows last-generated + next run; inert + honest when media creds
+                aren't set. A new, distinct section — does not touch #67 systems / #52
+                chat / #55 Tasks / #62 Versions / #64 Documents / #65 masthead / #51 video. */}
+            <div className="m-mono m-website-section-h" data-testid="section-growth" style={{ marginTop: 4 }}>Growth</div>
+            <MediaPanel
+              companyId={companyId}
+              companyName={company}
+              brandTagline={state.brandTagline}
+              brandColor={state.brandColor}
+              idea={state.idea}
+            />
+            {/* Auto Mode (#58) — user-set autonomous run duration ("Cody works
+                nonstop. You choose how long."). Duration selector + START/STOP wired
+                to the REAL loop (/api/build/auto-mode → bounded swarm dispatch over the
+                window), with live progress (time remaining / tasks dispatched / current
+                activity). Paid-gated (Business+, same unlock as the nightly loop) with a
+                transparent credit cost, agent-triggerable, and inert+honest when the loop
+                isn't configured. A NEW, distinct section — does not touch #67 systems /
+                #52 chat / #55 Tasks / #62 Versions / #64 Documents / #65 masthead / #51
+                video / #54 media. */}
+            <AutoModePanel
+              companyId={companyId}
+              companyName={company}
+              track={state.track}
+              unlocked={gates.nightlyLoop}
+              onUpgrade={goUpgrade}
+            />
+          </CollapsibleSection>
           {/* Growth (#449) — fund a real, automated Meta ad-test campaign run
               from AINative's own ad account (the founder never touches Meta
               directly). Paid-gated (any paid plan). A NEW, distinct section —
               does not touch #67 systems / #52 chat / #55 Tasks / #62 Versions
               / #64 Documents / #65 masthead / #51 video / #54 media / #58
               Auto Mode. */}
-          <GrowthPanel
-            companyId={companyId}
-            companyName={company}
-            unlocked={gates.growth}
-            onUpgrade={goUpgrade}
-          />
+          <CollapsibleSection slug={companyId} sectionId="growth" title="Growth">
+            <GrowthPanel
+              companyId={companyId}
+              companyName={company}
+              unlocked={gates.growth}
+              onUpgrade={goUpgrade}
+            />
+          </CollapsibleSection>
         </div>
 
         {/* RIGHT — Ask Cody anything. Sticky rail (m-live-col-chat) so the chat —
