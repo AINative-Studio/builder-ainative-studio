@@ -641,38 +641,100 @@
 
   // ============================================================
   // AIKitSidebar — Collapsible sidebar navigation
+  //
+  // MOBILE RESPONSIVENESS (real, live bug fix — a real customer's generated
+  // app, agentive-product, had AIKitSidebar rendering full-width and
+  // permanently visible on a 390px phone viewport, with no way to reach the
+  // rest of the app's content). This component is the MANDATED sidebar
+  // pattern for every generated dashboard (professional-prompt.ts: "not
+  // custom aside divs"), so the fix belongs here, once, rather than in every
+  // generated app individually — every app using AIKitSidebar gets it for
+  // free, including apps already generated before this fix shipped.
+  //
+  // Self-contained: tracks its own mobile-open state and renders its own
+  // hamburger trigger — no new props required, so no codegen-prompt or
+  // generated-app changes are needed for existing/future apps to benefit.
+  // Uses a real `window.matchMedia` breakpoint check + resize listener
+  // (JS-driven, not a Tailwind `md:` utility class) because this exact
+  // preview pipeline has a confirmed, separate bug where dynamically-
+  // interpolated Tailwind classes in a template literal can be corrupted at
+  // serve time (see lib/build/template-literal-to-concat.ts's doc comment)
+  // — a JS-computed inline style is immune to that failure mode by
+  // construction, not just by coincidence.
   // ============================================================
   const AIKitSidebar = ({ items = [], activeItem, onItemClick, collapsed = false, onToggle, logo, title, className = '', ...props }) => {
-    return React.createElement('aside', {
-      className: cn('flex flex-col bg-[#131726] text-white transition-all duration-300 sticky top-0 h-screen', collapsed ? 'w-16' : 'w-64', className),
+    const [isMobile, setIsMobile] = React.useState(
+      typeof window !== 'undefined' ? window.innerWidth < 768 : false
+    );
+    const [mobileOpen, setMobileOpen] = React.useState(false);
+
+    React.useEffect(() => {
+      if (typeof window === 'undefined') return;
+      const mq = window.matchMedia('(max-width: 767px)');
+      const onChange = () => setIsMobile(mq.matches);
+      onChange();
+      mq.addEventListener ? mq.addEventListener('change', onChange) : mq.addListener(onChange);
+      return () => {
+        mq.removeEventListener ? mq.removeEventListener('change', onChange) : mq.removeListener(onChange);
+      };
+    }, []);
+
+    const handleItemClick = (item) => {
+      onItemClick && onItemClick(item.id || item.label);
+      if (isMobile) setMobileOpen(false);
+    };
+
+    const asideStyle = isMobile
+      ? {
+          position: 'fixed', top: 0, left: 0, zIndex: 40, height: '100vh', width: '16rem',
+          transform: mobileOpen ? 'translateX(0)' : 'translateX(-100%)',
+          transition: 'transform 0.3s ease',
+        }
+      : undefined;
+
+    const sidebarEl = React.createElement('aside', {
+      className: cn(
+        'flex flex-col bg-[#131726] text-white transition-all duration-300',
+        isMobile ? '' : 'sticky top-0 h-screen',
+        isMobile ? '' : (collapsed ? 'w-16' : 'w-64'),
+        className
+      ),
+      style: asideStyle,
       ...props
     },
       // Header
       React.createElement('div', { className: 'p-4 flex items-center justify-between border-b border-white/10' },
-        !collapsed && React.createElement('div', { className: 'flex items-center gap-2' },
+        (!collapsed || isMobile) && React.createElement('div', { className: 'flex items-center gap-2' },
           logo || React.createElement('div', { className: 'w-8 h-8 bg-[#5867EF] rounded-lg flex items-center justify-center text-white font-bold text-sm' }, (title || 'A')[0]),
           React.createElement('span', { className: 'font-bold text-lg' }, title || 'App')
         ),
-        onToggle && React.createElement('button', {
-          onClick: onToggle, className: 'p-1.5 rounded-lg hover:bg-white/10 transition-colors'
-        }, React.createElement('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2 },
-          collapsed ? React.createElement('path', { d: 'M9 18l6-6-6-6' }) : React.createElement('path', { d: 'M15 18l-6-6 6-6' })
-        ))
+        isMobile
+          ? React.createElement('button', {
+              onClick: () => setMobileOpen(false), 'aria-label': 'Close menu',
+              className: 'p-1.5 rounded-lg hover:bg-white/10 transition-colors'
+            }, React.createElement('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2 },
+              React.createElement('path', { d: 'M18 6L6 18M6 6l12 12' })
+            ))
+          : onToggle && React.createElement('button', {
+              onClick: onToggle, className: 'p-1.5 rounded-lg hover:bg-white/10 transition-colors'
+            }, React.createElement('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2 },
+              collapsed ? React.createElement('path', { d: 'M9 18l6-6-6-6' }) : React.createElement('path', { d: 'M15 18l-6-6 6-6' })
+            ))
       ),
       // Nav items
       React.createElement('nav', { className: 'flex-1 p-3 space-y-1 overflow-y-auto' },
         items.map((item, i) =>
           React.createElement('button', {
             key: i,
-            onClick: () => onItemClick && onItemClick(item.id || item.label),
+            onClick: () => handleItemClick(item),
             className: cn(
               'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all',
               (activeItem === (item.id || item.label)) ? 'bg-[#5867EF] text-white' : 'text-slate-400 hover:text-white hover:bg-white/10'
             )
           },
             item.icon && React.createElement('span', { className: 'flex-shrink-0 w-5 h-5 flex items-center justify-center' }, item.icon),
-            !collapsed && React.createElement('span', null, item.label),
-            !collapsed && item.badge && React.createElement('span', {
+            (!collapsed || isMobile) && React.createElement('span', null, item.label),
+            (!collapsed || isMobile) && item.badge && React.createElement('span', {
               className: 'ml-auto text-xs bg-[#5867EF]/30 text-[#5867EF] px-2 py-0.5 rounded-full'
             }, item.badge)
           )
@@ -686,9 +748,30 @@
           React.createElement('svg', { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2 },
             React.createElement('path', { d: 'M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9' })
           ),
-          !collapsed && React.createElement('span', null, 'Sign Out')
+          (!collapsed || isMobile) && React.createElement('span', null, 'Sign Out')
         )
       )
+    );
+
+    if (!isMobile) return sidebarEl;
+
+    // Mobile: a fixed hamburger trigger (always reachable, independent of
+    // the sidebar's own open/closed state) + an overlay + the off-canvas
+    // sidebar itself.
+    return React.createElement(React.Fragment, null,
+      React.createElement('button', {
+        onClick: () => setMobileOpen(true), 'aria-label': 'Open menu',
+        style: { position: 'fixed', top: '1rem', left: '1rem', zIndex: 50 },
+        className: cn('p-2 rounded-lg bg-[#131726] text-white shadow-lg', mobileOpen ? 'hidden' : '')
+      }, React.createElement('svg', { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2 },
+        React.createElement('path', { d: 'M3 12h18M3 6h18M3 18h18' })
+      )),
+      mobileOpen && React.createElement('div', {
+        onClick: () => setMobileOpen(false),
+        'data-aikit-sidebar-backdrop': 'true',
+        style: { position: 'fixed', inset: 0, zIndex: 39, background: 'rgba(0,0,0,0.5)' },
+      }),
+      sidebarEl
     );
   };
 
