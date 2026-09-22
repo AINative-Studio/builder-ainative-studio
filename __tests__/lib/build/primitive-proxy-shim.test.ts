@@ -89,4 +89,16 @@ describe('the injected fetch shim (#443, extends #331 dbTokenShim)', () => {
   it('is a no-op (empty string) when there is nothing to inject', () => {
     expect(dbTokenShim('', {})).toBe('')
   })
+
+  // #814 — contentworkflow is not a FounderScopedPrimitive, but the shim's
+  // /api/primitive/ branch is generic on primitive name (it looks up
+  // PT[m[1]] regardless of which key it is), so once mintPreviewPrimitiveTokens
+  // actually populates a contentworkflow entry (the real fix), the shim needs
+  // no changes of its own to attach it correctly. This proves that.
+  it('attaches x-ainative-primitive-token on a /api/primitive/contentworkflow/... call (#814)', async () => {
+    const proxyToken = mintPrimitiveProxyToken('agentive-product', 'contentworkflow', 1_700_000_000)
+    const shim = dbTokenShim('', { contentworkflow: proxyToken })
+    const { init } = await runShimAgainst(shim, '/api/primitive/contentworkflow/content/calendar')
+    expect(init.headers.get('x-ainative-primitive-token')).toBe(proxyToken)
+  })
 })

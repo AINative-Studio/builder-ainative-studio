@@ -23,8 +23,16 @@ import { hasFounderCredential, type FounderScopedPrimitive } from '@/lib/build/p
 // e.g. a real serviceos/zerovoice credential would hit this exact same
 // silent 401 in preview — the missing entry, not a credential problem.
 // Keep this in sync with FounderScopedPrimitive's real union (all 10
-// members — contentworkflow is deliberately excluded: it uses Builder's own
-// service key, not a founder credential, so it needs no preview token).
+// members). contentworkflow is deliberately excluded from THIS list (it
+// uses Builder's own service key, not a founder credential, so it is never
+// gated on hasFounderCredential) — but it IS still minted a proxy token,
+// unconditionally, by mintPreviewPrimitiveTokens below (#814). The proxy
+// route's resolveSlug() requires a signed {slug, primitive} binding token
+// for every primitive in the no-COMPANY_SLUG (preview) case, contentworkflow
+// included, regardless of which downstream credential model it uses — so
+// "needs no founder credential" is NOT the same as "needs no preview token."
+// The earlier version of this comment conflated the two, which is exactly
+// how contentworkflow ended up permanently 401ing in preview.
 export const FOUNDER_SCOPED_PRIMITIVES: FounderScopedPrimitive[] = [
   'zerocommerce', 'zeropipeline', 'agentflow', 'zeroforms', 'zerocrm',
   'zerovoice', 'zeroinvoice', 'serviceos', 'livestreaming', 'socialgraph',
@@ -55,9 +63,23 @@ async function mintPreviewDbToken(slug: string | null, previewId: string): Promi
  * primitives that were never provisioned, rather than minting a token that
  * would just 502 at request time). Cheap: HMAC only, no network call beyond
  * the existence check against the already-fetched registry entry.
+ *
+ * #814 — contentworkflow is deliberately NOT in FOUNDER_SCOPED_PRIMITIVES (it
+ * uses Builder's own service key, never a per-founder credential), so it was
+ * ALWAYS skipped by the hasFounderCredential loop below and could never get a
+ * token in the preview iframe — a real, confirmed 401
+ * (missing_or_invalid_token) on every contentworkflow call from inside
+ * preview, even though the actual downstream call needs no founder
+ * credential at all. The proxy route's resolveSlug() still requires a signed
+ * primitive-proxy token in the no-COMPANY_SLUG (preview) case for EVERY
+ * primitive, contentworkflow included — so it still needs a real
+ * {slug, primitive} binding token, just minted unconditionally on the same
+ * slug/chatId binding check as the founder-scoped ones, never gated on
+ * hasFounderCredential (there is no founder credential to check for this
+ * primitive; gating on one that structurally never exists is the bug).
  */
-async function mintPreviewPrimitiveTokens(slug: string | null, previewId: string): Promise<Partial<Record<FounderScopedPrimitive, string>>> {
-  const tokens: Partial<Record<FounderScopedPrimitive, string>> = {}
+export async function mintPreviewPrimitiveTokens(slug: string | null, previewId: string): Promise<Partial<Record<FounderScopedPrimitive | 'contentworkflow', string>>> {
+  const tokens: Partial<Record<FounderScopedPrimitive | 'contentworkflow', string>> = {}
   if (!slug || !/^[a-z0-9-]{1,64}$/i.test(slug)) return tokens
   try {
     const { resolveApp } = await import('@/lib/build/app-registry')
@@ -71,6 +93,12 @@ async function mintPreviewPrimitiveTokens(slug: string | null, previewId: string
         }
       }),
     )
+    // #814 — no founder-credential gate: contentworkflow's binding is proof
+    // of "this is really company X's preview," not proof of a per-founder
+    // credential (it never has one). mintPrimitiveProxyToken's signed
+    // {slug, primitive} payload is exactly that binding shape regardless of
+    // which primitive name is passed, so it's reused as-is here.
+    tokens.contentworkflow = mintPrimitiveProxyToken(slug, 'contentworkflow', iat)
   } catch {
     return {}
   }
@@ -84,7 +112,7 @@ async function mintPreviewPrimitiveTokens(slug: string | null, previewId: string
  *  /api/community/ (#505) requests, and (#443)
  *  the right primitive-proxy token on same-origin /api/primitive/{name}/...
  *  requests. No-op pieces omitted when there is no token to attach. */
-export function dbTokenShim(token: string, primitiveTokens: Partial<Record<FounderScopedPrimitive, string>> = {}): string {
+export function dbTokenShim(token: string, primitiveTokens: Partial<Record<FounderScopedPrimitive | 'contentworkflow', string>> = {}): string {
   if (!token && Object.keys(primitiveTokens).length === 0) return ''
   return `<script>(function(){
   var T=${JSON.stringify(token)};var PT=${JSON.stringify(primitiveTokens)};var of=window.fetch;

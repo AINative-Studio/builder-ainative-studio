@@ -32,4 +32,24 @@ describe('primitive-proxy-token (#443) — secure per-app primitive binding', ()
     const dbToken = mintAppDataToken('proj-123', 'coffee-shop', 1_700_000_000)
     expect(verifyPrimitiveProxyToken(dbToken)).toBeNull()
   })
+
+  // #814 — contentworkflow is not a FounderScopedPrimitive (it uses
+  // Builder's own service key, never a per-founder credential), but it goes
+  // through this exact same signed {slug, primitive} binding in the preview
+  // iframe — the proxy route requires one for every primitive regardless of
+  // its downstream credential model. Confirms the token machinery itself
+  // works identically for it (mint, verify, forged-signature rejection).
+  it('mints and verifies a contentworkflow token identically to a founder-scoped one (#814)', () => {
+    const t = mintPrimitiveProxyToken('agentive-product', 'contentworkflow', 1_700_000_000)
+    const p = verifyPrimitiveProxyToken(t)
+    expect(p).not.toBeNull()
+    expect(p!.slug).toBe('agentive-product')
+    expect(p!.primitive).toBe('contentworkflow')
+  })
+
+  it('rejects a FORGED contentworkflow token signature (same IDOR protection as any other primitive)', () => {
+    const t = mintPrimitiveProxyToken('victim', 'contentworkflow', 1_700_000_000)
+    const [payload] = t.split('.')
+    expect(verifyPrimitiveProxyToken(`${payload}.deadbeef`)).toBeNull()
+  })
 })

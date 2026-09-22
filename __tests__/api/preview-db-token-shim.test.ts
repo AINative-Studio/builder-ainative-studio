@@ -115,6 +115,20 @@ describe('dbTokenShim — generated apps get the right header on the right path'
     expect(captured.headers?.get('x-ainative-primitive-token')).toBe('real-primitive-token')
   })
 
+  // #814 — contentworkflow token-shim gap: confirmed live on agentive-product
+  // that /api/primitive/contentworkflow/content/calendar always 401'd from
+  // preview because no contentworkflow entry was ever minted into
+  // primitiveTokens (it's deliberately excluded from FOUNDER_SCOPED_PRIMITIVES
+  // and was therefore skipped by the old hasFounderCredential-gated loop).
+  // The shim itself needed no change — it's generic on primitive name — so
+  // this just confirms it attaches correctly once given a contentworkflow key.
+  it('attaches x-ainative-primitive-token on /api/primitive/contentworkflow/ (#814)', async () => {
+    const html = dbTokenShim('real-db-token', { contentworkflow: 'real-contentworkflow-token' })
+    const { captured } = runShimAndCapture(html, '/api/primitive/contentworkflow/content/calendar')
+    await window.fetch('/api/primitive/contentworkflow/content/calendar')
+    expect(captured.headers?.get('x-ainative-primitive-token')).toBe('real-contentworkflow-token')
+  })
+
   it('does not attach any token header on an unrelated path', async () => {
     const html = dbTokenShim('real-db-token')
     const { captured } = runShimAndCapture(html, '/api/build/ask')
