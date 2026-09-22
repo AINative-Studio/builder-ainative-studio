@@ -162,11 +162,11 @@ describe('#841 runLoopBackfillSweep — a real run enrolls only what qualifies',
     )
   })
 
-  it('enrolls NOTHING for a mixed registry except the one qualifying company', async () => {
+  it('enrolls every genuinely qualifying company in a mixed registry (#841 — Pro is now loop-eligible)', async () => {
     h.listAllAppsWithStatus.mockResolvedValue({
       apps: [
         app('paid-loop', 'biz@x.com'),      // business  → enroll
-        app('paid-pro', 'pro@x.com'),       // pro       → paid, but not loop tier
+        app('paid-pro', 'pro@x.com'),       // pro       → enroll (Pro is loop-eligible per #841)
         app('freebie', 'free@x.com'),       // free      → not paid
         app('anon'),                        // no owner  → skip
         app('flaky', 'err@x.com'),          // lookup failed → fail closed
@@ -184,11 +184,12 @@ describe('#841 runLoopBackfillSweep — a real run enrolls only what qualifies',
 
     const r = await runLoopBackfillSweep({ dryRun: false })
 
-    expect(r.enrolled).toBe(1)
-    expect(h.enrollCompany).toHaveBeenCalledTimes(1)
+    expect(r.enrolled).toBe(2)
+    expect(h.enrollCompany).toHaveBeenCalledTimes(2)
     expect(h.enrollCompany).toHaveBeenCalledWith(expect.objectContaining({ companyId: 'paid-loop' }))
+    expect(h.enrollCompany).toHaveBeenCalledWith(expect.objectContaining({ companyId: 'paid-pro' }))
     expect(r.byDisposition).toMatchObject({
-      enroll: 1, paid_not_loop_tier: 1, not_paid: 1,
+      enroll: 2, not_paid: 1,
       no_owner_email: 1, unverifiable: 1, already_enrolled: 1,
     })
   })
@@ -205,15 +206,16 @@ describe('#841 runLoopBackfillSweep — a real run enrolls only what qualifies',
     expect(r.results[0]).toMatchObject({ disposition: 'unverifiable', reason: 'request_failed:TimeoutError' })
   })
 
-  it('never enrolls a Pro company — paying, but the loop is a Business+ entitlement', async () => {
+  it('enrolls a real Pro company (#841 — agentive/amador was the live example of this bug)', async () => {
     h.listAllAppsWithStatus.mockResolvedValue({ apps: [app('agentive', 'amador@x.com')], ok: true })
     h.fetchPlanByEmail.mockResolvedValue(verified('pro'))
 
     const r = await runLoopBackfillSweep({ dryRun: false })
 
-    expect(r.enrolled).toBe(0)
-    expect(h.runNightlyLoop).not.toHaveBeenCalled()
-    expect(r.results[0]).toMatchObject({ disposition: 'paid_not_loop_tier', plan: 'pro' })
+    expect(r.enrolled).toBe(1)
+    expect(h.enrollCompany).toHaveBeenCalledWith(expect.objectContaining({ companyId: 'agentive' }))
+    expect(h.runNightlyLoop).toHaveBeenCalledWith(expect.objectContaining({ companyId: 'agentive' }))
+    expect(r.results[0]).toMatchObject({ disposition: 'enroll', plan: 'pro' })
   })
 })
 
