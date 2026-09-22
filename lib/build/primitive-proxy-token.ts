@@ -19,10 +19,21 @@ import type { FounderScopedPrimitive } from './primitive-credentials'
 const SECRET = process.env.AUTH_SECRET || 'fallback-secret-for-development'
 const PURPOSE = 'primitive-proxy-v1'
 
+/**
+ * #814 — contentworkflow is not a FounderScopedPrimitive (it has no per-
+ * founder credential — see primitive-credentials.ts), but it goes through
+ * this SAME signed {slug, primitive} binding in the preview iframe (the
+ * proxy route's resolveSlug() requires one regardless of which downstream
+ * credential model a primitive uses). The token payload's `primitive` field
+ * is therefore typed to accept it too, alongside the 10 real founder-scoped
+ * members.
+ */
+export type ProxyTokenPrimitive = FounderScopedPrimitive | 'contentworkflow'
+
 export interface PrimitiveProxyTokenPayload {
   purpose: typeof PURPOSE
   slug: string
-  primitive: FounderScopedPrimitive
+  primitive: ProxyTokenPrimitive
   iat: number
 }
 
@@ -40,7 +51,7 @@ function sign(payloadB64: string): string {
  *  preview-render time (mirrors mintPreviewDbToken in app/api/preview/[id]/route.ts). */
 export function mintPrimitiveProxyToken(
   slug: string,
-  primitive: FounderScopedPrimitive,
+  primitive: ProxyTokenPrimitive,
   iatSeconds: number,
 ): string {
   if (!slug) throw new Error('mintPrimitiveProxyToken: slug required')
