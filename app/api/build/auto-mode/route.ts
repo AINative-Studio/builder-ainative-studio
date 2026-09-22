@@ -14,10 +14,11 @@
  *   POST { companyId, companyName?, duration, action:'start' } → { ok, run, progress, cost } | { ok:false, reason }
  *   POST { companyId, action:'stop' }                   → { ok }
  *
- * GATING (#58 req 5): the bounded run is a paid capability — gated on the SAME
- * `nightlyLoop` unlock (Business+) the nightly enrollment uses. Credit COST is
- * quoted transparently (Polsia-style) but not hard-charged here (no live credit
- * ledger yet) — the founder always sees the cost before starting.
+ * GATING (#58 req 5, #841): the bounded run is a paid capability — gated on the
+ * SAME `nightlyLoop` unlock (Pro+, corrected from Business+ in #841) the nightly
+ * enrollment uses. Credit COST is quoted transparently (Polsia-style) but not
+ * hard-charged here (no live credit ledger yet) — the founder always sees the
+ * cost before starting.
  *
  * SAFETY (#58 req 5): inert when the run store / loop isn't configured. Start then
  * returns { ok:false, reason:'unavailable' } and never 500s — a missing key can

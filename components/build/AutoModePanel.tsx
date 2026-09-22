@@ -10,10 +10,10 @@
  * and the current activity. STOP ends it.
  *
  * Machine surface: /api/build/auto-mode (also agent-triggerable, #58 req 4).
- * Gating (#58 req 5): the run is a paid capability (Business+, same unlock as the
- * nightly loop); credit cost is shown transparently before starting. When the loop
- * store isn't configured the panel renders an honest disabled state and never fakes
- * a run.
+ * Gating (#58 req 5, #841): the run is a paid capability (Pro+, corrected from
+ * Business+ — same unlock as the nightly loop); credit cost is shown transparently
+ * before starting. When the loop store isn't configured the panel renders an
+ * honest disabled state and never fakes a run.
  *
  * Chrome: reuses the `.modernist` `.m-live-card`, `.st` pills, `.m-chip`, `.btn-*`,
  * `.m-doc-tab` and `.m-task-*` classes already used by #54/#55/#62/#64 so it matches
@@ -41,7 +41,7 @@ interface Props {
   companyId: string
   companyName: string
   track?: 'app' | 'company'
-  /** Whether Auto Mode is unlocked on the current plan (Business+). */
+  /** Whether Auto Mode is unlocked on the current plan (Pro+, #841). */
   unlocked: boolean
   /** Called when a locked founder tries to start — routes to upgrade. */
   onUpgrade: () => void
@@ -219,7 +219,7 @@ export function AutoModePanel({ companyId, companyName, track = 'company', unloc
           </select>
 
           <p className="m-mono m-metric-note" data-testid="auto-mode-cost">
-            {creditCostLabel(duration)} · {unlocked ? '(This Feature Is Included In Your Plan)' : 'Business plan required'}
+            {creditCostLabel(duration)} · {unlocked ? '(This Feature Is Included In Your Plan)' : 'Paid plan required'}
           </p>
 
           <button

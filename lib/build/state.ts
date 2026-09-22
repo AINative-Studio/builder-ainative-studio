@@ -501,9 +501,13 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
       return {
         ...state,
         activePlan: action.plan,
-        // Business+ auto-enroll into the nightly loop; default from the tier when
-        // the caller doesn't pass an explicit flag (#241; cron itself is #243).
-        enrolled: action.enrolled ?? (action.plan === 'business' || action.plan === 'enterprise' || action.plan === 'cody_vcto'),
+        // Pro+ auto-enroll into the nightly loop (#841 — was Business+); default
+        // from the tier when the caller doesn't pass an explicit flag (#241; cron
+        // itself is #243). Reuses planUnlocks() directly instead of duplicating
+        // the tier-rank check a third time — this exact duplicated check (here,
+        // subscription/verify/route.ts, and planUnlocks itself) was independently
+        // stale in two of the three places when #841 was fixed.
+        enrolled: action.enrolled ?? planUnlocks(action.plan).nightlyLoop,
       }
     case 'PICK_DESIGN_SYSTEM':
       return { ...state, designSystemId: action.designSystemId, designStepDone: true }
@@ -539,12 +543,21 @@ export function trackViews(track: Track): readonly string[] {
 }
 
 /**
- * Plan-gated feature unlocks (#241). Screens read these off `state.activePlan`
- * to decide what a paid tier unlocks. Tiers are cumulative:
- *   Pro        → custom-domain eligibility
- *   Business   → nightly-loop enrollment (+ everything Pro)
- *   Enterprise → the agent swarm (+ everything Business)
- * cody_vcto is treated as the top tier (all unlocks). '' = no subscription.
+ * Plan-gated feature unlocks (#241, #841). Screens read these off
+ * `state.activePlan` to decide what a paid tier unlocks. As of #841, every
+ * paid tier (Pro/Business/Enterprise/cody_vcto) unlocks the SAME feature
+ * set — nightly-loop enrollment (Auto Mode) and the agent swarm are both
+ * real, working capabilities available to any paying founder, not staged
+ * behind higher tiers. '' = no subscription (nothing unlocked).
+ *
+ * #841: `nightlyLoop` and `swarm` were previously gated at Business+/
+ * Enterprise+ respectively — confirmed live this was never the intended
+ * product decision (a real Pro customer expected Auto Mode to work and it
+ * didn't). Real, existing Pro/Business customers who converted before this
+ * shipped need to be told these are now available to them — see the
+ * founder-facing announcement tracked alongside #841's backfill sweep,
+ * which also now enrolls any already-paid, never-enrolled company under
+ * the corrected gate.
  */
 export function planUnlocks(plan: ActivePlan): {
   customDomain: boolean
@@ -558,8 +571,8 @@ export function planUnlocks(plan: ActivePlan): {
   const r = rank[plan] ?? 0
   return {
     customDomain: r >= 1,   // Pro+
-    nightlyLoop: r >= 2,    // Business+
-    swarm: r >= 3,          // Enterprise+
+    nightlyLoop: r >= 1,    // Pro+ (#841 — was Business+, corrected)
+    swarm: r >= 1,          // Pro+ (#841 — was Enterprise+, corrected)
     // Growth/ad-testing (#449) — any paid plan, same threshold the server's
     // own PAID_PLANS check uses (app/api/build/growth/ad-budget-checkout).
     growth: r >= 1,

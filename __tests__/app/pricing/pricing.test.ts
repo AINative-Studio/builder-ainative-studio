@@ -82,11 +82,20 @@ describe('Pricing page JSON-LD shape', () => {
     expect(hasSonnet).toBe(true)
   })
 
-  it('Business features mention autonomous loop', () => {
-    const biz = PRICING_TIERS.find((t) => t.id === 'business')!
-    const hasLoop = biz.features.some(
+  // #841: the nightly autonomous loop (and the real agent swarm) moved to
+  // Pro+ — confirmed live this was never the intended product decision (a
+  // real Pro customer expected it to work and it didn't). Business now adds
+  // only higher usage limits on top of everything in Pro.
+  it('Pro features mention the autonomous loop', () => {
+    const pro = PRICING_TIERS.find((t) => t.id === 'pro')!
+    const hasLoop = pro.features.some(
       (f) => f.toLowerCase().includes('autonomous') || f.toLowerCase().includes('loop'),
     )
     expect(hasLoop).toBe(true)
+  })
+
+  it('Business features say "Everything in Pro" rather than re-listing the loop as Business-exclusive', () => {
+    const biz = PRICING_TIERS.find((t) => t.id === 'business')!
+    expect(biz.features.some((f) => f.toLowerCase().includes('everything in pro'))).toBe(true)
   })
 })

@@ -88,8 +88,18 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Business+ auto-enroll into the nightly loop (cron itself is #243).
-    const enrolled = plan === 'business' || plan === 'enterprise' || plan === 'cody_vcto'
+    // #841: Pro+ auto-enroll into the nightly loop (cron itself is #243) — was
+    // Business+ only. `plan` here is core's REAL raw plan_id, confirmed live
+    // against GET /api/v1/public/pricing/plans: hobbyist / pro / business /
+    // enterprise / cody__your_virtual_cto — NOT Pricing.tsx's own internal
+    // `plan: 'launch' | 'company'` grouping field (a Builder-only concept
+    // used for its own Stripe checkout routing, unrelated to what core's
+    // verify endpoint returns; conflating the two was a real mistake caught
+    // before shipping). 'hobbyist' (Builder's "Starter" $20/mo tier reuses
+    // core's free-tier price id, per prior investigation — it is NOT a real
+    // paid autonomous-features tier) is deliberately excluded — Pro and up
+    // only, per product decision.
+    const enrolled = plan === 'pro' || plan === 'business' || plan === 'enterprise' || plan === 'cody_vcto' || plan === 'cody__your_virtual_cto'
     // Persist the plan on the company so Live can reflect it going forward.
     if (slug) {
       setAppPlan(slug, plan).catch(() => {})

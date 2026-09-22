@@ -147,12 +147,12 @@ describe('POST /api/build/subscription/verify — #464 real loop-enrollment brid
     expect(h.runNightlyLoop).not.toHaveBeenCalled()
   })
 
-  it('#813 — does NOT dispatch for a non-loop-eligible (pro) plan', async () => {
+  it('#841 — DOES dispatch for pro (was non-loop-eligible before #841 corrected the gate to Pro+)', async () => {
     ;(fetch as any).mockResolvedValue(coreVerify('pro'))
     h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', name: 'Acme' })
     await POST(req({ session_id: 'cs_test', slug: 'acme' }))
     await flush()
-    expect(h.runNightlyLoop).not.toHaveBeenCalled()
+    expect(h.runNightlyLoop).toHaveBeenCalledTimes(1)
   })
 
   it('#813 — never fails checkout confirmation when runNightlyLoop rejects (best-effort dispatch)', async () => {
@@ -196,14 +196,14 @@ describe('POST /api/build/subscription/verify — #464 real loop-enrollment brid
     expect(h.enrollCompany).toHaveBeenCalled()
   })
 
-  it('does NOT enroll a pro-plan company (not Business+)', async () => {
+  it('#841 — DOES enroll a pro-plan company (was Business+ only)', async () => {
     ;(fetch as any).mockResolvedValue(coreVerify('pro'))
     h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', name: 'Acme' })
     const res = await POST(req({ session_id: 'cs_test', slug: 'acme' }))
     const json = await res.json()
-    expect(json.enrolled).toBe(false)
+    expect(json.enrolled).toBe(true)
     await flush()
-    expect(h.enrollCompany).not.toHaveBeenCalled()
+    expect(h.enrollCompany).toHaveBeenCalled()
   })
 
   it('does NOT double-enroll an already-enrolled company (guarded by isEnrolled)', async () => {
