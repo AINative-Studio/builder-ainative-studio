@@ -225,12 +225,24 @@ describe('#835 — operational gate does not require a shared source', () => {
 })
 
 /**
- * #835 — token precedence. Railway injects a PROJECT-scoped RAILWAY_TOKEN into
- * every running container which is NOT authorized for these account-level
- * queries ("Not Authorized", confirmed live); the ACCOUNT-scoped
- * RAILWAY_API_TOKEN we set is. So RAILWAY_API_TOKEN must win.
+ * #835/#839 — token precedence. Railway injects a PROJECT-scoped RAILWAY_TOKEN
+ * into every running container which is NOT authorized for these
+ * account-level queries ("Not Authorized", confirmed live).
+ *
+ * #839: RAILWAY_API_TOKEN (the name #835/#838 preferred) turned out to be
+ * UNSAFE too — confirmed live via `railway ssh` into the deployed container,
+ * it collides with a Railway-reserved/auto-injected variable of the exact
+ * same name: the 36-char account-scoped UUID token actually configured as a
+ * service variable (verified from OUTSIDE the container to answer
+ * `variables(...)` and `me{id email}` correctly) was NOT what the running
+ * container presented under that name — instead a 43-char, differently
+ * shaped value that changed on every fresh deploy, and Railway correctly
+ * rejected it as "Not Authorized". So the real account token now lives under
+ * RAILWAY_ACCOUNT_TOKEN, a name Railway does not reserve, and it must win
+ * over BOTH RAILWAY_API_TOKEN and RAILWAY_TOKEN even when all three are set
+ * to different values.
  */
-describe('#835 — Railway token precedence', () => {
+describe('#835/#839 — Railway token precedence', () => {
   beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -238,8 +250,28 @@ describe('#835 — Railway token precedence', () => {
     vi.restoreAllMocks()
   })
 
-  it('prefers the account-scoped RAILWAY_API_TOKEN over the injected RAILWAY_TOKEN', async () => {
+  it('prefers RAILWAY_ACCOUNT_TOKEN over both RAILWAY_API_TOKEN and the injected RAILWAY_TOKEN', async () => {
     vi.stubEnv('RAILWAY_DEPLOY_ENABLED', 'true')
+    vi.stubEnv('RAILWAY_TOKEN', 'injected-project-token')
+    // Simulates the #839 collision: RAILWAY_API_TOKEN is present but is NOT
+    // the value we configured — it must never win once RAILWAY_ACCOUNT_TOKEN
+    // is set, regardless of what value collides under the reserved name.
+    vi.stubEnv('RAILWAY_API_TOKEN', 'collided-reserved-name-value')
+    vi.stubEnv('RAILWAY_ACCOUNT_TOKEN', 'the-real-account-token')
+    vi.stubEnv('RAILWAY_COMPANY_PROJECT_ID', 'proj-123')
+    vi.stubEnv('RAILWAY_COMPANY_ENVIRONMENT_ID', 'env-123')
+
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(gql({ variables: {} }))
+    await listServiceVariables('svc-existing')
+
+    const headers = (fetchMock.mock.calls[0]?.[1] as any)?.headers || {}
+    expect(headers.Authorization).toBe('Bearer the-real-account-token')
+  })
+
+  it('falls back to the legacy RAILWAY_API_TOKEN when RAILWAY_ACCOUNT_TOKEN is unset', async () => {
+    vi.stubEnv('RAILWAY_DEPLOY_ENABLED', 'true')
+    vi.stubEnv('RAILWAY_ACCOUNT_TOKEN', '')
     vi.stubEnv('RAILWAY_TOKEN', 'injected-project-token')
     vi.stubEnv('RAILWAY_API_TOKEN', 'account-token')
     vi.stubEnv('RAILWAY_COMPANY_PROJECT_ID', 'proj-123')
@@ -253,8 +285,9 @@ describe('#835 — Railway token precedence', () => {
     expect(headers.Authorization).toBe('Bearer account-token')
   })
 
-  it('falls back to RAILWAY_TOKEN when no API token is set', () => {
+  it('falls back to RAILWAY_TOKEN when neither ACCOUNT nor API token is set', () => {
     vi.stubEnv('RAILWAY_DEPLOY_ENABLED', 'true')
+    vi.stubEnv('RAILWAY_ACCOUNT_TOKEN', '')
     vi.stubEnv('RAILWAY_API_TOKEN', '')
     vi.stubEnv('RAILWAY_TOKEN', 'only-token')
     vi.stubEnv('RAILWAY_COMPANY_PROJECT_ID', 'proj-123')
