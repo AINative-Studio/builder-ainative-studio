@@ -94,6 +94,11 @@ export function Live() {
   // same shape as enrollNightly().
   const [commsMode, setCommsMode] = useState<'agile' | 'pairProgramming'>('agile')
   const [commsModeSaving, setCommsModeSaving] = useState(false)
+  // Honest "your emails are bouncing" notice (#840) — hydrated from the same
+  // resolve-app fetch below. Null until a REAL, verified Resend webhook event
+  // (email.bounced/email.complained) has flagged this company's founder
+  // email; never speculative, never shown by default.
+  const [emailUndeliverable, setEmailUndeliverable] = useState<{ at: string; reason: string } | null>(null)
   const [chat, setChat] = useState<ChatLine[]>([])
   // Chat attachments (#741): files picked/uploaded in the composer, attached
   // to the NEXT sent message. Uploaded immediately on selection so the
@@ -365,6 +370,10 @@ export function Live() {
   // sees their real saved choice, not always the default. Separate from the
   // idea-hydration effect above (that one gates on !state.idea; this needs to
   // run regardless, on every mount for this company).
+  //
+  // Also hydrates the honest #840 "your emails are bouncing" notice from the
+  // SAME fetch (resolve-app already returns it additively) — no extra round
+  // trip needed.
   useEffect(() => {
     if (!companyId) return
     let alive = true
@@ -373,6 +382,7 @@ export function Live() {
       .then((d) => {
         if (!alive) return
         if (d?.commsMode === 'agile' || d?.commsMode === 'pairProgramming') setCommsMode(d.commsMode)
+        setEmailUndeliverable(d?.emailUndeliverable && d.emailUndeliverable.at ? d.emailUndeliverable : null)
       })
       .catch(() => {})
     return () => { alive = false }
@@ -1106,6 +1116,20 @@ export function Live() {
                 <option value="pairProgramming">Pair programming</option>
               </select>
             </div>
+            {/* Honest "your emails are bouncing" notice (#840) — real, live
+                bug this closes: Resend accepted every send with a clean 2xx
+                and then silently dropped it server-side once its own
+                suppression check ran (async, after the API already reported
+                success), so a founder whose address hard-bounces got ZERO
+                daily emails from Cody with no indication anywhere why. Only
+                rendered once a REAL Resend webhook event has confirmed this —
+                never a guess, never shown by default. */}
+            {emailUndeliverable && (
+              <p className="m-live-card-body m-mono" data-testid="email-undeliverable-notice" style={{ color: 'var(--m-danger, #c0392b)' }}>
+                ⚠ Emails to your account address are bouncing — Cody&apos;s daily updates aren&apos;t reaching you.
+                Please check your inbox/spam settings, or update your contact email in Account.
+              </p>
+            )}
             <div className="m-live-card-actions">
               <button className="btn-ghost" onClick={openGraph}>Open the artifact graph →</button>
               <button className="btn-ghost" onClick={rescopeWedge}>Re-scope the wedge ⚠</button>
