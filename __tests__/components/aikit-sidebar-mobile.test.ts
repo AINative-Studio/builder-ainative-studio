@@ -172,6 +172,20 @@ describe('AIKitSidebar — mobile (#844 follow-up: the real fix)', () => {
     expect((aside as HTMLElement).style.transform).toContain('translateX(-100%)')
   })
 
+  it('the hamburger trigger stacks above AIKitHeader\'s own z-50 sticky bar (real bug: a tie lost to DOM order, making it unclickable)', () => {
+    setViewportWidth(390)
+    const { AIKitSidebar, AIKitHeader } = globalThis.AIKitComponents!
+    const host = render(
+      React.createElement(React.Fragment, null,
+        React.createElement(AIKitSidebar, { title: 'App', items: [{ id: 'dashboard', label: 'Dashboard' }] }),
+        React.createElement(AIKitHeader, { title: 'Dashboard' }),
+      ),
+    )
+    const trigger = host.querySelector('button[aria-label="Open menu"]') as HTMLElement
+    const header = host.querySelector('header') as HTMLElement
+    expect(Number(trigger.style.zIndex)).toBeGreaterThan(Number(getComputedStyle(header).zIndex) || 50)
+  })
+
   it('the hamburger trigger hides itself while the sidebar is open (no doubled controls)', () => {
     setViewportWidth(390)
     const { AIKitSidebar } = globalThis.AIKitComponents!
