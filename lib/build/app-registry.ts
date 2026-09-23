@@ -6,7 +6,6 @@
  */
 
 import { getAinativeApiKey } from '@/lib/build/env-keys'
-import { storeCompanyZerodbKey } from '@/lib/build/company-zerodb-credentials'
 
 const AINATIVE_API = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 const API_KEY = getAinativeApiKey()
@@ -937,9 +936,20 @@ export async function claimCompanyProject(
     // already be in the store; this call has nothing new to add).
     const newApiKey = typeof data?.api_key === 'string' ? data.api_key : undefined
     if (newApiKey && existing.zerodbProjectId) {
-      await storeCompanyZerodbKey(existing.zerodbProjectId, newApiKey, {
-        slug, keyKind: 'permanent',
-      }).catch(() => false)
+      // Dynamic import (real bug found live, this session — mirrors
+      // ./instant-db's own dynamic import a few lines below, for the exact
+      // same reason): company-zerodb-credentials.ts pulls in Node-only APIs
+      // (crypto, a Drizzle/Postgres client) transitively. A static top-level
+      // import here got bundled into EVERY consumer of this file, including
+      // middleware.ts (Edge runtime) — which broke the Railway build with
+      // "A Node.js API is used (process.cwd) which is not supported in the
+      // Edge Runtime," confirmed via the actual failed deployment's logs.
+      try {
+        const { storeCompanyZerodbKey } = await import('./company-zerodb-credentials')
+        await storeCompanyZerodbKey(existing.zerodbProjectId, newApiKey, {
+          slug, keyKind: 'permanent',
+        })
+      } catch { /* best-effort — a store failure must never fail the claim */ }
     }
 
     // #250: now that the project is claimed (associated to a real account and
