@@ -22,6 +22,7 @@ import {
   setAppLifecycle,
   listAppsForOwner,
   claimCompanyProject,
+  reconcilePlanFulfillment,
 } from '@/lib/build/app-registry'
 
 // --------------- helpers ---------------
@@ -691,5 +692,116 @@ describe('claimCompanyProject', () => {
     const res = await claimCompanyProject('acme', 'jwt-token')
     expect(res.ok).toBe(false)
     expect(res.reason).toContain('network error')
+  })
+})
+
+// =======================================
+// reconcilePlanFulfillment (#844 follow-up)
+// =======================================
+describe('reconcilePlanFulfillment', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn())
+    h.storeCompanyZerodbKey.mockClear()
+    h.storeCompanyZerodbKey.mockResolvedValue(true)
+  })
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+  it('is a no-op with missing args', async () => {
+    expect(await reconcilePlanFulfillment('', 'pro', 'jwt')).toEqual({ planFixed: false, keyClaimed: false })
+    expect(await reconcilePlanFulfillment('agentive', '', 'jwt')).toEqual({ planFixed: false, keyClaimed: false })
+    expect(await reconcilePlanFulfillment('agentive', 'pro', '')).toEqual({ planFixed: false, keyClaimed: false })
+  })
+
+  it('is a no-op when the slug has no registry entry', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(rowsResponse([]))
+    const res = await reconcilePlanFulfillment('ghost', 'pro', 'jwt')
+    expect(res).toEqual({ planFixed: false, keyClaimed: false })
+  })
+
+  // THE BUG (real, live, agentive/amador@selfpreneur.com): registry plan is
+  // stale (null) despite the founder being genuinely on Pro right now, AND
+  // the project is still on an unclaimed tmp_ key — both get fixed together
+  // in a single reconciliation, exactly mirroring what subscription/verify
+  // would have done had the Stripe redirect completed.
+  it('THE BUG: fixes a stale plan (null) AND claims a still-tmp_ key in one pass — the exact agentive repro', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    // 1: resolveApp GET (inside reconcilePlanFulfillment itself)
+    fetchMock.mockResolvedValueOnce(
+      rowsResponse([row('agentive', {
+        zerodbProjectId: 'proj-agentive', keyKind: 'tmp', claimToken: 'tok-1', plan: undefined,
+      })]),
+    )
+    // 2: resolveApp GET (inside setAppPlan)
+    fetchMock.mockResolvedValueOnce(
+      rowsResponse([row('agentive', {
+        zerodbProjectId: 'proj-agentive', keyKind: 'tmp', claimToken: 'tok-1', plan: undefined,
+      })]),
+    )
+    // 3: registerApp POST (setAppPlan's write)
+    fetchMock.mockResolvedValueOnce(okResponse())
+    // 4: resolveApp GET (inside claimCompanyProject)
+    fetchMock.mockResolvedValueOnce(
+      rowsResponse([row('agentive', {
+        zerodbProjectId: 'proj-agentive', keyKind: 'tmp', claimToken: 'tok-1', plan: 'pro',
+      })]),
+    )
+    // 5: /api/v1/public/instant-db/claim POST → 200, real permanent key
+    fetchMock.mockResolvedValueOnce({
+      ok: true, status: 200, json: async () => ({ api_key: 'sk_agentive_real_key' }),
+    } as unknown as Response)
+    // 6: registerApp POST (claimCompanyProject's write, flips to permanent)
+    fetchMock.mockResolvedValueOnce(okResponse())
+
+    const res = await reconcilePlanFulfillment('agentive', 'pro', 'amadors-real-jwt')
+
+    expect(res.planFixed).toBe(true)
+    expect(res.keyClaimed).toBe(true)
+    expect(h.storeCompanyZerodbKey).toHaveBeenCalledWith(
+      'proj-agentive', 'sk_agentive_real_key', { slug: 'agentive', keyKind: 'permanent' },
+    )
+  })
+
+  it('does nothing when the registry plan already matches (no drift to fix)', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(
+      rowsResponse([row('acme', { zerodbProjectId: 'proj-1', keyKind: 'permanent', plan: 'pro' })]),
+    )
+    const res = await reconcilePlanFulfillment('acme', 'pro', 'jwt')
+    expect(res).toEqual({ planFixed: false, keyClaimed: false })
+    expect(fetchMock).toHaveBeenCalledTimes(1) // only the initial resolveApp read
+  })
+
+  it('fixes plan drift without touching an already-permanent key', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(
+      rowsResponse([row('acme', { zerodbProjectId: 'proj-1', keyKind: 'permanent', plan: undefined })]),
+    )
+    fetchMock.mockResolvedValueOnce(
+      rowsResponse([row('acme', { zerodbProjectId: 'proj-1', keyKind: 'permanent', plan: undefined })]),
+    )
+    fetchMock.mockResolvedValueOnce(okResponse())
+
+    const res = await reconcilePlanFulfillment('acme', 'pro', 'jwt')
+    expect(res.planFixed).toBe(true)
+    expect(res.keyClaimed).toBe(false)
+  })
+
+  it('never throws — a claim/setAppPlan failure downgrades to {planFixed:false, keyClaimed:false} silently', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockRejectedValueOnce(new Error('registry unreachable'))
+    const res = await reconcilePlanFulfillment('acme', 'pro', 'jwt')
+    expect(res).toEqual({ planFixed: false, keyClaimed: false })
+  })
+
+  it('does not attempt a claim when there is no zerodbProjectId (never provisioned)', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(rowsResponse([row('acme', { keyKind: 'tmp', plan: undefined })]))
+    fetchMock.mockResolvedValueOnce(rowsResponse([row('acme', { keyKind: 'tmp', plan: undefined })]))
+    fetchMock.mockResolvedValueOnce(okResponse())
+
+    const res = await reconcilePlanFulfillment('acme', 'pro', 'jwt')
+    expect(res.planFixed).toBe(true)
+    expect(res.keyClaimed).toBe(false)
   })
 })

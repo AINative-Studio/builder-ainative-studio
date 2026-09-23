@@ -210,11 +210,17 @@ export function Live() {
   // again. Runs once when signed in and no plan is set yet.
   useEffect(() => {
     if (!signedIn || activePlan) return
-    fetch('/api/build/subscription/status')
+    // #844 follow-up (real bug, agentive/amador@selfpreneur.com): pass this
+    // company's slug so the route can reconcile a stale plan/tmp_ key state
+    // against the founder's REAL current plan — see reconcilePlanFulfillment's
+    // doc comment in lib/build/app-registry.ts for the full story (no Stripe
+    // webhook exists; this is the retroactive fix for a redirect that never
+    // completed).
+    fetch(`/api/build/subscription/status?slug=${encodeURIComponent(companyId)}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => { if (d?.plan) dispatch({ type: 'SET_ACTIVE_PLAN', plan: d.plan }) })
       .catch(() => {})
-  }, [signedIn, activePlan, dispatch])
+  }, [signedIn, activePlan, dispatch, companyId])
 
   // Trial state (#207): an unpaid company runs on a 72h tmp_ project. We surface a
   // countdown + upgrade CTA so the founder has an obvious, intuitive path to pay.
@@ -1237,7 +1243,6 @@ export function Live() {
             <ZeroVoiceConnect
               companyId={companyId}
               signedIn={signedIn}
-              isPaidPlan={!!activePlan}
               e164={zerovoiceE164}
               onRequireAuth={() => dispatch({ type: 'GOTO_SCREEN', screen: 'signup' })}
             />

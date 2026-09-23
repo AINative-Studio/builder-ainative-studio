@@ -18,6 +18,22 @@
  * Cost honesty: ZeroVoice numbers carry a real, non-trivial recurring cost
  * (~$1.15/month + usage), so the button says so up front rather than
  * hiding it behind a vague "connect" label.
+ *
+ * PAID-GATE FIX (real, live bug — a real founder on a real paid plan saw a
+ * permanently-disabled button here): this used to also disable the button
+ * client-side via an `isPaidPlan` prop derived from Live.tsx's own
+ * `state.activePlan`. That client state can be genuinely stale/unhydrated
+ * for a real paying founder for reasons that have nothing to do with their
+ * actual entitlement (a slow/failed subscription/status fetch, a fresh
+ * session, a race on first load) — the SERVER route already does the real,
+ * authoritative tier check (core's own /auth/me, live, every request) and
+ * returns an honest `reason: 'tier'` rejection with a clear message when it
+ * genuinely fails. Gating the button on a second, less reliable client-side
+ * copy of that same check can ONLY ever produce a false negative (a paid
+ * founder blocked) — it can never correctly block someone the server would
+ * have let through anyway, since the server re-checks regardless. Removed
+ * the client-side gate entirely; the real tier check happens exactly once,
+ * server-side, on every click.
  */
 
 import { useState } from 'react'
@@ -25,13 +41,12 @@ import { useState } from 'react'
 interface Props {
   companyId: string
   signedIn: boolean
-  isPaidPlan: boolean
   /** Already-provisioned number, if any (from the company registry). */
   e164?: string | null
   onRequireAuth: () => void
 }
 
-export function ZeroVoiceConnect({ companyId, signedIn, isPaidPlan, e164, onRequireAuth }: Props) {
+export function ZeroVoiceConnect({ companyId, signedIn, e164, onRequireAuth }: Props) {
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [number, setNumber] = useState<string | null>(e164 || null)
@@ -81,8 +96,8 @@ export function ZeroVoiceConnect({ companyId, signedIn, isPaidPlan, e164, onRequ
           className="btn-secondary"
           data-testid="zerovoice-connect-btn"
           onClick={provision}
-          disabled={busy || !isPaidPlan}
-          title={isPaidPlan ? 'Get a real phone number — Cody answers texts and calls directly (~$1.15/mo + usage)' : 'Upgrade to a paid plan to get a phone number for Cody'}
+          disabled={busy}
+          title="Get a real phone number — Cody answers texts and calls directly (~$1.15/mo + usage)"
         >
           {busy ? 'Getting a number…' : 'Get a phone number (~$1.15/mo)'}
         </button>

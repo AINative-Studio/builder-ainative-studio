@@ -971,6 +971,75 @@ export async function claimCompanyProject(
 }
 
 /**
+ * Reconcile a company's stale plan/key state against its founder's REAL,
+ * CURRENT core plan (real, live bug fix — agentive/amador@selfpreneur.com,
+ * a real paying Pro customer whose company registry still said `plan: null`
+ * and `keyKind: 'tmp'` well after they'd paid).
+ *
+ * ROOT CAUSE THIS CLOSES: `setAppPlan()` and `claimCompanyProject()` — the
+ * only two places that ever stamp a real plan / upgrade a project to a
+ * permanent key — are BOTH called from exactly one place,
+ * `POST /api/build/subscription/verify`, which itself only ever runs when
+ * the founder's browser completes the full Stripe-redirect round-trip back
+ * to `/build?screen=live&...&upgraded=1&session_id=...` (see that route's
+ * own doc comment: "Return-URL verification is the MVP path; a hardened
+ * Stripe webhook is deferred"). Core never calls Builder back — there is no
+ * webhook. A closed tab, a network blip, or an ad-blocker on that ONE
+ * redirect means a real, paying founder gets NONE of it: no plan stamped,
+ * no permanent key, no loop enrollment — forever, since nothing else ever
+ * retries it. Confirmed live: agentive's own registry history has 7 rows
+ * spanning creation to hours before this fix, EVERY one still `keyKind:
+ * "tmp"` with an unused `claimToken` sitting there, while every real
+ * `/api/db` write for their live landing page's waitlist form was silently
+ * 502ing (fail-closed per #806) the entire time.
+ *
+ * THIS FUNCTION is the retroactive, session-based reconciliation: called
+ * from `GET /api/build/subscription/status` (which already resolves the
+ * REAL signed-in founder's REAL current plan on every Live dashboard load,
+ * independent of any Stripe redirect) whenever that founder is genuinely
+ * paid AND the named company's own registry state disagrees. It repeats
+ * exactly the same two fulfillment steps `subscription/verify` performs —
+ * `setAppPlan` and, if still on a `tmp_` key, `claimCompanyProject` — using
+ * the CALLER'S OWN real session token (never impersonation, never an
+ * anonymous/service-level path — CODY.md Rule 5). This is why the fix lives
+ * on a per-request, session-bound reconciliation rather than an offline
+ * cron sweep: `claimCompanyProject` requires the founder's own bearer token
+ * (the claim associates a project to a specific real account), which no
+ * background job can legitimately borrow.
+ *
+ * Best-effort and silent on failure — this must never turn a plain page
+ * load into a visible error. Only acts when `corePlan` is a real, paid
+ * plan id; never triggered by a free/hobbyist account.
+ */
+export async function reconcilePlanFulfillment(
+  slug: string,
+  corePlan: string,
+  jwt: string,
+): Promise<{ planFixed: boolean; keyClaimed: boolean }> {
+  let planFixed = false
+  let keyClaimed = false
+  if (!slug || !corePlan || !jwt) return { planFixed, keyClaimed }
+
+  try {
+    const existing = await resolveApp(slug)
+    if (!existing) return { planFixed, keyClaimed }
+
+    if (existing.plan !== corePlan) {
+      planFixed = await setAppPlan(slug, corePlan).catch(() => false)
+    }
+
+    if (existing.zerodbProjectId && existing.keyKind === 'tmp' && existing.claimToken) {
+      const claim = await claimCompanyProject(slug, jwt).catch(() => null)
+      keyClaimed = Boolean(claim?.ok && claim.claimed)
+    }
+  } catch {
+    /* best-effort — a reconciliation hiccup must never surface to the founder */
+  }
+
+  return { planFixed, keyClaimed }
+}
+
+/**
  * Reverse-lookup a company by its own ZeroVoice inbound number (#744 — SMS to
  * Cody becomes a real Gitea issue). `e164` is the SMS webhook's `To` field
  * (the company's own provisioned number, set via setAppZeroVoice).

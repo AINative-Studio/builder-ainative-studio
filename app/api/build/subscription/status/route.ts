@@ -10,6 +10,7 @@
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { fetchCorePlanIdentity } from '@/lib/ainative/resolve-plan'
+import { reconcilePlanFulfillment } from '@/lib/build/app-registry'
 
 export const runtime = 'nodejs'
 
@@ -26,10 +27,12 @@ const PLAN_MAP: Record<string, string> = {
   company: 'business',
 }
 
-export async function GET(_request: NextRequest) {
+export async function GET(request: NextRequest) {
   const session = await auth()
   const token = (session as any)?.accessToken as string | undefined
   if (!token) return Response.json({ plan: null, signedIn: false })
+
+  const slug = request.nextUrl.searchParams.get('slug')?.trim()
 
   // #762: resolved through the SAME shared `/api/v1/auth/me` reader that
   // getPlanStatus() and every other paid gate now use, so this route and the
@@ -48,8 +51,25 @@ export async function GET(_request: NextRequest) {
     })
   }
 
+  const activePlan = PLAN_MAP[identity.rawPlan ?? ''] || null
+
+  // Real bug fix (agentive/amador@selfpreneur.com, a real paying Pro
+  // customer): the ONLY place a company's registry plan/key state ever gets
+  // fixed is subscription/verify, which only runs on a completed Stripe
+  // redirect round-trip — no webhook exists, so a closed tab/network blip
+  // there leaves a genuinely paying founder's company permanently stuck with
+  // plan:null and a tmp_ key. This runs on every Live dashboard load for a
+  // slug the caller already knows about (not a background sweep — the claim
+  // step needs THIS founder's own real session token, never borrowed or
+  // impersonated), and is a strict no-op unless we've just confirmed they are
+  // genuinely on a real, paid plan. Best-effort: never blocks or fails this
+  // response either way.
+  if (slug && activePlan && identity.rawPlan) {
+    reconcilePlanFulfillment(slug, identity.rawPlan, token).catch(() => {})
+  }
+
   return Response.json({
-    plan: PLAN_MAP[identity.rawPlan ?? ''] || null, // Builder ActivePlan or null
+    plan: activePlan, // Builder ActivePlan or null
     rawPlan: identity.rawPlan,                      // the underlying core plan id
     signedIn: true,
     email: identity.email,
