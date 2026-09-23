@@ -121,6 +121,7 @@ export async function runCommsDigestSweep(opts: { dryRun: boolean }): Promise<{
         const report = scopeKey ? await todaysDailyReport(scopeKey) : null
         const digest = buildAgileDigest({
           companyName: e.companyName,
+          companyId: e.companyId,
           dailyReportContent: report?.content ?? null,
           dailyReportCreatedAt: report?.createdAt ?? null,
         })
@@ -135,6 +136,7 @@ export async function runCommsDigestSweep(opts: { dryRun: boolean }): Promise<{
         const commits = await getCommitsSince(app.gitOrg, e.companyId, sinceIso)
         const digest = buildPairProgrammingDigest({
           companyName: e.companyName,
+          companyId: e.companyId,
           commits,
           repoUrl: app.gitRepoUrl,
           sinceIso,

@@ -25,7 +25,7 @@ const h = vi.hoisted(() => ({
 vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
 vi.mock('@/lib/build/company-email', () => ({ sendCompanyEmail: h.sendCompanyEmail }))
 
-import { hasGenuineUpdate, runNightlyCommsOutreach } from '@/lib/build/comms-policy'
+import { hasGenuineUpdate, runNightlyCommsOutreach, buildOutreachEmail } from '@/lib/build/comms-policy'
 import { __resetFrequencyCapForTests } from '@/lib/build/frequency-cap'
 
 function makeResult(overrides: Partial<NightlyRunResult> = {}): NightlyRunResult {
@@ -90,6 +90,10 @@ describe('runNightlyCommsOutreach', () => {
       expect.any(String),
       expect.stringContaining('task-1'),
     )
+    // #857 — real customer feedback (Greg Rose): the overnight-update email
+    // never linked back to the dashboard at all.
+    const sentText = h.sendCompanyEmail.mock.calls[0][4] as string
+    expect(sentText).toContain('https://builder.ainative.studio/build?screen=live&company=acme')
   })
 
   it('blocks a second outreach for the same company within the frequency window', async () => {
@@ -177,5 +181,27 @@ describe('runNightlyCommsOutreach', () => {
 
     expect(result.status).toBe('skipped')
     expect(h.sendCompanyEmail).not.toHaveBeenCalled()
+  })
+})
+
+describe('buildOutreachEmail (#857)', () => {
+  // Real customer feedback (Greg Rose): "It would be great if the emails
+  // included a link to that project so I could just click and go there.
+  // Maybe with a little marking message like 'click here to jump back in'"
+  it('THE FIX: includes a real link back to the Live dashboard', () => {
+    const { text } = buildOutreachEmail('acme', 'Acme AI', makeResult())
+    expect(text).toContain('https://builder.ainative.studio/build?screen=live&company=acme')
+    expect(text).toContain('Jump back in')
+  })
+
+  it('URL-encodes a companyId with special characters', () => {
+    const { text } = buildOutreachEmail('a company/slug', 'Acme AI', makeResult())
+    expect(text).toContain('company=a%20company%2Fslug')
+  })
+
+  it('still grounds the email in the real taskId and briefing (never fabricated)', () => {
+    const { text } = buildOutreachEmail('acme', 'Acme AI', makeResult({ taskId: 'real-task-42', briefing: 'Focus on retention' }))
+    expect(text).toContain('real-task-42')
+    expect(text).toContain('Focus on retention')
   })
 })

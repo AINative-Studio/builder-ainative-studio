@@ -41,6 +41,36 @@ describe('buildAgileDigest (#743)', () => {
     const digest = buildAgileDigest({ companyName: '', dailyReportContent: null, dailyReportCreatedAt: null })
     expect(digest.text).toContain('your company')
   })
+
+  // #857 — real customer feedback (Greg Rose): "It would be great if the
+  // emails included a link to that project so I could just click and go
+  // there." Neither digest mode ever linked back to the dashboard at all.
+  it('THE FIX: includes a "Jump back in" link to the real Live dashboard when companyId is present', () => {
+    const digest = buildAgileDigest({
+      companyName: 'Acme', companyId: 'acme',
+      dailyReportContent: 'did the thing', dailyReportCreatedAt: '2026-09-14T07:00:00Z',
+    })
+    expect(digest.text).toContain('https://builder.ainative.studio/build?screen=live&company=acme')
+    expect(digest.html).toContain('href="https://builder.ainative.studio/build?screen=live&company=acme"')
+    expect(digest.html).toContain('Jump back in')
+  })
+
+  it('includes the link even in the "no updates" honest-empty-state email', () => {
+    const digest = buildAgileDigest({ companyName: 'Acme', companyId: 'acme', dailyReportContent: null, dailyReportCreatedAt: null })
+    expect(digest.text).toContain('https://builder.ainative.studio/build?screen=live&company=acme')
+    expect(digest.html).toContain('Jump back in')
+  })
+
+  it('URL-encodes a companyId with special characters', () => {
+    const digest = buildAgileDigest({ companyName: 'Acme', companyId: 'a company/slug', dailyReportContent: null, dailyReportCreatedAt: null })
+    expect(digest.text).toContain('company=a%20company%2Fslug')
+  })
+
+  it('omits the link entirely (never a broken one) when companyId is not provided', () => {
+    const digest = buildAgileDigest({ companyName: 'Acme', dailyReportContent: 'did the thing', dailyReportCreatedAt: '2026-09-14T07:00:00Z' })
+    expect(digest.text).not.toContain('Jump back in')
+    expect(digest.html).not.toContain('Jump back in')
+  })
 })
 
 describe('buildPairProgrammingDigest (#743)', () => {
@@ -100,5 +130,31 @@ describe('buildPairProgrammingDigest (#743)', () => {
     })
     expect(digest.html).not.toContain('<script>')
     expect(digest.html).not.toContain('<b>hacker</b>')
+  })
+
+  // #857 — same real customer feedback as the agile digest: the dashboard
+  // link belongs ALONGSIDE the repo's own "Full history" link, not instead
+  // of it.
+  it('THE FIX: includes a "Jump back in" dashboard link alongside the repo history link', () => {
+    const digest = buildPairProgrammingDigest({
+      companyName: 'Acme', companyId: 'acme',
+      commits: [commit('abcdef1', 'fix the login bug')],
+      sinceIso, repoUrl: 'https://git.ainative.studio/ws-1/acme',
+    })
+    expect(digest.text).toContain('https://git.ainative.studio/ws-1/acme') // repo link preserved
+    expect(digest.text).toContain('https://builder.ainative.studio/build?screen=live&company=acme')
+    expect(digest.html).toContain('Jump back in')
+  })
+
+  it('includes the link even in the "no new activity" honest-empty-state email', () => {
+    const digest = buildPairProgrammingDigest({ companyName: 'Acme', companyId: 'acme', commits: [], sinceIso })
+    expect(digest.text).toContain('https://builder.ainative.studio/build?screen=live&company=acme')
+    expect(digest.html).toContain('Jump back in')
+  })
+
+  it('omits the link entirely (never a broken one) when companyId is not provided', () => {
+    const digest = buildPairProgrammingDigest({ companyName: 'Acme', commits: [commit('a1', 'x')], sinceIso })
+    expect(digest.text).not.toContain('Jump back in')
+    expect(digest.html).not.toContain('Jump back in')
   })
 })
