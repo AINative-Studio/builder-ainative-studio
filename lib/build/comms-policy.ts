@@ -60,6 +60,8 @@ import { sendCompanyEmail } from '@/lib/build/company-email'
 import { checkFrequencyCap, recordFrequencyCapHit } from '@/lib/build/frequency-cap'
 import type { NightlyRunResult } from '@/lib/build/autonomous-loop'
 
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio'
+
 /** No more than one proactive comms email per company within this window. */
 const COMMS_FREQUENCY_WINDOW_MS = Number(process.env.COMMS_FREQUENCY_WINDOW_MS || 24 * 60 * 60 * 1000)
 
@@ -90,8 +92,16 @@ export function hasGenuineUpdate(result: NightlyRunResult): boolean {
   return result.status === 'dispatched' && Boolean(result.taskId)
 }
 
-/** Compose the actual email content — grounded in the real run result, never invented. */
+/**
+ * Compose the actual email content — grounded in the real run result, never
+ * invented. Includes a link back to the Live dashboard (#857 — real customer
+ * feedback, Greg Rose: "It would be great if the emails included a link to
+ * that project so I could just click and go there") so the founder can jump
+ * straight back in instead of navigating to the site and finding their
+ * company again.
+ */
 export function buildOutreachEmail(
+  companyId: string,
   companyName: string,
   result: NightlyRunResult,
 ): { subject: string; text: string } {
@@ -104,7 +114,8 @@ export function buildOutreachEmail(
   if (result.briefing) {
     lines.push('', `Briefing that informed the run:`, result.briefing)
   }
-  lines.push('', `— Cody`)
+  const url = `${APP_URL}/build?screen=live&company=${encodeURIComponent(companyId)}`
+  lines.push('', `Jump back in: ${url}`, '', `— Cody`)
   return { subject, text: lines.join('\n') }
 }
 
@@ -138,7 +149,7 @@ export async function runNightlyCommsOutreach(
     const cap = checkFrequencyCap(frequencyCapKey(companyId), COMMS_FREQUENCY_WINDOW_MS)
     if (!cap.ok) return { status: 'skipped', reason: 'rate_limited' }
 
-    const { subject, text } = buildOutreachEmail(companyName, result)
+    const { subject, text } = buildOutreachEmail(companyId, companyName, result)
     const sendResult = await sendCompanyEmail(companyName, founderEmail, subject, '', text)
     if (!sendResult.ok) return { status: 'skipped', reason: 'send_failed' }
 
