@@ -6,6 +6,7 @@
  */
 
 import { getAinativeApiKey } from '@/lib/build/env-keys'
+import { storeCompanyZerodbKey } from '@/lib/build/company-zerodb-credentials'
 
 const AINATIVE_API = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 const API_KEY = getAinativeApiKey()
@@ -917,6 +918,30 @@ export async function claimCompanyProject(
     if (!res.ok && !alreadyClaimed) {
       return { ok: false, claimed: false, reason: String(data?.detail || res.status).slice(0, 120) }
     }
+
+    // REAL BUG FIX (found live, agentive/amador@selfpreneur.com, a real Pro
+    // customer whose landing page's waitlist form had been silently failing
+    // every signup): this claim call minted a real, permanent sk_ api_key —
+    // the response's own `api_key` field — but NOTHING downstream of it ever
+    // persisted that key anywhere. Every company that ever went through this
+    // upgrade path stayed permanently unable to satisfy #806's per-company
+    // key store, which fails CLOSED (502) on any /api/db call against a
+    // project with no stored key — so a "successfully upgraded to
+    // permanent" company's real /api/db writes (waitlist signups, visitor
+    // tracking, any app-generated record) kept silently failing anyway,
+    // completely independent of whether the founder had paid.
+    //
+    // Only store when the claim response actually carries a fresh key — a
+    // 409 (already claimed) legitimately has no new key to store (whatever
+    // key resulted from the ORIGINAL claim, made elsewhere/earlier, should
+    // already be in the store; this call has nothing new to add).
+    const newApiKey = typeof data?.api_key === 'string' ? data.api_key : undefined
+    if (newApiKey && existing.zerodbProjectId) {
+      await storeCompanyZerodbKey(existing.zerodbProjectId, newApiKey, {
+        slug, keyKind: 'permanent',
+      }).catch(() => false)
+    }
+
     // #250: now that the project is claimed (associated to a real account and
     // permanent), re-attempt filing it under the Builder workspace. Best-effort —
     // must never fail the claim. Dynamic import avoids a static import cycle
