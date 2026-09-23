@@ -1243,7 +1243,6 @@ export function Live() {
             <ZeroVoiceConnect
               companyId={companyId}
               signedIn={signedIn}
-              isPaidPlan={!!activePlan}
               e164={zerovoiceE164}
               onRequireAuth={() => dispatch({ type: 'GOTO_SCREEN', screen: 'signup' })}
             />
