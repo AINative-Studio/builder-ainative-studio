@@ -56,21 +56,35 @@ const RAILWAY_API_URL =
 /**
  * Service-account token for the Railway GraphQL API.
  *
- * RAILWAY_API_TOKEN FIRST (#835). Railway injects its own PROJECT-scoped
- * RAILWAY_TOKEN into every running container — we never set it, and it is NOT
- * authorized for the account-level queries this module makes: with it, the
- * company `variables` query fails "Not Authorized" (confirmed live against the
- * deployed service). The ACCOUNT-scoped RAILWAY_API_TOKEN we do set answers the
- * same query successfully. This mirrors the token-type split company-deploy.ts
- * already documents for `railway link`, where the project-scoped token likewise
- * fails while the account-scoped one works.
+ * #839: `RAILWAY_API_TOKEN` (the name #835/#838 preferred) turned out to be
+ * UNSAFE — it collides with a Railway-reserved/auto-injected variable of the
+ * exact same name. Confirmed live via `railway ssh` into the deployed
+ * container: the service variable we set (`RAILWAY_API_TOKEN`, a 36-char
+ * account-scoped UUID token, verified from OUTSIDE the container to answer
+ * `variables(...)` and `me{id email}` correctly) is NOT what the running
+ * container actually sees under that name — the container instead presents a
+ * 43-char, differently-formatted value (Railway's own access-token shape,
+ * changing on every fresh deploy), which the `variables` query correctly
+ * rejects as "Not Authorized" because it isn't the account token we set at
+ * all. This is a DIFFERENT bug than the one #835/#838 fixed (which was about
+ * `RAILWAY_TOKEN`, Railway's project-scoped CLI token — that one really is
+ * absent from this container and irrelevant here); the collision here is on
+ * `RAILWAY_API_TOKEN` itself.
  *
- * Preferring the injected token here meant that even with the gate fixed, every
- * operational call failed at the API instead of at the gate. RAILWAY_TOKEN is
- * kept as a fallback for envs that set it deliberately (and for tests).
+ * FIX: the account token now lives under `RAILWAY_ACCOUNT_TOKEN`, a name
+ * Railway does not reserve, so nothing can shadow it. Old `RAILWAY_API_TOKEN`
+ * is kept as a last-resort fallback (for any environment that still only has
+ * it set and isn't affected by the collision, e.g. local/test), but
+ * `RAILWAY_ACCOUNT_TOKEN` always wins when both are present so a reserved-name
+ * collision can never silently win over the correct value again.
  */
 function railwayToken(): string {
-  return process.env.RAILWAY_API_TOKEN || process.env.RAILWAY_TOKEN || ''
+  return (
+    process.env.RAILWAY_ACCOUNT_TOKEN ||
+    process.env.RAILWAY_API_TOKEN ||
+    process.env.RAILWAY_TOKEN ||
+    ''
+  )
 }
 
 /**

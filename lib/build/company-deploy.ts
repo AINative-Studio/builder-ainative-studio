@@ -48,7 +48,16 @@ export const DEPLOY_TIMEOUT_MS = 300_000
  *  that gate is scoped to the OLD shared-image GraphQL flow (still checks
  *  RAILWAY_COMPANY_SOURCE_IMAGE/_REPO, which this module doesn't use). This
  *  flow only needs RAILWAY_DEPLOY_ENABLED itself; RAILWAY_API_TOKEN (see
- *  ensureRailwayLink below) is what authorizes the actual calls. */
+ *  ensureRailwayLink below) is what authorizes the actual calls.
+ *
+ *  NOTE (#839): this module's `railway link`/`railway up` calls go through the
+ *  spawned Railway CLI binary itself, which reads `RAILWAY_API_TOKEN` from
+ *  `process.env` using Railway's OWN (not our) CLI convention — this is
+ *  unaffected by, and must NOT be renamed to match, the `RAILWAY_ACCOUNT_TOKEN`
+ *  fix in railway-deploy.ts. That fix is scoped to OUR direct GraphQL client
+ *  only, which found `RAILWAY_API_TOKEN` unsafe for its OWN purpose (a
+ *  reserved-name collision in the running container's env — see railway-deploy
+ *  .ts's railwayToken() doc comment). Leave the CLI's env var alone here. */
 export function companyDeployEnabled(): boolean {
   return process.env.RAILWAY_DEPLOY_ENABLED === 'true'
 }
