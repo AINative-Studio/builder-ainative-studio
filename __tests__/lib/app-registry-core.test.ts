@@ -7,6 +7,11 @@ vi.hoisted(() => {
   process.env.ZERODB_PROJECT_ID = 'proj-abc'
 })
 
+const h = vi.hoisted(() => ({ storeCompanyZerodbKey: vi.fn().mockResolvedValue(true) }))
+vi.mock('@/lib/build/company-zerodb-credentials', () => ({
+  storeCompanyZerodbKey: h.storeCompanyZerodbKey,
+}))
+
 import {
   registerApp,
   resolveApp,
@@ -515,7 +520,11 @@ describe('listAppsForOwner', () => {
 // claimCompanyProject
 // =======================================
 describe('claimCompanyProject', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn())
+    h.storeCompanyZerodbKey.mockClear()
+    h.storeCompanyZerodbKey.mockResolvedValue(true)
+  })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('returns not_registered when the slug has no entry', async () => {
@@ -588,7 +597,60 @@ describe('claimCompanyProject', () => {
     expect(body.row_data.claimedAt).toBeTruthy()
   })
 
-  it('treats 409 (already claimed externally) as idempotent success with claimed=false', async () => {
+  // REAL BUG FIX (found live, agentive/amador@selfpreneur.com, a real paying
+  // Pro customer): the claim call above minted a real, permanent sk_ api_key
+  // in its response — the test above has ALWAYS mocked `api_key: 'sk_new'` —
+  // but nothing downstream ever persisted it anywhere. Every company that
+  // ever claimed stayed permanently unable to satisfy #806's per-company key
+  // store, so /api/db kept failing closed (502) on every real write for that
+  // company regardless of having paid and "successfully" claimed.
+  it('THE BUG FIX: persists the claim response\'s permanent api_key via storeCompanyZerodbKey', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(
+      rowsResponse([row('agentive', { zerodbProjectId: 'proj-agentive', keyKind: 'tmp', claimToken: 'tok-1' })]),
+    )
+    fetchMock.mockResolvedValueOnce({
+      ok: true, status: 200, json: async () => ({ api_key: 'sk_permanent_real_key' }),
+    } as unknown as Response)
+    fetchMock.mockResolvedValueOnce(okResponse())
+
+    const res = await claimCompanyProject('agentive', 'valid-jwt')
+
+    expect(res.ok).toBe(true)
+    expect(h.storeCompanyZerodbKey).toHaveBeenCalledWith(
+      'proj-agentive', 'sk_permanent_real_key', { slug: 'agentive', keyKind: 'permanent' },
+    )
+  })
+
+  it('does NOT call storeCompanyZerodbKey when the claim response carries no api_key (nothing new to store)', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(
+      rowsResponse([row('acme', { zerodbProjectId: 'proj-1', keyKind: 'tmp', claimToken: 'tok-1' })]),
+    )
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) } as unknown as Response)
+    fetchMock.mockResolvedValueOnce(okResponse())
+
+    await claimCompanyProject('acme', 'valid-jwt')
+    expect(h.storeCompanyZerodbKey).not.toHaveBeenCalled()
+  })
+
+  it('a storeCompanyZerodbKey failure never fails the claim itself (best-effort)', async () => {
+    h.storeCompanyZerodbKey.mockResolvedValue(false)
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(
+      rowsResponse([row('acme', { zerodbProjectId: 'proj-1', keyKind: 'tmp', claimToken: 'tok-1' })]),
+    )
+    fetchMock.mockResolvedValueOnce({
+      ok: true, status: 200, json: async () => ({ api_key: 'sk_new' }),
+    } as unknown as Response)
+    fetchMock.mockResolvedValueOnce(okResponse())
+
+    const res = await claimCompanyProject('acme', 'valid-jwt')
+    expect(res.ok).toBe(true)
+    expect(res.claimed).toBe(true)
+  })
+
+  it('treats 409 (already claimed externally) as idempotent success with claimed=false, and does not re-store a key (nothing new in a 409 response)', async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValueOnce(
       rowsResponse([row('acme', { zerodbProjectId: 'proj-1', keyKind: 'tmp', claimToken: 'tok-1' })]),
@@ -601,6 +663,7 @@ describe('claimCompanyProject', () => {
     const res = await claimCompanyProject('acme', 'jwt-token')
     expect(res.ok).toBe(true)
     expect(res.claimed).toBe(false)
+    expect(h.storeCompanyZerodbKey).not.toHaveBeenCalled()
   })
 
   it('returns an error reason on a non-ok non-409 response from the claim endpoint', async () => {
