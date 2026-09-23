@@ -223,6 +223,29 @@ describe('runCommsDigestSweep — commsOptOut (#742 baseline policy adopted) (#7
   })
 })
 
+describe('runCommsDigestSweep — emailUndeliverable pre-send check (#840)', () => {
+  it('skips honestly with recipient_undeliverable BEFORE attempting a send, never reporting sent:true', async () => {
+    h.listEnrolled.mockResolvedValue([ENROLLED_AGILE])
+    h.resolveApp.mockResolvedValue({
+      ...APP_AGILE,
+      emailUndeliverableAt: '2026-09-21T19:48:00Z',
+      emailUndeliverableReason: 'bounced:Suppressed',
+    })
+    const result = await runCommsDigestSweep({ dryRun: false })
+    expect(result.skipped).toBe(1)
+    expect(result.sent).toBe(0)
+    expect(result.results[0].reason).toBe('recipient_undeliverable')
+    expect(h.sendCompanyEmail).not.toHaveBeenCalled()
+  })
+
+  it('is checked before the commsOptOut/no_owner_email checks matter — still sends normally when absent', async () => {
+    h.listEnrolled.mockResolvedValue([ENROLLED_AGILE])
+    h.resolveApp.mockResolvedValue({ ...APP_AGILE, emailUndeliverableAt: undefined })
+    const result = await runCommsDigestSweep({ dryRun: false })
+    expect(result.sent).toBe(1)
+  })
+})
+
 describe('runCommsDigestSweep — general behavior (#743)', () => {
   it('skips a company with no registered owner email', async () => {
     h.listEnrolled.mockResolvedValue([ENROLLED_AGILE])

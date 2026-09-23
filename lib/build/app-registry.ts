@@ -274,6 +274,24 @@ export interface AppEntry {
   // AFTER a successful sendCompanyEmail — never advanced on a failed send, so
   // a transient failure doesn't silently drop that day's activity.
   lastDigestAt?: string
+  // Real, durable "this recipient is undeliverable" flag (#840) — set ONLY
+  // from a verified Resend webhook event (a permanent `email.bounced`, or
+  // `email.complained`), never speculatively. Before this, Resend returned a
+  // clean 2xx at send time for a suppressed/hard-bounced recipient and then
+  // silently dropped the email server-side — confirmed live: admin@ainative.
+  // studio (an Enterprise account owning ~30 companies) got ZERO daily
+  // digest emails, with the digest cron reporting every one of those 28
+  // sends as `sent: true`. `emailUndeliverableReason` carries Resend's own
+  // bounce subType/message (or 'complained') for an honest, non-fabricated
+  // UI string — never a guess. Checked by the comms-digest cron BEFORE
+  // attempting a send (see app/api/cron/comms-digest) and surfaced on the
+  // Live dashboard (see Live.tsx's nightly-run card + GET /api/build/
+  // resolve-app) so a founder whose email is bouncing actually finds out,
+  // instead of the failure being invisible everywhere. No code path clears
+  // this yet (a `suppression.removed` handler is out of scope for #840's
+  // first pass — see the webhook route's own doc comment).
+  emailUndeliverableAt?: string
+  emailUndeliverableReason?: string
   createdAt: string
 }
 
@@ -317,6 +335,66 @@ export async function setAppLogo(
     logoFileId: fields.logoFileId,
     logoUpdatedAt: new Date().toISOString(),
   })
+}
+
+/**
+ * Record a real Resend bounce/complaint for ONE company (#840). Appends an
+ * updated row carrying the existing entry plus the new
+ * emailUndeliverable{At,Reason} fields, so resolveApp() (latest-wins)
+ * surfaces it to the digest cron's pre-send check and the Live dashboard's
+ * honest notice. Idempotent: no-op success (true) when already flagged with
+ * the SAME reason (no churn row) — a redelivered webhook (Resend's own
+ * "delivered at least once" guarantee) or a second distinct bounce with a
+ * different reason still updates the timestamp/reason. No-op (false) if the
+ * slug isn't registered.
+ */
+export async function setAppEmailUndeliverable(
+  slug: string,
+  reason: string,
+): Promise<boolean> {
+  const existing = await resolveApp(slug)
+  if (!existing) return false
+  if (existing.emailUndeliverableReason === reason && existing.emailUndeliverableAt) return true
+  return registerApp({
+    ...existing,
+    emailUndeliverableAt: new Date().toISOString(),
+    emailUndeliverableReason: reason,
+  })
+}
+
+/**
+ * Flag EVERY company owned by a given recipient email as undeliverable
+ * (#840) — the real shape of the reported bug: Resend's bounce/complaint
+ * events carry the recipient ADDRESS, not a company slug, and one address
+ * can own many companies (confirmed live: admin@ainative.studio owns ~30).
+ * Reuses the same real, already-working listAllAppsWithStatus() read
+ * (latest-wins per slug) and matches client-side — identical approach to
+ * listAppsForOwner()/resolveAppByZeroVoiceNumber() above, for the same
+ * reason (this table's read path has no confirmed server-side filter on an
+ * arbitrary row_data field).
+ *
+ * Returns the slugs that were actually (re)flagged. Silently returns an
+ * empty array on an empty address or a failed underlying read — a webhook
+ * handler must never throw on a transient registry hiccup (Resend will just
+ * retry the delivery).
+ */
+export async function markEmailUndeliverableForAddress(
+  email: string,
+  reason: string,
+): Promise<string[]> {
+  const target = (email || '').trim().toLowerCase()
+  if (!target) return []
+  const { apps, ok } = await listAllAppsWithStatus()
+  if (!ok) return []
+  const owned = apps.filter(
+    (a) => (a.ownerEmail || '').toLowerCase() === target && (a.lifecycleStatus || 'active') !== 'deleted',
+  )
+  const flagged: string[] = []
+  for (const app of owned) {
+    const didFlag = await setAppEmailUndeliverable(app.slug, reason).catch(() => false)
+    if (didFlag) flagged.push(app.slug)
+  }
+  return flagged
 }
 
 /**

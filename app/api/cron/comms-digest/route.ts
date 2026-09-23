@@ -35,6 +35,16 @@
  * SAFETY: mirrors winback's dry-run-by-default posture — a real send requires
  * BOTH the CRON_SECRET AND an explicit `?send=true`, so a routine cron ping
  * or a probe never emails a real founder.
+ *
+ * #840: also checks AppEntry.emailUndeliverableAt (set only by a verified
+ * Resend webhook event, app/api/webhooks/resend) BEFORE attempting a send —
+ * real, live bug this closes: Resend returns a clean 2xx at send time for a
+ * suppressed/hard-bounced recipient and then silently drops the email
+ * server-side, which this cron used to report as `sent: true` with zero
+ * visibility anywhere (confirmed live: 28/28 daily digests to a real
+ * Enterprise account's admin@ainative.studio were silently dropped this
+ * way). A flagged recipient is now skipped with an honest
+ * `reason: 'recipient_undeliverable'` instead.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -102,6 +112,18 @@ export async function runCommsDigestSweep(opts: { dryRun: boolean }): Promise<{
     if (app?.commsOptOut) {
       skipped += 1
       results.push({ companyId: e.companyId, mode, sent: false, reason: 'comms_opted_out' })
+      continue
+    }
+
+    // #840: a real Resend webhook (email.bounced/email.complained, see
+    // app/api/webhooks/resend) has already told us this recipient is
+    // undeliverable — attempting the send again would repeat the exact
+    // silent-drop bug this issue reports (Resend returns a clean 2xx even
+    // for a recipient it will drop server-side). Skip HONESTLY instead of
+    // reporting a false `sent: true`.
+    if (app?.emailUndeliverableAt) {
+      skipped += 1
+      results.push({ companyId: e.companyId, mode, sent: false, reason: 'recipient_undeliverable' })
       continue
     }
 

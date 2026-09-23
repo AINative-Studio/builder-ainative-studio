@@ -41,6 +41,13 @@
  * selection ('agile' default | 'pairProgramming'), so the dashboard's mode
  * selector can hydrate its current value on load instead of always showing
  * the default. Existing callers unaffected by this extra field.
+ *
+ * `emailUndeliverable` (#840, additive): honest surface of a real, verified
+ * Resend bounce/complaint for this company's founder email (set only by
+ * app/api/webhooks/resend, never speculatively) — so Live.tsx can show a
+ * real "emails to your address are bouncing" notice instead of the founder
+ * silently getting zero daily digests forever with no indication why.
+ * Existing callers unaffected by this extra field.
  */
 
 import { NextRequest } from 'next/server'
@@ -57,6 +64,9 @@ export async function GET(request: NextRequest) {
     chatId: entry?.chatId ?? null,
     idea: entry?.idea || null,
     commsMode: entry?.commsMode || 'agile',
+    emailUndeliverable: entry?.emailUndeliverableAt
+      ? { at: entry.emailUndeliverableAt, reason: entry.emailUndeliverableReason || 'bounced' }
+      : null,
     verified,
   })
 }
