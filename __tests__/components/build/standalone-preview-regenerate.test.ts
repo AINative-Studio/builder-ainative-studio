@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { planRegenerate, baseSlugOf, isAcceptedPreviewMessageOrigin } from '@/components/build/StandalonePreviewRegenerate'
+import { planRegenerate, baseSlugOf, isAcceptedPreviewMessageOrigin, homeDestination } from '@/components/build/StandalonePreviewRegenerate'
 
 /**
  * Real gap found live (2026-09-21): a founder's real product build
@@ -95,5 +95,35 @@ describe('isAcceptedPreviewMessageOrigin', () => {
 
   it('rejects a genuinely different origin (never trust an arbitrary cross-origin postMessage)', () => {
     expect(isAcceptedPreviewMessageOrigin('https://evil.example.com', 'https://builder.ainative.studio')).toBe(false)
+  })
+})
+
+/**
+ * #866 (2026-09-24): the "Preview Unavailable" error page's ONLY buttons are
+ * "Start New Chat" (posts { action: 'home' }) and "Try Again" (reload) — for
+ * a founder whose generation is genuinely, permanently broken (#865), the
+ * bare homepage was a dead end with no path back to their own dashboard.
+ * Confirmed live: evan@ainative.studio's flashpoint registry entry stayed
+ * stale (plan: null, keyKind: tmp) through a real logout/login specifically
+ * because this page never routes back to Live.tsx, the only place plan
+ * reconciliation runs.
+ */
+describe('homeDestination', () => {
+  it('routes to this company\'s own Live dashboard when a slug is known', () => {
+    expect(homeDestination('flashpoint')).toBe('/build?screen=live&company=flashpoint')
+  })
+
+  it('strips a -product suffix so a product-page slug still lands on its base company', () => {
+    expect(homeDestination('agentive-product')).toBe('/build?screen=live&company=agentive')
+  })
+
+  it('falls back to the bare homepage only when there is genuinely no slug', () => {
+    expect(homeDestination(undefined)).toBe('/')
+    expect(homeDestination('')).toBe('/')
+    expect(homeDestination('   ')).toBe('/')
+  })
+
+  it('encodes the slug safely', () => {
+    expect(homeDestination('a company/weird')).toBe('/build?screen=live&company=a%20company%2Fweird')
   })
 })

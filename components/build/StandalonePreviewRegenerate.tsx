@@ -24,6 +24,31 @@ import { useEffect, useState } from 'react'
  * equivalent to call from a bare standalone page, so for that track this
  * honestly sends the founder back into the dashboard to regenerate from
  * there, rather than silently doing nothing.
+ *
+ * #866 (2026-09-24): two more real gaps found on this same page, both
+ * confirmed live against a real founder's (evan@ainative.studio) permanently-
+ * broken generation (#865):
+ *
+ *  1. The "Preview Unavailable" error page's OWN "Start New Chat" button
+ *     posts `{ action: 'home' }`, which this listener sent to the bare
+ *     marketing homepage (`/`) — no `?company=` at all. That's the ONLY
+ *     button on that error page (the other is "Try Again" → reload, which
+ *     just re-shows the same error), so a founder whose generation is
+ *     genuinely, permanently broken had NO way back into the real dashboard
+ *     from here. Fixed: 'home' now goes to this company's own Live dashboard
+ *     (`/build?screen=live&company={slug}`) when a slug is known, falling
+ *     back to `/` only when it genuinely isn't.
+ *
+ *  2. This page never calls `/api/build/subscription/status`, which is the
+ *     ONLY place `reconcilePlanFulfillment()` runs (from `Live.tsx` on
+ *     mount) — the self-heal that fixes a stale `plan: null` / `tmp` key
+ *     registry entry against a founder's real, current paid plan. A founder
+ *     who only ever uses their standalone share link (never opens the full
+ *     dashboard) got no self-heal, no matter how many times they reloaded or
+ *     re-logged-in — confirmed live: evan's registry stayed stale through a
+ *     real logout/login specifically because of this gap. Fixed: this page
+ *     now makes that same call once on mount when the founder is signed in,
+ *     so reconciliation isn't gated on finding the dashboard first.
  */
 export interface RegenerateProps {
   slug: string
@@ -78,8 +103,30 @@ export function isAcceptedPreviewMessageOrigin(messageOrigin: string, pageOrigin
   return messageOrigin === 'null' || messageOrigin === pageOrigin
 }
 
+/**
+ * Where "Start New Chat" / "home" should actually send the founder: back to
+ * THIS company's own Live dashboard when a slug is known (that's where
+ * regeneration, plan reconciliation, and everything else actually lives),
+ * falling back to the bare homepage only when there's genuinely no slug to
+ * route with. Pure + exported so the routing decision is unit-testable.
+ */
+export function homeDestination(slug?: string): string {
+  const s = (slug || '').trim()
+  return s ? `/build?screen=live&company=${encodeURIComponent(baseSlugOf(s))}` : '/'
+}
+
 export function StandalonePreviewRegenerate({ slug, idea, track, name }: RegenerateProps) {
   const [status, setStatus] = useState<'idle' | 'working' | 'done' | 'error'>('idle')
+
+  // #866: the ONLY place reconcilePlanFulfillment() runs is Live.tsx's own
+  // mount effect — a founder who never leaves this standalone page never
+  // gets that self-heal. Fire the same status check here once, best-effort;
+  // a 401 (signed out) or any failure is silently ignored, same as every
+  // other best-effort call on this page.
+  useEffect(() => {
+    if (!slug) return
+    fetch(`/api/build/subscription/status?slug=${encodeURIComponent(baseSlugOf(slug))}`).catch(() => {})
+  }, [slug])
 
   useEffect(() => {
     function onPreviewMessage(e: MessageEvent) {
@@ -87,7 +134,7 @@ export function StandalonePreviewRegenerate({ slug, idea, track, name }: Regener
       const data = e.data as { type?: string; action?: string } | null
       if (!data || data.type !== 'ainative-preview-nav') return
       if (data.action === 'home') {
-        window.location.href = '/'
+        window.location.href = homeDestination(slug)
         return
       }
       if (data.action === 'retry' || data.action === 'reload') {

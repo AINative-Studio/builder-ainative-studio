@@ -49,6 +49,11 @@ import { logAgentRun } from '@/lib/services/agent-runs.service'
 import { isQuotaError, QUOTA_USER_MESSAGE } from '@/lib/quota-error'
 import { getBedrockClient, isBedrockEnabled } from '@/lib/bedrock-client'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
+import {
+  registerInFlightGeneration,
+  unregisterInFlightGeneration,
+  installShutdownFlushHandler,
+} from '@/lib/generation-shutdown-flush'
 
 // Log model configuration on first module load
 logModelConfiguration()
@@ -371,6 +376,15 @@ const MODEL_CONFIG: Record<string, { provider: 'meta' | 'ainative'; modelId: str
   'deepseek-v3': { provider: 'ainative', modelId: 'deepseek-v3', tier: 'standard' },
   'qwen3-32b': { provider: 'ainative', modelId: 'qwen3-32b', tier: 'standard' },
 }
+
+// #865: install the SIGTERM shutdown-flush handler once, at module load —
+// this is the ONLY route where a real, long-running generation is ever in
+// flight, so this is the right (and only) place to arm it. Uses the same
+// zerodb-store.saveGeneration lazily-imported everywhere else in this file.
+installShutdownFlushHandler(async (data) => {
+  const { saveGeneration } = await import('@/lib/zerodb-store')
+  return saveGeneration(data)
+})
 
 export async function POST(request: NextRequest) {
   try {
@@ -1440,6 +1454,19 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
           const checkpoint = new GenerationCheckpoint()
           checkpoint.record('initial', finalContent, validation.valid)
 
+          // #865: register this generation as in-flight so a SIGTERM (an
+          // ordinary deploy restarting this process) can flush whatever this
+          // checkpoint holds instead of losing the generation entirely. The
+          // SAME checkpoint object is mutated by every `.record()` call
+          // below, so the registry always sees the latest valid stage with
+          // no further wiring needed. Unregistered in the `finally` below.
+          registerInFlightGeneration({
+            chatId: responseId,
+            prompt: message,
+            model: requestedModel || DEFAULT_MODEL,
+            checkpoint,
+          })
+
           // AUTO-RETRY: If validation fails, automatically retry once with error feedback
           if (!validation.valid) {
             console.error('⚠️ Initial validation failed:', validation.error)
@@ -2220,6 +2247,14 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
           }).catch(() => {})
 
           try { controller.close() } catch (_) { /* already closed */ }
+        } finally {
+          // #865: unconditional — runs on the normal close path, the error
+          // catch, AND a genuinely unexpected throw. A generation that
+          // reached here already went through its own success/degraded
+          // persistGeneration call (or was never registered at all, if it
+          // failed before the checkpoint was created) — either way, it no
+          // longer needs the shutdown-flush safety net.
+          unregisterInFlightGeneration(responseId)
         }
       }
     })
