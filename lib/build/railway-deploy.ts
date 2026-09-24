@@ -1031,17 +1031,53 @@ export interface SecretsListResult {
   reason?: string
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Resolve a company's REAL Railway service UUID for a GraphQL call (#839
+ * follow-up, real bug found live: the registry's `railwayServiceId` field is
+ * populated from `deployCompanyFromGitea()`'s `serviceName`
+ * (`serviceNameForSlug(slug)`, e.g. "company-triage") — a Railway CLI SERVICE
+ * NAME, because `railway up --service <name>`/`railway link` operate on
+ * names. Railway's GraphQL API (`variables(...)`, `variableUpsert(...)`)
+ * requires the actual service UUID, not a name, and — confirmed live via
+ * `railway ssh`, same valid account token, same project/environment —
+ * returns a misleading "Not Authorized" for a name where it expects a UUID,
+ * rather than a clear "invalid id". That's what made this look like a
+ * token/authorization bug rather than an ID-type mismatch.
+ *
+ * Fixes every already-affected company with NO registry backfill needed: if
+ * `storedServiceId` already looks like a real UUID (a fresh/future company,
+ * once the write side is also fixed), it's used as-is; otherwise it's
+ * resolved via `findCompanyService(slug)`, which queries Railway's real
+ * `project.services` list and matches on the deterministic name — the exact
+ * mechanism that already existed for provisioning idempotency, reused here
+ * for read/write of secrets.
+ */
+async function resolveRealServiceId(slug: string, storedServiceId: string): Promise<string | null> {
+  if (UUID_RE.test(storedServiceId)) return storedServiceId
+  return findCompanyService(slug)
+}
+
 /**
  * List a service's runtime variables (#63.B). Returns the RAW map; the caller is
  * responsible for masking (maskSecrets) before it ever leaves the server. Inert
  * (reason:'disabled') when Railway isn't configured.
+ *
+ * `slug` (#839 follow-up) is required so a non-UUID `serviceId` (a legacy
+ * registry row still holding a Railway CLI service NAME) can be resolved to
+ * the real UUID GraphQL requires — see resolveRealServiceId's doc comment.
  */
 export async function listServiceVariables(
+  slug: string,
   serviceId: string,
   environmentId?: string,
 ): Promise<SecretsListResult> {
   if (!railwayApiConfigured()) return { ok: false, reason: 'disabled' }
   if (!serviceId) return { ok: false, reason: 'no_service' }
+  const realServiceId = await resolveRealServiceId(slug, serviceId)
+  if (!realServiceId) return { ok: false, reason: 'service_not_found' }
+  serviceId = realServiceId
   const envId = environmentId || companyEnvironmentId()
   if (!envId) return { ok: false, reason: 'no_environment' }
   try {
@@ -1068,10 +1104,14 @@ export interface SecretMutationResult {
  * Add or update a runtime variable on a service (#63.B). Validates the name and
  * refuses platform-reserved names. NEVER logs the value. Inert when disabled.
  *
+ * `slug` (#839 follow-up) resolves a legacy non-UUID `serviceId` the same way
+ * listServiceVariables does — see resolveRealServiceId's doc comment.
+ *
  * @param name   the variable name (validated + reserved-checked here).
  * @param value  the secret value (not logged, not returned).
  */
 export async function upsertServiceVariable(
+  slug: string,
   serviceId: string,
   name: string,
   value: string,
@@ -1081,6 +1121,9 @@ export async function upsertServiceVariable(
   if (!serviceId) return { ok: false, reason: 'no_service' }
   if (!isValidSecretName(name)) return { ok: false, reason: 'bad_name' }
   if (isReservedSecretName(name)) return { ok: false, reason: 'reserved' }
+  const realServiceId = await resolveRealServiceId(slug, serviceId)
+  if (!realServiceId) return { ok: false, reason: 'service_not_found' }
+  serviceId = realServiceId
   const envId = environmentId || companyEnvironmentId()
   if (!envId) return { ok: false, reason: 'no_environment' }
   try {
@@ -1109,6 +1152,7 @@ export async function upsertServiceVariable(
  * names so provisioning-injected variables can't be removed. Inert when disabled.
  */
 export async function deleteServiceVariable(
+  slug: string,
   serviceId: string,
   name: string,
   environmentId?: string,
@@ -1117,6 +1161,9 @@ export async function deleteServiceVariable(
   if (!serviceId) return { ok: false, reason: 'no_service' }
   if (!isValidSecretName(name)) return { ok: false, reason: 'bad_name' }
   if (isReservedSecretName(name)) return { ok: false, reason: 'reserved' }
+  const realServiceId = await resolveRealServiceId(slug, serviceId)
+  if (!realServiceId) return { ok: false, reason: 'service_not_found' }
+  serviceId = realServiceId
   const envId = environmentId || companyEnvironmentId()
   if (!envId) return { ok: false, reason: 'no_environment' }
   try {

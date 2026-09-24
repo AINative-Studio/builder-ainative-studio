@@ -73,7 +73,7 @@ export async function GET(request: NextRequest) {
   const authed = await authorizeCompany(session, companyId)
   if (authed instanceof Response) return authed
 
-  const result = await listServiceVariables(authed.serviceId)
+  const result = await listServiceVariables(companyId, authed.serviceId)
   if (!result.ok) {
     // Disabled/unconfigured Railway → honest empty list, not an error, so the panel
     // renders with a "no secrets yet / not available in this environment" state.
@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
   if (!isValidSecretName(name)) return Response.json({ error: 'invalid name' }, { status: 400 })
   if (isReservedSecretName(name)) return Response.json({ error: 'reserved name' }, { status: 400 })
 
-  const result = await upsertServiceVariable(authed.serviceId, name, value)
+  const result = await upsertServiceVariable(companyId, authed.serviceId, name, value)
   if (!result.ok) {
     logger.error('secret upsert failed', new Error(result.reason || 'upsert failed'))
     return Response.json({ error: result.reason || 'could not save secret' }, { status: 502 })
@@ -119,7 +119,7 @@ export async function DELETE(request: NextRequest) {
   if (!isValidSecretName(name)) return Response.json({ error: 'invalid name' }, { status: 400 })
   if (isReservedSecretName(name)) return Response.json({ error: 'reserved name' }, { status: 400 })
 
-  const result = await deleteServiceVariable(authed.serviceId, name)
+  const result = await deleteServiceVariable(companyId, authed.serviceId, name)
   if (!result.ok) {
     logger.error('secret delete failed', new Error(result.reason || 'delete failed'))
     return Response.json({ error: result.reason || 'could not delete secret' }, { status: 502 })

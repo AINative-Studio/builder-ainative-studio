@@ -22,6 +22,10 @@ function gql(data: unknown): Response {
   return { ok: true, status: 200, text: async () => JSON.stringify({ data }) } as unknown as Response
 }
 
+// A realistic Railway service UUID (#839 follow-up) — resolveRealServiceId
+// passes these through unchanged (no extra findCompanyService lookup).
+const SVC_UUID = '4e047634-e12b-4e87-9045-f1810225eb0c'
+
 function enableRailway() {
   vi.stubEnv('RAILWAY_DEPLOY_ENABLED', 'true')
   vi.stubEnv('RAILWAY_TOKEN', 'test-token')
@@ -95,28 +99,28 @@ describe('secrets API — cost/config guards', () => {
   afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks() })
 
   it('listServiceVariables is inert (no fetch) when disabled', async () => {
-    const r = await listServiceVariables('svc-1')
+    const r = await listServiceVariables('acme', 'svc-1')
     expect(r).toEqual({ ok: false, reason: 'disabled' })
     expect((globalThis.fetch as any)).not.toHaveBeenCalled()
   })
 
   it('upsertServiceVariable refuses a reserved name WITHOUT touching Railway', async () => {
     enableRailway()
-    const r = await upsertServiceVariable('svc-1', 'COMPANY_SLUG', 'x')
+    const r = await upsertServiceVariable('acme', 'svc-1', 'COMPANY_SLUG', 'x')
     expect(r).toEqual({ ok: false, reason: 'reserved' })
     expect((globalThis.fetch as any)).not.toHaveBeenCalled()
   })
 
   it('upsertServiceVariable rejects an invalid name WITHOUT touching Railway', async () => {
     enableRailway()
-    const r = await upsertServiceVariable('svc-1', 'bad name', 'x')
+    const r = await upsertServiceVariable('acme', 'svc-1', 'bad name', 'x')
     expect(r).toEqual({ ok: false, reason: 'bad_name' })
     expect((globalThis.fetch as any)).not.toHaveBeenCalled()
   })
 
   it('deleteServiceVariable refuses a reserved name', async () => {
     enableRailway()
-    const r = await deleteServiceVariable('svc-1', 'ZERODB_PROJECT_ID')
+    const r = await deleteServiceVariable('acme', 'svc-1', 'ZERODB_PROJECT_ID')
     expect(r).toEqual({ ok: false, reason: 'reserved' })
     expect((globalThis.fetch as any)).not.toHaveBeenCalled()
   })
@@ -129,27 +133,27 @@ describe('secrets API — mocked Railway', () => {
 
   it('listServiceVariables returns the raw variable map', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(gql({ variables: { API_KEY: 'secretval', COMPANY_SLUG: 'acme' } })))
-    const r = await listServiceVariables('svc-1')
+    const r = await listServiceVariables('acme', SVC_UUID)
     expect(r.ok).toBe(true)
     expect(r.variables).toEqual({ API_KEY: 'secretval', COMPANY_SLUG: 'acme' })
   })
 
   it('upsertServiceVariable succeeds for a valid user variable', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(gql({ variableUpsert: true })))
-    const r = await upsertServiceVariable('svc-1', 'STRIPE_KEY', 'sk_live_x')
+    const r = await upsertServiceVariable('acme', SVC_UUID, 'STRIPE_KEY', 'sk_live_x')
     expect(r).toEqual({ ok: true })
     expect((globalThis.fetch as any)).toHaveBeenCalledTimes(1)
   })
 
   it('deleteServiceVariable succeeds for a valid user variable', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(gql({ variableDelete: true })))
-    const r = await deleteServiceVariable('svc-1', 'STRIPE_KEY')
+    const r = await deleteServiceVariable('acme', SVC_UUID, 'STRIPE_KEY')
     expect(r).toEqual({ ok: true })
   })
 
   it('surfaces a Railway error as a structured reason (never throws)', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500, text: async () => 'boom' } as unknown as Response))
-    const r = await upsertServiceVariable('svc-1', 'STRIPE_KEY', 'x')
+    const r = await upsertServiceVariable('acme', SVC_UUID, 'STRIPE_KEY', 'x')
     expect(r.ok).toBe(false)
     expect(typeof r.reason).toBe('string')
   })

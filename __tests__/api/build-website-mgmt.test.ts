@@ -179,7 +179,7 @@ describe('/api/build/secrets (#63.B)', () => {
     h.upsertServiceVariable.mockResolvedValue({ ok: true })
     const res = await secretsPOST(bodyReq({ companyId: 'acme', name: 'STRIPE_KEY', value: 'sk_live_x' }))
     expect(res.status).toBe(200)
-    expect(h.upsertServiceVariable).toHaveBeenCalledWith('svc-1', 'STRIPE_KEY', 'sk_live_x')
+    expect(h.upsertServiceVariable).toHaveBeenCalledWith('acme', 'svc-1', 'STRIPE_KEY', 'sk_live_x')
   })
 
   it('DELETE removes a secret', async () => {
@@ -187,7 +187,7 @@ describe('/api/build/secrets (#63.B)', () => {
     h.deleteServiceVariable.mockResolvedValue({ ok: true })
     const res = await secretsDELETE(bodyReq({ companyId: 'acme', name: 'STRIPE_KEY' }))
     expect(res.status).toBe(200)
-    expect(h.deleteServiceVariable).toHaveBeenCalledWith('svc-1', 'STRIPE_KEY')
+    expect(h.deleteServiceVariable).toHaveBeenCalledWith('acme', 'svc-1', 'STRIPE_KEY')
   })
 
   it('DELETE refuses a reserved name', async () => {
