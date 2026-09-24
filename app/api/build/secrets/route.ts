@@ -75,6 +75,11 @@ export async function GET(request: NextRequest) {
 
   const result = await listServiceVariables(authed.serviceId)
   if (!result.ok) {
+    // TEMP DIAGNOSTIC (#839) — ids only, never secrets/token values. Confirms
+    // exactly what serviceId/env this specific request resolved, since the
+    // identical query+token combo verified working from inside the container
+    // for triage's real serviceId. Remove once #839 is confirmed fixed.
+    logger.info('secrets diag839', { companyId, serviceId: authed.serviceId, reason: result.reason })
     // Disabled/unconfigured Railway → honest empty list, not an error, so the panel
     // renders with a "no secrets yet / not available in this environment" state.
     return Response.json({ ok: true, secrets: [], available: false, reason: result.reason })
