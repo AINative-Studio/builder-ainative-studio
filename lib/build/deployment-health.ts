@@ -1,27 +1,34 @@
 /**
- * Deployment-health stage reporting (builder-ainative-studio#868).
+ * Deployment-health stage reporting (builder-ainative-studio#868, #870).
  *
- * core#6925 built a generic, auth-required stage-reporting API specifically
- * so resolveTask() (lib/build/task-resolver.ts) could report its real
- * pipeline stages (implement -> commit -> coverage -> merge -> deploy)
- * somewhere queryable, instead of only a free-text `output` string on one
- * BuildTask row. That wiring was scoped as a follow-up in #6925 but never
- * built — deployment_health_stages had 0 rows in production 3+ weeks after
- * shipping because nothing ever called it. This is that follow-up.
+ * core#6925 built a generic, auth-required stage-reporting API. Two separate
+ * Builder pipelines produce/modify apps and both were found unwired:
  *
- * Auth: resolveTask() runs both from the unattended nightly loop (no founder
- * session/JWT exists there — see task-resolution-loop.ts) and from an
- * authenticated founder request (edit-app/route.ts). The endpoint accepts
- * either a JWT or an X-API-Key (core's get_current_user_flexible), so this
- * uses the same service-level AINative API key app-registry.ts already uses
- * for Builder's own infrastructure writes (builder_app_registry) — the row
- * is attributed to whichever AINative account owns that key, which is
- * correct here since this reports on Builder's own pipeline, not founder-
- * supplied data.
+ *  - resolveTask() (lib/build/task-resolver.ts, #868): the backlog-task
+ *    auto-resolution pipeline (nightly loop + chat-triggered edits). Reports
+ *    under entity_type "builder_company_task", entity_id = the BuildTask id.
+ *  - register-app / company-app routes (#870): the real App-track and
+ *    Company-track app-GENERATION pipelines — the dominant real traffic,
+ *    confirmed via core#6927's investigation to have been the reason
+ *    deployment_health_stages still had 0 rows even after #868 shipped.
+ *    Reports under entity_type "builder_app_generation", entity_id = slug
+ *    (the one identifier both routes have in scope, unlike chat-ws itself
+ *    which only ever knows a chatId — see #870's own investigation for why
+ *    chat-ws is not the right place to hook this).
+ *
+ * Auth: neither pipeline reliably has a founder JWT in scope (resolveTask()
+ * runs from the unattended nightly loop; register-app/company-app run before
+ * or independent of any billing/session gate). The endpoint accepts either a
+ * JWT or an X-API-Key (core's get_current_user_flexible), so this uses the
+ * same service-level AINative API key app-registry.ts already uses for
+ * Builder's own infrastructure writes (builder_app_registry) — rows are
+ * attributed to whichever AINative account owns that key, which is correct
+ * here since this reports on Builder's own pipelines, not founder-supplied
+ * data.
  *
  * Best-effort throughout, matching the existing startDecisionTrace/
  * addTraceStep pattern in task-resolver.ts: a reporting-call failure must
- * NEVER affect the real task resolution outcome.
+ * NEVER affect the real pipeline outcome it's called from.
  */
 
 import { getAinativeApiKey } from '@/lib/build/env-keys'
@@ -29,29 +36,33 @@ import { getAinativeApiKey } from '@/lib/build/env-keys'
 const AINATIVE_API = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 const API_KEY = getAinativeApiKey()
 
-export type DeploymentHealthStage = 'implement' | 'commit' | 'coverage' | 'merge' | 'deploy'
+export type DeploymentHealthEntityType = 'builder_company_task' | 'builder_app_generation'
+export type DeploymentHealthStage =
+  | 'implement' | 'commit' | 'coverage' | 'merge' | 'deploy' // resolveTask() stages
+  | 'generate' | 'ready_check' | 'register' | 'git_commit'   // app-generation stages
 export type DeploymentHealthStatus = 'ok' | 'failed' | 'skipped'
 
 /**
- * Report one stage outcome for a builder company task. Never throws — a
- * reporting failure is swallowed so it can never affect the real resolution
- * outcome resolveTask() already computed.
+ * Report one stage outcome for a builder entity (a backlog task or an app
+ * generation). Never throws — a reporting failure is swallowed so it can
+ * never affect the real pipeline outcome the caller already computed.
  */
 export async function reportDeploymentHealthStage(
-  taskId: string,
+  entityType: DeploymentHealthEntityType,
+  entityId: string,
   stage: DeploymentHealthStage,
   taskStatus: DeploymentHealthStatus,
   reason?: string,
   metadata?: Record<string, unknown>,
 ): Promise<void> {
-  if (!API_KEY || !taskId) return
+  if (!API_KEY || !entityId) return
 
   try {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 10_000)
     try {
       await fetch(
-        `${AINATIVE_API}/api/v1/public/deployment-health/builder_company_task/${encodeURIComponent(taskId)}`,
+        `${AINATIVE_API}/api/v1/public/deployment-health/${entityType}/${encodeURIComponent(entityId)}`,
         {
           method: 'POST',
           headers: {

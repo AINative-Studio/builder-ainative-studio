@@ -58,6 +58,7 @@ import {
   resolvePendingProductGeneration,
 } from '@/lib/build/product-generation-state'
 import { loadGeneration } from '@/lib/zerodb-store'
+import { reportDeploymentHealthStage } from '@/lib/build/deployment-health'
 
 export const runtime = 'nodejs'
 
@@ -110,8 +111,14 @@ async function runLandingPageGeneration(
       if (chatId && completed) break
     }
     if (!chatId) throw new Error('no chatId')
+    await reportDeploymentHealthStage(
+      'builder_app_generation', slug, 'generate',
+      completed ? 'ok' : 'failed',
+      completed ? undefined : 'Stream ended without a complete event.',
+    )
 
-    await registerApp({ slug, chatId, name, tagline, color, track: 'company', idea })
+    const registered = await registerApp({ slug, chatId, name, tagline, color, track: 'company', idea })
+    await reportDeploymentHealthStage('builder_app_generation', slug, 'register', registered ? 'ok' : 'failed')
     await markProductGenerationRegistered(slug, chatId)
     // #270: capture the IDEA → generated app for the recursive learning loop, with
     // converted:false initially. subscription/verify flips it converted on payment.
@@ -122,6 +129,7 @@ async function runLandingPageGeneration(
     }).catch(() => {})
   } catch (e: any) {
     logBuildOutcome({ slug, idea, brand: name, track: 'company', codeStatus: 'failure', converted: false }).catch(() => {})
+    await reportDeploymentHealthStage('builder_app_generation', slug, 'generate', 'failed', e?.message ? String(e.message) : 'Landing-page generation threw an error.')
     console.warn(`[company-app] background generation failed for ${slug}:`, e?.message || e)
   }
 }

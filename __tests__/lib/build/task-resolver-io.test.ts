@@ -396,7 +396,7 @@ describe('resolveTask — deployment-health stage reporting (#868)', () => {
 
     await resolveTask('owner::slug', TASK, 'slug')
 
-    const stages = h.reportDeploymentHealthStage.mock.calls.map((c: any[]) => [c[1], c[2]])
+    const stages = h.reportDeploymentHealthStage.mock.calls.map((c: any[]) => [c[2], c[3]])
     expect(stages).toEqual([
       ['implement', 'ok'],
       ['commit', 'ok'],
@@ -404,8 +404,12 @@ describe('resolveTask — deployment-health stage reporting (#868)', () => {
       ['merge', 'ok'],
       ['deploy', 'skipped'],
     ])
-    // Every call is attributed to the real task id, not the scopeKey or slug.
-    h.reportDeploymentHealthStage.mock.calls.forEach((c: any[]) => expect(c[0]).toBe('t_abc123'))
+    // Every call is attributed to the "builder_company_task" entity type and
+    // the real task id, not the scopeKey or slug.
+    h.reportDeploymentHealthStage.mock.calls.forEach((c: any[]) => {
+      expect(c[0]).toBe('builder_company_task')
+      expect(c[1]).toBe('t_abc123')
+    })
   })
 
   it('reports "implement" failed when the company is not git-provisioned', async () => {
@@ -414,7 +418,7 @@ describe('resolveTask — deployment-health stage reporting (#868)', () => {
     await resolveTask('owner::slug', TASK, 'slug')
 
     expect(h.reportDeploymentHealthStage).toHaveBeenCalledWith(
-      't_abc123', 'implement', 'failed', expect.stringMatching(/not git-provisioned/i),
+      'builder_company_task', 't_abc123', 'implement', 'failed', expect.stringMatching(/not git-provisioned/i),
     )
   })
 
@@ -427,11 +431,11 @@ describe('resolveTask — deployment-health stage reporting (#868)', () => {
     await resolveTask('owner::slug', TASK, 'slug')
 
     expect(h.reportDeploymentHealthStage).toHaveBeenCalledWith(
-      't_abc123', 'commit', 'failed', expect.stringContaining('commit_push_failed'),
+      'builder_company_task', 't_abc123', 'commit', 'failed', expect.stringContaining('commit_push_failed'),
     )
     // implement already reported ok (real); never reports coverage/merge/deploy
     // once commit itself failed.
-    const stages = h.reportDeploymentHealthStage.mock.calls.map((c: any[]) => c[1])
+    const stages = h.reportDeploymentHealthStage.mock.calls.map((c: any[]) => c[2])
     expect(stages).toEqual(['implement', 'commit'])
   })
 
@@ -444,7 +448,7 @@ describe('resolveTask — deployment-health stage reporting (#868)', () => {
 
     await resolveTask('owner::slug', TASK, 'slug')
 
-    const stages = h.reportDeploymentHealthStage.mock.calls.map((c: any[]) => [c[1], c[2]])
+    const stages = h.reportDeploymentHealthStage.mock.calls.map((c: any[]) => [c[2], c[3]])
     expect(stages).toEqual([
       ['implement', 'ok'],
       ['commit', 'ok'],
@@ -464,10 +468,10 @@ describe('resolveTask — deployment-health stage reporting (#868)', () => {
     await resolveTask('owner::slug', TASK, 'slug')
 
     expect(h.reportDeploymentHealthStage).toHaveBeenCalledWith(
-      't_abc123', 'merge', 'skipped', expect.stringMatching(/could not auto-merge/i), expect.anything(),
+      'builder_company_task', 't_abc123', 'merge', 'skipped', expect.stringMatching(/could not auto-merge/i), expect.anything(),
     )
     // No deploy report at all when merge itself did not succeed.
-    const stages = h.reportDeploymentHealthStage.mock.calls.map((c: any[]) => c[1])
+    const stages = h.reportDeploymentHealthStage.mock.calls.map((c: any[]) => c[2])
     expect(stages).not.toContain('deploy')
   })
 
@@ -483,7 +487,7 @@ describe('resolveTask — deployment-health stage reporting (#868)', () => {
 
     await resolveTask('owner::slug', TASK, 'slug')
 
-    expect(h.reportDeploymentHealthStage).toHaveBeenCalledWith('t_abc123', 'deploy', 'ok', undefined)
+    expect(h.reportDeploymentHealthStage).toHaveBeenCalledWith('builder_company_task', 't_abc123', 'deploy', 'ok', undefined)
   })
 
   it('reports "deploy" failed (never downgrades the completed task) when deployCompanyFromGitea throws', async () => {
@@ -499,7 +503,7 @@ describe('resolveTask — deployment-health stage reporting (#868)', () => {
     const result = await resolveTask('owner::slug', TASK, 'slug')
 
     expect(result.stage).toBe('completed') // unaffected — deploy reporting is best-effort
-    expect(h.reportDeploymentHealthStage).toHaveBeenCalledWith('t_abc123', 'deploy', 'failed', expect.any(String))
+    expect(h.reportDeploymentHealthStage).toHaveBeenCalledWith('builder_company_task', 't_abc123', 'deploy', 'failed', expect.any(String))
   })
 
 })
