@@ -1,14 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 /**
- * builder-ainative-studio#868 — resolveTask() reports real stage outcomes to
- * core's deployment-health API (core#6925). This was never wired up, so
- * `deployment_health_stages` had 0 rows in production 3+ weeks after the
- * endpoint shipped (core#6927 investigation). These tests prove the client
- * itself: it calls the right URL with the right auth, never throws (this
- * must always stay best-effort — a reporting hiccup can never affect the
- * real resolveTask() pipeline it's called from), and no-ops cleanly when no
- * API key is configured.
+ * builder-ainative-studio#868, #870 — two Builder pipelines (resolveTask()'s
+ * backlog-task resolution, and the register-app/company-app app-generation
+ * routes) report real stage outcomes to core's deployment-health API
+ * (core#6925). This was never wired up for EITHER pipeline, so
+ * `deployment_health_stages` had 0 rows in production even after #868
+ * shipped — #870's investigation found #868 only wired the smaller
+ * resolveTask() pipeline; the dominant real traffic (app generation) still
+ * reported nothing. These tests prove the client itself: it calls the right
+ * entity-scoped URL with the right auth, never throws (this must always stay
+ * best-effort — a reporting hiccup can never affect the real pipeline it's
+ * called from), and no-ops cleanly when no API key or entity id is present.
  */
 
 // deployment-health.ts captures API_KEY at MODULE LOAD (const), so it must be
@@ -32,7 +35,7 @@ describe('reportDeploymentHealthStage', () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValueOnce(okResponse())
 
-    await reportDeploymentHealthStage('t_abc123', 'implement', 'ok', 'produced 2 files')
+    await reportDeploymentHealthStage('builder_company_task', 't_abc123', 'implement', 'ok', 'produced 2 files')
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, init] = fetchMock.mock.calls[0]
@@ -44,11 +47,21 @@ describe('reportDeploymentHealthStage', () => {
     expect(body).toEqual({ stage: 'implement', status: 'ok', reason: 'produced 2 files', metadata: undefined })
   })
 
-  it('URL-encodes the task id', async () => {
+  it('POSTs under the builder_app_generation entity type for app-generation callers', async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValueOnce(okResponse())
 
-    await reportDeploymentHealthStage('task/with slashes', 'deploy', 'ok')
+    await reportDeploymentHealthStage('builder_app_generation', 'my-slug', 'register', 'ok')
+
+    const [url] = fetchMock.mock.calls[0]
+    expect(url).toBe('https://api.ainative.studio/api/v1/public/deployment-health/builder_app_generation/my-slug')
+  })
+
+  it('URL-encodes the entity id', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(okResponse())
+
+    await reportDeploymentHealthStage('builder_company_task', 'task/with slashes', 'deploy', 'ok')
 
     const [url] = fetchMock.mock.calls[0]
     expect(url).toBe('https://api.ainative.studio/api/v1/public/deployment-health/builder_company_task/task%2Fwith%20slashes')
@@ -58,7 +71,7 @@ describe('reportDeploymentHealthStage', () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValueOnce(okResponse())
 
-    await reportDeploymentHealthStage('t_1', 'coverage', 'failed', 'below floor', { coveragePercent: 55 })
+    await reportDeploymentHealthStage('builder_company_task', 't_1', 'coverage', 'failed', 'below floor', { coveragePercent: 55 })
 
     const [, init] = fetchMock.mock.calls[0]
     const body = JSON.parse(init.body)
@@ -69,20 +82,20 @@ describe('reportDeploymentHealthStage', () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockRejectedValueOnce(new Error('network error'))
 
-    await expect(reportDeploymentHealthStage('t_1', 'merge', 'ok')).resolves.toBeUndefined()
+    await expect(reportDeploymentHealthStage('builder_company_task', 't_1', 'merge', 'ok')).resolves.toBeUndefined()
   })
 
   it('never throws when fetch resolves with a non-ok response', async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValueOnce({ ok: false, status: 500, text: async () => 'error' } as unknown as Response)
 
-    await expect(reportDeploymentHealthStage('t_1', 'merge', 'ok')).resolves.toBeUndefined()
+    await expect(reportDeploymentHealthStage('builder_company_task', 't_1', 'merge', 'ok')).resolves.toBeUndefined()
   })
 
-  it('no-ops without calling fetch when taskId is empty', async () => {
+  it('no-ops without calling fetch when entityId is empty', async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
 
-    await reportDeploymentHealthStage('', 'implement', 'ok')
+    await reportDeploymentHealthStage('builder_company_task', '', 'implement', 'ok')
 
     expect(fetchMock).not.toHaveBeenCalled()
   })

@@ -19,6 +19,7 @@ import { commitRegeneration, provisionCompanyRepo, toFileMapForCommit } from '@/
 import { BUILDER_WORKSPACE_ID } from '@/lib/build/instant-db'
 import { enrollCompany, isEnrolled } from '@/lib/build/loop-enrollment'
 import { sendWelcomeEmail } from '@/lib/build/company-email'
+import { reportDeploymentHealthStage } from '@/lib/build/deployment-health'
 
 export const runtime = 'nodejs'
 
@@ -63,6 +64,7 @@ export async function POST(request: NextRequest) {
     ready = await checkAppReady(chatId).catch(() => ({ checked: false, ok: true } as const))
   }
   if (ready.checked && !ready.ok) {
+    await reportDeploymentHealthStage('builder_app_generation', requestedSlug, 'ready_check', 'failed', ready.reason)
     return Response.json(
       {
         ok: false,
@@ -73,6 +75,9 @@ export async function POST(request: NextRequest) {
       },
       { status: 422 },
     )
+  }
+  if (ready.checked) {
+    await reportDeploymentHealthStage('builder_app_generation', requestedSlug, 'ready_check', 'ok')
   }
 
   // COLLISION SAFETY NET, not the primary defense: the real prevention lives
@@ -183,6 +188,13 @@ export async function POST(request: NextRequest) {
     // never overwritten with '' by a later regeneration call that omits it.
     idea: b.idea ? String(b.idea).trim().slice(0, 3000) : existing?.idea,
   })
+  await reportDeploymentHealthStage(
+    'builder_app_generation',
+    slug,
+    'register',
+    ok ? 'ok' : 'failed',
+    ok ? undefined : 'registerApp() returned false.',
+  )
 
   // Auto-enroll EVERY registered company (free or paid) into the nightly
   // backlog loop at registration time — previously enrollment only ever
@@ -220,6 +232,7 @@ export async function POST(request: NextRequest) {
   // commit the new code. If not but they're provisioned, create the repo now.
   // Best-effort — never blocks the registration response.
   let gitCommitted = false
+  let gitAttempted = false
   try {
     const stored = await resolveStoredApp(chatId)
     // Real gap found live: EVERY real generated app that only has flat `.code`
@@ -232,6 +245,7 @@ export async function POST(request: NextRequest) {
     if (fileMap) {
       if (existing?.gitRepoId) {
         // Existing repo → commit regeneration
+        gitAttempted = true
         gitCommitted = await commitRegeneration({
           slug,
           files: fileMap,
@@ -239,6 +253,7 @@ export async function POST(request: NextRequest) {
         })
       } else if (existing?.zerodbProjectId) {
         // Provisioned but no repo yet → provision git now
+        gitAttempted = true
         const git = await provisionCompanyRepo({
           workspaceId: BUILDER_WORKSPACE_ID,
           slug,
@@ -249,6 +264,10 @@ export async function POST(request: NextRequest) {
     }
   } catch (err) {
     console.warn(`[register-app] Git commit error for ${slug}:`, err)
+    gitAttempted = true
+  }
+  if (gitAttempted) {
+    await reportDeploymentHealthStage('builder_app_generation', slug, 'git_commit', gitCommitted ? 'ok' : 'failed')
   }
 
   return Response.json({

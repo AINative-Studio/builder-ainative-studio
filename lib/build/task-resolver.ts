@@ -114,7 +114,7 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
   const fail = async (reason: string, healthStage: DeploymentHealthStageName = 'implement'): Promise<ResolveTaskResult> => {
     await updateTask(scopeKey, task.id, { stage: 'failed', output: reason })
     if (traceId) await completeDecisionTrace(traceId, reason, false)
-    await reportDeploymentHealthStage(task.id, healthStage, 'failed', reason)
+    await reportDeploymentHealthStage('builder_company_task', task.id, healthStage, 'failed', reason)
     return { ok: false, stage: 'failed', reason }
   }
 
@@ -143,6 +143,7 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
     return fail(implemented.reason || 'Implementation step failed with no reason given.')
   }
   await reportDeploymentHealthStage(
+    'builder_company_task',
     task.id,
     'implement',
     'ok',
@@ -167,6 +168,7 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
     return fail(`Could not commit the implementation: ${gitResult.reason || 'unknown git-sync failure'}.`, 'commit')
   }
   await reportDeploymentHealthStage(
+    'builder_company_task',
     task.id,
     'commit',
     'ok',
@@ -186,6 +188,7 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
   const outcome = decideOutcomeFromCoverage(coverage)
 
   await reportDeploymentHealthStage(
+    'builder_company_task',
     task.id,
     'coverage',
     outcome.stage === 'completed' ? 'ok' : 'failed',
@@ -211,6 +214,7 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
   if (outcome.stage === 'completed' && gitResult.prNumber) {
     merged = await mergeTaskPR(app.gitOrg, slug, gitResult.prNumber).catch(() => false)
     await reportDeploymentHealthStage(
+      'builder_company_task',
       task.id,
       'merge',
       merged ? 'ok' : 'skipped',
@@ -226,6 +230,7 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
           redeployed = true
         }
         await reportDeploymentHealthStage(
+          'builder_company_task',
           task.id,
           'deploy',
           redeployed ? 'ok' : 'failed',
@@ -233,10 +238,10 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
         )
       } catch {
         /* best-effort — a redeploy hiccup never downgrades a completed task */
-        await reportDeploymentHealthStage(task.id, 'deploy', 'failed', 'Redeploy threw an error.')
+        await reportDeploymentHealthStage('builder_company_task', task.id, 'deploy', 'failed', 'Redeploy threw an error.')
       }
     } else if (merged) {
-      await reportDeploymentHealthStage(task.id, 'deploy', 'skipped', 'Railway deploy is not enabled for this environment.')
+      await reportDeploymentHealthStage('builder_company_task', task.id, 'deploy', 'skipped', 'Railway deploy is not enabled for this environment.')
     }
   }
 
