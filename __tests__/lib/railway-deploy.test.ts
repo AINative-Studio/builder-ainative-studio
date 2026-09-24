@@ -25,6 +25,13 @@ import { deployRailwayService } from '@/lib/build/deploy'
  * company. We mock global fetch so NO real Railway API call is ever made, and assert
  * the cost guards short-circuit before any fetch.
  */
+// A realistic Railway service UUID (#839 follow-up) — resolveRealServiceId
+// passes these through unchanged (no extra findCompanyService lookup), so
+// existing call-count assertions in this file stay accurate for a
+// CORRECTLY-populated registry going forward. See the dedicated
+// "#839 follow-up" describe block below for the legacy-name resolution path.
+const SVC_UUID = '4e047634-e12b-4e87-9045-f1810225eb0c'
+
 function gql(data: unknown): Response {
   return {
     ok: true,
@@ -146,7 +153,7 @@ describe('#835 — operational gate does not require a shared source', () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValueOnce(gql({ variables: { COMPANY_SLUG: 'triage', API_KEY: 'sk_x' } }))
 
-    const res = await listServiceVariables('svc-existing')
+    const res = await listServiceVariables('triage', SVC_UUID)
     expect(res.ok).toBe(true)
     expect(res.reason).toBeUndefined()
     expect(res.variables).toEqual({ COMPANY_SLUG: 'triage', API_KEY: 'sk_x' })
@@ -180,8 +187,8 @@ describe('#835 — operational gate does not require a shared source', () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValue(gql({ variableUpsert: true, variableDelete: true }))
 
-    expect(await upsertServiceVariable('svc-existing', 'STRIPE_KEY', 'sk_live_x')).toEqual({ ok: true })
-    expect(await deleteServiceVariable('svc-existing', 'STRIPE_KEY')).toEqual({ ok: true })
+    expect(await upsertServiceVariable('triage', SVC_UUID, 'STRIPE_KEY', 'sk_live_x')).toEqual({ ok: true })
+    expect(await deleteServiceVariable('triage', SVC_UUID, 'STRIPE_KEY')).toEqual({ ok: true })
   })
 
   it('custom-domain create/status work with no source configured (#53)', async () => {
@@ -213,11 +220,11 @@ describe('#835 — operational gate does not require a shared source', () => {
     enableRailwayWithoutSource()
     // Empty serviceId: the company has no dedicated service. Must be a real
     // no_service reason with NO Railway call — never a misleading ok:true.
-    expect(await listServiceVariables('')).toEqual({ ok: false, reason: 'no_service' })
+    expect(await listServiceVariables('acme', '')).toEqual({ ok: false, reason: 'no_service' })
     expect(await listDeployments('')).toEqual({ ok: false, reason: 'no_service' })
     expect(await redeployCurrent('')).toEqual({ ok: false, reason: 'no_service' })
-    expect(await upsertServiceVariable('', 'API_KEY', 'v')).toEqual({ ok: false, reason: 'no_service' })
-    expect(await deleteServiceVariable('', 'API_KEY')).toEqual({ ok: false, reason: 'no_service' })
+    expect(await upsertServiceVariable('acme', '', 'API_KEY', 'v')).toEqual({ ok: false, reason: 'no_service' })
+    expect(await deleteServiceVariable('acme', '', 'API_KEY')).toEqual({ ok: false, reason: 'no_service' })
     expect(await createCustomDomain('', 'myco.com')).toEqual({ ok: false, reason: 'no_service' })
     expect(await getCustomDomainStatus('', 'myco.com')).toEqual({ ok: false, reason: 'no_service' })
     expect(fetch).not.toHaveBeenCalled()
@@ -263,7 +270,7 @@ describe('#835/#839 — Railway token precedence', () => {
 
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValueOnce(gql({ variables: {} }))
-    await listServiceVariables('svc-existing')
+    await listServiceVariables('triage', SVC_UUID)
 
     const headers = (fetchMock.mock.calls[0]?.[1] as any)?.headers || {}
     expect(headers.Authorization).toBe('Bearer the-real-account-token')
@@ -279,7 +286,7 @@ describe('#835/#839 — Railway token precedence', () => {
 
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValueOnce(gql({ variables: {} }))
-    await listServiceVariables('svc-existing')
+    await listServiceVariables('triage', SVC_UUID)
 
     const headers = (fetchMock.mock.calls[0]?.[1] as any)?.headers || {}
     expect(headers.Authorization).toBe('Bearer account-token')
@@ -292,6 +299,105 @@ describe('#835/#839 — Railway token precedence', () => {
     vi.stubEnv('RAILWAY_TOKEN', 'only-token')
     vi.stubEnv('RAILWAY_COMPANY_PROJECT_ID', 'proj-123')
     expect(railwayApiConfigured()).toBe(true)
+  })
+})
+
+/**
+ * #839 follow-up (real bug, found live verifying #860's fix in production):
+ * `AppEntry.railwayServiceId` is populated from `deployCompanyFromGitea()`'s
+ * `serviceName` (`serviceNameForSlug(slug)`, e.g. "company-triage") — a
+ * Railway CLI SERVICE NAME, because `railway up --service <name>`/
+ * `railway link` operate on names. Railway's GraphQL API (`variables(...)`,
+ * `variableUpsert(...)`, `variableDelete(...)`) requires the real service
+ * UUID, not a name — confirmed live via `railway ssh`: the exact same query,
+ * same valid account token, same project/environment, succeeds with the
+ * real UUID and fails "Not Authorized" with the name. Railway's API returns
+ * a misleading auth error for a malformed/wrong-type serviceId rather than a
+ * clear invalid-id error, which is what made #839 initially look like a
+ * pure token/authorization bug.
+ *
+ * These tests pin `resolveRealServiceId`'s real behavior (exercised
+ * indirectly through listServiceVariables/upsertServiceVariable/
+ * deleteServiceVariable, since it's a private helper): a real UUID passes
+ * straight through (no extra Railway call — see SVC_UUID used everywhere
+ * else in this file), while a legacy name is resolved via
+ * `findCompanyService` before the real operation proceeds.
+ */
+describe('#839 follow-up — legacy (non-UUID) railwayServiceId resolution', () => {
+  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  })
+
+  it('THE BUG: a legacy service NAME ("company-triage") is resolved to its real UUID before the variables() call', async () => {
+    enableRailwayWithoutSource()
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    // 1: findCompanyService's project.services lookup — resolves the name to the real UUID.
+    fetchMock.mockResolvedValueOnce(
+      gql({ project: { services: { edges: [{ node: { id: SVC_UUID, name: 'company-triage' } }] } } }),
+    )
+    // 2: the real variables() call, now with the resolved UUID.
+    fetchMock.mockResolvedValueOnce(gql({ variables: { COMPANY_SLUG: 'triage' } }))
+
+    const res = await listServiceVariables('triage', 'company-triage')
+    expect(res.ok).toBe(true)
+    expect(res.variables).toEqual({ COMPANY_SLUG: 'triage' })
+
+    // The second call's body carries the resolved UUID, never the raw name.
+    const secondBody = String(fetchMock.mock.calls[1]?.[1]?.body || '')
+    expect(secondBody).toContain(SVC_UUID)
+    expect(secondBody).not.toContain('"company-triage"')
+  })
+
+  it('a REAL UUID service id skips the extra resolution call entirely (only 1 fetch)', async () => {
+    enableRailwayWithoutSource()
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(gql({ variables: { COMPANY_SLUG: 'triage' } }))
+
+    const res = await listServiceVariables('triage', SVC_UUID)
+    expect(res.ok).toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('fails honestly (service_not_found) when a legacy name cannot be resolved — never a false "Not Authorized"', async () => {
+    enableRailwayWithoutSource()
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(gql({ project: { services: { edges: [] } } }))
+
+    const res = await listServiceVariables('ghost-company', 'company-ghost-company')
+    expect(res).toEqual({ ok: false, reason: 'service_not_found' })
+    // Only the resolution lookup fired — never a doomed variables() call with a bad id.
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('upsertServiceVariable resolves a legacy name the same way', async () => {
+    enableRailwayWithoutSource()
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(
+      gql({ project: { services: { edges: [{ node: { id: SVC_UUID, name: 'company-triage' } }] } } }),
+    )
+    fetchMock.mockResolvedValueOnce(gql({ variableUpsert: true }))
+
+    const res = await upsertServiceVariable('triage', 'company-triage', 'STRIPE_KEY', 'sk_live_x')
+    expect(res).toEqual({ ok: true })
+    const secondBody = String(fetchMock.mock.calls[1]?.[1]?.body || '')
+    expect(secondBody).toContain(SVC_UUID)
+  })
+
+  it('deleteServiceVariable resolves a legacy name the same way', async () => {
+    enableRailwayWithoutSource()
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(
+      gql({ project: { services: { edges: [{ node: { id: SVC_UUID, name: 'company-triage' } }] } } }),
+    )
+    fetchMock.mockResolvedValueOnce(gql({ variableDelete: true }))
+
+    const res = await deleteServiceVariable('triage', 'company-triage', 'STRIPE_KEY')
+    expect(res).toEqual({ ok: true })
+    const secondBody = String(fetchMock.mock.calls[1]?.[1]?.body || '')
+    expect(secondBody).toContain(SVC_UUID)
   })
 })
 
@@ -321,7 +427,7 @@ describe('#835 — company environment id resolution', () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValueOnce(gql({ variables: { COMPANY_SLUG: 'triage' } }))
 
-    const res = await listServiceVariables('svc-existing')
+    const res = await listServiceVariables('triage', SVC_UUID)
     expect(res.ok).toBe(true)
     // The derived env id is what actually went to Railway.
     const body = String(fetchMock.mock.calls[0]?.[1]?.body || '')
@@ -338,7 +444,7 @@ describe('#835 — company environment id resolution', () => {
 
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValueOnce(gql({ variables: {} }))
-    await listServiceVariables('svc-existing')
+    await listServiceVariables('triage', SVC_UUID)
     const body = String(fetchMock.mock.calls[0]?.[1]?.body || '')
     expect(body).toContain('env-explicit')
     expect(body).not.toContain('env-prod')
@@ -352,7 +458,7 @@ describe('#835 — company environment id resolution', () => {
     vi.stubEnv('RAILWAY_PROJECT_ID', 'proj-somewhere-else')
     vi.stubEnv('RAILWAY_ENVIRONMENT_ID', 'env-unrelated')
 
-    const res = await listServiceVariables('svc-existing')
+    const res = await listServiceVariables('triage', SVC_UUID)
     expect(res).toEqual({ ok: false, reason: 'no_environment' })
     expect(fetch).not.toHaveBeenCalled()
   })
@@ -365,7 +471,7 @@ describe('#835 — company environment id resolution', () => {
     vi.stubEnv('RAILWAY_PROJECT_ID', '')
     vi.stubEnv('RAILWAY_ENVIRONMENT_ID', '')
 
-    const res = await listServiceVariables('svc-existing')
+    const res = await listServiceVariables('triage', SVC_UUID)
     expect(res).toEqual({ ok: false, reason: 'no_environment' })
     expect(fetch).not.toHaveBeenCalled()
   })
