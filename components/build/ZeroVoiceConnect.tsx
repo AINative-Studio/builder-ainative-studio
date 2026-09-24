@@ -34,6 +34,19 @@
  * have let through anyway, since the server re-checks regardless. Removed
  * the client-side gate entirely; the real tier check happens exactly once,
  * server-side, on every click.
+ *
+ * SMS CONSENT DISCLOSURE (ZeroVoice#626 follow-up): the public
+ * zerovoice-frontend `/sms-terms` page describes opt-in as happening at
+ * THIS exact moment — clicking "Get a phone number" — but until now that
+ * moment carried no visible disclosure text of its own, only the number's
+ * cost. A carrier reviewer verifying the A2P 10DLC campaign's `message_flow`
+ * has no way to confirm the described in-product opt-in actually exists
+ * without logging into a real account, and Twilio's compliance review
+ * rejected the campaign twice on exactly this ("unverifiable Call to
+ * Action," error 30909) even after `/sms-terms` itself was solid. Added the
+ * real disclosure text directly here, at the real point of consent, so it
+ * matches what `/sms-terms` describes and is visible to anyone who reaches
+ * this screen (a paid founder), not just describable from outside it.
  */
 
 import { useState } from 'react'
@@ -92,15 +105,24 @@ export function ZeroVoiceConnect({ companyId, signedIn, e164, onRequireAuth }: P
       </span>
       <span className="m-chip m-system-prim">ZeroVoice</span>
       {!number && (
-        <button
-          className="btn-secondary"
-          data-testid="zerovoice-connect-btn"
-          onClick={provision}
-          disabled={busy}
-          title="Get a real phone number — Cody answers texts and calls directly (~$1.15/mo + usage)"
-        >
-          {busy ? 'Getting a number…' : 'Get a phone number (~$1.15/mo)'}
-        </button>
+        <>
+          <button
+            className="btn-secondary"
+            data-testid="zerovoice-connect-btn"
+            onClick={provision}
+            disabled={busy}
+            title="Get a real phone number — Cody answers texts and calls directly (~$1.15/mo + usage)"
+          >
+            {busy ? 'Getting a number…' : 'Get a phone number (~$1.15/mo)'}
+          </button>
+          <p className="m-mono m-metric-note" data-testid="zerovoice-sms-consent">
+            By requesting a number, you agree to receive SMS replies from Cody at that number.
+            Msg &amp; data rates may apply. Reply STOP to opt out, HELP for help. See{' '}
+            <a href="https://zerovoice-frontend-production.up.railway.app/sms-terms" target="_blank" rel="noreferrer">
+              SMS Program Terms
+            </a>.
+          </p>
+        </>
       )}
       {notice && (
         <p className="m-mono m-metric-note" data-testid="zerovoice-connect-notice">{notice}</p>
