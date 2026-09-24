@@ -22,6 +22,7 @@ const h = vi.hoisted(() => ({
   startDecisionTrace: vi.fn(),
   addTraceStep: vi.fn(),
   completeDecisionTrace: vi.fn(),
+  reportDeploymentHealthStage: vi.fn(),
 }))
 
 vi.mock('@/lib/git/gitea-client', () => ({ fetchRepoFiles: h.fetchRepoFiles, mergeTaskPR: h.mergeTaskPR }))
@@ -40,6 +41,7 @@ vi.mock('@/lib/agent/zeromemory', () => ({
   addTraceStep: h.addTraceStep,
   completeDecisionTrace: h.completeDecisionTrace,
 }))
+vi.mock('@/lib/build/deployment-health', () => ({ reportDeploymentHealthStage: h.reportDeploymentHealthStage }))
 
 import { resolveTask } from '@/lib/build/task-resolver'
 import type { BuildTask } from '@/lib/build/task-store'
@@ -63,6 +65,7 @@ beforeEach(() => {
   h.startDecisionTrace.mockResolvedValue('trace-1')
   h.addTraceStep.mockResolvedValue(undefined)
   h.completeDecisionTrace.mockResolvedValue(undefined)
+  h.reportDeploymentHealthStage.mockResolvedValue(undefined)
 })
 
 describe('resolveTask — end-to-end orchestration', () => {
@@ -376,4 +379,127 @@ describe('resolveTask — Decision Trace (#685)', () => {
     expect(h.addTraceStep).not.toHaveBeenCalled()
     expect(h.completeDecisionTrace).not.toHaveBeenCalled()
   })
+})
+
+// builder-ainative-studio#868 — resolveTask() must report each real stage
+// outcome to core's deployment-health API (core#6925), which had 0 rows in
+// production because this wiring never existed.
+describe('resolveTask — deployment-health stage reporting (#868)', () => {
+  it('reports each real stage ok on a full success', async () => {
+    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
+    h.implementTask.mockResolvedValue({ ok: true, files: { 'b.ts': 'new' } })
+    h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/42', prNumber: 42 })
+    h.runCoverage.mockResolvedValue({ coveragePercent: 91, testable: true, passed: true })
+    h.mergeTaskPR.mockResolvedValue(true)
+    h.companyDeployEnabled.mockReturnValue(false)
+
+    await resolveTask('owner::slug', TASK, 'slug')
+
+    const stages = h.reportDeploymentHealthStage.mock.calls.map((c: any[]) => [c[1], c[2]])
+    expect(stages).toEqual([
+      ['implement', 'ok'],
+      ['commit', 'ok'],
+      ['coverage', 'ok'],
+      ['merge', 'ok'],
+      ['deploy', 'skipped'],
+    ])
+    // Every call is attributed to the real task id, not the scopeKey or slug.
+    h.reportDeploymentHealthStage.mock.calls.forEach((c: any[]) => expect(c[0]).toBe('t_abc123'))
+  })
+
+  it('reports "implement" failed when the company is not git-provisioned', async () => {
+    h.resolveApp.mockResolvedValue({ gitOrg: undefined })
+
+    await resolveTask('owner::slug', TASK, 'slug')
+
+    expect(h.reportDeploymentHealthStage).toHaveBeenCalledWith(
+      't_abc123', 'implement', 'failed', expect.stringMatching(/not git-provisioned/i),
+    )
+  })
+
+  it('reports "commit" failed when the git commit fails', async () => {
+    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
+    h.implementTask.mockResolvedValue({ ok: true, files: { 'a.ts': 'new' } })
+    h.commitTaskWithPR.mockResolvedValue({ ok: false, reason: 'commit_push_failed' })
+
+    await resolveTask('owner::slug', TASK, 'slug')
+
+    expect(h.reportDeploymentHealthStage).toHaveBeenCalledWith(
+      't_abc123', 'commit', 'failed', expect.stringContaining('commit_push_failed'),
+    )
+    // implement already reported ok (real); never reports coverage/merge/deploy
+    // once commit itself failed.
+    const stages = h.reportDeploymentHealthStage.mock.calls.map((c: any[]) => c[1])
+    expect(stages).toEqual(['implement', 'commit'])
+  })
+
+  it('reports "coverage" failed when coverage is below the floor, without attempting merge/deploy', async () => {
+    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
+    h.implementTask.mockResolvedValue({ ok: true, files: { 'b.ts': 'new' } })
+    h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/7', prNumber: 7 })
+    h.runCoverage.mockResolvedValue({ coveragePercent: 55, testable: true, passed: true })
+
+    await resolveTask('owner::slug', TASK, 'slug')
+
+    const stages = h.reportDeploymentHealthStage.mock.calls.map((c: any[]) => [c[1], c[2]])
+    expect(stages).toEqual([
+      ['implement', 'ok'],
+      ['commit', 'ok'],
+      ['coverage', 'failed'],
+    ])
+    expect(h.mergeTaskPR).not.toHaveBeenCalled()
+  })
+
+  it('reports "merge" skipped (not failed) when auto-merge does not succeed', async () => {
+    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
+    h.implementTask.mockResolvedValue({ ok: true, files: { 'b.ts': 'new' } })
+    h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/42', prNumber: 42 })
+    h.runCoverage.mockResolvedValue({ coveragePercent: 91, testable: true, passed: true })
+    h.mergeTaskPR.mockResolvedValue(false)
+
+    await resolveTask('owner::slug', TASK, 'slug')
+
+    expect(h.reportDeploymentHealthStage).toHaveBeenCalledWith(
+      't_abc123', 'merge', 'skipped', expect.stringMatching(/could not auto-merge/i), expect.anything(),
+    )
+    // No deploy report at all when merge itself did not succeed.
+    const stages = h.reportDeploymentHealthStage.mock.calls.map((c: any[]) => c[1])
+    expect(stages).not.toContain('deploy')
+  })
+
+  it('reports "deploy" ok after a successful merge + redeploy', async () => {
+    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1', workspaceId: 'workspace-1' })
+    h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
+    h.implementTask.mockResolvedValue({ ok: true, files: { 'b.ts': 'new' } })
+    h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/42', prNumber: 42 })
+    h.runCoverage.mockResolvedValue({ coveragePercent: 91, testable: true, passed: true })
+    h.mergeTaskPR.mockResolvedValue(true)
+    h.companyDeployEnabled.mockReturnValue(true)
+    h.deployCompanyFromGitea.mockResolvedValue({ ok: true, serviceName: 'company-slug', url: 'https://slug.up.railway.app' })
+
+    await resolveTask('owner::slug', TASK, 'slug')
+
+    expect(h.reportDeploymentHealthStage).toHaveBeenCalledWith('t_abc123', 'deploy', 'ok', undefined)
+  })
+
+  it('reports "deploy" failed (never downgrades the completed task) when deployCompanyFromGitea throws', async () => {
+    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1', workspaceId: 'workspace-1' })
+    h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
+    h.implementTask.mockResolvedValue({ ok: true, files: { 'b.ts': 'new' } })
+    h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/42', prNumber: 42 })
+    h.runCoverage.mockResolvedValue({ coveragePercent: 91, testable: true, passed: true })
+    h.mergeTaskPR.mockResolvedValue(true)
+    h.companyDeployEnabled.mockReturnValue(true)
+    h.deployCompanyFromGitea.mockRejectedValue(new Error('railway CLI unavailable'))
+
+    const result = await resolveTask('owner::slug', TASK, 'slug')
+
+    expect(result.stage).toBe('completed') // unaffected — deploy reporting is best-effort
+    expect(h.reportDeploymentHealthStage).toHaveBeenCalledWith('t_abc123', 'deploy', 'failed', expect.any(String))
+  })
+
 })

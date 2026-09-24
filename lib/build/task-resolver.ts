@@ -38,6 +38,7 @@ import { updateTask, type BuildTask } from '@/lib/build/task-store'
 import { deployCompanyFromGitea, companyDeployEnabled } from '@/lib/build/company-deploy'
 import { BUILDER_WORKSPACE_ID } from '@/lib/build/instant-db'
 import { startDecisionTrace, addTraceStep, completeDecisionTrace } from '@/lib/agent/zeromemory'
+import { reportDeploymentHealthStage, type DeploymentHealthStage as DeploymentHealthStageName } from '@/lib/build/deployment-health'
 
 export const COVERAGE_FLOOR = 80
 
@@ -110,9 +111,10 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
   // traceId is null.
   const traceId = await startDecisionTrace(`Resolve backlog task: ${task.title}`, scopeKey)
 
-  const fail = async (reason: string): Promise<ResolveTaskResult> => {
+  const fail = async (reason: string, healthStage: DeploymentHealthStageName = 'implement'): Promise<ResolveTaskResult> => {
     await updateTask(scopeKey, task.id, { stage: 'failed', output: reason })
     if (traceId) await completeDecisionTrace(traceId, reason, false)
+    await reportDeploymentHealthStage(task.id, healthStage, 'failed', reason)
     return { ok: false, stage: 'failed', reason }
   }
 
@@ -140,6 +142,12 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
   if (!implemented.ok || !implemented.files) {
     return fail(implemented.reason || 'Implementation step failed with no reason given.')
   }
+  await reportDeploymentHealthStage(
+    task.id,
+    'implement',
+    'ok',
+    `LLM produced ${Object.keys(implemented.files).length} changed/new file(s).`,
+  )
 
   if (traceId) {
     await addTraceStep(
@@ -156,8 +164,15 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
     title: task.title,
   })
   if (!gitResult.ok) {
-    return fail(`Could not commit the implementation: ${gitResult.reason || 'unknown git-sync failure'}.`)
+    return fail(`Could not commit the implementation: ${gitResult.reason || 'unknown git-sync failure'}.`, 'commit')
   }
+  await reportDeploymentHealthStage(
+    task.id,
+    'commit',
+    'ok',
+    'Committed the implementation and opened a real PR.',
+    gitResult.prUrl ? { prUrl: gitResult.prUrl } : undefined,
+  )
 
   if (traceId) {
     await addTraceStep(traceId, `Committed the implementation and opened a real PR.`, 'commit_pr', gitResult.prUrl ? [gitResult.prUrl] : undefined)
@@ -169,6 +184,14 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
   const fullTree = { ...existingFiles, ...implemented.files }
   const coverage = await runCoverage(fullTree)
   const outcome = decideOutcomeFromCoverage(coverage)
+
+  await reportDeploymentHealthStage(
+    task.id,
+    'coverage',
+    outcome.stage === 'completed' ? 'ok' : 'failed',
+    outcome.reason,
+    { coveragePercent: coverage.coveragePercent, testable: coverage.testable },
+  )
 
   if (traceId) {
     await addTraceStep(
@@ -187,6 +210,13 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
   let redeployed = false
   if (outcome.stage === 'completed' && gitResult.prNumber) {
     merged = await mergeTaskPR(app.gitOrg, slug, gitResult.prNumber).catch(() => false)
+    await reportDeploymentHealthStage(
+      task.id,
+      'merge',
+      merged ? 'ok' : 'skipped',
+      merged ? undefined : 'Could not auto-merge — needs manual review.',
+      gitResult.prUrl ? { prUrl: gitResult.prUrl } : undefined,
+    )
     if (merged && companyDeployEnabled()) {
       try {
         const alreadyProvisioned = Boolean(app.railwayServiceId)
@@ -195,7 +225,18 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
           await setAppRailwayService(slug, { railwayServiceId: dep.serviceName, deployUrl: dep.url }).catch(() => {})
           redeployed = true
         }
-      } catch { /* best-effort — a redeploy hiccup never downgrades a completed task */ }
+        await reportDeploymentHealthStage(
+          task.id,
+          'deploy',
+          redeployed ? 'ok' : 'failed',
+          redeployed ? undefined : 'Redeploy did not report a service name.',
+        )
+      } catch {
+        /* best-effort — a redeploy hiccup never downgrades a completed task */
+        await reportDeploymentHealthStage(task.id, 'deploy', 'failed', 'Redeploy threw an error.')
+      }
+    } else if (merged) {
+      await reportDeploymentHealthStage(task.id, 'deploy', 'skipped', 'Railway deploy is not enabled for this environment.')
     }
   }
 
