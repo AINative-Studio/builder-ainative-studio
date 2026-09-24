@@ -59,6 +59,26 @@ describe('ZeroVoiceConnect', () => {
     expect(host.querySelector('[data-testid="zerovoice-connect-btn"]')).toBeNull()
   })
 
+  // ZeroVoice#626 follow-up: Twilio's A2P 10DLC review rejected the campaign
+  // twice on an "unverifiable Call to Action" (error 30909) because the
+  // public /sms-terms page describes opt-in as happening at this exact
+  // button, but nothing in the product actually showed that disclosure. The
+  // consent text must be visible whenever the provisioning button is (i.e.
+  // before a number exists), and gone once a number is already provisioned.
+  it('shows the real SMS consent disclosure text next to the provisioning button', () => {
+    render(<ZeroVoiceConnect companyId="acme" signedIn={true} e164={null} onRequireAuth={() => {}} />)
+    const consent = host.querySelector('[data-testid="zerovoice-sms-consent"]')
+    expect(consent?.textContent).toContain('agree to receive SMS replies from Cody')
+    expect(consent?.textContent).toContain('Reply STOP to opt out')
+    const link = consent?.querySelector('a[href="https://zerovoice-frontend-production.up.railway.app/sms-terms"]')
+    expect(link).not.toBeNull()
+  })
+
+  it('does not show the SMS consent disclosure once a number is already provisioned', () => {
+    render(<ZeroVoiceConnect companyId="acme" signedIn={true} e164="+15551234567" onRequireAuth={() => {}} />)
+    expect(host.querySelector('[data-testid="zerovoice-sms-consent"]')).toBeNull()
+  })
+
   // Real, live bug fix: the button used to also disable client-side via an
   // isPaidPlan prop derived from Live.tsx's own (sometimes stale/unhydrated)
   // activePlan state — a real founder on a real paid plan (agentive/
