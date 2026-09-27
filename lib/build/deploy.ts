@@ -102,7 +102,67 @@ export const RESERVED_SUBDOMAINS = new Set([
   // /build/{label}.
   'mcp', 'strapi', 'prd-generator', 'sequential-thinking', 'design-system',
   'gtm', 'opencapstack', 'google-ads', 'meta-ads', 'dataforseo',
+  // core#7954: core-staging.ainative.studio (the AINative Studio Core Backend's
+  // staging environment) was missing from this list entirely — a gap this same
+  // audit found. Reserved so a staging deploy of core is never treated as a
+  // company slug either.
+  'core-staging',
 ])
+
+/**
+ * core#7954 — builder-ainative-studio's OWN specific-domain labels. Live-verified
+ * via `railway domain` on the builder-ainative-studio service: its only custom
+ * domain claims are `builder.ainative.studio` (specific) and `*.ainative.studio`
+ * (the wildcard this whole issue is about) — nothing else. `builder` must be
+ * excluded from the reserved-host 404 guard below even though it's also listed in
+ * RESERVED_SUBDOMAINS (there, its job is only to block "builder" as a company
+ * slug) — this app must never reject its OWN real domain.
+ */
+const SELF_HOST_LABELS = new Set(['builder'])
+
+/**
+ * core#7954 — the reserved-subdomain guard's own list of subdomains OWNED BY A
+ * DIFFERENT AINative service. Derived from RESERVED_SUBDOMAINS minus this app's
+ * own self-host labels (SELF_HOST_LABELS) — everything left is either a sibling
+ * app's specific-domain claim or an infra label with no legitimate reason to ever
+ * reach this app. If RESERVED_SUBDOMAINS narrows for the slug-gate's own reasons,
+ * re-derive this from the same audit rather than assuming they always match.
+ */
+export const RESERVED_HOST_LABELS = new Set(
+  [...RESERVED_SUBDOMAINS].filter((label) => !SELF_HOST_LABELS.has(label)),
+)
+
+/**
+ * core#7954 — last-line-of-defense guard: is this request Host one of OUR OWN
+ * reserved *.ainative.studio subdomains (mcp, docs, dev, memory, sc-builders,
+ * mif, core-staging, …) that belong to a DIFFERENT AINative service? Unlike
+ * wildcardSlugFromHost() above, this check does NOT depend on
+ * AINATIVE_WILDCARD_HOST being set — it must still catch a reserved host even if
+ * that env var is ever unset, misconfigured, or this function is called from a
+ * code path that runs before the wildcard block. It deliberately excludes this
+ * app's own domain (builder.ainative.studio) — see SELF_HOST_LABELS.
+ *
+ * Why this exists: builder-ainative-studio owns a literal `*.ainative.studio`
+ * wildcard custom domain on Railway. Every specific AINative subdomain (like
+ * mcp.ainative.studio, owned by APISIX-Gateway) normally wins routing because
+ * its OWN specific-domain claim is verified with a valid cert — the wildcard
+ * only serves hosts nobody else has claimed. If that specific verification
+ * ever silently lapses (expired TXT record, cert renewal hiccup, Railway
+ * re-evaluating ownership), HTTPS does NOT fail loudly: it silently starts
+ * routing to this wildcard instead, and this app would serve the wrong
+ * content with a valid cert and no error — UNLESS this guard catches it.
+ * Middleware calls this to reject reserved hosts with a clean 404 rather
+ * than silently serving the Builder SPA. See middleware.ts.
+ */
+export function isReservedHost(host: string | null, apex = WILDCARD_HOST || 'ainative.studio'): string | null {
+  if (!apex || !host) return null
+  const h = host.toLowerCase().split(':')[0]
+  const suffix = `.${apex.toLowerCase()}`
+  if (!h.endsWith(suffix)) return null
+  const sub = h.slice(0, -suffix.length)
+  if (!sub || sub.includes('.')) return null
+  return RESERVED_HOST_LABELS.has(sub) ? sub : null
+}
 
 /**
  * Extract a company slug from an incoming request Host header for the wildcard

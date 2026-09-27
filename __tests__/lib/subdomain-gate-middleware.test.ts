@@ -85,3 +85,51 @@ describe('middleware subdomain gate (#78)', () => {
     expect(res.headers.get('location')).toBe('https://builder.ainative.studio/build/unknownco')
   })
 })
+
+/**
+ * core#7954 — reserved-subdomain guard (last line of defense). This app owns a
+ * literal `*.ainative.studio` wildcard custom domain on Railway. Every reserved
+ * AINative subdomain (mcp, docs, dev, memory, sc-builders, mif, core-staging, …)
+ * normally has its OWN specific-domain claim, so it never actually reaches this
+ * app — but if that claim's verification ever silently lapses, HTTPS would
+ * otherwise route to this wildcard and this app would silently serve the wrong
+ * content (the Builder SPA) with a valid cert and no error. Assert a reserved
+ * Host is rejected with a clean 404, BEFORE the wildcard-slug rewrite/redirect
+ * logic and before resolveApp is ever called.
+ */
+describe('middleware reserved-subdomain guard (#7954)', () => {
+  beforeEach(() => resolveAppMock.mockReset())
+  afterEach(() => vi.clearAllMocks())
+
+  it('rejects a reserved host with a clean 404, not the SPA', async () => {
+    const res = await middleware(req('mcp.ainative.studio', '/'))
+    expect(res.status).toBe(404)
+    expect(resolveAppMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects every reserved label named in the issue', async () => {
+    for (const sub of ['mcp', 'docs', 'dev', 'memory', 'sc-builders', 'mif', 'core-staging', 'api']) {
+      const res = await middleware(req(`${sub}.ainative.studio`, '/'))
+      expect(res.status).toBe(404)
+    }
+    expect(resolveAppMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects a reserved host even on a deep path, not just "/"', async () => {
+    const res = await middleware(req('docs.ainative.studio', '/some/deep/path'))
+    expect(res.status).toBe(404)
+  })
+
+  it('does NOT reject a genuine company slug host', async () => {
+    resolveAppMock.mockResolvedValueOnce({ slug: 'acme', chatId: 'c1', plan: 'pro', subdomainClaimed: true })
+    const res = await middleware(req('acme.ainative.studio', '/'))
+    expect(res.status).not.toBe(404)
+  })
+
+  it('does NOT reject builder.ainative.studio — that is this app itself', async () => {
+    // builder is also in RESERVED_SUBDOMAINS (can't be a company slug), but it is
+    // this service's own live custom domain — the guard must never 404 it.
+    const res = await middleware(req('builder.ainative.studio', '/'))
+    expect(res.status).not.toBe(404)
+  })
+})
