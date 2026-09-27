@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { wildcardSlugFromHost, wildcardUrl, isPaidPlan, subdomainServable } from '@/lib/build/deploy'
+import {
+  wildcardSlugFromHost,
+  wildcardUrl,
+  isPaidPlan,
+  subdomainServable,
+  isReservedHost,
+} from '@/lib/build/deploy'
 
 // #243 wildcard host → slug routing. wildcardHost is passed explicitly so the
 // tests don't depend on process.env at import time.
@@ -125,5 +131,65 @@ describe('subdomainServable (#78)', () => {
   it('treats a truthy-but-non-true claimed value as NOT claimed (strict === true)', () => {
     // Defensive: only an explicit boolean true claims the subdomain.
     expect(subdomainServable({ plan: 'pro', subdomainClaimed: 1 as unknown as boolean })).toBe(false)
+  })
+})
+
+// core#7954 — the reserved-subdomain guard middleware relies on. Independent of
+// AINATIVE_WILDCARD_HOST: must still catch a reserved host even if that env var is
+// ever unset or misconfigured, since it's the last line of defense against this
+// app's own *.ainative.studio wildcard domain silently swallowing a sibling app's
+// traffic if that sibling's specific-domain claim ever lapses.
+describe('isReservedHost (#7954)', () => {
+  it('flags every reserved label named in the issue', () => {
+    for (const sub of ['mcp', 'docs', 'dev', 'memory', 'sc-builders', 'mif', 'core-staging', 'api']) {
+      expect(isReservedHost(`${sub}.ainative.studio`, HOST)).toBe(sub)
+    }
+  })
+
+  it('is case-insensitive and strips a port', () => {
+    expect(isReservedHost('MCP.AINative.Studio', HOST)).toBe('mcp')
+    expect(isReservedHost('mcp.ainative.studio:3000', HOST)).toBe('mcp')
+  })
+
+  it('returns null for a genuine company slug (not reserved)', () => {
+    expect(isReservedHost('riff.ainative.studio', HOST)).toBeNull()
+    expect(isReservedHost('acme.ainative.studio', HOST)).toBeNull()
+  })
+
+  it('returns null for the bare apex (this app has no domain claim there) or no host', () => {
+    expect(isReservedHost('ainative.studio', HOST)).toBeNull()
+    expect(isReservedHost(null, HOST)).toBeNull()
+  })
+
+  it('flags www — it is a DIFFERENT Railway service (redirect to the apex), not this app', () => {
+    // Live-verified (core#7954): builder-ainative-studio's own custom-domain claims
+    // are ONLY builder.ainative.studio + *.ainative.studio (`railway domain`) — it
+    // does not own www.ainative.studio. `dig`/`curl` confirm www resolves to a
+    // different Railway target (7nhqiseu.up.railway.app, a 308 redirect to the
+    // apex) than builder's own (lnq6rci9.up.railway.app). So www must be rejected
+    // by this guard exactly like any other sibling app's reserved label.
+    expect(isReservedHost('www.ainative.studio', HOST)).toBe('www')
+  })
+
+  it('returns null for an unrelated different host', () => {
+    expect(isReservedHost('mcp.example.com', HOST)).toBeNull()
+  })
+
+  it('defaults to the ainative.studio apex even with no explicit apex argument', () => {
+    // Regression guard: this must NOT depend on AINATIVE_WILDCARD_HOST being set —
+    // it is the defense-in-depth backstop for when that config is missing/wrong.
+    expect(isReservedHost('mcp.ainative.studio')).toBe('mcp')
+  })
+
+  it('returns null for a multi-label subdomain of a reserved host', () => {
+    expect(isReservedHost('foo.mcp.ainative.studio', HOST)).toBeNull()
+  })
+
+  it('never flags builder.ainative.studio — that IS this app, not a sibling', () => {
+    // Regression guard: `builder` is also in RESERVED_SUBDOMAINS (so it can never
+    // be claimed as a company slug), but builder-ainative-studio's own live
+    // `railway domain` claims are builder.ainative.studio + *.ainative.studio —
+    // this guard must never 404 the service's own real production domain.
+    expect(isReservedHost('builder.ainative.studio', HOST)).toBeNull()
   })
 })

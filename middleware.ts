@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { guestRegex, isDevelopmentEnvironment } from './lib/constants'
 import { applyRateLimit } from './lib/middleware/rate-limit'
-import { wildcardSlugFromHost, subdomainServable } from './lib/build/deploy'
+import { wildcardSlugFromHost, subdomainServable, isReservedHost } from './lib/build/deploy'
 import { resolveApp } from './lib/build/app-registry'
 
 export async function middleware(request: NextRequest) {
@@ -22,6 +22,28 @@ export async function middleware(request: NextRequest) {
   // deploy never passes healthcheck, so new instances never swap in.
   if (pathname.startsWith('/health')) {
     return NextResponse.next()
+  }
+
+  // core#7954 — reserved-subdomain guard (last line of defense). This app owns a
+  // literal `*.ainative.studio` wildcard custom domain on Railway, which competes
+  // with every other AINative-owned subdomain's OWN specific-domain claim (mcp,
+  // docs, dev, memory, sc-builders, mif, core-staging, …). Those specific claims
+  // normally win routing, so this app never actually receives their traffic — but
+  // if a specific claim's verification ever silently lapses (expired TXT record,
+  // cert renewal hiccup, Railway re-evaluating ownership), HTTPS does NOT fail
+  // loudly: it silently starts routing to THIS app's wildcard instead, serving the
+  // wrong content with a valid cert and no error. Reject explicitly with a clean
+  // 404 rather than silently falling through to the SPA (login/dashboard) below —
+  // checked independent of AINATIVE_WILDCARD_HOST so it still catches a reserved
+  // host even if that env var is ever unset or misconfigured.
+  const reservedLabel = isReservedHost(request.headers.get('host'))
+  if (reservedLabel) {
+    console.error(
+      `[middleware] reserved-subdomain guard: rejected request for reserved host label "${reservedLabel}" ` +
+        `(host="${request.headers.get('host')}", path="${pathname}") — this app's wildcard domain must never ` +
+        'serve a reserved AINative subdomain. See core#7954.',
+    )
+    return new NextResponse('Not Found', { status: 404 })
   }
 
   // Wildcard company host (#243): a request to {slug}.ainative.studio is served as
