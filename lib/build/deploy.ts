@@ -105,8 +105,19 @@ export const RESERVED_SUBDOMAINS = new Set([
   // core#7954: core-staging.ainative.studio (the AINative Studio Core Backend's
   // staging environment) was missing from this list entirely — a gap this same
   // audit found. Reserved so a staging deploy of core is never treated as a
-  // company slug either.
+  // company slug either. (Re-verified 2026-09-27: core-staging's only actual
+  // live custom domain today is dev.ainative.studio, already reserved above —
+  // this label is kept as defense-in-depth for the documented name, same
+  // treatment as the not-yet-provisioned MCP gateway labels.)
   'core-staging',
+  // Re-synced directly against Railway's GraphQL API for every service's custom
+  // *.ainative.studio domain across the full "AINative Studio" workspace
+  // (2026-09-27, 78 services enumerated in project 47539617-ae34-4a52-a010-a88d875f347e)
+  // — two more real, live custom domains were missing from every prior sync:
+  // 'doc' (AINative-Docs, alias of the already-reserved 'docs') and 'ledger'
+  // (ledger). 'insyteful' was already added above by a concurrent fix to this
+  // same file; not duplicated here.
+  'doc', 'ledger',
 ])
 
 /**

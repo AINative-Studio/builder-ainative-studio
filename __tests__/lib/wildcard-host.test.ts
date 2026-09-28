@@ -48,6 +48,18 @@ describe('wildcardSlugFromHost', () => {
     }
   })
 
+  it('ignores sibling apps missing from the previous sync (re-verified 2026-09-27)', () => {
+    // Re-checked directly against the live Railway custom-domain inventory across
+    // every service in the AINative Studio workspace: 'doc' (alias of 'docs',
+    // both -> AINative-Docs), 'insyteful' (-> insyteful), and 'ledger' (-> ledger)
+    // are real, live *.ainative.studio custom domains that were absent from the
+    // 2026-09-01 sync. Without this reservation each one rewrites into
+    // /build/{label} instead of ever reaching its real service.
+    for (const sub of ['doc', 'insyteful', 'ledger']) {
+      expect(wildcardSlugFromHost(`${sub}.ainative.studio`, HOST)).toBeNull()
+    }
+  })
+
   it('ignores hosted primitive MCP gateway labels (core#6667)', () => {
     // #612 (2026-09-11): mcp.ainative.studio is confirmed LIVE with its own
     // dedicated DNS/routing (does NOT currently fall through to this
