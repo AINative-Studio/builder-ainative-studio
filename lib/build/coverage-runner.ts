@@ -24,6 +24,7 @@ import { promises as fs } from 'fs'
 import path from 'path'
 import os from 'os'
 import { spawn } from 'child_process'
+import * as mars from '@/lib/build/mars-sandbox'
 
 export interface FileMap {
   [relativePath: string]: string
@@ -149,11 +150,223 @@ function runCommand(
 }
 
 /**
+ * Tar a local directory into an in-memory Buffer, using `archiver` (already a
+ * project dependency, used here for the first time) rather than shelling out
+ * to the host `tar` binary. Deliberately NOT using the host `tar` command:
+ * live investigation for #875 found that macOS's `tar` silently includes
+ * AppleDouble metadata files (`._foo.js`) alongside real files unless
+ * `COPYFILE_DISABLE=1` is set — one of those `._foo.test.js` files is enough
+ * to make Vite/Rollup crash with a binary-parse error inside the sandbox. A
+ * pure-JS archiver never has this problem since it walks exactly the files
+ * it's told to add, with no OS-level extended-attribute shadow files.
+ */
+async function tarDirectory(dir: string): Promise<Buffer> {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const archiver = (await import('archiver')).default
+  return new Promise((resolve, reject) => {
+    const archive = archiver('tar')
+    const chunks: Buffer[] = []
+    archive.on('data', (chunk: Buffer) => chunks.push(chunk))
+    archive.on('error', reject)
+    archive.on('end', () => resolve(Buffer.concat(chunks)))
+    archive.directory(dir, false)
+    archive.finalize()
+  })
+}
+
+/**
+ * Run the founder's test command inside an isolated M.A.R.S. sandbox session
+ * (#875) instead of on Builder's own production server process. Mirrors
+ * runLocalCoverage's exact steps and CoverageResult contract — only the I/O
+ * layer differs. Session teardown always runs (success or failure) via the
+ * outer finally, so a session is never leaked on any exit path.
+ */
+async function runSandboxedCoverage(
+  dir: string,
+  testCommand: { command: string; args: string[] },
+  timeoutMs: number,
+): Promise<CoverageResult> {
+  let sessionId: string | null = null
+  try {
+    const session = await mars.createSandboxSession()
+    if (!session) {
+      // configured() was true a moment ago but createSandboxSession itself
+      // guards it again — null here would only happen on a race with env
+      // changing mid-request, effectively never in practice. Fall back to
+      // local execution rather than fail outright.
+      return runLocalCoverage(dir, testCommand, timeoutMs)
+    }
+    sessionId = session.sessionId
+
+    const tarBytes = await tarDirectory(dir)
+    await mars.uploadArchive(sessionId, 'app', tarBytes)
+
+    const install = await mars.execInSandbox(sessionId, ['npm', 'install', '--no-audit', '--no-fund'], {
+      workdir: '/workspace/app',
+      timeoutMs,
+    })
+    if (install.timedOut || install.exitCode !== 0) {
+      return {
+        coveragePercent: null,
+        testable: true,
+        passed: false,
+        reason: install.timedOut
+          ? `npm install timed out after ${timeoutMs}ms (sandboxed)`
+          : `npm install failed (exit ${install.exitCode}, sandboxed)`,
+      }
+    }
+
+    const installCoverageDep = await mars.execInSandbox(
+      sessionId,
+      ['npm', 'install', '--no-audit', '--no-fund', '--no-save', '@vitest/coverage-v8@3.2.4'],
+      { workdir: '/workspace/app', timeoutMs },
+    )
+    if (installCoverageDep.timedOut || installCoverageDep.exitCode !== 0) {
+      return {
+        coveragePercent: null,
+        testable: true,
+        passed: false,
+        reason: installCoverageDep.timedOut
+          ? `@vitest/coverage-v8 install timed out after ${timeoutMs}ms (sandboxed)`
+          : `@vitest/coverage-v8 install failed (exit ${installCoverageDep.exitCode}, sandboxed)`,
+      }
+    }
+
+    const run = await mars.execInSandbox(
+      sessionId,
+      [
+        testCommand.command,
+        ...testCommand.args,
+        '--coverage.reportsDirectory=.coverage-output',
+        '--coverage.reporter=json-summary',
+      ],
+      { workdir: '/workspace/app', timeoutMs },
+    )
+
+    const summaryBytes = await mars.downloadFile(sessionId, 'app/.coverage-output/coverage-summary.json')
+    const coveragePercent = parseCoverageSummary(summaryBytes ? summaryBytes.toString('utf8') : undefined)
+
+    if (run.timedOut) {
+      return {
+        coveragePercent,
+        testable: true,
+        passed: false,
+        reason: `Test run timed out after ${timeoutMs}ms (sandboxed)`,
+      }
+    }
+
+    return {
+      coveragePercent,
+      testable: true,
+      passed: run.exitCode === 0,
+      reason: run.exitCode === 0 ? undefined : `Test run exited with code ${run.exitCode} (sandboxed)`,
+    }
+  } finally {
+    if (sessionId) {
+      await mars.removeSandboxSession(sessionId)
+    }
+  }
+}
+
+/**
+ * Run the founder's test command directly on THIS process via local
+ * `spawn` — the original, unisolated path. Kept as the fallback for when
+ * M.A.R.S. isn't configured (see mars.configured() in runCoverage below) so
+ * an environment without DIGITALOCEAN_API_TOKEN set never loses coverage
+ * verification entirely — mirrors this repo's "disabled means honest no-op,
+ * never a crash" convention used throughout lib/build/*.ts's configured()
+ * guards.
+ */
+async function runLocalCoverage(
+  dir: string,
+  testCommand: { command: string; args: string[] },
+  timeoutMs: number,
+): Promise<CoverageResult> {
+  const install = await runCommand('npm', ['install', '--no-audit', '--no-fund'], dir, timeoutMs)
+  if (install.exitCode !== 0) {
+    return {
+      coveragePercent: null,
+      testable: true,
+      passed: false,
+      reason: install.timedOut
+        ? `npm install timed out after ${timeoutMs}ms`
+        : `npm install failed (exit ${install.exitCode})`,
+    }
+  }
+
+  // vitest's --coverage flag needs @vitest/coverage-v8 as a SEPARATE package
+  // (not a transitive dep of vitest itself) — a generated app declaring
+  // `vitest` alone (the common case, since we don't control what the
+  // codegen step wrote) has no way to actually produce coverage output.
+  // Install it explicitly rather than requiring every generated app to have
+  // anticipated this; the runner brings what IT needs to do its job.
+  const installCoverageDep = await runCommand(
+    'npm', ['install', '--no-audit', '--no-fund', '--no-save', '@vitest/coverage-v8@3.2.4'], dir, timeoutMs,
+  )
+  if (installCoverageDep.exitCode !== 0) {
+    return {
+      coveragePercent: null,
+      testable: true,
+      passed: false,
+      reason: installCoverageDep.timedOut
+        ? `@vitest/coverage-v8 install timed out after ${timeoutMs}ms`
+        : `@vitest/coverage-v8 install failed (exit ${installCoverageDep.exitCode})`,
+    }
+  }
+
+  const coverageDir = path.join(dir, '.coverage-output')
+  const run = await runCommand(
+    testCommand.command,
+    [...testCommand.args, `--coverage.reportsDirectory=${coverageDir}`, '--coverage.reporter=json-summary'],
+    dir,
+    timeoutMs,
+  )
+
+  let summaryRaw: string | undefined
+  try {
+    summaryRaw = await fs.readFile(path.join(coverageDir, 'coverage-summary.json'), 'utf8')
+  } catch {
+    summaryRaw = undefined
+  }
+  const coveragePercent = parseCoverageSummary(summaryRaw)
+
+  if (run.timedOut) {
+    return {
+      coveragePercent,
+      testable: true,
+      passed: false,
+      reason: `Test run timed out after ${timeoutMs}ms`,
+    }
+  }
+
+  return {
+    coveragePercent,
+    testable: true,
+    passed: run.exitCode === 0,
+    reason: run.exitCode === 0 ? undefined : `Test run exited with code ${run.exitCode}`,
+  }
+}
+
+/**
  * Run a generated app's own coverage suite against a FileMap and return a
  * REAL result. Never fabricates a coveragePercent — a run that can't produce
  * one (no tests, install failure, timeout, unparseable output) returns null,
  * and the caller (the resolver in #374) must treat that as "cannot verify,"
  * not as an automatic pass or fail.
+ *
+ * #875 — SECURITY: a founder's own generated test/build code is untrusted
+ * and, until now, ran with zero process isolation directly on Builder's own
+ * production server (see coverage-runner.ts's module doc comment history /
+ * GitHub issue #875 for the full incident writeup). When M.A.R.S. is
+ * configured (mars.configured(), i.e. DIGITALOCEAN_API_TOKEN is set), the
+ * founder's files and test command run inside a fresh, network-restricted
+ * DigitalOcean Managed Agents sandbox session instead — see
+ * runSandboxedCoverage. When it is NOT configured, this falls back to the
+ * original local-spawn path (runLocalCoverage) so an environment without
+ * M.A.R.S. set up (e.g. local dev) never silently loses coverage
+ * verification — mirrors this repo's "disabled means honest no-op, never a
+ * crash" convention (see lib/git/gitea-client.ts's configured() guard for
+ * the same pattern elsewhere).
  */
 export async function runCoverage(
   files: FileMap,
@@ -174,69 +387,32 @@ export async function runCoverage(
   try {
     dir = await writeFileMapToTemp(files)
 
-    const install = await runCommand('npm', ['install', '--no-audit', '--no-fund'], dir, timeoutMs)
-    if (install.exitCode !== 0) {
-      return {
-        coveragePercent: null,
-        testable: true,
-        passed: false,
-        reason: install.timedOut
-          ? `npm install timed out after ${timeoutMs}ms`
-          : `npm install failed (exit ${install.exitCode})`,
+    if (mars.configured()) {
+      try {
+        return await runSandboxedCoverage(dir, testCommand, timeoutMs)
+      } catch (e) {
+        // A genuine M.A.R.S. API/transport failure (outage, auth failure,
+        // quota) must not silently fabricate a result — but it also must not
+        // permanently break coverage verification for every company just
+        // because the sandbox provider had a bad moment. Fall back to local
+        // execution for THIS run, with the real reason recorded if the local
+        // run also can't produce a result. This mirrors how a local npm
+        // install failure already degrades to an honest reason string rather
+        // than throwing out of runCoverage entirely.
+        try {
+          return await runLocalCoverage(dir, testCommand, timeoutMs)
+        } catch (localErr) {
+          return {
+            coveragePercent: null,
+            testable: true,
+            passed: false,
+            reason: `Sandboxed run failed (${e instanceof Error ? e.message : String(e)}) and local fallback also errored: ${localErr instanceof Error ? localErr.message : String(localErr)}`,
+          }
+        }
       }
     }
 
-    // vitest's --coverage flag needs @vitest/coverage-v8 as a SEPARATE package
-    // (not a transitive dep of vitest itself) — a generated app declaring
-    // `vitest` alone (the common case, since we don't control what the
-    // codegen step wrote) has no way to actually produce coverage output.
-    // Install it explicitly rather than requiring every generated app to have
-    // anticipated this; the runner brings what IT needs to do its job.
-    const installCoverageDep = await runCommand(
-      'npm', ['install', '--no-audit', '--no-fund', '--no-save', '@vitest/coverage-v8@3.2.4'], dir, timeoutMs,
-    )
-    if (installCoverageDep.exitCode !== 0) {
-      return {
-        coveragePercent: null,
-        testable: true,
-        passed: false,
-        reason: installCoverageDep.timedOut
-          ? `@vitest/coverage-v8 install timed out after ${timeoutMs}ms`
-          : `@vitest/coverage-v8 install failed (exit ${installCoverageDep.exitCode})`,
-      }
-    }
-
-    const coverageDir = path.join(dir, '.coverage-output')
-    const run = await runCommand(
-      testCommand.command,
-      [...testCommand.args, `--coverage.reportsDirectory=${coverageDir}`, '--coverage.reporter=json-summary'],
-      dir,
-      timeoutMs,
-    )
-
-    let summaryRaw: string | undefined
-    try {
-      summaryRaw = await fs.readFile(path.join(coverageDir, 'coverage-summary.json'), 'utf8')
-    } catch {
-      summaryRaw = undefined
-    }
-    const coveragePercent = parseCoverageSummary(summaryRaw)
-
-    if (run.timedOut) {
-      return {
-        coveragePercent,
-        testable: true,
-        passed: false,
-        reason: `Test run timed out after ${timeoutMs}ms`,
-      }
-    }
-
-    return {
-      coveragePercent,
-      testable: true,
-      passed: run.exitCode === 0,
-      reason: run.exitCode === 0 ? undefined : `Test run exited with code ${run.exitCode}`,
-    }
+    return await runLocalCoverage(dir, testCommand, timeoutMs)
   } catch (e) {
     return {
       coveragePercent: null,
