@@ -118,6 +118,10 @@ export const RESERVED_SUBDOMAINS = new Set([
   // (ledger). 'insyteful' was already added above by a concurrent fix to this
   // same file; not duplicated here.
   'doc', 'ledger',
+  // connections.ainative.studio: new dedicated Next.js frontend (2026-09-28),
+  // provisioned via Railway custom domain — reserved so it's never treated as
+  // a company slug on this app's wildcard.
+  'connections',
 ])
 
 /**
