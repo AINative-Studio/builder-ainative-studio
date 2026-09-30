@@ -1181,7 +1181,20 @@ export async function resolveApp(slug: string): Promise<AppEntry | null> {
  * companies list on nothing more than a transient upstream hiccup.
  */
 export async function resolveAppVerified(slug: string): Promise<{ entry: AppEntry | null; verified: boolean }> {
-  if (!configured() || !slug) return { entry: null, verified: true }
+  // Real gap found live (2026-09-30, a misconfigured local dev environment):
+  // `!configured()` used to return `verified: true` — "confirmed doesn't
+  // exist" — for a slug this environment genuinely never checked at all
+  // (missing ZERODB_PROJECT_ID/API key). That's the exact anti-pattern #807/
+  // #832 fixed for the network-failure branch below, just left unfixed here:
+  // "couldn't check" must never look identical to "confirmed gone," since a
+  // caller (e.g. contexts/build-context.tsx's deep-link-not-found redirect)
+  // treats `verified: true` + no entry as license to bounce a founder off
+  // their own real company. Production is always configured, so this never
+  // fires there — but any genuinely unconfigured environment hit this exact
+  // false-confirmed-miss. `!slug` stays `verified: true` (an empty slug is a
+  // real, confirmed "nothing to look up", not an infrastructure gap).
+  if (!slug) return { entry: null, verified: true }
+  if (!configured()) return { entry: null, verified: false }
   try {
     const res = await fetch(`${rowsUrl()}?limit=1000`, { headers: headers(), signal: AbortSignal.timeout(20000) })
     if (!res.ok) return { entry: null, verified: false }
