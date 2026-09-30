@@ -4,6 +4,35 @@ import { guestRegex, isDevelopmentEnvironment } from './lib/constants'
 import { applyRateLimit } from './lib/middleware/rate-limit'
 import { wildcardSlugFromHost, subdomainServable, isReservedHost } from './lib/build/deploy'
 import { resolveApp } from './lib/build/app-registry'
+import { prefersMarkdown, homepageMarkdown, notFoundMarkdown } from './lib/agent-markdown-negotiation'
+
+/**
+ * Real top-level page segments (AX/agent-readiness scan, 2026-09-30) — used
+ * ONLY to decide whether a Markdown-negotiated 404 body applies to a given
+ * path. Kept in sync manually, same maintenance model this file already uses
+ * for `protectedPaths` below; a path here always exists, so it's never
+ * treated as a 404 even if this list drifts stale — the worst case of an
+ * entry going missing is a real page also getting a Markdown 404 body
+ * alongside its normal HTML, not a real page breaking.
+ */
+const KNOWN_TOP_LEVEL_SEGMENTS = new Set([
+  'about', 'account', 'admin', 'ai-cofounder', 'ai-company',
+  'autonomous-company-builder', 'best', 'billing', 'build', 'capabilities',
+  'chats', 'compare', 'context-budget-demo', 'demo', 'deployments',
+  'design-tokens', 'docs', 'evidence', 'guides', 'health', 'help', 'insights',
+  'login', 'preview', 'pricing', 'privacy', 'profile', 'projects', 'refer',
+  'register', 'reset-password', 'settings', 'showcase', 'storybook',
+  'templates', 'terms', 'test-components',
+])
+
+/** True for a path whose top-level segment isn't a real route AND isn't an
+ *  API/internal/asset path — the genuinely-unknown case the AX scan flagged. */
+function isLikelyUnknownPath(pathname: string): boolean {
+  if (pathname === '/') return false
+  if (pathname.startsWith('/api/') || pathname.startsWith('/_next/')) return false
+  const segment = pathname.split('/').filter(Boolean)[0]
+  return !segment || !KNOWN_TOP_LEVEL_SEGMENTS.has(segment)
+}
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
@@ -15,6 +44,27 @@ export async function middleware(request: NextRequest) {
    */
   if (pathname.startsWith('/ping')) {
     return new Response('pong', { status: 200 })
+  }
+
+  // Markdown content negotiation (AX/agent-readiness scan, 2026-09-30):
+  //  - The homepage now serves a real Markdown summary when explicitly asked
+  //    for one (Accept: text/markdown), with Vary: Accept so caches never
+  //    serve the wrong representation to the wrong client. HTML is unchanged.
+  //  - A genuinely unknown top-level path gets a REAL 404 status with a
+  //    Markdown body (when Markdown was requested) pointing to the sitemap,
+  //    llms.txt, and the OpenAPI spec — never the login-redirect soft-404
+  //    this same scan found (fixed separately, below, for the HTML case).
+  if (pathname === '/' && prefersMarkdown(request.headers.get('accept'))) {
+    return new Response(homepageMarkdown(), {
+      status: 200,
+      headers: { 'Content-Type': 'text/markdown; charset=utf-8', Vary: 'Accept' },
+    })
+  }
+  if (isLikelyUnknownPath(pathname) && prefersMarkdown(request.headers.get('accept'))) {
+    return new Response(notFoundMarkdown(pathname), {
+      status: 404,
+      headers: { 'Content-Type': 'text/markdown; charset=utf-8', Vary: 'Accept' },
+    })
   }
 
   // Liveness probe (Railway healthcheck path is /health/live). Must bypass auth
@@ -376,8 +426,16 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next()
     }
 
-    // For any other protected routes, redirect to login
-    return NextResponse.redirect(new URL('/login', request.url))
+    // Real gap found via an AX/agent-readiness scan (2026-09-30): every path NOT
+    // explicitly listed above used to redirect to /login — including a genuinely
+    // nonexistent path. A human saw a login wall instead of "page not found"; an
+    // agent probing for resources concluded every path on the domain existed,
+    // since /login itself returns 200. `protectedPaths` above is already the
+    // explicit, maintained list of what SHOULD gate — anything reaching this line
+    // is, by construction, not one of those, so let Next.js's own routing decide
+    // (a real page renders normally; a genuinely unknown path hits the real
+    // not-found handler with an honest 404, not a login redirect).
+    return NextResponse.next()
   }
 
   const isGuest = guestRegex.test(token?.email ?? '')
