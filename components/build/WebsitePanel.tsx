@@ -68,6 +68,13 @@ export function WebsitePanel({
   const [secrets, setSecrets] = useState<MaskedSecret[]>([])
   const [secretsLoaded, setSecretsLoaded] = useState(false)
   const [secretsAvailable, setSecretsAvailable] = useState(false)
+  // #881: distinguishes "never had a dedicated deploy service" (the common
+  // case) from "had one, and it was deleted" — collapsing both into a single
+  // boolean read as "you'll get this once deployed" for a company whose
+  // service genuinely existed and was later cleaned up (e.g. Railway cost
+  // remediation removing a FAILED-deploy service with zero live traffic),
+  // which is misleading about what actually happened.
+  const [secretsReason, setSecretsReason] = useState<string | null>(null)
   const [newName, setNewName] = useState('')
   const [newValue, setNewValue] = useState('')
   const [secretBusy, setSecretBusy] = useState(false)
@@ -93,6 +100,7 @@ export function WebsitePanel({
         if (!alive) return
         setSecrets(Array.isArray(d?.secrets) ? d.secrets : [])
         setSecretsAvailable(!!d?.available)
+        setSecretsReason(typeof d?.reason === 'string' ? d.reason : null)
         setSecretsLoaded(true)
       })
       .catch(() => { if (alive) setSecretsLoaded(true) })
@@ -390,7 +398,9 @@ export function WebsitePanel({
           <p className="m-mono m-task-empty" data-testid="secrets-loading">loading secrets…</p>
         ) : !secretsAvailable && secrets.length === 0 ? (
           <p className="m-mono m-task-empty" data-testid="secrets-unavailable">
-            Secrets become available once your app has its own deploy service.
+            {secretsReason === 'service_not_found'
+              ? "Your app's dedicated deploy service is no longer available — reconnect it to manage secrets again."
+              : 'Secrets become available once your app has its own deploy service.'}
           </p>
         ) : (
           <>
