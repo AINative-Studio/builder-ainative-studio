@@ -59,7 +59,7 @@ function inMemoryRateLimit(
   pathname: string,
 ): { success: boolean; response?: NextResponse } {
   const isAuth = pathname.startsWith('/api/auth/')
-  const isGeneration = pathname === '/api/chat-ws' || pathname === '/api/chat' || pathname === '/api/chat-llama'
+  const isGeneration = pathname === '/api/chat-ws' || pathname === '/api/chat' || pathname === '/api/chat-llama' || pathname === '/api/build/media'
   const isReadOnly = pathname.startsWith('/api/chats') || pathname.startsWith('/api/preview') || pathname === '/api/health'
   if (isReadOnly) return { success: true } // Don't rate-limit read-only polling
   const limit = isAuth ? 10 : isGeneration ? 10 : 200
@@ -122,7 +122,8 @@ export async function applyRateLimit(
     const isGenerationEndpoint =
       pathname === '/api/chat-ws' ||
       pathname === '/api/chat' ||
-      pathname === '/api/chat-llama'
+      pathname === '/api/chat-llama' ||
+      pathname === '/api/build/media'
 
     const rateLimit = isGenerationEndpoint ? generationRateLimit : generalRateLimit
     const identifier = `${ip}:${isGenerationEndpoint ? 'generation' : 'general'}`
