@@ -1,5 +1,7 @@
 /**
- * Minimal Amazon Bedrock client for Anthropic Claude models (builder Config C).
+ * Minimal Amazon Bedrock client for Anthropic Claude models (builder Config C),
+ * plus the open-source models on this account's Bedrock catalog (Kimi, MiniMax,
+ * GLM — builder#895, cheap tier).
  *
  * Why a hand-rolled client instead of @anthropic-ai/bedrock-sdk:
  *   - The builder container authenticates to Bedrock with a BEARER TOKEN
@@ -10,6 +12,15 @@
  *     header and the standard Anthropic messages payload
  *     ({anthropic_version, max_tokens, system, messages}). Verified live:
  *     POST /model/us.anthropic.claude-sonnet-4-5-20250929-v1:0/invoke -> HTTP 200.
+ *
+ * Non-Anthropic models on this same Bedrock account (moonshotai.kimi-*,
+ * minimax.minimax-*, zai.glm-*) accept that same Anthropic-shaped request body
+ * (they just ignore the Claude-only fields) but reply in OpenAI chat-completions
+ * shape — `choices[0].message.content` / `usage.prompt_tokens` /
+ * `usage.completion_tokens` — not Claude's `content[]` / `input_tokens` /
+ * `output_tokens`. Verified live against all three providers 2026-10-02. This
+ * client detects the provider from the model ID prefix and normalizes the
+ * response back to the Claude shape so every call site stays provider-agnostic.
  *
  * This client exposes a `.messages.create()` method whose signature and return
  * shape match the @anthropic-ai/sdk client the route already uses, so the call
@@ -64,6 +75,21 @@ export function resolveBedrockModelId(env: NodeJS.ProcessEnv = process.env): str
   return 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'
 }
 
+/**
+ * Does this Bedrock model ID belong to a non-Anthropic provider on this
+ * account's catalog? These accept the same request body as Claude but reply
+ * in OpenAI chat-completions shape, not Claude's — see the file header.
+ */
+function isOpenAIShapedModel(model: string): boolean {
+  const m = model.toLowerCase()
+  return (
+    m.includes('moonshotai.kimi') ||
+    m.includes('moonshot.kimi') ||
+    m.includes('minimax.') ||
+    m.includes('zai.glm')
+  )
+}
+
 class BedrockMessages {
   constructor(
     private readonly region: string,
@@ -101,6 +127,23 @@ class BedrockMessages {
     }
 
     const data: any = await res.json()
+
+    if (isOpenAIShapedModel(model)) {
+      const choice = data.choices?.[0]
+      const text = choice?.message?.content ?? ''
+      return {
+        content: text ? [{ type: 'text', text }] : [],
+        usage: data.usage
+          ? {
+              input_tokens: data.usage.prompt_tokens || 0,
+              output_tokens: data.usage.completion_tokens || 0,
+            }
+          : undefined,
+        stop_reason: choice?.finish_reason,
+        model: data.model,
+      }
+    }
+
     return {
       content: Array.isArray(data.content) ? data.content : [],
       usage: data.usage
