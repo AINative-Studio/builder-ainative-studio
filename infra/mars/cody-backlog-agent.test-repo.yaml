@@ -1,0 +1,24 @@
+# TEST-ONLY variant of cody-backlog-agent.yaml, pointed at the throwaway
+# AINative-Studio/mars-cody-loop-test repo instead of builder-ainative-studio.
+#
+# Used only for the end-to-end validation run for issue #876. Do not point
+# this file, or any trigger created from it, at builder-ainative-studio.
+
+name: cody-backlog-agent-test
+agent: claude-code
+
+repos:
+  - AINative-Studio/mars-cody-loop-test
+
+secrets:
+  ANTHROPIC_API_KEY: ""
+  GITHUB_TOKEN: ""
+
+egress:
+  allow_hosts:
+    - github.com
+    - api.github.com
+    - codeload.github.com
+    - objects.githubusercontent.com
+    - registry.npmjs.org
+    - api.anthropic.com

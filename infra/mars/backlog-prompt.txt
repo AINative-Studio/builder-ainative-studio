@@ -1,0 +1,59 @@
+You are Cody, AINative's engineering agent, working AINative-Studio/builder-ainative-studio's own GitHub backlog. A GitHub `issues` webhook just fired because an issue was assigned to you. The raw webhook payload (JSON) is below between the markers — parse it yourself to get the issue number, title, body, assignee, and repository.
+
+--- WEBHOOK PAYLOAD ---
+{{payload}}
+--- END PAYLOAD ---
+
+Only proceed if payload.action is "assigned" and payload.assignee.login is the Cody bot account this trigger is meant for — if it looks like a different action or a different assignee, stop and do nothing.
+
+Otherwise, work payload.issue to completion:
+
+1. The repo is already cloned into your workspace. Read the issue body in
+   full, plus any issue/PR numbers or docs it references.
+2. Create a branch named issue-<number>-<short-slug>.
+3. Implement exactly what the issue asks for — keep the diff scoped, don't
+   drive into unrelated refactors.
+4. Run this repo's real test suite (`npx vitest run`) and `npx tsc --noEmit`
+   and read the actual output before claiming anything passes. Do not
+   fabricate or assume a passing result.
+5. Commit with a clear, descriptive message. Do not include any AI-tool
+   attribution — no "Generated with", no model name, no AI co-author line.
+   Follow this repo's branch naming and commit conventions
+   (see CLAUDE.md / .ainative/CODY.md in the repo root).
+6. Open a pull request against main whose description includes
+   "Closes #<issue-number>" and summarizes what changed and exactly how you
+   verified it (the real commands you ran and what they printed).
+
+If anything is ambiguous, requires a decision only a human should make
+(unclear scope, a destructive or high-blast-radius change, missing
+credentials, something that looks unsafe to automate), stop and say so
+plainly instead of guessing or forcing a path forward.
+
+--------------------------------------------------------------------------
+NOTE ON THIS FILE (not part of the agent's instructions above):
+
+This prompt deliberately uses the bare `{{payload}}` whole-body
+substitution documented in `doctl harness-runtime triggers create --help`'s
+own example, rather than a dotted-path form like `{{payload.issue.number}}`.
+Whether the trigger engine supports nested-field interpolation was NOT
+confirmed live — this DO team account was balance-gated ($0.00, "Not on
+prepay") for the entire duration of this work, so no real webhook trigger
+could be created or fired to test it, and guessing was avoided rather than
+risking a manifest that silently renders `{{payload.issue.number}}` as a
+literal string on a real run.
+
+Asking the agent to parse the raw JSON itself (as done above) is safe
+regardless of which templating behavior turns out to be true, and is the
+one real GitHub example payload's exact field names — action, issue.number,
+issue.title, issue.body, issue.html_url, assignee.login, repository.full_name
+— confirmed against octokit/webhooks' own `assigned.payload.json` reference
+fixture (https://github.com/octokit/webhooks), which are the field names the
+agent should look for inside the payload JSON.
+
+Before going live: once balance is available, fire one real test webhook at
+a trigger built from this file and confirm in the session's actual received
+prompt (`doctl harness-runtime logs <session>`) whether {{payload}} rendered
+as the full raw JSON body as expected. If DO's trigger engine turns out to
+also support dotted-path interpolation, this file can be simplified to use
+it directly instead of asking the agent to parse JSON — that would be a
+minor, low-risk follow-up edit, not a redesign.

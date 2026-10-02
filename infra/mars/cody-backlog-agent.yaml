@@ -1,0 +1,43 @@
+# Session template for Cody's autonomous GitHub-backlog loop (issue #876).
+#
+# This is the manifest a "fresh" webhook trigger uses as its session template
+# (doctl harness-runtime triggers create --session-mode fresh --spec infra/mars/cody-backlog-agent.yaml).
+# It is NOT registered against any live trigger as part of this change — see
+# infra/mars/README.md for what "registering for real" means and the human
+# approval step required before that happens.
+#
+# Manifest shape verified live against this DO account's doctl (v1.175.0) via
+# `doctl harness-runtime create --harness claude-code --dry-run` and
+# `doctl harness-runtime validate` — see infra/mars/README.md for the exact
+# commands and their output.
+
+name: cody-backlog-agent
+agent: claude-code
+
+repos:
+  - AINative-Studio/builder-ainative-studio
+
+# Secrets are declared here as slots only — no values are ever committed.
+# Real values are supplied out-of-band with `--secret NAME=@path` (or `=-`
+# for stdin) at `triggers create` / `triggers update` time. See README.md
+# "Secrets" section for exactly what each one is for and how to source it.
+secrets:
+  ANTHROPIC_API_KEY: ""
+  GITHUB_TOKEN: ""
+
+# Deliberately NOT `unrestricted`. A session with push access to a real repo
+# gets network access scoped to exactly what cloning, installing, testing,
+# and opening a PR against this repo requires today — nothing else.
+#
+# Excludes Playwright's browser-binary CDN on purpose: the backlog loop is
+# expected to verify with `npx vitest run` + `npx tsc --noEmit`, not a full
+# browser install. Widen this deliberately (not by default) if a future
+# issue's verification genuinely needs a real Playwright browser run.
+egress:
+  allow_hosts:
+    - github.com
+    - api.github.com
+    - codeload.github.com
+    - objects.githubusercontent.com
+    - registry.npmjs.org
+    - api.anthropic.com
