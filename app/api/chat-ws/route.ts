@@ -108,6 +108,9 @@ const PAID_MODEL = process.env.PAID_MODEL || 'kimi-k2.6'
 let anthropicClient: any = null
 function getAnthropicDirectClient() {
   if (anthropicClient) return anthropicClient
+  // Benign/expected: no direct-Anthropic key configured (e.g. Bedrock-only
+  // deploys). Not an alert-worthy failure — distinct from the SDK import
+  // failure below, which IS unexpected and should be visible in prod data.
   if (!(process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.startsWith('sk-ant-'))) return null
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -115,8 +118,21 @@ function getAnthropicDirectClient() {
     anthropicClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 0 })
     console.log('✅ Anthropic (direct API) client initialized for Claude Sonnet 4.5')
     return anthropicClient
-  } catch (e) {
-    console.warn('⚠️ @anthropic-ai/sdk not available, falling back to AINative')
+  } catch (e: any) {
+    // #888: this used to be a plain console.warn with no way to tell "SDK
+    // genuinely missing" apart from any other null-return reason in prod
+    // data. Combined with #886 (no persisted cost ledger), there was no
+    // signal for how often Builder falls through past its secondary tier
+    // (direct Anthropic) to core's tertiary fallback. Emit a Sentry event
+    // tagged with a distinguishable reason code (same captureMessage
+    // pattern already used for output-validation failures in this file)
+    // so fallback frequency from this specific cause is queryable/alertable.
+    console.warn('⚠️ @anthropic-ai/sdk not available, falling back to AINative:', e?.message?.slice(0, 200))
+    Sentry.captureMessage('build/chat-ws anthropic direct client unavailable: sdk import failed', {
+      level: 'warning',
+      tags: { reason: 'anthropic_sdk_import_failed', fallbackTier: 'ainative' },
+      extra: { error: e?.message?.slice(0, 500), stack: e?.stack?.slice(0, 1000) },
+    })
     return null
   }
 }
