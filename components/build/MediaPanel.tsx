@@ -33,6 +33,30 @@ import { validateUpload, isUploadedAsset, UPLOAD_ACCEPT_ATTR } from '@/lib/build
 type MediaKind = 'image' | 'video'
 type MediaFrequency = 'once' | 'daily' | 'weekly' | 'monthly'
 
+/**
+ * #884: every generation failure used to show the identical generic toast
+ * regardless of what actually went wrong. The API now propagates a specific
+ * `reason` (see MediaFailureReason in lib/build/media-schedule.ts) — map each
+ * to an honest, status-specific message. Falls back to the original generic
+ * copy for an unrecognized/missing reason so this never regresses to a blank
+ * or broken message.
+ */
+function generationFailureMessage(mediaKind: MediaKind, reason?: string): string {
+  switch (reason) {
+    case 'poll_timeout':
+      return `Generating that ${mediaKind} is taking longer than expected — it may still finish; check back shortly.`
+    case 'poll_failed':
+      return `The ${mediaKind} generation job failed partway through — try again shortly.`
+    case 'core_error':
+      return `The media generation service is unavailable right now — try again shortly.`
+    case 'no_asset_url':
+    case 'save_failed':
+      return `Couldn't generate ${mediaKind} right now — try again shortly.`
+    default:
+      return `Couldn't generate ${mediaKind} right now — try again shortly.`
+  }
+}
+
 interface Routine {
   id: string
   mediaKind: MediaKind
@@ -186,7 +210,7 @@ export function MediaPanel({
       if (d?.status === 'disabled') {
         setNotice((n) => ({ ...n, [k]: 'Media generation isn’t switched on yet — your schedule is saved and will run once it is.' }))
       } else {
-        setNotice((n) => ({ ...n, [k]: `Couldn’t generate ${k} right now — try again shortly.` }))
+        setNotice((n) => ({ ...n, [k]: generationFailureMessage(k, d?.reason) }))
       }
     } catch {
       setNotice((n) => ({ ...n, [k]: 'Connection hiccup — try again.' }))
