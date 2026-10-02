@@ -82,6 +82,35 @@ describe('runClaudeModelSmokeTest', () => {
     expect(body.max_tokens).toBe(1)
   })
 
+  it('Bedrock path: requestedModel reflects BEDROCK_MODEL_ID (not the unrelated CLAUDE_MODEL env var)', async () => {
+    // lib/bedrock-client.ts caches its client in a module-level singleton
+    // keyed by nothing (first call wins), so this test needs a fresh module
+    // instance to see its own BEDROCK_MODEL_ID rather than an earlier test's.
+    vi.resetModules()
+    const { runClaudeModelSmokeTest: freshRun } = await import('@/lib/config/claude-model-smoketest')
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        content: [{ type: 'text', text: 'ok' }],
+        model: 'us.anthropic.claude-sonnet-4-6-v1:0',
+      }),
+    }) as any
+
+    const env = cleanEnv({
+      CODY_USE_BEDROCK: '1',
+      AWS_BEARER_TOKEN_BEDROCK: 'test-bearer-token',
+      BEDROCK_MODEL_ID: 'us.anthropic.claude-sonnet-4-6-v1:0',
+      // Deliberately different/stale — must NOT leak into requestedModel on
+      // the Bedrock path, since CLAUDE_MODEL only governs direct-Anthropic.
+      CLAUDE_MODEL: 'claude-sonnet-4-20250514',
+    })
+
+    const result = await freshRun(env)
+    expect(result.requestedModel).toBe('us.anthropic.claude-sonnet-4-6-v1:0')
+    expect(result.requestedModel).not.toBe('claude-sonnet-4-20250514')
+  })
+
   it('Bedrock path: detects a hard failure (stale/404 model ID) and reports it, not a silent pass', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,
