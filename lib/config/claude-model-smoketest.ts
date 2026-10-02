@@ -71,6 +71,13 @@ export async function runClaudeModelSmokeTest(
         error: 'CODY_USE_BEDROCK=1 but Bedrock client failed to initialize (missing AWS_BEARER_TOKEN_BEDROCK bearer token)',
       }
     }
+    // On the Bedrock path the model actually requested is the Bedrock
+    // inference-profile ID (BEDROCK_MODEL_ID, see resolveBedrockModelId in
+    // lib/bedrock-client.ts) — NOT the CLAUDE_MODEL env var, which only
+    // governs the direct-Anthropic-API path below. Report that instead, so
+    // a stale/misconfigured BEDROCK_MODEL_ID is visible rather than always
+    // showing CLAUDE_MODEL's value regardless of which path actually ran.
+    const bedrockRequestedModel = bedrock.modelId
     try {
       const res = await bedrock.messages.create({
         max_tokens: 1,
@@ -81,23 +88,31 @@ export async function runClaudeModelSmokeTest(
         return {
           ok: false,
           provider: 'bedrock',
-          requestedModel,
+          requestedModel: bedrockRequestedModel,
           latencyMs,
           error: 'Bedrock response missing expected content array',
         }
       }
+      // Unlike the direct Anthropic path, Bedrock addresses the model by ID
+      // directly in the invoke URL (see BedrockMessages.create in
+      // lib/bedrock-client.ts) — a stale/wrong ID 404s at the HTTP level
+      // (caught in the catch block below) rather than silently serving a
+      // different model, so there's no analogous mismatch check here.
+      // Bedrock's response `model` field can legitimately differ from the
+      // requested inference-profile ID (it reflects the resolved underlying
+      // snapshot) and is reported for visibility only, not as a failure signal.
       return {
         ok: true,
         provider: 'bedrock',
-        requestedModel,
-        respondedModel: res.model || bedrock.modelId,
+        requestedModel: bedrockRequestedModel,
+        respondedModel: res.model,
         latencyMs,
       }
     } catch (e: any) {
       return {
         ok: false,
         provider: 'bedrock',
-        requestedModel,
+        requestedModel: bedrockRequestedModel,
         latencyMs: Date.now() - start,
         error: e?.message || String(e),
       }
