@@ -541,6 +541,14 @@ async function persistBase64Image(scopeKey: string, base64: string): Promise<str
  *
  * Pure with respect to timing (interval/timeout are injectable) so the
  * retry/timeout logic is unit-testable without real waits.
+ *
+ * #884: every poll failure used to vanish into a bare `catch {}` with no
+ * logging at all — a non-ok response, a terminal Fail/Failed status, a
+ * Success with no video_url, AND a thrown network/abort error all collapsed
+ * into either silent retries or a silent 'failed' return. Each distinct
+ * branch now logs the real signal (status code/body, raw job status, or the
+ * caught error) so a stuck/failing video job is actually diagnosable from
+ * server logs instead of indistinguishable noise.
  */
 export async function pollVideoStatus(
   taskId: string,
@@ -563,27 +571,75 @@ export async function pollVideoStatus(
         const rawStatus = String(data?.status || '')
         if (rawStatus === VIDEO_STATUS_SUCCESS) {
           const videoUrl = extractVideoUrl(data)
-          return videoUrl ? { status: 'completed', videoUrl } : { status: 'failed' }
+          if (!videoUrl) {
+            console.error('[media-schedule] pollVideoStatus: Success status with no extractable video url', {
+              taskId,
+              data,
+            })
+            return { status: 'failed' }
+          }
+          return { status: 'completed', videoUrl }
         }
         if (VIDEO_STATUS_FAILURES.has(rawStatus)) {
+          console.error('[media-schedule] pollVideoStatus: job reported a terminal failure status', {
+            taskId,
+            rawStatus,
+            data,
+          })
           return { status: 'failed' }
         }
         // Any other status (Preparing/Processing/Queueing/…) → keep polling.
+      } else {
+        console.error('[media-schedule] pollVideoStatus: non-2xx response while polling', {
+          taskId,
+          status: res.status,
+          statusText: res.statusText,
+          body: await res.text().catch(() => '<unreadable>'),
+        })
       }
-    } catch {
-      // Transient poll failure — keep trying until the deadline, never throw.
+    } catch (err) {
+      // Transient poll failure (network error, AbortSignal timeout firing,
+      // JSON parse failure) — keep trying until the deadline, but log the
+      // real error instead of swallowing it silently.
+      console.error('[media-schedule] pollVideoStatus: poll attempt threw', {
+        taskId,
+        error: err instanceof Error ? err.message : String(err),
+      })
     }
     await sleep(intervalMs)
   }
+  console.error('[media-schedule] pollVideoStatus: timed out waiting for a terminal status', {
+    taskId,
+    timeoutMs,
+  })
   return { status: 'timeout' }
 }
+
+/**
+ * The specific reason a 'failed' result carries (#884). MediaPanel can use this
+ * to show a status-specific message instead of one generic string for every
+ * distinct failure mode; every branch below also console.errors the real
+ * underlying signal (status/body/error) so a failure is diagnosable from logs
+ * even before any UI picks `reason` up.
+ */
+export const MEDIA_FAILURE_REASONS = [
+  'core_error',
+  'poll_timeout',
+  'poll_failed',
+  'no_asset_url',
+  'save_failed',
+  'exception',
+] as const
+export type MediaFailureReason = (typeof MEDIA_FAILURE_REASONS)[number]
 
 /**
  * Run a single media generation against the core Multimodal primitive and persist
  * the resulting asset to the company's own storage. GATED (#54 req 6): returns a
  * typed result and NEVER throws.
  *   - 'disabled'  → generation isn't configured (flag/key) — inert, no-op.
- *   - 'failed'    → configured, but the generation call produced no asset.
+ *   - 'failed'    → configured, but the generation call produced no asset
+ *                   (see `reason` for which branch, and server logs for the
+ *                   real underlying status/error — #884).
  *   - 'generated' → an on-brand asset was produced + persisted (asset returned).
  *
  * #404: video generation is genuinely async — the initial POST only accepts
@@ -591,12 +647,20 @@ export async function pollVideoStatus(
  * video_url. When the response carries a task_id, poll for completion before
  * giving up; image generation is unaffected (confirmed synchronous — no
  * task_id in its response shape).
+ *
+ * #884: every distinct failure branch (non-2xx core response, failed/timed-out
+ * poll, no resolvable url/task_id, a failed persist, and the swallowed
+ * top-level catch) used to collapse into the same bare `{ status: 'failed' }`
+ * with ZERO logging anywhere — making a real failure indistinguishable from
+ * every other failure mode. Each branch now console.errors the real signal
+ * (response status/body, poll outcome, or caught error) and tags the result
+ * with a specific `reason` so this is actually diagnosable.
  */
 export async function runMediaGeneration(
   scopeKey: string,
   mediaKind: MediaKind,
   brand: BrandContext,
-): Promise<{ status: 'disabled' | 'failed' | 'generated'; asset?: MediaAsset }> {
+): Promise<{ status: 'disabled' | 'failed' | 'generated'; asset?: MediaAsset; reason?: MediaFailureReason }> {
   if (!mediaGenerationConfigured()) return { status: 'disabled' }
   const prompt = buildBrandPrompt(mediaKind, brand)
   const { path, body } = buildGenerationRequest(mediaKind, prompt)
@@ -607,8 +671,25 @@ export async function runMediaGeneration(
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(60_000),
     })
-    if (!res.ok) return { status: 'failed' }
-    const data = await res.json().catch(() => null)
+    if (!res.ok) {
+      console.error('[media-schedule] runMediaGeneration: core generation call returned non-2xx', {
+        scopeKey,
+        mediaKind,
+        path,
+        status: res.status,
+        statusText: res.statusText,
+        body: await res.text().catch(() => '<unreadable>'),
+      })
+      return { status: 'failed', reason: 'core_error' }
+    }
+    const data = await res.json().catch((err) => {
+      console.error('[media-schedule] runMediaGeneration: core response was not valid JSON', {
+        scopeKey,
+        mediaKind,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      return null
+    })
     let url = extractVideoUrl(data)
     if (!url && mediaKind === 'image') {
       const base64 = extractImageBase64(data)
@@ -617,13 +698,45 @@ export async function runMediaGeneration(
     const taskId = String(data?.task_id || '')
     if (!url && mediaKind === 'video' && taskId && String(data?.status || '') !== VIDEO_STATUS_SUCCESS) {
       const polled = await pollVideoStatus(taskId)
-      if (polled.status !== 'completed' || !polled.videoUrl) return { status: 'failed' }
+      if (polled.status !== 'completed' || !polled.videoUrl) {
+        console.error('[media-schedule] runMediaGeneration: video polling did not complete', {
+          scopeKey,
+          mediaKind,
+          taskId,
+          pollStatus: polled.status,
+        })
+        return { status: 'failed', reason: polled.status === 'timeout' ? 'poll_timeout' : 'poll_failed' }
+      }
       url = polled.videoUrl
     }
-    if (!url) return { status: 'failed' }
+    if (!url) {
+      console.error('[media-schedule] runMediaGeneration: no resolvable asset url or task_id in the core response', {
+        scopeKey,
+        mediaKind,
+        data,
+      })
+      return { status: 'failed', reason: 'no_asset_url' }
+    }
     const asset = await saveAsset(scopeKey, { mediaKind, url, prompt, provider: data?.provider || data?.model })
-    return asset ? { status: 'generated', asset } : { status: 'failed' }
-  } catch {
-    return { status: 'failed' }
+    if (!asset) {
+      console.error('[media-schedule] runMediaGeneration: generated asset failed to persist to ZeroDB', {
+        scopeKey,
+        mediaKind,
+        url,
+      })
+      return { status: 'failed', reason: 'save_failed' }
+    }
+    return { status: 'generated', asset }
+  } catch (err) {
+    // Any thrown exception — network error, the 60s AbortSignal.timeout firing,
+    // or anything else unexpected — used to vanish here with no trace at all.
+    console.error('[media-schedule] runMediaGeneration: unhandled exception during generation', {
+      scopeKey,
+      mediaKind,
+      path,
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    })
+    return { status: 'failed', reason: 'exception' }
   }
 }
