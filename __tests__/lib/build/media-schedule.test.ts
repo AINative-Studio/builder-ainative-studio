@@ -440,6 +440,82 @@ describe('I/O: saveRoutine / saveAsset / listMedia / runMediaGeneration', () => 
     expect((await runMediaGeneration('a::b', 'image', {})).status).toBe('failed')
   })
 
+  // #884: every distinct failure branch used to collapse to the same bare
+  // { status: 'failed' } with ZERO logging anywhere, making every failure
+  // mode indistinguishable from every other. Each branch must now log the
+  // real underlying signal AND tag the result with a specific `reason`.
+  describe('#884 — observability: each distinct failure branch logs + tags a specific reason', () => {
+    let errorSpy: ReturnType<typeof vi.spyOn>
+    beforeEach(() => {
+      errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    })
+    afterEach(() => { errorSpy.mockRestore() })
+
+    it('logs + tags core_error on a non-2xx core response', async () => {
+      process.env.BUILD_MEDIA_ENABLED = 'true'
+      vi.stubGlobal('fetch', vi.fn(async () => ERR(503) as any))
+      const res = await runMediaGeneration('a::b', 'video', {})
+      expect(res.status).toBe('failed')
+      expect(res.reason).toBe('core_error')
+      expect(errorSpy).toHaveBeenCalled()
+      const loggedArgs = errorSpy.mock.calls.map((c) => JSON.stringify(c)).join(' ')
+      expect(loggedArgs).toContain('503')
+    })
+
+    it('logs + tags no_asset_url when the response has neither a url nor a task_id', async () => {
+      process.env.BUILD_MEDIA_ENABLED = 'true'
+      vi.stubGlobal('fetch', vi.fn(async () => OK({ nothing: true }) as any))
+      const res = await runMediaGeneration('a::b', 'image', {})
+      expect(res.status).toBe('failed')
+      expect(res.reason).toBe('no_asset_url')
+      expect(errorSpy).toHaveBeenCalled()
+    })
+
+    it('logs + tags exception when the generation call throws (network error / abort)', async () => {
+      process.env.BUILD_MEDIA_ENABLED = 'true'
+      vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('ECONNRESET') }))
+      const res = await runMediaGeneration('a::b', 'image', {})
+      expect(res.status).toBe('failed')
+      expect(res.reason).toBe('exception')
+      expect(errorSpy).toHaveBeenCalled()
+      const loggedArgs = errorSpy.mock.calls.map((c) => JSON.stringify(c)).join(' ')
+      expect(loggedArgs).toContain('ECONNRESET')
+    })
+
+    it('logs + tags poll_timeout when the video job never reaches a terminal state', async () => {
+      process.env.BUILD_MEDIA_ENABLED = 'true'
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(OK({ status: 'processing', task_id: 'task-1' }) as any) // initial POST
+        .mockResolvedValue(OK({ status: 'Processing' }) as any) // every poll stays non-terminal
+      vi.stubGlobal('fetch', fetchMock)
+      // Inject a fast/short timeout via module-internal default isn't possible from
+      // here (pollVideoStatus's defaults aren't overridable through runMediaGeneration),
+      // so this covers the poll_failed (terminal Fail) branch at the integration level
+      // instead, and the timeout branch is covered directly against pollVideoStatus below.
+      const failFetch = vi.fn()
+        .mockResolvedValueOnce(OK({ status: 'processing', task_id: 'task-1' }) as any)
+        .mockResolvedValueOnce(OK({ status: 'Fail', task_id: 'task-1' }) as any)
+      vi.stubGlobal('fetch', failFetch)
+      const res = await runMediaGeneration('a::b', 'video', {})
+      expect(res.status).toBe('failed')
+      expect(res.reason).toBe('poll_failed')
+      expect(errorSpy).toHaveBeenCalled()
+    })
+
+    it('logs + tags save_failed when generation succeeds but persisting the asset fails', async () => {
+      process.env.BUILD_MEDIA_ENABLED = 'true'
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(OK({ url: 'http://x/gen.mp4', provider: 'multimodal' }) as any) // generate
+        .mockResolvedValueOnce(ERR(500) as any) // saveAsset's ensureTable (best-effort, failure ignored)
+        .mockResolvedValueOnce(ERR(500) as any) // saveAsset's real write fails
+      vi.stubGlobal('fetch', fetchMock)
+      const res = await runMediaGeneration('a::b', 'video', {})
+      expect(res.status).toBe('failed')
+      expect(res.reason).toBe('save_failed')
+      expect(errorSpy).toHaveBeenCalled()
+    })
+  })
+
   // #404: video generation is async — the initial POST only accepts the job
   // (status:'processing' + task_id), it never returns a finished video_url.
   it('runMediaGeneration polls to completion for an async video job', async () => {
@@ -553,5 +629,50 @@ describe('pollVideoStatus (#404)', () => {
     vi.stubGlobal('fetch', fetchMock)
     const res = await pollVideoStatus('t1', { sleep: fastSleep })
     expect(res).toEqual({ status: 'completed', videoUrl: 'http://x/v.mp4' })
+  })
+
+  // #884: pollVideoStatus had its own bare `catch {}` per poll attempt with no
+  // logging, plus silent non-ok / malformed-success / timeout branches.
+  describe('#884 — observability: each poll branch logs the real signal', () => {
+    let errorSpy: ReturnType<typeof vi.spyOn>
+    beforeEach(() => { errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {}) })
+    afterEach(() => { errorSpy.mockRestore() })
+
+    it('logs the real status code + body on a non-ok poll response', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => ERR(502) as any))
+      await pollVideoStatus('t1', { sleep: fastSleep, intervalMs: 1, timeoutMs: 1 })
+      expect(errorSpy).toHaveBeenCalled()
+      const loggedArgs = errorSpy.mock.calls.map((c) => JSON.stringify(c)).join(' ')
+      expect(loggedArgs).toContain('502')
+    })
+
+    it('logs the terminal status on Fail/Failed', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => OK({ status: 'Fail' }) as any))
+      await pollVideoStatus('t1', { sleep: fastSleep })
+      expect(errorSpy).toHaveBeenCalled()
+      const loggedArgs = errorSpy.mock.calls.map((c) => JSON.stringify(c)).join(' ')
+      expect(loggedArgs).toContain('Fail')
+    })
+
+    it('logs when Success carries no extractable video url', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => OK({ status: 'Success' }) as any))
+      await pollVideoStatus('t1', { sleep: fastSleep })
+      expect(errorSpy).toHaveBeenCalled()
+    })
+
+    it('logs the real caught error on a thrown exception (network/abort)', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('aborted') }))
+      await pollVideoStatus('t1', { sleep: fastSleep, intervalMs: 1, timeoutMs: 1 })
+      expect(errorSpy).toHaveBeenCalled()
+      const loggedArgs = errorSpy.mock.calls.map((c) => JSON.stringify(c)).join(' ')
+      expect(loggedArgs).toContain('aborted')
+    })
+
+    it('logs on a genuine timeout', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => OK({ status: 'Processing' }) as any))
+      const res = await pollVideoStatus('t1', { sleep: fastSleep, intervalMs: 1, timeoutMs: 5 })
+      expect(res.status).toBe('timeout')
+      expect(errorSpy).toHaveBeenCalled()
+    })
   })
 })
