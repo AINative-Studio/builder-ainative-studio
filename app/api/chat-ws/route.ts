@@ -100,6 +100,11 @@ const USE_CLAUDE_DIRECT = USE_BEDROCK || !!(process.env.ANTHROPIC_API_KEY && pro
 // CRITICAL: the Anthropic key only has Sonnet 4.5 access — the old
 // 'claude-sonnet-4-20250514' ID 404s, silently forcing every generation onto the
 // gpt-oss-20b fallback (mislabeled as claude). Use the working ID, env-overridable.
+// #887: a stale CLAUDE_MODEL can recur with a different ID and nothing would
+// catch it except another live incident — GET /api/health?model=1 (backed by
+// lib/config/claude-model-smoketest.ts) makes a real, minimal probe call
+// against this exact ID and reports a mismatch/failure instead of relying on
+// this comment to warn future readers.
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-5-20250929'
 const DEFAULT_MODEL = USE_CLAUDE_DIRECT ? CLAUDE_MODEL : (process.env.DEFAULT_MODEL || 'ministral-14b')
 const PAID_MODEL = process.env.PAID_MODEL || 'kimi-k2.6'
