@@ -42,6 +42,7 @@ import { checkDesignConformance } from '@/lib/build/design-conformance'
 import { parseMultiFileOutput } from '@/lib/multi-file-parser'
 import { shouldUseSandpack } from '@/lib/build/preview-engine'
 import { storeFiles as storeFilesV2 } from '@/lib/preview-store-v2'
+import { recordBuildCost, buildCostEntryFromTokenUsage } from '@/lib/build/build-cost-ledger'
 import { logModelConfiguration } from '@/lib/config/model-validator'
 import { isClaudeAgentEnabled, isClaudeAgentFallbackEnabled, runHeadlessAgent } from '@/lib/agent/claude-agent'
 import { cleanupWorktree } from '@/lib/agent/worktree-manager'
@@ -1958,6 +1959,18 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               console.warn('[PERSIST] degraded save failed:', e?.message || e)
             }
 
+            // #886: persist the real computed cost even on the degraded path —
+            // a failed/invalid generation still spent real tokens, and the
+            // ledger exists to reconcile actual spend against flat build
+            // quota regardless of whether the build ultimately validated.
+            // Fire-and-forget: never blocks the response on a metering outage.
+            recordBuildCost(
+              buildCostEntryFromTokenUsage(
+                responseId, userId, requestedModel || DEFAULT_MODEL, tokenUsage, 'degraded',
+                Date.now() - generationStartTime,
+              ),
+            ).catch((e: any) => console.warn('[COST-LEDGER] degraded persist failed:', e?.message || e))
+
             // Send completion with error flag
             safeEnqueue(encoder.encode(`data: ${JSON.stringify({
               type: 'complete',
@@ -2142,6 +2155,14 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               const isShowcase = finalContent.length > 1000
               const usedModel = requestedModel || DEFAULT_MODEL
               const genTimeMs = Date.now() - generationStartTime
+
+              // #886: persist the real computed cost (tokenUsage.estimated_cost)
+              // to a durable ZeroDB ledger — previously this was only ever
+              // console.log'd, or handed to storeFilesV2's 2-hour-TTL in-memory
+              // Map. Fire-and-forget, never blocks completion.
+              recordBuildCost(
+                buildCostEntryFromTokenUsage(responseId, userId, usedModel, tokenUsage, 'success', genTimeMs),
+              ).catch((e: any) => console.warn('[COST-LEDGER] persist failed:', e?.message || e))
 
               // NOTE: the ZeroDB saveGeneration now runs (awaited) earlier on the
               // success path (#89) so it survives slow/cut requests. Not repeated
