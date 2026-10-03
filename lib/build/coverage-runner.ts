@@ -18,12 +18,23 @@
  * Deliberately decoupled from Gitea/company-repo: this module only knows about
  * a FileMap on disk. Fetching a company's current repo state and writing it to
  * a temp directory is the CALLER's job (see #374 — task-git-sync wiring).
+ *
+ * #875: this previously ran a founder's own generated test command via a raw
+ * `spawn()` directly on Builder's production server — zero isolation between
+ * untrusted, LLM-generated code and the process serving every other founder's
+ * requests. When E2B_API_KEY is configured, the real run now happens inside
+ * an isolated E2B (Firecracker microVM) sandbox instead — see
+ * lib/build/e2b-sandbox.ts. Falls back to the local subprocess path only
+ * when E2B isn't configured, so a half-configured environment fails toward
+ * "less isolated" rather than toward "silently broken" (mirrors
+ * isBedrockEnabled()'s fail-closed pattern in lib/bedrock-client.ts).
  */
 
 import { promises as fs } from 'fs'
 import path from 'path'
 import os from 'os'
 import { spawn } from 'child_process'
+import { isE2BEnabled, runSequenceInE2BSandbox } from './e2b-sandbox'
 
 export interface FileMap {
   [relativePath: string]: string
@@ -157,7 +168,7 @@ function runCommand(
  */
 export async function runCoverage(
   files: FileMap,
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; env?: NodeJS.ProcessEnv } = {},
 ): Promise<CoverageResult> {
   const timeoutMs = opts.timeoutMs ?? RUN_TIMEOUT_MS
   const testCommand = detectTestCommand(files['package.json'] ?? files['/package.json'])
@@ -168,6 +179,10 @@ export async function runCoverage(
       passed: false,
       reason: 'No vitest dependency + test script found — this app has no coverage-testable suite yet.',
     }
+  }
+
+  if (isE2BEnabled(opts.env)) {
+    return runCoverageInE2B(files, testCommand, timeoutMs)
   }
 
   let dir: string | null = null
@@ -248,5 +263,92 @@ export async function runCoverage(
     if (dir) {
       await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
     }
+  }
+}
+
+const COVERAGE_RELATIVE_PATH = '.coverage-output/coverage-summary.json'
+
+/**
+ * E2B-isolated path (#875): the same install → install-coverage-dep → run →
+ * read-coverage-summary sequence as the local-subprocess path above, but
+ * executed inside one isolated E2B sandbox instead of a local temp dir, so a
+ * founder's own generated test command never touches Builder's host process.
+ * Mirrors the local path's per-step error labeling (install failure vs.
+ * coverage-dep install failure vs. test-run failure are distinguishable).
+ */
+async function runCoverageInE2B(
+  files: FileMap,
+  testCommand: { command: string; args: string[] },
+  timeoutMs: number,
+): Promise<CoverageResult> {
+  const coverageArgs = [...testCommand.args, `--coverage.reportsDirectory=.coverage-output`, '--coverage.reporter=json-summary']
+
+  const session = await runSequenceInE2BSandbox(
+    files,
+    [
+      { command: 'npm', args: ['install', '--no-audit', '--no-fund'] },
+      { command: 'npm', args: ['install', '--no-audit', '--no-fund', '--no-save', '@vitest/coverage-v8@3.2.4'] },
+      { command: testCommand.command, args: coverageArgs },
+    ],
+    { timeoutMs, readBack: [COVERAGE_RELATIVE_PATH] },
+  )
+
+  if (session.sandboxError) {
+    return {
+      coveragePercent: null,
+      testable: true,
+      passed: false,
+      reason: `E2B sandbox unavailable: ${session.sandboxError}`,
+    }
+  }
+
+  const [install, installCoverageDep, run] = session.commandResults
+  const coveragePercent = parseCoverageSummary(session.files[COVERAGE_RELATIVE_PATH])
+
+  if (!install || install.exitCode !== 0) {
+    return {
+      coveragePercent: null,
+      testable: true,
+      passed: false,
+      reason: install?.timedOut
+        ? `npm install timed out after ${timeoutMs}ms (E2B sandbox)`
+        : `npm install failed (exit ${install?.exitCode ?? 'unknown'}) (E2B sandbox)`,
+    }
+  }
+
+  if (!installCoverageDep || installCoverageDep.exitCode !== 0) {
+    return {
+      coveragePercent: null,
+      testable: true,
+      passed: false,
+      reason: installCoverageDep?.timedOut
+        ? `@vitest/coverage-v8 install timed out after ${timeoutMs}ms (E2B sandbox)`
+        : `@vitest/coverage-v8 install failed (exit ${installCoverageDep?.exitCode ?? 'unknown'}) (E2B sandbox)`,
+    }
+  }
+
+  if (!run) {
+    return {
+      coveragePercent,
+      testable: true,
+      passed: false,
+      reason: 'Test run did not produce a result (E2B sandbox)',
+    }
+  }
+
+  if (run.timedOut) {
+    return {
+      coveragePercent,
+      testable: true,
+      passed: false,
+      reason: `Test run timed out after ${timeoutMs}ms (E2B sandbox)`,
+    }
+  }
+
+  return {
+    coveragePercent,
+    testable: true,
+    passed: run.exitCode === 0,
+    reason: run.exitCode === 0 ? undefined : `Test run exited with code ${run.exitCode} (E2B sandbox)`,
   }
 }
