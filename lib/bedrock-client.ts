@@ -1,7 +1,5 @@
 /**
- * Minimal Amazon Bedrock client for Anthropic Claude models (builder Config C),
- * plus the open-source models on this account's Bedrock catalog (Kimi, MiniMax,
- * GLM — builder#895, cheap tier).
+ * Minimal Amazon Bedrock client for Anthropic Claude models (builder Config C).
  *
  * Why a hand-rolled client instead of @anthropic-ai/bedrock-sdk:
  *   - The builder container authenticates to Bedrock with a BEARER TOKEN
@@ -13,18 +11,23 @@
  *     ({anthropic_version, max_tokens, system, messages}). Verified live:
  *     POST /model/us.anthropic.claude-sonnet-4-5-20250929-v1:0/invoke -> HTTP 200.
  *
- * Non-Anthropic models on this same Bedrock account (moonshotai.kimi-*,
- * minimax.minimax-*, zai.glm-*) accept that same Anthropic-shaped request body
- * (they just ignore the Claude-only fields) but reply in OpenAI chat-completions
- * shape — `choices[0].message.content` / `usage.prompt_tokens` /
- * `usage.completion_tokens` — not Claude's `content[]` / `input_tokens` /
- * `output_tokens`. Verified live against all three providers 2026-10-02. This
- * client detects the provider from the model ID prefix and normalizes the
- * response back to the Claude shape so every call site stays provider-agnostic.
- *
  * This client exposes a `.messages.create()` method whose signature and return
  * shape match the @anthropic-ai/sdk client the route already uses, so the call
  * site is a drop-in swap.
+ *
+ * builder#895 (2026-10-02): this client ALSO normalizes responses from the
+ * non-Anthropic models on this same Bedrock account's catalog (moonshotai.kimi-*,
+ * minimax.minimax-*, zai.glm-*) — they accept the same Anthropic-shaped request
+ * body but reply in OpenAI chat-completions shape (`choices[0].message.content` /
+ * `usage.prompt_tokens`/`completion_tokens`), not Claude's. isOpenAIShapedModel()
+ * below detects this and normalizes it back. That infrastructure is kept (it's
+ * correct and tested) even though the attempt to actually USE one of these models
+ * for the `simple` complexity tier was reverted the same day — real end-to-end
+ * testing against the actual production system prompt showed all three ignore
+ * the required React/TSX output structure and emit raw HTML/markdown instead
+ * (see lib/build/model-select.ts's revert note for the full story). Route a
+ * call here to one of these models only after that prompt/extraction mismatch
+ * is actually solved, not by itself.
  */
 
 export interface BedrockMessage {

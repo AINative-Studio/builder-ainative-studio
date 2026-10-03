@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import { selectModelForComplexity, modelSelectionReport } from '@/lib/build/model-select'
 
-describe('model-select (#306, #895) — complexity-driven, quality-first', () => {
-  const KIMI25 = 'moonshotai.kimi-k2.5'
+describe('model-select (#306) — complexity-driven, quality-first', () => {
+  const SONNET45 = 'us.anthropic.claude-sonnet-4-5-20250929-v1:0'
   const SONNET46 = 'us.anthropic.claude-sonnet-4-6'
   const OPUS46 = 'us.anthropic.claude-opus-4-6-v1'
 
-  it('maps each tier to its default model — open-source for simple, Opus ONLY for complex', () => {
-    expect(selectModelForComplexity('simple', { env: {} })).toBe(KIMI25)
+  it('maps each tier to its default Bedrock profile — Opus ONLY for complex', () => {
+    expect(selectModelForComplexity('simple', { env: {} })).toBe(SONNET45)
     expect(selectModelForComplexity('medium', { env: {} })).toBe(SONNET46)
     expect(selectModelForComplexity('complex', { env: {} })).toBe(OPUS46)
   })
@@ -23,7 +23,7 @@ describe('model-select (#306, #895) — complexity-driven, quality-first', () =>
     expect(selectModelForComplexity('medium', { wantsMultiFile: true, env: {} })).toBe(OPUS46)
     expect(selectModelForComplexity('simple', { wantsMultiFile: true, env: {} })).toBe(OPUS46)
     // Without the multi-file signal, tiers stay on their cheap defaults.
-    expect(selectModelForComplexity('simple', { env: {} })).toBe(KIMI25)
+    expect(selectModelForComplexity('simple', { env: {} })).toBe(SONNET45)
     expect(selectModelForComplexity('medium', { env: {} })).toBe(SONNET46)
   })
 
