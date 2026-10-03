@@ -90,6 +90,7 @@
     "dotenv": "^16.4.5",
     "drizzle-kit": "^0.31.4",
     "drizzle-orm": "^0.44.5",
+    "e2b": "^2.52.0",
     "embla-carousel-react": "^8.6.0",
     "form-data": "^4.0.4",
     "ioredis": "^5.8.0",
