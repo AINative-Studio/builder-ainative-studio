@@ -15,6 +15,7 @@ import {
   createTask,
   listTasks,
   updateTask,
+  needsSplit,
   MAX_LOAD_TASKS,
   type BuildTask,
 } from '@/lib/build/task-store'
@@ -224,6 +225,52 @@ describe('coerceTask (#55)', () => {
   it('truncates an oversized rationale to 300 chars', () => {
     const t = coerceTask({ title: 'x', story_points: 2, estimate_rationale: 'y'.repeat(1000) })
     expect(t?.estimateRationale?.length).toBe(300)
+  })
+
+  // #903: needsSplit() derives from a coerced task's storyPoints (not a stored field)
+  it('a task coerced with storyPoints 3/5/8 is flagged needsSplit by the derivation', () => {
+    expect(needsSplit(coerceTask({ title: 'x', story_points: 3 })!.storyPoints)).toBe(true)
+    expect(needsSplit(coerceTask({ title: 'x', story_points: 5 })!.storyPoints)).toBe(true)
+    expect(needsSplit(coerceTask({ title: 'x', story_points: 8 })!.storyPoints)).toBe(true)
+  })
+  it('a task coerced with storyPoints 0/1/2 is not flagged needsSplit by the derivation', () => {
+    expect(needsSplit(coerceTask({ title: 'x', story_points: 0 })!.storyPoints)).toBe(false)
+    expect(needsSplit(coerceTask({ title: 'x', story_points: 1 })!.storyPoints)).toBe(false)
+    expect(needsSplit(coerceTask({ title: 'x', story_points: 2 })!.storyPoints)).toBe(false)
+  })
+  it('an unestimated (null storyPoints) coerced task is not flagged needsSplit', () => {
+    expect(needsSplit(coerceTask({ title: 'x' })!.storyPoints)).toBe(false)
+  })
+})
+
+// ---------- needsSplit ----------
+describe('needsSplit (#903)', () => {
+  /**
+   * `.ainative/RULES.MD` §2: "3/5/8: large — split into smaller stories first."
+   * `needsSplit` is a PURE derivation from `BuildTask.storyPoints` — deliberately
+   * NOT a persisted field on the row (see task-store.ts's `BuildTask` doc
+   * comment for the full rationale): storyPoints is the single source of truth,
+   * so a derived function can never drift out of sync with it the way a second
+   * stored boolean could (e.g. a manual ZeroDB row edit, or a future re-estimate,
+   * updating storyPoints without anyone remembering to also flip a stored flag).
+   */
+  it('is true for the three oversized Fibonacci points: 3, 5, 8', () => {
+    expect(needsSplit(3)).toBe(true)
+    expect(needsSplit(5)).toBe(true)
+    expect(needsSplit(8)).toBe(true)
+  })
+  it('is false for the three small Fibonacci points: 0, 1, 2', () => {
+    expect(needsSplit(0)).toBe(false)
+    expect(needsSplit(1)).toBe(false)
+    expect(needsSplit(2)).toBe(false)
+  })
+  it('is false for null (unestimated — never blocks an old/pre-estimate row)', () => {
+    expect(needsSplit(null)).toBe(false)
+  })
+  it('is false for a non-Fibonacci/garbage number (defensive — only a recognized oversized point flags)', () => {
+    expect(needsSplit(4 as any)).toBe(false)
+    expect(needsSplit(13 as any)).toBe(false)
+    expect(needsSplit(-1 as any)).toBe(false)
   })
 })
 

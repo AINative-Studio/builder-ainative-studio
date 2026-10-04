@@ -12,7 +12,13 @@ const h = vi.hoisted(() => ({
   resolveTask: vi.fn(),
 }))
 
-vi.mock('@/lib/build/task-store', () => ({ listTasks: h.listTasks }))
+// needsSplit (#903) is a real, pure, no-I/O derivation — keep the real
+// implementation in this mock (rather than stubbing it) so these tests prove
+// actual behavior, not a re-description of a fake.
+vi.mock('@/lib/build/task-store', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/build/task-store')>('@/lib/build/task-store')
+  return { listTasks: h.listTasks, needsSplit: actual.needsSplit }
+})
 vi.mock('@/lib/build/task-resolver', () => ({ resolveTask: h.resolveTask }))
 
 import {
@@ -112,6 +118,63 @@ describe('runTaskResolutions (#433)', () => {
     h.listTasks.mockResolvedValue([])
     const res = await runTaskResolutions('a::b', 'my-co')
     expect(res).toEqual({ attempted: 0, completed: 0 })
+  })
+})
+
+/**
+ * #903 (epic #900, depends on #902): a `todo` task estimated at 3/5/8 story
+ * points is oversized per `.ainative/RULES.MD` §2 and must be SPLIT (#904)
+ * before it's implemented directly — this loop must never hand one to
+ * resolveTask() while it's still oversized.
+ */
+describe('runTaskResolutions skips oversized (needsSplit) tasks (#903)', () => {
+  it('never calls resolveTask for a todo task estimated at 3, 5, or 8', async () => {
+    h.listTasks.mockResolvedValue([
+      task({ id: 't3', storyPoints: 3 }),
+      task({ id: 't5', storyPoints: 5 }),
+      task({ id: 't8', storyPoints: 8 }),
+    ])
+    const res = await runTaskResolutions('a::b', 'my-co', 'enterprise')
+    expect(res).toEqual({ attempted: 0, completed: 0 })
+    expect(h.resolveTask).not.toHaveBeenCalled()
+  })
+
+  it('still resolves a todo task estimated at 0, 1, or 2 (not oversized)', async () => {
+    h.listTasks.mockResolvedValue([task({ id: 't1', storyPoints: 1 })])
+    h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
+    const res = await runTaskResolutions('a::b', 'my-co')
+    expect(res).toEqual({ attempted: 1, completed: 1 })
+    expect(h.resolveTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 't1' }), 'my-co')
+  })
+
+  it('still resolves an unestimated (null storyPoints) todo task — never blocks on a missing estimate', async () => {
+    h.listTasks.mockResolvedValue([task({ id: 'tn', storyPoints: null })])
+    h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
+    const res = await runTaskResolutions('a::b', 'my-co')
+    expect(res).toEqual({ attempted: 1, completed: 1 })
+  })
+
+  it('skips an oversized task but still resolves a smaller due task in the same run, under the tier limit', async () => {
+    h.listTasks.mockResolvedValue([
+      task({ id: 'big', storyPoints: 8, createdAt: '2026-01-01T00:00:00.000Z' }),
+      task({ id: 'small', storyPoints: 2, createdAt: '2026-01-02T00:00:00.000Z' }),
+    ])
+    h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
+    const res = await runTaskResolutions('a::b', 'my-co')
+    expect(res).toEqual({ attempted: 1, completed: 1 })
+    expect(h.resolveTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 'small' }), 'my-co')
+  })
+
+  it('an oversized task never counts against the per-run tier limit (a paid tier still gets real throughput)', async () => {
+    h.listTasks.mockResolvedValue([
+      task({ id: 'big1', storyPoints: 5, createdAt: '2026-01-01T00:00:00.000Z' }),
+      task({ id: 'ok1', storyPoints: 1, createdAt: '2026-01-02T00:00:00.000Z' }),
+      task({ id: 'ok2', storyPoints: 2, createdAt: '2026-01-03T00:00:00.000Z' }),
+    ])
+    h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
+    const res = await runTaskResolutions('a::b', 'my-co', 'starter')
+    expect(res.attempted).toBe(2)
+    expect(h.resolveTask).not.toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 'big1' }), 'my-co')
   })
 })
 

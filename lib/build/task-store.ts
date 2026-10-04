@@ -192,6 +192,24 @@ export function isTaskStage(value: unknown): value is TaskStage {
 }
 
 /**
+ * Does a task sized at `storyPoints` exceed the split threshold? (#903, epic
+ * #900, depends on #902.) `.ainative/RULES.MD` §2: "3/5/8: large — split into
+ * smaller stories first." Pure derivation from `BuildTask.storyPoints` —
+ * deliberately NOT a persisted field on the row. `storyPoints` is already the
+ * single source of truth for a task's size; a second stored boolean could
+ * drift out of sync with it (a manual row edit, or a future re-estimate,
+ * changing storyPoints without remembering to also flip a stored flag), while
+ * a pure function derived from it every time it's checked cannot. `null`
+ * (unestimated — a pre-#902 row, or a failed/best-effort estimation call)
+ * and any value outside the real Fibonacci set both return false — this is
+ * detection-only (#903); the actual decomposition is #904, and an oversized
+ * flag should never silently appear on data that was never actually sized.
+ */
+export function needsSplit(storyPoints: number | null): boolean {
+  return isFibonacciPoint(storyPoints) && (storyPoints === 3 || storyPoints === 5 || storyPoints === 8)
+}
+
+/**
  * Filter a task list by stage. A falsy / 'all' stage returns everything. An
  * unknown stage returns []. Pure.
  */
