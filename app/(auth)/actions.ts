@@ -6,6 +6,8 @@ import { createUser, getUser } from '@/lib/db/queries'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import { AuthError } from 'next-auth'
+import { headers } from 'next/headers'
+import { turnstileEnabled, verifyTurnstileToken } from '@/lib/turnstile'
 
 const signInSchema = z.object({
   email: z.string().email('Please enter a valid email.'),
@@ -86,6 +88,21 @@ export async function signUpAction(
       email: formData.get('email'),
       password: formData.get('password'),
     })
+
+    if (turnstileEnabled()) {
+      const token = formData.get('turnstileToken')
+      const ip = (await headers()).get('x-forwarded-for')?.split(',')[0]?.trim()
+      const verification = await verifyTurnstileToken(
+        typeof token === 'string' ? token : null,
+        ip,
+      )
+      if (!verification.success) {
+        return {
+          type: 'error',
+          message: 'Verification failed. Please try again.',
+        }
+      }
+    }
 
     const existingUsers = await getUser(validatedData.email)
 

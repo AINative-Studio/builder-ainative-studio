@@ -1,9 +1,10 @@
 'use client'
 
-import { useActionState } from 'react'
+import { useActionState, useState } from 'react'
 import { signInAction, signUpAction } from '@/app/(auth)/actions'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { TurnstileWidget } from '@/components/turnstile-widget'
 import Link from 'next/link'
 
 interface AuthFormProps {
@@ -15,6 +16,8 @@ export function AuthForm({ type }: AuthFormProps) {
     type === 'signin' ? signInAction : signUpAction,
     undefined,
   )
+  const [turnstileToken, setTurnstileToken] = useState('')
+  const turnstileRequired = Boolean(process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY)
 
   return (
     <>
@@ -42,11 +45,22 @@ export function AuthForm({ type }: AuthFormProps) {
           />
         </div>
 
+        {type === 'signup' && (
+          <>
+            <input type="hidden" name="turnstileToken" value={turnstileToken} />
+            <TurnstileWidget onVerify={setTurnstileToken} onExpire={() => setTurnstileToken('')} />
+          </>
+        )}
+
         {state?.type === 'error' && (
           <div className="text-sm text-red-500">{state.message}</div>
         )}
 
-        <Button type="submit" className="w-full" disabled={isPending}>
+        <Button
+          type="submit"
+          className="w-full"
+          disabled={isPending || (type === 'signup' && turnstileRequired && !turnstileToken)}
+        >
           {isPending
             ? type === 'signin'
               ? 'Signing in...'
