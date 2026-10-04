@@ -18,7 +18,7 @@
  * loop from continuing to the next task/company).
  */
 
-import { listTasks, type BuildTask } from '@/lib/build/task-store'
+import { listTasks, needsSplit, type BuildTask } from '@/lib/build/task-store'
 import { resolveTask } from '@/lib/build/task-resolver'
 
 /**
@@ -139,6 +139,14 @@ export async function runTaskResolutions(
     const tasks = await listTasks(scopeKey)
     const due = tasks
       .filter((t): t is BuildTask => t.stage === 'todo')
+      // #903 (epic #900, depends on #902): a task estimated at 3/5/8 story
+      // points is oversized per .ainative/RULES.MD §2 and must be SPLIT (#904)
+      // before it's implemented directly — never hand one to resolveTask()
+      // while it's still oversized. Filtered out here (not counted against
+      // the tier limit) rather than merely skipped-but-counted, so an
+      // oversized task sitting in the backlog never steals a paid tier's real
+      // nightly throughput from its smaller, resolvable due tasks.
+      .filter((t) => !needsSplit(t.storyPoints))
       .sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime())
       .slice(0, limit)
 
