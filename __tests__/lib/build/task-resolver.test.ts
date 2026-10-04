@@ -54,33 +54,84 @@ describe('decideOutcomeFromCoverage', () => {
 /**
  * #905 — "No Code Without An Issue" (.ainative/ISSUE_TRACKING_ENFORCEMENT.md's
  * Golden Rule). buildTaskIssueBody() renders the issue body resolveTask() opens
- * on the company's own Gitea repo BEFORE implementation begins. Estimate/
- * rationale (story points) is explicitly out of scope here — that lands via
- * the follow-up issue #906 — so this body says so honestly rather than
- * fabricating a point value.
+ * on the company's own Gitea repo BEFORE implementation begins.
  */
 describe('buildTaskIssueBody (#905)', () => {
   it('includes the problem/context drawn from the task title and detail', () => {
-    const body = buildTaskIssueBody({ title: 'Add dark mode', detail: 'Founder asked for a toggle in settings.' })
+    const body = buildTaskIssueBody({ title: 'Add dark mode', detail: 'Founder asked for a toggle in settings.', storyPoints: null, estimateRationale: null })
     expect(body).toContain('Add dark mode')
     expect(body).toContain('Founder asked for a toggle in settings.')
     expect(body).toMatch(/## Problem\/Context/)
   })
 
   it('falls back to the title alone when detail is absent', () => {
-    const body = buildTaskIssueBody({ title: 'Add dark mode' })
+    const body = buildTaskIssueBody({ title: 'Add dark mode', storyPoints: null, estimateRationale: null })
     expect(body).toContain('Add dark mode')
     expect(body).not.toMatch(/undefined/)
   })
 
   it('includes an honest acceptance criteria section', () => {
-    const body = buildTaskIssueBody({ title: 'Add dark mode' })
+    const body = buildTaskIssueBody({ title: 'Add dark mode', storyPoints: null, estimateRationale: null })
     expect(body).toMatch(/## Acceptance Criteria/)
   })
+})
 
-  it('notes that estimate/rationale is out of scope and lands via #906, without fabricating a story point', () => {
+/**
+ * #906 — attach the task's REAL Fibonacci estimate (#902) + rationale to the
+ * issue body opened by #905, matching ISSUE_TRACKING_ENFORCEMENT.md's required
+ * "## Estimate" template section (Story Points / Rationale). A task with no
+ * estimate yet (storyPoints: null — a pre-#902 row, or a failed estimation
+ * call) must show an honest "unestimated" state, never a fabricated number.
+ */
+describe('buildTaskIssueBody — estimate section (#906)', () => {
+  it('includes the real Fibonacci story points and rationale when the task has an estimate', () => {
+    const body = buildTaskIssueBody({
+      title: 'Add dark mode',
+      storyPoints: 3,
+      estimateRationale: 'Moderate — one clear feature slice across settings + theme provider.',
+    })
+    expect(body).toMatch(/## Estimate/)
+    expect(body).toMatch(/\*\*Story Points:\*\*\s*3/)
+    expect(body).toContain('Moderate — one clear feature slice across settings + theme provider.')
+  })
+
+  it('renders each of the six canonical Fibonacci values verbatim (0 included — falsy but valid)', () => {
+    for (const points of [0, 1, 2, 3, 5, 8] as const) {
+      const body = buildTaskIssueBody({ title: 'T', storyPoints: points, estimateRationale: 'r' })
+      expect(body).toMatch(new RegExp(`\\*\\*Story Points:\\*\\*\\s*${points}\\b`))
+    }
+  })
+
+  it('shows an honest "unestimated" state when storyPoints is null — never fabricates a number', () => {
+    const body = buildTaskIssueBody({ title: 'Add dark mode', storyPoints: null, estimateRationale: null })
+    expect(body).toMatch(/## Estimate/)
+    expect(body).toMatch(/\*\*Story Points:\*\*\s*Unestimated/i)
+    expect(body).not.toMatch(/\*\*Story Points:\*\*\s*\d/)
+  })
+
+  it('shows an honest unestimated state when storyPoints is null even if a stray rationale string is present', () => {
+    // Defensive: task-store.ts's own invariant keeps these null together, but
+    // buildTaskIssueBody must not trust an inconsistent rationale alone to
+    // fabricate a number — null storyPoints always wins.
+    const body = buildTaskIssueBody({ title: 'Add dark mode', storyPoints: null, estimateRationale: 'stray text' })
+    expect(body).toMatch(/\*\*Story Points:\*\*\s*Unestimated/i)
+  })
+
+  it('omits a rationale line when unestimated rather than printing "null" or "undefined"', () => {
+    const body = buildTaskIssueBody({ title: 'Add dark mode', storyPoints: null, estimateRationale: null })
+    expect(body).not.toMatch(/null/i)
+    expect(body).not.toMatch(/undefined/i)
+  })
+
+  it('still includes Problem/Context and Acceptance Criteria alongside the new Estimate section', () => {
+    const body = buildTaskIssueBody({ title: 'Add dark mode', storyPoints: 1, estimateRationale: 'Tiny, single-file.' })
+    expect(body).toMatch(/## Problem\/Context/)
+    expect(body).toMatch(/## Acceptance Criteria/)
+    expect(body).toMatch(/## Estimate/)
+  })
+
+  it('defaults to an unestimated state when storyPoints/estimateRationale are omitted entirely (back-compat callers)', () => {
     const body = buildTaskIssueBody({ title: 'Add dark mode' })
-    expect(body).toMatch(/#906/)
-    expect(body).not.toMatch(/Story Points:\*\*\s*\d/)
+    expect(body).toMatch(/\*\*Story Points:\*\*\s*Unestimated/i)
   })
 })

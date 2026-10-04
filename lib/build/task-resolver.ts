@@ -34,11 +34,18 @@
  * company's own Gitea repo first. Now, before `implementTask` runs,
  * resolveTask() opens a real issue (via the existing createIssue() client
  * method added by #744) using an honest body (problem/context + acceptance
- * criteria; estimate/rationale is explicitly out of scope — lands via #906)
- * and persists the real issue number on the task. Best-effort, matching this
- * pipeline's existing pattern: a creation failure logs and proceeds — it
- * never blocks or fails the resolver. Not attempted again for a task that
- * already has one (no duplicate issues on a retried/resumed task).
+ * criteria + estimate, per #906) and persists the real issue number on the
+ * task. Best-effort, matching this pipeline's existing pattern: a creation
+ * failure logs and proceeds — it never blocks or fails the resolver. Not
+ * attempted again for a task that already has one (no duplicate issues on a
+ * retried/resumed task).
+ *
+ * #906 — the issue body's "## Estimate" section now carries the task's REAL
+ * Fibonacci storyPoints/estimateRationale (populated at creation time by
+ * #902's lib/build/story-estimator.ts), matching
+ * ISSUE_TRACKING_ENFORCEMENT.md's required template section. A task with no
+ * estimate yet (`storyPoints: null`) renders an honest "Unestimated" state —
+ * see buildTaskIssueBody() below.
  */
 
 import { fetchRepoFiles, mergeTaskPR, createIssue } from '@/lib/git/gitea-client'
@@ -106,14 +113,28 @@ export function decideOutcomeFromCoverage(
 /**
  * Render the body of the Gitea issue opened before a task is implemented
  * (#905). Follows the shape of `.ainative/ISSUE_TRACKING_ENFORCEMENT.md`'s
- * template — problem/context and acceptance criteria — without fabricating
- * the parts of that template this issue deliberately leaves out: there is no
- * Fibonacci estimate/rationale here (that's #906's scope, not this one's;
- * see docs/audits/AINATIVE_PROCESS_PARITY_GAP_2026-10-04.md §3e), and no
- * issue↔PR linkage beyond a plain note (that's #907's scope). PURE.
+ * template — problem/context, acceptance criteria, and (#906) the required
+ * "## Estimate" section carrying the task's REAL Fibonacci story-point size
+ * + rationale (lib/build/story-estimator.ts via #902) — without fabricating
+ * the parts of that template still out of scope: issue↔PR linkage beyond a
+ * plain note is #907's scope. PURE.
+ *
+ * #906 — a task that has no estimate yet (`storyPoints: null`: a pre-#902
+ * row, or this task's own estimation call failed — see story-estimator.ts's
+ * BEST-EFFORT contract) renders an honest "Unestimated" state rather than
+ * ever inventing a Fibonacci number. `storyPoints` is checked with a strict
+ * `=== null` test (not a falsy check) so the real, valid `0` estimate (a
+ * trivial task) renders as `0`, not as unestimated.
  */
-export function buildTaskIssueBody(task: { title: string; detail?: string }): string {
+export function buildTaskIssueBody(task: { title: string; detail?: string; storyPoints?: number | null; estimateRationale?: string | null }): string {
   const context = task.detail?.trim() || task.title
+  const hasEstimate = task.storyPoints !== null && task.storyPoints !== undefined
+  const estimateLines = hasEstimate
+    ? [
+        `**Story Points:** ${task.storyPoints}`,
+        `**Rationale:** ${task.estimateRationale?.trim() || 'No rationale recorded.'}`,
+      ]
+    : [`**Story Points:** Unestimated`, `**Rationale:** Not yet estimated.`]
   return [
     `## Problem/Context`,
     `**${task.title}**`,
@@ -124,7 +145,10 @@ export function buildTaskIssueBody(task: { title: string; detail?: string }): st
     '- [ ] The described change is implemented and committed',
     '- [ ] Real test coverage on changed files meets the project floor',
     '',
-    `_Opened automatically before implementation begins, per .ainative/ISSUE_TRACKING_ENFORCEMENT.md's "No Code Without An Issue" rule (#905). Estimate/rationale and issue↔PR linkage are tracked separately — see #906 and #907._`,
+    '## Estimate',
+    ...estimateLines,
+    '',
+    `_Opened automatically before implementation begins, per .ainative/ISSUE_TRACKING_ENFORCEMENT.md's "No Code Without An Issue" rule (#905). Issue↔PR linkage is tracked separately — see #907._`,
   ].join('\n')
 }
 
