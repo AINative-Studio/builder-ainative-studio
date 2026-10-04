@@ -94,6 +94,11 @@ export function ArtifactFrame({
           companyName: state.companyName || undefined,
           prior: collectPrior(views, state.generated, view),
           feedback: fb || undefined,
+          // #927: the real project identifier so the server persists this
+          // regenerated artifact (overwriting the prior persisted version for
+          // this view, not duplicating it) — absent for early intake before a
+          // project exists, in which case the server simply skips persisting.
+          companyId: state.appChatId || undefined,
         }),
       })
       const data = await res.json().catch(() => null)

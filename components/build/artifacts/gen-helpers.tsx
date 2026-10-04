@@ -109,6 +109,8 @@ export function useGenAutoRetry<T = any>(
         track: state.track,
         companyName: state.companyName || undefined,
         prior: collectPrior(views, state.generated, view),
+        // #927: real project identifier so a successful retry persists server-side too.
+        companyId: state.appChatId || undefined,
       }),
     })
       .then((res) => res.json().catch(() => null).then((data) => ({ res, data })))

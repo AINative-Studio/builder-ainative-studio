@@ -11,9 +11,21 @@
  * The enterprise-gated agent-swarm path is reserved for the paid real-build step
  * (see core#6422).
  *
- * Body: { view, idea, track, companyName?, prior?, feedback? }
+ * Body: { view, idea, track, companyName?, prior?, feedback?, companyId? }
  *   feedback (GR-16 #329): founder's review notes when REGENERATING an artifact —
  *   appended to the generation prompt so the redraft applies the requested changes.
+ *   companyId (#927): the real project identifier (BuildState.appChatId, the
+ *   slug served at /build/{slug}). When present, every successful generation
+ *   is persisted via document-store's upsertDocument() under the SAME
+ *   {ownerKey}::{companySlug} scope key app/api/build/documents/route.ts
+ *   already uses — overwriting any prior persisted doc for this (project,
+ *   view) pair rather than accumulating a duplicate on every redraft. This is
+ *   the fix for the real root blocker behind #900/#901: nothing ever
+ *   persisted a founder's generated artifacts anywhere, so the nightly loop's
+ *   PRD-priority read path always fell back to a generic description because
+ *   there was never a real PRD document to read. Persistence is STRICTLY
+ *   best-effort — absent companyId, or any persistence failure, never blocks
+ *   or alters the artifact response reaching the founder.
  * Returns: { view, content (parsed JSON per artifact schema), provider, model }
  */
 
@@ -29,6 +41,8 @@ import { modelsForTier } from '@/lib/build/tier-models'
 import { loadCoreProfile } from '@/lib/build/profile'
 import { languageInstruction, normalizeLanguage, DEFAULT_CONTENT_LANGUAGE } from '@/lib/build/content-language'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
+import { deriveOwnerKey, chatScopeKey } from '@/lib/build/chat-store'
+import { upsertDocument, normalizeType, DOC_TYPE_LABELS } from '@/lib/build/document-store'
 
 export const runtime = 'nodejs'
 
@@ -120,6 +134,47 @@ async function resolveContentLanguage(bodyLanguage: unknown): Promise<string> {
   }
 }
 
+/**
+ * Resolve the durable documents scope key for persistence from the SERVER
+ * session + a client-supplied companyId (#927). Mirrors
+ * app/api/build/documents/route.ts's resolveScopeKey exactly — the owner half
+ * is ALWAYS taken from the server session, never trusted from the body, so
+ * one founder's artifacts can never be written into another's scope. Returns
+ * '' when there's no companyId yet (early intake, before a project exists) —
+ * the caller treats that as "don't persist", not an error.
+ */
+async function resolvePersistScopeKey(companyId: unknown): Promise<string> {
+  const slug = String(companyId || '').trim()
+  if (!slug) return ''
+  const session = await auth().catch(() => null)
+  return chatScopeKey(deriveOwnerKey(session as any), slug)
+}
+
+/**
+ * Best-effort persistence of a successfully generated artifact (#927). Never
+ * throws and never blocks the response that already has its content — a
+ * ZeroDB hiccup degrades silently here exactly like every other best-effort
+ * write in this codebase (document-store.ts's own createDocument/
+ * upsertDocument, task-store.ts's updateTask, …). Overwrites rather than
+ * duplicates: upsertDocument matches the existing doc for this (scope, view)
+ * pair and replaces it, so a founder's redraft never piles up copies.
+ */
+async function persistArtifact(companyId: unknown, view: string, content: unknown): Promise<void> {
+  try {
+    const scopeKey = await resolvePersistScopeKey(companyId)
+    if (!scopeKey) return // no project yet — honest no-op, not a failure
+    const type = normalizeType(view)
+    const title = DOC_TYPE_LABELS[type] || view
+    await upsertDocument(scopeKey, {
+      title,
+      content: JSON.stringify(content),
+      type: view,
+    })
+  } catch (e) {
+    console.warn(`[build/artifact] persistArtifact failed for view=${view}:`, (e as Error)?.message?.slice(0, 120) || e)
+  }
+}
+
 /** Pull the first balanced JSON object out of a model response (handles ```json fences, stray prose). */
 function parseJson(raw: string): unknown | null {
   if (!raw) return null
@@ -143,7 +198,7 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'invalid JSON body' }, { status: 400 })
   }
 
-  const { view, idea, track, companyName, prior, feedback } = body || {}
+  const { view, idea, track, companyName, prior, feedback, companyId } = body || {}
   if (!view || !ARTIFACT_PROMPTS[view]) {
     return Response.json({ error: `unknown or missing view: ${view}` }, { status: 400 })
   }
@@ -212,6 +267,7 @@ export async function POST(request: NextRequest) {
           .join('\n')
         const content = parseJson(text)
         if (content) {
+          await persistArtifact(companyId, view, content)
           return Response.json({ view, content, provider: claude.provider, model, tier: tierModels.tier })
         }
         attemptLog.push(`${claude.provider}/${model} pass ${pass + 1}: unparseable JSON`)
@@ -252,6 +308,7 @@ export async function POST(request: NextRequest) {
         const text = res.choices?.[0]?.message?.content || ''
         const content = parseJson(text)
         if (content) {
+          await persistArtifact(companyId, view, content)
           return Response.json({ view, content, provider: 'ainative', model, tier: tierModels.tier })
         }
         attemptLog.push(`ainative/${model} pass ${pass + 1}: unparseable JSON`)

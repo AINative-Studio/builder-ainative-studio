@@ -250,6 +250,7 @@ describe('useAutoplay — wedge draft fetch (hook body, #668)', () => {
       wedgePicked: '',
       wedgeDraft: null,
       idea: 'a hot sauce subscription box',
+      appChatId: 'hotsauce-co',
     })
     const dispatch = vi.fn()
     useAutoplay(state, dispatch)
@@ -264,6 +265,9 @@ describe('useAutoplay — wedge draft fetch (hook body, #668)', () => {
     )
     const sentBody = JSON.parse(fetchMock.mock.calls[0][1].body)
     expect(sentBody.idea).toBe('a hot sauce subscription box')
+    // #927: appChatId (the real project identifier) is threaded through as
+    // companyId so the server can persist this generated artifact.
+    expect(sentBody.companyId).toBe('hotsauce-co')
 
     // Let the fetch promise chain resolve before asserting the dispatch.
     await new Promise((r) => setTimeout(r, 0))
@@ -451,7 +455,7 @@ describe('useAutoplay — prose view (hook body)', () => {
     } as unknown as Response)
     vi.stubGlobal('fetch', fetchMock)
 
-    const state = wsState({ done: { design: 'done' }, view: 'brief', track: 'app', askedPrivacy: true, designStepDone: true })
+    const state = wsState({ done: { design: 'done' }, view: 'brief', track: 'app', askedPrivacy: true, designStepDone: true, appChatId: 'brief-co' })
     const dispatch = vi.fn()
     useAutoplay(state, dispatch)
     ;(globalThis as any).__triggerEffect?.(0)
@@ -459,6 +463,9 @@ describe('useAutoplay — prose view (hook body)', () => {
     await new Promise((r) => origSetTimeout(r, 50))
     const types = dispatch.mock.calls.map((c) => c[0].type)
     expect(types).toContain('GEN_DONE')
+    // #927: appChatId threaded through as companyId on the prose-generation fetch too.
+    const sentBody = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(sentBody.companyId).toBe('brief-co')
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
