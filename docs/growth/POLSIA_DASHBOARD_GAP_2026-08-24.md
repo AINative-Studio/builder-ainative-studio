@@ -22,7 +22,7 @@ Polsia's dashboard is a **closed black box**: every panel (Twitter, Email, Ads, 
 Polsia shows Twitter/Email/Ads/DB as its own black boxes. Builder's Live already has a business-systems grid (ZeroPipeline/ZeroInvoice/ZeroCommerce/ZeroVoice) — **push it further to full parity with Polsia's channel set, each backed by a primitive the user owns:**
 | Polsia panel | Builder equivalent (owned primitive) |
 |---|---|
-| Tasks / Routines | AgentCloud / OpenClaw swarm (real task_ids, our nightly loop) |
+| Tasks / Routines | AgentCloud / AINative Agent Swarm (real task_ids, our nightly loop) |
 | Documents (Research/Roadmap/Mission) | ZeroMemory + doc generation (already have artifacts) |
 | Website | Builder deploy + custom domain (owned, on Railway) |
 | Email | **ServiceOS / ZeroVoice** or a ZeroPipeline email sequence |

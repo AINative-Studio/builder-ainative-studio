@@ -7,13 +7,14 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { listEnrolled, recordRun } from '@/lib/build/loop-enrollment'
-import { runNightlyLoop } from '@/lib/build/autonomous-loop'
+import { runNightlyLoop, buildTaskDescription } from '@/lib/build/autonomous-loop'
 import { appendAutoRunEvent } from '@/lib/build/auto-mode'
 import { dispatchEventTitle } from '@/lib/build/auto-run-activity'
 import { chatScopeKey } from '@/lib/build/chat-store'
 import { createDocument, hasReportForDate, pruneDuplicateReports } from '@/lib/build/document-store'
 import { buildDailyReport, dailyReportTitle } from '@/lib/build/document-prompts'
 import { runMediaRoutines } from '@/lib/build/media-routine'
+import { createTask, listTasks } from '@/lib/build/task-store'
 import { runTaskResolutions } from '@/lib/build/task-resolution-loop'
 import { resolveApp } from '@/lib/build/app-registry'
 import { runNightlyCommsOutreach } from '@/lib/build/comms-policy'
@@ -160,6 +161,45 @@ export async function GET(request: NextRequest) {
           mediaGenerated += m.generated
         } catch (err) {
           logger.warn('Media routine run failed', { companyId: e.companyId, err: (err as Error)?.message })
+        }
+
+        // Backlog seeding (#898): runTaskResolutions() below only resolves
+        // tasks that ALREADY exist with stage:'todo' — nothing in the nightly
+        // loop ever created one, so the swarm dispatch above and the real
+        // implement→Gitea-commit→coverage-verify pipeline (task-resolver.ts)
+        // were two working but completely disconnected systems. Seed a real
+        // todo task from the SAME description already sent to the swarm, so
+        // there is something concrete for the resolver to actually implement.
+        //
+        // 'app' track only: the resolver's pipeline commits a code diff to the
+        // company's Gitea repo and coverage-gates it — meaningful for an app's
+        // "bug fix / UX polish / small feature" description, not for the
+        // 'company' track's business-ops description (positioning, pipeline,
+        // outreach), which has no repo to commit into.
+        //
+        // IDEMPOTENT: skip if this company already has an unresolved nightly
+        // task (todo or in_progress, source:'recurring') so a slow/failing
+        // resolver doesn't accumulate a new duplicate every night — same
+        // pattern as hasReportForDate above, applied to the task queue
+        // instead of the documents list.
+        if (e.track === 'app') {
+          try {
+            const scopeKey = chatScopeKey(e.ownerKey, e.companyId)
+            const existing = await listTasks(scopeKey)
+            const hasUnresolved = existing.some(
+              (t) => t.source === 'recurring' && (t.stage === 'todo' || t.stage === 'in_progress'),
+            )
+            if (!hasUnresolved) {
+              await createTask(scopeKey, {
+                title: `Nightly backlog: ${e.companyName}`,
+                detail: buildTaskDescription({ companyId: e.companyId, companyName: e.companyName, track: e.track, goal: e.goal }, r.briefing),
+                stage: 'todo',
+                source: 'recurring',
+              })
+            }
+          } catch (err) {
+            logger.warn('Nightly backlog task seed failed', { companyId: e.companyId, err: (err as Error)?.message })
+          }
         }
 
         // Task resolution (#433, epic #371): resolveTask() had zero real

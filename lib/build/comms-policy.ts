@@ -8,9 +8,10 @@
  * (lib/build/autonomous-loop.ts's `runNightlyLoop`, invoked per company by
  * app/api/build/nightly-loop/route.ts) — the ONE system with a legitimate,
  * ongoing reason to email a founder about their live company — never calls
- * `runHeadlessAgent` at all. It dispatches free-text tasks to core's OpenClaw
- * swarm (POST /api/v1/public/agent-swarm/tasks), a completely separate
- * execution environment with no access to Builder's local MCP servers.
+ * `runHeadlessAgent` at all. It dispatches free-text tasks to core's real
+ * Agent Swarm (POST /api/v1/public/agent-swarm/tasks, claimed and executed by
+ * core's own Celery consumer), a completely separate execution environment
+ * with no access to Builder's local MCP servers.
  *
  * OPTION A vs B (see the issue + this branch's PR description for the full
  * writeup): Option A — teaching the swarm task to call back into Builder's
