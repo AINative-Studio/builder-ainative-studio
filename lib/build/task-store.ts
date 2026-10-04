@@ -23,6 +23,7 @@
 
 import { deriveOwnerKey, chatScopeKey } from '@/lib/build/chat-store'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
+import { estimateStoryPoints, isFibonacciPoint, type FibonacciPoint } from '@/lib/build/story-estimator'
 
 const ZERODB_API = process.env.ZERODB_API_URL || 'https://api.ainative.studio/api'
 const PROJECT_ID = process.env.ZERODB_PROJECT_ID || '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
@@ -80,6 +81,16 @@ export interface BuildTask {
   taskId?: string | null
   /** Agent output / result text once it runs (shown in VIEW). */
   output?: string
+  /**
+   * Fibonacci story-point size (#902 · .ainative/RULES.MD §2: 0,1,2,3,5,8).
+   * Set via a best-effort LLM estimation call at creation time
+   * (lib/build/story-estimator.ts). `null` means unestimated — either an old
+   * row created before #902, or the estimation call failed; both degrade
+   * gracefully (no sizing shown) rather than blocking task creation.
+   */
+  storyPoints: number | null
+  /** One-line rationale for `storyPoints`, from the same estimation call. `null` alongside `storyPoints: null`. */
+  estimateRationale: string | null
   /** ISO timestamp created. */
   createdAt: string
   /** ISO timestamp last updated (stage change, output). */
@@ -208,6 +219,14 @@ export function coerceTask(raw: any, scopeKey = ''): BuildTask | null {
   const createdAt = String(rd.created_at || rd.createdAt || new Date().toISOString())
   const source: TaskSource =
     rd.source === 'swarm' || rd.source === 'recurring' ? rd.source : 'cody'
+  // #902: old rows (pre-estimation) and a failed estimation call both have no
+  // usable story_points — coerce anything that isn't a valid Fibonacci number
+  // to null (unestimated) rather than persisting/propagating garbage.
+  const rawPoints = rd.story_points ?? rd.storyPoints
+  const storyPoints: number | null = isFibonacciPoint(rawPoints) ? (rawPoints as FibonacciPoint) : null
+  const rationale = rd.estimate_rationale ?? rd.estimateRationale
+  const estimateRationale: string | null =
+    storyPoints !== null && rationale ? String(rationale).slice(0, 300) : null
   return {
     id: String(rd.id || rd.task_id || `t_${createdAt}_${title.slice(0, 12)}`),
     scopeKey: String(rd.scope_key || rd.scopeKey || scopeKey),
@@ -217,6 +236,8 @@ export function coerceTask(raw: any, scopeKey = ''): BuildTask | null {
     source,
     taskId: rd.task_id || rd.taskId || null,
     output: rd.output ? String(rd.output).slice(0, 8000) : undefined,
+    storyPoints,
+    estimateRationale,
     createdAt,
     updatedAt: String(rd.updated_at || rd.updatedAt || createdAt),
   }
@@ -255,6 +276,11 @@ export function recurringTaskFromLoop(
     source: 'recurring',
     taskId: lastRun?.lastTaskId || null,
     output: ranBefore ? `Last dispatch: ${lastRun?.lastTaskId || 'n/a'} · ${lastRun?.lastStatus || 'dispatched'}` : undefined,
+    // #902: the synthetic recurring-loop row is not an estimable unit of work
+    // (it's a standing scheduled process, not a sized task) — unestimated by
+    // design, same as any pre-#902 row.
+    storyPoints: null,
+    estimateRationale: null,
     createdAt: runAt || nowIso,
     updatedAt: runAt || nowIso,
   }
@@ -337,6 +363,12 @@ export async function createTask(
   const id = `t_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
   const source: TaskSource =
     input.source === 'swarm' || input.source === 'recurring' ? input.source : 'cody'
+  // #902: size every newly-created task via a small, fast best-effort LLM call.
+  // estimateStoryPoints() never throws — a missing key, a failed/timed-out call,
+  // or an unparseable reply all resolve to null, which we persist as
+  // unestimated (identical to a pre-#902 row) rather than ever blocking
+  // task creation on an estimation hiccup.
+  const estimate = await estimateStoryPoints(title, input.detail)
   const row = {
     id,
     scope_key: scopeKey,
@@ -346,6 +378,8 @@ export async function createTask(
     source,
     task_id: input.taskId || null,
     output: input.output ? String(input.output).slice(0, 8000) : '',
+    story_points: estimate?.storyPoints ?? null,
+    estimate_rationale: estimate?.estimateRationale ?? null,
     created_at: now,
     updated_at: now,
   }

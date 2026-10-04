@@ -24,6 +24,10 @@ const task = (over: Partial<BuildTask> = {}): BuildTask => ({
   title: 'Do a thing',
   stage: 'todo',
   source: 'cody',
+  // #902: unestimated by default in this fixture — these orchestration tests
+  // don't exercise sizing, same as any pre-#902 row.
+  storyPoints: null,
+  estimateRationale: null,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
   ...over,
