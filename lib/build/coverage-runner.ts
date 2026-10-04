@@ -24,10 +24,20 @@
  * untrusted, LLM-generated code and the process serving every other founder's
  * requests. When E2B_API_KEY is configured, the real run now happens inside
  * an isolated E2B (Firecracker microVM) sandbox instead — see
- * lib/build/e2b-sandbox.ts. Falls back to the local subprocess path only
- * when E2B isn't configured, so a half-configured environment fails toward
- * "less isolated" rather than toward "silently broken" (mirrors
- * isBedrockEnabled()'s fail-closed pattern in lib/bedrock-client.ts).
+ * lib/build/e2b-sandbox.ts.
+ *
+ * #917: a missing E2B_API_KEY used to fall straight through to that same
+ * unsandboxed local spawn() path with ZERO warning logged — the opposite of
+ * isE2BEnabled()'s own doc comment, which claims a half-configured
+ * environment "fail[s] closed... never silently run[s] unsandboxed" (mirrors
+ * isBedrockEnabled()'s fail-closed pattern in lib/bedrock-client.ts). Now, by
+ * default, a missing E2B_API_KEY returns an honest refusal CoverageResult
+ * (testable: false) instead of ever touching spawn(). The local-subprocess
+ * path still exists for legitimate local development (no E2B key available,
+ * developer still wants to exercise the real test run) — but only behind the
+ * explicit ALLOW_UNSANDBOXED_COVERAGE=true opt-in, and even then a loud
+ * console.error warning fires immediately beforehand naming the exact risk,
+ * so the escape hatch itself is never silent.
  */
 
 import { promises as fs } from 'fs'
@@ -184,6 +194,30 @@ export async function runCoverage(
   if (isE2BEnabled(opts.env)) {
     return runCoverageInE2B(files, testCommand, timeoutMs)
   }
+
+  const env = opts.env ?? process.env
+  if (env.ALLOW_UNSANDBOXED_COVERAGE !== 'true') {
+    console.error(
+      '[coverage-runner] E2B_API_KEY is not configured — refusing to run founder-generated ' +
+        'test code unsandboxed. Set E2B_API_KEY to enable sandboxed coverage runs, or set ' +
+        'ALLOW_UNSANDBOXED_COVERAGE=true for local development only.',
+    )
+    return {
+      coveragePercent: null,
+      testable: false,
+      passed: false,
+      reason: 'E2B not configured — sandboxed execution required for untrusted code',
+    }
+  }
+
+  // Explicit, narrowly-named opt-in only — see file header (#917). Still log
+  // loudly every time this path actually runs, so the escape hatch is never
+  // silent even when a developer has deliberately enabled it.
+  console.error(
+    '[coverage-runner] ALLOW_UNSANDBOXED_COVERAGE=true is set and E2B_API_KEY is absent — ' +
+      'running founder-generated test code UNSANDBOXED via local spawn() on this process. ' +
+      'This must never happen in production; set E2B_API_KEY instead.',
+  )
 
   let dir: string | null = null
   try {
