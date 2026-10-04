@@ -29,15 +29,18 @@ const h = vi.hoisted(() => ({
   runTaskResolutions: vi.fn(),
   resolveApp: vi.fn(),
   runNightlyCommsOutreach: vi.fn(),
+  createTask: vi.fn(),
+  listTasks: vi.fn(),
 }))
 
 vi.mock('@/lib/build/loop-enrollment', () => ({ listEnrolled: h.listEnrolled, recordRun: h.recordRun }))
-vi.mock('@/lib/build/autonomous-loop', () => ({ runNightlyLoop: h.runNightlyLoop }))
+vi.mock('@/lib/build/autonomous-loop', () => ({ runNightlyLoop: h.runNightlyLoop, buildTaskDescription: () => 'desc' }))
 vi.mock('@/lib/build/auto-mode', () => ({ appendAutoRunEvent: h.appendAutoRunEvent }))
 vi.mock('@/lib/build/auto-run-activity', () => ({ dispatchEventTitle: () => 'Dispatched' }))
 vi.mock('@/lib/build/document-store', () => ({ createDocument: h.createDocument, hasReportForDate: h.hasReportForDate }))
 vi.mock('@/lib/build/media-routine', () => ({ runMediaRoutines: h.runMediaRoutines }))
 vi.mock('@/lib/build/task-resolution-loop', () => ({ runTaskResolutions: h.runTaskResolutions }))
+vi.mock('@/lib/build/task-store', () => ({ createTask: h.createTask, listTasks: h.listTasks }))
 vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
 vi.mock('@/lib/build/comms-policy', () => ({ runNightlyCommsOutreach: h.runNightlyCommsOutreach }))
 vi.mock('@/lib/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }))
@@ -69,6 +72,8 @@ describe('GET /api/build/nightly-loop', () => {
     h.createDocument.mockResolvedValue({ id: 'd1' })
     h.runMediaRoutines.mockResolvedValue({ generated: 0 })
     h.runTaskResolutions.mockResolvedValue({ attempted: 0, completed: 0 })
+    h.createTask.mockResolvedValue({ id: 't1' })
+    h.listTasks.mockResolvedValue([])
     h.resolveApp.mockResolvedValue({ slug: 'beacon', tagline: 'Guiding growth', color: '#1e88e5' })
     h.runNightlyCommsOutreach.mockResolvedValue({ status: 'skipped', reason: 'no_genuine_update' })
   })

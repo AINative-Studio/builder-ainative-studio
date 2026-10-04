@@ -68,9 +68,10 @@ async function getBriefing(input: NightlyRunInput): Promise<string | null> {
  *
  * Uses the DOCUMENTED task-dispatch flow (docs/agent-cloud/task-dispatch): a
  * platform agent is registered once (POST /api/v1/public/agents/register →
- * X-Agent-API-Key), then work is submitted to the cloud task queue that the
- * OpenClaw swarm claims and executes. We register lazily + cache the agent key.
- * Errors are surfaced in `detail` (not swallowed) for diagnosability.
+ * X-Agent-API-Key), then work is submitted to the cloud task queue that
+ * core's real Celery consumer (swarm_task_execution.py) claims and drives
+ * through its application-generation engine. We register lazily + cache the
+ * agent key. Errors are surfaced in `detail` (not swallowed) for diagnosability.
  */
 async function dispatchSwarmTask(
   input: NightlyRunInput,
@@ -122,7 +123,10 @@ export async function runNightlyLoop(input: NightlyRunInput): Promise<NightlyRun
   return { companyId: input.companyId, briefing, taskId, status: 'dispatched', detail }
 }
 
-function buildTaskDescription(input: NightlyRunInput, briefing: string | null): string {
+/** Exported so the nightly-loop route can seed a real backlog `todo` task
+ * (#898) using the exact same description text already sent to the swarm,
+ * instead of duplicating the prompt logic. */
+export function buildTaskDescription(input: NightlyRunInput, briefing: string | null): string {
   const base = input.track === 'company'
     ? `Evaluate the AI-native company "${input.companyName}" and run the single highest-leverage growth or product task tonight (e.g. improve positioning, qualify pipeline leads, ship a landing-page improvement, draft outreach). Produce a concrete artifact + a one-line morning summary.`
     : `Evaluate the product "${input.companyName}" and ship the single highest-leverage improvement tonight (bug fix, UX polish, or a small feature from the backlog). Produce a diff + a one-line morning summary.`
