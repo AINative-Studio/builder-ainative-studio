@@ -73,6 +73,13 @@ export interface MediaRoutine {
   enabled: boolean
   createdAt: string
   lastRunAt?: string
+  /**
+   * Index into {@link VARIATION_DESCRIPTORS} used by the most recent run
+   * (#909). Persisted the same way `lastRunAt` already advances, so the next
+   * scheduled run knows which scene/composition variant to avoid repeating.
+   * Undefined until the routine has actually fired once.
+   */
+  lastVariant?: number
 }
 
 /** A generated media asset owned by the company. */
@@ -160,6 +167,44 @@ export function isRoutineDue(routine: Pick<MediaRoutine, 'enabled' | 'frequency'
 }
 
 /**
+ * Rotating scene/composition/angle descriptors (#909) — the prompt-side
+ * variation axis that makes a recurring (weekly/monthly) generation actually
+ * differ run to run. Core's ImageRequest schema has no seed field at all
+ * (confirmed via direct read of core's own schemas/multimodal.py and
+ * services/multimodal_service.py), so there is no seed-based lever available
+ * even if Builder wanted one — variation has to live in the prompt text
+ * itself. Each descriptor is an instruction about COMPOSITION/FRAMING only —
+ * never content — so it layers on top of (never replaces) the real-business-
+ * grounding instructions in {@link buildBrandPrompt}.
+ */
+export const VARIATION_DESCRIPTORS = [
+  'Composition: a wide establishing shot that shows the full setting or environment this business operates in.',
+  'Composition: a close-up shot focused tightly on the product or service itself, or on it actively being used.',
+  'Composition: a candid team or customer interaction moment — people engaging with the product, service, or each other.',
+  'Composition: an abstract, conceptual visual representation of the core idea or value this business delivers, rather than a literal scene.',
+] as const
+
+/**
+ * Pick the next variation index (#909), guaranteeing it never repeats the
+ * immediately-prior variant for the same company. Pure + deterministic-safe
+ * (uses Math.random for the actual pick, but the "never equal to prev"
+ * guarantee is structural, not probabilistic retry-based, so it can never
+ * loop forever). Defends against a missing/undefined/out-of-range `prev`
+ * (first-ever run, malformed persisted data) by treating it as "no
+ * constraint" rather than throwing. When `total` is 1, there is nothing to
+ * rotate to, so it always returns 0.
+ */
+export function pickNextVariant(prev: number | undefined | null, total: number): number {
+  if (!Number.isFinite(total) || total <= 1) return 0
+  const hasValidPrev = typeof prev === 'number' && Number.isInteger(prev) && prev >= 0 && prev < total
+  if (!hasValidPrev) return Math.floor(Math.random() * total)
+  // Pick uniformly among the (total - 1) remaining indices, then shift past
+  // `prev` so the result is never equal to it — structural, not retry-based.
+  const offset = 1 + Math.floor(Math.random() * (total - 1))
+  return (prev + offset) % total
+}
+
+/**
  * Build the on-brand generation prompt from the company's brand artifacts
  * (#54 req 4). Grounded ENTIRELY in real brand fields — never fabricated. Falls
  * back gracefully when a field is missing.
@@ -179,8 +224,17 @@ export function isRoutineDue(routine: Pick<MediaRoutine, 'enabled' | 'frequency'
  * degraded straight to generic stock-photo tropes), and (3) explicitly instruct
  * the model NOT to render any instructional/meta text as visible words unless
  * it is a real, intentional headline.
+ *
+ * #909: recurring (weekly/monthly) auto-media generation produced the exact
+ * same image every run because this function was fully deterministic for a
+ * given BrandContext. `variantIndex` (optional, defaults to 0 for back-compat
+ * with any caller that doesn't thread one through) selects a rotating
+ * scene/composition/angle descriptor from {@link VARIATION_DESCRIPTORS},
+ * appended AFTER all the grounding/no-text instructions so it can never
+ * weaken them. An out-of-range or missing index safely falls back to index 0
+ * rather than throwing or producing "undefined" in the prompt text.
  */
-export function buildBrandPrompt(mediaKind: MediaKind, brand: BrandContext): string {
+export function buildBrandPrompt(mediaKind: MediaKind, brand: BrandContext, variantIndex?: number): string {
   const name = (brand.companyName || 'the company').trim()
   const tagline = (brand.tagline || '').trim()
   const idea = (brand.idea || '').trim()
@@ -189,6 +243,11 @@ export function buildBrandPrompt(mediaKind: MediaKind, brand: BrandContext): str
   const subject = idea
     ? `${name}: ${idea}`
     : `${name}${tagline ? ` — ${tagline}` : ''}`
+  const safeIndex =
+    typeof variantIndex === 'number' && Number.isInteger(variantIndex) && variantIndex >= 0 && variantIndex < VARIATION_DESCRIPTORS.length
+      ? variantIndex
+      : 0
+  const variation = VARIATION_DESCRIPTORS[safeIndex]
   const parts = [
     `Create ${noun} for a real company. What this company actually does: ${subject}.`,
     'The image must depict THIS business — its real product, service, or the problem it',
@@ -201,6 +260,7 @@ export function buildBrandPrompt(mediaKind: MediaKind, brand: BrandContext): str
     'Do NOT render any words, letters, logos, or captions in the image — no text overlays',
     'of any kind, including the company name, tagline, or any instructional phrasing from',
     'this prompt. This must be a purely visual asset with zero on-image text.',
+    variation,
   ]
   return parts.filter(Boolean).join(' ')
 }
@@ -292,6 +352,7 @@ export function coerceRoutine(raw: any, scopeKey = ''): MediaRoutine | null {
     enabled: Boolean(r.enabled),
     createdAt: String(r.createdAt || new Date().toISOString()),
     lastRunAt: r.lastRunAt ? String(r.lastRunAt) : undefined,
+    lastVariant: Number.isInteger(r.lastVariant) ? Number(r.lastVariant) : undefined,
   }
 }
 
@@ -353,7 +414,7 @@ async function zerodbRequest(method: string, path: string, body?: unknown, retri
  */
 export async function saveRoutine(
   scopeKey: string,
-  input: { mediaKind: MediaKind; frequency: MediaFrequency; enabled?: boolean; lastRunAt?: string },
+  input: { mediaKind: MediaKind; frequency: MediaFrequency; enabled?: boolean; lastRunAt?: string; lastVariant?: number },
 ): Promise<MediaRoutine | null> {
   if (!scopeKey) return null
   const now = new Date().toISOString()
@@ -366,6 +427,7 @@ export async function saveRoutine(
     enabled: input.enabled !== false,
     createdAt: now,
     lastRunAt: input.lastRunAt,
+    lastVariant: Number.isInteger(input.lastVariant) ? input.lastVariant : undefined,
   }
   await ensureTable()
   const result = await zerodbRequest(
@@ -660,9 +722,10 @@ export async function runMediaGeneration(
   scopeKey: string,
   mediaKind: MediaKind,
   brand: BrandContext,
+  variantIndex?: number,
 ): Promise<{ status: 'disabled' | 'failed' | 'generated'; asset?: MediaAsset; reason?: MediaFailureReason }> {
   if (!mediaGenerationConfigured()) return { status: 'disabled' }
-  const prompt = buildBrandPrompt(mediaKind, brand)
+  const prompt = buildBrandPrompt(mediaKind, brand, variantIndex)
   const { path, body } = buildGenerationRequest(mediaKind, prompt)
   try {
     const res = await fetch(`${CORE_API}${path}`, {

@@ -20,6 +20,8 @@ import {
   runMediaGeneration,
   saveRoutine,
   mediaGenerationConfigured,
+  pickNextVariant,
+  VARIATION_DESCRIPTORS,
   type BrandContext,
 } from '@/lib/build/media-schedule'
 
@@ -48,16 +50,22 @@ export async function runMediaRoutines(
     for (const routine of routines) {
       if (!isRoutineDue(routine)) continue
       try {
-        const result = await runMediaGeneration(scopeKey, routine.mediaKind, brand)
+        // #909: pick the next prompt-variation index BEFORE generating, so the
+        // actual core call carries a different scene/composition than the
+        // routine's last run — never repeating routine.lastVariant.
+        const variantIndex = pickNextVariant(routine.lastVariant, VARIATION_DESCRIPTORS.length)
+        const result = await runMediaGeneration(scopeKey, routine.mediaKind, brand, variantIndex)
         if (result.status !== 'generated') continue
         generated += 1
         // Advance the routine forward. A 'once' routine disables after it fires;
         // recurring routines keep enabled with a fresh lastRunAt so nextRunAt moves.
+        // lastVariant also advances so the NEXT run never repeats this one.
         await saveRoutine(scopeKey, {
           mediaKind: routine.mediaKind,
           frequency: routine.frequency,
           enabled: routine.frequency !== 'once',
           lastRunAt: new Date().toISOString(),
+          lastVariant: variantIndex,
         })
       } catch {
         /* per-routine failure is non-fatal — keep going */
