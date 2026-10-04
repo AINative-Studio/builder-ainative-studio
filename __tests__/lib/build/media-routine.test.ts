@@ -74,6 +74,43 @@ describe('runMediaRoutines', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  // #909: the nightly-loop runner is the thing that actually fires a scheduled
+  // generation, so it must be the thing that picks the next variant (never
+  // repeating the routine's lastVariant) and persists it forward — otherwise a
+  // company's weekly/monthly routine still produces the same image every run.
+  it('picks a different variant than lastVariant and persists it forward (#909)', async () => {
+    process.env.BUILD_MEDIA_ENABLED = 'true'
+    const rows = [routineRow({ lastRunAt: '2026-01-01T00:00:00Z', frequency: 'daily', lastVariant: 0 })]
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(OK({ data: rows }) as any)              // listMedia
+      .mockResolvedValueOnce(OK({ url: 'http://x/g.png' }) as any)   // generate
+      .mockResolvedValueOnce(OK({ ok: true }) as any)               // saveAsset
+      .mockResolvedValueOnce(OK({ ok: true }) as any)               // saveRoutine advance
+    vi.stubGlobal('fetch', fetchMock)
+    await runMediaRoutines('a::b', { companyName: 'Acme' })
+    const advanceBody = JSON.parse(fetchMock.mock.calls.at(-1)![1].body)
+    expect(advanceBody.row_data.lastVariant).not.toBe(0)
+    expect(typeof advanceBody.row_data.lastVariant).toBe('number')
+  })
+
+  it('bakes the chosen variant into the actual generation prompt sent to core (#909)', async () => {
+    process.env.BUILD_MEDIA_ENABLED = 'true'
+    const rows = [routineRow({ lastRunAt: '2026-01-01T00:00:00Z', frequency: 'daily', lastVariant: 0, mediaKind: 'image' })]
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(OK({ data: rows }) as any)
+      .mockResolvedValueOnce(OK({ url: 'http://x/g.png' }) as any)
+      .mockResolvedValueOnce(OK({ ok: true }) as any)
+      .mockResolvedValueOnce(OK({ ok: true }) as any)
+    vi.stubGlobal('fetch', fetchMock)
+    await runMediaRoutines('a::b', { companyName: 'Acme' })
+    const generateCall = fetchMock.mock.calls[1]
+    const sentBody = JSON.parse(String(generateCall[1].body))
+    // Must not be the same deterministic prompt variant 0 would produce if
+    // lastVariant were ignored — i.e. the prompt differs across runs.
+    const { buildBrandPrompt } = await import('@/lib/build/media-schedule')
+    expect(sentBody.prompt).not.toBe(buildBrandPrompt('image', { companyName: 'Acme' }, 0))
+  })
+
   it("advances a 'once' routine to disabled after it fires", async () => {
     process.env.BUILD_MEDIA_ENABLED = 'true'
     const rows = [routineRow({ frequency: 'once', lastRunAt: undefined })] // never run → due

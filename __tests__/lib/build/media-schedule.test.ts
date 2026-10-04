@@ -21,6 +21,8 @@ import {
   listMedia,
   runMediaGeneration,
   pollVideoStatus,
+  VARIATION_DESCRIPTORS,
+  pickNextVariant,
   type MediaRoutine,
   type MediaAsset,
 } from '@/lib/build/media-schedule'
@@ -173,6 +175,105 @@ describe('buildBrandPrompt', () => {
       expect(p).not.toContain('undefined')
     })
   })
+
+  // #909: recurring (weekly/monthly) auto-media generation produced the exact
+  // same image every run because buildBrandPrompt was fully deterministic for
+  // a given BrandContext — same brand in, same prompt string out, every time.
+  // Core's ImageRequest schema has no seed field at all, so the fix has to be
+  // prompt-side: a rotating scene/composition/angle descriptor selected by an
+  // explicit variant index, layered ON TOP of (never replacing) the existing
+  // real-business-grounding instructions.
+  describe('variation axis (#909 — recurring media must not repeat the same image)', () => {
+    it('exposes a small, stable set of rotating variation descriptors', () => {
+      expect(Array.isArray(VARIATION_DESCRIPTORS)).toBe(true)
+      expect(VARIATION_DESCRIPTORS.length).toBeGreaterThanOrEqual(4)
+      // Every descriptor must be real, non-empty prose (not placeholder text).
+      for (const d of VARIATION_DESCRIPTORS) {
+        expect(typeof d).toBe('string')
+        expect(d.length).toBeGreaterThan(5)
+      }
+    })
+
+    it('the same brand + different variant indices produce different prompt text', () => {
+      const brand = { companyName: 'Acme', idea: 'inventory bot' }
+      const prompts = VARIATION_DESCRIPTORS.map((_, i) => buildBrandPrompt('image', brand, i))
+      const unique = new Set(prompts)
+      expect(unique.size).toBe(VARIATION_DESCRIPTORS.length)
+    })
+
+    it('an out-of-range or missing variant index defaults safely (never throws, never undefined)', () => {
+      const brand = { companyName: 'Acme' }
+      expect(() => buildBrandPrompt('image', brand)).not.toThrow()
+      expect(buildBrandPrompt('image', brand)).not.toContain('undefined')
+      expect(() => buildBrandPrompt('image', brand, 999)).not.toThrow()
+      expect(buildBrandPrompt('image', brand, 999)).not.toContain('undefined')
+      expect(() => buildBrandPrompt('image', brand, -1)).not.toThrow()
+      expect(buildBrandPrompt('image', brand, -1)).not.toContain('undefined')
+    })
+
+    it('preserves the real-business-grounding instructions in every variant', () => {
+      const brand = { companyName: 'Beacon', idea: 'a lighthouse-as-a-service safety beacon network' }
+      for (let i = 0; i < VARIATION_DESCRIPTORS.length; i++) {
+        const p = buildBrandPrompt('image', brand, i)
+        expect(p).toContain('a lighthouse-as-a-service safety beacon network')
+        expect(p).toMatch(/ground every visual choice/i)
+        expect(p).toMatch(/not a generic, unrelated stock scene/i)
+        expect(p).toMatch(/do not render|no text overlays|zero on-image text/i)
+      }
+    })
+
+    it('still never leaks the literal "on-brand marketing asset" phrase in any variant', () => {
+      for (let i = 0; i < VARIATION_DESCRIPTORS.length; i++) {
+        const p = buildBrandPrompt('image', { companyName: 'Beacon' }, i)
+        expect(p.toLowerCase()).not.toContain('on-brand marketing asset')
+      }
+    })
+
+    it('works identically for video prompts', () => {
+      const prompts = VARIATION_DESCRIPTORS.map((_, i) => buildBrandPrompt('video', { companyName: 'Acme' }, i))
+      expect(new Set(prompts).size).toBe(VARIATION_DESCRIPTORS.length)
+    })
+  })
+})
+
+describe('pickNextVariant (#909)', () => {
+  it('picks a valid index within range', () => {
+    for (let i = 0; i < 20; i++) {
+      const v = pickNextVariant(undefined, VARIATION_DESCRIPTORS.length)
+      expect(v).toBeGreaterThanOrEqual(0)
+      expect(v).toBeLessThan(VARIATION_DESCRIPTORS.length)
+    }
+  })
+
+  it('never repeats the immediately-prior variant', () => {
+    for (let prev = 0; prev < VARIATION_DESCRIPTORS.length; prev++) {
+      for (let i = 0; i < 50; i++) {
+        const next = pickNextVariant(prev, VARIATION_DESCRIPTORS.length)
+        expect(next).not.toBe(prev)
+        expect(next).toBeGreaterThanOrEqual(0)
+        expect(next).toBeLessThan(VARIATION_DESCRIPTORS.length)
+      }
+    }
+  })
+
+  it('handles an undefined/null previous variant (first-ever run) by picking any valid index', () => {
+    const v1 = pickNextVariant(undefined, VARIATION_DESCRIPTORS.length)
+    const v2 = pickNextVariant(null as unknown as undefined, VARIATION_DESCRIPTORS.length)
+    expect(v1).toBeGreaterThanOrEqual(0)
+    expect(v2).toBeGreaterThanOrEqual(0)
+  })
+
+  it('handles an out-of-range previous variant defensively (never throws, never stuck)', () => {
+    expect(() => pickNextVariant(999, VARIATION_DESCRIPTORS.length)).not.toThrow()
+    const v = pickNextVariant(999, VARIATION_DESCRIPTORS.length)
+    expect(v).toBeGreaterThanOrEqual(0)
+    expect(v).toBeLessThan(VARIATION_DESCRIPTORS.length)
+  })
+
+  it('degrades to always 0 when there is only one descriptor (never loops forever)', () => {
+    expect(pickNextVariant(0, 1)).toBe(0)
+    expect(pickNextVariant(undefined, 1)).toBe(0)
+  })
 })
 
 describe('buildGenerationRequest', () => {
@@ -223,6 +324,22 @@ describe('coerceRoutine / coerceAsset', () => {
     expect(r?.mediaKind).toBe('video')
     expect(r?.enabled).toBe(true)
   })
+
+  // #909: lastVariant persists the rotating prompt-variation index, mirroring
+  // how lastRunAt already advances — so the next scheduled run knows which
+  // variant it must NOT repeat.
+  it('coerces a persisted lastVariant', () => {
+    const r = coerceRoutine({ row_data: { id: 'x', rowKind: 'routine', mediaKind: 'image', frequency: 'weekly', enabled: true, createdAt: 't', lastVariant: 2 } })
+    expect(r?.lastVariant).toBe(2)
+  })
+  it('lastVariant is undefined when never set (no fabrication)', () => {
+    const r = coerceRoutine({ row_data: { id: 'x', rowKind: 'routine', mediaKind: 'image', frequency: 'weekly', enabled: true, createdAt: 't' } })
+    expect(r?.lastVariant).toBeUndefined()
+  })
+  it('coerces a malformed lastVariant defensively (never NaN, never a crash)', () => {
+    const r = coerceRoutine({ row_data: { id: 'x', rowKind: 'routine', mediaKind: 'image', frequency: 'weekly', enabled: true, createdAt: 't', lastVariant: 'not-a-number' } })
+    expect(r?.lastVariant === undefined || Number.isInteger(r?.lastVariant)).toBe(true)
+  })
   it('rejects non-routine / missing id', () => {
     expect(coerceRoutine({ rowKind: 'asset' })).toBeNull()
     expect(coerceRoutine({ rowKind: 'routine' })).toBeNull()
@@ -264,6 +381,16 @@ describe('I/O: saveRoutine / saveAsset / listMedia / runMediaGeneration', () => 
   })
   it('saveRoutine returns null with no scope', async () => {
     expect(await saveRoutine('', { mediaKind: 'image', frequency: 'once' })).toBeNull()
+  })
+  it('saveRoutine persists an explicit lastVariant (#909)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => OK({ ok: true }) as any))
+    const r = await saveRoutine('a::b', { mediaKind: 'image', frequency: 'weekly', lastVariant: 3 })
+    expect(r?.lastVariant).toBe(3)
+  })
+  it('saveRoutine leaves lastVariant undefined when not provided (no fabrication)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => OK({ ok: true }) as any))
+    const r = await saveRoutine('a::b', { mediaKind: 'image', frequency: 'weekly' })
+    expect(r?.lastVariant).toBeUndefined()
   })
   it('saveAsset persists and returns the asset', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => OK({ ok: true }) as any))
@@ -438,6 +565,34 @@ describe('I/O: saveRoutine / saveAsset / listMedia / runMediaGeneration', () => 
     process.env.BUILD_MEDIA_ENABLED = 'true'
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('boom') }))
     expect((await runMediaGeneration('a::b', 'image', {})).status).toBe('failed')
+  })
+
+  // #909: runMediaGeneration must accept an explicit variant index and bake the
+  // corresponding rotating descriptor into the prompt it actually sends to core —
+  // this is the real end-to-end wiring that makes a scheduled run's image differ
+  // from the previous one.
+  it('runMediaGeneration threads an explicit variant index into the generated prompt', async () => {
+    process.env.BUILD_MEDIA_ENABLED = 'true'
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(OK({ url: 'http://x/gen.mp4' }) as any)
+      .mockResolvedValueOnce(OK({}) as any)
+      .mockResolvedValueOnce(OK({ ok: true }) as any)
+    vi.stubGlobal('fetch', fetchMock)
+    await runMediaGeneration('a::b', 'video', { companyName: 'Acme' }, 1)
+    const firstCall = fetchMock.mock.calls[0]
+    const sentBody = JSON.parse(String(firstCall[1].body))
+    expect(sentBody.prompt).toBe(buildBrandPrompt('video', { companyName: 'Acme' }, 1))
+  })
+
+  it('runMediaGeneration defaults sensibly when no variant index is passed (back-compat)', async () => {
+    process.env.BUILD_MEDIA_ENABLED = 'true'
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(OK({ url: 'http://x/gen.mp4' }) as any)
+      .mockResolvedValueOnce(OK({}) as any)
+      .mockResolvedValueOnce(OK({ ok: true }) as any)
+    vi.stubGlobal('fetch', fetchMock)
+    const res = await runMediaGeneration('a::b', 'video', { companyName: 'Acme' })
+    expect(res.status).toBe('generated')
   })
 
   // #884: every distinct failure branch used to collapse to the same bare
