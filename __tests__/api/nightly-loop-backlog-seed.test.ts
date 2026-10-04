@@ -41,7 +41,7 @@ const h = vi.hoisted(() => ({
 vi.mock('@/lib/build/loop-enrollment', () => ({ listEnrolled: h.listEnrolled, recordRun: h.recordRun }))
 vi.mock('@/lib/build/autonomous-loop', () => ({
   runNightlyLoop: h.runNightlyLoop,
-  buildTaskDescription: (input: any, briefing: string | null) =>
+  buildNightlySeedDescription: async (_scopeKey: string, input: any, briefing: string | null) =>
     `desc for ${input.companyName}${briefing ? ` (${briefing})` : ''}`,
 }))
 vi.mock('@/lib/build/auto-mode', () => ({ appendAutoRunEvent: h.appendAutoRunEvent }))

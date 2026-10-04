@@ -53,6 +53,10 @@ describe('DOC constants (#64)', () => {
     expect(DOC_TYPE_LABELS.roadmap).toBe('Product Roadmap')
     expect(DOC_TYPE_LABELS.daily).toBe('Daily Report')
   })
+  it('includes "prd" as a canonical type (#901) — read path for nightly-loop priority seeding', () => {
+    expect(DOC_TYPES).toContain('prd')
+    expect(DOC_TYPE_LABELS.prd).toBe('Product Requirements')
+  })
   it('starterDocumentTypes are the four durable Polsia-style docs', () => {
     expect(starterDocumentTypes()).toEqual(['research', 'roadmap', 'mission', 'market'])
   })
@@ -86,6 +90,9 @@ describe('normalizeType (#64)', () => {
     expect(normalizeType('market research')).toBe('market')
     expect(normalizeType('nightly')).toBe('daily')
     expect(normalizeType('operational')).toBe('daily')
+    expect(normalizeType('product_requirements')).toBe('prd')
+    expect(normalizeType('requirements')).toBe('prd')
+    expect(normalizeType('prd')).toBe('prd')
   })
   it('falls back to note for unknowns', () => {
     expect(normalizeType('gibberish')).toBe('note')
@@ -98,7 +105,7 @@ describe('normalizeType (#64)', () => {
 describe('kindForType / normalizeKind (#64)', () => {
   it('daily is a report; everything else is a document', () => {
     expect(kindForType('daily')).toBe('report')
-    for (const t of ['research', 'roadmap', 'mission', 'market', 'note'] as const) {
+    for (const t of ['research', 'roadmap', 'mission', 'market', 'note', 'prd'] as const) {
       expect(kindForType(t)).toBe('document')
     }
   })

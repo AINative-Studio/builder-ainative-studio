@@ -58,6 +58,7 @@ export const DOC_TYPES = [
   'market',
   'note',
   'daily',
+  'prd',
 ] as const
 export type DocType = (typeof DOC_TYPES)[number]
 
@@ -69,10 +70,11 @@ export const DOC_TYPE_LABELS: Record<DocType, string> = {
   market: 'Market Research',
   note: 'Note',
   daily: 'Daily Report',
+  prd: 'Product Requirements',
 }
 
 /** Which document types are durable artifacts (kind='document'). */
-const DOCUMENT_TYPES: DocType[] = ['research', 'roadmap', 'mission', 'market', 'note']
+const DOCUMENT_TYPES: DocType[] = ['research', 'roadmap', 'mission', 'market', 'note', 'prd']
 
 /** A single persisted library document. */
 export interface BuildDocument {
@@ -159,6 +161,10 @@ export function normalizeType(value: unknown): DocType {
     case 'operational':
     case 'ops':
       return 'daily'
+    case 'product_requirements':
+    case 'product_requirements_document':
+    case 'requirements':
+      return 'prd'
     default:
       return 'note'
   }
