@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { template_submissions, templates } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
+import { requireAdmin } from '@/lib/auth/require-admin'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,21 +18,12 @@ export async function PATCH(
   { params }: RouteParams
 ) {
   try {
-    const session = await auth()
+    const admin = await requireAdmin()
 
-    if (!session?.user?.id) {
+    if (!admin.ok) {
       return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
-    }
-
-    // Check admin access
-    const isAdmin = session.user.email?.includes('admin') || false
-    if (!isAdmin) {
-      return NextResponse.json(
-        { error: 'Forbidden: Admin access required' },
-        { status: 403 }
+        { error: admin.status === 401 ? 'Unauthorized' : 'Forbidden: Admin access required' },
+        { status: admin.status }
       )
     }
 
@@ -76,7 +67,7 @@ export async function PATCH(
         .set({
           status: 'approved',
           reviewed_at: new Date(),
-          reviewed_by: session.user.id,
+          reviewed_by: admin.userId,
           admin_notes,
         })
         .where(eq(template_submissions.id, id))
@@ -92,7 +83,7 @@ export async function PATCH(
         .set({
           status: 'rejected',
           reviewed_at: new Date(),
-          reviewed_by: session.user.id,
+          reviewed_by: admin.userId,
           admin_notes,
         })
         .where(eq(template_submissions.id, id))
