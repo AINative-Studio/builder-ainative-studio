@@ -18,6 +18,8 @@ import { createTask, listTasks } from '@/lib/build/task-store'
 import { runTaskResolutions } from '@/lib/build/task-resolution-loop'
 import { resolveApp } from '@/lib/build/app-registry'
 import { runNightlyCommsOutreach } from '@/lib/build/comms-policy'
+import { fetchPlanByEmail, type AdminPlanLookup } from '@/lib/ainative/admin-plan-lookup'
+import { normalizeTier } from '@/lib/ainative/plan'
 import { logger } from '@/lib/logger'
 
 export const dynamic = 'force-dynamic'
@@ -41,6 +43,38 @@ export async function GET(request: NextRequest) {
     let tasksAttempted = 0
     let tasksCompleted = 0
     let commsSent = 0
+
+    // #908 (epic #900): plan-tier-aware nightly backlog throughput. This cron
+    // has no founder session to resolve a plan from (resolveActivePlan()
+    // needs one — see task-resolution-loop.ts's doc comment), so plan tier is
+    // looked up by owner email via the same admin-scoped, offline-safe path
+    // lib/build/loop-backfill.ts already established for this exact gap
+    // (fetchPlanByEmail → normalizeTier). Cached per owner email: one founder
+    // commonly owns several enrolled companies, so this keeps the sweep to
+    // ~N core calls for N distinct owners rather than one per company.
+    const planCache = new Map<string, AdminPlanLookup>()
+    async function resolvePlanTier(ownerKey: string | undefined): Promise<string | null> {
+      const email = (ownerKey || '').trim().toLowerCase()
+      // A guest scope key (see deriveOwnerKey) is never a real account email —
+      // skip the lookup entirely and let maxTasksForTier degrade to free-tier.
+      if (!email || !email.includes('@')) return null
+      let lookup = planCache.get(email)
+      if (!lookup) {
+        lookup = await fetchPlanByEmail(email).catch(
+          (err: unknown): AdminPlanLookup => ({
+            plan: null, email: null, verified: false,
+            reason: `threw:${err instanceof Error ? err.name : 'unknown'}`,
+          }),
+        )
+        planCache.set(email, lookup)
+      }
+      // verified:false must never be treated as a real tier — degrade to the
+      // free-tier limit (maxTasksForTier's own null/undefined handling), same
+      // invariant loop-backfill.ts's toActivePlan() enforces for enrollment.
+      if (!lookup.verified) return null
+      return normalizeTier(lookup.plan)
+    }
+
     for (const e of enrolled) {
       const r = await runNightlyLoop({
         companyId: e.companyId, companyName: e.companyName, track: e.track, goal: e.goal,
@@ -218,12 +252,15 @@ export async function GET(request: NextRequest) {
         // callers anywhere in the app until this — alongside the media
         // routine and swarm dispatch, resolve any DUE (`todo`) backlog tasks
         // for this company via the real coverage-gated pipeline. Best-effort
-        // + fully bounded (MAX_TASKS_PER_COMPANY_PER_RUN): a hiccup here must
-        // never break the nightly loop, and one company's backlog must never
-        // starve the shared route's maxDuration budget.
+        // + fully bounded per the company's real plan tier (#908 — see
+        // resolvePlanTier above and task-resolution-loop.ts's
+        // maxTasksForTier): a hiccup here must never break the nightly loop,
+        // and one company's backlog must never starve the shared route's
+        // maxDuration budget.
         try {
           const scopeKey = chatScopeKey(e.ownerKey, e.companyId)
-          const t = await runTaskResolutions(scopeKey, e.companyId)
+          const planTier = await resolvePlanTier(e.ownerKey).catch(() => null)
+          const t = await runTaskResolutions(scopeKey, e.companyId, planTier)
           tasksAttempted += t.attempted
           tasksCompleted += t.completed
         } catch (err) {

@@ -15,7 +15,13 @@ const h = vi.hoisted(() => ({
 vi.mock('@/lib/build/task-store', () => ({ listTasks: h.listTasks }))
 vi.mock('@/lib/build/task-resolver', () => ({ resolveTask: h.resolveTask }))
 
-import { runTaskResolutions, MAX_TASKS_PER_COMPANY_PER_RUN } from '@/lib/build/task-resolution-loop'
+import {
+  runTaskResolutions,
+  MAX_TASKS_PER_COMPANY_PER_RUN,
+  maxTasksForTier,
+  TASK_LIMIT_BY_TIER,
+  FREE_TIER_TASK_LIMIT,
+} from '@/lib/build/task-resolution-loop'
 import type { BuildTask } from '@/lib/build/task-store'
 
 const task = (over: Partial<BuildTask> = {}): BuildTask => ({
@@ -72,7 +78,7 @@ describe('runTaskResolutions (#433)', () => {
     expect(h.resolveTask).not.toHaveBeenCalled()
   })
 
-  it('caps at MAX_TASKS_PER_COMPANY_PER_RUN even with more todo tasks available', async () => {
+  it('caps at MAX_TASKS_PER_COMPANY_PER_RUN (free-tier default) even with more todo tasks available, when no plan tier is given', async () => {
     expect(MAX_TASKS_PER_COMPANY_PER_RUN).toBe(1)
     h.listTasks.mockResolvedValue([task({ id: 't1' }), task({ id: 't2' }), task({ id: 't3' })])
     h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
@@ -106,5 +112,113 @@ describe('runTaskResolutions (#433)', () => {
     h.listTasks.mockResolvedValue([])
     const res = await runTaskResolutions('a::b', 'my-co')
     expect(res).toEqual({ attempted: 0, completed: 0 })
+  })
+})
+
+/**
+ * #908 (epic #900) — plan-tier-aware nightly backlog throughput.
+ * MAX_TASKS_PER_COMPANY_PER_RUN was a flat constant applied identically to
+ * every plan tier. maxTasksForTier() + TASK_LIMIT_BY_TIER replace it with a
+ * real per-tier ceiling, and runTaskResolutions() takes an optional resolved
+ * plan tier to pick the right ceiling instead of always using 1.
+ */
+describe('maxTasksForTier (#908)', () => {
+  it('free/hobbyist gets the conservative default — must not regress below today\'s effective value (1)', () => {
+    expect(maxTasksForTier('hobbyist')).toBe(FREE_TIER_TASK_LIMIT)
+    expect(FREE_TIER_TASK_LIMIT).toBe(1)
+  })
+
+  it('starter gets a higher limit than free', () => {
+    expect(maxTasksForTier('starter')).toBeGreaterThan(maxTasksForTier('hobbyist'))
+  })
+
+  it('pro and business get a higher limit than starter', () => {
+    expect(maxTasksForTier('pro')).toBeGreaterThan(maxTasksForTier('starter'))
+    expect(maxTasksForTier('business')).toBeGreaterThan(maxTasksForTier('starter'))
+  })
+
+  it('enterprise and cody_vcto get the highest ceiling', () => {
+    expect(maxTasksForTier('enterprise')).toBeGreaterThanOrEqual(maxTasksForTier('business'))
+    expect(maxTasksForTier('cody_vcto')).toBeGreaterThanOrEqual(maxTasksForTier('business'))
+  })
+
+  it('every configured tier is a finite, sane ceiling — never literally unlimited (cost control)', () => {
+    for (const tier of Object.keys(TASK_LIMIT_BY_TIER)) {
+      const limit = maxTasksForTier(tier)
+      expect(Number.isFinite(limit)).toBe(true)
+      expect(limit).toBeGreaterThan(0)
+      expect(limit).toBeLessThanOrEqual(50) // sane ceiling, not Infinity
+    }
+  })
+
+  it('an unknown/garbage tier string degrades to the free-tier limit (never over-grant)', () => {
+    expect(maxTasksForTier('totally-made-up-tier')).toBe(FREE_TIER_TASK_LIMIT)
+    expect(maxTasksForTier('')).toBe(FREE_TIER_TASK_LIMIT)
+  })
+
+  it('null/undefined (plan-resolution failure) degrades to the free-tier limit — never unlimited', () => {
+    expect(maxTasksForTier(null)).toBe(FREE_TIER_TASK_LIMIT)
+    expect(maxTasksForTier(undefined)).toBe(FREE_TIER_TASK_LIMIT)
+  })
+
+  it('is case-insensitive (tier strings from core are not guaranteed lowercase)', () => {
+    expect(maxTasksForTier('ENTERPRISE')).toBe(maxTasksForTier('enterprise'))
+    expect(maxTasksForTier('Pro')).toBe(maxTasksForTier('pro'))
+  })
+
+  it('accepts the launch/company aliases normalizeTier() folds into pro/business', () => {
+    expect(maxTasksForTier('launch')).toBe(maxTasksForTier('pro'))
+    expect(maxTasksForTier('company')).toBe(maxTasksForTier('business'))
+  })
+})
+
+describe('runTaskResolutions with a resolved plan tier (#908)', () => {
+  it('a free-tier company is capped at the free-tier limit', async () => {
+    h.listTasks.mockResolvedValue(
+      Array.from({ length: 5 }, (_, i) => task({ id: `t${i}` })),
+    )
+    h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
+    const res = await runTaskResolutions('a::b', 'my-co', 'hobbyist')
+    expect(res.attempted).toBe(FREE_TIER_TASK_LIMIT)
+  })
+
+  it('a paid-tier company gets its tier\'s (higher) limit', async () => {
+    h.listTasks.mockResolvedValue(
+      Array.from({ length: 10 }, (_, i) => task({ id: `t${i}` })),
+    )
+    h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
+    const res = await runTaskResolutions('a::b', 'my-co', 'enterprise')
+    expect(res.attempted).toBeGreaterThan(FREE_TIER_TASK_LIMIT)
+    expect(res.attempted).toBe(maxTasksForTier('enterprise'))
+  })
+
+  it('a plan-resolution failure (empty string / unresolved) degrades to the free-tier limit, never unlimited', async () => {
+    h.listTasks.mockResolvedValue(
+      Array.from({ length: 10 }, (_, i) => task({ id: `t${i}` })),
+    )
+    h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
+    const res = await runTaskResolutions('a::b', 'my-co', '')
+    expect(res.attempted).toBe(FREE_TIER_TASK_LIMIT)
+  })
+
+  it('omitting the plan tier entirely (backward compat) still defaults to the free-tier limit', async () => {
+    h.listTasks.mockResolvedValue(
+      Array.from({ length: 10 }, (_, i) => task({ id: `t${i}` })),
+    )
+    h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
+    const res = await runTaskResolutions('a::b', 'my-co')
+    expect(res.attempted).toBe(FREE_TIER_TASK_LIMIT)
+  })
+
+  it('still resolves the OLDEST due tasks first (FIFO) under a higher tier limit', async () => {
+    h.listTasks.mockResolvedValue([
+      task({ id: 'newest', createdAt: '2026-06-01T00:00:00.000Z' }),
+      task({ id: 'oldest', createdAt: '2026-01-01T00:00:00.000Z' }),
+      task({ id: 'middle', createdAt: '2026-03-01T00:00:00.000Z' }),
+    ])
+    h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
+    await runTaskResolutions('a::b', 'my-co', 'starter')
+    const resolvedIds = h.resolveTask.mock.calls.map((c) => c[1].id)
+    expect(resolvedIds[0]).toBe('oldest')
   })
 })
