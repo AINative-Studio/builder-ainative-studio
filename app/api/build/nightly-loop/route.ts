@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { listEnrolled, recordRun } from '@/lib/build/loop-enrollment'
-import { runNightlyLoop, buildTaskDescription } from '@/lib/build/autonomous-loop'
+import { runNightlyLoop, buildNightlySeedDescription } from '@/lib/build/autonomous-loop'
 import { appendAutoRunEvent } from '@/lib/build/auto-mode'
 import { dispatchEventTitle } from '@/lib/build/auto-run-activity'
 import { chatScopeKey } from '@/lib/build/chat-store'
@@ -190,9 +190,21 @@ export async function GET(request: NextRequest) {
               (t) => t.source === 'recurring' && (t.stage === 'todo' || t.stage === 'in_progress'),
             )
             if (!hasUnresolved) {
+              // PRD feature priority (#901, epic #900): prefer naming the
+              // company's real highest-priority (P0 else P1 else P2) PRD
+              // feature over the generic "ship the highest-leverage thing"
+              // prose, when that company has a `prd` document in its scope.
+              // Falls back to buildTaskDescription() (today's behavior, and
+              // still the universal case until #532's write-side lands) with
+              // no regression — see autonomous-loop.ts's buildNightlySeedDescription().
+              const detail = await buildNightlySeedDescription(
+                scopeKey,
+                { companyId: e.companyId, companyName: e.companyName, track: e.track, goal: e.goal },
+                r.briefing,
+              )
               await createTask(scopeKey, {
                 title: `Nightly backlog: ${e.companyName}`,
-                detail: buildTaskDescription({ companyId: e.companyId, companyName: e.companyName, track: e.track, goal: e.goal }, r.briefing),
+                detail,
                 stage: 'todo',
                 source: 'recurring',
               })
