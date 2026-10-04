@@ -91,6 +91,14 @@ export interface BuildTask {
   storyPoints: number | null
   /** One-line rationale for `storyPoints`, from the same estimation call. `null` alongside `storyPoints: null`. */
   estimateRationale: string | null
+  /**
+   * The real Gitea issue number opened on the company's own repo before
+   * resolveTask() began implementing this task (#905 — "No Code Without An
+   * Issue", per .ainative/ISSUE_TRACKING_ENFORCEMENT.md). Null when no issue
+   * has been opened yet (not started) or the open attempt failed (best-effort
+   * — never blocks resolution, see task-resolver.ts).
+   */
+  giteaIssueNumber?: number | null
   /** ISO timestamp created. */
   createdAt: string
   /** ISO timestamp last updated (stage change, output). */
@@ -238,6 +246,12 @@ export function coerceTask(raw: any, scopeKey = ''): BuildTask | null {
     output: rd.output ? String(rd.output).slice(0, 8000) : undefined,
     storyPoints,
     estimateRationale,
+    giteaIssueNumber:
+      typeof rd.gitea_issue_number === 'number'
+        ? rd.gitea_issue_number
+        : typeof rd.giteaIssueNumber === 'number'
+          ? rd.giteaIssueNumber
+          : null,
     createdAt,
     updatedAt: String(rd.updated_at || rd.updatedAt || createdAt),
   }
@@ -355,6 +369,7 @@ export async function createTask(
     source?: TaskSource
     taskId?: string | null
     output?: string
+    giteaIssueNumber?: number | null
   },
 ): Promise<BuildTask | null> {
   const title = String(input?.title || '').trim()
@@ -380,6 +395,7 @@ export async function createTask(
     output: input.output ? String(input.output).slice(0, 8000) : '',
     story_points: estimate?.storyPoints ?? null,
     estimate_rationale: estimate?.estimateRationale ?? null,
+    gitea_issue_number: typeof input.giteaIssueNumber === 'number' ? input.giteaIssueNumber : null,
     created_at: now,
     updated_at: now,
   }
@@ -450,13 +466,14 @@ export async function listTasks(
 export async function updateTask(
   scopeKey: string,
   id: string,
-  patch: { stage?: string; output?: string; taskId?: string | null },
+  patch: { stage?: string; output?: string; taskId?: string | null; giteaIssueNumber?: number | null },
 ): Promise<boolean> {
   if (!scopeKey || !id) return false
   const patchFields: Record<string, unknown> = { updated_at: new Date().toISOString() }
   if (patch.stage != null) patchFields.stage = normalizeStage(patch.stage)
   if (patch.output != null) patchFields.output = String(patch.output).slice(0, 8000)
   if (patch.taskId !== undefined) patchFields.task_id = patch.taskId
+  if (patch.giteaIssueNumber !== undefined) patchFields.gitea_issue_number = patch.giteaIssueNumber
   // Nothing to change beyond the timestamp → treat as a no-op success.
   if (Object.keys(patchFields).length === 1) return true
   try {

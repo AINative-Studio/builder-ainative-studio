@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const h = vi.hoisted(() => ({
   fetchRepoFiles: vi.fn(),
   mergeTaskPR: vi.fn(),
+  createIssue: vi.fn(),
   commitTaskWithPR: vi.fn(),
   resolveApp: vi.fn(),
   setAppRailwayService: vi.fn(),
@@ -25,7 +26,7 @@ const h = vi.hoisted(() => ({
   reportDeploymentHealthStage: vi.fn(),
 }))
 
-vi.mock('@/lib/git/gitea-client', () => ({ fetchRepoFiles: h.fetchRepoFiles, mergeTaskPR: h.mergeTaskPR }))
+vi.mock('@/lib/git/gitea-client', () => ({ fetchRepoFiles: h.fetchRepoFiles, mergeTaskPR: h.mergeTaskPR, createIssue: h.createIssue }))
 vi.mock('@/lib/git/task-git-sync', () => ({ commitTaskWithPR: h.commitTaskWithPR }))
 vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp, setAppRailwayService: h.setAppRailwayService }))
 vi.mock('@/lib/build/task-implementer', () => ({ implementTask: h.implementTask }))
@@ -63,6 +64,7 @@ beforeEach(() => {
   Object.values(h).forEach((fn) => fn.mockReset())
   h.updateTask.mockResolvedValue(true)
   h.mergeTaskPR.mockResolvedValue(false)
+  h.createIssue.mockResolvedValue({ ok: true, issueNumber: 101, url: 'https://git.ainative.studio/ws-1/slug/issues/101' })
   h.companyDeployEnabled.mockReturnValue(false)
   h.setAppRailwayService.mockResolvedValue(true)
   h.startDecisionTrace.mockResolvedValue('trace-1')
@@ -140,6 +142,81 @@ describe('resolveTask — end-to-end orchestration', () => {
       'owner::slug', 't_abc123',
       { stage: 'completed', output: expect.stringContaining('https://git.ainative.studio/pr/42') },
     )
+  })
+
+  describe('#905 — open a real Gitea issue before implementation begins', () => {
+    function setupSuccess() {
+      h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+      h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
+      h.implementTask.mockResolvedValue({ ok: true, files: { 'b.ts': 'new' } })
+      h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/42', prNumber: 42 })
+      h.runCoverage.mockResolvedValue({ coveragePercent: 91, testable: true, passed: true })
+    }
+
+    it('opens a real Gitea issue BEFORE calling implementTask', async () => {
+      setupSuccess()
+      const callOrder: string[] = []
+      h.createIssue.mockImplementation(async () => {
+        callOrder.push('createIssue')
+        return { ok: true, issueNumber: 101, url: 'https://git.ainative.studio/ws-1/slug/issues/101' }
+      })
+      h.implementTask.mockImplementation(async () => {
+        callOrder.push('implementTask')
+        return { ok: true, files: { 'b.ts': 'new' } }
+      })
+
+      await resolveTask('owner::slug', TASK, 'slug')
+      expect(callOrder).toEqual(['createIssue', 'implementTask'])
+      expect(h.createIssue).toHaveBeenCalledWith('ws-1', 'slug', TASK.title, expect.any(String))
+    })
+
+    it('persists the created issue number on the task via updateTask', async () => {
+      setupSuccess()
+      h.createIssue.mockResolvedValue({ ok: true, issueNumber: 777, url: 'https://git.ainative.studio/ws-1/slug/issues/777' })
+
+      await resolveTask('owner::slug', TASK, 'slug')
+      expect(h.updateTask).toHaveBeenCalledWith('owner::slug', 't_abc123', { giteaIssueNumber: 777 })
+    })
+
+    it('degrades gracefully (logs, proceeds) when issue creation fails — never blocks the resolver', async () => {
+      setupSuccess()
+      h.createIssue.mockResolvedValue({ ok: false, reason: 'gitea unreachable' })
+
+      const result = await resolveTask('owner::slug', TASK, 'slug')
+      expect(result.ok).toBe(true)
+      expect(result.stage).toBe('completed')
+      expect(h.implementTask).toHaveBeenCalled()
+      // No issue number to persist when creation failed.
+      expect(h.updateTask).not.toHaveBeenCalledWith('owner::slug', 't_abc123', expect.objectContaining({ giteaIssueNumber: expect.anything() }))
+    })
+
+    it('degrades gracefully (never throws, proceeds) when createIssue itself rejects', async () => {
+      setupSuccess()
+      h.createIssue.mockRejectedValue(new Error('network down'))
+
+      const result = await resolveTask('owner::slug', TASK, 'slug')
+      expect(result.ok).toBe(true)
+      expect(result.stage).toBe('completed')
+    })
+
+    it('never opens a duplicate issue for a task that already has one', async () => {
+      setupSuccess()
+      const taskWithIssue = { ...TASK, giteaIssueNumber: 55 }
+
+      await resolveTask('owner::slug', taskWithIssue, 'slug')
+      expect(h.createIssue).not.toHaveBeenCalled()
+    })
+
+    it('still proceeds to implement when the company is git-provisioned but has no org set at all would already have failed earlier — sanity: createIssue uses the resolved gitOrg', async () => {
+      h.resolveApp.mockResolvedValue({ gitOrg: 'ws-custom' })
+      h.fetchRepoFiles.mockResolvedValue({})
+      h.implementTask.mockResolvedValue({ ok: true, files: { 'a.ts': 'x' } })
+      h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/1' })
+      h.runCoverage.mockResolvedValue({ coveragePercent: 90, testable: true, passed: true })
+
+      await resolveTask('owner::slug', TASK, 'slug')
+      expect(h.createIssue).toHaveBeenCalledWith('ws-custom', 'slug', TASK.title, expect.any(String))
+    })
   })
 
   describe('#468 — auto-merge + redeploy on completion', () => {
@@ -346,7 +423,7 @@ describe('resolveTask — Decision Trace (#685)', () => {
 
     await resolveTask('owner::slug', TASK, 'slug')
     const actions = h.addTraceStep.mock.calls.map((c: any[]) => c[2])
-    expect(actions).toEqual(['read_repo', 'implement', 'commit_pr', 'verify_coverage'])
+    expect(actions).toEqual(['open_issue', 'read_repo', 'implement', 'commit_pr', 'verify_coverage'])
   })
 
   it('completes the trace with success:true on a completed task', async () => {

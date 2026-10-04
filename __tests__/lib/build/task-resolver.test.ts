@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { decideOutcomeFromCoverage } from '@/lib/build/task-resolver'
+import { decideOutcomeFromCoverage, buildTaskIssueBody } from '@/lib/build/task-resolver'
 
 /**
  * #374 (epic #371) — pure-logic tests for the coverage→stage decision.
@@ -48,5 +48,39 @@ describe('decideOutcomeFromCoverage', () => {
   it('respects a custom floor override', () => {
     const result = decideOutcomeFromCoverage({ coveragePercent: 70, testable: true, passed: true }, 60)
     expect(result.stage).toBe('completed')
+  })
+})
+
+/**
+ * #905 — "No Code Without An Issue" (.ainative/ISSUE_TRACKING_ENFORCEMENT.md's
+ * Golden Rule). buildTaskIssueBody() renders the issue body resolveTask() opens
+ * on the company's own Gitea repo BEFORE implementation begins. Estimate/
+ * rationale (story points) is explicitly out of scope here — that lands via
+ * the follow-up issue #906 — so this body says so honestly rather than
+ * fabricating a point value.
+ */
+describe('buildTaskIssueBody (#905)', () => {
+  it('includes the problem/context drawn from the task title and detail', () => {
+    const body = buildTaskIssueBody({ title: 'Add dark mode', detail: 'Founder asked for a toggle in settings.' })
+    expect(body).toContain('Add dark mode')
+    expect(body).toContain('Founder asked for a toggle in settings.')
+    expect(body).toMatch(/## Problem\/Context/)
+  })
+
+  it('falls back to the title alone when detail is absent', () => {
+    const body = buildTaskIssueBody({ title: 'Add dark mode' })
+    expect(body).toContain('Add dark mode')
+    expect(body).not.toMatch(/undefined/)
+  })
+
+  it('includes an honest acceptance criteria section', () => {
+    const body = buildTaskIssueBody({ title: 'Add dark mode' })
+    expect(body).toMatch(/## Acceptance Criteria/)
+  })
+
+  it('notes that estimate/rationale is out of scope and lands via #906, without fabricating a story point', () => {
+    const body = buildTaskIssueBody({ title: 'Add dark mode' })
+    expect(body).toMatch(/#906/)
+    expect(body).not.toMatch(/Story Points:\*\*\s*\d/)
   })
 })

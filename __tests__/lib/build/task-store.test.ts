@@ -165,6 +165,18 @@ describe('coerceTask (#55)', () => {
     const t = coerceTask({ row_data: { id: 'x', title: 'Do it', stage: 'running', source: 'swarm', task_id: 'p1', created_at: '2026-01-01' } })
     expect(t).toMatchObject({ id: 'x', title: 'Do it', stage: 'in_progress', source: 'swarm', taskId: 'p1' })
   })
+  it('coerces a persisted gitea_issue_number into giteaIssueNumber (#905)', () => {
+    const t = coerceTask({ row_data: { id: 'x', title: 'Do it', gitea_issue_number: 42 } })
+    expect(t?.giteaIssueNumber).toBe(42)
+  })
+  it('defaults giteaIssueNumber to null when absent (#905)', () => {
+    const t = coerceTask({ title: 'Do it' })
+    expect(t?.giteaIssueNumber).toBeNull()
+  })
+  it('also accepts a camelCase giteaIssueNumber on the raw row (#905)', () => {
+    const t = coerceTask({ title: 'Do it', giteaIssueNumber: 9 })
+    expect(t?.giteaIssueNumber).toBe(9)
+  })
   it('accepts a flat row (no row_data wrapper)', () => {
     const t = coerceTask({ title: 'Flat', stage: 'todo' }, 'a::b')
     expect(t?.title).toBe('Flat')
@@ -364,6 +376,22 @@ describe('createTask (#55, #902)', () => {
     const t = await createTask('a::b', { title: 'x' })
     expect(t?.source).toBe('cody')
     expect(t?.stage).toBe('todo')
+  })
+
+  it('persists giteaIssueNumber when provided at creation (#905)', async () => {
+    const fn = mockFetch(() => ({ ok: true, json: () => ({ id: 'r1' }) }))
+    const t = await createTask('a::b', { title: 'x', giteaIssueNumber: 42 })
+    expect(t?.giteaIssueNumber).toBe(42)
+    const body = JSON.parse(fn.mock.calls[0][1].body)
+    expect(body.row_data.gitea_issue_number).toBe(42)
+  })
+
+  it('defaults giteaIssueNumber to null when not provided (#905)', async () => {
+    const fn = mockFetch(() => ({ ok: true, json: () => ({ id: 'r1' }) }))
+    const t = await createTask('a::b', { title: 'x' })
+    expect(t?.giteaIssueNumber).toBeNull()
+    const body = JSON.parse(fn.mock.calls[0][1].body)
+    expect(body.row_data.gitea_issue_number).toBeNull()
   })
 
   it('returns null (never throws) on a non-ok response', async () => {
@@ -593,5 +621,23 @@ describe('updateTask (#55)', () => {
   it('returns false when fetch throws', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network') }))
     expect(await updateTask('a::b', 't1', { output: 'x' })).toBe(false)
+  })
+
+  it('persists giteaIssueNumber on a patch (#905)', async () => {
+    const fn = mockUpdateFlow({
+      existingRow: { row_id: 'row-abc', row_data: { id: 't1', stage: 'todo', scope_key: 'a::b' } },
+    })
+    const ok = await updateTask('a::b', 't1', { giteaIssueNumber: 42 })
+    expect(ok).toBe(true)
+    const putCall = fn.mock.calls.find((c) => /\/rows\/row-abc$/.test(String(c[0])))!
+    expect(JSON.parse(putCall[1].body).row_data.gitea_issue_number).toBe(42)
+  })
+
+  it('treats a giteaIssueNumber-only patch as a real change, not a no-op (#905)', async () => {
+    const fn = mockUpdateFlow({
+      existingRow: { row_id: 'row-abc', row_data: { id: 't1', stage: 'todo', scope_key: 'a::b' } },
+    })
+    await updateTask('a::b', 't1', { giteaIssueNumber: 7 })
+    expect(fn).toHaveBeenCalled()
   })
 })
