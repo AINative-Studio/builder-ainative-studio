@@ -16,10 +16,19 @@
  * itself already records the real failure reason on the task — see
  * task-resolver.ts — so nothing is silently lost, it just doesn't stop the
  * loop from continuing to the next task/company).
+ *
+ * #904 (epic #900, depends on #902/#903) — before resolving the DUE list,
+ * every `todo` task flagged `needsSplit` (#903: estimated at 3/5/8 points)
+ * is now run through `lib/build/task-splitter.ts`'s `splitTask()` instead of
+ * being left to sit in the backlog forever. Same best-effort contract: a
+ * splitter failure leaves that parent task untouched (still `todo`) for a
+ * future nightly retry, and never blocks resolution of this run's other,
+ * smaller due tasks.
  */
 
 import { listTasks, needsSplit, type BuildTask } from '@/lib/build/task-store'
 import { resolveTask } from '@/lib/build/task-resolver'
+import { splitTask } from '@/lib/build/task-splitter'
 
 /**
  * v1 scope: resolve at most this many `todo` tasks per company per nightly
@@ -137,15 +146,37 @@ export async function runTaskResolutions(
   let completed = 0
   try {
     const tasks = await listTasks(scopeKey)
-    const due = tasks
-      .filter((t): t is BuildTask => t.stage === 'todo')
-      // #903 (epic #900, depends on #902): a task estimated at 3/5/8 story
-      // points is oversized per .ainative/RULES.MD §2 and must be SPLIT (#904)
-      // before it's implemented directly — never hand one to resolveTask()
-      // while it's still oversized. Filtered out here (not counted against
-      // the tier limit) rather than merely skipped-but-counted, so an
-      // oversized task sitting in the backlog never steals a paid tier's real
-      // nightly throughput from its smaller, resolvable due tasks.
+    const todo = tasks.filter((t): t is BuildTask => t.stage === 'todo')
+
+    // #903 (epic #900, depends on #902): a task estimated at 3/5/8 story
+    // points is oversized per .ainative/RULES.MD §2 and must be SPLIT before
+    // it's implemented directly — never hand one to resolveTask() while
+    // it's still oversized.
+    //
+    // #904 — rather than just filtering these out forever (#903's original
+    // scope, detection-only), decompose each one via splitTask(): a
+    // best-effort LLM call that breaks it into 2-4 smaller, independently-
+    // estimated sub-tasks and marks the oversized parent `completed` with an
+    // honest reference to the real children. A splitter failure (the LLM
+    // call, parsing, or a child persistence hiccup) leaves the parent
+    // untouched — still `todo`, still oversized — for a future nightly
+    // retry; it is never silently lost. Oversized tasks are never counted
+    // against the tier's resolution limit (whether the split succeeds or
+    // not) so they can never steal a paid tier's real nightly throughput
+    // from its smaller, resolvable due tasks — matching #903's existing
+    // invariant.
+    const oversized = todo.filter((t) => needsSplit(t.storyPoints))
+    for (const task of oversized) {
+      try {
+        await splitTask(scopeKey, task)
+      } catch {
+        /* best-effort — a splitter failure (even an unexpected throw) must
+         * never break the loop or lose the parent task; splitTask itself
+         * already leaves the parent untouched on any internal failure. */
+      }
+    }
+
+    const due = todo
       .filter((t) => !needsSplit(t.storyPoints))
       .sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime())
       .slice(0, limit)
