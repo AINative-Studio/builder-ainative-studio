@@ -50,6 +50,13 @@ export type DocTab = 'all' | DocKind
 /**
  * Document types (the human category shown as a chip on each card). Durable docs
  * are the four Polsia-style artifacts + a generic 'note'; reports are 'daily'.
+ *
+ * #927: the remaining 14 real `/build/artifact` views (thesis, wedge, …
+ * sprintPlan — see lib/build/artifact-prompts.ts) are added here so EVERY
+ * generated artifact can persist via createDocument()/upsertDocument(), not
+ * just the PRD (#901 only added 'prd' for the nightly-loop PRD-priority read
+ * path). Without a DOC_TYPE, normalizeType() would silently coerce an unknown
+ * view name down to 'note', losing the real type on write.
  */
 export const DOC_TYPES = [
   'research',
@@ -59,6 +66,20 @@ export const DOC_TYPES = [
   'note',
   'daily',
   'prd',
+  'thesis',
+  'wedge',
+  'businessModel',
+  'positioning',
+  'landing',
+  'brief',
+  'comp',
+  'dataModel',
+  'memoryPolicy',
+  'agentDef',
+  'codingStandards',
+  'apiSpec',
+  'backlog',
+  'sprintPlan',
 ] as const
 export type DocType = (typeof DOC_TYPES)[number]
 
@@ -71,6 +92,20 @@ export const DOC_TYPE_LABELS: Record<DocType, string> = {
   note: 'Note',
   daily: 'Daily Report',
   prd: 'Product Requirements',
+  thesis: 'Value Thesis',
+  wedge: 'Wedge',
+  businessModel: 'Business Model',
+  positioning: 'Positioning',
+  landing: 'Landing Page',
+  brief: 'Product Brief',
+  comp: 'Competitive Analysis',
+  dataModel: 'Data Model',
+  memoryPolicy: 'Memory Policy',
+  agentDef: 'Agent Definition',
+  codingStandards: 'Coding Standards',
+  apiSpec: 'API Spec',
+  backlog: 'Backlog',
+  sprintPlan: 'Sprint Plan',
 }
 
 /** Which document types are durable artifacts (kind='document'). */
@@ -132,9 +167,19 @@ export function documentScopeKey(
  * Normalize an arbitrary type-ish value to a valid DocType. Accepts common
  * aliases so external callers (and the artifact generator) can use loose
  * vocabulary. Unknown values fall back to 'note'. Pure.
+ *
+ * #927: several of the real artifact-view DOC_TYPES are camelCase
+ * (businessModel, dataModel, memoryPolicy, agentDef, codingStandards,
+ * apiSpec, sprintPlan — matching lib/build/state.ts's ArtifactView names
+ * exactly, so the route can pass `view` straight through). Check the
+ * trimmed ORIGINAL-case value against DOC_TYPES first so these exact,
+ * already-canonical values pass through unchanged; only fall through to the
+ * lowercased alias table below for loose/legacy vocabulary.
  */
 export function normalizeType(value: unknown): DocType {
-  const s = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
+  const original = String(value || '').trim()
+  if ((DOC_TYPES as readonly string[]).includes(original)) return original as DocType
+  const s = original.toLowerCase().replace(/[\s-]+/g, '_')
   if ((DOC_TYPES as readonly string[]).includes(s)) return s as DocType
   switch (s) {
     case 'audit':
@@ -370,6 +415,78 @@ export async function createDocument(
     return coerceDocument(row, scopeKey)
   } catch (e) {
     console.warn('[document-store] createDocument failed:', (e as Error)?.name || e)
+    return null
+  }
+}
+
+/**
+ * Persist a document for a scope, OVERWRITING any existing document of the SAME
+ * type in that scope instead of creating a duplicate (#927). A founder
+ * regenerating/redrafting an artifact (PRD, thesis, backlog, …) should replace
+ * the prior persisted version for that (project, view) pair, not accumulate a
+ * new row every redraft.
+ *
+ * Implementation mirrors the established query-by-scope_key + client-side
+ * match + PUT-the-merged-row pattern already proven in task-store.ts's
+ * updateTask() (ZeroDB's query engine can only filter on scope_key — see that
+ * function's doc comment for the live-confirmed root cause): list the scope's
+ * documents, find one whose `type` exactly matches, and PUT a merged row to
+ * its real `row_id` if found; otherwise fall through to a plain createDocument
+ * (first generation for this (scope, type) pair — nothing to overwrite yet).
+ *
+ * Best-effort end to end: a lookup or PUT failure never throws; it degrades to
+ * null (matching createDocument's own contract) so a persistence hiccup can
+ * never block the artifact response reaching the founder.
+ */
+export async function upsertDocument(
+  scopeKey: string,
+  input: { title: string; content: string; type?: string; kind?: string },
+): Promise<BuildDocument | null> {
+  const title = String(input?.title || '').trim()
+  const content = String(input?.content || '').trim()
+  if (!scopeKey || !title || !content) return null
+  const type = normalizeType(input.type)
+
+  let existingRow: { row_id?: string; row_data?: any } | null = null
+  try {
+    const result = await zerodbRequest(
+      'POST',
+      `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/query`,
+      { filters: { scope_key: scopeKey }, limit: MAX_LOAD_DOCUMENTS },
+      { retries: 1 },
+    )
+    const rows: any[] = result?.data || []
+    existingRow = rows.find((r) => normalizeType((r?.row_data || r)?.type) === type) || null
+  } catch (e) {
+    console.warn('[document-store] upsertDocument lookup failed, falling back to create:', (e as Error)?.name || e)
+    existingRow = null
+  }
+
+  // No prior document of this type for this scope — first generation, plain create.
+  if (!existingRow?.row_id) {
+    return createDocument(scopeKey, input)
+  }
+
+  const kind = input.kind ? normalizeKind(input.kind) : kindForType(type)
+  const merged = {
+    ...existingRow.row_data,
+    title: title.slice(0, 300),
+    content: content.slice(0, 40000),
+    type,
+    kind,
+    updated_at: new Date().toISOString(),
+  }
+  try {
+    const updated = await zerodbRequest(
+      'PUT',
+      `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/rows/${existingRow.row_id}`,
+      { row_data: merged },
+      { retries: 1 },
+    )
+    if (!updated) return null
+    return coerceDocument(merged, scopeKey)
+  } catch (e) {
+    console.warn('[document-store] upsertDocument update failed:', (e as Error)?.name || e)
     return null
   }
 }

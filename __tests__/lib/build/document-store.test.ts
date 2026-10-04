@@ -15,6 +15,7 @@ import {
   sortDocuments,
   starterDocumentTypes,
   createDocument,
+  upsertDocument,
   listDocuments,
   getDocument,
   hasReportForDate,
@@ -59,6 +60,29 @@ describe('DOC constants (#64)', () => {
   })
   it('starterDocumentTypes are the four durable Polsia-style docs', () => {
     expect(starterDocumentTypes()).toEqual(['research', 'roadmap', 'mission', 'market'])
+  })
+
+  // #927 — every real /build/artifact view (thesis, wedge, … sprintPlan) needs
+  // its own DOC_TYPE so app/api/build/artifact/route.ts can persist ANY
+  // generated artifact, not just the PRD (#901 only added 'prd').
+  const ARTIFACT_VIEW_TYPES = [
+    'thesis', 'wedge', 'businessModel', 'positioning', 'landing', 'brief',
+    'comp', 'dataModel', 'memoryPolicy', 'agentDef', 'codingStandards',
+    'apiSpec', 'backlog', 'sprintPlan',
+  ] as const
+
+  it('includes all 14 real artifact-view types (#927), each with a human label', () => {
+    for (const t of ARTIFACT_VIEW_TYPES) {
+      expect(DOC_TYPES).toContain(t)
+      expect(typeof DOC_TYPE_LABELS[t as (typeof DOC_TYPES)[number]]).toBe('string')
+      expect(DOC_TYPE_LABELS[t as (typeof DOC_TYPES)[number]].length).toBeGreaterThan(0)
+    }
+  })
+
+  it('every artifact-view type derives the durable document kind, not report', () => {
+    for (const t of ARTIFACT_VIEW_TYPES) {
+      expect(kindForType(t as (typeof DOC_TYPES)[number])).toBe('document')
+    }
   })
 })
 
@@ -271,6 +295,104 @@ describe('ZeroDB I/O (#64)', () => {
       vi.stubGlobal('fetch', fetchMock)
       const doc = await createDocument('a::b', { title: 'Research', content: 'body', type: 'research' })
       expect(doc!.title).toBe('Research')
+    })
+  })
+
+  // ---- upsertDocument (#927): regenerating the same view for the same
+  // project must OVERWRITE the prior persisted doc for that (scope, type)
+  // pair, not accumulate a duplicate every redraft. ----
+  describe('upsertDocument (#927)', () => {
+    it('creates a new row when no existing document of that type exists for the scope', async () => {
+      const fetchMock = vi.fn()
+        // ensureTable
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) })
+        // query for an existing doc of this type — none found
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ data: [] }) })
+        // create POST
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ id: 'row-1' }) })
+      vi.stubGlobal('fetch', fetchMock)
+      const doc = await upsertDocument('a::b', { title: 'PRD v1', content: 'body', type: 'prd' })
+      expect(doc!.title).toBe('PRD v1')
+      const createCall = fetchMock.mock.calls.find(([url, opts]) =>
+        String(url).includes('/rows') && opts?.method === 'POST',
+      )
+      expect(createCall).toBeTruthy()
+    })
+
+    it('overwrites (PUTs) the existing row when a document of the same type already exists in scope — no duplicate created', async () => {
+      const existingRow = {
+        row_id: 'row-existing',
+        row_data: { id: 'd-old', scope_key: 'a::b', type: 'prd', title: 'PRD v1', content: 'old body', created_at: '2026-01-01T00:00:00Z' },
+      }
+      const fetchMock = vi.fn()
+        // query for an existing doc of this type — found one
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ data: [existingRow] }) })
+        // PUT update
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ ok: true }) })
+      vi.stubGlobal('fetch', fetchMock)
+      const doc = await upsertDocument('a::b', { title: 'PRD v2', content: 'new body', type: 'prd' })
+      expect(doc!.title).toBe('PRD v2')
+      expect(doc!.content).toBe('new body')
+      // Same app-level id preserved (true overwrite, not a new document).
+      expect(doc!.id).toBe('d-old')
+      // No POST create call to the rows-create endpoint was made — only the
+      // scope query (also a POST, ZeroDB's query verb) + the PUT update.
+      const createCall = fetchMock.mock.calls.find(
+        ([url, opts]) => opts?.method === 'POST' && String(url).endsWith('/rows'),
+      )
+      expect(createCall).toBeUndefined()
+      const putCall = fetchMock.mock.calls.find(([, opts]) => opts?.method === 'PUT')
+      expect(putCall).toBeTruthy()
+      expect(String(putCall![0])).toContain('/rows/row-existing')
+    })
+
+    it('only matches an existing doc of the SAME type — a different type in the same scope is left alone and a new row is created', async () => {
+      const otherTypeRow = {
+        row_id: 'row-other',
+        row_data: { id: 'd-other', scope_key: 'a::b', type: 'thesis', title: 'Thesis', content: 'x', created_at: '2026-01-01T00:00:00Z' },
+      }
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) }) // ensureTable
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ data: [otherTypeRow] }) }) // query — no 'prd' match
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ id: 'row-new' }) }) // create
+      vi.stubGlobal('fetch', fetchMock)
+      const doc = await upsertDocument('a::b', { title: 'PRD v1', content: 'body', type: 'prd' })
+      expect(doc!.title).toBe('PRD v1')
+      const putCall = fetchMock.mock.calls.find(([, opts]) => opts?.method === 'PUT')
+      expect(putCall).toBeUndefined()
+    })
+
+    it('returns null without a scope key or content, same contract as createDocument', async () => {
+      expect(await upsertDocument('', { title: 't', content: 'c' })).toBeNull()
+      expect(await upsertDocument('a::b', { title: '', content: 'c' })).toBeNull()
+      expect(await upsertDocument('a::b', { title: 't', content: '' })).toBeNull()
+    })
+
+    it('never throws when the existing-doc lookup fails — falls through to create', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const fetchMock = vi.fn()
+        // lookup's zerodbRequest has retries:1 → 2 real fetch attempts before it gives up
+        .mockRejectedValueOnce(new Error('query failed'))
+        .mockRejectedValueOnce(new Error('query failed again'))
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) }) // ensureTable (create path)
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ id: 'row-new' }) }) // create
+      vi.stubGlobal('fetch', fetchMock)
+      const doc = await upsertDocument('a::b', { title: 'PRD', content: 'body', type: 'prd' })
+      expect(doc!.title).toBe('PRD')
+    })
+
+    it('never throws when the PUT update itself fails — degrades to null, best-effort', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const existingRow = {
+        row_id: 'row-existing',
+        row_data: { id: 'd-old', scope_key: 'a::b', type: 'prd', title: 'PRD v1', content: 'old', created_at: '2026-01-01T00:00:00Z' },
+      }
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ data: [existingRow] }) })
+        .mockRejectedValueOnce(new Error('PUT failed'))
+      vi.stubGlobal('fetch', fetchMock)
+      const doc = await upsertDocument('a::b', { title: 'PRD v2', content: 'new', type: 'prd' })
+      expect(doc).toBeNull()
     })
   })
 

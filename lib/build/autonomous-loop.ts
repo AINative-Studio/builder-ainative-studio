@@ -148,24 +148,28 @@ function authHeaders(): Record<string, string> {
 // only the generic buildTaskDescription() prose above, so a founder's P0
 // feature and P2 feature were indistinguishable to the autonomous loop.
 //
-// SCOPE (deliberately narrow — see PR/issue discussion): this is a READ-path
-// addition only. It does NOT add any new persistence plumbing for PRD
-// artifacts — that would overreach into issue #532's separate, undecided
-// write-side territory. Today, NOTHING in this codebase writes a
-// `type: 'prd'` document (confirmed: app/api/build/artifact/route.ts returns
-// the generated PRD JSON directly to the client and never calls
-// createDocument() with it) — so in practice `pickPrdFeatureDescription()`
-// below will always return null today and every nightly seed will fall
-// through to the generic buildTaskDescription(). That is intentional and
-// honest, not a bug: once something starts writing a `prd` document (#532),
-// this read path lights up for free with no further changes here.
+// SCOPE originally (#901): a READ-path addition only, deliberately NOT paired
+// with persistence for PRD artifacts — that was issue #532's separate,
+// undecided write-side territory. At the time, NOTHING in this codebase wrote
+// a `type: 'prd'` document (app/api/build/artifact/route.ts returned the
+// generated PRD JSON directly to the client with no createDocument() call),
+// so `pickPrdFeatureDescription()` always returned null and every nightly
+// seed fell through to the generic buildTaskDescription().
 //
-// CONTRACT for a future writer: a `prd` document's `content` field is expected
-// to be the JSON-stringified shape already defined by the `prd` artifact
-// schema (lib/build/artifact-prompts.ts): `{ overview, features: [{ name,
-// desc, priority: "P0"|"P1"|"P2" }], acceptance }`. Reusing that exact shape
-// (rather than inventing a new one) means a future writer can persist the
-// artifact's own generation output completely as-is.
+// #927 closed that gap: app/api/build/artifact/route.ts now persists every
+// successful generation (when the request carries a real companyId) via
+// document-store's upsertDocument(), writing the EXACT content shape this
+// read path already expected (see CONTRACT below) under the SAME scope key
+// (chatScopeKey(deriveOwnerKey(session), companyId)) this function reads
+// from. So this read path now lights up for a real company the moment a
+// founder generates (or regenerates) their PRD — no further changes needed
+// here.
+//
+// CONTRACT (unchanged): a `prd` document's `content` field is the
+// JSON-stringified shape defined by the `prd` artifact schema
+// (lib/build/artifact-prompts.ts): `{ overview, features: [{ name, desc,
+// priority: "P0"|"P1"|"P2" }], acceptance }` — persisted as-is from the
+// artifact generator's own output, nothing re-derived or re-shaped.
 // ---------------------------------------------------------------------------
 
 /** One feature entry as authored in a PRD artifact's `features` array. */

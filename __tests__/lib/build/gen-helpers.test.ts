@@ -44,12 +44,13 @@ vi.mock('@/contexts/build-context', () => ({ useBuild: h.useBuild }))
 
 import { useGenAutoRetry } from '@/components/build/artifacts/gen-helpers'
 
-function mockBuild(overrides: { generated?: Record<string, unknown>; genError?: Record<string, string> } = {}) {
+function mockBuild(overrides: { generated?: Record<string, unknown>; genError?: Record<string, string>; appChatId?: string } = {}) {
   const dispatch = vi.fn()
   h.useBuild.mockReturnValue({
     state: {
       idea: 'a brilliant idea', track: 'company', companyName: 'Dwellow',
       generated: overrides.generated ?? {}, genError: overrides.genError ?? {},
+      appChatId: overrides.appChatId ?? 'dwellow-co',
     },
     views: ['thesis', 'wedge', 'businessModel', 'positioning', 'landing', 'plan30'],
     dispatch,
@@ -104,6 +105,9 @@ describe('useGenAutoRetry — automatic background retry on failure', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [, opts] = fetchMock.mock.calls[0]
     expect(JSON.parse(opts.body)).toMatchObject({ view: 'landing', idea: 'a brilliant idea', track: 'company' })
+    // #927: the real project identifier (appChatId) is threaded through as
+    // companyId so a successful generation can persist server-side.
+    expect(JSON.parse(opts.body).companyId).toBe('dwellow-co')
 
     // flush the retry promise chain
     for (let i = 0; i < 10; i++) await Promise.resolve()
@@ -111,6 +115,21 @@ describe('useGenAutoRetry — automatic background retry on failure', () => {
     expect(result.stuck).toBe(true) // stale return value from the render that triggered the effect
     const dispatchFn = h.useBuild.mock.results[0].value.dispatch
     expect(dispatchFn).toHaveBeenCalledWith({ type: 'GEN_DONE', view: 'landing', content: { headline: 'recovered' } })
+  })
+
+  it('omits companyId when no project exists yet (appChatId empty) — early intake, nothing to scope the persist to', async () => {
+    mockBuild({ genError: { landing: 'HTTP 503' }, appChatId: '' })
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ content: { headline: 'recovered' } }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    useGenAutoRetry('landing')
+    ;(globalThis as any).__triggerEffect?.(0)
+
+    const [, opts] = fetchMock.mock.calls[0]
+    expect(JSON.parse(opts.body).companyId).toBeUndefined()
   })
 
   it('dispatches GEN_FAIL with the surfaced error when the automatic retry ALSO fails', async () => {

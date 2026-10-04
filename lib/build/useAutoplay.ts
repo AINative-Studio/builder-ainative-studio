@@ -120,7 +120,11 @@ export function useAutoplay(state: BuildState, dispatch: Dispatch) {
         fetch('/api/build/artifact', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ view: 'wedge', idea: state.idea, track: state.track, companyName: state.companyName || undefined }),
+          body: JSON.stringify({
+            view: 'wedge', idea: state.idea, track: state.track, companyName: state.companyName || undefined,
+            // #927: real project identifier so this wedge draft persists server-side too.
+            companyId: state.appChatId || undefined,
+          }),
         })
           .then(async (res) => {
             const data = await res.json().catch(() => null)
@@ -219,6 +223,10 @@ export function useAutoplay(state: BuildState, dispatch: Dispatch) {
               body: JSON.stringify({
                 view: next, idea: state.idea, track: state.track,
                 companyName: state.companyName || undefined, prior,
+                // #927: real project identifier so a successful generation
+                // persists server-side (absent for early intake, before a
+                // project exists — the server simply skips persisting then).
+                companyId: state.appChatId || undefined,
               }),
             })
           } catch (e: unknown) {
