@@ -64,6 +64,16 @@ export interface CoverageResult {
   /** Human-readable reason when testable/passed is false — for the task's
    *  durable `output` field (lib/build/task-store.ts), never silently blank. */
   reason?: string
+  /**
+   * True ONLY when `testable: false` means "we refused to run this
+   * (unconfigured sandboxing)," never "this app genuinely has no tests yet."
+   * #917 introduced a second reason `testable` can be false — a caller like
+   * task-resolver.ts's decideOutcomeFromCoverage() must NOT auto-complete a
+   * task on this reason the way it correctly does for the benign no-tests
+   * case, or a future E2B misconfiguration would silently merge unverified
+   * code while looking like an honest, deliberate decision.
+   */
+  sandboxRefused?: boolean
 }
 
 /** Reasonable ceiling so a hung generated app's test suite can't hang the
@@ -207,6 +217,7 @@ export async function runCoverage(
       testable: false,
       passed: false,
       reason: 'E2B not configured — sandboxed execution required for untrusted code',
+      sandboxRefused: true,
     }
   }
 

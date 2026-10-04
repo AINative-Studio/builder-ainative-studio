@@ -13,6 +13,18 @@ describe('decideOutcomeFromCoverage', () => {
     expect(result.reason).toMatch(/no test suite/i)
   })
 
+  it('#917: never auto-completes when testable:false means the sandbox refused, not "no tests exist"', () => {
+    const result = decideOutcomeFromCoverage({
+      coveragePercent: null,
+      testable: false,
+      passed: false,
+      reason: 'E2B not configured — sandboxed execution required for untrusted code',
+      sandboxRefused: true,
+    })
+    expect(result.stage).toBe('failed')
+    expect(result.reason).toMatch(/sandbox/i)
+  })
+
   it('fails when tests genuinely did not pass', () => {
     const result = decideOutcomeFromCoverage({
       coveragePercent: 90, testable: true, passed: false, reason: 'Test run exited with code 1',

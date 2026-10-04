@@ -86,9 +86,16 @@ export interface ResolveTaskResult {
  * generated app has no tests yet. PURE.
  */
 export function decideOutcomeFromCoverage(
-  coverage: { coveragePercent: number | null; testable: boolean; passed: boolean; reason?: string },
+  coverage: { coveragePercent: number | null; testable: boolean; passed: boolean; reason?: string; sandboxRefused?: boolean },
   floor: number = COVERAGE_FLOOR,
 ): { stage: 'completed' | 'failed'; reason?: string } {
+  if (coverage.sandboxRefused) {
+    // #917: testable:false here means "we refused to run untrusted code
+    // unsandboxed," NOT "this app has no tests yet" — must never be treated
+    // as the benign case below, or a future E2B misconfiguration would
+    // silently merge unverified code while looking like an honest decision.
+    return { stage: 'failed', reason: coverage.reason || 'Coverage could not be verified — sandboxed execution was unavailable.' }
+  }
   if (!coverage.testable) {
     // No test suite for this app yet — not testable via code tests, so this
     // story is accepted on a successful implement+commit rather than blocked

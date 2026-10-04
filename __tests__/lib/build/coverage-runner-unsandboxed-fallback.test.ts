@@ -59,7 +59,16 @@ describe('runCoverage — fail-closed when E2B is unconfigured (#917)', () => {
       testable: false,
       passed: false,
       reason: 'E2B not configured — sandboxed execution required for untrusted code',
+      sandboxRefused: true,
     })
+  })
+
+  it('#917 follow-up: sets sandboxRefused so decideOutcomeFromCoverage never auto-completes this as "no tests exist"', async () => {
+    const result = await runCoverage(
+      { 'package.json': PKG_JSON },
+      { env: {} as any },
+    )
+    expect(result.sandboxRefused).toBe(true)
   })
 
   it('never touches the local spawn() path or the E2B path when refusing', async () => {
