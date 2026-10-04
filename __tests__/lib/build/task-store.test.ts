@@ -426,18 +426,20 @@ describe('createTask (#55, #902)', () => {
   })
 
   it('persists giteaIssueNumber when provided at creation (#905)', async () => {
-    const fn = mockFetch(() => ({ ok: true, json: () => ({ id: 'r1' }) }))
+    const fn = mockCreateFlow({ zerodb: () => ({ ok: true, json: () => ({ id: 'r1' }) }) })
     const t = await createTask('a::b', { title: 'x', giteaIssueNumber: 42 })
     expect(t?.giteaIssueNumber).toBe(42)
-    const body = JSON.parse(fn.mock.calls[0][1].body)
+    const zerodbCall = fn.mock.calls.find((c) => !String(c[0]).includes('/chat/completions'))
+    const body = JSON.parse(zerodbCall![1].body)
     expect(body.row_data.gitea_issue_number).toBe(42)
   })
 
   it('defaults giteaIssueNumber to null when not provided (#905)', async () => {
-    const fn = mockFetch(() => ({ ok: true, json: () => ({ id: 'r1' }) }))
+    const fn = mockCreateFlow({ zerodb: () => ({ ok: true, json: () => ({ id: 'r1' }) }) })
     const t = await createTask('a::b', { title: 'x' })
     expect(t?.giteaIssueNumber).toBeNull()
-    const body = JSON.parse(fn.mock.calls[0][1].body)
+    const zerodbCall = fn.mock.calls.find((c) => !String(c[0]).includes('/chat/completions'))
+    const body = JSON.parse(zerodbCall![1].body)
     expect(body.row_data.gitea_issue_number).toBeNull()
   })
 
