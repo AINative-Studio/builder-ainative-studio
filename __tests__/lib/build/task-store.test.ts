@@ -36,6 +36,8 @@ const mkTask = (over: Partial<BuildTask> = {}): BuildTask => ({
   source: over.source || 'cody',
   taskId: over.taskId ?? null,
   output: over.output,
+  storyPoints: over.storyPoints ?? null,
+  estimateRationale: over.estimateRationale ?? null,
   createdAt: over.createdAt || '2026-01-01T00:00:00Z',
   updatedAt: over.updatedAt || over.createdAt || '2026-01-01T00:00:00Z',
 })
@@ -180,6 +182,37 @@ describe('coerceTask (#55)', () => {
     const t = coerceTask({ title: 'x', created_at: '2026-02-02' })
     expect(t?.updatedAt).toBe('2026-02-02')
   })
+
+  // #902: storyPoints / estimateRationale coercion
+  it('coerces a valid story_points + estimate_rationale pair through', () => {
+    const t = coerceTask({ title: 'x', story_points: 3, estimate_rationale: 'One clear feature slice.' })
+    expect(t?.storyPoints).toBe(3)
+    expect(t?.estimateRationale).toBe('One clear feature slice.')
+  })
+  it('accepts the camelCase alias (storyPoints/estimateRationale)', () => {
+    const t = coerceTask({ title: 'x', storyPoints: 5, estimateRationale: 'Multi-file.' })
+    expect(t?.storyPoints).toBe(5)
+    expect(t?.estimateRationale).toBe('Multi-file.')
+  })
+  it('coerces a missing story_points (pre-#902 row) to null/null', () => {
+    const t = coerceTask({ title: 'x' })
+    expect(t?.storyPoints).toBeNull()
+    expect(t?.estimateRationale).toBeNull()
+  })
+  it('coerces a non-Fibonacci story_points (corrupt data) to null, dropping the rationale too', () => {
+    const t = coerceTask({ title: 'x', story_points: 4, estimate_rationale: 'should be dropped' })
+    expect(t?.storyPoints).toBeNull()
+    expect(t?.estimateRationale).toBeNull()
+  })
+  it('treats storyPoints: 0 as a real estimate, not falsy/absent', () => {
+    const t = coerceTask({ title: 'x', story_points: 0, estimate_rationale: 'Trivial.' })
+    expect(t?.storyPoints).toBe(0)
+    expect(t?.estimateRationale).toBe('Trivial.')
+  })
+  it('truncates an oversized rationale to 300 chars', () => {
+    const t = coerceTask({ title: 'x', story_points: 2, estimate_rationale: 'y'.repeat(1000) })
+    expect(t?.estimateRationale?.length).toBe(300)
+  })
 })
 
 // ---------- sortTasks ----------
@@ -269,15 +302,49 @@ function mockFetch(impl: (url: string, init?: any) => { ok: boolean; status?: nu
   return fn
 }
 
-describe('createTask (#55)', () => {
+/**
+ * createTask also fires a best-effort estimation call (#902) to AINative's
+ * chat/completions proxy — a DIFFERENT endpoint than the ZeroDB rows/query
+ * calls the rest of this suite mocks. This dispatcher-based fetch mock lets a
+ * single stub answer both: ZeroDB urls get `zerodb`'s response, anything
+ * hitting `/chat/completions` gets `estimate`'s. Defaulting `estimate` to a
+ * benign fixed reply keeps every pre-existing createTask test (written before
+ * #902) valid unchanged — they never asserted on story_points/rationale, and
+ * still don't need to.
+ */
+type FetchStub = { ok: boolean; status?: number; json?: () => any }
+
+function mockCreateFlow(opts: {
+  zerodb: (url: string, init?: any) => FetchStub
+  estimate?: (url: string, init?: any) => FetchStub
+}) {
+  const estimate: (url: string, init?: any) => FetchStub =
+    opts.estimate ||
+    (() => ({ ok: true, json: () => ({ choices: [{ message: { content: 'POINTS: 2\nRATIONALE: Small, well-defined.' } }] }) }))
+  const fn = vi.fn(async (url: string, init?: any) => {
+    const u = String(url)
+    const r = u.includes('/chat/completions') ? estimate(u, init) : opts.zerodb(u, init)
+    return {
+      ok: r.ok,
+      status: r.status ?? (r.ok ? 200 : 500),
+      json: async () => (r.json ? r.json() : {}),
+      text: async () => '',
+    } as any
+  })
+  vi.stubGlobal('fetch', fn)
+  return fn
+}
+
+describe('createTask (#55, #902)', () => {
   beforeEach(() => { process.env.ZERODB_API_KEY = 'k' })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('POSTs a row and returns the coerced task on success', async () => {
-    const fn = mockFetch(() => ({ ok: true, json: () => ({ id: 'r1' }) }))
+    const fn = mockCreateFlow({ zerodb: () => ({ ok: true, json: () => ({ id: 'r1' }) }) })
     const t = await createTask('a::b', { title: 'Ship it', stage: 'dispatched', source: 'swarm', taskId: 'p1' })
     expect(t).toMatchObject({ title: 'Ship it', stage: 'in_progress', source: 'swarm', taskId: 'p1', scopeKey: 'a::b' })
-    const [url, init] = fn.mock.calls[0]
+    const rowsCall = fn.mock.calls.find((c) => String(c[0]).includes('/database/tables/build_tasks/rows'))!
+    const [url, init] = rowsCall
     expect(url).toContain('/database/tables/build_tasks/rows')
     expect(init.method).toBe('POST')
     const body = JSON.parse(init.body)
@@ -286,27 +353,90 @@ describe('createTask (#55)', () => {
   })
 
   it('rejects a blank scope or blank title without calling fetch', async () => {
-    const fn = mockFetch(() => ({ ok: true }))
+    const fn = mockCreateFlow({ zerodb: () => ({ ok: true }) })
     expect(await createTask('', { title: 'x' })).toBeNull()
     expect(await createTask('a::b', { title: '   ' })).toBeNull()
     expect(fn).not.toHaveBeenCalled()
   })
 
   it('defaults source to cody and stage to todo', async () => {
-    mockFetch(() => ({ ok: true, json: () => ({}) }))
+    mockCreateFlow({ zerodb: () => ({ ok: true, json: () => ({}) }) })
     const t = await createTask('a::b', { title: 'x' })
     expect(t?.source).toBe('cody')
     expect(t?.stage).toBe('todo')
   })
 
   it('returns null (never throws) on a non-ok response', async () => {
-    mockFetch(() => ({ ok: false, status: 500 }))
+    mockCreateFlow({ zerodb: () => ({ ok: false, status: 500 }) })
     expect(await createTask('a::b', { title: 'x' })).toBeNull()
   })
 
   it('returns null when fetch throws', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network') }))
     expect(await createTask('a::b', { title: 'x' })).toBeNull()
+  })
+
+  // ---------- #902: Fibonacci estimation wiring ----------
+  it('persists the estimated storyPoints + rationale on the created row and returned task', async () => {
+    const fn = mockCreateFlow({
+      zerodb: () => ({ ok: true, json: () => ({ id: 'r1' }) }),
+      estimate: () => ({ ok: true, json: () => ({ choices: [{ message: { content: 'POINTS: 5\nRATIONALE: Touches several files.' } }] }) }),
+    })
+    const t = await createTask('a::b', { title: 'Rework the billing flow' })
+    expect(t?.storyPoints).toBe(5)
+    expect(t?.estimateRationale).toBe('Touches several files.')
+    const rowsCall = fn.mock.calls.find((c) => String(c[0]).includes('/database/tables/build_tasks/rows'))!
+    const body = JSON.parse(rowsCall[1].body)
+    expect(body.row_data.story_points).toBe(5)
+    expect(body.row_data.estimate_rationale).toBe('Touches several files.')
+  })
+
+  it('a trivial task (typo-level) title estimates to 0 or 1', async () => {
+    mockCreateFlow({
+      zerodb: () => ({ ok: true, json: () => ({ id: 'r1' }) }),
+      estimate: () => ({ ok: true, json: () => ({ choices: [{ message: { content: 'POINTS: 0\nRATIONALE: Single-character typo fix.' } }] }) }),
+    })
+    const t = await createTask('a::b', { title: 'Fix typo in footer copy' })
+    expect([0, 1]).toContain(t?.storyPoints)
+  })
+
+  it('a complex multi-part task title estimates to 5 or 8', async () => {
+    mockCreateFlow({
+      zerodb: () => ({ ok: true, json: () => ({ id: 'r1' }) }),
+      estimate: () => ({ ok: true, json: () => ({ choices: [{ message: { content: 'POINTS: 8\nRATIONALE: Rewrites auth and migrates schema across six files.' } }] }) }),
+    })
+    const t = await createTask('a::b', {
+      title: 'Rewrite the entire authentication system and migrate the database schema',
+      detail: 'New auth provider, data migration, SSO, admin UI, audit log, rollback plan.',
+    })
+    expect([5, 8]).toContain(t?.storyPoints)
+  })
+
+  it('still creates the task with storyPoints/estimateRationale null when the estimation call fails (never blocks creation)', async () => {
+    const fn = mockCreateFlow({
+      zerodb: () => ({ ok: true, json: () => ({ id: 'r1' }) }),
+      estimate: () => ({ ok: false, status: 500 }),
+    })
+    const t = await createTask('a::b', { title: 'Anything' })
+    expect(t).not.toBeNull()
+    expect(t?.storyPoints).toBeNull()
+    expect(t?.estimateRationale).toBeNull()
+    const rowsCall = fn.mock.calls.find((c) => String(c[0]).includes('/database/tables/build_tasks/rows'))!
+    const body = JSON.parse(rowsCall[1].body)
+    expect(body.row_data.story_points).toBeNull()
+    expect(body.row_data.estimate_rationale).toBeNull()
+  })
+
+  it('still creates the task when the estimation call throws/times out (never blocks creation)', async () => {
+    const fn = vi.fn(async (url: string, init?: any) => {
+      const u = String(url)
+      if (u.includes('/chat/completions')) throw new Error('timeout')
+      return { ok: true, status: 200, json: async () => ({ id: 'r1' }), text: async () => '' } as any
+    })
+    vi.stubGlobal('fetch', fn)
+    const t = await createTask('a::b', { title: 'Anything' })
+    expect(t).not.toBeNull()
+    expect(t?.storyPoints).toBeNull()
   })
 })
 

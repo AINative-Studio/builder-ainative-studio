@@ -52,6 +52,9 @@ const TASK: BuildTask = {
   title: 'Add a dark mode toggle',
   stage: 'todo',
   source: 'cody',
+  // #902: unestimated — this fixture exercises resolveTask()'s pipeline, not sizing.
+  storyPoints: null,
+  estimateRationale: null,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
 }
