@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const h = vi.hoisted(() => ({
   listTasks: vi.fn(),
   resolveTask: vi.fn(),
+  splitTask: vi.fn(),
 }))
 
 // needsSplit (#903) is a real, pure, no-I/O derivation — keep the real
@@ -20,6 +21,7 @@ vi.mock('@/lib/build/task-store', async () => {
   return { listTasks: h.listTasks, needsSplit: actual.needsSplit }
 })
 vi.mock('@/lib/build/task-resolver', () => ({ resolveTask: h.resolveTask }))
+vi.mock('@/lib/build/task-splitter', () => ({ splitTask: h.splitTask }))
 
 import {
   runTaskResolutions,
@@ -48,6 +50,8 @@ const task = (over: Partial<BuildTask> = {}): BuildTask => ({
 beforeEach(() => {
   h.listTasks.mockReset()
   h.resolveTask.mockReset()
+  h.splitTask.mockReset()
+  h.splitTask.mockResolvedValue({ ok: true, childIds: ['c1', 'c2'] })
 })
 
 describe('runTaskResolutions (#433)', () => {
@@ -175,6 +179,80 @@ describe('runTaskResolutions skips oversized (needsSplit) tasks (#903)', () => {
     const res = await runTaskResolutions('a::b', 'my-co', 'starter')
     expect(res.attempted).toBe(2)
     expect(h.resolveTask).not.toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 'big1' }), 'my-co')
+  })
+})
+
+/**
+ * #904 (epic #900, depends on #902/#903) — instead of just filtering
+ * oversized (`needsSplit`) todo tasks out forever, runTaskResolutions() now
+ * calls splitTask() on each one (best-effort) before resolving the rest of
+ * the due list.
+ */
+describe('runTaskResolutions calls splitTask on oversized (needsSplit) tasks (#904)', () => {
+  it('calls splitTask for every todo task estimated at 3, 5, or 8', async () => {
+    h.listTasks.mockResolvedValue([
+      task({ id: 't3', storyPoints: 3 }),
+      task({ id: 't5', storyPoints: 5 }),
+      task({ id: 't8', storyPoints: 8 }),
+    ])
+    await runTaskResolutions('a::b', 'my-co')
+    expect(h.splitTask).toHaveBeenCalledTimes(3)
+    expect(h.splitTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 't3' }))
+    expect(h.splitTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 't5' }))
+    expect(h.splitTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 't8' }))
+  })
+
+  it('never calls splitTask for a non-oversized or unestimated todo task', async () => {
+    h.listTasks.mockResolvedValue([task({ id: 'small', storyPoints: 2 }), task({ id: 'ne', storyPoints: null })])
+    h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
+    await runTaskResolutions('a::b', 'my-co')
+    expect(h.splitTask).not.toHaveBeenCalled()
+  })
+
+  it('still resolves the normal due tasks in the same run after splitting the oversized ones', async () => {
+    h.listTasks.mockResolvedValue([
+      task({ id: 'big', storyPoints: 8, createdAt: '2026-01-01T00:00:00.000Z' }),
+      task({ id: 'small', storyPoints: 2, createdAt: '2026-01-02T00:00:00.000Z' }),
+    ])
+    h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
+    const res = await runTaskResolutions('a::b', 'my-co')
+    expect(h.splitTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 'big' }))
+    expect(h.resolveTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 'small' }), 'my-co')
+    expect(res).toEqual({ attempted: 1, completed: 1 })
+  })
+
+  it('never calls resolveTask directly on an oversized task, even after splitTask runs', async () => {
+    h.listTasks.mockResolvedValue([task({ id: 'big', storyPoints: 5 })])
+    await runTaskResolutions('a::b', 'my-co')
+    expect(h.resolveTask).not.toHaveBeenCalled()
+  })
+
+  it('a splitTask failure (ok: false) does not throw and does not count against attempted/completed', async () => {
+    h.listTasks.mockResolvedValue([task({ id: 'big', storyPoints: 8 })])
+    h.splitTask.mockResolvedValue({ ok: false, childIds: [], reason: 'LLM call failed' })
+    const res = await runTaskResolutions('a::b', 'my-co')
+    expect(res).toEqual({ attempted: 0, completed: 0 })
+  })
+
+  it('never throws when splitTask itself throws — continues the run (other due tasks still resolve)', async () => {
+    h.listTasks.mockResolvedValue([
+      task({ id: 'big', storyPoints: 8, createdAt: '2026-01-01T00:00:00.000Z' }),
+      task({ id: 'small', storyPoints: 1, createdAt: '2026-01-02T00:00:00.000Z' }),
+    ])
+    h.splitTask.mockRejectedValue(new Error('splitter exploded'))
+    h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
+    await expect(runTaskResolutions('a::b', 'my-co')).resolves.toEqual({ attempted: 1, completed: 1 })
+  })
+
+  it('an oversized task sent to splitTask still never counts against the per-run tier limit', async () => {
+    h.listTasks.mockResolvedValue([
+      task({ id: 'big1', storyPoints: 5, createdAt: '2026-01-01T00:00:00.000Z' }),
+      task({ id: 'ok1', storyPoints: 1, createdAt: '2026-01-02T00:00:00.000Z' }),
+      task({ id: 'ok2', storyPoints: 2, createdAt: '2026-01-03T00:00:00.000Z' }),
+    ])
+    h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
+    const res = await runTaskResolutions('a::b', 'my-co', 'starter')
+    expect(res.attempted).toBe(2)
   })
 })
 

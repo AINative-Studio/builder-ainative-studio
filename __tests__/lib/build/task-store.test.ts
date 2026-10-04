@@ -241,6 +241,20 @@ describe('coerceTask (#55)', () => {
   it('an unestimated (null storyPoints) coerced task is not flagged needsSplit', () => {
     expect(needsSplit(coerceTask({ title: 'x' })!.storyPoints)).toBe(false)
   })
+
+  // #904: parentTaskId coercion
+  it('coerces a parent_task_id through (snake_case)', () => {
+    const t = coerceTask({ title: 'x', parent_task_id: 'p1' })
+    expect(t?.parentTaskId).toBe('p1')
+  })
+  it('accepts the camelCase alias (parentTaskId)', () => {
+    const t = coerceTask({ title: 'x', parentTaskId: 'p1' })
+    expect(t?.parentTaskId).toBe('p1')
+  })
+  it('coerces a missing parent_task_id to null (a normal, non-split task)', () => {
+    const t = coerceTask({ title: 'x' })
+    expect(t?.parentTaskId).toBeNull()
+  })
 })
 
 // ---------- needsSplit ----------
@@ -426,11 +440,17 @@ describe('createTask (#55, #902)', () => {
   })
 
   it('persists giteaIssueNumber when provided at creation (#905)', async () => {
+    // NOTE (#904 cleanup): switched from the single-response mockFetch to
+    // mockCreateFlow — createTask's #902 estimation call now always fires
+    // BEFORE the rows POST, so `fn.mock.calls[0]` under a plain mockFetch is
+    // actually the /chat/completions call, not the rows call. This was a
+    // latent bug in these two assertions (pre-dating #904) masked by the
+    // fact they never actually checked which call they were indexing.
     const fn = mockCreateFlow({ zerodb: () => ({ ok: true, json: () => ({ id: 'r1' }) }) })
     const t = await createTask('a::b', { title: 'x', giteaIssueNumber: 42 })
     expect(t?.giteaIssueNumber).toBe(42)
-    const zerodbCall = fn.mock.calls.find((c) => !String(c[0]).includes('/chat/completions'))
-    const body = JSON.parse(zerodbCall![1].body)
+    const rowsCall = fn.mock.calls.find((c) => String(c[0]).includes('/database/tables/build_tasks/rows'))!
+    const body = JSON.parse(rowsCall[1].body)
     expect(body.row_data.gitea_issue_number).toBe(42)
   })
 
@@ -438,9 +458,27 @@ describe('createTask (#55, #902)', () => {
     const fn = mockCreateFlow({ zerodb: () => ({ ok: true, json: () => ({ id: 'r1' }) }) })
     const t = await createTask('a::b', { title: 'x' })
     expect(t?.giteaIssueNumber).toBeNull()
-    const zerodbCall = fn.mock.calls.find((c) => !String(c[0]).includes('/chat/completions'))
-    const body = JSON.parse(zerodbCall![1].body)
+    const rowsCall = fn.mock.calls.find((c) => String(c[0]).includes('/database/tables/build_tasks/rows'))!
+    const body = JSON.parse(rowsCall[1].body)
     expect(body.row_data.gitea_issue_number).toBeNull()
+  })
+
+  it('persists parentTaskId when provided at creation (#904)', async () => {
+    const fn = mockCreateFlow({ zerodb: () => ({ ok: true, json: () => ({ id: 'r1' }) }) })
+    const t = await createTask('a::b', { title: 'x', parentTaskId: 'parent-1' })
+    expect(t?.parentTaskId).toBe('parent-1')
+    const rowsCall = fn.mock.calls.find((c) => String(c[0]).includes('/database/tables/build_tasks/rows'))!
+    const body = JSON.parse(rowsCall[1].body)
+    expect(body.row_data.parent_task_id).toBe('parent-1')
+  })
+
+  it('defaults parentTaskId to null when not provided (#904)', async () => {
+    const fn = mockCreateFlow({ zerodb: () => ({ ok: true, json: () => ({ id: 'r1' }) }) })
+    const t = await createTask('a::b', { title: 'x' })
+    expect(t?.parentTaskId).toBeNull()
+    const rowsCall = fn.mock.calls.find((c) => String(c[0]).includes('/database/tables/build_tasks/rows'))!
+    const body = JSON.parse(rowsCall[1].body)
+    expect(body.row_data.parent_task_id).toBeNull()
   })
 
   it('returns null (never throws) on a non-ok response', async () => {

@@ -99,6 +99,17 @@ export interface BuildTask {
    * — never blocks resolution, see task-resolver.ts).
    */
   giteaIssueNumber?: number | null
+  /**
+   * The id of the oversized parent task this task was decomposed FROM (#904,
+   * epic #900, depends on #903's `needsSplit`). Set only on a child task
+   * created by `lib/build/task-splitter.ts`'s `splitTask()` — `null`/absent
+   * for every normal task (chat/swarm/recurring-originated, or a re-split
+   * child's own children, which carry their own parent's id, not the
+   * original root's). Lets the UI/trace trail a decomposition back to the
+   * task it replaced; the parent itself never becomes `completed` without a
+   * real reference to these children (see task-splitter.ts).
+   */
+  parentTaskId?: string | null
   /** ISO timestamp created. */
   createdAt: string
   /** ISO timestamp last updated (stage change, output). */
@@ -270,6 +281,12 @@ export function coerceTask(raw: any, scopeKey = ''): BuildTask | null {
         : typeof rd.giteaIssueNumber === 'number'
           ? rd.giteaIssueNumber
           : null,
+    parentTaskId:
+      typeof rd.parent_task_id === 'string'
+        ? rd.parent_task_id
+        : typeof rd.parentTaskId === 'string'
+          ? rd.parentTaskId
+          : null,
     createdAt,
     updatedAt: String(rd.updated_at || rd.updatedAt || createdAt),
   }
@@ -388,6 +405,8 @@ export async function createTask(
     taskId?: string | null
     output?: string
     giteaIssueNumber?: number | null
+    /** #904 — links a split child task back to the oversized parent it was decomposed from. */
+    parentTaskId?: string | null
   },
 ): Promise<BuildTask | null> {
   const title = String(input?.title || '').trim()
@@ -414,6 +433,7 @@ export async function createTask(
     story_points: estimate?.storyPoints ?? null,
     estimate_rationale: estimate?.estimateRationale ?? null,
     gitea_issue_number: typeof input.giteaIssueNumber === 'number' ? input.giteaIssueNumber : null,
+    parent_task_id: typeof input.parentTaskId === 'string' ? input.parentTaskId : null,
     created_at: now,
     updated_at: now,
   }
