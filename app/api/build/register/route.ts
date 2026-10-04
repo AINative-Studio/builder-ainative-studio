@@ -49,6 +49,7 @@ import { reportMetaConversion, fbcFromRequest, fbpFromRequest } from '@/lib/buil
 import { createHash } from 'crypto'
 import { sendOtp, verifyOtp, toE164, checkOtpRateLimit } from '@/lib/build/otp'
 import { recordFounderPhone, markFounderPhoneVerified } from '@/lib/build/founder-phones'
+import { turnstileEnabled, verifyTurnstileToken } from '@/lib/turnstile'
 
 export const runtime = 'nodejs'
 
@@ -171,6 +172,20 @@ export async function POST(request: NextRequest) {
   const rawPhone = typeof b?.phone === 'string' ? b.phone : ''
   if (!EMAIL_RE.test(email)) return Response.json({ ok: false, error: 'invalid_email' }, { status: 400 })
   if (password.length < 8) return Response.json({ ok: false, error: 'weak_password', detail: 'Password must be at least 8 characters.' }, { status: 400 })
+
+  // #933 — Turnstile bot-protection on the REAL /build signup path (the
+  // legacy standalone /register page got this in #931, but that is not
+  // where founders actually sign up). Fails closed, before any core call.
+  if (turnstileEnabled()) {
+    const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+    const verification = await verifyTurnstileToken(
+      typeof b?.turnstileToken === 'string' ? b.turnstileToken : null,
+      ip,
+    )
+    if (!verification.success) {
+      return Response.json({ ok: false, error: 'verification_failed' }, { status: 400 })
+    }
+  }
 
   const gclid = gclidFromRequest(request)
   const utm = utmFromRequest(request)

@@ -12,6 +12,7 @@ import { migrateGuestWork } from '@/lib/build/guest-migration'
 import { getRefCode } from '@/lib/build/attribution'
 import { decideLimitAction } from '@/lib/build/value-moment'
 import { toE164 } from '@/lib/build/otp'
+import { TurnstileWidget } from '@/components/turnstile-widget'
 
 function BrandPanel() {
   return (
@@ -67,6 +68,11 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
   const [phoneVerified, setPhoneVerified] = useState(false)
   const [otpCode, setOtpCode] = useState('')
   const [otpNote, setOtpNote] = useState<string | null>(null)
+  // #933 — Turnstile token, signup only. Mirrors server-side gating in
+  // app/api/build/register/route.ts: submit() blocks until a real token is
+  // present, same as phoneVerified above.
+  const [turnstileToken, setTurnstileToken] = useState('')
+  const turnstileRequired = Boolean(process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY)
   // #7698 — real password reset (this used to be a "coming soon" stub that
   // never called anything). `resetSent` switches the forgot screen into a
   // neutral "check your email" confirmation — core deliberately does not reveal
@@ -314,6 +320,9 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
     if (mode === 'signup' && phone.trim() && !phoneVerified) {
       setError('Verify your phone number to continue.'); return
     }
+    if (mode === 'signup' && turnstileRequired && !turnstileToken) {
+      setError('Please complete the verification challenge.'); return
+    }
     setBusy(true)
     try {
       if (mode === 'signup') {
@@ -323,7 +332,7 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
         const normalizedPhone = phone.trim() ? toE164(phone) : null
         const res = await fetch('/api/build/register', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password, phone: normalizedPhone || undefined }),
+          body: JSON.stringify({ email, password, phone: normalizedPhone || undefined, turnstileToken }),
         })
         const d = await res.json().catch(() => null)
         if (!d?.ok) {
@@ -521,9 +530,17 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
               {busy ? 'Verifying…' : 'Verify code →'}
             </button>
           )}
+          {mode === 'signup' && (
+            <TurnstileWidget onVerify={setTurnstileToken} onExpire={() => setTurnstileToken('')} />
+          )}
         </div>
         {error && <p className="m-mono m-auth-error" style={{ color: '#e5451f' }}>{error}</p>}
-        <button className="btn-primary" data-testid="auth-submit" onClick={submit} disabled={busy}>
+        <button
+          className="btn-primary"
+          data-testid="auth-submit"
+          onClick={submit}
+          disabled={busy || (mode === 'signup' && turnstileRequired && !turnstileToken)}
+        >
           {busy ? 'Working…' : `${copy.cta} →`}
         </button>
         {(mode === 'login' || mode === 'signup') && (
