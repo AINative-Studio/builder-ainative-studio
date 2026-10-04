@@ -2,32 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import db from '@/lib/db/connection'
 import { error_logs } from '@/lib/db/schema'
 import { desc, sql, and, gte, eq } from 'drizzle-orm'
-import { getToken } from 'next-auth/jwt'
 import { withErrorHandler, AuthenticationError, AuthorizationError } from '@/lib/middleware/error-handler'
-
-// Admin check - you can customize this based on your auth setup
-async function requireAdmin(request: NextRequest): Promise<void> {
-  const token = await getToken({
-    req: request,
-    secret: process.env.AUTH_SECRET,
-  })
-
-  if (!token) {
-    throw new AuthenticationError()
-  }
-
-  // Check if user is admin (customize based on your user model)
-  // For now, we'll check if the email matches an admin pattern or specific email
-  const isAdmin = token.email?.includes('admin') ||
-                  token.email === process.env.ADMIN_EMAIL
-
-  if (!isAdmin) {
-    throw new AuthorizationError('Admin access required')
-  }
-}
+import { requireAdmin } from '@/lib/auth/require-admin'
 
 async function getErrorsHandler(request: NextRequest) {
-  await requireAdmin(request)
+  const admin = await requireAdmin()
+  if (!admin.ok) {
+    throw admin.status === 401 ? new AuthenticationError(admin.message) : new AuthorizationError(admin.message)
+  }
 
   const { searchParams } = request.nextUrl
   const timeRange = searchParams.get('timeRange') || '24h'

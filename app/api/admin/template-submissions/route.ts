@@ -1,32 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { template_submissions, users } from '@/lib/db/schema'
 import { eq, desc } from 'drizzle-orm'
+import { requireAdmin } from '@/lib/auth/require-admin'
 
 export const dynamic = 'force-dynamic'
 
 // GET /api/admin/template-submissions - List all submissions (admin only)
 export async function GET(request: NextRequest) {
   try {
-    const session = await auth()
+    const admin = await requireAdmin()
 
-    // Check if user is admin (you may want to add an is_admin field to users table)
-    if (!session?.user?.id) {
+    if (!admin.ok) {
       return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
-    }
-
-    // For now, check if user email is admin (you should implement proper role-based access)
-    // This is a placeholder - implement proper admin check based on your requirements
-    const isAdmin = session.user.email?.includes('admin') || false
-
-    if (!isAdmin) {
-      return NextResponse.json(
-        { error: 'Forbidden: Admin access required' },
-        { status: 403 }
+        { error: admin.status === 401 ? 'Unauthorized' : 'Forbidden: Admin access required' },
+        { status: admin.status }
       )
     }
 
