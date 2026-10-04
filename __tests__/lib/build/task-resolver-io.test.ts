@@ -207,6 +207,36 @@ describe('resolveTask — end-to-end orchestration', () => {
       expect(h.createIssue).not.toHaveBeenCalled()
     })
 
+    it('#907: passes the FRESHLY created issue number to commitTaskWithPR on a first-time resolution (not the stale null from the task snapshot)', async () => {
+      setupSuccess()
+      h.createIssue.mockResolvedValue({ ok: true, issueNumber: 321, url: 'https://git.ainative.studio/ws-1/slug/issues/321' })
+
+      await resolveTask('owner::slug', TASK, 'slug')
+      expect(h.commitTaskWithPR).toHaveBeenCalledWith(
+        expect.objectContaining({ giteaIssueNumber: 321 }),
+      )
+    })
+
+    it('#907: passes the EXISTING issue number to commitTaskWithPR when the task already had one (no re-create)', async () => {
+      setupSuccess()
+      const taskWithIssue = { ...TASK, giteaIssueNumber: 55 }
+
+      await resolveTask('owner::slug', taskWithIssue, 'slug')
+      expect(h.createIssue).not.toHaveBeenCalled()
+      expect(h.commitTaskWithPR).toHaveBeenCalledWith(
+        expect.objectContaining({ giteaIssueNumber: 55 }),
+      )
+    })
+
+    it('#907: passes no issue number to commitTaskWithPR when issue creation fails (fallback, no malformed reference upstream)', async () => {
+      setupSuccess()
+      h.createIssue.mockResolvedValue({ ok: false, reason: 'gitea unreachable' })
+
+      await resolveTask('owner::slug', TASK, 'slug')
+      const call = h.commitTaskWithPR.mock.calls[0][0]
+      expect(call.giteaIssueNumber == null).toBe(true)
+    })
+
     it('still proceeds to implement when the company is git-provisioned but has no org set at all would already have failed earlier — sanity: createIssue uses the resolved gitOrg', async () => {
       h.resolveApp.mockResolvedValue({ gitOrg: 'ws-custom' })
       h.fetchRepoFiles.mockResolvedValue({})

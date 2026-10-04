@@ -192,10 +192,20 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
   // skips this step entirely rather than opening a duplicate. A creation
   // failure (network, misconfiguration) logs and proceeds — it must never
   // block the resolver, matching this pipeline's existing best-effort style.
-  if (task.giteaIssueNumber == null) {
+  //
+  // #907 — `issueNumber` captures whichever issue number ends up governing
+  // THIS resolution (freshly created here, or already on the task from a
+  // resumed/retried run) so the branch/commit/PR step below can reference it.
+  // `task.giteaIssueNumber` itself is never reassigned after a fresh
+  // createIssue call (the `task` param is a snapshot from before this
+  // function ran), so reading it directly after this block would silently
+  // lose a just-created issue number on every first-time resolution.
+  let issueNumber: number | null | undefined = task.giteaIssueNumber
+  if (issueNumber == null) {
     try {
       const issueResult = await createIssue(app.gitOrg, slug, task.title, buildTaskIssueBody(task))
       if (issueResult.ok && issueResult.issueNumber) {
+        issueNumber = issueResult.issueNumber
         await updateTask(scopeKey, task.id, { giteaIssueNumber: issueResult.issueNumber })
         if (traceId) {
           await addTraceStep(traceId, `Opened a real Gitea issue before implementation: #${issueResult.issueNumber}.`, 'open_issue')
@@ -246,6 +256,12 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
     slug,
     files: implemented.files,
     title: task.title,
+    // #907 — thread the real issue number (opened above, #905) through so the
+    // branch name, commit message (`Refs #N`), and PR body (`Closes #N`) all
+    // reference it. `issueNumber` stays null/undefined for a pre-#905 row or
+    // a failed issue-open attempt, in which case commitTaskWithPR/
+    // task-git-sync.ts fall back to today's behavior.
+    giteaIssueNumber: issueNumber,
   })
   if (!gitResult.ok) {
     return fail(`Could not commit the implementation: ${gitResult.reason || 'unknown git-sync failure'}.`, 'commit')

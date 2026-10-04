@@ -335,19 +335,21 @@ export async function getDefaultBranchSha(org: string, repo: string): Promise<st
 }
 
 /**
- * Create a branch for a task. PURE naming: task/{taskId}. IDEMPOTENT — returns
- * the existing branch if present. Returns null when unconfigured. THROWS on
- * genuine failures.
+ * Create a branch for a task. PURE naming: task/{taskId}, or
+ * task/{issueNumber}-{taskId} when `issueNumber` is given (#907). IDEMPOTENT —
+ * returns the existing branch if present. Returns null when unconfigured.
+ * THROWS on genuine failures.
  */
 export async function createTaskBranch(
   org: string,
   repo: string,
   taskId: string,
   baseSha?: string,
+  issueNumber?: number | null,
 ): Promise<GiteaBranch | null> {
   if (!configured() || !org || !repo || !taskId) return null
   const repoName = repoNameForSlug(repo)
-  const branchName = taskBranchName(taskId)
+  const branchName = taskBranchName(taskId, issueNumber)
 
   // Pre-flight: already exists?
   const existing = await getBranch(org, repoName, branchName)
@@ -399,17 +401,28 @@ export async function getBranch(
 }
 
 /**
- * Derive the branch name for a task. PURE. Format: task/{taskId}
- * Sanitizes the taskId to be a valid git branch name.
+ * Derive the branch name for a task. PURE. Format: task/{taskId}, or
+ * task/{issueNumber}-{taskId} when a real Gitea issue number is given (#907 —
+ * mirrors the documented `[type]/[issue-number]-[slug]` branch convention,
+ * adapted to this module's existing `task/{taskId}` naming rather than
+ * inventing a new type prefix). Sanitizes the taskId to be a valid git
+ * branch name.
+ *
+ * `issueNumber` is optional and falls back to today's `task/{taskId}` format
+ * when omitted, null, or not a positive finite integer (#907 — a task with no
+ * issue yet, e.g. a pre-#905 row or a failed issue-open attempt, must never
+ * produce a malformed branch reference like `task/NaN-t1`).
  */
-export function taskBranchName(taskId: string): string {
+export function taskBranchName(taskId: string, issueNumber?: number | null): string {
   const clean = String(taskId || '')
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9._-]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 50)
-  return clean ? `task/${clean}` : ''
+  if (!clean) return ''
+  const validIssue = Number.isFinite(issueNumber) && (issueNumber as number) > 0
+  return validIssue ? `task/${issueNumber}-${clean}` : `task/${clean}`
 }
 
 // ---------------------------------------------------------------------------
@@ -432,6 +445,12 @@ export interface GiteaPullRequest {
  * Create a pull request from a task branch to main. IDEMPOTENT — if a PR already
  * exists for this head→base, returns it. Returns null when unconfigured.
  * THROWS on genuine failures.
+ *
+ * `issueNumber` (#907), when given, must be the SAME value passed to
+ * createTaskBranch for this task — it only affects which head branch this PR
+ * is opened from (taskBranchName derives the branch name identically from
+ * taskId + issueNumber), so a mismatch here would look for/create the wrong
+ * branch entirely.
  */
 export async function createTaskPR(
   org: string,
@@ -441,11 +460,12 @@ export async function createTaskPR(
     title: string
     body?: string
     baseBranch?: string
+    issueNumber?: number | null
   },
 ): Promise<GiteaPullRequest | null> {
   if (!configured() || !org || !repo || !opts.taskId) return null
   const repoName = repoNameForSlug(repo)
-  const headBranch = taskBranchName(opts.taskId)
+  const headBranch = taskBranchName(opts.taskId, opts.issueNumber)
   const baseBranch = opts.baseBranch || 'main'
 
   // Pre-flight: check if PR already exists for this branch
