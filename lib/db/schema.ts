@@ -16,7 +16,7 @@ import {
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().notNull(), // No DB default — app must provide UUID
   email: varchar('email', { length: 255 }).notNull(),
-  password: varchar('password_hash', { length: 255 }), // Maps to password_hash column in AINative core DB
+  password: varchar('hashed_password', { length: 255 }), // #932: live table's real NOT NULL column is hashed_password, not password_hash
   full_name: varchar('full_name', { length: 255 }),
   workspace_id: uuid('workspace_id').notNull(), // Required in AINative core DB
   is_active: boolean('is_active').notNull().default(true),
