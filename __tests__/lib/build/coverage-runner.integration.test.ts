@@ -10,7 +10,15 @@ import { runCoverage, type FileMap } from '@/lib/build/coverage-runner'
  *
  * These are slow (real npm install) — kept in their own file so the fast pure
  * -logic suite (coverage-runner.test.ts) isn't held up by them.
+ *
+ * #917: runCoverage() now refuses (testable: false) when E2B isn't
+ * configured, unless ALLOW_UNSANDBOXED_COVERAGE=true is explicitly set. This
+ * suite intentionally exercises the REAL local subprocess path (no E2B
+ * available in this test environment), so every call below opts in
+ * explicitly — same real behavior as before #917, just no longer implicit.
  */
+
+const UNSANDBOXED_ENV = { ALLOW_UNSANDBOXED_COVERAGE: 'true' } as unknown as NodeJS.ProcessEnv
 
 const PASSING_APP: FileMap = {
   'package.json': JSON.stringify({
@@ -62,7 +70,7 @@ const NO_TESTS_APP: FileMap = {
 
 describe('runCoverage — real subprocess integration', () => {
   it('a genuinely passing app returns a real coverage number and passed:true', async () => {
-    const result = await runCoverage(PASSING_APP, { timeoutMs: 60_000 })
+    const result = await runCoverage(PASSING_APP, { timeoutMs: 60_000, env: UNSANDBOXED_ENV })
     expect(result.testable).toBe(true)
     expect(result.passed).toBe(true)
     expect(result.coveragePercent).not.toBeNull()
@@ -70,14 +78,14 @@ describe('runCoverage — real subprocess integration', () => {
   }, 90_000)
 
   it('a genuinely failing app returns passed:false, never fabricates a pass', async () => {
-    const result = await runCoverage(FAILING_APP, { timeoutMs: 60_000 })
+    const result = await runCoverage(FAILING_APP, { timeoutMs: 60_000, env: UNSANDBOXED_ENV })
     expect(result.testable).toBe(true)
     expect(result.passed).toBe(false)
     expect(result.reason).toBeDefined()
   }, 90_000)
 
   it('an app with no test script/vitest dep is testable:false, coveragePercent:null — never a fabricated 0%', async () => {
-    const result = await runCoverage(NO_TESTS_APP, { timeoutMs: 10_000 })
+    const result = await runCoverage(NO_TESTS_APP, { timeoutMs: 10_000, env: UNSANDBOXED_ENV })
     expect(result.testable).toBe(false)
     expect(result.coveragePercent).toBeNull()
     expect(result.passed).toBe(false)
@@ -118,7 +126,7 @@ describe('slow', () => {
 `,
     }
     const start = Date.now()
-    const result = await runCoverage(hangingApp, { timeoutMs: 8_000 })
+    const result = await runCoverage(hangingApp, { timeoutMs: 8_000, env: UNSANDBOXED_ENV })
     const elapsed = Date.now() - start
     expect(result.passed).toBe(false)
     expect(result.reason).toMatch(/timed out/i)

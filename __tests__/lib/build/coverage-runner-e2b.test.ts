@@ -114,10 +114,11 @@ describe('runCoverage — E2B-isolated path (#875)', () => {
   })
 
   it('does NOT route to E2B when E2B_API_KEY is absent', async () => {
-    // detectTestCommand will find a real test command, but since there's no
-    // real npm/vitest installed in this test env, the local path will itself
-    // fail fast (ENOENT) — the only thing we're asserting here is that
-    // runSequenceInE2BSandbox (the E2B path) was never called.
+    // #917: a missing E2B_API_KEY (and no ALLOW_UNSANDBOXED_COVERAGE opt-in)
+    // now returns an honest refusal rather than falling through to the local
+    // spawn() path — see coverage-runner-unsandboxed-fallback.test.ts for the
+    // full behavior. This test only asserts runSequenceInE2BSandbox (the E2B
+    // path) was never called.
     await runCoverage(
       { 'package.json': PKG_JSON },
       { env: {} as any, timeoutMs: 100 },
