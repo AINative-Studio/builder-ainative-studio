@@ -27,9 +27,21 @@
  * `completed`: a merge or deploy hiccup downgrades the founder's visibility
  * (the PR/commit stays real and inspectable) but never flips a genuinely
  * coverage-verified task back to `failed`.
+ *
+ * #905 — "No Code Without An Issue" (.ainative/ISSUE_TRACKING_ENFORCEMENT.md's
+ * Golden Rule). Before this, a task went straight from `build_tasks` row to
+ * LLM-implementation to a Gitea PR — no issue was ever opened on the
+ * company's own Gitea repo first. Now, before `implementTask` runs,
+ * resolveTask() opens a real issue (via the existing createIssue() client
+ * method added by #744) using an honest body (problem/context + acceptance
+ * criteria; estimate/rationale is explicitly out of scope — lands via #906)
+ * and persists the real issue number on the task. Best-effort, matching this
+ * pipeline's existing pattern: a creation failure logs and proceeds — it
+ * never blocks or fails the resolver. Not attempted again for a task that
+ * already has one (no duplicate issues on a retried/resumed task).
  */
 
-import { fetchRepoFiles, mergeTaskPR } from '@/lib/git/gitea-client'
+import { fetchRepoFiles, mergeTaskPR, createIssue } from '@/lib/git/gitea-client'
 import { commitTaskWithPR } from '@/lib/git/task-git-sync'
 import { resolveApp, setAppRailwayService } from '@/lib/build/app-registry'
 import { implementTask } from '@/lib/build/task-implementer'
@@ -91,6 +103,31 @@ export function decideOutcomeFromCoverage(
   return { stage: 'completed', reason: `Coverage ${coverage.coveragePercent}% meets the ${floor}% floor.` }
 }
 
+/**
+ * Render the body of the Gitea issue opened before a task is implemented
+ * (#905). Follows the shape of `.ainative/ISSUE_TRACKING_ENFORCEMENT.md`'s
+ * template — problem/context and acceptance criteria — without fabricating
+ * the parts of that template this issue deliberately leaves out: there is no
+ * Fibonacci estimate/rationale here (that's #906's scope, not this one's;
+ * see docs/audits/AINATIVE_PROCESS_PARITY_GAP_2026-10-04.md §3e), and no
+ * issue↔PR linkage beyond a plain note (that's #907's scope). PURE.
+ */
+export function buildTaskIssueBody(task: { title: string; detail?: string }): string {
+  const context = task.detail?.trim() || task.title
+  return [
+    `## Problem/Context`,
+    `**${task.title}**`,
+    '',
+    context,
+    '',
+    '## Acceptance Criteria',
+    '- [ ] The described change is implemented and committed',
+    '- [ ] Real test coverage on changed files meets the project floor',
+    '',
+    `_Opened automatically before implementation begins, per .ainative/ISSUE_TRACKING_ENFORCEMENT.md's "No Code Without An Issue" rule (#905). Estimate/rationale and issue↔PR linkage are tracked separately — see #906 and #907._`,
+  ].join('\n')
+}
+
 // ---------------------------------------------------------------------------
 // I/O — the real end-to-end pipeline
 // ---------------------------------------------------------------------------
@@ -123,6 +160,28 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
   const app = await resolveApp(slug)
   if (!app?.gitOrg) {
     return fail('Company is not git-provisioned yet — cannot resolve tasks without a Gitea repo.')
+  }
+
+  // #905 — open a real tracked issue on the company's own Gitea repo BEFORE
+  // implementation begins. Best-effort and never attempted twice: a task
+  // that already has a giteaIssueNumber (e.g. a resumed/retried resolution)
+  // skips this step entirely rather than opening a duplicate. A creation
+  // failure (network, misconfiguration) logs and proceeds — it must never
+  // block the resolver, matching this pipeline's existing best-effort style.
+  if (task.giteaIssueNumber == null) {
+    try {
+      const issueResult = await createIssue(app.gitOrg, slug, task.title, buildTaskIssueBody(task))
+      if (issueResult.ok && issueResult.issueNumber) {
+        await updateTask(scopeKey, task.id, { giteaIssueNumber: issueResult.issueNumber })
+        if (traceId) {
+          await addTraceStep(traceId, `Opened a real Gitea issue before implementation: #${issueResult.issueNumber}.`, 'open_issue')
+        }
+      } else {
+        console.warn('[task-resolver] createIssue did not succeed, proceeding without an issue:', issueResult.reason)
+      }
+    } catch (e) {
+      console.warn('[task-resolver] createIssue threw, proceeding without an issue:', (e as Error)?.message || e)
+    }
   }
 
   const existingFiles = await fetchRepoFiles(app.gitOrg, slug)
