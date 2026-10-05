@@ -4,6 +4,8 @@ import {
   retrieveCapabilities,
   isCapabilityQuestion,
   capabilitiesGroundingBlock,
+  capabilityForPrimitive,
+  includedFramingForPrimitive,
 } from '@/lib/build/capabilities'
 
 describe('capabilities (#313/#316)', () => {
@@ -43,5 +45,25 @@ describe('capabilities (#313/#316)', () => {
     expect(b).toMatch(/plain-English/i)
     expect(b).toMatch(/Replaces:/)
     expect(b).not.toMatch(/api-reference|Authorization: Bearer|endpoint/i)
+  })
+
+  // #314/#315: map a primitive name → its plain-English capability/framing.
+  it('capabilityForPrimitive maps a primitive name to its capability (exact + case-insensitive)', () => {
+    expect(capabilityForPrimitive('ZeroPipeline')?.replaces).toMatch(/HubSpot/)
+    expect(capabilityForPrimitive('zerocommerce')?.product).toBe('ZeroCommerce')
+    // primitives with no customer-facing capability entry return undefined
+    expect(capabilityForPrimitive('Instant DB')).toBeUndefined()
+    expect(capabilityForPrimitive('')).toBeUndefined()
+  })
+
+  it('includedFramingForPrimitive produces the "included / no key / replaces X" one-liner', () => {
+    const framing = includedFramingForPrimitive('ZeroPipeline')
+    expect(framing).toBeTruthy()
+    expect(framing).toMatch(/already included/i)
+    expect(framing).toMatch(/no extra API key/i)
+    expect(framing).toMatch(/no extra cost/i)
+    expect(framing).toMatch(/replaces HubSpot/)
+    // undefined for a primitive with no capability entry
+    expect(includedFramingForPrimitive('Instant DB')).toBeUndefined()
   })
 })

@@ -103,4 +103,35 @@ describe('primitive-catalog codegen composition (#218)', () => {
     expect(crm).toContain('ZeroPipeline')
     expect(crm).not.toContain('https://zerocommerce.ainative.studio/api/v1')
   })
+
+  // #314/#315: surface the "already included, no extra key/cost, replaces X" framing
+  // in the codegen composition path.
+  it('CRM idea composition carries the included/replaces framing on ZeroPipeline', () => {
+    const block = codegenCompositionBlock('a B2B sales CRM to track deals and leads', 'company')
+    expect(block).toContain('ZeroPipeline')
+    // plain-English "already included, no extra key/cost" framing
+    expect(block).toMatch(/included/i)
+    expect(block).toMatch(/no extra API key/i)
+    expect(block).toMatch(/no extra cost/i)
+    // plain-English "replaces {commercial tool}" (#315)
+    expect(block).toMatch(/replaces/i)
+    expect(block).toMatch(/HubSpot/)
+  })
+
+  it('commerce idea carries "replaces Shopify" included framing', () => {
+    const block = codegenCompositionBlock('an online store selling coffee', 'company')
+    expect(block).toContain('ZeroCommerce')
+    expect(block).toMatch(/replaces/i)
+    expect(block).toMatch(/Shopify/)
+    expect(block).toMatch(/no extra API key/i)
+  })
+
+  it('instructs the model to surface the included/replaces framing to the user', () => {
+    const block = codegenCompositionBlock('an invoicing app that bills clients', 'company')
+    // The prompt tells the model to surface "built-in / no extra key / replaces X".
+    expect(block).toMatch(/built-in|already have|already included/i)
+    expect(block).toMatch(/Surface that to the user/i)
+    // and not to send the user to the commercial tool it replaces
+    expect(block).toMatch(/Do NOT tell the user to sign up/i)
+  })
 })

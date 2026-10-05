@@ -126,6 +126,35 @@ export const CAPABILITIES: Capability[] = [
   },
 ]
 
+/**
+ * Look up the plain-English capability for a primitive by its catalog `name`
+ * (#314/#315). Capability `product` values are kept in sync with the
+ * primitive-catalog `name` values, so this is an exact-match lookup with a
+ * lowercase fallback. Returns undefined for primitives that have no
+ * customer-facing "replaces X / included" framing (e.g. pure substrate like
+ * Instant DB, Context Graph). Used by the codegen composition block to carry the
+ * "already included — no extra key/cost — replaces {tool}" message into the
+ * generated app's guidance.
+ */
+export function capabilityForPrimitive(name: string): Capability | undefined {
+  if (!name) return undefined
+  const exact = CAPABILITIES.find((c) => c.product === name)
+  if (exact) return exact
+  const lower = name.toLowerCase()
+  return CAPABILITIES.find((c) => c.product.toLowerCase() === lower)
+}
+
+/**
+ * One-line "already included — no extra key/cost — replaces X" framing for a
+ * primitive (#314/#315), or undefined if the primitive has no capability entry.
+ * Kept terse so it can be appended to the codegen prompt without bloating it.
+ */
+export function includedFramingForPrimitive(name: string): string | undefined {
+  const cap = capabilityForPrimitive(name)
+  if (!cap) return undefined
+  return `already included (no extra API key, no extra cost) — replaces ${cap.replaces}`
+}
+
 /** Retrieve the capabilities most relevant to a free-text question. */
 export function retrieveCapabilities(question: string, limit = 6): Capability[] {
   const q = (question || '').toLowerCase()
