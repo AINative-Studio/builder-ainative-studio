@@ -36,6 +36,7 @@ import { WebsitePanel } from '@/components/build/WebsitePanel'
 import { FeedbackPulse } from '@/components/build/FeedbackPulse'
 import { ZeroInvoiceConnect } from '@/components/build/ZeroInvoiceConnect'
 import { ZeroVoiceConnect } from '@/components/build/ZeroVoiceConnect'
+import { TextCodyCard } from '@/components/build/TextCodyCard'
 import { UPLOAD_ACCEPT_ATTR } from '@/lib/build/media-upload'
 import { DOCUMENT_UPLOAD_ACCEPT_ATTR } from '@/lib/build/document-upload'
 import { useHeaderHeightVar } from '@/lib/build/useHeaderHeightVar'
@@ -1270,6 +1271,10 @@ export function Live() {
               e164={zerovoiceE164}
               onRequireAuth={() => dispatch({ type: 'GOTO_SCREEN', screen: 'signup' })}
             />
+            {/* Shared Text-Cody number (#936) — no provisioning needed, the
+                number already exists; paid-tier gate is server-side on the
+                inbound SMS itself (lib/build/shared-cody-number.ts). */}
+            <TextCodyCard />
           </div>
         </div>
 
