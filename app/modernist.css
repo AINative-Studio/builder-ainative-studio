@@ -49,7 +49,11 @@
   --success: #2f7d4f;
 
   /* ---- neutrals ---- */
-  --text-muted: #7d7979;
+  /* --text-muted darkened from #7d7979 (2026-10-05, accessibility audit):
+     measured 3.85:1 against --color-bg (#f3f2f2), fails WCAG 1.4.3's 4.5:1
+     normal-text minimum — real footer/support-email/back-link copy, not an
+     edge case. #726e6e computes to 4.51:1 against the same background. */
+  --text-muted: #726e6e;
   --text-faint: #9b9797;
   --text-body-70: #444141;
   --text-body-85: #2d2b2b;
@@ -101,6 +105,15 @@
 .modernist .m-mono { font-family: var(--font-mono); }
 .modernist .m-artifact { font-family: var(--font-artifact); }
 
+/* Visually hidden but screen-reader-readable (standard sr-only pattern) —
+   added 2026-10-05 for TurnstileWidget's aria-live status announcement;
+   reusable anywhere content needs to reach assistive tech without a visual
+   footprint. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
 /* status pill (.st) — mono, uppercase, glyph via ::before, no fill */
 .modernist .st {
   display: inline-flex; align-items: center; gap: 6px;
@@ -121,10 +134,14 @@
 /* buttons — flush-left labels */
 .modernist .btn-primary {
   display: inline-flex; align-items: center; gap: 8px; justify-content: flex-start;
-  background: var(--color-accent); color: #fff; border: 0; padding: 10px 16px;
+  /* --color-accent-600, not base --color-accent (2026-10-05, accessibility
+     audit): white text on --color-accent measured 4.20:1, fails WCAG 1.4.3's
+     4.5:1 minimum at 14px/600 weight. accent-600 (already an existing,
+     designed token — previously only the hover state) computes to 5.07:1. */
+  background: var(--color-accent-600); color: #fff; border: 0; padding: 10px 16px;
   font-family: var(--font-heading); font-size: 14px; font-weight: 600; cursor: pointer;
 }
-.modernist .btn-primary:hover { background: var(--color-accent-600); }
+.modernist .btn-primary:hover { background: var(--color-accent-700); }
 .modernist .btn-secondary {
   display: inline-flex; align-items: center; gap: 8px; justify-content: flex-start;
   background: transparent; color: var(--color-text); border: 1.5px solid var(--ink);

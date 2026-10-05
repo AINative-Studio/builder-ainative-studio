@@ -239,7 +239,7 @@ export function Landing() {
       <div className="m-land-ticker">&gt; {TICKER_LINES[tickerIdx]}<span className="m-caret">_</span></div>
 
       {/* top nav */}
-      <div className="m-land-nav">
+      <nav className="m-land-nav" aria-label="Main">
         <div className="m-land-brand">
           <img className="m-land-brand-icon" alt="" aria-hidden="true"
             src="https://ainative.studio/mediakit/logos/ainative-studio-logo-mark-primary.svg" />
@@ -257,8 +257,9 @@ export function Landing() {
             <button onClick={goSignIn} className="m-land-signin" data-testid="landing-signin">Sign in</button>
           )}
         </div>
-      </div>
+      </nav>
 
+      <main>
       {/* pinned scrollytelling stage (4× viewport tall) */}
       <div ref={stageRef} className="m-land-stage" style={{ height: '400vh' }}>
         <div className="m-land-pin">
@@ -361,9 +362,10 @@ export function Landing() {
 
         </div>
       </div>
+      </main>
 
       {/* footer */}
-      <div className="m-land-foot">
+      <footer className="m-land-foot">
         <a href="/showcase">Showcase</a>
         <a href="/capabilities">What can I build?</a>
         <a href="/about">About</a>
@@ -371,7 +373,7 @@ export function Landing() {
         <a href="https://ainative.studio/acceptable-use">Acceptable use</a>
         <a href="https://ainative.studio/privacy">Privacy</a>
         <span>Support: <a href="mailto:support@ainative.studio">support@ainative.studio</a></span>
-      </div>
+      </footer>
     </div>
   )
 }

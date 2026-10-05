@@ -97,6 +97,61 @@ describe('modernist.css phone breakpoints (#334–#339)', () => {
     expect(tsx).toMatch(/m-land-beat2-grid/)
     expect(tsx).toMatch(/m-land-beat2-photo/)
   })
+
+  it('#940 — dashboard act-bar wraps instead of overflowing at <=760px', () => {
+    expect(inBlock(760, /\.m-actbar\s*\{[^}]*flex-wrap:\s*wrap/)).toBe(true)
+    expect(inBlock(760, /\.m-acts\s*\{[^}]*flex-wrap:\s*wrap/)).toBe(true)
+    expect(inBlock(760, /\.m-actbar-right\s*\{[^}]*flex-wrap:\s*wrap/)).toBe(true)
+    expect(inBlock(760, /\.m-actbar-btn\s*\{[^}]*min-height:\s*44px/)).toBe(true)
+    expect(inBlock(760, /\.m-land-sound[\s\S]{0,40}\{[^}]*min-height:\s*44px|min-height:\s*44px[\s\S]*\.m-land-sound/)).toBe(true)
+  })
+})
+
+describe('accessibility fixes (2026-10-05 audit)', () => {
+  it('#726e6e is darkened from the original #7d7979 to clear WCAG 1.4.3 (4.5:1) against --color-bg', () => {
+    expect(css).toMatch(/--text-muted:\s*#726e6e/)
+    expect(css).not.toMatch(/--text-muted:\s*#7d7979/)
+  })
+
+  it('.btn-primary uses --color-accent-600 (5.07:1), not base --color-accent (4.20:1, fails 1.4.3)', () => {
+    const btnPrimaryBlock = css.match(/\.modernist \.btn-primary\s*\{[^}]*\}/)?.[0] || ''
+    expect(btnPrimaryBlock).toMatch(/background:\s*var\(--color-accent-600\)/)
+    expect(btnPrimaryBlock).not.toMatch(/background:\s*var\(--color-accent\)[;,\s]/)
+  })
+
+  it('.sr-only utility exists for screen-reader-only content', () => {
+    expect(css).toMatch(/\.sr-only\s*\{[^}]*clip:\s*rect\(0,\s*0,\s*0,\s*0\)/)
+  })
+
+  it('Auth.tsx BrandPanel tagline is no longer a real <h2> preceding the screen\'s real <h1>', () => {
+    const authTsx = readFileSync(join(__dirname, '../../components/build/screens/Auth.tsx'), 'utf8')
+    // Scope to the real JSX only — BrandPanel's own explanatory comment
+    // mentions "<h2>" in prose, which would false-positive a naive match.
+    const brandPanelJsx = authTsx.match(/<aside className="m-auth-brand">[\s\S]*?<\/aside>/)?.[0] || ''
+    expect(brandPanelJsx).not.toBe('')
+    expect(brandPanelJsx).not.toMatch(/<h2[\s>]/)
+    expect(brandPanelJsx).toMatch(/<p className="m-artifact m-auth-statement">/)
+    // The real screen heading (copy.h, rendered later in the component) stays an <h1>.
+    expect(authTsx).toMatch(/<h1 className="m-artifact m-auth-h">\{copy\.h\}<\/h1>/)
+  })
+
+  it('Auth.tsx form fields carry real autocomplete/inputmode hints', () => {
+    const authTsx = readFileSync(join(__dirname, '../../components/build/screens/Auth.tsx'), 'utf8')
+    expect(authTsx).toMatch(/type="email"[^>]*autoComplete="email"/)
+    expect(authTsx).toMatch(/autoComplete=\{mode === 'login' \? 'current-password' : 'new-password'\}/)
+    expect(authTsx).toMatch(/type="tel"[^>]*autoComplete="tel"/)
+    expect(authTsx).toMatch(/autoComplete="one-time-code"/)
+  })
+
+  it('Landing.tsx has real nav/main/footer landmarks, not bare divs', () => {
+    const landingTsx = readFileSync(join(__dirname, '../../components/build/screens/Landing.tsx'), 'utf8')
+    expect(landingTsx).toMatch(/<nav className="m-land-nav"/)
+    expect(landingTsx).toMatch(/<main>/)
+    expect(landingTsx).toMatch(/<footer className="m-land-foot">/)
+    // The old bare-div versions must be gone, not just the new tags added alongside them.
+    expect(landingTsx).not.toMatch(/<div className="m-land-nav">/)
+    expect(landingTsx).not.toMatch(/<div className="m-land-foot">/)
+  })
 })
 
 describe('4-tier pricing grids never orphan the 4th card (2026-09-15)', () => {
