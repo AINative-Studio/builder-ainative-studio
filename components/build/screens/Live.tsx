@@ -30,6 +30,26 @@ const PLAN_META_VALUE: Record<string, number> = {
 
 interface ChatLine { role: 'user' | 'cody'; text: string }
 
+/**
+ * Stable guest session id (#52) so an anonymous founder's Cody conversation
+ * survives a reload (keyed by {guestId}:{slug} server-side). Persisted in
+ * localStorage; signed-in users are keyed by their account instead, so this only
+ * matters pre-auth. SSR-safe (returns '' on the server).
+ */
+function getGuestId(): string {
+  if (typeof window === 'undefined') return ''
+  try {
+    let id = window.localStorage.getItem('builder_guest_id')
+    if (!id) {
+      id = `guest_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`
+      window.localStorage.setItem('builder_guest_id', id)
+    }
+    return id
+  } catch {
+    return ''
+  }
+}
+
 export function Live() {
   const { state, dispatch } = useBuild()
   const proof = useLiveProof()
@@ -297,6 +317,30 @@ export function Live() {
     dispatch({ type: 'GOTO_SCREEN', screen: 'ws' })
   }
 
+  // Hydrate the Cody conversation on mount (#52): fetch the persisted thread for
+  // this company + owner (signed-in account, else guest session) so a reload or
+  // re-login restores the chat exactly where it was left. Re-runs when the company
+  // changes or the user signs in (so an anonymous thread is replaced by the
+  // account thread once auth resolves). Honest empty state when there's no history.
+  useEffect(() => {
+    let alive = true
+    const guestId = getGuestId()
+    const qs = new URLSearchParams({ slug: companyId })
+    if (guestId) qs.set('guestId', guestId)
+    fetch(`/api/build/ask?${qs.toString()}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!alive || !Array.isArray(d?.turns) || d.turns.length === 0) return
+        setChat(
+          d.turns
+            .filter((t: any) => t && t.text)
+            .map((t: any) => ({ role: t.role === 'user' ? 'user' : 'cody', text: String(t.text) } as ChatLine)),
+        )
+      })
+      .catch(() => { /* honest: keep the empty state on any error */ })
+    return () => { alive = false }
+  }, [companyId, signedIn])
+
   const ask = async () => {
     const q = msg.trim()
     if (!q || asking) return
@@ -307,7 +351,7 @@ export function Live() {
       const res = await fetch('/api/build/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: q, idea: state.idea, companyName: company, track: state.track, companyId }),
+        body: JSON.stringify({ question: q, idea: state.idea, companyName: company, track: state.track, companyId, guestId: getGuestId() }),
       })
       const data = await res.json().catch(() => null)
       setChat((c) => [...c, { role: 'cody', text: data?.answer || "I couldn't reach my brain just now — try again in a moment." }])

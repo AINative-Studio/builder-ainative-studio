@@ -1,15 +1,20 @@
 /**
- * POST /api/build/ask (#207 · B2, #287, #288) — the "Ask Cody anything" chat on
- * the Live dashboard.
+ * POST /api/build/ask (#207 · B2, #287, #288, #52) — the "Ask Cody anything" chat
+ * on the Live dashboard.
  *
  * Improvements:
  *  #288 — system prompt now uses the company's ACTUAL selected primitives from
  *          the catalog (via catalogPromptBlock) instead of a hardcoded list.
  *  #287 — Cody knows what's live vs queued, can explain the conversion gate, and
  *          names 3-5 concrete backlog items for THIS company — not invented ones.
+ *  #52  — the conversation is now PERSISTED (ZeroDB builder_build_chat) and Cody
+ *          has MEMORY: POST loads recent history and feeds it to the model, then
+ *          persists the new user+cody turns. GET returns the prior thread so the
+ *          Live dashboard rehydrates on mount (survives reload / re-login).
  *
- * Body: { question, idea, companyName?, track?, companyId? }
+ * Body: { question, idea, companyName?, track?, companyId?, guestId? }
  * Returns: { answer, model, provider }
+ * GET  ?slug=&guestId= → { turns: [{ role, text }] } — the persisted conversation.
  */
 
 import { NextRequest } from 'next/server'
@@ -19,8 +24,28 @@ import { auth } from '@/app/(auth)/auth'
 import { getPlanStatus } from '@/lib/ainative/plan'
 import { modelsForTier } from '@/lib/build/tier-models'
 import { selectPrimitives, catalogPromptBlock } from '@/lib/build/primitive-catalog'
+import { chatKey, loadConversation, appendExchange, toMessages } from '@/lib/build/chat-store'
 
 export const runtime = 'nodejs'
+
+/**
+ * Resolve the conversation OWNER for persistence (#52): the signed-in user's email
+ * (real, durable cross-device identity once auth #49 lands) if present, else the
+ * caller-supplied guest session id (survives reload for an anonymous founder). We
+ * NEVER trust a body-supplied email — the authed identity comes from the server
+ * session only. Returns '' when we have neither (chat degrades to in-memory).
+ */
+async function resolveOwner(guestId: string): Promise<string> {
+  try {
+    const session = await auth()
+    const email = (session as any)?.user?.email as string | undefined
+    const type = (session as any)?.user?.type as string | undefined
+    if (email && type !== 'guest') return email
+  } catch {
+    /* fall through to guest */
+  }
+  return String(guestId || '').trim()
+}
 
 const ainative = new OpenAI({
   apiKey: process.env.AINATIVE_API_KEY || process.env.API_Key || process.env.ZERODB_API_KEY || '',
@@ -74,6 +99,13 @@ export async function POST(request: NextRequest) {
   const companyName = String(body?.companyName || 'the company').slice(0, 120)
   const track = body?.track === 'app' ? 'app' : 'company'
   const companyId = String(body?.companyId || '').slice(0, 80)
+  const guestId = String(body?.guestId || '').slice(0, 120)
+
+  // #52 — the conversation key + prior history. Best-effort: if we can't resolve an
+  // owner or the load fails, `key` is '' and `history` is [] — Cody answers exactly
+  // as before (no memory, no persistence), so this is never a regression.
+  const key = chatKey(await resolveOwner(guestId), companyId)
+  const history = key ? await loadConversation(key).catch(() => []) : []
 
   // Get the actual primitives selected for this company's idea
   const { names: primitiveNames } = selectPrimitives(idea, track)
@@ -108,16 +140,27 @@ export async function POST(request: NextRequest) {
 
   const tier = modelsForTier(await resolveTier())
 
+  // #52 — recent history so follow-ups ("make it cheaper", "and add auth") have
+  // context. The current question is appended LAST so it's the turn being answered.
+  const historyMessages = toMessages(history)
+  const conversation = [...historyMessages, { role: 'user' as const, content: question }]
+
+  // Persist the completed exchange after we have an answer (best-effort, never blocks
+  // the response). Skipped when there's no key (unresolvable owner / degraded mode).
+  const persist = (answer: string) => {
+    if (key && answer) void appendExchange(key, question, answer)
+  }
+
   const claude = getClaudeCompletion()
   if (claude) {
     const model = claude.provider === 'bedrock' ? tier.bedrockModel : claude.model
     try {
       const res = await claude.client.messages.create({
         model, max_tokens: 600, temperature: 0.7, system,
-        messages: [{ role: 'user', content: question }],
+        messages: conversation,
       })
       const answer = (res.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n').trim()
-      if (answer) return Response.json({ answer, provider: claude.provider, model })
+      if (answer) { persist(answer); return Response.json({ answer, provider: claude.provider, model }) }
     } catch (e: any) {
       console.warn(`[build/ask] ${claude.provider} failed: ${e?.message?.slice(0, 80)}`)
     }
@@ -127,13 +170,29 @@ export async function POST(request: NextRequest) {
   try {
     const res = await ainative.chat.completions.create({
       model: tier.ainativeModel, max_tokens: 600, temperature: 0.7,
-      messages: [{ role: 'system', content: system }, { role: 'user', content: question }],
+      messages: [{ role: 'system', content: system }, ...conversation],
     })
     const answer = res.choices?.[0]?.message?.content?.trim()
-    if (answer) return Response.json({ answer, provider: 'ainative', model: tier.ainativeModel })
+    if (answer) { persist(answer); return Response.json({ answer, provider: 'ainative', model: tier.ainativeModel }) }
   } catch (e: any) {
     console.warn(`[build/ask] ainative failed: ${e?.message?.slice(0, 80)}`)
   }
 
   return Response.json({ error: 'unavailable' }, { status: 503 })
+}
+
+/**
+ * GET /api/build/ask?slug=&guestId= (#52) — the persisted conversation for this
+ * company + owner, oldest-first, so the Live dashboard rehydrates its chat on mount
+ * (survives reload / re-login). Honest empty state ({ turns: [] }) for a brand-new
+ * company or an unresolvable owner — never fabricated history.
+ */
+export async function GET(request: NextRequest) {
+  const params = new URL(request.url).searchParams
+  const slug = String(params.get('slug') || '').slice(0, 80)
+  const guestId = String(params.get('guestId') || '').slice(0, 120)
+  const key = chatKey(await resolveOwner(guestId), slug)
+  if (!key) return Response.json({ turns: [] })
+  const turns = await loadConversation(key).catch(() => [])
+  return Response.json({ turns: turns.map((t) => ({ role: t.role, text: t.text })) })
 }
