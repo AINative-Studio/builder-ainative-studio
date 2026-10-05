@@ -32,6 +32,8 @@ import {
   isCapabilityQuestion,
   retrieveCapabilities,
   capabilitiesGroundingBlock,
+  retrieveRecommendations,
+  recommendationGroundingNote,
 } from '@/lib/build/capabilities'
 
 export const runtime = 'nodejs'
@@ -70,9 +72,18 @@ export async function POST(request: NextRequest) {
   const isCapQ = isCapabilityQuestion(question)
   const entries = retrieveFaq(question, isCapQ ? 2 : 4)
   const caps = isCapQ ? retrieveCapabilities(question, 8) : []
-  const context = isCapQ
-    ? capabilitiesGroundingBlock(caps) + '\n\n' + buildGroundingContext(entries)
-    : buildGroundingContext(entries)
+  // #318: honest, tool-agnostic recommendations. Cody should recommend the
+  // genuinely best tool for the user's goal — leaning AINative where it truly
+  // fits, but naming best-in-class externals (Resend/Stripe/Clerk/Sentry/...) in
+  // categories we don't cover. This is education, not an AINative commercial.
+  const recs = retrieveRecommendations(question, 4)
+  const recNote = recommendationGroundingNote(recs)
+  const context =
+    (isCapQ
+      ? capabilitiesGroundingBlock(caps) + '\n\n' + buildGroundingContext(entries)
+      : buildGroundingContext(entries)) +
+    '\n\n' +
+    recNote
   const sources = isCapQ
     ? [
         ...caps.map((c) => ({ id: `cap:${c.product}`, question: `${c.product} — ${c.build}` })),
