@@ -89,6 +89,16 @@ export interface AppEntry {
   // billable service. `railwayDeployedAt` records when it was first provisioned.
   railwayServiceId?: string
   railwayDeployedAt?: string
+  // Per-company Gitea repository (#354, GIT-1). One private repo per company slug,
+  // under one Gitea org per AINative workspace (org-per-workspace, epic #349). Set
+  // once the repo is provisioned via lib/git/gitea-client (provisionCompanyRepo).
+  // `gitRepoUrl` is the https clone URL, `gitRepoId` the numeric Gitea repo id
+  // (stringified), `gitOrg` the workspace's Gitea org name. Presence makes repo
+  // provisioning idempotent — the provisioner skips creation when already set.
+  gitRepoUrl?: string
+  gitRepoId?: string
+  gitOrg?: string
+  gitProvisionedAt?: string
   // Company lifecycle (#57, Danger Zone). Absent/'active' = the company is live and
   // its app is served. 'offline' = the founder took the app offline (kept, but not
   // served). 'deleted' = the founder deleted the company (soft delete — the row is
