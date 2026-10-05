@@ -16,9 +16,16 @@ import { TurnstileWidget } from '@/components/turnstile-widget'
 
 function BrandPanel() {
   return (
+    // #940-follow-up (accessibility audit, 2026-10-05): this tagline is
+    // decorative/supplementary brand copy, not a document-outline heading —
+    // it rendered as a real <h2> that preceded the screen's actual <h1>
+    // ("Welcome back"/"Create account" below), a WCAG 1.3.1/2.4.6 heading-
+    // order violation for screen-reader users navigating by heading. Visual
+    // styling (m-artifact m-auth-statement) is unchanged; only the element
+    // itself changed, since nothing here introduces a real page section.
     <aside className="m-auth-brand">
       <span className="m-eyebrow" style={{ color: '#fff' }}>AINATIVE BUILDER</span>
-      <h2 className="m-artifact m-auth-statement">Compose intelligent products and AI-native companies.</h2>
+      <p className="m-artifact m-auth-statement">Compose intelligent products and AI-native companies.</p>
       <p className="m-auth-subhead">Your idea is the input. AINative primitives are the building blocks. Cody builds the rest.</p>
       <span className="m-mono m-auth-domain">builder.ainative.studio</span>
     </aside>
@@ -494,12 +501,12 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
         <div className="m-auth-fields">
           {(mode === 'login' || mode === 'signup' || mode === 'forgot') && (
             <label className="m-field"><span className="m-mono m-field-l">Email</span>
-              <input type="email" data-testid="auth-email" placeholder="you@company.com" value={email}
+              <input type="email" inputMode="email" autoComplete="email" data-testid="auth-email" placeholder="you@company.com" value={email}
                 onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submit()} /></label>
           )}
           {(mode === 'login' || mode === 'signup' || mode === 'reset') && (
             <label className="m-field"><span className="m-mono m-field-l">{mode === 'reset' ? 'New password' : 'Password'}</span>
-              <input type="password" data-testid="auth-password" placeholder="••••••••" value={password}
+              <input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} data-testid="auth-password" placeholder="••••••••" value={password}
                 onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submit()} /></label>
           )}
           {/* #734 — phone input, signup only. Not required: an empty phone never
@@ -507,7 +514,7 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
               opt-in verification step rather than a hard signup requirement. */}
           {mode === 'signup' && !verifyPhone && (
             <label className="m-field"><span className="m-mono m-field-l">Phone (optional)</span>
-              <input type="tel" data-testid="auth-phone" placeholder="+1 555 000 1111" value={phone}
+              <input type="tel" inputMode="tel" autoComplete="tel" data-testid="auth-phone" placeholder="+1 555 000 1111" value={phone}
                 onChange={(e) => { setPhone(e.target.value); setPhoneVerified(false) }}
                 onKeyDown={(e) => e.key === 'Enter' && phone.trim() && submitOtp()} /></label>
           )}
@@ -521,7 +528,7 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
           )}
           {mode === 'signup' && verifyPhone && (
             <label className="m-field"><span className="m-mono m-field-l">Verification code</span>
-              <input type="text" inputMode="numeric" data-testid="auth-otp-code" placeholder="6-digit code" value={otpCode}
+              <input type="text" inputMode="numeric" autoComplete="one-time-code" data-testid="auth-otp-code" placeholder="6-digit code" value={otpCode}
                 onChange={(e) => setOtpCode(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && confirmOtp()} /></label>
           )}
           {otpNote && <p className="m-mono" data-testid="auth-otp-note" style={{ color: '#1f7a3d' }}>{otpNote}</p>}

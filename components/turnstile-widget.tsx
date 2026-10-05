@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useId, useRef } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 
 declare global {
   interface Window {
@@ -48,11 +48,19 @@ interface TurnstileWidgetProps {
  * Cloudflare Turnstile widget (#930). Renders nothing — and never blocks
  * the form — when NEXT_PUBLIC_TURNSTILE_SITE_KEY isn't set, so local dev
  * without the key configured still works.
+ *
+ * Accessibility (2026-10-05 audit): Turnstile's own "Success!" state change
+ * inside its iframe is not announced to screen readers — there's no
+ * aria-live ancestor around it, and the iframe's internals aren't ours to
+ * fix. Added our own aria-live region, driven by the same onVerify callback
+ * the form already uses, so a screen-reader user gets an explicit
+ * announcement independent of whatever Turnstile's iframe does internally.
  */
 export function TurnstileWidget({ onVerify, onExpire }: TurnstileWidgetProps) {
   const containerId = useId().replace(/:/g, '')
   const widgetIdRef = useRef<string | null>(null)
   const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY
+  const [verified, setVerified] = useState(false)
 
   useEffect(() => {
     if (!siteKey) return
@@ -62,9 +70,18 @@ export function TurnstileWidget({ onVerify, onExpire }: TurnstileWidgetProps) {
       if (cancelled || !window.turnstile) return
       widgetIdRef.current = window.turnstile.render(`#${containerId}`, {
         sitekey: siteKey,
-        callback: onVerify,
-        'error-callback': onExpire,
-        'expired-callback': onExpire,
+        callback: (token: string) => {
+          setVerified(true)
+          onVerify(token)
+        },
+        'error-callback': () => {
+          setVerified(false)
+          onExpire?.()
+        },
+        'expired-callback': () => {
+          setVerified(false)
+          onExpire?.()
+        },
       })
     })
 
@@ -79,5 +96,12 @@ export function TurnstileWidget({ onVerify, onExpire }: TurnstileWidgetProps) {
 
   if (!siteKey) return null
 
-  return <div id={containerId} data-testid="turnstile-widget" />
+  return (
+    <>
+      <div id={containerId} data-testid="turnstile-widget" />
+      <span className="sr-only" role="status" aria-live="polite" data-testid="turnstile-sr-status">
+        {verified ? 'Verification complete.' : ''}
+      </span>
+    </>
+  )
 }
