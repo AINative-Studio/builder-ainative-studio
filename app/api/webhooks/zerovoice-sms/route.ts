@@ -44,7 +44,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
-import { resolveAppByZeroVoiceNumber } from '@/lib/build/app-registry'
+import { resolveAppByZeroVoiceNumber, resolveApp } from '@/lib/build/app-registry'
 import { createIssue } from '@/lib/git/gitea-client'
 import { sendZeroVoiceSms } from '@/lib/build/zerovoice'
 import { resolveFounderCredential, type FounderScopedPrimitive, type ResolvedCredential } from '@/lib/build/primitive-credentials'
@@ -52,10 +52,13 @@ import { deriveOwnerKey, chatScopeKey } from '@/lib/build/chat-store'
 import { detectEditIntent } from '@/lib/build/edit-intent'
 import { askCody } from '@/app/api/build/ask/route'
 import { getPlanStatus } from '@/lib/ainative/plan'
+import { handleSharedNumberSms } from '@/lib/build/shared-cody-number'
+import { sendSharedSms } from '@/lib/build/otp'
 
 export const runtime = 'nodejs'
 
 const WEBHOOK_SECRET = process.env.ZEROVOICE_SMS_WEBHOOK_SECRET || ''
+const SHARED_NUMBER = process.env.ZEROVOICE_SHARED_NUMBER || '+19377642838'
 
 export interface InboundSmsPayload {
   From?: string
@@ -107,6 +110,74 @@ export async function handleInboundSms(payload: InboundSmsPayload): Promise<SmsC
     return null
   })
   if (!app) {
+    // #936 — the shared, paid-tier Text-Cody number is a SEPARATE, additive
+    // routing mode, tried only on a dedicated-number miss. The existing
+    // "no fallback company, ever" invariant above is unchanged for every
+    // dedicated number — this branch only ever fires for SHARED_NUMBER.
+    if (to === SHARED_NUMBER) {
+      const shared = await handleSharedNumberSms(from, body).catch((e) => {
+        console.error('[zerovoice-sms-webhook] handleSharedNumberSms threw:', e)
+        return { replyText: null, resolvedSlug: null, resolvedOwnerEmail: null }
+      })
+      if (!shared.resolvedSlug) {
+        if (shared.replyText) {
+          const sendResult = await sendSharedSms(from, shared.replyText).catch((e) => {
+            console.error('[zerovoice-sms-webhook] sendSharedSms (shared-number reply) threw:', e)
+            return { ok: false, reason: 'threw' }
+          })
+          if (!sendResult.ok) {
+            console.error('[zerovoice-sms-webhook] shared-number reply send failed:', sendResult.reason)
+          }
+        }
+        return { ok: false, reason: 'shared_number_no_company_resolved' }
+      }
+      // A company WAS resolved via the shared number — run the exact same
+      // askCody() + reply pipeline the dedicated-number path below uses,
+      // just addressed to `from` via the shared number instead of a
+      // per-company founder-owned number. Lookup is by SLUG here (not by
+      // number, since the shared number isn't any one company's own) —
+      // resolveApp() already exists in app-registry.ts for this exact case
+      // (e.g. app/api/build/zerovoice/route.ts uses it the same way).
+      const companyApp = await resolveApp(shared.resolvedSlug).catch(() => null)
+      if (!companyApp) {
+        return { ok: false, reason: 'shared_number_company_not_found' }
+      }
+      if (!body) return { ok: false, reason: 'empty_body' }
+
+      const ownerKey = shared.resolvedOwnerEmail ? shared.resolvedOwnerEmail.trim().toLowerCase() : 'guest:anon'
+      const scopeKey = chatScopeKey(ownerKey, companyApp.slug)
+      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio'
+
+      const result = await askCody({
+        question: body,
+        idea: companyApp.idea || '',
+        companyName: companyApp.name || companyApp.slug,
+        track: companyApp.track === 'app' ? 'app' : 'company',
+        companyId: companyApp.slug,
+        scopeKey,
+        tier: 'pro', // already gated paid upstream in handleSharedNumberSms — a literal non-hobbyist tier here only affects askCody's own internal tier-based behavior, not re-checked billing
+        baseUrl,
+      }).catch((e) => {
+        console.error('[zerovoice-sms-webhook] askCody (shared-number path) threw:', e)
+        return null
+      })
+
+      const editTriggered = Boolean(companyApp.gitOrg && detectEditIntent(body))
+      const replyText = result && 'answer' in result && result.answer
+        ? result.answer.slice(0, MAX_REPLY_CHARS)
+        : "Sorry, I couldn't process that just now — text me again in a bit?"
+
+      const sendResult = await sendSharedSms(from, replyText).catch((e) => {
+        console.error('[zerovoice-sms-webhook] sendSharedSms (shared-number answer) threw:', e)
+        return { ok: false, reason: 'threw' }
+      })
+      if (!sendResult.ok) {
+        console.error('[zerovoice-sms-webhook] shared-number answer send failed:', sendResult.reason)
+      }
+
+      return { ok: Boolean(result && 'answer' in result), reason: result && 'answer' in result ? 'replied' : 'fallback_logged', editTriggered }
+    }
+
     console.error(`[zerovoice-sms-webhook] no company matched inbound number ${to} — no-op, not filing against any fallback`)
     return { ok: false, reason: 'no_matching_company' }
   }

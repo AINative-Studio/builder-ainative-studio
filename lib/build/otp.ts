@@ -208,12 +208,12 @@ export async function sendOtp(phone: string): Promise<SendOtpResult> {
     return { ok: false, reason: 'not_configured', expiresAt }
   }
 
-  const sendResult = await sendSharedOtpSms(phone, `Your AINative Builder verification code is ${code}. It expires in 10 minutes.`)
+  const sendResult = await sendSharedSms(phone, `Your AINative Builder verification code is ${code}. It expires in 10 minutes.`)
   if (!sendResult.ok) return { ok: false, reason: sendResult.reason || 'send_failed', expiresAt }
   return { ok: true, expiresAt }
 }
 
-interface SharedSmsResult {
+export interface SharedSmsResult {
   ok: boolean
   reason?: string
 }
@@ -231,7 +231,7 @@ interface SharedSmsResult {
  * MessagingServiceSid here produced a confusing same-number From/To
  * collision during live testing earlier this session.
  */
-async function sendSharedOtpSms(toE164Number: string, body: string): Promise<SharedSmsResult> {
+export async function sendSharedSms(toE164Number: string, body: string): Promise<SharedSmsResult> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID || ''
   const authToken = process.env.TWILIO_AUTH_TOKEN || ''
   const fromNumber = process.env.TWILIO_OTP_FROM_NUMBER || ''
