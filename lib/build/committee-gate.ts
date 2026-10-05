@@ -599,31 +599,68 @@ export function rankFindings(findings: MergedFinding[]): MergedFinding[] {
 }
 
 /**
- * Derive the committee verdict from reviewer verdicts + merged findings, applying
- * the chair discipline: a lone low-confidence finding is not a blocker; agreement
- * or high confidence promotes it.
+ * Derive the committee verdict — WEIGHTED / CHAIR-ARBITRATED (builder#353).
  *
- * - request-changes if any BLOCKER is corroborated (agreement>=2) OR a lone
- *   blocker is high-confidence (>=0.7), OR a majority of reviewers said
- *   request-changes.
- * - needs-discussion if there are majors/uncorroborated blockers or a reviewer
- *   split.
- * - approve otherwise.
+ * The #346 re-measurement showed the old CONSENSUS rule ("any reviewer disagrees
+ * → needs-discussion / request-changes") false-blocked 100% of known-good builds:
+ * the calibrated frontier reviewer (claude-opus-4.5) correctly approved, but a
+ * single dissenting vendor (qwen-coder-32b / gemini-flash) vetoed every build.
+ * A committee that needs consensus is only as good as its weakest reviewer.
+ *
+ * The fix: TRUST the frontier/chair reviewer as the backbone of the verdict. The
+ * other vendors CONTRIBUTE findings and can escalate severity, but a single
+ * non-consensus vendor must NOT force needs-discussion / request-changes on its
+ * own. A finding only overrides the chair when it is CORROBORATED (>=2 reviewers).
+ *
+ * Rules (chair = the frontier reviewer, default DEFAULT_CHAIR):
+ * - request-changes when there is a CORROBORATED blocker (agreement>=2), OR the
+ *   chair itself said request-changes and backs a real blocker it is confident in.
+ * - needs-discussion is reserved for a GENUINE SPLIT on a real blocker: the chair
+ *   is uncertain (needs-discussion) AND at least one blocker exists, or a lone
+ *   high-confidence blocker the chair did not clear. It is NOT triggered by a
+ *   single dissenting vendor's majors or uncorroborated blockers.
+ * - approve when the frontier reviewer approves AND no blocker is corroborated by
+ *   >=2 reviewers (lone-vendor concerns are recorded as findings, not vetoes).
+ * - When the chair is absent from the roster, fall back to the strongest merged
+ *   signal alone (corroborated blocker → request-changes; else approve), never to
+ *   a single-vendor veto.
  */
-export function deriveVerdict(reviews: ReviewerReview[], merged: MergedFinding[]): Verdict {
+export function deriveVerdict(
+  reviews: ReviewerReview[],
+  merged: MergedFinding[],
+  chairModel: string = DEFAULT_CHAIR,
+): Verdict {
   const live = reviews.filter((r) => !r.failed)
-  const n = live.length || 1
-  const rc = live.filter((r) => r.verdict === 'request-changes').length
-  const nd = live.filter((r) => r.verdict === 'needs-discussion').length
+  const chair = live.find((r) => r.model === chairModel)
 
   const blockers = merged.filter((f) => f.severity === 'blocker')
-  const strongBlocker = blockers.some((f) => f.agreement >= 2 || f.maxConfidence >= 0.7)
-  const weakBlocker = blockers.some((f) => f.agreement < 2 && f.maxConfidence < 0.7)
-  const majors = merged.filter((f) => f.severity === 'major')
+  // A blocker only overrides the frontier reviewer when INDEPENDENTLY corroborated.
+  const corroboratedBlocker = blockers.some((f) => f.agreement >= 2)
+  // A lone blocker the chair itself is confident in (its own high-confidence call).
+  const chairHighConfBlocker =
+    chair?.verdict !== 'approve' &&
+    blockers.some((f) => f.raisedBy.includes(chairModel) && f.maxConfidence >= 0.7)
 
-  if (strongBlocker || rc > n / 2) return 'request-changes'
-  if (weakBlocker || majors.length > 0 || nd > 0 || rc > 0) return 'needs-discussion'
-  return 'approve'
+  // Corroboration across the committee is the one signal strong enough to override
+  // the frontier reviewer. Also honor the chair's OWN confident block.
+  if (corroboratedBlocker || chairHighConfBlocker) return 'request-changes'
+
+  // No chair on the roster: fall back to the merged signal alone, never a lone veto.
+  if (!chair) {
+    return 'approve'
+  }
+
+  // Backbone: trust the frontier reviewer. Its approval stands unless a blocker was
+  // corroborated (handled above). A single dissenting vendor cannot override it.
+  if (chair.verdict === 'approve') return 'approve'
+
+  // The chair itself is not clean. A genuine split on a real blocker → discuss;
+  // otherwise the chair wants changes it did not raise a corroborated blocker for.
+  if (chair.verdict === 'needs-discussion') {
+    return blockers.length > 0 ? 'needs-discussion' : 'request-changes'
+  }
+  // chair.verdict === 'request-changes'
+  return 'request-changes'
 }
 
 // ---------------------------------------------------------------------------
@@ -705,12 +742,12 @@ export async function runCommittee(
   // The deterministic merge is the backbone — always runs, never trusts a model
   // to do the counting.
   const merged = mergeFindingsLocally(results)
-  const verdict = deriveVerdict(results, merged)
+  const chairModel = opts.chair || process.env.COMMITTEE_CHAIR || DEFAULT_CHAIR
+  const verdict = deriveVerdict(results, merged, chairModel)
 
   // Optional LLM chair narrative — only when asked AND under the cost cap.
   let chairNarrative: string | undefined
   if (opts.useLlmChair && tokensSpent <= maxTokens) {
-    const chairModel = opts.chair || process.env.COMMITTEE_CHAIR || DEFAULT_CHAIR
     try {
       const chairInput = buildChairInput(subject, results, merged)
       const { text, tokens } = await runModel({
