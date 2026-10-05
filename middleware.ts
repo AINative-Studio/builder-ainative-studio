@@ -139,6 +139,13 @@ export async function middleware(request: NextRequest) {
       return NextResponse.next()
     }
 
+    // Founder story + vision page — public trust/AEO asset; same crawlability
+    // requirement as /compare and /best. Must NOT 307→/login or search engines
+    // and LLMs will never index it (#61).
+    if (pathname.startsWith('/about')) {
+      return NextResponse.next()
+    }
+
     // Category landing pages (non-branded SEO/AEO targets Polsia is weak on) —
     // "AI that runs your company", "autonomous company builder", "AI co-founder".
     // MUST be crawlable + viewable without an account, else they 307→/login and
