@@ -503,6 +503,8 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
     `    GET  /api/db/{table}?search={text}  → SEMANTIC search (returns { results: [...] }); use this for\n` +
     `        "search"/"find similar" features — do NOT hand-roll client-side text filtering for semantic search.\n` +
     `  Load on mount with useEffect; re-fetch or update state after writes. Rows come back FLAT with an \`id\`.\n` +
+    `  Data is AUTO-SCOPED to THIS company's own isolated project (the platform reads a per-request cookie) —\n` +
+    `  pass NO project id / key / company param; just call \`/api/db/{table}\` and it targets this company's data.\n` +
     `- AUTH (lightweight, no backend): if the app has per-user data, scope it to a user id kept in localStorage\n` +
     `  (e.g. \`let uid = localStorage.getItem('uid') || crypto.randomUUID(); localStorage.setItem('uid', uid)\`),\n` +
     `  store \`userId: uid\` on each row, and filter reads with \`/api/db/{table}?filter=\${encodeURIComponent(JSON.stringify({userId: uid}))}\`.\n` +

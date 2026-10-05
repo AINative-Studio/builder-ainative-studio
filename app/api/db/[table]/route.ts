@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { resolveDbProject, pickAppSlug } from '@/lib/build/app-registry'
 
 /**
  * ZeroDB Proxy API — allows generated apps to do CRUD without exposing API key.
@@ -8,13 +9,69 @@ import { NextRequest, NextResponse } from 'next/server'
  * PUT  /api/db/{table}?id=xxx  → update row
  * DELETE /api/db/{table}?id=xxx → delete row
  *
- * Guest users get the shared builder project.
- * Signed-in users could get their own project (future).
+ * PER-COMPANY ISOLATION (#331): each request is scoped to the CURRENT company's
+ * ZeroDB project — NOT one shared project for everybody. The company slug arrives on
+ * every same-origin call automatically (the preview/host response sets a first-party
+ * `ainative_app` cookie), so the generated app code needs NO change. We resolve
+ * slug → provisioned zerodbProjectId server-side (resolveDbProject) and address the
+ * ZeroDB rows/query/embeddings endpoints under that project, using the Builder's own
+ * server key (never a per-app key in the browser) — the same admin-key-scoped-by-project
+ * pattern already used in app/api/build/systems/route.ts::readProvisionedCounts.
+ *
+ * FALLBACK: un-provisioned / anonymous-guest apps (no slug, or a slug with no
+ * provisioned project yet) fall back to the shared env project, so everything that
+ * works today keeps working.
  */
 
 const ZERODB_API = 'https://api.ainative.studio/api'
-const PROJECT_ID = process.env.ZERODB_PROJECT_ID || '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
-const API_KEY = process.env.ZERODB_API_KEY || ''
+const DEFAULT_PROJECT_ID = process.env.ZERODB_PROJECT_ID || '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
+// Builder server key. Prefer AINATIVE_API_KEY (mirrors app-registry + systems route),
+// fall back to ZERODB_API_KEY for backward compatibility with existing deploys.
+const API_KEY = process.env.AINATIVE_API_KEY || process.env.ZERODB_API_KEY || ''
+
+/**
+ * The resolved data-plane scope for a single request (#331): which ZeroDB project the
+ * proxy addresses and which key it uses. `apiKey` is always the Builder server key —
+ * the browser never receives a per-app key; isolation comes from the project id.
+ */
+interface DbScope {
+  projectId: string
+  apiKey: string
+  source: 'cookie' | 'query' | 'header' | 'env'
+}
+
+/**
+ * Resolve the per-request DB scope from the CURRENT company (#331).
+ *
+ * Reads the company slug (precedence: first-party cookie `ainative_app` > `?app=`
+ * query > `x-ainative-app` header), maps it to the company's provisioned
+ * zerodbProjectId via the app registry, and returns that project scoped to the
+ * Builder server key. If there is no slug or no provisioned project, falls back to the
+ * shared env project so guest/un-provisioned apps keep working. Never throws.
+ */
+async function resolveScope(request: NextRequest): Promise<DbScope> {
+  const cookieSlug = request.cookies.get('ainative_app')?.value
+  const querySlug = request.nextUrl.searchParams.get('app')
+  const headerSlug = request.headers.get('x-ainative-app')
+  const slug = pickAppSlug({ cookie: cookieSlug, query: querySlug, header: headerSlug })
+  const via: DbScope['source'] = (cookieSlug || '').trim()
+    ? 'cookie'
+    : (querySlug || '').trim()
+      ? 'query'
+      : (headerSlug || '').trim()
+        ? 'header'
+        : 'env'
+
+  if (slug) {
+    try {
+      const { projectId } = await resolveDbProject(slug)
+      if (projectId) return { projectId, apiKey: API_KEY, source: via }
+    } catch {
+      // fall through to env default
+    }
+  }
+  return { projectId: DEFAULT_PROJECT_ID, apiKey: API_KEY, source: 'env' }
+}
 
 /**
  * Normalize a raw ZeroDB row into the FLAT shape generated apps expect.
@@ -65,11 +122,14 @@ function normalizeBody(json: any): any {
   return json
 }
 
-async function zerodbFetch(method: string, path: string, body?: any) {
+async function zerodbFetch(scope: DbScope, method: string, path: string, body?: any) {
   const res = await fetch(`${ZERODB_API}${path}`, {
     method,
     headers: {
-      'X-API-Key': API_KEY,
+      'X-API-Key': scope.apiKey,
+      // Bearer + X-API-Key: mirror the systems route so the project-scoped path is
+      // authorized whether core wants the header or the bearer form.
+      Authorization: `Bearer ${scope.apiKey}`,
       'Content-Type': 'application/json',
     },
     body: body ? JSON.stringify(body) : undefined,
@@ -82,12 +142,16 @@ async function zerodbFetch(method: string, path: string, body?: any) {
   return NextResponse.json(normalizeBody(await res.json()))
 }
 
-// Ensure table exists (auto-create on first use)
-async function ensureTable(table: string) {
+// Ensure table exists (auto-create on first use) — scoped to the resolved project.
+async function ensureTable(scope: DbScope, table: string) {
   try {
-    await fetch(`${ZERODB_API}/v1/projects/${PROJECT_ID}/database/tables`, {
+    await fetch(`${ZERODB_API}/v1/projects/${scope.projectId}/database/tables`, {
       method: 'POST',
-      headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
+      headers: {
+        'X-API-Key': scope.apiKey,
+        Authorization: `Bearer ${scope.apiKey}`,
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify({ table_name: table }),
       signal: AbortSignal.timeout(5000),
     })
@@ -102,6 +166,7 @@ export async function GET(
   { params }: { params: Promise<{ table: string }> }
 ) {
   const { table } = await params
+  const scope = await resolveScope(request)
   const searchParams = request.nextUrl.searchParams
   const limit = searchParams.get('limit') || '50'
   const filter = searchParams.get('filter')
@@ -116,7 +181,7 @@ export async function GET(
   // project's vector store (namespace = table), so the app must have stored vectors.
   if (search) {
     const threshold = searchParams.get('threshold')
-    return zerodbFetch('POST', `/v1/projects/${PROJECT_ID}/embeddings/search`, {
+    return zerodbFetch(scope, 'POST', `/v1/projects/${scope.projectId}/embeddings/search`, {
       query: search,
       limit: parseInt(limit),
       namespace: table,
@@ -128,7 +193,7 @@ export async function GET(
     // Query with filter
     try {
       const filters = JSON.parse(filter)
-      return zerodbFetch('POST', `/v1/projects/${PROJECT_ID}/database/tables/${table}/query`, {
+      return zerodbFetch(scope, 'POST', `/v1/projects/${scope.projectId}/database/tables/${table}/query`, {
         filters,
         limit: parseInt(limit),
       })
@@ -137,7 +202,7 @@ export async function GET(
     }
   }
 
-  return zerodbFetch('GET', `/v1/projects/${PROJECT_ID}/database/tables/${table}/rows?limit=${limit}`)
+  return zerodbFetch(scope, 'GET', `/v1/projects/${scope.projectId}/database/tables/${table}/rows?limit=${limit}`)
 }
 
 // POST /api/db/{table} — insert row(s)
@@ -146,19 +211,24 @@ export async function POST(
   { params }: { params: Promise<{ table: string }> }
 ) {
   const { table } = await params
+  const scope = await resolveScope(request)
   const body = await request.json()
 
   // Auto-create table on first insert
-  await ensureTable(table)
+  await ensureTable(scope, table)
 
   // Support both single row and batch
   if (Array.isArray(body)) {
     // Batch insert
     const results = []
     for (const row of body) {
-      const res = await fetch(`${ZERODB_API}/v1/projects/${PROJECT_ID}/database/tables/${table}/rows`, {
+      const res = await fetch(`${ZERODB_API}/v1/projects/${scope.projectId}/database/tables/${table}/rows`, {
         method: 'POST',
-        headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json' },
+        headers: {
+          'X-API-Key': scope.apiKey,
+          Authorization: `Bearer ${scope.apiKey}`,
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({ row_data: row }),
         signal: AbortSignal.timeout(10000),
       })
@@ -167,7 +237,7 @@ export async function POST(
     return NextResponse.json({ inserted: results.length, data: results })
   }
 
-  return zerodbFetch('POST', `/v1/projects/${PROJECT_ID}/database/tables/${table}/rows`, {
+  return zerodbFetch(scope, 'POST', `/v1/projects/${scope.projectId}/database/tables/${table}/rows`, {
     row_data: body,
   })
 }
@@ -178,13 +248,14 @@ export async function PUT(
   { params }: { params: Promise<{ table: string }> }
 ) {
   const { table } = await params
+  const scope = await resolveScope(request)
   const rowId = request.nextUrl.searchParams.get('id')
   if (!rowId) {
     return NextResponse.json({ error: 'id parameter required' }, { status: 400 })
   }
 
   const body = await request.json()
-  return zerodbFetch('PUT', `/v1/projects/${PROJECT_ID}/database/tables/${table}/rows/${rowId}`, {
+  return zerodbFetch(scope, 'PUT', `/v1/projects/${scope.projectId}/database/tables/${table}/rows/${rowId}`, {
     row_data: body,
   })
 }
@@ -195,10 +266,11 @@ export async function DELETE(
   { params }: { params: Promise<{ table: string }> }
 ) {
   const { table } = await params
+  const scope = await resolveScope(request)
   const rowId = request.nextUrl.searchParams.get('id')
   if (!rowId) {
     return NextResponse.json({ error: 'id parameter required' }, { status: 400 })
   }
 
-  return zerodbFetch('DELETE', `/v1/projects/${PROJECT_ID}/database/tables/${table}/rows/${rowId}`)
+  return zerodbFetch(scope, 'DELETE', `/v1/projects/${scope.projectId}/database/tables/${table}/rows/${rowId}`)
 }

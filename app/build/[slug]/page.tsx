@@ -6,6 +6,12 @@ import { resolveApp } from '@/lib/build/app-registry'
  * or app. Resolves the brand slug to its generated app's chatId and renders the
  * actual running app (served from /api/preview/{chatId}) in a branded frame.
  * Replaces the dead {slug}.ainative.studio subdomain — no DNS, works immediately.
+ *
+ * Per-company DB isolation (#331): the app's /api/db calls scope to THIS company's
+ * ZeroDB project via the first-party `ainative_app` cookie. That cookie is set for
+ * this surface by middleware.ts on the /build/{slug} request AND by the embedded
+ * /api/preview/{chatId} route on the iframe document — a Server Component page cannot
+ * set cookies (Next.js throws), so the cookie is stamped at those two seams instead.
  */
 
 export const runtime = 'nodejs'

@@ -5,6 +5,18 @@ import { applyRateLimit } from './lib/middleware/rate-limit'
 import { wildcardSlugFromHost, subdomainServable } from './lib/build/deploy'
 import { resolveApp } from './lib/build/app-registry'
 
+/**
+ * Stamp the per-company DB-scope cookie (#331). The generated app's bare same-origin
+ * fetch('/api/db/...') automatically carries this, so /api/db resolves the company's
+ * OWN ZeroDB project server-side with ZERO change to generated app code. SameSite=Lax
+ * + Path=/ so it rides normal navigations/fetches under the company host/path.
+ */
+function setAppScopeCookie(res: NextResponse, slug: string | null | undefined): void {
+  const s = (slug || '').trim()
+  if (!s) return
+  res.cookies.set('ainative_app', s, { path: '/', sameSite: 'lax' })
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
   const startTime = Date.now()
@@ -58,18 +70,33 @@ export async function middleware(request: NextRequest) {
     }
     // Paid + claimed → serve the company app on its subdomain.
     // Already under /build (asset/subpath) → leave as-is; else map to the app root.
+    // Per-company DB isolation (#331): stamp the ainative_app cookie so the served
+    // company app's same-origin /api/db calls scope to ITS project.
     if (!pathname.startsWith('/build/')) {
       const target = request.nextUrl.clone()
       target.pathname = buildPath
-      return NextResponse.rewrite(target)
+      const res = NextResponse.rewrite(target)
+      setAppScopeCookie(res, wildcardSlug)
+      return res
     }
-    return NextResponse.next()
+    const res = NextResponse.next()
+    setAppScopeCookie(res, wildcardSlug)
+    return res
   }
 
   // /build is the new public front door (the pivot UX) — anonymous users must be
   // able to Fork → Intake → watch Cody build before any auth wall.
   if (pathname.startsWith('/build')) {
-    return NextResponse.next()
+    const res = NextResponse.next()
+    // Per-company DB isolation (#331): on the path-served surface /build/{slug} the
+    // slug is right there in the URL — stamp the ainative_app cookie so the app's
+    // same-origin /api/db calls scope to that company's project. The embedded
+    // /api/preview/{chatId} iframe also sets this cookie; setting it here covers the
+    // frame document + any direct path fetches. Only the concrete /build/{slug}
+    // surface gets a slug (not /build itself or /build/... editor screens without one).
+    const slugMatch = pathname.match(/^\/build\/([^/]+)/)
+    if (slugMatch && slugMatch[1]) setAppScopeCookie(res, decodeURIComponent(slugMatch[1]))
+    return res
   }
 
   if (pathname.startsWith('/api/auth')) {

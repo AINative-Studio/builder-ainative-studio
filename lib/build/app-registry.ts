@@ -460,6 +460,75 @@ export async function claimCompanyProject(
   }
 }
 
+/**
+ * Reverse lookup (#331): resolve a preview chatId back to its company SLUG.
+ *
+ * The preview HTML is server-rendered per-request in app/api/preview/[id]/route.ts
+ * (id === chatId). To scope the generated app's /api/db calls to the RIGHT company
+ * project, the preview response must carry the company slug (as a first-party cookie
+ * + a window global). The generated app only knows its own chatId (the preview URL),
+ * never the slug — so we reverse-map chatId → slug here. Latest-wins per slug mirrors
+ * resolveApp; soft-deleted companies are treated as gone. Returns null when unknown.
+ */
+export async function resolveSlugByChatId(chatId: string): Promise<string | null> {
+  if (!configured() || !chatId) return null
+  try {
+    const res = await fetch(`${rowsUrl()}?limit=1000`, { headers: headers(), signal: AbortSignal.timeout(20000) })
+    if (!res.ok) return null
+    const data = JSON.parse(await res.text())
+    const rows = Array.isArray(data) ? data : data.data || data.rows || []
+    const matches: AppEntry[] = rows
+      .map((r: { row_data?: AppEntry }) => r.row_data)
+      .filter((rd: AppEntry | undefined): rd is AppEntry => rd?.chatId === chatId && !!rd?.slug)
+    if (!matches.length) return null
+    // Latest-wins on createdAt (a slug can be re-registered to the same chatId).
+    matches.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+    const latest = matches[0]
+    if (latest.lifecycleStatus === 'deleted') return null
+    return latest.slug
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Pick the CURRENT company slug from the three request-scope signals in precedence
+ * order (#331): first-party cookie `ainative_app` > `?app=` query > `x-ainative-app`
+ * header. Returns the trimmed slug or '' when none is present. Pure/synchronous so the
+ * /api/db proxy's precedence is unit-testable without importing the Next route module.
+ */
+export function pickAppSlug(signals: {
+  cookie?: string | null
+  query?: string | null
+  header?: string | null
+}): string {
+  return (
+    (signals.cookie || '').trim() ||
+    (signals.query || '').trim() ||
+    (signals.header || '').trim() ||
+    ''
+  )
+}
+
+/**
+ * Resolve a company slug to its provisioned ZeroDB project id (#331) — the seam the
+ * /api/db proxy uses to scope reads/writes to the company's OWN data plane instead of
+ * the shared env project. Returns `{ projectId, source }` where source is:
+ *   'registry'  — the company has a provisioned per-app project (zerodbProjectId set),
+ *   'none'      — no slug / not registered / not provisioned (caller falls back to env).
+ * Never throws; a lookup failure degrades to source:'none' so un-provisioned/guest apps
+ * keep working on the shared project.
+ */
+export async function resolveDbProject(
+  slug: string | null | undefined,
+): Promise<{ projectId: string | null; source: 'registry' | 'none' }> {
+  const s = (slug || '').trim()
+  if (!s) return { projectId: null, source: 'none' }
+  const entry = await resolveApp(s).catch(() => null)
+  const projectId = entry?.zerodbProjectId || null
+  return projectId ? { projectId, source: 'registry' } : { projectId: null, source: 'none' }
+}
+
 /** Resolve a slug to its most recent app entry (chatId + brand), or null. */
 export async function resolveApp(slug: string): Promise<AppEntry | null> {
   if (!configured() || !slug) return null

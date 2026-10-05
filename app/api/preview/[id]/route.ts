@@ -3,6 +3,7 @@ import { getPreview, isPreviewStreaming, storePreview, getSSRPreview } from '@/l
 import { validateJavaScriptCode, sanitizeForSandpack } from '@/lib/code-validator'
 import { detectRootComponent } from '@/lib/component-detector'
 import { flattenMultiFile } from '@/lib/build/flatten-multifile'
+import { resolveSlugByChatId } from '@/lib/build/app-registry'
 // Sucrase removed — builds were failing. Using client-side Babel.
 // The key fix is using models that produce COMPLETE code (not maverick 512-tok)
 
@@ -11,6 +12,14 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+
+  // Per-company DB isolation (#331): resolve this preview's chatId → company slug so
+  // the served HTML can carry the slug (first-party `ainative_app` cookie + a
+  // window.__AINATIVE_APP global). That slug is what /api/db uses to scope the
+  // generated app's data to the company's OWN ZeroDB project. Best-effort — a preview
+  // with no registered slug (guest/anonymous) simply carries no cookie and /api/db
+  // falls back to the shared project. Never blocks rendering.
+  const appSlug = await resolveSlugByChatId(id).catch(() => null)
 
   let content = getPreview(id)
 
@@ -654,6 +663,11 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Preview</title>
+    <!-- Per-company DB scope (#331): the company slug for this preview. /api/db reads
+         the first-party ainative_app cookie set on this response, so bare same-origin
+         fetch('/api/db/...') is auto-scoped with NO app-code change. This global is a
+         belt-and-braces fallback if a generated fetch helper wants to append ?app=. -->
+    <script>window.__AINATIVE_APP=${JSON.stringify(appSlug || '')};</script>
     <!-- Google Fonts: Inter (primary) + Geist-like fallback -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1531,6 +1545,14 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
     headers: {
       'Content-Type': 'text/html',
       'Cache-Control': 'no-cache, no-store, must-revalidate',
+      // Per-company DB isolation (#331): scope the generated app's same-origin
+      // /api/db calls to THIS company. SameSite=Lax + Path=/ so a bare
+      // fetch('/api/db/todos') from the preview carries the slug automatically —
+      // zero change to already-generated app code. Only set when we resolved a slug
+      // (guest/anonymous previews stay on the shared fallback project).
+      ...(appSlug
+        ? { 'Set-Cookie': `ainative_app=${encodeURIComponent(appSlug)}; Path=/; SameSite=Lax` }
+        : {}),
       // CSP (#10): the app is served into an iframe sandboxed WITHOUT
       // allow-same-origin, so it already runs on a null origin (can't touch our
       // cookies/DOM/same-origin APIs). This CSP is defense-in-depth: 'unsafe-eval'

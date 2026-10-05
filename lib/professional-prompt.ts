@@ -279,7 +279,10 @@ async function addTodo(text) {
 
 **HARD RULES:**
 - For persistent data, use \`/api/db/{table}\` (ZeroDB serverless). This is the
-  AINative data primitive — surface it.
+  AINative data primitive — surface it. Data is AUTOMATICALLY scoped to THIS company's
+  own project (the platform reads a first-party cookie per request), so you do NOT
+  pass any project id, key, or company identifier — just call \`/api/db/{table}\` and it
+  writes/reads that company's isolated data.
 - NEVER instantiate or connect to a dedicated database (no \`pg\`, \`postgres://\`,
   \`new Pool\`, Prisma/Drizzle clients, Supabase, Firebase, Mongo, or any
   server DB). NEVER write a backend server or provision a database instance.
