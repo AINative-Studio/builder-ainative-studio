@@ -120,6 +120,59 @@ export async function setAppOwner(slug: string, ownerEmail: string): Promise<boo
 }
 
 /**
+ * Migrate anonymous guest-built companies to a real AINative account (#49).
+ *
+ * When a founder builds a company as an anonymous guest and THEN registers or
+ * logs in, their in-progress work must not be lost: this claims the given guest
+ * company slugs for the now-authenticated account by stamping ownerEmail, so the
+ * companies surface in listAppsForOwner() (the "my companies" index) under the
+ * real account.
+ *
+ * SAFETY — only UNOWNED companies are claimed. A row that already carries a
+ * DIFFERENT ownerEmail is skipped (never stolen); a row already owned by THIS
+ * email is a no-op success (idempotent, so re-running the migration on repeat
+ * logins is harmless). Unregistered slugs are skipped. Returns the slugs that
+ * were newly migrated plus the ones skipped, so the caller can log without
+ * failing the sign-in path.
+ */
+export async function migrateGuestCompanies(
+  slugs: string[],
+  ownerEmail: string,
+): Promise<{ migrated: string[]; skipped: string[] }> {
+  const email = (ownerEmail || '').trim().toLowerCase()
+  const migrated: string[] = []
+  const skipped: string[] = []
+  if (!email || !Array.isArray(slugs) || slugs.length === 0) {
+    return { migrated, skipped }
+  }
+  // De-duplicate + drop empties so a repeated slug isn't processed twice.
+  const unique = Array.from(new Set(slugs.map((s) => (s || '').trim()).filter(Boolean)))
+  for (const slug of unique) {
+    const existing = await resolveApp(slug).catch(() => null)
+    if (!existing) {
+      skipped.push(slug)
+      continue
+    }
+    const currentOwner = (existing.ownerEmail || '').toLowerCase()
+    // Already owned by this account → nothing to do (idempotent).
+    if (currentOwner === email) {
+      migrated.push(slug)
+      continue
+    }
+    // Owned by SOMEONE ELSE → never steal it.
+    if (currentOwner && currentOwner !== email) {
+      skipped.push(slug)
+      continue
+    }
+    // Unowned (built as guest) → claim it for this account.
+    const ok = await registerApp({ ...existing, ownerEmail: email }).catch(() => false)
+    if (ok) migrated.push(slug)
+    else skipped.push(slug)
+  }
+  return { migrated, skipped }
+}
+
+/**
  * List the companies owned by a given AINative account email (#253) — the data
  * behind the "my companies" index. Reads all registry rows, keeps only the
  * latest row per slug (latest-wins, matching resolveApp), then filters to those
