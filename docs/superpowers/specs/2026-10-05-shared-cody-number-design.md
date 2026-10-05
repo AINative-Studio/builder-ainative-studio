@@ -22,15 +22,21 @@ The ask: let any signed-in **paid-tier** founder text Cody on this one shared nu
 
 ## Design
 
-### 1. Phone → founder lookup (new)
+### 1. Phone → founder lookup (new, UNIFIED with the mobile phone-login spec)
 
-`lib/build/founder-phones.ts` currently only supports `email → phone` writes (`recordFounderPhone`, `markFounderPhoneVerified`), both from the existing `/build` signup OTP flow (#734). Add:
+**Updated 2026-10-05, per explicit product direction**: a founder's phone-login number (see `2026-10-05-mobile-phone-login-design.md`) IS their one number of record for all Cody SMS communication — not a second, independently-tracked number. This changes the lookup to check two sources, not one:
 
 ```ts
-export async function findFounderByPhone(e164: string): Promise<{ email: string } | null>
+export async function findFounderByPhone(e164: string): Promise<{ email: string | null; coreUserId?: string } | null>
 ```
 
-Queries the existing `builder_founder_phones` ZeroDB table for the latest `verified: true` row matching `phone === e164`. Returns `null` on no match (never throws — matches every other function in this file). **Only verified phone numbers match** — an unverified phone entry (recorded but never OTP-confirmed) must not grant SMS access to someone else's account via spoofed `From`.
+Lookup order:
+1. **`core`'s `users.phone` column** (new, from the mobile phone-login spec, Part 1) — a founder who registered via phone-identity. No `email` on these accounts (returns `email: null`, `coreUserId` set) — callers downstream (e.g. `listAppsForOwner`) need an owner-key strategy that works for a `coreUserId`-keyed founder, not only an `email`-keyed one; check whether `listAppsForOwner`/`app-registry.ts`'s ownership model already supports a non-email owner key or needs its own small extension.
+2. **Fallback: the existing `builder_founder_phones` ZeroDB table** (`lib/build/founder-phones.ts`, `recordFounderPhone`/`markFounderPhoneVerified`, #734) — for an email/password founder who added an optional verified phone via the existing add-on flow, with no core phone-identity account at all. Only the latest `verified: true` row matches.
+
+Returns `null` on no match in either source (never throws). **Only verified phone numbers match in both sources** — an unverified phone entry (recorded but never OTP-confirmed) must not grant SMS access to someone else's account via spoofed `From`.
+
+This lookup should NOT be implemented until the mobile phone-login spec's Part 1 (`core`'s `users.phone` column + endpoints) actually ships — until then, only the fallback source exists, and this function can ship as originally scoped (fallback-only) with the core-lookup branch added once Part 1 lands. Don't block this spec's rollout on the other one; land this with just the fallback path, then extend.
 
 ### 2. Shared-number routing mode (new, alongside the existing per-company mode)
 
