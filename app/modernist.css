@@ -1691,10 +1691,13 @@
   .m-tiers { grid-template-columns: 1fr; }
   .m-billing-switch button { min-height: 44px; }
 
-  /* Tap minimums (#339) — 44px iOS HIG floor for the small text controls. */
+  /* Tap minimums (#339) — 44px iOS HIG floor for the small text controls.
+     m-land-sound was missed in the original #339 pass (confirmed live:
+     16.5px tall) — added here alongside its siblings. */
   .modernist .btn-ghost,
   .m-back,
   .modernist .m-land-signin,
+  .modernist .m-land-sound,
   .m-account-chip { min-height: 44px; display: inline-flex; align-items: center; }
   .modernist .m-land-foot a { display: inline-flex; align-items: center; min-height: 44px; }
 
@@ -1711,6 +1714,26 @@
   .modernist .m-land-nav { padding: 14px 16px; row-gap: 10px; }
   .modernist .m-land-brand-by { display: none; }
   .modernist .m-land-nav-actions { gap: 14px 16px; }
+
+  /* Dashboard act-bar (WorkspaceShell.tsx) — the SAME overflow failure mode
+     as PublicNav above, same root cause (no wrap, no breakpoint ever
+     touched these classes). Unlike PublicNav this crams FIVE act-progress
+     steps (.m-acts) plus four more controls (woven counter, Index,
+     Artifacts, AccountMenu) into one unwrapped flex row — a worse case,
+     confirmed live to overflow well before 390px. Wrap both halves onto
+     their own line, shrink the act-progress labels to just their numbered
+     badges (the text labels add little at this width and are the single
+     biggest space cost), and let the right-side controls wrap internally
+     rather than widen the row past the viewport. */
+  .m-actbar { flex-wrap: wrap; row-gap: 8px; padding: 8px 16px; }
+  .m-acts { flex-wrap: wrap; row-gap: 6px; }
+  .m-act-label { display: none; }
+  .m-actbar-right { flex-wrap: wrap; row-gap: 8px; margin-left: 0; }
+  .m-woven { display: none; }
+  /* Tap minimum (#339's own 44px floor, applied here too — m-actbar-btn was
+     never covered by that pass; confirmed live at 4px 10px / 11px font, well
+     under the floor). */
+  .m-actbar-btn { min-height: 44px; display: inline-flex; align-items: center; }
 }
 
 /* 2x2 tablet layout for the 4-tier grid — a straight 4-col-to-1-col jump at
