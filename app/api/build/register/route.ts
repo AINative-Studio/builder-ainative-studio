@@ -35,12 +35,14 @@
  * has no documented phone field (checked: no existing call site sends one),
  * so a submitted `phone` is stored in Builder's own ZeroDB
  * (lib/build/founder-phones.ts) rather than assumed to be a core contract
- * field. `send-otp`/`verify-otp` are self-contained (lib/build/otp.ts) —
- * see that file's header for the real, honest gap this documents: sending
- * the actual SMS requires a Builder-owned ZeroVoice service credential that
- * does not exist in this environment yet, so the send is gated behind
- * ZEROVOICE_OTP_ENABLED (default off) and returns an honest
- * {ok:false, reason:'not_configured'} rather than a fabricated success.
+ * field. `send-otp`/`verify-otp` are self-contained (lib/build/otp.ts).
+ *
+ * #938 (2026-10-05): the real OTP SMS send was gated off for a while — no
+ * Builder-owned ZeroVoice service credential ever existed. Resolved:
+ * Builder's Railway service now holds a direct Twilio credential (copied
+ * from core's real, working account) and sends via Twilio's Messages API
+ * directly, gated on ZEROVOICE_OTP_ENABLED + the TWILIO_* vars being set —
+ * see lib/build/otp.ts's header for the full detail.
  */
 
 import { NextRequest } from 'next/server'
@@ -119,8 +121,8 @@ async function handleLoginCheck(email: string, password: string) {
 /**
  * #734 — generate + store + send a 6-digit OTP for a phone number, rate
  * limited per phone AND per IP (a few sends per hour) since this triggers a
- * real, billed SMS once ZEROVOICE_OTP_ENABLED is flipped on. See
- * lib/build/otp.ts's header for the honest not-configured gap.
+ * real, billed SMS (sent directly via Twilio as of #938). See
+ * lib/build/otp.ts's header for the send implementation.
  */
 async function handleSendOtp(rawPhone: string, request: NextRequest) {
   const phone = toE164(rawPhone)

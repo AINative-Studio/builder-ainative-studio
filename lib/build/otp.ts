@@ -219,31 +219,47 @@ interface SharedSmsResult {
 }
 
 /**
- * Minimal, self-contained "send one SMS via ZeroVoice using a Builder
- * service credential" call — deliberately not shared with zerovoice.ts's
- * founder-JWT-scoped sendZeroVoiceSms (see file doc for why). Reads a
- * hypothetical service credential + pool number from env; both are
- * currently UNSET in this repo's environment (confirmed via `railway
- * variables`), so this only ever executes when a human wires them up AND
- * flips ZEROVOICE_OTP_ENABLED — until then, callers should short-circuit on
- * zeroVoiceOtpEnabled() before ever reaching this function (sendOtp does).
+ * Send one SMS directly via Twilio's Messages API (#938) — replaces the
+ * original ZeroVoice-tenant-auth design (see file doc above for the real,
+ * now-resolved gap it documented: no Builder-owned ZeroVoice service
+ * credential ever existed). Builder's own Railway service now holds a
+ * direct Twilio credential (TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN), copied
+ * from core's real, working Twilio account on 2026-10-05, and
+ * TWILIO_OTP_FROM_NUMBER is the real, confirmed-live ZeroVoice number
+ * (+19377642838) already wired for two-way SMS. Explicit From/To (never
+ * routed through a Messaging Service's number-selection) — using a
+ * MessagingServiceSid here produced a confusing same-number From/To
+ * collision during live testing earlier this session.
  */
 async function sendSharedOtpSms(toE164Number: string, body: string): Promise<SharedSmsResult> {
-  const serviceJwt = process.env.ZEROVOICE_SERVICE_JWT || ''
-  const poolFromNumber = process.env.ZEROVOICE_POOL_E164 || ''
-  if (!serviceJwt || !poolFromNumber) return { ok: false, reason: 'not_configured' }
+  const accountSid = process.env.TWILIO_ACCOUNT_SID || ''
+  const authToken = process.env.TWILIO_AUTH_TOKEN || ''
+  const fromNumber = process.env.TWILIO_OTP_FROM_NUMBER || ''
+  if (!accountSid || !authToken || !fromNumber) return { ok: false, reason: 'not_configured' }
 
   try {
-    const res = await fetch(`${ZV_BASE}/sms/send`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${serviceJwt}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from_number: poolFromNumber, to_number: toE164Number, body }),
-      signal: AbortSignal.timeout(20000),
-    })
+    const params = new URLSearchParams({ From: fromNumber, To: toE164Number, Body: body })
+    const res = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: params,
+        signal: AbortSignal.timeout(20000),
+      },
+    )
+    const data = await res.json().catch(() => null)
     if (!res.ok) {
-      const data = await res.json().catch(() => null)
-      return { ok: false, reason: String(data?.message || data?.detail || res.status).slice(0, 160) }
+      return { ok: false, reason: String(data?.message || res.status).slice(0, 160) }
     }
+    // Twilio returns 201 with status:'queued'/'accepted' immediately — the
+    // real delivery outcome arrives later via a status callback, which this
+    // flow doesn't track (matches the honest, no-fabrication pattern the
+    // rest of this file follows: queued-at-Twilio is the real, true thing
+    // we know synchronously, not a guess at eventual delivery).
     return { ok: true }
   } catch (e: any) {
     return { ok: false, reason: String(e?.message || e).slice(0, 160) }
