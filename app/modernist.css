@@ -336,9 +336,29 @@
 }
 .m-lead-email:focus { outline: none; border-color: var(--m-brand, #e5451f); }
 
-/* Custom-domain modal (FIX-3) */
-.m-domain-list { display: flex; flex-direction: column; gap: 1.5px; background: var(--color-divider); margin: 18px 0 10px; }
-.m-domain-opt { display: flex; justify-content: space-between; align-items: center; background: var(--color-surface); border: 0; padding: 12px 16px; cursor: pointer; font-family: var(--font-body); font-size: 15px; color: var(--color-text); }
+/* Custom-domain modal (FIX-3 / #48) */
+/* Scroll-contained suggestion list — modal stays a fixed size regardless of result count. */
+.m-domain-scroll-body {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  /* Accommodate ~5 domain rows (≈52px each) plus the show-more button. On
+     mobile we tighten this so the CTA always stays on-screen. */
+  max-height: 280px;
+  margin: 18px 0 10px;
+  /* Subtle scrollbar so it's visible but not obtrusive. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-divider) transparent;
+}
+.m-domain-scroll-body::-webkit-scrollbar { width: 4px; }
+.m-domain-scroll-body::-webkit-scrollbar-track { background: transparent; }
+.m-domain-scroll-body::-webkit-scrollbar-thumb { background: var(--color-divider); }
+@media (max-height: 600px) {
+  /* Short viewports (e.g. landscape mobile): shrink to keep CTA in view */
+  .m-domain-scroll-body { max-height: 180px; }
+}
+.m-domain-list { display: flex; flex-direction: column; gap: 1.5px; background: var(--color-divider); margin: 0; }
+.m-domain-opt { display: flex; justify-content: space-between; align-items: center; background: var(--color-surface); border: 0; padding: 12px 16px; cursor: pointer; font-family: var(--font-body); font-size: 15px; color: var(--color-text); width: 100%; text-align: left; }
 .m-domain-opt:disabled { opacity: 0.5; cursor: not-allowed; }
 .m-domain-opt.is-picked { background: var(--color-accent-100); box-shadow: inset 3px 0 0 var(--color-accent); }
 .m-domain-name { font-family: var(--font-mono); }
@@ -347,6 +367,8 @@
 .m-domain-badge.is-taken { color: var(--text-faint); }
 .m-domain-price { color: var(--track, var(--color-accent)); font-size: 13px; }
 .m-domain-status { font-size: 12px; color: var(--text-body-70); margin: 6px 0; }
+/* Show-more row sits inside the scroll body so it travels with the list */
+.m-domain-more-row { padding: 8px 16px; background: var(--color-surface); border-top: 1.5px solid var(--color-divider); }
 
 /* Live activity ticker — the "watch it build live" spectacle (CRUSH-2) */
 .m-ticker { display: flex; align-items: center; gap: 12px; margin-bottom: 26px; padding: 8px 14px; background: var(--ink); color: #e8e4e0; font-size: 12px; max-width: fit-content; }
