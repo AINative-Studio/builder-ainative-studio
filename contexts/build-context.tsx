@@ -7,6 +7,7 @@
  */
 
 import { createContext, useContext, useReducer, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react'
+import { getSession } from 'next-auth/react'
 import {
   buildReducer, initialBuildState, trackViews, countWoven,
   type BuildState, type BuildAction, type ArtifactView, type Track, type CompanyRole, type Screen,
@@ -164,6 +165,22 @@ export function isDeepLinkCompanyNotFound(resolveAppResponse: { chatId?: string 
   return resolveAppResponse.chatId === null && !resolveAppResponse.idea
 }
 
+/**
+ * Pure decision for the #669 resume-pointer effect: given the resolved
+ * next-auth session, is it safe to restore a saved build from localStorage?
+ * Exported so the fix for #948 (an unauthenticated visitor restoring a real
+ * in-progress build and landing straight on the live generation screen) is
+ * unit-testable without mounting the full BuildProvider. Every screen
+ * `active-build.ts`'s own save-side guard ever persists a pointer for
+ * (`noResumeScreens` excludes landing/login/signup/forgot/reset/live) is
+ * inherently mid-build — so the rule is simply: never resume without a
+ * real, authenticated session. Same authority Intake.tsx's auth wall
+ * (#dashboard-ux) already uses.
+ */
+export function canResumeActiveBuild(session: { user?: unknown } | null | undefined): boolean {
+  return Boolean(session?.user)
+}
+
 export function BuildProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(buildReducer, initialBuildState)
 
@@ -269,8 +286,20 @@ export function BuildProvider({ children }: { children: ReactNode }) {
     if (!pointer) return
     const saved = loadBuildState(pointer.slug)
     if (!saved) { clearActiveBuild(); return }
-    dispatch({ type: 'RESTORE_BUILD', partial: saved })
-    dispatch({ type: 'GOTO_SCREEN', screen: pointer.screen as Screen })
+    // #948: a bare localStorage pointer is not proof the current browser tab
+    // belongs to the founder who left it — require a real, resolved session
+    // before restoring anything past the auth-gated entry point (same
+    // authority as Intake.tsx's own auth wall). Fails closed: an
+    // unauthenticated/undetermined visitor just clears the stale pointer
+    // instead of silently landing on someone else's in-progress generation.
+    let cancelled = false
+    getSession().then((session) => {
+      if (cancelled) return
+      if (!canResumeActiveBuild(session)) { clearActiveBuild(); return }
+      dispatch({ type: 'RESTORE_BUILD', partial: saved })
+      dispatch({ type: 'GOTO_SCREEN', screen: pointer.screen as Screen })
+    }).catch(() => { if (!cancelled) clearActiveBuild() })
+    return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
