@@ -5,15 +5,20 @@
 
 ## Problem
 
-AINative owns a real, working phone number (`+1 937-764-2838`) that is wired to ZeroVoice's SMS relay and confirmed live (a real end-to-end delivery test on 2026-10-05 succeeded). Today this number is not surfaced anywhere in Builder's UI, and texting it from a phone number not already tied to a provisioned, paid, per-company ZeroVoice number gets **no reply at all** — `handleInboundSms` in `app/api/webhooks/zerovoice-sms/route.ts` explicitly refuses to converse unless the inbound `To` number resolves to exactly one company (`resolveAppByZeroVoiceNumber`), by design ("no default/fallback company, ever").
+AINative owns a real, working phone number (`+1 937-764-2838`) that is wired to ZeroVoice's SMS relay and confirmed live (a real end-to-end delivery test on 2026-10-05 succeeded). Today this number is not surfaced anywhere in Builder's UI, and texting it from a phone number not already tied to a provisioned, per-company ZeroVoice number gets **no reply at all** — `handleInboundSms` in `app/api/webhooks/zerovoice-sms/route.ts` explicitly refuses to converse unless the inbound `To` number resolves to exactly one company (`resolveAppByZeroVoiceNumber`), by design ("no default/fallback company, ever").
 
-The ask: let any signed-in founder text Cody on this one shared number, for free, without needing to pay for their own dedicated ZeroVoice number — and surface that capability in the dashboard UI (a card, next to or near the existing paid "Get a phone number" card).
+The ask: let any signed-in **paid-tier** founder text Cody on this one shared number — without needing to separately pay ~$1.15/mo for their own dedicated ZeroVoice number — and surface that capability in the dashboard UI (a card, next to or near the existing dedicated-number card). This is a **paid-plan feature**, same tier gate (`isPaidTier`) as the existing "Get a phone number" card — not a free/anonymous capability.
+
+**Confirmed already working, not new scope**: for founders who DO have their own dedicated ZeroVoice number, texting it already runs through the real `askCody()` + `detectEditIntent()` pipeline (same as the dashboard chat) — a real feature request texted in can already dispatch a real tracked backlog/edit task. This spec's conversation-handling logic (section 2 below) deliberately reuses that exact same pipeline for the shared number, rather than building a second, different conversational capability.
+
+**Confirmed real gap, NOT in this spec's scope**: Cody has no live deployment/build "system status" awareness over SMS today (`askCody()` has no status-check capability wired in) — answering "is my app still deploying?" over text would need a separate, smaller follow-up (give `askCody` a tool/context source for real deployment status) and is not blocking this spec's shared-number routing work.
 
 ## Non-goals
 
-- This does not replace or change the existing paid per-company number flow (`ZeroVoiceConnect.tsx`, `/api/build/zerovoice`). Both features coexist: founders can still pay for a dedicated number, and can also use the shared number for free.
+- This does not replace or change the existing dedicated per-company number flow (`ZeroVoiceConnect.tsx`, `/api/build/zerovoice`) or its own pricing (~$1.15/mo) — that flow is for a founder who wants their OWN number (e.g. for customer-facing use); the shared number is Cody's own line for the founder's personal use. Both coexist.
 - This does not add voice/call support to the shared number — SMS only, matching the existing `handleInboundSms` scope.
 - This does not require changing anything on `core` or ZeroVoice's own codebase — 937 is already correctly wired to ZeroVoice's relay; all new logic lives in Builder.
+- This does NOT add live deployment/system-status awareness to Cody's SMS replies — flagged above as a real, separate follow-up.
 
 ## Design
 
@@ -35,13 +40,15 @@ Queries the existing `builder_founder_phones` ZeroDB table for the latest `verif
 to === SHARED_NUMBER?
   → findFounderByPhone(from)
     → no match: reply "Text us from the phone number on your AINative account, or sign up at builder.ainative.studio" (never silently drop — a real founder on a new/different phone deserves a clear next step)
-    → match found → listAppsForOwner(email)
-        → 0 companies: reply "You don't have any companies yet — head to builder.ainative.studio to start one."
-        → 1 company: proceed exactly like the existing single-company conversation flow (same askCody() call, same scopeKey derivation)
-        → 2+ companies: enter disambiguation mode (see below)
+    → match found → check paid tier (isPaidTier, same check ZeroVoiceConnect.tsx's server route already does — via the founder's resolved AINative credential, NOT a client-supplied claim)
+        → not paid: reply "Texting Cody is a paid-plan feature — upgrade at builder.ainative.studio to turn this on."
+        → paid → listAppsForOwner(email)
+            → 0 companies: reply "You don't have any companies yet — head to builder.ainative.studio to start one."
+            → 1 company: proceed exactly like the existing single-company conversation flow (same askCody() call, same scopeKey derivation, same detectEditIntent() backlog-dispatch behavior)
+            → 2+ companies: enter disambiguation mode (see below)
 ```
 
-This is a genuinely separate code path from the existing per-company flow, not a modification to it — the existing flow's strict "no fallback" invariant is preserved unchanged for dedicated numbers.
+This is a genuinely separate code path from the existing per-company flow, not a modification to it — the existing flow's strict "no fallback" invariant is preserved unchanged for dedicated numbers. The tier check must be a real server-side lookup against the founder's actual plan (same authoritative pattern `/api/build/zerovoice`'s own doc comment insists on — "the SERVER route already does the real, authoritative tier check... every request"), never trusted from anything in the inbound SMS payload itself.
 
 ### 3. Multi-company disambiguation (new, stateful across 2 texts)
 
@@ -54,10 +61,12 @@ When a founder with 2+ companies texts the shared number:
 
 ### 4. Dashboard UI card (new)
 
-A new, small component (e.g. `components/build/TextCodyCard.tsx`) shown on the dashboard for every signed-in founder, regardless of plan tier (the whole point is this is free) — likely placed near `ZeroVoiceConnect.tsx` on the Live dashboard so both number options are visible together. Content:
+A new, small component (e.g. `components/build/TextCodyCard.tsx`) shown on the dashboard, gated the same way `ZeroVoiceConnect.tsx`'s button already is (paid tier via `isPaidTier`) — likely placed near `ZeroVoiceConnect.tsx` on the Live dashboard so both number options are visible together. For a non-paid founder, either hide the card entirely or show it with an "upgrade to unlock" state (mirroring the existing `reason: 'tier'` notice pattern in `ZeroVoiceConnect.tsx`) — consistent with how the rest of the dashboard already handles tier-gated features, decide which at implementation time by checking how other paid-only cards on `Live.tsx` currently present themselves to free-tier founders.
+
+Content:
 
 - The shared number, formatted for display: `(937) 764-2838`
-- Copy: something like "Text Cody anytime at (937) 764-2838 — free, no setup" (final copy TBD at implementation time, matching the app's existing voice)
+- Copy: something like "Text Cody anytime at (937) 764-2838" (final copy TBD at implementation time, matching the app's existing voice) — framed as a paid-plan perk, not a free giveaway, consistent with the gate above.
 - The same SMS consent disclosure language `ZeroVoiceConnect.tsx` already carries (`By texting this number, you agree to receive SMS replies from Cody...`) — same legal/compliance bar, since this is still a real two-way SMS relationship subject to the same A2P 10DLC program.
 - No action button needed — there's nothing to "provision," the number already exists. This is purely informational/copy-paste convenience ("text Cody on the go").
 
