@@ -69,3 +69,31 @@ export async function markFounderPhoneVerified(email: string, phone: string): Pr
     return false
   }
 }
+
+/**
+ * Find the founder who owns a verified phone number (#936). Only a
+ * `verified: true` row matches — an unverified phone entry (recorded but
+ * never OTP-confirmed) must not grant SMS access to someone else's account
+ * via a spoofed `From`. Picks the LATEST verified row when multiple exist
+ * (latest-wins, matching this file's append-only write pattern). Returns
+ * null on no match or any failure — never throws.
+ */
+export async function findFounderByPhone(e164: string): Promise<{ email: string } | null> {
+  if (!configured() || !e164) return null
+  try {
+    const res = await fetch(`${rowsUrl()}?limit=1000`, { headers: headers(), signal: AbortSignal.timeout(15000) })
+    if (!res.ok) return null
+    const data = JSON.parse(await res.text())
+    const rows = Array.isArray(data) ? data : data.data || data.rows || []
+    const entries: FounderPhoneEntry[] = rows
+      .map((r: { row_data?: FounderPhoneEntry }) => r.row_data)
+      .filter((rd: FounderPhoneEntry | undefined): rd is FounderPhoneEntry =>
+        !!rd && rd.phone === e164 && rd.verified === true,
+      )
+    if (entries.length === 0) return null
+    entries.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+    return { email: entries[0].email }
+  } catch {
+    return null
+  }
+}
