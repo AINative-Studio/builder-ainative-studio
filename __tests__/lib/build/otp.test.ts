@@ -41,29 +41,29 @@ function mockFetch(impl: (url: string, init?: RequestInit) => { ok: boolean; sta
   return fn
 }
 
-// Only ZEROVOICE_* env vars are safe to vary per-test — ZERODB_API_KEY/
+// Only these env vars are safe to vary per-test — ZERODB_API_KEY/
 // ZERODB_PROJECT_ID are captured once at module load (see vi.hoisted above)
 // and cannot be changed afterward, matching app-registry.ts's real behavior.
 const savedZvEnv = {
   ZEROVOICE_OTP_ENABLED: process.env.ZEROVOICE_OTP_ENABLED,
-  ZEROVOICE_SERVICE_JWT: process.env.ZEROVOICE_SERVICE_JWT,
-  ZEROVOICE_POOL_E164: process.env.ZEROVOICE_POOL_E164,
+  TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN,
+  TWILIO_OTP_FROM_NUMBER: process.env.TWILIO_OTP_FROM_NUMBER,
 }
 
 beforeEach(() => {
   delete process.env.ZEROVOICE_OTP_ENABLED
-  delete process.env.ZEROVOICE_SERVICE_JWT
-  delete process.env.ZEROVOICE_POOL_E164
+  delete process.env.TWILIO_ACCOUNT_SID
+  delete process.env.TWILIO_AUTH_TOKEN
+  delete process.env.TWILIO_OTP_FROM_NUMBER
   __resetOtpRateLimitForTests()
 })
 
 afterEach(() => {
-  if (savedZvEnv.ZEROVOICE_OTP_ENABLED === undefined) delete process.env.ZEROVOICE_OTP_ENABLED
-  else process.env.ZEROVOICE_OTP_ENABLED = savedZvEnv.ZEROVOICE_OTP_ENABLED
-  if (savedZvEnv.ZEROVOICE_SERVICE_JWT === undefined) delete process.env.ZEROVOICE_SERVICE_JWT
-  else process.env.ZEROVOICE_SERVICE_JWT = savedZvEnv.ZEROVOICE_SERVICE_JWT
-  if (savedZvEnv.ZEROVOICE_POOL_E164 === undefined) delete process.env.ZEROVOICE_POOL_E164
-  else process.env.ZEROVOICE_POOL_E164 = savedZvEnv.ZEROVOICE_POOL_E164
+  for (const key of Object.keys(savedZvEnv) as Array<keyof typeof savedZvEnv>) {
+    if (savedZvEnv[key] === undefined) delete process.env[key]
+    else process.env[key] = savedZvEnv[key] as string
+  }
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -141,43 +141,51 @@ describe('sendOtp — the honest not_configured path (default env)', () => {
 })
 
 describe('sendOtp — real send path when explicitly enabled + credentialed', () => {
-  it('sends via ZeroVoice and returns ok:true when the service credential is configured', async () => {
+  it('sends via Twilio directly and returns ok:true when the credential is configured', async () => {
     process.env.ZEROVOICE_OTP_ENABLED = 'true'
-    process.env.ZEROVOICE_SERVICE_JWT = 'service-jwt'
-    process.env.ZEROVOICE_POOL_E164 = '+15005550006'
+    process.env.TWILIO_ACCOUNT_SID = 'ACxxx'
+    process.env.TWILIO_AUTH_TOKEN = 'test-token'
+    process.env.TWILIO_OTP_FROM_NUMBER = '+15005550006'
     const fn = mockFetch((url) => {
       if (url.includes('builder_otp_codes')) return { ok: true, json: {} }
-      if (url.includes('/sms/send')) return { ok: true, status: 202, json: { sid: 'SMxxx' } }
+      if (url.includes('api.twilio.com')) return { ok: true, status: 201, json: { sid: 'SMxxx', status: 'queued' } }
       return { ok: false }
     })
     const result = await sendOtp('+15550001111')
     expect(result.ok).toBe(true)
     expect(result.expiresAt).toBeTruthy()
-    const smsCall = fn.mock.calls.find((c) => String(c[0]).includes('/sms/send'))
+    const smsCall = fn.mock.calls.find((c) => String(c[0]).includes('api.twilio.com'))
     expect(smsCall).toBeTruthy()
-    const sentBody = JSON.parse((smsCall![1] as RequestInit).body as string)
-    expect(sentBody.to_number).toBe('+15550001111')
-    expect(sentBody.from_number).toBe('+15005550006')
-    expect(sentBody.body).toContain('verification code')
+    const [url, init] = smsCall!
+    expect(String(url)).toContain('/Accounts/ACxxx/Messages.json')
+    expect((init as RequestInit).headers).toMatchObject({
+      Authorization: `Basic ${Buffer.from('ACxxx:test-token').toString('base64')}`,
+    })
+    const sentBody = new URLSearchParams((init as RequestInit).body as string)
+    expect(sentBody.get('To')).toBe('+15550001111')
+    expect(sentBody.get('From')).toBe('+15005550006')
+    expect(sentBody.get('Body')).toContain('verification code')
   })
 
-  it('still returns not_configured when enabled but no service credential is set', async () => {
+  it('still returns not_configured when enabled but no Twilio credential is set', async () => {
     process.env.ZEROVOICE_OTP_ENABLED = 'true'
-    delete process.env.ZEROVOICE_SERVICE_JWT
-    delete process.env.ZEROVOICE_POOL_E164
+    delete process.env.TWILIO_ACCOUNT_SID
+    delete process.env.TWILIO_AUTH_TOKEN
+    delete process.env.TWILIO_OTP_FROM_NUMBER
     mockFetch((url) => (url.includes('builder_otp_codes') ? { ok: true, json: {} } : { ok: false }))
     const result = await sendOtp('+15550001111')
     expect(result.ok).toBe(false)
     expect(result.reason).toBe('not_configured')
   })
 
-  it('surfaces a real ZeroVoice send failure as send_failed', async () => {
+  it('surfaces a real Twilio send failure as the send error', async () => {
     process.env.ZEROVOICE_OTP_ENABLED = 'true'
-    process.env.ZEROVOICE_SERVICE_JWT = 'service-jwt'
-    process.env.ZEROVOICE_POOL_E164 = '+15005550006'
+    process.env.TWILIO_ACCOUNT_SID = 'ACxxx'
+    process.env.TWILIO_AUTH_TOKEN = 'test-token'
+    process.env.TWILIO_OTP_FROM_NUMBER = '+15005550006'
     mockFetch((url) => {
       if (url.includes('builder_otp_codes')) return { ok: true, json: {} }
-      if (url.includes('/sms/send')) return { ok: false, status: 500, json: { message: 'twilio down' } }
+      if (url.includes('api.twilio.com')) return { ok: false, status: 500, json: { message: 'twilio down' } }
       return { ok: false }
     })
     const result = await sendOtp('+15550001111')
