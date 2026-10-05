@@ -29,7 +29,7 @@ import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { resolveApp, setAppProvisioned } from '@/lib/build/app-registry'
 import { deployPersistent } from '@/lib/build/deploy'
-import { provisionInstantDb } from '@/lib/build/instant-db'
+import { provisionInstantDb, TRIAL_WINDOW_MS } from '@/lib/build/instant-db'
 import { provisionPipeline } from '@/lib/build/zeropipeline'
 
 export const runtime = 'nodejs'
@@ -68,11 +68,22 @@ export async function POST(request: NextRequest) {
   // Already provisioned? Return the persisted project id (idempotent).
   if (existing.zerodbProjectId) {
     const target = await deployPersistent(existing.chatId, slug)
+    // Backfill: a tmp_ trial provisioned before #260 may have no trialExpiresAt
+    // (blank countdown). Anchor it to provisionedAt + 72h (or now + 72h) and
+    // persist so the value is stable across reads. Permanent projects never expire.
+    let trialExpiresAt = existing.trialExpiresAt
+    if (existing.keyKind === 'tmp' && !trialExpiresAt) {
+      const anchor = existing.provisionedAt ? new Date(existing.provisionedAt).getTime() : Date.now()
+      trialExpiresAt = new Date(anchor + TRIAL_WINDOW_MS).toISOString()
+      await setAppProvisioned(slug, { trialExpiresAt, provisionedAt: existing.provisionedAt }).catch(() => {})
+    }
     return Response.json({
       ok: true,
       zerodbProjectId: existing.zerodbProjectId,
       keyKind: existing.keyKind || 'permanent',
+      trial: existing.keyKind === 'tmp',
       claimable: existing.keyKind === 'tmp',
+      expiresAt: existing.keyKind === 'tmp' ? (trialExpiresAt || null) : null,
       created: false,
       deployUrl: existing.deployUrl || target.url,
       dnsPointable: target.dnsPointable,
@@ -105,6 +116,15 @@ export async function POST(request: NextRequest) {
   const target = await deployPersistent(existing.chatId, slug)
   const provisionedAt = new Date().toISOString()
 
+  // Trial expiry only for tmp_ (unpaid) projects — drives the Live "Free trial:
+  // Xh left" countdown/upgrade UI. Instant DB normally returns expires_at, but for
+  // tmp_ keys it can be missing/empty (#260); fall back to now + 72h so the
+  // countdown always has a real value. Permanent (paid) projects never expire.
+  const trialExpiresAt =
+    prov.keyKind === 'tmp'
+      ? prov.expiresAt || new Date(Date.now() + TRIAL_WINDOW_MS).toISOString()
+      : undefined
+
   // Persist provisioning onto the company's registry entry so Live/systems read
   // real per-company primitives going forward. We store the project id + key kind
   // (+ claim token for tmp_), NOT the raw api_key (data-plane secret).
@@ -112,8 +132,7 @@ export async function POST(request: NextRequest) {
     zerodbProjectId: prov.projectId,
     keyKind: prov.keyKind,
     claimToken: prov.claimToken,
-    // Trial expiry only for tmp_ (unpaid) projects — used for the countdown/upgrade UI.
-    trialExpiresAt: prov.keyKind === 'tmp' ? (prov.expiresAt || undefined) : undefined,
+    trialExpiresAt,
     deployUrl: target.url,
     provisionedAt,
     pipelineProvisioned: pipeline.provisioned,
@@ -128,7 +147,9 @@ export async function POST(request: NextRequest) {
     // keep it (tmp_ → permanent). Paid users get a permanent project outright.
     trial: prov.keyKind === 'tmp',
     claimable: prov.keyKind === 'tmp',
-    expiresAt: prov.expiresAt || null,
+    // The persisted trial expiry (Instant DB expires_at, or the 72h fallback) so
+    // the client gets a real countdown value even when core returns no expires_at.
+    expiresAt: trialExpiresAt || null,
     plan: plan || null,
     created: true,
     pipelineProvisioned: pipeline.provisioned,
@@ -145,14 +166,24 @@ export async function GET(request: NextRequest) {
   const entry = await resolveApp(slug).catch(() => null)
   if (!entry) return Response.json({ provisioned: false })
   const isTrial = entry.keyKind === 'tmp'
-  const expired = Boolean(isTrial && entry.trialExpiresAt && new Date(entry.trialExpiresAt).getTime() < Date.now())
+  // A tmp_ trial must always report a real expiry so Live's "Free trial: Xh left"
+  // countdown shows a number. If the persisted value is missing (e.g. Instant DB
+  // returned no expires_at, #260), anchor it to provisionedAt + 72h (or now + 72h)
+  // and persist it so it's stable across reads. Permanent projects never expire.
+  let trialExpiresAt = entry.trialExpiresAt || null
+  if (isTrial && !trialExpiresAt) {
+    const anchor = entry.provisionedAt ? new Date(entry.provisionedAt).getTime() : Date.now()
+    trialExpiresAt = new Date(anchor + TRIAL_WINDOW_MS).toISOString()
+    await setAppProvisioned(slug, { trialExpiresAt, provisionedAt: entry.provisionedAt }).catch(() => {})
+  }
+  const expired = Boolean(isTrial && trialExpiresAt && new Date(trialExpiresAt).getTime() < Date.now())
   return Response.json({
     provisioned: Boolean(entry.zerodbProjectId),
     zerodbProjectId: entry.zerodbProjectId || null,
     keyKind: entry.keyKind || null,
     trial: isTrial,
     claimable: isTrial,
-    trialExpiresAt: entry.trialExpiresAt || null,
+    trialExpiresAt: isTrial ? trialExpiresAt : null,
     trialExpired: expired,
     plan: entry.plan || null,
     deployUrl: entry.deployUrl || null,
