@@ -19,6 +19,7 @@ import { trackEvent } from '@/components/analytics/google-analytics'
 import { captureAttribution } from '@/lib/build/attribution'
 import { savePendingBuild, loadPendingBuild, clearPendingBuild } from '@/lib/build/pending-build'
 import { saveActiveBuild, loadActiveBuild, clearActiveBuild } from '@/lib/build/active-build'
+import { looksLikeUnsubstitutedPlaceholder } from '@/lib/build/placeholder-guard'
 
 interface BuildContextValue {
   state: BuildState
@@ -166,6 +167,42 @@ export function isDeepLinkCompanyNotFound(resolveAppResponse: { chatId?: string 
 }
 
 /**
+ * Is this raw `?company=` deep-link value safe to seed a real build from?
+ * (builder#960)
+ *
+ * Real bug found live, root-caused by exact reproduction (2026-10-06): the
+ * deep-link effect below seeds `idea`, `appSub` AND `companyName` all from the
+ * RAW query param. Live.tsx then posts `state.companyName` as `name` and
+ * `state.idea` as `idea` to /api/build/company-app and /api/build/company-product,
+ * which embed both verbatim into their real codegen prompts. So any junk in
+ * `?company=` becomes a real, paid-for, publicly-showcased generation.
+ *
+ * That is exactly what happened: someone opened
+ * `/build?screen=live&company={slug}` — the markdown code-span's trailing
+ * backtick included — from a URL copied out of this repo's own documentation
+ * (docs/growth/WINBACK_EMAIL_2026-08-27.md line 23 literally contains
+ * `?screen=live&company={slug}` inside backticks). Two garbage generations
+ * landed on the public /showcase titled, literally, `{slug}` + a backtick, one
+ * per template. Nothing anywhere between the URL bar and the LLM prompt ever
+ * questioned the value.
+ *
+ * Exported pure so the guard is unit-testable without mounting the full
+ * BuildProvider (which OOMs jsdom via useAutoplay — see
+ * build-context-url-sync-mount-race.test.ts's own note).
+ *
+ * Fails CLOSED on purpose, and only for unmistakable template syntax: a
+ * `?company=` value carrying `{...}`/`${...}` or a stray backtick is never a
+ * real founder's company. Real slugs are produced by lib/build/slug.ts's
+ * toSlug (lowercase alnum + hyphens only), so no legitimate deep link can
+ * contain either.
+ */
+export function isUsableDeepLinkCompany(company: string | null | undefined): boolean {
+  const s = (company || '').trim()
+  if (!s) return false
+  return !looksLikeUnsubstitutedPlaceholder(s)
+}
+
+/**
  * Pure decision for the #669 resume-pointer effect: given the resolved
  * next-auth session, is it safe to restore a saved build from localStorage?
  * Exported so the fix for #948 (an unauthenticated visitor restoring a real
@@ -207,6 +244,23 @@ export function BuildProvider({ children }: { children: ReactNode }) {
     const scr = q.get('screen')
     if (scr && KNOWN_DEEP_LINK_SCREENS.includes(scr)) {
       const company = q.get('company')
+      // builder#960: a `?company=` carrying unsubstituted template syntax
+      // (`{slug}`, `${slug}`, a stray markdown backtick) is NEVER a real
+      // company — but START_BUILD below seeds `idea`, `appSub` AND
+      // `companyName` from this RAW value, and Live.tsx then posts
+      // companyName/idea straight into /api/build/company-app's and
+      // /api/build/company-product's real codegen prompts. Confirmed live:
+      // two public showcase entries titled, literally, `{slug}` + a backtick
+      // came from exactly this path, after a placeholder URL was copied out
+      // of this repo's own docs. Treated like the confirmed-not-found case
+      // below (land on the companies picker, tell the founder which slug
+      // didn't work) rather than silently starting a real, billable
+      // generation from documentation text.
+      if (company && !isUsableDeepLinkCompany(company)) {
+        dispatch({ type: 'RESTORE_BUILD', partial: { deepLinkNotFound: company } })
+        dispatch({ type: 'GOTO_SCREEN', screen: 'companies' })
+        return
+      }
       if (company) {
         // Attempt to restore persisted build state for this company BEFORE
         // START_BUILD fires (so isNewBuild check sees a matching appSub first).

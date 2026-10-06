@@ -159,6 +159,15 @@ export const SEED_SHOWCASE: ShowcaseEntry[] = [
 ]
 
 /**
+ * Re-exported so the showcase read path (app/api/showcase/route.ts) and the
+ * client deep-link guard (contexts/build-context.tsx) share ONE definition of
+ * "this is an unsubstituted template placeholder, not a real company name".
+ * Lives in its own tiny import-free module so the client bundle doesn't pull
+ * SEED_SHOWCASE in for a regex. See builder#960.
+ */
+export { looksLikeUnsubstitutedPlaceholder } from '@/lib/build/placeholder-guard'
+
+/**
  * Extract a real, distinctive title from a generation prompt (real gap
  * fixed 2026-09-10 — the showcase was flooded with dozens of entries
  * literally titled "Polished, Working Web App For This" and "Polished,
