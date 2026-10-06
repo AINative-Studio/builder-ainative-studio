@@ -58,12 +58,18 @@
 import { getAinativeApiKey } from '@/lib/build/env-keys'
 import { sendViaResend, resendConfigured } from '@/lib/build/resend-client'
 // lib/jobs/alerting.ts pulls in the real Postgres driver (lib/db/connection.ts,
-// Node-only — net/tls/perf_hooks). This file is also imported by the CLIENT
-// component Auth.tsx (for toE164), so a static top-level import here would
-// bundle that Node-only chain into client JS and break the build (confirmed:
-// PR #970 CI failed with exactly this "Module not found: Can't resolve 'net'"
-// error). Deferred to a dynamic import inside recordOtpDeliveryStatus below,
-// which only ever runs server-side (the Twilio webhook route).
+// Node-only — net/tls/perf_hooks). Auth.tsx (a CLIENT component) used to
+// import toE164 from THIS file, which bundled that whole Node-only chain
+// into client JS and broke the build — confirmed twice in CI with "Module
+// not found: Can't resolve 'net'", once via a static import to alerting.ts
+// and once even via a dynamic import (webpack still resolves a dynamically
+// imported module's own dependency graph to build its chunk, so laziness
+// alone doesn't sever the reachability). The real fix was extracting
+// toE164 into lib/build/phone.ts (pure, dependency-free) and pointing
+// Auth.tsx there directly — see that file's doc comment. The dynamic
+// import below is kept anyway as defense-in-depth (this file has no other
+// client importers now, but a future one would hit the same bundling
+// issue if alerting.ts were a static import here).
 
 const AINATIVE_API = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 const API_KEY = getAinativeApiKey()
@@ -94,27 +100,13 @@ export function zeroVoiceOtpEnabled(): boolean {
   return process.env.ZEROVOICE_OTP_ENABLED === 'true'
 }
 
-/**
- * Normalize a phone number to E.164 (client- and server-side; no npm
- * dependency). Best-effort: assumes US/CA (+1) for a bare 10-digit number
- * (Builder's current market), passes through a number already starting
- * with '+', and returns null for anything that doesn't look like a real
- * number after stripping formatting characters.
- */
-export function toE164(raw: string): string | null {
-  const trimmed = (raw || '').trim()
-  if (!trimmed) return null
-  if (trimmed.startsWith('+')) {
-    const digits = trimmed.slice(1).replace(/\D/g, '')
-    if (digits.length < 8 || digits.length > 15) return null
-    return `+${digits}`
-  }
-  const digits = trimmed.replace(/\D/g, '')
-  if (digits.length === 10) return `+1${digits}`
-  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`
-  if (digits.length >= 8 && digits.length <= 15) return `+${digits}`
-  return null
-}
+// toE164 lives in lib/build/phone.ts (a pure, dependency-free module) and is
+// re-exported here so every existing server-side importer of it from
+// '@/lib/build/otp' keeps working unchanged. See phone.ts's doc comment for
+// why: Auth.tsx (a CLIENT component) must import toE164 from phone.ts
+// directly, never through this file, since this file transitively reaches
+// the Node-only Postgres driver via lib/jobs/alerting.ts.
+export { toE164 } from '@/lib/build/phone'
 
 interface OtpRow {
   phone: string
