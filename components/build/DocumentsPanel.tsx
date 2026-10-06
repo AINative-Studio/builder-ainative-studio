@@ -364,7 +364,7 @@ export function DocumentsPanel({
         <div data-testid="documents-empty">
           <p className="m-mono m-task-empty">
             {tab === 'report'
-              ? `No reports yet. Each night Cody appends a dated operational report for ${companyName || 'your company'} — what the swarm did, metrics, and next actions.`
+              ? `No reports yet. Each night Cody appends a dated operational report for ${companyName || 'your company'} — what Cody's team did, metrics, and next actions.`
               : `No documents yet. As ${companyName || 'your company'} evolves, Cody builds a library — Research, Product Roadmap, Mission and Market Research — each grounded in your idea.`}
           </p>
           {/* Offer to generate the durable starter docs (never auto-faked). This is
