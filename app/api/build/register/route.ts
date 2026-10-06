@@ -49,7 +49,7 @@ import { NextRequest } from 'next/server'
 import { gclidFromRequest } from '@/lib/build/conversions'
 import { reportMetaConversion, fbcFromRequest, fbpFromRequest } from '@/lib/build/meta-capi'
 import { createHash } from 'crypto'
-import { sendOtp, verifyOtp, toE164, checkOtpRateLimit } from '@/lib/build/otp'
+import { sendOtp, sendOtpEmail, verifyOtp, toE164, checkOtpRateLimit } from '@/lib/build/otp'
 import { recordFounderPhone, markFounderPhoneVerified } from '@/lib/build/founder-phones'
 import { turnstileEnabled, verifyTurnstileToken } from '@/lib/turnstile'
 
@@ -150,6 +150,19 @@ async function handleSendOtp(rawPhone: string, request: NextRequest) {
 }
 
 /**
+ * #BLD-02b — email-code fallback alongside phone OTP. Mirrors
+ * handleSendOtp above exactly, routed through sendOtpEmail instead of
+ * sendOtp (lib/build/otp.ts — same storage, same verifyOtp() lookup).
+ */
+async function handleSendOtpEmail(email: string) {
+  const trimmed = (email || '').trim()
+  if (!trimmed) return Response.json({ ok: false, reason: 'invalid_email' }, { status: 400 })
+  const result = await sendOtpEmail(trimmed)
+  const status = result.ok ? 200 : (result.reason === 'not_configured' ? 200 : 502)
+  return Response.json(result, { status })
+}
+
+/**
  * #734 — verify a submitted code against the stored OTP. On success, marks
  * the phone verified in the founder-phone registry (best-effort — the
  * client is the source of truth for gating final signup submission; this
@@ -176,6 +189,7 @@ export async function POST(request: NextRequest) {
   if (b?.action === 'login-check') return handleLoginCheck(email, String(b?.password || ''))
   // #734 — phone OTP actions, same one-endpoint pattern as resend/login-check above.
   if (b?.action === 'send-otp') return handleSendOtp(String(b?.phone || ''), request)
+  if (b?.action === 'send-otp-email') return handleSendOtpEmail(String(b?.email || ''))
   if (b?.action === 'verify-otp') return handleVerifyOtp(String(b?.phone || ''), String(b?.code || ''), email)
 
   const password = String(b?.password || '')

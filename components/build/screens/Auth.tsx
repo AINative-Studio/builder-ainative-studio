@@ -301,6 +301,30 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
     setError(null)
   }
 
+  // #BLD-02b — a real alternative channel alongside Resend/Skip: send the
+  // same 6-digit code by email instead (lib/build/otp.ts's sendOtpEmail,
+  // verified through the exact same verifyOtp() the phone code uses).
+  const emailOtpFallback = async () => {
+    setBusy(true); setError(null)
+    try {
+      const res = await fetch('/api/build/register', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'send-otp-email', email }),
+      })
+      const d = await res.json().catch(() => null)
+      if (d?.ok) {
+        setOtpNote('Code sent to your email — enter it below.')
+        setOtpFallbackDue(false)
+      } else {
+        setError('Could not send the code by email — try again.')
+      }
+    } catch {
+      setError('Network error — try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   // #7698 — request a reset email from core via the Builder proxy, which passes
   // app:'builder' so the email is Builder-branded and its link returns here
   // instead of ainative.studio. Core answers the same way whether or not the
@@ -576,6 +600,9 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
               </button>
               <button className="btn-ghost" data-testid="auth-otp-skip" onClick={skipOtpVerification} disabled={busy} type="button">
                 Skip for now
+              </button>
+              <button className="btn-ghost" data-testid="auth-otp-email-fallback" onClick={emailOtpFallback} disabled={busy} type="button">
+                Email me a code instead
               </button>
             </div>
           )}
