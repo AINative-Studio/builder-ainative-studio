@@ -208,6 +208,41 @@ export async function provisionZeroVoiceNumber(
   }
 }
 
+export interface ZeroVoiceReleaseResult {
+  ok: boolean
+  reason?: string
+  status?: number
+}
+
+/**
+ * Release a provisioned ZeroVoice number on company delete (#SEP-02). Mirrors
+ * provisionZeroVoiceNumber's own auth/error shape exactly — same JWT-bearer
+ * auth, same never-throws-past-the-caller contract, since this is called from
+ * the Danger Zone delete flow where a release failure must never block the
+ * founder-visible delete from completing.
+ */
+export async function releaseZeroVoiceNumber(
+  jwt: string,
+  numberId: string,
+): Promise<ZeroVoiceReleaseResult> {
+  if (!jwt) return { ok: false, reason: 'no_jwt' }
+  if (!numberId) return { ok: false, reason: 'no_number_id' }
+  try {
+    const res = await fetch(`${ZV_BASE}/numbers/${encodeURIComponent(numberId)}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${jwt}` },
+      signal: AbortSignal.timeout(15000),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => null)
+      return { ok: false, status: res.status, reason: String(data?.message || data?.detail || data?.error || res.status).slice(0, 160) }
+    }
+    return { ok: true, status: res.status }
+  } catch (e: any) {
+    return { ok: false, reason: String(e?.message || e).slice(0, 160) }
+  }
+}
+
 export interface ZeroVoiceRelayConfigResult {
   ok: boolean
   reason?: string

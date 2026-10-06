@@ -570,6 +570,33 @@ export async function getCustomDomainStatus(
   }
 }
 
+export interface CustomDomainDeleteResult {
+  ok: boolean
+  reason?: string
+}
+
+/**
+ * Release a founder's BYO custom domain wiring on company delete (#SEP-02).
+ * Mirrors createCustomDomain/getCustomDomainStatus's own railwayQuery usage —
+ * never throws past the caller, since a release failure must never block the
+ * Danger Zone delete flow from completing.
+ */
+export async function deleteCustomDomain(domainId: string): Promise<CustomDomainDeleteResult> {
+  if (!railwayApiConfigured()) return { ok: false, reason: 'disabled' }
+  if (!domainId) return { ok: false, reason: 'no_domain_id' }
+  try {
+    await railwayQuery(
+      `mutation CustomDomainDelete($id: String!) {
+        customDomainDelete(id: $id)
+      }`,
+      { id: domainId },
+    )
+    return { ok: true }
+  } catch (e: any) {
+    return { ok: false, reason: String(e?.message || e).slice(0, 200) }
+  }
+}
+
 /**
  * Best-effort DNS check via DNS-over-HTTPS (Google DoH) — has the founder's CNAME
  * (or A) started resolving toward the expected target? Used as a fast pre-check so
