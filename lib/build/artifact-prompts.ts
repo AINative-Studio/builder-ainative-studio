@@ -98,7 +98,9 @@ export const ARTIFACT_PROMPTS: Record<string, ArtifactSpec> = {
     user: (ctx) =>
       ctxPreamble(ctx) +
       'Write POSITIONING. JSON: statement (a sharp "for X, this is the Y that Z" positioning line), ' +
-      'unlike (array of 3 "unlike the alternatives" contrasts). Schema: {"statement","unlike":[...]}',
+      'unlike (array of up to 3 things that make this company distinct, phrased as positive ' +
+      'differentiators rather than named against specific competitors). ' +
+      'Schema: {"statement","unlike":[...]}',
   },
   landing: {
     system: BASE_SYSTEM,
