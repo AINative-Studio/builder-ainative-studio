@@ -211,6 +211,9 @@ export async function sendOtp(phone: string): Promise<SendOtpResult> {
 
   const sendResult = await sendSharedSms(phone, `Your AINative Builder verification code is ${code}. It expires in 10 minutes.`)
   if (!sendResult.ok) return { ok: false, reason: sendResult.reason || 'send_failed', expiresAt }
+  if (sendResult.messageSid) {
+    recordOtpSendMapping(sendResult.messageSid, phone).catch(() => {})
+  }
   return { ok: true, expiresAt }
 }
 
@@ -250,6 +253,7 @@ export async function sendOtpEmail(email: string): Promise<SendOtpResult> {
 export interface SharedSmsResult {
   ok: boolean
   reason?: string
+  messageSid?: string
 }
 
 /**
@@ -272,7 +276,10 @@ export async function sendSharedSms(toE164Number: string, body: string): Promise
   if (!accountSid || !authToken || !fromNumber) return { ok: false, reason: 'not_configured' }
 
   try {
-    const params = new URLSearchParams({ From: fromNumber, To: toE164Number, Body: body })
+    const params = new URLSearchParams({
+      From: fromNumber, To: toE164Number, Body: body,
+      StatusCallback: `${process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio'}/api/webhooks/twilio/otp-status`,
+    })
     const res = await fetch(
       `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
       {
@@ -290,13 +297,97 @@ export async function sendSharedSms(toE164Number: string, body: string): Promise
       return { ok: false, reason: String(data?.message || res.status).slice(0, 160) }
     }
     // Twilio returns 201 with status:'queued'/'accepted' immediately — the
-    // real delivery outcome arrives later via a status callback, which this
-    // flow doesn't track (matches the honest, no-fabrication pattern the
-    // rest of this file follows: queued-at-Twilio is the real, true thing
-    // we know synchronously, not a guess at eventual delivery).
-    return { ok: true }
+    // real delivery outcome arrives later via the StatusCallback above
+    // (#BLD-02c), tracked via recordOtpSendMapping/recordOtpDeliveryStatus
+    // below rather than guessed at here.
+    return { ok: true, messageSid: data?.sid }
   } catch (e: any) {
     return { ok: false, reason: String(e?.message || e).slice(0, 160) }
+  }
+}
+
+const DELIVERY_TABLE = 'builder_otp_delivery'
+
+interface OtpDeliveryRow {
+  messageSid: string
+  phone: string
+  status?: 'delivered' | 'undelivered' | 'failed'
+  createdAt: string
+}
+
+async function ensureDeliveryTable(): Promise<void> {
+  try {
+    await fetch(`${AINATIVE_API}/api/v1/projects/${PROJECT_ID}/database/tables`, {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ table_name: DELIVERY_TABLE }),
+      signal: AbortSignal.timeout(5000),
+    })
+  } catch { /* table might already exist */ }
+}
+
+/** Record which phone a just-sent Twilio MessageSid belongs to, so a later status callback (keyed only by MessageSid) can be resolved back to the right phone (#BLD-02c). Called right after a successful sendSharedSms. */
+export async function recordOtpSendMapping(messageSid: string, phone: string): Promise<void> {
+  if (!configured() || !messageSid || !phone) return
+  await ensureDeliveryTable()
+  try {
+    await fetch(`${AINATIVE_API}/api/v1/projects/${PROJECT_ID}/database/tables/${DELIVERY_TABLE}/rows`, {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ row_data: { messageSid, phone, createdAt: new Date().toISOString() } }),
+      signal: AbortSignal.timeout(10000),
+    })
+  } catch { /* best-effort — a missed mapping just means the webhook can't resolve this one send, the 45s client timeout still applies as the fallback */ }
+}
+
+/** Append a row to DELIVERY_TABLE. Mirrors insertOtpRow's exact shape (same ensureTable-then-write pattern already established for OTP_TABLE in this file) but targets DELIVERY_TABLE — insertOtpRow itself is hardcoded to OTP_TABLE and is never reused here. */
+async function recordDeliveryRow(row: OtpDeliveryRow): Promise<boolean> {
+  if (!configured()) return false
+  await ensureDeliveryTable()
+  try {
+    const res = await fetch(`${AINATIVE_API}/api/v1/projects/${PROJECT_ID}/database/tables/${DELIVERY_TABLE}/rows`, {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({ row_data: row }),
+      signal: AbortSignal.timeout(15000),
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
+/** Record a real Twilio delivery-status callback against its MessageSid (#BLD-02c). A callback for a MessageSid this flow never sent (e.g. a different SMS flow's Twilio traffic) finds no matching row and is silently dropped — never guessed at or associated with the wrong phone. Appends an updated row (append-only/latest-wins, same pattern verifyOtp's own consumed-marking already uses in this file) rather than mutating the original mapping row. */
+export async function recordOtpDeliveryStatus(messageSid: string, status: 'delivered' | 'undelivered' | 'failed'): Promise<void> {
+  if (!configured() || !messageSid) return
+  try {
+    const res = await fetch(`${AINATIVE_API}/api/v1/projects/${PROJECT_ID}/database/tables/${DELIVERY_TABLE}/rows?limit=1000`, { headers: headers(), signal: AbortSignal.timeout(15000) })
+    if (!res.ok) return
+    const data = JSON.parse(await res.text())
+    const rows = Array.isArray(data) ? data : data.data || data.rows || []
+    const match = rows.map((r: { row_data?: OtpDeliveryRow }) => r.row_data).find((rd: OtpDeliveryRow | undefined) => rd?.messageSid === messageSid)
+    if (!match) return // unmapped sid — not this flow's send, drop silently
+    await recordDeliveryRow({ ...match, status })
+  } catch { /* best-effort */ }
+}
+
+/** Current delivery status for a phone's most recent OTP send (#BLD-02c). 'pending' when nothing has been recorded yet (no callback has landed, or none was ever sent). */
+export async function getOtpDeliveryStatus(phone: string): Promise<'pending' | 'delivered' | 'undelivered' | 'failed'> {
+  if (!configured() || !phone) return 'pending'
+  try {
+    const res = await fetch(`${AINATIVE_API}/api/v1/projects/${PROJECT_ID}/database/tables/${DELIVERY_TABLE}/rows?limit=1000`, { headers: headers(), signal: AbortSignal.timeout(15000) })
+    if (!res.ok) return 'pending'
+    const data = JSON.parse(await res.text())
+    const rows = Array.isArray(data) ? data : data.data || data.rows || []
+    const matches = rows.map((r: { row_data?: OtpDeliveryRow }) => r.row_data).filter((rd: OtpDeliveryRow | undefined) => rd?.phone === phone)
+    // Reverse to insertion order (newest-appended-first) BEFORE the stable
+    // sort below, so a status update sharing the same millisecond as its
+    // original mapping row (the common case — recordOtpDeliveryStatus
+    // appends immediately after reading the match) still resolves to the
+    // newer, status-bearing row rather than the original unstatused one.
+    matches.reverse()
+    matches.sort((a: OtpDeliveryRow, b: OtpDeliveryRow) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+    return matches[0]?.status || 'pending'
+  } catch {
+    return 'pending'
   }
 }
 
