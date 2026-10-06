@@ -101,6 +101,7 @@ export interface BuildState {
   conflictResolved: boolean
   conflictView: string     // the upstream artifact whose edit triggered the conflict ('' = none)
   answers: { privacy?: PrivacyAnswer; [k: string]: string | undefined }
+  growthIntent: boolean   // #BLD-10 — true when the visitor picked "Grow my company" on Start.tsx
   companyName: string
   appSub: string           // staging subdomain, e.g. {appSub}.ainative.studio
   // A ?company= deep link whose slug turned out not to resolve to any real,
@@ -198,6 +199,7 @@ export const initialBuildState: BuildState = {
   conflictResolved: false,
   conflictView: '',
   answers: {},
+  growthIntent: false,
   companyName: '',
   appSub: '',
   deepLinkNotFound: null,
@@ -240,6 +242,7 @@ export type BuildAction =
   // before kickoff's own 3rd question has been answered. Pure data, no
   // side effects — mirrors SET_IDEA's own shape.
   | { type: 'SET_BRAND_DRAFT'; appSub: string; companyName: string; brandTagline: string; brandColor: string }
+  | { type: 'SET_GROWTH_INTENT'; value: boolean }
   | { type: 'GEN_DONE'; view: string; content: unknown }
   | { type: 'GEN_FAIL'; view: string; error: string }
   /** Inline artifact edit (GR-16 #329): replace a view's generated content with
@@ -407,6 +410,8 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
         brandTagline: action.brandTagline,
         brandColor: action.brandColor,
       }
+    case 'SET_GROWTH_INTENT':
+      return { ...state, growthIntent: action.value }
     case 'GEN_DONE':
       return {
         ...state,
