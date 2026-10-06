@@ -14,7 +14,7 @@ import { decideLimitAction } from '@/lib/build/value-moment'
 import { toE164 } from '@/lib/build/phone'
 import { TurnstileWidget } from '@/components/turnstile-widget'
 
-function BrandPanel() {
+export function BrandPanel() {
   return (
     // #940-follow-up (accessibility audit, 2026-10-05): this tagline is
     // decorative/supplementary brand copy, not a document-outline heading —
@@ -25,8 +25,8 @@ function BrandPanel() {
     // itself changed, since nothing here introduces a real page section.
     <aside className="m-auth-brand">
       <span className="m-eyebrow" style={{ color: '#fff' }}>AINATIVE BUILDER</span>
-      <p className="m-artifact m-auth-statement">Compose intelligent products and AI-native companies.</p>
-      <p className="m-auth-subhead">Your idea is the input. AINative primitives are the building blocks. Cody builds the rest.</p>
+      <p className="m-artifact m-auth-statement">Describe your idea.</p>
+      <p className="m-auth-subhead">Cody builds the website, the plan, and your first customers.</p>
       <span className="m-mono m-auth-domain">builder.ainative.studio</span>
     </aside>
   )
