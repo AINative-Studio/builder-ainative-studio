@@ -37,6 +37,34 @@ describe('extractShowcaseTitle', () => {
     expect(title).toContain('Atlas Coffee')
   })
 
+  // #955 — real bug found live (2026-10-06): showcase cards for company-app
+  // (landing-page-only) generations rendered titles like
+  // `"Wrench" (tagline: "From Job Site To Paid —` — raw template syntax
+  // (quote marks, the literal word "tagline:", a mid-sentence truncation)
+  // leaking straight into the public UI. Root cause: company-app/route.ts's
+  // message template ALWAYS includes `(tagline: "...")` right after the
+  // quoted name whenever a tagline exists (line 207: `(tagline ? \`
+  // (tagline: "${tagline}")\` : '')`), but the 'Atlas Coffee' test above
+  // only covers the taglineless shape — extractShowcaseTitle's wrapper-strip
+  // left the tagline parenthetical untouched, so the 8-word truncation cut
+  // off mid-parenthetical.
+  it('extracts just the company name when the landing-page wrapper includes a tagline (#955)', () => {
+    const prompt =
+      'Build a polished, production-quality single-page marketing LANDING PAGE for "Wrench" (tagline: "From Job Site To Paid — on autopilot.") — a real company for this idea: automates scheduling, invoicing, and customer updates so plumbers, electricians, and HVAC pros can stop chasing paperwork.'
+    const title = extractShowcaseTitle(prompt)
+    expect(title).toBe('Wrench')
+    expect(title).not.toContain('tagline')
+    expect(title).not.toContain('"')
+    expect(title).not.toContain('(')
+  })
+
+  it('still extracts the company name when the landing-page wrapper has NO tagline (#955 regression guard)', () => {
+    const prompt =
+      'Build a polished, production-quality single-page marketing LANDING PAGE for "Shutter" — a real company for this idea: an all-in-one workspace for freelance photographers.'
+    const title = extractShowcaseTitle(prompt)
+    expect(title).toBe('Shutter')
+  })
+
   it('two different real ideas using the SAME wrapper produce two DIFFERENT titles (the core bug)', () => {
     const invoicing = extractShowcaseTitle(
       'Build a polished, working web app for this idea: a freelance consulting invoicing tool. Make it interactive.',
