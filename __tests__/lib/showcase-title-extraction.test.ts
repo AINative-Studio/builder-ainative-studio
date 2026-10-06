@@ -89,4 +89,50 @@ describe('extractShowcaseTitle', () => {
     expect(title.split(' ').length).toBeLessThanOrEqual(8)
     expect(title[0]).toBe(title[0].toUpperCase())
   })
+
+  // #958 — real bug found live on production (2026-10-06), human-testing
+  // #955's fix: a real founder's prompt that doesn't match any known
+  // template wrapper fell through to the generic 8-word truncation, which
+  // for a natural first-person idea description produces a nonsense title
+  // (a raw sentence fragment, not a business name). Real production example
+  // (a genuinely good idea — "LinkedIn for volunteer firefighters"):
+  // "I would like to build an app that connects volunteer firefighters to
+  // real stations..." rendered as the showcase title literally
+  // "I Would Like To Build An App That". Fix: strip the same handful of
+  // extremely common first-person openings the way the wrapper regexes
+  // already strip the app's OWN template phrasing, before falling through
+  // to word-truncation.
+  it('strips "I would like to build an app that" before truncating (#958)', () => {
+    const prompt =
+      'I would like to build an app that connects volunteer firefighters to real stations. I would like the captains to be able to go on and see each persons page.'
+    const title = extractShowcaseTitle(prompt)
+    expect(title.toLowerCase()).not.toContain('i would like')
+    expect(title.toLowerCase()).toContain('connects volunteer firefighters')
+  })
+
+  it('strips the same prompt when it arrives wrapped in the App-track template (#958)', () => {
+    const prompt =
+      'Build a polished, working web app for this idea: I would like to build an app that connects volunteer firefighters to real stations. Make it interactive.'
+    const title = extractShowcaseTitle(prompt)
+    expect(title.toLowerCase()).not.toContain('i would like')
+    expect(title.toLowerCase()).toContain('connects volunteer firefighters')
+  })
+
+  it('strips "I want to build a/an X"', () => {
+    const title = extractShowcaseTitle('I want to build a marketplace for local artisans to sell handmade goods.')
+    expect(title.toLowerCase()).not.toContain('i want')
+    expect(title.toLowerCase()).toContain('marketplace for local artisans')
+  })
+
+  it('strips "I\'m building a/an X"', () => {
+    const title = extractShowcaseTitle("I'm building a scheduling tool for yoga studios.")
+    expect(title.toLowerCase()).not.toContain("i'm building")
+    expect(title.toLowerCase()).toContain('scheduling tool for yoga studios')
+  })
+
+  it('strips "I need an app that X"', () => {
+    const title = extractShowcaseTitle('I need an app that tracks inventory for my small bakery.')
+    expect(title.toLowerCase()).not.toContain('i need')
+    expect(title.toLowerCase()).toContain('tracks inventory for my small bakery')
+  })
 })
