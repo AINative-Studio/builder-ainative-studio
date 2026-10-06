@@ -97,15 +97,26 @@ export function Intake() {
     dispatch({ type: 'SET_RUNWAY_NOTE', note: runwayNote })
   }
 
+  // #E3.1 — idea entry is Cody's first chat message, not a form header.
+  // "Idea too thin" (a single word) gets one plain follow-up before the
+  // submit button is usable, instead of silently staying disabled.
+  const wordCount = idea.trim() ? idea.trim().split(/\s+/).length : 0
+  const tooThin = wordCount > 0 && wordCount < 2
+
   return (
     <div className="modernist m-intake" data-track={state.track}>
       <button className="m-back" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'fork' })}>← Back</button>
-      <p className="m-cody-line"><span className="m-glyph">◇</span> Cody · your technical co-founder</p>
-      <h1 className="m-h1">Tell me what we&apos;re building.</h1>
-      <p className="m-sub">
-        I&apos;ll draft everything — brief, PRD, data model, a backlog, then put a swarm of agents to work and
-        provision the infrastructure. I&apos;ll only stop to ask you the calls that actually change the product.
-      </p>
+      <div className="m-chat-log">
+        <p className="m-chat-cody"><span className="m-glyph">◇</span> Cody · your co-founder</p>
+        <p className="m-chat-cody-turn">
+          Tell me your idea in a sentence or two. I&apos;ll ask 3 quick questions, then get to work.
+        </p>
+        {tooThin && (
+          <p className="m-chat-cody-turn" data-testid="intake-idea-too-thin">
+            Tell me a bit more — what would it do, and who is it for?
+          </p>
+        )}
+      </div>
       <textarea
         className="m-intake-field"
         placeholder="Describe your idea…"
@@ -113,14 +124,7 @@ export function Intake() {
         onChange={(e) => setIdea(e.target.value)}
         autoFocus
       />
-      {/* #319 GR-10 — step-numbered microcopy for a founder with zero prior context. */}
-      <p className="m-helper m-mono">
-        Step 1 of 2 — describe your idea in one sentence. I do everything else.
-      </p>
-      <p className="m-helper">
-        Step 2 happens while I build — you&apos;ll answer ~2 quick questions · I&apos;ll name your company and give it a live preview URL.
-      </p>
-      <button className="btn-primary" onClick={start} disabled={!idea.trim() || naming}>
+      <button className="btn-primary" onClick={start} disabled={!idea.trim() || naming || tooThin}>
         {naming ? 'Naming your company…' : 'Let Cody build it →'}
       </button>
     </div>
