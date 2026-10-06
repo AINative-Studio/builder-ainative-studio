@@ -397,6 +397,73 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
     }
   }
 
+  const sendPrimaryPhoneCode = async () => {
+    setPhoneFormError(null)
+    const normalized = toE164(primaryPhone)
+    if (!normalized) { setPhoneFormError('Enter a valid phone number.'); return }
+    setPhoneFormBusy(true)
+    try {
+      const res = await fetch('/api/build/register-phone', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'send-otp', phone: normalized }),
+      })
+      const d = await res.json().catch(() => null)
+      if (!d?.ok) { setPhoneFormError('Could not send a code — try again.'); setPhoneFormBusy(false); return }
+      setPrimaryPhoneStep('code')
+    } catch {
+      setPhoneFormError('Network error — try again.')
+    } finally {
+      setPhoneFormBusy(false)
+    }
+  }
+
+  const submitPrimaryPhoneCode = async () => {
+    setPhoneFormError(null)
+    const normalized = toE164(primaryPhone)
+    if (!normalized || !primaryOtpCode) { setPhoneFormError('Enter the code we texted you.'); return }
+    setPhoneFormBusy(true)
+    try {
+      // Try login first; a core NO_SUCH_PHONE_ACCOUNT response means this
+      // number has never registered, so fall back to register-phone — this
+      // is the one request per attempt that decides which path applies,
+      // since the UI has no other signal for "is this a new number."
+      const loginRes = await fetch('/api/build/login-phone', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: normalized, otp_code: primaryOtpCode }),
+      })
+      let d = await loginRes.json().catch(() => null)
+      if (!d?.ok && d?.errorCode === 'NO_SUCH_PHONE_ACCOUNT') {
+        const registerRes = await fetch('/api/build/register-phone', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: normalized, otp_code: primaryOtpCode }),
+        })
+        d = await registerRes.json().catch(() => null)
+      }
+      if (!d?.ok) { setPhoneFormError(d?.error || 'Could not verify that code.'); setPhoneFormBusy(false); return }
+
+      const result = await signIn('phone-login', {
+        redirect: false,
+        accessToken: d.accessToken,
+        refreshToken: d.refreshToken,
+        expiresIn: d.expiresIn,
+      })
+      if (result?.error) { setPhoneFormError('Could not sign you in — try again.'); setPhoneFormBusy(false); return }
+
+      await migrateGuestWork(state.appSub).catch(() => {})
+      const refCode = getRefCode()
+      if (refCode) {
+        fetch('/api/build/referral', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: refCode }),
+        }).catch(() => {})
+      }
+      afterAuth()
+    } catch {
+      setPhoneFormError('Network error — try again.')
+      setPhoneFormBusy(false)
+    }
+  }
+
   const submit = async () => {
     setError(null); setResendNote(null)
     if (mode === 'forgot') { await submitForgot(); return }
@@ -675,7 +742,7 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
                   type="button"
                   data-testid="phone-send-code"
                   disabled={phoneFormBusy}
-                  onClick={() => { /* Task 8 fills this in */ }}
+                  onClick={sendPrimaryPhoneCode}
                 >
                   Send code
                 </button>
@@ -698,7 +765,7 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
                   type="button"
                   data-testid="phone-submit-code"
                   disabled={phoneFormBusy}
-                  onClick={() => { /* Task 8 fills this in */ }}
+                  onClick={submitPrimaryPhoneCode}
                 >
                   Continue
                 </button>
