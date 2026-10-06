@@ -20,7 +20,7 @@ Replit winback email (screenshot 2026-08-27). Verbatim structure:
 | Audience | Owners in app-registry (`ownerEmail`) with a registered app and no build/preview/chat activity in N days (7 default) — from `builder_build_credits` events + chat-store |
 | Project name | Company name + tagline from the registry |
 | "Credits refreshed" | Free-tier build-allowance state (`build-credits`); ecosystem-bonus mention when earned |
-| CTA deep link | `/build?screen=companies` or `?screen=live&company={slug}` (durable) |
+| CTA deep link | `/build?screen=companies` or `?screen=live&company=<SLUG>` (durable). `<SLUG>` is a placeholder — substitute the real company slug. Do NOT open this URL with the placeholder left in: that used to start a real, billable generation named after the placeholder text and put it on the public showcase (builder#960, now rejected by a guard). |
 | P.S. "publishing is free" | Claim-your-subdomain / share-your-app |
 | Trigger | Nightly loop cron **(prereq: `/api/cron/*` is middleware-gated — fix the allowlist per codebase audit finding #9)** or a Railway cron |
 | Idempotency | One winback per owner per 30d, logged to ZeroDB (`builder_emails`) for suppression + measurement |

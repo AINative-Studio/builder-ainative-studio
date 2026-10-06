@@ -59,6 +59,7 @@ import {
 } from '@/lib/build/product-generation-state'
 import { loadGeneration } from '@/lib/zerodb-store'
 import { reportDeploymentHealthStage } from '@/lib/build/deployment-health'
+import { looksLikeUnsubstitutedPlaceholder } from '@/lib/build/placeholder-guard'
 
 export const runtime = 'nodejs'
 
@@ -139,6 +140,26 @@ export async function POST(request: NextRequest) {
   const idea = String(b?.idea || '').trim().slice(0, 3000)
   const slug = String(b?.slug || '').slice(0, 40)
   if (!idea || !slug) return Response.json({ error: 'idea and slug required' }, { status: 400 })
+  // builder#960: reject an `idea`/`name` still carrying unsubstituted template
+  // syntax BEFORE it reaches the generation pipeline. Both values are embedded
+  // verbatim in the codegen prompt below, so a placeholder here buys a real,
+  // billable generation and a garbage public showcase entry. Confirmed live:
+  // a `?company={slug}` deep link (copied, backtick included, out of this
+  // repo's own docs) produced exactly that — chat_id x6wOHR9rN8UDxcUyTXElZ,
+  // titled literally `{slug}` on the public /showcase. The real entry point is
+  // guarded in contexts/build-context.tsx; this is the API-boundary backstop
+  // for every other caller, present and future.
+  const placeholderField = looksLikeUnsubstitutedPlaceholder(idea)
+    ? 'idea'
+    : looksLikeUnsubstitutedPlaceholder(String(b?.name || ''))
+      ? 'name'
+      : null
+  if (placeholderField) {
+    return Response.json(
+      { error: `${placeholderField} contains an unsubstituted template placeholder — expected a real company name/idea` },
+      { status: 400 },
+    )
+  }
   // Real gap (same as company-product/route.ts's own force param): a
   // generation that registered a chatId but whose CODE failed server-side
   // validation serves a real, honest error page with a real Regenerate

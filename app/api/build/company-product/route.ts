@@ -78,6 +78,7 @@ import {
   resolvePendingProductGeneration,
 } from '@/lib/build/product-generation-state'
 import { loadGeneration } from '@/lib/zerodb-store'
+import { looksLikeUnsubstitutedPlaceholder } from '@/lib/build/placeholder-guard'
 
 export const runtime = 'nodejs'
 
@@ -143,6 +144,23 @@ export async function POST(request: NextRequest) {
   const idea = String(b?.idea || '').trim().slice(0, 3000)
   const slug = String(b?.slug || '').slice(0, 40)
   if (!idea || !slug) return Response.json({ error: 'idea and slug required' }, { status: 400 })
+  // builder#960: same guard as company-app/route.ts's — reject an `idea`/`name`
+  // still carrying unsubstituted template syntax BEFORE it reaches the
+  // generation pipeline, since both are embedded verbatim in the codegen prompt
+  // below. Confirmed live: the SAME `?company={slug}` deep link that hit
+  // company-app also hit this route (Live.tsx fires both), producing chat_id
+  // 7W6siLoHGM8O4rsusuIQt — titled literally `{slug}` on the public /showcase.
+  const placeholderField = looksLikeUnsubstitutedPlaceholder(idea)
+    ? 'idea'
+    : looksLikeUnsubstitutedPlaceholder(String(b?.name || ''))
+      ? 'name'
+      : null
+  if (placeholderField) {
+    return Response.json(
+      { error: `${placeholderField} contains an unsubstituted template placeholder — expected a real company name/idea` },
+      { status: 400 },
+    )
+  }
   // Real gap: a generation that registered a chatId but whose CODE failed
   // server-side validation (e.g. "Identifier 'X' has already been declared")
   // serves a real, honest "this build needs another pass" error page with a
