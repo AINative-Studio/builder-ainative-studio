@@ -21,6 +21,13 @@ const SWARM_AGENTS = [
   { name: 'Security', role: 'Threat analysis' },
 ]
 
+// #SEP-06 — static, plan-inclusive usage message shown only on the longest-
+// running, most resource-intensive overlay kinds (swarm/provisioning). No
+// live cost calculation — no metering mechanism exists anywhere in this repo
+// to compute a real dollar/credit figure, so this stays genuinely generic
+// rather than implying a precision the system can't deliver.
+const USAGE_MESSAGE = "This build uses your plan's included generation credits — no surprise charges."
+
 const INFRA_ITEMS = [
   ['ZeroDB project', 'vectors + tables + embeddings'],
   ['ZeroMemory namespace', 'per-workspace isolation'],
@@ -70,6 +77,7 @@ export function BuildOverlays() {
             )
           })}
         </div>
+        <p className="m-sub m-muted">{USAGE_MESSAGE}</p>
       </div>
     )
   }
@@ -89,6 +97,7 @@ export function BuildOverlays() {
           </li>
         ))}
       </ul>
+      <p className="m-sub m-muted">{USAGE_MESSAGE}</p>
     </div>
   )
 }
