@@ -4,8 +4,10 @@
  * Start — funnel step 1 (Claude Design handoff). "Let's get started." The visitor
  * picks whether they're creating a new company or growing an existing one.
  *
- *   Create a new company → step 2 (Build: "Let's build something")
- *   Grow my company      → straight to auth (they already have a business)
+ * #BLD-10 — both paths now reach the same build/kickoff flow; growthIntent
+ * (set here) selects which kickoff question variant KickoffQuestions.tsx
+ * shows. The auth-wall decision is untouched — it stays in
+ * KickoffQuestions.tsx's proceed(), same as the "create" path already used.
  *
  * Selection is a two-card single-choice; Continue commits it. Matches the
  * prototype's create/grow branch (Landing & Signup.dc.html).
@@ -35,9 +37,10 @@ export function Start() {
 
   const goBuild = () => {
     window.scrollTo(0, 0)
-    // "Grow my company" already has a business → go to auth. "Create" continues
-    // into the build-idea step.
-    dispatch({ type: 'GOTO_SCREEN', screen: path === 'create' ? 'build' : 'login' })
+    // #BLD-10 — both paths reach the same idea-entry/kickoff flow now;
+    // growthIntent tells KickoffQuestions.tsx which question variant to show.
+    dispatch({ type: 'SET_GROWTH_INTENT', value: path === 'grow' })
+    dispatch({ type: 'GOTO_SCREEN', screen: 'build' })
   }
 
   return (
