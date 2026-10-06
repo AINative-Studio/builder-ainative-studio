@@ -2,71 +2,19 @@
 
 /**
  * Workspace shell (#220) — the shared chrome both tracks render inside.
- * Top bar · journey act-bar · path breadcrumb · Cody feed (34%) · center panel
- * · artifact rail. Re-themed per track via the .modernist[data-track] root.
+ * Top bar · journey bar (#BLD-06.1, merges the old act-bar + path breadcrumb)
+ * · Cody feed (34%) · center panel · artifact rail. Re-themed per track via
+ * the .modernist[data-track] root.
  */
 
-import { useState } from 'react'
 import { useBuild } from '@/contexts/build-context'
-import { useSession } from 'next-auth/react'
-import { APP_ACT_LABELS, COMPANY_ACT_LABELS } from '@/lib/build/acts'
-import type { Screen } from '@/lib/build/state'
 import { BuildOverlays } from '@/components/build/BuildOverlays'
 import { TerminalRibbon } from '@/components/build/TerminalRibbon'
 import { PricingNudge } from '@/components/build/PricingNudge'
 import { DecisionModal } from '@/components/build/DecisionModal'
 import { ArtifactRail } from '@/components/build/ArtifactRail'
-import { AccountMenu } from '@/components/build/AccountMenu'
+import { JourneyBar } from '@/components/build/JourneyBar'
 import type { ReactNode } from 'react'
-
-function ActBar() {
-  const { state, dispatch, woven, totalPrimitives } = useBuild()
-  const { data: session } = useSession()
-  const [menuOpen, setMenuOpen] = useState(false)
-
-  // Map current screen/view to one of this track's acts for the tracker.
-  const actLabels = state.track === 'company' ? COMPANY_ACT_LABELS : APP_ACT_LABELS
-  const actIndex = currentActIndex(state)
-  const doneCount = Object.keys(state.done).length
-
-  const handleScreen = (screen: string) => {
-    dispatch({ type: 'GOTO_SCREEN', screen: screen as Screen })
-  }
-
-  return (
-    <div className="m-actbar" role="navigation" aria-label="Build progress">
-      <ol className="m-acts">
-        {actLabels.map((label, i) => {
-          const cls = i < actIndex ? 'is-done' : i === actIndex ? 'is-current' : 'is-upcoming'
-          return (
-            <li key={label} className={`m-act ${cls}`}>
-              <span className="m-act-badge" aria-hidden>{i < actIndex ? '✓' : i + 1}</span>
-              <span className="m-act-label">{label}</span>
-            </li>
-          )
-        })}
-      </ol>
-      <div className="m-actbar-right">
-        <span className="m-woven m-mono" title="AINative primitives woven into this build">
-          {woven}/{totalPrimitives} woven
-        </span>
-        <button className="m-actbar-btn m-mono" onClick={() => dispatch({ type: 'TOGGLE_INDEX' })} title="Jump to any screen">
-          Index
-        </button>
-        <button className={`m-actbar-btn m-mono ${state.railOpen ? 'is-active' : ''}`} onClick={() => dispatch({ type: 'TOGGLE_RAIL' })} title="Artifacts">
-          Artifacts · {doneCount}
-        </button>
-        {/* Unified account nav dropdown (#56) — replaces bare chip. */}
-        <AccountMenu
-          session={session}
-          open={menuOpen}
-          onOpenChange={setMenuOpen}
-          onScreen={handleScreen}
-        />
-      </div>
-    </div>
-  )
-}
 
 /** Index (jump-to-any-screen) panel — quick nav to any generated artifact. */
 function IndexPanel() {
@@ -106,29 +54,6 @@ function IndexPanel() {
   )
 }
 
-function PathBreadcrumb() {
-  const { state, views, goView } = useBuild()
-  return (
-    <div className="m-breadcrumb" role="navigation" aria-label="Artifacts">
-      {views.map((v) => {
-        const isCurrent = v === state.view
-        const isDone = Boolean(state.done[v])
-        const clickable = !state.auto && (isDone || isCurrent)
-        const cls = isCurrent ? 'is-current' : isDone ? 'is-done' : 'is-upcoming'
-        return (
-          <button
-            key={v}
-            className={`m-crumb m-mono ${cls}`}
-            disabled={!clickable}
-            onClick={() => clickable && goView(v as never)}
-          >
-            {v}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
 
 export function WorkspaceShell({
   feed,
@@ -149,9 +74,8 @@ export function WorkspaceShell({
         </span>
         <span className="m-topbar-artifact m-artifact">{state.companyName || 'Untitled'}</span>
       </header>
-      <ActBar />
+      <JourneyBar />
       <IndexPanel />
-      <PathBreadcrumb />
       <TerminalRibbon />
       <PricingNudge />
       <div className={`m-ws-body ${state.tablet ? 'is-tablet' : ''}`}>
