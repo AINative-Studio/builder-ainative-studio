@@ -364,6 +364,22 @@ export function Landing() {
       </div>
       </main>
 
+      {/* #BLD-11 — "what you get", in normal document flow (not part of the
+          pinned-scroll beat animation above, which is tuned to a fixed
+          4-beat sequence — see seg()'s hard-coded breakpoints). Names
+          concrete outcomes for both tracks, including physical/local
+          businesses, which the hero beats above never mention. */}
+      <section className="m-land-beat" aria-label="What you get" style={{ position: 'relative', padding: '64px 8vw' }}>
+        <h2 className="m-land-title" style={{ fontSize: 'clamp(28px,4vw,44px)', margin: '0 0 20px' }}>What you actually get</h2>
+        <p style={{ fontSize: 18, lineHeight: 1.5, maxWidth: '60ch' }}>
+          Building software? You get a real, running app — not a mockup.
+          Running a bakery, a gym, a landscaping company, or any other local
+          business? Cody builds the website, the customer intake forms, and
+          the first-customer outreach plan — no code, no software background
+          needed either way.
+        </p>
+      </section>
+
       {/* footer */}
       <footer className="m-land-foot">
         <a href="/showcase">Showcase</a>
