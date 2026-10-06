@@ -15,6 +15,11 @@ import { useBuild } from '@/contexts/build-context'
 import { getQuestionsForView, composeFeedbackFromAnswers } from '@/lib/build/cody-questions'
 import { collectPrior } from '@/lib/build/artifact-edit'
 
+// #BLD-06.9 — the real build-stage views (confirmed APP_VIEWS entries) this
+// gate covers. Never the same views BLD-06.2's lighter per-step summary
+// targets — the two must not collide.
+const BUILD_STAGE_VIEWS = ['swarm', 'infra', 'preview']
+
 export function CodyChatPanel() {
   const { state, views, dispatch } = useBuild()
   // #BLD-06.3 — per-step Q&A answers, component state only (not persisted —
@@ -22,6 +27,28 @@ export function CodyChatPanel() {
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [regenerating, setRegenerating] = useState(false)
   const questions = getQuestionsForView(state.view)
+
+  // #BLD-06.9 — explain before building, reusing the SAME nudgeState/NUDGE
+  // state this codebase already uses for CodyNudge's accept/dismiss pattern,
+  // keyed by view, so an accepted gate never reappears for that view.
+  const isBuildStage = BUILD_STAGE_VIEWS.includes(state.view)
+  const explainAccepted = state.nudgeState?.[state.view] === 'accepted'
+  const [explanation, setExplanation] = useState<string | null>(null)
+  useEffect(() => {
+    if (!isBuildStage || explainAccepted) { setExplanation(null); return }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch('/api/build/cody-explain', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ view: state.view, track: state.track, idea: state.idea }),
+        })
+        const d = await res.json().catch(() => null)
+        if (!cancelled && d?.ok && d?.explanation) setExplanation(d.explanation)
+      } catch { /* no gate text if the call fails — never blocks autoplay silently stuck */ }
+    })()
+    return () => { cancelled = true }
+  }, [state.view, isBuildStage, explainAccepted, state.track, state.idea])
 
   const submitAnswers = async () => {
     const feedback = composeFeedbackFromAnswers(questions, answers)
@@ -114,6 +141,19 @@ export function CodyChatPanel() {
         <p className="m-cody-chat-line">
           {summary || (<>You&apos;re on <span className="m-mono">{state.view}</span>.</>)}
         </p>
+        {isBuildStage && !explainAccepted && explanation && (
+          <div className="m-cody-explain-gate" data-testid="cody-explain-gate">
+            <p className="m-cody-chat-line">{explanation}</p>
+            <button
+              type="button"
+              data-testid="cody-explain-go-ahead"
+              className="btn-primary"
+              onClick={() => dispatch({ type: 'NUDGE', view: state.view, state: 'accepted' })}
+            >
+              Go ahead
+            </button>
+          </div>
+        )}
         {state.generated?.[state.view] !== undefined && (
           <div className="m-cody-save-row">
             {isDraftUnsaved && (

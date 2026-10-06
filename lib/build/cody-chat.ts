@@ -17,6 +17,36 @@ Rules:
 - No jargon: never use the words "wedge", "PRD", "data model", "memory policy", "AI-native", "swarm", or "provision".
 - Say what this step is and why it matters to the founder, not how it was generated.`
 
+const EXPLAIN_SYSTEM_PROMPT = `You tell a founder what you are about to build and which business goal it tests, before you start building it.
+Rules:
+- One or two plain sentences, no jargon.
+- Say what you're building and why it matters to the business, then nothing else -- the founder will be asked to confirm separately.`
+
+export async function explainBeforeBuilding(
+  view: string,
+  track: 'app' | 'company',
+  idea: string,
+): Promise<SummaryResult & { explanation?: string }> {
+  const completion = getClaudeCompletion()
+  if (!completion) return { ok: false, reason: 'not_configured' }
+  try {
+    const res = await completion.client.messages.create({
+      model: completion.model,
+      max_tokens: 200,
+      system: EXPLAIN_SYSTEM_PROMPT,
+      messages: [{
+        role: 'user',
+        content: `Track: ${track}. About to build: ${view}. The founder's idea: ${idea}`,
+      }],
+    })
+    const text = res?.content?.find((b: { type: string }) => b.type === 'text')?.text
+    if (!text) return { ok: false, reason: 'empty_response' }
+    return { ok: true, explanation: String(text).trim() }
+  } catch (e: any) {
+    return { ok: false, reason: String(e?.message || e).slice(0, 160) }
+  }
+}
+
 export async function summarizeArtifactStep(
   view: string,
   track: 'app' | 'company',
