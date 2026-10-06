@@ -208,6 +208,25 @@ export function extractShowcaseTitle(prompt: string): string {
   // (" — a real company for this idea: ...", title-cased into nonsense).
   const quotedNameMatch = text.match(/^"([^"]+)"/)
   if (quotedNameMatch) return quotedNameMatch[1]
+  // #958 — real founders very often open their OWN idea text with one of a
+  // handful of first-person framings ("I would like to build an app that
+  // connects volunteer firefighters...", "I want to build a marketplace
+  // for...", "I'm building a scheduling tool for...", "I need an app that
+  // tracks..."). These carry no distinctive information (same reasoning as
+  // the app's own template wrappers above) and previously survived into the
+  // 8-word-truncated title verbatim — a real founder's good idea ("LinkedIn
+  // for volunteer firefighters") rendered on the public showcase as the
+  // nonsense title "I Would Like To Build An App That". Strip them the same
+  // way, whether this is the founder's raw, unwrapped prompt or one of the
+  // app's own wrappers has already been stripped above and left one of
+  // these first-person openings underneath it.
+  text = text.replace(
+    /^I(?:'m| am| would like to| want to)\s+build(?:ing)?\s+(?:a|an)\s+(?:app|tool|platform|site|website)?\s*(?:that|for)?\s*/i,
+    '',
+  ).replace(
+    /^I\s+need\s+an?\s+(?:app|tool|platform|site|website)\s+that\s+/i,
+    '',
+  ).trim()
   // Trailing generic instruction boilerplate ("Make it interactive and
   // visually complete with realistic sample data.") carries no distinctive
   // information — cut it off at the first sentence of the REMAINING text.
