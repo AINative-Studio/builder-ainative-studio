@@ -53,6 +53,31 @@ export function CodyChatPanel() {
       setRegenerating(false)
     }
   }
+  // #BLD-06.4 — save/version tracking. isDraftUnsaved flips true whenever
+  // this view's generated content changes after the last save; never blocks
+  // navigation — Cody only ASKS, per the story's own scenario.
+  const lastSavedContent = useRef<Record<string, unknown>>({})
+  const [isDraftUnsaved, setIsDraftUnsaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+  useEffect(() => {
+    const current = state.generated?.[state.view]
+    const saved = lastSavedContent.current[state.view]
+    setIsDraftUnsaved(current !== undefined && current !== saved)
+  }, [state.view, state.generated])
+
+  const saveVersion = async () => {
+    setSaving(true)
+    try {
+      await fetch('/api/build/artifact-version', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companyId: state.appChatId, view: state.view, content: state.generated?.[state.view] }),
+      })
+      lastSavedContent.current[state.view] = state.generated?.[state.view]
+      setIsDraftUnsaved(false)
+    } catch { /* best-effort — the live artifact itself is unaffected */ }
+    finally { setSaving(false) }
+  }
+
   // #BLD-06.2 — real, LLM-generated step summaries, cached per-view for this
   // component's lifetime only (no persistence — a reload re-summarizing is
   // cheap and avoids a new persistence surface for throwaway text).
@@ -89,6 +114,24 @@ export function CodyChatPanel() {
         <p className="m-cody-chat-line">
           {summary || (<>You&apos;re on <span className="m-mono">{state.view}</span>.</>)}
         </p>
+        {state.generated?.[state.view] !== undefined && (
+          <div className="m-cody-save-row">
+            {isDraftUnsaved && (
+              <p className="m-cody-chat-line m-muted" data-testid="cody-unsaved-draft-note">
+                Save this version, or keep the last saved one?
+              </p>
+            )}
+            <button
+              type="button"
+              data-testid="cody-save-version"
+              className="btn-ghost"
+              disabled={saving}
+              onClick={saveVersion}
+            >
+              {saving ? 'Saving…' : 'Save this'}
+            </button>
+          </div>
+        )}
       </div>
       {questions.length > 0 && (
         <div className="m-cody-questions" data-testid="cody-questions">
