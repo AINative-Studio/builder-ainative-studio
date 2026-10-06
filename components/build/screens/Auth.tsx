@@ -11,10 +11,10 @@ import { trackMeta } from '@/components/analytics/meta-pixel'
 import { migrateGuestWork } from '@/lib/build/guest-migration'
 import { getRefCode } from '@/lib/build/attribution'
 import { decideLimitAction } from '@/lib/build/value-moment'
-import { toE164 } from '@/lib/build/otp'
+import { toE164 } from '@/lib/build/phone'
 import { TurnstileWidget } from '@/components/turnstile-widget'
 
-function BrandPanel() {
+export function BrandPanel() {
   return (
     // #940-follow-up (accessibility audit, 2026-10-05): this tagline is
     // decorative/supplementary brand copy, not a document-outline heading —
@@ -25,8 +25,8 @@ function BrandPanel() {
     // itself changed, since nothing here introduces a real page section.
     <aside className="m-auth-brand">
       <span className="m-eyebrow" style={{ color: '#fff' }}>AINATIVE BUILDER</span>
-      <p className="m-artifact m-auth-statement">Compose intelligent products and AI-native companies.</p>
-      <p className="m-auth-subhead">Your idea is the input. AINative primitives are the building blocks. Cody builds the rest.</p>
+      <p className="m-artifact m-auth-statement">Describe your idea.</p>
+      <p className="m-auth-subhead">Cody builds the website, the plan, and your first customers.</p>
       <span className="m-mono m-auth-domain">builder.ainative.studio</span>
     </aside>
   )
@@ -285,11 +285,28 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
   // fires, surface Resend + Skip. Cleared automatically by the effect's own
   // cleanup whenever verifyPhone changes (a fresh send or a successful
   // verify both reset/clear it via setVerifyPhone above).
+  // #BLD-02c — a parallel poll of the real Twilio delivery status alongside
+  // the 45s blind timeout above: a CONFIRMED undelivered/failed status
+  // surfaces the fallback immediately rather than waiting out the full 45s.
+  // The 45s timer stays as the backstop when no status ever lands (e.g.
+  // StatusCallback misconfigured, or the number genuinely stays pending).
   useEffect(() => {
     if (!verifyPhone) return
     const timer = setTimeout(() => setOtpFallbackDue(true), 45_000)
-    return () => clearTimeout(timer)
-  }, [verifyPhone])
+    const normalizedPhone = toE164(phone)
+    const poll = normalizedPhone ? setInterval(async () => {
+      try {
+        const res = await fetch(`/api/build/otp-delivery-status?phone=${encodeURIComponent(normalizedPhone)}`)
+        const d = await res.json().catch(() => null)
+        if (d?.status === 'undelivered' || d?.status === 'failed') {
+          setOtpFallbackDue(true)
+          clearTimeout(timer)
+          clearInterval(poll)
+        }
+      } catch { /* keep polling — the 45s timer is still the backstop */ }
+    }, 5000) : undefined
+    return () => { clearTimeout(timer); if (poll) clearInterval(poll) }
+  }, [verifyPhone, phone])
 
   // #950 — Skip: same honest-fallback shape as submitOtp's not_configured
   // branch above (let signup continue unverified rather than dead-end).
@@ -299,6 +316,30 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
     setOtpNote(null)
     setOtpFallbackDue(false)
     setError(null)
+  }
+
+  // #BLD-02b — a real alternative channel alongside Resend/Skip: send the
+  // same 6-digit code by email instead (lib/build/otp.ts's sendOtpEmail,
+  // verified through the exact same verifyOtp() the phone code uses).
+  const emailOtpFallback = async () => {
+    setBusy(true); setError(null)
+    try {
+      const res = await fetch('/api/build/register', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'send-otp-email', email }),
+      })
+      const d = await res.json().catch(() => null)
+      if (d?.ok) {
+        setOtpNote('Code sent to your email — enter it below.')
+        setOtpFallbackDue(false)
+      } else {
+        setError('Could not send the code by email — try again.')
+      }
+    } catch {
+      setError('Network error — try again.')
+    } finally {
+      setBusy(false)
+    }
   }
 
   // #7698 — request a reset email from core via the Builder proxy, which passes
@@ -576,6 +617,9 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
               </button>
               <button className="btn-ghost" data-testid="auth-otp-skip" onClick={skipOtpVerification} disabled={busy} type="button">
                 Skip for now
+              </button>
+              <button className="btn-ghost" data-testid="auth-otp-email-fallback" onClick={emailOtpFallback} disabled={busy} type="button">
+                Email me a code instead
               </button>
             </div>
           )}

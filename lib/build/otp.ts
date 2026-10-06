@@ -56,6 +56,20 @@
  */
 
 import { getAinativeApiKey } from '@/lib/build/env-keys'
+import { sendViaResend, resendConfigured } from '@/lib/build/resend-client'
+// lib/jobs/alerting.ts pulls in the real Postgres driver (lib/db/connection.ts,
+// Node-only — net/tls/perf_hooks). Auth.tsx (a CLIENT component) used to
+// import toE164 from THIS file, which bundled that whole Node-only chain
+// into client JS and broke the build — confirmed twice in CI with "Module
+// not found: Can't resolve 'net'", once via a static import to alerting.ts
+// and once even via a dynamic import (webpack still resolves a dynamically
+// imported module's own dependency graph to build its chunk, so laziness
+// alone doesn't sever the reachability). The real fix was extracting
+// toE164 into lib/build/phone.ts (pure, dependency-free) and pointing
+// Auth.tsx there directly — see that file's doc comment. The dynamic
+// import below is kept anyway as defense-in-depth (this file has no other
+// client importers now, but a future one would hit the same bundling
+// issue if alerting.ts were a static import here).
 
 const AINATIVE_API = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 const API_KEY = getAinativeApiKey()
@@ -86,27 +100,13 @@ export function zeroVoiceOtpEnabled(): boolean {
   return process.env.ZEROVOICE_OTP_ENABLED === 'true'
 }
 
-/**
- * Normalize a phone number to E.164 (client- and server-side; no npm
- * dependency). Best-effort: assumes US/CA (+1) for a bare 10-digit number
- * (Builder's current market), passes through a number already starting
- * with '+', and returns null for anything that doesn't look like a real
- * number after stripping formatting characters.
- */
-export function toE164(raw: string): string | null {
-  const trimmed = (raw || '').trim()
-  if (!trimmed) return null
-  if (trimmed.startsWith('+')) {
-    const digits = trimmed.slice(1).replace(/\D/g, '')
-    if (digits.length < 8 || digits.length > 15) return null
-    return `+${digits}`
-  }
-  const digits = trimmed.replace(/\D/g, '')
-  if (digits.length === 10) return `+1${digits}`
-  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`
-  if (digits.length >= 8 && digits.length <= 15) return `+${digits}`
-  return null
-}
+// toE164 lives in lib/build/phone.ts (a pure, dependency-free module) and is
+// re-exported here so every existing server-side importer of it from
+// '@/lib/build/otp' keeps working unchanged. See phone.ts's doc comment for
+// why: Auth.tsx (a CLIENT component) must import toE164 from phone.ts
+// directly, never through this file, since this file transitively reaches
+// the Node-only Postgres driver via lib/jobs/alerting.ts.
+export { toE164 } from '@/lib/build/phone'
 
 interface OtpRow {
   phone: string
@@ -210,12 +210,49 @@ export async function sendOtp(phone: string): Promise<SendOtpResult> {
 
   const sendResult = await sendSharedSms(phone, `Your AINative Builder verification code is ${code}. It expires in 10 minutes.`)
   if (!sendResult.ok) return { ok: false, reason: sendResult.reason || 'send_failed', expiresAt }
+  if (sendResult.messageSid) {
+    recordOtpSendMapping(sendResult.messageSid, phone).catch(() => {})
+  }
+  return { ok: true, expiresAt }
+}
+
+/**
+ * Email-code fallback alongside phone OTP (#965). Reuses the SAME
+ * `builder_otp_codes` storage and `verifyOtp` lookup as the phone flow
+ * (the lookup is identifier-agnostic — it just matches the `phone` field
+ * against whatever string it's given), so a founder who requests an
+ * email code verifies through the exact same path as one who requests
+ * an SMS code. Sends via the existing, already-wired Resend client
+ * (lib/build/resend-client.ts) rather than a new email sender.
+ */
+export async function sendOtpEmail(email: string): Promise<SendOtpResult> {
+  const trimmed = (email || '').trim().toLowerCase()
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(trimmed)) return { ok: false, reason: 'invalid_email' }
+  if (!configured()) return { ok: false, reason: 'registry_unavailable' }
+  if (!resendConfigured()) return { ok: false, reason: 'not_configured' }
+
+  const code = String(Math.floor(Math.random() * 10 ** OTP_LENGTH)).padStart(OTP_LENGTH, '0')
+  const now = new Date()
+  const expiresAt = new Date(now.getTime() + OTP_TTL_MS).toISOString()
+
+  const stored = await insertOtpRow({ phone: trimmed, code, expiresAt, createdAt: now.toISOString() })
+  if (!stored) return { ok: false, reason: 'storage_failed' }
+
+  const sendResult = await sendViaResend(
+    'AINative Builder <noreply@ainative.studio>',
+    trimmed,
+    'Your AINative Builder verification code',
+    `<p>Your verification code is <strong>${code}</strong>. It expires in 10 minutes.</p>`,
+    `Your verification code is ${code}. It expires in 10 minutes.`,
+  )
+  if (!sendResult.ok) return { ok: false, reason: 'send_failed', expiresAt }
   return { ok: true, expiresAt }
 }
 
 export interface SharedSmsResult {
   ok: boolean
   reason?: string
+  messageSid?: string
 }
 
 /**
@@ -238,7 +275,10 @@ export async function sendSharedSms(toE164Number: string, body: string): Promise
   if (!accountSid || !authToken || !fromNumber) return { ok: false, reason: 'not_configured' }
 
   try {
-    const params = new URLSearchParams({ From: fromNumber, To: toE164Number, Body: body })
+    const params = new URLSearchParams({
+      From: fromNumber, To: toE164Number, Body: body,
+      StatusCallback: `${process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio'}/api/webhooks/twilio/otp-status`,
+    })
     const res = await fetch(
       `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
       {
@@ -256,13 +296,102 @@ export async function sendSharedSms(toE164Number: string, body: string): Promise
       return { ok: false, reason: String(data?.message || res.status).slice(0, 160) }
     }
     // Twilio returns 201 with status:'queued'/'accepted' immediately — the
-    // real delivery outcome arrives later via a status callback, which this
-    // flow doesn't track (matches the honest, no-fabrication pattern the
-    // rest of this file follows: queued-at-Twilio is the real, true thing
-    // we know synchronously, not a guess at eventual delivery).
-    return { ok: true }
+    // real delivery outcome arrives later via the StatusCallback above
+    // (#BLD-02c), tracked via recordOtpSendMapping/recordOtpDeliveryStatus
+    // below rather than guessed at here.
+    return { ok: true, messageSid: data?.sid }
   } catch (e: any) {
     return { ok: false, reason: String(e?.message || e).slice(0, 160) }
+  }
+}
+
+const DELIVERY_TABLE = 'builder_otp_delivery'
+
+interface OtpDeliveryRow {
+  messageSid: string
+  phone: string
+  status?: 'delivered' | 'undelivered' | 'failed'
+  createdAt: string
+}
+
+async function ensureDeliveryTable(): Promise<void> {
+  try {
+    await fetch(`${AINATIVE_API}/api/v1/projects/${PROJECT_ID}/database/tables`, {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ table_name: DELIVERY_TABLE }),
+      signal: AbortSignal.timeout(5000),
+    })
+  } catch { /* table might already exist */ }
+}
+
+/** Record which phone a just-sent Twilio MessageSid belongs to, so a later status callback (keyed only by MessageSid) can be resolved back to the right phone (#BLD-02c). Called right after a successful sendSharedSms. */
+export async function recordOtpSendMapping(messageSid: string, phone: string): Promise<void> {
+  if (!configured() || !messageSid || !phone) return
+  await ensureDeliveryTable()
+  try {
+    await fetch(`${AINATIVE_API}/api/v1/projects/${PROJECT_ID}/database/tables/${DELIVERY_TABLE}/rows`, {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ row_data: { messageSid, phone, createdAt: new Date().toISOString() } }),
+      signal: AbortSignal.timeout(10000),
+    })
+  } catch { /* best-effort — a missed mapping just means the webhook can't resolve this one send, the 45s client timeout still applies as the fallback */ }
+}
+
+/** Append a row to DELIVERY_TABLE. Mirrors insertOtpRow's exact shape (same ensureTable-then-write pattern already established for OTP_TABLE in this file) but targets DELIVERY_TABLE — insertOtpRow itself is hardcoded to OTP_TABLE and is never reused here. */
+async function recordDeliveryRow(row: OtpDeliveryRow): Promise<boolean> {
+  if (!configured()) return false
+  await ensureDeliveryTable()
+  try {
+    const res = await fetch(`${AINATIVE_API}/api/v1/projects/${PROJECT_ID}/database/tables/${DELIVERY_TABLE}/rows`, {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({ row_data: row }),
+      signal: AbortSignal.timeout(15000),
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
+/** Record a real Twilio delivery-status callback against its MessageSid (#BLD-02c). A callback for a MessageSid this flow never sent (e.g. a different SMS flow's Twilio traffic) finds no matching row and is silently dropped — never guessed at or associated with the wrong phone. Appends an updated row (append-only/latest-wins, same pattern verifyOtp's own consumed-marking already uses in this file) rather than mutating the original mapping row. */
+export async function recordOtpDeliveryStatus(messageSid: string, status: 'delivered' | 'undelivered' | 'failed'): Promise<void> {
+  if (!configured() || !messageSid) return
+  try {
+    const res = await fetch(`${AINATIVE_API}/api/v1/projects/${PROJECT_ID}/database/tables/${DELIVERY_TABLE}/rows?limit=1000`, { headers: headers(), signal: AbortSignal.timeout(15000) })
+    if (!res.ok) return
+    const data = JSON.parse(await res.text())
+    const rows = Array.isArray(data) ? data : data.data || data.rows || []
+    const match = rows.map((r: { row_data?: OtpDeliveryRow }) => r.row_data).find((rd: OtpDeliveryRow | undefined) => rd?.messageSid === messageSid)
+    if (!match) return // unmapped sid — not this flow's send, drop silently
+    const stored = await recordDeliveryRow({ ...match, status })
+    if (stored && (status === 'undelivered' || status === 'failed')) {
+      import('@/lib/jobs/alerting')
+        .then((m) => m.checkSmsDeliveryFailureAlert())
+        .catch(() => {})
+    }
+  } catch { /* best-effort */ }
+}
+
+/** Current delivery status for a phone's most recent OTP send (#BLD-02c). 'pending' when nothing has been recorded yet (no callback has landed, or none was ever sent). */
+export async function getOtpDeliveryStatus(phone: string): Promise<'pending' | 'delivered' | 'undelivered' | 'failed'> {
+  if (!configured() || !phone) return 'pending'
+  try {
+    const res = await fetch(`${AINATIVE_API}/api/v1/projects/${PROJECT_ID}/database/tables/${DELIVERY_TABLE}/rows?limit=1000`, { headers: headers(), signal: AbortSignal.timeout(15000) })
+    if (!res.ok) return 'pending'
+    const data = JSON.parse(await res.text())
+    const rows = Array.isArray(data) ? data : data.data || data.rows || []
+    const matches = rows.map((r: { row_data?: OtpDeliveryRow }) => r.row_data).filter((rd: OtpDeliveryRow | undefined) => rd?.phone === phone)
+    // Reverse to insertion order (newest-appended-first) BEFORE the stable
+    // sort below, so a status update sharing the same millisecond as its
+    // original mapping row (the common case — recordOtpDeliveryStatus
+    // appends immediately after reading the match) still resolves to the
+    // newer, status-bearing row rather than the original unstatused one.
+    matches.reverse()
+    matches.sort((a: OtpDeliveryRow, b: OtpDeliveryRow) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+    return matches[0]?.status || 'pending'
+  } catch {
+    return 'pending'
   }
 }
 

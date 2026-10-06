@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const outcome = await applyDangerAction(parsed.value)
+    const outcome = await applyDangerAction(parsed.value, (session as any)?.accessToken)
     logger.info('danger-zone action applied', {
       action: parsed.value.action,
       companyId: parsed.value.companyId,

@@ -11,7 +11,9 @@
  */
 
 import { setLoopEnabled } from '@/lib/build/loop-enrollment'
-import { setAppLifecycle } from '@/lib/build/app-registry'
+import { setAppLifecycle, resolveApp } from '@/lib/build/app-registry'
+import { releaseZeroVoiceNumber } from '@/lib/build/zerovoice'
+import { deleteCustomDomain } from '@/lib/build/railway-deploy'
 
 export type DangerAction = 'pause' | 'resume' | 'offline' | 'delete'
 
@@ -76,6 +78,8 @@ export interface DangerOutcome {
   /** Side-effects that actually succeeded, for an honest response to the UI. */
   loopChanged?: boolean
   lifecycleChanged?: boolean
+  zerovoiceReleased?: boolean
+  byoDomainReleased?: boolean
   detail?: string
 }
 
@@ -84,14 +88,21 @@ export interface DangerOutcome {
  *   - pause   → disable the nightly loop (setLoopEnabled false)
  *   - resume  → re-enable the nightly loop (setLoopEnabled true)
  *   - offline → set app lifecycle 'offline' (kept, not served)
- *   - delete  → disable the loop AND set app lifecycle 'deleted' (soft delete),
- *               so a deleted company also stops running overnight.
+ *   - delete  → disable the loop, best-effort release the two provisioned
+ *               resources with a confirmed real release API (ZeroVoice
+ *               number, BYO domain Railway wiring — ZeroDB projects and
+ *               purchased domains have NO delete endpoint anywhere in their
+ *               real APIs, see #SEP-02's own research; left unreleased, not
+ *               silently simulated), THEN set app lifecycle 'deleted'.
  *
  * Best-effort + honest: returns which side-effects landed. A store that isn't
  * configured returns false from its setter, surfaced as *_changed:false rather
- * than a thrown error, so the caller can report partial success truthfully.
+ * than a thrown error, so the caller can report partial success truthfully. A
+ * release failure must never block the lifecycle flip — a founder expects
+ * "delete" to make the company disappear from their view even if a backend
+ * is down.
  */
-export async function applyDangerAction(req: DangerRequest): Promise<DangerOutcome> {
+export async function applyDangerAction(req: DangerRequest, founderJwt?: string): Promise<DangerOutcome> {
   switch (req.action) {
     case 'pause': {
       const loopChanged = await setLoopEnabled(req.companyId, req.companyName, req.track, false)
@@ -107,8 +118,21 @@ export async function applyDangerAction(req: DangerRequest): Promise<DangerOutco
     }
     case 'delete': {
       const loopChanged = await setLoopEnabled(req.companyId, req.companyName, req.track, false)
+
+      let zerovoiceReleased: boolean | undefined
+      let byoDomainReleased: boolean | undefined
+      const entry = await resolveApp(req.slug).catch(() => null)
+      if (entry?.zerovoiceNumberId && founderJwt) {
+        const released = await releaseZeroVoiceNumber(founderJwt, entry.zerovoiceNumberId)
+        zerovoiceReleased = released.ok
+      }
+      if (entry?.byoDomainId) {
+        const released = await deleteCustomDomain(entry.byoDomainId)
+        byoDomainReleased = released.ok
+      }
+
       const lifecycleChanged = await setAppLifecycle(req.slug, 'deleted')
-      return { ok: true, action: 'delete', loopChanged, lifecycleChanged }
+      return { ok: true, action: 'delete', loopChanged, lifecycleChanged, zerovoiceReleased, byoDomainReleased }
     }
     default:
       return { ok: false, action: req.action, detail: 'unhandled action' }

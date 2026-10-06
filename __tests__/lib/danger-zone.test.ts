@@ -6,9 +6,23 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
  *     destructive actions, defaults slug to companyId.
  *   - applyDangerAction: maps to the real stores (loop-enrollment + app-registry).
  */
-const h = vi.hoisted(() => ({ setLoopEnabled: vi.fn(), setAppLifecycle: vi.fn() }))
+const h = vi.hoisted(() => ({
+  setLoopEnabled: vi.fn(),
+  setAppLifecycle: vi.fn(),
+  // #SEP-02 — applyDangerAction's delete case now also looks up the entry
+  // (to find what to release) and attempts real resource release; these
+  // tests only exercise pause/resume/offline/delete's existing loop+lifecycle
+  // behavior, so resolveApp resolving to an entry with neither
+  // zerovoiceNumberId nor byoDomainId set is a safe, inert default — no
+  // release call fires for any of these pre-existing test cases.
+  resolveApp: vi.fn(),
+  releaseZeroVoiceNumber: vi.fn(),
+  deleteCustomDomain: vi.fn(),
+}))
 vi.mock('@/lib/build/loop-enrollment', () => ({ setLoopEnabled: h.setLoopEnabled }))
-vi.mock('@/lib/build/app-registry', () => ({ setAppLifecycle: h.setAppLifecycle }))
+vi.mock('@/lib/build/app-registry', () => ({ setAppLifecycle: h.setAppLifecycle, resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/zerovoice', () => ({ releaseZeroVoiceNumber: h.releaseZeroVoiceNumber }))
+vi.mock('@/lib/build/railway-deploy', () => ({ deleteCustomDomain: h.deleteCustomDomain }))
 
 import { parseDangerRequest, applyDangerAction } from '@/lib/build/danger-zone'
 
@@ -72,6 +86,9 @@ describe('applyDangerAction (#57)', () => {
   beforeEach(() => {
     h.setLoopEnabled.mockReset().mockResolvedValue(true)
     h.setAppLifecycle.mockReset().mockResolvedValue(true)
+    h.resolveApp.mockReset().mockResolvedValue({ slug: 'acme' }) // no zerovoiceNumberId/byoDomainId — no release call fires
+    h.releaseZeroVoiceNumber.mockReset()
+    h.deleteCustomDomain.mockReset()
   })
 
   const base = { companyId: 'acme', companyName: 'Acme', slug: 'acme', track: 'app' as const, confirm: 'acme' }

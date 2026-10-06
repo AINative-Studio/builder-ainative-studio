@@ -21,6 +21,13 @@ const SWARM_AGENTS = [
   { name: 'Security', role: 'Threat analysis' },
 ]
 
+// #SEP-06 — static, plan-inclusive usage message shown only on the longest-
+// running, most resource-intensive overlay kinds (swarm/provisioning). No
+// live cost calculation — no metering mechanism exists anywhere in this repo
+// to compute a real dollar/credit figure, so this stays genuinely generic
+// rather than implying a precision the system can't deliver.
+const USAGE_MESSAGE = "This build uses your plan's included generation credits — no surprise charges."
+
 const INFRA_ITEMS = [
   ['ZeroDB project', 'vectors + tables + embeddings'],
   ['ZeroMemory namespace', 'per-workspace isolation'],
@@ -54,7 +61,7 @@ export function BuildOverlays() {
     return (
       <div className="m-overlay m-formin" role="status" aria-live="polite">
         <span className="m-overlay-pill m-mono">SWARM WORKING</span>
-        <h1 className="m-artifact m-overlay-h">Cody&apos;s swarm is building the MVP</h1>
+        <h1 className="m-artifact m-overlay-h">Cody&apos;s team is building your MVP</h1>
         <div className="m-agent-grid">
           {SWARM_AGENTS.map((a) => {
             const active = ribbon.toLowerCase().includes(a.name.toLowerCase())
@@ -70,6 +77,7 @@ export function BuildOverlays() {
             )
           })}
         </div>
+        <p className="m-sub m-muted">{USAGE_MESSAGE}</p>
       </div>
     )
   }
@@ -80,7 +88,7 @@ export function BuildOverlays() {
     <div className="m-overlay m-formin" role="status" aria-live="polite">
       <span className="m-overlay-pill m-mono">PROVISIONING</span>
       <h1 className="m-artifact m-overlay-h">Provisioning your infrastructure</h1>
-      <p className="m-sub">Provision everything, ask nothing — real primitives, spun up for you.</p>
+      <p className="m-sub">Setting everything up automatically — real primitives, spun up for you.</p>
       <ul className="m-list m-checklist">
         {INFRA_ITEMS.map(([n, d], i) => (
           <li key={n}>
@@ -89,6 +97,7 @@ export function BuildOverlays() {
           </li>
         ))}
       </ul>
+      <p className="m-sub m-muted">{USAGE_MESSAGE}</p>
     </div>
   )
 }

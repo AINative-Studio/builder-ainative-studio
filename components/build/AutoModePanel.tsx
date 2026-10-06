@@ -173,7 +173,7 @@ export function AutoModePanel({ companyId, companyName, track = 'company', unloc
             {progress.dispatchesSoFar} task{progress.dispatchesSoFar === 1 ? '' : 's'} dispatched this run
           </p>
           <p className="m-task-meta" data-testid="auto-mode-activity">
-            Current activity: Cody is dispatching the swarm on {companyName} — briefing → highest-leverage task → ship.
+            Current activity: Cody's team is working on {companyName} — briefing → highest-leverage task → ship.
           </p>
           <button
             className="btn-secondary"

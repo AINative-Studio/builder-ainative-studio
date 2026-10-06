@@ -40,12 +40,12 @@ const TIERS = [
   { id: 'pro', name: 'Pro', monthly: 49, tagline: 'Build it for real.', plan: 'launch' as const, featured: true,
     priceId: 'price_1TGUVdDP3OaRv4TyMwk7nnp1',
     priceIdYearly: '', // TODO(#258): create Stripe yearly price ($490/yr) and set its price_… here
-    features: ['Cody builds your app + company', 'The nightly autonomous loop + real agent swarm', '1M tokens · 50K API · 10GB', 'Real generation (Claude Sonnet 4.5)', 'Custom domain available'] },
+    features: ['Cody builds your app + company', 'Cody keeps working overnight, with a full team of AI workers', '1M tokens · 50K API · 10GB', 'Real generation (Claude Sonnet 4.5)', 'Custom domain available'] },
   { id: 'business', name: 'Business', monthly: 149, tagline: 'Cody runs it 24/7.', plan: 'company' as const,
     priceId: 'price_1TGUVeDP3OaRv4TyaqQG6lVT',
     priceIdYearly: '', // TODO(#258): create Stripe yearly price ($1,490/yr) and set its price_… here
     features: ['Everything in Pro', 'Sales pipeline · invoicing · helpdesk · voice', '5M tokens · 150K API · 50GB'] },
-  { id: 'enterprise', name: 'Enterprise', monthly: 999, tagline: 'Full agent-swarm autonomy.', plan: 'company' as const,
+  { id: 'enterprise', name: 'Enterprise', monthly: 999, tagline: "Cody's full team works independently.", plan: 'company' as const,
     priceId: 'price_1Ti31LDP3OaRv4TytcjLbFPh',
     priceIdYearly: '', // TODO(#258): create Stripe yearly price ($9,990/yr) and set its price_… here
     features: ['Everything in Business', '20M tokens · 200GB · SSO', 'Priority support'] },
