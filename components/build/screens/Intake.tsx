@@ -2,9 +2,10 @@
 
 /** Intake screen (#222) — capture the idea in one field. Copy verbatim from 04-SCREENS §2. */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useBuild } from '@/contexts/build-context'
 import { trackEvent } from '@/components/analytics/google-analytics'
+import { getOrCreateAnonDraftToken } from '@/lib/build/anon-draft-token'
 
 export function Intake() {
   const { state, dispatch } = useBuild()
@@ -12,6 +13,16 @@ export function Intake() {
   // mounts) so the founder lands on a ready-to-edit starter idea, not a blank field.
   const [idea, setIdea] = useState(state.idea || '')
   const [naming, setNaming] = useState(false)
+
+  // #E3.4 — offer to resume a real saved anonymous draft for this browser.
+  const [resumeDraft, setResumeDraft] = useState<{ idea: string } | null>(null)
+  useEffect(() => {
+    const token = getOrCreateAnonDraftToken()
+    fetch(`/api/build/anon-draft?token=${encodeURIComponent(token)}`)
+      .then((res) => res.json())
+      .then((d) => { if (d?.draft?.idea) setResumeDraft(d.draft) })
+      .catch(() => { /* no resume offer — never blocks the real idea form */ })
+  }, [])
 
   const start = async () => {
     if (!idea.trim() || naming) return
@@ -61,6 +72,27 @@ export function Intake() {
           <p className="m-chat-cody-turn" data-testid="intake-idea-too-thin">
             Tell me a bit more — what would it do, and who is it for?
           </p>
+        )}
+        {resumeDraft && (
+          <div className="m-chat-cody-turn" data-testid="intake-resume-draft">
+            <p>Pick up where you left off?</p>
+            <button
+              type="button"
+              className="btn-primary"
+              data-testid="intake-resume-continue"
+              onClick={() => { dispatch({ type: 'SET_IDEA', idea: resumeDraft.idea }); setIdea(resumeDraft.idea); setResumeDraft(null) }}
+            >
+              Continue
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              data-testid="intake-resume-start-over"
+              onClick={() => setResumeDraft(null)}
+            >
+              Start over
+            </button>
+          </div>
         )}
       </div>
       <textarea

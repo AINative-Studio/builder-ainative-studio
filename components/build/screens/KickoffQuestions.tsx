@@ -15,6 +15,7 @@ import { useBuild } from '@/contexts/build-context'
 import { trackEvent } from '@/components/analytics/google-analytics'
 import { decideLimitAction } from '@/lib/build/value-moment'
 import { getKickoffQuestions } from '@/lib/build/kickoff-questions'
+import { getOrCreateAnonDraftToken } from '@/lib/build/anon-draft-token'
 
 const NOT_SURE = 'Not sure yet'
 
@@ -28,11 +29,24 @@ export function KickoffQuestions() {
   const question = questions[index]
 
   const answer = (value: string) => {
-    if (value.trim() && value !== NOT_SURE) {
-      dispatch({ type: 'SET_ANSWER', key: question.id, value: value.trim() })
+    const trimmed = value.trim() && value !== NOT_SURE ? value.trim() : undefined
+    if (trimmed) {
+      dispatch({ type: 'SET_ANSWER', key: question.id, value: trimmed })
     }
     trackEvent('kickoff_answered', 'funnel', state.track, undefined)
     setFreeText('')
+    const nextStep = index < questions.length - 1 ? index + 1 : questions.length
+    // #E3.4 — autosave the draft so an abandoned kickoff can be resumed.
+    // Best-effort, fire-and-forget — never blocks the real UI flow.
+    const token = getOrCreateAnonDraftToken()
+    fetch('/api/build/anon-draft', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token, idea: state.idea, track: state.track,
+        answers: trimmed ? { ...state.answers, [question.id]: trimmed } : state.answers,
+        step: `kickoff-${nextStep}`,
+      }),
+    }).catch(() => {})
     if (index < questions.length - 1) {
       setIndex(index + 1)
     } else {
