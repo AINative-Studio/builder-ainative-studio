@@ -1247,6 +1247,11 @@
    Auth + Account (#227)
    ============================================================================ */
 .m-auth { min-height: 100vh; display: grid; grid-template-columns: 1fr 1fr; }
+/* #944 Part 2 — above the mobile breakpoint, default to the existing
+   email/password form; .m-auth-force-phone is the explicit opt-in. */
+.m-auth-phone-form { display: none; }
+.m-auth.m-auth-force-phone .m-auth-phone-form { display: flex; }
+.m-auth.m-auth-force-phone .m-auth-fields-email { display: none; }
 .m-auth-brand { background: var(--alert); color: #fff; padding: 56px 44px; display: flex; flex-direction: column; justify-content: center; }
 .m-auth-statement { font-weight: 500; font-size: 34px; line-height: 1.2; margin: 14px 0; }
 .m-auth-subhead { font-size: 15px; line-height: 1.6; opacity: 0.9; max-width: 40ch; }
@@ -1705,6 +1710,14 @@
   .m-auth-form { padding: 72px 24px 32px; max-width: none; }
   .m-auth-statement { font-size: 26px; }
   .m-auth-header { top: 20px; left: 24px; right: 24px; }
+
+  /* #944 Part 2 — mobile-first phone login. Default on mobile: show the
+     phone-first form, hide the email/password form. .m-auth-force-email
+     (escape hatch, both directions) overrides this regardless of viewport. */
+  .m-auth-phone-form { display: flex; }
+  .m-auth-fields-email { display: none; }
+  .m-auth.m-auth-force-email .m-auth-phone-form { display: none; }
+  .m-auth.m-auth-force-email .m-auth-fields-email { display: flex; }
 
   .m-pricing { padding: 32px 20px; }
   .m-tiers { grid-template-columns: 1fr; }
