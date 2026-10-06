@@ -19,6 +19,7 @@ import { trackEvent } from '@/components/analytics/google-analytics'
 import { captureAttribution } from '@/lib/build/attribution'
 import { savePendingBuild, loadPendingBuild, clearPendingBuild } from '@/lib/build/pending-build'
 import { saveActiveBuild, loadActiveBuild, clearActiveBuild } from '@/lib/build/active-build'
+import { recordFunnelEvent } from '@/lib/build/funnel-events'
 
 interface BuildContextValue {
   state: BuildState
@@ -179,6 +180,19 @@ export function isDeepLinkCompanyNotFound(resolveAppResponse: { chatId?: string 
  */
 export function canResumeActiveBuild(session: { user?: unknown } | null | undefined): boolean {
   return Boolean(session?.user)
+}
+
+/**
+ * Whether the active track's final build step has been reached (#BLD-06.12).
+ * The pre-existing build_completed effect below only ever checked
+ * builtCompany — a real, pre-existing gap that silently never fired on the
+ * App track, which completes via builtMVP instead. Extracted as a pure,
+ * directly-testable function per this file's own established pattern
+ * (canResumeActiveBuild, computeSyncedUrl) — mounting the full
+ * BuildProvider OOMs jsdom via useAutoplay.
+ */
+export function isLastStepReached(state: { track: 'app' | 'company'; builtCompany: boolean; builtMVP: boolean }): boolean {
+  return state.track === 'company' ? state.builtCompany : state.builtMVP
 }
 
 export function BuildProvider({ children }: { children: ReactNode }) {
@@ -411,6 +425,21 @@ export function BuildProvider({ children }: { children: ReactNode }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.builtCompany])
+  // #BLD-06.12 — last_step_reached, gated on isLastStepReached (the real
+  // fix for build_completed's pre-existing App-track gap above: that
+  // effect never covers builtMVP, so this is the funnel's own, correct
+  // signal rather than reusing the narrower one).
+  useEffect(() => {
+    if (isLastStepReached(state)) {
+      recordFunnelEvent('last_step_reached', { companyId: state.appSub || null, track: state.track, step: state.view }).catch(() => {})
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.builtCompany, state.builtMVP])
+  // #BLD-06.12 — step_viewed, fires whenever the current artifact changes.
+  useEffect(() => {
+    recordFunnelEvent('step_viewed', { companyId: state.appSub || null, track: state.track, step: state.view }).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.view])
 
   const views = useMemo(() => trackViews(state.track), [state.track])
   const woven = useMemo(() => countWoven(state, PRIMITIVE_MAP), [state])
