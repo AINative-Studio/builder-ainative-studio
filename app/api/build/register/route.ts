@@ -137,6 +137,14 @@ async function handleSendOtp(rawPhone: string, request: NextRequest) {
   }
 
   const result = await sendOtp(phone)
+  // #950 — the only non-ok reasons that indicate a real problem (not the
+  // honest, expected not_configured infra gap) are genuine send failures —
+  // e.g. the 2026-10-06 incident where Twilio accepted the send but carrier
+  // delivery silently failed (error 30034). Never log the phone number or
+  // the code itself.
+  if (!result.ok && result.reason !== 'not_configured') {
+    console.warn('[otp] send-otp failed', result.reason)
+  }
   const status = result.ok ? 200 : (result.reason === 'not_configured' ? 200 : 502)
   return Response.json(result, { status })
 }
