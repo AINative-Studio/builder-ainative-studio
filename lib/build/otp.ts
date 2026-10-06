@@ -57,6 +57,7 @@
 
 import { getAinativeApiKey } from '@/lib/build/env-keys'
 import { sendViaResend, resendConfigured } from '@/lib/build/resend-client'
+import { checkSmsDeliveryFailureAlert } from '@/lib/jobs/alerting'
 
 const AINATIVE_API = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 const API_KEY = getAinativeApiKey()
@@ -365,7 +366,10 @@ export async function recordOtpDeliveryStatus(messageSid: string, status: 'deliv
     const rows = Array.isArray(data) ? data : data.data || data.rows || []
     const match = rows.map((r: { row_data?: OtpDeliveryRow }) => r.row_data).find((rd: OtpDeliveryRow | undefined) => rd?.messageSid === messageSid)
     if (!match) return // unmapped sid — not this flow's send, drop silently
-    await recordDeliveryRow({ ...match, status })
+    const stored = await recordDeliveryRow({ ...match, status })
+    if (stored && (status === 'undelivered' || status === 'failed')) {
+      checkSmsDeliveryFailureAlert().catch(() => {})
+    }
   } catch { /* best-effort */ }
 }
 

@@ -27,7 +27,7 @@ let lastAlertTime: Record<string, number> = {}
 const ALERT_COOLDOWN = 5 * 60 * 1000
 
 // Check if we should send an alert (avoid spam)
-function shouldSendAlert(alertName: string): boolean {
+export function shouldSendAlert(alertName: string): boolean {
   const now = Date.now()
   const lastAlert = lastAlertTime[alertName] || 0
 
@@ -37,6 +37,11 @@ function shouldSendAlert(alertName: string): boolean {
 
   lastAlertTime[alertName] = now
   return true
+}
+
+/** Test-only: reset the alert cooldown state between test cases. */
+export function __resetAlertCooldownsForTests(): void {
+  lastAlertTime = {}
 }
 
 // Alert Rule 1: Error rate > 5% for 5 minutes
@@ -126,7 +131,7 @@ async function checkLLMFailures(): Promise<boolean> {
 }
 
 // Send alert to Slack
-async function sendSlackAlert(notification: AlertNotification): Promise<void> {
+export async function sendSlackAlert(notification: AlertNotification): Promise<void> {
   const webhookUrl = process.env.SLACK_WEBHOOK_URL
 
   if (!webhookUrl) {
@@ -185,6 +190,26 @@ async function sendEmailAlert(notification: AlertNotification): Promise<void> {
     title: notification.title,
     message: notification.message,
     severity: notification.severity,
+  })
+}
+
+/**
+ * Alert on a confirmed OTP SMS delivery failure (#BLD-02d). Called from
+ * otp.ts's recordOtpDeliveryStatus whenever Twilio's real webhook (#BLD-02c)
+ * reports undelivered/failed. Respects the same 5-minute cooldown as every
+ * other alert here — a carrier-wide block (confirmed real and ongoing this
+ * session: the A2P 10DLC campaign stuck since 2026-09-21) must alert ONCE,
+ * not once per failed send.
+ */
+export async function checkSmsDeliveryFailureAlert(errorCode?: string): Promise<void> {
+  if (!shouldSendAlert('sms-delivery-failure')) return
+  await sendSlackAlert({
+    title: 'OTP SMS delivery failed',
+    message: errorCode
+      ? `A phone verification code failed to deliver (Twilio error ${errorCode}).`
+      : 'A phone verification code failed to deliver.',
+    severity: 'critical',
+    timestamp: new Date(),
   })
 }
 
