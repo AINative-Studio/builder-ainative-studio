@@ -17,6 +17,7 @@
  */
 import { NextRequest } from 'next/server'
 import { toE164 } from '@/lib/build/phone'
+import { turnstileEnabled, verifyTurnstileToken } from '@/lib/turnstile'
 
 export const runtime = 'nodejs'
 
@@ -47,5 +48,42 @@ export async function POST(request: NextRequest) {
 
   if (b?.action === 'send-otp') return handleSendOtp(String(b?.phone || ''))
 
-  return Response.json({ ok: false, error: 'not_implemented' }, { status: 501 })
+  const rawPhone = String(b?.phone || '')
+  const otpCode = String(b?.otp_code || '')
+  const phone = toE164(rawPhone)
+  if (!phone) return Response.json({ ok: false, error: 'invalid_phone' }, { status: 400 })
+  if (!otpCode) return Response.json({ ok: false, error: 'invalid_request' }, { status: 400 })
+
+  if (turnstileEnabled()) {
+    const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+    const verification = await verifyTurnstileToken(
+      typeof b?.turnstileToken === 'string' ? b.turnstileToken : null,
+      ip,
+    )
+    if (!verification.success) {
+      return Response.json({ ok: false, error: 'verification_failed' }, { status: 400 })
+    }
+  }
+
+  try {
+    const res = await fetch(`${CORE}/api/v1/auth/register-phone`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, otp_code: otpCode }),
+      signal: AbortSignal.timeout(25000),
+    })
+    const data = await res.json().catch(() => null)
+    if (!res.ok) {
+      const detail = typeof data?.detail === 'string' ? data.detail : (data?.detail?.message || 'registration failed')
+      return Response.json({ ok: false, error: detail }, { status: res.status })
+    }
+    return Response.json({
+      ok: true,
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      expiresIn: data.expires_in,
+    })
+  } catch (e: any) {
+    return Response.json({ ok: false, error: String(e?.message || e).slice(0, 120) }, { status: 502 })
+  }
 }
