@@ -1262,6 +1262,8 @@
 .m-field-l { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); }
 .m-field input { padding: 10px 12px; border: 1.5px solid var(--neutral-line); font-family: var(--font-body); font-size: 14px; background: var(--color-surface); }
 .m-auth-links { display: flex; justify-content: space-between; margin-top: 16px; gap: 12px; }
+.m-otp-fallback { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.m-otp-fallback button { margin-right: 10px; }
 
 .m-account { min-height: 100vh; max-width: 760px; margin: 0 auto; padding: 40px 44px; }
 .m-account-head { display: flex; align-items: center; gap: 16px; margin-bottom: 28px; }
