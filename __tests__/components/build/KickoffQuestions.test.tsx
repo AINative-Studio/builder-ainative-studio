@@ -13,9 +13,10 @@ vi.mock('next-auth/react', () => ({ useSession: () => ({ status: 'unauthenticate
 vi.mock('@/components/analytics/google-analytics', () => ({ trackEvent: vi.fn() }))
 vi.mock('@/lib/build/value-moment', () => ({ decideLimitAction: () => 'continue' }))
 const dispatchMock = vi.fn()
+let mockTrack: 'app' | 'company' = 'company'
 vi.mock('@/contexts/build-context', () => ({
   useBuild: () => ({
-    state: { track: 'company', idea: 'x', appSub: 'acme', companyName: 'Acme', brandTagline: '', brandColor: '#000' },
+    state: { track: mockTrack, idea: 'x', appSub: 'acme', companyName: 'Acme', brandTagline: '', brandColor: '#000' },
     dispatch: dispatchMock,
   }),
 }))
@@ -34,10 +35,12 @@ afterEach(() => {
   act(() => { root?.unmount() })
   host?.remove()
   vi.clearAllMocks()
+  mockTrack = 'company'
 })
 
 describe('KickoffQuestions — Company track (#E3.2)', () => {
   it('asks one question at a time, with suggestions, free text, and Not sure yet', () => {
+    mockTrack = 'company'
     render(React.createElement(KickoffQuestions))
     expect(host.textContent).toContain('Who would you like to help')
     expect(host.textContent).toContain('Not sure yet')
@@ -65,5 +68,28 @@ describe('KickoffQuestions — Company track (#E3.2)', () => {
     }
     const calledTypes = dispatchMock.mock.calls.map((c) => c[0].type)
     expect(calledTypes).toContain('DEFER_BUILD')
+  })
+})
+
+describe('KickoffQuestions — App track (#E3.3)', () => {
+  it('asks the 3 real App-track questions from the backlog doc', () => {
+    mockTrack = 'app'
+    render(React.createElement(KickoffQuestions))
+    expect(host.textContent).toContain('What should the app help people do')
+  })
+
+  it('cycles through all 3 App-track questions in order', async () => {
+    mockTrack = 'app'
+    render(React.createElement(KickoffQuestions))
+    expect(host.textContent).toContain('What should the app help people do')
+    const freetextInput = host.querySelector('input[type="text"]') as HTMLInputElement
+    const freetextSubmit = host.querySelector('[data-testid="kickoff-submit-freetext"]') as HTMLButtonElement
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!
+      setter.call(freetextInput, 'help people schedule things')
+      freetextInput.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => { freetextSubmit.click() })
+    expect(host.textContent).toContain('Who will use it')
   })
 })
