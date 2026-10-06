@@ -18,10 +18,20 @@
 import { NextRequest } from 'next/server'
 import { toE164 } from '@/lib/build/phone'
 import { turnstileEnabled, verifyTurnstileToken } from '@/lib/turnstile'
+import { gclidFromRequest } from '@/lib/build/conversions'
 
 export const runtime = 'nodejs'
 
 const CORE = process.env.AINATIVE_API_URL || process.env.AINATIVE_API_BASE_URL || 'https://api.ainative.studio'
+
+// Mirrors register/route.ts's private utmFromRequest exactly (not exported
+// there, so duplicated rather than reaching into another route's internals).
+function utmFromRequest(request: Request): Record<string, string> {
+  const cookie = request.headers.get('cookie') || ''
+  const m = cookie.match(/(?:^|; )ax_utm=([^;]*)/)
+  if (!m) return {}
+  try { return JSON.parse(decodeURIComponent(m[1])) } catch { return {} }
+}
 
 async function handleSendOtp(rawPhone: string) {
   const phone = toE164(rawPhone)
@@ -65,11 +75,32 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Review finding #4 (2026-10-06): the spec explicitly required forwarding
+  // signup_source + ext the same way register/route.ts does — dropped in
+  // the first pass, which would have silently broken ad-attribution (no
+  // users.gclid set) and the card-free keyless bypass for every phone
+  // signup. Same gclid/utm cookie reads, same nested ext.utm shape core
+  // expects (auth.py reads gclid flat but utm from a NESTED ext.utm dict).
+  const gclid = gclidFromRequest(request)
+  const utm = utmFromRequest(request)
+
   try {
     const res = await fetch(`${CORE}/api/v1/auth/register-phone`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone, otp_code: otpCode }),
+      body: JSON.stringify({
+        phone,
+        otp_code: otpCode,
+        signup_source: 'builder',
+        ext: {
+          gclid: gclid || undefined,
+          utm: {
+            utm_source: utm.utm_source || (gclid ? 'google' : undefined),
+            utm_medium: utm.utm_medium || (gclid ? 'cpc' : undefined),
+            utm_campaign: utm.utm_campaign || undefined,
+          },
+        },
+      }),
       signal: AbortSignal.timeout(25000),
     })
     const data = await res.json().catch(() => null)

@@ -99,6 +99,11 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
   const [primaryOtpCode, setPrimaryOtpCode] = useState('')
   const [phoneFormBusy, setPhoneFormBusy] = useState(false)
   const [phoneFormError, setPhoneFormError] = useState<string | null>(null)
+  // Review finding #2 (2026-10-06): register-phone's route is Turnstile-gated
+  // (mirrors /api/build/register's gate), but nothing ever rendered a widget
+  // on this path or sent its token, so every phone registration fail-closed
+  // with 'verification_failed' whenever Turnstile is configured in prod.
+  const [primaryTurnstileToken, setPrimaryTurnstileToken] = useState('')
   // #7698 — real password reset (this used to be a "coming soon" stub that
   // never called anything). `resetSent` switches the forgot screen into a
   // neutral "check your email" confirmation — core deliberately does not reveal
@@ -435,7 +440,7 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
       if (!d?.ok && d?.errorCode === 'NO_SUCH_PHONE_ACCOUNT') {
         const registerRes = await fetch('/api/build/register-phone', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ phone: normalized, otp_code: primaryOtpCode }),
+          body: JSON.stringify({ phone: normalized, otp_code: primaryOtpCode, turnstileToken: primaryTurnstileToken }),
         })
         d = await registerRes.json().catch(() => null)
       }
@@ -738,6 +743,9 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
                   />
                 </label>
                 {phoneFormError && <p className="m-auth-error">{phoneFormError}</p>}
+                {mode === 'signup' && (
+                  <TurnstileWidget onVerify={setPrimaryTurnstileToken} onExpire={() => setPrimaryTurnstileToken('')} />
+                )}
                 <button
                   type="button"
                   data-testid="phone-send-code"
@@ -771,6 +779,16 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
                 </button>
               </>
             )}
+          </div>
+        )}
+        {/* Review finding #1 (2026-10-06): these must live OUTSIDE
+            .m-auth-phone-form — .m-auth-force-email hides that whole
+            container, which previously hid the only control that could
+            switch back to the phone form, stranding a founder who tapped
+            "Use email instead" by accident. This wrapper is never
+            force-hidden by either .m-auth-force-email or .m-auth-force-phone. */}
+        {(mode === 'login' || mode === 'signup') && (
+          <div className="m-auth-escape-row">
             {showPhoneForm !== 'email' && (
               <button
                 type="button"

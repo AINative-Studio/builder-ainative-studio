@@ -3,13 +3,14 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-function req(body: unknown, ip = '1.2.3.4') {
+function req(body: unknown, ip = '1.2.3.4', cookie = '') {
   return {
     json: async () => body,
     headers: {
       get: (k: string) => {
         const key = k.toLowerCase()
         if (key === 'x-forwarded-for') return ip
+        if (key === 'cookie') return cookie
         return null
       },
     },
@@ -100,13 +101,40 @@ describe('POST /api/build/register-phone — register action', () => {
     const d = await res.json()
     expect(res.status).toBe(200)
     expect(d).toEqual({ ok: true, accessToken: 'tok-abc', refreshToken: 'ref-abc', expiresIn: 3600 })
-    expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining('/api/v1/auth/register-phone'),
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({ phone: '+15125551234', otp_code: '123456' }),
-      }),
-    )
+    const [, init] = fetchMock.mock.calls[0]
+    const sentBody = JSON.parse(init.body)
+    expect(sentBody.phone).toBe('+15125551234')
+    expect(sentBody.otp_code).toBe('123456')
+  })
+
+  it('forwards signup_source:builder and ad-attribution ext, same as /api/build/register (review finding #4)', async () => {
+    // Spec (docs/superpowers/specs/2026-10-06-mobile-phone-login-part2-design.md)
+    // explicitly required this: "register-phone additionally forwards
+    // signup_source: 'builder' + ext (gclid/utm...) same as register/route.ts
+    // does." Dropped silently in the first implementation pass — a phone
+    // founder who clicked a paid ad would have their gclid never reach
+    // core's users.gclid column, so the eventual paid-conversion Stripe
+    // webhook has nothing to upload back to Google Ads. Caught by review.
+    const { POST } = await import('@/app/api/build/register-phone/route')
+    await POST(req(
+      { phone: '5125551234', otp_code: '123456' },
+      '1.2.3.4',
+      'ax_gclid=abc123; ax_utm=' + encodeURIComponent(JSON.stringify({ utm_source: 'google', utm_medium: 'cpc', utm_campaign: 'spring' })),
+    ))
+    const [, init] = fetchMock.mock.calls[0]
+    const sentBody = JSON.parse(init.body)
+    expect(sentBody.signup_source).toBe('builder')
+    expect(sentBody.ext.gclid).toBe('abc123')
+    expect(sentBody.ext.utm).toEqual({ utm_source: 'google', utm_medium: 'cpc', utm_campaign: 'spring' })
+  })
+
+  it('still forwards signup_source:builder even with no ad-attribution cookies present', async () => {
+    const { POST } = await import('@/app/api/build/register-phone/route')
+    await POST(req({ phone: '5125551234', otp_code: '123456' }))
+    const [, init] = fetchMock.mock.calls[0]
+    const sentBody = JSON.parse(init.body)
+    expect(sentBody.signup_source).toBe('builder')
+    expect(sentBody.ext.gclid).toBeUndefined()
   })
 
   it('surfaces a core registration failure cleanly', async () => {

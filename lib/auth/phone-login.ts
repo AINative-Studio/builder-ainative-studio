@@ -9,9 +9,15 @@
  * Mirrors the existing `ainative-oauth` provider's shape exactly: adopts an
  * ALREADY-VERIFIED access token (core's /register-phone or /login-phone
  * already issued it) into a session — no password, ever, on this path.
- * `email` is explicitly null (not omitted) since a phone-only account has
- * none — downstream code reading session.user.email must see an explicit
- * absence, not undefined from a missing key.
+ *
+ * `email` is a SYNTHETIC string (`phone-<id>@phone.ainative.studio`), not a
+ * real address — a phone-only account has none. Initially this was a literal
+ * `null`, which a fresh-context review (2026-10-06) caught breaking ~22
+ * call sites across this app that key account identity off
+ * session.user.email with a plain `if (!email) return 401` check. The
+ * synthetic form mirrors the EXISTING guest-account convention
+ * (`guest-${id}@example.com` in lib/db/queries.ts) so every one of those
+ * call sites keeps working unchanged.
  */
 export type PhoneLoginCreds = {
   accessToken?: string
@@ -56,7 +62,21 @@ export async function authorizePhoneLogin(creds: PhoneLoginCreds) {
 
     return {
       id: profile.id,
-      email: null,
+      // Review finding #3 (2026-10-06): a literal null here broke every one
+      // of the ~22 call sites across this app that key account identity off
+      // session.user.email (my-companies, credits, provision, chat-store's
+      // deriveOwnerKey, secrets, domains, export, uploads, redeploy,
+      // danger-zone, and more) — each does `if (!email) return 401`, so a
+      // phone founder's session would authenticate successfully and then
+      // immediately 401 on every subsequent authenticated call. Mirrors the
+      // EXISTING synthetic-email convention guest accounts already use
+      // (lib/db/queries.ts: `guest-${guestId}@example.com`) rather than
+      // inventing a new one — a real, stable, unique string that satisfies
+      // every truthy check downstream without any of those 22 call sites
+      // needing to change. Distinguishable via its own `phone-` prefix +
+      // `@phone.ainative.studio` domain if a caller ever needs to special-
+      // case it the way deriveOwnerKey already special-cases guest emails.
+      email: `phone-${profile.id}@phone.ainative.studio`,
       name: profile.full_name || profile.phone || 'AINative User',
       type: 'ainative' as const,
       accessToken: creds.accessToken,
