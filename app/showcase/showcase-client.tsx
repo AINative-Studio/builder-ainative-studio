@@ -338,13 +338,13 @@ function cleanTitle(title: string): string {
     .slice(0, 5)
     .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
     .join(' ')
-  return t || 'Generated App'
+  return t || 'A Business Built with Cody'
 }
 
 // Generate a real description from the prompt
 function cleanDescription(prompt: string, title: string): string {
   if (!prompt || prompt === title) {
-    return `A production-ready React application generated with AI`
+    return `A real business, built by describing this idea to Cody`
   }
   // Remove "Build a/an" prefix and clean up
   let desc = prompt

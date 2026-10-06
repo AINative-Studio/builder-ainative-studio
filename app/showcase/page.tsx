@@ -6,11 +6,11 @@ import { PublicNav } from '@/components/shared/public-nav'
 import { PublicFooter } from '@/components/shared/public-footer'
 
 export const metadata: Metadata = {
-  title: 'Showcase — AI-Generated React Apps | AINative Builder',
-  description: 'Browse beautiful, production-ready React applications generated entirely by AI. Dashboards, landing pages, e-commerce, chat interfaces, and more — all built with AINative Builder in seconds.',
+  title: 'Showcase — Real Businesses Built by Cody | AINative Builder',
+  description: 'Browse real businesses that founders built by describing an idea to Cody, their AI co-founder — no code required. Side hustles, freelance tools, and small companies, each running on real AINative primitives.',
   openGraph: {
-    title: 'AI App Showcase — AINative Builder',
-    description: 'See what AI can build. Browse 50+ production-ready React apps generated in seconds.',
+    title: 'Showcase — Real Businesses Built by Cody',
+    description: 'No code, no developer — just an idea and a conversation with Cody. See what real founders have built.',
     url: 'https://builder.ainative.studio/showcase',
   },
   alternates: {
@@ -125,7 +125,7 @@ export default async function ShowcasePage() {
   const all = SEED_SHOWCASE
 
   return (
-    <div className="modernist" style={{ minHeight: '100vh' }} data-agent-role="application" data-agent-context="showcase gallery of AI-generated React apps">
+    <div className="modernist" style={{ minHeight: '100vh' }} data-agent-role="application" data-agent-context="showcase of real businesses founders built with Cody, their AI co-founder, no code required">
       <PublicNav />
       <header data-agent-role="navigation">
         <div style={{ maxWidth: 1200, margin: '0 auto', padding: '48px 24px 40px' }}>
@@ -134,13 +134,14 @@ export default async function ShowcasePage() {
             <span>/</span>
             <span style={{ color: 'var(--color-text)', fontWeight: 600 }}>Showcase</span>
           </nav>
-          <h1 className="m-h1" style={{ fontSize: 40, margin: '0 0 12px' }}>AI App Showcase</h1>
+          <h1 className="m-h1" style={{ fontSize: 40, margin: '0 0 12px' }}>Real Businesses, Built by Cody</h1>
           <p style={{ fontSize: 17, color: 'var(--text-muted)', maxWidth: 640 }}>
-            Production-ready React applications generated entirely by AI in seconds.
-            Each app was built with a single prompt using AINative Builder.
+            Every business below started as one sentence from a founder — a side hustle, a
+            freelance tool, a small company idea. No code, no developer. Cody, their AI
+            co-founder, composed it from real AINative primitives and keeps running it.
           </p>
           <div style={{ marginTop: 16 }}>
-            <Link href="/" className="btn-primary" style={{ textDecoration: 'none' }} aria-label="Try building your own app">
+            <Link href="/" className="btn-primary" style={{ textDecoration: 'none' }} aria-label="Describe your own idea to Cody">
               Build Your Own
               <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
             </Link>
@@ -162,19 +163,19 @@ export default async function ShowcasePage() {
         {/* ALL generated apps — live preview thumbnails, filterable by category */}
         <section aria-label="All generated apps">
           <h2 style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, fontSize: 20, marginBottom: 8 }}>
-            All Generated Apps
+            All Businesses
           </h2>
           <p style={{ fontSize: 14, color: 'var(--text-muted)', marginBottom: 24 }}>
-            Every app below was built with a single prompt — click to view the live preview
+            Every one below started as a single idea, described in plain English — click to see it live
           </p>
           <ShowcaseGalleryClient />
         </section>
 
         {/* CTA to build your own */}
         <section aria-label="Build your own" style={{ marginTop: 48, textAlign: 'center', padding: '48px 24px', background: 'var(--color-surface)', borderTop: '4px solid var(--color-accent)' }}>
-          <h2 className="m-h1" style={{ fontSize: 28, margin: '0 auto 12px' }}>Build Your Own App</h2>
+          <h2 className="m-h1" style={{ fontSize: 28, margin: '0 auto 12px' }}>Start Your Own</h2>
           <p style={{ color: 'var(--text-muted)', marginBottom: 24, maxWidth: 400, marginInline: 'auto' }}>
-            Describe any app in plain English and get production-ready React code in seconds.
+            No coding experience needed. Describe your idea in plain English, and Cody takes it from there.
           </p>
           <Link href="/" className="btn-primary" style={{ textDecoration: 'none' }}>
             Start Building
@@ -186,22 +187,25 @@ export default async function ShowcasePage() {
         <section className="m-artifact" style={{ marginTop: 64, fontSize: 16, lineHeight: 1.7, color: 'var(--color-text)' }} aria-label="About the showcase">
           <h2 style={{ fontSize: 24, fontWeight: 500 }}>What is AINative Builder?</h2>
           <p>
-            AINative Builder is an AI-powered application builder that generates production-ready
-            React components from natural language prompts. Describe what you want — a dashboard,
-            landing page, chat interface, or any web application — and get working code in seconds.
+            AINative Builder is for people who have a business idea but aren't developers —
+            side hustlers, freelancers, small business owners, and first-time entrepreneurs.
+            Describe your idea in plain English to Cody, your AI co-founder, and Cody builds a
+            real, working business around it — not just a mockup of one.
           </p>
-          <h3 style={{ fontSize: 19, fontWeight: 500 }}>How are these apps generated?</h3>
+          <h3 style={{ fontSize: 19, fontWeight: 500 }}>What makes this different from an AI app generator?</h3>
           <p>
-            Every app in this showcase was generated by a single prompt. The AI analyzes your
-            requirements, selects appropriate components (Tailwind CSS, Lucide icons, Recharts,
-            shadcn/ui), generates complete React code, and renders it in a live preview — all
-            within seconds.
+            Most AI tools stop at generating code you then have to host, connect, and maintain
+            yourself. Cody composes your business from AINative's own real, already-running
+            systems — invoicing, payments, a customer pipeline, a phone number customers can
+            text — so what you get is a working business from day one, not a prototype you
+            still have to build. Cody keeps running it afterward: nightly checks, growth tasks,
+            and real upkeep, the way a technical co-founder would.
           </p>
-          <h3 style={{ fontSize: 19, fontWeight: 500 }}>Can I use these in my projects?</h3>
+          <h3 style={{ fontSize: 19, fontWeight: 500 }}>Do I need to know how to code?</h3>
           <p>
-            Yes! All generated code is yours to use. Export any project as a complete Next.js
-            application with a single click. The generated code uses modern React patterns,
-            TypeScript, and Tailwind CSS — ready for production deployment.
+            No. Every business in this showcase was started by someone describing an idea in a
+            sentence or two — no code, no developer, no technical background required. If you
+            can describe what you want your business to do, Cody can build it.
           </p>
         </section>
       </main>
@@ -215,8 +219,8 @@ export default async function ShowcasePage() {
           __html: JSON.stringify({
             '@context': 'https://schema.org',
             '@type': 'CollectionPage',
-            name: 'AI App Showcase — AINative Builder',
-            description: 'Browse production-ready React applications generated entirely by AI.',
+            name: 'Showcase — Real Businesses Built by Cody',
+            description: 'Real businesses founders built by describing an idea to Cody, their AI co-founder — no code required.',
             url: 'https://builder.ainative.studio/showcase',
             numberOfItems: all.length,
             publisher: {

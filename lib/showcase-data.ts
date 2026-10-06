@@ -177,16 +177,37 @@ export function extractShowcaseTitle(prompt: string): string {
   let text = prompt
   // Strip each known wrapper phrasing (longest/most-specific first) so what
   // remains is the founder's real idea text, not template boilerplate.
+  //
+  // #955 — the landing-page wrapper (company-app/route.ts) MUST be tried
+  // before the generic "...for this idea:" wrapper below it. Without a
+  // tagline, the landing-page prompt is "...for \"Name\" — a real company
+  // for this idea: ...", and the generic wrapper's unanchored `[^:]*` was
+  // greedily matching all the way past the quoted name to THIS prompt's own
+  // "for this idea:" — stripping the whole thing down to the raw idea text
+  // instead of the company name. (With a tagline present, the embedded
+  // "tagline:" colon accidentally blocked that same greedy match, which is
+  // why this only broke for taglineless companies — an inconsistency that
+  // depended on an unrelated field being empty, not a real ordering rule.)
   const wrappers: RegExp[] = [
     /^Build\s+a\s+real,\s+working,\s+functional\s+application\s+for\s+"[^"]*"\s+that\s+actually\s+implements\s+this\s+idea:\s*/i,
-    /^Build\s+a\s+polished,\s+(?:working|production-quality)[^:]*for\s+this\s+idea:\s*/i,
     /^Build\s+a\s+polished,\s+production-quality\s+single-page\s+marketing\s+landing\s+page\s+for\s+/i,
+    /^Build\s+a\s+polished,\s+(?:working|production-quality)[^:]*for\s+this\s+idea:\s*/i,
     /^Build\s+(a|an)\s+/i,
   ]
   for (const re of wrappers) {
     const stripped = text.replace(re, '')
     if (stripped !== text) { text = stripped; break }
   }
+  // #955 — once a wrapper strip leaves a leading quoted name (the
+  // company-app/route.ts "...for \"{name}\"..." shape, with or without the
+  // "(tagline: \"...\")" parenthetical that ALWAYS follows a non-empty
+  // tagline), that quoted name IS the real title — stop there rather than
+  // falling through to the generic word-truncation below, which previously
+  // either cut off mid-parenthetical ("Wrench" (tagline: "From Job Site To
+  // Paid —) or, with no tagline, kept going into the idea text that follows
+  // (" — a real company for this idea: ...", title-cased into nonsense).
+  const quotedNameMatch = text.match(/^"([^"]+)"/)
+  if (quotedNameMatch) return quotedNameMatch[1]
   // Trailing generic instruction boilerplate ("Make it interactive and
   // visually complete with realistic sample data.") carries no distinctive
   // information — cut it off at the first sentence of the REMAINING text.
@@ -214,7 +235,7 @@ export function generateSlug(title: string): string {
  * Generate SEO description from prompt
  */
 export function generateDescription(prompt: string, title: string): string {
-  return `${title} — AI-generated React component built with AINative Builder. ${prompt.substring(0, 120)}. Built with React, Tailwind CSS, and modern web technologies.`
+  return `${title} — a real business built by describing this idea to Cody: ${prompt.substring(0, 120)}.`
 }
 
 /** Normalize a prompt so re-runs of the same request collapse to one key. */
