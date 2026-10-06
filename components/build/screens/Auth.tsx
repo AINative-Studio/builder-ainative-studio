@@ -569,7 +569,7 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
             </button>
           )}
           {mode === 'signup' && verifyPhone && otpFallbackDue && (
-            <div className="m-mono" data-testid="auth-otp-fallback">
+            <div className="m-mono m-otp-fallback" data-testid="auth-otp-fallback">
               <p>Didn&apos;t get it? You can continue without phone verification for now.</p>
               <button className="btn-ghost" data-testid="auth-otp-resend" onClick={submitOtp} disabled={busy} type="button">
                 Resend code
