@@ -52,7 +52,11 @@ export async function GET(request: NextRequest) {
           // and loads code on demand via /api/preview/{chatId}. `hasCode` lets
           // the client keep its "real app" filter without the code. (#58)
           hasCode: true,
-          tags: ['ai-generated', 'react'],
+          // #955: these were ['ai-generated', 'react'] — dev-tool vocabulary
+          // on a page for non-technical founders. 'live' and 'ai-native'
+          // describe what the business actually is from a founder's
+          // perspective, not the implementation.
+          tags: ['live', 'ai-native'],
           featured: false,
           createdAt: r.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
         } as ShowcaseEntry

@@ -359,6 +359,22 @@ function cleanDescription(prompt: string, title: string): string {
   return desc
 }
 
+/**
+ * #955 follow-up — found live right after the main fix shipped: this card
+ * was calling cleanDescription(entry.prompt, ...) directly, completely
+ * ignoring entry.description — which /api/showcase already computes
+ * correctly via the real generateDescription() (lib/showcase-data.ts, also
+ * fixed under #955). cleanDescription's own regex cleanup is much weaker
+ * (only strips a "Build a/an" prefix + known AIKit component names) and
+ * left the full, raw internal LLM prompt — including the "(tagline: ...)"
+ * template syntax — showing directly in the public UI. Prefer the already-
+ * correct server-computed description; cleanDescription is now only a
+ * fallback for the rare entry that has none.
+ */
+export function pickCardDescription(entry: { description?: string; prompt?: string }, title: string): string {
+  return entry.description || cleanDescription(entry.prompt || '', title)
+}
+
 function CommunityCard({ entry, isSeed = false }: { entry: ShowcaseEntry; isSeed?: boolean }) {
   const cat = detectCategory(entry.prompt || entry.title || '')
   const category = SHOWCASE_CATEGORIES.find(c => c.id === cat)
@@ -414,7 +430,7 @@ function CommunityCard({ entry, isSeed = false }: { entry: ShowcaseEntry; isSeed
           {title}
         </h3>
         <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 mt-1">
-          {cleanDescription(entry.prompt || '', title)}
+          {pickCardDescription(entry, title)}
         </p>
       </div>
     </a>
