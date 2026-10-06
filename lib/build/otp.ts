@@ -56,6 +56,7 @@
  */
 
 import { getAinativeApiKey } from '@/lib/build/env-keys'
+import { sendViaResend, resendConfigured } from '@/lib/build/resend-client'
 
 const AINATIVE_API = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 const API_KEY = getAinativeApiKey()
@@ -210,6 +211,39 @@ export async function sendOtp(phone: string): Promise<SendOtpResult> {
 
   const sendResult = await sendSharedSms(phone, `Your AINative Builder verification code is ${code}. It expires in 10 minutes.`)
   if (!sendResult.ok) return { ok: false, reason: sendResult.reason || 'send_failed', expiresAt }
+  return { ok: true, expiresAt }
+}
+
+/**
+ * Email-code fallback alongside phone OTP (#965). Reuses the SAME
+ * `builder_otp_codes` storage and `verifyOtp` lookup as the phone flow
+ * (the lookup is identifier-agnostic — it just matches the `phone` field
+ * against whatever string it's given), so a founder who requests an
+ * email code verifies through the exact same path as one who requests
+ * an SMS code. Sends via the existing, already-wired Resend client
+ * (lib/build/resend-client.ts) rather than a new email sender.
+ */
+export async function sendOtpEmail(email: string): Promise<SendOtpResult> {
+  const trimmed = (email || '').trim().toLowerCase()
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(trimmed)) return { ok: false, reason: 'invalid_email' }
+  if (!configured()) return { ok: false, reason: 'registry_unavailable' }
+  if (!resendConfigured()) return { ok: false, reason: 'not_configured' }
+
+  const code = String(Math.floor(Math.random() * 10 ** OTP_LENGTH)).padStart(OTP_LENGTH, '0')
+  const now = new Date()
+  const expiresAt = new Date(now.getTime() + OTP_TTL_MS).toISOString()
+
+  const stored = await insertOtpRow({ phone: trimmed, code, expiresAt, createdAt: now.toISOString() })
+  if (!stored) return { ok: false, reason: 'storage_failed' }
+
+  const sendResult = await sendViaResend(
+    'AINative Builder <noreply@ainative.studio>',
+    trimmed,
+    'Your AINative Builder verification code',
+    `<p>Your verification code is <strong>${code}</strong>. It expires in 10 minutes.</p>`,
+    `Your verification code is ${code}. It expires in 10 minutes.`,
+  )
+  if (!sendResult.ok) return { ok: false, reason: 'send_failed', expiresAt }
   return { ok: true, expiresAt }
 }
 
