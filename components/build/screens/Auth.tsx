@@ -75,6 +75,14 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
   const [phoneVerified, setPhoneVerified] = useState(false)
   const [otpCode, setOtpCode] = useState('')
   const [otpNote, setOtpNote] = useState<string | null>(null)
+  // #950 — a sendOtp {ok:true} only means Twilio ACCEPTED the send; real
+  // carrier delivery is async and untracked (see lib/build/otp.ts), so a
+  // real SMS can silently fail delivery after we've already told the
+  // founder "Code sent." Without this, they were stuck on the code-entry
+  // screen forever with no way out. `otpFallbackDue` flips true once a
+  // visible wait has passed with no verification yet, surfacing Resend +
+  // Skip. Cleared whenever a fresh code is sent or the phone verifies.
+  const [otpFallbackDue, setOtpFallbackDue] = useState(false)
   // #933 — Turnstile token, signup only. Mirrors server-side gating in
   // app/api/build/register/route.ts: submit() blocks until a real token is
   // present, same as phoneVerified above.
@@ -210,7 +218,7 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
   const submitOtp = async () => {
     const normalized = toE164(phone)
     if (!normalized) { setError('Enter a valid phone number.'); return }
-    setBusy(true); setError(null); setOtpNote(null)
+    setBusy(true); setError(null); setOtpNote(null); setOtpFallbackDue(false)
     try {
       const res = await fetch('/api/build/register', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -255,6 +263,7 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
         setPhoneVerified(true)
         setVerifyPhone(null)
         setOtpNote(null)
+        setOtpFallbackDue(false)
       } else {
         const reason = d?.reason
         setError(
@@ -268,6 +277,28 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
     } finally {
       setBusy(false)
     }
+  }
+
+  // #950 — a code that never arrives (silent delivery failure — see
+  // lib/build/otp.ts) must not dead-end the founder. Arm a one-shot timer
+  // whenever a code is freshly sent (verifyPhone becomes truthy); once it
+  // fires, surface Resend + Skip. Cleared automatically by the effect's own
+  // cleanup whenever verifyPhone changes (a fresh send or a successful
+  // verify both reset/clear it via setVerifyPhone above).
+  useEffect(() => {
+    if (!verifyPhone) return
+    const timer = setTimeout(() => setOtpFallbackDue(true), 45_000)
+    return () => clearTimeout(timer)
+  }, [verifyPhone])
+
+  // #950 — Skip: same honest-fallback shape as submitOtp's not_configured
+  // branch above (let signup continue unverified rather than dead-end).
+  const skipOtpVerification = () => {
+    setVerifyPhone(null)
+    setPhoneVerified(true)
+    setOtpNote(null)
+    setOtpFallbackDue(false)
+    setError(null)
   }
 
   // #7698 — request a reset email from core via the Builder proxy, which passes
@@ -536,6 +567,17 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
             <button className="btn-ghost" data-testid="auth-verify-otp" onClick={confirmOtp} disabled={busy || !otpCode} type="button">
               {busy ? 'Verifying…' : 'Verify code →'}
             </button>
+          )}
+          {mode === 'signup' && verifyPhone && otpFallbackDue && (
+            <div className="m-mono" data-testid="auth-otp-fallback">
+              <p>Didn&apos;t get it? You can continue without phone verification for now.</p>
+              <button className="btn-ghost" data-testid="auth-otp-resend" onClick={submitOtp} disabled={busy} type="button">
+                Resend code
+              </button>
+              <button className="btn-ghost" data-testid="auth-otp-skip" onClick={skipOtpVerification} disabled={busy} type="button">
+                Skip for now
+              </button>
+            </div>
           )}
           {mode === 'signup' && (
             <TurnstileWidget onVerify={setTurnstileToken} onExpire={() => setTurnstileToken('')} />
