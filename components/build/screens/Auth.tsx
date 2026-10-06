@@ -11,7 +11,7 @@ import { trackMeta } from '@/components/analytics/meta-pixel'
 import { migrateGuestWork } from '@/lib/build/guest-migration'
 import { getRefCode } from '@/lib/build/attribution'
 import { decideLimitAction } from '@/lib/build/value-moment'
-import { toE164 } from '@/lib/build/otp'
+import { toE164 } from '@/lib/build/phone'
 import { TurnstileWidget } from '@/components/turnstile-widget'
 
 function BrandPanel() {
