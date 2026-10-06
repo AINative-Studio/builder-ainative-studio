@@ -132,7 +132,7 @@ export function computeSyncedUrl(currentUrl: string, screen: string): string | n
  * allowlist (not the reducer) is what gates deep-link restoration.
  */
 export const KNOWN_DEEP_LINK_SCREENS = [
-  'landing', 'start', 'build', 'fork', 'intake', 'ws', 'pricing', 'live',
+  'landing', 'start', 'build', 'fork', 'intake', 'kickoff', 'ws', 'pricing', 'live',
   'login', 'signup', 'forgot', 'reset', 'account', 'companies', 'refer',
 ]
 

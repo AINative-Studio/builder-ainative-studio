@@ -12,7 +12,7 @@ export type Screen =
                   // the builder path. Signed-in visitors skip straight to builds.
   | 'start'       // funnel step 1: "Let's get started" — Create a new company / Grow
   | 'build'       // funnel step 2: "Let's build something" — Surprise me / Build my idea
-  | 'fork' | 'intake' | 'ws' | 'pricing' | 'live'
+  | 'fork' | 'intake' | 'kickoff' | 'ws' | 'pricing' | 'live'
   | 'login' | 'signup' | 'forgot' | 'reset' | 'account'
   | 'companies'   // "my companies" index (#253) — a founder's built companies
   | 'refer'       // Refer & Earn (#59) — referral link, copy, and stats
@@ -234,6 +234,12 @@ export type BuildAction =
   // (the founder returns via the email-verify link and should land on login).
   | { type: 'RESTORE_PENDING_BUILD'; idea: string; appSub: string; companyName: string; brandTagline: string; brandColor: string }
   | { type: 'CLEAR_PENDING_BUILD' }
+  // #E3.2/#E3.3 — stash the brand Intake.tsx already generated (name/slug/
+  // tagline/color) so KickoffQuestions.tsx can read it WITHOUT triggering
+  // START_BUILD/DEFER_BUILD's side effects (generation, auth-wall routing)
+  // before kickoff's own 3rd question has been answered. Pure data, no
+  // side effects — mirrors SET_IDEA's own shape.
+  | { type: 'SET_BRAND_DRAFT'; appSub: string; companyName: string; brandTagline: string; brandColor: string }
   | { type: 'GEN_DONE'; view: string; content: unknown }
   | { type: 'GEN_FAIL'; view: string; error: string }
   /** Inline artifact edit (GR-16 #329): replace a view's generated content with
@@ -250,6 +256,11 @@ export type BuildAction =
   | { type: 'COMPLETE_ARTIFACT'; view: string; status?: string }
   | { type: 'PAUSE'; pendingQ: PendingQuestion }
   | { type: 'ANSWER_Q'; key: string; value: string }
+  // #E3.2/#E3.3 — record a kickoff-question answer. Deliberately distinct
+  // from ANSWER_Q: that action is coupled to the autoplay pause/resume
+  // interrupt (paused/pendingQ), which does not apply before a build has
+  // even started. SET_ANSWER only ever touches `answers`.
+  | { type: 'SET_ANSWER'; key: string; value: string }
   | { type: 'TAKE_THE_WHEEL' }
   | { type: 'KEEP_GOING' }
   | { type: 'NUDGE'; view: string; state: 'accepted' | 'dismissed' }
@@ -388,6 +399,14 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
       }
     case 'CLEAR_PENDING_BUILD':
       return { ...state, pendingBuild: null }
+    case 'SET_BRAND_DRAFT':
+      return {
+        ...state,
+        appSub: action.appSub,
+        companyName: action.companyName,
+        brandTagline: action.brandTagline,
+        brandColor: action.brandColor,
+      }
     case 'GEN_DONE':
       return {
         ...state,
@@ -433,6 +452,8 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
         pendingQ: null,
         answers: { ...state.answers, [action.key]: action.value },
       }
+    case 'SET_ANSWER':
+      return { ...state, answers: { ...state.answers, [action.key]: action.value } }
     case 'TAKE_THE_WHEEL':
       return { ...state, auto: false }
     case 'KEEP_GOING':
