@@ -20,7 +20,7 @@ function buildLines(agents: number | null, tasks: number | null): string[] {
   const a = agents ?? 0
   const lines = [
     `${a} agents working across the platform right now`,
-    'swarm ▸ composing artifacts from real AINative primitives',
+    "Cody's team ▸ composing artifacts from real AINative primitives",
     'briefing ▸ nightly loop picked the highest-leverage task',
     'RLHF ▸ scoring outcomes back into the lakehouse',
   ]

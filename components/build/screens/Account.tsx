@@ -286,7 +286,7 @@ export function Account() {
             </div>
             <div className="m-sec-row">
               <span>Unlock</span>
-              <span className="m-mono m-muted">Custom domain, nightly loop &amp; swarm on paid plans.</span>
+              <span className="m-mono m-muted">Custom domain, overnight work, and Cody's full team on paid plans.</span>
             </div>
             <div className="m-sec-row">
               <span>Pricing</span>
@@ -346,8 +346,8 @@ export function Account() {
               {planLoading
                 ? '—'
                 : activePlan
-                ? [gates.customDomain && 'custom domain', gates.nightlyLoop && 'nightly loop', gates.swarm && 'agent swarm'].filter(Boolean).join(' · ') || '—'
-                : 'Upgrade to unlock custom domain, nightly loop, and the swarm.'}
+                ? [gates.customDomain && 'custom domain', gates.nightlyLoop && 'nightly loop', gates.swarm && "Cody's team"].filter(Boolean).join(' · ') || '—'
+                : "Upgrade to unlock custom domain, nightly loop, and Cody's team."}
             </span>
           </div>
           <div className="m-sec-row">

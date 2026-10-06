@@ -64,16 +64,19 @@ describe('JourneyBar (#BLD-06.1)', () => {
   })
 
   it('marks a done artifact chip as done, the current one as current', () => {
+    // #BLD-08 — chips now show the plain ARTIFACT_TITLES label ("Product
+    // Brief"/"Design System"), not the raw view id, so these lookups match
+    // the plain text instead of the id.
     render(React.createElement(JourneyBar))
-    const briefChip = Array.from(host.querySelectorAll('.m-crumb')).find((el) => el.textContent === 'brief') as HTMLButtonElement
+    const briefChip = Array.from(host.querySelectorAll('.m-crumb')).find((el) => el.textContent === 'Product Brief') as HTMLButtonElement
     expect(briefChip.className).toContain('is-current')
-    const designChip = Array.from(host.querySelectorAll('.m-crumb')).find((el) => el.textContent === 'design') as HTMLButtonElement
+    const designChip = Array.from(host.querySelectorAll('.m-crumb')).find((el) => el.textContent === 'Design System') as HTMLButtonElement
     expect(designChip.className).toContain('is-done')
   })
 
   it('clicking a done, non-current chip calls goView', () => {
     render(React.createElement(JourneyBar))
-    const designChip = Array.from(host.querySelectorAll('.m-crumb')).find((el) => el.textContent === 'design') as HTMLButtonElement
+    const designChip = Array.from(host.querySelectorAll('.m-crumb')).find((el) => el.textContent === 'Design System') as HTMLButtonElement
     act(() => { designChip.click() })
     expect(goViewMock).toHaveBeenCalledWith('design')
   })

@@ -54,7 +54,7 @@ export function BuildOverlays() {
     return (
       <div className="m-overlay m-formin" role="status" aria-live="polite">
         <span className="m-overlay-pill m-mono">SWARM WORKING</span>
-        <h1 className="m-artifact m-overlay-h">Cody&apos;s swarm is building the MVP</h1>
+        <h1 className="m-artifact m-overlay-h">Cody&apos;s team is building your MVP</h1>
         <div className="m-agent-grid">
           {SWARM_AGENTS.map((a) => {
             const active = ribbon.toLowerCase().includes(a.name.toLowerCase())
@@ -80,7 +80,7 @@ export function BuildOverlays() {
     <div className="m-overlay m-formin" role="status" aria-live="polite">
       <span className="m-overlay-pill m-mono">PROVISIONING</span>
       <h1 className="m-artifact m-overlay-h">Provisioning your infrastructure</h1>
-      <p className="m-sub">Provision everything, ask nothing — real primitives, spun up for you.</p>
+      <p className="m-sub">Setting everything up automatically — real primitives, spun up for you.</p>
       <ul className="m-list m-checklist">
         {INFRA_ITEMS.map(([n, d], i) => (
           <li key={n}>

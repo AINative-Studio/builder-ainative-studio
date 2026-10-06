@@ -119,7 +119,7 @@ export function OnboardingVideo({ src, poster, className }: OnboardingVideoProps
 
       <p className="m-live-card-body" style={{ marginTop: 10 }}>
         {isPlaceholder
-          ? "A short walkthrough is on its way — it'll show you exactly how to get the most out of Cody and the swarm."
+          ? "A short walkthrough is on its way — it'll show you exactly how to get the most out of Cody and Cody's team."
           : 'Watch how Cody builds and runs companies autonomously while you focus on what matters.'}
       </p>
     </div>

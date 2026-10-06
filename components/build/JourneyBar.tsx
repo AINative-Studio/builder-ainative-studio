@@ -16,6 +16,7 @@ import { useState } from 'react'
 import { useBuild } from '@/contexts/build-context'
 import { useSession } from 'next-auth/react'
 import { APP_ACT_LABELS, COMPANY_ACT_LABELS } from '@/lib/build/acts'
+import { ARTIFACT_TITLES } from '@/lib/build/titles'
 import type { Screen } from '@/lib/build/state'
 import { AccountMenu } from '@/components/build/AccountMenu'
 import { currentActIndex } from '@/components/build/WorkspaceShell'
@@ -74,7 +75,7 @@ export function JourneyBar() {
               disabled={!clickable}
               onClick={() => clickable && goView(v as never)}
             >
-              {v}
+              {ARTIFACT_TITLES[v] ?? v}
             </button>
           )
         })}
