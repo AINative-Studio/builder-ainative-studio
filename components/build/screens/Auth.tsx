@@ -285,11 +285,28 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
   // fires, surface Resend + Skip. Cleared automatically by the effect's own
   // cleanup whenever verifyPhone changes (a fresh send or a successful
   // verify both reset/clear it via setVerifyPhone above).
+  // #BLD-02c — a parallel poll of the real Twilio delivery status alongside
+  // the 45s blind timeout above: a CONFIRMED undelivered/failed status
+  // surfaces the fallback immediately rather than waiting out the full 45s.
+  // The 45s timer stays as the backstop when no status ever lands (e.g.
+  // StatusCallback misconfigured, or the number genuinely stays pending).
   useEffect(() => {
     if (!verifyPhone) return
     const timer = setTimeout(() => setOtpFallbackDue(true), 45_000)
-    return () => clearTimeout(timer)
-  }, [verifyPhone])
+    const normalizedPhone = toE164(phone)
+    const poll = normalizedPhone ? setInterval(async () => {
+      try {
+        const res = await fetch(`/api/build/otp-delivery-status?phone=${encodeURIComponent(normalizedPhone)}`)
+        const d = await res.json().catch(() => null)
+        if (d?.status === 'undelivered' || d?.status === 'failed') {
+          setOtpFallbackDue(true)
+          clearTimeout(timer)
+          clearInterval(poll)
+        }
+      } catch { /* keep polling — the 45s timer is still the backstop */ }
+    }, 5000) : undefined
+    return () => { clearTimeout(timer); if (poll) clearInterval(poll) }
+  }, [verifyPhone, phone])
 
   // #950 — Skip: same honest-fallback shape as submitOtp's not_configured
   // branch above (let signup continue unverified rather than dead-end).
