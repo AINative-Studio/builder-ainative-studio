@@ -3,8 +3,9 @@
 /**
  * Workspace shell (#220) — the shared chrome both tracks render inside.
  * Top bar · journey bar (#BLD-06.1, merges the old act-bar + path breadcrumb)
- * · Cody feed (34%) · center panel · artifact rail. Re-themed per track via
- * the .modernist[data-track] root.
+ * · Cody feed (34%, left) · center panel · Cody chat panel (#BLD-06.1,
+ * persistent — replaces the old toggled Artifacts rail). Re-themed per
+ * track via the .modernist[data-track] root.
  */
 
 import { useBuild } from '@/contexts/build-context'
@@ -12,8 +13,8 @@ import { BuildOverlays } from '@/components/build/BuildOverlays'
 import { TerminalRibbon } from '@/components/build/TerminalRibbon'
 import { PricingNudge } from '@/components/build/PricingNudge'
 import { DecisionModal } from '@/components/build/DecisionModal'
-import { ArtifactRail } from '@/components/build/ArtifactRail'
 import { JourneyBar } from '@/components/build/JourneyBar'
+import { CodyChatPanel } from '@/components/build/CodyChatPanel'
 import type { ReactNode } from 'react'
 
 /** Index (jump-to-any-screen) panel — quick nav to any generated artifact. */
@@ -57,11 +58,9 @@ function IndexPanel() {
 
 export function WorkspaceShell({
   feed,
-  rail,
   children,
 }: {
   feed?: ReactNode
-  rail?: ReactNode
   children: ReactNode
 }) {
   const { state } = useBuild()
@@ -83,8 +82,7 @@ export function WorkspaceShell({
         <main className="m-center">
           {state.overlay.kind !== 'none' ? <BuildOverlays /> : children}
         </main>
-        {rail && <aside className="m-rail">{rail}</aside>}
-        <ArtifactRail />
+        <aside className="m-cody-chat"><CodyChatPanel /></aside>
       </div>
       <DecisionModal />
     </div>
