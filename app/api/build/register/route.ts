@@ -167,13 +167,21 @@ async function handleSendOtpEmail(email: string) {
  * the phone verified in the founder-phone registry (best-effort — the
  * client is the source of truth for gating final signup submission; this
  * durable record is for later reference, not itself a hard gate).
+ *
+ * #BLD-02b — a code sent via sendOtpEmail is stored under the raw email
+ * address (verifyOtp's lookup is identifier-agnostic), so verification must
+ * use that SAME identifier, not a toE164-normalized phone. When no valid
+ * phone is given, fall back to the submitted email as the identifier
+ * (markFounderPhoneVerified is skipped in that case — there's no real phone
+ * to record as verified).
  */
 async function handleVerifyOtp(rawPhone: string, code: string, email: string) {
   const phone = toE164(rawPhone)
-  if (!phone || !code) return Response.json({ ok: false, reason: 'invalid_request' }, { status: 400 })
+  const identifier = phone || email
+  if (!identifier || !code) return Response.json({ ok: false, reason: 'invalid_request' }, { status: 400 })
 
-  const result = await verifyOtp(phone, code)
-  if (result.ok && email) {
+  const result = await verifyOtp(identifier, code)
+  if (result.ok && phone && email) {
     markFounderPhoneVerified(email, phone).catch(() => {})
   }
   return Response.json(result, { status: result.ok ? 200 : 400 })

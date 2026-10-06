@@ -57,7 +57,13 @@
 
 import { getAinativeApiKey } from '@/lib/build/env-keys'
 import { sendViaResend, resendConfigured } from '@/lib/build/resend-client'
-import { checkSmsDeliveryFailureAlert } from '@/lib/jobs/alerting'
+// lib/jobs/alerting.ts pulls in the real Postgres driver (lib/db/connection.ts,
+// Node-only — net/tls/perf_hooks). This file is also imported by the CLIENT
+// component Auth.tsx (for toE164), so a static top-level import here would
+// bundle that Node-only chain into client JS and break the build (confirmed:
+// PR #970 CI failed with exactly this "Module not found: Can't resolve 'net'"
+// error). Deferred to a dynamic import inside recordOtpDeliveryStatus below,
+// which only ever runs server-side (the Twilio webhook route).
 
 const AINATIVE_API = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 const API_KEY = getAinativeApiKey()
@@ -368,7 +374,9 @@ export async function recordOtpDeliveryStatus(messageSid: string, status: 'deliv
     if (!match) return // unmapped sid — not this flow's send, drop silently
     const stored = await recordDeliveryRow({ ...match, status })
     if (stored && (status === 'undelivered' || status === 'failed')) {
-      checkSmsDeliveryFailureAlert().catch(() => {})
+      import('@/lib/jobs/alerting')
+        .then((m) => m.checkSmsDeliveryFailureAlert())
+        .catch(() => {})
     }
   } catch { /* best-effort */ }
 }
