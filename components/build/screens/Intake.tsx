@@ -3,14 +3,11 @@
 /** Intake screen (#222) — capture the idea in one field. Copy verbatim from 04-SCREENS §2. */
 
 import { useState } from 'react'
-import { useSession, getSession } from 'next-auth/react'
 import { useBuild } from '@/contexts/build-context'
 import { trackEvent } from '@/components/analytics/google-analytics'
-import { decideLimitAction } from '@/lib/build/value-moment'
 
 export function Intake() {
   const { state, dispatch } = useBuild()
-  const { status: sessionStatus } = useSession()
   // Prefill from a seeded idea (funnel "Surprise me" sets state.idea before Intake
   // mounts) so the founder lands on a ready-to-edit starter idea, not a blank field.
   const [idea, setIdea] = useState(state.idea || '')
@@ -34,67 +31,16 @@ export function Intake() {
     } catch { /* fall back below */ }
     if (!brand.name) brand.name = fallbackName(idea)
 
-    // Auth wall (#dashboard-ux): an anonymous founder must register BEFORE any
-    // generation runs — we never spend LLM tokens on an un-registered visitor.
-    // Stash the idea/brand and route to signup; after they register + verify and
-    // land back, the deferred build fires (see build-context). Naming already
-    // happened above (cheap brand call) so the signup screen can greet the company.
-    //
-    // RACE FIX: useSession() reports 'loading' until the provider resolves — a
-    // fast submit was walled at "create your account" even though the founder
-    // WAS logged in. When the hook isn't 'authenticated' yet, resolve the
-    // session definitively before deciding; only genuinely-anonymous defers.
-    let authed = sessionStatus === 'authenticated'
-    if (!authed) {
-      const s = await getSession().catch(() => null)
-      authed = Boolean(s?.user)
-    }
-    if (!authed) {
-      trackEvent('idea_gated_signup', 'funnel', state.track, undefined)
-      dispatch({
-        type: 'DEFER_BUILD', idea,
-        appSub: brand.slug, companyName: brand.name,
-        brandTagline: brand.tagline, brandColor: brand.color,
-      })
-      return
-    }
-
-    // Freemium enforcement (#dashboard-ux): record a build against the founder's
-    // allowance. If the free/starter limit is exhausted, route to pricing instead
-    // of starting a build. Fails OPEN on any error (metering never hard-blocks).
-    // The idea/track let the SERVER compute this build's composed primitives for
-    // the ecosystem-runway bonus (#324 GR-15) — the bonus is never client-decided.
-    let runwayNote = ''
-    try {
-      const res = await fetch('/api/build/credits', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slug: brand.slug, idea, track: state.track, role: state.role || undefined }),
-      })
-      if (res.status === 402) {
-        trackEvent('build_limit_reached', 'funnel', state.track, undefined)
-        // Value-moment gate (#310/#311 GR-01/GR-02): a founder who has NEVER
-        // seen a working preview is not routed to the pay gate — the build
-        // proceeds (fail toward value; the server's value guarantee allows the
-        // first visible build too). Only after the value moment does the limit
-        // route to pricing.
-        if (decideLimitAction({ limitReached: true, sawPreview: state.sawPreview }) === 'pricing') {
-          dispatch({ type: 'GOTO_SCREEN', screen: 'pricing' })
-          setNaming(false)
-          return
-        }
-      }
-      const d = await res.json().catch(() => null)
-      if (typeof d?.ecosystem?.message === 'string') runwayNote = d.ecosystem.message
-    } catch { /* fail open — proceed with the build */ }
-
+    // #E3.2/#E3.3 — kickoff questions now sit between brand-naming and the
+    // real auth-wall/START_BUILD decision (moved into KickoffQuestions.tsx,
+    // which makes that call after its own 3rd question using the exact same
+    // logic this screen used to run directly).
     dispatch({
-      type: 'START_BUILD', idea,
-      appSub: brand.slug, companyName: brand.name,
+      type: 'SET_BRAND_DRAFT', appSub: brand.slug, companyName: brand.name,
       brandTagline: brand.tagline, brandColor: brand.color,
     })
-    // Surface the earned ecosystem-runway bonus in the workspace (#324 GR-15).
-    // Dispatched AFTER START_BUILD so a new-build reset can't clobber the note.
-    dispatch({ type: 'SET_RUNWAY_NOTE', note: runwayNote })
+    dispatch({ type: 'SET_IDEA', idea })
+    dispatch({ type: 'GOTO_SCREEN', screen: 'kickoff' })
   }
 
   // #E3.1 — idea entry is Cody's first chat message, not a form header.
