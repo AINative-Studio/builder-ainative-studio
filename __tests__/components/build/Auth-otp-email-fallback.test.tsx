@@ -45,7 +45,10 @@ async function tick(times = 4) {
   for (let i = 0; i < times; i++) await act(async () => { await Promise.resolve() })
 }
 
-describe('Auth signup — email-OTP fallback option (#BLD-02b)', () => {
+// #734 follow-up (2026-10-07): OTP verification UI removed from Auth.tsx
+// for now — see Auth-phone-otp.test.tsx's header for the full reason.
+// Skipped, not deleted.
+describe.skip('Auth signup — email-OTP fallback option (#BLD-02b)', () => {
   it('offers "Email me a code instead" in the fallback once it appears, and sending it calls send-otp-email', async () => {
     vi.useFakeTimers()
     global.fetch = vi.fn(async (url: string, opts?: any) => {

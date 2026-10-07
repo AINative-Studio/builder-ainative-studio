@@ -475,13 +475,13 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
     if (mode === 'reset') { await submitReset(); return }
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { setError('Enter a valid email.'); return }
     if (password.length < 8) { setError('Password must be at least 8 characters.'); return }
-    // #734 — gate final signup submission on phone verification completing,
-    // once a phone number has been entered at all. A founder who never typed
-    // a phone (or whose only path was the not_configured fallback above,
-    // which sets phoneVerified:true directly) is unaffected.
-    if (mode === 'signup' && phone.trim() && !phoneVerified) {
-      setError('Verify your phone number to continue.'); return
-    }
+    // #734 follow-up (2026-10-07): the phone-verification gate is removed
+    // for now. Twilio's A2P 10DLC campaign for OTP SMS delivery is still
+    // IN_PROGRESS in carrier review (core#8533) -- requiring verification
+    // before submit would block every signup that enters a phone number,
+    // the same live breakage #944's mobile-default fix addressed. Phone is
+    // captured unverified (see normalizedPhone below) and sent to
+    // /api/build/register exactly as before; only the hard block is gone.
     if (mode === 'signup' && turnstileRequired && !turnstileToken) {
       setError('Please complete the verification challenge.'); return
     }
@@ -665,47 +665,21 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
               <input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} data-testid="auth-password" placeholder="••••••••" value={password}
                 onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submit()} /></label>
           )}
-          {/* #734 — phone input, signup only. Not required: an empty phone never
-              blocks submit() (see the phoneVerified gate above), so this is an
-              opt-in verification step rather than a hard signup requirement. */}
-          {mode === 'signup' && !verifyPhone && (
+          {/* #734 follow-up (2026-10-07): OTP verification step removed for
+              now — Twilio's A2P 10DLC campaign for OTP SMS delivery is still
+              IN_PROGRESS in carrier review (core#8533), so send-otp/verify-otp
+              cannot complete for any real user. Plain, unverified capture only:
+              the typed number is still sent to /api/build/register and stored
+              (see normalizedPhone in submit() above) — just no code round-trip
+              gating it. The OTP functions/state (submitOtp, confirmOtp,
+              skipOtpVerification, emailOtpFallback, verifyPhone, phoneVerified,
+              otpCode, otpNote, otpFallbackDue) are untouched and ready to
+              restore by reverting this block once Twilio's campaign clears. */}
+          {mode === 'signup' && (
             <label className="m-field"><span className="m-mono m-field-l">Phone (optional)</span>
               <input type="tel" inputMode="tel" autoComplete="tel" data-testid="auth-phone" placeholder="+1 555 000 1111" value={phone}
-                onChange={(e) => { setPhone(e.target.value); setPhoneVerified(false) }}
-                onKeyDown={(e) => e.key === 'Enter' && phone.trim() && submitOtp()} /></label>
-          )}
-          {mode === 'signup' && phone.trim() && !verifyPhone && !phoneVerified && (
-            <button className="btn-ghost" data-testid="auth-send-otp" onClick={submitOtp} disabled={busy} type="button">
-              {busy ? 'Sending…' : 'Send verification code →'}
-            </button>
-          )}
-          {mode === 'signup' && phoneVerified && (
-            <p className="m-mono" data-testid="auth-phone-verified" style={{ color: '#1f7a3d' }}>✓ Phone verified</p>
-          )}
-          {mode === 'signup' && verifyPhone && (
-            <label className="m-field"><span className="m-mono m-field-l">Verification code</span>
-              <input type="text" inputMode="numeric" autoComplete="one-time-code" data-testid="auth-otp-code" placeholder="6-digit code" value={otpCode}
-                onChange={(e) => setOtpCode(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && confirmOtp()} /></label>
-          )}
-          {otpNote && <p className="m-mono" data-testid="auth-otp-note" style={{ color: '#1f7a3d' }}>{otpNote}</p>}
-          {mode === 'signup' && verifyPhone && (
-            <button className="btn-ghost" data-testid="auth-verify-otp" onClick={confirmOtp} disabled={busy || !otpCode} type="button">
-              {busy ? 'Verifying…' : 'Verify code →'}
-            </button>
-          )}
-          {mode === 'signup' && verifyPhone && otpFallbackDue && (
-            <div className="m-mono m-otp-fallback" data-testid="auth-otp-fallback">
-              <p>Didn&apos;t get it? You can continue without phone verification for now.</p>
-              <button className="btn-ghost" data-testid="auth-otp-resend" onClick={submitOtp} disabled={busy} type="button">
-                Resend code
-              </button>
-              <button className="btn-ghost" data-testid="auth-otp-skip" onClick={skipOtpVerification} disabled={busy} type="button">
-                Skip for now
-              </button>
-              <button className="btn-ghost" data-testid="auth-otp-email-fallback" onClick={emailOtpFallback} disabled={busy} type="button">
-                Email me a code instead
-              </button>
-            </div>
+                onChange={(e) => setPhone(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && submit()} /></label>
           )}
           {mode === 'signup' && (
             <TurnstileWidget onVerify={setTurnstileToken} onExpire={() => setTurnstileToken('')} />
