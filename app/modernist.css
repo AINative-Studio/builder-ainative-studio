@@ -1715,13 +1715,18 @@
   .m-auth-statement { font-size: 26px; }
   .m-auth-header { top: 20px; left: 24px; right: 24px; }
 
-  /* #944 Part 2 — mobile-first phone login. Default on mobile: show the
-     phone-first form, hide the email/password form. .m-auth-force-email
-     (escape hatch, both directions) overrides this regardless of viewport. */
-  .m-auth-phone-form { display: flex; }
-  .m-auth-fields-email { display: none; }
-  .m-auth.m-auth-force-email .m-auth-phone-form { display: none; }
-  .m-auth.m-auth-force-email .m-auth-fields-email { display: flex; flex-direction: column; }
+  /* #944 follow-up (2026-10-07): mobile no longer defaults to the
+     phone-first form. Core's /auth/register-phone and /auth/login-phone
+     hard-require a valid otp_code (422 without one, confirmed live), and
+     Twilio's A2P 10DLC campaign for OTP SMS delivery is still IN_PROGRESS
+     in carrier review (core#8533) — so phone-first login was a dead end
+     for every real mobile user, with only the easy-to-miss "Use email
+     instead" link as an escape. Email/password (the base .m-auth rule
+     above, identical at every width now) is the default everywhere until
+     a no-OTP phone-identity path exists on core's side. The phone-first
+     form itself is untouched and still reachable via .m-auth-force-phone
+     (the "Use phone instead" escape hatch) for anyone who wants to try it.
+     See .m-auth.m-auth-force-phone rules above this media query. */
 
   .m-pricing { padding: 32px 20px; }
   .m-tiers { grid-template-columns: 1fr; }
