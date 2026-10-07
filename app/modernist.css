@@ -1249,7 +1249,11 @@
 .m-auth { min-height: 100vh; display: grid; grid-template-columns: 1fr 1fr; }
 /* #944 Part 2 — above the mobile breakpoint, default to the existing
    email/password form; .m-auth-force-phone is the explicit opt-in. */
-.m-auth-phone-form { display: none; }
+.m-auth-phone-form { display: none; flex-direction: column; gap: 14px; }
+.m-auth-fields-email { display: flex; flex-direction: column; }
+.m-auth-escape-row { margin-top: 16px; }
+.m-auth-escape { background: none; border: 0; cursor: pointer; font-size: 13px; color: var(--text-muted); text-decoration: underline; padding: 0; }
+.m-auth-escape:hover { color: var(--text); }
 .m-auth.m-auth-force-phone .m-auth-phone-form { display: flex; }
 .m-auth.m-auth-force-phone .m-auth-fields-email { display: none; }
 .m-auth-brand { background: var(--alert); color: #fff; padding: 56px 44px; display: flex; flex-direction: column; justify-content: center; }
@@ -1717,7 +1721,7 @@
   .m-auth-phone-form { display: flex; }
   .m-auth-fields-email { display: none; }
   .m-auth.m-auth-force-email .m-auth-phone-form { display: none; }
-  .m-auth.m-auth-force-email .m-auth-fields-email { display: flex; }
+  .m-auth.m-auth-force-email .m-auth-fields-email { display: flex; flex-direction: column; }
 
   .m-pricing { padding: 32px 20px; }
   .m-tiers { grid-template-columns: 1fr; }
