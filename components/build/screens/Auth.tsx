@@ -741,6 +741,7 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
                     onChange={(e) => setPrimaryPhone(e.target.value)}
                     placeholder="(512) 555-1234"
                   />
+                  <p className="m-field-hint">We&apos;ll text you a one-time code to verify this number.</p>
                 </label>
                 {phoneFormError && <p className="m-auth-error">{phoneFormError}</p>}
                 {mode === 'signup' && (
