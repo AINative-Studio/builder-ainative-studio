@@ -8,6 +8,13 @@
  * carrier-review requirements, that mobile opt-in/phone number data collected
  * for the SMS feature is never shared with third parties for marketing.
  *
+ * 2026-10-07 follow-up: the SAME campaign (resubmitted as a 2FA use case for
+ * #944's phone-login feature) was rejected again — 30908/30882/30896/30924,
+ * all pointing at the same real gap: this page covered Cody's conversational
+ * SMS feature but said nothing about phone-number sign-in / one-time
+ * verification codes, the exact use case the campaign claims. Section 04
+ * below closes that gap.
+ *
  * SSR, Modernist chrome (matches /about, /help, /terms) — must stay on the
  * middleware's public allowlist so it renders for anonymous visitors and for
  * automated carrier/compliance review, not just logged-in founders.
@@ -19,7 +26,7 @@ import { PublicFooter } from '@/components/shared/public-footer'
 
 const PAGE_URL = 'https://builder.ainative.studio/privacy'
 const ORG_NAME = 'AINative Studio'
-const LAST_UPDATED = '2026-09-17'
+const LAST_UPDATED = '2026-10-07'
 
 export const metadata: Metadata = {
   title: 'Privacy Policy | AINative Builder',
@@ -173,7 +180,26 @@ export default function PrivacyPage() {
           </p>
         </Section>
 
-        <Section eyebrow="04" title="How we use information">
+        <Section eyebrow="04" title="Phone number sign-in (one-time verification codes)">
+          <p>
+            Builder offers an optional way to create an account or sign in using only your phone
+            number, instead of an email address and password. If you choose this option, enter
+            your phone number and tap <span className="m-mono">Send code</span>. We text a single
+            6-digit verification code to that number, valid for 10 minutes, solely to confirm you
+            control it. Entering the correct code signs you in; no password is ever set or
+            required for this method.
+          </p>
+          <p style={{ marginTop: 12 }}>
+            We send exactly one verification SMS per request — never an unsolicited message, and
+            never outside of a login or signup attempt you initiated yourself. Your phone number
+            is stored as part of your account (so it can be reused for future sign-ins) but is
+            never sold, rented, or used for marketing. This is a separate, narrower use of SMS
+            than Cody&apos;s conversational texting feature described in Section 03 above —
+            verification codes only, not ongoing conversation.
+          </p>
+        </Section>
+
+        <Section eyebrow="05" title="How we use information">
           <p>We use the information we collect to:</p>
           <ul style={{ marginTop: 12, paddingLeft: 20, listStyle: 'disc' }}>
             <li style={{ marginBottom: 6 }}>Provide, operate, and maintain the Service, including Cody&apos;s chat and SMS features</li>
@@ -187,7 +213,7 @@ export default function PrivacyPage() {
           </p>
         </Section>
 
-        <Section eyebrow="05" title="Information sharing">
+        <Section eyebrow="06" title="Information sharing">
           <p>We may share information with:</p>
           <ul style={{ marginTop: 12, paddingLeft: 20, listStyle: 'disc' }}>
             <li style={{ marginBottom: 6 }}>
@@ -203,7 +229,7 @@ export default function PrivacyPage() {
           </p>
         </Section>
 
-        <Section eyebrow="06" title="Data retention &amp; security">
+        <Section eyebrow="07" title="Data retention &amp; security">
           <p>
             We retain information for as long as needed to provide the Service and comply with our
             legal obligations. We use encryption in transit and at rest, access controls, and
@@ -212,7 +238,7 @@ export default function PrivacyPage() {
           </p>
         </Section>
 
-        <Section eyebrow="07" title="Your rights &amp; choices">
+        <Section eyebrow="08" title="Your rights &amp; choices">
           <ul style={{ paddingLeft: 20, listStyle: 'disc' }}>
             <li style={{ marginBottom: 8 }}>
               <strong>Opt out of SMS.</strong> Reply <span className="m-mono">STOP</span> to any
@@ -237,14 +263,14 @@ export default function PrivacyPage() {
           </p>
         </Section>
 
-        <Section eyebrow="08" title="Changes to this policy">
+        <Section eyebrow="09" title="Changes to this policy">
           <p>
             We may update this Privacy Policy from time to time. Material changes will be reflected
             by updating the &quot;Last updated&quot; date above.
           </p>
         </Section>
 
-        <Section eyebrow="09" title="Contact">
+        <Section eyebrow="10" title="Contact">
           <p>
             Questions about this Privacy Policy? Contact us at{' '}
             <a href="mailto:privacy@ainative.studio" style={{ color: 'var(--color-accent)' }}>
