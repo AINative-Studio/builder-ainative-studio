@@ -262,11 +262,20 @@ export interface SharedSmsResult {
  * credential ever existed). Builder's own Railway service now holds a
  * direct Twilio credential (TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN), copied
  * from core's real, working Twilio account on 2026-10-05, and
- * TWILIO_OTP_FROM_NUMBER is the real, confirmed-live ZeroVoice number
- * (+19377642838) already wired for two-way SMS. Explicit From/To (never
- * routed through a Messaging Service's number-selection) — using a
- * MessagingServiceSid here produced a confusing same-number From/To
- * collision during live testing earlier this session.
+ * TWILIO_OTP_FROM_NUMBER is a Builder-owned number (+19377642838) already
+ * wired for two-way SMS. Explicit From/To (never routed through a
+ * Messaging Service's number-selection) — using a MessagingServiceSid here
+ * produced a confusing same-number From/To collision during live testing
+ * earlier this session.
+ *
+ * #944 follow-up (2026-10-07): this number's live A2P 10DLC campaign was
+ * registered under ZeroVoice's branding/use-case (CUSTOMER_CARE, message
+ * samples referencing ZeroVoice by name), not Builder's — which is why
+ * carriers are currently blocking sends (core#8533, error 30034/30896).
+ * A second Builder-owned number (+18313183353) has the same problem. Both
+ * need their own 2FA-use-case campaigns resubmitted under Builder's own
+ * branding/URL, with no ZeroVoice references — tracked in core#8533, a
+ * Twilio-console task, not a code change.
  */
 export async function sendSharedSms(toE164Number: string, body: string): Promise<SharedSmsResult> {
   const accountSid = process.env.TWILIO_ACCOUNT_SID || ''
