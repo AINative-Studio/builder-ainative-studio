@@ -74,7 +74,10 @@ async function sendOtpAndReachCodeEntry() {
   await act(async () => { sendBtn.click(); await tick() })
 }
 
-describe('Auth signup — OTP resend/skip fallback (#950)', () => {
+// #734 follow-up (2026-10-07): OTP verification UI removed from Auth.tsx
+// for now — see Auth-phone-otp.test.tsx's header for the full reason.
+// Skipped, not deleted.
+describe.skip('Auth signup — OTP resend/skip fallback (#950)', () => {
   it('does not show the "didn\'t get it?" fallback immediately after a code is sent', async () => {
     global.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ ok: true, expiresAt: 'x' }) })) as any
     await sendOtpAndReachCodeEntry()

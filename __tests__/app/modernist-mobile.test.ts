@@ -140,7 +140,10 @@ describe('accessibility fixes (2026-10-05 audit)', () => {
     expect(authTsx).toMatch(/type="email"[^>]*autoComplete="email"/)
     expect(authTsx).toMatch(/autoComplete=\{mode === 'login' \? 'current-password' : 'new-password'\}/)
     expect(authTsx).toMatch(/type="tel"[^>]*autoComplete="tel"/)
-    expect(authTsx).toMatch(/autoComplete="one-time-code"/)
+    // one-time-code hint lived on the OTP verification-code input, removed
+    // #734 follow-up (2026-10-07) alongside the rest of the OTP UI — see
+    // Auth-phone-otp.test.tsx's header for why. Restore this assertion
+    // alongside that JSX when OTP verification comes back.
   })
 
   it('Landing.tsx has real nav/main/footer landmarks, not bare divs', () => {

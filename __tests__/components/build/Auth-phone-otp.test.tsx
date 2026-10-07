@@ -57,7 +57,12 @@ async function tick(times = 4) {
   for (let i = 0; i < times; i++) await act(async () => { await Promise.resolve() })
 }
 
-describe('Auth signup — phone input + OTP verification (#734)', () => {
+// #734 follow-up (2026-10-07): OTP verification UI removed from Auth.tsx
+// for now — Twilio's A2P 10DLC campaign for OTP SMS delivery is still
+// IN_PROGRESS in carrier review (core#8533), so this UI is unreachable.
+// Skipped, not deleted: these tests are the spec for OTP behavior and
+// should pass again once the corresponding JSX block is restored.
+describe.skip('Auth signup — phone input + OTP verification (#734)', () => {
   it('renders the phone input only in signup mode', async () => {
     render(React.createElement(Auth, { mode: 'signup' }))
     expect(host.querySelector('[data-testid="auth-phone"]')).toBeTruthy()
