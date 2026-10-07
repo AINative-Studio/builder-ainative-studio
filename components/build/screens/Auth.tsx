@@ -88,6 +88,22 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
   // present, same as phoneVerified above.
   const [turnstileToken, setTurnstileToken] = useState('')
   const turnstileRequired = Boolean(process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY)
+  // #944 Part 2 — mobile-first phone-primary login/signup. Fully separate
+  // from the phone/verifyPhone/phoneVerified state above (#734's optional
+  // verification add-on on the email/password path) — this is a parallel,
+  // independent identity path with its own state, per the design spec's
+  // explicit non-goal of merging the two.
+  const [showPhoneForm, setShowPhoneForm] = useState<'auto' | 'email' | 'phone'>('auto')
+  const [primaryPhone, setPrimaryPhone] = useState('')
+  const [primaryPhoneStep, setPrimaryPhoneStep] = useState<'enter' | 'code'>('enter')
+  const [primaryOtpCode, setPrimaryOtpCode] = useState('')
+  const [phoneFormBusy, setPhoneFormBusy] = useState(false)
+  const [phoneFormError, setPhoneFormError] = useState<string | null>(null)
+  // Review finding #2 (2026-10-06): register-phone's route is Turnstile-gated
+  // (mirrors /api/build/register's gate), but nothing ever rendered a widget
+  // on this path or sent its token, so every phone registration fail-closed
+  // with 'verification_failed' whenever Turnstile is configured in prod.
+  const [primaryTurnstileToken, setPrimaryTurnstileToken] = useState('')
   // #7698 — real password reset (this used to be a "coming soon" stub that
   // never called anything). `resetSent` switches the forgot screen into a
   // neutral "check your email" confirmation — core deliberately does not reveal
@@ -386,6 +402,73 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
     }
   }
 
+  const sendPrimaryPhoneCode = async () => {
+    setPhoneFormError(null)
+    const normalized = toE164(primaryPhone)
+    if (!normalized) { setPhoneFormError('Enter a valid phone number.'); return }
+    setPhoneFormBusy(true)
+    try {
+      const res = await fetch('/api/build/register-phone', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'send-otp', phone: normalized }),
+      })
+      const d = await res.json().catch(() => null)
+      if (!d?.ok) { setPhoneFormError('Could not send a code — try again.'); setPhoneFormBusy(false); return }
+      setPrimaryPhoneStep('code')
+    } catch {
+      setPhoneFormError('Network error — try again.')
+    } finally {
+      setPhoneFormBusy(false)
+    }
+  }
+
+  const submitPrimaryPhoneCode = async () => {
+    setPhoneFormError(null)
+    const normalized = toE164(primaryPhone)
+    if (!normalized || !primaryOtpCode) { setPhoneFormError('Enter the code we texted you.'); return }
+    setPhoneFormBusy(true)
+    try {
+      // Try login first; a core NO_SUCH_PHONE_ACCOUNT response means this
+      // number has never registered, so fall back to register-phone — this
+      // is the one request per attempt that decides which path applies,
+      // since the UI has no other signal for "is this a new number."
+      const loginRes = await fetch('/api/build/login-phone', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: normalized, otp_code: primaryOtpCode }),
+      })
+      let d = await loginRes.json().catch(() => null)
+      if (!d?.ok && d?.errorCode === 'NO_SUCH_PHONE_ACCOUNT') {
+        const registerRes = await fetch('/api/build/register-phone', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: normalized, otp_code: primaryOtpCode, turnstileToken: primaryTurnstileToken }),
+        })
+        d = await registerRes.json().catch(() => null)
+      }
+      if (!d?.ok) { setPhoneFormError(d?.error || 'Could not verify that code.'); setPhoneFormBusy(false); return }
+
+      const result = await signIn('phone-login', {
+        redirect: false,
+        accessToken: d.accessToken,
+        refreshToken: d.refreshToken,
+        expiresIn: d.expiresIn,
+      })
+      if (result?.error) { setPhoneFormError('Could not sign you in — try again.'); setPhoneFormBusy(false); return }
+
+      await migrateGuestWork(state.appSub).catch(() => {})
+      const refCode = getRefCode()
+      if (refCode) {
+        fetch('/api/build/referral', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: refCode }),
+        }).catch(() => {})
+      }
+      afterAuth()
+    } catch {
+      setPhoneFormError('Network error — try again.')
+      setPhoneFormBusy(false)
+    }
+  }
+
   const submit = async () => {
     setError(null); setResendNote(null)
     if (mode === 'forgot') { await submitForgot(); return }
@@ -555,7 +638,7 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
   }
 
   return (
-    <div className="modernist m-auth">
+    <div className={`modernist m-auth ${showPhoneForm === 'email' ? 'm-auth-force-email' : showPhoneForm === 'phone' ? 'm-auth-force-phone' : ''}`}>
       <BrandPanel />
       <main className="m-auth-form">
         <AuthHeader go={go} />
@@ -570,6 +653,7 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
         )}
         <h1 className="m-artifact m-auth-h">{copy.h}</h1>
         <p className="m-sub">{copy.sub}</p>
+        <div className="m-auth-fields-email">
         <div className="m-auth-fields">
           {(mode === 'login' || mode === 'signup' || mode === 'forgot') && (
             <label className="m-field"><span className="m-mono m-field-l">Email</span>
@@ -643,6 +727,89 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
               Continue with AINative
             </button>
           </>
+        )}
+        </div>
+        {(mode === 'login' || mode === 'signup') && (
+          <div className="m-auth-phone-form" data-testid="auth-phone-form">
+            {primaryPhoneStep === 'enter' && (
+              <>
+                <label className="m-field">
+                  <span className="m-mono m-field-l">Phone number</span>
+                  <input
+                    type="tel"
+                    value={primaryPhone}
+                    onChange={(e) => setPrimaryPhone(e.target.value)}
+                    placeholder="(512) 555-1234"
+                  />
+                </label>
+                {phoneFormError && <p className="m-auth-error">{phoneFormError}</p>}
+                {mode === 'signup' && (
+                  <TurnstileWidget onVerify={setPrimaryTurnstileToken} onExpire={() => setPrimaryTurnstileToken('')} />
+                )}
+                <button
+                  type="button"
+                  data-testid="phone-send-code"
+                  disabled={phoneFormBusy}
+                  onClick={sendPrimaryPhoneCode}
+                >
+                  Send code
+                </button>
+              </>
+            )}
+            {primaryPhoneStep === 'code' && (
+              <>
+                <label className="m-field">
+                  <span className="m-mono m-field-l">Enter the code we texted you</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={primaryOtpCode}
+                    onChange={(e) => setPrimaryOtpCode(e.target.value)}
+                    placeholder="123456"
+                  />
+                </label>
+                {phoneFormError && <p className="m-auth-error">{phoneFormError}</p>}
+                <button
+                  type="button"
+                  data-testid="phone-submit-code"
+                  disabled={phoneFormBusy}
+                  onClick={submitPrimaryPhoneCode}
+                >
+                  Continue
+                </button>
+              </>
+            )}
+          </div>
+        )}
+        {/* Review finding #1 (2026-10-06): these must live OUTSIDE
+            .m-auth-phone-form — .m-auth-force-email hides that whole
+            container, which previously hid the only control that could
+            switch back to the phone form, stranding a founder who tapped
+            "Use email instead" by accident. This wrapper is never
+            force-hidden by either .m-auth-force-email or .m-auth-force-phone. */}
+        {(mode === 'login' || mode === 'signup') && (
+          <div className="m-auth-escape-row">
+            {showPhoneForm !== 'email' && (
+              <button
+                type="button"
+                className="m-auth-escape"
+                data-testid="auth-use-email-instead"
+                onClick={() => setShowPhoneForm('email')}
+              >
+                Use email instead
+              </button>
+            )}
+            {showPhoneForm === 'email' && (
+              <button
+                type="button"
+                className="m-auth-escape"
+                data-testid="auth-use-phone-instead"
+                onClick={() => setShowPhoneForm('auto')}
+              >
+                Use phone instead
+              </button>
+            )}
+          </div>
         )}
         <div className="m-auth-links m-mono">
           {mode === 'login' && <><button className="btn-ghost" onClick={() => go('forgot')}>Forgot password?</button><button className="btn-ghost" onClick={() => go('signup')}>Create account</button></>}

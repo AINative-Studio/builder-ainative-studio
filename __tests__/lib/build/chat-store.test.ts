@@ -48,6 +48,15 @@ describe('deriveOwnerKey (#52)', () => {
   it('trims surrounding whitespace on the email', () => {
     expect(deriveOwnerKey({ user: { email: '  a@b.com  ' } })).toBe('a@b.com')
   })
+
+  it('keys a phone-login account (#944 review finding #3) by its synthetic email, not as a guest', () => {
+    // authorizePhoneLogin (lib/auth/phone-login.ts) issues
+    // `phone-<id>@phone.ainative.studio` for phone-only accounts — this
+    // must NOT match the guest-email regex, or a signed-in phone founder's
+    // chat history would silently land under a shared/guest-shaped key.
+    expect(deriveOwnerKey({ user: { email: 'phone-u-1@phone.ainative.studio', type: 'ainative' } }))
+      .toBe('phone-u-1@phone.ainative.studio')
+  })
 })
 
 // ---------- chatScopeKey ----------

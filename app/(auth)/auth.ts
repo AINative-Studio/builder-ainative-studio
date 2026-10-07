@@ -6,6 +6,7 @@ import { authConfig } from './auth.config'
 import { DUMMY_PASSWORD } from '@/lib/constants'
 import type { DefaultJWT } from 'next-auth/jwt'
 import { shouldRefreshToken, refreshAINativeToken } from '@/lib/auth/tokenRefresh'
+import { authorizePhoneLogin } from '@/lib/auth/phone-login'
 
 const isDevelopment = process.env.NODE_ENV === 'development'
 
@@ -224,6 +225,13 @@ export const {
           workspaceId: workspace.id,
           workspaceName: workspace.name,
         }
+      },
+    }),
+    Credentials({
+      id: 'phone-login',
+      credentials: {},
+      async authorize(creds: any) {
+        return authorizePhoneLogin(creds)
       },
     }),
   ],
