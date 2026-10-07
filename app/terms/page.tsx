@@ -9,6 +9,12 @@
  * QE2c6890da8086d771620e9b13fadeba0b) — carriers could not resolve a public,
  * unauthenticated legal page for the product actually sending the texts.
  *
+ * 2026-10-07 follow-up: the SAME campaign (resubmitted as a 2FA use case for
+ * #944's phone-login feature) was rejected again — the URLs now resolve, but
+ * this page said nothing about phone-number sign-in / one-time verification
+ * codes, the exact use case the campaign claims. Section 04 below closes
+ * that gap — see app/privacy/page.tsx's matching section.
+ *
  * SSR, Modernist chrome (matches /about, /help, /pricing) — must stay on the
  * middleware's public allowlist so it renders for anonymous visitors and for
  * Twilio's/carriers' automated review, not just logged-in founders.
@@ -20,7 +26,7 @@ import { PublicFooter } from '@/components/shared/public-footer'
 
 const PAGE_URL = 'https://builder.ainative.studio/terms'
 const ORG_NAME = 'AINative Studio'
-const LAST_UPDATED = '2026-09-17'
+const LAST_UPDATED = '2026-10-07'
 
 export const metadata: Metadata = {
   title: 'Terms of Service | AINative Builder',
@@ -178,7 +184,36 @@ export default function TermsPage() {
           </ul>
         </Section>
 
-        <Section eyebrow="04" title="Accounts">
+        <Section eyebrow="04" title="Phone number sign-in — one-time verification codes">
+          <p>
+            Builder offers an optional way to create an account or sign in using only your phone
+            number instead of an email address and password. If you choose this option and enter
+            your phone number, we send one SMS containing a 6-digit verification code, valid for
+            10 minutes, to confirm you control that number. Entering the correct code signs you
+            in or creates your account; no password is ever set or required on this path.
+          </p>
+          <ul style={{ marginTop: 12, paddingLeft: 20, listStyle: 'disc' }}>
+            <li style={{ marginBottom: 8 }}>
+              <strong>Message frequency.</strong> Exactly one verification SMS per sign-in or
+              signup attempt you initiate — never unsolicited, never recurring.
+            </li>
+            <li style={{ marginBottom: 8 }}>
+              <strong>Message and data rates.</strong> Message and data rates may apply, depending
+              on your mobile carrier and plan.
+            </li>
+            <li style={{ marginBottom: 8 }}>
+              <strong>Opting out.</strong> Reply <span className="m-mono">STOP</span> to any
+              verification text to stop receiving them; you can still sign in with email and
+              password at any time. Reply <span className="m-mono">HELP</span> for assistance.
+            </li>
+          </ul>
+          <p style={{ marginTop: 12 }}>
+            This is separate from the conversational Cody SMS feature described in Section 03
+            above — verification codes only, sent solely to confirm phone ownership at sign-in.
+          </p>
+        </Section>
+
+        <Section eyebrow="05" title="Accounts">
           <p>
             You are responsible for maintaining the confidentiality of your account credentials and
             for all activity under your account. You agree to provide accurate information when
@@ -186,7 +221,7 @@ export default function TermsPage() {
           </p>
         </Section>
 
-        <Section eyebrow="05" title="Acceptable use">
+        <Section eyebrow="06" title="Acceptable use">
           <p>You agree not to use Builder or the phone numbers it provisions to:</p>
           <ul style={{ marginTop: 12, paddingLeft: 20, listStyle: 'disc' }}>
             <li style={{ marginBottom: 6 }}>Send unsolicited marketing, spam, or bulk messages to third parties</li>
@@ -196,7 +231,7 @@ export default function TermsPage() {
           </ul>
         </Section>
 
-        <Section eyebrow="06" title="Ownership">
+        <Section eyebrow="07" title="Ownership">
           <p>
             The application Cody generates for you, and the data it stores through your own
             provisioned company resources, belong to you. AINative retains ownership of the
@@ -205,7 +240,7 @@ export default function TermsPage() {
           </p>
         </Section>
 
-        <Section eyebrow="07" title="Disclaimer &amp; limitation of liability">
+        <Section eyebrow="08" title="Disclaimer &amp; limitation of liability">
           <p>
             The Service is provided &quot;as is&quot; without warranties of any kind. To the
             maximum extent permitted by law, AINative is not liable for indirect, incidental, or
@@ -215,7 +250,7 @@ export default function TermsPage() {
           </p>
         </Section>
 
-        <Section eyebrow="08" title="Changes to these terms">
+        <Section eyebrow="09" title="Changes to these terms">
           <p>
             We may update these Terms from time to time. Material changes will be reflected by
             updating the &quot;Last updated&quot; date above. Continued use of the Service after a
@@ -223,7 +258,7 @@ export default function TermsPage() {
           </p>
         </Section>
 
-        <Section eyebrow="09" title="Contact">
+        <Section eyebrow="10" title="Contact">
           <p>
             Questions about these Terms? Contact us at{' '}
             <a href="mailto:legal@ainative.studio" style={{ color: 'var(--color-accent)' }}>
