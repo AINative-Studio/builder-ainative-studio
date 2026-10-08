@@ -872,6 +872,16 @@ export async function setAppProvisioned(
     trialExpiresAt?: string
     keyKind?: 'tmp' | 'permanent'
     claimToken?: string
+    /**
+     * #1014: the founder's REAL, live plan, as confirmed from core at
+     * provisioning time. Before this, `plan` was only ever written by the
+     * post-Stripe-checkout `subscription/verify` redirect (#1012) and two
+     * internal loop jobs — never from the founder's actual account tier — so a
+     * founder who was already paid before creating the company had an empty
+     * `plan` here forever. The provision route only writes a CONFIRMED paid
+     * tier, so an unresolved/unpaid read can never clobber a real Stripe stamp.
+     */
+    plan?: string
     pipelineProvisioned?: boolean
     pipelineId?: string
     commerceProvisioned?: boolean

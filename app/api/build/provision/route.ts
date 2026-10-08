@@ -15,8 +15,11 @@
  *    keyKind = 'tmp'; the claim token is persisted so a later payment (#241) can
  *    upgrade tmp_ → permanent via claimCompanyProject() (no data loss).
  *
- * Gating: gated on the #241 `plan` field when present (paid plan → allow; unknown
- * paid plan → 402). Empty/missing is allowed for the MVP so the seam is exercisable.
+ * Gating (#1014): the permanent-vs-tmp decision is made against the founder's
+ * REAL, LIVE account tier read from core at provisioning time, NOT the registry
+ * row's `plan` field (which only the post-Stripe-checkout redirect ever writes,
+ * #1012). The registry `plan` survives only as a one-directional fallback for
+ * when the live lookup cannot be resolved — see the POST body for why.
  *
  * SECURITY: the raw sk_/tmp_ api_key is returned to THIS caller (server-side) but is
  * NOT written into the shared registry — only project_id + keyKind + claim token are.
@@ -29,13 +32,15 @@
  * builder_app_registry (read broadly, whole rows returned) — same trust boundary as
  * builder_primitive_credentials.
  *
- * Body: { slug, name?, plan? }
+ * Body: { slug, name? }. A `plan` sent by the client is IGNORED (and always has
+ * been — #1014 confirmed it was never read): entitlement is resolved server-side
+ * from the founder's own session, never taken from the caller.
  * Returns: { ok, zerodbProjectId, keyKind, created, claimable, deployUrl, dnsPointable } | { ok:false, reason }
  */
 
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
-import { isPaidTier } from '@/lib/ainative/plan'
+import { getPlanStatus, isPaidTier } from '@/lib/ainative/plan'
 import { resolveApp, setAppProvisioned, setAppOwner } from '@/lib/build/app-registry'
 import { deployPersistent } from '@/lib/build/deploy'
 import {
@@ -217,23 +222,110 @@ export async function POST(request: NextRequest) {
     return Response.json({ ok: false, reason: 'not_registered' }, { status: 404 })
   }
 
-  // Provisioning policy (#207): PERMANENT (sk_) requires a PAID subscription; an
-  // UNPAID user gets a REAL 72h `tmp_` trial project (no hard paywall). The trial
-  // is the conversion hook — after they pay, the tmp_ project is claimed →
-  // permanent (claimCompanyProject, from subscription/verify), so their work
-  // survives. The plan is read from the server-verified registry entry, NEVER the
-  // request body.
-  const plan = String(existing.plan || '')
-  const isPaid = isPaidTier(plan)
-
   // Founder's JWT (used ONLY for a permanent, paid provision + ZeroPipeline —
   // NEVER for a tmp_ trial, so an unpaid signed-in user can't mint a permanent key).
+  // Resolved BEFORE the paid decision below, which now needs this token (#1014).
   const session = await auth()
   const jwt = (session as any)?.accessToken as string | undefined
   // #253: stamp the signed-in founder as this company's owner so it appears in
   // their "my companies" index (best-effort; independent of paid/trial state).
   const ownerEmail = (session as any)?.user?.email as string | undefined
   if (ownerEmail) setAppOwner(slug, ownerEmail).catch(() => {})
+
+  // Provisioning policy (#207): PERMANENT (sk_) requires a PAID subscription; an
+  // UNPAID user gets a REAL 72h `tmp_` trial project (no hard paywall). The trial
+  // is the conversion hook — after they pay, the tmp_ project is claimed →
+  // permanent (claimCompanyProject, from subscription/verify), so their work
+  // survives.
+  //
+  // #1014: the paid decision is made against the founder's REAL, LIVE account
+  // tier (getPlanStatus → fetchCorePlanIdentity → core's `/api/v1/auth/me`),
+  // NOT against `existing.plan`. That registry field is populated by exactly one
+  // narrow mechanism — the post-Stripe-checkout redirect in
+  // `/api/build/subscription/verify` (itself unreliable, #1012) — and is never
+  // derived from the founder's account, so before this fix NO code path anywhere
+  // asked "is this founder, right now, really paid?" at provisioning time.
+  // Confirmed live 2026-10-07: admin@ainative.studio is a genuine enterprise
+  // account and the company it created ("Flo") still got a 72h tmp_ trial key.
+  // The request body's `plan` is still never read — entitlement is never taken
+  // from the caller.
+  //
+  // FAILURE POLICY — deliberately identical to /api/build/growth/ad-test's, the
+  // other route that asks this same entitlement question: fail CLOSED to unpaid
+  // on a lookup error (never mint billed capability on an unresolved tier), but
+  // log it LOUDLY so a core outage is never silently mistaken for a real
+  // entitlement gap (#762). An anonymous caller has no token to look up with and
+  // is genuinely unpaid — that is a resolved answer, not a failure.
+  //
+  // "Resolved" is read from `status.verified`, NOT merely from "no exception was
+  // thrown". getPlanStatus does not throw on a core outage: fetchCorePlanIdentity
+  // is explicitly documented "Never throws — an unreachable core yields
+  // `verified: false`", and the resulting null plan normalizes to a completely
+  // ordinary-looking 'hobbyist'. Keying off try/catch alone (as this originally
+  // did) left `liveTierResolved` TRUE through a real outage, so the registry
+  // fallback below never engaged and a genuinely paid founder creating a second
+  // company during a core blip was gated to a 72h tmp_ trial — the exact failure
+  // that fallback exists to prevent. The try/catch is kept as well: a thrown
+  // error (e.g. from the usage lookups) is still an unresolved tier.
+  let liveTier = 'hobbyist'
+  let liveTierResolved = true
+  if (jwt) {
+    liveTierResolved = false
+    try {
+      const status = await getPlanStatus(jwt)
+      liveTier = status.tier || 'hobbyist'
+      liveTierResolved = status.verified
+      if (!liveTierResolved) {
+        console.error(
+          `[provision] live tier lookup UNVERIFIED for slug "${slug}" — core did not ` +
+            `answer (timeout/5xx/network), so tier "${liveTier}" is a default, not a ` +
+            `real read. NOT proof the founder is unpaid; falling back to any ` +
+            `Stripe-verified plan already stamped on the registry row.`,
+        )
+      }
+    } catch (err) {
+      console.error(
+        `[provision] live tier lookup threw for slug "${slug}" — failing closed to ` +
+          `unpaid (tmp_ trial). NOT proof the founder is unpaid: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+  }
+  const livePaid = isPaidTier(liveTier)
+
+  // `existing.plan` is kept as a NARROW, one-directional fallback rather than
+  // deleted: when it carries a genuinely paid plan it was written by a COMPLETED
+  // Stripe checkout (subscription/verify) or by reconcilePlanFulfillment after a
+  // verified core read — a real purchase signal we must not throw away just
+  // because core is momentarily unreachable. It can only ever ADD entitlement
+  // (OR, never AND), so a stale/empty row can't drag a genuinely paid founder
+  // down to tmp_, and an unpaid row can't either. It is consulted only when the
+  // live lookup did NOT resolve, so a founder who has genuinely downgraded in
+  // core is not kept on a permanent key by a stale registry stamp.
+  const registryPlan = String(existing.plan || '')
+  const registryPaid = isPaidTier(registryPlan)
+  const isPaid = livePaid || (!liveTierResolved && registryPaid)
+  // The plan to report and persist. Prefer the live tier we just CONFIRMED paid
+  // — stamping it closes the #1014 gap at the source, so every later reader of
+  // this row (claimSubdomain, the GET below, the Live dashboard) stops seeing an
+  // empty plan for a founder who was paid all along.
+  //
+  // Everything else resolves to '' so the `...(plan ? { plan } : {})` guard below
+  // omits the field entirely and leaves whatever the row already holds untouched:
+  //
+  //  - CONFIRMED UNPAID (verified, hobbyist/starter): this used to fall through to
+  //    `registryPlan`, re-stamping a stale paid value from a past purchase onto the
+  //    row of a founder core had just confirmed is NOT currently paid. It read as
+  //    harmless ("not a new value") but `subdomainServable()` (lib/build/deploy.ts),
+  //    `claimSubdomain()` (lib/build/app-registry.ts) and the /api/build/deck
+  //    paywall all read this field directly and would keep treating the founder as
+  //    paid, against a live confirmed answer — and it contradicted this comment's
+  //    own "an unconfirmed or unpaid tier is deliberately NOT written" promise.
+  //  - UNRESOLVED (core outage): writing the default 'hobbyist' would overwrite a
+  //    real Stripe-verified stamp with a guess. The registry's own existing value
+  //    still grants entitlement for THIS provision via `isPaid` above; it simply
+  //    isn't re-written here.
+  const plan = livePaid ? liveTier : ''
 
   // Already provisioned? Return the persisted project id (idempotent).
   if (existing.zerodbProjectId) {
@@ -280,12 +372,21 @@ export async function POST(request: NextRequest) {
     if (mcp.ok && mcp.projectId) {
       const target = await deployPersistent(existing.chatId, slug, existing)
       const provisionedAt = new Date().toISOString()
+      // NOTE (#1014 triage, pre-existing and deliberately NOT changed here):
+      // this MCP path hardcodes keyKind:'permanent' and consults neither `isPaid`
+      // nor the founder's plan at all, so with ENABLE_MCP_PROVISION on, an
+      // unpaid founder gets a permanent project. That is the OPPOSITE defect
+      // from #1014 (an over-grant from an unrelated feature flag, not an
+      // under-grant), it is inert by default (the flag is off), and changing it
+      // would alter #73's behavior — so it is reported, not silently fixed.
+      // The live plan IS stamped below, since that is strictly an improvement.
       const persisted = await setAppProvisioned(slug, {
         zerodbProjectId: mcp.projectId,
         keyKind: 'permanent',
         provisionedAt,
         deployUrl: target.url,
         workspaceId: BUILDER_WORKSPACE_ID,
+        ...(plan ? { plan } : {}),
       })
       return Response.json({
         ok: true,
@@ -542,6 +643,10 @@ export async function POST(request: NextRequest) {
     keyKind: prov.keyKind,
     claimToken: prov.claimToken,
     trialExpiresAt,
+    // #1014: stamp the live, confirmed-paid plan so the row stops lying about
+    // an already-paying founder. Omitted entirely when we did not confirm a paid
+    // tier, so a core outage can never overwrite a real Stripe-verified stamp.
+    ...(plan ? { plan } : {}),
     deployUrl: target.url,
     provisionedAt,
     pipelineProvisioned: pipeline.provisioned,

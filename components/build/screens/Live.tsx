@@ -788,7 +788,9 @@ export function Live() {
     try {
       const res = await fetch('/api/build/provision', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slug: companyId, name: company, plan: state.plan }),
+        // #1014: no `plan` is sent — it was dead on both sides (the route never
+        // read it; state.plan is '' always). The route resolves the real one.
+        body: JSON.stringify({ slug: companyId, name: company }),
       })
       const d = await res.json().catch(() => null)
       if (d?.ok) {
