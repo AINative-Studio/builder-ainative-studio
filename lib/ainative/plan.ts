@@ -59,6 +59,15 @@ export function tierLabel(tier: string): string {
 const TIER_ALIASES: Record<string, string> = {
   launch: 'pro',
   company: 'business',
+  // Core's own long-form plan_id for the top tier, confirmed live against
+  // GET /api/v1/public/pricing/plans. It was MISSING here, so
+  // normalizeTier('cody__your_virtual_cto') fell through to 'hobbyist' and
+  // isPaidTier() answered FALSE for the single most expensive plan Builder
+  // sells — the exact silent-downgrade class #762 fixed for `business`, just
+  // left unfixed for this id. Two registry-side call sites
+  // (setAppPlan's `enrolled`, subscription/verify) already special-cased it
+  // with a literal ||-chain, which is precisely how the vocabularies drifted.
+  cody__your_virtual_cto: 'cody_vcto',
 }
 
 /** Normalize a core plan_name to a limits key. Legacy free/basic/trial resolve to

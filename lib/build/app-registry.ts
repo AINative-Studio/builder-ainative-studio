@@ -6,6 +6,10 @@
  */
 
 import { getAinativeApiKey } from '@/lib/build/env-keys'
+// The ONE consolidated paid-tier vocabulary (#762). Imported rather than
+// re-implemented so the registry's stored `plan` and every gate that reads it
+// back can never drift apart on what "paid" means (#1012 review finding 1/3).
+import { isPaidTier, normalizeTier } from '@/lib/ainative/plan'
 
 const AINATIVE_API = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 const API_KEY = getAinativeApiKey()
@@ -800,10 +804,17 @@ export async function setAppPlan(slug: string, plan: string): Promise<boolean> {
   const existing = await resolveApp(slug)
   if (!existing) return false
   // #841: Pro and up auto-enroll into the nightly improvement loop (was
-  // Business+ only) — `plan` here is core's real raw plan_id (confirmed live
-  // against GET /api/v1/public/pricing/plans: pro/business/enterprise/
-  // cody__your_virtual_cto), same value subscription/verify/route.ts checks.
-  const enrolled = plan === 'pro' || plan === 'business' || plan === 'enterprise' || plan === 'cody_vcto' || plan === 'cody__your_virtual_cto'
+  // Business+ only).
+  //
+  // This was a hand-written ||-chain over literal plan ids
+  // (pro/business/enterprise/cody_vcto/cody__your_virtual_cto) and was one of
+  // the readers that silently disagreed with the rest of the repo (#1012 review
+  // finding 1): it had no case for core's `launch`/`company` aliases, so a
+  // founder on Launch got `enrolled: false` and the nightly loop never picked
+  // their company up — with nothing logged. It now asks the SAME consolidated
+  // predicate (#762) every other paid gate asks, which normalizes those aliases
+  // first. Membership is unchanged for every id the chain already covered.
+  const enrolled = isPaidTier(plan)
   return registerApp({ ...existing, plan, enrolled })
 }
 
@@ -823,10 +834,12 @@ export async function claimSubdomain(
 ): Promise<{ ok: boolean; claimed: boolean; reason?: string }> {
   const existing = await resolveApp(slug)
   if (!existing) return { ok: false, claimed: false, reason: 'not_registered' }
-  // Paid gate — a subdomain can only be claimed on a paid plan (#78).
-  const plan = String(existing.plan || '').toLowerCase()
-  const paid = plan === 'pro' || plan === 'business' || plan === 'enterprise' || plan === 'cody_vcto'
-  if (!paid) return { ok: false, claimed: false, reason: 'not_paid' }
+  // Paid gate — a subdomain can only be claimed on a paid plan (#78). Asks the
+  // consolidated predicate (#762) rather than a local literal set, which used to
+  // return `not_paid` to a founder whose row held an un-normalized core alias
+  // (#1012 review finding 1). Normalization now happens on the write side too,
+  // so this is belt-and-braces for rows already written before that fix.
+  if (!isPaidTier(existing.plan)) return { ok: false, claimed: false, reason: 'not_paid' }
   // Already claimed → idempotent success, no churn row.
   if (existing.subdomainClaimed === true) return { ok: true, claimed: true }
   const ok = await registerApp({
@@ -1125,6 +1138,155 @@ export async function reconcilePlanFulfillment(
   }
 
   return { planFixed, keyClaimed }
+}
+
+/**
+ * True when `plan` is a real, paid core plan id — delegated to `isPaidTier`,
+ * the ONE consolidated paid-tier predicate (#762, lib/ainative/plan.ts).
+ *
+ * THIS USED TO BE ITS OWN `PAID_PLAN_IDS` Set, and that was the bug (#1012
+ * review finding 1/3). That set listed core's alias ids (`launch`, `company`)
+ * as accepted values alongside the canonical ones, which is correct for
+ * "may I act on this?" but catastrophic as a gate in front of a WRITE: every
+ * registry CONSUMER compares the stored string against canonical ids only, so
+ * an accepted-but-unnormalized alias produced a row that this predicate called
+ * paid and `lib/build/deploy.ts`'s `isPaidPlan` called unpaid. #762 created
+ * `isPaidTier` precisely so that one plan id can never mean two different
+ * things depending on which code path reads it; a sixth private copy of the
+ * answer defeated that. Normalization now happens in `fulfillPaidPlan` before
+ * the write, so acceptance and storage can no longer disagree.
+ *
+ * Semantics are unchanged for every id this previously accepted: `isPaidTier`
+ * funnels through `normalizeTier`, whose TIER_ALIASES map launch→pro,
+ * company→business, cody__your_virtual_cto→cody_vcto, and whose PAID_TIERS is
+ * the same pro|business|enterprise|cody_vcto membership. `hobbyist` and the $20
+ * `starter` remain NOT paid.
+ */
+export function isPaidPlanId(plan: string | undefined | null): boolean {
+  return isPaidTier(plan)
+}
+
+/**
+ * The canonical plan string to PERSIST for a paid core plan id (#1012 review
+ * finding 1).
+ *
+ * `plan` on a registry row is read back by several independent paid gates that
+ * each compare it against canonical ids — `lib/build/deploy.ts`'s `isPaidPlan`
+ * (which `subdomainServable` and therefore middleware's wildcard-host serving
+ * depends on), `claimSubdomain`'s own check, and `setAppPlan`'s `enrolled`
+ * computation. Writing core's raw alias (`launch`/`company`) satisfied NONE of
+ * them: a founder who genuinely paid for Launch got `{slug}.ainative.studio`
+ * never served, `reason: 'not_paid'` on their subdomain claim, and no nightly
+ * loop enrollment. Normalizing on the way in means the registry holds exactly
+ * the vocabulary every reader already expects.
+ */
+function canonicalPaidPlan(plan: string | undefined | null): string {
+  return normalizeTier(plan)
+}
+
+export interface FulfillPaidPlanResult {
+  /** The fulfillment was accepted and acted on (plan already correct counts). */
+  ok: boolean
+  /** A plan row was actually appended on this call. */
+  planSet: boolean
+  /** The tmp_ Instant DB project was upgraded to permanent on this call. */
+  keyClaimed: boolean
+  /**
+   * The company STILL sits on an unclaimed tmp_ key. Load-bearing honesty
+   * signal: a webhook has no founder token, so it cannot finish this step —
+   * reporting it lets the caller log/alert instead of pretending fulfillment
+   * was complete.
+   */
+  keyClaimPending: boolean
+  reason?: string
+}
+
+/**
+ * Stamp a VERIFIED-PAID plan onto a company and, when possible, upgrade its
+ * tmp_ Instant DB project to permanent (#1012).
+ *
+ * WHY THIS EXISTS: these two steps (`setAppPlan` + `claimCompanyProject`) were
+ * the entirety of paid fulfillment, and both were reachable from exactly ONE
+ * place — POST /api/build/subscription/verify — which only ever runs if the
+ * founder's browser survives the full Stripe→Builder redirect round-trip. A
+ * closed tab, a network blip, or an ad-blocker on that single redirect left a
+ * genuinely paying founder permanently on `plan: null` and a 72h tmp_ key that
+ * silently expires. Production evidence (2026-10-08, 338 registry rows across
+ * 17 real accounts): exactly one company ever had `plan` set, via an internal
+ * staff enterprise bypass — ZERO real external Stripe purchases had ever
+ * round-tripped. #855's `reconcilePlanFulfillment` (above) retries on Live
+ * dashboard load, which helps only founders who revisit that one screen.
+ *
+ * This function is that same fulfillment, extracted so a browser-independent
+ * caller (POST /api/webhooks/stripe) performs the IDENTICAL steps rather than
+ * a second, drifting copy of them. It deliberately composes the existing,
+ * already-proven `setAppPlan` / `claimCompanyProject` rather than re-writing
+ * their registry semantics.
+ *
+ * `jwt` IS OPTIONAL AND THAT IS THE WHOLE POINT. Core's
+ * /api/v1/public/instant-db/claim associates a project to a SPECIFIC real
+ * account and requires that account's own bearer token; a webhook has none,
+ * and CODY.md Rule 5 forbids borrowing/impersonating one or falling back to an
+ * anonymous service-level provisioning path. So the webhook path stamps the
+ * plan (the part that unblocks every paid gate and was the actual reported
+ * breakage) and reports `keyClaimPending: true`; the founder's very next
+ * authenticated Live load finishes the claim through
+ * `reconcilePlanFulfillment`, which now finds a correct plan already in place.
+ *
+ * Idempotent: a re-delivered webhook for an already-fulfilled company appends
+ * no churn row (`planSet: false`, `ok: true`) because `setAppPlan` is only
+ * called when the stored plan actually differs, and `claimCompanyProject` is
+ * itself a no-op once `keyKind === 'permanent'`.
+ *
+ * Refuses (`ok: false`, `reason: 'not_a_paid_plan'`) on a free/hobbyist plan id
+ * so a webhook can never stamp a non-paid tier onto a company.
+ */
+export async function fulfillPaidPlan(
+  slug: string,
+  corePlan: string,
+  jwt?: string,
+): Promise<FulfillPaidPlanResult> {
+  const base: FulfillPaidPlanResult = { ok: false, planSet: false, keyClaimed: false, keyClaimPending: false }
+  const rawPlan = String(corePlan || '').trim()
+  if (!slug || !rawPlan) return { ...base, reason: 'missing_args' }
+  if (!isPaidPlanId(rawPlan)) return { ...base, reason: 'not_a_paid_plan' }
+
+  // NORMALIZE BEFORE WRITING (#1012 review finding 1). `corePlan` arrives as
+  // core's own raw plan_id, which may be an alias (`launch`/`company`/
+  // `cody__your_virtual_cto`). Every consumer of the stored `plan` — deploy.ts's
+  // isPaidPlan → subdomainServable → middleware's wildcard-host serving,
+  // claimSubdomain's paid gate, and setAppPlan's `enrolled` flag — compares it
+  // against CANONICAL ids, so persisting the raw alias left a genuinely paying
+  // founder's company reading as unpaid everywhere it mattered. The canonical
+  // form is what lands on the row from here on.
+  const plan = canonicalPaidPlan(rawPlan)
+
+  const existing = await resolveApp(slug).catch(() => null)
+  if (!existing) return { ...base, reason: 'not_registered' }
+
+  let planSet = false
+  if (existing.plan !== plan) {
+    planSet = await setAppPlan(slug, plan).catch(() => false)
+  }
+
+  // Does this company still need its tmp_ project claimed at all?
+  const needsClaim = Boolean(existing.zerodbProjectId && existing.keyKind === 'tmp' && existing.claimToken)
+
+  let keyClaimed = false
+  if (needsClaim && jwt) {
+    const claim = await claimCompanyProject(slug, jwt).catch(() => null)
+    keyClaimed = Boolean(claim?.ok && claim.claimed)
+  }
+
+  return {
+    // Plan is correct either because we just wrote it or because it already was.
+    ok: planSet || existing.plan === plan,
+    planSet,
+    keyClaimed,
+    // Still pending if a claim was needed and we didn't (or couldn't) complete it.
+    keyClaimPending: needsClaim && !keyClaimed,
+    reason: planSet ? undefined : existing.plan === plan ? 'already_fulfilled' : 'plan_write_failed',
+  }
 }
 
 /**
