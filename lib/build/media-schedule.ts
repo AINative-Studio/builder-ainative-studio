@@ -80,6 +80,15 @@ export interface MediaRoutine {
    * Undefined until the routine has actually fired once.
    */
   lastVariant?: number
+  /**
+   * Index into {@link STYLE_DESCRIPTORS} used by the most recent run (#1018).
+   * A SEPARATE rotation from `lastVariant` — composition/framing and
+   * style/mood are independent axes, so a company can land on, say,
+   * composition-variant 2 + style-variant 0 rather than being locked into one
+   * combined rotation of fixed pairs. Persisted and advanced the same way as
+   * `lastVariant`. Undefined until the routine has actually fired once.
+   */
+  lastStyleVariant?: number
 }
 
 /** A generated media asset owned by the company. */
@@ -185,6 +194,34 @@ export const VARIATION_DESCRIPTORS = [
 ] as const
 
 /**
+ * Rotating style/mood descriptors (#1018) — a SECOND, independent variation
+ * axis from {@link VARIATION_DESCRIPTORS}. #909 fixed run-to-run repetition
+ * for a single company (composition/framing), and the subject-matter
+ * grounding in {@link buildBrandPrompt} was already real and working — but
+ * the STYLE instruction was one fixed, generic phrase
+ * ("modern, clean, professional photography or illustration, high visual
+ * quality") sent for EVERY company, every run. A fintech company and a
+ * children's toy company got identical style language, so even with varied
+ * composition and grounded subject matter, every company's asset read as
+ * "the same overarching theme."
+ *
+ * Each descriptor is an instruction about STYLE/MOOD/AESTHETIC only — never
+ * subject matter — so, like the composition axis, it layers on top of (never
+ * replaces) the real-business-grounding and no-on-image-text instructions in
+ * {@link buildBrandPrompt}. Picked via the SAME {@link pickNextVariant}
+ * helper, but with its OWN persisted index (`lastStyleVariant`) so the two
+ * axes rotate independently rather than being locked into one combined
+ * rotation of fixed pairs — a company can land on composition-variant 2 +
+ * style-variant 0 in the same run.
+ */
+export const STYLE_DESCRIPTORS = [
+  'Style: warm and approachable — soft natural lighting, inviting and human, favoring an editorial-photography feel over anything slick or corporate.',
+  'Style: bold and energetic — high contrast, vivid saturated color, a dynamic sense of motion and momentum.',
+  'Style: minimalist and refined — clean negative space, a restrained palette, precise and uncluttered, premium rather than busy.',
+  'Style: grounded and technical — crisp, detail-oriented, documentary-like clarity that foregrounds how the product or process actually works.',
+] as const
+
+/**
  * Pick the next variation index (#909), guaranteeing it never repeats the
  * immediately-prior variant for the same company. Pure + deterministic-safe
  * (uses Math.random for the actual pick, but the "never equal to prev"
@@ -233,8 +270,24 @@ export function pickNextVariant(prev: number | undefined | null, total: number):
  * appended AFTER all the grounding/no-text instructions so it can never
  * weaken them. An out-of-range or missing index safely falls back to index 0
  * rather than throwing or producing "undefined" in the prompt text.
+ *
+ * #1018: the STYLE line used to be one fixed, generic phrase
+ * ("modern, clean, professional photography or illustration, high visual
+ * quality") sent for every company, every run — never varying by industry or
+ * brand personality. `styleIndex` (optional, same back-compat default of 0)
+ * independently selects a rotating style/mood descriptor from
+ * {@link STYLE_DESCRIPTORS}, REPLACING that static line (it was never a
+ * grounding instruction, just inert filler) rather than adding alongside it.
+ * It is a SEPARATE index from `variantIndex` — composition and style rotate
+ * independently, not as one combined pairing — validated and defaulted the
+ * exact same defensive way.
  */
-export function buildBrandPrompt(mediaKind: MediaKind, brand: BrandContext, variantIndex?: number): string {
+export function buildBrandPrompt(
+  mediaKind: MediaKind,
+  brand: BrandContext,
+  variantIndex?: number,
+  styleIndex?: number,
+): string {
   const name = (brand.companyName || 'the company').trim()
   const tagline = (brand.tagline || '').trim()
   const idea = (brand.idea || '').trim()
@@ -248,6 +301,11 @@ export function buildBrandPrompt(mediaKind: MediaKind, brand: BrandContext, vari
       ? variantIndex
       : 0
   const variation = VARIATION_DESCRIPTORS[safeIndex]
+  const safeStyleIndex =
+    typeof styleIndex === 'number' && Number.isInteger(styleIndex) && styleIndex >= 0 && styleIndex < STYLE_DESCRIPTORS.length
+      ? styleIndex
+      : 0
+  const style = STYLE_DESCRIPTORS[safeStyleIndex]
   const parts = [
     `Create ${noun} for a real company. What this company actually does: ${subject}.`,
     'The image must depict THIS business — its real product, service, or the problem it',
@@ -256,7 +314,7 @@ export function buildBrandPrompt(mediaKind: MediaKind, brand: BrandContext, vari
     '(e.g. fashion/apparel imagery) unless the company itself is in that industry.',
     tagline ? `Brand tagline (for tone only — do not render this text in the image): "${tagline}".` : '',
     color ? `Use the brand accent color ${color} prominently in the palette.` : '',
-    'Style: modern, clean, professional photography or illustration, high visual quality.',
+    style,
     'Do NOT render any words, letters, logos, or captions in the image — no text overlays',
     'of any kind, including the company name, tagline, or any instructional phrasing from',
     'this prompt. This must be a purely visual asset with zero on-image text.',
@@ -353,6 +411,7 @@ export function coerceRoutine(raw: any, scopeKey = ''): MediaRoutine | null {
     createdAt: String(r.createdAt || new Date().toISOString()),
     lastRunAt: r.lastRunAt ? String(r.lastRunAt) : undefined,
     lastVariant: Number.isInteger(r.lastVariant) ? Number(r.lastVariant) : undefined,
+    lastStyleVariant: Number.isInteger(r.lastStyleVariant) ? Number(r.lastStyleVariant) : undefined,
   }
 }
 
@@ -414,7 +473,14 @@ async function zerodbRequest(method: string, path: string, body?: unknown, retri
  */
 export async function saveRoutine(
   scopeKey: string,
-  input: { mediaKind: MediaKind; frequency: MediaFrequency; enabled?: boolean; lastRunAt?: string; lastVariant?: number },
+  input: {
+    mediaKind: MediaKind
+    frequency: MediaFrequency
+    enabled?: boolean
+    lastRunAt?: string
+    lastVariant?: number
+    lastStyleVariant?: number
+  },
 ): Promise<MediaRoutine | null> {
   if (!scopeKey) return null
   const now = new Date().toISOString()
@@ -428,6 +494,7 @@ export async function saveRoutine(
     createdAt: now,
     lastRunAt: input.lastRunAt,
     lastVariant: Number.isInteger(input.lastVariant) ? input.lastVariant : undefined,
+    lastStyleVariant: Number.isInteger(input.lastStyleVariant) ? input.lastStyleVariant : undefined,
   }
   await ensureTable()
   const result = await zerodbRequest(
@@ -717,15 +784,19 @@ export type MediaFailureReason = (typeof MEDIA_FAILURE_REASONS)[number]
  * every other failure mode. Each branch now console.errors the real signal
  * (response status/body, poll outcome, or caught error) and tags the result
  * with a specific `reason` so this is actually diagnosable.
+ *
+ * #1018: `styleIndex` (optional, independent from `variantIndex`) selects the
+ * rotating style/mood descriptor — see {@link buildBrandPrompt}.
  */
 export async function runMediaGeneration(
   scopeKey: string,
   mediaKind: MediaKind,
   brand: BrandContext,
   variantIndex?: number,
+  styleIndex?: number,
 ): Promise<{ status: 'disabled' | 'failed' | 'generated'; asset?: MediaAsset; reason?: MediaFailureReason }> {
   if (!mediaGenerationConfigured()) return { status: 'disabled' }
-  const prompt = buildBrandPrompt(mediaKind, brand, variantIndex)
+  const prompt = buildBrandPrompt(mediaKind, brand, variantIndex, styleIndex)
   const { path, body } = buildGenerationRequest(mediaKind, prompt)
   try {
     const res = await fetch(`${CORE_API}${path}`, {

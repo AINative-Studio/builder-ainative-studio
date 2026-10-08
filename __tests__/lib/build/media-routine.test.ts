@@ -111,6 +111,46 @@ describe('runMediaRoutines', () => {
     expect(sentBody.prompt).not.toBe(buildBrandPrompt('image', { companyName: 'Acme' }, 0))
   })
 
+  // #1018: the nightly-loop runner must ALSO pick a next style/mood index
+  // (independent from lastVariant) and persist it forward as its own field —
+  // otherwise every recurring run still carries the same fixed style phrase
+  // even though composition now varies.
+  it('picks a different style index than lastStyleVariant and persists it forward, independently of lastVariant (#1018)', async () => {
+    process.env.BUILD_MEDIA_ENABLED = 'true'
+    const rows = [routineRow({ lastRunAt: '2026-01-01T00:00:00Z', frequency: 'daily', lastVariant: 0, lastStyleVariant: 0 })]
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(OK({ data: rows }) as any)              // listMedia
+      .mockResolvedValueOnce(OK({ url: 'http://x/g.png' }) as any)   // generate
+      .mockResolvedValueOnce(OK({ ok: true }) as any)               // saveAsset
+      .mockResolvedValueOnce(OK({ ok: true }) as any)               // saveRoutine advance
+    vi.stubGlobal('fetch', fetchMock)
+    await runMediaRoutines('a::b', { companyName: 'Acme' })
+    const advanceBody = JSON.parse(fetchMock.mock.calls.at(-1)![1].body)
+    expect(advanceBody.row_data.lastStyleVariant).not.toBe(0)
+    expect(typeof advanceBody.row_data.lastStyleVariant).toBe('number')
+    // lastVariant (composition) advanced too, but the two need not be equal —
+    // they are independent rotations, not one combined pairing.
+    expect(typeof advanceBody.row_data.lastVariant).toBe('number')
+  })
+
+  it('bakes the chosen style index into the actual generation prompt sent to core, alongside the composition variant (#1018)', async () => {
+    process.env.BUILD_MEDIA_ENABLED = 'true'
+    const rows = [routineRow({ lastRunAt: '2026-01-01T00:00:00Z', frequency: 'daily', lastVariant: 0, lastStyleVariant: 0, mediaKind: 'image' })]
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(OK({ data: rows }) as any)
+      .mockResolvedValueOnce(OK({ url: 'http://x/g.png' }) as any)
+      .mockResolvedValueOnce(OK({ ok: true }) as any)
+      .mockResolvedValueOnce(OK({ ok: true }) as any)
+    vi.stubGlobal('fetch', fetchMock)
+    await runMediaRoutines('a::b', { companyName: 'Acme' })
+    const generateCall = fetchMock.mock.calls[1]
+    const sentBody = JSON.parse(String(generateCall[1].body))
+    const { buildBrandPrompt } = await import('@/lib/build/media-schedule')
+    // Must not match the prompt that lastVariant=0/lastStyleVariant=0 would
+    // have produced if neither axis actually advanced.
+    expect(sentBody.prompt).not.toBe(buildBrandPrompt('image', { companyName: 'Acme' }, 0, 0))
+  })
+
   it("advances a 'once' routine to disabled after it fires", async () => {
     process.env.BUILD_MEDIA_ENABLED = 'true'
     const rows = [routineRow({ frequency: 'once', lastRunAt: undefined })] // never run → due

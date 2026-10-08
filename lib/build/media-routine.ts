@@ -22,6 +22,7 @@ import {
   mediaGenerationConfigured,
   pickNextVariant,
   VARIATION_DESCRIPTORS,
+  STYLE_DESCRIPTORS,
   type BrandContext,
 } from '@/lib/build/media-schedule'
 
@@ -54,18 +55,25 @@ export async function runMediaRoutines(
         // actual core call carries a different scene/composition than the
         // routine's last run — never repeating routine.lastVariant.
         const variantIndex = pickNextVariant(routine.lastVariant, VARIATION_DESCRIPTORS.length)
-        const result = await runMediaGeneration(scopeKey, routine.mediaKind, brand, variantIndex)
+        // #1018: pick the next STYLE/mood index the same way, but as a fully
+        // independent rotation from `variantIndex` — a company can land on
+        // composition-variant 2 + style-variant 0 rather than being locked
+        // into one combined rotation of fixed pairs.
+        const styleIndex = pickNextVariant(routine.lastStyleVariant, STYLE_DESCRIPTORS.length)
+        const result = await runMediaGeneration(scopeKey, routine.mediaKind, brand, variantIndex, styleIndex)
         if (result.status !== 'generated') continue
         generated += 1
         // Advance the routine forward. A 'once' routine disables after it fires;
         // recurring routines keep enabled with a fresh lastRunAt so nextRunAt moves.
-        // lastVariant also advances so the NEXT run never repeats this one.
+        // lastVariant/lastStyleVariant also advance so the NEXT run never repeats
+        // either axis from this run.
         await saveRoutine(scopeKey, {
           mediaKind: routine.mediaKind,
           frequency: routine.frequency,
           enabled: routine.frequency !== 'once',
           lastRunAt: new Date().toISOString(),
           lastVariant: variantIndex,
+          lastStyleVariant: styleIndex,
         })
       } catch {
         /* per-routine failure is non-fatal — keep going */
