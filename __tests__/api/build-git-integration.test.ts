@@ -129,16 +129,27 @@ describe('Git integration modules (#349)', () => {
       expect(routeContent).toContain('gitProvisioned')
     })
 
-    it('register-app route imports git module', async () => {
+    // #1015: the commit itself moved OUT of the route body and into the shared
+    // lib/build/register-app-core.ts, so the server-side reconciliation sweep
+    // (for companies whose browser died before Preview.tsx ever called this
+    // route) re-drives the identical logic instead of a second copy of it. The
+    // wiring this test exists to protect is unchanged — it is just one level of
+    // indirection away now — so assert the real chain end to end rather than a
+    // single file's source text.
+    it('register-app route is wired to the git commit path via the shared core module', async () => {
       const fs = await import('fs')
       const routeContent = fs.readFileSync(
         'app/api/build/register-app/route.ts',
         'utf-8'
       )
-      expect(routeContent).toContain('commitRegeneration')
-      expect(routeContent).toContain('provisionCompanyRepo')
-      expect(routeContent).toContain('@/lib/git/company-repo')
+      expect(routeContent).toContain('@/lib/build/register-app-core')
+      expect(routeContent).toContain('runGitCommit')
       expect(routeContent).toContain('gitCommitted')
+
+      const coreContent = fs.readFileSync('lib/build/register-app-core.ts', 'utf-8')
+      expect(coreContent).toContain('commitRegeneration')
+      expect(coreContent).toContain('provisionCompanyRepo')
+      expect(coreContent).toContain('@/lib/git/company-repo')
     })
   })
 })
