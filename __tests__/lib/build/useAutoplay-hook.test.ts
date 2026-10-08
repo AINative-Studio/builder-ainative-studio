@@ -364,6 +364,129 @@ describe('useAutoplay — wedge draft fetch (hook body, #668)', () => {
   })
 })
 
+// ── Nudge hold (#1019) ────────────────────────────────────────────────────────
+// CodyNudge ("Cody suggests · {primitive}") used to vanish ~550ms (HANDOFF_MS)
+// after the artifact it's attached to finished generating — autoplay advanced
+// state.view unconditionally, and showNudge (CodyFeed.tsx) is keyed off
+// state.view, so the card for the view just left disappears with it. Live
+// verification (real /build autoplay run, Playwright) confirmed the real
+// window is max(HANDOFF_MS, generation latency) — observed ~4.3s for one
+// artifact, but on a fast/cached generation it can still collapse to the raw
+// 550ms floor, exactly the reported symptom. Fix: hold autoplay (don't even
+// search for `next`) while the CURRENT view has an unactioned nudge and has
+// finished generating; NUDGE (accept/dismiss) releases the hold.
+
+describe('useAutoplay — nudge hold (hook body, #1019)', () => {
+  it('does NOT advance state.view while the current view has an unactioned, done nudge', () => {
+    // 'brief' has a real nudge (AI Kit Safety, see lib/build/primitives.ts) and
+    // is already done generating — autoplay's natural next step would advance
+    // past it, but the nudge is still unactioned (nudgeState.brief === undefined).
+    const state = wsState({
+      done: { design: 'done', brief: 'done' },
+      view: 'brief',
+      track: 'app',
+      askedPrivacy: true,
+      designStepDone: true,
+      nudgeState: {},
+    })
+    const dispatch = vi.fn()
+    useAutoplay(state, dispatch)
+    ;(globalThis as any).__triggerEffect?.(0)
+    // No GOTO_VIEW, no SET_OVERLAY, no fetch-driving dispatch at all — autoplay
+    // is fully held, not just skipping the transition.
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it('does NOT hold when the view has no nudge (prd has nudge: null)', () => {
+    const state = wsState({
+      done: { design: 'done', brief: 'done' },
+      view: 'prd',
+      track: 'app',
+      askedPrivacy: true,
+      designStepDone: true,
+      nudgeState: {},
+    })
+    const dispatch = vi.fn()
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
+    useAutoplay(state, dispatch)
+    ;(globalThis as any).__triggerEffect?.(0)
+    // prd has no nudge (PRIMITIVE_MAP.prd.nudge === null) — autoplay proceeds
+    // normally and dispatches the forming overlay for the next undone view.
+    expect(dispatch).toHaveBeenCalled()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('does NOT hold once the nudge has been accepted (nudgeState set)', () => {
+    const state = wsState({
+      done: { design: 'done', brief: 'done' },
+      view: 'brief',
+      track: 'app',
+      askedPrivacy: true,
+      designStepDone: true,
+      nudgeState: { brief: 'accepted' },
+    })
+    const dispatch = vi.fn()
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
+    useAutoplay(state, dispatch)
+    ;(globalThis as any).__triggerEffect?.(0)
+    // Nudge answered — autoplay resumes searching for the next undone view
+    // (prd) and dispatches GOTO_VIEW to it.
+    const types = dispatch.mock.calls.map((c) => c[0].type)
+    expect(types).toContain('GOTO_VIEW')
+    const gotoCall = dispatch.mock.calls.find((c) => c[0].type === 'GOTO_VIEW')
+    expect(gotoCall![0].view).toBe('prd')
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('does NOT hold once the nudge has been dismissed (nudgeState set)', () => {
+    const state = wsState({
+      done: { design: 'done', brief: 'done' },
+      view: 'brief',
+      track: 'app',
+      askedPrivacy: true,
+      designStepDone: true,
+      nudgeState: { brief: 'dismissed' },
+    })
+    const dispatch = vi.fn()
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
+    useAutoplay(state, dispatch)
+    ;(globalThis as any).__triggerEffect?.(0)
+    const types = dispatch.mock.calls.map((c) => c[0].type)
+    expect(types).toContain('GOTO_VIEW')
+    const gotoCall = dispatch.mock.calls.find((c) => c[0].type === 'GOTO_VIEW')
+    expect(gotoCall![0].view).toBe('prd')
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('does NOT hold while the nudge-bearing view is still generating (not done yet)', () => {
+    // brief has a nudge but isn't done yet — the card isn't showing (CodyFeed's
+    // showNudge only depends on state.view/nudgeState, not `done`, but there is
+    // nothing to hold FOR here: next is still brief itself, so the generation
+    // fetch must be allowed to proceed normally).
+    const state = wsState({
+      done: { design: 'done' },
+      view: 'brief',
+      track: 'app',
+      askedPrivacy: true,
+      designStepDone: true,
+      nudgeState: {},
+    })
+    const dispatch = vi.fn()
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
+    useAutoplay(state, dispatch)
+    ;(globalThis as any).__triggerEffect?.(0)
+    const formingCall = dispatch.mock.calls.find(
+      (c) => c[0].type === 'SET_OVERLAY' && c[0].overlay?.kind === 'forming',
+    )
+    expect(formingCall).toBeDefined()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+})
+
 // ── GOTO_VIEW when view does not match next ───────────────────────────────────
 
 describe('useAutoplay — GOTO_VIEW navigation (hook body)', () => {
