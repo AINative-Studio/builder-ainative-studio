@@ -21,6 +21,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { trackViews, type BuildState, type BuildAction, type ArtifactView } from '@/lib/build/state'
 import { GENERATED_VIEWS } from '@/lib/build/artifact-prompts'
+import { PRIMITIVE_MAP } from '@/lib/build/primitives'
 
 type Dispatch = React.Dispatch<BuildAction>
 
@@ -93,6 +94,30 @@ export function useAutoplay(state: BuildState, dispatch: Dispatch) {
         dispatch({ type: 'GOTO_VIEW', view: 'preview' as ArtifactView })
       }
       // Company track: plan30's own "See it live →" CTA fires COMPANY_DONE.
+      return
+    }
+
+    // #1019: a nudge card (PRIMITIVE_MAP[view].nudge) gives the founder a real
+    // decision to make — "add" a primitive to the company — but used to vanish
+    // the instant autoplay advanced state.view, which happens HANDOFF_MS (550ms)
+    // after generation finishes. On a fast/cached generation that left well
+    // under a second to notice the card, read it, and click — live-verified:
+    // the real window is max(HANDOFF_MS, generation latency), which can still
+    // collapse to the 550ms floor. Hold autoplay here — don't let it move
+    // state.view away — while the CURRENT view has an unactioned nudge, is
+    // already done generating, and autoplay is actually about to advance past
+    // it (state.view !== next; if they're equal there's nothing to protect —
+    // e.g. this is the last view and the track-complete branch above already
+    // returned). NUDGE (accept/dismiss) is in the dependency array below, so
+    // answering the nudge re-runs this effect and lets autoplay resume exactly
+    // where it left off — this is not a permanent stall.
+    const currentNudge = PRIMITIVE_MAP[state.view]?.nudge
+    if (
+      currentNudge &&
+      state.nudgeState[state.view] === undefined &&
+      state.done[state.view] &&
+      state.view !== next
+    ) {
       return
     }
 
@@ -272,6 +297,9 @@ export function useAutoplay(state: BuildState, dispatch: Dispatch) {
     state.screen, state.auto, state.paused, state.idea, state.track, state.view,
     state.done, state.generated, state.genError, state.askedPrivacy, state.builtMVP,
     state.wedgePicked, state.designStepDone, state.wedgeDraft, state.wedgeDraftError,
+    // #1019: NUDGE (accept/dismiss) must re-run this effect so the nudge-hold
+    // guard above releases and autoplay resumes advancing.
+    state.nudgeState,
   ])
 
   // Clear pending timers on unmount so a torn-down workspace doesn't dispatch.
