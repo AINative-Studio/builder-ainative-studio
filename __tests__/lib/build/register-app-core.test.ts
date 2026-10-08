@@ -4,17 +4,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
  * #1015 — the ready-gate + git-commit half of register-app, extracted so a
  * SERVER-SIDE reconciliation pass can run the identical logic.
  *
- * Why an extraction rather than an internal fetch back into the route: the
- * route's POST handler also calls auth() (session-bound owner resolution and
- * the slug-collision/auto-suffix decision), deployPersistent(), enrollCompany()
- * and sendWelcomeEmail(). A sweep has no founder session, so an internal fetch
- * would run the collision branch with `callerIsOwner: false` — the exact path
- * that auto-suffixes a real, live slug to `{slug}-2` (the Meridian bug the
- * route's own comments document) — and would re-fire a welcome email at a
- * founder who signed up hours ago. The two things actually missing for a stuck
- * company are the ready gate and the git commit, and those are the two things
- * this module owns. Both the route and the reconciler call it, so they can
- * never drift.
+ * Why an extraction rather than an internal fetch back into the route: the two
+ * things actually missing for a stuck company are the ready gate and the git
+ * commit, and the route's POST handler does considerably more — notably an
+ * unconditional, un-deduped `registerApp()` append against a registry read with a
+ * hard `?limit=1000` cap, which a recurring sweep would burn for nothing; and a
+ * self-fetch would have to cross the middleware boundary with an absolute origin
+ * URL. The gate and the commit are the two things this module owns, and both the
+ * route and the reconciler call it, so they can never drift. (The `{slug}-2`
+ * auto-suffix and a re-fired welcome email are NOT hazards on this path — see
+ * lib/build/register-app-core.ts's header for why each is unreachable.)
  */
 
 const checkAppReady = vi.fn()

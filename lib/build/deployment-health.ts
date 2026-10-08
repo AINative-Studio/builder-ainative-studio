@@ -179,6 +179,15 @@ export async function fetchDeploymentHealthStages(
  *  - `ready_check_failed`— the gate ran and genuinely REJECTED the app. Already
  *                          adjudicated; repair/regeneration is a different path
  *                          (/api/build/repair-app), not reconciliation.
+ *  - `unrecoverable`     — the reconciler reached this company and found its
+ *                          generated code is GONE: the gate had nothing to check
+ *                          and the commit had nothing to commit, so it recorded a
+ *                          terminal `ready_check: skipped`. Deliberately NOT
+ *                          `complete` (nothing was ever verified or shipped) and
+ *                          deliberately NOT `stuck` (re-driving it would burn a
+ *                          read + a gate pass + retries on every single sweep,
+ *                          forever, and could never succeed). A real
+ *                          regeneration is the only thing that can fix it.
  *  - `unverifiable`      — the read failed. Fail closed, always.
  */
 export type RegistrationHealthDisposition =
@@ -187,6 +196,7 @@ export type RegistrationHealthDisposition =
   | 'never_generated'
   | 'generation_failed'
   | 'ready_check_failed'
+  | 'unrecoverable'
   | 'unverifiable'
 
 export function classifyRegistrationHealth(read: DeploymentHealthRead): RegistrationHealthDisposition {
@@ -195,10 +205,18 @@ export function classifyRegistrationHealth(read: DeploymentHealthRead): Registra
   const has = (stage: string, status?: string) =>
     read.stages.some((s) => s.stage === stage && (status === undefined || s.status === status))
 
-  // `ready_check` existing at all — ok OR failed — means the gate genuinely ran
-  // for this company, so there is nothing unfinished for the reconciler to
-  // re-drive. Distinguish the two only to report honestly.
+  // `ready_check` existing at all means this company has been adjudicated, so
+  // there is nothing unfinished for the reconciler to re-drive. Distinguish the
+  // outcomes only to report honestly.
+  //
+  // Order matters: stage telemetry is append-only, so a company can carry BOTH a
+  // `skipped` row (recorded by a reconciliation pass that found no stored code)
+  // and a later real verdict (a regeneration landed new code and the gate ran for
+  // real). A genuine verdict always wins over a skip.
   if (has('ready_check', 'failed')) return 'ready_check_failed'
+  if (has('ready_check', 'ok')) return 'complete'
+  // Only a skip recorded: terminal, but nothing was ever verified or shipped.
+  if (has('ready_check', 'skipped')) return 'unrecoverable'
   if (has('ready_check')) return 'complete'
 
   // git_commit without ready_check shouldn't happen (register-app reports the

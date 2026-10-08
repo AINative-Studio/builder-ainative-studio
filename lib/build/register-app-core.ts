@@ -17,21 +17,42 @@
  * nothing of their actual idea.
  *
  * WHY EXTRACTION RATHER THAN AN INTERNAL FETCH BACK INTO THE ROUTE
- * The route's handler does considerably more than these two steps, and the rest
- * of it is actively wrong to re-run for an hours-old company with no founder
- * session in scope:
- *  - `auth()` drives both owner resolution and the slug-collision decision. A
- *    sweep is unauthenticated, so `callerIsOwner` is false and a slug whose
- *    chatId no longer matches gets auto-suffixed to `{slug}-2` — the exact
- *    Meridian bug the route's own comments document, except this time it would
- *    be inflicted on a live, shareable URL.
- *  - `sendWelcomeEmail` would re-greet a founder who signed up hours ago.
- *  - `deployPersistent` and `enrollCompany` re-fire side effects that already
- *    succeeded (the `register: ok` stage proves it).
  * The two things a stuck company is genuinely missing are the gate and the
- * commit. Those are the two things this module owns, and both the route and the
- * reconciler call it — so the client-triggered path and the server-side repair
- * path can never drift apart.
+ * commit. The route's handler does considerably more, and two of those extras
+ * are real problems for a sweep:
+ *
+ *  - REGISTRY CHURN. The handler always calls `registerApp()`, which appends a
+ *    row unconditionally with no dedup against the current entry (unlike e.g.
+ *    `setAppLogo`, which short-circuits when nothing changed). The registry is
+ *    append-only / latest-wins and is READ with a hard `?limit=1000` cap, so a
+ *    recurring sweep over every live company would add a no-op row per company
+ *    per run, consuming that fixed read budget for nothing. A sweep must not
+ *    spend the registry's headroom to re-assert data it did not change.
+ *
+ *  - SERVERLESS SELF-FETCH. Calling the route from inside the same deployment
+ *    means an HTTP round trip back through the middleware boundary, which needs
+ *    an absolute origin URL rather than a relative path — an extra piece of
+ *    environment-dependent configuration, and an extra failure mode, for logic
+ *    that is a plain function call away.
+ *
+ * Two risks that LOOK like they belong on this list do NOT, and are recorded
+ * here so nobody re-derives them from scratch (an earlier version of this
+ * comment asserted all three as live hazards; they were traced and are not):
+ *  - The `{slug}-2` auto-suffix (the Meridian bug) is NOT reachable this way.
+ *    The route only suffixes when `requestedOwner.chatId !== chatId`, and a
+ *    reconciler's chatId comes from `resolveApp(slug)` — the same latest-wins
+ *    row the route itself reads into `requestedOwner`. They are equal by
+ *    construction, so `firstFreeSlug()` cannot fire on this path regardless of
+ *    auth state.
+ *  - `sendWelcomeEmail` is gated on `!existing`, which is false for an
+ *    already-registered company, and `deployPersistent` is pure string
+ *    computation with no network or billing side effect (see its own comment on
+ *    why the billable Railway path is deliberately elsewhere). Both are already
+ *    correctly guarded against a repeat call.
+ *
+ * Either way the extraction is what makes the two paths share ONE
+ * implementation: both the route and the reconciler call this module, so the
+ * client-triggered path and the server-side repair path can never drift apart.
  *
  * Every function here keeps the route's original failure posture verbatim:
  * the gate FAILS OPEN on an unverifiable app (a store outage must never block a

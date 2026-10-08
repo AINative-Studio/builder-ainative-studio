@@ -25,6 +25,7 @@ const listAllAppsWithStatus = vi.fn()
 const resolveApp = vi.fn()
 const fetchDeploymentHealthStages = vi.fn()
 const classifyRegistrationHealth = vi.fn()
+const reportDeploymentHealthStage = vi.fn()
 const runReadyGate = vi.fn()
 const runGitCommit = vi.fn()
 
@@ -35,6 +36,7 @@ vi.mock('@/lib/build/app-registry', () => ({
 vi.mock('@/lib/build/deployment-health', () => ({
   fetchDeploymentHealthStages: (...a: unknown[]) => fetchDeploymentHealthStages(...a),
   classifyRegistrationHealth: (...a: unknown[]) => classifyRegistrationHealth(...a),
+  reportDeploymentHealthStage: (...a: unknown[]) => reportDeploymentHealthStage(...a),
 }))
 vi.mock('@/lib/build/register-app-core', () => ({
   runReadyGate: (...a: unknown[]) => runReadyGate(...a),
@@ -117,6 +119,88 @@ describe('reconcileRegistration — the stuck "Flo" class', () => {
     expect(res.disposition).toBe('stuck')
     expect(res.reconciled).toBe(false)
     expect(res.reason).toBe('dry_run')
+  })
+})
+
+/**
+ * The code-review finding this pins down (HIGH): a stuck company whose generated
+ * code is no longer resolvable at all.
+ *
+ * The in-memory preview store is PROCESS-LOCAL (lib/preview-store.ts), so a
+ * browser that died mid-generation may never have landed a durable ZeroDB copy.
+ * For such a company the gate returns { checked: false, ok: true } (fail-open,
+ * reporting NO stage) and toFileMapForCommit(null) is falsy so the commit
+ * reports attempted:false — ALSO no stage. Nothing was written, so the company's
+ * stage set is byte-identical to before the run and classifyRegistrationHealth
+ * calls it `stuck` again on the very next sweep. Forever.
+ *
+ * Reporting `reconciled: true` there is exactly the fabricated-success the rest
+ * of this module is careful to avoid (cf. fetchDeploymentHealthStages' deliberate
+ * ok:false vs. genuinely-empty distinction). It must be reported as unresolved,
+ * AND a terminal stage must be recorded so the company stops being re-swept.
+ */
+describe('reconcileRegistration — code genuinely unrecoverable (no stored code)', () => {
+  beforeEach(() => {
+    // The real shape: gate could not verify anything (fail-open, no stage
+    // reported) and the commit never attempted anything (no file map).
+    runReadyGate.mockResolvedValue({ ready: { checked: false, ok: true }, blocked: false })
+    runGitCommit.mockResolvedValue({ attempted: false, committed: false })
+  })
+
+  it('does NOT claim reconciled:true when neither the gate nor the commit did anything real', async () => {
+    const res = await reconcileRegistration('flo')
+
+    expect(res.reconciled).toBe(false)
+    expect(res.readyChecked).toBe(false)
+    expect(res.gitCommitted).toBe(false)
+  })
+
+  it('reports the real reason so the sweep counters distinguish this from a success', async () => {
+    const res = await reconcileRegistration('flo')
+    expect(res.reason).toBe('no_stored_code')
+  })
+
+  it('records a terminal ready_check:skipped stage so the company classifies OUT of stuck next run', async () => {
+    await reconcileRegistration('flo')
+
+    expect(reportDeploymentHealthStage).toHaveBeenCalledWith(
+      'builder_app_generation', 'flo', 'ready_check', 'skipped', 'no_stored_code',
+    )
+  })
+
+  it('still counts as reconciled when the gate was unverifiable but a real commit DID land', async () => {
+    // An unverifiable gate alone is not proof the code is gone — the durable
+    // store can answer the commit path even when the parse gate fails open.
+    runGitCommit.mockResolvedValue({ attempted: true, committed: true })
+
+    const res = await reconcileRegistration('flo')
+
+    expect(res.reconciled).toBe(true)
+    expect(res.gitCommitted).toBe(true)
+    expect(reportDeploymentHealthStage).not.toHaveBeenCalled()
+  })
+
+  it('still counts as reconciled when the gate verified the app but the company has nowhere to commit', async () => {
+    // A free, unprovisioned company legitimately has no repo. The gate reported
+    // a real ready_check:ok, so genuine progress was made.
+    runReadyGate.mockResolvedValue({ ready: { checked: true, ok: true }, blocked: false })
+
+    const res = await reconcileRegistration('flo')
+
+    expect(res.reconciled).toBe(true)
+    expect(res.readyChecked).toBe(true)
+    expect(reportDeploymentHealthStage).not.toHaveBeenCalled()
+  })
+
+  it('counts an unresolvable company as a SKIP, not a success, in the sweep totals', async () => {
+    listAllAppsWithStatus.mockResolvedValue({ apps: [{ slug: 'flo', chatId: 'chat_flo' }], ok: true })
+
+    const res = await runRegistrationReconcileSweep({ dryRun: false })
+
+    expect(res.candidates).toBe(1)
+    expect(res.reconciled).toBe(0)
+    expect(res.skipped).toBe(1)
+    expect(res.results[0].reason).toBe('no_stored_code')
   })
 })
 
@@ -283,6 +367,79 @@ describe('runRegistrationReconcileSweep', () => {
     expect(res.total).toBe(1)
     expect(res.reconciled).toBe(1)
     expect(runGitCommit).toHaveBeenCalledTimes(1)
+  })
+
+  /**
+   * Code-review finding (MEDIUM): the sweep's READ pass is unbounded.
+   *
+   * MAX_RECONCILES_PER_RUN caps WRITES, but every live company (~162 in
+   * production) still costs a sequential resolveApp + fetchDeploymentHealthStages,
+   * each with a 15s timeout. That read pass is where the time goes, and the cron
+   * route's maxDuration is 300s. A sweep that overruns is killed mid-iteration:
+   * nothing is persisted, the response never returns, and the next run restarts
+   * from the top of the SAME iteration order — so companies late in that order can
+   * starve indefinitely while the early ones are re-read every time.
+   *
+   * The fix is a wall-clock budget: stop iterating with headroom under the ceiling
+   * and return what was genuinely completed, flagged truncated with a real
+   * remaining count — never a silent partial reported as a whole-platform sweep.
+   */
+  describe('wall-clock deadline', () => {
+    it('stops iterating once the time budget is spent and reports the truncation honestly', async () => {
+      listAllAppsWithStatus.mockResolvedValue({
+        apps: [app('a'), app('b'), app('c'), app('d')],
+        ok: true,
+      })
+      // Each company "costs" 100ms of wall clock against a 150ms budget. The
+      // deadline is checked BEFORE each company (so the budget's headroom covers
+      // finishing the in-flight one), meaning a and b run — after b the clock
+      // reads 200ms, which is past 150ms — and c and d are left for the next run.
+      let now = 0
+      fetchDeploymentHealthStages.mockImplementation(async () => {
+        now += 100
+        return { ok: true, stages: [{ stage: 'generate' }] }
+      })
+
+      const res = await runRegistrationReconcileSweep({
+        dryRun: true,
+        budgetMs: 150,
+        now: () => now,
+      })
+
+      expect(res.truncated).toBe(true)
+      expect(res.remaining).toBe(2)
+      expect(res.results).toHaveLength(2)
+      // `total` stays the real live-company count — the sweep must not pretend the
+      // platform only has as many companies as it managed to reach.
+      expect(res.total).toBe(4)
+      expect(fetchDeploymentHealthStages).toHaveBeenCalledTimes(2)
+    })
+
+    it('reports truncated:false and remaining:0 when the whole registry fits in the budget', async () => {
+      listAllAppsWithStatus.mockResolvedValue({ apps: [app('a'), app('b')], ok: true })
+
+      const res = await runRegistrationReconcileSweep({ dryRun: true })
+
+      expect(res.truncated).toBe(false)
+      expect(res.remaining).toBe(0)
+      expect(res.results).toHaveLength(2)
+    })
+
+    it('always makes progress on at least one company, even with a budget already spent', async () => {
+      // A pathologically small/elapsed budget must not produce a sweep that does
+      // nothing forever — that would be the starvation this fix exists to prevent.
+      listAllAppsWithStatus.mockResolvedValue({ apps: [app('a'), app('b')], ok: true })
+
+      const res = await runRegistrationReconcileSweep({
+        dryRun: true,
+        budgetMs: 0,
+        now: () => 10_000,
+      })
+
+      expect(res.results).toHaveLength(1)
+      expect(res.truncated).toBe(true)
+      expect(res.remaining).toBe(1)
+    })
   })
 
   it('counts a per-company failure as failed without aborting the rest of the sweep', async () => {

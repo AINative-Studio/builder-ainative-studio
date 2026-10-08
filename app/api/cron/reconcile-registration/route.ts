@@ -19,6 +19,12 @@
  *
  * It lives under /api/cron/* to inherit that path's established secret-gating
  * (middleware.ts allowlists the prefix; this handler is the auth boundary).
+ *
+ * BUDGET: the sweep is bounded by SWEEP_BUDGET_MS (250s) of wall clock, under the
+ * `maxDuration = 300` below. A run that cannot reach every live company inside
+ * that budget returns `truncated: true` with a real `remaining` count instead of
+ * being killed mid-iteration — the response is a genuine partial, never a
+ * silently-cut sweep reported as a whole-platform pass.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -57,10 +63,14 @@ export async function GET(request: NextRequest) {
       )
     }
 
+    // `truncated`/`remaining` are logged alongside the counts because a partial
+    // sweep's totals describe only the companies it reached — reading them as a
+    // whole-platform result would understate the real backlog.
     logger.info('Registration reconciliation sweep complete', {
       dryRun: result.dryRun, slug: slug || null, total: result.total,
       candidates: result.candidates, reconciled: result.reconciled,
       committed: result.committed, skipped: result.skipped,
+      truncated: result.truncated, remaining: result.remaining,
       byDisposition: result.byDisposition,
     })
     return NextResponse.json(result)

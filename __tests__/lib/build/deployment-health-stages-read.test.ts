@@ -186,4 +186,29 @@ describe('classifyRegistrationHealth', () => {
     const d = classifyRegistrationHealth({ ok: true, stages: [stage('generate')] })
     expect(d).toBe('stuck')
   })
+
+  /**
+   * Code-review finding (HIGH): a company whose generated code is genuinely
+   * unrecoverable — the process-local preview store died with the browser and no
+   * durable ZeroDB copy ever landed — can never be gate-checked or committed. The
+   * reconciler records a terminal `ready_check: skipped` for it so the sweep stops
+   * burning real time on it every single run. That must classify OUT of `stuck`,
+   * but must NOT be reported as `complete`: nothing was ever verified or shipped.
+   */
+  it('calls a terminal ready_check:skipped UNRECOVERABLE — out of stuck, but never "complete"', () => {
+    const d = classifyRegistrationHealth({
+      ok: true,
+      stages: [stage('generate'), stage('register'), stage('ready_check', 'skipped')],
+    })
+    expect(d).toBe('unrecoverable')
+  })
+
+  it('prefers a genuine ready_check verdict over a skipped one when both are recorded', () => {
+    // Append-only telemetry: a later real verdict must win over an earlier skip.
+    const d = classifyRegistrationHealth({
+      ok: true,
+      stages: [stage('generate'), stage('ready_check', 'skipped'), stage('ready_check', 'ok')],
+    })
+    expect(d).toBe('complete')
+  })
 })

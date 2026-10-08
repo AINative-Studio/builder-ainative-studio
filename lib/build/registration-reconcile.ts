@@ -58,13 +58,24 @@
  *    provision time; this only commits code into what already exists).
  *  - Reuses register-app's ACTUAL logic via lib/build/register-app-core.ts
  *    rather than reimplementing the gate or the commit, so the client-triggered
- *    path and this repair path can never drift apart.
+ *    path and this repair path can never drift apart. It calls that shared module
+ *    directly rather than fetching the route: the route also appends an
+ *    unconditional, un-deduped registry row (against a table read with a hard
+ *    `?limit=1000` cap), and a self-fetch would need to cross the middleware
+ *    boundary with an absolute origin URL. See register-app-core.ts's header for
+ *    the full reasoning, including two risks commonly assumed here that are
+ *    provably NOT reachable on this path.
+ *  - A company whose code can no longer be resolved at all is reported as
+ *    UNRESOLVED (`reason: 'no_stored_code'`), never as a reconciliation, and gets
+ *    a terminal `ready_check: skipped` so it stops being re-swept forever. See
+ *    reconcileRegistration's own comment at that branch.
  */
 
 import { listAllAppsWithStatus, resolveApp, type AppEntry } from '@/lib/build/app-registry'
 import {
   fetchDeploymentHealthStages,
   classifyRegistrationHealth,
+  reportDeploymentHealthStage,
   type RegistrationHealthDisposition,
 } from '@/lib/build/deployment-health'
 import { runReadyGate, runGitCommit } from '@/lib/build/register-app-core'
@@ -77,13 +88,47 @@ import { logger } from '@/lib/logger'
  */
 export const MAX_RECONCILES_PER_RUN = 25
 
+/**
+ * Wall-clock budget for one whole sweep, in ms.
+ *
+ * MAX_RECONCILES_PER_RUN caps WRITES; this caps the READ pass, which is where the
+ * time actually goes. Every live company (~162 in production) costs a sequential
+ * `resolveApp` + `fetchDeploymentHealthStages`, each with its own 15s timeout, so
+ * the read pass alone can approach the cron route's `maxDuration = 300` even
+ * though only 25 companies can ever be written.
+ *
+ * Overrunning that ceiling is strictly worse than stopping short: the platform
+ * kills the handler mid-iteration, nothing is persisted, the response never
+ * returns, and the next run restarts from the top of the SAME iteration order —
+ * so companies late in that order starve while the early ones are re-read on
+ * every run. 250s leaves ~50s of headroom to finish the in-flight company and
+ * serialize an honest, explicitly-truncated response.
+ */
+export const SWEEP_BUDGET_MS = 250_000
+
 /** Git commit message label, so the history says plainly why this commit exists. */
 const RECONCILE_TASK_LABEL = 'server-side registration reconciliation (#1015)'
+
+/**
+ * The one terminal outcome this pass can reach without finishing anything: the
+ * company's generated code is no longer resolvable from EITHER store, so there is
+ * nothing to gate and nothing to commit. Used both as the recorded stage reason
+ * and as the reported result reason, so the telemetry and the sweep counters say
+ * the same thing.
+ */
+const NO_STORED_CODE = 'no_stored_code'
 
 export interface ReconcileCompanyResult {
   slug: string
   disposition: RegistrationHealthDisposition | 'unknown'
-  /** True only when the gate + commit were genuinely re-driven for real. */
+  /**
+   * True only when the gate or the commit genuinely DID something — a real gate
+   * verdict was recorded, or a real commit was attempted. A pass where neither
+   * step could act (no stored code left to act on) is `false` with
+   * `reason: 'no_stored_code'`, never a success: nothing changed, so claiming
+   * otherwise would both overstate the run and hide a company that needs a real
+   * regeneration.
+   */
   reconciled: boolean
   /** Whether the re-run gate reached a verdict (false = unverifiable, failed open). */
   readyChecked?: boolean
@@ -107,6 +152,14 @@ export interface ReconcileSweepResult {
   /** Of those, how many landed a real git commit. */
   committed: number
   skipped: number
+  /**
+   * True when the sweep stopped early on its wall-clock budget rather than
+   * reaching every live company. The counts below it then describe only the
+   * companies actually examined — never the whole platform.
+   */
+  truncated: boolean
+  /** Live companies never reached on this run. 0 on a complete sweep. */
+  remaining: number
   byDisposition: Record<string, number>
   results: ReconcileCompanyResult[]
 }
@@ -182,6 +235,43 @@ export async function reconcileRegistration(
       taskLabel: RECONCILE_TASK_LABEL,
     })
 
+    // UNRECOVERABLE CODE (code review, #1015 follow-up).
+    //
+    // The gate reporting no verdict AND the commit attempting nothing is the
+    // signature of one specific thing: `resolveStoredApp` found no code at all.
+    // The in-memory preview store is process-local (lib/preview-store.ts), so a
+    // browser that died mid-generation may never have landed a durable ZeroDB
+    // copy — and then there is nothing for the gate to parse and nothing for the
+    // commit to push. Neither step reports a stage in that case, by design (a
+    // fabricated `ok`, or a phantom `failed` for a company that legitimately has
+    // nowhere to commit, would both be worse).
+    //
+    // The consequence, if this returned `reconciled: true` anyway: the company's
+    // stage set is byte-identical to before the run, so classifyRegistrationHealth
+    // calls it `stuck` on the very next sweep — and every sweep after that,
+    // forever, each one spending a registry read, a stage read, and four gate
+    // attempts with retry sleeps on work that can never succeed. Meanwhile the
+    // run's own `reconciled` counter would claim success for a company nothing
+    // happened to.
+    //
+    // So: report it honestly as unresolved, AND record a terminal
+    // `ready_check: skipped` carrying the real reason, which classifies the
+    // company as `unrecoverable` from here on. Only a genuine regeneration (which
+    // writes new code and a real `ready_check`) can move it forward.
+    if (!gate.ready.checked && !commit.attempted) {
+      await reportDeploymentHealthStage(
+        'builder_app_generation', slug, 'ready_check', 'skipped', NO_STORED_CODE,
+      )
+      return {
+        slug,
+        disposition,
+        reconciled: false,
+        readyChecked: false,
+        gitCommitted: false,
+        reason: NO_STORED_CODE,
+      }
+    }
+
     return {
       slug,
       disposition,
@@ -213,11 +303,21 @@ export async function reconcileRegistration(
  * Pass `slug` to reconcile exactly one company instead of enumerating the whole
  * registry — that is the shape a per-company touchpoint (a dashboard load)
  * should use, so a single founder's page view does not sweep the platform.
+ *
+ * Bounded by SWEEP_BUDGET_MS of wall clock: a sweep that would overrun the cron
+ * route's maxDuration stops early and says so (`truncated` + `remaining`) rather
+ * than being killed mid-iteration with nothing persisted and nothing returned.
+ *
+ * `budgetMs` and `now` are injectable for tests only — production uses the
+ * SWEEP_BUDGET_MS default and the real clock.
  */
 export async function runRegistrationReconcileSweep(
-  opts: { dryRun?: boolean; slug?: string } = {},
+  opts: { dryRun?: boolean; slug?: string; budgetMs?: number; now?: () => number } = {},
 ): Promise<ReconcileSweepResult> {
   const dryRun = opts.dryRun !== false
+  const budgetMs = opts.budgetMs ?? SWEEP_BUDGET_MS
+  const now = opts.now ?? (() => Date.now())
+  const startedAt = now()
 
   // Single-company mode: no registry enumeration at all.
   if (opts.slug) {
@@ -231,6 +331,9 @@ export async function runRegistrationReconcileSweep(
       reconciled: result.reconciled ? 1 : 0,
       committed: result.gitCommitted ? 1 : 0,
       skipped: result.reconciled ? 0 : 1,
+      // One explicitly-named company is never a partial sweep of the platform.
+      truncated: false,
+      remaining: 0,
       byDisposition: { [result.disposition]: 1 },
       results: [result],
     }
@@ -246,7 +349,8 @@ export async function runRegistrationReconcileSweep(
     )
     return {
       ok: true, dryRun, registryOk: false, total: 0, candidates: 0,
-      reconciled: 0, committed: 0, skipped: 0, byDisposition: {}, results: [],
+      reconciled: 0, committed: 0, skipped: 0, truncated: false, remaining: 0,
+      byDisposition: {}, results: [],
     }
   }
 
@@ -257,6 +361,15 @@ export async function runRegistrationReconcileSweep(
   let committed = 0
 
   for (const app of live) {
+    // WALL-CLOCK DEADLINE. Checked BEFORE starting a company, so the budget's
+    // headroom covers finishing the one already in flight plus serializing the
+    // response. `results.length > 0` guarantees forward progress even on a budget
+    // already spent when the loop begins — a sweep that always did nothing would
+    // be the same starvation this check exists to prevent. (reconcileRegistration
+    // never throws, so every iteration pushes exactly one result: results.length
+    // is the real count of companies examined.)
+    if (results.length > 0 && now() - startedAt >= budgetMs) break
+
     // Cap REAL work only. Candidates past the cap are still classified and
     // reported so the next run's backlog is visible, never silently dropped.
     const capped = !dryRun && reconciled >= MAX_RECONCILES_PER_RUN
@@ -275,16 +388,35 @@ export async function runRegistrationReconcileSweep(
   }
 
   const candidates = results.filter((r) => r.disposition === 'stuck').length
+  const remaining = live.length - results.length
+  const truncated = remaining > 0
+
+  if (truncated) {
+    // Surfaced as a warning, not swallowed: a sweep that cannot finish the
+    // platform inside its budget is an operational signal (the read pass needs
+    // batching or concurrency), not a routine outcome.
+    logger.warn('Registration reconciliation sweep truncated on its wall-clock budget', {
+      examined: results.length,
+      remaining,
+      budgetMs,
+      total: live.length,
+    })
+  }
 
   return {
     ok: true,
     dryRun,
     registryOk: true,
+    // The real live-company count, NOT how many were reached — a truncated run
+    // must not make the platform look smaller than it is. `results.length` plus
+    // `remaining` is what was examined vs. left.
     total: live.length,
     candidates,
     reconciled,
     committed,
     skipped: results.length - reconciled,
+    truncated,
+    remaining,
     byDisposition,
     results,
   }
