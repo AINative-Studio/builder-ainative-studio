@@ -146,3 +146,76 @@ describe('mintProjectScopedKey', () => {
     expect(String(r.reason)).toContain('ECONNRESET')
   })
 })
+
+/**
+ * SCOPE VERIFICATION (code-review HIGH finding).
+ *
+ * `project_id` is OPTIONAL and NULLABLE in BOTH `APIKeyCreateRequest` and
+ * `APIKeyCreateResponse` in core's live openapi.json. Nothing in that contract
+ * guarantees the key core hands back is actually scoped to the project_id we
+ * asked for — a 201 can legitimately carry `project_id: null` (an
+ * account-wide key) or, if core's own resolution ever drifts, a DIFFERENT
+ * project id entirely.
+ *
+ * Accepting such a key is strictly WORSE than leaving the company broken, and
+ * this specific script is what makes it unrecoverable:
+ *   1. the mis-scoped key gets written to builder_company_zerodb_keys,
+ *   2. the sweep reports `backfilled` — a clean, successful-looking run,
+ *   3. the next sweep sees a stored key and reports `already_stored`, so the
+ *      company is never retried: idempotency now cements the damage,
+ *   4. and the company's real /api/db calls move from an honest, diagnosable
+ *      502 KEY_UNAVAILABLE to ZeroDB's 403 API_KEY_PROJECT_MISMATCH — the exact
+ *      cross-tenant mis-scoping #806 existed to eliminate.
+ *
+ * So the response's OWN project_id must match the requested projectId exactly,
+ * and anything else is a failure BEFORE the key can ever reach the store.
+ */
+describe('mintProjectScopedKey — response scope verification', () => {
+  function stubMint(body: any, status = 201) {
+    const fetchMock = vi.fn(async () => ({ ok: status < 400, status, json: async () => body }))
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  it('rejects a 201 whose project_id is null — an unscoped/account-wide key must never be stored', async () => {
+    stubMint({ id: 'k', api_key: 'sk_live_account_wide', project_id: null })
+    const { mintProjectScopedKey } = await load()
+    const r = await mintProjectScopedKey('company-project-1', { slug: 'agentive' })
+
+    expect(r.ok).toBe(false)
+    expect(r.reason).toBe('scope_mismatch')
+    // The key must not leak out on the failure path — the caller stores
+    // `minted.apiKey` whenever it is present.
+    expect(r.apiKey).toBeUndefined()
+    expect(r.status).toBe(201)
+  })
+
+  it('rejects a 201 with project_id omitted entirely from the response body', async () => {
+    stubMint({ id: 'k', api_key: 'sk_live_no_scope_field' })
+    const { mintProjectScopedKey } = await load()
+    const r = await mintProjectScopedKey('company-project-1')
+
+    expect(r.ok).toBe(false)
+    expect(r.reason).toBe('scope_mismatch')
+    expect(r.apiKey).toBeUndefined()
+  })
+
+  it('rejects a 201 scoped to a DIFFERENT project than the one requested', async () => {
+    stubMint({ id: 'k', api_key: 'sk_live_someone_elses_project', project_id: 'some-other-project' })
+    const { mintProjectScopedKey } = await load()
+    const r = await mintProjectScopedKey('company-project-1')
+
+    expect(r.ok).toBe(false)
+    expect(r.reason).toBe('scope_mismatch')
+    expect(r.apiKey).toBeUndefined()
+  })
+
+  it('accepts a 201 whose project_id matches the requested project exactly (happy path intact)', async () => {
+    stubMint({ id: 'k', api_key: 'sk_live_correctly_scoped', project_id: 'company-project-1' })
+    const { mintProjectScopedKey } = await load()
+    const r = await mintProjectScopedKey('company-project-1')
+
+    expect(r.ok).toBe(true)
+    expect(r.apiKey).toBe('sk_live_correctly_scoped')
+  })
+})

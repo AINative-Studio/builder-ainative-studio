@@ -217,6 +217,12 @@ export interface MintedProjectKey {
   reason?: string
   /** Core's HTTP status, when the call actually reached core. */
   status?: number
+  /**
+   * Extra operator-facing context for a structural failure (currently only
+   * `scope_mismatch`, where it names the requested vs. returned project_id).
+   * Never carries the key itself.
+   */
+  detail?: string
 }
 
 /**
@@ -246,6 +252,20 @@ export interface MintedProjectKey {
  * that owns the Builder workspace every Instant DB project is filed under — and
  * fails honestly with core's own 404 when that identity genuinely cannot reach
  * the project.
+ *
+ * SCOPE IS VERIFIED AGAINST THE RESPONSE, NOT ASSUMED. `project_id` is OPTIONAL
+ * and NULLABLE in BOTH `APIKeyCreateRequest` and `APIKeyCreateResponse` in
+ * core's live openapi.json, so a 201 does NOT prove the key came back scoped to
+ * the project we asked for: it can legitimately carry `project_id: null` (an
+ * account-wide key) or a different project id. Accepting such a key here would
+ * be strictly worse than leaving the company broken, because the #1013 sweep
+ * then (a) writes it to the store, (b) reports `backfilled`, (c) sees it on the
+ * next run and reports `already_stored` — so the company is never retried — and
+ * (d) turns the company's honest, diagnosable 502 KEY_UNAVAILABLE into ZeroDB's
+ * 403 API_KEY_PROJECT_MISMATCH, which is precisely the cross-tenant mis-scoping
+ * #806 existed to eliminate. So the response's own `project_id` must match the
+ * requested `projectId` exactly; anything else is `scope_mismatch`, and the key
+ * is dropped here rather than being handed to `storeCompanyZerodbKey`.
  *
  * Never throws; returns {ok:false, reason} so a sweep can report it per-company
  * rather than aborting. A caller MUST NOT treat {ok:false} as anything but a
@@ -282,6 +302,29 @@ export async function mintProjectScopedKey(
     // A 201 with no key in the body is a failure, not a success — storing an
     // empty key would make the company look repaired while still failing closed.
     if (!apiKey) return { ok: false, status: res.status, reason: 'no_api_key_in_response' }
+
+    // A key whose scope we cannot PROVE is the project we asked for must not
+    // escape this function — see the SCOPE IS VERIFIED note above for why a
+    // mis-scoped key is worse than no key at all. Note the deliberate ordering:
+    // this runs before the key is returned, so it can never reach the store.
+    const grantedProjectId = typeof data?.project_id === 'string' ? data.project_id : ''
+    if (grantedProjectId !== projectId) {
+      return {
+        ok: false,
+        status: res.status,
+        reason: 'scope_mismatch',
+        // The requested/granted pair, for an operator reading the sweep output.
+        // The key itself is deliberately NOT returned.
+        detail: `requested project_id=${projectId} but core returned project_id=${
+          data?.project_id === null
+            ? 'null'
+            : data?.project_id === undefined
+              ? '(absent)'
+              : String(data.project_id).slice(0, 80)
+        }`,
+      }
+    }
+
     return { ok: true, apiKey, status: res.status }
   } catch (e: any) {
     return { ok: false, reason: String(e?.message || e).slice(0, 160) }

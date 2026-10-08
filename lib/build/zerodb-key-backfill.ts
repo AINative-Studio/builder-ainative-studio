@@ -47,6 +47,15 @@
  *    key exists" must never become "mint a new one" — ZeroDB's read path is
  *    documented-flaky (see the showcase read-path incident), and minting over a
  *    key that already works would churn credentials for no reason.
+ *  - NEVER STORES A KEY WHOSE SCOPE IS UNPROVEN. `mintProjectScopedKey` checks
+ *    the mint response's OWN project_id against the project asked for and fails
+ *    with `scope_mismatch` otherwise (core's contract makes project_id optional
+ *    and nullable on both the request and the response, so a 201 alone proves
+ *    nothing). This matters most HERE: a mis-scoped key would be stored, counted
+ *    as `backfilled`, then seen as `already_stored` on every later run — so the
+ *    company would never be retried — while its real /api/db calls degraded from
+ *    an honest 502 KEY_UNAVAILABLE to a 403 API_KEY_PROJECT_MISMATCH. Idempotency
+ *    is what makes accepting a bad key unrecoverable, so a bad key is refused.
  *  - NEVER FABRICATES SUCCESS. A failed mint and a failed store are each
  *    counted as failures with the real reason attached; a company whose
  *    underlying project is genuinely gone is reported as a terminal
@@ -238,12 +247,16 @@ export async function runZerodbKeyBackfillSweep(
     }))
     if (!minted.ok || !minted.apiKey) {
       failed++
+      // `scope_mismatch` carries a `detail` naming the requested vs. returned
+      // project_id; keep it, so a mis-scoped mint is distinguishable from a 404
+      // in the report instead of looking like a generic mint failure.
+      const detail = (minted as { detail?: string }).detail
       record({
         slug,
         projectId,
         provisionedAt: app.provisionedAt,
         disposition: 'mint_failed',
-        reason: minted.reason || 'mint_failed',
+        reason: [minted.reason || 'mint_failed', detail].filter(Boolean).join(': ').slice(0, 240),
       })
       continue
     }

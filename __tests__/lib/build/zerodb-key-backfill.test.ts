@@ -61,6 +61,11 @@ async function load(opts: {
   hasKeyThrows?: string[]
   /** projectId → minted key, or absent to simulate "project gone / access denied". */
   mint?: Record<string, string | null>
+  /**
+   * projectIds for which the mint returns the real `scope_mismatch` failure —
+   * core answered 201 but scoped the key to a different project (or to none).
+   */
+  mintScopeMismatch?: string[]
   /** projectIds whose storeCompanyZerodbKey write should fail. */
   storeFails?: string[]
 }) {
@@ -72,6 +77,15 @@ async function load(opts: {
     return !(opts.storeFails || []).includes(projectId)
   })
   const mintProjectScopedKey = vi.fn(async (projectId: string) => {
+    if ((opts.mintScopeMismatch || []).includes(projectId)) {
+      // Exactly the shape mintProjectScopedKey returns for a mis-scoped 201.
+      return {
+        ok: false as const,
+        status: 201,
+        reason: 'scope_mismatch',
+        detail: `requested project_id=${projectId} but core returned project_id=some-other-project`,
+      }
+    }
     const key = (opts.mint || {})[projectId]
     if (key) return { ok: true as const, apiKey: key }
     return { ok: false as const, reason: 'project_not_found', status: 404 }
@@ -205,6 +219,30 @@ describe('runZerodbKeyBackfillSweep — repairing a missing key', () => {
       reason: 'project_not_found',
     })
     // Never fabricate a key for a project we could not reach.
+    expect(storeCompanyZerodbKey).not.toHaveBeenCalled()
+  })
+
+  it('reports a FAILURE when the mint came back MIS-SCOPED — a wrong-project key must never be stored or counted as repaired', async () => {
+    // mintProjectScopedKey verifies the response's own project_id and rejects a
+    // 201 scoped to null / another project (see its own test file for why). The
+    // sweep must treat that like any other mint failure: the company stays
+    // reported as broken so it is retried, rather than flipping to
+    // `already_stored` forever behind a key that 403s.
+    const { runZerodbKeyBackfillSweep, storeCompanyZerodbKey } = await load({
+      apps: [{ slug: 'misscoped', zerodbProjectId: 'proj-misscoped' }],
+      mintScopeMismatch: ['proj-misscoped'],
+    })
+
+    const r = await runZerodbKeyBackfillSweep({ dryRun: false })
+
+    expect(r.backfilled).toBe(0)
+    expect(r.failed).toBe(1)
+    expect(r.results[0]).toMatchObject({ slug: 'misscoped', disposition: 'mint_failed' })
+    // The operator must be able to tell a mis-scope apart from a 404 in the
+    // report, and see which project core actually handed back.
+    expect(String(r.results[0].reason)).toContain('scope_mismatch')
+    expect(String(r.results[0].reason)).toContain('some-other-project')
+    // The whole point: nothing reaches the key store.
     expect(storeCompanyZerodbKey).not.toHaveBeenCalled()
   })
 
