@@ -1128,6 +1128,131 @@ export async function reconcilePlanFulfillment(
 }
 
 /**
+ * The set of core plan ids that represent a REAL, paid Builder tier (#1012).
+ *
+ * These are core's own raw `plan_id` values, confirmed live against
+ * GET /api/v1/public/pricing/plans — NOT Pricing.tsx's internal
+ * `plan: 'launch' | 'company'` grouping field (a Builder-only checkout-routing
+ * concept; conflating the two was a real mistake caught before shipping, see
+ * subscription/verify/route.ts). `hobbyist` is deliberately absent: Builder's
+ * "Starter" $20 tier reuses core's FREE-tier price id, so it is not a real
+ * paid autonomous-features tier and must never satisfy a paid gate.
+ *
+ * Extracted so the browser-redirect path, the Live-load reconciliation, and the
+ * webhook can never drift apart on what "paid" means.
+ */
+const PAID_PLAN_IDS = new Set([
+  'pro',
+  'business',
+  'enterprise',
+  'cody_vcto',
+  'cody__your_virtual_cto',
+  // generous aliases the catalog sometimes emits for the same real tiers
+  'launch',
+  'company',
+])
+
+/** True when `plan` is a real, paid core plan id (see PAID_PLAN_IDS). */
+export function isPaidPlanId(plan: string | undefined | null): boolean {
+  return PAID_PLAN_IDS.has(String(plan || '').trim().toLowerCase())
+}
+
+export interface FulfillPaidPlanResult {
+  /** The fulfillment was accepted and acted on (plan already correct counts). */
+  ok: boolean
+  /** A plan row was actually appended on this call. */
+  planSet: boolean
+  /** The tmp_ Instant DB project was upgraded to permanent on this call. */
+  keyClaimed: boolean
+  /**
+   * The company STILL sits on an unclaimed tmp_ key. Load-bearing honesty
+   * signal: a webhook has no founder token, so it cannot finish this step —
+   * reporting it lets the caller log/alert instead of pretending fulfillment
+   * was complete.
+   */
+  keyClaimPending: boolean
+  reason?: string
+}
+
+/**
+ * Stamp a VERIFIED-PAID plan onto a company and, when possible, upgrade its
+ * tmp_ Instant DB project to permanent (#1012).
+ *
+ * WHY THIS EXISTS: these two steps (`setAppPlan` + `claimCompanyProject`) were
+ * the entirety of paid fulfillment, and both were reachable from exactly ONE
+ * place — POST /api/build/subscription/verify — which only ever runs if the
+ * founder's browser survives the full Stripe→Builder redirect round-trip. A
+ * closed tab, a network blip, or an ad-blocker on that single redirect left a
+ * genuinely paying founder permanently on `plan: null` and a 72h tmp_ key that
+ * silently expires. Production evidence (2026-10-08, 338 registry rows across
+ * 17 real accounts): exactly one company ever had `plan` set, via an internal
+ * staff enterprise bypass — ZERO real external Stripe purchases had ever
+ * round-tripped. #855's `reconcilePlanFulfillment` (above) retries on Live
+ * dashboard load, which helps only founders who revisit that one screen.
+ *
+ * This function is that same fulfillment, extracted so a browser-independent
+ * caller (POST /api/webhooks/stripe) performs the IDENTICAL steps rather than
+ * a second, drifting copy of them. It deliberately composes the existing,
+ * already-proven `setAppPlan` / `claimCompanyProject` rather than re-writing
+ * their registry semantics.
+ *
+ * `jwt` IS OPTIONAL AND THAT IS THE WHOLE POINT. Core's
+ * /api/v1/public/instant-db/claim associates a project to a SPECIFIC real
+ * account and requires that account's own bearer token; a webhook has none,
+ * and CODY.md Rule 5 forbids borrowing/impersonating one or falling back to an
+ * anonymous service-level provisioning path. So the webhook path stamps the
+ * plan (the part that unblocks every paid gate and was the actual reported
+ * breakage) and reports `keyClaimPending: true`; the founder's very next
+ * authenticated Live load finishes the claim through
+ * `reconcilePlanFulfillment`, which now finds a correct plan already in place.
+ *
+ * Idempotent: a re-delivered webhook for an already-fulfilled company appends
+ * no churn row (`planSet: false`, `ok: true`) because `setAppPlan` is only
+ * called when the stored plan actually differs, and `claimCompanyProject` is
+ * itself a no-op once `keyKind === 'permanent'`.
+ *
+ * Refuses (`ok: false`, `reason: 'not_a_paid_plan'`) on a free/hobbyist plan id
+ * so a webhook can never stamp a non-paid tier onto a company.
+ */
+export async function fulfillPaidPlan(
+  slug: string,
+  corePlan: string,
+  jwt?: string,
+): Promise<FulfillPaidPlanResult> {
+  const base: FulfillPaidPlanResult = { ok: false, planSet: false, keyClaimed: false, keyClaimPending: false }
+  const plan = String(corePlan || '').trim()
+  if (!slug || !plan) return { ...base, reason: 'missing_args' }
+  if (!isPaidPlanId(plan)) return { ...base, reason: 'not_a_paid_plan' }
+
+  const existing = await resolveApp(slug).catch(() => null)
+  if (!existing) return { ...base, reason: 'not_registered' }
+
+  let planSet = false
+  if (existing.plan !== plan) {
+    planSet = await setAppPlan(slug, plan).catch(() => false)
+  }
+
+  // Does this company still need its tmp_ project claimed at all?
+  const needsClaim = Boolean(existing.zerodbProjectId && existing.keyKind === 'tmp' && existing.claimToken)
+
+  let keyClaimed = false
+  if (needsClaim && jwt) {
+    const claim = await claimCompanyProject(slug, jwt).catch(() => null)
+    keyClaimed = Boolean(claim?.ok && claim.claimed)
+  }
+
+  return {
+    // Plan is correct either because we just wrote it or because it already was.
+    ok: planSet || existing.plan === plan,
+    planSet,
+    keyClaimed,
+    // Still pending if a claim was needed and we didn't (or couldn't) complete it.
+    keyClaimPending: needsClaim && !keyClaimed,
+    reason: planSet ? undefined : existing.plan === plan ? 'already_fulfilled' : 'plan_write_failed',
+  }
+}
+
+/**
  * Reverse-lookup a company by its own ZeroVoice inbound number (#744 — SMS to
  * Cody becomes a real Gitea issue). `e164` is the SMS webhook's `To` field
  * (the company's own provisioned number, set via setAppZeroVoice).
