@@ -217,11 +217,48 @@
 .m-crumb.is-done { background: var(--track-100); color: var(--track-700); cursor: pointer; }
 .m-crumb.is-current { background: var(--track); color: #fff; }
 
-.m-ws-body { flex: 1; display: grid; grid-template-columns: 34% 1fr auto; min-height: 0; }
+/* User-reported (2026-10-07): the 3rd column was `auto`, which sizes to its
+   CONTENT's natural width — with .m-cody-chat-panel's children entirely
+   unstyled (see below), unwrapped text forced this column wide enough to
+   crush the middle .m-center column down to a sliver, truncating its
+   content mid-word. Fixed width matches .m-feed's 34% pattern on the
+   opposite side, and the panel itself now constrains/wraps its own text
+   regardless, so neither failure mode can recur even if a future
+   component ships with incomplete CSS again. */
+.m-ws-body { flex: 1; display: grid; grid-template-columns: 34% 1fr 360px; min-height: 0; }
 .m-ws-body.is-tablet { grid-template-columns: 1fr; }
 .m-feed { border-right: 2px solid var(--color-divider); padding: 18px; overflow-y: auto; background: var(--color-bg); }
-.m-center { padding: 44px 56px; overflow-y: auto; max-width: 940px; }
+.m-center { padding: 44px 56px; overflow-y: auto; max-width: 940px; min-width: 0; }
 .m-rail { border-left: 2px solid var(--color-divider); background: var(--color-surface); }
+.m-cody-chat { border-left: 2px solid var(--color-divider); background: var(--color-surface); min-width: 0; overflow: hidden; display: flex; flex-direction: column; }
+
+/* Cody chat panel (#BLD-06.1 / #944) — CodyChatPanel.tsx shipped with zero
+   CSS for any of its classes (confirmed: grep found no matches anywhere in
+   this file). Real layout + the existing design-token/button conventions
+   used throughout this file, matching .m-chat-cody/.m-feed-line's text
+   treatment and .m-field's input styling. */
+.m-cody-chat-panel { display: flex; flex-direction: column; min-height: 0; height: 100%; padding: 18px; overflow-y: auto; gap: 16px; }
+.m-cody-chat-header { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); flex-shrink: 0; }
+.m-cody-chat-log { display: flex; flex-direction: column; gap: 10px; }
+.m-cody-chat-line { font-size: 13px; color: var(--text-body-85); line-height: 1.5; margin: 0; word-break: break-word; }
+.m-cody-chat-line.m-muted { color: var(--text-muted); }
+
+.m-cody-explain-gate { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1.5px solid var(--neutral-line); background: var(--color-bg); }
+.m-cody-explain-gate .btn-primary { align-self: flex-start; }
+
+.m-cody-save-row { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+
+.m-cody-questions { display: flex; flex-direction: column; gap: 16px; padding-top: 12px; border-top: 1px solid var(--color-divider); }
+.m-cody-question { display: flex; flex-direction: column; gap: 8px; }
+.m-cody-question-text { font-size: 13px; color: var(--text-body-85); line-height: 1.5; margin: 0; }
+.m-cody-question-suggestions { display: flex; flex-wrap: wrap; gap: 6px; }
+.m-cody-suggestion.is-selected { background: var(--color-accent-600); color: #fff; border-color: var(--color-accent-600); }
+.m-cody-question-freetext { width: 100%; padding: 8px 10px; border: 1.5px solid var(--neutral-line); font-family: var(--font-body); font-size: 13px; background: var(--color-surface); color: var(--color-text); }
+.m-cody-questions-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.m-cody-chat-input-row { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--color-divider); flex-shrink: 0; }
+.m-cody-chat-input { width: 100%; padding: 10px 12px; border: 1.5px solid var(--neutral-line); font-family: var(--font-body); font-size: 13px; background: var(--color-surface); color: var(--text-muted); }
+.m-cody-chat-input:disabled { cursor: not-allowed; opacity: 0.7; }
 
 /* ============================================================================
    Fork + Intake (#222)
@@ -544,6 +581,17 @@
 .m-artifact-meta.is-error { color: var(--alert); }
 
 .m-intake-field { width: 100%; min-height: 160px; margin-top: 22px; padding: 16px; font-family: var(--font-body); font-size: 16px; background: var(--color-surface); border: 1.5px solid var(--neutral-line); color: var(--color-text); resize: vertical; }
+
+/* #E3.2/#E3.3 kickoff questions (user-reported, 2026-10-07): these two
+   classes had NO CSS at all since KickoffQuestions.tsx shipped — suggestion
+   chips ran together as plain inline text with no spacing, and the
+   freetext input sat flush against the Next button with no gap. Real
+   layout, matching this file's existing .m-field/.btn-ghost conventions. */
+.m-kickoff-suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.m-kickoff-freetext-row { display: flex; gap: 10px; margin-top: 14px; align-items: stretch; }
+.m-kickoff-freetext-row input { flex: 1; min-width: 0; padding: 10px 12px; border: 1.5px solid var(--neutral-line); font-family: var(--font-body); font-size: 14px; background: var(--color-surface); color: var(--color-text); }
+.m-kickoff-freetext-row .btn-primary { flex-shrink: 0; }
+
 .m-helper { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); margin: 12px 0 22px; }
 .m-back { font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); background: none; border: 0; cursor: pointer; }
 
