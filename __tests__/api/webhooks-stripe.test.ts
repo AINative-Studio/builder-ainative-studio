@@ -50,13 +50,19 @@ function signStripe(rawBody: string, tsSec: number, secret = STRIPE_SECRET): str
 
 const h = vi.hoisted(() => ({
   fulfillPaidPlan: vi.fn(),
-  resolveApp: vi.fn(),
+  // The route resolves the company via resolveAppVerified, NOT resolveApp —
+  // `resolveApp`'s single `null` return cannot distinguish "confirmed not in the
+  // registry" from "the lookup itself failed", and acking 200 on the latter
+  // permanently discarded real payments (#1012 review finding 2). The four
+  // verified/entry combinations are pinned down in
+  // __tests__/api/webhooks-stripe-retryable-1012.test.ts.
+  resolveAppVerified: vi.fn(),
   markConverted: vi.fn(async () => undefined),
 }))
 
 vi.mock('@/lib/build/app-registry', () => ({
   fulfillPaidPlan: h.fulfillPaidPlan,
-  resolveApp: h.resolveApp,
+  resolveAppVerified: h.resolveAppVerified,
 }))
 vi.mock('@/lib/build/learning', () => ({ markConverted: h.markConverted }))
 
@@ -105,7 +111,10 @@ beforeEach(() => {
   h.fulfillPaidPlan.mockResolvedValue({
     ok: true, planSet: true, keyClaimed: false, keyClaimPending: true,
   })
-  h.resolveApp.mockResolvedValue({ slug: 'agentive', chatId: 'c1', name: 'Agentive' })
+  h.resolveAppVerified.mockResolvedValue({
+    entry: { slug: 'agentive', chatId: 'c1', name: 'Agentive' },
+    verified: true,
+  })
 })
 
 afterEach(() => {
@@ -203,22 +212,26 @@ describe('POST /api/webhooks/stripe (#1012) — checkout.session.completed', () 
     expect(h.fulfillPaidPlan).toHaveBeenCalledWith('castlo', 'business')
   })
 
-  it('acks 200 but fulfills nothing when the session carries no company slug', async () => {
+  it('rejects a signed callback that names no company at all, and fulfills nothing', async () => {
     const { POST } = await import('@/app/api/webhooks/stripe/route')
     const res: any = await POST(callbackReq(completedPayload({ slug: '' })))
-    expect(res.status).toBe(200)
-    const json = await res.json()
-    expect(json.ok).toBe(true)
-    expect(json.reason).toBe('no_slug')
+    // 401, not the old 200 + `no_slug` (#1012 review finding 4): a required
+    // field is now part of signature verification, matching the sibling
+    // /api/webhooks/ad-budget-confirmed. A correctly-signed payload that names
+    // no company is malformed, so it is rejected at the boundary rather than
+    // coerced to '' and reported vaguely downstream.
+    expect(res.status).toBe(401)
     expect(h.fulfillPaidPlan).not.toHaveBeenCalled()
   })
 
-  it('acks 200 but fulfills nothing for a company that is not in the registry', async () => {
-    h.resolveApp.mockResolvedValue(null)
+  it('acks 200 but fulfills nothing for a company CONFIRMED not in the registry', async () => {
+    // verified:true + no entry — the registry answered, and the answer is that
+    // this company genuinely does not exist.
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: true })
     const { POST } = await import('@/app/api/webhooks/stripe/route')
     const res: any = await POST(callbackReq(completedPayload({ slug: 'ghost' })))
-    // 200, not 404 — a 4xx makes Stripe/core retry this forever over a company
-    // Builder legitimately does not have.
+    // 200, not 404 and not a 5xx — a retry makes Stripe/core try forever over a
+    // company Builder legitimately does not have and never will.
     expect(res.status).toBe(200)
     const json = await res.json()
     expect(json.reason).toBe('company_not_found')
@@ -255,14 +268,19 @@ describe('POST /api/webhooks/stripe (#1012) — checkout.session.completed', () 
     expect(json.reason).toBe('not_a_paid_plan')
   })
 
-  it('still returns 200 when fulfillment itself throws (Stripe must not retry-storm)', async () => {
+  it('asks the sender to RETRY when fulfillment itself throws (a real payment must not be discarded)', async () => {
     h.fulfillPaidPlan.mockRejectedValue(new Error('zerodb down'))
     const { POST } = await import('@/app/api/webhooks/stripe/route')
     const res: any = await POST(callbackReq(completedPayload()))
-    expect(res.status).toBe(200)
+    // This previously acked 200 (#1012 review finding 2): a transient ZeroDB
+    // write failure told the sender the payment was handled while the company
+    // sat unfulfilled. A thrown write is retryable, so it is a 5xx — the
+    // sender's own backoff, not a false ack, is what prevents a retry storm.
+    expect(res.status).toBeGreaterThanOrEqual(500)
     const json = await res.json()
     expect(json.ok).toBe(false)
     expect(json.reason).toBe('fulfillment_failed')
+    expect(json.retryable).toBe(true)
   })
 })
 

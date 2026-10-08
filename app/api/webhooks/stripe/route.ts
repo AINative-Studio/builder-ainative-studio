@@ -49,13 +49,34 @@
  * FAILS CLOSED: with no secret configured, every request is 401. There is no
  * unauthenticated path to fulfillment.
  *
- * ── WHY 200 ON ALMOST EVERYTHING ────────────────────────────────────────────
- * Stripe (and core's relay) retry on any non-2xx, with backoff, for days. A
- * 4xx/5xx for "this isn't my company" or "ZeroDB hiccuped" turns a
- * non-actionable event into a retry storm. So: 401 ONLY for a failed signature
- * (the real security boundary), and 200 + an honest machine-readable `reason`
- * for everything else. The body is what an operator greps; the status is what
- * the sender acts on.
+ * ── WHEN TO ACK (200) AND WHEN TO ASK FOR A RETRY (5xx) ─────────────────────
+ * Stripe (and core's relay) retry on any non-2xx, with backoff, for days, so a
+ * blanket non-2xx turns a non-actionable event into a retry storm. But the
+ * inverse — acking everything — is worse, and was a real defect here: a
+ * transient ZeroDB read failure was reported as `company_not_found` and acked
+ * 200, telling the sender "handled, stop retrying" and PERMANENTLY DISCARDING a
+ * real payment. The split is therefore by whether a retry can actually succeed:
+ *
+ *   401  — failed signature or a malformed signed payload. The security
+ *          boundary; retrying the same bad token never helps.
+ *   200  — DETERMINISTIC non-actionability. This event is genuinely nothing to
+ *          do (wrong type, unpaid, no slug, no plan), or the company is
+ *          CONFIRMED not in the registry, or it is already fulfilled. Retrying
+ *          would produce the identical answer forever, so the sender should
+ *          stop.
+ *   5xx  — TRANSIENT failure. We could not CHECK (registry lookup unverified)
+ *          or could not WRITE (fulfillment threw / the plan write failed). The
+ *          event is real and still unfulfilled, and a retry is exactly the
+ *          correct behaviour — this is the one case where trying again works.
+ *          Carries `retryable: true` so the intent is explicit, not inferred
+ *          from the status code alone.
+ *
+ * The load-bearing distinction is "couldn't check" vs "confirmed gone", which
+ * `resolveApp`'s plain `null` return cannot express — hence `resolveAppVerified`
+ * (#807/#832) and its `verified` flag, which exists for precisely this.
+ * #855's `reconcilePlanFulfillment` is still a backstop on the founder's next
+ * Live load, but it must not be the ONLY thing standing between a real payment
+ * and fulfillment.
  *
  * ── THE ONE THING A WEBHOOK CANNOT DO ───────────────────────────────────────
  * Fulfillment is two steps: stamp the plan, and upgrade a `tmp_` project to
@@ -73,7 +94,7 @@
 
 import { NextRequest } from 'next/server'
 import { createHmac, timingSafeEqual } from 'crypto'
-import { fulfillPaidPlan, resolveApp } from '@/lib/build/app-registry'
+import { fulfillPaidPlan, resolveAppVerified } from '@/lib/build/app-registry'
 import { markConverted } from '@/lib/build/learning'
 
 export const runtime = 'nodejs'
@@ -152,6 +173,26 @@ function verifyCoreCallback(token: string | null): Record<string, any> | null {
   // Replay protection — a signed payload from an hour ago has no legitimate
   // reason to arrive now (core signs each delivery attempt freshly).
   if (!freshTs(payload.ts)) return null
+
+  // REQUIRED FIELDS ARE PART OF VERIFICATION (#1012 review finding 4), matching
+  // the sibling /api/webhooks/ad-budget-confirmed, whose verifyCallback likewise
+  // requires its own payload essentials before returning success. A
+  // correctly-signed payload that names no company at all is MALFORMED, not
+  // merely unactionable — rejecting it at the boundary beats falling through to
+  // downstream String() coercion of undefined into '' and a vague `no_slug`.
+  //
+  // Checked against the FULLY EXTRACTED slug, not just the top-level field.
+  // core's flat envelope puts it at `slug`, but this same scheme is also used to
+  // relay a nested Stripe event object whose company lives in
+  // data.object.metadata — requiring the top-level field alone would reject
+  // those legitimately-signed deliveries (caught by the existing
+  // "accepts the Stripe-native metadata shape" test).
+  if (!extractFulfillment(payload).slug) return null
+
+  // An explicitly present but non-string/blank `slug` is malformed regardless of
+  // what a fallback field happens to supply.
+  if ('slug' in payload && (typeof payload.slug !== 'string' || payload.slug.trim() === '')) return null
+
   return payload
 }
 
@@ -283,12 +324,42 @@ export async function POST(request: NextRequest) {
     return Response.json({ ok: true, reason: 'no_plan', type, slug })
   }
 
-  // Confirm Builder actually owns this company before writing. A payment for a
-  // slug not in the registry is acked (not 404'd) so the sender stops retrying
-  // over something Builder legitimately does not have.
-  const app = await resolveApp(slug).catch(() => null)
-  if (!app) {
-    console.warn('[webhooks/stripe] paid event for a company not in the registry', { type, slug, plan })
+  // Confirm Builder actually owns this company before writing — and critically,
+  // tell "confirmed not in the registry" apart from "the registry lookup itself
+  // failed" (#1012 review finding 2).
+  //
+  // This used to be `resolveApp(slug).catch(() => null)`, whose single `null`
+  // return conflates both. A ZeroDB 5xx, a timeout, or a missing
+  // ZERODB_PROJECT_ID therefore reported `company_not_found` and ACKED 200,
+  // telling the sender to stop retrying and permanently discarding a real
+  // payment for a company that exists perfectly well. `resolveAppVerified`
+  // (#807/#832) was built for exactly this conflation and carries the `verified`
+  // flag that answers it.
+  const lookup = await resolveAppVerified(slug).catch(() => ({ entry: null, verified: false }))
+
+  if (!lookup.verified) {
+    // COULD NOT CHECK. The event is real and still unfulfilled, and a retry can
+    // genuinely succeed once the registry is reachable — so ask for one. Nothing
+    // is written on an answer we cannot trust (including the case where an entry
+    // came back alongside verified:false; an untrusted read is untrusted either
+    // way).
+    console.error(
+      '[webhooks/stripe] registry lookup UNVERIFIED — cannot distinguish a missing company ' +
+        'from an unreachable registry, so asking the sender to retry rather than acking and ' +
+        'discarding a real payment',
+      { type, slug, plan },
+    )
+    return Response.json(
+      { ok: false, reason: 'registry_lookup_failed', retryable: true, type, slug },
+      { status: 503 },
+    )
+  }
+
+  if (!lookup.entry) {
+    // CONFIRMED GONE. Acked (not 404'd, not 5xx'd): retrying will never make
+    // this company exist, so the sender should stop. Logged loudly because a
+    // real payment for an unknown slug is operator-actionable.
+    console.warn('[webhooks/stripe] paid event for a company CONFIRMED not in the registry', { type, slug, plan })
     return Response.json({ ok: true, reason: 'company_not_found', type, slug })
   }
 
@@ -300,11 +371,32 @@ export async function POST(request: NextRequest) {
   try {
     result = await fulfillPaidPlan(slug, plan)
   } catch (e: any) {
-    // Ack 200 even on a genuine failure: a retry storm against a wobbling
-    // ZeroDB helps nobody, and #855's reconciliation still covers this company
-    // on the founder's next Live load. Logged so it is recoverable.
-    console.error('[webhooks/stripe] fulfillment threw', { slug, plan, error: String(e?.message || e) })
-    return Response.json({ ok: false, reason: 'fulfillment_failed', type, slug, plan })
+    // A THROWN fulfillment is a transient WRITE failure (#1012 review finding
+    // 2), not a decision. This used to ack 200, which told the sender the
+    // payment was handled while the company sat unfulfilled — the same
+    // fail-open as the lookup above, and leaning on #855's reconciliation as
+    // the only recovery meant it only ever fired for a founder who happened to
+    // revisit Live. Asking for a retry is the correct response to a wobbling
+    // ZeroDB; the sender's own backoff, not a 200, is what prevents a storm.
+    console.error('[webhooks/stripe] fulfillment threw — asking the sender to retry', {
+      slug, plan, error: String(e?.message || e),
+    })
+    return Response.json(
+      { ok: false, reason: 'fulfillment_failed', retryable: true, type, slug, plan },
+      { status: 503 },
+    )
+  }
+
+  // A reported (not thrown) WRITE failure is equally transient and equally
+  // retryable. Every other `!ok` reason — `not_a_paid_plan`, `not_registered`,
+  // `missing_args` — is a deterministic refusal that a retry would reproduce
+  // exactly, so those stay 200 acks below.
+  if (!result.ok && result.reason === 'plan_write_failed') {
+    console.error('[webhooks/stripe] plan write FAILED — asking the sender to retry', { slug, plan })
+    return Response.json(
+      { ok: false, reason: 'plan_write_failed', retryable: true, type, slug, plan },
+      { status: 503 },
+    )
   }
 
   // Record the paid conversion in the recursive learning loop, mirroring what
