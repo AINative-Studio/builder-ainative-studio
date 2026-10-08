@@ -22,6 +22,7 @@ import {
   runMediaGeneration,
   pollVideoStatus,
   VARIATION_DESCRIPTORS,
+  STYLE_DESCRIPTORS,
   pickNextVariant,
   type MediaRoutine,
   type MediaAsset,
@@ -234,6 +235,85 @@ describe('buildBrandPrompt', () => {
       expect(new Set(prompts).size).toBe(VARIATION_DESCRIPTORS.length)
     })
   })
+
+  // #1018: every company's "on-brand" generated image/video shared the same
+  // overarching visual style because the STYLE line was one fixed, generic
+  // phrase for every company, every run — independent of the (already-fixed)
+  // composition axis and subject grounding. STYLE_DESCRIPTORS is a SECOND,
+  // independently-indexed rotation (styleIndex), analogous to
+  // VARIATION_DESCRIPTORS/variantIndex but never conflated with it.
+  describe('style axis (#1018 — every company must not share the same fixed style phrase)', () => {
+    it('exposes a small, stable set of rotating style descriptors', () => {
+      expect(Array.isArray(STYLE_DESCRIPTORS)).toBe(true)
+      expect(STYLE_DESCRIPTORS.length).toBeGreaterThanOrEqual(4)
+      for (const d of STYLE_DESCRIPTORS) {
+        expect(typeof d).toBe('string')
+        expect(d.length).toBeGreaterThan(5)
+      }
+    })
+
+    it('never sends the old fixed, generic style phrase for every company', () => {
+      const p = buildBrandPrompt('image', { companyName: 'Acme' }, 0, 0)
+      expect(p).not.toContain('modern, clean, professional photography or illustration, high visual quality')
+    })
+
+    it('the same brand + different style indices produce different prompt text', () => {
+      const brand = { companyName: 'Acme', idea: 'inventory bot' }
+      const prompts = STYLE_DESCRIPTORS.map((_, i) => buildBrandPrompt('image', brand, 0, i))
+      const unique = new Set(prompts)
+      expect(unique.size).toBe(STYLE_DESCRIPTORS.length)
+    })
+
+    it('an out-of-range or missing style index defaults safely (never throws, never undefined)', () => {
+      const brand = { companyName: 'Acme' }
+      expect(() => buildBrandPrompt('image', brand, 0, undefined)).not.toThrow()
+      expect(buildBrandPrompt('image', brand, 0, undefined)).not.toContain('undefined')
+      expect(() => buildBrandPrompt('image', brand, 0, 999)).not.toThrow()
+      expect(buildBrandPrompt('image', brand, 0, 999)).not.toContain('undefined')
+      expect(() => buildBrandPrompt('image', brand, 0, -1)).not.toThrow()
+      expect(buildBrandPrompt('image', brand, 0, -1)).not.toContain('undefined')
+    })
+
+    it('preserves the real-business-grounding and no-text instructions in every style variant', () => {
+      const brand = { companyName: 'Beacon', idea: 'a lighthouse-as-a-service safety beacon network' }
+      for (let i = 0; i < STYLE_DESCRIPTORS.length; i++) {
+        const p = buildBrandPrompt('image', brand, 0, i)
+        expect(p).toContain('a lighthouse-as-a-service safety beacon network')
+        expect(p).toMatch(/ground every visual choice/i)
+        expect(p).toMatch(/not a generic, unrelated stock scene/i)
+        expect(p).toMatch(/do not render|no text overlays|zero on-image text/i)
+      }
+    })
+
+    it('still never leaks the literal "on-brand marketing asset" phrase in any style variant', () => {
+      for (let i = 0; i < STYLE_DESCRIPTORS.length; i++) {
+        const p = buildBrandPrompt('image', { companyName: 'Beacon' }, 0, i)
+        expect(p.toLowerCase()).not.toContain('on-brand marketing asset')
+      }
+    })
+
+    it('works identically for video prompts', () => {
+      const prompts = STYLE_DESCRIPTORS.map((_, i) => buildBrandPrompt('video', { companyName: 'Acme' }, 0, i))
+      expect(new Set(prompts).size).toBe(STYLE_DESCRIPTORS.length)
+    })
+
+    it('rotates independently from the composition axis — composition-variant 2 + style-variant 0 is reachable and differs from composition-variant 0 + style-variant 0', () => {
+      const brand = { companyName: 'Acme', idea: 'inventory bot' }
+      const a = buildBrandPrompt('image', brand, 0, 0)
+      const b = buildBrandPrompt('image', brand, 2, 0)
+      const c = buildBrandPrompt('image', brand, 0, 2)
+      expect(a).not.toBe(b) // composition differs, style fixed
+      expect(a).not.toBe(c) // style differs, composition fixed
+      expect(b).not.toBe(c)
+    })
+
+    it('a missing styleIndex does not affect the composition axis output (back-compat with 3-arg callers)', () => {
+      const brand = { companyName: 'Acme' }
+      const threeArg = buildBrandPrompt('image', brand, 1)
+      const fourArgDefaultStyle = buildBrandPrompt('image', brand, 1, 0)
+      expect(threeArg).toBe(fourArgDefaultStyle)
+    })
+  })
 })
 
 describe('pickNextVariant (#909)', () => {
@@ -273,6 +353,20 @@ describe('pickNextVariant (#909)', () => {
   it('degrades to always 0 when there is only one descriptor (never loops forever)', () => {
     expect(pickNextVariant(0, 1)).toBe(0)
     expect(pickNextVariant(undefined, 1)).toBe(0)
+  })
+
+  // #1018: pickNextVariant is reused as-is for the independent style axis —
+  // same helper, different list length / different persisted index.
+  it('works identically against STYLE_DESCRIPTORS for the independent style axis', () => {
+    for (let i = 0; i < 20; i++) {
+      const v = pickNextVariant(undefined, STYLE_DESCRIPTORS.length)
+      expect(v).toBeGreaterThanOrEqual(0)
+      expect(v).toBeLessThan(STYLE_DESCRIPTORS.length)
+    }
+    for (let prev = 0; prev < STYLE_DESCRIPTORS.length; prev++) {
+      const next = pickNextVariant(prev, STYLE_DESCRIPTORS.length)
+      expect(next).not.toBe(prev)
+    }
   })
 })
 
@@ -340,6 +434,22 @@ describe('coerceRoutine / coerceAsset', () => {
     const r = coerceRoutine({ row_data: { id: 'x', rowKind: 'routine', mediaKind: 'image', frequency: 'weekly', enabled: true, createdAt: 't', lastVariant: 'not-a-number' } })
     expect(r?.lastVariant === undefined || Number.isInteger(r?.lastVariant)).toBe(true)
   })
+
+  // #1018: lastStyleVariant persists the rotating STYLE-axis index, an
+  // independent field from lastVariant (composition) — same coercion rigor.
+  it('coerces a persisted lastStyleVariant independently from lastVariant', () => {
+    const r = coerceRoutine({ row_data: { id: 'x', rowKind: 'routine', mediaKind: 'image', frequency: 'weekly', enabled: true, createdAt: 't', lastVariant: 1, lastStyleVariant: 3 } })
+    expect(r?.lastVariant).toBe(1)
+    expect(r?.lastStyleVariant).toBe(3)
+  })
+  it('lastStyleVariant is undefined when never set (no fabrication)', () => {
+    const r = coerceRoutine({ row_data: { id: 'x', rowKind: 'routine', mediaKind: 'image', frequency: 'weekly', enabled: true, createdAt: 't' } })
+    expect(r?.lastStyleVariant).toBeUndefined()
+  })
+  it('coerces a malformed lastStyleVariant defensively (never NaN, never a crash)', () => {
+    const r = coerceRoutine({ row_data: { id: 'x', rowKind: 'routine', mediaKind: 'image', frequency: 'weekly', enabled: true, createdAt: 't', lastStyleVariant: 'not-a-number' } })
+    expect(r?.lastStyleVariant === undefined || Number.isInteger(r?.lastStyleVariant)).toBe(true)
+  })
   it('rejects non-routine / missing id', () => {
     expect(coerceRoutine({ rowKind: 'asset' })).toBeNull()
     expect(coerceRoutine({ rowKind: 'routine' })).toBeNull()
@@ -391,6 +501,17 @@ describe('I/O: saveRoutine / saveAsset / listMedia / runMediaGeneration', () => 
     vi.stubGlobal('fetch', vi.fn(async () => OK({ ok: true }) as any))
     const r = await saveRoutine('a::b', { mediaKind: 'image', frequency: 'weekly' })
     expect(r?.lastVariant).toBeUndefined()
+  })
+  it('saveRoutine persists an explicit lastStyleVariant independently from lastVariant (#1018)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => OK({ ok: true }) as any))
+    const r = await saveRoutine('a::b', { mediaKind: 'image', frequency: 'weekly', lastVariant: 1, lastStyleVariant: 2 })
+    expect(r?.lastVariant).toBe(1)
+    expect(r?.lastStyleVariant).toBe(2)
+  })
+  it('saveRoutine leaves lastStyleVariant undefined when not provided (no fabrication)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => OK({ ok: true }) as any))
+    const r = await saveRoutine('a::b', { mediaKind: 'image', frequency: 'weekly' })
+    expect(r?.lastStyleVariant).toBeUndefined()
   })
   it('saveAsset persists and returns the asset', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => OK({ ok: true }) as any))
@@ -593,6 +714,24 @@ describe('I/O: saveRoutine / saveAsset / listMedia / runMediaGeneration', () => 
     vi.stubGlobal('fetch', fetchMock)
     const res = await runMediaGeneration('a::b', 'video', { companyName: 'Acme' })
     expect(res.status).toBe('generated')
+  })
+
+  // #1018: runMediaGeneration must also thread an explicit, INDEPENDENT style
+  // index into the generated prompt, alongside (not instead of) the
+  // composition variant index.
+  it('runMediaGeneration threads an explicit style index into the generated prompt, independent of the variant index', async () => {
+    process.env.BUILD_MEDIA_ENABLED = 'true'
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(OK({ url: 'http://x/gen.mp4' }) as any)
+      .mockResolvedValueOnce(OK({}) as any)
+      .mockResolvedValueOnce(OK({ ok: true }) as any)
+    vi.stubGlobal('fetch', fetchMock)
+    await runMediaGeneration('a::b', 'video', { companyName: 'Acme' }, 1, 2)
+    const firstCall = fetchMock.mock.calls[0]
+    const sentBody = JSON.parse(String(firstCall[1].body))
+    expect(sentBody.prompt).toBe(buildBrandPrompt('video', { companyName: 'Acme' }, 1, 2))
+    // And it must differ from the variant-only (style defaulted to 0) prompt.
+    expect(sentBody.prompt).not.toBe(buildBrandPrompt('video', { companyName: 'Acme' }, 1))
   })
 
   // #884: every distinct failure branch used to collapse to the same bare
