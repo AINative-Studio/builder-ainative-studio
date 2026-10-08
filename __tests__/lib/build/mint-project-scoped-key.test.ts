@@ -26,7 +26,12 @@ beforeEach(() => {
   vi.resetModules()
   process.env.ZERODB_API_KEY = 'shared-service-key'
   process.env.ZERODB_PROJECT_ID = 'builder-registry-project'
-  delete process.env.AINATIVE_API_URL
+  // A real local .env sets AINATIVE_API_URL with a trailing slash — pin the
+  // exact value this suite assumes rather than merely deleting it, since a
+  // deleted var can still be re-populated by dotenv loading between resets.
+  process.env.AINATIVE_API_URL = 'https://api.ainative.studio'
+  delete process.env.AINATIVE_API_KEY
+  delete process.env.API_Key
 })
 
 afterEach(() => {
@@ -124,12 +129,18 @@ describe('mintProjectScopedKey', () => {
   })
 
   it('refuses to call core when Builder has no service key configured', async () => {
-    delete process.env.ZERODB_API_KEY
-    delete process.env.AINATIVE_API_KEY
-    delete process.env.API_Key
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     const { mintProjectScopedKey } = await load()
+    // The dynamic import above transitively pulls in lib/db/connection.ts,
+    // which calls dotenv's config() as an unrelated side effect — dotenv
+    // fills any env var that is currently absent from a real local .env, so
+    // deleting these BEFORE the import gets silently undone by it. Delete
+    // again now, after every module in the chain has already finished
+    // loading, so nothing refills them before the function call below.
+    delete process.env.ZERODB_API_KEY
+    delete process.env.AINATIVE_API_KEY
+    delete process.env.API_Key
     const r = await mintProjectScopedKey('p1')
 
     expect(r.ok).toBe(false)
