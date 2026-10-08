@@ -29,6 +29,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 const h = vi.hoisted(() => ({
   auth: vi.fn(async () => null as any),
   resolveApp: vi.fn<(...args: any[]) => Promise<any>>(),
+  // #1021: the #73 MCP wedge's own gate + provisioner, so the MCP branch can be
+  // driven independently of the real ENABLE_MCP_PROVISION env flag.
+  isMcpProvisionEnabled: vi.fn(() => false),
+  provisionZeroDbViaMcp: vi.fn<(...args: any[]) => Promise<any>>(async () => ({ ok: false })),
   // Typed like resolveApp/provisionInstantDb below, and deliberately: an
   // untyped `vi.fn(async () => true)` gives `.mock.calls` an EMPTY-tuple
   // element type, so reading `calls.at(-1)?.[1]` (the persisted `fields`
@@ -73,8 +77,8 @@ vi.mock('@/lib/build/zeroforms', () => ({ provisionForm: vi.fn(async () => ({ ok
 vi.mock('@/lib/build/agentflow', () => ({ provisionProject: vi.fn(async () => ({ ok: false })) }))
 vi.mock('@/lib/build/zeroerp', () => ({ provisionZeroERPTenant: vi.fn(async () => ({ ok: false })) }))
 vi.mock('@/lib/build/mcp-provision', () => ({
-  provisionZeroDbViaMcp: vi.fn(async () => ({ ok: false })),
-  isMcpProvisionEnabled: vi.fn(() => false),
+  provisionZeroDbViaMcp: h.provisionZeroDbViaMcp,
+  isMcpProvisionEnabled: h.isMcpProvisionEnabled,
 }))
 vi.mock('@/lib/git/company-repo', () => ({
   provisionCompanyRepo: vi.fn(async () => ({ ok: false })),
@@ -113,6 +117,12 @@ describe('POST /api/build/provision — permanent/tmp gating follows the REAL li
     h.setAppProvisioned.mockReset().mockResolvedValue(true)
     h.setAppOwner.mockReset().mockResolvedValue(true)
     h.storeCompanyZerodbKey.mockReset().mockResolvedValue(true)
+    // #1021: the #73 MCP wedge is OFF by default here, exactly as it is in
+    // production (confirmed 2026-10-08: ENABLE_MCP_PROVISION is not set at all
+    // on the builder-ainative-studio Railway service), so every #1014 case
+    // below continues to exercise the Instant-DB path it was written for.
+    h.isMcpProvisionEnabled.mockReset().mockReturnValue(false)
+    h.provisionZeroDbViaMcp.mockReset().mockResolvedValue({ ok: false })
     // `verified:true` is the default because that is what a REAL, reachable
     // core produces (fetchCorePlanIdentity sets it on every successful read).
     // Tests that model a core outage override it to false explicitly.
@@ -323,6 +333,195 @@ describe('POST /api/build/provision — permanent/tmp gating follows the REAL li
     const res = await POST(postRequest({ slug: 'flo', plan: 'enterprise' }))
     const body = await res.json()
 
+    expect(h.provisionInstantDb).toHaveBeenCalledWith('founder-real-jwt', false)
+    expect(body.keyKind).toBe('tmp')
+  })
+})
+
+/**
+ * The #73 MCP provisioning wedge must answer the key-kind question the SAME way
+ * (#1021).
+ *
+ * THE BUG: the `isMcpProvisionEnabled()` branch — the "Cody OPERATES the
+ * primitive agentically" path — hardcoded `keyKind: 'permanent'` in both its
+ * `setAppProvisioned` write and its JSON response, and consulted neither
+ * `isPaid` nor any resolved plan at all. #1014 resolved the founder's real live
+ * tier a few lines above and even stamped it onto the row through this branch,
+ * but deliberately left the key-kind decision alone, so the two paths through
+ * the SAME route disagreed about the same entitlement question: a hobbyist
+ * founder got a 72h tmp_ trial via Instant DB and a PERMANENT project via MCP.
+ * That is the exact "several code paths answer the same entitlement question
+ * differently" class #762 consolidated `isPaidTier` to prevent.
+ *
+ * Inert in production today — ENABLE_MCP_PROVISION is not set at all on the
+ * Railway service (verified 2026-10-08: absent from all 171 variables), and
+ * `isMcpProvisionEnabled()` requires a literal '1'/'true' — so this was a
+ * latent over-grant that would have activated the moment #73's flag was flipped
+ * on. These tests pin the correct behavior BEFORE that happens.
+ */
+describe('POST /api/build/provision — the #73 MCP path honors the same resolved plan (#1021)', () => {
+  beforeEach(() => {
+    h.auth.mockReset().mockResolvedValue({
+      accessToken: 'founder-real-jwt',
+      user: { email: 'founder@example.com' },
+    })
+    h.resolveApp.mockReset().mockResolvedValue(unprovisionedCompany())
+    h.setAppProvisioned.mockReset().mockResolvedValue(true)
+    h.setAppOwner.mockReset().mockResolvedValue(true)
+    h.storeCompanyZerodbKey.mockReset().mockResolvedValue(true)
+    h.getPlanStatus.mockReset().mockResolvedValue({ tier: 'hobbyist', verified: true })
+    h.provisionInstantDb
+      .mockReset()
+      .mockImplementation(async (_jwt: string | undefined, permanent?: boolean) =>
+        permanent
+          ? { ok: true, projectId: 'proj-perm', keyKind: 'permanent', apiKey: 'sk_real' }
+          : { ok: true, projectId: 'proj-tmp', keyKind: 'tmp', apiKey: 'tmp_real', claimToken: 'claim-1' },
+      )
+    // Flag ON + a successful MCP provision ⇒ the MCP branch short-circuits and
+    // owns the response. This is the only configuration in which the bug is
+    // reachable at all.
+    h.isMcpProvisionEnabled.mockReset().mockReturnValue(true)
+    h.provisionZeroDbViaMcp
+      .mockReset()
+      .mockResolvedValue({ ok: true, projectId: 'mcp-proj-1', tablesCreated: ['waitlist'] })
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  /** The persisted-fields object from the last setAppProvisioned call. */
+  function lastPersisted(): Record<string, any> {
+    const lastCall = h.setAppProvisioned.mock.calls.at(-1)
+    expect(lastCall).toBeDefined()
+    return lastCall![1]
+  }
+
+  // ── The over-grant itself ────────────────────────────────────────────────
+  it('gives a genuinely UNPAID founder a tmp_ 72h trial, not a permanent key (the #1021 over-grant)', async () => {
+    h.getPlanStatus.mockResolvedValue({ tier: 'hobbyist', verified: true })
+
+    const res = await POST(postRequest({ slug: 'flo', name: 'Flo' }))
+    const body = await res.json()
+
+    expect(body.ok).toBe(true)
+    expect(body.provisionedVia).toBe('mcp')
+    expect(body.zerodbProjectId).toBe('mcp-proj-1')
+    // The whole point: the real live plan, not a hardcoded constant.
+    expect(body.keyKind).toBe('tmp')
+    expect(body.trial).toBe(true)
+    expect(body.claimable).toBe(true)
+    expect(body.expiresAt).toBeTruthy()
+
+    // …and the row must agree with the response, or the Live dashboard /
+    // claimSubdomain / subdomainServable all read a permanent key that the
+    // founder never earned.
+    const persisted = lastPersisted()
+    expect(persisted.keyKind).toBe('tmp')
+    expect(persisted.trialExpiresAt).toBeTruthy()
+  })
+
+  it('keeps a `starter` ($20) founder on tmp_ through the MCP path too — starter is not a permanent-key tier', async () => {
+    h.getPlanStatus.mockResolvedValue({ tier: 'starter', verified: true })
+
+    const res = await POST(postRequest({ slug: 'flo' }))
+    const body = await res.json()
+
+    expect(body.provisionedVia).toBe('mcp')
+    expect(body.keyKind).toBe('tmp')
+    expect(body.trial).toBe(true)
+  })
+
+  it('gives an ANONYMOUS founder tmp_ through the MCP path (no token, genuinely unpaid)', async () => {
+    h.auth.mockResolvedValue(null)
+
+    const res = await POST(postRequest({ slug: 'flo' }))
+    const body = await res.json()
+
+    expect(h.getPlanStatus).not.toHaveBeenCalled()
+    expect(body.provisionedVia).toBe('mcp')
+    expect(body.keyKind).toBe('tmp')
+    expect(body.claimable).toBe(true)
+  })
+
+  // ── A genuinely paid founder still gets what they pay for ────────────────
+  it.each(['enterprise', 'pro', 'business', 'cody_vcto'])(
+    'still mints a PERMANENT key for a genuinely live-%s founder',
+    async (tier) => {
+      h.getPlanStatus.mockResolvedValue({ tier, verified: true })
+
+      const res = await POST(postRequest({ slug: 'flo' }))
+      const body = await res.json()
+
+      expect(body.provisionedVia).toBe('mcp')
+      expect(body.keyKind).toBe('permanent')
+      expect(body.trial).toBe(false)
+      expect(body.claimable).toBe(false)
+      expect(body.expiresAt).toBeNull()
+      expect(lastPersisted().keyKind).toBe('permanent')
+    },
+  )
+
+  it('keeps stamping the live confirmed-paid plan onto the row (the one thing #1014 already fixed here)', async () => {
+    h.getPlanStatus.mockResolvedValue({ tier: 'enterprise', verified: true })
+
+    const res = await POST(postRequest({ slug: 'flo' }))
+    const body = await res.json()
+
+    expect(body.plan).toBe('enterprise')
+    expect(lastPersisted().plan).toBe('enterprise')
+  })
+
+  // ── The SAME failure policy as the Instant-DB path ───────────────────────
+  it('honors a Stripe-verified registry plan when the live lookup resolves UNVERIFIED (core outage)', async () => {
+    h.getPlanStatus.mockResolvedValue({ tier: 'hobbyist', verified: false })
+    h.resolveApp.mockResolvedValue(unprovisionedCompany({ plan: 'pro' }))
+
+    const res = await POST(postRequest({ slug: 'flo' }))
+    const body = await res.json()
+
+    expect(body.provisionedVia).toBe('mcp')
+    expect(body.keyKind).toBe('permanent')
+  })
+
+  it('fails CLOSED to tmp_ when the live lookup THROWS and the registry carries no paid plan', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    h.getPlanStatus.mockRejectedValue(new Error('core /auth/me 503'))
+
+    const res = await POST(postRequest({ slug: 'flo' }))
+    const body = await res.json()
+
+    expect(body.provisionedVia).toBe('mcp')
+    expect(body.keyKind).toBe('tmp')
+  })
+
+  // ── Flag-off behavior must be COMPLETELY unchanged ───────────────────────
+  //
+  // The MCP branch must stay unreachable with the flag off — the fix is a
+  // gating change inside an already-gated branch, and must not make that
+  // branch fire (or even call the MCP provisioner) for anyone.
+  it('never reaches the MCP path when the flag is OFF — not even to ask', async () => {
+    h.isMcpProvisionEnabled.mockReturnValue(false)
+    h.getPlanStatus.mockResolvedValue({ tier: 'enterprise', verified: true })
+
+    const res = await POST(postRequest({ slug: 'flo' }))
+    const body = await res.json()
+
+    expect(h.provisionZeroDbViaMcp).not.toHaveBeenCalled()
+    expect(body.provisionedVia).toBeUndefined()
+    expect(h.provisionInstantDb).toHaveBeenCalledWith('founder-real-jwt', true)
+    expect(body.zerodbProjectId).toBe('proj-perm')
+    expect(body.keyKind).toBe('permanent')
+  })
+
+  it('falls through to Instant DB (unchanged) when the flag is on but the MCP provision does not succeed', async () => {
+    h.provisionZeroDbViaMcp.mockResolvedValue({ ok: false, skipped: true, reason: 'not_configured' })
+    h.getPlanStatus.mockResolvedValue({ tier: 'hobbyist', verified: true })
+
+    const res = await POST(postRequest({ slug: 'flo' }))
+    const body = await res.json()
+
+    expect(h.provisionZeroDbViaMcp).toHaveBeenCalled()
+    expect(body.provisionedVia).toBeUndefined()
     expect(h.provisionInstantDb).toHaveBeenCalledWith('founder-real-jwt', false)
     expect(body.keyKind).toBe('tmp')
   })

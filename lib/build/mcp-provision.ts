@@ -16,6 +16,12 @@
  *    and the caller falls back to the existing Instant-DB REST path.
  *  - All failures are swallowed into a structured result — this function NEVER throws.
  *  - No secrets are logged; the MCP key comes from env only.
+ *  - ENTITLEMENT is NOT this module's concern and never was: it creates a real
+ *    ZeroDB project and says so, nothing more. The permanent-vs-tmp key-kind
+ *    decision belongs to the caller, which resolves it once from the founder's
+ *    real live plan and applies it to BOTH its provisioning paths (#1021 —
+ *    before that, the caller hardcoded `permanent` for this path only, so
+ *    enabling the flag would have over-granted every unpaid founder).
  *
  * This module owns ONLY the ZeroDB build-time seam (phase-1 goal: one primitive
  * end-to-end). Run-time ops (GTM/ZeroVoice/etc.) are later phases.

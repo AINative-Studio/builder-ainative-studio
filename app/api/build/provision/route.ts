@@ -21,6 +21,12 @@
  * #1012). The registry `plan` survives only as a one-directional fallback for
  * when the live lookup cannot be resolved — see the POST body for why.
  *
+ * #1021: that decision is resolved ONCE (`isPaid`) and both provisioning paths
+ * out of this route honor it — the Instant-DB REST path AND the #73 MCP wedge
+ * (`ENABLE_MCP_PROVISION`), which previously hardcoded `keyKind: 'permanent'`
+ * and so would have handed every unpaid founder a permanent project the moment
+ * that flag was enabled.
+ *
  * SECURITY: the raw sk_/tmp_ api_key is returned to THIS caller (server-side) but is
  * NOT written into the shared registry — only project_id + keyKind + claim token are.
  * It IS persisted ENCRYPTED in its own scoped store (#806/#844,
@@ -372,17 +378,35 @@ export async function POST(request: NextRequest) {
     if (mcp.ok && mcp.projectId) {
       const target = await deployPersistent(existing.chatId, slug, existing)
       const provisionedAt = new Date().toISOString()
-      // NOTE (#1014 triage, pre-existing and deliberately NOT changed here):
-      // this MCP path hardcodes keyKind:'permanent' and consults neither `isPaid`
-      // nor the founder's plan at all, so with ENABLE_MCP_PROVISION on, an
-      // unpaid founder gets a permanent project. That is the OPPOSITE defect
-      // from #1014 (an over-grant from an unrelated feature flag, not an
-      // under-grant), it is inert by default (the flag is off), and changing it
-      // would alter #73's behavior — so it is reported, not silently fixed.
-      // The live plan IS stamped below, since that is strictly an improvement.
+      // #1021: the key-kind decision follows the SAME resolved plan the
+      // Instant-DB path below uses — `isPaid`, computed once above from the
+      // founder's REAL live tier (getPlanStatus → `/api/v1/auth/me`) with the
+      // registry's Stripe-verified `plan` as the one-directional outage
+      // fallback. This used to hardcode `keyKind: 'permanent'` and consult
+      // neither `isPaid` nor any plan at all, so with ENABLE_MCP_PROVISION on,
+      // the two paths through this ONE route answered the same entitlement
+      // question differently: a hobbyist founder got a 72h tmp_ trial via
+      // Instant DB and a PERMANENT project via MCP. That is the over-grant
+      // mirror of #1014's under-grant, and exactly the "several code paths
+      // answer the same entitlement question differently" class #762
+      // consolidated `isPaidTier` to prevent — so it is fixed at the shared
+      // decision rather than left to activate the day #73's flag is flipped on.
+      //
+      // Unpaid ⇒ the same REAL 72h trial the main path gives (the conversion
+      // hook, not a paywall): a later payment claims the project via
+      // claimCompanyProject with no data loss. Unlike Instant DB, the MCP
+      // wedge's `zerodb_create_project` has no tmp/permanent key notion of its
+      // own and returns no expiry, so the trial window is anchored here the
+      // same way the main path anchors a missing `expires_at` (#260).
+      const keyKind: 'permanent' | 'tmp' = isPaid ? 'permanent' : 'tmp'
+      const trialExpiresAt =
+        keyKind === 'tmp' ? new Date(Date.now() + TRIAL_WINDOW_MS).toISOString() : undefined
       const persisted = await setAppProvisioned(slug, {
         zerodbProjectId: mcp.projectId,
-        keyKind: 'permanent',
+        keyKind,
+        // Only ever set for a tmp_ trial — a permanent (paid) project never
+        // expires, and writing a value here would start a countdown on it.
+        ...(trialExpiresAt ? { trialExpiresAt } : {}),
         provisionedAt,
         deployUrl: target.url,
         workspaceId: BUILDER_WORKSPACE_ID,
@@ -391,10 +415,10 @@ export async function POST(request: NextRequest) {
       return Response.json({
         ok: true,
         zerodbProjectId: mcp.projectId,
-        keyKind: 'permanent',
-        trial: false,
-        claimable: false,
-        expiresAt: null,
+        keyKind,
+        trial: keyKind === 'tmp',
+        claimable: keyKind === 'tmp',
+        expiresAt: trialExpiresAt || null,
         plan: plan || null,
         created: true,
         provisionedVia: 'mcp',
