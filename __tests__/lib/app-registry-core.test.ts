@@ -762,6 +762,66 @@ describe('reconcilePlanFulfillment', () => {
     )
   })
 
+  // ── #1022: the guards the doc comment always CLAIMED, now actually enforced ──
+  it('#1022: refuses a non-paid plan id outright — never stamps hobbyist/starter/garbage onto a company', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    for (const notPaid of ['hobbyist', 'free', 'starter', 'trial', 'nonsense']) {
+      const res = await reconcilePlanFulfillment('acme', notPaid, 'jwt')
+      expect(res, notPaid).toEqual({ planFixed: false, keyClaimed: false })
+    }
+    // Rejected before any I/O at all — not even the initial resolveApp read.
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it("#1022: NORMALIZES an alias before persisting — 'admin' lands on the row as 'enterprise', the vocabulary every reader expects", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    // 1: resolveApp (inside reconcilePlanFulfillment), 2: resolveApp (inside setAppPlan)
+    fetchMock.mockResolvedValueOnce(
+      rowsResponse([row('hexlock', { zerodbProjectId: 'proj-h', keyKind: 'permanent', plan: undefined })]),
+    )
+    fetchMock.mockResolvedValueOnce(
+      rowsResponse([row('hexlock', { zerodbProjectId: 'proj-h', keyKind: 'permanent', plan: undefined })]),
+    )
+    fetchMock.mockResolvedValueOnce(okResponse()) // 3: registerApp POST
+
+    const res = await reconcilePlanFulfillment('hexlock', 'admin', 'admins-real-jwt')
+    expect(res.planFixed).toBe(true)
+
+    const body = JSON.parse(fetchMock.mock.calls.at(-1)![1].body)
+    // Writing the literal 'admin' here would leave deploy.ts's isPaidPlan,
+    // claimSubdomain and setAppPlan's `enrolled` all reading the row as UNPAID.
+    expect(body.row_data.plan).toBe('enterprise')
+    expect(body.row_data.enrolled).toBe(true)
+  })
+
+  it("#1022: normalizes core's own paid aliases too (launch ⇒ pro, company ⇒ business)", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    for (const [alias, canonical] of [['launch', 'pro'], ['company', 'business']] as const) {
+      fetchMock.mockReset()
+      fetchMock.mockResolvedValueOnce(
+        rowsResponse([row('acme', { zerodbProjectId: 'p', keyKind: 'permanent', plan: undefined })]),
+      )
+      fetchMock.mockResolvedValueOnce(
+        rowsResponse([row('acme', { zerodbProjectId: 'p', keyKind: 'permanent', plan: undefined })]),
+      )
+      fetchMock.mockResolvedValueOnce(okResponse())
+
+      await reconcilePlanFulfillment('acme', alias, 'jwt')
+      const body = JSON.parse(fetchMock.mock.calls.at(-1)![1].body)
+      expect(body.row_data.plan, alias).toBe(canonical)
+    }
+  })
+
+  it('#1022: an already-canonical row is still a no-op when reached via its alias (no churn row)', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(
+      rowsResponse([row('acme', { zerodbProjectId: 'p', keyKind: 'permanent', plan: 'enterprise' })]),
+    )
+    const res = await reconcilePlanFulfillment('acme', 'admin', 'jwt')
+    expect(res).toEqual({ planFixed: false, keyClaimed: false })
+    expect(fetchMock).toHaveBeenCalledTimes(1) // only the initial resolveApp read
+  })
+
   it('does nothing when the registry plan already matches (no drift to fix)', async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValueOnce(

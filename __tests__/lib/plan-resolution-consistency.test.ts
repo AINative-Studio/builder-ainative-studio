@@ -348,6 +348,28 @@ describe('#762 — every paid plan core sells resolves as paid', () => {
     expect(isPaidTier('company')).toBe(true)
   })
 
+  // #1022: `fetchCorePlanIdentity` reports AINative staff as the literal
+  // `rawPlan: 'admin'` — core's ROLE, not a plan id. Every session-level
+  // consumer already hand-resolved that to enterprise (getPlanStatus's
+  // `identity.admin ? 'enterprise' : …`, resolveActivePlanForToken, the status
+  // route's #309 bypass), but the VOCABULARY itself did not, so any path handed
+  // the raw string rather than the pre-resolved tier got 'hobbyist' and decided
+  // a genuine enterprise staff account was unpaid. That is what made the
+  // retroactive `reconcilePlanFulfillment` repair path unreachable for admins.
+  it("staff 'admin' resolves to enterprise in the vocabulary itself, not just at session level (#1022)", async () => {
+    const { normalizeTier, isPaidTier, tierLabel } = await importPlan()
+
+    expect(normalizeTier('admin')).toBe('enterprise')
+    expect(normalizeTier('ADMIN')).toBe('enterprise')   // lowercased on the way in
+    expect(isPaidTier('admin')).toBe(true)
+    expect(tierLabel(normalizeTier('admin'))).toBe('Enterprise')
+  })
+
+  it('admin inherits enterprise LIMITS, so a staff account is never capped like a hobbyist (#1022)', async () => {
+    const { normalizeTier, TIER_LIMITS } = await importPlan()
+    expect(TIER_LIMITS[normalizeTier('admin')]).toEqual(TIER_LIMITS.enterprise)
+  })
+
   it('unpaid/unknown plans are not paid', async () => {
     const { isPaidTier } = await importPlan()
     for (const p of ['hobbyist', 'free', '', null, undefined, 'made-up']) {
