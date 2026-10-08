@@ -105,6 +105,26 @@ const PAID_TIERS = new Set(['pro', 'business', 'enterprise', 'cody_vcto'])
 export interface PlanStatus {
   tier: string
   tierLabel: string
+  /**
+   * Whether `tier` reflects a REAL answer from core, as opposed to the un-paid
+   * default landed on after a timeout/5xx/network error (#1014).
+   *
+   * This field exists because `getPlanStatus` NEVER THROWS for a core outage:
+   * `fetchCorePlanIdentity` is documented "Never throws — an unreachable core
+   * yields `verified: false`", returning `{rawPlan: null, verified: false}`,
+   * which `normalizeTier(null)` then turns into a perfectly ordinary-looking
+   * `'hobbyist'`. Until this was surfaced, that flag was computed by
+   * resolve-plan.ts and then DISCARDED here, so every caller's "did the lookup
+   * work?" question could only be answered by try/catch — which an outage never
+   * triggers. Callers that fall back to another entitlement signal (e.g. the
+   * provision route's Stripe-verified registry `plan`) were therefore dead code
+   * in exactly the scenario they were written for.
+   *
+   * `verified: false` is NOT proof the user is unpaid — conflating the two is
+   * the original #762 bug. Fail closed on it, but never treat it as a confirmed
+   * entitlement answer, and never let it overwrite a real purchase signal.
+   */
+  verified: boolean
   /** Subscription status from core: 'trialing' | 'active' | 'none'. */
   status: 'trialing' | 'active' | 'none'
   trial: { active: boolean; endsAt: string | null; daysLeft: number | null }
@@ -198,6 +218,10 @@ export async function getPlanStatus(accessToken: string): Promise<PlanStatus> {
   return {
     tier,
     tierLabel: tierLabel(tier),
+    // Straight through from core's own answer — never re-derived from the
+    // resolved tier, which cannot distinguish a genuine Hobbyist from an
+    // unreachable core (both land on 'hobbyist'). See PlanStatus.verified.
+    verified: identity.verified,
     status,
     trial: {
       active: status === 'trialing',

@@ -256,6 +256,17 @@ export async function POST(request: NextRequest) {
   // log it LOUDLY so a core outage is never silently mistaken for a real
   // entitlement gap (#762). An anonymous caller has no token to look up with and
   // is genuinely unpaid — that is a resolved answer, not a failure.
+  //
+  // "Resolved" is read from `status.verified`, NOT merely from "no exception was
+  // thrown". getPlanStatus does not throw on a core outage: fetchCorePlanIdentity
+  // is explicitly documented "Never throws — an unreachable core yields
+  // `verified: false`", and the resulting null plan normalizes to a completely
+  // ordinary-looking 'hobbyist'. Keying off try/catch alone (as this originally
+  // did) left `liveTierResolved` TRUE through a real outage, so the registry
+  // fallback below never engaged and a genuinely paid founder creating a second
+  // company during a core blip was gated to a 72h tmp_ trial — the exact failure
+  // that fallback exists to prevent. The try/catch is kept as well: a thrown
+  // error (e.g. from the usage lookups) is still an unresolved tier.
   let liveTier = 'hobbyist'
   let liveTierResolved = true
   if (jwt) {
@@ -263,7 +274,15 @@ export async function POST(request: NextRequest) {
     try {
       const status = await getPlanStatus(jwt)
       liveTier = status.tier || 'hobbyist'
-      liveTierResolved = true
+      liveTierResolved = status.verified
+      if (!liveTierResolved) {
+        console.error(
+          `[provision] live tier lookup UNVERIFIED for slug "${slug}" — core did not ` +
+            `answer (timeout/5xx/network), so tier "${liveTier}" is a default, not a ` +
+            `real read. NOT proof the founder is unpaid; falling back to any ` +
+            `Stripe-verified plan already stamped on the registry row.`,
+        )
+      }
     } catch (err) {
       console.error(
         `[provision] live tier lookup threw for slug "${slug}" — failing closed to ` +
@@ -289,10 +308,24 @@ export async function POST(request: NextRequest) {
   // The plan to report and persist. Prefer the live tier we just CONFIRMED paid
   // — stamping it closes the #1014 gap at the source, so every later reader of
   // this row (claimSubdomain, the GET below, the Live dashboard) stops seeing an
-  // empty plan for a founder who was paid all along. An unconfirmed or unpaid
-  // tier is deliberately NOT written: it would overwrite a real Stripe-verified
-  // stamp with a guess made during a core outage.
-  const plan = livePaid ? liveTier : registryPlan
+  // empty plan for a founder who was paid all along.
+  //
+  // Everything else resolves to '' so the `...(plan ? { plan } : {})` guard below
+  // omits the field entirely and leaves whatever the row already holds untouched:
+  //
+  //  - CONFIRMED UNPAID (verified, hobbyist/starter): this used to fall through to
+  //    `registryPlan`, re-stamping a stale paid value from a past purchase onto the
+  //    row of a founder core had just confirmed is NOT currently paid. It read as
+  //    harmless ("not a new value") but `subdomainServable()` (lib/build/deploy.ts),
+  //    `claimSubdomain()` (lib/build/app-registry.ts) and the /api/build/deck
+  //    paywall all read this field directly and would keep treating the founder as
+  //    paid, against a live confirmed answer — and it contradicted this comment's
+  //    own "an unconfirmed or unpaid tier is deliberately NOT written" promise.
+  //  - UNRESOLVED (core outage): writing the default 'hobbyist' would overwrite a
+  //    real Stripe-verified stamp with a guess. The registry's own existing value
+  //    still grants entitlement for THIS provision via `isPaid` above; it simply
+  //    isn't re-written here.
+  const plan = livePaid ? liveTier : ''
 
   // Already provisioned? Return the persisted project id (idempotent).
   if (existing.zerodbProjectId) {

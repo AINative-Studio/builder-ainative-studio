@@ -193,6 +193,74 @@ describe('#762 — one authoritative plan source across every code path', () => 
     expect(logged).toMatch(/PAYING customer may be wrongly denied/i)
   })
 
+  // ── `verified` must reach CALLERS, not just the logs (#1014) ──────────────
+  //
+  // A loud log tells a human the difference between "really Hobbyist" and "core
+  // was down". It tells CODE nothing. getPlanStatus computed that distinction
+  // (fetchCorePlanIdentity's `verified`) and then threw it away, returning the
+  // outage default as an ordinary resolution — and because it RESOLVES rather
+  // than throws, every caller guarding with try/catch saw a clean success.
+  // Routes that fall back to another entitlement signal on an unresolved lookup
+  // (the provision route's Stripe-verified registry `plan`) were therefore dead
+  // code in exactly the outage they were written for.
+  it('reports verified:false to CALLERS when core could not be reached (an outage RESOLVES, it does not throw)', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    mockCore({ meReject: new Error('ECONNREFUSED') })
+
+    const { getPlanStatus } = await importPlan()
+    // The critical property: no exception. A try/catch cannot detect this.
+    const status = await getPlanStatus('t')
+
+    expect(status.tier).toBe('hobbyist')
+    expect(status.verified).toBe(false)
+  })
+
+  it('reports verified:false when /api/v1/auth/me answers a non-2xx', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    mockCore({ me: { detail: 'bad gateway' }, meStatus: 502 })
+
+    const { getPlanStatus } = await importPlan()
+    const status = await getPlanStatus('t')
+
+    expect(status.tier).toBe('hobbyist')
+    expect(status.verified).toBe(false)
+  })
+
+  it('reports verified:true for a REAL core answer — paid and unpaid alike', async () => {
+    mockCore({ me: ENTERPRISE_ME, subscription: subscriptionPayload('enterprise') })
+    const { getPlanStatus } = await importPlan()
+    const paid = await getPlanStatus('t')
+    expect(paid.tier).toBe('enterprise')
+    expect(paid.verified).toBe(true)
+
+    vi.resetModules()
+    mockCore({
+      me: { ...ENTERPRISE_ME, plan: 'hobbyist' },
+      subscription: subscriptionPayload('hobbyist', 'trialing'),
+    })
+    const { getPlanStatus: getAgain } = await importPlan()
+    const unpaid = await getAgain('t')
+    // A CONFIRMED hobbyist is verified — distinguishable from the outage above
+    // even though both land on the same tier string.
+    expect(unpaid.tier).toBe('hobbyist')
+    expect(unpaid.verified).toBe(true)
+  })
+
+  it('a slow/failing /api/v1/subscription does NOT make a real /auth/me read unverified', async () => {
+    // Enrichment failure must never be mistaken for a tier-verification failure
+    // — that conflation is what #762 was about in the first place.
+    mockCore({
+      me: ENTERPRISE_ME,
+      subscriptionReject: Object.assign(new Error('timed out'), { name: 'AbortError' }),
+    })
+
+    const { getPlanStatus } = await importPlan()
+    const status = await getPlanStatus('t')
+
+    expect(status.tier).toBe('enterprise')
+    expect(status.verified).toBe(true)
+  })
+
   it('usage + trial data is still populated (the fix preserves PlanStatus in full)', async () => {
     mockCore({
       me: ENTERPRISE_ME,
