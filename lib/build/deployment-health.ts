@@ -81,3 +81,134 @@ export async function reportDeploymentHealthStage(
     // Best-effort — never let a reporting hiccup affect the real pipeline.
   }
 }
+
+// ---------------------------------------------------------------------------
+// Reading stages back (#1015)
+// ---------------------------------------------------------------------------
+
+/**
+ * One stage row as core returns it on the GET side of the same endpoint.
+ * Shape captured live from
+ * `GET /api/v1/public/deployment-health/builder_app_generation/flo`:
+ *   { id, entity_type, entity_id, stage, status, reason, metadata, user_id,
+ *     created_at }
+ * Only the fields this module actually reasons about are typed as required.
+ */
+export interface DeploymentHealthStageRow {
+  stage: string
+  status: string
+  reason?: string | null
+  created_at?: string
+  metadata?: Record<string, unknown> | null
+}
+
+export interface DeploymentHealthRead {
+  /**
+   * TRUE only when core genuinely answered with a parseable stage list.
+   *
+   * This distinction is the whole point: "we could not read the stages" must
+   * never be indistinguishable from "the stages are confirmed absent." The
+   * registration reconciler acts on ABSENCE (re-driving a company's ready-gate
+   * and git commit), so a network blip reported as an empty success would hand
+   * it a licence to re-drive every company on the platform — the exact
+   * false-confirmed-miss class resolveAppVerified() had to fix for the
+   * registry read.
+   */
+  ok: boolean
+  stages: DeploymentHealthStageRow[]
+}
+
+/**
+ * Read back the real recorded stages for one builder entity.
+ *
+ * There is no list/summary variant of this endpoint (verified live: requesting
+ * `.../builder_app_generation/summary` just returns an entity literally named
+ * "summary" with zero stages), so callers that need to sweep must enumerate
+ * candidates from the registry and call this per slug — see
+ * lib/build/registration-reconcile.ts.
+ *
+ * Never throws. Returns `ok: false` on any failure, including a malformed
+ * body, so a caller can tell an unverified read from a verified-empty one.
+ */
+export async function fetchDeploymentHealthStages(
+  entityType: DeploymentHealthEntityType,
+  entityId: string,
+): Promise<DeploymentHealthRead> {
+  if (!API_KEY || !entityId) return { ok: false, stages: [] }
+
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 15_000)
+    try {
+      const res = await fetch(
+        `${AINATIVE_API}/api/v1/public/deployment-health/${entityType}/${encodeURIComponent(entityId)}`,
+        {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${API_KEY}`,
+            'X-API-Key': API_KEY,
+            'Content-Type': 'application/json',
+          },
+          signal: controller.signal,
+        },
+      )
+      if (!res.ok) return { ok: false, stages: [] }
+      const body = (await res.json().catch(() => null)) as { stages?: unknown } | null
+      if (!body || !Array.isArray(body.stages)) return { ok: false, stages: [] }
+      return { ok: true, stages: body.stages as DeploymentHealthStageRow[] }
+    } finally {
+      clearTimeout(timer)
+    }
+  } catch {
+    return { ok: false, stages: [] }
+  }
+}
+
+/**
+ * What a company's app-generation stage set says about whether its
+ * registration pipeline actually FINISHED.
+ *
+ *  - `stuck`             — the #1015 bug class. `generate` is ok, but the
+ *                          ready-gate never adjudicated this app at all. The
+ *                          code exists; nothing verified or committed it.
+ *  - `complete`          — `ready_check` already ran. Nothing to re-drive.
+ *  - `never_generated`   — no successful `generate` stage. NOT this bug class:
+ *                          there is no generated code to verify or commit, so
+ *                          re-driving would invent work, not finish it.
+ *  - `generation_failed` — `generate` itself failed. Same reasoning.
+ *  - `ready_check_failed`— the gate ran and genuinely REJECTED the app. Already
+ *                          adjudicated; repair/regeneration is a different path
+ *                          (/api/build/repair-app), not reconciliation.
+ *  - `unverifiable`      — the read failed. Fail closed, always.
+ */
+export type RegistrationHealthDisposition =
+  | 'stuck'
+  | 'complete'
+  | 'never_generated'
+  | 'generation_failed'
+  | 'ready_check_failed'
+  | 'unverifiable'
+
+export function classifyRegistrationHealth(read: DeploymentHealthRead): RegistrationHealthDisposition {
+  if (!read.ok) return 'unverifiable'
+
+  const has = (stage: string, status?: string) =>
+    read.stages.some((s) => s.stage === stage && (status === undefined || s.status === status))
+
+  // `ready_check` existing at all — ok OR failed — means the gate genuinely ran
+  // for this company, so there is nothing unfinished for the reconciler to
+  // re-drive. Distinguish the two only to report honestly.
+  if (has('ready_check', 'failed')) return 'ready_check_failed'
+  if (has('ready_check')) return 'complete'
+
+  // git_commit without ready_check shouldn't happen (register-app reports the
+  // gate first), but if it did, the route demonstrably ran — treat as complete
+  // rather than re-committing someone's code a second time.
+  if (has('git_commit')) return 'complete'
+
+  if (!has('generate')) return 'never_generated'
+  if (!has('generate', 'ok')) return 'generation_failed'
+
+  // generate is ok and the ready gate never adjudicated: exactly Flo.
+  return 'stuck'
+}

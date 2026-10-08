@@ -13,10 +13,9 @@ import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { registerApp, resolveApp, type AppEntry } from '@/lib/build/app-registry'
 import { deployPersistent } from '@/lib/build/deploy'
-import { checkAppReady, resolveStoredApp } from '@/lib/build/ready-gate'
+import { resolveStoredApp } from '@/lib/build/ready-gate'
 import { checkSeededData, type SeededDataCheck } from '@/lib/build/seed-check'
-import { commitRegeneration, provisionCompanyRepo, toFileMapForCommit } from '@/lib/git/company-repo'
-import { BUILDER_WORKSPACE_ID } from '@/lib/build/instant-db'
+import { runReadyGate, runGitCommit } from '@/lib/build/register-app-core'
 import { enrollCompany, isEnrolled } from '@/lib/build/loop-enrollment'
 import { sendWelcomeEmail } from '@/lib/build/company-email'
 import { reportDeploymentHealthStage } from '@/lib/build/deployment-health'
@@ -58,13 +57,13 @@ export async function POST(request: NextRequest) {
   // durable persist — a store miss fail-opened and a truncated app got
   // registered while its code was still landing. Re-check up to 3× (2s apart)
   // before accepting an unverifiable app; genuine store outages still fail open.
-  let ready = await checkAppReady(chatId).catch(() => ({ checked: false, ok: true } as const))
-  for (let i = 0; !ready.checked && i < 3; i++) {
-    await new Promise((r) => setTimeout(r, 2000))
-    ready = await checkAppReady(chatId).catch(() => ({ checked: false, ok: true } as const))
-  }
-  if (ready.checked && !ready.ok) {
-    await reportDeploymentHealthStage('builder_app_generation', requestedSlug, 'ready_check', 'failed', ready.reason)
+  // #1015: the gate itself (incl. the store-miss retry and its ready_check
+  // stage reporting) now lives in lib/build/register-app-core.ts, so the
+  // server-side reconciliation sweep for companies whose browser died
+  // mid-generation runs the IDENTICAL logic rather than a second copy of it.
+  const gate = await runReadyGate(requestedSlug, chatId)
+  const ready = gate.ready
+  if (gate.blocked) {
     return Response.json(
       {
         ok: false,
@@ -75,9 +74,6 @@ export async function POST(request: NextRequest) {
       },
       { status: 422 },
     )
-  }
-  if (ready.checked) {
-    await reportDeploymentHealthStage('builder_app_generation', requestedSlug, 'ready_check', 'ok')
   }
 
   // COLLISION SAFETY NET, not the primary defense: the real prevention lives
@@ -231,44 +227,16 @@ export async function POST(request: NextRequest) {
   // #349: Git commit for regeneration. If the company already has a git repo,
   // commit the new code. If not but they're provisioned, create the repo now.
   // Best-effort — never blocks the registration response.
-  let gitCommitted = false
-  let gitAttempted = false
-  try {
-    const stored = await resolveStoredApp(chatId)
-    // Real gap found live: EVERY real generated app that only has flat `.code`
-    // (a single-file app — the majority case) used to be silently skipped
-    // here because the old guard only ever checked `.files` (the multi-file
-    // map, populated only for Sandpack-routed generations). toFileMapForCommit
-    // falls back to a synthetic single-entry map so single-file apps get
-    // git-provisioned/committed too, not just multi-file ones.
-    const fileMap = toFileMapForCommit(stored)
-    if (fileMap) {
-      if (existing?.gitRepoId) {
-        // Existing repo → commit regeneration
-        gitAttempted = true
-        gitCommitted = await commitRegeneration({
-          slug,
-          files: fileMap,
-          taskLabel: b.taskLabel,
-        })
-      } else if (existing?.zerodbProjectId) {
-        // Provisioned but no repo yet → provision git now
-        gitAttempted = true
-        const git = await provisionCompanyRepo({
-          workspaceId: BUILDER_WORKSPACE_ID,
-          slug,
-          files: fileMap,
-        })
-        gitCommitted = git.ok
-      }
-    }
-  } catch (err) {
-    console.warn(`[register-app] Git commit error for ${slug}:`, err)
-    gitAttempted = true
-  }
-  if (gitAttempted) {
-    await reportDeploymentHealthStage('builder_app_generation', slug, 'git_commit', gitCommitted ? 'ok' : 'failed')
-  }
+  // #1015: shared with the server-side reconciliation sweep (see
+  // lib/build/register-app-core.ts) — one implementation of "commit this
+  // company's code," called from both the client-triggered path and the repair
+  // path, so they can never diverge.
+  const { committed: gitCommitted } = await runGitCommit({
+    slug,
+    chatId,
+    existing,
+    taskLabel: b.taskLabel,
+  })
 
   return Response.json({
     ok,
