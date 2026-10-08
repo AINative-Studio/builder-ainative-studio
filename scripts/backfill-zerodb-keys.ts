@@ -30,26 +30,38 @@
  * STRONGLY RECOMMENDED: do the first real run with `--only <slug>` against ONE
  * company, then verify a real `/api/db` read/write for that company's live app
  * actually succeeds, before running the whole backlog.
+ *
+ * A `--only` with no slug after it (e.g. the typo `--only --apply`) EXITS 1
+ * before reading or minting anything — it is never read as "no scope
+ * restriction". "Whole registry" has to be asked for by omitting `--only`.
  */
 
 export {}
 
 import { runZerodbKeyBackfillSweep, MAX_BACKFILLS_PER_RUN } from '../lib/build/zerodb-key-backfill'
+import { parseBackfillArgs, BackfillArgsError, type BackfillArgs } from './backfill-zerodb-keys-args'
 
-const APPLY = process.argv.includes('--apply')
-
-/** `--only slug-a,slug-b` or repeated `--only slug-a --only slug-b`. */
-function parseOnly(): string[] {
-  const out: string[] = []
-  const argv = process.argv
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] !== '--only') continue
-    const v = argv[i + 1]
-    if (!v || v.startsWith('--')) continue
-    out.push(...v.split(',').map((s) => s.trim()).filter(Boolean))
+/**
+ * `--only slug-a,slug-b` / repeated `--only`, plus `--apply`.
+ *
+ * Parsed by a pure, tested function (backfill-zerodb-keys-args.ts) that treats a
+ * `--only` with no slug as a HARD ERROR rather than an unscoped run: `--only
+ * --apply`, a one-token typo of the recommended canary `--only agentive
+ * --apply`, used to silently widen the scope from one company to the entire
+ * registry while still applying. Exit before anything is read or minted.
+ */
+let ARGS: BackfillArgs
+try {
+  ARGS = parseBackfillArgs(process.argv.slice(2))
+} catch (e) {
+  if (e instanceof BackfillArgsError) {
+    console.error(`\n✗ ${e.message}\n`)
+    process.exit(1)
   }
-  return out
+  throw e
 }
+
+const APPLY = ARGS.apply
 
 const MARKS: Record<string, string> = {
   backfilled: '✓',
@@ -63,7 +75,7 @@ const MARKS: Record<string, string> = {
 }
 
 async function main() {
-  const onlySlugs = parseOnly()
+  const onlySlugs = ARGS.onlySlugs
   console.log(
     `\n#1013 ZeroDB key backfill — ${APPLY ? 'APPLY (mints real credentials!)' : 'DRY RUN (no writes)'}` +
       `${onlySlugs.length ? `  scope: ${onlySlugs.join(', ')}` : '  scope: whole registry'}\n`,
