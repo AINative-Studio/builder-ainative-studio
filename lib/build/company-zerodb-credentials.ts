@@ -208,3 +208,82 @@ export async function resolveCompanyZerodbKey(projectId: string): Promise<Resolv
 export async function hasCompanyZerodbKey(projectId: string): Promise<boolean> {
   return (await resolveStoredRow(projectId)) !== null
 }
+
+export interface MintedProjectKey {
+  ok: boolean
+  /** The full, one-time-visible data-plane key. Present only when ok. */
+  apiKey?: string
+  /** Honest failure detail — core's own `detail`, or a structural reason. */
+  reason?: string
+  /** Core's HTTP status, when the call actually reached core. */
+  status?: number
+}
+
+/**
+ * Mint a NEW data-plane key scoped to a company's ALREADY-EXISTING ZeroDB
+ * project (#1013).
+ *
+ * WHY THIS IS NEEDED. `storeCompanyZerodbKey` above is written from exactly one
+ * place — the provision path — with the key `provisionInstantDb` happened to
+ * mint while CREATING the project. For a company provisioned before #806
+ * shipped (2026-09-22), that key was returned once and discarded: it is
+ * unrecoverable. The project itself still exists and still holds the founder's
+ * real data, so re-provisioning (minting a brand-new project) would silently
+ * orphan it. The only correct repair for those ~17 historical companies is to
+ * mint a FRESH key against the EXISTING project id.
+ *
+ * Core exposes exactly that: `POST /api/v1/public/api-keys { name, project_id }`
+ * → 201 APIKeyCreateResponse, whose `api_key` field carries the full key once
+ * ("Save this key now - it won't be shown again!"). 404 means "Project not found
+ * or access denied" — i.e. this identity cannot reach that project, which for a
+ * backfill is a real terminal case (the project was deleted upstream, or was
+ * never owned by Builder's identity), not a bug to retry around.
+ *
+ * IDENTITY — deliberately NOT the instant-db claim path. That path needs the
+ * FOUNDER'S own bearer token (the claim associates a project to a specific real
+ * account), and an offline repair sweep must never borrow a founder's identity
+ * (CODY.md Rule 5). This uses Builder's OWN service key — the admin identity
+ * that owns the Builder workspace every Instant DB project is filed under — and
+ * fails honestly with core's own 404 when that identity genuinely cannot reach
+ * the project.
+ *
+ * Never throws; returns {ok:false, reason} so a sweep can report it per-company
+ * rather than aborting. A caller MUST NOT treat {ok:false} as anything but a
+ * failure — there is no fallback key that would be correctly scoped.
+ */
+export async function mintProjectScopedKey(
+  projectId: string,
+  options: { slug?: string; name?: string } = {},
+): Promise<MintedProjectKey> {
+  if (!projectId) return { ok: false, reason: 'no_project_id' }
+  const key = serviceKey()
+  if (!key) return { ok: false, reason: 'unconfigured' }
+
+  // A human-traceable name, so an operator looking at this key in core can see
+  // which company it belongs to and that a #1013 backfill created it.
+  const name = options.name || `builder-backfill-1013-${options.slug || projectId}`
+
+  try {
+    const res = await fetch(`${AINATIVE_API}/api/v1/public/api-keys`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'X-API-Key': key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, project_id: projectId }),
+      signal: AbortSignal.timeout(30000),
+    })
+    const data = await res.json().catch(() => null)
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        reason: String(data?.detail || data?.error_code || res.status).slice(0, 200),
+      }
+    }
+    const apiKey = typeof data?.api_key === 'string' ? data.api_key : ''
+    // A 201 with no key in the body is a failure, not a success — storing an
+    // empty key would make the company look repaired while still failing closed.
+    if (!apiKey) return { ok: false, status: res.status, reason: 'no_api_key_in_response' }
+    return { ok: true, apiKey, status: res.status }
+  } catch (e: any) {
+    return { ok: false, reason: String(e?.message || e).slice(0, 160) }
+  }
+}
