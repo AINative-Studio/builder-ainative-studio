@@ -1121,6 +1121,21 @@ export async function claimCompanyProject(
  * Best-effort and silent on failure — this must never turn a plain page
  * load into a visible error. Only acts when `corePlan` is a real, paid
  * plan id; never triggered by a free/hobbyist account.
+ *
+ * #1022: those last two sentences were the DOC's claim only — nothing here
+ * actually enforced either one. The paid-only property was entirely a
+ * property of the single caller's own gate, and the plan was written RAW.
+ * Both are now enforced in this function, next to the write they protect:
+ *
+ *   - `isPaidPlanId` rejects a free/hobbyist/unknown id outright, so this can
+ *     never stamp a non-paid tier onto a company (same guard, same reason, as
+ *     `fulfillPaidPlan`'s `not_a_paid_plan`).
+ *   - `canonicalPaidPlan` normalizes before persisting, so an alias
+ *     (`launch`/`company`/`cody__your_virtual_cto`/`admin`) can't land on the
+ *     row as a string that `deploy.ts`'s `isPaidPlan`, `claimSubdomain` and
+ *     `setAppPlan`'s `enrolled` flag each read as UNPAID — the exact
+ *     accepted-but-unnormalized defect #1012's review found in `isPaidPlanId`
+ *     and fixed in `fulfillPaidPlan`, left unfixed on this path.
  */
 export async function reconcilePlanFulfillment(
   slug: string,
@@ -1130,13 +1145,18 @@ export async function reconcilePlanFulfillment(
   let planFixed = false
   let keyClaimed = false
   if (!slug || !corePlan || !jwt) return { planFixed, keyClaimed }
+  // Never stamp a non-paid tier (enforced here, not merely assumed of callers).
+  if (!isPaidPlanId(corePlan)) return { planFixed, keyClaimed }
+
+  // The canonical vocabulary every registry READER already compares against.
+  const plan = canonicalPaidPlan(corePlan)
 
   try {
     const existing = await resolveApp(slug)
     if (!existing) return { planFixed, keyClaimed }
 
-    if (existing.plan !== corePlan) {
-      planFixed = await setAppPlan(slug, corePlan).catch(() => false)
+    if (existing.plan !== plan) {
+      planFixed = await setAppPlan(slug, plan).catch(() => false)
     }
 
     if (existing.zerodbProjectId && existing.keyKind === 'tmp' && existing.claimToken) {

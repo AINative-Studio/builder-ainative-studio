@@ -79,13 +79,22 @@ describe('GET /api/build/subscription/status', () => {
     expect(h.reconcilePlanFulfillment).toHaveBeenCalledWith('agentive', 'pro', 'amadors-real-jwt')
   })
 
-  it('admins are treated as enterprise and never trigger reconciliation (staff bypass, not a real per-company plan)', async () => {
+  // #1022 CORRECTION: this test used to assert admins "never trigger
+  // reconciliation (staff bypass, not a real per-company plan)". That premise
+  // was wrong, and asserting it locked the bug in. Admin-ness belongs to the
+  // FOUNDER; the stuck `plan`/`keyKind` state lives on the COMPANY's registry
+  // row, whose readers cannot see who owns it — `deploy.ts`'s
+  // `isPaidPlan(entry.plan)` (→ `subdomainServable` → middleware wildcard-host
+  // serving) takes only `{plan, subdomainClaimed}`. An admin-owned company left
+  // on `plan: null` is therefore just as stuck as any other. See the dedicated
+  // suite in subscription-status-admin-reconcile-1022.test.ts.
+  it('admins are treated as enterprise AND reconciled, with the canonical plan (#1022)', async () => {
     h.auth.mockResolvedValue({ accessToken: 'admin-jwt' })
-    h.fetchCorePlanIdentity.mockResolvedValue({ verified: true, admin: true, email: 'admin@ainative.studio' })
+    h.fetchCorePlanIdentity.mockResolvedValue({ verified: true, admin: true, rawPlan: 'admin', email: 'admin@ainative.studio' })
     const res: any = await GET(getReq('http://localhost/api/build/subscription/status?slug=agentive'))
     const json = await res.json()
     expect(json.plan).toBe('enterprise')
-    expect(h.reconcilePlanFulfillment).not.toHaveBeenCalled()
+    expect(h.reconcilePlanFulfillment).toHaveBeenCalledWith('agentive', 'enterprise', 'admin-jwt')
   })
 
   it('a reconciliation failure never fails or blocks the response', async () => {

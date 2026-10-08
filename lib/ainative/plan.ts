@@ -68,6 +68,25 @@ const TIER_ALIASES: Record<string, string> = {
   // (setAppPlan's `enrolled`, subscription/verify) already special-cased it
   // with a literal ||-chain, which is precisely how the vocabularies drifted.
   cody__your_virtual_cto: 'cody_vcto',
+  // AINative staff (#309 / #1022). `fetchCorePlanIdentity` reports an admin as
+  // the literal `rawPlan: 'admin'` — core's role, not a plan id — and every
+  // session-level consumer already resolves that to enterprise by hand
+  // (`getPlanStatus`: `identity.admin ? 'enterprise' : normalizeTier(...)`;
+  // `resolveActivePlanForToken`; this route's own staff bypass). What was
+  // MISSING was the same answer for the vocabulary itself, so any path handed
+  // the raw string instead of the pre-resolved tier — the retroactive
+  // `reconcilePlanFulfillment` repair path in #1022 — got 'hobbyist' and
+  // silently decided a genuine enterprise staff account was unpaid. This is
+  // the same silent-downgrade class as `business` (#762) and
+  // `cody__your_virtual_cto` above, and the fix belongs in the SAME one map
+  // rather than a fifth local special case.
+  //
+  // NOT a privilege escalation: admin-ness is read ONLY from core's own
+  // `role`/`is_admin`/`is_superuser` on `/api/v1/auth/me` (see
+  // resolve-plan.ts), never from anything client-supplied, and no founder can
+  // set their registry `plan` directly. `normalizeTier('admin')` simply states
+  // the tier core's staff already hold.
+  admin: 'enterprise',
 }
 
 /** Normalize a core plan_name to a limits key. Legacy free/basic/trial resolve to
