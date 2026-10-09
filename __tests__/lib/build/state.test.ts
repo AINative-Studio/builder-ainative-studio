@@ -195,6 +195,62 @@ describe('buildReducer — START_BUILD', () => {
     expect(s.done).toEqual({ brief: 'done' })
   })
 
+  // #1033: MyCompanies.tsx's openLive() re-enters an existing company via the
+  // ?screen=live&company={slug} deep link, which fires RESTORE_BUILD then
+  // PICK_TRACK then START_BUILD in the same mount effect. Confirmed via real
+  // browser verification (seeded localStorage + Playwright) that without
+  // this, re-entering an already-finished App-track company undid
+  // RESTORE_BUILD's auto:false normalization on this very next dispatch,
+  // bringing the JourneyBar tab lockout right back.
+  it('#1033 — re-entering an existing, already-finished company (builtMVP true, same appSub) keeps auto=false', () => {
+    const prev: BuildState = {
+      ...initialBuildState,
+      appSub: 'finished-app-co',
+      builtMVP: true,
+      auto: false, // what RESTORE_BUILD just set, moments earlier in the same effect
+      done: Object.fromEntries(APP_VIEWS.map((v) => [v, 'done'])),
+    }
+    const s = buildReducer(prev, {
+      type: 'START_BUILD',
+      idea: 'Same idea',
+      appSub: 'finished-app-co', // same slug — re-entry, not a new build
+    })
+    expect(s.auto).toBe(false)
+  })
+
+  it('#1033 — re-entering an existing, already-finished company (builtCompany true) keeps auto=false', () => {
+    const prev: BuildState = {
+      ...initialBuildState,
+      appSub: 'finished-company-co',
+      builtCompany: true,
+      auto: false,
+      track: 'company',
+    }
+    const s = buildReducer(prev, {
+      type: 'START_BUILD',
+      idea: 'Same idea',
+      appSub: 'finished-company-co',
+    })
+    expect(s.auto).toBe(false)
+  })
+
+  it('#1033 — re-entering an existing company whose track is NOT yet finished still drives autoplay (auto=true)', () => {
+    const prev: BuildState = {
+      ...initialBuildState,
+      appSub: 'in-progress-co',
+      builtMVP: false,
+      auto: false, // e.g. the founder had taken the wheel mid-build
+      done: { design: 'done', brief: 'done' },
+    }
+    const s = buildReducer(prev, {
+      type: 'START_BUILD',
+      idea: 'Same idea',
+      appSub: 'in-progress-co',
+    })
+    // Re-entry of an unfinished build must still restart autoplay, same as today.
+    expect(s.auto).toBe(true)
+  })
+
   it('clears generated when appSub was empty before', () => {
     const prev: BuildState = {
       ...initialBuildState,
@@ -402,11 +458,30 @@ describe('buildReducer — MVP_DONE / COMPANY_DONE', () => {
     expect(s.building).toBe(false)
   })
 
+  // #1033: without this, state.auto stays true forever once the App track
+  // finishes — JourneyBar's `clickable` check (`!state.auto && (isDone ||
+  // isCurrent)`) then permanently disables EVERY artifact tab, locking the
+  // founder out of their own workspace with no visible error.
+  it('#1033 — MVP_DONE sets auto=false so the founder regains manual control (and JourneyBar tabs unlock)', () => {
+    const s = buildReducer({ ...initialBuildState, building: true, auto: true }, { type: 'MVP_DONE' })
+    expect(s.auto).toBe(false)
+  })
+
   it('COMPANY_DONE sets builtCompany=true, building=false, screen=live', () => {
     const s = buildReducer({ ...initialBuildState, building: true }, { type: 'COMPANY_DONE' })
     expect(s.builtCompany).toBe(true)
     expect(s.building).toBe(false)
     expect(s.screen).toBe('live')
+  })
+
+  // #1033: COMPANY_DONE never set auto:false either. It's normally masked by
+  // screen:'live' (JourneyBar isn't rendered there), but Live.tsx has real
+  // buttons that route back to screen:'ws' later (openGraph, Pricing's
+  // seePreviewFirst, Account's "Back to app") — at that point the SAME
+  // permanent tab lockout would hit a Company-track founder too.
+  it('#1033 — COMPANY_DONE sets auto=false (protects the real screen:ws-return paths from Live.tsx)', () => {
+    const s = buildReducer({ ...initialBuildState, building: true, auto: true }, { type: 'COMPANY_DONE' })
+    expect(s.auto).toBe(false)
   })
 
   // #398: autoplay's live walk-through leaves `view` on the LAST artifact
@@ -485,6 +560,48 @@ describe('buildReducer — RESTORE_BUILD', () => {
     expect(s.activePlan).toBe('pro')
     expect(s.enrolled).toBe(true)
     expect(s.screen).toBe('landing') // unchanged (RESTORE_BUILD never navigates)
+  })
+
+  // #1033 — the reload-strands-the-founder compounding bug. `builtMVP` is a
+  // persisted field (loadBuildState → RESTORE_BUILD on mount), but `auto`
+  // itself is deliberately NOT persisted (it's live UI state, not something
+  // a reload should restore) — so a fresh load always starts from
+  // initialBuildState's auto:true, merged with the OLD session's already-true
+  // builtMVP. useAutoplay's "if (state.track==='app' && !state.builtMVP)"
+  // guard that fires MVP_DONE (and, with the other fix, auto:false) never
+  // re-runs because !state.builtMVP is already false on this load — so
+  // without this normalization, the founder reloads straight back into the
+  // same permanent tab lockout, now with no in-session event left to escape
+  // it. Fixing it in RESTORE_BUILD itself (rather than relying on
+  // useAutoplay's one-shot effect to notice) guarantees a hydrated builtMVP
+  // can never re-create the locked state, regardless of effect timing.
+  it('#1033 — restoring an already-true builtMVP normalizes auto to false (prevents reload-stranding)', () => {
+    const s = buildReducer(initialBuildState, {
+      type: 'RESTORE_BUILD',
+      partial: { builtMVP: true },
+    })
+    expect(s.builtMVP).toBe(true)
+    expect(s.auto).toBe(false)
+  })
+
+  // Same mechanism for the Company track, since builtCompany is also
+  // persisted and COMPANY_DONE has the identical gap.
+  it('#1033 — restoring an already-true builtCompany normalizes auto to false', () => {
+    const s = buildReducer(initialBuildState, {
+      type: 'RESTORE_BUILD',
+      partial: { builtCompany: true },
+    })
+    expect(s.builtCompany).toBe(true)
+    expect(s.auto).toBe(false)
+  })
+
+  it('does NOT force auto=false when restoring an in-progress build (builtMVP still false)', () => {
+    const s = buildReducer({ ...initialBuildState, auto: true }, {
+      type: 'RESTORE_BUILD',
+      partial: { idea: 'still building', appSub: 'in-progress-co' },
+    })
+    expect(s.builtMVP).toBe(false)
+    expect(s.auto).toBe(true) // untouched — autoplay should keep driving
   })
 })
 

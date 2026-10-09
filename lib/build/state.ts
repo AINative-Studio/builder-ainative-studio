@@ -356,7 +356,19 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
         brandTagline: action.brandTagline ?? state.brandTagline,
         brandColor: action.brandColor ?? state.brandColor,
         building: true,
-        auto: true,
+        // #1033: a genuinely NEW build always starts autoplay driving (auto:
+        // true, unconditionally, as before). But RE-ENTERING an EXISTING
+        // company whose track already finished (builtMVP/builtCompany true —
+        // same persisted fields RESTORE_BUILD normalizes auto for) must NOT
+        // flip auto back to true, or it undoes that normalization on the very
+        // next dispatch in the same effect. Real reachable path: MyCompanies'
+        // openLive() round-trips through ?screen=live&company={slug}, which
+        // fires RESTORE_BUILD then PICK_TRACK then this START_BUILD in one
+        // mount effect — confirmed live via direct browser verification
+        // (Playwright against a seeded localStorage state) that without this,
+        // the JourneyBar tab lockout came right back the instant START_BUILD
+        // ran, even though RESTORE_BUILD had just set auto:false.
+        auto: isNewBuild || !(state.builtMVP || state.builtCompany),
         // Only clear prior generation on a genuinely new build (#284).
         generated: isNewBuild ? {} : state.generated,
         genError: isNewBuild ? {} : state.genError,
@@ -475,7 +487,16 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
       // Let useAutoplay's effect see wedgeDraft go back to null and re-fetch.
       return { ...state, wedgeDraft: null, wedgeDraftError: '' }
     case 'MVP_DONE':
-      return { ...state, builtMVP: true, building: false }
+      // #1033: auto:false matches the field's own stated intent ("Cody
+      // autoplaying vs user manual nav") — once the build is actually done,
+      // the founder regains manual control. Without this, state.auto stayed
+      // true forever after track completion, and JourneyBar's `clickable`
+      // check (`!state.auto && (isDone || isCurrent)`) permanently disabled
+      // every artifact tab — the App track's equivalent screen (`ws`) keeps
+      // rendering that tab bar, so this was a real, permanent lockout (unlike
+      // COMPANY_DONE below, which escapes via screen:'live' on the same track
+      // — see #1033 for the reachable path back to `ws` that hits it too).
+      return { ...state, builtMVP: true, building: false, auto: false }
     case 'COMPANY_DONE':
       // #398: land the founder at the TOP of the artifacts list (thesis) when
       // they enter the persistent workspace, not wherever autoplay's live
@@ -483,7 +504,14 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
       // design, while generation is actually running). Once generation is
       // done, the founder is free to browse; starting at the first artifact
       // reads as more intuitive than starting at the last.
-      return { ...state, builtCompany: true, building: false, screen: 'live', view: trackViews(state.track)[0] as ArtifactView }
+      //
+      // #1033: auto:false for the same reason as MVP_DONE above. This track
+      // escapes `ws` (JourneyBar's screen) via screen:'live' here, but Live.tsx
+      // has real buttons (openGraph, Pricing's seePreviewFirst, Account's
+      // "Back to app") that route back to screen:'ws' later in the session —
+      // at that point state.auto was still true (never reset), so the exact
+      // same permanent tab lockout hit Company-track founders too.
+      return { ...state, builtCompany: true, building: false, auto: false, screen: 'live', view: trackViews(state.track)[0] as ArtifactView }
     case 'PICK_PLAN':
       return { ...state, plan: action.plan }
     case 'SET_PROPAGATING':
@@ -505,9 +533,27 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
         auto: false,
         overlay: { kind: 'none' },
       }
-    case 'RESTORE_BUILD':
+    case 'RESTORE_BUILD': {
       // Hydrate persisted fields without disturbing live UI state (#284).
-      return { ...state, ...action.partial }
+      const merged = { ...state, ...action.partial }
+      // #1033: builtMVP/builtCompany are both persisted fields (survive a
+      // reload via localStorage — see loadBuildState/contexts/build-context.tsx),
+      // but MVP_DONE/COMPANY_DONE's own auto:false only fires the FIRST time
+      // the track completes. A returning founder whose track was already done
+      // last session hydrates `auto` back to the reducer's un-restored value
+      // (true, from initialBuildState — `auto` is deliberately NOT in
+      // RESTORE_BUILD's persisted-field union, since live UI state like this
+      // isn't meant to be restored). Left alone, useAutoplay's one-time
+      // "!state.builtMVP" guard never re-fires (the restored value is already
+      // true), so auto never gets corrected — the founder reloads straight
+      // into the exact same permanent JourneyBar tab lockout, stranded on
+      // whatever `view` was last persisted. Normalizing here, at the single
+      // point persisted state is merged in, fixes it regardless of which
+      // field triggered the restore and without relying on any effect
+      // re-running at the right time.
+      if (merged.builtMVP || merged.builtCompany) merged.auto = false
+      return merged
+    }
     case 'SET_TABLET':
       return { ...state, tablet: action.tablet }
     case 'TOGGLE_RAIL':
