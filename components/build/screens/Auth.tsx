@@ -779,7 +779,7 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
                 type="button"
                 className="m-auth-escape"
                 data-testid="auth-use-phone-instead"
-                onClick={() => setShowPhoneForm('auto')}
+                onClick={() => setShowPhoneForm('phone')}
               >
                 Use phone instead
               </button>
