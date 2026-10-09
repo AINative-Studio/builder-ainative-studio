@@ -50,11 +50,9 @@ describe('CodyChatPanel (#BLD-06.1)', () => {
     expect(host.textContent).not.toContain('>brief<')
   })
 
-  it('shows a present-but-not-yet-wired input, honestly labeled', () => {
+  it('never renders the permanently-disabled placeholder input (BLD-06.1 shell scaffolding, superseded by the real BLD-06.3 Q&A chips + ArtifactFrame\'s "What should change?" feedback box once those shipped — a dead, non-functional input left in place would visually promise a chat box that can never work)', () => {
     currentView = 'brief'
     render(React.createElement(CodyChatPanel))
-    const input = host.querySelector('[data-testid="cody-chat-input"]') as HTMLInputElement
-    expect(input).toBeTruthy()
-    expect(input.disabled).toBe(true)
+    expect(host.querySelector('[data-testid="cody-chat-input"]')).toBeFalsy()
   })
 })
