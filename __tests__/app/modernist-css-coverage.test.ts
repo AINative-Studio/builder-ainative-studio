@@ -44,8 +44,6 @@ describe('CodyChatPanel.tsx classes all have real CSS (2026-10-07 incident)', ()
     'm-cody-suggestion',
     'm-cody-question-freetext',
     'm-cody-questions-actions',
-    'm-cody-chat-input-row',
-    'm-cody-chat-input',
   ]
 
   it.each(classes)('%s has a real CSS rule', (className) => {

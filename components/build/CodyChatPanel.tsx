@@ -2,12 +2,21 @@
 
 /**
  * Cody chat panel (#BLD-06.1) — the persistent right-hand panel replacing
- * the old Artifacts rail drawer. This story ships the panel SHELL only: a
- * real, visible, always-on chat surface that reacts to the current
- * artifact. The guided conversation itself (step summaries, Q&A, revise,
- * save/restore) is BLD-06.2 through BLD-06.4's scope, not this one's —
- * the input below is honestly disabled rather than wired to fake behavior
- * that doesn't exist yet.
+ * the old Artifacts rail drawer. BLD-06.1 shipped the panel SHELL only,
+ * with a visible-but-permanently-disabled text input as an honest
+ * placeholder for a guided conversation that didn't exist yet.
+ *
+ * BLD-06.2 through BLD-06.9 (and #987) then shipped that guided
+ * conversation for real: per-step summaries, tap-to-answer + free-text
+ * Q&A that drives a real regenerate, save/version history, and the
+ * explain-before-build gate. The founder's real way to talk to Cody about
+ * the CURRENT artifact is this panel's Q&A block below (for the views with
+ * a question set) plus ArtifactFrame's "What should change?" feedback box
+ * (every view, once the artifact has content) — both call the same
+ * /api/build/artifact feedback mechanism. The original disabled input was
+ * leftover BLD-06.1 scaffolding nothing ever retired once those real paths
+ * shipped; removed rather than left as a dead affordance that visually
+ * promised a chat box that could never work.
  */
 
 import { useEffect, useRef, useState } from 'react'
@@ -233,15 +242,6 @@ export function CodyChatPanel() {
           </div>
         </div>
       )}
-      <div className="m-cody-chat-input-row">
-        <input
-          className="m-cody-chat-input"
-          data-testid="cody-chat-input"
-          type="text"
-          placeholder="Guided Q&A coming soon"
-          disabled
-        />
-      </div>
     </div>
   )
 }

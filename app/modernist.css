@@ -256,10 +256,6 @@
 .m-cody-question-freetext { width: 100%; padding: 8px 10px; border: 1.5px solid var(--neutral-line); font-family: var(--font-body); font-size: 13px; background: var(--color-surface); color: var(--color-text); }
 .m-cody-questions-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
-.m-cody-chat-input-row { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--color-divider); flex-shrink: 0; }
-.m-cody-chat-input { width: 100%; padding: 10px 12px; border: 1.5px solid var(--neutral-line); font-family: var(--font-body); font-size: 13px; background: var(--color-surface); color: var(--text-muted); }
-.m-cody-chat-input:disabled { cursor: not-allowed; opacity: 0.7; }
-
 /* ============================================================================
    Fork + Intake (#222)
    ============================================================================ */
