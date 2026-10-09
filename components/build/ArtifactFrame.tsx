@@ -18,7 +18,7 @@
  */
 
 import { useBuild } from '@/contexts/build-context'
-import { SHARED_LATE_VIEWS } from '@/lib/build/state'
+import { SHARED_LATE_VIEWS, trackViews } from '@/lib/build/state'
 import { collectPrior, serializeArtifact, applyEdit } from '@/lib/build/artifact-edit'
 import { CompanyNameEdit } from '@/components/build/CompanyNameEdit'
 import { useState, type ReactNode } from 'react'
@@ -61,6 +61,19 @@ export function ArtifactFrame({
   const artifactId = ARTIFACT_ID[view]
   const isLate = isSharedLateView(view)
   const companyLabel = state.companyName || 'company'
+
+  // #1038: "Take the wheel" (and resuming an in-progress build, which per
+  // #1033's START_BUILD comment deliberately leaves auto:false) sets
+  // state.auto to false, which is the ONLY gate useAutoplay.ts checks before
+  // it will fetch another artifact. KEEP_GOING (auto: true) has existed in
+  // the reducer the whole time but had no caller anywhere in the component
+  // tree — so once paused, a build could never resume on its own. Surface a
+  // "Keep going" affordance whenever paused AND the active track still has
+  // real work left, using the exact same "next undone, non-errored view"
+  // lookup useAutoplay.ts itself uses to decide whether a track is complete,
+  // so this never appears once the track has actually finished.
+  const hasUnfinishedWork = trackViews(state.track).some((v) => !state.done?.[v] && !state.genError?.[v])
+  const canKeepGoing = !isLate && !state.auto && hasUnfinishedWork
 
   // ── Per-artifact review actions (GR-16 #329) ──────────────────────────────
   // Shown on every artifact that has GENERATED content (prose views after
@@ -259,6 +272,16 @@ export function ArtifactFrame({
       ) : !state.auto ? (
         <div className="m-artifact-nav">
           <button className="btn-ghost" disabled={!prev} onClick={() => prev && goView(prev as never)}>‹ Back</button>
+          {/* #1038: restores the dead KEEP_GOING path — the only way back to
+              autoplay once paused (via "Take the wheel" or a resumed build)
+              was previously nonexistent. Hidden once the track has actually
+              finished (hasUnfinishedWork is false), since there's nothing
+              left for autoplay to resume. */}
+          {canKeepGoing && (
+            <button className="btn-secondary" onClick={() => dispatch({ type: 'KEEP_GOING' })}>
+              Keep going →
+            </button>
+          )}
           {/* On the LAST artifact (e.g. preview) there is no next artifact, so the
               pager 'Next' used to be a disabled dead-end — users clicked it and
               nothing happened. Instead, advance to the pricing/pay-gate (the real
