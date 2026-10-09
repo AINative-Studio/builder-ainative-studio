@@ -11,7 +11,20 @@ import { FRONT_DOOR_VALUE_LINE } from '@/lib/build/front-door-value'
 import { APP_VIEWS, COMPANY_VIEWS } from '@/lib/build/state'
 
 export function Fork() {
-  const { pickTrack } = useBuild()
+  const { dispatch, pickTrack } = useBuild()
+  // Fork is only ever reached as a "start fresh" entry point (MyCompanies'
+  // "+ New company", the landing funnel, or "Back" from Intake) — never a
+  // resume path. Without this, any idea text left over from a PREVIOUS
+  // build earlier in the same session (e.g. an app the founder built last
+  // week) silently reappears pre-filled in Intake's textarea for a
+  // brand-new company, since PICK_TRACK itself doesn't touch state.idea
+  // (it can't — BuildStart's "Surprise me" flow relies on PICK_TRACK
+  // leaving an idea it just set via SET_IDEA alone). Confirmed live during
+  // Company-track QA (2026-10-09).
+  const choose = (track: 'app' | 'company') => {
+    dispatch({ type: 'SET_IDEA', idea: '' })
+    pickTrack(track)
+  }
   return (
     <div className="modernist m-fork">
       <LiveTicker />
@@ -30,24 +43,24 @@ export function Fork() {
 
       <div className="m-fork-cards">
         <div className="m-fork-card" data-track="app" role="button" tabIndex={0}
-          onClick={() => pickTrack('app')} onKeyDown={(e) => e.key === 'Enter' && pickTrack('app')}>
+          onClick={() => choose('app')} onKeyDown={(e) => e.key === 'Enter' && choose('app')}>
           <h2 className="m-artifact">Build an App</h2>
           <p>Turn an idea into a working intelligent product.</p>
           <div className="m-chip-trail">
             {APP_VIEWS.slice(0, 6).map((v) => <span key={v} className="m-chip">{v}</span>)}
             <span className="m-chip">…</span>
           </div>
-          <button className="btn-primary" onClick={(e) => { e.stopPropagation(); pickTrack('app') }}>Build an App →</button>
+          <button className="btn-primary" onClick={(e) => { e.stopPropagation(); choose('app') }}>Build an App →</button>
         </div>
 
         <div className="m-fork-card" data-track="company" role="button" tabIndex={0}
-          onClick={() => pickTrack('company')} onKeyDown={(e) => e.key === 'Enter' && pickTrack('company')}>
+          onClick={() => choose('company')} onKeyDown={(e) => e.key === 'Enter' && choose('company')}>
           <h2 className="m-artifact">Build a Company</h2>
           <p>Turn a problem into an operating AI-native business.</p>
           <div className="m-chip-trail">
             {COMPANY_VIEWS.map((v) => <span key={v} className="m-chip">{v}</span>)}
           </div>
-          <button className="btn-primary" onClick={(e) => { e.stopPropagation(); pickTrack('company') }}>Build a Company →</button>
+          <button className="btn-primary" onClick={(e) => { e.stopPropagation(); choose('company') }}>Build a Company →</button>
         </div>
       </div>
 
