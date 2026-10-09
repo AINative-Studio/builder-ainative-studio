@@ -99,11 +99,30 @@ describe('modernist.css phone breakpoints (#334–#339)', () => {
   })
 
   it('#940 — dashboard act-bar wraps instead of overflowing at <=760px', () => {
-    expect(inBlock(760, /\.m-actbar\s*\{[^}]*flex-wrap:\s*wrap/)).toBe(true)
+    // #91: the outer wrapper this rule meant to target was renamed from
+    // .m-actbar to .m-journey-phases when components/build/JourneyBar.tsx
+    // merged the old separate ActBar + PathBreadcrumb components (its own
+    // doc comment says so) — confirmed live that .m-actbar no longer
+    // exists anywhere in the rendered DOM. The inner .m-acts/.m-actbar-right
+    // sub-rules below still match (they key off their own class names,
+    // untouched by the refactor) and keep working independently, but the
+    // outer wrap/padding rule needs the current selector to do anything.
+    expect(inBlock(760, /\.m-journey-phases\s*\{[^}]*flex-wrap:\s*wrap/)).toBe(true)
     expect(inBlock(760, /\.m-acts\s*\{[^}]*flex-wrap:\s*wrap/)).toBe(true)
     expect(inBlock(760, /\.m-actbar-right\s*\{[^}]*flex-wrap:\s*wrap/)).toBe(true)
     expect(inBlock(760, /\.m-actbar-btn\s*\{[^}]*min-height:\s*44px/)).toBe(true)
     expect(inBlock(760, /\.m-land-sound[\s\S]{0,40}\{[^}]*min-height:\s*44px|min-height:\s*44px[\s\S]*\.m-land-sound/)).toBe(true)
+  })
+
+  it('#91 — workspace artifact tabs (.m-crumb) hit the 44px tap-target floor at <=760px', () => {
+    // Real bug found live (2026-10-09 pre-summit mobile QA pass): .m-crumb
+    // (the "design system / product brief / product requirements / ..."
+    // breadcrumb buttons in JourneyBar.tsx — the primary way a founder
+    // switches between a build's 14 artifacts) measured ~24px tall on a
+    // 375px phone (getBoundingClientRect, confirmed against production),
+    // well under the 44px floor every other control on this same screen
+    // already respects (#339/#940). No media rule touched it at all.
+    expect(inBlock(760, /\.m-crumb\s*\{[^}]*min-height:\s*44px/)).toBe(true)
   })
 })
 
