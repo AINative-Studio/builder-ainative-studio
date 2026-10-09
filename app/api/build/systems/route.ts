@@ -11,7 +11,7 @@
  */
 
 import { NextRequest } from 'next/server'
-import { buildSystems } from '@/lib/build/business-systems'
+import { buildSystems, type SystemProvisioningFlags } from '@/lib/build/business-systems'
 import { resolveApp } from '@/lib/build/app-registry'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
 
@@ -27,15 +27,30 @@ export async function GET(request: NextRequest) {
 
   let counts: Counts = {}
   let provisioned = false
-  let pipelineProvisioned = false
-  let instanceUrls: Record<string, string> = {}
+  // #1044: each primitive's OWN provisioning flag, read straight off the registry
+  // entry (written independently per primitive by setAppProvisioned at provision
+  // time). Previously only pipelineProvisioned was threaded through and the rest
+  // of the entry was discarded, so ZeroInvoice/ZeroCommerce/OpenCapStack shared
+  // the single `provisioned` boolean and showed identical Live/Planned badges.
+  let flags: SystemProvisioningFlags = {}
+  const instanceUrls: Record<string, string> = {}
 
   if (companyId) {
     const entry = await resolveApp(companyId).catch(() => null)
     const projectId = entry?.zerodbProjectId
-    pipelineProvisioned = Boolean(entry?.pipelineProvisioned)
+    provisioned = Boolean(projectId)
+    flags = {
+      provisioned,
+      pipelineProvisioned: Boolean(entry?.pipelineProvisioned),
+      zeroinvoiceProvisioned: Boolean(entry?.zeroinvoiceProvisioned),
+      commerceProvisioned: Boolean(entry?.commerceProvisioned),
+      capstackProvisioned: Boolean(entry?.capstackProvisioned),
+      serviceosProvisioned: Boolean(entry?.serviceosProvisioned),
+      zerovoiceProvisioned: Boolean(entry?.zerovoiceProvisioned),
+      livestreamingProvisioned: Boolean(entry?.livestreamingProvisioned),
+      socialgraphProvisioned: Boolean(entry?.socialgraphProvisioned),
+    }
     if (projectId) {
-      provisioned = true
       try {
         counts = await readProvisionedCounts(projectId)
       } catch {
@@ -50,14 +65,28 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  const systems = buildSystems(idea, counts, { provisioned, pipelineProvisioned, instanceUrls })
+  const systems = buildSystems(idea, counts, { ...flags, instanceUrls })
 
   return Response.json({
     systems,
     companyId,
     idea,
     provisioned,
-    pipelineProvisioned,
+    pipelineProvisioned: Boolean(flags.pipelineProvisioned),
+    // #1044: surface the real per-primitive provisioning state alongside the
+    // cards, so the dashboard (and QA) can see which primitives are genuinely
+    // live rather than inferring it from one shared boolean.
+    primitiveProvisioning: {
+      zerodb: Boolean(flags.provisioned),
+      pipeline: Boolean(flags.pipelineProvisioned),
+      zeroinvoice: Boolean(flags.zeroinvoiceProvisioned),
+      commerce: Boolean(flags.commerceProvisioned),
+      capstack: Boolean(flags.capstackProvisioned),
+      serviceos: Boolean(flags.serviceosProvisioned),
+      zerovoice: Boolean(flags.zerovoiceProvisioned),
+      livestreaming: Boolean(flags.livestreamingProvisioned),
+      socialgraph: Boolean(flags.socialgraphProvisioned),
+    },
     zeroState: Object.keys(counts).length === 0,
   })
 }
