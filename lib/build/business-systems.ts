@@ -216,6 +216,64 @@ const SYSTEM_CARD_NAMES = new Set<string>([
 ])
 
 /**
+ * Per-primitive provisioning flags, as actually stored on the company's registry
+ * entry (`AppEntry` in lib/build/app-registry.ts) and written independently per
+ * primitive at provision time (`setAppProvisioned`). Each is the REAL signal for
+ * that one primitive — absent/false means "still simulated", per the registry's
+ * own field docs. (#1044)
+ *
+ * `provisioned` here means only "the company has its own ZeroDB project" — it is
+ * the ZeroDB card's own flag and a data-source signal for counts. It is NOT a
+ * stand-in for any other primitive's state, which was the #1044 bug: ZeroInvoice,
+ * ZeroCommerce and OpenCapStack all read this one boolean, so their Live/Planned
+ * badges were identical no matter what had actually been provisioned.
+ */
+export interface SystemProvisioningFlags {
+  /** entry.zerodbProjectId exists — the ZeroDB card's own provisioning truth */
+  provisioned?: boolean
+  /** entry.pipelineProvisioned — ZeroPipeline */
+  pipelineProvisioned?: boolean
+  /** entry.zeroinvoiceProvisioned — ZeroInvoice */
+  zeroinvoiceProvisioned?: boolean
+  /** entry.commerceProvisioned — ZeroCommerce */
+  commerceProvisioned?: boolean
+  /** entry.capstackProvisioned — OpenCapStack */
+  capstackProvisioned?: boolean
+  /** entry.serviceosProvisioned — ServiceOS */
+  serviceosProvisioned?: boolean
+  /** entry.zerovoiceProvisioned — ZeroVoice (explicit founder action only) */
+  zerovoiceProvisioned?: boolean
+  /** entry.livestreamingProvisioned — Live Streaming */
+  livestreamingProvisioned?: boolean
+  /** entry.socialgraphProvisioned — Social Graph */
+  socialgraphProvisioned?: boolean
+  /** Per-primitive instance URLs for the card link (#278) */
+  instanceUrls?: Record<string, string>
+}
+
+/**
+ * Which `SystemProvisioningFlags` field is the real provisioning truth for each
+ * system card (#1044). A primitive absent from this map has NO per-company
+ * provisioning signal in the registry at all (Community, Context Graph,
+ * Search & Discovery, Content Workflow, Intent-Casting Marketplace, Browser
+ * Agent) — those stay honestly Planned rather than borrowing another
+ * primitive's flag. ZeroCRM/ZeroForms/AgentFlow/ZeroERP do have registry flags
+ * but are not in SYSTEM_CARD_NAMES, so they render no card today (out of scope
+ * per #1044); add them here if/when they become cards.
+ */
+const PROVISIONING_FLAG_BY_PRIMITIVE: Record<string, keyof SystemProvisioningFlags> = {
+  ZeroPipeline: 'pipelineProvisioned',
+  ZeroInvoice: 'zeroinvoiceProvisioned',
+  ZeroCommerce: 'commerceProvisioned',
+  OpenCapStack: 'capstackProvisioned',
+  ServiceOS: 'serviceosProvisioned',
+  ZeroVoice: 'zerovoiceProvisioned',
+  'Live Streaming': 'livestreamingProvisioned',
+  'Social Graph': 'socialgraphProvisioned',
+  ZeroDB: 'provisioned',
+}
+
+/**
  * Build the systems list for a company from its idea + real counts.
  *
  * The list is IDEA-DRIVEN: primitives are ranked by idea relevance
@@ -230,13 +288,13 @@ const SYSTEM_CARD_NAMES = new Set<string>([
  *
  * @param idea      The founder's original idea string (drives primitive selection)
  * @param counts    Real per-primitive counts from the company's ZeroDB project
- * @param opts      Provisioning state flags
+ * @param opts      Real per-primitive provisioning flags off the registry entry (#1044)
  * @param maxCards  Max number of system cards to show (default 4)
  */
 export function buildSystems(
   idea: string = '',
   counts: Record<string, { count?: number; value?: number }> = {},
-  opts: { provisioned?: boolean; pipelineProvisioned?: boolean; instanceUrls?: Record<string, string> } = {},
+  opts: SystemProvisioningFlags = {},
   maxCards = 4,
 ): BusinessSystem[] {
   // (#72) Rank ALL primitives (foundational included) by idea relevance, then
@@ -264,8 +322,6 @@ export function buildSystems(
 
   candidates = candidates.slice(0, maxCards)
 
-  const zdb = Boolean(opts.provisioned)
-  const pipelineLive = Boolean(opts.pipelineProvisioned) || zdb
   const instanceUrls = opts.instanceUrls || {}
 
   return candidates.map((prim): BusinessSystem => {
@@ -274,11 +330,14 @@ export function buildSystems(
     const rawCount = counts[countKey]?.count ?? 0
     const rawValue = counts[countKey]?.value ?? 0
 
-    // Per-primitive provisioning honesty (#243)
-    let isProvisioned = false
-    if (prim.name === 'ZeroPipeline') isProvisioned = pipelineLive
-    else if (['ZeroInvoice', 'ZeroCommerce', 'OpenCapStack'].includes(prim.name)) isProvisioned = zdb
-    // ServiceOS, ZeroVoice, Content Workflow etc. have no per-company data yet
+    // Per-primitive provisioning honesty (#243, fixed in #1044): read THIS
+    // primitive's own registry flag. Previously ZeroInvoice/ZeroCommerce/
+    // OpenCapStack all shared `opts.provisioned` ("has any ZeroDB project"), so
+    // three different primitives showed one identical badge. A primitive with no
+    // flag in the map has no real per-company signal and stays Planned — we never
+    // borrow another primitive's state to claim Live.
+    const flagKey = PROVISIONING_FLAG_BY_PRIMITIVE[prim.name]
+    const isProvisioned = flagKey ? Boolean(opts[flagKey]) : false
 
     // Card URL (#278): own instance > no URL. Never marketing site.
     const url = instanceUrls[prim.name] || undefined
@@ -314,7 +373,7 @@ export function buildSystems(
  */
 export function buildSystemsLegacy(
   counts: Partial<Record<'pipeline' | 'invoices' | 'helpdesk' | 'voice', { count?: number; value?: number }>> = {},
-  opts: { provisioned?: boolean; pipelineProvisioned?: boolean } = {},
+  opts: SystemProvisioningFlags = {},
 ): BusinessSystem[] {
   // Map old fixed keys → new generic counts shape
   const mapped: Record<string, { count?: number; value?: number }> = {}
