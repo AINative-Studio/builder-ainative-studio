@@ -220,6 +220,143 @@ export function canResumeActiveBuild(session: { user?: unknown } | null | undefi
 }
 
 /**
+ * Does a `?screen=&company=` pair in the URL represent an EXPLICIT, user-chosen
+ * destination that no async "helpful redirect" effect may override? (builder#1037)
+ *
+ * This is the invariant the #1037 bounce violated twice over. Two separate
+ * effects — the #669 resume pointer below, and ScreenRouter's my-companies
+ * front door in BuildApp.tsx — both sample `state.screen` early (when it is
+ * still the reducer's initial 'landing', because the deep-link effect's
+ * dispatches only land in the NEXT commit, the same ordering #761 documents),
+ * then dispatch a GOTO_SCREEN once an async call resolves ~1-2s later. Both
+ * therefore land ON TOP of a destination the deep-link effect had already
+ * committed, with no way to tell they were too late.
+ *
+ * The URL does not have that problem: it is correct from the first byte and no
+ * commit ordering can race it. So "did the founder explicitly ask for this
+ * company's screen?" is answered here, from the URL, and both effects defer.
+ *
+ * Requires BOTH params: `?company=` alone names no destination (the deep-link
+ * effect itself ignores it without a `?screen=`), and `?screen=` alone is not
+ * company-scoped, so neither alone is something to protect. The screen must
+ * also be one the deep-link effect will actually honor — an unknown `?screen=`
+ * silently no-ops there, so suppressing the fallbacks for it would strand the
+ * founder on the landing page instead.
+ *
+ * Exported pure so the decision is testable without mounting BuildProvider
+ * (which OOMs jsdom via useAutoplay — see
+ * build-context-url-sync-mount-race.test.ts's own note on this).
+ */
+export function isExplicitCompanyDeepLink(searchOrUrl: string): boolean {
+  try {
+    const raw = searchOrUrl || ''
+    const q = new URLSearchParams(raw.includes('?') ? raw.slice(raw.indexOf('?') + 1) : raw)
+    const screen = q.get('screen')
+    const company = (q.get('company') || '').trim()
+    if (!screen || !company) return false
+    return KNOWN_DEEP_LINK_SCREENS.includes(screen)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Minimal shape of a persisted per-slug cache entry, for completeness checks.
+ * Deliberately loose (every field optional): a real localStorage entry written
+ * by an older deploy can be missing any of them.
+ */
+export interface SavedBuildStateShape {
+  builtCompany?: boolean
+  builtMVP?: boolean
+  appChatId?: string
+  productChatId?: string
+  track?: string
+}
+
+/**
+ * Is a localStorage `ainative_build_<slug>` entry complete enough to be trusted
+ * WITHOUT re-checking the server? (builder#1037)
+ *
+ * The deep-link effect below used to skip its `resolve-app` verification
+ * whenever ANY cache entry existed (`if (!saved)`), on the reasoning that a
+ * local cache is "strong evidence the company is real from a prior successful
+ * session on this device". Reproduced live on production (4/4) and in a real
+ * browser here (3/3): that is false for a half-written entry. The reported
+ * company's own cache held, byte for byte:
+ *
+ *   builtCompany: false, builtMVP: false, appChatId: "", productChatId: "",
+ *   sawPreview: false, generated: {}, done: {}
+ *
+ * — for a company `resolve-app` confirmed as genuinely live
+ * (`{"chatId":"JMBmjUQcE_FBl3SDKW68k","idea":"silo","verified":true}`). An
+ * entry like that is produced by ordinary use, not an edge case: the #284
+ * persist effect writes on the FIRST state change for a slug, so any browser
+ * that merely touched a company — a different device, a session that ended
+ * mid-build, a build whose completion was only ever recorded server-side —
+ * holds one. It proves nothing about the company and must not buy a skip.
+ *
+ * The rule: real proof is a registered app (a non-empty `appChatId` or
+ * `productChatId`, which only ever come from a real server-side registration
+ * via SET_APP_CHATID/SET_PRODUCT_CHATID) AND the active track's own completion
+ * flag. Both, because either alone is a genuinely mid-build state:
+ * a chatId with no completion flag is a build still in flight, and a completion
+ * flag with no chatId is the locally-claimed-but-never-registered case at the
+ * heart of this bug.
+ *
+ * Deliberately conservative — it only ever decides whether to spend ONE cheap
+ * GET. A false "incomplete" costs a single `resolve-app` call that then fails
+ * open via isDeepLinkCompanyNotFound's `verified` guard; a false "complete"
+ * costs the founder their dashboard. Only a cache that is unambiguously
+ * finished skips the network, which keeps the common case (a founder whose
+ * cache genuinely IS up to date) at exactly zero added latency.
+ */
+export function isSavedBuildStateComplete(saved: SavedBuildStateShape | null | undefined): boolean {
+  if (!saved) return false
+  const hasRegisteredApp = Boolean(
+    (saved.appChatId || '').trim() || (saved.productChatId || '').trim(),
+  )
+  if (!hasRegisteredApp) return false
+  // Track defaults to 'company' — the same back-compat default the deep-link
+  // effect itself applies to a missing `?track=`.
+  return saved.track === 'app' ? Boolean(saved.builtMVP) : Boolean(saved.builtCompany)
+}
+
+/**
+ * Should the #669 active-build resume pointer actually be honored? (builder#1037)
+ *
+ * Gathers every precondition the resume effect below must satisfy into one pure
+ * decision, so the ordering bug that caused #1037 cannot be reintroduced by
+ * editing the effect alone. The new clause is the first one: an explicit
+ * company deep link wins, because #669's own doc comment names exactly one
+ * case it exists to serve — "a genuinely bare reload or fresh tab of /build
+ * (no query params)". A URL that already says where to go is not that case,
+ * and the pointer is only ever a best-effort guess for a URL that says nothing.
+ *
+ * Confirmed live as the dominant bounce path: a founder on ?screen=companies
+ * with a slug still in `state.appSub` persists `{ slug, screen: 'companies' }`
+ * (the pointer-maintenance effect's `noResumeScreens` does not list
+ * 'companies'), so their next "Open dashboard" click — a full page load, per
+ * MyCompanies' openLive() — was bounced straight back to the screen they
+ * clicked from, ~1-2s later, once `getSession()` resolved.
+ *
+ * The other three clauses are the effect's pre-existing behavior, unchanged:
+ * a pointer must exist, its slug must have real persisted state (#669's own
+ * bail — and why clearing `ainative_build_<slug>` was a working workaround),
+ * and there must be a real authenticated session (#948's auth gate).
+ */
+export function shouldResumeFromPointer(input: {
+  search: string
+  pointer: { slug: string; screen: string } | null | undefined
+  saved: unknown
+  session: { user?: unknown } | null | undefined
+}): boolean {
+  if (isExplicitCompanyDeepLink(input.search)) return false
+  if (!input.pointer) return false
+  if (!input.saved) return false
+  return canResumeActiveBuild(input.session)
+}
+
+/**
  * Whether the active track's final build step has been reached (#BLD-06.12).
  * The pre-existing build_completed effect below only ever checked
  * builtCompany — a real, pre-existing gap that silently never fired on the
@@ -296,11 +433,20 @@ export function BuildProvider({ children }: { children: ReactNode }) {
         // gets a chance to notice the slug is fake). Nothing ever independently
         // confirmed the company was real until some OTHER slug-scoped call
         // (e.g. /api/build/connect-domain) 404'd deep inside a feature, with
-        // no context for the founder about why. Skip this check when a local
-        // cache already exists (`saved`, above) — that's strong evidence the
-        // company is real from a prior successful session on this device;
-        // only bother the network for the case that actually needs it.
-        if (!saved) {
+        // no context for the founder about why.
+        //
+        // builder#1037: this used to skip the check whenever ANY local cache
+        // entry existed (`if (!saved)`), reasoning that a cache is strong
+        // evidence the company is real. Reproduced live — that holds only for
+        // a COMPLETE entry. A half-written one (builtCompany/builtMVP false,
+        // appChatId/productChatId empty, generated/done empty) is written by
+        // ordinary use on any browser that merely touched the company, proves
+        // nothing, and bought a skip that left the founder's genuinely-live
+        // company unverified. Gate the skip on real completeness instead
+        // (see isSavedBuildStateComplete) — a founder whose cache genuinely
+        // IS up to date still pays zero added latency, and only the stale case
+        // spends the one cheap GET it needs.
+        if (!isSavedBuildStateComplete(saved)) {
           fetch(`/api/build/resolve-app?slug=${encodeURIComponent(company)}`)
             .then((r) => (r.ok ? r.json() : null))
             .then((d) => {
@@ -348,8 +494,31 @@ export function BuildProvider({ children }: { children: ReactNode }) {
   // pointer says a build was in flight, hydrate its full per-slug state (same
   // loadBuildState this file already persists via saveBuildState) and jump
   // straight back to where the founder left off, skipping the landing screen.
+  //
+  // builder#1037: `state.screen !== 'landing'` is NOT a usable "the founder
+  // already has a destination" check on a fresh mount — it is ALWAYS 'landing'
+  // here, because the deep-link effect above dispatches in this same effect
+  // flush and its GOTO_SCREEN only reaches `state` in the NEXT commit (the same
+  // ordering #761 documents for the URL-sync effect). So this effect used to
+  // read the pointer on EVERY mount, including an explicit
+  // ?screen=live&company=<slug> load, and then — ~1-2s later, once getSession()
+  // resolved — dispatch GOTO_SCREEN(pointer.screen) straight over the top of
+  // the deep link's own destination. Confirmed as the dominant #1037 bounce by
+  // instrumenting this very dispatch and reading the origin back out of a live
+  // browser (3/3). The pointer-maintenance effect below does not list
+  // 'companies' in `noResumeScreens`, so the pointer routinely said
+  // 'companies' — bouncing the founder from their own Live dashboard back to
+  // the exact screen they had just clicked "Open dashboard" on.
+  //
+  // The URL is the authority `state.screen` cannot be at this point: see
+  // shouldResumeFromPointer / isExplicitCompanyDeepLink.
   useEffect(() => {
     if (state.screen !== 'landing') return
+    const search = window.location.search
+    // Short-circuit BEFORE reading or clearing anything: a deep link must leave
+    // the pointer untouched, so a later bare reload can still resume from it
+    // normally.
+    if (isExplicitCompanyDeepLink(search)) return
     const pointer = loadActiveBuild()
     if (!pointer) return
     const saved = loadBuildState(pointer.slug)
@@ -363,7 +532,12 @@ export function BuildProvider({ children }: { children: ReactNode }) {
     let cancelled = false
     getSession().then((session) => {
       if (cancelled) return
-      if (!canResumeActiveBuild(session)) { clearActiveBuild(); return }
+      // Re-evaluated at resolve time against the URL (which cannot have gone
+      // stale) rather than a ref sampled before the deep link committed.
+      if (!shouldResumeFromPointer({ search, pointer, saved, session })) {
+        if (!canResumeActiveBuild(session)) clearActiveBuild()
+        return
+      }
       dispatch({ type: 'RESTORE_BUILD', partial: saved })
       dispatch({ type: 'GOTO_SCREEN', screen: pointer.screen as Screen })
     }).catch(() => { if (!cancelled) clearActiveBuild() })
@@ -396,7 +570,15 @@ export function BuildProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (typeof window === 'undefined') return
     const slug = state.appSub
-    const noResumeScreens = new Set(['landing', 'login', 'signup', 'forgot', 'reset', 'live'])
+    // builder#1037: 'companies' belongs here for the same reason 'live' does —
+    // it is not a mid-build screen, it is the index a founder browses from, and
+    // registerApp/my-companies already covers them there. Persisting it meant a
+    // founder who had merely visited My companies with a slug still in
+    // `state.appSub` left a pointer that said "resume on the companies screen",
+    // which is exactly the destination the #1037 bounce delivered them to. Even
+    // with the deep-link guard above, a pointer naming the index is pure
+    // noise — a bare reload resuming onto 'companies' is a no-op at best.
+    const noResumeScreens = new Set(['landing', 'login', 'signup', 'forgot', 'reset', 'live', 'companies'])
     if (!slug || noResumeScreens.has(state.screen)) {
       clearActiveBuild()
       return
