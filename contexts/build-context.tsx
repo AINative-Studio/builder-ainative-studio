@@ -344,16 +344,77 @@ export function isSavedBuildStateComplete(saved: SavedBuildStateShape | null | u
  * bail — and why clearing `ainative_build_<slug>` was a working workaround),
  * and there must be a real authenticated session (#948's auth gate).
  */
+/**
+ * Screens from which the #669 pointer resume is still safe to fire (#1049).
+ *
+ * #669's own doc comment names exactly one case it exists to serve: "a
+ * genuinely bare reload or fresh tab of /build" — a founder who has expressed
+ * no destination at all. These are the screens where that is still true: the
+ * passive front door, and the auth/account/index screens a founder passes
+ * through without committing to a build.
+ *
+ * Deliberately EXCLUDES 'start' and 'build' as well as the mid-funnel screens.
+ * Those are an explicit "I want to build something new" — the same rule
+ * BuildApp.tsx's sibling my-companies front door already states for itself
+ * ("a founder who deliberately navigates into the funnel ('+ New company',
+ * Get started) is never yanked out of it"). Live-verified for #1049: a founder
+ * who had clicked "Get started" and typed nothing yet was still thrown to
+ * ?screen=ws&view=plan30 of a months-old company when the held session
+ * resolved.
+ */
+const RESUMABLE_ENTRY_SCREENS = new Set([
+  'landing', 'login', 'signup', 'forgot', 'reset', 'account', 'companies', 'refer',
+])
+
 export function shouldResumeFromPointer(input: {
   search: string
   pointer: { slug: string; screen: string } | null | undefined
   saved: unknown
   session: { user?: unknown } | null | undefined
+  /**
+   * builder#1049: where the founder ACTUALLY is at resolve time. Optional so
+   * every existing caller/test keeps its meaning — absent means "nothing live
+   * to protect", the state a genuinely bare reload is in.
+   */
+  current?: { screen: string; appSub: string; idea: string }
 }): boolean {
   if (isExplicitCompanyDeepLink(input.search)) return false
   if (!input.pointer) return false
   if (!input.saved) return false
-  return canResumeActiveBuild(input.session)
+  if (!canResumeActiveBuild(input.session)) return false
+  // builder#1049: the founder may have started a REAL build in the seconds
+  // this effect spent awaiting getSession(). None of the checks above can see
+  // that — a brand-new build is created entirely client-side ("+ New company"
+  // → Fork → App track → idea → kickoff are all GOTO_SCREEN/PICK_TRACK
+  // dispatches that never touch the URL's `company` param), so the URL stays
+  // exactly as bare as it was at mount and `isExplicitCompanyDeepLink` stays
+  // false the whole way through.
+  //
+  // Resuming into that is destructive, not helpful: RESTORE_BUILD replaces
+  // `track`, `done`, `idea`, `appSub` and `companyName` with the stale
+  // company's, and (#1033) forces `auto: false` when that company had already
+  // finished — so autoplay stops dead mid-generation and the founder is left
+  // on a frozen artifact skeleton with "Keep going →" as the only escape.
+  // That is the #1049 report, including why it hit the first content artifact
+  // (the window this effect's await covers) and never recurred afterwards
+  // (the effect is one-shot per mount).
+  //
+  // This mirrors what shouldRouteToCompaniesIndex (components/build/BuildApp.tsx)
+  // already does for the sibling my-companies front door: re-check, at resolve
+  // time, whether the founder has since navigated. "Live build" is a real
+  // destination of their own — any screen past the landing/auth entry points,
+  // or a slug/idea they have already committed to. The one exception is a
+  // pointer naming the SAME company already in state, which is a real reload
+  // of that very build and exactly what #669 exists to serve.
+  const cur = input.current
+  if (cur) {
+    const sameCompany = Boolean(cur.appSub) && cur.appSub === input.pointer.slug
+    if (!sameCompany) {
+      if (!RESUMABLE_ENTRY_SCREENS.has(cur.screen)) return false
+      if (cur.appSub.trim() || cur.idea.trim()) return false
+    }
+  }
+  return true
 }
 
 /**
@@ -512,6 +573,13 @@ export function BuildProvider({ children }: { children: ReactNode }) {
   //
   // The URL is the authority `state.screen` cannot be at this point: see
   // shouldResumeFromPointer / isExplicitCompanyDeepLink.
+  // builder#1049: the resume effect below awaits getSession() and must judge
+  // "has the founder started something real?" at RESOLVE time, not at the
+  // mount-time snapshot it closes over. A live ref is the only thing that can
+  // see dispatches committed in the meantime.
+  const liveBuildRef = useRef({ screen: state.screen, appSub: state.appSub, idea: state.idea })
+  liveBuildRef.current = { screen: state.screen, appSub: state.appSub, idea: state.idea }
+
   useEffect(() => {
     if (state.screen !== 'landing') return
     const search = window.location.search
@@ -533,8 +601,13 @@ export function BuildProvider({ children }: { children: ReactNode }) {
     getSession().then((session) => {
       if (cancelled) return
       // Re-evaluated at resolve time against the URL (which cannot have gone
-      // stale) rather than a ref sampled before the deep link committed.
-      if (!shouldResumeFromPointer({ search, pointer, saved, session })) {
+      // stale) rather than a ref sampled before the deep link committed, AND
+      // (builder#1049) against the live build state, which a mount-time
+      // snapshot cannot see — the founder may have started a real build of
+      // their own while this await was in flight.
+      if (!shouldResumeFromPointer({
+        search, pointer, saved, session, current: liveBuildRef.current,
+      })) {
         if (!canResumeActiveBuild(session)) clearActiveBuild()
         return
       }

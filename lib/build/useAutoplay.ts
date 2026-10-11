@@ -19,7 +19,10 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { trackViews, type BuildState, type BuildAction, type ArtifactView } from '@/lib/build/state'
+import {
+  trackViews, viewBelongsToTrack, firstUnfinishedView,
+  type BuildState, type BuildAction, type ArtifactView,
+} from '@/lib/build/state'
 import { GENERATED_VIEWS } from '@/lib/build/artifact-prompts'
 import { PRIMITIVE_MAP } from '@/lib/build/primitives'
 
@@ -226,6 +229,35 @@ export function useAutoplay(state: BuildState, dispatch: Dispatch) {
     // Only drive while in the workspace, in auto mode, not paused on a decision.
     if (state.screen !== 'ws' || !state.auto || state.paused || !state.idea) return
     if (busy.current) return
+
+    // #1049: never sit on a view that isn't part of the active track. A
+    // (track, view) pair drawn from the wrong sequence — e.g. track 'company'
+    // with the app-only 'brief' — is unreachable by any real build, but it IS
+    // reachable by state restore and by the several unvalidated GOTO_VIEW
+    // entry points (a ?view= deep link, CodyNudge's nudge.to, Pricing's jump
+    // straight to 'preview'). When it happened, the `next` lookup below found
+    // the whole sequence already drafted, fell into the track-complete branch,
+    // and returned having dispatched nothing at all — leaving the workspace on
+    // a frozen "Cody is drafting this from your idea…" skeleton indefinitely,
+    // with no error, no network activity and no paused indicator. That is the
+    // reported stall, and a silent no-op is the one outcome this engine must
+    // never produce while it is still nominally driving.
+    //
+    // RESTORE_BUILD now keeps the pair coherent at the source (see state.ts),
+    // so this is the belt to that braces: steer back onto the sequence — at
+    // the step the build is genuinely up to — and clear the stale overlay so
+    // the founder isn't looking at a generating placeholder for a view we
+    // have just left. SHARED_LATE_VIEWS are excluded: they are deliberate
+    // off-sequence detours (conflict/graph/rescope-intent/pipeline), not a
+    // broken pair.
+    if (!viewBelongsToTrack(state.view, state.track)) {
+      dispatch({ type: 'SET_OVERLAY', overlay: { kind: 'none' } })
+      dispatch({
+        type: 'GOTO_VIEW',
+        view: firstUnfinishedView(state.track, state.done, state.genError) as ArtifactView,
+      })
+      return
+    }
 
     const seq = trackViews(state.track)
     const next = seq.find((v) => !state.done[v] && !state.genError[v])
