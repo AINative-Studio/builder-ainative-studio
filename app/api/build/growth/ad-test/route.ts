@@ -2,23 +2,44 @@
  * /api/build/growth/ad-test (#449, child of the 2026-09-01 product call) —
  * explicit, founder-triggered "create a test ad campaign" action.
  *
- * Doubly gated, matching the issue's own scope decision:
+ * Gated on:
  *   1. GROWTH_AD_TESTING_ENABLED=true (feature flag, default off)
  *   2. A real Marketing API credential actually configured (separate check —
  *      the flag could be flipped on before the credential is provisioned)
- *   3. Paid tier (same PAID_PLANS check provision/route.ts already uses)
- *   4. Signed-in founder
+ *   3. Signed-in founder
+ *   4. A resolvable company
  *
  * Creates exactly ONE real, PAUSED Meta Ads campaign — never auto-activated,
  * no real spend, no billing of any kind (the reseller-margin billing model
  * needs core support that doesn't exist yet, tracked separately as core#6835).
+ *
+ * NO PLAN-TIER GATE (#1017, product direction confirmed 2026-10-10). This
+ * route used to require `isPaidTier`. It no longer does, for two reasons that
+ * both point the same way:
+ *
+ *   - Ad validation is explicitly for ANY founder, free tier included — it is
+ *     how a founder proves demand for their idea. The real gate is ACTIVATION,
+ *     and that gate is "has this founder purchased prepaid ad credits",
+ *     enforced in app/api/webhooks/ad-budget-confirmed/route.ts behind an
+ *     HMAC-verified Stripe-payment callback.
+ *   - #1017's auto-create path (lib/build/ad-test-autocreate.ts) performs this
+ *     EXACT operation — same `createAdTestCampaign`, same PAUSED status, same
+ *     `setAppGrowthAdTest` field, same idempotence — with no tier gate, for
+ *     every founder whose build completes. Keeping a gate here protected
+ *     nothing that path doesn't already (correctly) bypass; all it produced was
+ *     the incoherent result that a free founder's campaign is created
+ *     automatically but their own manual re-trigger of it is refused.
+ *
+ * Creation remains structurally incapable of spending money: `createAdTestCampaign`
+ * hardcodes status PAUSED and exposes no status parameter, and this route is
+ * idempotent on the company's existing `growthAdTestCampaignId`, so a signed-in
+ * founder cannot use it to accumulate campaigns.
  *
  * POST { slug, dailyBudgetUsd? } → { ok, campaignId?, reason? }
  */
 
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
-import { getPlanStatus, isPaidTier } from '@/lib/ainative/plan'
 import { resolveApp, setAppGrowthAdTest } from '@/lib/build/app-registry'
 import {
   createAdTestCampaign,
@@ -30,13 +51,12 @@ import {
 
 export const runtime = 'nodejs'
 
-// Same set provision/route.ts already gates real provisioning behind.
-// #762: paid-tier membership now lives in lib/ainative/plan.ts's isPaidTier.
-
 // #1017: the two budget constants moved to lib/build/ad-testing.ts (the
 // auto-create path needs the same DEFAULT and can't import a route module).
 // Re-exported here so any existing importer of this route keeps working and
-// this route's own behavior is unchanged.
+// this route's own behavior is unchanged. MAX is a per-DAY ceiling on the
+// PAUSED campaign's own budget field — unrelated to the TOTAL prepaid credit
+// amounts offered at checkout.
 export { DEFAULT_DAILY_BUDGET_USD, MAX_DAILY_BUDGET_USD }
 
 export async function POST(request: NextRequest) {
@@ -56,28 +76,12 @@ export async function POST(request: NextRequest) {
     ? Math.min(rawBudget, MAX_DAILY_BUDGET_USD)
     : DEFAULT_DAILY_BUDGET_USD
 
+  // Sign-in stays required: campaign creation writes to a real company's
+  // registry row and uses AINative's own Meta ad account, so it must never be
+  // reachable anonymously.
   const session = await auth().catch(() => null)
   const token = (session as any)?.accessToken
   if (!token) return Response.json({ ok: false, reason: 'signin' })
-
-  let tier = 'hobbyist'
-  let tierResolved = false
-  try {
-    const status = await getPlanStatus(token)
-    tier = status.tier || 'hobbyist'
-    tierResolved = true
-  } catch (err) {
-    // Fail closed to the un-paid default — never grant a real ad campaign
-    // creation on an unresolved tier lookup — but log it (#762): a core
-    // failure must never masquerade as a genuine entitlement gap.
-    console.error(
-      `[growth/ad-test] tier lookup threw for slug "${slug}" — failing closed. ` +
-        `NOT proof the user is unpaid: ${err instanceof Error ? err.message : String(err)}`,
-    )
-  }
-  if (!isPaidTier(tier)) {
-    return Response.json({ ok: false, reason: 'tier', tier, unverified: !tierResolved })
-  }
 
   const app = await resolveApp(slug).catch(() => null)
   if (!app) return Response.json({ ok: false, reason: 'company_not_found' }, { status: 404 })
