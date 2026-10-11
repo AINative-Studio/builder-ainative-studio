@@ -38,6 +38,17 @@ export interface BusinessSystem {
    */
   provisioned?: boolean
   /**
+   * True/false when a real wiring scan (#1056, lib/build/primitive-wiring)
+   * found whether the generated app's OWN source genuinely calls this
+   * primitive via /api/primitive/{name}/...; undefined when no scan has run
+   * for this company yet. Distinct from `provisioned` — `provisioned` means
+   * a credential was issued, `wired` means the app's code actually uses it.
+   * A real company (`mendr`) had 6 primitives provisioned with wired:false
+   * on every one; others (`flashpoint`, `habanero-hub`) had provisioned
+   * primitives that were genuinely wired:true.
+   */
+  wired?: boolean
+  /**
    * Savings comparison (#dashboard-ux): what the founder would pay for a
    * comparable stand-alone SaaS to replace this AINative primitive. Included so
    * the card can communicate "you'd pay $X/mo for <provider>, included here."
@@ -247,6 +258,27 @@ export interface SystemProvisioningFlags {
   livestreamingProvisioned?: boolean
   /** entry.socialgraphProvisioned — Social Graph */
   socialgraphProvisioned?: boolean
+  // #1056: per-primitive WIRING flags — a real signal distinct from the
+  // *Provisioned flags above. Absent/undefined means "no wiring scan result
+  // yet" (never downgrades an existing Live badge — see
+  // lib/build/live-vs-planned.ts's deriveSystemStatus for why `undefined`
+  // and `false` are handled differently here).
+  /** entry.pipelineWired — ZeroPipeline */
+  pipelineWired?: boolean
+  /** entry.zeroinvoiceWired — ZeroInvoice */
+  zeroinvoiceWired?: boolean
+  /** entry.commerceWired — ZeroCommerce */
+  commerceWired?: boolean
+  /** entry.capstackWired — OpenCapStack */
+  capstackWired?: boolean
+  /** entry.serviceosWired — ServiceOS */
+  serviceosWired?: boolean
+  /** entry.zerovoiceWired — ZeroVoice */
+  zerovoiceWired?: boolean
+  /** entry.livestreamingWired — Live Streaming */
+  livestreamingWired?: boolean
+  /** entry.socialgraphWired — Social Graph */
+  socialgraphWired?: boolean
   /** Per-primitive instance URLs for the card link (#278) */
   instanceUrls?: Record<string, string>
 }
@@ -271,6 +303,26 @@ const PROVISIONING_FLAG_BY_PRIMITIVE: Record<string, keyof SystemProvisioningFla
   'Live Streaming': 'livestreamingProvisioned',
   'Social Graph': 'socialgraphProvisioned',
   ZeroDB: 'provisioned',
+}
+
+/**
+ * Which `SystemProvisioningFlags` field is the real WIRING truth for each
+ * system card (#1056) — mirrors PROVISIONING_FLAG_BY_PRIMITIVE's shape
+ * exactly, one level over. A primitive absent here (same set absent from
+ * PROVISIONING_FLAG_BY_PRIMITIVE, plus ZeroDB — there is no generic
+ * /api/primitive/ proxy call for the ZeroDB card itself, its data path is
+ * /api/db/*) has no wiring signal and stays undefined, which
+ * deriveSystemStatus treats as "no scan yet", never as "confirmed unwired".
+ */
+const WIRED_FLAG_BY_PRIMITIVE: Record<string, keyof SystemProvisioningFlags> = {
+  ZeroPipeline: 'pipelineWired',
+  ZeroInvoice: 'zeroinvoiceWired',
+  ZeroCommerce: 'commerceWired',
+  OpenCapStack: 'capstackWired',
+  ServiceOS: 'serviceosWired',
+  ZeroVoice: 'zerovoiceWired',
+  'Live Streaming': 'livestreamingWired',
+  'Social Graph': 'socialgraphWired',
 }
 
 /**
@@ -339,6 +391,16 @@ export function buildSystems(
     const flagKey = PROVISIONING_FLAG_BY_PRIMITIVE[prim.name]
     const isProvisioned = flagKey ? Boolean(opts[flagKey]) : false
 
+    // Per-primitive WIRING honesty (#1056): read THIS primitive's own
+    // *Wired flag off the registry, same shape as isProvisioned above but
+    // one level deeper — "has a key" vs "the app's code genuinely calls it".
+    // A primitive with no entry in the map (no wiring signal exists for it
+    // at all) or whose flag was never set by a scan stays `undefined` here —
+    // deriveSystemStatus treats undefined as "no scan ran yet", never as a
+    // confirmed-unwired downgrade of an otherwise-Live badge.
+    const wiredFlagKey = WIRED_FLAG_BY_PRIMITIVE[prim.name]
+    const isWired = wiredFlagKey ? (opts as Record<string, boolean | undefined>)[wiredFlagKey] : undefined
+
     // Card URL (#278): own instance > no URL. Never marketing site.
     const url = instanceUrls[prim.name] || undefined
 
@@ -358,6 +420,7 @@ export function buildSystems(
       count: rawCount,
       value: rawValue > 0 ? rawValue : undefined,
       provisioned: isProvisioned,
+      wired: isWired,
       vsProvider: saving?.vsProvider,
       savedMonthly: saving?.monthly,
     }

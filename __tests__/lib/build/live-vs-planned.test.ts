@@ -90,6 +90,59 @@ describe('deriveSystemStatus', () => {
 })
 
 // ---------------------------------------------------------------------------
+// deriveSystemStatus — 'unwired' state (#1056)
+//
+// Real evidence: `mendr` had 6 primitives provisioned (real credentials) but
+// ZERO called by the generated app's actual source. `flashpoint` and
+// `habanero-hub` (also provisioned) DID genuinely call theirs. The `wired`
+// param is how a wiring-scan result (lib/build/primitive-wiring.ts) reaches
+// this pure status logic — `undefined` (no scan has run) must NEVER
+// downgrade an existing 'live' system, so every pre-#1056 caller that omits
+// `wired` keeps the EXACT #1044 behavior unregressed.
+// ---------------------------------------------------------------------------
+
+describe('deriveSystemStatus — unwired (#1056)', () => {
+  it('returns "unwired" when provisioned but a wiring scan explicitly found wired:false (the real mendr shape)', () => {
+    expect(deriveSystemStatus({ provisioned: true, wired: false })).toBe('unwired')
+  })
+
+  it('returns "live" when provisioned AND wired:true (the real flashpoint/habanero-hub shape)', () => {
+    expect(deriveSystemStatus({ provisioned: true, wired: true })).toBe('live')
+  })
+
+  it('returns "live" when provisioned and `wired` is omitted — UNREGRESSED #1044 behavior', () => {
+    // No wiring scan result available yet must never read as "not wired".
+    expect(deriveSystemStatus({ provisioned: true })).toBe('live')
+    expect(deriveSystemStatus({ provisioned: true, wired: undefined })).toBe('live')
+  })
+
+  it('a real instance URL always wins over an explicit wired:false', () => {
+    // A system with its OWN linkable instance URL is unambiguously live,
+    // regardless of what the generic primitive-proxy wiring scan found.
+    expect(deriveSystemStatus({ url: 'https://acme.ainative.studio', provisioned: true, wired: false })).toBe('live')
+  })
+
+  it('wired:false with no provisioning at all stays "planned" (nothing to be unwired FROM)', () => {
+    expect(deriveSystemStatus({ provisioned: false, wired: false })).toBe('planned')
+  })
+})
+
+describe('systemBadge — unwired (#1056)', () => {
+  it('returns the unwired badge config, distinct from both live and planned', () => {
+    const badge = systemBadge({ provisioned: true, wired: false })
+    expect(badge.status).toBe('unwired')
+    expect(badge.modifier).toBe('is-needs')
+    expect(badge.label).not.toBe('Live')
+    expect(badge.label).not.toBe('Planned')
+    expect(badge.description.length).toBeGreaterThan(0)
+  })
+
+  it('STATUS_BADGE.unwired has a non-empty description honestly distinguishing it from Live', () => {
+    expect(STATUS_BADGE.unwired.description.toLowerCase()).toContain('provisioned')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // systemBadge
 // ---------------------------------------------------------------------------
 
@@ -249,9 +302,9 @@ describe('countSystemStatuses', () => {
 // ---------------------------------------------------------------------------
 
 describe('SystemStatus type', () => {
-  it('covers both "live" and "planned" states', () => {
-    const states: SystemStatus[] = ['live', 'planned']
-    expect(states).toHaveLength(2)
+  it('covers "live", "unwired" and "planned" states (#1056 added unwired)', () => {
+    const states: SystemStatus[] = ['live', 'unwired', 'planned']
+    expect(states).toHaveLength(3)
     // Every state must be a key in STATUS_BADGE
     for (const s of states) {
       expect(STATUS_BADGE[s]).toBeDefined()

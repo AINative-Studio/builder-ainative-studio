@@ -22,6 +22,7 @@ const commitRegeneration = vi.fn()
 const provisionCompanyRepo = vi.fn()
 const toFileMapForCommit = vi.fn()
 const reportDeploymentHealthStage = vi.fn()
+const setAppWiring = vi.fn()
 
 vi.mock('@/lib/build/ready-gate', () => ({
   checkAppReady: (...a: unknown[]) => checkAppReady(...a),
@@ -35,12 +36,16 @@ vi.mock('@/lib/git/company-repo', () => ({
 vi.mock('@/lib/build/deployment-health', () => ({
   reportDeploymentHealthStage: (...a: unknown[]) => reportDeploymentHealthStage(...a),
 }))
+vi.mock('@/lib/build/app-registry', () => ({
+  setAppWiring: (...a: unknown[]) => setAppWiring(...a),
+}))
 
-import { runReadyGate, runGitCommit } from '@/lib/build/register-app-core'
+import { runReadyGate, runGitCommit, runWiringScan } from '@/lib/build/register-app-core'
 
 beforeEach(() => {
   vi.clearAllMocks()
   reportDeploymentHealthStage.mockResolvedValue(undefined)
+  setAppWiring.mockResolvedValue(true)
 })
 
 describe('runReadyGate', () => {
@@ -188,5 +193,74 @@ describe('runGitCommit', () => {
     expect(reportDeploymentHealthStage).toHaveBeenCalledWith(
       'builder_app_generation', 'my-slug', 'git_commit', 'failed',
     )
+  })
+})
+
+/**
+ * #1056 — runWiringScan re-scans the CURRENT generated code (the same
+ * resolveStoredApp() resolution the seeded-data check already uses) for real
+ * /api/primitive/{name}/... calls and persists the `*Wired` flags, distinct
+ * from the `*Provisioned` (credential-issued) flags. Real evidence: mendr
+ * was provisioned with 6 primitives and wired NONE; flashpoint/habanero-hub
+ * (also provisioned, track:'app') genuinely wired socialgraph / pipeline+
+ * zerovoice respectively. Best-effort, fail-open, matching runGitCommit.
+ */
+describe('runWiringScan', () => {
+  it('scans real code and persists true for a genuinely wired primitive', async () => {
+    resolveStoredApp.mockResolvedValue({
+      code: "fetch(`/api/primitive/socialgraph/api/v1/social/${id}/followers`)",
+      files: null,
+    })
+
+    const res = await runWiringScan('flashpoint', 'chat_fp')
+
+    expect(res.scanned).toBe(true)
+    expect(res.flags?.socialgraphWired).toBe(true)
+    expect(res.flags?.zeroinvoiceWired).toBe(false)
+    expect(setAppWiring).toHaveBeenCalledWith('flashpoint', expect.objectContaining({ socialgraphWired: true }))
+  })
+
+  it('persists all-false flags for a provisioned-but-unwired app (the real mendr shape)', async () => {
+    resolveStoredApp.mockResolvedValue({
+      code: "fetch('/api/db/waitlist', { method: 'POST' }); fetch('/api/db/visitors')",
+      files: null,
+    })
+
+    const res = await runWiringScan('mendr', 'chat_mendr')
+
+    expect(res.scanned).toBe(true)
+    expect(res.flags?.zeroinvoiceWired).toBe(false)
+    expect(res.flags?.zerocrmWired).toBe(false)
+    expect(res.flags?.capstackWired).toBe(false)
+    expect(res.flags?.serviceosWired).toBe(false)
+    expect(res.flags?.socialgraphWired).toBe(false)
+    expect(res.flags?.livestreamingWired).toBe(false)
+  })
+
+  it('does not scan (fail-open) when there is no stored code', async () => {
+    resolveStoredApp.mockResolvedValue(null)
+
+    const res = await runWiringScan('my-slug', 'chat_1')
+
+    expect(res).toEqual({ scanned: false, flags: null })
+    expect(setAppWiring).not.toHaveBeenCalled()
+  })
+
+  it('fails open (never throws) when resolveStoredApp itself throws', async () => {
+    resolveStoredApp.mockRejectedValue(new Error('store exploded'))
+
+    const res = await runWiringScan('my-slug', 'chat_1')
+
+    expect(res).toEqual({ scanned: false, flags: null })
+  })
+
+  it('fails open (still reports scanned:true) when the persist call itself throws', async () => {
+    resolveStoredApp.mockResolvedValue({ code: "fetch('/api/primitive/zeropipeline/x')", files: null })
+    setAppWiring.mockRejectedValue(new Error('zerodb down'))
+
+    const res = await runWiringScan('my-slug', 'chat_1')
+
+    expect(res.scanned).toBe(true)
+    expect(res.flags?.pipelineWired).toBe(true)
   })
 })
