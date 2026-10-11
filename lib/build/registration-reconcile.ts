@@ -79,6 +79,7 @@ import {
   type RegistrationHealthDisposition,
 } from '@/lib/build/deployment-health'
 import { runReadyGate, runGitCommit } from '@/lib/build/register-app-core'
+import { autoCreateAdTestCampaign } from '@/lib/build/ad-test-autocreate'
 import { logger } from '@/lib/logger'
 
 /**
@@ -271,6 +272,18 @@ export async function reconcileRegistration(
         reason: NO_STORED_CODE,
       }
     }
+
+    // #1017: this company's build is now genuinely complete — the same state a
+    // browser-completed build reaches. Auto-create its real, PAUSED ad-test
+    // campaign so the feature doesn't silently skip every founder whose tab
+    // died mid-generation (the exact population this sweep exists for).
+    //
+    // No money, no plan-tier gate: the campaign is PAUSED and cannot start
+    // spend; activation is gated on prepaid credits in the
+    // ad-budget-confirmed webhook. Awaited (not fire-and-forget) because a
+    // cron handler can be torn down the moment it responds — but wrapped, so
+    // an ad failure never downgrades a real, successful reconciliation.
+    await autoCreateAdTestCampaign(slug).catch(() => {})
 
     return {
       slug,

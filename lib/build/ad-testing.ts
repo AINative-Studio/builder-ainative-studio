@@ -11,9 +11,16 @@
  * See app/api/build/growth/ad-budget-checkout/route.ts (payment init) and
  * app/api/webhooks/ad-budget-confirmed/route.ts (the ONLY place a real
  * campaign gets created, gated on a verified Stripe payment via core's
- * webhook). This module (`createAdTestCampaign`) is called from that
- * webhook handler, still hardcoded PAUSED — no code path here can activate
- * real spend on its own.
+ * webhook). `createAdTestCampaign` is still hardcoded PAUSED and has no
+ * caller-overridable status — it structurally cannot start spend.
+ *
+ * #1017 ADDS ONE (and only one) ACTIVATION PATH: `activateAdTestCampaign`,
+ * which flips an existing PAUSED campaign to ACTIVE. It is reachable from
+ * exactly one place — the HMAC-verified ad-budget-confirmed webhook, after a
+ * founder's prepaid ad credits are confirmed paid. Purchasing credits is the
+ * consent to real spend; activation is NOT gated on plan tier, since a
+ * free-tier founder who bought credits is explicitly entitled to run a
+ * validation campaign (#1017 product direction, 2026-10-10).
  *
  * REAL INTEGRATION LAYER — corrected during implementation: the
  * `mcp__meta-ads__*` tools available in an interactive agent session are NOT
@@ -30,6 +37,21 @@
  */
 
 const GRAPH_API_BASE = process.env.META_GRAPH_API_BASE || 'https://graph.facebook.com/v21.0'
+
+/**
+ * Daily-budget bounds for an ad-test campaign, in whole USD.
+ *
+ * #1017 moved these here from app/api/build/growth/ad-test/route.ts (which
+ * still re-exports them, so that route's behavior is byte-identical) because
+ * the auto-create path needs the same DEFAULT without importing a route
+ * module into a library.
+ *
+ * DEFAULT is the placeholder a PAUSED auto-created campaign carries: it is
+ * never spent, since a PAUSED campaign has no delivery, and the real budget is
+ * whatever the founder's prepaid credits actually fund at activation time.
+ */
+export const DEFAULT_DAILY_BUDGET_USD = 5
+export const MAX_DAILY_BUDGET_USD = 25
 
 export function growthAdTestingEnabled(): boolean {
   return process.env.GROWTH_AD_TESTING_ENABLED === 'true'
@@ -104,6 +126,56 @@ export async function createAdTestCampaign(input: AdTestCampaignInput): Promise<
     const campaignId = data?.id
     if (typeof campaignId !== 'string' || !campaignId) {
       return { ok: false, reason: 'campaign_response_missing_id' }
+    }
+    return { ok: true, campaignId, status: res.status }
+  } catch (e: any) {
+    return { ok: false, reason: String(e?.message || e).slice(0, 160) }
+  }
+}
+
+/**
+ * Activate ONE already-created, PAUSED campaign (#1017) — the ONLY function in
+ * this module that can start real spend, deliberately split out from
+ * `createAdTestCampaign` so that function's hardcoded-PAUSED invariant stays
+ * intact and un-weakened (no caller-overridable `status` was ever added there).
+ *
+ * CALL-SITE CONTRACT: this must only be reached once a founder's prepaid ad
+ * credits are confirmed paid — i.e. from the HMAC-verified
+ * /api/webhooks/ad-budget-confirmed callback, never from anything
+ * client-triggered and never from the auto-create path. Purchasing credits IS
+ * the founder's consent to real spend (#1017's product direction); nothing
+ * else in the codebase is allowed to stand in for it. NOT gated on plan tier:
+ * a free-tier founder who has bought credits is explicitly entitled to run a
+ * validation campaign.
+ *
+ * Never throws — an activation failure (including the credential not being
+ * configured) is surfaced as a structured, honest result, matching
+ * createAdTestCampaign/fetchAdTestInsights.
+ *
+ * Real contract: POST {GRAPH_API_BASE}/{campaignId} with { status: 'ACTIVE' }
+ * — Meta's documented Marketing API campaign-update endpoint. UNVERIFIED
+ * against the live Meta API (no Marketing API credential is provisioned on
+ * builder's production service), exactly like createAdTestCampaign.
+ */
+export async function activateAdTestCampaign(campaignId: string): Promise<AdTestCampaignResult> {
+  if (!growthAdTestingCredentialConfigured()) return { ok: false, reason: 'credential_not_configured' }
+  if (!campaignId?.trim()) return { ok: false, reason: 'campaign_id_required' }
+
+  const accessToken = process.env.METAADS_ACCESS_TOKEN as string
+
+  try {
+    const res = await fetch(`${GRAPH_API_BASE}/${encodeURIComponent(campaignId)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        access_token: accessToken,
+        status: 'ACTIVE',
+      }),
+      signal: AbortSignal.timeout(15000),
+    })
+    const data = await res.json().catch(() => null)
+    if (!res.ok) {
+      return { ok: false, status: res.status, reason: String(data?.error?.message || res.status).slice(0, 160) }
     }
     return { ok: true, campaignId, status: res.status }
   } catch (e: any) {

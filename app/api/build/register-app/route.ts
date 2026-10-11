@@ -16,6 +16,7 @@ import { deployPersistent } from '@/lib/build/deploy'
 import { resolveStoredApp } from '@/lib/build/ready-gate'
 import { checkSeededData, type SeededDataCheck } from '@/lib/build/seed-check'
 import { runReadyGate, runGitCommit } from '@/lib/build/register-app-core'
+import { autoCreateAdTestCampaign } from '@/lib/build/ad-test-autocreate'
 import { enrollCompany, isEnrolled } from '@/lib/build/loop-enrollment'
 import { sendWelcomeEmail } from '@/lib/build/company-email'
 import { reportDeploymentHealthStage } from '@/lib/build/deployment-health'
@@ -237,6 +238,25 @@ export async function POST(request: NextRequest) {
     existing,
     taskLabel: b.taskLabel,
   })
+
+  // #1017: the founder's build is now genuinely complete — the ready gate
+  // adjudicated above (a blocked build already returned 422 and never reaches
+  // here) and the git commit has run. Auto-create their real, PAUSED Meta
+  // ad-test campaign so the Growth panel has something concrete to offer
+  // instead of a pay-first abstraction nobody ever opted into (#1016 found
+  // 0/338 companies had ever completed one).
+  //
+  // No plan-tier gate, by design (#1017, 2026-10-10): ad validation is for ANY
+  // founder, free tier included. No money is involved here — the campaign is
+  // PAUSED and `createAdTestCampaign` cannot be made to start spend. Credits
+  // purchased via the Stripe prepay flow are what activate it, and that gate
+  // lives in /api/webhooks/ad-budget-confirmed.
+  //
+  // Fire-and-forget on the SAME terms as the welcome email and auto-enroll
+  // above: a Meta hiccup must never fail a founder's registration. Uses the
+  // ACTUAL registered `slug` (not `requestedSlug`), so a collision-suffixed
+  // company gets the campaign under the slug it really owns.
+  autoCreateAdTestCampaign(slug).catch(() => {})
 
   return Response.json({
     ok,
