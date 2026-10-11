@@ -20,6 +20,8 @@
 import { useBuild } from '@/contexts/build-context'
 import { SHARED_LATE_VIEWS, trackViews } from '@/lib/build/state'
 import { collectPrior, serializeArtifact, applyEdit } from '@/lib/build/artifact-edit'
+import { GENERATED_VIEWS } from '@/lib/build/artifact-prompts'
+import { generateArtifact } from '@/lib/build/useAutoplay'
 import { CompanyNameEdit } from '@/components/build/CompanyNameEdit'
 import { useState, type ReactNode } from 'react'
 
@@ -74,6 +76,32 @@ export function ArtifactFrame({
   // so this never appears once the track has actually finished.
   const hasUnfinishedWork = trackViews(state.track).some((v) => !state.done?.[v] && !state.genError?.[v])
   const canKeepGoing = !isLate && !state.auto && hasUnfinishedWork
+
+  // #1038 (remaining half): generation was ONLY ever reachable through
+  // useAutoplay's single effect, gated on state.auto — so paging manually to
+  // an undone view via `Next ›` while paused left it stuck on "Cody is
+  // drafting this…" forever, with zero network activity. generateArtifact
+  // (extracted from useAutoplay.ts so both paths share the exact same fetch/
+  // retry/dispatch sequence) fires here, independent of state.auto, for
+  // whichever view the founder is actually navigating TO — not gated on
+  // whether autoplay happens to be driving. De-duping against a concurrent
+  // autoplay or "Keep going" request for the SAME view is handled inside
+  // generateArtifact itself (module-level in-flight guard, same single-
+  // flight intent as useAutoplay's own busy/wedgeFetching refs) — this call
+  // site doesn't need its own lock.
+  const triggerOnDemandGeneration = (target: string) => {
+    if (!state.idea) return
+    if (!GENERATED_VIEWS.has(target)) return // build/interrupt views have their own driver
+    if (state.done?.[target] || state.genError?.[target]) return // already resolved one way or the other
+    generateArtifact(target, dispatch, {
+      idea: state.idea,
+      track: state.track,
+      companyName: state.companyName || undefined,
+      companyId: state.appChatId || undefined,
+      generated: state.generated,
+      seq: views,
+    })
+  }
 
   // ── Per-artifact review actions (GR-16 #329) ──────────────────────────────
   // Shown on every artifact that has GENERATED content (prose views after
@@ -271,7 +299,11 @@ export function ArtifactFrame({
         </div>
       ) : !state.auto ? (
         <div className="m-artifact-nav">
-          <button className="btn-ghost" disabled={!prev} onClick={() => prev && goView(prev as never)}>‹ Back</button>
+          <button
+            className="btn-ghost"
+            disabled={!prev}
+            onClick={() => { if (!prev) return; goView(prev as never); triggerOnDemandGeneration(prev) }}
+          >‹ Back</button>
           {/* #1038: restores the dead KEEP_GOING path — the only way back to
               autoplay once paused (via "Take the wheel" or a resumed build)
               was previously nonexistent. Hidden once the track has actually
@@ -287,7 +319,10 @@ export function ArtifactFrame({
               nothing happened. Instead, advance to the pricing/pay-gate (the real
               forward path, same as the 'Make it real →' CTA) so Next is never dead. */}
           {next ? (
-            <button className="btn-secondary" onClick={() => goView(next as never)}>Next ›</button>
+            <button
+              className="btn-secondary"
+              onClick={() => { goView(next as never); triggerOnDemandGeneration(next) }}
+            >Next ›</button>
           ) : (
             /* Forward-to-pricing only AFTER the founder has actually seen the
                rendered preview (sawPreview) — navigating away mid-generation

@@ -25,6 +25,150 @@ import { PRIMITIVE_MAP } from '@/lib/build/primitives'
 
 type Dispatch = React.Dispatch<BuildAction>
 
+// #1038: generation used to be reachable ONLY through this file's single
+// autoplay effect, which early-returns whenever `state.auto` is false. That
+// meant "Take the wheel" (or resuming an in-progress build, which per #1033
+// deliberately leaves auto:false) didn't just pause the driver — it made
+// every remaining artifact permanently ungeneratable, including ones a
+// founder paged to manually via ArtifactFrame's `Next ›`. generateArtifact
+// below is the real fetch+retry+dispatch sequence, extracted so it can be
+// called from EITHER this autoplay effect (when auto is true) OR a manual
+// on-demand trigger (ArtifactFrame, when paused and the founder navigates to
+// an undone view) — same request, same retry policy, same dispatches,
+// whichever path invokes it.
+//
+// Module-level (not a ref inside this hook) because the caller that needs
+// de-duping is NOT always this hook's own instance — ArtifactFrame's manual
+// trigger and this effect's autoplay path must see EACH OTHER's in-flight
+// requests to avoid a double-fetch for the same view (e.g. founder clicks
+// "Next ›" to an undone view, generation starts, then immediately clicks
+// "Keep going →" before it resolves). A single build is ever active per tab,
+// so sharing this across the module is safe and mirrors the existing
+// wedgeFetching-ref pattern's single-flight intent, just visible outside this
+// hook too.
+const genInFlight = new Set<string>()
+
+/** True while a generateArtifact() call for this view has not yet settled.
+ *  Exported so callers (ArtifactFrame) can skip rendering a redundant manual
+ *  trigger affordance while one is already running for the same view. */
+export function isGenerationInFlight(view: string): boolean {
+  return genInFlight.has(view)
+}
+
+export interface GenerateArtifactOptions {
+  idea: string
+  track: BuildState['track']
+  companyName?: string
+  companyId?: string
+  /** Every already-generated artifact, keyed by view — forwarded as `prior`. */
+  generated: Record<string, unknown>
+  /** The full ordered view sequence for the active track (trackViews(track)). */
+  seq: readonly string[]
+  /** Optional founder feedback appended to the generation prompt (regenerate). */
+  feedback?: string
+  signal?: AbortSignal
+}
+
+/**
+ * The real /api/build/artifact fetch + transient-failure retry/backoff +
+ * GEN_DONE/GEN_FAIL dispatch sequence for a single prose (GENERATED_VIEWS)
+ * artifact. Extracted from the autoplay effect below so it is NOT gated on
+ * `state.auto` — any caller (autoplay, or a manual on-demand trigger) can
+ * invoke it for any view, and it de-dupes against a concurrent in-flight
+ * request for THAT SAME view via the module-level `genInFlight` guard.
+ *
+ * No-ops (resolves immediately, dispatches nothing) when a request for this
+ * view is already running — callers don't need to check isGenerationInFlight
+ * themselves first, though ArtifactFrame does anyway to skip a redundant
+ * "forming" overlay flash.
+ */
+export function generateArtifact(
+  view: string,
+  dispatch: Dispatch,
+  opts: GenerateArtifactOptions,
+): Promise<void> {
+  if (genInFlight.has(view)) return Promise.resolve()
+  genInFlight.add(view)
+
+  const prior: Record<string, unknown> = { ...(opts.generated ? pick(opts.generated, opts.seq) : {}) }
+
+  // Artifact generation can hit a TRANSIENT provider blip: /api/build/artifact
+  // returns 503 'generation_unavailable' only when EVERY provider (Bedrock/
+  // Anthropic + both AINative fallbacks, each now with a JSON-repair pass —
+  // see app/api/build/artifact/route.ts) fails at once. A single blip used to
+  // fail the artifact permanently and stall the whole build with no recovery.
+  // Retry such transient failures with backoff before giving up; only a
+  // genuine, repeated failure surfaces GEN_FAIL. 4xx (bad request) is NOT
+  // retried — it won't heal.
+  const MAX_ATTEMPTS = 5
+  const isTransient = (status: number, error?: string) =>
+    status === 503 || status === 502 || status === 500 || status === 504 || status === 429 || status === 0 ||
+    error === 'generation_unavailable'
+
+  const backoff = (n: number) =>
+    new Promise((res) => setTimeout(res, Math.min(800 * Math.pow(2, n - 1), 6400))) // 0.8s,1.6s,3.2s,6.4s…capped
+
+  // Bound EACH attempt so a hung request (server never responds, no
+  // network-level error) can't stall the whole build forever in
+  // "Generating…" — it now times out and retries like any other transient
+  // failure instead of leaving the view stuck indefinitely.
+  const ATTEMPT_TIMEOUT_MS = 25_000
+
+  const attempt = async (n: number): Promise<void> => {
+    let response: Response
+    try {
+      const signals = opts.signal ? [opts.signal, AbortSignal.timeout(ATTEMPT_TIMEOUT_MS)] : [AbortSignal.timeout(ATTEMPT_TIMEOUT_MS)]
+      response = await fetch('/api/build/artifact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.any(signals),
+        body: JSON.stringify({
+          view, idea: opts.idea, track: opts.track,
+          companyName: opts.companyName || undefined, prior,
+          feedback: opts.feedback || undefined,
+          // #927: real project identifier so a successful generation persists
+          // server-side (absent for early intake, before a project exists —
+          // the server simply skips persisting then).
+          companyId: opts.companyId || undefined,
+        }),
+      })
+    } catch (e: unknown) {
+      // The caller's own signal aborting (teardown/unmount) is terminal —
+      // everything else, including our own per-attempt timeout firing, is
+      // transient → retry.
+      if (opts.signal?.aborted) { genInFlight.delete(view); return }
+      if (n < MAX_ATTEMPTS) { await backoff(n); if (opts.signal?.aborted) { genInFlight.delete(view); return }; return attempt(n + 1) }
+      genInFlight.delete(view)
+      dispatch({ type: 'GEN_FAIL', view, error: e instanceof Error ? e.message : String(e) })
+      return
+    }
+    const data = await response.json().catch(() => null)
+    if (response.ok && data?.content) {
+      genInFlight.delete(view)
+      dispatch({ type: 'GEN_DONE', view, content: data.content })
+      return
+    }
+    const err = data?.error || `HTTP ${response.status}`
+    // Retry only TRANSIENT failures (503/502/429/generation_unavailable). A
+    // 4xx is a bad request that won't heal — fail it immediately.
+    if (n < MAX_ATTEMPTS && isTransient(response.status, data?.error)) {
+      await backoff(n)
+      if (opts.signal?.aborted) { genInFlight.delete(view); return }
+      return attempt(n + 1)
+    }
+    genInFlight.delete(view)
+    if (!opts.signal?.aborted) dispatch({ type: 'GEN_FAIL', view, error: err })
+  }
+
+  return attempt(1)
+}
+
+function pick(generated: Record<string, unknown>, seq: readonly string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const v of seq) if (generated[v]) out[v] = generated[v]
+  return out
+}
+
 // Views that are "built" over time (overlay + ribbon) rather than text-generated.
 const BUILD_VIEWS = new Set(['swarm', 'infra', 'preview'])
 
@@ -205,80 +349,19 @@ export function useAutoplay(state: BuildState, dispatch: Dispatch) {
     }
 
     // ── Prose view: forming overlay → real generation → done ────────────────
+    // The actual fetch + retry/backoff + GEN_DONE/GEN_FAIL dispatch sequence
+    // lives in generateArtifact() (above) so the exact same request path is
+    // shared with ArtifactFrame's manual on-demand trigger (#1038) — this is
+    // no longer the only caller.
     if (GENERATED_VIEWS.has(next)) {
       dispatch({ type: 'SET_OVERLAY', overlay: { kind: 'forming', view: next } })
       const ac = new AbortController()
-      const prior: Record<string, unknown> = {}
-      for (const v of seq) if (state.generated[v]) prior[v] = state.generated[v]
 
       schedule(() => {
-        // Artifact generation can hit a TRANSIENT provider blip: /api/build/artifact
-        // returns 503 'generation_unavailable' only when EVERY provider (Bedrock/
-        // Anthropic + both AINative fallbacks, each now with a JSON-repair pass —
-        // see app/api/build/artifact/route.ts) fails at once. A single blip used to
-        // fail the artifact permanently and stall the whole build with no recovery
-        // (this is what left coastal/nXl2rNA1f6FuavVJ_X0kF half-built, and what left
-        // Dwellow's landing page silently showing placeholder copy). Retry such
-        // transient failures with backoff before giving up; only a genuine, repeated
-        // failure surfaces GEN_FAIL. 4xx (bad request) is NOT retried — it won't heal.
-        // 5 attempts (up from 3) because the server-side repair pass means a single
-        // client attempt now represents up to 6 underlying model calls — worth a
-        // couple more client rounds before asking the user to intervene at all.
-        const MAX_ATTEMPTS = 5
-        const isTransient = (status: number, error?: string) =>
-          status === 503 || status === 502 || status === 500 || status === 504 || status === 429 || status === 0 ||
-          error === 'generation_unavailable'
-
-        const backoff = (n: number) =>
-          new Promise((res) => setTimeout(res, Math.min(800 * Math.pow(2, n - 1), 6400))) // 0.8s,1.6s,3.2s,6.4s…capped
-
-        // Bound EACH attempt so a hung request (server never responds, no
-        // network-level error) can't stall the whole build forever in
-        // "Generating…" — it now times out and retries like any other
-        // transient failure instead of leaving the view stuck indefinitely.
-        const ATTEMPT_TIMEOUT_MS = 25_000
-
-        const attempt = async (n: number): Promise<void> => {
-          let response: Response
-          try {
-            response = await fetch('/api/build/artifact', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              signal: AbortSignal.any([ac.signal, AbortSignal.timeout(ATTEMPT_TIMEOUT_MS)]),
-              body: JSON.stringify({
-                view: next, idea: state.idea, track: state.track,
-                companyName: state.companyName || undefined, prior,
-                // #927: real project identifier so a successful generation
-                // persists server-side (absent for early intake, before a
-                // project exists — the server simply skips persisting then).
-                companyId: state.appChatId || undefined,
-              }),
-            })
-          } catch (e: unknown) {
-            // ac.signal.aborted (teardown/unmount) is terminal — everything else,
-            // including our own per-attempt timeout firing, is transient → retry.
-            if (ac.signal.aborted) return
-            if (n < MAX_ATTEMPTS) { await backoff(n); if (ac.signal.aborted) return; return attempt(n + 1) }
-            dispatch({ type: 'GEN_FAIL', view: next, error: e instanceof Error ? e.message : String(e) })
-            return
-          }
-          const data = await response.json().catch(() => null)
-          if (response.ok && data?.content) {
-            dispatch({ type: 'GEN_DONE', view: next, content: data.content })
-            return
-          }
-          const err = data?.error || `HTTP ${response.status}`
-          // Retry only TRANSIENT failures (503/502/429/generation_unavailable).
-          // A 4xx is a bad request that won't heal — fail it immediately.
-          if (n < MAX_ATTEMPTS && isTransient(response.status, data?.error)) {
-            await backoff(n)
-            if (ac.signal.aborted) return
-            return attempt(n + 1)
-          }
-          if (!ac.signal.aborted) dispatch({ type: 'GEN_FAIL', view: next, error: err })
-        }
-
-        attempt(1).finally(() => {
+        generateArtifact(next, dispatch, {
+          idea: state.idea, track: state.track, companyName: state.companyName || undefined,
+          companyId: state.appChatId || undefined, generated: state.generated, seq, signal: ac.signal,
+        }).finally(() => {
           schedule(() => {
             dispatch({ type: 'SET_OVERLAY', overlay: { kind: 'none' } })
             done()
