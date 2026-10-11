@@ -552,6 +552,37 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
       // field triggered the restore and without relying on any effect
       // re-running at the right time.
       if (merged.builtMVP || merged.builtCompany) merged.auto = false
+      // builder#1049: `track` IS in the persisted-field union above but `view`
+      // deliberately is NOT (live UI position isn't meant to be restored). The
+      // merge is a plain spread, so restoring a company-track company while
+      // `view` is still this reducer's own initial 'brief' — an APP-ONLY view —
+      // yields a pair no real build can reach:
+      //
+      //     track: 'company'   view: 'brief'      ('brief' ∉ COMPANY_VIEWS)
+      //
+      // useAutoplay then computes `next` over trackViews('company'), finds
+      // every company view already drafted, falls into its track-complete
+      // branch and returns having dispatched NOTHING (that branch only acts on
+      // the app track). The workspace is left rendering 'brief' forever: a
+      // frozen "Cody is drafting this from your idea…" skeleton, zero network
+      // activity, no error and no paused indicator — which is exactly what
+      // #1049 reported on the App track's first content artifact.
+      //
+      // Reproduced deterministically in a real browser via the #669 bare-reload
+      // resume path (contexts/build-context.tsx), which dispatches
+      // RESTORE_BUILD(saved) + GOTO_SCREEN('ws') and — unlike the ?company=
+      // deep-link path a few lines above it — has NO following PICK_TRACK to
+      // incidentally reset `view` to 'design'. So nothing repaired the pair.
+      //
+      // Normalizing here, at the single point persisted state is merged in,
+      // fixes it for every RESTORE_BUILD caller regardless of which field
+      // triggered the restore — the same reasoning (and the same place) as
+      // #1033's `auto` normalization directly above.
+      if (!viewBelongsToTrack(merged.view, merged.track)) {
+        merged.view = firstUnfinishedView(
+          merged.track, merged.done, merged.genError,
+        ) as ArtifactView
+      }
       return merged
     }
     case 'SET_TABLET':
@@ -612,6 +643,45 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
 /** Ordered artifact sequence for the active track (drives breadcrumb + act-bar). */
 export function trackViews(track: Track): readonly string[] {
   return track === 'app' ? APP_VIEWS : COMPANY_VIEWS
+}
+
+/**
+ * Is `view` a legal place to be while the active track is `track`? (#1049)
+ *
+ * APP_VIEWS and COMPANY_VIEWS overlap only at 'design' — every other entry
+ * belongs to exactly one track, so a (track, view) pair drawn from the wrong
+ * list is not merely odd, it is unreachable by any real build and leaves
+ * useAutoplay with no next step at all (see RESTORE_BUILD below).
+ *
+ * SHARED_LATE_VIEWS ('pipeline', 'rescope-intent', 'conflict', 'graph') are
+ * legal on BOTH tracks by design: they are deliberate off-sequence detours
+ * (TRIGGER_CONFLICT routes to them, ArtifactFrame gives them their own escape
+ * CTAs instead of the pager) and must never be treated as a broken pair.
+ */
+export function viewBelongsToTrack(view: string, track: Track): boolean {
+  if ((SHARED_LATE_VIEWS as readonly string[]).includes(view)) return true
+  return trackViews(track).includes(view)
+}
+
+/**
+ * The step a build is genuinely up to: the first view in the track sequence
+ * that is neither drafted nor errored — the SAME lookup useAutoplay uses to
+ * decide what to generate next. Falls back to the track's LAST view when
+ * everything is finished (nothing left to draft, so the end of the sequence
+ * is where the founder belongs).
+ *
+ * Extracted so the reducer and the autoplay engine agree on "where am I"
+ * rather than each hand-rolling it (#1049) — picking an arbitrary first/last
+ * view instead would drop a half-finished founder back to the start of their
+ * own build.
+ */
+export function firstUnfinishedView(
+  track: Track,
+  done: Record<string, string>,
+  genError: Record<string, string>,
+): string {
+  const seq = trackViews(track)
+  return seq.find((v) => !done[v] && !genError[v]) ?? seq[seq.length - 1]
 }
 
 /**
