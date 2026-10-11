@@ -3,6 +3,26 @@ name: Nightly Autonomous Loop
 # Fires the Builder autonomous loop nightly: for each enrolled company, Cody pulls
 # an agent-intelligence briefing and dispatches the highest-leverage task to the
 # AINative agent swarm. (Option B of the pivot — #207 / #228.)
+#
+# #1055 — this job used to POST once with `--max-time 300`, exactly the route's own
+# `maxDuration = 300`, while the route iterated ~77 companies serially. The two
+# raced and the client lost: 9 of the last 15 scheduled runs died with
+# `curl: (28) Operation timed out after 300001 milliseconds with 0 bytes received`.
+#
+# Both halves are fixed, and both are needed:
+#   * The route now parallelizes per-company work under a finite concurrency cap
+#     and stops admitting new companies at its own ~210s internal budget, so it
+#     genuinely finishes and answers well inside maxDuration instead of being
+#     killed mid-sweep (see app/api/build/nightly-loop/route.ts).
+#   * The sweep is SHARDED here into several smaller calls, so each call's work
+#     stays comfortably inside that budget as the enrolled-company count grows,
+#     and the client timeout is raised above the server budget so curl can no
+#     longer give up before the server has answered. Raising the timeout alone
+#     would only have hidden the slowness.
+#
+# Shards run as a matrix so they execute in parallel; every enrolled company lands
+# in exactly one shard (interleaved by index — see lib/build/concurrent-map.ts's
+# selectShard), so there is no overlap and no company is skipped.
 
 on:
   schedule:
@@ -13,18 +33,39 @@ on:
 jobs:
   run-loop:
     runs-on: ubuntu-latest
+    strategy:
+      # Don't let one shard's failure cancel the others — a company in shard 2
+      # must still get its nightly run if shard 0 had a bad night.
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     steps:
-      - name: Trigger nightly autonomous loop
+      - name: Trigger nightly autonomous loop (shard ${{ matrix.shard }}/4)
         run: |
-          echo "Triggering nightly autonomous loop…"
+          echo "Triggering nightly autonomous loop — shard ${{ matrix.shard }} of 4…"
           code=$(curl -sS -o /tmp/resp.json -w "%{http_code}" \
-            -X POST "https://builder.ainative.studio/api/build/nightly-loop" \
+            -X POST "https://builder.ainative.studio/api/build/nightly-loop?shard=${{ matrix.shard }}&shards=4" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            --max-time 300)
+            --max-time 420)
           echo "HTTP $code"
           cat /tmp/resp.json
           echo
           if [ "$code" != "200" ]; then
-            echo "::error::Nightly loop returned HTTP $code"
+            echo "::error::Nightly loop shard ${{ matrix.shard }} returned HTTP $code"
             exit 1
+          fi
+          # Surface the two real health numbers in the job log/annotations.
+          # `deferred > 0` means this shard ran out of its own time budget and
+          # pushed companies to the next tick — the signal to raise the shard
+          # count, not to raise a timeout.
+          deferred=$(python3 -c "import json;print(json.load(open('/tmp/resp.json')).get('deferred',0))" 2>/dev/null || echo 0)
+          if [ "$deferred" != "0" ]; then
+            echo "::warning::Shard ${{ matrix.shard }} deferred $deferred companies — consider increasing the shard count"
+          fi
+          # `stalledCompanies > 0` means companies whose dispatched swarm tasks
+          # are accepted by the platform and then never complete (#1055). The
+          # loop itself is healthy; core's agent-swarm executor needs attention.
+          stalled=$(python3 -c "import json;print(json.load(open('/tmp/resp.json')).get('stalledCompanies',0))" 2>/dev/null || echo 0)
+          if [ "$stalled" != "0" ]; then
+            echo "::warning::Shard ${{ matrix.shard }}: $stalled companies have a STALLED agent swarm (tasks queued past SLA, never completing)"
           fi
