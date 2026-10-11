@@ -423,6 +423,47 @@ export function Live() {
     // no corresponding app-registry row). company-app now mirrors
     // company-product's own fix below exactly: detached background
     // generation, 'processing' returned immediately, poll resolve-app.
+    // builder#1041: both codegen triggers below gate on client-only reducer
+    // state (`!state.appChatId` / `!state.productChatId`), which is
+    // legitimately EMPTY for a genuinely live, server-registered company —
+    // #1037's confirmed stale-cache shape, written by ordinary use on any
+    // browser that merely touched the company (a new tab, another device, a
+    // session that ended mid-build). So both POSTs fired on every such load.
+    //
+    // Server-side that is safe on the happy path: each route resolves the
+    // registry first and returns the existing chatId (verified live on
+    // production against #1037's own company — `cached: true` /
+    // `status: 'cached'`, sub-second, no generation). The real spend risk was
+    // the fail-open when that registry read FAILS, now fixed in the routes.
+    //
+    // This is the client half. `resolve-app` is a cheap GET this screen
+    // already polls, and it carries the honest `verified` flag (#807/#832/
+    // #833): "confirmed no such app" vs "could not check". Consulting it
+    // before POSTing turns a speculative write on every load into one cheap
+    // read, and keeps the genuinely-new-company path intact:
+    //   - a real chatId     → adopt it, never generate;
+    //   - a CONFIRMED miss  → genuinely new, generate exactly as before;
+    //   - an unconfirmed read → generate NOTHING this pass, and let the
+    //     existing poll/next mount retry. Failing closed costs a founder a
+    //     short wait; failing open costs a real, billable generation.
+    const generateIfGenuinelyMissing = (
+      slug: string,
+      onFound: (chatId: string) => void,
+      startGeneration: () => void,
+    ) => {
+      fetch(`/api/build/resolve-app?slug=${encodeURIComponent(slug)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (!alive) return
+          if (d?.chatId) { onFound(String(d.chatId)); return }
+          // Only a CONFIRMED miss may buy a generation.
+          if (d && d.verified === false) return
+          if (!d) return
+          startGeneration()
+        })
+        .catch(() => { /* could not check — never speculate into a paid call */ })
+    }
+
     if (!state.appChatId && state.idea && state.appSub) {
       const MAX_APP_POLL_ATTEMPTS = 60 // ~5 min at 5s apart — matches company-product's own budget
       const pollForApp = (n: number) => {
@@ -437,6 +478,10 @@ export function Live() {
             if (n < MAX_APP_POLL_ATTEMPTS) setTimeout(() => { if (alive) pollForApp(n + 1) }, 5000)
           })
       }
+      generateIfGenuinelyMissing(
+        state.appSub,
+        (chatId) => { setAppReady(true); dispatch({ type: 'SET_APP_CHATID', chatId }) },
+        () => {
       fetch('/api/build/company-app', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -458,6 +503,8 @@ export function Live() {
           if (d?.status === 'processing') pollForApp(1)
         })
         .catch(() => { if (alive) pollForApp(1) })
+        },
+      )
     }
     // Real gap (customer-reported, Meridian, 2026-09-10, issue #620): the
     // landing page above is marketing copy — it was never the founder's
@@ -492,6 +539,10 @@ export function Live() {
             if (n < MAX_POLL_ATTEMPTS) setTimeout(() => { if (alive) pollForProduct(n + 1) }, 5000)
           })
       }
+      generateIfGenuinelyMissing(
+        productSlug,
+        (chatId) => { dispatch({ type: 'SET_PRODUCT_CHATID', chatId }) },
+        () => {
       fetch('/api/build/company-product', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -507,6 +558,8 @@ export function Live() {
           if (d?.status === 'processing') pollForProduct(1)
         })
         .catch(() => { if (alive) pollForProduct(1) })
+        },
+      )
     }
     // The visible nightshift — the real last nightly run + morning summary.
     fetch(`/api/build/nightshift?companyId=${encodeURIComponent(companyId)}&idea=${encodeURIComponent(state.idea)}&companyName=${encodeURIComponent(company)}`)

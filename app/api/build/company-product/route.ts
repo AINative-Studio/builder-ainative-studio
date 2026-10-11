@@ -70,7 +70,7 @@
  */
 
 import { NextRequest } from 'next/server'
-import { registerApp, resolveApp } from '@/lib/build/app-registry'
+import { registerApp, resolveApp, resolveAppVerified } from '@/lib/build/app-registry'
 import { logBuildOutcome } from '@/lib/build/learning'
 import {
   recordPendingProductGeneration,
@@ -176,8 +176,27 @@ export async function POST(request: NextRequest) {
 
   // Already built? return the existing chatId (don't regenerate) — unless
   // the caller explicitly asked to force a fresh attempt (see above).
-  const existing = await resolveApp(productSlug).catch(() => null)
+  //
+  // builder#1041: same fix as company-app/route.ts's sibling check, and the
+  // same reasoning — plain `resolveApp` collapses "confirmed no such slug"
+  // and "the registry read FAILED" into one `null` (the #807/#832/#833
+  // ambiguity, unfixed on the spend path), so a transient full-table
+  // `?limit=1000` read failure made an already-generated product look brand
+  // new and bought a fresh, billable generation. This route is the more
+  // expensive of the two: no `landingPageOnly`, full primitive compliance,
+  // and a real obedience-repair pass is a SECOND model call. Only a
+  // CONFIRMED miss may proceed to spend.
+  const { entry: existing, verified } = await resolveAppVerified(productSlug).catch(
+    () => ({ entry: null as Awaited<ReturnType<typeof resolveApp>>, verified: false }),
+  )
   if (existing?.chatId && !force) return Response.json({ chatId: existing.chatId, productSlug, status: 'cached' })
+  if (!verified && !force) {
+    return Response.json({
+      status: 'unverified',
+      productSlug,
+      error: 'Could not confirm whether this company already has a generated product — not starting a new generation.',
+    })
+  }
 
   // Recover an orphaned prior attempt (registration-durability gap, #660):
   // a previous call's background task may have gotten a chatId, had its

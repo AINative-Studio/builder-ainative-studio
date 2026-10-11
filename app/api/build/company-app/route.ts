@@ -50,7 +50,7 @@
  */
 
 import { NextRequest } from 'next/server'
-import { registerApp, resolveApp } from '@/lib/build/app-registry'
+import { registerApp, resolveApp, resolveAppVerified } from '@/lib/build/app-registry'
 import { logBuildOutcome } from '@/lib/build/learning'
 import {
   recordPendingProductGeneration,
@@ -169,8 +169,34 @@ export async function POST(request: NextRequest) {
 
   // Already built? return the existing chatId (don't regenerate) — unless
   // the caller explicitly asked to force a fresh attempt (see above).
-  const existing = await resolveApp(slug).catch(() => null)
+  //
+  // builder#1041: this used to call plain `resolveApp(slug)`, which collapses
+  // "confirmed no such slug" and "the registry read FAILED" into the same
+  // `null` — the exact ambiguity #807/#832/#833 fixed for the dashboard
+  // redirect path, left unfixed here on the far more expensive path. The
+  // registry read is a full unpaginated `?limit=1000` scan of an append-only
+  // table behind a 20s timeout, so a transient failure is a real, recurring
+  // condition, not a theoretical one. Collapsed into `null`, it made an
+  // ALREADY-GENERATED company look brand new and bought a fresh, billable
+  // generation — and Live.tsx re-POSTs here on every dashboard load whose
+  // local cache lacks an `appChatId` (#1037's stale-cache shape), so a
+  // registry hiccup turned every load into another charge.
+  //
+  // `verified` is the honest signal: only a CONFIRMED miss may proceed to
+  // spend. An unconfirmed read fails CLOSED (no generation) and says so, so
+  // the caller retries a cheap read rather than polling for a build that was
+  // never started. A genuinely new company is unaffected — its miss is
+  // verified, and it generates exactly as before.
+  const { entry: existing, verified } = await resolveAppVerified(slug).catch(
+    () => ({ entry: null as Awaited<ReturnType<typeof resolveApp>>, verified: false }),
+  )
   if (existing?.chatId && !force) return Response.json({ chatId: existing.chatId, cached: true })
+  if (!verified && !force) {
+    return Response.json({
+      status: 'unverified',
+      error: 'Could not confirm whether this company already has a generated app — not starting a new generation.',
+    })
+  }
 
   // Recover an orphaned prior attempt (same registration-durability gap
   // company-product/route.ts closed, #660 follow-up): a previous call's
