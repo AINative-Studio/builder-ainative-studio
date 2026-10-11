@@ -9,14 +9,33 @@
  * Body: { slug, amountCents }
  * Returns: { url } (Stripe Checkout URL) or { error }
  *
- * Gated the same way ad-test/route.ts already is: feature flag, paid tier,
- * signed-in founder. The campaign itself is NOT created here — only after
- * core's webhook confirms the payment (see app/api/webhooks/ad-budget-confirmed).
+ * Gated on: the feature flag, a signed-in founder, and a real company. The
+ * campaign itself is NOT created here — only after core's webhook confirms the
+ * payment (see app/api/webhooks/ad-budget-confirmed).
+ *
+ * NO PLAN-TIER GATE (#1017, product direction confirmed 2026-10-10). Ad
+ * campaigns are not gated on subscription tier: founders pay for prepaid ad
+ * CREDITS to fund a campaign, and a free-tier founder proving demand for their
+ * idea is precisely who that is for. This route previously required
+ * `isPaidTier`, which made the funding flow a dead end once #1017's auto-create
+ * path started handing every founder a real, PAUSED campaign plus a prompt to
+ * fund it: the founder followed the prompt and was refused with
+ * `reason: 'tier'` at the moment of payment. Purchasing credits IS the
+ * founder's consent to real spend; their plan is irrelevant to it.
+ *
+ * What still gates a real charge, deliberately unchanged:
+ *   - the GROWTH_AD_TESTING_ENABLED flag;
+ *   - a signed-in founder holding a real core access token;
+ *   - that token being forwarded to core, which verifies the founder actually
+ *     owns `slug` before issuing a Stripe session — builder never asserts
+ *     ownership on the founder's behalf;
+ *   - a resolvable company;
+ *   - the 20% margin never disclosed to Meta, computed server-side on core
+ *     (app/api/v1/endpoints/ad_budget.py), never trusted from the client.
  */
 
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
-import { getPlanStatus, isPaidTier } from '@/lib/ainative/plan'
 import { resolveApp } from '@/lib/build/app-registry'
 import { growthAdTestingEnabled } from '@/lib/build/ad-testing'
 
@@ -24,7 +43,6 @@ export const runtime = 'nodejs'
 
 const CORE = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 const APP = process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio'
-// #762: paid-tier membership now lives in lib/ainative/plan.ts's isPaidTier.
 
 export async function POST(request: NextRequest) {
   if (!growthAdTestingEnabled()) {
@@ -40,27 +58,12 @@ export async function POST(request: NextRequest) {
     return Response.json({ ok: false, reason: 'amountCents required' }, { status: 400 })
   }
 
+  // Authentication is the real boundary here and is UNCHANGED: an anonymous
+  // caller can never reach Stripe, and the token below is the founder's own —
+  // core authorizes the purchase against it.
   const session = await auth().catch(() => null)
   const token = (session as any)?.accessToken
   if (!token) return Response.json({ ok: false, reason: 'signin' })
-
-  let tier = 'hobbyist'
-  let tierResolved = false
-  try {
-    const status = await getPlanStatus(token)
-    tier = status.tier || 'hobbyist'
-    tierResolved = true
-  } catch (err) {
-    // Fail closed — never let an unresolved tier lookup grant a real charge —
-    // but log it (#762) so an outage is never mistaken for an unpaid account.
-    console.error(
-      `[growth/ad-budget-checkout] tier lookup threw — failing closed. ` +
-        `NOT proof the user is unpaid: ${err instanceof Error ? err.message : String(err)}`,
-    )
-  }
-  if (!isPaidTier(tier)) {
-    return Response.json({ ok: false, reason: 'tier', tier, unverified: !tierResolved })
-  }
 
   const app = await resolveApp(slug).catch(() => null)
   if (!app) return Response.json({ ok: false, reason: 'company_not_found' }, { status: 404 })

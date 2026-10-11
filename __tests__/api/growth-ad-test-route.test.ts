@@ -11,8 +11,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
  *    configured — a separate, honest failure mode;
  *  - requires a slug (400 on missing);
  *  - requires sign-in (reason:'signin' when anonymous);
- *  - requires a PAID tier (reason:'tier' for hobbyist/free);
- *  - a paid, signed-in founder on a company with no existing test campaign
+ *  - is NOT gated on plan tier (#1017) — creation is PAUSED and spends
+ *    nothing, so any signed-in founder can trigger it;
+ *  - a signed-in founder on a company with no existing test campaign
  *    gets a real campaign created, and it's persisted via setAppGrowthAdTest;
  *  - a company that already has a test campaign short-circuits to the
  *    existing campaign WITHOUT calling createAdTestCampaign again;
@@ -105,21 +106,48 @@ describe('POST /api/build/growth/ad-test (#449)', () => {
     expect(h.createAdTestCampaign).not.toHaveBeenCalled()
   })
 
-  it('blocks a non-paid (hobbyist) tier', async () => {
+  // ── #1017: campaign CREATION is not plan-gated ──────────────────────────────
+  // This route creates the same PAUSED, zero-spend campaign, via the same
+  // `createAdTestCampaign`, idempotent on the same registry field, as #1017's
+  // auto-create path — which is deliberately ungated per the 2026-10-10
+  // direction. A tier gate here only meant a free founder's AUTOMATIC campaign
+  // succeeded while their own manual re-trigger of the identical operation
+  // returned reason:'tier'.
+  it('creates a campaign for a free-tier (hobbyist) founder — no tier gate (#1017)', async () => {
     h.getPlanStatus.mockResolvedValue({ tier: 'hobbyist' })
+    h.createAdTestCampaign.mockResolvedValue({ ok: true, campaignId: 'camp-free' })
     const res: any = await POST(postReq({ slug: 'acme' }))
     const json = await res.json()
-    // `unverified: false` — a REAL entitlement gap, genuinely resolved (#762).
-    expect(json).toEqual({ ok: false, reason: 'tier', tier: 'hobbyist', unverified: false })
-    expect(h.createAdTestCampaign).not.toHaveBeenCalled()
+    expect(json).toEqual({ ok: true, campaignId: 'camp-free' })
+    expect(h.createAdTestCampaign).toHaveBeenCalledTimes(1)
   })
 
-  it('fails closed to the un-paid default when plan lookup itself errors', async () => {
+  it('creates a campaign even when the plan lookup itself errors (#1017)', async () => {
+    // Creation costs nothing and spends nothing, so an unreachable core must
+    // not block it. It never consults the plan at all now.
     h.getPlanStatus.mockRejectedValue(new Error('core unreachable'))
+    h.createAdTestCampaign.mockResolvedValue({ ok: true, campaignId: 'camp-no-plan' })
     const res: any = await POST(postReq({ slug: 'acme' }))
     const json = await res.json()
-    expect(json.ok).toBe(false)
-    expect(json.reason).toBe('tier')
+    expect(json).toEqual({ ok: true, campaignId: 'camp-no-plan' })
+  })
+
+  it('never refuses creation with reason:"tier" for any plan (#1017)', async () => {
+    h.createAdTestCampaign.mockResolvedValue({ ok: true, campaignId: 'camp-x' })
+    for (const tier of ['hobbyist', 'starter', 'pro', 'enterprise', undefined]) {
+      h.getPlanStatus.mockResolvedValue({ tier })
+      const res: any = await POST(postReq({ slug: 'acme' }))
+      const json = await res.json()
+      expect(json.reason).not.toBe('tier')
+      expect(json.ok).toBe(true)
+    }
+  })
+
+  it('still requires sign-in — authentication is UNCHANGED (#1017)', async () => {
+    h.auth.mockResolvedValue(null)
+    const res: any = await POST(postReq({ slug: 'acme' }))
+    const json = await res.json()
+    expect(json).toEqual({ ok: false, reason: 'signin' })
     expect(h.createAdTestCampaign).not.toHaveBeenCalled()
   })
 

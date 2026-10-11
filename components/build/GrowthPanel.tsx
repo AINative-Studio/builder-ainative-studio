@@ -29,6 +29,13 @@
  *                                  NOT plan-gated (#1017, 2026-10-10).
  *   - campaignId + funding       → FUNDED: activated by the webhook, reporting.
  *
+ * NOT plan-gated in ANY of these states (#1017, 2026-10-10). Ad credits are
+ * purchasable on every plan, free tier included — running a validation
+ * campaign is how a founder proves demand for their idea, so gating it behind
+ * an upgrade defeated the point. The panel no longer bounces an un-upgraded
+ * founder to the upgrade screen before the request is even sent; the server
+ * endpoint is the single source of truth about who may purchase.
+ *
  * Chrome: reuses the same `.m-live-card`/`.st`/`.m-chip`/`.btn-*`/`.m-task-*`
  * classes AutoModePanel already established, so it matches the dashboard
  * without a new visual language.
@@ -39,8 +46,18 @@ import { useCallback, useEffect, useState } from 'react'
 interface Props {
   companyId: string
   companyName: string
-  /** Whether the Growth module is unlocked on the current plan (paid tiers only). */
+  /**
+   * Whether the Growth module is unlocked on the current plan.
+   *
+   * #1017: this no longer gates funding. Buying prepaid ad credits is open on
+   * every plan, free tier included, and the checkout endpoint has no
+   * `isPaidTier` gate, so the panel must not pre-empt it with a client-side
+   * paywall. Retained on the interface because the Live dashboard still
+   * computes and passes it (`gates.growth`) and it remains a meaningful signal
+   * about the module itself — just not a payment gate.
+   */
   unlocked: boolean
+  /** Shown only if the SERVER refuses on entitlement (`reason: 'tier'`). */
   onUpgrade: () => void
 }
 
@@ -60,7 +77,7 @@ function formatCents(cents: number | undefined): string {
   return `$${((cents as number) / 100).toFixed(2)}`
 }
 
-export function GrowthPanel({ companyId, companyName, unlocked, onUpgrade }: Props) {
+export function GrowthPanel({ companyId, companyName, onUpgrade }: Props) {
   const [loaded, setLoaded] = useState(false)
   const [available, setAvailable] = useState(true)
   const [state, setState] = useState<GrowthState>({})
@@ -92,22 +109,27 @@ export function GrowthPanel({ companyId, companyName, unlocked, onUpgrade }: Pro
   useEffect(() => load(), [load])
 
   /**
-   * Start the credits checkout.
+   * Start the real Stripe checkout for prepaid ad credits.
    *
-   * `skipTierPrompt` (#1017) is passed from the ready-to-activate prompt: that
-   * state is NOT plan-gated (ad validation is explicitly for any founder, free
-   * tier included — 2026-10-10 direction on #1017), so it must not bounce a
-   * free-tier founder to the upgrade screen before they can even try to buy
-   * credits. The server still has the final word: `/ad-budget-checkout`'s own
-   * `isPaidTier` gate predates that direction and is deliberately left as-is
-   * here (changing a real-money endpoint's entitlement is a separate,
-   * reviewable decision), so if it still refuses, the `reason: 'tier'` branch
-   * below surfaces the upgrade path honestly rather than this component
-   * pre-judging it.
+   * NOT plan-gated (#1017, direction confirmed 2026-10-10): buying ad credits
+   * is open to any signed-in founder, free tier included, and the server
+   * endpoint no longer has an `isPaidTier` gate either (see
+   * app/api/build/growth/ad-budget-checkout/route.ts). This used to short-
+   * circuit to `onUpgrade()` whenever `unlocked` was false, which — now that
+   * the server would happily serve them — would be the client inventing a
+   * paywall the product does not have. (An earlier draft of the #1017
+   * auto-create work routed around that client-side bounce with a
+   * `skipTierPrompt` escape hatch while the server gate still existed; with
+   * the gate itself removed here, that escape hatch is unnecessary and was
+   * dropped rather than carried forward as dead weight.)
+   *
+   * The server still has the only real say. The `reason: 'tier'` branch below
+   * is kept deliberately: if any upstream gate ever does refuse on
+   * entitlement, the founder gets the honest upgrade path rather than a
+   * generic error.
    */
-  const fund = async (opts: { skipTierPrompt?: boolean } = {}) => {
+  const fund = async () => {
     if (busy) return
-    if (!unlocked && !opts.skipTierPrompt) { onUpgrade(); return }
     setBusy(true); setNotice(null)
     try {
       const r = await fetch('/api/build/growth/ad-budget-checkout', {
@@ -225,7 +247,7 @@ export function GrowthPanel({ companyId, companyName, unlocked, onUpgrade }: Pro
           <button
             className="btn-primary"
             data-testid="growth-activate-fund"
-            onClick={() => fund({ skipTierPrompt: true })}
+            onClick={() => fund()}
             disabled={busy}
           >
             {busy ? 'Starting checkout…' : `ADD ${formatCents(amountCents)} IN CREDITS & LAUNCH`}
@@ -283,11 +305,15 @@ export function GrowthPanel({ companyId, companyName, unlocked, onUpgrade }: Pro
               <option key={c} value={c}>{formatCents(c)}</option>
             ))}
           </select>
+          {/* #1017: no longer "Paid plan required" — ad credits are available on
+              every plan, so this states what the founder actually pays for
+              (the credits) instead of advertising a paywall that was removed
+              from the server endpoint. */}
           <p className="m-mono m-metric-note" data-testid="growth-cost">
-            {unlocked ? '(This Feature Is Included In Your Plan)' : 'Paid plan required'}
+            Prepaid ad credits — available on any plan, including free.
           </p>
           <button className="btn-primary" data-testid="growth-fund" onClick={() => fund()} disabled={busy}>
-            {busy ? 'Starting checkout…' : unlocked ? 'FUND TEST CAMPAIGN' : 'FUND TEST CAMPAIGN ↗'}
+            {busy ? 'Starting checkout…' : 'FUND TEST CAMPAIGN'}
           </button>
         </div>
       )}
