@@ -19,6 +19,16 @@
  * API credential) — this panel renders an honest disabled/unavailable state
  * rather than faking a working flow when either isn't configured.
  *
+ * THREE STATES since #1017 (was two). A completed build now auto-creates a
+ * real, PAUSED campaign server-side (lib/build/ad-test-autocreate.ts), so the
+ * panel discriminates on FUNDING, not on whether a campaign exists:
+ *   - no campaignId              → IDLE: the original pay-first offer. Only
+ *                                  reachable when auto-create is off/failed.
+ *   - campaignId, no funding     → READY TO ACTIVATE: the campaign is already
+ *                                  real and paused; add credits to launch it.
+ *                                  NOT plan-gated (#1017, 2026-10-10).
+ *   - campaignId + funding       → FUNDED: activated by the webhook, reporting.
+ *
  * Chrome: reuses the same `.m-live-card`/`.st`/`.m-chip`/`.btn-*`/`.m-task-*`
  * classes AutoModePanel already established, so it matches the dashboard
  * without a new visual language.
@@ -81,9 +91,23 @@ export function GrowthPanel({ companyId, companyName, unlocked, onUpgrade }: Pro
 
   useEffect(() => load(), [load])
 
-  const fund = async () => {
+  /**
+   * Start the credits checkout.
+   *
+   * `skipTierPrompt` (#1017) is passed from the ready-to-activate prompt: that
+   * state is NOT plan-gated (ad validation is explicitly for any founder, free
+   * tier included — 2026-10-10 direction on #1017), so it must not bounce a
+   * free-tier founder to the upgrade screen before they can even try to buy
+   * credits. The server still has the final word: `/ad-budget-checkout`'s own
+   * `isPaidTier` gate predates that direction and is deliberately left as-is
+   * here (changing a real-money endpoint's entitlement is a separate,
+   * reviewable decision), so if it still refuses, the `reason: 'tier'` branch
+   * below surfaces the upgrade path honestly rather than this component
+   * pre-judging it.
+   */
+  const fund = async (opts: { skipTierPrompt?: boolean } = {}) => {
     if (busy) return
-    if (!unlocked) { onUpgrade(); return }
+    if (!unlocked && !opts.skipTierPrompt) { onUpgrade(); return }
     setBusy(true); setNotice(null)
     try {
       const r = await fetch('/api/build/growth/ad-budget-checkout', {
@@ -132,6 +156,12 @@ export function GrowthPanel({ companyId, companyName, unlocked, onUpgrade }: Pro
 
   if (!loaded) return null
 
+  // #1017: a campaign now exists BEFORE any payment (auto-created, PAUSED, on
+  // build completion), so "has a campaign" no longer implies "was funded."
+  // Funding is the real discriminator between the ready-to-activate prompt and
+  // the funded/reporting view.
+  const hasFunding = Number(state.fundedCents) > 0
+
   return (
     <div className="m-live-card" data-testid="growth-panel">
       <div className="m-task-card-h">
@@ -144,13 +174,70 @@ export function GrowthPanel({ companyId, companyName, unlocked, onUpgrade }: Pro
           Growth isn’t available in this environment yet. Nothing was faked — it’ll switch on
           once ad testing is configured.
         </p>
+      ) : state.campaignId && !hasFunding ? (
+        // ---- READY TO ACTIVATE: auto-created, PAUSED, not yet funded (#1017) -
+        //
+        // The state #1016's finding created the need for: the campaign is
+        // already real and already made for this founder (auto-created the
+        // moment their build completed), so the offer is concrete — add credits
+        // and it launches — instead of the abstract pay-for-a-campaign-that-
+        // doesn't-exist-yet pitch that 0 of 338 companies ever took.
+        //
+        // Keying on `hasFunding` rather than campaignId alone matters: before
+        // #1017 the only way to have a campaignId was to have paid, so the
+        // funded branch below was safe. An auto-created campaign breaks that
+        // assumption and would otherwise render "funded $0.00 / real Meta
+        // budget $0.00/day" as though the founder had already been charged.
+        <div className="m-task-card" data-testid="growth-ready-to-activate">
+          <p className="m-task-meta" data-testid="growth-ready-status">
+            Your test campaign for {companyName} is ready and paused — nothing has been
+            spent. Add ad credits to launch it and start getting real clicks on your idea.
+          </p>
+          <label className="m-mono m-metric-note" htmlFor="growth-activate-amount-select">
+            Credits to add:
+          </label>
+          <div className="m-doc-tabs" role="radiogroup" aria-label="Ad credit amount" data-testid="growth-activate-amounts">
+            {PRESET_AMOUNTS_CENTS.map((c) => (
+              <button
+                key={c}
+                role="radio"
+                aria-checked={amountCents === c}
+                className={`m-chip m-doc-tab${amountCents === c ? ' is-active' : ''}`}
+                data-testid={`growth-activate-amount-${c}`}
+                onClick={() => setAmountCents(c)}
+              >
+                {formatCents(c)}
+              </button>
+            ))}
+          </div>
+          <select
+            id="growth-activate-amount-select"
+            className="m-select"
+            data-testid="growth-activate-amount-select"
+            value={amountCents}
+            onChange={(e) => setAmountCents(Number(e.target.value))}
+            style={{ display: 'none' }}
+          >
+            {PRESET_AMOUNTS_CENTS.map((c) => (
+              <option key={c} value={c}>{formatCents(c)}</option>
+            ))}
+          </select>
+          <button
+            className="btn-primary"
+            data-testid="growth-activate-fund"
+            onClick={() => fund({ skipTierPrompt: true })}
+            disabled={busy}
+          >
+            {busy ? 'Starting checkout…' : `ADD ${formatCents(amountCents)} IN CREDITS & LAUNCH`}
+          </button>
+        </div>
       ) : state.campaignId ? (
-        // ---- FUNDED: campaign exists, show reporting ------------------------
+        // ---- FUNDED: campaign exists and credits were purchased -------------
         <div className="m-task-card" data-testid="growth-campaign-active">
           <p className="m-task-meta" data-testid="growth-campaign-status">
-            Test campaign created for {companyName} — funded {formatCents(state.fundedCents)},
-            real Meta budget {formatCents(state.realBudgetCents)}/day. Paused — review and launch it
-            yourself in Meta Ads Manager when ready.
+            Test campaign for {companyName} — funded {formatCents(state.fundedCents)},
+            real Meta budget {formatCents(state.realBudgetCents)}/day. Launched when your
+            credits cleared; performance below refreshes from Meta on demand.
           </p>
           <div className="m-task-card-h">
             <span className="m-chip" data-testid="growth-clicks">
@@ -199,7 +286,7 @@ export function GrowthPanel({ companyId, companyName, unlocked, onUpgrade }: Pro
           <p className="m-mono m-metric-note" data-testid="growth-cost">
             {unlocked ? '(This Feature Is Included In Your Plan)' : 'Paid plan required'}
           </p>
-          <button className="btn-primary" data-testid="growth-fund" onClick={fund} disabled={busy}>
+          <button className="btn-primary" data-testid="growth-fund" onClick={() => fund()} disabled={busy}>
             {busy ? 'Starting checkout…' : unlocked ? 'FUND TEST CAMPAIGN' : 'FUND TEST CAMPAIGN ↗'}
           </button>
         </div>

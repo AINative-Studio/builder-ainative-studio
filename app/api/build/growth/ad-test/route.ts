@@ -20,15 +20,24 @@ import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { getPlanStatus, isPaidTier } from '@/lib/ainative/plan'
 import { resolveApp, setAppGrowthAdTest } from '@/lib/build/app-registry'
-import { createAdTestCampaign, growthAdTestingEnabled, growthAdTestingCredentialConfigured } from '@/lib/build/ad-testing'
+import {
+  createAdTestCampaign,
+  growthAdTestingEnabled,
+  growthAdTestingCredentialConfigured,
+  DEFAULT_DAILY_BUDGET_USD,
+  MAX_DAILY_BUDGET_USD,
+} from '@/lib/build/ad-testing'
 
 export const runtime = 'nodejs'
 
 // Same set provision/route.ts already gates real provisioning behind.
 // #762: paid-tier membership now lives in lib/ainative/plan.ts's isPaidTier.
 
-const DEFAULT_DAILY_BUDGET_USD = 5
-const MAX_DAILY_BUDGET_USD = 25
+// #1017: the two budget constants moved to lib/build/ad-testing.ts (the
+// auto-create path needs the same DEFAULT and can't import a route module).
+// Re-exported here so any existing importer of this route keeps working and
+// this route's own behavior is unchanged.
+export { DEFAULT_DAILY_BUDGET_USD, MAX_DAILY_BUDGET_USD }
 
 export async function POST(request: NextRequest) {
   if (!growthAdTestingEnabled()) {

@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
-import { createAdTestCampaign, growthAdTestingEnabled, growthAdTestingCredentialConfigured } from '@/lib/build/ad-testing'
+import {
+  activateAdTestCampaign,
+  createAdTestCampaign,
+  growthAdTestingEnabled,
+  growthAdTestingCredentialConfigured,
+} from '@/lib/build/ad-testing'
 
 /**
  * lib/build/ad-testing — Growth module ad-testing client (#449).
@@ -143,6 +148,81 @@ describe('createAdTestCampaign (#449)', () => {
     it('never throws when fetch throws a network error', async () => {
       vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('ECONNRESET') }))
       const result = await createAdTestCampaign({ companyName: 'Acme', dailyBudgetUsd: 10 })
+      expect(result.ok).toBe(false)
+      expect(result.reason).toContain('ECONNRESET')
+    })
+  })
+})
+
+/**
+ * activateAdTestCampaign (#1017) — the one function that can turn a real,
+ * PAUSED auto-created campaign into live spend. Every test here asserts the
+ * guards that keep it from firing accidentally; the real Meta API call itself
+ * is mocked at the HTTP boundary (same posture as createAdTestCampaign above
+ * — no real campaign is ever activated by this suite).
+ */
+describe('activateAdTestCampaign (#1017)', () => {
+  it('returns { ok: false, reason: "credential_not_configured" } when the Marketing API credential is missing, without ever calling fetch', async () => {
+    delete process.env.METAADS_ACCESS_TOKEN
+    delete process.env.METAADS_AD_ACCOUNT_ID
+    const fn = mockFetch(() => ({ ok: true, json: { success: true } }))
+    const result = await activateAdTestCampaign('camp_1')
+    expect(result).toEqual({ ok: false, reason: 'credential_not_configured' })
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  describe('with a configured credential', () => {
+    beforeEach(() => {
+      process.env.METAADS_ACCESS_TOKEN = 'real-token'
+      process.env.METAADS_AD_ACCOUNT_ID = '999888777'
+    })
+
+    it('returns { ok: false, reason: "campaign_id_required" } for an empty campaign id, without calling fetch', async () => {
+      const fn = mockFetch(() => ({ ok: true, json: { success: true } }))
+      const result = await activateAdTestCampaign('')
+      expect(result).toEqual({ ok: false, reason: 'campaign_id_required' })
+      expect(fn).not.toHaveBeenCalled()
+    })
+
+    it('POSTs status ACTIVE to the campaign-by-id endpoint with the access token', async () => {
+      let capturedUrl = ''
+      let capturedBody: any = null
+      let capturedMethod = ''
+      const fn = mockFetch((url, init) => {
+        capturedUrl = url
+        capturedMethod = String(init?.method)
+        capturedBody = JSON.parse(String(init?.body))
+        return { ok: true, json: { success: true } }
+      })
+      const result = await activateAdTestCampaign('camp_real_123')
+      expect(result).toEqual({ ok: true, campaignId: 'camp_real_123', status: 200 })
+      expect(capturedMethod).toBe('POST')
+      // The campaign-by-id edit endpoint, NOT the account-level create endpoint.
+      expect(capturedUrl).toContain('/camp_real_123')
+      expect(capturedUrl).not.toContain('/campaigns')
+      expect(capturedBody.status).toBe('ACTIVE')
+      expect(capturedBody.access_token).toBe('real-token')
+      expect(fn).toHaveBeenCalledTimes(1)
+    })
+
+    it('url-encodes the campaign id', async () => {
+      let capturedUrl = ''
+      mockFetch((url) => { capturedUrl = url; return { ok: true, json: { success: true } } })
+      await activateAdTestCampaign('camp/weird id')
+      expect(capturedUrl).toContain(encodeURIComponent('camp/weird id'))
+    })
+
+    it('surfaces a real Meta API error honestly', async () => {
+      mockFetch(() => ({ ok: false, status: 400, json: { error: { message: 'Campaign cannot be activated' } } }))
+      const result = await activateAdTestCampaign('camp_1')
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(400)
+      expect(result.reason).toContain('Campaign cannot be activated')
+    })
+
+    it('never throws when fetch throws a network error', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('ECONNRESET') }))
+      const result = await activateAdTestCampaign('camp_1')
       expect(result.ok).toBe(false)
       expect(result.reason).toContain('ECONNRESET')
     })

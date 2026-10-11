@@ -32,6 +32,7 @@ const h = vi.hoisted(() => ({
   setAppGrowthAdBudgetFunded: vi.fn(async () => true),
   setAppGrowthAdTest: vi.fn(async () => true),
   createAdTestCampaign: vi.fn(),
+  activateAdTestCampaign: vi.fn(),
 }))
 
 vi.mock('@/lib/build/app-registry', () => ({
@@ -39,7 +40,10 @@ vi.mock('@/lib/build/app-registry', () => ({
   setAppGrowthAdBudgetFunded: h.setAppGrowthAdBudgetFunded,
   setAppGrowthAdTest: h.setAppGrowthAdTest,
 }))
-vi.mock('@/lib/build/ad-testing', () => ({ createAdTestCampaign: h.createAdTestCampaign }))
+vi.mock('@/lib/build/ad-testing', () => ({
+  createAdTestCampaign: h.createAdTestCampaign,
+  activateAdTestCampaign: h.activateAdTestCampaign,
+}))
 
 function req(body: any, token?: string | null) {
   return {
@@ -58,6 +62,7 @@ beforeEach(() => {
   h.setAppGrowthAdBudgetFunded.mockResolvedValue(true)
   h.setAppGrowthAdTest.mockResolvedValue(true)
   h.createAdTestCampaign.mockResolvedValue({ ok: true, campaignId: 'camp_123' })
+  h.activateAdTestCampaign.mockResolvedValue({ ok: true, campaignId: 'camp_existing' })
 })
 
 afterEach(() => {
@@ -128,7 +133,10 @@ describe('POST /api/webhooks/ad-budget-confirmed (#449)', () => {
     const token = signPayload(payload)
     const res: any = await POST(req(payload, token))
     const json = await res.json()
-    expect(json).toEqual({ ok: true, campaignId: 'camp_existing', alreadyExisted: true })
+    // #1017: the pre-existing campaign is now ACTIVATED rather than no-op'd —
+    // an auto-created PAUSED campaign is exactly what lands in this branch,
+    // and the founder has just paid for credits.
+    expect(json).toEqual({ ok: true, campaignId: 'camp_existing', alreadyExisted: true, activated: true })
     expect(h.createAdTestCampaign).not.toHaveBeenCalled()
     // Funding is still recorded even though no new campaign is created.
     expect(h.setAppGrowthAdBudgetFunded).toHaveBeenCalled()
@@ -141,5 +149,97 @@ describe('POST /api/webhooks/ad-budget-confirmed (#449)', () => {
     const token = signPayload(payload)
     const res: any = await POST(req(payload, token))
     expect(res.status).toBe(404)
+  })
+})
+
+/**
+ * #1017 — activating the AUTO-CREATED campaign instead of creating a duplicate.
+ *
+ * With #1017's auto-create, by the time a founder's prepaid-credit payment
+ * clears, their company already HAS a PAUSED campaign. This webhook's old
+ * `growthAdTestCampaignId` branch was a pure no-op ("alreadyExisted"), so the
+ * money would clear and the campaign would stay paused forever. The composition
+ * rule: creation is still exactly once (whichever path got there first), and
+ * activation is the one new step the confirmed payment unlocks.
+ *
+ * Confirmed payment is the ONLY gate — no plan-tier check, by design: a
+ * free-tier founder who bought credits is entitled to run the campaign.
+ */
+describe('POST /api/webhooks/ad-budget-confirmed — activation (#1017)', () => {
+  const FUNDED = { slug: 'acme', paymentIntentId: 'pi_act', requestedAmountCents: 1000, adBudgetCents: 800, ts: nowSec() }
+
+  it('ACTIVATES the existing PAUSED campaign rather than creating a duplicate', async () => {
+    h.resolveApp.mockResolvedValue({ ...APP, growthAdTestCampaignId: 'camp_auto_1' })
+    h.activateAdTestCampaign.mockResolvedValue({ ok: true, campaignId: 'camp_auto_1' })
+    const { POST } = await import('@/app/api/webhooks/ad-budget-confirmed/route')
+    const res: any = await POST(req(FUNDED, signPayload(FUNDED)))
+    const json = await res.json()
+
+    expect(h.activateAdTestCampaign).toHaveBeenCalledWith('camp_auto_1')
+    expect(h.createAdTestCampaign).not.toHaveBeenCalled()
+    expect(json.ok).toBe(true)
+    expect(json.campaignId).toBe('camp_auto_1')
+    expect(json.activated).toBe(true)
+  })
+
+  it('records the funding BEFORE attempting activation, so a failed activation never loses the payment', async () => {
+    h.resolveApp.mockResolvedValue({ ...APP, growthAdTestCampaignId: 'camp_auto_1' })
+    h.activateAdTestCampaign.mockResolvedValue({ ok: false, reason: 'Campaign cannot be activated' })
+    const { POST } = await import('@/app/api/webhooks/ad-budget-confirmed/route')
+    const res: any = await POST(req(FUNDED, signPayload(FUNDED)))
+    const json = await res.json()
+
+    expect(h.setAppGrowthAdBudgetFunded).toHaveBeenCalledWith('acme', {
+      paymentIntentId: 'pi_act', requestedCents: 1000, realCents: 800,
+    })
+    // Honest about the failure — never reports activated:true on a failed call.
+    expect(json.activated).toBe(false)
+    expect(json.reason).toContain('Campaign cannot be activated')
+  })
+
+  it('does NOT activate anything when the company has no campaign yet — it creates one (still PAUSED)', async () => {
+    h.resolveApp.mockResolvedValue({ ...APP })
+    const { POST } = await import('@/app/api/webhooks/ad-budget-confirmed/route')
+    const res: any = await POST(req(FUNDED, signPayload(FUNDED)))
+    const json = await res.json()
+
+    expect(h.createAdTestCampaign).toHaveBeenCalledTimes(1)
+    expect(json.campaignId).toBe('camp_123')
+    expect(json.ok).toBe(true)
+  })
+
+  it('never activates on an unverified/forged callback — no payment, no activation', async () => {
+    h.resolveApp.mockResolvedValue({ ...APP, growthAdTestCampaignId: 'camp_auto_1' })
+    const { POST } = await import('@/app/api/webhooks/ad-budget-confirmed/route')
+    const res: any = await POST(req(FUNDED, signPayload(FUNDED, 'wrong-secret')))
+    expect(res.status).toBe(401)
+    expect(h.activateAdTestCampaign).not.toHaveBeenCalled()
+  })
+
+  it('never activates on a stale/replayed callback', async () => {
+    h.resolveApp.mockResolvedValue({ ...APP, growthAdTestCampaignId: 'camp_auto_1' })
+    const stale = { ...FUNDED, ts: nowSec() - 60 * 60 }
+    const { POST } = await import('@/app/api/webhooks/ad-budget-confirmed/route')
+    const res: any = await POST(req(stale, signPayload(stale)))
+    expect(res.status).toBe(401)
+    expect(h.activateAdTestCampaign).not.toHaveBeenCalled()
+  })
+
+  it('never activates for an unknown company', async () => {
+    h.resolveApp.mockResolvedValue(null)
+    const { POST } = await import('@/app/api/webhooks/ad-budget-confirmed/route')
+    const res: any = await POST(req(FUNDED, signPayload(FUNDED)))
+    expect(res.status).toBe(404)
+    expect(h.activateAdTestCampaign).not.toHaveBeenCalled()
+  })
+
+  it('never throws when activation itself rejects', async () => {
+    h.resolveApp.mockResolvedValue({ ...APP, growthAdTestCampaignId: 'camp_auto_1' })
+    h.activateAdTestCampaign.mockRejectedValue(new Error('ECONNRESET'))
+    const { POST } = await import('@/app/api/webhooks/ad-budget-confirmed/route')
+    const res: any = await POST(req(FUNDED, signPayload(FUNDED)))
+    const json = await res.json()
+    expect(json.ok).toBe(true)
+    expect(json.activated).toBe(false)
   })
 })

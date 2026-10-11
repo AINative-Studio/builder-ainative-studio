@@ -47,6 +47,11 @@ vi.mock('@/lib/build/ad-testing', () => ({
   createAdTestCampaign: h.createAdTestCampaign,
   growthAdTestingEnabled: h.growthAdTestingEnabled,
   growthAdTestingCredentialConfigured: h.growthAdTestingCredentialConfigured,
+  // #1017: the budget constants moved into lib/build/ad-testing.ts so the
+  // auto-create path can share the DEFAULT. Mocked at their real values so
+  // this route's existing clamping behavior is tested unchanged.
+  DEFAULT_DAILY_BUDGET_USD: 5,
+  MAX_DAILY_BUDGET_USD: 25,
 }))
 
 import { POST } from '@/app/api/build/growth/ad-test/route'

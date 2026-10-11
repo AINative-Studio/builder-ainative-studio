@@ -6,6 +6,15 @@
  * from a client-facing success redirect — so the signature check here is
  * the actual security boundary, not a formality.
  *
+ * #1017: it is now also the ONLY place a campaign gets ACTIVATED (real spend
+ * starts). Since builds auto-create a PAUSED campaign on completion, the
+ * common path through here is activate-the-existing-one, not create-a-new-one.
+ * The gate on activation is this verified payment and nothing else — not plan
+ * tier: purchasing prepaid ad credits IS the founder's consent to real spend,
+ * and a free-tier founder who bought credits is entitled to run a validation
+ * campaign (confirmed product direction, 2026-10-10). Which makes the
+ * signature check below the security boundary for starting live spend, too.
+ *
  * Verifies an HMAC-SHA256 token in the `x-ainative-callback-token` header:
  * `base64url(payloadJsonBytes).base64url(hmacSha256(BUILDER_CALLBACK_SECRET, payloadB64))`.
  * Core signs over the EXACT JSON bytes it sends (compact, sorted keys) — this
@@ -20,7 +29,7 @@
 import { NextRequest } from 'next/server'
 import { createHmac, timingSafeEqual } from 'crypto'
 import { resolveApp, setAppGrowthAdBudgetFunded, setAppGrowthAdTest } from '@/lib/build/app-registry'
-import { createAdTestCampaign } from '@/lib/build/ad-testing'
+import { activateAdTestCampaign, createAdTestCampaign } from '@/lib/build/ad-testing'
 
 export const runtime = 'nodejs'
 
@@ -98,11 +107,42 @@ export async function POST(request: NextRequest) {
     realCents: adBudgetCents,
   }).catch(() => {})
 
-  // Already has a campaign — funding a second time (shouldn't normally
-  // happen, one purchase per campaign for this first pass) doesn't create a
-  // duplicate.
+  // ---- #1017: ACTIVATE an existing PAUSED campaign -----------------------
+  //
+  // This branch used to be a pure no-op ("alreadyExisted", nothing done). With
+  // #1017's auto-create (lib/build/ad-test-autocreate.ts), it is now the NORMAL
+  // case: by the time a founder's prepaid-credit payment clears, their company
+  // already has a real, PAUSED campaign waiting. Leaving it paused after taking
+  // their money is the bug this closes.
+  //
+  // COMPOSITION RULE with the create path below: creation happens exactly once,
+  // by whichever path got there first (auto-create on build completion, the
+  // manual endpoint, or the create below for a company that somehow has none).
+  // Activation is the ONE new step the confirmed payment unlocks. Nothing here
+  // ever creates a second campaign for the same company.
+  //
+  // THE GATE: a verified payment, and nothing else. No plan-tier check, by
+  // design (#1017, 2026-10-10) — purchasing prepaid ad credits IS the founder's
+  // consent to real spend, and a free-tier founder who bought credits is
+  // explicitly entitled to run a validation campaign. The HMAC signature check
+  // above is therefore the real security boundary for starting live spend.
+  //
+  // Funding is recorded ABOVE this point, deliberately: a failed activation must
+  // never lose the payment record. An honest `activated: false` + reason is
+  // returned instead of a fabricated success, so a retry/manual path has
+  // something real to act on.
   if (app.growthAdTestCampaignId) {
-    return Response.json({ ok: true, campaignId: app.growthAdTestCampaignId, alreadyExisted: true })
+    const activation = await activateAdTestCampaign(app.growthAdTestCampaignId).catch((e: any) => ({
+      ok: false as const,
+      reason: String(e?.message || e).slice(0, 160),
+    }))
+    return Response.json({
+      ok: true,
+      campaignId: app.growthAdTestCampaignId,
+      alreadyExisted: true,
+      activated: activation.ok === true,
+      ...(activation.ok ? {} : { reason: activation.reason || 'activation_failed' }),
+    })
   }
 
   const result = await createAdTestCampaign({
