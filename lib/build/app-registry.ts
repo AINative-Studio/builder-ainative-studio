@@ -296,6 +296,42 @@ export interface AppEntry {
   // first pass — see the webhook route's own doc comment).
   emailUndeliverableAt?: string
   emailUndeliverableReason?: string
+  // PRIMITIVE WIRING (#1056) — a real, honest signal distinct from the
+  // `*Provisioned` flags above. `*Provisioned` means "a real credential was
+  // issued"; `*Wired` means "the generated app's own rendered source
+  // genuinely calls this primitive" (a real /api/primitive/{name}/... fetch
+  // found via lib/build/primitive-wiring's extractWiredPrimitives). A real
+  // enterprise company (`mendr`) had 6 primitives provisioned with ZERO
+  // wired — the registry had no way to tell a founder "you have a key but
+  // your app never uses it" apart from a genuinely wired integration.
+  //
+  // A follow-up spot-check on track:'app' companies found this gap is
+  // per-generation, not track-specific: some app-track companies
+  // (`flashpoint`, `habanero-hub`) ARE genuinely wired, others (`castlo`,
+  // `aerosol`) are provisioned but not wired, same as mendr. So these flags
+  // are computed fresh at every register-app call (see runWiringScan in
+  // register-app-core.ts) rather than inferred from track or assumed.
+  //
+  // Absent/false = not detected as wired (default for every company created
+  // before this field existed, and for any company whose code genuinely
+  // never calls the primitive). These are ADDITIVE ONLY — never read as a
+  // substitute for the existing `*Provisioned` flags, which #1044's Live/
+  // Planned badge logic already depends on.
+  pipelineWired?: boolean
+  zeroinvoiceWired?: boolean
+  commerceWired?: boolean
+  capstackWired?: boolean
+  serviceosWired?: boolean
+  zerovoiceWired?: boolean
+  livestreamingWired?: boolean
+  socialgraphWired?: boolean
+  zerocrmWired?: boolean
+  agentflowWired?: boolean
+  formsWired?: boolean
+  contentWorkflowWired?: boolean
+  // When the wiring scan last ran for this company (set by runWiringScan,
+  // called from register-app on every registration/regeneration).
+  wiringScannedAt?: string
   createdAt: string
 }
 
@@ -538,6 +574,39 @@ export async function setAppLastDigestAt(slug: string, atIso: string): Promise<b
   const existing = await resolveApp(slug)
   if (!existing) return false
   return registerApp({ ...existing, lastDigestAt: atIso })
+}
+
+/**
+ * Persist the `*Wired` flags computed by a fresh wiring scan (#1056) —
+ * see the `*Wired` fields' own doc comment above for why these are a
+ * separate, additive signal from `*Provisioned`. Called from
+ * runWiringScan (lib/build/register-app-core.ts) on every registration/
+ * regeneration, so the flags always reflect the CURRENT generated code,
+ * never a stale scan from an earlier version of the app.
+ *
+ * Idempotent-ish: still appends a fresh row every call (this runs once per
+ * register-app call already, same cadence as the existing seeded-data
+ * check, so no extra dedup is needed here) but short-circuits to a no-op
+ * success when every flag is already at the exact same value AND a scan
+ * timestamp already exists, so a register-app retry with unchanged code
+ * doesn't churn the registry.
+ */
+export async function setAppWiring(
+  slug: string,
+  flags: Record<string, boolean>,
+): Promise<boolean> {
+  const existing = await resolveApp(slug)
+  if (!existing) return false
+  const existingRecord = existing as unknown as Record<string, unknown>
+  const unchanged = existing.wiringScannedAt && Object.entries(flags).every(
+    ([k, v]) => Boolean(existingRecord[k]) === v,
+  )
+  if (unchanged) return true
+  return registerApp({
+    ...existing,
+    ...flags,
+    wiringScannedAt: new Date().toISOString(),
+  })
 }
 
 /**

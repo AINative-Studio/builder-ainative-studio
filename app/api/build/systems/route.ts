@@ -49,6 +49,19 @@ export async function GET(request: NextRequest) {
       zerovoiceProvisioned: Boolean(entry?.zerovoiceProvisioned),
       livestreamingProvisioned: Boolean(entry?.livestreamingProvisioned),
       socialgraphProvisioned: Boolean(entry?.socialgraphProvisioned),
+      // #1056: per-primitive WIRING flags — read as-is (undefined stays
+      // undefined, never coerced to `false`) so buildSystems can tell "no
+      // wiring scan has run yet" apart from "a scan ran and found nothing
+      // wired". A fresh company with no scan result must never show the new
+      // #1056 "Connected, not wired" badge it hasn't earned.
+      pipelineWired: entry?.pipelineWired,
+      zeroinvoiceWired: entry?.zeroinvoiceWired,
+      commerceWired: entry?.commerceWired,
+      capstackWired: entry?.capstackWired,
+      serviceosWired: entry?.serviceosWired,
+      zerovoiceWired: entry?.zerovoiceWired,
+      livestreamingWired: entry?.livestreamingWired,
+      socialgraphWired: entry?.socialgraphWired,
     }
     if (projectId) {
       try {
@@ -86,6 +99,20 @@ export async function GET(request: NextRequest) {
       zerovoice: Boolean(flags.zerovoiceProvisioned),
       livestreaming: Boolean(flags.livestreamingProvisioned),
       socialgraph: Boolean(flags.socialgraphProvisioned),
+    },
+    // #1056: the honest wiring counterpart — `undefined` when no wiring scan
+    // has run for that primitive yet (NOT coerced to `false`), so a caller
+    // can tell "unknown" apart from "confirmed unwired". See
+    // lib/build/primitive-wiring.ts / runWiringScan for how this gets set.
+    primitiveWiring: {
+      pipeline: flags.pipelineWired,
+      zeroinvoice: flags.zeroinvoiceWired,
+      commerce: flags.commerceWired,
+      capstack: flags.capstackWired,
+      serviceos: flags.serviceosWired,
+      zerovoice: flags.zerovoiceWired,
+      livestreaming: flags.livestreamingWired,
+      socialgraph: flags.socialgraphWired,
     },
     zeroState: Object.keys(counts).length === 0,
   })

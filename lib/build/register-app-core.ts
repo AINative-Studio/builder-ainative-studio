@@ -64,6 +64,8 @@ import { checkAppReady, resolveStoredApp, type ReadyCheck } from '@/lib/build/re
 import { commitRegeneration, provisionCompanyRepo, toFileMapForCommit } from '@/lib/git/company-repo'
 import { BUILDER_WORKSPACE_ID } from '@/lib/build/instant-db'
 import { reportDeploymentHealthStage } from '@/lib/build/deployment-health'
+import { computeWiringFlags, type WiringFlags } from '@/lib/build/primitive-wiring'
+import { setAppWiring } from '@/lib/build/app-registry'
 
 /** Extra store-miss re-checks before an unverifiable app is accepted. */
 const READY_GATE_RETRIES = 3
@@ -178,4 +180,40 @@ export async function runGitCommit(opts: {
     await reportDeploymentHealthStage('builder_app_generation', slug, 'git_commit', committed ? 'ok' : 'failed')
   }
   return { attempted, committed }
+}
+
+export interface WiringScanResult {
+  /** True once we actually resolved code to scan (false = store miss — nothing recorded). */
+  scanned: boolean
+  /** The computed flags, when scanned. */
+  flags: WiringFlags | null
+}
+
+/**
+ * Scan a company's CURRENT generated code for real primitive-proxy calls
+ * and persist the `*Wired` flags (#1056) — a signal distinct from the
+ * `*Provisioned` (credential-issued) flags already on the registry entry.
+ *
+ * WHY HERE: this is the same seam the seeded-data check (#343) already
+ * uses — resolveStoredApp() has just been called to get "what code will
+ * this app actually run," so re-scanning that same code for primitive
+ * wiring costs nothing extra over a second regex pass, and runs on the
+ * exact cadence that matters: every registration AND every regeneration,
+ * so a company's wiring state never goes stale after a founder adds (or
+ * removes) a real integration.
+ *
+ * FAIL-OPEN / best-effort, matching runGitCommit's posture: a store miss or
+ * a registry-write hiccup must never block registration. Never throws.
+ */
+export async function runWiringScan(slug: string, chatId: string): Promise<WiringScanResult> {
+  try {
+    const stored = await resolveStoredApp(chatId)
+    if (!stored) return { scanned: false, flags: null }
+    const flags = computeWiringFlags(stored.code)
+    await setAppWiring(slug, flags).catch(() => false)
+    return { scanned: true, flags }
+  } catch (err) {
+    console.warn(`[register-app-core] Wiring scan error for ${slug}:`, err)
+    return { scanned: false, flags: null }
+  }
 }

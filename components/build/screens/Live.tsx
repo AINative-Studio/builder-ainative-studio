@@ -1281,8 +1281,8 @@ export function Live() {
                     <span className="m-system-name">{s.name}</span>
                     <span className="m-system-stat m-mono">{s.stat}</span>
                     <span className="m-chip m-system-prim">{s.primitive}</span>
-                    {/* Live/Planned badge (#67): unambiguous status for every system. */}
-                    <SystemStatusBadge url={s.url} provisioned={s.provisioned} />
+                    {/* Live/Connected-not-wired/Planned badge (#67, #1056): unambiguous status for every system. */}
+                    <SystemStatusBadge url={s.url} provisioned={s.provisioned} wired={s.wired} />
                     <SystemSaving vsProvider={s.vsProvider} savedMonthly={s.savedMonthly} />
                   </a>
                 ) : (
@@ -1296,8 +1296,8 @@ export function Live() {
                     <span className="m-system-name">{s.name}</span>
                     <span className="m-system-stat m-mono">{s.stat}</span>
                     <span className="m-chip m-system-prim">{s.primitive}</span>
-                    {/* Live/Planned badge (#67): replaces ● live / ○ sim text markers. */}
-                    <SystemStatusBadge provisioned={s.provisioned} />
+                    {/* Live/Connected-not-wired/Planned badge (#67, #1056): replaces ● live / ○ sim text markers. */}
+                    <SystemStatusBadge provisioned={s.provisioned} wired={s.wired} />
                     <SystemSaving vsProvider={s.vsProvider} savedMonthly={s.savedMonthly} />
                     <a className="m-system-learn m-mono" href={s.docUrl} target="_blank" rel="noreferrer">docs ↗</a>
                   </div>

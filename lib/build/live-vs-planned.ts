@@ -8,11 +8,17 @@
  */
 
 /**
- * The two definitive states a system or artifact can be in:
- *  - 'live'    → real, running, backed by a provisioned data source.
- *  - 'planned' → simulated, planned, will be built when the company goes live.
+ * The definitive states a system or artifact can be in:
+ *  - 'live'      → real, running, backed by a provisioned data source.
+ *  - 'unwired'   → credentials are genuinely provisioned, but the generated
+ *                  app's own code never calls this primitive (#1056). Distinct
+ *                  from both 'live' (actually used) and 'planned' (no
+ *                  credential at all) — a founder who sees "connected" should
+ *                  not be told the same thing as a founder whose app code
+ *                  genuinely reaches the primitive.
+ *  - 'planned'   → simulated, planned, will be built when the company goes live.
  */
-export type SystemStatus = 'live' | 'planned'
+export type SystemStatus = 'live' | 'unwired' | 'planned'
 
 /**
  * Badge display config for a given status — drives both the CSS class modifier
@@ -20,8 +26,8 @@ export type SystemStatus = 'live' | 'planned'
  */
 export interface StatusBadgeConfig {
   status: SystemStatus
-  /** CSS class modifier appended to `.st` (e.g. 'is-done', 'is-running') */
-  modifier: 'is-done' | 'is-running'
+  /** CSS class modifier appended to `.st` (e.g. 'is-done', 'is-running', 'is-needs') */
+  modifier: 'is-done' | 'is-running' | 'is-needs'
   /** Short label shown in the badge */
   label: string
   /** Long tooltip / aria-label for accessibility */
@@ -36,6 +42,15 @@ export const STATUS_BADGE: Record<SystemStatus, StatusBadgeConfig> = {
     label: 'Live',
     description: 'Real and running — backed by a live data source for this company.',
   },
+  // #1056: reuses modernist.css's existing `.st.is-needs` modifier (amber,
+  // square dot) — already defined, never previously used by this badge, so
+  // this is a genuinely distinct visual state with no new CSS required.
+  unwired: {
+    status: 'unwired',
+    modifier: 'is-needs',
+    label: 'Connected, not wired',
+    description: 'Credentials are provisioned, but the generated app does not call this primitive yet.',
+  },
   planned: {
     status: 'planned',
     modifier: 'is-running',
@@ -45,28 +60,42 @@ export const STATUS_BADGE: Record<SystemStatus, StatusBadgeConfig> = {
 }
 
 /**
- * Derive the system status from the provisioning flags on a BusinessSystem.
+ * Derive the system status from the provisioning + wiring flags on a
+ * BusinessSystem.
  *
- * A system is 'live' when:
- *  - It has a real instance URL (pointing to a provisioned service), OR
- *  - Its `provisioned` flag is true (per-company ZeroDB data wired).
- *
- * Everything else is 'planned' — it's a plan/simulation of what will be built.
+ * A system is:
+ *  - 'live'    when it has a real instance URL, OR it's provisioned AND
+ *              (no wiring signal is available, OR wiring confirms the app
+ *              genuinely calls it). `wired` is OPTIONAL and UNDEFINED means
+ *              "no wiring scan has run for this company/primitive yet" —
+ *              deliberately treated as live-as-before (unregressed: every
+ *              existing caller that never passes `wired` keeps today's
+ *              exact behavior, #1044's Live/Planned badge included).
+ *  - 'unwired' when it's provisioned (not via a direct instance URL) AND a
+ *              wiring scan explicitly found `wired === false` — a REAL,
+ *              confirmed "has a key, app never calls it" (#1056).
+ *  - 'planned' otherwise — no credential at all.
  *
  * @param opts.provisioned  True when the system's data comes from a real ZeroDB project.
  * @param opts.url          If set, the system has a real provisioned instance URL.
+ * @param opts.wired        True/false when a wiring scan ran for this primitive (#1056);
+ *                          undefined when no scan result exists yet (never downgrades).
  */
-export function deriveSystemStatus(opts: { provisioned?: boolean; url?: string }): SystemStatus {
+export function deriveSystemStatus(opts: { provisioned?: boolean; url?: string; wired?: boolean }): SystemStatus {
   if (opts.url) return 'live'
-  if (opts.provisioned) return 'live'
+  if (opts.provisioned) {
+    if (opts.wired === false) return 'unwired'
+    return 'live'
+  }
   return 'planned'
 }
 
 /**
- * Returns the full badge config for a given system based on its provisioning state.
- * Convenience wrapper: `deriveSystemStatus` → `STATUS_BADGE`.
+ * Returns the full badge config for a given system based on its provisioning
+ * (and, when available, wiring) state. Convenience wrapper:
+ * `deriveSystemStatus` → `STATUS_BADGE`.
  */
-export function systemBadge(opts: { provisioned?: boolean; url?: string }): StatusBadgeConfig {
+export function systemBadge(opts: { provisioned?: boolean; url?: string; wired?: boolean }): StatusBadgeConfig {
   return STATUS_BADGE[deriveSystemStatus(opts)]
 }
 

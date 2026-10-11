@@ -15,7 +15,7 @@ import { registerApp, resolveApp, type AppEntry } from '@/lib/build/app-registry
 import { deployPersistent } from '@/lib/build/deploy'
 import { resolveStoredApp } from '@/lib/build/ready-gate'
 import { checkSeededData, type SeededDataCheck } from '@/lib/build/seed-check'
-import { runReadyGate, runGitCommit } from '@/lib/build/register-app-core'
+import { runReadyGate, runGitCommit, runWiringScan } from '@/lib/build/register-app-core'
 import { autoCreateAdTestCampaign } from '@/lib/build/ad-test-autocreate'
 import { enrollCompany, isEnrolled } from '@/lib/build/loop-enrollment'
 import { sendWelcomeEmail } from '@/lib/build/company-email'
@@ -150,6 +150,16 @@ export async function POST(request: NextRequest) {
       }
     }
   } catch { /* fail-open — never block on the data check */ }
+
+  // PRIMITIVE WIRING SCAN (#1056): scan this registration's CURRENT generated
+  // code for real /api/primitive/{name}/... calls and persist the `*Wired`
+  // flags — a signal distinct from the `*Provisioned` (credential-issued)
+  // flags, so the Live dashboard can honestly show "provisioned but the app
+  // never actually calls it" (the real mendr/castlo/aerosol shape) separately
+  // from "provisioned AND genuinely wired" (the real flashpoint/habanero-hub
+  // shape). Best-effort, never blocks registration — see runWiringScan's own
+  // doc comment for the fail-open posture.
+  runWiringScan(slug, chatId).catch(() => {})
 
   // Ownership (#253 / Greg's missing-dashboard bug): stamp the signed-in
   // founder as owner AT REGISTRATION — provisioning/checkout may never run for a
