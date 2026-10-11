@@ -227,6 +227,40 @@ export async function getLastRun(companyId: string): Promise<CompanyRun | null> 
 }
 
 /**
+ * The company's most recent nightly runs, newest-first (#1055).
+ *
+ * `getLastRun()` above returns only the single latest run, which is exactly
+ * why the agent-swarm stall was invisible: one run in isolation always looks
+ * fine ("dispatched"), and the real signal — the last N nights in a row all
+ * dispatching a task that never finished — needs the recent HISTORY. The
+ * append-only run rows already hold it (`recordRun` writes one per company
+ * per night with its real `lastTaskId`); nothing had ever read more than the
+ * newest one back.
+ *
+ * Returns at most `limit` rows, only those carrying a real `lastTaskId`
+ * (a 'skipped'/'error' run with no task id has nothing to check a status
+ * for). Empty on any failure — the caller then honestly reports
+ * "not assessed" rather than guessing.
+ */
+export async function listRecentRuns(companyId: string, limit = 6): Promise<CompanyRun[]> {
+  if (!configured() || !companyId) return []
+  try {
+    const res = await fetch(`${rowsUrl()}?limit=500`, { headers: headers(), signal: AbortSignal.timeout(20000) })
+    if (!res.ok) return []
+    const data = JSON.parse(await res.text())
+    const rows = Array.isArray(data) ? data : data.data || data.rows || []
+    const runs: CompanyRun[] = rows
+      .map((r: { row_data?: CompanyRun & { kind?: string } }) => r.row_data)
+      .filter((rd: (CompanyRun & { kind?: string }) | undefined): rd is CompanyRun =>
+        rd?.kind === 'run' && rd?.companyId === companyId && Boolean(rd?.lastTaskId))
+    runs.sort((a, b) => (b.lastRunAt || '').localeCompare(a.lastRunAt || ''))
+    return runs.slice(0, Math.max(0, limit))
+  } catch {
+    return []
+  }
+}
+
+/**
  * Whether a company is enrolled in the nightly autonomous loop (#55). Used by the
  * Tasks panel to decide if the synthetic "Recurring" task should appear. Returns
  * false on any failure so the backlog degrades to no-recurring-row honestly.

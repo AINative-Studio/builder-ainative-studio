@@ -18,6 +18,7 @@
  */
 
 import type { DocType } from '@/lib/build/document-store'
+import type { SwarmHealthVerdict } from '@/lib/build/swarm-task-health'
 
 /** Context for generating a durable document. */
 export interface DocGenContext {
@@ -120,6 +121,22 @@ export interface DailyReportInput {
   briefing?: string | null
   /** The loop's own detail line (what happened). */
   detail?: string
+  /**
+   * The AGGREGATE swarm outcome across this company's recent dispatched tasks
+   * (#1055) — read back from core's real task-status endpoint, never inferred.
+   *
+   * THE BUG THIS FIELD EXISTS FOR: without it this report described only the
+   * current run's DISPATCH, which is always "dispatched" when the POST
+   * succeeds. A real enterprise company (`mendr`) therefore received thirteen
+   * consecutive nightly reports reading "Loop status: dispatched" while every
+   * one of those dispatched tasks sat `queued` in core's swarm and zero
+   * completed. Per-run honest, aggregate silent — and the founder reasonably
+   * believed work was happening.
+   *
+   * Optional and additive: omitted (or with `checked: 0`) the report renders
+   * exactly as before. See lib/build/swarm-task-health.ts for the verdict rule.
+   */
+  swarmHealth?: SwarmHealthVerdict | null
 }
 
 /** Format an ISO date as "Aug 25, 2026" for the report title/body. Pure. */
@@ -132,10 +149,27 @@ function formatDate(iso: string): string {
 /**
  * Build the daily operational report title from the run date. Pure — so the report
  * appended by the nightly loop always carries an honest, dated title.
+ *
+ * #1055: when the aggregate swarm verdict is a real stall, the title says so.
+ * The Documents library lists documents by TITLE, so a founder scanning
+ * thirteen identically-named "Daily Operational Report — <date>" entries had
+ * no way to see that none of them represented delivered work without opening
+ * each one. A healthy run's title is deliberately unchanged — no alarm creep.
  */
 export function dailyReportTitle(input: DailyReportInput): string {
   const runAt = input.runAt || new Date().toISOString()
-  return `Daily Operational Report — ${formatDate(runAt)}`
+  const base = `Daily Operational Report — ${formatDate(runAt)}`
+  return input.swarmHealth?.stalled ? `${base} — needs attention` : base
+}
+
+/** "13 days" for a long stall, "6 hours" for a short one. Pure. */
+function formatAge(hours: number): string {
+  if (hours >= 48) {
+    const days = Math.floor(hours / 24)
+    return `${days} day${days === 1 ? '' : 's'}`
+  }
+  const h = Math.max(1, Math.round(hours))
+  return `${h} hour${h === 1 ? '' : 's'}`
 }
 
 /**
@@ -150,17 +184,61 @@ export function buildDailyReport(input: DailyReportInput): string {
   const status = String(input.status || 'unknown').toLowerCase()
   const dispatched = status === 'dispatched' && !!input.taskId
   const company = input.companyName || 'the company'
+  const health = input.swarmHealth && input.swarmHealth.checked > 0 ? input.swarmHealth : null
 
-  const summary = dispatched
-    ? `Overnight, Cody evaluated ${company} and dispatched the highest-leverage task to the AINative agent swarm (task ${input.taskId}). The swarm executes asynchronously; results feed back into tomorrow's briefing.`
-    : status === 'skipped'
-      ? `The nightly loop was skipped for ${company} this run (${input.detail || 'no work dispatched'}). No changes were made overnight.`
-      : `The nightly loop for ${company} did not complete a dispatch this run (status: ${status}${input.detail ? `; ${input.detail}` : ''}). No changes were made overnight — this is flagged for review.`
+  // #1055 — the AGGREGATE truth leads the summary when the swarm has stalled.
+  // A founder reading "Cody dispatched the highest-leverage task" every night
+  // for thirteen nights, while none of those tasks ever finished, was being
+  // told something true about the dispatch and nothing at all about the
+  // outcome. When the recent tasks are genuinely stuck, that is the headline.
+  const stallSummary = health?.stalled
+    ? `${company}'s last ${health.consecutiveUnfinished} dispatched overnight task${health.consecutiveUnfinished === 1 ? '' : 's'} ` +
+      `${health.consecutiveUnfinished === 1 ? 'has' : 'have'} NOT completed — the oldest has been waiting in the agent swarm's queue for ${formatAge(health.oldestQueuedHours)}. ` +
+      `Tonight's task was dispatched as usual (task ${input.taskId || 'n/a'}), but no overnight work has actually been delivered ` +
+      `${health.lastCompletedAt
+        ? `since ${formatDate(health.lastCompletedAt)}`
+        : `in any of the last ${health.checked} nights checked`}. ` +
+      `This is a platform-side execution backlog, not a problem with your company's setup, and it is flagged here rather than left to look like business as usual.`
+    : null
+
+  const summary = stallSummary
+    ? stallSummary
+    : dispatched
+      ? `Overnight, Cody evaluated ${company} and dispatched the highest-leverage task to the AINative agent swarm (task ${input.taskId}). The swarm executes asynchronously; results feed back into tomorrow's briefing.`
+      : status === 'skipped'
+        ? `The nightly loop was skipped for ${company} this run (${input.detail || 'no work dispatched'}). No changes were made overnight.`
+        : `The nightly loop for ${company} did not complete a dispatch this run (status: ${status}${input.detail ? `; ${input.detail}` : ''}). No changes were made overnight — this is flagged for review.`
 
   const findings: string[] = []
   findings.push(`- Run at ${formatDate(runAt)} (${runAt}).`)
   findings.push(`- Loop status: ${status}.`)
   if (input.taskId) findings.push(`- Swarm task dispatched: ${input.taskId}.`)
+
+  // The real, read-back aggregate — the thing that was missing entirely.
+  if (health) {
+    findings.push(
+      `- Recent swarm outcomes (last ${health.checked} dispatched task${health.checked === 1 ? '' : 's'}): ` +
+      `${health.completed} completed, ${health.queued} still queued, ${health.running} running, ${health.failed} failed` +
+      (health.unknown ? `, ${health.unknown} could not be read` : '') + '.',
+    )
+    if (health.stalled) {
+      findings.push(
+        `- STALLED: the last ${health.consecutiveUnfinished} dispatched task${health.consecutiveUnfinished === 1 ? '' : 's'} ` +
+        `never finished; oldest queued ${formatAge(health.oldestQueuedHours)} (${health.oldestQueuedHours} hours).`,
+      )
+    }
+    if (health.lastCompletedAt) {
+      findings.push(`- Last task that actually completed: ${formatDate(health.lastCompletedAt)}.`)
+    } else if (health.unknown === health.checked) {
+      findings.push("- The swarm's task-status endpoint could not be read this run, so recent outcomes are unverified — neither confirmed complete nor confirmed stalled.")
+    } else if (!health.completed) {
+      findings.push('- No dispatched task in the tracked window has completed.')
+    }
+    if (health.failed > 0) {
+      findings.push(`- ${health.failed} recent task${health.failed === 1 ? '' : 's'} failed outright in the swarm.`)
+    }
+  }
+
   if (input.briefing) {
     findings.push(`- Data-informed briefing used: ${String(input.briefing).slice(0, 300)}`)
   } else {
@@ -168,14 +246,21 @@ export function buildDailyReport(input: DailyReportInput): string {
   }
   if (input.detail) findings.push(`- Detail: ${String(input.detail).slice(0, 300)}`)
 
-  const nextActions = dispatched
-    ? '- Poll the dispatched swarm task for its result and review the produced artifact.\n- Cody will pick the next highest-leverage task on tomorrow\'s run.'
-    : '- Investigate why no task was dispatched (enrollment, plan tier, or API availability).\n- The loop will retry on the next nightly run.'
+  const nextActions = health?.stalled
+    ? '- Escalate to AINative support with this report: the agent swarm is accepting tasks but not completing them, which needs a platform-side fix.\n' +
+      '- Nothing is lost — the queued tasks remain queued and Cody keeps dispatching nightly; expect a catch-up once the swarm drains.\n' +
+      "- Investigate whether any work should be re-prioritised given the gap since the last completed task."
+    : dispatched
+      ? '- Poll the dispatched swarm task for its result and review the produced artifact.\n- Cody will pick the next highest-leverage task on tomorrow\'s run.'
+      : '- Investigate why no task was dispatched (enrollment, plan tier, or API availability).\n- The loop will retry on the next nightly run.'
 
   return (
     `## Executive Summary\n${summary}\n\n` +
     `## Key Findings\n${findings.join('\n')}\n\n### Next actions\n${nextActions}\n\n` +
     `## Sources\n- Nightly autonomous loop run record (task id + status), ${runAt}.\n` +
+    (health
+      ? `- AINative agent-swarm task status, read live for the last ${health.checked} dispatched task id${health.checked === 1 ? '' : 's'} (GET /api/v1/public/agent-swarm/tasks/{id}).\n`
+      : '') +
     (input.briefing
       ? '- AINative Agent Intelligence briefing (lakehouse-derived).\n'
       : '- No external briefing source for this run.\n')
