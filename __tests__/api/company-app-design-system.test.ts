@@ -41,6 +41,14 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/lib/build/app-registry', () => ({
   resolveApp: h.resolveApp,
+  // builder#1041: the routes now read the honest `verified` flag (#807/#832/
+  // #833) so a FAILED registry read can no longer look like a confirmed miss
+  // and buy a fresh billable generation. Delegated to this file's existing
+  // `resolveApp` mock with verified:true, so every expectation below keeps its
+  // original meaning: a null entry here is a CONFIRMED miss, which still
+  // generates. The unverified path has its own dedicated coverage in
+  // __tests__/api/company-codegen-registry-failure-idempotency-1041.test.ts.
+  resolveAppVerified: async () => ({ entry: await h.resolveApp(), verified: true }),
   registerApp: h.registerApp,
 }))
 vi.mock('@/lib/build/learning', () => ({ logBuildOutcome: h.logBuildOutcome }))
