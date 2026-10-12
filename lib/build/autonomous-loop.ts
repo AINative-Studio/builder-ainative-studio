@@ -39,6 +39,17 @@ export interface NightlyRunInput {
   companyName: string
   track: 'app' | 'company'
   goal?: string
+  /**
+   * The company's real Gitea repo URL (git.ainative.studio), from
+   * `AppEntry.gitRepoUrl` — this is where the company's actual generated
+   * code lives (provisioned at build time, see lib/build/app-registry.ts's
+   * `setAppGitRepo`). Threaded through to the swarm task's `config` so core
+   * can surface the REAL repo link instead of leaving its own GitHub-shaped
+   * `github_repo_url` field null (that field reflects a totally different,
+   * unrelated GitHub integration inside core's generic codegen engine,
+   * which this task never touches — see core#8656).
+   */
+  giteaRepoUrl?: string
 }
 
 export interface NightlyRunResult {
@@ -91,7 +102,12 @@ async function dispatchSwarmTask(
         agent_types: input.track === 'company'
           ? ['architect', 'data', 'docs']
           : ['architect', 'backend', 'qa'],
-        config: { company: input.companyName, track: input.track, source: 'builder-nightly-loop' },
+        config: {
+          company: input.companyName,
+          track: input.track,
+          source: 'builder-nightly-loop',
+          ...(input.giteaRepoUrl ? { gitea_repo_url: input.giteaRepoUrl } : {}),
+        },
       }),
       signal: AbortSignal.timeout(30000),
     })

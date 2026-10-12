@@ -142,7 +142,9 @@ export async function POST(request: NextRequest) {
             // Best-effort first dispatch — a swarm/API hiccup must never fail
             // checkout confirmation; the enrollment above still lets the nightly
             // cron pick the company up on its next tick either way.
-            await runNightlyLoop({ companyId: slug, companyName, track }).catch(() => {})
+            await runNightlyLoop({
+              companyId: slug, companyName, track, giteaRepoUrl: entry.gitRepoUrl,
+            }).catch(() => {})
           })
           .catch(() => {})
       }

@@ -45,6 +45,7 @@ import {
 import { dispatchEventTitle } from '@/lib/build/auto-run-activity'
 import { enrollCompany, setLoopEnabled } from '@/lib/build/loop-enrollment'
 import { runNightlyLoop } from '@/lib/build/autonomous-loop'
+import { resolveApp } from '@/lib/build/app-registry'
 import { planUnlocks } from '@/lib/build/state'
 import { resolveActivePlan } from '@/lib/ainative/active-plan'
 import { logger } from '@/lib/logger'
@@ -181,7 +182,10 @@ export async function POST(request: NextRequest) {
     //    fail the start (the enrollment + cron will still drive the window).
     let firstTaskId: string | null = null
     try {
-      const r = await runNightlyLoop({ companyId, companyName, track })
+      const registryEntry = await resolveApp(companyId).catch(() => null)
+      const r = await runNightlyLoop({
+        companyId, companyName, track, giteaRepoUrl: registryEntry?.gitRepoUrl,
+      })
       firstTaskId = r.taskId
       // Event trail (#340): record what this run just did on the AutoRun record
       // so the Live swarm card + per-company ribbon show the founder's OWN

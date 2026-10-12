@@ -250,7 +250,10 @@ export async function runLoopBackfillSweep(
       // task exists straight away instead of waiting on the next nightly tick.
       // A swarm hiccup must not undo the enrollment — the nightly cron will
       // still pick the company up — so this is reported, not fatal.
-      const run = await runNightlyLoop({ companyId, companyName: app.name || companyId, track })
+      const run = await runNightlyLoop({
+        companyId, companyName: app.name || companyId, track,
+        giteaRepoUrl: app.gitRepoUrl,
+      })
         .catch((err: unknown) => ({ status: 'error', detail: String((err as Error)?.message || err).slice(0, 200) }))
       const didDispatch = (run as { status?: string })?.status === 'dispatched'
       if (didDispatch) dispatched += 1
