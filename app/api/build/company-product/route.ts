@@ -75,7 +75,8 @@ import { logBuildOutcome } from '@/lib/build/learning'
 import {
   recordPendingProductGeneration,
   markProductGenerationRegistered,
-  resolvePendingProductGeneration,
+  resolvePendingProductGenerationVerified,
+  type ProductGenerationState,
 } from '@/lib/build/product-generation-state'
 import { loadGeneration } from '@/lib/zerodb-store'
 import { looksLikeUnsubstitutedPlaceholder } from '@/lib/build/placeholder-guard'
@@ -203,7 +204,20 @@ export async function POST(request: NextRequest) {
   // generation genuinely succeed and persist, and then died (e.g. a deploy)
   // before ever calling registerApp. Check for that BEFORE starting a brand
   // new, costly generation.
-  const pending = await resolvePendingProductGeneration(productSlug).catch(() => null)
+  //
+  // #1051: fail CLOSED on an unconfirmed read, same reasoning as the
+  // resolveAppVerified check above — an unconfirmed read must never look
+  // identical to "confirmed no pending attempt."
+  const { state: pending, verified: pendingVerified } = await resolvePendingProductGenerationVerified(productSlug).catch(
+    () => ({ state: null as ProductGenerationState | null, verified: false }),
+  )
+  if (!pendingVerified && !force) {
+    return Response.json({
+      status: 'unverified',
+      productSlug,
+      error: 'Could not confirm whether a generation is already in flight for this company — not starting a new one.',
+    })
+  }
   if (pending?.chatId && pending.status === 'pending') {
     const gen = await loadGeneration(pending.chatId).catch(() => null)
     if (gen?.generatedCode) {

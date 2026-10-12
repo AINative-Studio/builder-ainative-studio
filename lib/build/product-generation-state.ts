@@ -109,21 +109,50 @@ export async function markProductGenerationRegistered(productSlug: string, chatI
  * wins, matching every other table in this codebase's append-only pattern.
  * Null when never attempted, when ZeroDB is unconfigured, or on any error
  * (fails toward "attempt a fresh generation," never toward a stale result).
+ *
+ * @deprecated Use {@link resolvePendingProductGenerationVerified} at any call
+ * site that gates a billable regeneration decision on the result (#1051).
+ * This function cannot distinguish "confirmed no pending attempt" from "the
+ * read itself failed" — both return a bare `null`, and a caller treating
+ * that as "nothing pending, safe to generate fresh" pays for a duplicate
+ * generation on a transient registry-read failure or (once this table
+ * crosses 1000 rows) the same `?limit=1000` read-cap gap #1041 fixed for
+ * `company-app`/`company-product`. Kept only for any caller that genuinely
+ * doesn't spend money on the result.
  */
 export async function resolvePendingProductGeneration(productSlug: string): Promise<ProductGenerationState | null> {
-  if (!configured() || !productSlug) return null
+  const { state } = await resolvePendingProductGenerationVerified(productSlug)
+  return state
+}
+
+/**
+ * Same lookup as {@link resolvePendingProductGeneration}, but honest about
+ * WHY a miss happened (#1051 — same risk class #1041 fixed for
+ * `resolveApp`/`resolveAppVerified`): `verified: true` means this is a
+ * CONFIRMED absence of a pending attempt, safe to proceed to a fresh
+ * generation; `verified: false` means the read itself failed (unconfigured,
+ * non-ok response, timeout, or a parse error) and the caller does not
+ * actually know whether an in-flight/orphaned attempt exists. A caller that
+ * gates a billable regeneration on this result must fail CLOSED on
+ * `verified: false` — same pattern as `resolveAppVerified`.
+ */
+export async function resolvePendingProductGenerationVerified(
+  productSlug: string,
+): Promise<{ state: ProductGenerationState | null; verified: boolean }> {
+  if (!productSlug) return { state: null, verified: true }
+  if (!configured()) return { state: null, verified: false }
   try {
     const res = await fetch(`${rowsUrl()}?limit=1000`, { headers: headers(), signal: AbortSignal.timeout(15000) })
-    if (!res.ok) return null
+    if (!res.ok) return { state: null, verified: false }
     const data = JSON.parse(await res.text())
     const rows = Array.isArray(data) ? data : data.data || data.rows || []
     const matches = rows
       .map((r: { row_data?: ProductGenerationState }) => r.row_data)
       .filter((rd: ProductGenerationState | undefined): rd is ProductGenerationState => rd?.productSlug === productSlug)
-    if (!matches.length) return null
+    if (!matches.length) return { state: null, verified: true }
     matches.sort((a: ProductGenerationState, b: ProductGenerationState) => (b.createdAt || '').localeCompare(a.createdAt || ''))
-    return matches[0]
+    return { state: matches[0], verified: true }
   } catch {
-    return null
+    return { state: null, verified: false }
   }
 }
