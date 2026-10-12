@@ -19,6 +19,7 @@ import {
   recordPendingProductGeneration,
   markProductGenerationRegistered,
   resolvePendingProductGeneration,
+  resolvePendingProductGenerationVerified,
 } from '@/lib/build/product-generation-state'
 
 function mockFetchSequence(responses: Array<{ ok: boolean; json?: any; text?: string }>) {
@@ -111,5 +112,78 @@ describe('resolvePendingProductGeneration', () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network down') }))
     const result = await resolvePendingProductGeneration('acme-product')
     expect(result).toBeNull()
+  })
+})
+
+/**
+ * #1051 — same risk class #1041 fixed for resolveApp/resolveAppVerified:
+ * resolvePendingProductGeneration's bare `null` on ANY failure makes
+ * "confirmed no pending attempt" indistinguishable from "the read failed,"
+ * and a caller gating a billable regeneration on that result pays for a
+ * duplicate on a transient error. resolvePendingProductGenerationVerified
+ * is the honest version — these tests lock down the verified/unverified
+ * split for every branch the deprecated wrapper's own tests above cover.
+ */
+describe('resolvePendingProductGenerationVerified', () => {
+  it('verified:true, state:null when no row matches — a CONFIRMED miss', async () => {
+    mockFetchSequence([{ ok: true, json: { data: [] } }])
+    const result = await resolvePendingProductGenerationVerified('nope-product')
+    expect(result).toEqual({ state: null, verified: true })
+  })
+
+  it('verified:true with the latest row when the SAME productSlug has multiple rows', async () => {
+    mockFetchSequence([{
+      ok: true,
+      json: {
+        data: [
+          { row_data: { productSlug: 'acme-product', chatId: 'old-chat', status: 'pending', createdAt: '2026-09-10T10:00:00.000Z' } },
+          { row_data: { productSlug: 'acme-product', chatId: 'new-chat', status: 'registered', createdAt: '2026-09-10T12:00:00.000Z' } },
+        ],
+      },
+    }])
+    const result = await resolvePendingProductGenerationVerified('acme-product')
+    expect(result.verified).toBe(true)
+    expect(result.state).toEqual({ productSlug: 'acme-product', chatId: 'new-chat', status: 'registered', createdAt: '2026-09-10T12:00:00.000Z' })
+  })
+
+  it('verified:false on a non-ok response — an UNCONFIRMED read, never a confirmed miss', async () => {
+    mockFetchSequence([{ ok: false }])
+    const result = await resolvePendingProductGenerationVerified('acme-product')
+    expect(result).toEqual({ state: null, verified: false })
+  })
+
+  it('verified:false when ZeroDB is unreachable — never a confirmed miss', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network down') }))
+    const result = await resolvePendingProductGenerationVerified('acme-product')
+    expect(result).toEqual({ state: null, verified: false })
+  })
+
+  it('verified:false when ZeroDB is unconfigured — matches resolveAppVerified\'s unconfigured handling', async () => {
+    const prevProject = process.env.ZERODB_PROJECT_ID
+    const prevKey = process.env.AINATIVE_API_KEY
+    delete process.env.ZERODB_PROJECT_ID
+    delete process.env.AINATIVE_API_KEY
+    vi.resetModules()
+    try {
+      const mod = await import('@/lib/build/product-generation-state')
+      const result = await mod.resolvePendingProductGenerationVerified('acme-product')
+      expect(result).toEqual({ state: null, verified: false })
+    } finally {
+      process.env.ZERODB_PROJECT_ID = prevProject
+      process.env.AINATIVE_API_KEY = prevKey
+    }
+  })
+
+  it('an empty productSlug is a genuine, confirmed no-op (verified:true) — distinct from unconfigured', async () => {
+    const result = await resolvePendingProductGenerationVerified('')
+    expect(result).toEqual({ state: null, verified: true })
+  })
+
+  it('resolvePendingProductGeneration (deprecated) delegates to the Verified variant\'s state', async () => {
+    mockFetchSequence([{ ok: true, json: { data: [] } }])
+    const deprecated = await resolvePendingProductGeneration('acme-product')
+    mockFetchSequence([{ ok: true, json: { data: [] } }])
+    const verified = await resolvePendingProductGenerationVerified('acme-product')
+    expect(deprecated).toEqual(verified.state)
   })
 })

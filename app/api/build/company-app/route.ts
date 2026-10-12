@@ -55,7 +55,8 @@ import { logBuildOutcome } from '@/lib/build/learning'
 import {
   recordPendingProductGeneration,
   markProductGenerationRegistered,
-  resolvePendingProductGeneration,
+  resolvePendingProductGenerationVerified,
+  type ProductGenerationState,
 } from '@/lib/build/product-generation-state'
 import { loadGeneration } from '@/lib/zerodb-store'
 import { reportDeploymentHealthStage } from '@/lib/build/deployment-health'
@@ -203,7 +204,21 @@ export async function POST(request: NextRequest) {
   // background task may have gotten a chatId, had its generation genuinely
   // succeed and persist, and then died (e.g. a deploy) before ever calling
   // registerApp. Check for that BEFORE starting a brand new, costly generation.
-  const pending = await resolvePendingProductGeneration(slug).catch(() => null)
+  //
+  // #1051: fail CLOSED on an unconfirmed read, same reasoning as
+  // resolveAppVerified above — a transient registry-read failure (or, past
+  // this table's 1000-row read cap) must never look identical to "confirmed
+  // no pending attempt," since that silently falls through to a fresh,
+  // billable regeneration an already-in-flight/orphaned attempt didn't need.
+  const { state: pending, verified: pendingVerified } = await resolvePendingProductGenerationVerified(slug).catch(
+    () => ({ state: null as ProductGenerationState | null, verified: false }),
+  )
+  if (!pendingVerified && !force) {
+    return Response.json({
+      status: 'unverified',
+      error: 'Could not confirm whether a generation is already in flight for this company — not starting a new one.',
+    })
+  }
   if (pending?.chatId && pending.status === 'pending') {
     const gen = await loadGeneration(pending.chatId).catch(() => null)
     if (gen?.generatedCode) {

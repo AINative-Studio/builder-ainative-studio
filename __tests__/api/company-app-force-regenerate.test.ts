@@ -39,6 +39,14 @@ vi.mock('@/lib/build/product-generation-state', () => ({
   recordPendingProductGeneration: h.recordPendingProductGeneration,
   markProductGenerationRegistered: h.markProductGenerationRegistered,
   resolvePendingProductGeneration: h.resolvePendingProductGeneration,
+  // #1051: the real routes now call the Verified variant. Derive it from
+  // the existing mock so every pre-existing mockResolvedValue(...) call
+  // keeps driving the same behavior unchanged -- verified: true is correct
+  // for all of them since none exercise the new unverified-read path.
+  resolvePendingProductGenerationVerified: vi.fn(async () => ({
+    state: await h.resolvePendingProductGeneration(),
+    verified: true,
+  })),
 }))
 vi.mock('@/lib/zerodb-store', () => ({ loadGeneration: h.loadGeneration }))
 
