@@ -260,8 +260,13 @@ async function runForCompany(
     commsSent: false, stalled: false,
   }
 
+  // Best-effort: a registry lookup hiccup must never block dispatch — the
+  // task still runs, it just surfaces no Gitea link in its result (core#8656).
+  const registryEntry = await resolveApp(e.companyId).catch(() => null)
+
   const r = await runNightlyLoop({
     companyId: e.companyId, companyName: e.companyName, track: e.track, goal: e.goal,
+    giteaRepoUrl: registryEntry?.gitRepoUrl,
   })
   outcome.result = r
   await recordRun(e.companyId, r.taskId, r.status)

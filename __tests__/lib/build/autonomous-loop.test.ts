@@ -302,6 +302,30 @@ describe('runNightlyLoop() — track → agent_types in dispatch body', () => {
     expect(body.config.track).toBe('company')
     expect(body.config.source).toBe('builder-nightly-loop')
   })
+
+  // Refs #8656: the company's real Gitea repo link (git.ainative.studio),
+  // threaded through so core's swarm-task result can echo back the ACTUAL
+  // repo instead of its own unrelated github_repo_url field (which Builder
+  // companies never populate — their real code never lives on GitHub).
+  it('passes giteaRepoUrl through as config.gitea_repo_url when the caller supplies one', async () => {
+    const fn = makeSuccessFetch()
+    await runNightlyLoop(
+      makeInput({ giteaRepoUrl: 'https://git.ainative.studio/builder-companies/acme.git' }),
+    )
+
+    const body = JSON.parse((fn.mock.calls[1][1] as RequestInit).body as string)
+    expect(body.config.gitea_repo_url).toBe(
+      'https://git.ainative.studio/builder-companies/acme.git',
+    )
+  })
+
+  it('omits config.gitea_repo_url entirely when the caller has no registry entry yet', async () => {
+    const fn = makeSuccessFetch()
+    await runNightlyLoop(makeInput())
+
+    const body = JSON.parse((fn.mock.calls[1][1] as RequestInit).body as string)
+    expect(body.config).not.toHaveProperty('gitea_repo_url')
+  })
 })
 
 // ---------- Task description content ----------
