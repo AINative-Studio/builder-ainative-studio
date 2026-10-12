@@ -211,6 +211,10 @@ export default function TermsPage() {
             This is separate from the conversational Cody SMS feature described in Section 03
             above — verification codes only, sent solely to confirm phone ownership at sign-in.
           </p>
+          <p style={{ marginTop: 12 }}>
+            This feature is being rolled out — if a code does not arrive, you can still create an
+            account or sign in with email and password at any time.
+          </p>
         </Section>
 
         <Section eyebrow="05" title="Accounts">
