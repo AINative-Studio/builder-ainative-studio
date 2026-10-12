@@ -59,6 +59,22 @@ interface Props {
   unlocked: boolean
   /** Shown only if the SERVER refuses on entitlement (`reason: 'tier'`). */
   onUpgrade: () => void
+  /**
+   * Whether this company's registry row + ZeroDB project actually exist yet
+   * (Live.tsx's own `provision.provisioned` state). A brand-new company's
+   * registry row is written by a DETACHED background generation step that
+   * can take real minutes (see Live.tsx's `provisionCompany` doc comment,
+   * #748) — until it lands, every one of this panel's endpoints
+   * (growth/status, growth/ad-budget-checkout) 404s with `company_not_found`,
+   * because there is genuinely nothing to look up yet. That's expected
+   * server-side behavior, not a bug there — but this panel used to poll/fund
+   * unconditionally regardless, turning an expected, transient, self-healing
+   * state into a confusing wall of console errors and a silently-failing
+   * "FUND TEST CAMPAIGN" button for a founder who clicks it during that
+   * window. Default true so existing callers that don't pass it (none,
+   * currently) keep today's behavior rather than silently going dark.
+   */
+  provisioned?: boolean
 }
 
 interface GrowthState {
@@ -77,7 +93,7 @@ function formatCents(cents: number | undefined): string {
   return `$${((cents as number) / 100).toFixed(2)}`
 }
 
-export function GrowthPanel({ companyId, companyName, onUpgrade }: Props) {
+export function GrowthPanel({ companyId, companyName, onUpgrade, provisioned = true }: Props) {
   const [loaded, setLoaded] = useState(false)
   const [available, setAvailable] = useState(true)
   const [state, setState] = useState<GrowthState>({})
@@ -86,6 +102,11 @@ export function GrowthPanel({ companyId, companyName, onUpgrade }: Props) {
   const [notice, setNotice] = useState<string | null>(null)
 
   const load = useCallback(() => {
+    // Nothing to look up yet — the registry row this status check needs
+    // doesn't exist until provisioning lands. Not an error: `loaded` still
+    // flips true so the panel renders its (disabled) setting-up state
+    // instead of staying hidden (see `if (!loaded) return null` below).
+    if (!provisioned) { setLoaded(true); return () => {} }
     let alive = true
     fetch(`/api/build/growth/status?slug=${encodeURIComponent(companyId)}`)
       .then((r) => (r.ok ? r.json() : null))
@@ -104,7 +125,7 @@ export function GrowthPanel({ companyId, companyName, onUpgrade }: Props) {
       })
       .catch(() => { if (alive) setLoaded(true) })
     return () => { alive = false }
-  }, [companyId])
+  }, [companyId, provisioned])
 
   useEffect(() => load(), [load])
 
@@ -130,6 +151,10 @@ export function GrowthPanel({ companyId, companyName, onUpgrade }: Props) {
    */
   const fund = async () => {
     if (busy) return
+    if (!provisioned) {
+      setNotice('Still setting up your company — this will be ready in a few minutes.')
+      return
+    }
     setBusy(true); setNotice(null)
     try {
       const r = await fetch('/api/build/growth/ad-budget-checkout', {
@@ -312,8 +337,14 @@ export function GrowthPanel({ companyId, companyName, onUpgrade }: Props) {
           <p className="m-mono m-metric-note" data-testid="growth-cost">
             Prepaid ad credits — available on any plan, including free.
           </p>
-          <button className="btn-primary" data-testid="growth-fund" onClick={() => fund()} disabled={busy}>
-            {busy ? 'Starting checkout…' : 'FUND TEST CAMPAIGN'}
+          <button
+            className="btn-primary"
+            data-testid="growth-fund"
+            onClick={() => fund()}
+            disabled={busy || !provisioned}
+            title={!provisioned ? 'Still setting up your company — this will be ready in a few minutes' : undefined}
+          >
+            {!provisioned ? 'Setting up…' : busy ? 'Starting checkout…' : 'FUND TEST CAMPAIGN'}
           </button>
         </div>
       )}

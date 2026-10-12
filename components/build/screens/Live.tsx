@@ -1369,6 +1369,7 @@ export function Live() {
               companyName={company}
               unlocked={gates.growth}
               onUpgrade={goUpgrade}
+              provisioned={provision.provisioned}
             />
             {/* #844: the real signal growth activity is FOR — a founder asked
                 "where do I see who joined the waitlist" and there was no
