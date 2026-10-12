@@ -35,6 +35,7 @@ import {
   type ChatAttachment,
 } from '@/lib/build/chat-store'
 import { resolveApp } from '@/lib/build/app-registry'
+import { planUnlocks } from '@/lib/build/state'
 import { processConversation } from '@/lib/agent/zeromemory'
 import { detectEditIntent, QUESTION_STARTERS } from '@/lib/build/edit-intent'
 import { createIssue, listIssues } from '@/lib/git/gitea-client'
@@ -485,6 +486,17 @@ export async function askCody(params: AskCodyParams): Promise<AskCodyResult | { 
   // above) already carries that answer. This block is the fix: it puts the
   // REAL provisioning state in front of Cody explicitly, with an unambiguous
   // instruction never to claim otherwise.
+  // #1062: "Provision cloud" alone was the ONLY action this block ever told a
+  // founder to take — but it only sets up the per-company ZeroDB project/auth/
+  // primitives. It does not start the nightly autonomous loop; that is a
+  // SEPARATE action (Auto Mode, confirmed in lib/build/auto-mode.ts: it
+  // enrolls the company + fires a dispatch, it never provisions anything).
+  // A founder asking "how do I get the nightly loop running on my real
+  // backend" needs BOTH steps, in order — naming only the first one left them
+  // one click short of what they actually asked for. Auto Mode is also a real
+  // paid-tier gate (Pro+, #841) that provisioning itself is not, so the two
+  // must not be conflated into one generic "set things up" instruction.
+  const nightlyLoopUnlocked = Boolean(activePlan) && planUnlocks(activePlan).nightlyLoop
   const provisioningInstructions = isProvisioned
     ? `- PROVISIONING STATUS: this company IS provisioned — it has a real per-company cloud project ` +
       `(ZeroDB project id on file). You CAN and MUST answer questions about provisioning/setup status ` +
@@ -497,7 +509,14 @@ export async function askCody(params: AskCodyParams): Promise<AskCodyResult | { 
       `Website & infrastructure. NEVER say "I don't have a way to check" — you DO have this data, it's ` +
       `simply telling you setup hasn't run yet. NEVER claim the data layer, ZeroMemory context, auth, or ` +
       `any primitive is "fully functional," "handling context," "next in the queue," or otherwise live — ` +
-      `none of that is true until provisioning actually completes.\n`
+      `none of that is true until provisioning actually completes.\n` +
+      `  If they're asking specifically about STARTING THE NIGHTLY LOOP or ongoing autonomous operation ` +
+      `(not just general setup/provisioning status), be explicit this is a SECOND, SEPARATE step after ` +
+      `provisioning: Provision cloud sets up the backend; the nightly loop itself is started from the ` +
+      `"Auto Mode" button in the left panel. ` +
+      (nightlyLoopUnlocked
+        ? `Their plan already unlocks Auto Mode — no payment needed for that step.\n`
+        : `Auto Mode requires a paid plan (Pro or higher) — say so plainly rather than implying it's free.\n`)
 
   // #780: the #748 pattern above (ground Cody on general cloud-provisioning
   // status) had a real, primitive-specific blind spot for ZeroVoice. Real
