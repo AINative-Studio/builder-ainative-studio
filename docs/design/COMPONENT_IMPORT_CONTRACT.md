@@ -102,5 +102,7 @@ producing the defect in the first place — the Artifacts approach.
 
 This contract governs the **single-file preview tier**. It intentionally does NOT
 try to support multi-file projects or arbitrary npm deps — that's the real-bundler
-track (issue #91), where the answer is real Sandpack/WebContainer with real
-packages, not a whitelist.
+track (issue #91), where the answer is real Sandpack with real packages, not a
+whitelist. (WebContainers was evaluated as an alternative bundler during the
+self-hosting migration, epic #1076, and rejected — its terms of service bar
+"competitive" products and require a paid, sales-negotiated license.)
