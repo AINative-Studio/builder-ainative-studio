@@ -1,12 +1,17 @@
 import type { Metadata } from 'next'
 import { resolveApp } from '@/lib/build/app-registry'
 import { StandalonePreviewRegenerate } from '@/components/build/StandalonePreviewRegenerate'
+import { StandalonePreviewFrame } from '@/components/build/StandalonePreviewFrame'
 
 /**
  * /build/{slug} (#207 · FIX-2) — the REAL, shareable URL for a generated company
  * or app. Resolves the brand slug to its generated app's chatId and renders the
- * actual running app (served from /api/preview/{chatId}) in a branded frame.
- * Replaces the dead {slug}.ainative.studio subdomain — no DNS, works immediately.
+ * actual running app in a branded frame. Replaces the dead
+ * {slug}.ainative.studio subdomain — no DNS, works immediately.
+ *
+ * #1066: the actual preview rendering (Sandpack for multi-file generations,
+ * iframe /api/preview/{chatId} for single-file ones) lives in
+ * StandalonePreviewFrame — see that file's doc comment for why.
  */
 
 export const runtime = 'nodejs'
@@ -65,12 +70,7 @@ export default async function AppSubdirPage({ params }: Props) {
           built on AINative ↗
         </a>
       </header>
-      <iframe
-        src={`/api/preview/${entry.chatId}?slug=${encodeURIComponent(slug)}`}
-        title={entry.name || slug}
-        style={{ flex: 1, border: 0, width: '100%' }}
-        sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
-      />
+      <StandalonePreviewFrame chatId={entry.chatId} slug={slug} title={entry.name || slug} />
       <StandalonePreviewRegenerate slug={slug} idea={entry.idea} track={entry.track} name={entry.name} />
     </div>
   )
