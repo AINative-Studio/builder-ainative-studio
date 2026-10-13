@@ -381,10 +381,20 @@ function CommunityCard({ entry, isSeed = false }: { entry: ShowcaseEntry; isSeed
   const title = cleanTitle(entry.title || '')
   // Curated seed demos link to their reliable static-preview wrapper page
   // (/showcase/{slug} -> /showcase-previews/{slug}.html, build-time, can't fail).
-  // Dynamic community apps link to the runtime preview by chatId.
+  // Dynamic community apps link to /preview/{chatId} (#1068) — NOT
+  // /api/preview/{chatId} directly, which always flattened a multi-file app
+  // into one Babel module and could show a fabricated "build failed" error
+  // for an app that was completely fine (#1066). /preview/{chatId} already
+  // does the correct shouldUseSandpack() routing (#729) and is keyed purely
+  // by chatId — unlike /build/{slug}, which needs the REAL app-registry
+  // slug. This entry's `slug` is a synthetic display id the showcase API
+  // derives fresh (title + first 6 chars of chatId,
+  // app/api/showcase/route.ts), not that registry slug; a first attempt at
+  // this fix wrongly assumed they were the same value and 404'd every
+  // dynamic showcase entry.
   const previewUrl = isSeed
     ? `/showcase/${entry.slug}`
-    : (entry.chatId ? `/api/preview/${entry.chatId}` : '')
+    : (entry.chatId ? `/preview/${entry.chatId}` : '')
 
   return (
     <a

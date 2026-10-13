@@ -48,9 +48,13 @@ interface SandpackPreviewProps {
   files: Record<string, string>
   theme?: 'light' | 'dark'
   className?: string
+  /** #1068: off for non-interactive thumbnail uses (ShowcaseThumbnail) where
+   *  Sandpack's own refresh control would show through a pointer-events:none
+   *  scaled-down card. Defaults to true — unchanged for every existing caller. */
+  showRefreshButton?: boolean
 }
 
-export function SandpackPreview({ files, theme = 'light', className }: SandpackPreviewProps) {
+export function SandpackPreview({ files, theme = 'light', className, showRefreshButton = true }: SandpackPreviewProps) {
   // Start with all built-in files (AIKit, shadcn, template)
   const sandpackFiles: Record<string, string> = { ...getBuiltinFiles() }
 
@@ -312,7 +316,7 @@ export function SandpackPreview({ files, theme = 'light', className }: SandpackP
         >
           <SandpackPreviewComponent
             showNavigator={false}
-            showRefreshButton
+            showRefreshButton={showRefreshButton}
             showOpenInCodeSandbox={false}
             style={{ flex: 1, height: '100%' }}
           />

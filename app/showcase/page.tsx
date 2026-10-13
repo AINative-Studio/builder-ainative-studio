@@ -4,6 +4,7 @@ import { SEED_SHOWCASE, SHOWCASE_CATEGORIES, type ShowcaseEntry } from '@/lib/sh
 import { ShowcaseGalleryClient } from './showcase-client'
 import { PublicNav } from '@/components/shared/public-nav'
 import { PublicFooter } from '@/components/shared/public-footer'
+import { ShowcaseThumbnail } from '@/components/build/ShowcaseThumbnail'
 
 export const metadata: Metadata = {
   title: 'Showcase — Real Businesses Built by Cody | AINative Builder',
@@ -21,9 +22,19 @@ export const metadata: Metadata = {
 function ShowcaseCard({ entry }: { entry: ShowcaseEntry }) {
   const category = SHOWCASE_CATEGORIES.find(c => c.id === entry.category)
   // Seeds have a pre-built /showcase/{slug} detail page; dynamic apps do NOT
-  // (that route 404s for them). Dynamic apps open their live preview instead.
+  // (that route 404s for them). Dynamic apps link to /preview/{chatId}
+  // instead (#1068) — NOT /api/preview/{chatId} directly, which always
+  // flattened a multi-file app into one Babel module and could show a
+  // fabricated "build failed" error for an app that was completely fine
+  // (#1066). /preview/{chatId} already does the correct shouldUseSandpack()
+  // routing (#729) and is keyed purely by chatId, unlike /build/{slug} —
+  // this entry's `slug` is a synthetic display id the showcase API derives
+  // fresh (title + first 6 chars of chatId, app/api/showcase/route.ts), NOT
+  // the real app-registry slug /build/{slug} needs to resolve a chatId; a
+  // first attempt at this fix wrongly assumed they were the same value and
+  // 404'd every dynamic showcase entry.
   const isDynamic = Boolean(entry.chatId)
-  const href = isDynamic ? `/api/preview/${entry.chatId}` : `/showcase/${entry.slug}`
+  const href = isDynamic ? `/preview/${entry.chatId}` : `/showcase/${entry.slug}`
 
   return (
     <Link
@@ -46,15 +57,14 @@ function ShowcaseCard({ entry }: { entry: ShowcaseEntry }) {
         {entry.chatId ? (
           // Dynamic app: render the ACTUAL generated app as a live, non-interactive
           // thumbnail. Scaled to 1/2.5 and pinned so the full app fits the card.
+          // #1068: routed through ShowcaseThumbnail (shouldUseSandpack-gated,
+          // same as the full /build/{slug} page) instead of a raw iframe at
+          // /api/preview/{chatId} — that always flattened a multi-file app
+          // into one Babel module and could show a broken thumbnail for an
+          // app that was completely fine (#1066). The Featured strip is
+          // capped at 6 entries, so per-card Sandpack bundling here is cheap.
           <div style={{ position: 'absolute', inset: 0, zIndex: 1, pointerEvents: 'none', overflow: 'hidden' }}>
-            <iframe
-              src={`/api/preview/${entry.chatId}`}
-              title={`Live preview of ${entry.title}`}
-              loading="lazy"
-              tabIndex={-1}
-              aria-hidden="true"
-              style={{ transformOrigin: 'top left', border: 0, width: '250%', height: '250%', transform: 'scale(0.4)' }}
-            />
+            <ShowcaseThumbnail chatId={entry.chatId} title={entry.title} />
           </div>
         ) : (
           // Seed: fast pre-rendered PNG screenshot.
