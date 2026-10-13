@@ -190,6 +190,14 @@ export async function middleware(request: NextRequest) {
       pathname === '/api/version' ||
       pathname === '/api/debug-auth' ||
       pathname.startsWith('/api/preview/') ||
+      // #1066: durable multi-file map read, same chatId-keyed trust model as
+      // /api/preview/ above (no auth check in the handler itself — reading
+      // by chatId is the contract, same as /api/preview/{id}). The public
+      // /build/{slug} page's Sandpack routing fetches this with no session
+      // cookie at all (anonymous visitor on a shared link) — without this,
+      // every such visitor 401s here and silently falls back to the
+      // flattening-prone /api/preview/ iframe, the exact bug #1066 fixes.
+      pathname.startsWith('/api/generation/') ||
       pathname === '/api/showcase' ||
       pathname.startsWith('/api/showcase/') ||
       pathname === '/api/chat-ws' ||
