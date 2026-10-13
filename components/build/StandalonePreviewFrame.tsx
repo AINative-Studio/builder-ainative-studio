@@ -17,6 +17,17 @@
  * Preview.tsx already do. Single-file apps have no durable files map, so
  * this always falls through to the existing iframe — their behavior is
  * unchanged.
+ *
+ * Preview-system resilience (found live, same session): Sandpack's own
+ * bundler-side dependency fetch can hang forever with no error (unfixed
+ * CodeSandbox/unpkg gap — see components/chat/sandpack-preview.tsx's doc
+ * comment). A 15s watchdog (SandpackPreview's timeoutMs/onTimeout) falls
+ * back to the flattened-code iframe if Sandpack hasn't finished by then —
+ * strictly better than Sandpack's prior failure mode (blank forever), even
+ * though the iframe fallback can itself show a fabricated "build failed"
+ * for the reasons #1066 fixed elsewhere. A timed-out Sandpack render is
+ * never retried automatically within the same mount — once this gives up on
+ * Sandpack, it stays on the iframe path.
  */
 
 import { useEffect, useState } from 'react'
@@ -37,6 +48,7 @@ interface Props {
 export function StandalonePreviewFrame({ chatId, slug, title }: Props) {
   const [files, setFiles] = useState<Record<string, string> | null>(null)
   const [checkedFiles, setCheckedFiles] = useState(false)
+  const [sandpackTimedOut, setSandpackTimedOut] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -51,12 +63,17 @@ export function StandalonePreviewFrame({ chatId, slug, title }: Props) {
     return () => { cancelled = true }
   }, [chatId])
 
-  const useSandpack = checkedFiles && shouldUseSandpack(files)
+  const useSandpack = checkedFiles && shouldUseSandpack(files) && !sandpackTimedOut
 
   if (useSandpack && files) {
     return (
       <div style={{ flex: 1, minHeight: 0, width: '100%' }}>
-        <SandpackPreview files={files} className="w-full h-full" />
+        <SandpackPreview
+          files={files}
+          className="w-full h-full"
+          timeoutMs={15000}
+          onTimeout={() => setSandpackTimedOut(true)}
+        />
       </div>
     )
   }

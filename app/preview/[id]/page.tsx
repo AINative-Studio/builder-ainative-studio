@@ -21,6 +21,16 @@
  * lib/build/useRealPreview.ts) and route through shouldUseSandpack() exactly
  * like Preview.tsx does. Single-file apps are unaffected — they have no
  * durable files map, so this always falls through to the existing iframe.
+ *
+ * Resilience (found live, same session, on THIS exact page):
+ * components/chat/sandpack-preview.tsx's bundler-side dependency fetch can
+ * hang forever with no error (unfixed CodeSandbox/unpkg gap — see that
+ * file's doc comment). Confirmed directly: a real chatId's Sandpack preview
+ * never resolved a src for its own iframe, stuck on pending unpkg fetches
+ * for the exact pinned react/react-dom/prop-types versions Sandpack's
+ * bundler had resolved. A 15s watchdog (SandpackPreview's timeoutMs/
+ * onTimeout) falls back to the flattened-code iframe if Sandpack hasn't
+ * finished by then.
  */
 
 import { useEffect, useState } from 'react'
@@ -39,6 +49,7 @@ export default function PreviewPage() {
 
   const [files, setFiles] = useState<Record<string, string> | null>(null)
   const [checkedFiles, setCheckedFiles] = useState(false)
+  const [sandpackTimedOut, setSandpackTimedOut] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -57,7 +68,7 @@ export default function PreviewPage() {
     return () => { cancelled = true }
   }, [id])
 
-  const useSandpack = checkedFiles && shouldUseSandpack(files)
+  const useSandpack = checkedFiles && shouldUseSandpack(files) && !sandpackTimedOut
 
   return (
     <div className="min-h-screen bg-gray-100 p-4">
@@ -69,7 +80,7 @@ export default function PreviewPage() {
 
         <div className="bg-white rounded-lg shadow-lg overflow-hidden" style={{ height: '80vh' }}>
           {useSandpack && files ? (
-            <SandpackPreview files={files} />
+            <SandpackPreview files={files} timeoutMs={15000} onTimeout={() => setSandpackTimedOut(true)} />
           ) : (
             <iframe
               src={`/api/preview/${id}`}

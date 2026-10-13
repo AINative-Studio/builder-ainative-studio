@@ -20,11 +20,15 @@ beforeAll(() => {
 
 vi.mock('next/dynamic', () => ({
   default: (loader: () => Promise<any>) => {
-    const Stub = (props: any) => React.createElement('div', {
-      'data-testid': 'sandpack-stub',
-      'data-file-count': Object.keys(props.files || {}).length,
-      'data-show-refresh': String(props.showRefreshButton),
-    })
+    const Stub = (props: any) => {
+      ;(globalThis as any).__sandpackStubTriggerTimeout = props.onTimeout
+      return React.createElement('div', {
+        'data-testid': 'sandpack-stub',
+        'data-file-count': Object.keys(props.files || {}).length,
+        'data-show-refresh': String(props.showRefreshButton),
+        'data-timeout-ms': props.timeoutMs,
+      })
+    }
     return Stub
   },
 }))
@@ -89,5 +93,29 @@ describe('ShowcaseThumbnail — Sandpack routing (#1068)', () => {
     await renderThumbnail({ chatId: 'test-chat-id', title: 'Acme' })
     expect(host.querySelector('iframe')).toBeTruthy()
     expect(host.querySelector('[data-testid="sandpack-stub"]')).toBeFalsy()
+  })
+
+  it('uses a shorter 8s watchdog than the full page (cosmetic, not worth the same wait) and falls back on timeout', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        files: {
+          '/src/App.tsx': "import Sidebar from './components/Sidebar'\nexport default function App(){return null}",
+          '/src/components/Sidebar.tsx': 'export default function Sidebar(){return null}',
+        },
+      }),
+    })
+    await renderThumbnail({ chatId: 'finio-chat', title: 'Finio' })
+
+    const stub = host.querySelector('[data-testid="sandpack-stub"]')
+    expect(stub?.getAttribute('data-timeout-ms')).toBe('8000')
+
+    await act(async () => {
+      ;(globalThis as any).__sandpackStubTriggerTimeout()
+    })
+
+    expect(host.querySelector('[data-testid="sandpack-stub"]')).toBeFalsy()
+    const iframe = host.querySelector('iframe') as HTMLIFrameElement
+    expect(iframe.src).toContain('/api/preview/finio-chat')
   })
 })
