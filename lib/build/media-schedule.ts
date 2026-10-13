@@ -31,6 +31,7 @@
 import { deriveOwnerKey, chatScopeKey } from '@/lib/build/chat-store'
 import { buildUploadKey, uploadedAssetUrl } from '@/lib/build/media-upload'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
+import { listDocuments, type DocType } from '@/lib/build/document-store'
 
 const ZERODB_API = process.env.ZERODB_API_URL || 'https://api.ainative.studio/api'
 const PROJECT_ID = process.env.ZERODB_PROJECT_ID || '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
@@ -239,6 +240,53 @@ export function pickNextVariant(prev: number | undefined | null, total: number):
   // `prev` so the result is never equal to it — structural, not retry-based.
   const offset = 1 + Math.floor(Math.random() * (total - 1))
   return (prev + offset) % total
+}
+
+/**
+ * Document types that describe what the company actually DOES/sells, in
+ * priority order (most product-specific first) — the candidates
+ * {@link enrichIdeaFromDocuments} searches for an idea-grounding excerpt.
+ * Deliberately excludes types that describe HOW the company operates rather
+ * than WHAT it is (e.g. 'dataModel', 'apiSpec', 'codingStandards') — those
+ * would not improve image/video subject-matter grounding.
+ */
+const IDEA_GROUNDING_DOC_TYPES: readonly DocType[] = ['thesis', 'positioning', 'prd', 'brief', 'mission'] as const
+
+/** Max characters of a grounding document folded into the generation prompt — bounded so the prompt stays small and the real idea stays legible, not drowned in markdown. */
+const IDEA_GROUNDING_EXCERPT_CHARS = 400
+
+/**
+ * #1077: `buildBrandPrompt()`'s `idea` field is ENTIRELY the founder's original
+ * one-sentence intake pitch (`state.idea`, threaded through unchanged since
+ * creation) — confirmed via live spot-check: Wallkind's idea is ~3 words
+ * ("street art gallery"), visually ambiguous enough that real generation
+ * produced an interior-decor mural instead of street/graffiti art, and Ember
+ * Box's idea produced a generic subscription-box scene with no hot sauce
+ * visible. Builder already generates and stores a much richer, specific
+ * business description per company (thesis/positioning/PRD/brief/mission, in
+ * `build_documents`) — this was never read for media generation.
+ *
+ * Looks up the company's stored documents and returns a short excerpt of the
+ * most product-specific one found (first match in
+ * {@link IDEA_GROUNDING_DOC_TYPES} priority order — newest of that type, since
+ * listDocuments() is newest-first), to be folded in ADDITION to (never instead
+ * of) the real idea text. Returns null — never throws — when no scope key, no
+ * matching document exists yet (the common case for a brand-new company), or
+ * the lookup fails for any reason: the caller falls back to the raw idea
+ * alone, exactly like today, so this can never regress or break generation.
+ */
+export async function enrichIdeaFromDocuments(scopeKey: string): Promise<string | null> {
+  if (!scopeKey) return null
+  try {
+    const docs = await listDocuments(scopeKey)
+    for (const docType of IDEA_GROUNDING_DOC_TYPES) {
+      const match = docs.find((d) => d.type === docType && d.content && d.content.trim())
+      if (match) return match.content.trim().slice(0, IDEA_GROUNDING_EXCERPT_CHARS)
+    }
+    return null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -787,6 +835,12 @@ export type MediaFailureReason = (typeof MEDIA_FAILURE_REASONS)[number]
  *
  * #1018: `styleIndex` (optional, independent from `variantIndex`) selects the
  * rotating style/mood descriptor — see {@link buildBrandPrompt}.
+ *
+ * #1077: before building the prompt, looks up a richer stored business
+ * description for this scope ({@link enrichIdeaFromDocuments}) and appends it
+ * to `brand.idea` when found — grounds subject matter beyond the short
+ * original intake pitch alone. A lookup failure or no match leaves `brand`
+ * untouched, so this can never regress today's behavior.
  */
 export async function runMediaGeneration(
   scopeKey: string,
@@ -796,7 +850,11 @@ export async function runMediaGeneration(
   styleIndex?: number,
 ): Promise<{ status: 'disabled' | 'failed' | 'generated'; asset?: MediaAsset; reason?: MediaFailureReason }> {
   if (!mediaGenerationConfigured()) return { status: 'disabled' }
-  const prompt = buildBrandPrompt(mediaKind, brand, variantIndex, styleIndex)
+  const enrichment = await enrichIdeaFromDocuments(scopeKey)
+  const enrichedBrand: BrandContext = enrichment
+    ? { ...brand, idea: brand.idea ? `${brand.idea} — ${enrichment}` : enrichment }
+    : brand
+  const prompt = buildBrandPrompt(mediaKind, enrichedBrand, variantIndex, styleIndex)
   const { path, body } = buildGenerationRequest(mediaKind, prompt)
   try {
     const res = await fetch(`${CORE_API}${path}`, {

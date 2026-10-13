@@ -13,6 +13,7 @@ import {
   buildBrandPrompt,
   buildGenerationRequest,
   mediaGenerationConfigured,
+  enrichIdeaFromDocuments,
   coerceRoutine,
   coerceAsset,
   sortByCreatedDesc,
@@ -412,6 +413,82 @@ describe('mediaGenerationConfigured', () => {
   })
 })
 
+describe('enrichIdeaFromDocuments (#1077)', () => {
+  // Wallkind's real idea was ~3 words ("street art gallery") — visually
+  // ambiguous enough that live generation produced an interior-decor mural
+  // instead of street/graffiti art. enrichIdeaFromDocuments looks up the
+  // company's own richer stored business description so buildBrandPrompt()
+  // has more than a few words to ground subject matter on.
+  const docRow = (overrides: Partial<{ id: string; type: string; title: string; content: string; created_at: string }> = {}) => ({
+    row_data: {
+      id: 'd1',
+      rowKind: 'document',
+      type: 'thesis',
+      title: 'Business Thesis',
+      content: 'A real street art gallery — curated outdoor murals and graffiti pieces, sold as prints.',
+      created_at: '2026-10-01T00:00:00Z',
+      ...overrides,
+    },
+  })
+
+  it('returns null (never fails the caller) when there is no scope key', async () => {
+    expect(await enrichIdeaFromDocuments('')).toBeNull()
+  })
+
+  it('returns null when the company has no stored documents yet (brand-new company — the common case today)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => OK({ data: [] }) as any))
+    expect(await enrichIdeaFromDocuments('a::b')).toBeNull()
+  })
+
+  it('returns a trimmed excerpt of the thesis document when one exists', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => OK({ data: [docRow()] }) as any))
+    const result = await enrichIdeaFromDocuments('a::b')
+    expect(result).toContain('street art gallery')
+    expect(result).toContain('murals and graffiti')
+  })
+
+  it('prefers thesis over positioning/prd/brief/mission when multiple document types exist', async () => {
+    const docs = [
+      docRow({ id: 'm1', type: 'mission', content: 'Mission doc content, should lose to thesis.' }),
+      docRow({ id: 't1', type: 'thesis', content: 'Thesis doc content, should win.' }),
+      docRow({ id: 'p1', type: 'prd', content: 'PRD doc content, should lose to thesis.' }),
+    ]
+    vi.stubGlobal('fetch', vi.fn(async () => OK({ data: docs }) as any))
+    const result = await enrichIdeaFromDocuments('a::b')
+    expect(result).toContain('Thesis doc content')
+  })
+
+  it('falls back to a lower-priority type when no higher-priority type exists', async () => {
+    const docs = [docRow({ id: 'mi1', type: 'mission', content: 'Only a mission doc exists for this company.' })]
+    vi.stubGlobal('fetch', vi.fn(async () => OK({ data: docs }) as any))
+    const result = await enrichIdeaFromDocuments('a::b')
+    expect(result).toContain('Only a mission doc')
+  })
+
+  it('ignores document types that describe HOW the company operates, not WHAT it is', async () => {
+    const docs = [docRow({ id: 'dm1', type: 'dataModel', content: 'CREATE TABLE users (id uuid primary key);' })]
+    vi.stubGlobal('fetch', vi.fn(async () => OK({ data: docs }) as any))
+    expect(await enrichIdeaFromDocuments('a::b')).toBeNull()
+  })
+
+  it('bounds the excerpt length so an unbounded document cannot blow up the prompt', async () => {
+    const longContent = 'x'.repeat(5000)
+    vi.stubGlobal('fetch', vi.fn(async () => OK({ data: [docRow({ content: longContent })] }) as any))
+    const result = await enrichIdeaFromDocuments('a::b')
+    expect(result!.length).toBeLessThanOrEqual(400)
+  })
+
+  it('never throws — returns null on a network exception', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('boom') }))
+    expect(await enrichIdeaFromDocuments('a::b')).toBeNull()
+  })
+
+  it('never throws — returns null on a non-2xx response', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ERR(500) as any))
+    expect(await enrichIdeaFromDocuments('a::b')).toBeNull()
+  })
+})
+
 describe('coerceRoutine / coerceAsset', () => {
   it('coerces a valid routine row (row_data wrapped)', () => {
     const r = coerceRoutine({ row_data: { id: 'x', rowKind: 'routine', mediaKind: 'video', frequency: 'daily', enabled: true, createdAt: 't' } })
@@ -604,6 +681,7 @@ describe('I/O: saveRoutine / saveAsset / listMedia / runMediaGeneration', () => 
   it('runMediaGeneration generates + persists an owned VIDEO asset when configured (real video shape: a url field)', async () => {
     process.env.BUILD_MEDIA_ENABLED = 'true'
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(OK({ data: [] }) as any) // enrichIdeaFromDocuments' listDocuments — no stored docs
       .mockResolvedValueOnce(OK({ url: 'http://x/gen.mp4', provider: 'multimodal' }) as any) // generate
       .mockResolvedValueOnce(OK({}) as any) // saveAsset's ensureTable (build_media table-missing fix — best-effort, response unused)
       .mockResolvedValueOnce(OK({ ok: true }) as any) // saveAsset
@@ -612,9 +690,52 @@ describe('I/O: saveRoutine / saveAsset / listMedia / runMediaGeneration', () => 
     expect(res.status).toBe('generated')
     expect(res.asset?.url).toBe('http://x/gen.mp4')
     // The generation request must hit the multimodal video endpoint with an on-brand prompt.
-    const firstCall = fetchMock.mock.calls[0]
-    expect(String(firstCall[0])).toContain('/api/v1/multimodal/video/t2v')
-    expect(String(firstCall[1].body)).toContain('Acme')
+    const genCall = fetchMock.mock.calls[1]
+    expect(String(genCall[0])).toContain('/api/v1/multimodal/video/t2v')
+    expect(String(genCall[1].body)).toContain('Acme')
+  })
+
+  // #1077: end-to-end — when a stored business document exists for this
+  // scope, runMediaGeneration must fold its content into the sent prompt
+  // IN ADDITION TO the raw idea, not instead of it.
+  it('runMediaGeneration folds a stored business document into the prompt it actually sends, alongside the raw idea', async () => {
+    process.env.BUILD_MEDIA_ENABLED = 'true'
+    const thesisDoc = {
+      row_data: {
+        id: 't1',
+        rowKind: 'document',
+        type: 'thesis',
+        title: 'Thesis',
+        content: 'Curated outdoor murals and graffiti pieces sold as limited-run prints.',
+        created_at: '2026-10-01T00:00:00Z',
+      },
+    }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(OK({ data: [thesisDoc] }) as any) // enrichIdeaFromDocuments' listDocuments
+      .mockResolvedValueOnce(OK({ url: 'http://x/gen.png' }) as any) // generate
+      .mockResolvedValueOnce(OK({}) as any) // saveAsset's ensureTable
+      .mockResolvedValueOnce(OK({ ok: true }) as any) // saveAsset
+    vi.stubGlobal('fetch', fetchMock)
+    await runMediaGeneration('a::b', 'image', { companyName: 'Wallkind', idea: 'street art gallery' })
+    const genCall = fetchMock.mock.calls[1]
+    const sentBody = JSON.parse(String(genCall[1].body))
+    // Both the original short idea AND the richer thesis excerpt must ground the prompt.
+    expect(sentBody.prompt).toContain('street art gallery')
+    expect(sentBody.prompt).toContain('Curated outdoor murals and graffiti')
+  })
+
+  it('runMediaGeneration falls back to the raw idea alone when no stored document exists (no regression for new companies)', async () => {
+    process.env.BUILD_MEDIA_ENABLED = 'true'
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(OK({ data: [] }) as any) // enrichIdeaFromDocuments' listDocuments — nothing stored yet
+      .mockResolvedValueOnce(OK({ url: 'http://x/gen.png' }) as any)
+      .mockResolvedValueOnce(OK({}) as any)
+      .mockResolvedValueOnce(OK({ ok: true }) as any)
+    vi.stubGlobal('fetch', fetchMock)
+    await runMediaGeneration('a::b', 'image', { companyName: 'Acme', idea: 'a widget store' })
+    const genCall = fetchMock.mock.calls[1]
+    const sentBody = JSON.parse(String(genCall[1].body))
+    expect(sentBody.prompt).toBe(buildBrandPrompt('image', { companyName: 'Acme', idea: 'a widget store' }))
   })
 
   describe('image generation — real response shape is {image_base64}, not a url (live repro, 2026-09)', () => {
@@ -628,6 +749,7 @@ describe('I/O: saveRoutine / saveAsset / listMedia / runMediaGeneration', () => 
     it('decodes image_base64, uploads it, and persists the durable asset URL', async () => {
       process.env.BUILD_MEDIA_ENABLED = 'true'
       const fetchMock = vi.fn()
+        .mockResolvedValueOnce(OK({ data: [] }) as any) // enrichIdeaFromDocuments' listDocuments — no stored docs
         .mockResolvedValueOnce(OK({ image_base64: Buffer.from('fake-png-bytes').toString('base64'), provider: 'multimodal' }) as any) // generate
         .mockResolvedValueOnce(OK({ file_id: '11111111-1111-1111-1111-111111111111' }) as any) // uploadMediaFile
         .mockResolvedValueOnce(OK({}) as any) // saveAsset's ensureTable
@@ -637,13 +759,14 @@ describe('I/O: saveRoutine / saveAsset / listMedia / runMediaGeneration', () => 
       expect(res.status).toBe('generated')
       expect(res.asset?.url).toBe('/api/build/media/upload?id=11111111-1111-1111-1111-111111111111')
       // The upload call must send the real decoded bytes as multipart form data.
-      const uploadCall = fetchMock.mock.calls[1]
+      const uploadCall = fetchMock.mock.calls[2]
       expect(String(uploadCall[0])).toContain('/files/upload')
     })
 
     it('reports failed when image_base64 is present but the upload itself fails', async () => {
       process.env.BUILD_MEDIA_ENABLED = 'true'
       const fetchMock = vi.fn()
+        .mockResolvedValueOnce(OK({ data: [] }) as any) // enrichIdeaFromDocuments' listDocuments
         .mockResolvedValueOnce(OK({ image_base64: Buffer.from('x').toString('base64') }) as any) // generate
         .mockResolvedValueOnce(ERR(500) as any) // uploadMediaFile fails
       vi.stubGlobal('fetch', fetchMock)
@@ -661,6 +784,7 @@ describe('I/O: saveRoutine / saveAsset / listMedia / runMediaGeneration', () => 
     it('a real url field still wins for image responses that provide one directly (defensive — does not regress if core ever changes shape)', async () => {
       process.env.BUILD_MEDIA_ENABLED = 'true'
       const fetchMock = vi.fn()
+        .mockResolvedValueOnce(OK({ data: [] }) as any) // enrichIdeaFromDocuments' listDocuments
         .mockResolvedValueOnce(OK({ url: 'http://x/direct.png', image_base64: 'should-be-ignored' }) as any)
         .mockResolvedValueOnce(OK({}) as any)
         .mockResolvedValueOnce(OK({ ok: true }) as any)
@@ -668,8 +792,8 @@ describe('I/O: saveRoutine / saveAsset / listMedia / runMediaGeneration', () => 
       const res = await runMediaGeneration('a::b', 'image', {})
       expect(res.status).toBe('generated')
       expect(res.asset?.url).toBe('http://x/direct.png')
-      // Only 3 calls (generate + ensureTable + saveAsset) — never touched the upload path.
-      expect(fetchMock).toHaveBeenCalledTimes(3)
+      // 4 calls (listDocuments + generate + ensureTable + saveAsset) — never touched the upload path.
+      expect(fetchMock).toHaveBeenCalledTimes(4)
     })
   })
   it('runMediaGeneration reports failed when the core call errors', async () => {
@@ -695,19 +819,21 @@ describe('I/O: saveRoutine / saveAsset / listMedia / runMediaGeneration', () => 
   it('runMediaGeneration threads an explicit variant index into the generated prompt', async () => {
     process.env.BUILD_MEDIA_ENABLED = 'true'
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(OK({ data: [] }) as any) // enrichIdeaFromDocuments' listDocuments
       .mockResolvedValueOnce(OK({ url: 'http://x/gen.mp4' }) as any)
       .mockResolvedValueOnce(OK({}) as any)
       .mockResolvedValueOnce(OK({ ok: true }) as any)
     vi.stubGlobal('fetch', fetchMock)
     await runMediaGeneration('a::b', 'video', { companyName: 'Acme' }, 1)
-    const firstCall = fetchMock.mock.calls[0]
-    const sentBody = JSON.parse(String(firstCall[1].body))
+    const genCall = fetchMock.mock.calls[1]
+    const sentBody = JSON.parse(String(genCall[1].body))
     expect(sentBody.prompt).toBe(buildBrandPrompt('video', { companyName: 'Acme' }, 1))
   })
 
   it('runMediaGeneration defaults sensibly when no variant index is passed (back-compat)', async () => {
     process.env.BUILD_MEDIA_ENABLED = 'true'
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(OK({ data: [] }) as any) // enrichIdeaFromDocuments' listDocuments
       .mockResolvedValueOnce(OK({ url: 'http://x/gen.mp4' }) as any)
       .mockResolvedValueOnce(OK({}) as any)
       .mockResolvedValueOnce(OK({ ok: true }) as any)
@@ -722,13 +848,14 @@ describe('I/O: saveRoutine / saveAsset / listMedia / runMediaGeneration', () => 
   it('runMediaGeneration threads an explicit style index into the generated prompt, independent of the variant index', async () => {
     process.env.BUILD_MEDIA_ENABLED = 'true'
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(OK({ data: [] }) as any) // enrichIdeaFromDocuments' listDocuments
       .mockResolvedValueOnce(OK({ url: 'http://x/gen.mp4' }) as any)
       .mockResolvedValueOnce(OK({}) as any)
       .mockResolvedValueOnce(OK({ ok: true }) as any)
     vi.stubGlobal('fetch', fetchMock)
     await runMediaGeneration('a::b', 'video', { companyName: 'Acme' }, 1, 2)
-    const firstCall = fetchMock.mock.calls[0]
-    const sentBody = JSON.parse(String(firstCall[1].body))
+    const genCall = fetchMock.mock.calls[1]
+    const sentBody = JSON.parse(String(genCall[1].body))
     expect(sentBody.prompt).toBe(buildBrandPrompt('video', { companyName: 'Acme' }, 1, 2))
     // And it must differ from the variant-only (style defaulted to 0) prompt.
     expect(sentBody.prompt).not.toBe(buildBrandPrompt('video', { companyName: 'Acme' }, 1))
@@ -787,6 +914,7 @@ describe('I/O: saveRoutine / saveAsset / listMedia / runMediaGeneration', () => 
       // so this covers the poll_failed (terminal Fail) branch at the integration level
       // instead, and the timeout branch is covered directly against pollVideoStatus below.
       const failFetch = vi.fn()
+        .mockResolvedValueOnce(OK({ data: [] }) as any) // enrichIdeaFromDocuments' listDocuments
         .mockResolvedValueOnce(OK({ status: 'processing', task_id: 'task-1' }) as any)
         .mockResolvedValueOnce(OK({ status: 'Fail', task_id: 'task-1' }) as any)
       vi.stubGlobal('fetch', failFetch)
@@ -799,6 +927,7 @@ describe('I/O: saveRoutine / saveAsset / listMedia / runMediaGeneration', () => 
     it('logs + tags save_failed when generation succeeds but persisting the asset fails', async () => {
       process.env.BUILD_MEDIA_ENABLED = 'true'
       const fetchMock = vi.fn()
+        .mockResolvedValueOnce(OK({ data: [] }) as any) // enrichIdeaFromDocuments' listDocuments
         .mockResolvedValueOnce(OK({ url: 'http://x/gen.mp4', provider: 'multimodal' }) as any) // generate
         .mockResolvedValueOnce(ERR(500) as any) // saveAsset's ensureTable (best-effort, failure ignored)
         .mockResolvedValueOnce(ERR(500) as any) // saveAsset's real write fails
@@ -820,6 +949,7 @@ describe('I/O: saveRoutine / saveAsset / listMedia / runMediaGeneration', () => 
     // multi-attempt progression (Preparing → Processing → Success) is covered
     // directly against pollVideoStatus below, where the fast sleep IS injectable.
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(OK({ data: [] }) as any) // enrichIdeaFromDocuments' listDocuments
       .mockResolvedValueOnce(OK({ status: 'processing', task_id: 'task-1' }) as any) // initial POST
       .mockResolvedValueOnce(OK({ status: 'Success', task_id: 'task-1', video_url: 'http://x/v.mp4' }) as any) // poll — done
       .mockResolvedValueOnce(OK({}) as any) // saveAsset's ensureTable (build_media table-missing fix)
@@ -829,13 +959,14 @@ describe('I/O: saveRoutine / saveAsset / listMedia / runMediaGeneration', () => 
     expect(res.status).toBe('generated')
     expect(res.asset?.url).toBe('http://x/v.mp4')
     // Poll call hits the real status endpoint with the task id.
-    const pollCall = fetchMock.mock.calls[1]
+    const pollCall = fetchMock.mock.calls[2]
     expect(String(pollCall[0])).toContain('/api/v1/multimodal/video/status/task-1')
   })
 
   it('runMediaGeneration reports failed when the video job terminally fails', async () => {
     process.env.BUILD_MEDIA_ENABLED = 'true'
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(OK({ data: [] }) as any) // enrichIdeaFromDocuments' listDocuments
       .mockResolvedValueOnce(OK({ status: 'processing', task_id: 'task-1' }) as any)
       .mockResolvedValueOnce(OK({ status: 'Fail', task_id: 'task-1' }) as any)
     vi.stubGlobal('fetch', fetchMock)
@@ -846,13 +977,14 @@ describe('I/O: saveRoutine / saveAsset / listMedia / runMediaGeneration', () => 
   it('runMediaGeneration does not poll when the initial video response already has a url', async () => {
     process.env.BUILD_MEDIA_ENABLED = 'true'
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(OK({ data: [] }) as any) // enrichIdeaFromDocuments' listDocuments
       .mockResolvedValueOnce(OK({ status: 'Success', video_url: 'http://x/v.mp4' }) as any)
       .mockResolvedValueOnce(OK({}) as any) // saveAsset's ensureTable (build_media table-missing fix)
       .mockResolvedValueOnce(OK({ ok: true }) as any) // saveAsset
     vi.stubGlobal('fetch', fetchMock)
     const res = await runMediaGeneration('a::b', 'video', {})
     expect(res.status).toBe('generated')
-    expect(fetchMock).toHaveBeenCalledTimes(3) // generate + ensureTable + saveAsset, no separate poll call
+    expect(fetchMock).toHaveBeenCalledTimes(4) // listDocuments + generate + ensureTable + saveAsset, no separate poll call
   })
 
   it('runMediaGeneration does not poll for image generation even without a url', async () => {
