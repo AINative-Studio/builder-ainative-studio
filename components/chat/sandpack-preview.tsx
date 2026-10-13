@@ -13,6 +13,38 @@ import { getBuiltinFiles } from '@/lib/sandpack/setup'
 import { sanitizeForSandpack } from '@/lib/code-validator'
 
 /**
+ * #1074 (epic #1076): the underlying `@codesandbox/sandpack-client` dependency
+ * is now resolved via a pnpm override (see root package.json) to AINative's
+ * fork (`@ainative/sandpack-client`, carrying the self-hosted-CDN fixes from
+ * issue #1073 — see that PR and builder-ainative-studio#1073's closing
+ * comment for the real, browser-verified evidence that fork renders
+ * correctly). That fork's own BUILT-IN default bundler origin is
+ * `https://sandpack{{suffix}}.ainative.studio/` — a placeholder host that
+ * does NOT yet serve a real, deployed bundler (the actual iframe build,
+ * `sandpack-bundler` PR AINative-Studio/sandpack-bundler#2, is open but not
+ * yet deployed anywhere stable). Silently inheriting that default here would
+ * break 100% of multi-file previews on merge, not just prepare the ground
+ * for a later cutover.
+ *
+ * So: explicitly pin `bundlerURL` to the exact host Builder's previews are
+ * already using in production today (verified live, 2026-10-13 —
+ * `2-19-8-sandpack.codesandbox.io`, matching the currently-pinned
+ * `@codesandbox/sandpack-react@^2.20.0` / sandpack-client@2.19.8 version
+ * line) UNLESS `NEXT_PUBLIC_SANDPACK_BUNDLER_URL` is explicitly set. This
+ * makes the dependency swap itself behavior-neutral — real preview traffic
+ * keeps hitting the known-good CodeSandbox host exactly as before — while
+ * leaving a one-env-var cutover (no further code change, no redeploy of
+ * this file) once a real self-hosted bundler is live and verified at scale.
+ * Do NOT remove this override as part of a later "cleanup" without first
+ * confirming a real self-hosted bundler is deployed, stable, and the env
+ * var is set — see builder-ainative-studio#1074 and #1076 for the rollout
+ * plan.
+ */
+const STOCK_CODESANDBOX_BUNDLER_URL = 'https://2-19-8-sandpack.codesandbox.io/'
+const SANDPACK_BUNDLER_URL =
+  process.env.NEXT_PUBLIC_SANDPACK_BUNDLER_URL || STOCK_CODESANDBOX_BUNDLER_URL
+
+/**
  * Real production reliability gap, confirmed live (2026-10-12): Sandpack's
  * bundler-side dependency fetch (from unpkg.com) can hang indefinitely with
  * NO error event, NO timeout, and NO visible failure state — the preview
@@ -381,6 +413,7 @@ export function SandpackPreview({ files, theme = 'light', className, showRefresh
         options={{
           externalResources: ['https://cdn.tailwindcss.com'],
           activeFile: '/App.tsx',
+          bundlerURL: SANDPACK_BUNDLER_URL,
         }}
         theme={theme === 'dark' ? 'dark' : 'light'}
       >

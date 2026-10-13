@@ -6,6 +6,7 @@ settings:
 
 overrides:
   '@ainative/ai-kit>@ainative/ai-kit-core': 0.2.0
+  '@codesandbox/sandpack-client': npm:@ainative/sandpack-client@2.19.8
 
 importers:
 
@@ -392,6 +393,9 @@ packages:
     resolution: {integrity: sha512-l13RFaF7mjPgjO2Xq1MEYrPyMLVW7gh3kfpxv6EKxePBjs0NmelZgJsbMzgedM4/GZP45X74aPZzp3r/UC/83w==}
     engines: {node: '>=18.0.0'}
     hasBin: true
+
+  '@ainative/sandpack-client@2.19.8':
+    resolution: {integrity: sha512-5grlZrIi41Wj+lyAsWgZLRYewYlV9TMpq4fxiX5m74s7xbsU63ZTNyf29xiVX9QO72KLiPNmHN8hai3i7ij5hw==}
 
   '@alcalzone/ansi-tokenize@0.1.3':
     resolution: {integrity: sha512-3yWxPTq3UQ/FY9p1ErPxIyfT64elWaMvM9lIHnaqpyft63tkxodF5aUElYHrdisWve5cETkh1+KBw1yJuW0aRw==}
@@ -961,9 +965,6 @@ packages:
 
   '@codesandbox/nodebox@0.1.8':
     resolution: {integrity: sha512-2VRS6JDSk+M+pg56GA6CryyUSGPjBEe8Pnae0QL3jJF1mJZJVMDKr93gJRtBbLkfZN6LD/DwMtf+2L0bpWrjqg==}
-
-  '@codesandbox/sandpack-client@2.19.8':
-    resolution: {integrity: sha512-CMV4nr1zgKzVpx4I3FYvGRM5YT0VaQhALMW9vy4wZRhEyWAtJITQIqZzrTGWqB1JvV7V72dVEUCUPLfYz5hgJQ==}
 
   '@codesandbox/sandpack-react@2.20.0':
     resolution: {integrity: sha512-takd1YpW/PMQ6KPQfvseWLHWklJovGY8QYj8MtWnskGKbjOGJ6uZfyZbcJ6aCFLQMpNyjTqz9AKNbvhCOZ1TUQ==}
@@ -8451,6 +8452,15 @@ snapshots:
       shell-quote: 1.10.0
       zod: 3.25.76
 
+  '@ainative/sandpack-client@2.19.8':
+    dependencies:
+      '@codesandbox/nodebox': 0.1.8
+      buffer: 6.0.3
+      dequal: 2.0.3
+      mime-db: 1.54.0
+      outvariant: 1.4.0
+      static-browser-server: 1.0.3
+
   '@alcalzone/ansi-tokenize@0.1.3':
     dependencies:
       ansi-styles: 6.2.3
@@ -9304,15 +9314,6 @@ snapshots:
       outvariant: 1.4.0
       strict-event-emitter: 0.4.6
 
-  '@codesandbox/sandpack-client@2.19.8':
-    dependencies:
-      '@codesandbox/nodebox': 0.1.8
-      buffer: 6.0.3
-      dequal: 2.0.3
-      mime-db: 1.52.0
-      outvariant: 1.4.0
-      static-browser-server: 1.0.3
-
   '@codesandbox/sandpack-react@2.20.0(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
     dependencies:
       '@codemirror/autocomplete': 6.20.1
@@ -9323,7 +9324,7 @@ snapshots:
       '@codemirror/language': 6.12.3
       '@codemirror/state': 6.6.0
       '@codemirror/view': 6.40.0
-      '@codesandbox/sandpack-client': 2.19.8
+      '@codesandbox/sandpack-client': '@ainative/sandpack-client@2.19.8'
       '@lezer/highlight': 1.2.3
       '@react-hook/intersection-observer': 3.1.2(react@19.1.0)
       '@stitches/core': 1.2.8
@@ -16615,7 +16616,7 @@ snapshots:
     dependencies:
       '@open-draft/deferred-promise': 2.2.0
       dotenv: 16.6.1
-      mime-db: 1.52.0
+      mime-db: 1.54.0
       outvariant: 1.4.0
 
   statuses@2.0.2: {}
