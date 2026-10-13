@@ -145,7 +145,8 @@
   "packageManager": "pnpm@10.15.0",
   "pnpm": {
     "overrides": {
-      "@ainative/ai-kit>@ainative/ai-kit-core": "0.2.0"
+      "@ainative/ai-kit>@ainative/ai-kit-core": "0.2.0",
+      "@codesandbox/sandpack-client": "npm:@ainative/sandpack-client@2.19.8"
     }
   }
 }
