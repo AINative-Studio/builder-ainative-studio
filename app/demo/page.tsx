@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { StandalonePreviewFrame } from '@/components/build/StandalonePreviewFrame'
 
 export default function DemoPage() {
   const [currentPreview, setCurrentPreview] = useState('test-final-001')
@@ -39,14 +40,11 @@ export default function DemoPage() {
           ))}
         </div>
 
-        {/* Live Preview */}
-        <div className="bg-white rounded-lg shadow-lg overflow-hidden" style={{ height: '700px' }}>
-          <iframe
-            key={currentPreview}
-            src={`/api/preview/${currentPreview}`}
-            className="w-full h-full border-0"
-            title={`Preview ${currentPreview}`}
-          />
+        {/* Live Preview (#1068: Sandpack-routed via StandalonePreviewFrame,
+            same as /build/{slug} — was a raw /api/preview/{id} iframe,
+            exposed to the same flattening bug #1066 fixed there) */}
+        <div className="bg-white rounded-lg shadow-lg overflow-hidden flex" style={{ height: '700px' }}>
+          <StandalonePreviewFrame key={currentPreview} chatId={currentPreview} slug={currentPreview} title={`Preview ${currentPreview}`} />
         </div>
       </div>
     </div>
