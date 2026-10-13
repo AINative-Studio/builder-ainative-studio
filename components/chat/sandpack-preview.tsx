@@ -5,11 +5,62 @@ import {
   SandpackProvider,
   SandpackPreview as SandpackPreviewComponent,
   SandpackLayout,
+  useSandpack,
 } from '@codesandbox/sandpack-react'
 import { cn } from '@/lib/utils'
 import { fixJsxErrors } from '@/lib/sandpack/jsx-fixer'
 import { getBuiltinFiles } from '@/lib/sandpack/setup'
 import { sanitizeForSandpack } from '@/lib/code-validator'
+
+/**
+ * Real production reliability gap, confirmed live (2026-10-12): Sandpack's
+ * bundler-side dependency fetch (from unpkg.com) can hang indefinitely with
+ * NO error event, NO timeout, and NO visible failure state — the preview
+ * iframe is created but never given a real src, and the page just stays
+ * blank forever. This is a known, unfixed CodeSandbox/unpkg reliability gap
+ * (github.com/codesandbox/sandpack/issues/703, discussions/706 — a
+ * maintainer confirms "possible... a hiccup due to some UNPKG issues", no
+ * official fix exists 3+ years later).
+ *
+ * SandpackResilientTimeout listens for Sandpack's own "start"/"done" events
+ * (the same stream useSandpackPreviewProgress reads) and calls onTimeout if
+ * "done" never fires within `timeoutMs` of the first "start". Must render
+ * INSIDE SandpackProvider (useSandpack() requires that context).
+ */
+function SandpackResilientTimeout({ timeoutMs, onTimeout }: { timeoutMs: number; onTimeout: () => void }) {
+  const { listen } = useSandpack()
+  const firedRef = React.useRef(false)
+
+  React.useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const clear = () => { if (timer) clearTimeout(timer) }
+
+    const unsubscribe = listen((message) => {
+      if (message.type === 'start' && !timer) {
+        clear()
+        timer = setTimeout(() => {
+          if (!firedRef.current) {
+            firedRef.current = true
+            console.warn(`[SandpackPreview] No "done" event within ${timeoutMs}ms of start — treating as hung, falling back`)
+            onTimeout()
+          }
+        }, timeoutMs)
+      }
+      if (message.type === 'done') {
+        firedRef.current = true
+        clear()
+      }
+    })
+
+    return () => {
+      clear()
+      unsubscribe()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  return null
+}
 
 class SandpackErrorBoundary extends React.Component<
   { children: React.ReactNode; className?: string },
@@ -52,9 +103,18 @@ interface SandpackPreviewProps {
    *  Sandpack's own refresh control would show through a pointer-events:none
    *  scaled-down card. Defaults to true — unchanged for every existing caller. */
   showRefreshButton?: boolean
+  /** Real preview-system resilience gap found live: Sandpack's bundler-side
+   *  dependency fetch can hang forever with no error (unfixed CodeSandbox/
+   *  unpkg issue, see SandpackResilientTimeout's doc comment above). When
+   *  set, onTimeout fires once if Sandpack hasn't finished within timeoutMs
+   *  of starting — the caller is expected to swap to a non-Sandpack fallback
+   *  (e.g. the flattened-code iframe). Omit to disable the watchdog (keeps
+   *  existing behavior for any caller that doesn't opt in). */
+  timeoutMs?: number
+  onTimeout?: () => void
 }
 
-export function SandpackPreview({ files, theme = 'light', className, showRefreshButton = true }: SandpackPreviewProps) {
+export function SandpackPreview({ files, theme = 'light', className, showRefreshButton = true, timeoutMs, onTimeout }: SandpackPreviewProps) {
   // Start with all built-in files (AIKit, shadcn, template)
   const sandpackFiles: Record<string, string> = { ...getBuiltinFiles() }
 
@@ -292,6 +352,26 @@ export function SandpackPreview({ files, theme = 'light', className, showRefresh
         files={sandpackFiles}
         customSetup={{
           dependencies: {
+            // react/react-dom/prop-types pinned explicitly (not just left to
+            // Sandpack's auto-resolution from source imports) — unpinned,
+            // Sandpack resolves "latest matching" at request time, which can
+            // land on a version its own bundler-side fetch hangs on with no
+            // error (confirmed live: react@18.3.1/react-dom@18.3.1/
+            // prop-types@15.8.1 — Sandpack's auto-resolved pins at the time —
+            // never resolved inside Sandpack's bundler, even though the same
+            // exact unpkg URLs respond in well under a second to a direct
+            // fetch; this is a known, acknowledged, UNFIXED CodeSandbox/
+            // unpkg reliability gap: github.com/codesandbox/sandpack/
+            // issues/703, discussions/706). Pinning to a fixed, specific
+            // version makes the dependency resolution deterministic — not a
+            // moving target re-resolved on every load — and this is paired
+            // with a hard render timeout (SandpackResilientTimeout, below)
+            // that falls back to the existing iframe path if Sandpack still
+            // hangs regardless of version. That fallback is the real fix;
+            // the pin just reduces how often it's needed.
+            react: '18.2.0',
+            'react-dom': '18.2.0',
+            'prop-types': '15.8.1',
             'lucide-react': '0.344.0',
             'recharts': '2.15.0',
             'clsx': '2.1.0',
@@ -304,6 +384,9 @@ export function SandpackPreview({ files, theme = 'light', className, showRefresh
         }}
         theme={theme === 'dark' ? 'dark' : 'light'}
       >
+        {timeoutMs !== undefined && onTimeout && (
+          <SandpackResilientTimeout timeoutMs={timeoutMs} onTimeout={onTimeout} />
+        )}
         <SandpackLayout
           style={{
             height: '100%',

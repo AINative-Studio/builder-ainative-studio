@@ -22,7 +22,14 @@ beforeAll(() => {
 
 vi.mock('next/dynamic', () => ({
   default: (loader: () => Promise<any>) => {
-    const Stub = (props: any) => React.createElement('div', { 'data-testid': 'sandpack-stub', 'data-file-count': Object.keys(props.files || {}).length })
+    const Stub = (props: any) => {
+      // Real resilience test (see sandpack-preview.tsx's doc comment on the
+      // unfixed CodeSandbox/unpkg hang): expose a way for a test to trigger
+      // the SAME onTimeout callback SandpackResilientTimeout would call for
+      // real, via a global hook keyed by chatId-independent test control.
+      ;(globalThis as any).__sandpackStubTriggerTimeout = props.onTimeout
+      return React.createElement('div', { 'data-testid': 'sandpack-stub', 'data-file-count': Object.keys(props.files || {}).length, 'data-timeout-ms': props.timeoutMs })
+    }
     return Stub
   },
 }))
@@ -104,5 +111,34 @@ describe('StandalonePreviewFrame — Sandpack routing (#1066)', () => {
     await renderFrame({ chatId: 'test-chat-id', slug: 'acme', title: 'My Real Company' })
     const iframe = host.querySelector('iframe') as HTMLIFrameElement
     expect(iframe.title).toBe('My Real Company')
+  })
+
+  it('passes a real timeoutMs to SandpackPreview and falls back to the iframe when onTimeout fires — the real preview-system resilience fix', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        files: {
+          '/src/App.tsx': "import Sidebar from './components/Sidebar'\nexport default function App(){return null}",
+          '/src/components/Sidebar.tsx': 'export default function Sidebar(){return null}',
+        },
+      }),
+    })
+    await renderFrame({ chatId: 'finio-chat', slug: 'finio-product', title: 'Finio' })
+
+    const stub = host.querySelector('[data-testid="sandpack-stub"]')
+    expect(stub).toBeTruthy()
+    expect(stub?.getAttribute('data-timeout-ms')).toBe('15000')
+    expect(host.querySelector('iframe')).toBeFalsy()
+
+    // Simulate Sandpack hanging past the watchdog (the real, confirmed-live
+    // failure mode — unpkg never resolving a pinned dependency version).
+    await act(async () => {
+      ;(globalThis as any).__sandpackStubTriggerTimeout()
+    })
+
+    expect(host.querySelector('[data-testid="sandpack-stub"]')).toBeFalsy()
+    const iframe = host.querySelector('iframe') as HTMLIFrameElement
+    expect(iframe).toBeTruthy()
+    expect(iframe.src).toContain('/api/preview/finio-chat')
   })
 })

@@ -104,7 +104,15 @@ export function Preview() {
   // Engine routing (#291): a genuinely multi-file app renders via Sandpack (real
   // bundler, resolves cross-file imports); single-file apps keep the hardened Babel
   // iframe. Only route to Sandpack once the app is READY and the payload qualifies.
-  const useSandpack = status === 'ready' && shouldUseSandpack(files)
+  //
+  // Resilience (found live, same session): Sandpack's bundler-side dependency
+  // fetch can hang forever with no error (unfixed CodeSandbox/unpkg gap — see
+  // components/chat/sandpack-preview.tsx's doc comment). sandpackTimedOut
+  // falls this back to previewUrl's iframe if Sandpack hasn't finished within
+  // 15s — a founder actively waiting on their own build deserves to see
+  // SOMETHING rather than a permanently blank sandbox.
+  const [sandpackTimedOut, setSandpackTimedOut] = useState(false)
+  const useSandpack = status === 'ready' && shouldUseSandpack(files) && !sandpackTimedOut
   const [copied, setCopied] = useState(false)
   // #213: the durable live URL returned by register-app (deployPersistent) — a real
   // {slug}.ainative.studio wildcard host when configured, else the /build/{slug}
@@ -366,7 +374,7 @@ export function Preview() {
             // Sandpack runs in its own CodeSandbox sandbox origin (isolated by
             // construction), so it doesn't need our iframe sandbox attrs. (#291)
             <div className="m-preview-frame" style={{ height: '100%' }} data-testid="sandpack-preview-mount">
-              <SandpackPreview files={files} />
+              <SandpackPreview files={files} timeoutMs={15000} onTimeout={() => setSandpackTimedOut(true)} />
             </div>
           ) : previewUrl ? (
             <iframe

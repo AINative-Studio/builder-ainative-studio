@@ -15,6 +15,13 @@
  * non-interactive (pointer-events:none at the call site) for card use. The
  * Featured strip is capped at 6 entries, so per-card Sandpack bundling here
  * is cheap — this is NOT meant for an unbounded grid.
+ *
+ * Resilience (found live, same session): Sandpack's bundler-side dependency
+ * fetch can hang forever with no error (unfixed CodeSandbox/unpkg gap — see
+ * components/chat/sandpack-preview.tsx's doc comment). A shorter 8s watchdog
+ * than the full-page StandalonePreviewFrame uses (15s) — a thumbnail is
+ * cosmetic, not worth the same wait — falls back to the iframe if Sandpack
+ * hasn't finished by then.
  */
 
 import { useEffect, useState } from 'react'
@@ -34,6 +41,7 @@ interface Props {
 export function ShowcaseThumbnail({ chatId, title }: Props) {
   const [files, setFiles] = useState<Record<string, string> | null>(null)
   const [checkedFiles, setCheckedFiles] = useState(false)
+  const [sandpackTimedOut, setSandpackTimedOut] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -48,12 +56,17 @@ export function ShowcaseThumbnail({ chatId, title }: Props) {
     return () => { cancelled = true }
   }, [chatId])
 
-  const useSandpack = checkedFiles && shouldUseSandpack(files)
+  const useSandpack = checkedFiles && shouldUseSandpack(files) && !sandpackTimedOut
 
   if (useSandpack && files) {
     return (
       <div style={{ transformOrigin: 'top left', width: '250%', height: '250%', transform: 'scale(0.4)' }}>
-        <SandpackPreview files={files} showRefreshButton={false} />
+        <SandpackPreview
+          files={files}
+          showRefreshButton={false}
+          timeoutMs={8000}
+          onTimeout={() => setSandpackTimedOut(true)}
+        />
       </div>
     )
   }

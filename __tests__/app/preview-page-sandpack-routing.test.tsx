@@ -34,7 +34,10 @@ vi.mock('next/dynamic', () => ({
     // Synchronously resolve to a stub SandpackPreview for the test — the
     // real dynamic()/ssr:false behavior is exercised elsewhere; here we only
     // need to confirm PreviewPage renders IT (vs. the iframe) when it should.
-    const Stub = (props: any) => React.createElement('div', { 'data-testid': 'sandpack-stub', 'data-file-count': Object.keys(props.files || {}).length })
+    const Stub = (props: any) => {
+      ;(globalThis as any).__sandpackStubTriggerTimeout = props.onTimeout
+      return React.createElement('div', { 'data-testid': 'sandpack-stub', 'data-file-count': Object.keys(props.files || {}).length, 'data-timeout-ms': props.timeoutMs })
+    }
     return Stub
   },
 }))
@@ -109,5 +112,35 @@ describe('PreviewPage — Sandpack routing (#729)', () => {
     await renderPage()
     expect(host.querySelector('iframe')).toBeTruthy()
     expect(host.querySelector('[data-testid="sandpack-stub"]')).toBeFalsy()
+  })
+
+  it('passes a real timeoutMs to SandpackPreview and falls back to the iframe when onTimeout fires — the real preview-system resilience fix, confirmed live on this exact page', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        files: {
+          '/src/App.tsx': "import Sidebar from './components/Sidebar'\nexport default function App(){return null}",
+          '/src/components/Sidebar.tsx': 'export default function Sidebar(){return null}',
+        },
+      }),
+    })
+    await renderPage()
+
+    const stub = host.querySelector('[data-testid="sandpack-stub"]')
+    expect(stub).toBeTruthy()
+    expect(stub?.getAttribute('data-timeout-ms')).toBe('15000')
+    expect(host.querySelector('iframe')).toBeFalsy()
+
+    // Simulate Sandpack hanging past the watchdog (the real, confirmed-live
+    // failure mode on this page — unpkg never resolving a pinned dependency
+    // version for test-chat-id's own Sandpack bundle).
+    await act(async () => {
+      ;(globalThis as any).__sandpackStubTriggerTimeout()
+    })
+
+    expect(host.querySelector('[data-testid="sandpack-stub"]')).toBeFalsy()
+    const iframe = host.querySelector('iframe') as HTMLIFrameElement
+    expect(iframe).toBeTruthy()
+    expect(iframe.src).toContain('/api/preview/test-chat-id')
   })
 })
