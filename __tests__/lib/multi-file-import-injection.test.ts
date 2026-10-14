@@ -137,6 +137,92 @@ describe('multi-file import injection: no cross-module duplicates (#64)', () => 
 })
 
 /**
+ * Issue #1087 (real production bug, found live on
+ * https://builder.ainative.studio/build/wallkind-product, 2026-10-13):
+ * injectMissingImports only auto-injects missing AIKit, recharts, and
+ * lucide-react imports — it has NO handling for shadcn/ui components
+ * (Button, Card, Badge, Input, Select, etc). Confirmed with the real, durable
+ * generation data (chatId z4nabGqvy_UURyaKnCY8J, fetched via
+ * /api/generation/{chatId}/files): the stored /src/components/WallGrid.tsx
+ * uses <Button>, <Card>, <CardContent>, <Badge>, <Input>, <Select> etc. as
+ * JSX but only imports from 'lucide-react' and 'react' — no './components/
+ * ui/*' import exists anywhere in the file. This is what the public preview
+ * showed as a Sandpack "Could not find module in path: './components/ui/
+ * button'" error: the client-side safety net in components/chat/
+ * sandpack-preview.tsx DOES correctly compute the missing shadcn imports at
+ * render time, but that's an unreliable last line of defense (confirmed live
+ * — the same page errored via Sandpack on repeated loads and only rendered
+ * via the iframe/Babel fallback intermittently). Fixing this at the real
+ * source — generation time, server-side, same place AIKit/recharts/lucide
+ * are already handled — matches this repo's own stated contract philosophy
+ * (docs/design/COMPONENT_IMPORT_CONTRACT.md: stop the defect at generation
+ * time, not render time).
+ */
+describe('multi-file import injection: shadcn/ui components (#1087)', () => {
+  it('injects missing shadcn/ui imports for Button/Card/Badge/Input/Select — the real wallkind WallGrid.tsx shape', () => {
+    const raw = [
+      "import { Search, Trash2, Layout, Grid } from 'lucide-react'",
+      "import React, { useState } from 'react'",
+      'export default function WallGrid({ walls }) {',
+      '  return (',
+      '    <div>',
+      '      <Input placeholder="Search walls..." />',
+      '      <Select value="all">',
+      '        <SelectTrigger><SelectValue /></SelectTrigger>',
+      '        <SelectContent><SelectItem value="all">All</SelectItem></SelectContent>',
+      '      </Select>',
+      '      <Card>',
+      '        <CardContent>',
+      '          <Badge>draft</Badge>',
+      '          <Button variant="outline">Publish</Button>',
+      '        </CardContent>',
+      '      </Card>',
+      '    </div>',
+      '  )',
+      '}',
+    ].join('\n')
+    const app = Object.values(parseMultiFileOutput(raw))[0]
+    expect(/import\s*\{[^}]*\bButton\b[^}]*\}\s*from\s*['"]\.\/components\/ui\/button['"]/.test(app)).toBe(true)
+    expect(/import\s*\{[^}]*\bCard\b[^}]*\bCardContent\b[^}]*\}\s*from\s*['"]\.\/components\/ui\/card['"]/.test(app)).toBe(true)
+    expect(/import\s*\{[^}]*\bBadge\b[^}]*\}\s*from\s*['"]\.\/components\/ui\/badge['"]/.test(app)).toBe(true)
+    expect(/import\s*\{[^}]*\bInput\b[^}]*\}\s*from\s*['"]\.\/components\/ui\/input['"]/.test(app)).toBe(true)
+    expect(
+      /import\s*\{[^}]*\bSelect\b[^}]*\bSelectTrigger\b[^}]*\bSelectValue\b[^}]*\bSelectContent\b[^}]*\bSelectItem\b[^}]*\}\s*from\s*['"]\.\/components\/ui\/select['"]/.test(app),
+    ).toBe(true)
+    expect(strictParses(app)).toBe(true)
+  })
+
+  it('does not re-inject a shadcn component already imported', () => {
+    const raw = [
+      "import React from 'react'",
+      "import { Button } from './components/ui/button'",
+      'export default function App(){ return <Button>Go</Button>; }',
+    ].join('\n')
+    const app = Object.values(parseMultiFileOutput(raw))[0]
+    expect((app.match(/\bButton\b(?=[\s,}<])/g) || []).length).toBeLessThanOrEqual(3) // import + JSX open + close tag
+    expect((app.match(/from ['"]\.\/components\/ui\/button['"]/g) || []).length).toBe(1)
+    expect(strictParses(app)).toBe(true)
+  })
+
+  it('a shadcn import for a file nested inside components/ uses a sibling ./ui/ path, not another components/ hop', () => {
+    const raw = [
+      '// --- FILE: /src/App.tsx ---',
+      "import React from 'react'",
+      "import WallGrid from './components/WallGrid'",
+      'export default function App(){ return <WallGrid/>; }',
+      '// --- FILE: /src/components/WallGrid.tsx ---',
+      "import React from 'react'",
+      'export default function WallGrid(){ return <Button>Go</Button>; }',
+    ].join('\n')
+    const files = parseMultiFileOutput(raw)
+    const wallGrid = files['/src/components/WallGrid.tsx']
+    expect(wallGrid).toMatch(/from ['"]\.\/ui\/button['"]/)
+    expect(wallGrid).not.toMatch(/from ['"]\.\/components\/ui\/button['"]/)
+    expect(strictParses(wallGrid)).toBe(true)
+  })
+})
+
+/**
  * Real bug (customer-reported, "agentis", 2026-09-10): injectMissingImports
  * always wrote the SAME hardcoded 'from ./components/aikit' into EVERY file,
  * regardless of where that file actually lives in the tree. That's only

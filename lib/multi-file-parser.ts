@@ -158,7 +158,43 @@ const AIKIT_COMPONENTS = [
 ]
 
 /**
- * Auto-inject missing imports for recharts, lucide-react, and AIKit.
+ * Issue #1087 (real production bug, found live on wallkind-product):
+ * injectMissingImports had AIKit/recharts/lucide coverage but NONE for
+ * shadcn/ui components — so a model-emitted <Button>/<Card>/<Badge>/<Input>/
+ * <Select> etc. with no import line sailed straight through generation and
+ * got durably persisted exactly as broken. The client-side Sandpack safety
+ * net (components/chat/sandpack-preview.tsx) can patch this at render time,
+ * but confirmed live that's not reliable enough to depend on alone — the
+ * same page errored on repeated loads. Fix it at the source, same place and
+ * same pattern as AIKIT_COMPONENTS above. Mapping matches the one already
+ * used by lib/sandpack/jsx-fixer.ts's fixWrongShadcnSubpaths and
+ * components/chat/sandpack-preview.tsx's shadcn auto-inject block — keep
+ * these three in sync if a new shadcn component is added to the bundle.
+ */
+const SHADCN_COMPONENT_FILE: Record<string, string> = {
+  Button: 'button',
+  Card: 'card', CardHeader: 'card', CardContent: 'card', CardTitle: 'card', CardDescription: 'card', CardFooter: 'card',
+  Badge: 'badge',
+  Avatar: 'avatar', AvatarImage: 'avatar', AvatarFallback: 'avatar',
+  Input: 'input',
+  Label: 'label',
+  Tabs: 'tabs', TabsList: 'tabs', TabsTrigger: 'tabs', TabsContent: 'tabs',
+  Table: 'table', TableHeader: 'table', TableBody: 'table', TableRow: 'table', TableHead: 'table', TableCell: 'table',
+  Separator: 'separator',
+  Progress: 'progress', CircularProgress: 'progress',
+  Checkbox: 'checkbox', RadioGroup: 'checkbox', RadioGroupItem: 'checkbox',
+  Accordion: 'accordion', AccordionItem: 'accordion', AccordionTrigger: 'accordion', AccordionContent: 'accordion',
+  Alert: 'alert', AlertTitle: 'alert', AlertDescription: 'alert',
+  Dialog: 'dialog', DialogOverlay: 'dialog', DialogContent: 'dialog', DialogHeader: 'dialog', DialogTitle: 'dialog', DialogDescription: 'dialog', DialogFooter: 'dialog',
+  Popover: 'popover', PopoverTrigger: 'popover', PopoverContent: 'popover',
+  Select: 'select', SelectTrigger: 'select', SelectValue: 'select', SelectContent: 'select', SelectItem: 'select',
+  Switch: 'switch', Textarea: 'textarea',
+  Tooltip: 'tooltip', TooltipProvider: 'tooltip', TooltipTrigger: 'tooltip', TooltipContent: 'tooltip',
+}
+
+/**
+ * Auto-inject missing imports for recharts, lucide-react, AIKit, and
+ * shadcn/ui.
  * Also fixes @/ import aliases to relative paths for Sandpack.
  */
 /**
@@ -236,6 +272,23 @@ function injectMissingImports(code: string, filePath = '/src/App.tsx'): string {
   if (usedAikit.length > 0) {
     imports.push(`import { ${usedAikit.join(', ')} } from '${componentsPrefix}aikit'`)
     usedAikit.forEach(c => alreadyImported.add(c))
+  }
+
+  // Check for shadcn/ui component usage — group by the ui/<file> that
+  // actually exports each name (unlike AIKit's single flat module), skip any
+  // already imported individually (#1087).
+  {
+    const byFile: Record<string, string[]> = {}
+    for (const [name, file] of Object.entries(SHADCN_COMPONENT_FILE)) {
+      if (alreadyImported.has(name)) continue
+      if (new RegExp(`<${name}[\\s/>]`).test(code)) {
+        (byFile[file] ||= []).push(name)
+        alreadyImported.add(name)
+      }
+    }
+    for (const [file, names] of Object.entries(byFile)) {
+      imports.push(`import { ${names.join(', ')} } from '${componentsPrefix}ui/${file}'`)
+    }
   }
 
   // Check for recharts usage — real names AND the "Re"-prefixed aliases the
