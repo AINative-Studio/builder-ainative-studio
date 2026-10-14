@@ -65,6 +65,7 @@ import * as os from 'os'
 import { minimalFixture } from './fixtures/sandpack-verify/minimal'
 import { realisticFixture } from './fixtures/sandpack-verify/realistic'
 import { brokenDependencyFixture } from './fixtures/sandpack-verify/broken-dependency'
+import { buildChatIdFixture } from './fixtures/sandpack-verify/chat-id'
 import type { SandpackFixture } from './fixtures/sandpack-verify/types'
 
 // ---------------------------------------------------------------------------
@@ -74,10 +75,27 @@ import type { SandpackFixture } from './fixtures/sandpack-verify/types'
 interface Args {
   bundlerUrl: string
   cdnUrl: string
-  fixture: 'minimal' | 'realistic' | 'broken-dependency' | 'all'
+  fixture: 'minimal' | 'realistic' | 'broken-dependency' | 'all' | 'none'
   timeoutMs: number
   headed: boolean
   json: boolean
+  /**
+   * Real Builder chatId(s) to pull live via /api/generation/{id}/files and
+   * compile against --bundler-url, instead of (or alongside, see --fixture)
+   * the synthetic fixtures. Comma-separated for a multi-app sweep (used by
+   * the broad real-app spot-check, issue #1089). Each chatId is fetched
+   * fresh per run — no local caching — so results always reflect the app's
+   * current generated state.
+   */
+  chatIds: string[]
+  builderBaseUrl: string
+  /**
+   * Enables sandpack-bundler's real profiling instrumentation (PR #5,
+   * issue #1089) by appending ?profile=1 to --bundler-url and relaying the
+   * resulting sandpack-profile/compile-summary postMessage channels into
+   * the report. See browser-entry.ts's profileEntries relay.
+   */
+  profile: boolean
 }
 
 const DEFAULT_CDN_URL = 'https://sandpack-cdn-production.up.railway.app'
@@ -106,11 +124,25 @@ function parseArgs(argv: string[]): Args {
     process.exit(2)
   }
 
-  const fixtureArg = get('fixture') ?? 'all'
-  if (!['minimal', 'realistic', 'broken-dependency', 'all'].includes(fixtureArg)) {
+  // When --chat-id is given and --fixture is NOT explicitly passed, default
+  // to running ONLY the real chat-id fixture(s) — a caller asking to test a
+  // specific real app almost never also wants the synthetic minimal/
+  // realistic/broken-dependency noise mixed into the same report. Passing
+  // --fixture explicitly alongside --chat-id still runs both.
+  const fixtureExplicit = get('fixture')
+  const fixtureArg = fixtureExplicit ?? (argv.some((a) => a.startsWith('--chat-id=')) ? 'none' : 'all')
+  if (!['minimal', 'realistic', 'broken-dependency', 'all', 'none'].includes(fixtureArg)) {
     console.error(`[verify-sandpack-bundler-e2e] ERROR: invalid --fixture=${fixtureArg}`)
     process.exit(2)
   }
+
+  const chatIdArg = get('chat-id')
+  const chatIds = chatIdArg
+    ? chatIdArg
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : []
 
   return {
     bundlerUrl: bundlerUrl.replace(/\/+$/, '') + '/',
@@ -119,6 +151,9 @@ function parseArgs(argv: string[]): Args {
     timeoutMs: Number(get('timeout-ms') ?? 60_000),
     headed: has('headed'),
     json: has('json'),
+    chatIds,
+    builderBaseUrl: (get('builder-base-url') ?? 'http://localhost:3000').replace(/\/+$/, ''),
+    profile: has('profile'),
   }
 }
 
@@ -249,6 +284,10 @@ interface CaseResult {
   timedOut: boolean
   watchdogBand: 'under' | 'close' | 'over' | 'n/a'
   notes: string[]
+  /** Only populated when --profile is passed. Raw entries relayed from
+   *  sandpack-bundler's babel-worker.ts profileLog / bundler.ts
+   *  _transformModule instrumentation. See printProfileSummary(). */
+  profileEntries: any[]
 }
 
 function watchdogBand(compileMs: number | null): CaseResult['watchdogBand'] {
@@ -315,8 +354,18 @@ createRoot(document.getElementById('root')!).render(<App />)
     entry,
   }
 
+  // --profile appends ?profile=1 to the bundler's own URL — read by
+  // sandpack-bundler's src/index.ts at iframe load time to set
+  // window.__SANDPACK_PROFILE__ inside that (cross-origin) iframe, the only
+  // way a hosting page can toggle it (see that file's doc comment). This is
+  // the bundlerURL baked into the iframe src, so appending here reaches the
+  // real bundler instance, not a proxy.
+  const bundlerUrlForClient = args.profile
+    ? args.bundlerUrl + (args.bundlerUrl.includes('?') ? '&' : '?') + 'profile=1'
+    : args.bundlerUrl
+
   const clientOptions = {
-    bundlerURL: args.bundlerUrl,
+    bundlerURL: bundlerUrlForClient,
     logLevel: 30, // Info — enough to surface compile events, not noisy debug
     showOpenInCodeSandbox: false,
   }
@@ -363,8 +412,16 @@ createRoot(document.getElementById('root')!).render(<App />)
   const compileMs =
     compileStartPerf !== null && compileDonePerf !== null ? Math.round(compileDonePerf - compileStartPerf) : null
 
+  // Real chat-id fixtures (scripts/fixtures/sandpack-verify/chat-id.ts) have
+  // no harness-friendly data-testid marker baked into real generated app
+  // code — expectedText is a sentinel in that case, so skip the DOM-text
+  // assertion and score on compile completion + zero errors only, same as
+  // every real app actually is scored by Builder's own watchdog in
+  // production (SandpackResilientTimeout never checks DOM text either).
+  const isChatIdFixture = fixture.expectedText === '__CHAT_ID_FIXTURE_NO_TEXT_ASSERTION__'
+
   let renderedExpectedText: boolean | null = null
-  if (kind === 'render' && compileDonePerf !== null) {
+  if (kind === 'render' && compileDonePerf !== null && !isChatIdFixture) {
     try {
       // Scope through the wrapper div's first iframe child, not an id
       // selector on the iframe itself — see buildHostHtml()'s doc comment:
@@ -375,6 +432,15 @@ createRoot(document.getElementById('root')!).render(<App />)
     } catch {
       renderedExpectedText = false
       notes.push(`Expected text "${fixture.expectedText}" not found in rendered iframe DOM.`)
+    }
+  }
+
+  let profileEntries: any[] = []
+  if (args.profile) {
+    try {
+      profileEntries = await page.evaluate(() => window.__sandpackVerify.profileEntries)
+    } catch {
+      notes.push('Failed to read profileEntries from page — --profile may not be wired for this bundler version.')
     }
   }
 
@@ -394,6 +460,10 @@ createRoot(document.getElementById('root')!).render(<App />)
     if (verdict === 'FAIL' && timedOut) {
       notes.push('Broken-dependency case HUNG past the timeout with no surfaced error — this is the exact silent-hang failure mode the regression case exists to catch.')
     }
+  } else if (isChatIdFixture) {
+    verdict = compileDonePerf !== null && forbiddenRequests.length === 0 && sawErrorEvent.length === 0 && !timedOut
+      ? 'PASS'
+      : 'FAIL'
   } else {
     verdict =
       renderedExpectedText === true && forbiddenRequests.length === 0 && sawErrorEvent.length === 0 && !timedOut
@@ -412,6 +482,7 @@ createRoot(document.getElementById('root')!).render(<App />)
     timedOut,
     watchdogBand: kind === 'render' ? watchdogBand(compileMs) : 'n/a',
     notes,
+    profileEntries,
   }
 }
 
@@ -429,6 +500,62 @@ function bandLabel(band: CaseResult['watchdogBand']): string {
       return 'OVER 15s watchdog — would trip SandpackResilientTimeout in production'
     default:
       return 'n/a'
+  }
+}
+
+/**
+ * Aggregate raw profileLog entries (per babel.transform() call) into a
+ * human-readable breakdown: total calls, cache hit rate, time spent on
+ * node_modules vs app source, and the heaviest individual packages by
+ * summed transform time (filepath's node_modules/<pkg>/... prefix is used
+ * to bucket by package). This is the real evidence behind any root-cause
+ * claim this harness makes — not a guess.
+ */
+function printProfileSummary(entries: any[]) {
+  const transformEntries = entries.filter((e) => e && typeof e.totalMs === 'number')
+  if (transformEntries.length === 0) return
+
+  let nodeModuleCalls = 0
+  let appCalls = 0
+  let nodeModuleMs = 0
+  let appMs = 0
+  let cacheHits = 0
+  const byPackage = new Map<string, { calls: number; ms: number }>()
+
+  for (const e of transformEntries) {
+    const ms = e.totalMs as number
+    if (e.isNodeModule) {
+      nodeModuleCalls++
+      nodeModuleMs += ms
+      if (e.cacheHit) cacheHits++
+      const m = /node_modules\/((?:@[^/]+\/)?[^/]+)\//.exec(e.filepath ?? '')
+      const pkg = m ? m[1] : 'unknown'
+      const bucket = byPackage.get(pkg) ?? { calls: 0, ms: 0 }
+      bucket.calls++
+      bucket.ms += ms
+      byPackage.set(pkg, bucket)
+    } else {
+      appCalls++
+      appMs += ms
+    }
+  }
+
+  console.log(`       --- profile summary ---`)
+  console.log(
+    `       babel.transform() calls: ${transformEntries.length} total (${nodeModuleCalls} node_modules, ${appCalls} app source)`
+  )
+  console.log(
+    `       node_modules time: ${nodeModuleMs.toFixed(0)}ms across ${nodeModuleCalls} calls (cache hits: ${cacheHits}/${nodeModuleCalls})`
+  )
+  console.log(`       app source time: ${appMs.toFixed(0)}ms across ${appCalls} calls`)
+  const topPackages = Array.from(byPackage.entries())
+    .sort((a, b) => b[1].ms - a[1].ms)
+    .slice(0, 10)
+  if (topPackages.length > 0) {
+    console.log(`       top packages by summed transform time:`)
+    for (const [pkg, stat] of topPackages) {
+      console.log(`         ${pkg}: ${stat.ms.toFixed(0)}ms (${stat.calls} files)`)
+    }
   }
 }
 
@@ -466,6 +593,9 @@ function printReport(results: CaseResult[], args: Args) {
       console.log(`       error events seen: ${r.errorEvents.length}`)
     }
     for (const n of r.notes) console.log(`       note: ${n}`)
+    if (args.profile && r.profileEntries.length > 0) {
+      printProfileSummary(r.profileEntries)
+    }
     console.log('')
   }
 
@@ -508,6 +638,16 @@ async function main() {
   if (args.fixture === 'all' || args.fixture === 'broken-dependency')
     fixturesToRun.push({ fixture: brokenDependencyFixture, kind: 'regression' })
 
+  for (const chatId of args.chatIds) {
+    console.error(`[verify-sandpack-bundler-e2e] fetching real app files for chatId=${chatId} from ${args.builderBaseUrl}...`)
+    try {
+      const fixture = await buildChatIdFixture(chatId, args.builderBaseUrl)
+      fixturesToRun.push({ fixture, kind: 'render' })
+    } catch (err) {
+      console.error(`[verify-sandpack-bundler-e2e] FAILED to build fixture for chatId=${chatId}: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
   console.error(`[verify-sandpack-bundler-e2e] launching Chromium (headed=${args.headed})...`)
   const browser = await chromium.launch({ headless: !args.headed })
   const results: CaseResult[] = []
@@ -517,6 +657,15 @@ async function main() {
       const page = await browser.newPage()
       page.on('console', (msg: ConsoleMessage) => {
         if (msg.type() === 'error') console.error(`  [browser console] ${msg.text()}`)
+      })
+      page.on('pageerror', (err: Error) => {
+        // Debug aid (issue #1089): React's error-boundary console.error
+        // only logs a generic "above error occurred in <X>" wrapper
+        // message via msg.text() -- the actual thrown exception (what
+        // really failed and why) is a separate, real uncaught error.
+        // 'pageerror' captures that directly, bypassing React's logging
+        // entirely.
+        console.error(`  [page error] ${err.message}\n${err.stack ?? ''}`)
       })
       console.error(`[verify-sandpack-bundler-e2e] running fixture "${fixture.name}"...`)
       await page.goto(`file://${hostHtmlPath}`)
