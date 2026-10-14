@@ -268,10 +268,154 @@ export async function addCollaborator(
 }
 
 /**
+ * A minimal webhook reference returned by Gitea's hooks API.
+ *
+ * Confirmed live against the real Gitea instance's own swagger spec
+ * (git.ainative.studio/swagger.v1.json, same instance every other *live
+ * confirmed* comment in this file already validated against) — `Hook.config`
+ * is a free-form `map[string]string` (NOT a typed object), so the webhook's
+ * target URL comes back as `config.url` (a plain string key), same key name
+ * `CreateHookOptionConfig` accepts on create.
+ */
+export interface GiteaHook {
+  id: number
+  type: string
+  config: { url?: string; content_type?: string; secret?: string; [k: string]: string | undefined }
+  events: string[]
+  active: boolean
+}
+
+/**
+ * List webhooks configured on a repo. Returns [] when unconfigured, the repo
+ * doesn't exist (404), or on any other failure — this is a read used only for
+ * an idempotent pre-flight check (createRepoWebhook) and a backfill script's
+ * verification step, so a transient read failure degrading to "no hooks
+ * found" (and therefore attempting a create, which itself is safe to retry)
+ * is the right default rather than throwing and blocking the caller.
+ */
+export async function getRepoWebhooks(org: string, repo: string): Promise<GiteaHook[]> {
+  if (!configured() || !org || !repo) return []
+  const repoName = repoNameForSlug(repo)
+  if (!repoName) return []
+  try {
+    const res = await giteaFetch(
+      `/repos/${encodeURIComponent(org)}/${encodeURIComponent(repoName)}/hooks`,
+      { method: 'GET' },
+    )
+    if (!res.ok) return []
+    const hooks = (await res.json()) as GiteaHook[]
+    return Array.isArray(hooks) ? hooks : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Register the Builder webhook on a company repo (#1092) — this is the piece
+ * that was missing entirely: `docs/GITEA_PROVISIONING.md` documented webhook
+ * setup as a one-time MANUAL admin-panel step, but that manual step never
+ * actually happened for any real company repo, so `app/api/webhooks/gitea/
+ * route.ts` (the committee PR gate + #1091's build_tasks sync) was silently
+ * never called in production — no repo ever had a hook pointed at it.
+ *
+ * IDEMPOTENT, following the exact ensureOrg/createRepo pattern in this same
+ * file: a pre-flight GET (getRepoWebhooks) checks for an existing hook whose
+ * `config.url` already matches `targetUrl` before creating a new one, so a
+ * re-run (new-repo provisioning calling this again, or the backfill script
+ * run twice) never creates a duplicate.
+ *
+ * Real, confirmed Gitea contract (git.ainative.studio/swagger.v1.json,
+ * `CreateHookOption`/`CreateHookOptionConfig`): `POST /repos/{owner}/{repo}/
+ * hooks` with `{type: 'gitea', config: {url, content_type, secret}, events,
+ * active}` — `type` must be one of a fixed enum Gitea publishes
+ * ('gitea'/'gogs'/'slack'/etc.); 'gitea' is its own native webhook format,
+ * matching what `app/api/webhooks/gitea/route.ts` already parses
+ * (GiteaWebhookPayload / GiteaPushPayload shapes).
+ *
+ * NEVER THROWS — deliberately more lenient than ensureOrg/createRepo's "throw
+ * on genuine failure" policy. Per #1092 and this file's own resilience
+ * philosophy (see createIssue/listIssues above): the webhook is valuable but
+ * secondary to the repo existing at all. A hiccup creating it (auth blip,
+ * Gitea transient 500) must never fail `provisionCompanyRepo` and block a
+ * founder's company from getting its repo — the result's `ok:false` lets a
+ * caller log/alert on it without surfacing a user-facing provisioning error.
+ */
+export async function createRepoWebhook(
+  org: string,
+  repo: string,
+  targetUrl: string,
+  secret: string,
+): Promise<{ ok: boolean; hook?: GiteaHook; reason?: string }> {
+  if (!configured()) return { ok: false, reason: 'not_configured' }
+  if (!org) return { ok: false, reason: 'no_org' }
+  const repoName = repoNameForSlug(repo)
+  if (!repoName) return { ok: false, reason: 'no_repo' }
+  const url = String(targetUrl || '').trim()
+  if (!url) return { ok: false, reason: 'no_target_url' }
+
+  try {
+    // Pre-flight: a hook already pointed at this exact URL → idempotent no-op.
+    const existing = await getRepoWebhooks(org, repoName)
+    const match = existing.find((h) => h.config?.url === url)
+    if (match) return { ok: true, hook: match }
+
+    const res = await giteaFetch(
+      `/repos/${encodeURIComponent(org)}/${encodeURIComponent(repoName)}/hooks`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          type: 'gitea',
+          config: {
+            url,
+            content_type: 'json',
+            secret: secret || '',
+          },
+          events: ['push', 'pull_request'],
+          active: true,
+        }),
+      },
+    )
+    if (res.status === 409) {
+      // Raced create (another request registered it concurrently) — re-fetch.
+      const raced = await getRepoWebhooks(org, repoName)
+      const racedMatch = raced.find((h) => h.config?.url === url)
+      if (racedMatch) return { ok: true, hook: racedMatch }
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      return { ok: false, reason: `gitea createRepoWebhook ${org}/${repoName} failed: ${res.status} ${text}`.slice(0, 300) }
+    }
+    const hook = (await res.json()) as GiteaHook
+    return { ok: true, hook }
+  } catch (e) {
+    return { ok: false, reason: `createRepoWebhook threw: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300) }
+  }
+}
+
+/** The Builder route Gitea webhooks POST to — same convention every other
+ *  module deriving the app's own public URL already uses (lib/build/deploy.ts,
+ *  comms-policy.ts, winback-email.ts, etc: `NEXT_PUBLIC_APP_URL` with a
+ *  `https://builder.ainative.studio` fallback). Exported so the backfill
+ *  script (scripts/backfill-gitea-webhooks.ts) derives the identical target
+ *  URL rather than re-deriving its own and risking drift. */
+export function webhookTargetUrl(): string {
+  const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio').replace(/\/+$/, '')
+  return `${base}/api/webhooks/gitea`
+}
+
+/**
  * One-shot provision helper: ensure the workspace org, then the company's private
- * repo. Returns { org, repo } or null when unconfigured / inputs invalid. This is
- * the seam the build/deploy pipeline calls; persistence of the resulting repo URL/id
- * onto the AppEntry is done by the caller via setAppGitRepo (lib/build/app-registry).
+ * repo, then (#1092) register the Builder webhook on it so Gitea actually calls
+ * back into the committee PR gate / build_tasks sync (#1091) for this repo's PRs
+ * and pushes. Returns { org, repo } or null when unconfigured / inputs invalid.
+ * This is the seam the build/deploy pipeline calls; persistence of the resulting
+ * repo URL/id onto the AppEntry is done by the caller via setAppGitRepo
+ * (lib/build/app-registry).
+ *
+ * The webhook step never blocks or fails this function (see createRepoWebhook's
+ * doc) — a webhook hiccup is logged to console, never thrown, so a transient
+ * Gitea issue on the webhook call can never prevent a company's repo (the more
+ * critical half of provisioning) from being created.
  */
 export async function provisionCompanyRepo(
   workspaceId: string,
@@ -282,6 +426,17 @@ export async function provisionCompanyRepo(
   if (!org) return null
   const repo = await createRepo(org.username, slug, { private: true })
   if (!repo) return null
+
+  const hookResult = await createRepoWebhook(
+    org.username,
+    repo.name,
+    webhookTargetUrl(),
+    process.env.GITEA_WEBHOOK_SECRET || '',
+  )
+  if (!hookResult.ok) {
+    console.error(`[gitea] createRepoWebhook failed for ${org.username}/${repo.name}: ${hookResult.reason}`)
+  }
+
   return { org, repo }
 }
 
