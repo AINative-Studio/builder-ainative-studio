@@ -360,7 +360,18 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
     ? `${gitResult.prUrl ? `PR: ${gitResult.prUrl}. ` : ''}${outcome.reason || ''}${mergeNote}`.trim()
     : outcome.reason || 'Coverage verification failed.'
 
-  await updateTask(scopeKey, task.id, { stage: outcome.stage, output })
+  // #1086: persist the REAL task branch onto the row so the Gitea webhook's
+  // reverse sync (lib/git/task-sync-from-git.ts) can match this exact row by
+  // branch once the PR's state changes later (e.g. a human reviews and
+  // merges/closes it after a 'failed' coverage outcome here, or re-opens one
+  // this auto-merge attempt above left open) — without this, every such
+  // later webhook event would see no matching row and create a duplicate
+  // synthetic one instead of updating this real task.
+  await updateTask(scopeKey, task.id, {
+    stage: outcome.stage,
+    output,
+    giteaBranch: gitResult.branchName || undefined,
+  })
 
   if (traceId) {
     await completeDecisionTrace(traceId, output, outcome.stage === 'completed')

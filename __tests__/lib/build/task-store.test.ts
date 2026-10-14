@@ -14,8 +14,11 @@ import {
   taskScopeKey,
   createTask,
   listTasks,
+  listTasksForCompany,
   updateTask,
   needsSplit,
+  scopeKeyBelongsToCompany,
+  mergeGiteaTasks,
   MAX_LOAD_TASKS,
   type BuildTask,
 } from '@/lib/build/task-store'
@@ -726,5 +729,171 @@ describe('updateTask (#55)', () => {
     })
     await updateTask('a::b', 't1', { giteaIssueNumber: 7 })
     expect(fn).toHaveBeenCalled()
+  })
+
+  it('persists giteaBranch on a patch (#1086)', async () => {
+    const fn = mockUpdateFlow({
+      existingRow: { row_id: 'row-abc', row_data: { id: 't1', stage: 'todo', scope_key: 'a::b' } },
+    })
+    const ok = await updateTask('a::b', 't1', { giteaBranch: 'task/t1' })
+    expect(ok).toBe(true)
+    const putCall = fn.mock.calls.find((c) => /\/rows\/row-abc$/.test(String(c[0])))!
+    expect(JSON.parse(putCall[1].body).row_data.gitea_branch).toBe('task/t1')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// #1086 — company-wide scoping (Gitea sync read-path fix)
+// ---------------------------------------------------------------------------
+
+describe('scopeKeyBelongsToCompany (pure, #1086)', () => {
+  it('matches a scope key ending in ::{slug}', () => {
+    expect(scopeKeyBelongsToCompany('founder@x.com::acme', 'acme')).toBe(true)
+    expect(scopeKeyBelongsToCompany('guest:abc123::acme', 'acme')).toBe(true)
+  })
+  it('matches the synthetic Gitea sentinel scope key', () => {
+    expect(scopeKeyBelongsToCompany('git:webhook::acme', 'acme')).toBe(true)
+  })
+  it('does not match a DIFFERENT company, even with a shared suffix', () => {
+    expect(scopeKeyBelongsToCompany('founder@x.com::notacme', 'acme')).toBe(false)
+    expect(scopeKeyBelongsToCompany('founder@x.com::acme-two', 'acme')).toBe(false)
+  })
+  it('is case-insensitive', () => {
+    expect(scopeKeyBelongsToCompany('Founder@X.com::ACME', 'acme')).toBe(true)
+  })
+  it('returns false for empty scopeKey or slug', () => {
+    expect(scopeKeyBelongsToCompany('', 'acme')).toBe(false)
+    expect(scopeKeyBelongsToCompany('a::b', '')).toBe(false)
+  })
+})
+
+describe('mergeGiteaTasks (pure, #1086 req 3)', () => {
+  const mk = (over: Partial<BuildTask>): BuildTask => ({
+    id: over.id || 't1',
+    scopeKey: over.scopeKey || 'a::acme',
+    title: over.title || 'Task',
+    stage: over.stage || 'todo',
+    source: over.source || 'cody',
+    taskId: over.taskId ?? null,
+    storyPoints: null,
+    estimateRationale: null,
+    giteaBranch: over.giteaBranch,
+    giteaSynthetic: over.giteaSynthetic,
+    createdAt: over.createdAt || '2026-01-01T00:00:00Z',
+    updatedAt: over.updatedAt || over.createdAt || '2026-01-01T00:00:00Z',
+  })
+
+  it('passes through unbranched tasks unchanged', () => {
+    const tasks = [mk({ id: 't1' }), mk({ id: 't2' })]
+    expect(mergeGiteaTasks(tasks).map((t) => t.id).sort()).toEqual(['t1', 't2'])
+  })
+
+  it('keeps a single task per branch when there is no collision', () => {
+    const tasks = [mk({ id: 't1', giteaBranch: 'task/a' }), mk({ id: 't2', giteaBranch: 'task/b' })]
+    expect(mergeGiteaTasks(tasks)).toHaveLength(2)
+  })
+
+  it('prefers the REAL (non-synthetic) row over a synthetic duplicate on the same branch', () => {
+    const real = mk({ id: 'real-1', giteaBranch: 'task/t1', giteaSynthetic: false })
+    const synthetic = mk({ id: 'synthetic-1', giteaBranch: 'task/t1', giteaSynthetic: true })
+    const merged = mergeGiteaTasks([synthetic, real])
+    expect(merged).toHaveLength(1)
+    expect(merged[0].id).toBe('real-1')
+  })
+
+  it('order does not matter — real still wins when it comes first', () => {
+    const real = mk({ id: 'real-1', giteaBranch: 'task/t1', giteaSynthetic: false })
+    const synthetic = mk({ id: 'synthetic-1', giteaBranch: 'task/t1', giteaSynthetic: true })
+    const merged = mergeGiteaTasks([real, synthetic])
+    expect(merged).toHaveLength(1)
+    expect(merged[0].id).toBe('real-1')
+  })
+
+  it('when both are synthetic, keeps the freshest (most recently updated)', () => {
+    const older = mk({ id: 'a', giteaBranch: 'task/t1', giteaSynthetic: true, updatedAt: '2026-01-01T00:00:00Z' })
+    const newer = mk({ id: 'b', giteaBranch: 'task/t1', giteaSynthetic: true, updatedAt: '2026-01-02T00:00:00Z' })
+    const merged = mergeGiteaTasks([older, newer])
+    expect(merged).toHaveLength(1)
+    expect(merged[0].id).toBe('b')
+  })
+
+  it('handles an empty or non-array input', () => {
+    expect(mergeGiteaTasks([])).toEqual([])
+    expect(mergeGiteaTasks(undefined as any)).toEqual([])
+  })
+})
+
+describe('listTasksForCompany (#1086)', () => {
+  beforeEach(() => { process.env.ZERODB_API_KEY = 'k' })
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+  it('returns [] for a blank company slug without calling fetch', async () => {
+    const fn = mockFetch(() => ({ ok: true, json: () => ({ data: [] }) }))
+    expect(await listTasksForCompany('')).toEqual([])
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('aggregates rows across EVERY owner scope key for the company (the #1086 fix)', async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () => ({
+        data: [
+          { row_data: { id: 'a', title: 'founder A task', scope_key: 'founderA@x.com::acme', updated_at: '2026-01-01T00:00:01Z' } },
+          { row_data: { id: 'b', title: 'founder B task', scope_key: 'founderB@x.com::acme', updated_at: '2026-01-01T00:00:02Z' } },
+          { row_data: { id: 'c', title: 'other company', scope_key: 'founderA@x.com::other-co', updated_at: '2026-01-01T00:00:03Z' } },
+        ],
+      }),
+    }))
+    const tasks = await listTasksForCompany('acme')
+    expect(tasks.map((t) => t.id).sort()).toEqual(['a', 'b'])
+  })
+
+  it('calls the plain rows endpoint (not /query) with no filters, matching the app-registry full-scan convention', async () => {
+    const fn = mockFetch(() => ({ ok: true, json: () => ({ data: [] }) }))
+    await listTasksForCompany('acme')
+    const [url, init] = fn.mock.calls[0]
+    expect(url).toContain('/database/tables/build_tasks/rows')
+    expect(url).not.toContain('/query')
+    expect(init?.method ?? 'GET').toBe('GET')
+  })
+
+  it('includes the Gitea synthetic sentinel rows for the company', async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () => ({
+        data: [
+          { row_data: { id: 'synthetic-1', title: '[Gitea] manual PR', scope_key: 'git:webhook::acme', gitea_branch: 'task/manual-1', gitea_synthetic: true } },
+        ],
+      }),
+    }))
+    const tasks = await listTasksForCompany('acme')
+    expect(tasks).toHaveLength(1)
+    expect(tasks[0].giteaSynthetic).toBe(true)
+    expect(tasks[0].giteaBranch).toBe('task/manual-1')
+  })
+
+  it('de-dupes a real task and a synthetic duplicate sharing the same giteaBranch', async () => {
+    mockFetch(() => ({
+      ok: true,
+      json: () => ({
+        data: [
+          { row_data: { id: 'real-1', title: 'Real task', scope_key: 'founder@x.com::acme', gitea_branch: 'task/t1', gitea_synthetic: false } },
+          { row_data: { id: 'synthetic-1', title: '[Gitea] dup', scope_key: 'git:webhook::acme', gitea_branch: 'task/t1', gitea_synthetic: true } },
+        ],
+      }),
+    }))
+    const tasks = await listTasksForCompany('acme')
+    expect(tasks).toHaveLength(1)
+    expect(tasks[0].id).toBe('real-1')
+  })
+
+  it('returns [] (never throws) on a fetch rejection', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('boom') }))
+    expect(await listTasksForCompany('acme')).toEqual([])
+  })
+
+  it('returns [] when the response is not ok', async () => {
+    mockFetch(() => ({ ok: false, status: 500 }))
+    expect(await listTasksForCompany('acme')).toEqual([])
   })
 })
