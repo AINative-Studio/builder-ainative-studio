@@ -59,6 +59,23 @@ describe('DOCUMENT_PROMPTS (#64 quality bar)', () => {
       expect(u).toContain('AI inventory copilot')
     }
   })
+
+  /**
+   * #1083: a real, live generation (idea "street art gallery") produced a
+   * Mission document that confidently described generic home-décor
+   * personalization — never mentioning street art, murals, or a gallery. The
+   * model filled a short idea's ambiguity with a more statistically common
+   * adjacent business concept rather than the literal words given. The system
+   * prompt must explicitly instruct against this substitution, the same
+   * anti-drift fix already applied to buildBrandPrompt() for image/video (#1077).
+   */
+  it('instructs the model to ground in the literal idea, never substitute a more common adjacent concept', () => {
+    for (const t of ['research', 'roadmap', 'mission', 'market'] as const) {
+      const sys = DOCUMENT_PROMPTS[t]!.system.toLowerCase()
+      expect(sys).toContain('literal')
+      expect(sys).toContain('do not substitute')
+    }
+  })
 })
 
 // ---------- dailyReportTitle ----------
