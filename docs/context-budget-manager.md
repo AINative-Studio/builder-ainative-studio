@@ -18,26 +18,26 @@ The Context Budget Manager addresses the critical problem of token exhaustion in
 
 ### Components
 
+Actual file layout (Next.js App Router — these are NOT nested under one
+`context-budget/` directory, despite the logical grouping below):
+
 ```
-context-budget/
-├── types/
-│   └── context-budget.ts         # TypeScript type definitions
-├── services/
-│   └── context-budget.service.ts # Core business logic
-├── api/
-│   ├── budget/route.ts           # GET budget endpoint
-│   ├── track/route.ts            # POST track item endpoint
-│   ├── optimize/route.ts         # POST optimization endpoint
-│   ├── unload/route.ts           # POST unload items endpoint
-│   └── preload-cost/route.ts     # POST pre-load cost calculation
-├── components/
-│   ├── budget-meter.tsx          # Progress bar with status indicators
-│   ├── budget-breakdown.tsx      # Pie chart visualization
-│   ├── optimization-suggestions.tsx  # Actionable optimization UI
-│   ├── context-items-list.tsx    # Item management list
-│   └── budget-dashboard.tsx      # Main dashboard component
-└── db/
-    └── schema.ts                 # Database tables
+lib/types/context-budget.ts           # TypeScript type definitions
+lib/services/context-budget.service.ts  # Core business logic
+lib/services/context-budget-logic.ts    # Supporting logic
+app/api/context/
+├── budget/route.ts           # GET budget endpoint
+├── track/route.ts            # POST track item endpoint
+├── optimize/route.ts         # POST optimization endpoint
+├── unload/route.ts           # POST unload items endpoint
+└── preload-cost/route.ts     # POST pre-load cost calculation
+components/context-budget/
+├── budget-meter.tsx          # Progress bar with status indicators
+├── budget-breakdown.tsx      # Pie chart visualization
+├── optimization-suggestions.tsx  # Actionable optimization UI
+├── context-items-list.tsx    # Item management list
+└── budget-dashboard.tsx      # Main dashboard component
+lib/db/schema.ts              # Database tables (shared schema file, not a dedicated one)
 ```
 
 ### Database Schema

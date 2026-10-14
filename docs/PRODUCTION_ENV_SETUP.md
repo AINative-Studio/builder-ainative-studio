@@ -1,241 +1,206 @@
 # Production Environment Variables Setup
 
-This guide provides the complete configuration needed for deploying builder.ainative.studio to production on Vercel.
+This guide covers the environment configuration needed for `builder.ainative.studio`
+in production on **Railway** — not Vercel. (An earlier version of this doc was
+Vercel-shaped throughout; corrected below. See `docs/DEPLOYMENT_GUIDE.md` for the
+full deployment process.)
 
-## Required Environment Variables
-
-### Core Application Configuration
+Production variables are managed via Railway's variable store, not a committed
+`.env` file:
 
 ```bash
-# Application Environment
+railway variables --service builder-ainative-studio
+```
+
+## Core Application Configuration
+
+```bash
 NODE_ENV=production
 NEXT_PUBLIC_APP_URL=https://builder.ainative.studio
 
-# Authentication & Security
 # Generate with: openssl rand -base64 32
 AUTH_SECRET=<your-generated-secret>
+
+# Baked into the build automatically from RAILWAY_GIT_COMMIT_SHA on Railway
+# (or local git HEAD otherwise) — see package.json's `build` script. Don't set
+# this manually in normal operation.
+# NEXT_PUBLIC_BUILD_SHA=<auto>
 ```
 
-### Database Configuration
+## Database Configuration (Builder's own app DB — Drizzle/Postgres)
+
+This is Builder's own application database (auth, chat history, design tokens,
+deployment tracking, error logs, RLHF feedback) — separate from ZeroDB, which
+holds generated-app data.
 
 ```bash
-# PostgreSQL Database (Vercel Postgres recommended)
-POSTGRES_URL=<vercel-postgres-url>
-DATABASE_URL=<vercel-postgres-url>
+POSTGRES_URL=<postgres-connection-string>
+DATABASE_URL=<postgres-connection-string>
 ```
 
-### Redis Configuration
+## Redis Configuration
 
 ```bash
-# Upstash Redis (for Edge Runtime - rate limiting)
-# Required for middleware rate limiting
+# Upstash REST API — required for Edge Runtime (middleware rate limiting)
 UPSTASH_REDIS_REST_URL=<upstash-redis-rest-url>
 UPSTASH_REDIS_REST_TOKEN=<upstash-redis-rest-token>
 
-# Standard Redis (for session management and caching)
+# Standard Redis — Node.js runtime (session management, caching)
 REDIS_URL=<redis-url>
 REDIS_TTL=86400
 ```
 
-### AI/ML Service APIs
+## AI/ML Service Configuration
+
+**Check `docs/MODEL_USAGE.md` for the current, real model configuration before
+setting these** — this has drifted before (a previous version of this doc
+referenced `META_API_KEY`/`LLAMA_MODEL` for a Meta Llama path that no longer
+exists; see that doc's own correction notes). As of the last verified pass:
 
 ```bash
-# Anthropic API (Primary AI Service)
+# Primary path: AWS Bedrock
+CODY_USE_BEDROCK=true
+AWS_BEARER_TOKEN_BEDROCK=<bedrock-token>
+# BEDROCK_MODEL_ID — see docs/MODEL_USAGE.md for the current model id in use
+
+# Anthropic direct (when configured instead of/alongside Bedrock)
 ANTHROPIC_API_KEY=<your-anthropic-api-key>
-ANTHROPIC_MODEL=claude-sonnet-4-5-20250929
-USE_SUBAGENTS=true
 
-# Meta LLAMA API (Alternative AI Service)
-META_API_KEY=<your-meta-api-key>
-META_BASE_URL=https://api.llama.com/compat/v1
-LLAMA_MODEL=Llama-4-Maverick-17B-128E-Instruct-FP8
-
-# OpenAI API (for embeddings and translation)
+# OpenAI (embeddings / translation utilities)
 OPENAI_API_KEY=<your-openai-api-key>
 
-# DeepL API (optional - alternative translator)
+# DeepL (optional alternative translator)
 DEEPL_API_KEY=<your-deepl-api-key>
 ```
 
-### ZeroDB MCP Configuration
+Do not assume a specific `ANTHROPIC_MODEL` string or Meta/Llama variable is
+still in use without checking `docs/MODEL_USAGE.md` and the real
+`MODEL_CONFIG` in code — model routing has changed multiple times.
+
+## ZeroDB Configuration
+
+ZeroDB is AINative's own data-layer API (`api.ainative.studio`), used for
+generated-app data and several Builder features — a remote service, not
+something provisioned per-deploy.
 
 ```bash
-# ZeroDB for CRUD UI generation features
 ZERODB_MCP_URL=https://mcp.zerodb.io
 ZERODB_MCP_API_KEY=<your-zerodb-api-key>
 ZERODB_PROJECT_ID=<your-zerodb-project-id>
 ```
 
-### Rate Limiting
+## Gitea (company code hosting)
+
+Generated company repos live on Gitea (`git.ainative.studio`), not GitHub.
 
 ```bash
-# Maximum chats per user per hour
-MAX_CHATS_PER_HOUR=50
+# See docs/GITEA_PROVISIONING.md for the real, current variable set and flow.
+```
 
-# Maximum chats per IP for anonymous users per hour
+## Rate Limiting
+
+```bash
+MAX_CHATS_PER_HOUR=50
 MAX_ANONYMOUS_CHATS_PER_HOUR=10
 ```
 
-### Deployment Credentials Encryption
+## Deployment Credentials Encryption
 
 ```bash
-# 256-bit encryption key for storing deployment API tokens (AES-256-GCM)
+# AES-256-GCM key for encrypting stored per-company deployment API tokens.
 # Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 DEPLOYMENT_ENCRYPTION_KEY=<your-encryption-key>
 ```
 
-### Monitoring & Logging
+## Monitoring & Logging
 
 ```bash
-# Log level: debug, info, warn, error
 LOG_LEVEL=info
-
-# Sentry DSN (optional - for error tracking)
-SENTRY_DSN=<your-sentry-dsn>
+SENTRY_DSN=<your-sentry-dsn>   # optional
 ```
 
-## Vercel-Specific Variables
+## Railway-Specific Variables
 
-These are automatically set by Vercel:
+These are automatically set by Railway, not something you configure:
 
 ```bash
-VERCEL=1
-VERCEL_ENV=production
-VERCEL_URL=builder.ainative.studio
-VERCEL_REGION=iad1
+RAILWAY_GIT_COMMIT_SHA   # read by package.json's build script
+RAILWAY_ENVIRONMENT
+RAILWAY_SERVICE_NAME
 ```
 
-## Setting Up Environment Variables in Vercel
+## Setting Variables
 
-### Via Vercel Dashboard
-
-1. Go to your project in Vercel Dashboard
-2. Navigate to Settings > Environment Variables
-3. Add each variable with the appropriate scope:
-   - **Production**: Required for production deployments
-   - **Preview**: Optional for preview deployments
-   - **Development**: Not needed (use local .env)
-
-### Via Vercel CLI
+### Via Railway CLI
 
 ```bash
-# Install Vercel CLI
-npm i -g vercel
+railway service builder-ainative-studio
+railway variables --service builder-ainative-studio --set "KEY=value"
 
-# Set production environment variables
-vercel env add POSTGRES_URL production
-vercel env add AUTH_SECRET production
-vercel env add ANTHROPIC_API_KEY production
-# ... repeat for all required variables
-
-# Pull environment variables for local development
-vercel env pull .env.local
+# Explicit production deploy with a specific build SHA (the repo's own
+# `pnpm run deploy` script does exactly this):
+railway variables --service builder-ainative-studio \
+  --set "NEXT_PUBLIC_BUILD_SHA=$(git rev-parse HEAD)" --skip-deploys
+railway up --service builder-ainative-studio --ci --detach
 ```
 
-### Required Variables Checklist
+### Via Railway Dashboard
 
-Use this checklist to ensure all required variables are set:
+Project → Service → Variables tab. Scope to the correct environment
+(production vs. any staging/preview environment that exists for this service).
 
-- [ ] `NODE_ENV=production`
-- [ ] `NEXT_PUBLIC_APP_URL=https://builder.ainative.studio`
-- [ ] `AUTH_SECRET` (generated)
-- [ ] `POSTGRES_URL` (Vercel Postgres)
-- [ ] `DATABASE_URL` (Vercel Postgres)
-- [ ] `UPSTASH_REDIS_REST_URL` (Upstash)
-- [ ] `UPSTASH_REDIS_REST_TOKEN` (Upstash)
-- [ ] `REDIS_URL` (Redis instance)
-- [ ] `ANTHROPIC_API_KEY`
-- [ ] `ANTHROPIC_MODEL`
-- [ ] `USE_SUBAGENTS=true`
-- [ ] `META_API_KEY`
-- [ ] `OPENAI_API_KEY`
-- [ ] `ZERODB_MCP_API_KEY`
-- [ ] `ZERODB_PROJECT_ID`
-- [ ] `DEPLOYMENT_ENCRYPTION_KEY` (generated)
-- [ ] `MAX_CHATS_PER_HOUR`
-- [ ] `MAX_ANONYMOUS_CHATS_PER_HOUR`
-- [ ] `LOG_LEVEL=info`
+### Local development
 
-### Optional Variables
+Pull or construct a `.env.local` with only the variables your current task
+needs — or run against the real Railway-provisioned environment directly:
 
-- [ ] `DEEPL_API_KEY` (alternative translator)
-- [ ] `SENTRY_DSN` (error tracking)
-
-## Security Best Practices
-
-1. **Never commit `.env` files** - They are in `.gitignore`
-2. **Use strong, randomly generated secrets** - Especially for `AUTH_SECRET` and `DEPLOYMENT_ENCRYPTION_KEY`
-3. **Rotate credentials regularly** - Especially API keys with broad permissions
-4. **Use separate credentials per environment** - Never reuse production credentials in development
-5. **Enable API key restrictions** - Where supported by the provider (IP restrictions, domain restrictions)
-6. **Monitor API usage** - Set up alerts for unusual activity
-7. **Use Vercel's environment variable encryption** - All secrets are encrypted at rest
+```bash
+railway service builder-ainative-studio
+railway run -- pnpm dev
+```
 
 ## Validation
 
-After setting all variables, validate your configuration:
-
 ```bash
-# Test database connection
-vercel env pull .env.production.local
 npx tsx scripts/validate-env.ts
-
-# Deploy to preview first
-vercel --prod=false
-
-# Test preview deployment
-curl https://your-preview-url.vercel.app/api/health
-
-# Deploy to production
-vercel --prod
 ```
+
+Check that script's actual contents for what it currently validates — it may
+not cover every variable listed above, and may check things not listed here.
 
 ## Troubleshooting
 
-### Database Connection Issues
+### Database connection issues
 
-- Ensure `POSTGRES_URL` and `DATABASE_URL` are identical
-- Verify your IP is allowed in Vercel Postgres settings
-- Check SSL mode requirements (`?sslmode=require`)
+- Ensure `POSTGRES_URL` and `DATABASE_URL` are set to the same value.
+- Check SSL mode (`?sslmode=require`) if the provider requires it.
 
-### Redis Connection Issues
+### Redis connection issues
 
-- For Edge Runtime (middleware), use Upstash Redis REST API
-- For Node.js runtime (API routes), you can use standard Redis
-- Ensure both `UPSTASH_REDIS_REST_URL` and `REDIS_URL` are set
+- Edge Runtime (middleware) requires the Upstash REST variables specifically —
+  a standard `REDIS_URL` alone will not work there.
+- Node.js runtime (API routes) can use either.
 
-### API Key Issues
+### Model/API key issues
 
-- Verify API keys are active and have sufficient quota
-- Check for IP restrictions or domain restrictions
-- Monitor rate limits and usage quotas
+- Verify against `docs/MODEL_USAGE.md` which provider path (Bedrock vs.
+  Anthropic direct) is actually active before assuming a key is misconfigured.
 
-### Build Failures
+### Build failures
 
-- Check build logs in Vercel Dashboard
-- Verify all required environment variables are set
-- Ensure database migrations run successfully
+```bash
+railway logs --service builder-ainative-studio --build
+```
 
-## Monitoring Setup
+Cross-check https://status.railway.com before assuming a build failure is
+Builder-specific — CLI/dashboard status display lag has repeatedly caused
+false alarms in this repo's deploy history.
 
-The application includes built-in monitoring for:
+## Monitoring Data
 
-- **Token Usage Tracking**: All AI API calls are logged with token counts
-- **Generation Time Metrics**: Response times are tracked per generation
-- **Error Logging**: All errors are persisted to `error_logs` table
-- **Request Metrics**: API endpoints log performance data
-
-Access monitoring data via:
-
-- `/api/admin/errors` - Error logs (admin only)
-- `/api/usage` - Token usage statistics
-- Database queries on `error_logs` and `generations` tables
-
-## Support
-
-For issues with environment variable setup:
-
-1. Check Vercel deployment logs
-2. Verify environment variables in Vercel Dashboard
-3. Test with preview deployment first
-4. Review error logs at `/api/admin/errors`
+- `/api/health` — real-time health, DB/Redis connectivity, recent error counts.
+- `/api/version` — build SHA (can be stale relative to actual running
+  behavior on CLI-triggered deploys; prefer `/api/health` + real behavior
+  checks when verifying a specific deploy landed).
+- `error_logs` table (Drizzle/Postgres) — see `docs/MONITORING_QUERIES.md` for
+  real, current query patterns.

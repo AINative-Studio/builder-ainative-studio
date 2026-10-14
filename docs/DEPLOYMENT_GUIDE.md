@@ -1,1104 +1,293 @@
-# AINative Studio Deployment Guide
+# AINative Builder — Deployment Guide
 
-This comprehensive guide covers everything you need to deploy AINative Component Builder to production.
+This guide covers deploying `builder-ainative-studio` to production. **Railway is the
+real, confirmed-live deployment target** — not Vercel. (An earlier version of this
+doc described a Vercel-first setup; that was never accurate for this repo's actual
+production deployment and has been corrected. See the note at the bottom if you're
+evaluating Vercel as an alternative anyway.)
 
 ## Table of Contents
 
 1. [Prerequisites](#prerequisites)
 2. [Environment Setup](#environment-setup)
 3. [Build Process](#build-process)
-4. [Deployment to Vercel](#deployment-to-vercel)
-5. [Alternative Platforms](#alternative-platforms)
-6. [Post-Deployment Verification](#post-deployment-verification)
-7. [Monitoring Setup](#monitoring-setup)
-8. [Troubleshooting](#troubleshooting)
-9. [Rollback Procedures](#rollback-procedures)
+4. [Deployment to Railway](#deployment-to-railway)
+5. [Post-Deployment Verification](#post-deployment-verification)
+6. [Monitoring](#monitoring)
+7. [Troubleshooting](#troubleshooting)
+8. [Rollback Procedures](#rollback-procedures)
+9. [A note on Vercel](#a-note-on-vercel)
 
 ---
 
 ## Prerequisites
 
-### Required Accounts and Services
-
-Before deploying, ensure you have:
-
-- **Node.js** 18.x or higher installed
-- **pnpm** package manager (`npm install -g pnpm`)
-- **PostgreSQL** database (or managed service like Vercel Postgres, Supabase, Railway)
-- **Redis** instance (or Upstash Redis for serverless)
-- **Anthropic API** account and API key ([Get here](https://console.anthropic.com/))
-- **Vercel** account (recommended) or alternative platform account
-- **Git** repository (GitHub, GitLab, or Bitbucket)
-
-### API Keys Required
-
-Gather these API keys before starting:
-
-1. **Anthropic API Key** - Primary AI model
-2. **OpenAI API Key** - For embeddings and utilities
-3. **Unsplash Access Key** (optional) - Image integration
-4. **Database Connection String** - PostgreSQL URL
-5. **Redis URL** - For session management and caching
-6. **Upstash Redis** (for Vercel Edge) - REST URL and token
-
----
+- **Node.js** 20.x (Railpack reads the project's engines/lockfile; keep local and
+  CI Node versions aligned with what Railway actually builds with)
+- **pnpm** package manager
+- **Railway CLI** (`npm i -g @railway/cli`) and an authenticated account with
+  access to the `AINative Studio - Production` project
+- **PostgreSQL** — the app's own Drizzle-backed tables (auth, chat history,
+  design tokens, deployment tracking, error logs, RLHF feedback). This is
+  separate from ZeroDB (below) — don't conflate the two.
+- **ZeroDB** — AINative's own data-layer API (`api.ainative.studio`), used for
+  generated-app data and several Builder features (see
+  `docs/design/BUILDER_DESIGN_HANDOFF.md` and this repo's `CLAUDE.md` for the
+  authentication/workspace model). No local setup needed — it's a remote
+  service, not something you provision per-deploy.
+- **Redis** (session/cache; Upstash REST-compatible for Edge middleware)
+- **Anthropic API** key, and/or AWS Bedrock credentials (`CODY_USE_BEDROCK`,
+  `AWS_BEARER_TOKEN_BEDROCK`) — see `docs/MODEL_USAGE.md` for the real,
+  current model configuration (do not trust older docs or memory describing a
+  pure-Anthropic-direct setup; Bedrock is the current primary path)
+- **Gitea** access (`git.ainative.studio`) — generated company code lives on
+  Gitea, not GitHub. Don't assume a `github_repo_url: null` company has no repo.
 
 ## Environment Setup
 
-### Step 1: Clone and Install
+### Clone and install
 
 ```bash
-# Clone the repository
-git clone https://github.com/YOUR_ORG/builder-ainative-studio.git
+git clone https://github.com/AINative-Studio/builder-ainative-studio.git
 cd builder-ainative-studio
-
-# Install dependencies
 pnpm install
 ```
 
-### Step 2: Configure Environment Variables
+### Environment variables
 
-Create a `.env` file in the project root:
+Real environment variables are managed through Railway's own variable store for
+production — `railway variables --service builder-ainative-studio` — not a
+committed `.env` file. For local development, pull or construct a `.env.local`
+with the variables your task actually needs; check `lib/` and `app/api/` call
+sites for the exact env var names in use rather than trusting a static list
+here, since these have drifted from documentation before (see `docs/MODEL_USAGE.md`'s
+own correction history). Known-real, currently load-bearing variables include:
+
+- `NEXT_PUBLIC_BUILD_SHA` — baked into the build by `package.json`'s `build`
+  script, sourced from `RAILWAY_GIT_COMMIT_SHA` on Railway or local `git
+  rev-parse HEAD` otherwise. Surfaced at `/api/version`. Note: this can go
+  stale relative to actual running behavior on CLI-triggered deploys — prefer
+  checking `/api/health`'s `uptime`/real behavior over trusting this field
+  blindly during active debugging.
+- `DEPLOYMENT_ENCRYPTION_KEY` — AES-256-GCM key for encrypting stored
+  deployment API tokens.
+- Database connection vars for the Drizzle/Postgres layer (`db:*` scripts).
+- Redis connection vars (session/cache + Upstash REST for Edge middleware).
+
+### Database setup
 
 ```bash
-cp .env.example .env
+pnpm db:generate   # generate migration files (drizzle-kit generate), if schema changed
+pnpm db:migrate    # npx tsx lib/db/migrate.ts
+pnpm db:studio     # Drizzle Studio at http://localhost:4983
 ```
 
-Edit `.env` with your production values:
+This is Builder's own application database (auth, chat history, etc.) — it is
+NOT where generated apps' data lives. Generated-app data goes through ZeroDB
+via `/api/db/` (see `docs/design/BUILDER_DESIGN_HANDOFF.md`).
+
+### Test locally
 
 ```bash
-# ==================== Database Configuration ====================
-# PostgreSQL connection string
-POSTGRES_URL=postgresql://user:password@host:5432/database
-DATABASE_URL=postgresql://user:password@host:5432/database
-
-# ==================== Redis Configuration ====================
-# Redis connection for state persistence
-REDIS_URL=redis://username:password@host:port
-
-# Upstash Redis for Edge Runtime (Vercel middleware)
-UPSTASH_REDIS_REST_URL=https://your-redis.upstash.io
-UPSTASH_REDIS_REST_TOKEN=your-token-here
-
-# ==================== Authentication & Security ====================
-# Generate with: openssl rand -base64 32
-AUTH_SECRET=your-32-character-random-secret-here
-
-# ==================== AI/ML Service APIs ====================
-# Anthropic API (Primary)
-ANTHROPIC_API_KEY=sk-ant-your-key-here
-ANTHROPIC_MODEL=claude-sonnet-4-20250514
-
-# OpenAI API (Embeddings and utilities)
-OPENAI_API_KEY=sk-your-openai-key-here
-
-# Unsplash (Optional - Image integration)
-UNSPLASH_ACCESS_KEY=your-unsplash-key
-
-# ==================== Application Configuration ====================
-NODE_ENV=production
-NEXT_PUBLIC_APP_URL=https://your-domain.com
-
-# ==================== Rate Limiting ====================
-MAX_CHATS_PER_HOUR=50
-MAX_ANONYMOUS_CHATS_PER_HOUR=5
-
-# ==================== Monitoring & Logging ====================
-LOG_LEVEL=info
-SENTRY_DSN=your-sentry-dsn (optional)
-
-# ==================== Deployment Encryption ====================
-# Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-DEPLOYMENT_ENCRYPTION_KEY=your-64-character-hex-key
-```
-
-### Step 3: Database Setup
-
-Run migrations to create database tables:
-
-```bash
-# Generate migration files (if schema changed)
-pnpm db:generate
-
-# Run migrations
-pnpm db:migrate
-
-# Verify database connection
-pnpm db:studio
-# Opens Drizzle Studio at http://localhost:4983
-```
-
-**Database Schema Includes:**
-- Users and authentication tables
-- Chat history and messages
-- Design tokens and templates
-- Deployment tracking
-- Error logging
-- RLHF feedback collection
-
-### Step 4: Test Locally
-
-```bash
-# Start development server
 pnpm dev
-
-# Open browser
 open http://localhost:3000
+```
 
-# Test key features:
-# 1. User registration/login
-# 2. Chat creation
-# 3. Component generation
-# 4. Preview rendering
+Or, to run against the same Railway-provisioned environment variables the
+production service uses (the pattern used throughout this session for local
+verification work):
+
+```bash
+railway service builder-ainative-studio
+railway run -- pnpm dev
 ```
 
 ---
 
 ## Build Process
 
-### Understanding the Build
-
-The build process (`pnpm build`) performs:
-
-1. **Database Migrations** - Runs `tsx lib/db/migrate`
-2. **Next.js Build** - Compiles application with Turbopack
-3. **Asset Optimization** - Minifies CSS, JS, and images
-4. **Route Generation** - Creates static and dynamic routes
-
-### Build Command
-
 ```bash
-# Full production build
 pnpm build
-
-# Expected output:
-# ⏳ Running migrations...
-# ✅ Migrations completed in XXX ms
-# Creating an optimized production build
-# ✓ Compiled successfully
 ```
 
-### Build Configuration
-
-Key build settings in `next.config.ts`:
-
-```typescript
-const nextConfig: NextConfig = {
-  reactStrictMode: true,
-  images: {
-    dangerouslyAllowSVG: true,
-    contentDispositionType: 'attachment',
-    contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
-  },
-}
-```
-
-### Build Verification
-
-Check build output:
-
-```bash
-ls -la .next/
-# Should see:
-# - static/
-# - server/
-# - cache/
-# - BUILD_ID
-```
+This runs `next build --turbopack` with `NEXT_PUBLIC_BUILD_SHA` resolved from
+`RAILWAY_GIT_COMMIT_SHA` (on Railway) or local git HEAD (elsewhere). There is
+no separate database-migration step baked into `build` itself in this repo's
+current script — migrations are run explicitly via `pnpm db:migrate`, not as
+an automatic build side effect.
 
 ---
 
-## Deployment to Vercel
+## Deployment to Railway
 
-Vercel is the recommended platform for Next.js applications.
+Railway builds with **Railpack** (`railway.json`: `"builder": "RAILPACK"`),
+not a custom Dockerfile, and healthchecks `/health/live` (300s timeout, restart
+on failure, up to 3 retries).
 
-### Method 1: Vercel CLI (Recommended)
+### GitHub-triggered auto-deploy (normal path)
 
-#### Install Vercel CLI
-
-```bash
-npm i -g vercel
-```
-
-#### Login to Vercel
-
-```bash
-vercel login
-```
-
-#### Deploy
+Merges to `main` auto-trigger a Railway deploy. This has historically broken
+and been fixed more than once (see `docs/BUILD_FLOW_REALNESS_BACKLOG.md` and
+this repo's own commit history for incidents) — **verify it's actually firing**
+rather than assuming:
 
 ```bash
-# Preview deployment (staging)
-vercel
-
-# Production deployment
-vercel --prod
+gh api repos/AINative-Studio/builder-ainative-studio/deployments --jq '.[0]'
 ```
 
-### Method 2: GitHub Integration
+### CLI-triggered deploy (explicit/immediate, or while debugging)
 
-#### Step 1: Push to GitHub
+This repo has a real `deploy` script:
 
 ```bash
-git add .
-git commit -m "Prepare for deployment"
-git push origin main
+pnpm run deploy
+# equivalent to:
+railway variables --service builder-ainative-studio \
+  --set "NEXT_PUBLIC_BUILD_SHA=$(git rev-parse HEAD)" --skip-deploys
+railway up --service builder-ainative-studio --ci --detach
 ```
 
-#### Step 2: Connect to Vercel
-
-1. Go to [Vercel Dashboard](https://vercel.com/dashboard)
-2. Click **"Add New Project"**
-3. Import your GitHub repository
-4. Configure project settings:
-   - **Framework Preset:** Next.js
-   - **Root Directory:** `./`
-   - **Build Command:** `pnpm build`
-   - **Output Directory:** `.next`
-   - **Install Command:** `pnpm install`
-
-#### Step 3: Configure Environment Variables
-
-In Vercel project settings > Environment Variables, add all variables from `.env`:
-
-**Critical Variables:**
-- `POSTGRES_URL`
-- `DATABASE_URL`
-- `REDIS_URL`
-- `UPSTASH_REDIS_REST_URL`
-- `UPSTASH_REDIS_REST_TOKEN`
-- `AUTH_SECRET`
-- `ANTHROPIC_API_KEY`
-- `OPENAI_API_KEY`
-- `NODE_ENV=production`
-- `NEXT_PUBLIC_APP_URL`
-- `DEPLOYMENT_ENCRYPTION_KEY`
-
-**Environment Scopes:**
-- Production: For main branch
-- Preview: For pull requests
-- Development: For local development
-
-#### Step 4: Deploy
-
-Click **"Deploy"** - Vercel will:
-1. Clone repository
-2. Install dependencies
-3. Run database migrations
-4. Build application
-5. Deploy to edge network
-
-### Vercel Project Settings
-
-#### Domain Configuration
-
-1. Go to **Settings > Domains**
-2. Add your custom domain
-3. Configure DNS:
-   ```
-   Type: CNAME
-   Name: @ (or subdomain)
-   Value: cname.vercel-dns.com
-   ```
-
-#### Build & Development Settings
-
-```yaml
-Build Command: pnpm build
-Output Directory: .next
-Install Command: pnpm install
-Development Command: pnpm dev
-Node.js Version: 18.x
-```
-
-#### Function Configuration
-
-```yaml
-Max Duration: 300s (for AI generation)
-Memory: 1024 MB
-Regions: Auto (or specify: iad1, sfo1, etc.)
-```
-
----
-
-## Alternative Platforms
-
-### Netlify
+Then poll for completion and verify:
 
 ```bash
-# Install Netlify CLI
-npm install -g netlify-cli
-
-# Login
-netlify login
-
-# Deploy
-netlify deploy --prod
+railway deployment list --service builder-ainative-studio
+curl -s https://builder.ainative.studio/api/health
 ```
 
-**netlify.toml:**
-```toml
-[build]
-  command = "pnpm build"
-  publish = ".next"
+Prefer `/api/health`'s real `uptime` and behavior over `/api/version`'s
+`NEXT_PUBLIC_BUILD_SHA` field alone — that field can be stale relative to what's
+actually running, particularly on CLI-triggered deploys. If in doubt, confirm
+by checking for the actual code/behavior change you expect (e.g., grep a
+served JS chunk for a function name you just added), not just the version
+endpoint.
 
-[build.environment]
-  NODE_VERSION = "18"
+### `./scripts/deploy-production.sh`
 
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
-```
-
-### Railway
-
-```bash
-# Install Railway CLI
-npm i -g @railway/cli
-
-# Login
-railway login
-
-# Initialize project
-railway init
-
-# Deploy
-railway up
-```
-
-### Docker Deployment
-
-**Dockerfile:**
-```dockerfile
-FROM node:18-alpine AS base
-
-# Install dependencies only when needed
-FROM base AS deps
-RUN apk add --no-cache libc6-compat
-WORKDIR /app
-
-COPY package.json pnpm-lock.yaml ./
-RUN npm install -g pnpm && pnpm install --frozen-lockfile
-
-# Rebuild the source code only when needed
-FROM base AS builder
-WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
-
-ENV NEXT_TELEMETRY_DISABLED 1
-
-RUN npm install -g pnpm && pnpm build
-
-# Production image, copy all the files and run next
-FROM base AS runner
-WORKDIR /app
-
-ENV NODE_ENV production
-ENV NEXT_TELEMETRY_DISABLED 1
-
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
-
-COPY --from=builder /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-
-USER nextjs
-
-EXPOSE 3000
-
-ENV PORT 3000
-ENV HOSTNAME "0.0.0.0"
-
-CMD ["node", "server.js"]
-```
-
-**Build and run:**
-```bash
-docker build -t ainative-studio .
-docker run -p 3000:3000 --env-file .env ainative-studio
-```
+This repo also has a dedicated `deploy:production` script
+(`package.json` → `./scripts/deploy-production.sh`). Check that script directly
+for its current behavior before relying on it in a runbook — it may overlap
+with or supersede the `railway up` flow above; verify which is the intended
+path before using either in an automated or high-stakes context.
 
 ---
 
 ## Post-Deployment Verification
 
-### Health Check Endpoints
-
-Test these endpoints to verify deployment:
-
 ```bash
-# 1. Application health
-curl https://your-domain.com/
-
-# 2. API health (if implemented)
-curl https://your-domain.com/api/health
-
-# 3. Authentication
-curl -X POST https://your-domain.com/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"test@example.com","password":"testpass"}'
-
-# 4. Database connection (via any API endpoint)
-# Should return proper response, not 500 error
+curl https://builder.ainative.studio/api/health
+curl https://builder.ainative.studio/api/version
 ```
 
-### Manual Testing Checklist
+`/api/health` returns real status (database connectivity, Redis status if
+configured, recent error counts). Treat it as the source of truth over
+`/api/version` for "is the new code actually live" questions.
 
-- [ ] **Homepage loads correctly**
-  - UI renders properly
-  - No console errors
-  - CSS styles applied
+Manual checklist:
 
-- [ ] **User Authentication**
-  - [ ] Registration works
-  - [ ] Login works
-  - [ ] Session persists
-  - [ ] Logout works
-
-- [ ] **Chat Functionality**
-  - [ ] Create new chat
-  - [ ] Send messages
-  - [ ] Receive AI responses
-  - [ ] Real-time streaming works
-
-- [ ] **Component Generation**
-  - [ ] Template selection works
-  - [ ] Custom prompts generate components
-  - [ ] Preview renders correctly
-  - [ ] Code is syntactically valid
-
-- [ ] **Database Operations**
-  - [ ] Chat history saves
-  - [ ] User data persists
-  - [ ] Design tokens store correctly
-
-- [ ] **Rate Limiting**
-  - [ ] Anonymous user limits enforced
-  - [ ] Registered user limits work
-  - [ ] Error messages are clear
-
-- [ ] **Error Handling**
-  - [ ] 404 pages work
-  - [ ] 500 errors are logged
-  - [ ] User-friendly error messages
-
-### Performance Testing
-
-```bash
-# Load testing with autocannon
-npm install -g autocannon
-
-autocannon -c 10 -d 30 https://your-domain.com
-# Tests 10 concurrent connections for 30 seconds
-
-# Expected results:
-# - Average latency: < 500ms
-# - Requests/sec: > 100
-# - Error rate: < 1%
-```
-
-### Security Verification
-
-- [ ] **HTTPS enforced** (no HTTP access)
-- [ ] **Headers configured**:
-  ```bash
-  curl -I https://your-domain.com
-  # Should see:
-  # - X-Frame-Options
-  # - X-Content-Type-Options
-  # - Strict-Transport-Security
-  ```
-- [ ] **Environment variables not exposed** (check Network tab)
-- [ ] **API endpoints require authentication**
-- [ ] **SQL injection protected** (Drizzle ORM)
-- [ ] **XSS protected** (React escaping)
+- [ ] Homepage loads, no console errors
+- [ ] Auth (login/registration via next-auth, backed by core's real
+      `/v1/auth/login` + OAuth2.1/PKCE) works
+- [ ] Chat creation + generation works end-to-end
+- [ ] Preview rendering works — both the Sandpack multi-file path and the
+      flattened single-file fallback (see `docs/design/BUILDER_DESIGN_HANDOFF.md`
+      for the current dual-tier renderer and the in-progress self-hosting
+      migration, epic #1076)
+- [ ] Rate limiting behaves as configured
+- [ ] `/api/health` reports healthy database/Redis status
 
 ---
 
-## Monitoring Setup
+## Monitoring
 
-### Application Monitoring
-
-#### Vercel Analytics (Built-in)
-
-Enable in Vercel Dashboard:
-1. Go to **Analytics** tab
-2. Enable **Web Vitals**
-3. Monitor:
-   - Request count
-   - Error rate
-   - Response time
-   - Geographic distribution
-
-#### Custom Error Logging
-
-Already implemented via `error_logs` table:
-
-```typescript
-// Automatic error logging
-import { logError } from '@/lib/monitoring/error-logger'
-
-try {
-  // Your code
-} catch (error) {
-  await logError({
-    level: 'error',
-    message: error.message,
-    context: { userId, chatId },
-    stackTrace: error.stack,
-  })
-}
-```
-
-Query errors:
-
-```sql
--- Recent errors
-SELECT * FROM error_logs
-ORDER BY timestamp DESC
-LIMIT 100;
-
--- Errors by type
-SELECT error_type, COUNT(*) as count
-FROM error_logs
-WHERE timestamp > NOW() - INTERVAL '24 hours'
-GROUP BY error_type
-ORDER BY count DESC;
-```
-
-#### Sentry Integration (Optional)
-
-```bash
-npm install @sentry/nextjs
-```
-
-**sentry.client.config.js:**
-```javascript
-import * as Sentry from "@sentry/nextjs"
-
-Sentry.init({
-  dsn: process.env.SENTRY_DSN,
-  tracesSampleRate: 0.1,
-  environment: process.env.NODE_ENV,
-})
-```
-
-### Database Monitoring
-
-#### PostgreSQL Metrics
-
-Monitor these queries:
-
-```sql
--- Active connections
-SELECT count(*) FROM pg_stat_activity;
-
--- Slow queries
-SELECT query, mean_exec_time
-FROM pg_stat_statements
-ORDER BY mean_exec_time DESC
-LIMIT 10;
-
--- Database size
-SELECT pg_size_pretty(pg_database_size('your_db_name'));
-
--- Table sizes
-SELECT schemaname, tablename,
-       pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename))
-FROM pg_tables
-ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
-```
-
-#### Redis Monitoring
-
-```bash
-# Connect to Redis
-redis-cli -h your-redis-host -p 6379
-
-# Monitor commands
-MONITOR
-
-# Check memory
-INFO memory
-
-# Key count
-DBSIZE
-```
-
-### Performance Monitoring
-
-#### Set Up Alerts
-
-**Vercel Notifications:**
-1. Go to **Settings > Notifications**
-2. Enable alerts for:
-   - Deployment failures
-   - High error rates
-   - Performance degradation
-
-**Custom Alerts via Cron:**
-
-Create `/app/api/cron/alerts/route.ts`:
-
-```typescript
-export async function GET() {
-  // Check error rate
-  const errorCount = await db
-    .select()
-    .from(error_logs)
-    .where(gt(error_logs.timestamp, new Date(Date.now() - 3600000)))
-
-  if (errorCount.length > 100) {
-    // Send alert (email, Slack, PagerDuty)
-    await sendAlert({
-      type: 'high_error_rate',
-      count: errorCount.length,
-    })
-  }
-
-  return new Response('OK')
-}
-```
-
-**Vercel Cron:**
-```json
-// vercel.json
-{
-  "crons": [{
-    "path": "/api/cron/alerts",
-    "schedule": "*/5 * * * *"
-  }]
-}
-```
-
-### Log Aggregation
-
-Stream logs to monitoring service:
-
-```bash
-# Vercel CLI
-vercel logs --follow
-
-# Save to file
-vercel logs > deployment-logs.txt
-```
+- **`error_logs` table** (Drizzle/Postgres) — queryable directly; see
+  `docs/MONITORING_QUERIES.md` for real, current query patterns.
+- **Railway's own dashboard/CLI** — `railway logs --service builder-ainative-studio`,
+  `railway status`, deployment history.
+- **`/api/health`** — the fastest live signal; prefer it to any dashboard for a
+  quick "is it actually up" check.
 
 ---
 
 ## Troubleshooting
 
-### Common Issues and Solutions
+### Build/deploy issues
 
-#### 1. Build Failures
-
-**Error:** `Migration failed`
+Check actual Railway build logs first, not assumptions:
 
 ```bash
-# Solution: Check database connection
-psql $POSTGRES_URL -c "SELECT 1"
-
-# Verify migrations folder
-ls -la lib/db/migrations/
-
-# Run migrations manually
-pnpm db:migrate
+railway logs --service builder-ainative-studio --build
 ```
 
-**Error:** `Module not found`
+If a CLI-triggered deploy seems stuck in "BUILDING" for an unusually long time,
+cross-check Railway's own status page (https://status.railway.com) before
+assuming the build itself is broken — CLI/dashboard status display lag has been
+a real, repeated source of false alarms in this repo's deploy history.
+
+### Database connection issues
 
 ```bash
-# Solution: Clear cache and reinstall
-rm -rf node_modules .next
-pnpm install
-pnpm build
+pnpm db:studio   # verify connectivity via Drizzle Studio
 ```
 
-#### 2. Database Connection Issues
-
-**Error:** `Connection timeout`
+### Test suite — use the real runner
 
 ```bash
-# Check database is accessible
-pg_isready -h your-host -p 5432
-
-# Test connection string
-psql $POSTGRES_URL -c "\dt"
-
-# Verify SSL mode (add to connection string)
-POSTGRES_URL=postgresql://user:pass@host:5432/db?sslmode=require
+npx vitest run       # NOT npx jest — jest silently fails to parse all TS
+                      # tests in this repo and will falsely report passing
+npx tsc --noEmit      # typecheck
 ```
 
-**Error:** `Too many connections`
+### GitHub Actions / `gh pr checks` display lag
 
-```typescript
-// Solution: Configure connection pool
-import { Pool } from 'pg'
-
-const pool = new Pool({
-  connectionString: process.env.POSTGRES_URL,
-  max: 20, // Maximum pool size
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
-})
-```
-
-#### 3. Redis Connection Issues
-
-**Error:** `ECONNREFUSED`
+`gh pr checks` has repeatedly shown stale "pending" status for 10+ minutes
+after a run actually completed. If a check seems stuck, verify directly:
 
 ```bash
-# Verify Redis is running
-redis-cli ping
-# Should return: PONG
-
-# Check Redis URL format
-# Correct: redis://username:password@host:port
-# Correct: rediss://username:password@host:port (SSL)
+gh api repos/AINative-Studio/builder-ainative-studio/actions/runs/{id}/jobs
 ```
-
-#### 4. API Rate Limiting
-
-**Error:** `429 Too Many Requests`
-
-```typescript
-// Solution: Adjust rate limits
-// In .env:
-MAX_CHATS_PER_HOUR=100
-MAX_ANONYMOUS_CHATS_PER_HOUR=10
-
-// Or implement exponential backoff
-async function retryWithBackoff(fn, maxRetries = 3) {
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      return await fn()
-    } catch (error) {
-      if (error.status === 429 && i < maxRetries - 1) {
-        await new Promise(r => setTimeout(r, Math.pow(2, i) * 1000))
-        continue
-      }
-      throw error
-    }
-  }
-}
-```
-
-#### 5. Anthropic API Errors
-
-**Error:** `Invalid API key`
-
-```bash
-# Verify API key
-curl https://api.anthropic.com/v1/messages \
-  -H "x-api-key: $ANTHROPIC_API_KEY" \
-  -H "anthropic-version: 2023-06-01" \
-  -H "content-type: application/json" \
-  -d '{...}'
-```
-
-**Error:** `Rate limit exceeded`
-
-```typescript
-// Implement queue system
-import { Queue } from 'bull'
-
-const aiQueue = new Queue('ai-generation', process.env.REDIS_URL)
-
-aiQueue.process(async (job) => {
-  return await generateComponent(job.data)
-})
-
-// Add to queue instead of direct call
-await aiQueue.add({ prompt, userId })
-```
-
-#### 6. WebSocket Connection Failures
-
-**Error:** `WebSocket connection failed`
-
-```javascript
-// Client-side debugging
-const ws = new WebSocket('wss://your-domain.com/api/chat-ws')
-
-ws.onerror = (error) => {
-  console.error('WebSocket error:', error)
-  // Fallback to HTTP polling
-}
-
-ws.onclose = (event) => {
-  console.log('WebSocket closed:', event.code, event.reason)
-  // Attempt reconnection
-  setTimeout(() => connectWebSocket(), 5000)
-}
-```
-
-#### 7. Memory Issues
-
-**Error:** `JavaScript heap out of memory`
-
-```bash
-# Solution: Increase Node.js memory
-NODE_OPTIONS="--max-old-space-size=4096" pnpm build
-
-# Or in Vercel settings:
-# Functions > Memory: 1024 MB or 3008 MB
-```
-
-#### 8. Slow Performance
-
-**Investigation:**
-
-```typescript
-// Add performance monitoring
-console.time('database-query')
-const result = await db.select()...
-console.timeEnd('database-query')
-
-// Profile API endpoints
-import { performance } from 'perf_hooks'
-
-const start = performance.now()
-// Your code
-const end = performance.now()
-console.log(`Execution time: ${end - start}ms`)
-```
-
-**Solutions:**
-- Add database indexes
-- Implement caching with Redis
-- Use React.memo for heavy components
-- Optimize images with next/image
-- Enable Next.js production optimizations
 
 ---
 
 ## Rollback Procedures
 
-### Vercel Rollback
-
-#### Method 1: Vercel Dashboard
-
-1. Go to **Deployments** tab
-2. Find the last working deployment
-3. Click **"⋯"** menu → **"Promote to Production"**
-4. Confirm promotion
-
-#### Method 2: Vercel CLI
+### Git-based rollback (the real path for this repo)
 
 ```bash
-# List recent deployments
-vercel list
-
-# Example output:
-# Age  Deployment                    Status
-# 2m   ainative-studio-abc123.vercel Ready
-# 1h   ainative-studio-def456.vercel Ready
-
-# Promote previous deployment
-vercel promote ainative-studio-def456.vercel.app
-```
-
-#### Method 3: Git Revert
-
-```bash
-# Revert to previous commit
 git log --oneline
-# Find commit hash of working version
-
-git revert HEAD --no-edit
+git revert <bad-commit> --no-edit
 git push origin main
-
-# Vercel auto-deploys from main branch
+# triggers the normal auto-deploy path, or run `pnpm run deploy` explicitly
 ```
 
-### Database Rollback
+### Railway deployment rollback
 
-#### Backup Before Deployment
+Railway retains deployment history — a previous successful deployment can be
+redeployed/promoted directly via the Railway dashboard or
+`railway deployment list` + the appropriate Railway CLI/dashboard action for
+your Railway plan. Check Railway's current docs for the exact rollback command,
+since CLI surface area changes between Railway CLI versions.
+
+### Database rollback
 
 ```bash
-# Automatic backup script
-pg_dump $POSTGRES_URL > backup-$(date +%Y%m%d-%H%M%S).sql
-
-# Verify backup
-head -n 50 backup-*.sql
+pg_dump $POSTGRES_URL > backup-$(date +%Y%m%d-%H%M%S).sql   # before any risky change
 ```
 
-#### Restore from Backup
-
-```bash
-# Restore database
-psql $POSTGRES_URL < backup-20260302-120000.sql
-
-# Or restore specific tables
-pg_restore -d $POSTGRES_URL -t users backup.sql
-```
-
-#### Migration Rollback
-
-Drizzle ORM doesn't support automatic rollback. Manual process:
-
-1. **Identify migration to rollback:**
-   ```bash
-   ls -la lib/db/migrations/
-   # Note the migration file to undo
-   ```
-
-2. **Create reverse migration:**
-   ```sql
-   -- Example: If migration added a column
-   -- Original: ALTER TABLE users ADD COLUMN new_field VARCHAR(255);
-   -- Reverse:
-   ALTER TABLE users DROP COLUMN new_field;
-   ```
-
-3. **Run reverse SQL:**
-   ```bash
-   psql $POSTGRES_URL -f reverse-migration.sql
-   ```
-
-### Code Rollback Checklist
-
-- [ ] **Identify issue** - Error logs, user reports
-- [ ] **Check deployment time** - Correlate with issue start
-- [ ] **Review recent changes** - Git diff between deployments
-- [ ] **Test rollback target** - Verify previous version works
-- [ ] **Create database backup** - Before any changes
-- [ ] **Execute rollback** - Via Vercel or Git revert
-- [ ] **Verify rollback** - Run post-deployment tests
-- [ ] **Monitor metrics** - Ensure issue resolved
-- [ ] **Document incident** - For future reference
-- [ ] **Plan fix** - Address root cause
-
-### Emergency Rollback Script
-
-Create `scripts/emergency-rollback.sh`:
-
-```bash
-#!/bin/bash
-set -e
-
-echo "EMERGENCY ROLLBACK INITIATED"
-echo "=============================="
-
-# Get current deployment
-CURRENT=$(vercel list --limit 1 | grep Ready | awk '{print $2}')
-echo "Current deployment: $CURRENT"
-
-# Get previous deployment
-PREVIOUS=$(vercel list --limit 2 | grep Ready | tail -n 1 | awk '{print $2}')
-echo "Rolling back to: $PREVIOUS"
-
-# Backup database
-echo "Creating database backup..."
-pg_dump $POSTGRES_URL > emergency-backup-$(date +%Y%m%d-%H%M%S).sql
-echo "Backup created"
-
-# Promote previous deployment
-echo "Promoting previous deployment..."
-vercel promote $PREVIOUS --yes
-
-echo "Rollback complete"
-echo "Please verify: https://your-domain.com"
-```
-
-Usage:
-```bash
-chmod +x scripts/emergency-rollback.sh
-./scripts/emergency-rollback.sh
-```
+Drizzle doesn't support automatic migration rollback — reverting a schema
+change means writing and running the reverse SQL by hand.
 
 ---
 
-## Best Practices
+## A note on Vercel
 
-### Pre-Deployment Checklist
-
-- [ ] All tests passing (`pnpm test`)
-- [ ] Build succeeds locally (`pnpm build`)
-- [ ] Environment variables documented
-- [ ] Database backup created
-- [ ] Migration tested on staging
-- [ ] Performance benchmarks meet targets
-- [ ] Security scan completed
-- [ ] Changelog updated
-- [ ] Monitoring configured
-- [ ] Rollback plan prepared
-
-### Deployment Strategy
-
-**Recommended: Staged Rollout**
-
-1. **Staging Deployment**
-   - Deploy to preview environment
-   - Run full test suite
-   - Manual QA testing
-
-2. **Canary Release** (10% traffic)
-   - Deploy to subset of users
-   - Monitor error rates
-   - Check performance metrics
-
-3. **Full Production** (100% traffic)
-   - Promote to all users
-   - Continue monitoring
-   - Be ready to rollback
-
-### Monitoring After Deployment
-
-**First 30 minutes:**
-- Watch error logs actively
-- Monitor response times
-- Check database connections
-- Verify API endpoints
-
-**First 24 hours:**
-- Review error rates hourly
-- Check resource utilization
-- Monitor user feedback
-- Analyze performance metrics
-
-**First Week:**
-- Daily metric reviews
-- User feedback analysis
-- Performance optimization
-- Bug fix deployment if needed
-
----
-
-## Additional Resources
-
-### Documentation Links
-
-- [Next.js Deployment](https://nextjs.org/docs/deployment)
-- [Vercel Documentation](https://vercel.com/docs)
-- [Drizzle ORM Migrations](https://orm.drizzle.team/docs/migrations)
-- [Anthropic API Reference](https://docs.anthropic.com/)
-- [PostgreSQL Documentation](https://www.postgresql.org/docs/)
-
-### Support Channels
-
-- **GitHub Issues:** [Project Issues](https://github.com/YOUR_ORG/builder-ainative-studio/issues)
-- **Team Documentation:** `/docs` directory
-- **Emergency Contact:** [Your team contact info]
-
-### Deployment Automation
-
-Consider implementing:
-- GitHub Actions for CI/CD
-- Automated testing on PR
-- Automatic preview deployments
-- Scheduled database backups
-- Performance monitoring alerts
-
----
-
-## Conclusion
-
-This deployment guide provides a comprehensive approach to deploying AINative Component Builder. Follow each section carefully, test thoroughly, and maintain good monitoring practices.
-
-For questions or issues not covered here, refer to the project's GitHub issues or contact the development team.
-
-**Happy Deploying!**
+Builder is a standard Next.js app, so it is *technically* deployable to
+Vercel — but **production (`builder.ainative.studio`) does not run on
+Vercel**, and this repo's deploy tooling (`railway.json`, the `deploy` script,
+`DEPLOYMENT_ENCRYPTION_KEY`-gated per-company credential flows, Railway-specific
+env vars like `RAILWAY_GIT_COMMIT_SHA`) is built around Railway specifically.
+A stray `deploy:preview: vercel` script exists in `package.json` — verify
+whether it's still in active use for anything (e.g. a personal preview
+workflow) before relying on it; it is not part of the real production path.
+If you're genuinely evaluating a platform migration rather than looking for
+the current deploy process, treat that as a separate, deliberate decision —
+not something to infer from this doc.

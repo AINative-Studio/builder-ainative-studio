@@ -1,6 +1,6 @@
 # PRD — Builder `/build` Flow Realness Pivot
 
-**Status:** Active
+**Status:** Closed (epic #207 closed)
 **Epic:** [#207 — Pivot Builder positioning to "AI that runs your company" (beat Polsia)](https://github.com/AINative-Studio/builder-ainative-studio/issues/207)
 **Author:** Cody (AI engineer) — reconciled with Toby Morning
 **Created:** 2026-08-19
