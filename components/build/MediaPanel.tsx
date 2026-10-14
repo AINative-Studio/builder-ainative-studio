@@ -130,6 +130,20 @@ export function MediaPanel({
   const [loaded, setLoaded] = useState(false)
   // Per-kind selected frequency (before START), busy flags and per-kind notices.
   const [freq, setFreq] = useState<Record<MediaKind, MediaFrequency>>({ image: 'weekly', video: 'weekly' })
+  /**
+   * #1084: `busy` used to be ONE shared string for the whole panel
+   * ('schedule-image' | 'generate-image' | 'schedule-video' | 'generate-video'
+   * | 'upload' | null), and BOTH kind buttons disabled on `busy != null` —
+   * so starting Image also greyed out the unrelated Video button (and vice
+   * versa) for the full duration, including video's up-to-5-minute
+   * maxDuration=300 generation (app/api/build/media/route.ts). A founder
+   * mid-video-wait saw the Image button disabled too, with no visible reason
+   * why, which reads as broken rather than "something else is running."
+   * `busyKind` is scoped PER media kind so starting one never touches the
+   * other's button. The upload button still reads the old shared `busy`
+   * (unaffected — upload isn't an image/video kind and never overlapped).
+   */
+  const [busyKind, setBusyKind] = useState<Record<MediaKind, 'schedule' | 'generate' | null>>({ image: null, video: null })
   const [busy, setBusy] = useState<string | null>(null)
   const [notice, setNotice] = useState<Record<MediaKind, string>>({ image: '', video: '' })
   // Upload-your-own (#323 / GR-14) — file input + per-upload notice.
@@ -166,7 +180,7 @@ export function MediaPanel({
   // then, when configured, immediately kick a first on-brand generation.
   const start = async (k: MediaKind) => {
     setNotice((n) => ({ ...n, [k]: '' }))
-    setBusy(`schedule-${k}`)
+    setBusyKind((b) => ({ ...b, [k]: 'schedule' }))
     try {
       const res = await fetch('/api/build/media', {
         method: 'POST',
@@ -183,19 +197,21 @@ export function MediaPanel({
         setNotice((n) => ({ ...n, [k]: `Schedule saved. On-brand ${k} generation switches on once media is enabled.` }))
       } else {
         // Configured: fire an immediate first generation so the founder sees output.
-        generate(k)
+        // generate() owns its own busyKind for this kind from here on.
+        await generate(k)
+        return
       }
     } catch {
       setNotice((n) => ({ ...n, [k]: 'Connection hiccup — try again.' }))
     } finally {
-      setBusy(null)
+      setBusyKind((b) => ({ ...b, [k]: null }))
     }
   }
 
   // Generate one on-brand asset now (honest 'disabled' when not configured).
   const generate = async (k: MediaKind) => {
     setNotice((n) => ({ ...n, [k]: '' }))
-    setBusy(`generate-${k}`)
+    setBusyKind((b) => ({ ...b, [k]: 'generate' }))
     try {
       const res = await fetch('/api/build/media', {
         method: 'POST',
@@ -215,7 +231,7 @@ export function MediaPanel({
     } catch {
       setNotice((n) => ({ ...n, [k]: 'Connection hiccup — try again.' }))
     } finally {
-      setBusy(null)
+      setBusyKind((b) => ({ ...b, [k]: null }))
     }
   }
 
@@ -302,16 +318,33 @@ export function MediaPanel({
 
                 <div className="m-infra-btns">
                   <button
-                    className="btn-primary"
+                    className={`btn-primary${busyKind[key] ? ' is-busy' : ''}`}
                     data-testid={`media-start-${key}`}
-                    disabled={busy != null}
+                    aria-busy={busyKind[key] != null}
+                    disabled={busyKind[key] != null}
                     onClick={() => start(key)}
                   >
-                    {busy === `schedule-${key}` || busy === `generate-${key}`
-                      ? 'Working…'
-                      : routine?.enabled ? `Update Auto ${key === 'image' ? 'Image' : 'Video'}` : `Start Auto ${key === 'image' ? 'Image' : 'Video'}`}
+                    {busyKind[key] ? (
+                      <>
+                        <span className="m-spin" aria-hidden="true" />
+                        {busyKind[key] === 'generate' ? 'Generating…' : 'Saving…'}
+                      </>
+                    ) : (
+                      routine?.enabled ? `Update Auto ${key === 'image' ? 'Image' : 'Video'}` : `Start Auto ${key === 'image' ? 'Image' : 'Video'}`
+                    )}
                   </button>
                 </div>
+                {/* #1084: video generation can take up to 5 minutes (real async
+                    poll, app/api/build/media/route.ts's maxDuration=300) with no
+                    progress signal beyond the static "Generating…" label above —
+                    a founder mid-wait with no sense of how long "a while" means
+                    read that as the panel being stuck/broken. Image is honestly
+                    fast (confirmed live, ~5-10s) so this hint is video-only. */}
+                {key === 'video' && busyKind.video === 'generate' && (
+                  <p className="m-mono m-task-meta" data-testid="media-video-wait-hint">
+                    This can take a few minutes — real video generation, not a placeholder.
+                  </p>
+                )}
 
                 {/* Last-generated + next run (#54 req 3). */}
                 <div className="m-task-card-foot m-mono">
