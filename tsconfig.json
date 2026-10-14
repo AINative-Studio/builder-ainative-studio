@@ -29,5 +29,9 @@
     ".next/types/**/*.ts",
     "types/**/*.d.ts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules",
+    "scripts/fixtures/sandpack-verify",
+    "scripts/verify-sandpack-bundler-e2e.ts"
+  ]
 }
