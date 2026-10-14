@@ -439,6 +439,14 @@ export interface GiteaPullRequest {
   html_url: string
   head: { ref: string; sha?: string }
   base: { ref: string }
+  /**
+   * Whether the PR was merged (#1086 — confirmed present on the real Gitea
+   * PR object via the live swagger spec at git.ainative.studio/swagger.v1.json,
+   * alongside `merged_at`). Optional because this field is absent from a few
+   * older callers' own minimal literal objects in this codebase (e.g. tests
+   * constructing a bare `{}` pull_request) — never assume it's set.
+   */
+  merged?: boolean
 }
 
 /**

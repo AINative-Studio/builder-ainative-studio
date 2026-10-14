@@ -110,6 +110,25 @@ export interface BuildTask {
    * real reference to these children (see task-splitter.ts).
    */
   parentTaskId?: string | null
+  /**
+   * The Gitea task branch (`task/{taskId}` or `task/{issueNumber}-{taskId}`,
+   * see `taskBranchName` in lib/git/gitea-client.ts) this task's work landed
+   * on, once a PR has been opened for it (#1086). Set by
+   * `lib/git/task-sync-from-git.ts` as PR webhook events arrive — absent for
+   * a task with no linked branch/PR yet. This is the merge key the read path
+   * uses to match a Gitea-sourced synthetic row back to a real task row
+   * (same branch → same unit of work, never duplicated).
+   */
+  giteaBranch?: string | null
+  /**
+   * Whether this row was synthesized FROM a Gitea PR with no matching
+   * `task/{taskId}` branch — i.e. work created directly in Gitea, not through
+   * this app's own chat/swarm/nightly flows (#1086). `false`/absent for every
+   * normal task. A synthetic row's `taskId` is null (there is no platform
+   * task_id backing it); its identity is the PR/branch, not a dispatched
+   * task.
+   */
+  giteaSynthetic?: boolean
   /** ISO timestamp created. */
   createdAt: string
   /** ISO timestamp last updated (stage change, output). */
@@ -287,6 +306,13 @@ export function coerceTask(raw: any, scopeKey = ''): BuildTask | null {
         : typeof rd.parentTaskId === 'string'
           ? rd.parentTaskId
           : null,
+    giteaBranch:
+      typeof rd.gitea_branch === 'string'
+        ? rd.gitea_branch
+        : typeof rd.giteaBranch === 'string'
+          ? rd.giteaBranch
+          : null,
+    giteaSynthetic: Boolean(rd.gitea_synthetic ?? rd.giteaSynthetic),
     createdAt,
     updatedAt: String(rd.updated_at || rd.updatedAt || createdAt),
   }
@@ -355,6 +381,62 @@ export function sortTasks(tasks: BuildTask[]): BuildTask[] {
   )
 }
 
+/**
+ * Does a persisted `scope_key` (`{ownerKey}::{companySlug}`, see
+ * `chatScopeKey`) belong to `companySlug`? Pure. #1086 — the company-wide
+ * read path (`listTasksForCompany`) needs this to recognize every owner's
+ * rows for a company, not just the viewing session's own scope key, since
+ * `chatScopeKey` joins owner and slug with a literal `::` separator that
+ * never appears inside a normalized slug (`repoNameForSlug`/the chat-store's
+ * own slug normalization both strip non `[a-z0-9-]` characters). Case/
+ * whitespace-insensitive to match `chatScopeKey`'s own slug normalization.
+ */
+export function scopeKeyBelongsToCompany(scopeKey: string, companySlug: string): boolean {
+  const slug = String(companySlug || '').trim().toLowerCase()
+  if (!scopeKey || !slug) return false
+  return scopeKey.toLowerCase().endsWith(`::${slug}`)
+}
+
+/**
+ * Merge a persisted task list with Gitea-sourced synthetic rows, de-duplicating
+ * by `giteaBranch` so the SAME PR/branch never appears twice (#1086 req 3 — "no
+ * duplicate rows for the same unit of work"). When a real (non-synthetic) task
+ * and a synthetic row share a `giteaBranch`, the real task wins (it has a
+ * platform `taskId` and the founder-facing title/detail the synthetic row
+ * can't carry) and the synthetic duplicate is dropped — this is the safety net
+ * for the rare race where the webhook's own update-vs-create matching ran
+ * before the real task row existed yet. Pure.
+ */
+export function mergeGiteaTasks(tasks: BuildTask[]): BuildTask[] {
+  const list = Array.isArray(tasks) ? tasks : []
+  const byBranch = new Map<string, BuildTask>()
+  const unbranched: BuildTask[] = []
+  for (const t of list) {
+    if (!t) continue
+    const branch = t.giteaBranch ? String(t.giteaBranch) : ''
+    if (!branch) {
+      unbranched.push(t)
+      continue
+    }
+    const existing = byBranch.get(branch)
+    if (!existing) {
+      byBranch.set(branch, t)
+      continue
+    }
+    // Prefer the non-synthetic row; if both/neither are synthetic, prefer
+    // whichever was updated most recently (freshest Gitea signal wins).
+    const existingSynthetic = Boolean(existing.giteaSynthetic)
+    const thisSynthetic = Boolean(t.giteaSynthetic)
+    if (existingSynthetic && !thisSynthetic) {
+      byBranch.set(branch, t)
+    } else if (existingSynthetic === thisSynthetic) {
+      const newer = (t.updatedAt || t.createdAt || '') > (existing.updatedAt || existing.createdAt || '')
+      if (newer) byBranch.set(branch, t)
+    }
+  }
+  return [...unbranched, ...byBranch.values()]
+}
+
 // ---------------------------------------------------------------------------
 // ZeroDB I/O — isolated from the pure logic above
 // ---------------------------------------------------------------------------
@@ -407,6 +489,19 @@ export async function createTask(
     giteaIssueNumber?: number | null
     /** #904 — links a split child task back to the oversized parent it was decomposed from. */
     parentTaskId?: string | null
+    /** #1086 — the Gitea task branch backing this row, once known. */
+    giteaBranch?: string | null
+    /** #1086 — true only for a row synthesized from a Gitea PR with no matching task branch. */
+    giteaSynthetic?: boolean
+    /**
+     * Skip the LLM sizing call (#1086). The Gitea webhook sync creates
+     * synthetic rows on every PR event for a repo that may have no AINative
+     * API key configured in some test contexts, and a sizing judgment call
+     * adds latency to a webhook response path for a case where the row is
+     * about process bookkeeping, not real backlog planning. Defaults to
+     * false (unchanged behavior for every existing caller).
+     */
+    skipEstimate?: boolean
   },
 ): Promise<BuildTask | null> {
   const title = String(input?.title || '').trim()
@@ -419,8 +514,9 @@ export async function createTask(
   // estimateStoryPoints() never throws — a missing key, a failed/timed-out call,
   // or an unparseable reply all resolve to null, which we persist as
   // unestimated (identical to a pre-#902 row) rather than ever blocking
-  // task creation on an estimation hiccup.
-  const estimate = await estimateStoryPoints(title, input.detail)
+  // task creation on an estimation hiccup. #1086: skipped entirely when the
+  // caller opts out (synthetic Gitea-sourced rows).
+  const estimate = input.skipEstimate ? null : await estimateStoryPoints(title, input.detail)
   const row = {
     id,
     scope_key: scopeKey,
@@ -434,6 +530,8 @@ export async function createTask(
     estimate_rationale: estimate?.estimateRationale ?? null,
     gitea_issue_number: typeof input.giteaIssueNumber === 'number' ? input.giteaIssueNumber : null,
     parent_task_id: typeof input.parentTaskId === 'string' ? input.parentTaskId : null,
+    gitea_branch: typeof input.giteaBranch === 'string' ? input.giteaBranch : null,
+    gitea_synthetic: Boolean(input.giteaSynthetic),
     created_at: now,
     updated_at: now,
   }
@@ -480,6 +578,49 @@ export async function listTasks(
 }
 
 /**
+ * List EVERY task for a company, across every owner's scope key (#1086 req
+ * 4 — Gitea-sourced task state must be visible to any authorized viewer of a
+ * company, not gated by which session originally created the task). This
+ * only widens the READ path; `createTask`/`updateTask` stay owner-scoped
+ * writes (unchanged provenance for the swarm/nightly/resolver/splitter
+ * pipelines that already depend on `{owner}::{company}` scope keys).
+ *
+ * QUERY STRATEGY: `build_tasks` is normally read via the `/query` endpoint's
+ * `filters: { scope_key }` — but that only matches an EXACT scope_key, and
+ * there is no server-side "ends with" / suffix operator to match every
+ * owner's rows for one company in a single filtered call. Rather than risk
+ * a silent-empty-result failure mode against an unconfirmed filter key
+ * (`app-registry.ts`'s `resolveAppByZeroVoiceNumber` hit exactly that
+ * failure mode once already), this reuses the same real, already-working
+ * full-scan-then-filter-client-side approach `listAllAppsWithStatus` uses for
+ * `builder_app_registry` — fetch the plain rows endpoint capped at 1000, then
+ * keep only rows whose `scope_key` belongs to this company.
+ *
+ * Returns [] on empty / failure — an honest empty state, never fabricated.
+ */
+export async function listTasksForCompany(companySlug: string): Promise<BuildTask[]> {
+  const slug = String(companySlug || '').trim().toLowerCase()
+  if (!slug) return []
+  try {
+    const result = await zerodbRequest(
+      'GET',
+      `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/rows?limit=1000`,
+      undefined,
+      { retries: 1 },
+    )
+    const rows: any[] = Array.isArray(result) ? result : result?.data || result?.rows || []
+    const tasks = rows
+      .filter((r) => scopeKeyBelongsToCompany(String(r?.row_data?.scope_key || ''), slug))
+      .map((r) => coerceTask(r))
+      .filter((t): t is BuildTask => t !== null)
+    return sortTasks(mergeGiteaTasks(tasks)).slice(0, MAX_LOAD_TASKS)
+  } catch (e) {
+    console.warn('[task-store] listTasksForCompany failed:', (e as Error)?.name || e)
+    return []
+  }
+}
+
+/**
  * Update a task's stage and/or output by id within a scope. Best-effort: returns
  * true on success, false on any failure (never throws).
  *
@@ -504,7 +645,14 @@ export async function listTasks(
 export async function updateTask(
   scopeKey: string,
   id: string,
-  patch: { stage?: string; output?: string; taskId?: string | null; giteaIssueNumber?: number | null },
+  patch: {
+    stage?: string
+    output?: string
+    taskId?: string | null
+    giteaIssueNumber?: number | null
+    /** #1086 — set/refresh the Gitea branch backing this row. */
+    giteaBranch?: string | null
+  },
 ): Promise<boolean> {
   if (!scopeKey || !id) return false
   const patchFields: Record<string, unknown> = { updated_at: new Date().toISOString() }
@@ -512,6 +660,7 @@ export async function updateTask(
   if (patch.output != null) patchFields.output = String(patch.output).slice(0, 8000)
   if (patch.taskId !== undefined) patchFields.task_id = patch.taskId
   if (patch.giteaIssueNumber !== undefined) patchFields.gitea_issue_number = patch.giteaIssueNumber
+  if (patch.giteaBranch !== undefined) patchFields.gitea_branch = patch.giteaBranch
   // Nothing to change beyond the timestamp → treat as a no-op success.
   if (Object.keys(patchFields).length === 1) return true
   try {

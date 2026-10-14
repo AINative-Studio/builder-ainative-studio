@@ -144,6 +144,44 @@ describe('resolveTask — end-to-end orchestration', () => {
     )
   })
 
+  /**
+   * #1086 — the task row must carry the REAL branch it landed on so the
+   * Gitea webhook's reverse sync (lib/git/task-sync-from-git.ts) can match
+   * this exact row later by branch, instead of creating a duplicate
+   * synthetic row when the PR's state changes after resolveTask() itself
+   * already finished (e.g. a human merges/closes it after the auto-merge
+   * attempt above, or after a 'failed' coverage outcome).
+   */
+  it('#1086: persists the real branch name from commitTaskWithPR onto the task row', async () => {
+    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
+    h.implementTask.mockResolvedValue({ ok: true, files: { 'b.ts': 'new' } })
+    h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/42', prNumber: 42, branchName: 'task/t_abc123' })
+    h.runCoverage.mockResolvedValue({ coveragePercent: 91, testable: true, passed: true })
+
+    await resolveTask('owner::slug', TASK, 'slug')
+    expect(h.updateTask).toHaveBeenLastCalledWith(
+      'owner::slug', 't_abc123',
+      expect.objectContaining({ giteaBranch: 'task/t_abc123' }),
+    )
+  })
+
+  it('#1086: omits giteaBranch (does not clear it) when commitTaskWithPR reports no branchName', async () => {
+    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
+    h.implementTask.mockResolvedValue({ ok: true, files: { 'b.ts': 'new' } })
+    h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/42', prNumber: 42 })
+    h.runCoverage.mockResolvedValue({ coveragePercent: 91, testable: true, passed: true })
+
+    await resolveTask('owner::slug', TASK, 'slug')
+    const lastCall = h.updateTask.mock.calls.at(-1)!
+    // `updateTask`'s own patch contract (task-store.ts) only writes a field
+    // when it's !== undefined, so `giteaBranch: undefined` here is the
+    // "leave it alone" signal, not a value that clears a previously-set
+    // branch — functionally equivalent to the key being absent.
+    expect((lastCall[2] as Record<string, unknown>).giteaBranch).toBeUndefined()
+  })
+
   describe('#905 — open a real Gitea issue before implementation begins', () => {
     function setupSuccess() {
       h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })

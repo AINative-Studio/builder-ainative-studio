@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { handlePRWebhook, type GiteaWebhookPayload } from '@/lib/git/committee-pr-gate'
+import { syncTaskFromPREvent } from '@/lib/git/task-sync-from-git'
 import { deployCompanyFromGitea, companyDeployEnabled } from '@/lib/build/company-deploy'
 import { resolveApp, setAppRailwayService } from '@/lib/build/app-registry'
 import { BUILDER_WORKSPACE_ID } from '@/lib/build/instant-db'
@@ -8,7 +9,9 @@ import { BUILDER_WORKSPACE_ID } from '@/lib/build/instant-db'
  * Gitea Webhook Handler — receives PR and push events from Gitea.
  *
  *  - Pull Request events run the committee gate (coding standards + multi-model
- *    review).
+ *    review), AND (#1086) sync the PR's real state into the matching
+ *    `build_tasks` row (or a synthetic row when no task branch matches) —
+ *    see lib/git/task-sync-from-git.ts for the state-mapping design.
  *  - Push events (#392, follow-up deferred from #381) trigger a redeploy of an
  *    ALREADY-provisioned company's dedicated Railway service, so new commits
  *    landing on the default branch (e.g. #374's task-resolver merging a PR)
@@ -135,6 +138,27 @@ export async function POST(req: NextRequest) {
 
     const payload: GiteaWebhookPayload = JSON.parse(body)
     const result = await handlePRWebhook(payload)
+
+    // #1086: sync the real PR state into build_tasks — fire-and-forget, same
+    // reasoning as the push handler above (Gitea needs a fast ack, and a
+    // sync hiccup must never surface as a webhook failure). `result.verdict`
+    // is the SAME standards-gate verdict `handlePRWebhook` just computed —
+    // reused directly rather than re-run, since "CI" for a company repo's
+    // PRs IS this gate (see task-sync-from-git.ts's module doc).
+    if (payload.pull_request && payload.repository) {
+      syncTaskFromPREvent(
+        {
+          action: payload.action,
+          pullRequest: payload.pull_request,
+          repository: payload.repository,
+        },
+        result.verdict,
+      )
+        .then((syncResult) => {
+          if (!syncResult.ok) console.error('[gitea-webhook] task sync failed:', syncResult.reason)
+        })
+        .catch((err) => console.error('[gitea-webhook] task sync threw:', err))
+    }
 
     return NextResponse.json({
       ok: result.ok,
