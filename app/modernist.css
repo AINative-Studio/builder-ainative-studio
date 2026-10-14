@@ -131,6 +131,17 @@
 .modernist .st.is-done { color: var(--success); }
 .modernist .st.is-done::before { content: '✓'; border: 0; width: auto; height: auto; font-size: 11px; }
 
+/* #1084: in-flight indicator for a busy button (MediaPanel Auto Image/Video) —
+   reuses the same m-pulse animation + dot shape as .st.is-running above so a
+   "this is actively working" signal reads consistently across the app rather
+   than introducing a new spinner style. */
+.modernist .m-spin {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: currentColor; margin-right: 0.5em; vertical-align: middle;
+  animation: m-pulse 1.1s ease-in-out infinite;
+}
+.modernist .btn-primary.is-busy { opacity: 0.85; cursor: progress; }
+
 /* buttons — flush-left labels */
 .modernist .btn-primary {
   display: inline-flex; align-items: center; gap: 8px; justify-content: flex-start;
@@ -179,7 +190,8 @@
   .modernist .st.is-running::before,
   .modernist .m-shimmer,
   .modernist .m-formin,
-  .modernist .m-linein { animation: none !important; }
+  .modernist .m-linein,
+  .modernist .m-spin { animation: none !important; }
 }
 
 /* ============================================================================
