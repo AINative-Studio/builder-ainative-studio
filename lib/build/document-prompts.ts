@@ -42,6 +42,18 @@ export interface DocPromptSpec {
  * return well-formed markdown with an Executive Summary, Key Findings, and a Sources
  * section with real citations — and must flag any claim it cannot ground rather than
  * invent a citation. This is the anti-lorem guarantee from the quality bar.
+ *
+ * #1083: a real, live generation (company "wallkind", idea "street art gallery")
+ * produced a Mission document that confidently described a generic wall-décor /
+ * home-personalization company — never once mentioning street art, murals,
+ * graffiti, or a gallery. The idea text was short and the model filled the gap
+ * with a more statistically common adjacent business concept (home décor is a
+ * far more common startup pitch shape than a street-art gallery) rather than
+ * grounding literally in the words actually given. The explicit instruction
+ * below is the same anti-drift fix already applied to buildBrandPrompt()
+ * (lib/build/media-schedule.ts, #1077) for the same failure mode in image/video
+ * prompts: tell the model directly not to substitute a more common adjacent
+ * concept for what was actually said.
  */
 const STRUCTURE_CONTRACT =
   'You are Cody, an AI technical co-founder inside AINative Builder. You author ' +
@@ -50,6 +62,10 @@ const STRUCTURE_CONTRACT =
   'markdown with EXACTLY these top-level sections in order:\n' +
   '## Executive Summary\n## Key Findings\n## Sources\n' +
   'Rules:\n' +
+  '- Ground every claim in the LITERAL words of the idea given below — do not ' +
+  'substitute a more common or more familiar adjacent business concept for what was ' +
+  'actually said, even if the idea is short. A short idea is still a specific, real ' +
+  'business — represent exactly what it says, not the nearest well-known pitch shape.\n' +
   '- Executive Summary: 2–4 tight sentences a founder can act on.\n' +
   '- Key Findings: 4–8 specific, concrete bullets grounded in THIS company/idea. ' +
   'Each finding is a real claim, not a platitude.\n' +
