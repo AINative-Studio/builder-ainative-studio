@@ -376,6 +376,28 @@ export function SandpackPreview({ files, theme = 'light', className, showRefresh
     }
   }
 
+  // Only declare lucide-react/recharts in the dependency manifest when the
+  // generated app's own files actually reference them — issue #1089's
+  // tree-shaking fix (sandpack-bundler PR #7) cut lucide-react's barrel-walk
+  // cost by ~99%, but confirmed live that unconditionally declaring recharts
+  // on every preview (regardless of use) still pays its own ~48-package
+  // transitive CDN-fetch/compile tree on apps that never import it. react/
+  // react-dom/prop-types stay unconditional — every app needs them
+  // regardless of its own imports, so there's no real-usage check to make
+  // for those. A plain substring check (not an AST import parse) is
+  // deliberately conservative here: a false positive (declaring a dep an
+  // app doesn't actually use) only costs what today's behavior already
+  // costs for every app, so it's always safe to err toward "declare it" —
+  // only a FALSE NEGATIVE (skipping a dep the app really does import) could
+  // break a render, and a literal 'lucide-react'/'recharts' substring can
+  // only appear in generated source via a real import of that package.
+  const generatedCode = Object.entries(sandpackFiles)
+    .filter(([path]) => !builtinPaths.has(path))
+    .map(([, code]) => code)
+    .join('\n')
+  const usesLucideReact = generatedCode.includes('lucide-react')
+  const usesRecharts = generatedCode.includes('recharts')
+
   return (
     <div className={cn('w-full h-full flex flex-col', className)} style={{ minHeight: 0 }}>
       <SandpackErrorBoundary className="flex-1">
@@ -404,8 +426,8 @@ export function SandpackPreview({ files, theme = 'light', className, showRefresh
             react: '18.2.0',
             'react-dom': '18.2.0',
             'prop-types': '15.8.1',
-            'lucide-react': '0.344.0',
-            'recharts': '2.15.0',
+            ...(usesLucideReact ? { 'lucide-react': '0.344.0' } : {}),
+            ...(usesRecharts ? { 'recharts': '2.15.0' } : {}),
             'clsx': '2.1.0',
             'tailwind-merge': '2.2.0',
           },
