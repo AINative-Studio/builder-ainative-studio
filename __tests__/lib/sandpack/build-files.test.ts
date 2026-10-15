@@ -61,6 +61,14 @@ describe('buildSandpackFiles — shadcn/AIKit import-injection path correctness 
     // must resolve to exactly that file.
     expect(built['/src/components/ui/separator.tsx']).toBeDefined()
   })
+
+  it('injects CircleDot from lucide-react when used (confirmed live 2026-10-15 — real app used it, was missing from the safety-net icon list, verified CircleDot exists in the pinned lucide-react@0.344.0)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <CircleDot/> }",
+    })
+    expect(built['/App.tsx']).toContain("from 'lucide-react'")
+    expect(built['/App.tsx']).toMatch(/import\s*\{[^}]*\bCircleDot\b[^}]*\}\s*from\s*['"]lucide-react['"]/)
+  })
 })
 
 describe('detectSandpackDependencies (#1097)', () => {
