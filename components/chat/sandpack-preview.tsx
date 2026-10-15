@@ -8,9 +8,7 @@ import {
   useSandpack,
 } from '@codesandbox/sandpack-react'
 import { cn } from '@/lib/utils'
-import { fixJsxErrors } from '@/lib/sandpack/jsx-fixer'
-import { getBuiltinFiles } from '@/lib/sandpack/setup'
-import { sanitizeForSandpack } from '@/lib/code-validator'
+import { buildSandpackFiles, detectSandpackDependencies } from '@/lib/sandpack/build-files'
 
 /**
  * #1074 (epic #1076): the underlying `@codesandbox/sandpack-client` dependency
@@ -147,256 +145,25 @@ interface SandpackPreviewProps {
 }
 
 export function SandpackPreview({ files, theme = 'light', className, showRefreshButton = true, timeoutMs, onTimeout }: SandpackPreviewProps) {
-  // Start with all built-in files (AIKit, shadcn, template)
-  const sandpackFiles: Record<string, string> = { ...getBuiltinFiles() }
+  // Build the final Sandpack files map (builtins + generated files, path
+  // normalization, /App.tsx entry assembly, React/AIKit/shadcn/lucide
+  // import-injection safety nets, final de-dupe) via the shared pipeline in
+  // lib/sandpack/build-files.ts — see that file's doc comment for why this
+  // is extracted rather than inlined (keeps scripts/fixtures/sandpack-verify's
+  // --chat-id harness from drifting out of sync with what this component
+  // actually does).
+  const sandpackFiles = buildSandpackFiles(files)
+  const { usesLucideReact, usesRecharts } = detectSandpackDependencies(sandpackFiles)
 
-  // Overlay generated files on top, normalizing paths for Sandpack.
-  // Sandpack's entry point is /App.tsx at the root, so we flatten /src/ paths
-  // and duplicate files at multiple paths so relative imports resolve correctly.
-  for (const [rawPath, rawContent] of Object.entries(files)) {
-    const path = rawPath
-    // Skip non-code files (robots.txt, sitemap.xml, etc.)
-    if (path.endsWith('.txt') || path.endsWith('.xml') || (path.endsWith('.json') && path.includes('well-known'))) {
-      continue
-    }
-    // Apply the shared source auto-fixes (duplicate-import de-dupe, method-chain
-    // repair, etc.) so the primary Sandpack path gets the SAME fixes as the
-    // /api/preview fallback (#160). A duplicate `import { useState }` otherwise
-    // crashes Sandpack with "already been declared" before render (#161).
-    let content = rawContent
-    if (/\.(t|j)sx?$/.test(path)) {
-      try { content = sanitizeForSandpack(rawContent) } catch { content = rawContent }
-    }
-    sandpackFiles[path] = content
-
-    // Duplicate /src/* files at root /* so both import styles work:
-    // from './components/Foo' (when App.tsx is at /)
-    // from '../components/Foo' (when importing from /src/)
-    if (path.startsWith('/src/') && !path.includes('/App.tsx')) {
-      const rootPath = path.replace(/^\/src\//, '/')
-      sandpackFiles[rootPath] = content
-    }
-    // Also duplicate /app/* files at root /* for Next.js-style paths
-    if (path.startsWith('/src/app/') || path.startsWith('/app/')) {
-      const rootPath = path.replace(/^\/src\/app\//, '/app/').replace(/^\/app\//, '/app/')
-      sandpackFiles[rootPath] = content
-      // Also make page.tsx available as a direct import
-      if (path.endsWith('/page.tsx') || path.endsWith('/page.ts')) {
-        const dirPath = rootPath.replace(/\/page\.tsx?$/, '')
-        if (dirPath !== '') {
-          sandpackFiles[dirPath + '.tsx'] = content
-        }
-      }
-    }
+  if (sandpackFiles['/App.tsx']) {
+    const mainCode = sandpackFiles['/App.tsx']
+    console.log('[SandpackPreview] App.tsx:', mainCode.length, 'chars,', mainCode.split('\n').length, 'lines')
+    console.log('[SandpackPreview] Has return+JSX:', mainCode.includes('return') && mainCode.includes('<div'))
+    console.log('[SandpackPreview] Has export default:', mainCode.includes('export default'))
+    console.log('[SandpackPreview] Last 3 lines:', mainCode.split('\n').slice(-3).join(' | '))
+    console.log('[SandpackPreview] POST-FIX App.tsx:', mainCode.length, 'chars,', mainCode.split('\n').length, 'lines')
+    console.log('[SandpackPreview] POST-FIX last 3:', mainCode.split('\n').slice(-3).join(' | '))
   }
-
-  // Find the main component file
-  const mainFile = Object.keys(sandpackFiles).find(
-    f => f === '/src/App.tsx' || f === '/App.tsx'
-  ) || Object.keys(sandpackFiles).find(
-    f => f.endsWith('page.tsx') || f.endsWith('App.tsx')
-  ) || Object.keys(sandpackFiles)[0]
-
-  // Get the main component code
-  let mainCode = mainFile ? sandpackFiles[mainFile] : ''
-
-  // Rewrite relative imports that reference /src/ or /app/ paths
-  // so they resolve from / (where /App.tsx lives in Sandpack)
-  mainCode = mainCode.replace(
-    /from\s+['"]\.\/src\//g,
-    "from './"
-  )
-  mainCode = mainCode.replace(
-    /from\s+['"]\.\/app\/page['"]/g,
-    "from './app/page'"
-  )
-
-  // Inject React imports if missing — Claude often omits them
-  if (mainCode && !mainCode.includes('import React')) {
-    const needsHooks = /\b(useState|useEffect|useRef|useMemo|useCallback|useContext|useReducer)\b/.test(mainCode)
-    const hooks = ['useState', 'useEffect', 'useRef', 'useMemo', 'useCallback', 'useContext', 'useReducer']
-      .filter(h => mainCode.includes(h))
-    if (needsHooks) {
-      mainCode = `import React, { ${hooks.join(', ')} } from 'react'\n${mainCode}`
-    } else {
-      mainCode = `import React from 'react'\n${mainCode}`
-    }
-  }
-
-  // Ensure it has a default export
-  if (mainCode && !mainCode.includes('export default')) {
-    const match = mainCode.match(/function\s+([A-Z]\w+)/)
-    if (match) {
-      mainCode += `\n\nexport default ${match[1]}`
-    }
-  }
-
-  // Set as /App.tsx (Sandpack's expected entry)
-  sandpackFiles['/App.tsx'] = mainCode
-
-  // Debug: log what Sandpack receives
-  console.log('[SandpackPreview] App.tsx:', mainCode.length, 'chars,', mainCode.split('\n').length, 'lines')
-  console.log('[SandpackPreview] Has return+JSX:', mainCode.includes('return') && mainCode.includes('<div'))
-  console.log('[SandpackPreview] Has export default:', mainCode.includes('export default'))
-  console.log('[SandpackPreview] Last 3 lines:', mainCode.split('\n').slice(-3).join(' | '))
-
-  // Track which files are generated (not built-in) so we only fix those
-  const builtinPaths = new Set(Object.keys(getBuiltinFiles()))
-
-  // Fix syntax errors and sanitize imports in GENERATED .tsx files (not built-in AIKit/shadcn)
-  for (const [path, code] of Object.entries(sandpackFiles)) {
-    if (!path.endsWith('.tsx')) continue
-    if (builtinPaths.has(path)) continue // Don't touch built-in files
-
-    // Fix @/ path aliases before anything else — Sandpack doesn't support them
-    let fixed = code
-      .replace(/from ['"]@\/components\//g, "from './components/")
-      .replace(/from ['"]@\/lib\//g, "from './lib/")
-      .replace(/from ['"]@\//g, "from './")
-
-    // Fix: sanitize broken imports and fix syntax errors
-    fixed = fixJsxErrors(fixed)
-
-    // Then: inject missing imports only if the module isn't already imported.
-    // The multi-file-parser already injects most imports, so this is a safety net.
-    // We check for the module source string to avoid duplicates.
-
-    // React
-    if (!fixed.includes("from 'react'") && !fixed.includes('from "react"')) {
-      const hooks = ['useState', 'useEffect', 'useRef', 'useMemo', 'useCallback', 'useContext', 'useReducer']
-        .filter(h => fixed.includes(h))
-      if (hooks.length > 0) {
-        fixed = `import React, { ${hooks.join(', ')} } from 'react'\n${fixed}`
-      } else {
-        fixed = `import React from 'react'\n${fixed}`
-      }
-    }
-
-    // AIKit components — only inject imports for components not already imported
-    {
-      const aikitComponents = [
-        'MetricCard', 'AIKitPriceCard', 'AIKitRating', 'AgentCard', 'SwarmView',
-        'SafetyBadge', 'GuardrailPanel', 'ChatBubble', 'StreamingIndicator', 'CodeDisplay',
-        'TokenUsageBar', 'ConnectionStatus', 'AIKitHeader', 'AIKitSidebar', 'AIKitTable',
-        'AIKitTimeline', 'AIKitBanner', 'AIKitAvatar', 'Skeleton', 'SkeletonCard',
-        'EmptyState', 'AIKitProductCard', 'AIKitPagination', 'AIKitBreadcrumb',
-        'AIKitStepper', 'VideoPlayer', 'StreamingText', 'MediaGallery', 'AgentTimeline',
-      ]
-      const usedAikit = aikitComponents.filter(c =>
-        new RegExp(`<${c}[\\s/>]`).test(fixed) &&
-        !new RegExp(`import\\s+.*\\b${c}\\b.*from\\s+`).test(fixed)
-      )
-      if (usedAikit.length > 0) {
-        fixed = `import { ${usedAikit.join(', ')} } from './components/aikit'\n${fixed}`
-      }
-    }
-
-    // shadcn/ui components — skip any already imported
-    {
-      const shadcnMap: Record<string, string[]> = {
-        './components/ui/button': ['Button'],
-        './components/ui/card': ['Card', 'CardHeader', 'CardContent', 'CardTitle', 'CardDescription', 'CardFooter'],
-        './components/ui/badge': ['Badge'],
-        './components/ui/avatar': ['Avatar', 'AvatarImage', 'AvatarFallback'],
-        './components/ui/input': ['Input'],
-        './components/ui/tabs': ['Tabs', 'TabsList', 'TabsTrigger', 'TabsContent'],
-        './components/ui/label': ['Label'],
-        './components/ui/table': ['Table', 'TableHeader', 'TableBody', 'TableRow', 'TableHead', 'TableCell'],
-        './components/ui/separator': ['Separator'],
-        './components/ui/progress': ['Progress', 'CircularProgress'],
-        './components/ui/alert': ['Alert', 'AlertTitle', 'AlertDescription'],
-        './components/ui/dialog': ['Dialog', 'DialogContent', 'DialogHeader', 'DialogTitle', 'DialogDescription', 'DialogFooter'],
-        './components/ui/select': ['Select', 'SelectTrigger', 'SelectValue', 'SelectContent', 'SelectItem'],
-        './components/ui/checkbox': ['Checkbox', 'RadioGroup', 'RadioGroupItem'],
-        './components/ui/accordion': ['Accordion', 'AccordionItem', 'AccordionTrigger', 'AccordionContent'],
-      }
-      const imports: string[] = []
-      for (const [mod, components] of Object.entries(shadcnMap)) {
-        const used = components.filter(c =>
-          (new RegExp(`<${c}[\\s/>]|\\b${c}\\b`).test(fixed)) &&
-          !new RegExp(`import\\s+.*\\b${c}\\b.*from\\s+`).test(fixed)
-        )
-        if (used.length > 0) {
-          imports.push(`import { ${used.join(', ')} } from '${mod}'`)
-        }
-      }
-      if (imports.length > 0) {
-        fixed = imports.join('\n') + '\n' + fixed
-      }
-    }
-
-    // Lucide icons
-    if (!fixed.includes("from 'lucide-react'") && !fixed.includes('from "lucide-react"')) {
-      const allLucideIcons = [
-        'Activity', 'AlertCircle', 'AlertTriangle', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowUp',
-        'Award', 'BarChart', 'BarChart2', 'BarChart3', 'Bell', 'Book', 'BookOpen', 'Bot',
-        'Brain', 'Briefcase', 'Calendar', 'Camera', 'Check', 'CheckCircle', 'CheckCircle2',
-        'ChevronDown', 'ChevronLeft', 'ChevronRight', 'ChevronUp', 'Circle', 'Clock', 'Cloud',
-        'Code', 'Code2', 'Cog', 'Command', 'Copy', 'CreditCard', 'Crown',
-        'Database', 'DollarSign', 'Download', 'Edit', 'Edit2', 'Edit3', 'ExternalLink', 'Eye', 'EyeOff',
-        'Facebook', 'File', 'FileText', 'Filter', 'Flag', 'Flame', 'Folder', 'FolderOpen',
-        'Gift', 'Github', 'Globe', 'Grid', 'Grip', 'Hash', 'Headphones', 'Heart', 'HelpCircle', 'Home',
-        'Image', 'Inbox', 'Info', 'Instagram', 'Key', 'Laptop', 'Layout', 'LayoutDashboard',
-        'Layers', 'Library', 'Lightbulb', 'LineChart', 'Link', 'Linkedin', 'List', 'Loader', 'Loader2',
-        'Lock', 'LogIn', 'LogOut', 'Mail', 'Map', 'MapPin', 'Maximize', 'Maximize2',
-        'Menu', 'MessageCircle', 'MessageSquare', 'Mic', 'Minimize', 'Minimize2', 'Minus', 'Monitor',
-        'Moon', 'MoreHorizontal', 'MoreVertical', 'Mountain', 'MousePointer', 'Music', 'Navigation',
-        'Package', 'Palette', 'Paperclip', 'Pause', 'PenTool', 'Percent', 'Phone', 'PieChart',
-        'Pin', 'Play', 'PlayCircle', 'Plus', 'PlusCircle', 'Podcast', 'Power',
-        'Printer', 'QrCode', 'Quote', 'Radio', 'RefreshCw', 'Repeat', 'Reply', 'Rocket',
-        'RotateCcw', 'RotateCw', 'Rss', 'Save', 'Scale', 'Scan', 'Search', 'Send', 'Server',
-        'Settings', 'Settings2', 'Share', 'Share2', 'Shield', 'ShieldCheck', 'ShoppingBag',
-        'ShoppingCart', 'Shuffle', 'Sidebar', 'Signal', 'Slack', 'Sliders', 'Smartphone',
-        'Smile', 'Sparkle', 'Sparkles', 'Speaker', 'Square', 'Star', 'Sun', 'Sunrise', 'Sunset',
-        'Swords', 'Table', 'Tablet', 'Tag', 'Target', 'Terminal', 'ThumbsDown', 'ThumbsUp',
-        'Timer', 'ToggleLeft', 'ToggleRight', 'Tool', 'Trash', 'Trash2', 'TrendingDown', 'TrendingUp',
-        'Triangle', 'Trophy', 'Truck', 'Tv', 'Twitter', 'Type', 'Umbrella', 'Underline',
-        'Undo', 'Unlock', 'Upload', 'UploadCloud', 'User', 'UserCheck', 'UserMinus', 'UserPlus',
-        'Users', 'Video', 'Volume', 'Volume1', 'Volume2', 'VolumeX', 'Wallet', 'Wand', 'Wand2',
-        'Watch', 'Wifi', 'WifiOff', 'Wind', 'Wrench', 'X', 'XCircle', 'Youtube', 'Zap', 'ZoomIn', 'ZoomOut',
-      ]
-      const usedIcons = allLucideIcons.filter(icon => new RegExp(`\\b${icon}\\b`).test(fixed))
-      if (usedIcons.length > 0) {
-        fixed = `import { ${usedIcons.join(', ')} } from 'lucide-react'\n${fixed}`
-      }
-    }
-
-    // FINAL de-dupe pass — runs AFTER fixJsxErrors and all the React/AIKit/
-    // shadcn/lucide import injection above. A model-emitted duplicate import
-    // (`import React, { useState }` + `import { useState }`) survives the
-    // injection guards and crashes Sandpack with "already been declared" (#161).
-    // Doing this last guarantees the code Sandpack actually receives is de-duped,
-    // regardless of what earlier steps produced.
-    try { fixed = sanitizeForSandpack(fixed) } catch { /* keep fixed as-is */ }
-
-    sandpackFiles[path] = fixed
-    if (path === '/App.tsx') {
-      console.log('[SandpackPreview] POST-FIX App.tsx:', fixed.length, 'chars,', fixed.split('\n').length, 'lines')
-      console.log('[SandpackPreview] POST-FIX last 3:', fixed.split('\n').slice(-3).join(' | '))
-    }
-  }
-
-  // Only declare lucide-react/recharts in the dependency manifest when the
-  // generated app's own files actually reference them — issue #1089's
-  // tree-shaking fix (sandpack-bundler PR #7) cut lucide-react's barrel-walk
-  // cost by ~99%, but confirmed live that unconditionally declaring recharts
-  // on every preview (regardless of use) still pays its own ~48-package
-  // transitive CDN-fetch/compile tree on apps that never import it. react/
-  // react-dom/prop-types stay unconditional — every app needs them
-  // regardless of its own imports, so there's no real-usage check to make
-  // for those. A plain substring check (not an AST import parse) is
-  // deliberately conservative here: a false positive (declaring a dep an
-  // app doesn't actually use) only costs what today's behavior already
-  // costs for every app, so it's always safe to err toward "declare it" —
-  // only a FALSE NEGATIVE (skipping a dep the app really does import) could
-  // break a render, and a literal 'lucide-react'/'recharts' substring can
-  // only appear in generated source via a real import of that package.
-  const generatedCode = Object.entries(sandpackFiles)
-    .filter(([path]) => !builtinPaths.has(path))
-    .map(([, code]) => code)
-    .join('\n')
-  const usesLucideReact = generatedCode.includes('lucide-react')
-  const usesRecharts = generatedCode.includes('recharts')
 
   return (
     <div className={cn('w-full h-full flex flex-col', className)} style={{ minHeight: 0 }}>
