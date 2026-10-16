@@ -851,8 +851,22 @@ export async function listAllAppsWithStatus(): Promise<{ apps: AppEntry[]; ok: b
       const prev = latest.get(e.slug)
       if (!prev || (e.createdAt || '').localeCompare(prev.createdAt || '') > 0) latest.set(e.slug, e)
     }
+    // Real bug (#1106, found live): a soft-deleted company (lifecycleStatus
+    // 'deleted', set by Danger Zone — see setAppLifecycle) still showed up
+    // here, even though resolveAppVerified() (the single-slug read every
+    // OTHER code path in this file uses) already excludes it. The founder
+    // could see a deleted company in "My Companies" and click its own
+    // delete button — which then genuinely fails with "not_owner", since
+    // resolveApp() correctly can't find a live entry to act on. At least 5
+    // separate callers (winback-email, registration-reconcile,
+    // zerodb-key-backfill, loop-backfill, paid-founder-plan-backfill) were
+    // already re-implementing this exact filter themselves on this
+    // function's output — centralizing it here fixes every caller at once,
+    // including the ones that never added the workaround (this one,
+    // /api/build/my-companies, app-by-project).
+    const live = Array.from(latest.values()).filter((e) => (e.lifecycleStatus || 'active') !== 'deleted')
     return {
-      apps: Array.from(latest.values()).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')),
+      apps: live.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')),
       ok: true,
     }
   } catch (e) {
