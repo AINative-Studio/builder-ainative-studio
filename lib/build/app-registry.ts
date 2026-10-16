@@ -851,8 +851,22 @@ export async function listAllAppsWithStatus(): Promise<{ apps: AppEntry[]; ok: b
       const prev = latest.get(e.slug)
       if (!prev || (e.createdAt || '').localeCompare(prev.createdAt || '') > 0) latest.set(e.slug, e)
     }
+    // Real bug (#1106, found live): a soft-deleted company (lifecycleStatus
+    // 'deleted', set by Danger Zone — see setAppLifecycle) still showed up
+    // here, even though resolveAppVerified() (the single-slug read every
+    // OTHER code path in this file uses) already excludes it. The founder
+    // could see a deleted company in "My Companies" and click its own
+    // delete button — which then genuinely fails with "not_owner", since
+    // resolveApp() correctly can't find a live entry to act on. At least 5
+    // separate callers (winback-email, registration-reconcile,
+    // zerodb-key-backfill, loop-backfill, paid-founder-plan-backfill) were
+    // already re-implementing this exact filter themselves on this
+    // function's output — centralizing it here fixes every caller at once,
+    // including the ones that never added the workaround (this one,
+    // /api/build/my-companies, app-by-project).
+    const live = Array.from(latest.values()).filter((e) => (e.lifecycleStatus || 'active') !== 'deleted')
     return {
-      apps: Array.from(latest.values()).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')),
+      apps: live.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')),
       ok: true,
     }
   } catch (e) {
@@ -1464,53 +1478,7 @@ export async function resolveAppVerified(slug: string): Promise<{ entry: AppEntr
     const matches = rows
       .map((r: { row_data?: AppEntry }) => r.row_data)
       .filter((rd: AppEntry | undefined): rd is AppEntry => rd?.slug === slug && !!rd?.chatId)
-    // TEMPORARY DIAGNOSTIC (#1106, 2026-10-16) — same investigation as below;
-    // this branch logs when matches.length IS > 0, since an earlier run of
-    // THIS SAME diagnostic (route.ts, now reverted) saw matches.length === 0
-    // for this exact slug, but a later run skipped the !matches.length branch
-    // entirely — meaning the registry read is non-deterministic ACROSS CALLS
-    // for the same slug (consistent with the ?limit=1000-truncation theory:
-    // different calls land on different windows of a >1000-row table with
-    // unstable ordering). Logs every match found, win or lose, to see the
-    // real ownerEmail/createdAt when a match DOES land. Remove after use.
-    if (slug === 'delete-test-owned-1789199183304') {
-      // eslint-disable-next-line no-console
-      console.log('[app-registry][#1106-diagnostic] resolveAppVerified call result', {
-        slug,
-        page1RowCount: rows.length,
-        matchCount: matches.length,
-        matches: matches.map((m: AppEntry) => ({ ownerEmail: m.ownerEmail || null, createdAt: m.createdAt || null, lifecycleStatus: m.lifecycleStatus || null })),
-      })
-    }
-    if (!matches.length) {
-      // TEMPORARY DIAGNOSTIC (#1106, 2026-10-16) — investigating whether the
-      // registry's hardcoded ?limit=1000 read is silently truncating results.
-      // Logs the response's own total/count metadata (if the API returns
-      // one even on a single page) and whether an offset=1000 fetch returns
-      // ANY additional rows. Remove after use.
-      try {
-        const total = (data as any)?.total ?? (data as any)?.count ?? (data as any)?.totalCount ?? null
-        const page2Res = await fetch(`${rowsUrl()}?limit=1000&offset=1000`, { headers: headers(), signal: AbortSignal.timeout(20000) })
-        let page2Count: number | string = 'fetch_failed'
-        if (page2Res.ok) {
-          const page2Data = JSON.parse(await page2Res.text())
-          const page2Rows = Array.isArray(page2Data) ? page2Data : page2Data.data || page2Data.rows || []
-          page2Count = page2Rows.length
-        }
-        // eslint-disable-next-line no-console
-        console.log('[app-registry][#1106-diagnostic] slug not found in page1', {
-          slug,
-          page1RowCount: rows.length,
-          page1ResponseTotal: total,
-          page2Status: page2Res.status,
-          page2RowCount: page2Count,
-        })
-      } catch (diagErr) {
-        // eslint-disable-next-line no-console
-        console.log('[app-registry][#1106-diagnostic] diagnostic fetch itself failed', { slug, error: String(diagErr) })
-      }
-      return { entry: null, verified: true }
-    }
+    if (!matches.length) return { entry: null, verified: true }
     matches.sort((a: AppEntry, b: AppEntry) => (b.createdAt || '').localeCompare(a.createdAt || ''))
     const latest = matches[0]
     // A soft-deleted company (#57 Danger Zone) is treated as gone — the /build/{slug}

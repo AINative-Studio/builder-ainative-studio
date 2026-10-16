@@ -79,6 +79,29 @@ describe('listAllAppsWithStatus', () => {
     const apps = await listAllApps()
     expect(apps).toEqual([])
   })
+
+  /**
+   * Real bug found live (#1106, 2026-10-16): a company soft-deleted via
+   * Danger Zone (setAppLifecycle(slug, 'deleted') appends a NEW row with
+   * lifecycleStatus:'deleted' — the registry is append-only, latest-wins)
+   * still showed up here, even though resolveAppVerified() (the single-slug
+   * read EVERY other code path uses) already excludes a latest row whose
+   * lifecycleStatus is 'deleted'. A founder could see an already-deleted
+   * company in "My Companies" (/api/build/my-companies, which calls this
+   * function) and click its own delete button, which then genuinely failed
+   * with "not_owner" — not because of any real ownership problem, but
+   * because resolveApp() correctly found no live entry to act on.
+   */
+  it('excludes a company whose LATEST row is soft-deleted (lifecycleStatus "deleted"), matching resolveAppVerified\'s own contract', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(rowsResponse([
+      row('delete-test-owned', { ownerEmail: 'admin@ainative.studio', createdAt: '2026-09-12T07:46:24.005Z' }),
+      row('delete-test-owned', { ownerEmail: 'admin@ainative.studio', createdAt: '2026-09-12T07:46:28.615Z', lifecycleStatus: 'deleted' }),
+      row('still-live', { ownerEmail: 'admin@ainative.studio' }),
+    ]))
+    const result = await listAllAppsWithStatus()
+    expect(result.ok).toBe(true)
+    expect(result.apps.map((a) => a.slug)).toEqual(['still-live'])
+  })
 })
 
 describe('listAppsForOwnerWithStatus', () => {
