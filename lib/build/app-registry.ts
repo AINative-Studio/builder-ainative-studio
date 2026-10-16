@@ -1464,6 +1464,24 @@ export async function resolveAppVerified(slug: string): Promise<{ entry: AppEntr
     const matches = rows
       .map((r: { row_data?: AppEntry }) => r.row_data)
       .filter((rd: AppEntry | undefined): rd is AppEntry => rd?.slug === slug && !!rd?.chatId)
+    // TEMPORARY DIAGNOSTIC (#1106, 2026-10-16) — same investigation as below;
+    // this branch logs when matches.length IS > 0, since an earlier run of
+    // THIS SAME diagnostic (route.ts, now reverted) saw matches.length === 0
+    // for this exact slug, but a later run skipped the !matches.length branch
+    // entirely — meaning the registry read is non-deterministic ACROSS CALLS
+    // for the same slug (consistent with the ?limit=1000-truncation theory:
+    // different calls land on different windows of a >1000-row table with
+    // unstable ordering). Logs every match found, win or lose, to see the
+    // real ownerEmail/createdAt when a match DOES land. Remove after use.
+    if (slug === 'delete-test-owned-1789199183304') {
+      // eslint-disable-next-line no-console
+      console.log('[app-registry][#1106-diagnostic] resolveAppVerified call result', {
+        slug,
+        page1RowCount: rows.length,
+        matchCount: matches.length,
+        matches: matches.map((m: AppEntry) => ({ ownerEmail: m.ownerEmail || null, createdAt: m.createdAt || null, lifecycleStatus: m.lifecycleStatus || null })),
+      })
+    }
     if (!matches.length) {
       // TEMPORARY DIAGNOSTIC (#1106, 2026-10-16) — investigating whether the
       // registry's hardcoded ?limit=1000 read is silently truncating results.
