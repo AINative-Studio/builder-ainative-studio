@@ -41,7 +41,7 @@ function fetchResponse(status: number, body: unknown): Response {
 
 describe('GET /api/cron/nightly-loop-sequence', () => {
   beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
-  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
+  afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks() })
 
   it('rejects a request without the correct bearer token', async () => {
     const res = await GET(req({ auth: 'Bearer wrong' }))
@@ -83,6 +83,38 @@ describe('GET /api/cron/nightly-loop-sequence', () => {
       expect(String(url)).toContain('/api/build/nightly-loop?shard=')
       expect(String(url)).toContain('shards=4')
       expect((init as RequestInit).headers).toMatchObject({ Authorization: 'Bearer test-cron-secret' })
+    }
+  })
+
+  /**
+   * Found live (2026-10-16): calling the service's own PUBLIC domain from
+   * server-side fetch() failed fast with a bare "fetch failed" on every
+   * shard, even though the request demonstrably reached the handler
+   * server-side (visible in the logs) and the identical request from curl
+   * outside the container eventually worked. Routing through
+   * RAILWAY_PRIVATE_DOMAIN (Railway's internal network, no public edge hop)
+   * is the fix — this must not regress back to the public origin.
+   */
+  it('prefers RAILWAY_PRIVATE_DOMAIN over the request\'s public origin when set', async () => {
+    vi.stubEnv('RAILWAY_PRIVATE_DOMAIN', 'builder-ainative-studio.railway.internal')
+    vi.stubEnv('PORT', '4000')
+    vi.mocked(fetch).mockResolvedValue(fetchResponse(200, { ok: true }))
+
+    await GET(req({ auth: 'Bearer test-cron-secret' }))
+
+    for (const [url] of vi.mocked(fetch).mock.calls) {
+      expect(String(url)).toMatch(/^http:\/\/builder-ainative-studio\.railway\.internal:4000\/api\/build\/nightly-loop\?shard=\d&shards=4$/)
+    }
+  })
+
+  it('falls back to the request\'s public origin when RAILWAY_PRIVATE_DOMAIN is not set', async () => {
+    vi.stubEnv('RAILWAY_PRIVATE_DOMAIN', '')
+    vi.mocked(fetch).mockResolvedValue(fetchResponse(200, { ok: true }))
+
+    await GET(req({ auth: 'Bearer test-cron-secret' }))
+
+    for (const [url] of vi.mocked(fetch).mock.calls) {
+      expect(String(url)).toMatch(/^https:\/\/builder\.ainative\.studio\/api\/build\/nightly-loop\?shard=\d&shards=4$/)
     }
   })
 
