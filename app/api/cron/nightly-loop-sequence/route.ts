@@ -23,6 +23,17 @@
  * HTTP (not an in-process import) so each shard keeps its own real request
  * lifecycle/timeout — identical behavior to the old external caller, just
  * sequenced instead of parallel.
+ *
+ * PRIVATE NETWORKING (found live, 2026-10-16): calling the service's own
+ * PUBLIC domain (request.url's origin) from server-side fetch() failed fast
+ * with a bare "fetch failed" on every shard — not a timeout, an immediate
+ * connection-level error — even though the exact same request from curl
+ * outside the container worked (eventually). The request still reached the
+ * handler server-side (confirmed via "Nightly autonomous loop starting" in
+ * the logs), so the self-referential round trip through Railway's public
+ * edge back into the same container is the unreliable part, not the route's
+ * own logic. Fix: call RAILWAY_PRIVATE_DOMAIN instead — Railway's internal
+ * network, bypassing the public edge entirely for this server-to-server hop.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -100,7 +111,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'CRON_SECRET not configured' }, { status: 500 })
   }
 
-  const baseUrl = new URL(request.url).origin
+  // Prefer Railway's private internal domain (service-to-service, no public
+  // edge hop) over the request's own public origin — see PRIVATE NETWORKING
+  // above. The private network routes to whatever port this same process is
+  // actually listening on (next start -p ${PORT:-3000}, see package.json),
+  // which Railway injects as process.env.PORT at runtime.
+  const privateDomain = process.env.RAILWAY_PRIVATE_DOMAIN
+  const port = process.env.PORT || '3000'
+  const baseUrl = privateDomain ? `http://${privateDomain}:${port}` : new URL(request.url).origin
   const startedAt = Date.now()
   const outcomes: ShardOutcome[] = []
 
