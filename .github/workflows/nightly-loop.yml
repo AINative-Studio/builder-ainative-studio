@@ -23,12 +23,19 @@ name: Nightly Autonomous Loop
 # Shards run as a matrix so they execute in parallel; every enrolled company lands
 # in exactly one shard (interleaved by index — see lib/build/concurrent-map.ts's
 # selectShard), so there is no overlap and no company is skipped.
+#
+# #1110 — the scheduled trigger moved OFF GitHub Actions. Firing all 4 shards
+# within <1s of each other (as this matrix does) put up to 32 concurrent
+# per-company pipelines on the single Railway instance at once, causing
+# intermittent 502s on 1-2 shards most nights (confirmed live across four
+# separate nights, a different failing shard combination each time — pure
+# concurrent-load contention, not a shard-specific bug). The real nightly
+# trigger is now 4 staggered Railway cron-only services, each calling one
+# shard directly, 10-15 minutes apart. `schedule` is removed here on purpose;
+# `workflow_dispatch` is kept as a manual/ad-hoc fallback.
 
 on:
-  schedule:
-    # 07:00 UTC daily (~overnight for US timezones — the "while you sleep" run).
-    - cron: '0 7 * * *'
-  workflow_dispatch: {} # allow manual trigger
+  workflow_dispatch: {} # manual trigger only — see #1110 above for why schedule was removed
 
 jobs:
   run-loop:
