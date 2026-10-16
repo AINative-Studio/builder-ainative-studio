@@ -49,9 +49,18 @@ export async function POST(request: NextRequest) {
   const entry = await resolveApp(parsed.value.slug).catch(() => null)
   const ownerEmail = entry?.ownerEmail?.trim().toLowerCase()
   if (!ownerEmail || ownerEmail !== email) {
+    // TEMPORARY DIAGNOSTIC (2026-10-15) — investigating a real reported
+    // inconsistency: /api/build/my-companies lists a slug for an account
+    // that this check then rejects as not-owned. Captures the actual
+    // resolveApp() read (createdAt + ownerEmail) alongside the caller's
+    // session email so the two can be compared directly. Remove after use.
     logger.info('danger-zone action rejected — not the owner', {
       action: parsed.value.action,
       companyId: parsed.value.companyId,
+      callerEmail: email,
+      resolvedOwnerEmail: ownerEmail || null,
+      resolvedCreatedAt: entry?.createdAt || null,
+      resolvedLifecycleStatus: entry?.lifecycleStatus || null,
     })
     return Response.json({ error: 'not_owner' }, { status: 403 })
   }
