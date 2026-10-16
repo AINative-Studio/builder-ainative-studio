@@ -120,6 +120,26 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
 
     fixed = fixJsxErrors(fixed)
 
+    // Real bug (confirmed live 2026-10-15, two real apps — "Wallify"'s
+    // Hero.tsx and a second real app's Header.tsx): the MODEL ITSELF (not
+    // this file's own injection logic) sometimes writes an import like
+    // `from './components/aikit'` or `from './components/ui/button'` that's
+    // only correct from a root-level file (/App.tsx, /src/App.tsx) — when
+    // that exact literal path is hardcoded inside a file that ALREADY lives
+    // inside a components/ directory (e.g. /src/components/Hero.tsx), it
+    // resolves to the nonexistent .../components/components/... and crashes
+    // Sandpack with "Cannot find module". This is a different code path from
+    // the injection-depth fix above: that one only fires for imports THIS
+    // function adds because they were MISSING; this one corrects a wrong
+    // depth in an import the model already wrote, which the injection
+    // guards never touch since they only act on names with no existing
+    // import at all. Runs before injection so injection's "already
+    // imported" checks see the corrected (not the stale) path.
+    fixed = fixed.replace(
+      /from\s+(['"])(\.\.?\/)*components\/(ui\/[a-z-]+|aikit)\1/g,
+      (_match, quote: string, _dots: string, rest: string) => `from ${quote}${componentsPrefix}${rest}${quote}`
+    )
+
     if (!fixed.includes("from 'react'") && !fixed.includes('from "react"')) {
       const hooks = ['useState', 'useEffect', 'useRef', 'useMemo', 'useCallback', 'useContext', 'useReducer']
         .filter(h => fixed.includes(h))
@@ -181,7 +201,17 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
       }
     }
 
-    if (!fixed.includes("from 'lucide-react'") && !fixed.includes('from "lucide-react"')) {
+    // Real bug (confirmed live 2026-10-15): this used to be gated behind
+    // `if (!fixed.includes("from 'lucide-react'"))`, so a file that already
+    // imports SOME lucide icons (e.g. `import { Tag } from 'lucide-react'`)
+    // but uses another one the model forgot (e.g. `icon: Shield` inside an
+    // object literal) never got that missing icon injected at all — the
+    // guard assumed "has a lucide import" means "has everything it needs,"
+    // which isn't true when the model's own import list is incomplete.
+    // Compute missing icons unconditionally; merge into the existing import
+    // statement when one exists, otherwise add a new one, same as the
+    // shadcn/AIKit injections above already do.
+    {
       const allLucideIcons = [
         'Activity', 'AlertCircle', 'AlertTriangle', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowUp',
         'Award', 'BarChart', 'BarChart2', 'BarChart3', 'Bell', 'Book', 'BookOpen', 'Bot',
@@ -210,9 +240,26 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
         'Users', 'Video', 'Volume', 'Volume1', 'Volume2', 'VolumeX', 'Wallet', 'Wand', 'Wand2',
         'Watch', 'Wifi', 'WifiOff', 'Wind', 'Wrench', 'X', 'XCircle', 'Youtube', 'Zap', 'ZoomIn', 'ZoomOut',
       ]
-      const usedIcons = allLucideIcons.filter(icon => new RegExp(`\\b${icon}\\b`).test(fixed))
-      if (usedIcons.length > 0) {
-        fixed = `import { ${usedIcons.join(', ')} } from 'lucide-react'\n${fixed}`
+      // An icon already present in SOME existing lucide-react import
+      // statement (any quote style) doesn't need to be injected again —
+      // only truly missing icons do.
+      const existingImportMatch = fixed.match(/import\s*\{([^}]*)\}\s*from\s*['"]lucide-react['"]/)
+      const alreadyImported = new Set(
+        (existingImportMatch?.[1] ?? '')
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean)
+      )
+      const missingIcons = allLucideIcons.filter(icon =>
+        new RegExp(`\\b${icon}\\b`).test(fixed) && !alreadyImported.has(icon)
+      )
+      if (missingIcons.length > 0) {
+        if (existingImportMatch) {
+          const merged = [...alreadyImported, ...missingIcons].join(', ')
+          fixed = fixed.replace(existingImportMatch[0], `import { ${merged} } from 'lucide-react'`)
+        } else {
+          fixed = `import { ${missingIcons.join(', ')} } from 'lucide-react'\n${fixed}`
+        }
       }
     }
 
