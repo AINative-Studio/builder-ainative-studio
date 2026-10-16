@@ -56,6 +56,24 @@ const SANDPACK_BUNDLER_URL =
  * (the same stream useSandpackPreviewProgress reads) and calls onTimeout if
  * "done" never fires within `timeoutMs` of the first "start". Must render
  * INSIDE SandpackProvider (useSandpack() requires that context).
+ *
+ * Second real gap, confirmed live 2026-10-15 on real founder apps (Vaultn,
+ * Voya, Pulsar — all rendering blank on builder.ainative.studio/build/{slug}
+ * after the self-hosted bundler cutover): the ORIGINAL version of this
+ * watchdog only armed its timer once a "start" message arrived — but on the
+ * self-hosted bundler, the compile handshake sometimes never begins at all
+ * (confirmed via browser network inspection: zero requests to the bundler
+ * origin, zero console errors, zero Sandpack lifecycle events of any kind).
+ * "start" never fires, so the timer that only arms ON "start" never arms
+ * either, and the page is stuck blank forever with no fallback — strictly
+ * worse than the already-documented post-start hang this watchdog was built
+ * to catch, since that one at least left a "start" event the old code could
+ * key off of. Fix: also arm an unconditional fallback timer on mount, so a
+ * compile that never even starts is caught the same way a compile that
+ * starts-but-never-finishes already was. The "start"-triggered timer is kept
+ * as the primary path when it does fire, since it's a tighter, more
+ * accurate countdown than "from mount" when the handshake itself takes a
+ * little while to begin under real network conditions.
  */
 function SandpackResilientTimeout({ timeoutMs, onTimeout }: { timeoutMs: number; onTimeout: () => void }) {
   const { listen } = useSandpack()
@@ -64,17 +82,29 @@ function SandpackResilientTimeout({ timeoutMs, onTimeout }: { timeoutMs: number;
   React.useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined
     const clear = () => { if (timer) clearTimeout(timer) }
+    const arm = (reason: 'start' | 'mount') => {
+      clear()
+      timer = setTimeout(() => {
+        if (!firedRef.current) {
+          firedRef.current = true
+          console.warn(
+            reason === 'start'
+              ? `[SandpackPreview] No "done" event within ${timeoutMs}ms of start — treating as hung, falling back`
+              : `[SandpackPreview] No "start" event within ${timeoutMs}ms of mount — compile never began, treating as hung, falling back`
+          )
+          onTimeout()
+        }
+      }, timeoutMs)
+    }
+
+    // Unconditional fallback: catches a compile that never even starts
+    // (the self-hosted-bundler gap above). Re-armed with the tighter
+    // "start"-based countdown below if/when a real "start" does arrive.
+    arm('mount')
 
     const unsubscribe = listen((message) => {
-      if (message.type === 'start' && !timer) {
-        clear()
-        timer = setTimeout(() => {
-          if (!firedRef.current) {
-            firedRef.current = true
-            console.warn(`[SandpackPreview] No "done" event within ${timeoutMs}ms of start — treating as hung, falling back`)
-            onTimeout()
-          }
-        }, timeoutMs)
+      if (message.type === 'start') {
+        arm('start')
       }
       if (message.type === 'done') {
         firedRef.current = true
