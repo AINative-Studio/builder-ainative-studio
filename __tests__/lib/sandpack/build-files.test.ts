@@ -69,6 +69,42 @@ describe('buildSandpackFiles — shadcn/AIKit import-injection path correctness 
     expect(built['/App.tsx']).toContain("from 'lucide-react'")
     expect(built['/App.tsx']).toMatch(/import\s*\{[^}]*\bCircleDot\b[^}]*\}\s*from\s*['"]lucide-react['"]/)
   })
+
+  it('merges a missing lucide icon into an EXISTING lucide-react import rather than skipping injection entirely (confirmed live 2026-10-15 — real app imported Tag but used Shield as a value, not JSX, in an object literal)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "import { Tag } from 'lucide-react'\nimport React from 'react'\nconst items = [{ icon: Shield }]\nexport default function App(){ return <Tag/> }",
+    })
+    const app = built['/App.tsx']
+    // Previously: the whole lucide injection was skipped because the file
+    // ALREADY had a lucide-react import (just not a complete one) — Shield
+    // never got added, and Sandpack crashed with "Shield is not defined".
+    expect(app).toMatch(/import\s*\{[^}]*\bShield\b[^}]*\}\s*from\s*['"]lucide-react['"]/)
+    // Tag must still be there too — merging must not drop the existing icon.
+    expect(app).toMatch(/import\s*\{[^}]*\bTag\b[^}]*\}\s*from\s*['"]lucide-react['"]/)
+    // Only ONE lucide-react import statement — not a duplicate second one.
+    expect(app.match(/from\s*['"]lucide-react['"]/g)?.length).toBe(1)
+  })
+
+  it('rewrites a MODEL-AUTHORED (not injected) wrong-depth components/ import to the correct relative depth (confirmed live 2026-10-15 — two real apps, "Wallify"\'s Hero.tsx and a second real app\'s Header.tsx, both crashed with "Cannot find module \'/components/components/aikit\'")', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "import Header from './components/Header'\nexport default function App(){ return <Header/> }",
+      '/components/Header.tsx':
+        "import { MetricCard } from './components/aikit'\nimport { Button } from './components/ui/button'\nexport default function Header(){ return <div><Button/><MetricCard/></div> }",
+    })
+    const header = built['/components/Header.tsx']
+    expect(header).toContain("from './aikit'")
+    expect(header).toContain("from './ui/button'")
+    expect(header).not.toContain("from './components/aikit'")
+    expect(header).not.toContain("from './components/ui/button'")
+  })
+
+  it('leaves a model-authored components/ import UNCHANGED when the file is already at the correct depth (root level)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "import { MetricCard } from './components/aikit'\nexport default function App(){ return <MetricCard/> }",
+    })
+    expect(built['/App.tsx']).toContain("from './components/aikit'")
+  })
 })
 
 describe('detectSandpackDependencies (#1097)', () => {
