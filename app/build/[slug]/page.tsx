@@ -58,7 +58,7 @@ export default async function AppSubdirPage({ params }: Props) {
   }
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: '#fff' }}>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#fff' }}>
       {/* #844 follow-up: this used to repeat the company name + tagline right
           above the generated app's OWN header, which shows the same name/
           tagline again — a real founder saw this as a "double navigation"
