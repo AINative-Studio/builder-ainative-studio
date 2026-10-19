@@ -50,6 +50,12 @@ export const templateFiles: Record<string, string> = {
    * starts from), closing the race at its root instead of trying to detect
    * or retry around it after the fact.
    */
+  /**
+   * #root starts hidden (opacity:0) rather than displaying unstyled content
+   * — see /src/index.tsx below for why `window.tailwind` existing is NOT
+   * enough to know styling is actually applied, and why the real fix reveals
+   * #root only once Tailwind's injected <style> tag is confirmed present.
+   */
   '/public/index.html': `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -74,38 +80,67 @@ export const templateFiles: Record<string, string> = {
   </script>
 </head>
 <body style="font-family: Inter, system-ui, sans-serif; margin: 0;">
-  <div id="root"></div>
+  <div id="root" style="opacity: 0;"></div>
 </body>
 </html>`,
 
   /**
-   * Belt-and-suspenders alongside the blocking <script> above: even a
-   * synchronous script tag can't GUARANTEE Tailwind's internal MutationObserver
-   * is wired up by the exact instant React mounts (the script still has to
-   * execute its own setup code after loading). Poll for the real signal
-   * Tailwind's CDN script sets on window once it's ready (window.tailwind)
-   * before mounting React, with a short bounded timeout so a genuinely
-   * failed/blocked script (adblocker, offline) still renders — unstyled is
-   * strictly better than never rendering at all.
+   * Found live (2026-10-19): 9 of 23 real companies' /build/{slug} previews
+   * rendered with zero CSS applied — real content, real Tailwind classNames
+   * in the DOM, just unstyled. Root cause (full investigation, two layers):
+   *
+   *   1. Tailwind's CDN script was loaded via Sandpack's `externalResources`
+   *      option, injecting it as an async <script> AFTER the bundler's HTML
+   *      shell had already loaded — racing against React's render. Fixed by
+   *      moving it into THIS file's /public/index.html as a plain blocking
+   *      <script src>, the very first thing in <head> (no async/defer).
+   *
+   *   2. Even with that fix, a real gap remained: Tailwind's CDN script sets
+   *      `window.tailwind` SYNCHRONOUSLY the instant it loads, but the actual
+   *      CSS generation — scanning the DOM for classes, compiling via
+   *      PostCSS, injecting a real <style> tag into <head> — happens
+   *      ASYNCHRONOUSLY afterward, via a MutationObserver that only has
+   *      something to scan once React has mounted. So `window.tailwind`
+   *      existing proves the SCRIPT loaded, not that styling has been
+   *      APPLIED — confirmed live: the first fix alone did not resolve the
+   *      bug, still reproduced exactly the same way after deploying it.
+   *
+   * Real fix: #root starts hidden (opacity:0 in the HTML above). Mount React
+   * immediately — Tailwind's observer needs real DOM content to scan, so
+   * delaying the mount only delays the scan too. Then poll for the actual
+   * signal that styling has been applied: a real <style> element appended to
+   * <head> with non-empty textContent (exactly what Tailwind's CDN script's
+   * internal compile step does once it resolves — see its source: it creates
+   * one `<style>` tag and sets its textContent to the compiled CSS). Only
+   * once that's confirmed does #root become visible, so a visitor never sees
+   * the unstyled flash regardless of whether Sandpack's own "done" event
+   * fired first. Bounded to 3s so a genuinely blocked/offline Tailwind
+   * script still reveals the (unstyled) content — unstyled is strictly
+   * better than permanently invisible.
    */
   '/src/index.tsx': `import React from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
 
-function mount() {
-  const root = createRoot(document.getElementById('root')!)
-  root.render(<App />)
+const root = createRoot(document.getElementById('root')!)
+root.render(<App />)
+
+function tailwindStyleInjected(): boolean {
+  return Array.from(document.head.querySelectorAll('style')).some(
+    (el) => (el.textContent || '').length > 0
+  )
 }
 
-function waitForTailwindThenMount(deadline: number) {
-  if ((window as any).tailwind || Date.now() >= deadline) {
-    mount()
+function revealOnceStyled(deadline: number) {
+  const el = document.getElementById('root')!
+  if (tailwindStyleInjected() || Date.now() >= deadline) {
+    el.style.opacity = '1'
     return
   }
-  setTimeout(() => waitForTailwindThenMount(deadline), 30)
+  setTimeout(() => revealOnceStyled(deadline), 30)
 }
 
-waitForTailwindThenMount(Date.now() + 2000)
+revealOnceStyled(Date.now() + 3000)
 `,
 
   '/src/styles/globals.css': `@tailwind base;
