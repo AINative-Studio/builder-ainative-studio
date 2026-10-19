@@ -16,18 +16,46 @@ export const sandpackDependencies: Record<string, string> = {
   'date-fns': '3.6.0',
 }
 
-/** External resources loaded via CDN (Tailwind JIT) */
+/**
+ * External resources loaded via CDN (Tailwind JIT). Kept for backward
+ * compatibility / any other caller that still reads this constant, but the
+ * REAL preview path (components/chat/sandpack-preview.tsx) no longer passes
+ * this to Sandpack's `externalResources` option — see the /public/index.html
+ * doc comment below for why.
+ */
 export const sandpackExternalResources = [
   'https://cdn.tailwindcss.com',
 ]
 
 /** Base template files every sandbox gets */
 export const templateFiles: Record<string, string> = {
+  /**
+   * Found live (2026-10-19): 9 of 23 real companies' /build/{slug} previews
+   * rendered with zero CSS applied — real content, real Tailwind classNames
+   * in the DOM, just unstyled. Root cause: Tailwind's CDN script was loaded
+   * via Sandpack's `externalResources` option, which injects it as an async
+   * <script> tag AFTER the bundler's own HTML shell has already loaded —
+   * racing against React's render. Tailwind's CDN script only scans the DOM
+   * for classes once it finishes loading+initializing; if React mounts
+   * first (common on the self-hosted bundler, which is slower/less cached
+   * than stock CodeSandbox's CDN), the scan either never happens or happens
+   * before the real classes exist, and Sandpack's own "done" event fires
+   * from React's mount — genuinely unaware the stylesheet never applied.
+   *
+   * Fix: load the script directly in THIS static HTML shell, as the very
+   * first thing in <head>, with no `async`/`defer` — a plain blocking
+   * <script src>, which the browser fetches and executes before parsing
+   * continues to <body>/mounting React at all. This is deterministically
+   * loaded before any Sandpack-side JS runs (it's the shell every preview
+   * starts from), closing the race at its root instead of trying to detect
+   * or retry around it after the fact.
+   */
   '/public/index.html': `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <title>AINative Preview</title>
@@ -50,12 +78,34 @@ export const templateFiles: Record<string, string> = {
 </body>
 </html>`,
 
+  /**
+   * Belt-and-suspenders alongside the blocking <script> above: even a
+   * synchronous script tag can't GUARANTEE Tailwind's internal MutationObserver
+   * is wired up by the exact instant React mounts (the script still has to
+   * execute its own setup code after loading). Poll for the real signal
+   * Tailwind's CDN script sets on window once it's ready (window.tailwind)
+   * before mounting React, with a short bounded timeout so a genuinely
+   * failed/blocked script (adblocker, offline) still renders — unstyled is
+   * strictly better than never rendering at all.
+   */
   '/src/index.tsx': `import React from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
 
-const root = createRoot(document.getElementById('root')!)
-root.render(<App />)
+function mount() {
+  const root = createRoot(document.getElementById('root')!)
+  root.render(<App />)
+}
+
+function waitForTailwindThenMount(deadline: number) {
+  if ((window as any).tailwind || Date.now() >= deadline) {
+    mount()
+    return
+  }
+  setTimeout(() => waitForTailwindThenMount(deadline), 30)
+}
+
+waitForTailwindThenMount(Date.now() + 2000)
 `,
 
   '/src/styles/globals.css': `@tailwind base;
