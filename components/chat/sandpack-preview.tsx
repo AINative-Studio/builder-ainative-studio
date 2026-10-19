@@ -230,7 +230,13 @@ export function SandpackPreview({ files, theme = 'light', className, showRefresh
           },
         }}
         options={{
-          externalResources: ['https://cdn.tailwindcss.com'],
+          // Tailwind's CDN script is loaded directly in the HTML shell now
+          // (lib/sandpack/setup.ts's /public/index.html), as a blocking
+          // <script> tag that executes before React mounts — NOT here via
+          // externalResources, which injects it asynchronously AFTER the
+          // shell loads and races against the React render. See that file's
+          // doc comment for the full investigation (9/23 real companies
+          // found rendering unstyled, 2026-10-19).
           activeFile: '/App.tsx',
           bundlerURL: SANDPACK_BUNDLER_URL,
         }}
