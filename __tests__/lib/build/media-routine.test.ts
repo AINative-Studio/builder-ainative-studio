@@ -51,9 +51,12 @@ describe('runMediaRoutines', () => {
     const rows = [routineRow({ lastRunAt: '2026-01-01T00:00:00Z', frequency: 'daily' })]
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(OK({ data: rows }) as any)              // listMedia
+      .mockResolvedValueOnce(OK({ data: [] }) as any)                // enrichIdeaFromDocuments: listDocuments
       .mockResolvedValueOnce(OK({ url: 'http://x/g.png' }) as any)   // generate
-      .mockResolvedValueOnce(OK({ ok: true }) as any)               // saveAsset
-      .mockResolvedValueOnce(OK({ ok: true }) as any)               // saveRoutine advance
+      .mockResolvedValueOnce(OK({ ok: true }) as any)               // saveAsset: ensureTable
+      .mockResolvedValueOnce(OK({ ok: true }) as any)               // saveAsset: real write
+      .mockResolvedValueOnce(OK({ ok: true }) as any)               // saveRoutine advance: ensureTable
+      .mockResolvedValueOnce(OK({ ok: true }) as any)               // saveRoutine advance: real write
     vi.stubGlobal('fetch', fetchMock)
     const res = await runMediaRoutines('a::b', { companyName: 'Acme' })
     expect(res.generated).toBe(1)
@@ -83,9 +86,12 @@ describe('runMediaRoutines', () => {
     const rows = [routineRow({ lastRunAt: '2026-01-01T00:00:00Z', frequency: 'daily', lastVariant: 0 })]
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(OK({ data: rows }) as any)              // listMedia
+      .mockResolvedValueOnce(OK({ data: [] }) as any)                // enrichIdeaFromDocuments: listDocuments
       .mockResolvedValueOnce(OK({ url: 'http://x/g.png' }) as any)   // generate
-      .mockResolvedValueOnce(OK({ ok: true }) as any)               // saveAsset
-      .mockResolvedValueOnce(OK({ ok: true }) as any)               // saveRoutine advance
+      .mockResolvedValueOnce(OK({ ok: true }) as any)               // saveAsset: ensureTable
+      .mockResolvedValueOnce(OK({ ok: true }) as any)               // saveAsset: real write
+      .mockResolvedValueOnce(OK({ ok: true }) as any)               // saveRoutine advance: ensureTable
+      .mockResolvedValueOnce(OK({ ok: true }) as any)               // saveRoutine advance: real write
     vi.stubGlobal('fetch', fetchMock)
     await runMediaRoutines('a::b', { companyName: 'Acme' })
     const advanceBody = JSON.parse(fetchMock.mock.calls.at(-1)![1].body)
@@ -98,12 +104,15 @@ describe('runMediaRoutines', () => {
     const rows = [routineRow({ lastRunAt: '2026-01-01T00:00:00Z', frequency: 'daily', lastVariant: 0, mediaKind: 'image' })]
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(OK({ data: rows }) as any)
+      .mockResolvedValueOnce(OK({ data: [] }) as any) // enrichIdeaFromDocuments: listDocuments
       .mockResolvedValueOnce(OK({ url: 'http://x/g.png' }) as any)
-      .mockResolvedValueOnce(OK({ ok: true }) as any)
-      .mockResolvedValueOnce(OK({ ok: true }) as any)
+      .mockResolvedValueOnce(OK({ ok: true }) as any) // saveAsset: ensureTable
+      .mockResolvedValueOnce(OK({ ok: true }) as any) // saveAsset: real write
+      .mockResolvedValueOnce(OK({ ok: true }) as any) // saveRoutine advance: ensureTable
+      .mockResolvedValueOnce(OK({ ok: true }) as any) // saveRoutine advance: real write
     vi.stubGlobal('fetch', fetchMock)
     await runMediaRoutines('a::b', { companyName: 'Acme' })
-    const generateCall = fetchMock.mock.calls[1]
+    const generateCall = fetchMock.mock.calls[2]
     const sentBody = JSON.parse(String(generateCall[1].body))
     // Must not be the same deterministic prompt variant 0 would produce if
     // lastVariant were ignored — i.e. the prompt differs across runs.
@@ -120,9 +129,12 @@ describe('runMediaRoutines', () => {
     const rows = [routineRow({ lastRunAt: '2026-01-01T00:00:00Z', frequency: 'daily', lastVariant: 0, lastStyleVariant: 0 })]
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(OK({ data: rows }) as any)              // listMedia
+      .mockResolvedValueOnce(OK({ data: [] }) as any)                // enrichIdeaFromDocuments: listDocuments
       .mockResolvedValueOnce(OK({ url: 'http://x/g.png' }) as any)   // generate
-      .mockResolvedValueOnce(OK({ ok: true }) as any)               // saveAsset
-      .mockResolvedValueOnce(OK({ ok: true }) as any)               // saveRoutine advance
+      .mockResolvedValueOnce(OK({ ok: true }) as any)               // saveAsset: ensureTable
+      .mockResolvedValueOnce(OK({ ok: true }) as any)               // saveAsset: real write
+      .mockResolvedValueOnce(OK({ ok: true }) as any)               // saveRoutine advance: ensureTable
+      .mockResolvedValueOnce(OK({ ok: true }) as any)               // saveRoutine advance: real write
     vi.stubGlobal('fetch', fetchMock)
     await runMediaRoutines('a::b', { companyName: 'Acme' })
     const advanceBody = JSON.parse(fetchMock.mock.calls.at(-1)![1].body)
@@ -138,12 +150,15 @@ describe('runMediaRoutines', () => {
     const rows = [routineRow({ lastRunAt: '2026-01-01T00:00:00Z', frequency: 'daily', lastVariant: 0, lastStyleVariant: 0, mediaKind: 'image' })]
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(OK({ data: rows }) as any)
+      .mockResolvedValueOnce(OK({ data: [] }) as any) // enrichIdeaFromDocuments: listDocuments
       .mockResolvedValueOnce(OK({ url: 'http://x/g.png' }) as any)
-      .mockResolvedValueOnce(OK({ ok: true }) as any)
-      .mockResolvedValueOnce(OK({ ok: true }) as any)
+      .mockResolvedValueOnce(OK({ ok: true }) as any) // saveAsset: ensureTable
+      .mockResolvedValueOnce(OK({ ok: true }) as any) // saveAsset: real write
+      .mockResolvedValueOnce(OK({ ok: true }) as any) // saveRoutine advance: ensureTable
+      .mockResolvedValueOnce(OK({ ok: true }) as any) // saveRoutine advance: real write
     vi.stubGlobal('fetch', fetchMock)
     await runMediaRoutines('a::b', { companyName: 'Acme' })
-    const generateCall = fetchMock.mock.calls[1]
+    const generateCall = fetchMock.mock.calls[2]
     const sentBody = JSON.parse(String(generateCall[1].body))
     const { buildBrandPrompt } = await import('@/lib/build/media-schedule')
     // Must not match the prompt that lastVariant=0/lastStyleVariant=0 would
@@ -156,9 +171,12 @@ describe('runMediaRoutines', () => {
     const rows = [routineRow({ frequency: 'once', lastRunAt: undefined })] // never run → due
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(OK({ data: rows }) as any)
+      .mockResolvedValueOnce(OK({ data: [] }) as any) // enrichIdeaFromDocuments: listDocuments
       .mockResolvedValueOnce(OK({ url: 'http://x/g.png' }) as any)
-      .mockResolvedValueOnce(OK({ ok: true }) as any)
-      .mockResolvedValueOnce(OK({ ok: true }) as any)
+      .mockResolvedValueOnce(OK({ ok: true }) as any) // saveAsset: ensureTable
+      .mockResolvedValueOnce(OK({ ok: true }) as any) // saveAsset: real write
+      .mockResolvedValueOnce(OK({ ok: true }) as any) // saveRoutine advance: ensureTable
+      .mockResolvedValueOnce(OK({ ok: true }) as any) // saveRoutine advance: real write
     vi.stubGlobal('fetch', fetchMock)
     await runMediaRoutines('a::b', {})
     const advanceBody = JSON.parse(fetchMock.mock.calls.at(-1)![1].body)
