@@ -57,38 +57,44 @@ export const templateFiles: Record<string, string> = {
    * #root only once Tailwind's injected <style> tag is confirmed present.
    */
   /**
-   * REVERTED (2026-10-19/20, #1128): two fix attempts tonight for
-   * tidemark's intermittent Tailwind load failure (#1126's dynamic-script
-   * replacement, then #1127's static-tag-plus-retry) both caused real,
-   * confirmed-live regressions on wrench/lumeo/shingle -- companies that
-   * were working correctly before either change. #1126 broke the blocking
-   * load guarantee (a dynamically-created <script> element always loads
-   * async per the HTML spec); #1127 restored the static tag correctly but
-   * a long inline-script comment block leaked as visible page text, and
-   * even after trimming that, wrench STILL rendered unstyled on repeated
-   * reloads after #1127 deployed -- meaning the static-tag-plus-retry
-   * structure itself was not safely proven despite looking correct in
-   * isolation. Given two consecutive real regressions from two different
-   * angles on this exact file, this reverts all of it back to the single
-   * plain <script src> line, exactly as it was at #1123 (the last commit
-   * confirmed stable across wrench/lumeo/shingle/ember-box/driftly/
-   * triage/vaultn/zova/dispatch). The tidemark-specific Tailwind-load
-   * investigation (tracked in #1125, the sandpack-bundler trace) continues
-   * separately, with any future fix attempt requiring live verification
-   * against this same set of previously-working companies BEFORE being
-   * considered done, not just against tidemark.
+   * ROOT CAUSE FOUND (2026-10-19/20, #1129), after cloning the real
+   * AINative-Studio/sandpack-bundler source: its replaceHTML() (src/utils/
+   * html.ts) parses this file into { head, body } via getHTMLParts(), but
+   * then ONLY ever applies `document.body.innerHTML = body` -- the comment
+   * directly above it reads "// We only replace the body for now". The
+   * parsed `head` value is returned but the caller (bundler.ts's own
+   * replaceHTML() wrapper) never awaits or uses that return value at all.
+   * This means <head> content in this file -- EVERY <script>/<link>/<meta>
+   * tag placed there, across every fix attempted tonight (#1115 through
+   * #1128) -- has NEVER actually been applied to the real document by this
+   * bundler. It is a genuine, confirmed incomplete feature in that fork,
+   * not something fixable by changing what goes inside <head> here.
+   * Confirmed directly: diagnostic logging showed the rendered
+   * document.head containing ONLY the bundler's own runtime script --
+   * neither our Tailwind tag nor our unhandled-rejection-listener script
+   * (both previously in <head>) ever appeared, on repeated reloads of
+   * wrench (a company working correctly before tonight's head-only
+   * changes were ever introduced -- meaning this bug has likely always
+   * existed; earlier successes were real Sandpack compiles that happened
+   * to load Tailwind via some OTHER path, not this file's <head>).
+   *
+   * Real fix: since only `body` is ever applied, everything that needs to
+   * actually run moves there -- the Tailwind script tag placed in <body>,
+   * before #root, so it still loads/executes before React mounts into
+   * that div.
    */
   '/public/index.html': `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <title>AINative Preview</title>
+</head>
+<body style="font-family: Inter, system-ui, sans-serif; margin: 0;">
+  <script src="https://cdn.tailwindcss.com"></script>
   <script>
-    // Prevent Sandpack babel worker from crashing on frozen SyntaxError.message
     window.addEventListener('unhandledrejection', function(e) {
       if (e.reason && e.reason.toString().includes('read only property')) {
         e.preventDefault();
@@ -100,8 +106,6 @@ export const templateFiles: Record<string, string> = {
       }
     });
   </script>
-</head>
-<body style="font-family: Inter, system-ui, sans-serif; margin: 0;">
   <div id="root" style="opacity: 0;"></div>
 </body>
 </html>`,

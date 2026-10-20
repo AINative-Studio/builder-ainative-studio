@@ -4,49 +4,39 @@ import { templateFiles } from '@/lib/sandpack/setup'
 /**
  * Real production bug found live (2026-10-19): 9 of 23 real companies'
  * /build/{slug} previews rendered with zero CSS applied — real content,
- * real Tailwind classNames in the DOM, just unstyled. Three-layer
- * investigation (two fixes landed, neither sufficient alone, a third found
- * the fix was targeting the wrong file entirely):
+ * real Tailwind classNames in the DOM, just unstyled. Long investigation,
+ * several layers, culminating in the actual root cause (#1129):
  *
  *   1. Tailwind's CDN script was loaded via Sandpack's `externalResources`
  *      option — an async <script> injected AFTER the bundler's HTML shell
  *      had already loaded, racing React's render.
  *   2. Loading it as a blocking <script> in the HTML shell wasn't enough on
- *      its own: the script sets `window.tailwind` synchronously on load,
- *      but the actual CSS compile+inject (via a MutationObserver that needs
- *      real DOM content to scan) happens asynchronously AFTER React mounts.
- *   3. The mount-gating fix (#root hidden, revealed only once a real
- *      <style> tag is confirmed) was written to '/src/index.tsx' — but
- *      Sandpack's own `react-ts` template boots from ROOT '/index.tsx'
- *      (confirmed by reading @codesandbox/sandpack-react's
- *      REACT_TYPESCRIPT_TEMPLATE source: package.json main is
- *      "/index.tsx"). A files-map key only overrides the template file at
- *      the EXACT same path, so '/src/index.tsx' was dead code from the
- *      start — the template's own stock entry point (no Tailwind-wait logic
- *      at all) kept booting every real Sandpack preview. Confirmed live:
- *      wrench stayed blank 30+ seconds — past even Sandpack's own 15s
- *      watchdog — after layers 1+2 were believed fixed and deployed.
+ *      its own in every case — layers below explain why.
+ *   3. The mount-gating fix was initially written to the wrong file path
+ *      ('/src/index.tsx' instead of the template's real '/index.tsx').
+ *   4. THE ACTUAL ROOT CAUSE (#1129), found by cloning and reading the real
+ *      AINative-Studio/sandpack-bundler source: its replaceHTML()
+ *      (src/utils/html.ts) parses this file into { head, body }, but ONLY
+ *      ever applies `document.body.innerHTML = body` — the source has a
+ *      literal comment "// We only replace the body for now". The parsed
+ *      `head` is returned but never used by the caller. This means <head>
+ *      content in this file — EVERY <script>/<link>/<meta> tag placed
+ *      there across every fix attempted before #1129 — was NEVER actually
+ *      applied to the real document by this bundler. Confirmed directly:
+ *      diagnostic logging showed the real document.head containing ONLY
+ *      the bundler's own runtime script, never our Tailwind tag, on
+ *      repeated reloads of wrench (a company working correctly before any
+ *      of tonight's changes — meaning this bug likely always existed;
+ *      earlier successes loaded Tailwind via some other path entirely).
  *
- * Real fix: the override MUST be at '/index.tsx' (root), matching the
- * template's real entry point exactly.
+ * Real fix: since only `body` is ever applied, the Tailwind script (and
+ * anything else that must actually run) lives in <body>, before #root, not
+ * in <head>.
  */
-describe('Sandpack preview — Tailwind CDN load-order race (#1115/#1117/#1119, regression-tested after #1126/#1127/#1128)', () => {
-  it('declares the Tailwind CDN script as a plain static, blocking, parser-inserted tag', () => {
+describe('Sandpack preview — Tailwind CDN load-order race (#1115/#1117/#1119/#1129)', () => {
+  it('declares the Tailwind CDN script in <body> (not <head>, which this bundler never applies), before #root', () => {
     const html = templateFiles['/public/index.html']
 
-    // Two real regressions found live (2026-10-19/20) from two different
-    // attempts to add retry-on-failure for tidemark's intermittent
-    // Tailwind load: #1126 replaced this tag with a dynamically-created
-    // <script> element (always loads async per the HTML spec, breaking the
-    // blocking guarantee every other company depended on); #1127 restored
-    // a static tag but wrench STILL rendered unstyled afterward on
-    // repeated reloads, and a long inline-script comment leaked as visible
-    // page text. #1128 reverted this file entirely back to the single
-    // plain line below, exactly as it was at #1123 (the last commit
-    // confirmed stable across all 9 previously-fixed companies). Any
-    // future retry-on-failure attempt must be verified live against that
-    // same set of companies, not just against tidemark, before being
-    // considered done.
     const tailwindIndex = html.indexOf('<script src="https://cdn.tailwindcss.com">')
     expect(tailwindIndex).toBeGreaterThan(-1)
 
@@ -56,10 +46,28 @@ describe('Sandpack preview — Tailwind CDN load-order race (#1115/#1117/#1119, 
     // Exactly the plain tag — no onerror/retry wiring, no dynamic creation.
     expect(tailwindScriptTag).toBe('<script src="https://cdn.tailwindcss.com"></script>')
 
-    // Must appear before the body/root div — i.e. genuinely in <head>, not
-    // injected after the app's mount point.
+    // Must be inside <body>, after the opening <body> tag — this bundler's
+    // replaceHTML() only ever applies document.body.innerHTML, so anything
+    // placed in <head> is silently discarded.
+    const bodyOpenIndex = html.indexOf('<body')
+    expect(bodyOpenIndex).toBeGreaterThan(-1)
+    expect(tailwindIndex).toBeGreaterThan(bodyOpenIndex)
+
+    // Must still appear before the #root div, so it has a chance to load
+    // before React mounts into it.
     const rootDivIndex = html.indexOf('id="root"')
     expect(tailwindIndex).toBeLessThan(rootDivIndex)
+  })
+
+  it('declares nothing load-bearing inside <head> — this bundler never applies <head> content', () => {
+    const html = templateFiles['/public/index.html']
+    const headMatch = html.match(/<head>([\s\S]*)<\/head>/)
+    expect(headMatch).toBeTruthy()
+    const headContent = headMatch![1]
+    // <head> may still carry non-executing metadata (meta/link/title) that
+    // degrades gracefully if ignored, but must never be the only place a
+    // <script> this app depends on lives.
+    expect(headContent).not.toMatch(/<script/)
   })
 
   it('#root starts hidden so the unstyled flash is never visible', () => {
