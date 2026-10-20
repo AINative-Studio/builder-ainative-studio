@@ -155,15 +155,22 @@ function revealOnceStyled(deadline: number) {
   setTimeout(() => revealOnceStyled(deadline), 30)
 }
 
-// 15s, not 3s/8s: found live (2026-10-19), two rounds — a large generated
-// app (431 lines) still took longer than 8s to finish Tailwind's DOM-scan+
-// compile on the self-hosted bundler on some loads. The bound keeps firing
-// "correctly" (unstyled content revealed, not permanently hidden) but too
-// early for these larger apps, same visible symptom as the original bug for
-// anyone watching. 15s is generous enough to cover slower compiles on a
-// loaded/cold bundler while staying well under what a visitor would
-// reasonably wait before giving up anyway.
-revealOnceStyled(Date.now() + 15000)
+// Content-scaled bound, not a fixed guess: found live (2026-10-20) that even
+// 15s wasn't enough for vaultn, whose generation produced a single 30KB/
+// 614-line App.tsx with no separate component files (vs. a properly
+// decomposed app's several smaller files) — Tailwind's JIT compile genuinely
+// takes longer to scan+process that much JSX in one pass, it isn't hung. A
+// fixed bound forces a choice between making every small app wait
+// unnecessarily long or leaving large ones revealed-but-unstyled. Instead,
+// scale the bound to how much source Sandpack actually has to compile:
+// window.__APP_SOURCE_CHARS__ is set by buildSandpackFiles() (lib/sandpack/
+// build-files.ts) to the real assembled /App.tsx length. Base 8s covers a
+// typical small app; +1s per 3,000 chars covers larger ones (vaultn's
+// ~30,000 chars → +10s ≈ 18s total), capped at 30s so a genuinely stuck
+// compile still reveals (unstyled) content in a bounded time.
+const _appChars = (window as any).__APP_SOURCE_CHARS__ || 0
+const _boundMs = Math.min(30000, 8000 + Math.floor(_appChars / 3000) * 1000)
+revealOnceStyled(Date.now() + _boundMs)
 `,
 
   '/src/styles/globals.css': `@tailwind base;

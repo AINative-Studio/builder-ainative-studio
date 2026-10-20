@@ -1647,15 +1647,15 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
             }
             setTimeout(function() { _revealOnceStyled(deadline); }, 30);
           }
-          // 15s, not 3s/8s: found live (2026-10-19), two rounds — a large
-          // generated app still took longer than 8s to finish Tailwind's
-          // DOM-scan+compile on some loads. The bound kept firing "correctly"
-          // (unstyled content revealed, not permanently hidden) but too early
-          // for these larger apps, same visible symptom as the original bug
-          // for anyone watching. 15s is generous enough to cover slower
-          // compiles on a loaded/cold bundler — see lib/sandpack/setup.ts's
-          // matching constant for the Sandpack preview path.
-          _revealOnceStyled(Date.now() + 15000);
+          // Content-scaled bound, not a fixed guess: found live (2026-10-20)
+          // that a single giant generated file (vaultn: ~30,000 chars, no
+          // separate components) still exceeded a fixed 15s — Tailwind's JIT
+          // genuinely takes longer to scan+process that much JSX in one
+          // pass, it isn't hung. Scale to this component's real compiled
+          // length (componentCode, in scope server-side) instead of guessing
+          // one fixed number for every app size — see lib/sandpack/setup.ts's
+          // matching logic for the Sandpack preview path.
+          _revealOnceStyled(Date.now() + Math.min(30000, 8000 + Math.floor(${componentCode.length} / 3000) * 1000));
 
           // Recharts <ResponsiveContainer> measures its parent via ResizeObserver
           // at mount; in this dynamically-injected iframe the measure can fire

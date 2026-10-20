@@ -84,6 +84,15 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
     }
   }
 
+  // Real content length BEFORE any preamble is added below, so the reveal
+  // timeout (lib/sandpack/setup.ts's /index.tsx) scales to what Tailwind's
+  // JIT actually has to compile, not an inflated count. Set as a top-level
+  // side effect so it runs when '/index.tsx' does `import App from './App'`
+  // — before that file's own revealOnceStyled() call reads it.
+  if (mainCode) {
+    mainCode = `;(window as any).__APP_SOURCE_CHARS__ = ${mainCode.length};\n${mainCode}`
+  }
+
   sandpackFiles['/App.tsx'] = mainCode
 
   const builtinPaths = new Set(Object.keys(getBuiltinFiles()))
