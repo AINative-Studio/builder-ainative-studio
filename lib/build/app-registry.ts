@@ -469,6 +469,23 @@ export async function setAppDomain(slug: string, domain: string): Promise<boolea
 }
 
 /**
+ * Backfill a company's `idea` (#660/#696, landed 2026-09-11) onto a registry
+ * row created before that fix shipped (#1102/#1113 follow-up). `idea` is
+ * what Live.tsx's company-app/company-product generation triggers gate on
+ * (`state.idea && state.appSub`, see components/build/screens/Live.tsx) —
+ * a pre-#660 row with no `idea` at all silently never fires EITHER
+ * generation, regardless of track. Real root cause of habanero-hub never
+ * getting a landing page: not a track-based design choice, a one-day-early
+ * registration that missed the field entirely.
+ */
+export async function setAppIdea(slug: string, idea: string): Promise<boolean> {
+  const existing = await resolveApp(slug)
+  if (!existing) return false
+  if (existing.idea) return true // already has one — never overwrite a real idea
+  return registerApp({ ...existing, idea })
+}
+
+/**
  * Set a company's lifecycle state (#57, Danger Zone) — 'offline' (take the app
  * out of service, keep the company) or 'deleted' (soft-delete the company).
  * Appends an updated row carrying the existing chatId + brand plus the new
