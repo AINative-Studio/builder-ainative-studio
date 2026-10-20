@@ -146,10 +146,16 @@ function tailwindStyleInjected(): boolean {
   )
 }
 
+let _diagLogged = false
 function revealOnceStyled(deadline: number) {
   const el = document.getElementById('root')!
+  if (!_diagLogged) {
+    _diagLogged = true
+    console.log('[TidemarkDiag] window.tailwind:', typeof (window as any).tailwind, 'styleTags:', document.head.querySelectorAll('style').length)
+  }
   if (tailwindStyleInjected() || Date.now() >= deadline) {
     el.style.opacity = '1'
+    console.log('[TidemarkDiag] REVEALED. window.tailwind:', typeof (window as any).tailwind, 'styleTags:', document.head.querySelectorAll('style').length, 'styleLens:', Array.from(document.head.querySelectorAll('style')).map(s => s.textContent?.length))
     return
   }
   setTimeout(() => revealOnceStyled(deadline), 30)
