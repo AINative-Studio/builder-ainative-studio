@@ -79,6 +79,7 @@ afterEach(() => {
   vi.restoreAllMocks()
   delete process.env.AINATIVE_API_KEY
   delete process.env.ZERODB_API_KEY
+  delete process.env.API_Key
 })
 
 // ---------- No API key → skip ----------
@@ -87,6 +88,11 @@ describe('runNightlyLoop() — no API key', () => {
   it('returns status:skipped with detail when AINATIVE_API_KEY is absent', async () => {
     delete process.env.AINATIVE_API_KEY
     delete process.env.ZERODB_API_KEY
+    // getAinativeApiKey() also falls back to the legacy API_Key env var,
+    // which a real environment can have set for unrelated purposes
+    // (confirmed set in this cloud session) — delete it too so this case is
+    // genuinely unconfigured.
+    delete process.env.API_Key
     // Re-import to pick up env change (module caches API_KEY at load time)
     vi.resetModules()
     const { runNightlyLoop: run } = await import('@/lib/build/autonomous-loop')
