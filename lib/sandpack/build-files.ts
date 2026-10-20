@@ -268,7 +268,76 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
     sandpackFiles[path] = fixed
   }
 
+  stubMissingLocalComponents(sandpackFiles)
+
   return sandpackFiles
+}
+
+/**
+ * Real bug found live (2026-10-20, Dispatch): a generated app's own files
+ * can import a sibling component that the generation genuinely never
+ * produced (confirmed: /src/App.tsx imports './components/Footer', but no
+ * Footer.tsx exists anywhere in the real files map returned by
+ * /api/generation/{chatId}/files — a content-generation gap, not a path-
+ * resolution bug the existing shadcn/lucide/AIKit safety nets above cover).
+ * Sandpack's bundler fails the ENTIRE preview with "Cannot find module" for
+ * this one missing file, even though every OTHER component rendered fine.
+ *
+ * Mirrors the existing safety-net philosophy in this file: a generation gap
+ * must degrade gracefully, never take down the whole preview. Scans every
+ * non-builtin file for a relative import (`./X`, `./components/X`, `../X`)
+ * whose resolved path has no matching key in sandpackFiles, and synthesizes
+ * an inert stub component at that exact path — so the import resolves, the
+ * rest of the app renders, and the ONLY visible gap is the specific missing
+ * section (rendering nothing) rather than the entire page crashing.
+ *
+ * Deliberately conservative: only synthesizes a stub for a path that is
+ * genuinely absent after every real pass above (builtins, shadcn/AIKit
+ * injection, de-dupe) has already run — a real file at that path always
+ * wins, this never overwrites one.
+ */
+function stubMissingLocalComponents(sandpackFiles: Record<string, string>): void {
+  const builtinPaths = new Set(Object.keys(getBuiltinFiles()))
+  const importRe = /from\s+['"](\.\.?\/[^'"]+)['"]/g
+
+  // Collect candidate missing paths first — mutating sandpackFiles while
+  // iterating imports found across it could make a later stub's own file
+  // content get re-scanned; two passes keeps this deterministic.
+  const toStub = new Set<string>()
+
+  for (const [path, code] of Object.entries(sandpackFiles)) {
+    if (builtinPaths.has(path) || !/\.(t|j)sx?$/.test(path)) continue
+    const dir = path.slice(0, path.lastIndexOf('/')) || ''
+    let match: RegExpExecArray | null
+    importRe.lastIndex = 0
+    while ((match = importRe.exec(code))) {
+      const resolved = resolveRelativeImport(dir, match[1])
+      if (!resolved) continue
+      const candidates = [resolved, `${resolved}.tsx`, `${resolved}.ts`, `${resolved}/index.tsx`]
+      const exists = candidates.some((c) => c in sandpackFiles)
+      if (!exists) toStub.add(`${resolved}.tsx`)
+    }
+  }
+
+  for (const stubPath of toStub) {
+    if (stubPath in sandpackFiles) continue // a real pass already provided it
+    const name = (stubPath.split('/').pop() || 'Missing').replace(/\.tsx$/, '')
+    if (!/^[A-Za-z_$][\w$]*$/.test(name)) continue // not a valid component identifier, skip
+    sandpackFiles[stubPath] =
+      `import React from 'react'\n// Auto-stubbed: the generation did not produce this file (${stubPath}).\nexport default function ${name}() { return null }\n`
+  }
+}
+
+/** Resolve a relative import specifier against the importing file's directory. Returns null for anything that isn't a plain relative path this app's own files would use. */
+function resolveRelativeImport(fromDir: string, spec: string): string | null {
+  const parts = fromDir.split('/').filter(Boolean)
+  for (const seg of spec.split('/')) {
+    if (seg === '.' || seg === '') continue
+    if (seg === '..') { parts.pop(); continue }
+    parts.push(seg)
+  }
+  const resolved = `/${parts.join('/')}`
+  return /^\/[\w\-./]+$/.test(resolved) ? resolved : null
 }
 
 /**
