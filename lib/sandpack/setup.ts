@@ -56,28 +56,46 @@ export const templateFiles: Record<string, string> = {
    * enough to know styling is actually applied, and why the real fix reveals
    * #root only once Tailwind's injected <style> tag is confirmed present.
    */
+  /**
+   * ROOT CAUSE FOUND (2026-10-19/20, #1129/#1130), after cloning the real
+   * AINative-Studio/sandpack-bundler source: its replaceHTML() (src/utils/
+   * html.ts) parses this file into { head, body } via getHTMLParts(), but
+   * then ONLY ever applies `document.body.innerHTML = body` -- the comment
+   * directly above it reads "// We only replace the body for now". <head>
+   * content is therefore never applied at all. But moving the Tailwind
+   * <script> into <body> (#1129) ALSO didn't fix it, still live-confirmed
+   * `window.tailwind === undefined` afterward -- because `el.innerHTML =
+   * htmlString` is a standard, spec-defined DOM behavior: <script> tags
+   * parsed out of an innerHTML assignment are inert and NEVER execute, in
+   * any browser, regardless of where in the string they appear. This
+   * bundler's replaceHTML() has no code that extracts and re-creates those
+   * script nodes to make them live (the standard workaround for this exact
+   * browser quirk) -- so NO <script> tag in this HTML file, head or body,
+   * has ever executed via this mechanism. The only part of this file that
+   * does anything useful is non-script content (meta/link/title degrade
+   * gracefully if ignored) and the #root div, which IS correctly placed
+   * into the live DOM by the innerHTML assignment itself (just inert, not
+   * absent).
+   *
+   * Real fix (#1130): stop trying to run anything via this file's own
+   * <script> tags at all. Load Tailwind instead from inside /index.tsx
+   * (below) -- a real ES module the bundler's own module system compiles
+   * and executes directly, an entirely different code path from this
+   * dead HTML-string replacement, already proven live to execute
+   * correctly (its own diagnostic logging has reliably fired every time).
+   * document.createElement('script') + appendChild from WITHIN that module
+   * is standard, live DOM scripting -- not subject to the innerHTML-inert-
+   * script limitation at all, since the element is attached directly via
+   * the DOM API, never parsed from an HTML string.
+   */
   '/public/index.html': `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <title>AINative Preview</title>
-  <script>
-    // Prevent Sandpack babel worker from crashing on frozen SyntaxError.message
-    window.addEventListener('unhandledrejection', function(e) {
-      if (e.reason && e.reason.toString().includes('read only property')) {
-        e.preventDefault();
-      }
-    });
-    window.addEventListener('error', function(e) {
-      if (e.message && e.message.includes('read only property')) {
-        e.preventDefault();
-      }
-    });
-  </script>
 </head>
 <body style="font-family: Inter, system-ui, sans-serif; margin: 0;">
   <div id="root" style="opacity: 0;"></div>
@@ -137,8 +155,27 @@ export const templateFiles: Record<string, string> = {
 import { createRoot } from 'react-dom/client'
 import App from './App'
 
+window.addEventListener('unhandledrejection', function(e) {
+  if (e.reason && e.reason.toString().includes('read only property')) {
+    e.preventDefault()
+  }
+})
+window.addEventListener('error', function(e) {
+  if (e.message && e.message.includes('read only property')) {
+    e.preventDefault()
+  }
+})
+
 const root = createRoot(document.getElementById('root')!)
 root.render(<App />)
+
+const _twScript = document.createElement('script')
+_twScript.src = 'https://cdn.tailwindcss.com'
+_twScript.onload = function () {
+  document.documentElement.classList.add('tw-scan-nudge')
+  document.documentElement.classList.remove('tw-scan-nudge')
+}
+document.head.appendChild(_twScript)
 
 function tailwindStyleInjected(): boolean {
   return Array.from(document.head.querySelectorAll('style')).some(

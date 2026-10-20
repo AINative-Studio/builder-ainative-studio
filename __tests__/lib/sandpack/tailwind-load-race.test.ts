@@ -4,52 +4,53 @@ import { templateFiles } from '@/lib/sandpack/setup'
 /**
  * Real production bug found live (2026-10-19): 9 of 23 real companies'
  * /build/{slug} previews rendered with zero CSS applied — real content,
- * real Tailwind classNames in the DOM, just unstyled. Three-layer
- * investigation (two fixes landed, neither sufficient alone, a third found
- * the fix was targeting the wrong file entirely):
+ * real Tailwind classNames in the DOM, just unstyled. Long investigation,
+ * several layers, culminating in the actual root cause (#1129/#1130):
  *
  *   1. Tailwind's CDN script was loaded via Sandpack's `externalResources`
  *      option — an async <script> injected AFTER the bundler's HTML shell
  *      had already loaded, racing React's render.
- *   2. Loading it as a blocking <script> in the HTML shell wasn't enough on
- *      its own: the script sets `window.tailwind` synchronously on load,
- *      but the actual CSS compile+inject (via a MutationObserver that needs
- *      real DOM content to scan) happens asynchronously AFTER React mounts.
- *   3. The mount-gating fix (#root hidden, revealed only once a real
- *      <style> tag is confirmed) was written to '/src/index.tsx' — but
- *      Sandpack's own `react-ts` template boots from ROOT '/index.tsx'
- *      (confirmed by reading @codesandbox/sandpack-react's
- *      REACT_TYPESCRIPT_TEMPLATE source: package.json main is
- *      "/index.tsx"). A files-map key only overrides the template file at
- *      the EXACT same path, so '/src/index.tsx' was dead code from the
- *      start — the template's own stock entry point (no Tailwind-wait logic
- *      at all) kept booting every real Sandpack preview. Confirmed live:
- *      wrench stayed blank 30+ seconds — past even Sandpack's own 15s
- *      watchdog — after layers 1+2 were believed fixed and deployed.
+ *   2. The mount-gating fix was initially written to the wrong file path
+ *      ('/src/index.tsx' instead of the template's real '/index.tsx').
+ *   3. First real-root-cause layer (#1129), found by cloning and reading
+ *      the real AINative-Studio/sandpack-bundler source: its replaceHTML()
+ *      (src/utils/html.ts) parses /public/index.html into { head, body },
+ *      but ONLY ever applies `document.body.innerHTML = body` — the
+ *      source has a literal comment "// We only replace the body for
+ *      now". <head> content (every <script>/<link>/<meta> tag placed
+ *      there) was therefore never applied to the real document at all.
+ *   4. SECOND, deeper root-cause layer (#1130), found live immediately
+ *      after moving the script to <body> and re-verifying — it STILL
+ *      didn't execute. Root cause: `element.innerHTML = htmlString` is a
+ *      standard, spec-defined DOM behavior where any <script> tag parsed
+ *      out of that string is permanently inert and never executes, in any
+ *      browser, regardless of where in the string it appears. This
+ *      bundler's replaceHTML() has no code that extracts and re-creates
+ *      those script nodes to make them live (the standard workaround for
+ *      this exact browser quirk) — so NO <script> tag in this HTML file,
+ *      head or body, has ever actually run via this mechanism.
  *
- * Real fix: the override MUST be at '/index.tsx' (root), matching the
- * template's real entry point exactly.
+ * Real fix: stop relying on this file's own <script> tags at all. Load
+ * Tailwind from inside /index.tsx instead — a real ES module the
+ * bundler's own module system compiles and executes directly, an entirely
+ * different (and proven-working) code path from this dead HTML-string
+ * replacement. `document.createElement('script')` + `appendChild` from
+ * WITHIN that module is standard, live DOM scripting, not subject to the
+ * innerHTML-inert-script limitation — the element is attached directly via
+ * the DOM API, never parsed from an HTML string.
  */
-describe('Sandpack preview — Tailwind CDN load-order race (#1115/#1117/#1119)', () => {
-  it('declares the Tailwind CDN script as a blocking tag in the HTML shell, before any other script', () => {
+describe('Sandpack preview — Tailwind CDN load-order race (#1115/#1117/#1119/#1129/#1130)', () => {
+  it('/public/index.html contains no <script> tags at all — this bundler never executes any of them, head or body', () => {
     const html = templateFiles['/public/index.html']
-    const tailwindIndex = html.indexOf('<script src="https://cdn.tailwindcss.com">')
-    expect(tailwindIndex).toBeGreaterThan(-1)
-
-    // Must not carry async or defer — those would reintroduce the race this
-    // fix exists to close.
-    const tailwindScriptTag = html.slice(tailwindIndex, html.indexOf('</script>', tailwindIndex) + '</script>'.length)
-    expect(tailwindScriptTag).not.toMatch(/\basync\b/)
-    expect(tailwindScriptTag).not.toMatch(/\bdefer\b/)
-
-    // Must appear before the body/root div — i.e. genuinely in <head>, not
-    // injected after the app's mount point.
-    const rootDivIndex = html.indexOf('id="root"')
-    expect(tailwindIndex).toBeLessThan(rootDivIndex)
+    // Both root causes (#1129: <head> never applied; #1130: innerHTML
+    // scripts are inert everywhere) mean a <script> tag anywhere in this
+    // file is dead weight at best, misleading at worst. None should exist.
+    expect(html).not.toMatch(/<script/)
   })
 
-  it('#root starts hidden so the unstyled flash is never visible', () => {
+  it('/public/index.html still declares non-executing metadata (meta/link/title) and the #root mount point', () => {
     const html = templateFiles['/public/index.html']
+    expect(html).toContain('<div id="root"')
     expect(html).toMatch(/id="root"\s+style="opacity:\s*0;?"/)
   })
 
@@ -60,6 +61,37 @@ describe('Sandpack preview — Tailwind CDN load-order race (#1115/#1117/#1119)'
     expect(templateFiles['/index.tsx']).toBeDefined()
     expect(templateFiles['/index.tsx']).toContain('revealOnceStyled')
     expect(templateFiles['/src/index.tsx']).toBeUndefined()
+  })
+
+  it('/index.tsx loads Tailwind itself via a real DOM script element, not relying on the HTML shell', () => {
+    const indexTsx = templateFiles['/index.tsx']
+    expect(indexTsx).toContain("document.createElement('script')")
+    expect(indexTsx).toContain("src = 'https://cdn.tailwindcss.com'")
+    expect(indexTsx).toContain('document.head.appendChild(')
+  })
+
+  /**
+   * Real bug found live (2026-10-19/20, final layer): even once the
+   * Tailwind script genuinely loaded (confirmed: window.tailwind became a
+   * real object, not undefined -- the first time that happened all
+   * investigation), it still never produced a <style> tag, reproducibly,
+   * even 20+ seconds after load. Root cause, found by downloading and
+   * reading Tailwind's own CDN script source directly: it sets up a
+   * MutationObserver on document.documentElement watching for class/
+   * childList changes to trigger its compile step -- but that observer is
+   * only attached once the script executes, which happens AFTER React has
+   * already mounted and written its classNames into the DOM. The observer
+   * never sees that initial mutation, so nothing ever triggers the first
+   * scan. Fix: once the script loads, explicitly toggle a class on
+   * document.documentElement (add then immediately remove) to force a
+   * mutation the observer WILL see, triggering its compile pass on the
+   * DOM as it currently stands.
+   */
+  it('nudges a documentElement class change after Tailwind loads, to trigger its MutationObserver-based scan', () => {
+    const indexTsx = templateFiles['/index.tsx']
+    expect(indexTsx).toContain('_twScript.onload')
+    expect(indexTsx).toContain('document.documentElement.classList.add(')
+    expect(indexTsx).toContain('document.documentElement.classList.remove(')
   })
 
   it('/index.tsx mounts React immediately (Tailwind needs real DOM content to scan)', () => {
@@ -82,6 +114,13 @@ describe('Sandpack preview — Tailwind CDN load-order race (#1115/#1117/#1119)'
     // blocked/offline script must still eventually reveal the (unstyled)
     // content rather than leaving it permanently invisible.
     expect(indexTsx).toMatch(/Date\.now\(\)\s*>=\s*deadline/)
+  })
+
+  it('still installs the "read only property" error-suppression listeners, now in /index.tsx since the HTML shell\'s own <script> version never ran', () => {
+    const indexTsx = templateFiles['/index.tsx']
+    expect(indexTsx).toContain("addEventListener('unhandledrejection'")
+    expect(indexTsx).toContain("addEventListener('error'")
+    expect(indexTsx).toContain('read only property')
   })
 
   /**
