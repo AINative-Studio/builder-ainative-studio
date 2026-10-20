@@ -56,32 +56,40 @@ export const templateFiles: Record<string, string> = {
    * enough to know styling is actually applied, and why the real fix reveals
    * #root only once Tailwind's injected <style> tag is confirmed present.
    */
+  /**
+   * REGRESSION FOUND LIVE (2026-10-19/20): an earlier version of this fix
+   * (#1126) replaced the static <script src> below entirely with
+   * document.createElement('script') + appendChild, to add a retry for
+   * tidemark's intermittent Tailwind load failure. That broke every other
+   * company that had been working: a dynamically-created <script> element
+   * always loads asynchronously per the HTML spec regardless of async/defer
+   * attributes, unlike a static parser-inserted tag with neither attribute,
+   * which genuinely blocks HTML parsing until it loads. Losing that
+   * blocking guarantee reintroduced the exact load-order race already
+   * fixed by #1115/#1117/#1119 -- confirmed live: wrench, lumeo, shingle,
+   * all previously verified correctly styled, went back to rendering
+   * completely unstyled after #1126 shipped.
+   *
+   * Real fix (#1127): keep the static blocking tag as the primary load,
+   * and only retry -- via a dynamically-created script, acceptable once
+   * the primary synchronous attempt has already failed -- from that tag's
+   * own onerror, never instead of it.
+   *
+   * SECOND REGRESSION, also found live (2026-10-19/20, same investigation):
+   * a long multi-line JS comment block placed INSIDE this HTML template's
+   * <script> tag rendered as literal visible page text on wrench -- the
+   * comment content leaked into the page body instead of staying inside
+   * the executed script. Root cause not fully traced (likely something in
+   * the self-hosted sandpack-bundler's HTML handling), but the fix is the
+   * same regardless: keep this file's own inline <script> blocks minimal,
+   * with all explanation living here in a real TS comment instead.
+   */
   '/public/index.html': `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <script>
-    // Real regression found live (2026-10-19/20): an EARLIER version of
-    // this fix (#1126) replaced the static <script src> below entirely
-    // with document.createElement('script') + appendChild, intended to add
-    // a retry on failure for tidemark, whose Tailwind script intermittently
-    // never loaded. That broke every OTHER company that had been working
-    // correctly: a dynamically-created <script> element ALWAYS loads
-    // asynchronously (per the HTML spec — true regardless of async/defer
-    // attributes, which don't even apply to the createElement path),
-    // unlike a static parser-inserted <script src> with neither attribute,
-    // which genuinely blocks HTML parsing — the browser fetches and
-    // executes it before continuing to <body>/mounting React. Losing that
-    // blocking guarantee reintroduced the exact load-order race
-    // #1115/#1117/#1119 already fixed — confirmed live: wrench, lumeo,
-    // shingle, all previously verified correctly styled, went back to
-    // rendering completely unstyled after that change shipped.
-    //
-    // Real fix (#1127): keep the static blocking tag below as the primary
-    // load, and ONLY retry — via a dynamically-created script, an
-    // acceptable tradeoff once the primary synchronous attempt has already
-    // failed — from that tag's own onerror, never instead of it.
     function _twRetry(attempt) {
       var s = document.createElement('script');
       s.src = 'https://cdn.tailwindcss.com';
