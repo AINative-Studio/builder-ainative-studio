@@ -43,11 +43,29 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
     // existed), so Sandpack's own dependency walker tried to resolve
     // next/font/google, failed with "Cannot find module", and silently
     // failed the whole compile with zero error surfaced to the parent page
-    // (confirmed live via Sandpack's own relayed console message). Skip
-    // these — they describe the real app's shell, not anything the preview
-    // sandbox needs or can run.
+    // (confirmed live via Sandpack's own relayed console message). The
+    // actual mechanism (confirmed by reading the self-hosted sandpack-
+    // bundler fork's source, src/bundler/bundler.ts): `collectAppBarrelUsage`
+    // scans every file's imports and calls `resolveAsync` on each specifier
+    // for ALL provided files, not just ones reachable from the real
+    // '/App.tsx' entry — so an unresolvable import in ANY generated file,
+    // reachable or not, rejects that shared promise and silently fails the
+    // whole compile. Extended (2026-10-20, static analysis, not yet an
+    // individually-confirmed-live repro the way layout.tsx was) to the same
+    // class of Next.js-only convention file carrying the identical risk:
+    // route handlers and middleware import `next/server`
+    // (NextRequest/NextResponse), and the image-metadata convention files
+    // import `ImageResponse` from `next/og` — neither module exists in
+    // Sandpack's plain react-ts template either, and none of these files is
+    // ever the preview's entry point or renders anything a founder would
+    // see in the preview. Skip these — they describe the real app's shell,
+    // not anything the preview sandbox needs or can run.
     const basename = path.slice(path.lastIndexOf('/') + 1)
-    if (/^(layout|sitemap|robots)\.tsx?$/.test(basename)) {
+    if (
+      /^(layout|sitemap|robots|middleware|instrumentation|route|opengraph-image|twitter-image|icon|apple-icon|manifest)\.tsx?$/.test(
+        basename
+      )
+    ) {
       continue
     }
     let content = rawContent

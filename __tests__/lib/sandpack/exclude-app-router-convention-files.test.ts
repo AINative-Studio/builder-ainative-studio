@@ -61,4 +61,43 @@ describe('buildSandpackFiles — excludes Next.js App Router convention files (#
     expect(built['/src/components/AppLayout.tsx']).toBeDefined()
     expect(built['/components/AppLayout.tsx']).toBeDefined()
   })
+
+  /**
+   * Extended 2026-10-20 (static analysis, same root-cause class as the
+   * layout.tsx bug above — see build-files.ts's own comment): sandpack-
+   * bundler's collectAppBarrelUsage scans every provided file's imports,
+   * reachable or not, and calling resolveAsync on an unresolvable specifier
+   * anywhere silently fails the whole compile. route.ts/middleware.ts import
+   * `next/server`; the image-metadata convention files import `next/og` —
+   * neither exists in Sandpack's plain react-ts template.
+   */
+  it('excludes route.ts, middleware.ts, and instrumentation.ts (import next/server, never Sandpack-resolvable)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <div>hi</div> }",
+      '/app/api/widgets/route.ts': `import { NextRequest, NextResponse } from 'next/server'\nexport async function GET(req: NextRequest) { return NextResponse.json({ ok: true }) }`,
+      '/middleware.ts': `import { NextResponse } from 'next/server'\nexport function middleware() { return NextResponse.next() }`,
+      '/instrumentation.ts': `export function register() {}`,
+    })
+    expect(built['/app/api/widgets/route.ts']).toBeUndefined()
+    expect(built['/middleware.ts']).toBeUndefined()
+    expect(built['/instrumentation.ts']).toBeUndefined()
+    expect(Object.values(built).some(code => code.includes('next/server'))).toBe(false)
+  })
+
+  it('excludes the Next.js image-metadata convention files (import next/og, never Sandpack-resolvable)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <div>hi</div> }",
+      '/app/opengraph-image.tsx': `import { ImageResponse } from 'next/og'\nexport default function OG() { return new ImageResponse(<div/>) }`,
+      '/app/twitter-image.tsx': `import { ImageResponse } from 'next/og'\nexport default function Tw() { return new ImageResponse(<div/>) }`,
+      '/app/icon.tsx': `import { ImageResponse } from 'next/og'\nexport default function Icon() { return new ImageResponse(<div/>) }`,
+      '/app/apple-icon.tsx': `import { ImageResponse } from 'next/og'\nexport default function AppleIcon() { return new ImageResponse(<div/>) }`,
+      '/app/manifest.ts': `export default function manifest() { return {} }`,
+    })
+    expect(built['/app/opengraph-image.tsx']).toBeUndefined()
+    expect(built['/app/twitter-image.tsx']).toBeUndefined()
+    expect(built['/app/icon.tsx']).toBeUndefined()
+    expect(built['/app/apple-icon.tsx']).toBeUndefined()
+    expect(built['/app/manifest.ts']).toBeUndefined()
+    expect(Object.values(built).some(code => code.includes('next/og'))).toBe(false)
+  })
 })
