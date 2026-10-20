@@ -4,24 +4,33 @@ import { templateFiles } from '@/lib/sandpack/setup'
 /**
  * Real production bug found live (2026-10-19): 9 of 23 real companies'
  * /build/{slug} previews rendered with zero CSS applied — real content,
- * real Tailwind classNames in the DOM, just unstyled. Two-layer root cause:
+ * real Tailwind classNames in the DOM, just unstyled. Three-layer
+ * investigation (two fixes landed, neither sufficient alone, a third found
+ * the fix was targeting the wrong file entirely):
  *
  *   1. Tailwind's CDN script was loaded via Sandpack's `externalResources`
  *      option — an async <script> injected AFTER the bundler's HTML shell
  *      had already loaded, racing React's render.
- *   2. Even loading it as a blocking <script> in the HTML shell wasn't
- *      enough on its own: the script sets `window.tailwind` synchronously
- *      on load, but the actual CSS compile+inject (via a MutationObserver
- *      that needs real DOM content to scan) happens asynchronously AFTER
- *      React mounts — confirmed live, the blocking-script-only fix did not
- *      resolve the bug on retest.
+ *   2. Loading it as a blocking <script> in the HTML shell wasn't enough on
+ *      its own: the script sets `window.tailwind` synchronously on load,
+ *      but the actual CSS compile+inject (via a MutationObserver that needs
+ *      real DOM content to scan) happens asynchronously AFTER React mounts.
+ *   3. The mount-gating fix (#root hidden, revealed only once a real
+ *      <style> tag is confirmed) was written to '/src/index.tsx' — but
+ *      Sandpack's own `react-ts` template boots from ROOT '/index.tsx'
+ *      (confirmed by reading @codesandbox/sandpack-react's
+ *      REACT_TYPESCRIPT_TEMPLATE source: package.json main is
+ *      "/index.tsx"). A files-map key only overrides the template file at
+ *      the EXACT same path, so '/src/index.tsx' was dead code from the
+ *      start — the template's own stock entry point (no Tailwind-wait logic
+ *      at all) kept booting every real Sandpack preview. Confirmed live:
+ *      wrench stayed blank 30+ seconds — past even Sandpack's own 15s
+ *      watchdog — after layers 1+2 were believed fixed and deployed.
  *
- * Real fix: #root starts hidden (opacity:0), React mounts immediately (so
- * Tailwind's observer has content to scan), and a poll only reveals #root
- * once a real <style> tag with actual CSS content is confirmed present in
- * <head> — the one source of truth that styling has genuinely applied.
+ * Real fix: the override MUST be at '/index.tsx' (root), matching the
+ * template's real entry point exactly.
  */
-describe('Sandpack preview — Tailwind CDN load-order race (#1115/#1117)', () => {
+describe('Sandpack preview — Tailwind CDN load-order race (#1115/#1117/#1119)', () => {
   it('declares the Tailwind CDN script as a blocking tag in the HTML shell, before any other script', () => {
     const html = templateFiles['/public/index.html']
     const tailwindIndex = html.indexOf('<script src="https://cdn.tailwindcss.com">')
@@ -44,8 +53,17 @@ describe('Sandpack preview — Tailwind CDN load-order race (#1115/#1117)', () =
     expect(html).toMatch(/id="root"\s+style="opacity:\s*0;?"/)
   })
 
-  it('index.tsx mounts React immediately (Tailwind needs real DOM content to scan)', () => {
-    const indexTsx = templateFiles['/src/index.tsx']
+  it('the mount-gating override lives at the template\'s REAL entry point, /index.tsx (root) — not /src/index.tsx', () => {
+    // The real bug: this override was written to the wrong path and was
+    // dead code. Assert directly on the key the template actually boots
+    // from, and that the wrong path is NOT where the logic lives.
+    expect(templateFiles['/index.tsx']).toBeDefined()
+    expect(templateFiles['/index.tsx']).toContain('revealOnceStyled')
+    expect(templateFiles['/src/index.tsx']).toBeUndefined()
+  })
+
+  it('/index.tsx mounts React immediately (Tailwind needs real DOM content to scan)', () => {
+    const indexTsx = templateFiles['/index.tsx']
     // The createRoot/render call must not be gated behind any wait — mount
     // happens unconditionally and synchronously at module load.
     const mountIndex = indexTsx.indexOf('root.render(<App />)')
@@ -56,7 +74,7 @@ describe('Sandpack preview — Tailwind CDN load-order race (#1115/#1117)', () =
   })
 
   it('reveals #root only once a real <style> tag with actual CSS content is confirmed present', () => {
-    const indexTsx = templateFiles['/src/index.tsx']
+    const indexTsx = templateFiles['/index.tsx']
     expect(indexTsx).toContain('document.head.querySelectorAll(\'style\')')
     expect(indexTsx).toContain('.textContent || \'\').length > 0')
     expect(indexTsx).toContain('el.style.opacity = \'1\'')
