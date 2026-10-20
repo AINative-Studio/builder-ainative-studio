@@ -14,7 +14,7 @@ vi.mock('@/lib/build/company-zerodb-credentials', () => ({
   resolveCompanyZerodbKey: h.resolveCompanyZerodbKey,
 }))
 
-import { countVisitors } from '@/lib/build/visitor-metrics'
+import { countVisitors, listVisitors } from '@/lib/build/visitor-metrics'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -28,15 +28,23 @@ beforeEach(() => {
  * landing page fires on mount.
  *
  * Real, live bug found post-deploy (2026-09-06): every company sampled in
- * production had NO zerodbProjectId (none were provisioned with a dedicated
- * ZeroDB project). The write side (/api/db/{table}) already falls back to a
- * SHARED project for any unprovisioned app, but this module only ever
- * checked the per-app project — so it never looked where the real beacon
- * rows actually landed, and every dashboard read a permanent 0 despite real
- * visits happening. Fixed: when `projectId` is absent, fall back to the
- * shared project and scope the count by matching the company's own `chatId`
- * inside each row's recorded `path` (the beacon can only record its own
- * preview route, `/api/preview/{chatId}`, not the company's slug).
+ * production had NO `zerodbProjectId` at all (none of the 11 real admin-owned
+ * companies were provisioned with a dedicated ZeroDB project — they're all
+ * pre-paid trial/guest builds). `/api/db/{table}` itself already handles this
+ * by falling back to a SHARED_PROJECT_ID for any unprovisioned app (see
+ * app/api/db/[table]/route.ts's `resolveProject`) — but this module only ever
+ * checked the per-app project, which is `undefined` for these apps, so it
+ * never even looked in the shared project where the real beacon rows
+ * actually landed. Confirmed live: real rows exist in the shared project's
+ * `visitors` table (e.g. a real row from this session's own fresh-generation
+ * test), while every company's dashboard read a permanent 0.
+ *
+ * The shared table has no per-company column — a generated app has no way to
+ * know its own registered slug at runtime, so the beacon can only record
+ * `path: window.location.pathname`, which is the PREVIEW route
+ * (`/api/preview/{chatId}`), not the slug. chatId IS 1:1 with a company
+ * (app-registry.ts), so scope the shared-project count by matching the
+ * requesting company's own chatId inside that path string.
  */
 
 afterEach(() => {
@@ -127,5 +135,83 @@ describe('countVisitors', () => {
     const rows = [{ row_data: { path: '/api/preview/chat-A' } }]
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => rows }))
     expect(await countVisitors(undefined, 'chat-A')).toBe(1)
+  })
+})
+
+/**
+ * listVisitors() — the entries behind VisitorsPanel (same bar as
+ * WaitlistPanel: real data, real empty state, zero fabrication).
+ * countVisitors() above delegates to this, so these tests also cover the
+ * shape the panel renders.
+ */
+describe('listVisitors', () => {
+  it('returns [] without a projectId AND without a chatId — nothing to scope by', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await listVisitors(undefined, undefined)).toEqual([])
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('a provisioned company reads real entries from its OWN project with its OWN key', async () => {
+    const rows = [
+      { row_data: { path: '/api/preview/chat-1', ts: '2026-10-19T12:00:00.000Z' } },
+      { row_data: { path: '/api/preview/chat-1', ts: '2026-10-18T09:00:00.000Z' } },
+    ]
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: rows }) }))
+    const entries = await listVisitors('proj-1', 'chat-1')
+    expect(entries).toEqual([
+      { path: '/api/preview/chat-1', visitedAt: '2026-10-19T12:00:00.000Z' },
+      { path: '/api/preview/chat-1', visitedAt: '2026-10-18T09:00:00.000Z' },
+    ])
+  })
+
+  it('sorts newest-first by visitedAt', async () => {
+    const rows = [
+      { row_data: { path: '/p', ts: '2026-09-01T00:00:00.000Z' } },
+      { row_data: { path: '/p', ts: '2026-09-22T00:00:00.000Z' } },
+    ]
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: rows }) }))
+    const entries = await listVisitors('proj-1', 'chat-1')
+    expect(entries[0].visitedAt).toBe('2026-09-22T00:00:00.000Z')
+    expect(entries[1].visitedAt).toBe('2026-09-01T00:00:00.000Z')
+  })
+
+  it('scopes the shared-project fallback by chatId, same as countVisitors', async () => {
+    const rows = [
+      { row_data: { path: '/api/preview/chat-A', ts: '2026-10-19T00:00:00.000Z' } },
+      { row_data: { path: '/api/preview/chat-B', ts: '2026-10-19T00:00:00.000Z' } },
+    ]
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: rows }) }))
+    const entries = await listVisitors(undefined, 'chat-A')
+    expect(entries).toEqual([{ path: '/api/preview/chat-A', visitedAt: '2026-10-19T00:00:00.000Z' }])
+  })
+
+  it('returns [] on a non-ok response — never throws, never fabricates', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 404 }))
+    expect(await listVisitors('proj-1', 'chat-1')).toEqual([])
+  })
+
+  it('returns [] (never throws) on a network error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('timeout')))
+    expect(await listVisitors('proj-1', 'chat-1')).toEqual([])
+  })
+
+  it('#806: a provisioned company with NO stored key returns [] and never calls ZeroDB with the wrong key', async () => {
+    h.resolveCompanyZerodbKey.mockResolvedValue({ ok: false, reason: 'not_stored' })
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await listVisitors('legacy-proj', 'chat-1')).toEqual([])
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('countVisitors stays in lockstep with listVisitors (count === entries.length)', async () => {
+    const rows = [
+      { row_data: { path: '/p', ts: '2026-10-19T00:00:00.000Z' } },
+      { row_data: { path: '/p', ts: '2026-10-18T00:00:00.000Z' } },
+      { row_data: { path: '/p', ts: '2026-10-17T00:00:00.000Z' } },
+    ]
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: rows }) }))
+    const [count, entries] = await Promise.all([countVisitors('proj-1', 'chat-1'), listVisitors('proj-1', 'chat-1')])
+    expect(count).toBe(entries.length)
   })
 })

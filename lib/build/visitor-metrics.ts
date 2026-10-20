@@ -63,51 +63,71 @@ async function queryVisitorRows(
   }
 }
 
+export interface VisitorEntry {
+  path: string
+  visitedAt: string
+}
+
+function toEntries(rows: any[] | null): VisitorEntry[] {
+  if (!rows) return []
+  return rows
+    .map((r) => r?.row_data || r)
+    .filter((rd): rd is Record<string, unknown> => !!rd)
+    .map((rd) => ({ path: String(rd.path ?? ''), visitedAt: String(rd.ts ?? rd.visitedAt ?? '') }))
+    .sort((a, b) => b.visitedAt.localeCompare(a.visitedAt))
+}
+
 /**
- * Count real pageviews for a company. Returns 0 (never negative, never
+ * Real pageview entries for a company, newest first. Returns [] (never
  * fabricated) for a never-visited app or any read failure — an honest empty
- * state, exactly like every other metric store in this codebase.
+ * state, exactly like waitlist-metrics.ts's listWaitlist().
  *
- * `projectId` — the company's OWN ZeroDB project, when provisioned (counts
+ * `projectId` — the company's OWN ZeroDB project, when provisioned (reads
  * every row there directly, no scoping needed — the table itself is already
- * private to that company). `chatId` — required to correctly scope a count
+ * private to that company). `chatId` — required to correctly scope entries
  * in the SHARED project (used when `projectId` is absent): matches only rows
- * whose recorded `path` contains this exact chatId, so one company's count
- * never includes another unprovisioned company's visitors.
+ * whose recorded `path` contains this exact chatId, so one company's entries
+ * never include another unprovisioned company's visitors.
  *
- * KEY SCOPING (#806): the per-project branch used to query a company's OWN
- * project with the SHARED service key, which ZeroDB rejects
- * (403 API_KEY_PROJECT_MISMATCH) — so every provisioned company's count read a
- * permanent 0 regardless of real traffic, the 403 swallowed by the
- * fail-toward-0 policy. It now resolves that project's OWN stored key
- * (company-zerodb-credentials.ts). A company provisioned BEFORE that store
- * existed has no key and still reads 0 — unchanged from today's behavior, and
- * still honest (0 is never fabricated) — but it is now a diagnosable,
- * one-re-provision-away state rather than a structural dead end. The shared
- * key is NEVER used against a per-company project.
+ * KEY SCOPING (#806, mirrored verbatim from the original countVisitors): the
+ * per-project branch needs that project's OWN stored key
+ * (company-zerodb-credentials.ts) — the shared service key is NEVER used
+ * against a per-company project.
  */
-export async function countVisitors(
+export async function listVisitors(
   projectId: string | undefined | null,
   chatId?: string | undefined | null,
-): Promise<number> {
+): Promise<VisitorEntry[]> {
   if (projectId && projectId !== SHARED_PROJECT_ID) {
     const key = await resolveCompanyZerodbKey(projectId).catch(() => ({ ok: false } as const))
-    if (!key.ok || !key.apiKey) return 0
+    if (!key.ok || !key.apiKey) return []
     const rows = await queryVisitorRows(projectId, {}, key.apiKey)
-    return rows ? rows.length : 0
+    return toEntries(rows)
   }
   if (projectId) {
     // The company's project IS the shared project — the shared key is the
     // correctly-scoped key for it.
     const rows = await queryVisitorRows(projectId, {}, getApiKey())
-    return rows ? rows.length : 0
+    return toEntries(rows)
   }
-  if (!chatId) return 0
+  if (!chatId) return []
   const rows = await queryVisitorRows(SHARED_PROJECT_ID, {}, getApiKey())
-  if (!rows) return 0
+  if (!rows) return []
   const matching = rows.filter((r) => {
     const path = String(r?.row_data?.path || r?.path || '')
     return path.includes(chatId)
   })
-  return matching.length
+  return toEntries(matching)
+}
+
+/**
+ * Count of real pageviews — the hero-metric number. Delegates to
+ * listVisitors() so the count and the founder-facing list (VisitorsPanel)
+ * can never drift apart, mirroring waitlist-metrics.ts's countWaitlist().
+ */
+export async function countVisitors(
+  projectId: string | undefined | null,
+  chatId?: string | undefined | null,
+): Promise<number> {
+  return (await listVisitors(projectId, chatId)).length
 }
