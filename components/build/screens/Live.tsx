@@ -32,6 +32,7 @@ import { MediaPanel } from '@/components/build/MediaPanel'
 import { AutoModePanel } from '@/components/build/AutoModePanel'
 import { GrowthPanel } from '@/components/build/GrowthPanel'
 import { WaitlistPanel } from '@/components/build/WaitlistPanel'
+import { VisitorsPanel } from '@/components/build/VisitorsPanel'
 import { WebsitePanel } from '@/components/build/WebsitePanel'
 import { FeedbackPulse } from '@/components/build/FeedbackPulse'
 import { ZeroInvoiceConnect } from '@/components/build/ZeroInvoiceConnect'
@@ -1376,6 +1377,10 @@ export function Live() {
                 answer. The hero form already persisted every real signup;
                 this is the missing read side. */}
             <WaitlistPanel companyId={companyId} />
+            {/* Visitor tracking's detail view — the hero "visitors" metric above
+                already showed a real count (#483/#563); this is the missing
+                per-visit list, same bar as WaitlistPanel. */}
+            <VisitorsPanel companyId={companyId} />
             <AutoModePanel
               companyId={companyId}
               companyName={company}
