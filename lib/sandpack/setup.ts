@@ -81,10 +81,7 @@ export const templateFiles: Record<string, string> = {
     (function loadTailwind(attempt) {
       var s = document.createElement('script');
       s.src = 'https://cdn.tailwindcss.com';
-      console.log('[TidemarkDiag3] loadTailwind attempt', attempt, 'appending script');
-      s.onload = function() { console.log('[TidemarkDiag3] script onload fired, attempt', attempt, 'window.tailwind:', typeof window.tailwind); };
-      s.onerror = function(e) {
-        console.log('[TidemarkDiag3] script onerror fired, attempt', attempt);
+      s.onerror = function() {
         if (attempt < 3) {
           setTimeout(function() { loadTailwind(attempt + 1); }, 300);
         }
@@ -176,16 +173,10 @@ function tailwindStyleInjected(): boolean {
   )
 }
 
-let _diagLogged = false
 function revealOnceStyled(deadline: number) {
   const el = document.getElementById('root')!
-  if (!_diagLogged) {
-    _diagLogged = true
-    console.log('[TidemarkDiag3] window.tailwind:', typeof (window as any).tailwind, 'styleTags:', document.head.querySelectorAll('style').length, 'scriptTags:', Array.from(document.head.querySelectorAll('script')).map(s => s.src || '(inline)'))
-  }
   if (tailwindStyleInjected() || Date.now() >= deadline) {
     el.style.opacity = '1'
-    console.log('[TidemarkDiag3] REVEALED. window.tailwind:', typeof (window as any).tailwind, 'styleTags:', document.head.querySelectorAll('style').length, 'scriptTags:', Array.from(document.head.querySelectorAll('script')).map(s => s.src || '(inline)'))
     return
   }
   setTimeout(() => revealOnceStyled(deadline), 30)
