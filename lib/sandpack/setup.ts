@@ -57,31 +57,36 @@ export const templateFiles: Record<string, string> = {
    * #root only once Tailwind's injected <style> tag is confirmed present.
    */
   /**
-   * ROOT CAUSE FOUND (2026-10-19/20, #1129), after cloning the real
+   * ROOT CAUSE FOUND (2026-10-19/20, #1129/#1130), after cloning the real
    * AINative-Studio/sandpack-bundler source: its replaceHTML() (src/utils/
    * html.ts) parses this file into { head, body } via getHTMLParts(), but
    * then ONLY ever applies `document.body.innerHTML = body` -- the comment
-   * directly above it reads "// We only replace the body for now". The
-   * parsed `head` value is returned but the caller (bundler.ts's own
-   * replaceHTML() wrapper) never awaits or uses that return value at all.
-   * This means <head> content in this file -- EVERY <script>/<link>/<meta>
-   * tag placed there, across every fix attempted tonight (#1115 through
-   * #1128) -- has NEVER actually been applied to the real document by this
-   * bundler. It is a genuine, confirmed incomplete feature in that fork,
-   * not something fixable by changing what goes inside <head> here.
-   * Confirmed directly: diagnostic logging showed the rendered
-   * document.head containing ONLY the bundler's own runtime script --
-   * neither our Tailwind tag nor our unhandled-rejection-listener script
-   * (both previously in <head>) ever appeared, on repeated reloads of
-   * wrench (a company working correctly before tonight's head-only
-   * changes were ever introduced -- meaning this bug has likely always
-   * existed; earlier successes were real Sandpack compiles that happened
-   * to load Tailwind via some OTHER path, not this file's <head>).
+   * directly above it reads "// We only replace the body for now". <head>
+   * content is therefore never applied at all. But moving the Tailwind
+   * <script> into <body> (#1129) ALSO didn't fix it, still live-confirmed
+   * `window.tailwind === undefined` afterward -- because `el.innerHTML =
+   * htmlString` is a standard, spec-defined DOM behavior: <script> tags
+   * parsed out of an innerHTML assignment are inert and NEVER execute, in
+   * any browser, regardless of where in the string they appear. This
+   * bundler's replaceHTML() has no code that extracts and re-creates those
+   * script nodes to make them live (the standard workaround for this exact
+   * browser quirk) -- so NO <script> tag in this HTML file, head or body,
+   * has ever executed via this mechanism. The only part of this file that
+   * does anything useful is non-script content (meta/link/title degrade
+   * gracefully if ignored) and the #root div, which IS correctly placed
+   * into the live DOM by the innerHTML assignment itself (just inert, not
+   * absent).
    *
-   * Real fix: since only `body` is ever applied, everything that needs to
-   * actually run moves there -- the Tailwind script tag placed in <body>,
-   * before #root, so it still loads/executes before React mounts into
-   * that div.
+   * Real fix (#1130): stop trying to run anything via this file's own
+   * <script> tags at all. Load Tailwind instead from inside /index.tsx
+   * (below) -- a real ES module the bundler's own module system compiles
+   * and executes directly, an entirely different code path from this
+   * dead HTML-string replacement, already proven live to execute
+   * correctly (its own diagnostic logging has reliably fired every time).
+   * document.createElement('script') + appendChild from WITHIN that module
+   * is standard, live DOM scripting -- not subject to the innerHTML-inert-
+   * script limitation at all, since the element is attached directly via
+   * the DOM API, never parsed from an HTML string.
    */
   '/public/index.html': `<!DOCTYPE html>
 <html lang="en">
@@ -93,19 +98,6 @@ export const templateFiles: Record<string, string> = {
   <title>AINative Preview</title>
 </head>
 <body style="font-family: Inter, system-ui, sans-serif; margin: 0;">
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    window.addEventListener('unhandledrejection', function(e) {
-      if (e.reason && e.reason.toString().includes('read only property')) {
-        e.preventDefault();
-      }
-    });
-    window.addEventListener('error', function(e) {
-      if (e.message && e.message.includes('read only property')) {
-        e.preventDefault();
-      }
-    });
-  </script>
   <div id="root" style="opacity: 0;"></div>
 </body>
 </html>`,
@@ -163,8 +155,23 @@ export const templateFiles: Record<string, string> = {
 import { createRoot } from 'react-dom/client'
 import App from './App'
 
+window.addEventListener('unhandledrejection', function(e) {
+  if (e.reason && e.reason.toString().includes('read only property')) {
+    e.preventDefault()
+  }
+})
+window.addEventListener('error', function(e) {
+  if (e.message && e.message.includes('read only property')) {
+    e.preventDefault()
+  }
+})
+
 const root = createRoot(document.getElementById('root')!)
 root.render(<App />)
+
+const _twScript = document.createElement('script')
+_twScript.src = 'https://cdn.tailwindcss.com'
+document.head.appendChild(_twScript)
 
 function tailwindStyleInjected(): boolean {
   return Array.from(document.head.querySelectorAll('style')).some(
@@ -176,7 +183,7 @@ function revealOnceStyled(deadline: number) {
   const el = document.getElementById('root')!
   if (tailwindStyleInjected() || Date.now() >= deadline) {
     el.style.opacity = '1'
-    console.log('[TwDiag]', 'tw=' + typeof (window as any).tailwind, 'styles=' + document.head.querySelectorAll('style').length, 'scriptSrcs=' + JSON.stringify(Array.from(document.head.querySelectorAll('script')).map((s) => s.getAttribute('src') || '(inline:' + s.textContent!.length + 'ch)')), 'timedOut=' + (Date.now() >= deadline))
+    console.log('[TwDiag]', 'tw=' + typeof (window as any).tailwind, 'styles=' + document.head.querySelectorAll('style').length, 'timedOut=' + (Date.now() >= deadline))
     return
   }
   setTimeout(() => revealOnceStyled(deadline), 30)
