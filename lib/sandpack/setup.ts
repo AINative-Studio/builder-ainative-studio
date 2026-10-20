@@ -155,7 +155,13 @@ function revealOnceStyled(deadline: number) {
   setTimeout(() => revealOnceStyled(deadline), 30)
 }
 
-revealOnceStyled(Date.now() + 3000)
+// 8s, not 3s: found live (2026-10-19) a large generated app (431 lines) took
+// longer than 3s to finish Tailwind's DOM-scan+compile on the self-hosted
+// bundler — the bound fired "correctly" (unstyled content revealed, not
+// permanently hidden) but too early, same visible symptom as the original
+// bug for anyone watching. 8s is generous enough for a large app's compile
+// to finish on a cold bundler while still bounded.
+revealOnceStyled(Date.now() + 8000)
 `,
 
   '/src/styles/globals.css': `@tailwind base;
