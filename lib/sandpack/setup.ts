@@ -62,33 +62,36 @@ export const templateFiles: Record<string, string> = {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <script>
-    // Real bug found live (2026-10-19/20, tidemark): a plain blocking
-    // <script src="https://cdn.tailwindcss.com"> sometimes never loads at
-    // all inside the Sandpack iframe — confirmed directly: window.tailwind
-    // stayed 'undefined' and zero <style> tags existed even after a fully
-    // clean Sandpack compile (done/success, zero errors) and well past the
-    // reveal deadline. Non-deterministic across reloads of the SAME app —
-    // sometimes loads fine, sometimes doesn't — and the self-hosted
-    // bundler's own CPU/memory were confirmed idle at the time, ruling out
-    // server-side overload. This points to a transient network fetch
-    // failure for the external CDN script itself, which a plain <script
-    // src> has no way to detect or recover from (a blocked/failed script
-    // tag fails silently — no error reaches window.onerror in a way
-    // distinguishable from a thousand other things). Fix: load it via a
-    // real fetch-and-retry loop instead of a static tag, so a failed
-    // attempt is actually observable and retried rather than silently
-    // leaving window.tailwind undefined forever.
-    (function loadTailwind(attempt) {
+    // Real regression found live (2026-10-19/20): an EARLIER version of
+    // this fix (#1126) replaced the static <script src> below entirely
+    // with document.createElement('script') + appendChild, intended to add
+    // a retry on failure for tidemark, whose Tailwind script intermittently
+    // never loaded. That broke every OTHER company that had been working
+    // correctly: a dynamically-created <script> element ALWAYS loads
+    // asynchronously (per the HTML spec — true regardless of async/defer
+    // attributes, which don't even apply to the createElement path),
+    // unlike a static parser-inserted <script src> with neither attribute,
+    // which genuinely blocks HTML parsing — the browser fetches and
+    // executes it before continuing to <body>/mounting React. Losing that
+    // blocking guarantee reintroduced the exact load-order race
+    // #1115/#1117/#1119 already fixed — confirmed live: wrench, lumeo,
+    // shingle, all previously verified correctly styled, went back to
+    // rendering completely unstyled after that change shipped.
+    //
+    // Real fix (#1127): keep the static blocking tag below as the primary
+    // load, and ONLY retry — via a dynamically-created script, an
+    // acceptable tradeoff once the primary synchronous attempt has already
+    // failed — from that tag's own onerror, never instead of it.
+    function _twRetry(attempt) {
       var s = document.createElement('script');
       s.src = 'https://cdn.tailwindcss.com';
-      s.onerror = function() {
-        if (attempt < 3) {
-          setTimeout(function() { loadTailwind(attempt + 1); }, 300);
-        }
-      };
+      if (attempt < 3) {
+        s.onerror = function() { setTimeout(function() { _twRetry(attempt + 1); }, 300); };
+      }
       document.head.appendChild(s);
-    })(1);
+    }
   </script>
+  <script src="https://cdn.tailwindcss.com" onerror="_twRetry(1)"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <title>AINative Preview</title>
