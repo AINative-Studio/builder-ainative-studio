@@ -45,7 +45,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { listEnrolled, recordRun, listRecentRuns } from '@/lib/build/loop-enrollment'
+import { listEnrolled, recordRun, listRecentRuns, recordRunHealth } from '@/lib/build/loop-enrollment'
 import { runNightlyLoop, buildNightlySeedDescription, type NightlyRunResult } from '@/lib/build/autonomous-loop'
 import { appendAutoRunEvent } from '@/lib/build/auto-mode'
 import { dispatchEventTitle } from '@/lib/build/auto-run-activity'
@@ -216,6 +216,24 @@ export async function GET(request: NextRequest) {
         stalledCompanies, of: completed.length,
       })
     }
+
+    // #1130: give this aggregate a persisted home, not just the log line
+    // above and the HTTP response below — neither reachable once Railway cron
+    // (not a GitHub Actions matrix) is what's calling this route.
+    await recordRunHealth({
+      shardIndex: sharded ? Number(rawShard) : null,
+      shardCount: sharded ? Number(rawShards) : null,
+      enrolled: enrolled.length,
+      processed: completed.length,
+      deferred,
+      budgetExhausted,
+      dispatched,
+      failed: failedCompanies,
+      tasksAttempted,
+      tasksCompleted,
+      stalledCompanies,
+      elapsedMs,
+    })
 
     return NextResponse.json({
       ok: true,

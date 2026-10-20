@@ -21,6 +21,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 const h = vi.hoisted(() => ({
   listEnrolled: vi.fn(),
   recordRun: vi.fn(),
+  recordRunHealth: vi.fn(),
   runNightlyLoop: vi.fn(),
   appendAutoRunEvent: vi.fn(),
   createDocument: vi.fn(),
@@ -35,7 +36,7 @@ const h = vi.hoisted(() => ({
   fetchPlanByEmail: vi.fn(),
 }))
 
-vi.mock('@/lib/build/loop-enrollment', () => ({ listEnrolled: h.listEnrolled, recordRun: h.recordRun }))
+vi.mock('@/lib/build/loop-enrollment', () => ({ listEnrolled: h.listEnrolled, recordRun: h.recordRun, recordRunHealth: h.recordRunHealth }))
 vi.mock('@/lib/build/autonomous-loop', () => ({
   runNightlyLoop: h.runNightlyLoop,
   buildTaskDescription: (input: any, briefing: string | null) =>
@@ -75,6 +76,7 @@ describe('GET /api/build/nightly-loop — plan-tier-aware task throughput (#908)
     delete process.env.CRON_SECRET
     h.listEnrolled.mockResolvedValue([APP_ENROLLMENT])
     h.recordRun.mockResolvedValue(undefined)
+    h.recordRunHealth.mockResolvedValue(undefined)
     h.runNightlyLoop.mockResolvedValue({
       companyId: 'beacon', briefing: 'real briefing', taskId: 'task-1', status: 'dispatched', detail: 'ok',
     })
