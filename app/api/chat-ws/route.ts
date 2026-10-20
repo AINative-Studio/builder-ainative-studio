@@ -20,6 +20,9 @@ import { buildRagContext } from '@/lib/build/rag-context'
 import { shouldDecompose, buildDecompositionPrompt, buildFixAndDecomposePrompt } from '@/lib/build/decomposition'
 import { selectModelForComplexity, modelSelectionReport } from '@/lib/build/model-select'
 import { recallPastPerformance, storeGenerationMemory, relateEntityToPrimitives } from '@/lib/agent/zeromemory'
+import { resolveAppByChatId } from '@/lib/build/app-registry'
+import { chatScopeKey } from '@/lib/build/chat-store'
+import { createTask } from '@/lib/build/task-store'
 import { buildVerifyPrompt, buildVerifyAgentOptions } from '@/lib/agent/verify-loop'
 import { getWorktreeTestFailure, clearWorktreeTestResult } from '@/lib/agent/test-runner'
 import { GenerationCheckpoint, resolveDegradation } from '@/lib/generation-checkpoint'
@@ -1923,6 +1926,38 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
             // free-text memory content above. Fire-and-forget, never blocks.
             const { names: usedPrimitiveNames } = selectPrimitives(message, 'company', validRole)
             relateEntityToPrimitives(responseId, usedPrimitiveNames).catch(() => {})
+
+            // #1138: unresolved obedience-gate gaps (persistence, AIKit,
+            // primitive compliance, visitor tracking, fake lead capture, fake
+            // buttons, hardcoded toggles, AX) previously fed ONLY this
+            // ZeroMemory quality score — an internal recall signal a founder
+            // never sees. Every one of these gaps is a real, user-visible
+            // defect the generated app shipped with, yet none of them ever
+            // became a tracked backlog item, so the nightly task-resolution
+            // loop (task-resolution-loop.ts) had nothing to pick up and fix.
+            // File it as a plain `todo` task here — the existing resolver
+            // pipeline (task-resolver.ts, #905 "No Code Without An Issue")
+            // already opens a real Gitea issue for any `todo` row on its own,
+            // so this doesn't need to duplicate that. Detached (not awaited),
+            // same as relateEntityToPrimitives above: createTask's own
+            // story-point estimate is a real LLM call, and gating this SSE
+            // stream's close on it would add founder-visible latency for a
+            // best-effort bookkeeping row. A lookup/write failure here must
+            // never affect the response already served to the founder.
+            if (!obFinal.ok && chatId) {
+              resolveAppByChatId(chatId)
+                .then((app) => {
+                  if (!app?.slug) return null
+                  const scopeKey = chatScopeKey(app.ownerEmail || 'guest:anon', app.slug)
+                  return createTask(scopeKey, {
+                    title: `Fix generation compliance gap: ${obFinal.reasons[0] || 'obedience-gate check failed'}`,
+                    detail: obFinal.reasons.join('\n'),
+                    stage: 'todo',
+                    source: 'cody',
+                  })
+                })
+                .catch(() => {})
+            }
           } catch (memErr: any) {
             console.warn('[ZeroMemory] consolidate error (non-fatal):', memErr?.message || memErr)
           }
