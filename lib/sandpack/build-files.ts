@@ -33,6 +33,23 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
     if (path.endsWith('.txt') || path.endsWith('.xml') || (path.endsWith('.json') && path.includes('well-known'))) {
       continue
     }
+    // Real bug found live (2026-10-19, tidemark): Next.js App Router
+    // convention files (layout.tsx, sitemap.ts, robots.ts) are generated for
+    // the REAL deployed app — layout.tsx in particular commonly imports
+    // next/font/google, a module that only exists in a real Next.js runtime.
+    // Sandpack's preview sandbox is a plain `react-ts` template with no
+    // Next.js runtime at all, and these files are never the preview's entry
+    // point — but buildSandpackFiles() included them anyway (no filter
+    // existed), so Sandpack's own dependency walker tried to resolve
+    // next/font/google, failed with "Cannot find module", and silently
+    // failed the whole compile with zero error surfaced to the parent page
+    // (confirmed live via Sandpack's own relayed console message). Skip
+    // these — they describe the real app's shell, not anything the preview
+    // sandbox needs or can run.
+    const basename = path.slice(path.lastIndexOf('/') + 1)
+    if (/^(layout|sitemap|robots)\.tsx?$/.test(basename)) {
+      continue
+    }
     let content = rawContent
     if (/\.(t|j)sx?$/.test(path)) {
       try { content = sanitizeForSandpack(rawContent) } catch { content = rawContent }
