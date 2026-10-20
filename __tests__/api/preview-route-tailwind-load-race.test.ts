@@ -55,4 +55,16 @@ describe('/api/preview/[id] route — Tailwind CDN load-order race (#1115/#1117)
     expect(revealIndex).toBeGreaterThan(-1)
     expect(renderIndex).toBeLessThan(revealIndex)
   })
+
+  /**
+   * Real bug found live (2026-10-20): a fixed bound (tried 3s/8s/15s in
+   * turn) could never cover every app size — a single giant generated file
+   * (vaultn: ~30,000 chars, no separate components) still exceeded 15s.
+   * Fix: scale the bound to componentCode.length (the real compiled
+   * content, already in scope server-side) instead of one fixed number.
+   */
+  it('scales the reveal bound to the real component content size instead of using one fixed number for every app', () => {
+    expect(source).toContain('${componentCode.length}')
+    expect(source).toMatch(/Math\.min\(30000,\s*8000\s*\+\s*Math\.floor\(\$\{componentCode\.length\}/)
+  })
 })

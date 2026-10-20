@@ -83,4 +83,22 @@ describe('Sandpack preview — Tailwind CDN load-order race (#1115/#1117/#1119)'
     // content rather than leaving it permanently invisible.
     expect(indexTsx).toMatch(/Date\.now\(\)\s*>=\s*deadline/)
   })
+
+  /**
+   * Real bug found live (2026-10-20): a fixed bound (tried 3s, 8s, 15s in
+   * turn) could never cover every app size — vaultn's generation produced a
+   * single 30,000-char App.tsx with no separate component files, and
+   * Tailwind's JIT genuinely takes longer to compile that much JSX in one
+   * pass. A fixed bound forces choosing between making small apps wait
+   * unnecessarily long or leaving large ones revealed-but-unstyled. The
+   * bound must scale to how much source Sandpack actually has to compile.
+   */
+  it('scales the reveal bound to the real app content size instead of using one fixed number for every app', () => {
+    const indexTsx = templateFiles['/index.tsx']
+    expect(indexTsx).toContain('__APP_SOURCE_CHARS__')
+    expect(indexTsx).toMatch(/Math\.min\(\s*30000/)
+    // A bounded cap must still exist even when scaling up — a genuinely
+    // stuck compile must not wait forever regardless of reported size.
+    expect(indexTsx).toMatch(/revealOnceStyled\(Date\.now\(\)\s*\+\s*_boundMs\)/)
+  })
 })
