@@ -30,39 +30,31 @@ import { templateFiles } from '@/lib/sandpack/setup'
  * Real fix: the override MUST be at '/index.tsx' (root), matching the
  * template's real entry point exactly.
  */
-describe('Sandpack preview — Tailwind CDN load-order race (#1115/#1117/#1119/#1126/#1127)', () => {
-  it('declares the Tailwind CDN script as a static, blocking, parser-inserted tag — not a dynamically-created one', () => {
+describe('Sandpack preview — Tailwind CDN load-order race (#1115/#1117/#1119, regression-tested after #1126/#1127/#1128)', () => {
+  it('declares the Tailwind CDN script as a plain static, blocking, parser-inserted tag', () => {
     const html = templateFiles['/public/index.html']
 
-    // Real regression found live (2026-10-19/20): #1126 replaced this
-    // static tag entirely with document.createElement('script') +
-    // appendChild to add a retry-on-failure for tidemark. That broke every
-    // OTHER company that had been working — a dynamically-created <script>
-    // element ALWAYS loads asynchronously per the HTML spec, regardless of
-    // async/defer attributes, unlike a static parser-inserted <script src>
-    // with neither attribute, which genuinely blocks HTML parsing (and
-    // therefore React's mount) until it loads. Confirmed live: wrench,
-    // lumeo, shingle — all previously verified correctly styled — went back
-    // to rendering completely unstyled after that change shipped. The
-    // static tag MUST remain the primary load path; a retry may only
-    // attach via that tag's own onerror, never replace it outright.
-    const tailwindIndex = html.indexOf('<script src="https://cdn.tailwindcss.com"')
+    // Two real regressions found live (2026-10-19/20) from two different
+    // attempts to add retry-on-failure for tidemark's intermittent
+    // Tailwind load: #1126 replaced this tag with a dynamically-created
+    // <script> element (always loads async per the HTML spec, breaking the
+    // blocking guarantee every other company depended on); #1127 restored
+    // a static tag but wrench STILL rendered unstyled afterward on
+    // repeated reloads, and a long inline-script comment leaked as visible
+    // page text. #1128 reverted this file entirely back to the single
+    // plain line below, exactly as it was at #1123 (the last commit
+    // confirmed stable across all 9 previously-fixed companies). Any
+    // future retry-on-failure attempt must be verified live against that
+    // same set of companies, not just against tidemark, before being
+    // considered done.
+    const tailwindIndex = html.indexOf('<script src="https://cdn.tailwindcss.com">')
     expect(tailwindIndex).toBeGreaterThan(-1)
 
     const tailwindScriptTag = html.slice(tailwindIndex, html.indexOf('</script>', tailwindIndex) + '</script>'.length)
     expect(tailwindScriptTag).not.toMatch(/\basync\b/)
     expect(tailwindScriptTag).not.toMatch(/\bdefer\b/)
-
-    // The retry-on-failure logic (#1126/#1127) must still exist, attached
-    // via this tag's own onerror attribute — never as a replacement for the
-    // static tag itself. The retry function body lives in a preceding
-    // <script> block (so its real doc comment isn't inline inside an HTML
-    // attribute), called by name from onerror.
-    expect(tailwindScriptTag).toMatch(/onerror="_twRetry\(1\)"/)
-    expect(html).toContain("s.src = 'https://cdn.tailwindcss.com'")
-    expect(html).toMatch(/attempt\s*<\s*3/)
-    // The retry function must be defined BEFORE the static tag that calls it.
-    expect(html.indexOf('function _twRetry')).toBeLessThan(tailwindIndex)
+    // Exactly the plain tag — no onerror/retry wiring, no dynamic creation.
+    expect(tailwindScriptTag).toBe('<script src="https://cdn.tailwindcss.com"></script>')
 
     // Must appear before the body/root div — i.e. genuinely in <head>, not
     // injected after the app's mount point.

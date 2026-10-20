@@ -57,49 +57,33 @@ export const templateFiles: Record<string, string> = {
    * #root only once Tailwind's injected <style> tag is confirmed present.
    */
   /**
-   * REGRESSION FOUND LIVE (2026-10-19/20): an earlier version of this fix
-   * (#1126) replaced the static <script src> below entirely with
-   * document.createElement('script') + appendChild, to add a retry for
-   * tidemark's intermittent Tailwind load failure. That broke every other
-   * company that had been working: a dynamically-created <script> element
-   * always loads asynchronously per the HTML spec regardless of async/defer
-   * attributes, unlike a static parser-inserted tag with neither attribute,
-   * which genuinely blocks HTML parsing until it loads. Losing that
-   * blocking guarantee reintroduced the exact load-order race already
-   * fixed by #1115/#1117/#1119 -- confirmed live: wrench, lumeo, shingle,
-   * all previously verified correctly styled, went back to rendering
-   * completely unstyled after #1126 shipped.
-   *
-   * Real fix (#1127): keep the static blocking tag as the primary load,
-   * and only retry -- via a dynamically-created script, acceptable once
-   * the primary synchronous attempt has already failed -- from that tag's
-   * own onerror, never instead of it.
-   *
-   * SECOND REGRESSION, also found live (2026-10-19/20, same investigation):
-   * a long multi-line JS comment block placed INSIDE this HTML template's
-   * <script> tag rendered as literal visible page text on wrench -- the
-   * comment content leaked into the page body instead of staying inside
-   * the executed script. Root cause not fully traced (likely something in
-   * the self-hosted sandpack-bundler's HTML handling), but the fix is the
-   * same regardless: keep this file's own inline <script> blocks minimal,
-   * with all explanation living here in a real TS comment instead.
+   * REVERTED (2026-10-19/20, #1128): two fix attempts tonight for
+   * tidemark's intermittent Tailwind load failure (#1126's dynamic-script
+   * replacement, then #1127's static-tag-plus-retry) both caused real,
+   * confirmed-live regressions on wrench/lumeo/shingle -- companies that
+   * were working correctly before either change. #1126 broke the blocking
+   * load guarantee (a dynamically-created <script> element always loads
+   * async per the HTML spec); #1127 restored the static tag correctly but
+   * a long inline-script comment block leaked as visible page text, and
+   * even after trimming that, wrench STILL rendered unstyled on repeated
+   * reloads after #1127 deployed -- meaning the static-tag-plus-retry
+   * structure itself was not safely proven despite looking correct in
+   * isolation. Given two consecutive real regressions from two different
+   * angles on this exact file, this reverts all of it back to the single
+   * plain <script src> line, exactly as it was at #1123 (the last commit
+   * confirmed stable across wrench/lumeo/shingle/ember-box/driftly/
+   * triage/vaultn/zova/dispatch). The tidemark-specific Tailwind-load
+   * investigation (tracked in #1125, the sandpack-bundler trace) continues
+   * separately, with any future fix attempt requiring live verification
+   * against this same set of previously-working companies BEFORE being
+   * considered done, not just against tidemark.
    */
   '/public/index.html': `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <script>
-    function _twRetry(attempt) {
-      var s = document.createElement('script');
-      s.src = 'https://cdn.tailwindcss.com';
-      if (attempt < 3) {
-        s.onerror = function() { setTimeout(function() { _twRetry(attempt + 1); }, 300); };
-      }
-      document.head.appendChild(s);
-    }
-  </script>
-  <script src="https://cdn.tailwindcss.com" onerror="_twRetry(1)"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <title>AINative Preview</title>
