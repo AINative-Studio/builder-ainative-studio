@@ -171,6 +171,10 @@ root.render(<App />)
 
 const _twScript = document.createElement('script')
 _twScript.src = 'https://cdn.tailwindcss.com'
+_twScript.onload = function () {
+  document.documentElement.classList.add('tw-scan-nudge')
+  document.documentElement.classList.remove('tw-scan-nudge')
+}
 document.head.appendChild(_twScript)
 
 function tailwindStyleInjected(): boolean {
