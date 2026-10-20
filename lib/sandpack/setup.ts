@@ -61,7 +61,34 @@ export const templateFiles: Record<string, string> = {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // Real bug found live (2026-10-19/20, tidemark): a plain blocking
+    // <script src="https://cdn.tailwindcss.com"> sometimes never loads at
+    // all inside the Sandpack iframe — confirmed directly: window.tailwind
+    // stayed 'undefined' and zero <style> tags existed even after a fully
+    // clean Sandpack compile (done/success, zero errors) and well past the
+    // reveal deadline. Non-deterministic across reloads of the SAME app —
+    // sometimes loads fine, sometimes doesn't — and the self-hosted
+    // bundler's own CPU/memory were confirmed idle at the time, ruling out
+    // server-side overload. This points to a transient network fetch
+    // failure for the external CDN script itself, which a plain <script
+    // src> has no way to detect or recover from (a blocked/failed script
+    // tag fails silently — no error reaches window.onerror in a way
+    // distinguishable from a thousand other things). Fix: load it via a
+    // real fetch-and-retry loop instead of a static tag, so a failed
+    // attempt is actually observable and retried rather than silently
+    // leaving window.tailwind undefined forever.
+    (function loadTailwind(attempt) {
+      var s = document.createElement('script');
+      s.src = 'https://cdn.tailwindcss.com';
+      s.onerror = function() {
+        if (attempt < 3) {
+          setTimeout(function() { loadTailwind(attempt + 1); }, 300);
+        }
+      };
+      document.head.appendChild(s);
+    })(1);
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <title>AINative Preview</title>
@@ -146,16 +173,10 @@ function tailwindStyleInjected(): boolean {
   )
 }
 
-let _diagLogged = false
 function revealOnceStyled(deadline: number) {
   const el = document.getElementById('root')!
-  if (!_diagLogged) {
-    _diagLogged = true
-    console.log('[TidemarkDiag] window.tailwind:', typeof (window as any).tailwind, 'styleTags:', document.head.querySelectorAll('style').length)
-  }
   if (tailwindStyleInjected() || Date.now() >= deadline) {
     el.style.opacity = '1'
-    console.log('[TidemarkDiag] REVEALED. window.tailwind:', typeof (window as any).tailwind, 'styleTags:', document.head.querySelectorAll('style').length, 'styleLens:', Array.from(document.head.querySelectorAll('style')).map(s => s.textContent?.length))
     return
   }
   setTimeout(() => revealOnceStyled(deadline), 30)

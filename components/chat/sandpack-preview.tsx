@@ -103,13 +103,6 @@ function SandpackResilientTimeout({ timeoutMs, onTimeout }: { timeoutMs: number;
     arm('mount')
 
     const unsubscribe = listen((message) => {
-      // TEMP DIAGNOSTIC (2026-10-19): re-verifying the real #1124 fix
-      // actually eliminated the next/font/google error on tidemark. Remove
-      // once confirmed.
-      console.log('[SandpackDiag2] message.type:', message.type)
-      if (message.type === 'action' || message.type === 'console' || /error/i.test(message.type)) {
-        console.log('[SandpackDiag2] FULL MESSAGE:', JSON.stringify(message))
-      }
       if (message.type === 'start') {
         arm('start')
       }

@@ -30,22 +30,26 @@ import { templateFiles } from '@/lib/sandpack/setup'
  * Real fix: the override MUST be at '/index.tsx' (root), matching the
  * template's real entry point exactly.
  */
-describe('Sandpack preview — Tailwind CDN load-order race (#1115/#1117/#1119)', () => {
-  it('declares the Tailwind CDN script as a blocking tag in the HTML shell, before any other script', () => {
+describe('Sandpack preview — Tailwind CDN load-order race (#1115/#1117/#1119/#1126)', () => {
+  it('loads the Tailwind CDN script early in <head>, with a retry on fetch failure', () => {
     const html = templateFiles['/public/index.html']
-    const tailwindIndex = html.indexOf('<script src="https://cdn.tailwindcss.com">')
-    expect(tailwindIndex).toBeGreaterThan(-1)
 
-    // Must not carry async or defer — those would reintroduce the race this
-    // fix exists to close.
-    const tailwindScriptTag = html.slice(tailwindIndex, html.indexOf('</script>', tailwindIndex) + '</script>'.length)
-    expect(tailwindScriptTag).not.toMatch(/\basync\b/)
-    expect(tailwindScriptTag).not.toMatch(/\bdefer\b/)
+    // Real bug found live (2026-10-19/20, tidemark): a plain static
+    // <script src="https://cdn.tailwindcss.com"> sometimes never loads at
+    // all (confirmed live: window.tailwind stayed undefined, zero <style>
+    // tags, even past a clean Sandpack compile and the full reveal
+    // deadline) — a static tag has no way to detect or recover from that.
+    // Fixed by loading it via a real script element with an onerror retry.
+    const loaderIndex = html.indexOf("loadTailwind")
+    expect(loaderIndex).toBeGreaterThan(-1)
+    expect(html).toContain("s.src = 'https://cdn.tailwindcss.com'")
+    expect(html).toContain('s.onerror')
+    expect(html).toMatch(/attempt\s*<\s*3/)
 
     // Must appear before the body/root div — i.e. genuinely in <head>, not
     // injected after the app's mount point.
     const rootDivIndex = html.indexOf('id="root"')
-    expect(tailwindIndex).toBeLessThan(rootDivIndex)
+    expect(loaderIndex).toBeLessThan(rootDivIndex)
   })
 
   it('#root starts hidden so the unstyled flash is never visible', () => {
