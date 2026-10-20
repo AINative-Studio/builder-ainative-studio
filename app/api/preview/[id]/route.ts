@@ -1647,7 +1647,14 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
             }
             setTimeout(function() { _revealOnceStyled(deadline); }, 30);
           }
-          _revealOnceStyled(Date.now() + 3000);
+          // 8s, not 3s: found live (2026-10-19) a large generated app took
+          // longer than 3s to finish Tailwind's DOM-scan+compile — the bound
+          // fired "correctly" (unstyled content revealed, not permanently
+          // hidden) but too early, same visible symptom as the original bug
+          // for anyone watching. 8s is generous enough for a large app's
+          // compile to finish while still bounded — see lib/sandpack/
+          // setup.ts's matching constant for the Sandpack preview path.
+          _revealOnceStyled(Date.now() + 8000);
 
           // Recharts <ResponsiveContainer> measures its parent via ResizeObserver
           // at mount; in this dynamically-injected iframe the measure can fire
