@@ -103,6 +103,7 @@ function SandpackResilientTimeout({ timeoutMs, onTimeout }: { timeoutMs: number;
     arm('mount')
 
     const unsubscribe = listen((message) => {
+      if (message.type === 'console') console.log('[TwRelay]', JSON.stringify(message.log))
       if (message.type === 'start') {
         arm('start')
       }

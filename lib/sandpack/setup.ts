@@ -172,6 +172,7 @@ function revealOnceStyled(deadline: number) {
   const el = document.getElementById('root')!
   if (tailwindStyleInjected() || Date.now() >= deadline) {
     el.style.opacity = '1'
+    console.log('[TwDiag]', 'tw=' + typeof (window as any).tailwind, 'styles=' + document.head.querySelectorAll('style').length, 'scripts=' + document.head.querySelectorAll('script').length, 'timedOut=' + (Date.now() >= deadline))
     return
   }
   setTimeout(() => revealOnceStyled(deadline), 30)
