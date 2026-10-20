@@ -19,6 +19,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 const h = vi.hoisted(() => ({
   listEnrolled: vi.fn(),
   recordRun: vi.fn(),
+  recordRunHealth: vi.fn(),
   listRecentRuns: vi.fn(),
   runNightlyLoop: vi.fn(),
   appendAutoRunEvent: vi.fn(),
@@ -36,7 +37,7 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/build/loop-enrollment', () => ({
-  listEnrolled: h.listEnrolled, recordRun: h.recordRun, listRecentRuns: h.listRecentRuns,
+  listEnrolled: h.listEnrolled, recordRun: h.recordRun, listRecentRuns: h.listRecentRuns, recordRunHealth: h.recordRunHealth,
 }))
 vi.mock('@/lib/build/autonomous-loop', () => ({
   runNightlyLoop: h.runNightlyLoop,
@@ -94,6 +95,7 @@ describe('nightly-loop route — bounded wall clock (#1055 Problem A)', () => {
     delete process.env.NIGHTLY_LOOP_BUDGET_MS
     h.listEnrolled.mockResolvedValue([enrollment(1)])
     h.recordRun.mockResolvedValue(undefined)
+    h.recordRunHealth.mockResolvedValue(undefined)
     h.listRecentRuns.mockResolvedValue([])
     // Echo the real input companyId back — so a per-company result can be
     // traced to the company it came from (the shard-coverage assertions
@@ -226,6 +228,33 @@ describe('nightly-loop route — bounded wall clock (#1055 Problem A)', () => {
     expect(all.size).toBe(77)
   })
 
+  // #1130: this aggregate used to be visible only in the HTTP response and a
+  // log line — neither reachable once Railway cron (not a GitHub Actions
+  // matrix) calls this route directly. recordRunHealth() gives it a
+  // persisted home so a silently-unhealthy shard can actually be noticed.
+  it('persists this invocation\'s aggregate health, matching the HTTP response exactly', async () => {
+    h.listEnrolled.mockResolvedValue(Array.from({ length: 10 }, (_, i) => enrollment(i)))
+    const res = await GET(req('https://x/api/build/nightly-loop?shard=1&shards=3'))
+    const body = await res.json()
+    expect(h.recordRunHealth).toHaveBeenCalledTimes(1)
+    expect(h.recordRunHealth).toHaveBeenCalledWith({
+      shardIndex: 1, shardCount: 3,
+      enrolled: 10, processed: body.processed, deferred: body.deferred,
+      budgetExhausted: body.budgetExhausted, dispatched: body.dispatched,
+      failed: body.failed, tasksAttempted: body.tasksAttempted,
+      tasksCompleted: body.tasksCompleted, stalledCompanies: body.stalledCompanies,
+      elapsedMs: body.elapsedMs,
+    })
+  })
+
+  it('persists null shardIndex/shardCount for an unsharded (whole-list) run', async () => {
+    h.listEnrolled.mockResolvedValue([enrollment(1)])
+    await GET(req('https://x/api/build/nightly-loop'))
+    expect(h.recordRunHealth).toHaveBeenCalledWith(
+      expect.objectContaining({ shardIndex: null, shardCount: null }),
+    )
+  })
+
   it('an out-of-range or malformed shard param degrades to processing everything, not nothing', async () => {
     h.listEnrolled.mockResolvedValue(Array.from({ length: 5 }, (_, i) => enrollment(i)))
     for (const q of ['?shard=9&shards=2', '?shard=abc&shards=xyz', '?shards=0', '?shard=-1&shards=3']) {
@@ -277,6 +306,7 @@ describe('nightly-loop route — stall visibility wiring (#1055 Problem B)', () 
     delete process.env.NIGHTLY_LOOP_BUDGET_MS
     h.listEnrolled.mockResolvedValue([enrollment(1)])
     h.recordRun.mockResolvedValue(undefined)
+    h.recordRunHealth.mockResolvedValue(undefined)
     // Real shape of the recorded run rows the loop reads back: one row per
     // night, each carrying the task id that night's dispatch returned.
     h.listRecentRuns.mockResolvedValue([
