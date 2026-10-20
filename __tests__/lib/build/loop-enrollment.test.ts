@@ -496,3 +496,145 @@ describe('isEnrolled', () => {
     expect(await isEnrolled('co-1')).toBe(true)
   })
 })
+
+function makeHealthRow(over: Record<string, unknown> = {}) {
+  return {
+    row_data: {
+      kind: 'run_health',
+      recordedAt: '2026-10-20T03:00:00Z',
+      shardIndex: 0, shardCount: 4,
+      enrolled: 20, processed: 20, deferred: 0, budgetExhausted: false,
+      dispatched: 18, failed: 2, tasksAttempted: 40, tasksCompleted: 35,
+      stalledCompanies: 1, elapsedMs: 120_000,
+      ...over,
+    },
+  }
+}
+
+// ---------- recordRunHealth (#1130) ----------
+describe('recordRunHealth', () => {
+  afterEach(() => {
+    vi.resetModules()
+    delete process.env.ZERODB_API_KEY
+    delete process.env.ZERODB_PROJECT_ID
+  })
+
+  it('does nothing (no fetch) when not configured', async () => {
+    const fn = mockFetch(() => ({ ok: true }))
+    const { recordRunHealth } = await freshUnconfigured()
+    await recordRunHealth({
+      shardIndex: 0, shardCount: 4, enrolled: 1, processed: 1, deferred: 0,
+      budgetExhausted: false, dispatched: 1, failed: 0, tasksAttempted: 0,
+      tasksCompleted: 0, stalledCompanies: 0, elapsedMs: 100,
+    })
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('POSTs a row with kind="run_health", enabled=false, and every aggregate field', async () => {
+    const fn = mockFetch(() => ({ ok: true }))
+    const { recordRunHealth } = await freshConfigured()
+    await recordRunHealth({
+      shardIndex: 2, shardCount: 4, enrolled: 20, processed: 19, deferred: 1,
+      budgetExhausted: true, dispatched: 17, failed: 2, tasksAttempted: 40,
+      tasksCompleted: 33, stalledCompanies: 3, elapsedMs: 205_000,
+    })
+    const body = JSON.parse(fn.mock.calls[0][1]!.body as string)
+    expect(body.row_data).toMatchObject({
+      kind: 'run_health', enabled: false,
+      shardIndex: 2, shardCount: 4, enrolled: 20, processed: 19, deferred: 1,
+      budgetExhausted: true, dispatched: 17, failed: 2, tasksAttempted: 40,
+      tasksCompleted: 33, stalledCompanies: 3, elapsedMs: 205_000,
+    })
+    expect(typeof body.row_data.recordedAt).toBe('string')
+  })
+
+  it('is non-fatal -- swallows network errors without throwing', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('timeout') }))
+    const { recordRunHealth } = await freshConfigured()
+    await expect(recordRunHealth({
+      shardIndex: null, shardCount: null, enrolled: 1, processed: 1, deferred: 0,
+      budgetExhausted: false, dispatched: 1, failed: 0, tasksAttempted: 0,
+      tasksCompleted: 0, stalledCompanies: 0, elapsedMs: 100,
+    })).resolves.toBeUndefined()
+  })
+
+  it('accepts null shardIndex/shardCount (unsharded run)', async () => {
+    const fn = mockFetch(() => ({ ok: true }))
+    const { recordRunHealth } = await freshConfigured()
+    await recordRunHealth({
+      shardIndex: null, shardCount: null, enrolled: 5, processed: 5, deferred: 0,
+      budgetExhausted: false, dispatched: 5, failed: 0, tasksAttempted: 10,
+      tasksCompleted: 10, stalledCompanies: 0, elapsedMs: 5_000,
+    })
+    const body = JSON.parse(fn.mock.calls[0][1]!.body as string)
+    expect(body.row_data.shardIndex).toBeNull()
+    expect(body.row_data.shardCount).toBeNull()
+  })
+})
+
+// ---------- listRecentRunHealth (#1130) ----------
+describe('listRecentRunHealth', () => {
+  afterEach(() => {
+    vi.resetModules()
+    delete process.env.ZERODB_API_KEY
+    delete process.env.ZERODB_PROJECT_ID
+  })
+
+  it('returns [] when not configured', async () => {
+    const fn = mockFetch(() => ({ ok: true }))
+    const { listRecentRunHealth } = await freshUnconfigured()
+    expect(await listRecentRunHealth()).toEqual([])
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('returns only run_health rows, excluding enrollment and run-event rows', async () => {
+    mockFetch(() => ({ ok: true, body: { data: [
+      makeEnrollmentRow({ companyId: 'co-1' }),
+      { row_data: { kind: 'run', companyId: 'co-1', lastRunAt: '2026-10-20T01:00:00Z' } },
+      makeHealthRow({ shardIndex: 0 }),
+    ] } }))
+    const { listRecentRunHealth } = await freshConfigured()
+    const result = await listRecentRunHealth()
+    expect(result).toHaveLength(1)
+    expect(result[0].shardIndex).toBe(0)
+  })
+
+  it('sorts newest first by recordedAt', async () => {
+    mockFetch(() => ({ ok: true, body: { data: [
+      makeHealthRow({ shardIndex: 0, recordedAt: '2026-10-19T03:00:00Z' }),
+      makeHealthRow({ shardIndex: 1, recordedAt: '2026-10-20T03:00:00Z' }),
+      makeHealthRow({ shardIndex: 2, recordedAt: '2026-10-19T15:00:00Z' }),
+    ] } }))
+    const { listRecentRunHealth } = await freshConfigured()
+    const result = await listRecentRunHealth()
+    expect(result.map((r) => r.shardIndex)).toEqual([1, 2, 0])
+  })
+
+  it('respects the limit', async () => {
+    mockFetch(() => ({ ok: true, body: { data: [
+      makeHealthRow({ shardIndex: 0 }), makeHealthRow({ shardIndex: 1 }), makeHealthRow({ shardIndex: 2 }),
+    ] } }))
+    const { listRecentRunHealth } = await freshConfigured()
+    expect(await listRecentRunHealth(2)).toHaveLength(2)
+  })
+
+  it('returns [] on non-ok response', async () => {
+    mockFetch(() => ({ ok: false, status: 500 }))
+    const { listRecentRunHealth } = await freshConfigured()
+    expect(await listRecentRunHealth()).toEqual([])
+  })
+
+  it('returns [] (never throws) when fetch throws', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('net') }))
+    const { listRecentRunHealth } = await freshConfigured()
+    expect(await listRecentRunHealth()).toEqual([])
+  })
+
+  it('handles raw array response (no data wrapper)', async () => {
+    mockFetch(() => ({ ok: true, body: [makeHealthRow({ shardIndex: 3 })] }))
+    const { listRecentRunHealth } = await freshConfigured()
+    const result = await listRecentRunHealth()
+    expect(result).toHaveLength(1)
+    expect(result[0].shardIndex).toBe(3)
+  })
+})

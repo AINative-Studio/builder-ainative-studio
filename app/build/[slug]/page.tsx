@@ -70,7 +70,23 @@ export default async function AppSubdirPage({ params }: Props) {
           built on AINative ↗
         </a>
       </header>
-      <StandalonePreviewFrame chatId={entry.chatId} slug={slug} title={entry.name || slug} />
+      {/* #1126 follow-up: Next.js App Router does not remount this page's
+          component tree just because the `slug` dynamic segment changed —
+          client-side navigation between two different companies' /build/{slug}
+          URLs reconciles StandalonePreviewFrame (and the SandpackProvider/
+          bundler iframe nested inside it) in place rather than tearing it
+          down. The self-hosted sandpack-bundler's `Bundler` is a singleton
+          for the iframe's whole lifetime, so that reused iframe carries the
+          PREVIOUS company's barrel-usage cache into the NEW company's
+          compile — the confirmed live trigger for #1126's cross-company
+          "Element type is invalid" crash, independent of whichever
+          sandpack-bundler-side invalidation fix (PR #8/#9/#10 on that repo)
+          eventually lands. `key={slug}` forces a real unmount/remount (fresh
+          iframe, fresh Bundler, empty cache) on every company change — the
+          exact same precaution app/demo/page.tsx already takes
+          (`key={currentPreview}`) when its own local state swaps which
+          company's preview is shown without a full page navigation. */}
+      <StandalonePreviewFrame key={slug} chatId={entry.chatId} slug={slug} title={entry.name || slug} />
       <StandalonePreviewRegenerate slug={slug} idea={entry.idea} track={entry.track} name={entry.name} />
     </div>
   )

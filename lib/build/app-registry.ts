@@ -819,6 +819,54 @@ export async function listAllApps(): Promise<AppEntry[]> {
 }
 
 /**
+ * ZeroDB's rows endpoint caps `limit` at 1000 per request (1001+ → 422, see
+ * learning.ts's own note on this same cap). `builder_app_registry` is
+ * append-only — every update (domain change, plan change, logo change, a new
+ * lifecycle row, etc.) appends a brand-new row rather than mutating one in
+ * place (see registerApp) — and has grown well past a single 1000-row page
+ * in production (#1106, filed 2026-10-16). A fixed single-page `?limit=1000`
+ * fetch silently clips whichever rows fall past that boundary, with no error
+ * surfaced anywhere: depending on which window a given read happens to land
+ * in, an old-enough company's entire row history (every field update it ever
+ * had) could go invisible to resolveApp/resolveAppVerified — turning a real
+ * owner's danger-zone action into a false "not_owner", or /build/{slug} into
+ * an unpredictable 404 for a real, live company.
+ *
+ * Pages through with `skip`, same `?limit=N&skip=page*N` convention already
+ * proven working against this same rows API on a sibling table (see
+ * loop-enrollment.ts's fetchAllRows(), built for the identical append-only
+ * single-page-clipping bug on `builder_loop_enrollments`). Capped at
+ * MAX_REGISTRY_PAGES (not truly unbounded) so a pathological table still
+ * can't hang a request indefinitely.
+ *
+ * Returns `ok: false` (never a silently-partial row list) if any page fails
+ * to fetch — every caller here already fails closed on `ok: false` rather
+ * than treating an incomplete read as a confirmed answer.
+ */
+const MAX_REGISTRY_PAGES = 50
+const REGISTRY_PAGE_SIZE = 1000
+
+async function fetchAllRegistryRows(): Promise<{ rows: Array<{ row_data?: AppEntry }>; ok: boolean }> {
+  const all: Array<{ row_data?: AppEntry }> = []
+  for (let page = 0; page < MAX_REGISTRY_PAGES; page++) {
+    const skip = page * REGISTRY_PAGE_SIZE
+    const res = await fetch(`${rowsUrl()}?limit=${REGISTRY_PAGE_SIZE}&skip=${skip}`, {
+      headers: headers(), signal: AbortSignal.timeout(20000),
+    })
+    if (!res.ok) {
+      console.error(`[app-registry] fetchAllRegistryRows failed on page ${page}: ${res.status} ${await res.text().catch(() => '')}`.slice(0, 300))
+      return { rows: all, ok: false }
+    }
+    const data = JSON.parse(await res.text())
+    const rows = Array.isArray(data) ? data : data.data || data.rows || []
+    all.push(...rows)
+    const hasMore = Array.isArray(data) ? rows.length === REGISTRY_PAGE_SIZE : Boolean(data?.has_more)
+    if (!hasMore || rows.length < REGISTRY_PAGE_SIZE) break
+  }
+  return { rows: all, ok: true }
+}
+
+/**
  * Same real read as listAllApps(), but tells the caller WHETHER the empty
  * result is genuine (no rows) or the read itself failed (real bug found
  * live, 2026-09-13: core#7395 — Builder's own ZeroDB project started
@@ -835,13 +883,8 @@ export async function listAllApps(): Promise<AppEntry[]> {
 export async function listAllAppsWithStatus(): Promise<{ apps: AppEntry[]; ok: boolean }> {
   if (!configured()) return { apps: [], ok: false }
   try {
-    const res = await fetch(`${rowsUrl()}?limit=1000`, { headers: headers(), signal: AbortSignal.timeout(20000) })
-    if (!res.ok) {
-      console.error(`[app-registry] listAllApps failed: ${res.status} ${await res.text().catch(() => '')}`.slice(0, 300))
-      return { apps: [], ok: false }
-    }
-    const data = JSON.parse(await res.text())
-    const rows = Array.isArray(data) ? data : data.data || data.rows || []
+    const { rows, ok } = await fetchAllRegistryRows()
+    if (!ok) return { apps: [], ok: false }
     const entries: AppEntry[] = rows
       .map((r: { row_data?: AppEntry }) => r.row_data)
       .filter((rd: AppEntry | undefined): rd is AppEntry => !!rd?.slug && !!rd?.chatId)
@@ -1471,10 +1514,11 @@ export async function resolveAppVerified(slug: string): Promise<{ entry: AppEntr
   if (!slug) return { entry: null, verified: true }
   if (!configured()) return { entry: null, verified: false }
   try {
-    const res = await fetch(`${rowsUrl()}?limit=1000`, { headers: headers(), signal: AbortSignal.timeout(20000) })
-    if (!res.ok) return { entry: null, verified: false }
-    const data = JSON.parse(await res.text())
-    const rows = Array.isArray(data) ? data : data.data || data.rows || []
+    // #1106: a single `?limit=1000` page can silently miss this slug's real
+    // history once the table grows past one page — see fetchAllRegistryRows()'s
+    // doc comment above listAllAppsWithStatus().
+    const { rows, ok } = await fetchAllRegistryRows()
+    if (!ok) return { entry: null, verified: false }
     const matches = rows
       .map((r: { row_data?: AppEntry }) => r.row_data)
       .filter((rd: AppEntry | undefined): rd is AppEntry => rd?.slug === slug && !!rd?.chatId)

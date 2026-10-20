@@ -280,3 +280,74 @@ export async function isEnrolled(companyId: string): Promise<boolean> {
     return false
   }
 }
+
+/**
+ * Per-invocation aggregate health for one nightly-loop sweep (#1130). Every
+ * field here is already computed by app/api/build/nightly-loop/route.ts before
+ * it builds its JSON response — this just gives that aggregate a persisted
+ * home, the same way an individual company's outcome gets one via recordRun().
+ *
+ * Before #1110 (nightly-loop's cutover from a GitHub Actions matrix to 4
+ * staggered Railway cron shards), this aggregate at least reached the
+ * Action's own job logs. Railway cron calls the route directly, so since then
+ * it's only ever been returned in the HTTP response and passed to
+ * logger.info/warn — neither reachable from a session with no Railway log
+ * access. A shard that's silently gone unhealthy (budgetExhausted every
+ * night, stalledCompanies climbing) had no way to be noticed except manually
+ * sampling individual companies' own task records one at a time.
+ */
+export interface NightlyRunHealth {
+  recordedAt: string
+  shardIndex: number | null
+  shardCount: number | null
+  enrolled: number
+  processed: number
+  deferred: number
+  budgetExhausted: boolean
+  dispatched: number
+  failed: number
+  tasksAttempted: number
+  tasksCompleted: number
+  stalledCompanies: number
+  elapsedMs: number
+}
+
+/** Persist one shard invocation's aggregate health. Best-effort, like recordRun(). */
+export async function recordRunHealth(h: Omit<NightlyRunHealth, 'recordedAt'>): Promise<void> {
+  if (!configured()) return
+  try {
+    await fetch(rowsUrl(), {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({
+        row_data: { kind: 'run_health', ...h, recordedAt: new Date().toISOString(), enabled: false },
+      }),
+      signal: AbortSignal.timeout(15000),
+    })
+  } catch {
+    /* non-fatal */
+  }
+}
+
+/**
+ * The most recent nightly-loop run-health rows, newest first — one per shard
+ * invocation. Returns [] on any failure (unconfigured store, network hiccup)
+ * so a caller degrades to "no health data" honestly rather than guessing.
+ */
+export async function listRecentRunHealth(limit = 20): Promise<NightlyRunHealth[]> {
+  if (!configured()) return []
+  try {
+    const res = await fetch(`${rowsUrl()}?limit=500`, { headers: headers(), signal: AbortSignal.timeout(20000) })
+    if (!res.ok) return []
+    const data = JSON.parse(await res.text())
+    const rows = Array.isArray(data) ? data : data.data || data.rows || []
+    const health: NightlyRunHealth[] = rows
+      .map((r: { row_data?: NightlyRunHealth & { kind?: string } }) => r.row_data)
+      .filter((rd: (NightlyRunHealth & { kind?: string }) | undefined): rd is NightlyRunHealth =>
+        rd?.kind === 'run_health')
+    health.sort((a, b) => (b.recordedAt || '').localeCompare(a.recordedAt || ''))
+    return health.slice(0, Math.max(0, limit))
+  } catch {
+    return []
+  }
+}

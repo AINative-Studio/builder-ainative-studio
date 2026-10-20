@@ -116,6 +116,7 @@ describe('recallPastPerformance', () => {
     // plain `delete` of one isn't enough to prove the true no-key path.
     process.env.ZERODB_API_KEY = ''
     process.env.AINATIVE_API_KEY = ''
+    process.env.API_Key = ''
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     const { recallPastPerformance } = await import('@/lib/agent/zeromemory')
@@ -235,6 +236,7 @@ describe('relateEntityToPrimitives', () => {
   it('returns without calling fetch when no API key is configured', async () => {
     process.env.ZERODB_API_KEY = ''
     process.env.AINATIVE_API_KEY = ''
+    process.env.API_Key = ''
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     const { relateEntityToPrimitives } = await import('@/lib/agent/zeromemory')
@@ -287,6 +289,7 @@ describe('graphNeighborsOf', () => {
   it('returns [] when no API key is configured', async () => {
     process.env.ZERODB_API_KEY = ''
     process.env.AINATIVE_API_KEY = ''
+    process.env.API_Key = ''
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     const { graphNeighborsOf } = await import('@/lib/agent/zeromemory')
@@ -334,6 +337,7 @@ describe('startDecisionTrace', () => {
   it('returns null when no API key is configured', async () => {
     process.env.ZERODB_API_KEY = ''
     process.env.AINATIVE_API_KEY = ''
+    process.env.API_Key = ''
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     const { startDecisionTrace } = await import('@/lib/agent/zeromemory')
@@ -450,6 +454,7 @@ describe('processConversation', () => {
   it('returns without calling fetch when no API key is configured', async () => {
     process.env.ZERODB_API_KEY = ''
     process.env.AINATIVE_API_KEY = ''
+    process.env.API_Key = ''
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     const { processConversation } = await import('@/lib/agent/zeromemory')
@@ -530,6 +535,7 @@ describe('reflectOnEntity', () => {
   it('returns null when no API key is configured', async () => {
     process.env.ZERODB_API_KEY = ''
     process.env.AINATIVE_API_KEY = ''
+    process.env.API_Key = ''
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     const { reflectOnEntity } = await import('@/lib/agent/zeromemory')
