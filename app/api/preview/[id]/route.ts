@@ -746,7 +746,13 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
     _s.textContent = _ebPrefix + _compiled + ';\\nif(typeof ${detectedComponentName}!=="undefined")window.${detectedComponentName}=${detectedComponentName};';
     document.body.appendChild(_s);
     console.log('[Preview] ✓ Compiled and injected: ${detectedComponentName}, exists:', typeof window['${detectedComponentName}']);
-    document.getElementById('loading-indicator').style.display = 'none';
+    // NOTE: the loading indicator is intentionally NOT hidden here. This is
+    // only the Babel-COMPILE step — the compiled script has been injected
+    // but not yet executed, React has not mounted, and Tailwind has nothing
+    // to style yet. Hiding the loader this early left a visible gap of
+    // neither loader nor styled content. The real mount (later script block)
+    // keeps the loader visible until styling is CONFIRMED applied — see its
+    // own doc comment for the full Tailwind load-order race writeup.
   } catch(e) {
     console.error('[Preview] Babel error:', e.message);
     window.__BABEL_FAILED__ = true;
@@ -875,7 +881,10 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
 </head>
 <body>
     <div id="loading-indicator"><div class="spinner"></div><p>Loading preview...</p></div>
-    <div id="root"></div>
+    <!-- #root starts hidden — see the reveal script right before </body> for
+         why (Tailwind CDN load-order race, found live 2026-10-19, same bug
+         fixed in lib/sandpack/setup.ts for the Sandpack preview path). -->
+    <div id="root" style="opacity: 0;"></div>
     <!-- Setup script: icons, hooks, libraries (plain JS, no Babel needed) -->
     <script>
       console.log('[Preview] Starting preview initialization...');
@@ -1606,9 +1615,39 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
 
           root.render(wrappedElement);
           console.log('[Preview] ✓ Render called successfully!');
-          // Hide loading indicator
+
+          // Found live (2026-10-19): hiding the loader immediately after
+          // root.render() revealed the page before Tailwind's CDN script had
+          // actually compiled+injected its <style> tag — the script sets
+          // window.tailwind SYNCHRONOUSLY on load, but the real CSS
+          // generation (scanning the DOM via MutationObserver, compiling via
+          // PostCSS) happens ASYNCHRONOUSLY afterward and can only start once
+          // real content exists to scan. Result: real content, real
+          // Tailwind classNames, zero applied CSS — same bug fixed in
+          // lib/sandpack/setup.ts for the Sandpack preview path, independently
+          // present here since this route builds its own HTML shell. Fix:
+          // only hide the loader / reveal #root once a real <style> tag with
+          // actual CSS content is confirmed in <head>. Bounded to 3s so a
+          // genuinely blocked/offline Tailwind script still reveals
+          // (unstyled) content rather than staying hidden forever.
           var loader = document.getElementById('loading-indicator');
-          if (loader) loader.style.display = 'none';
+          var rootEl = document.getElementById('root');
+          function _tailwindStyleInjected() {
+            var styles = document.head.querySelectorAll('style');
+            for (var i = 0; i < styles.length; i++) {
+              if (styles[i].textContent && styles[i].textContent.length > 0) return true;
+            }
+            return false;
+          }
+          function _revealOnceStyled(deadline) {
+            if (_tailwindStyleInjected() || Date.now() >= deadline) {
+              if (loader) loader.style.display = 'none';
+              if (rootEl) rootEl.style.opacity = '1';
+              return;
+            }
+            setTimeout(function() { _revealOnceStyled(deadline); }, 30);
+          }
+          _revealOnceStyled(Date.now() + 3000);
 
           // Recharts <ResponsiveContainer> measures its parent via ResizeObserver
           // at mount; in this dynamically-injected iframe the measure can fire
