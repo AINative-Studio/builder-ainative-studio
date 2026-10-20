@@ -171,6 +171,11 @@ describe('export read path (#63.C)', () => {
   it('buildCompanyExport fails cleanly when not configured', async () => {
     vi.stubEnv('AINATIVE_API_KEY', '')
     vi.stubEnv('ZERODB_API_KEY', '')
+    // getAinativeApiKey() also falls back to the legacy API_Key env var — a
+    // real environment can have that set for unrelated purposes (confirmed
+    // live in this cloud session), which would otherwise make this "not
+    // configured" test spuriously see a truthy key.
+    vi.stubEnv('API_Key', '')
     const r = await buildCompanyExport('proj-1')
     expect(r).toEqual({ ok: false, reason: 'not_configured' })
   })

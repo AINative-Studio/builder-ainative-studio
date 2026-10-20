@@ -134,6 +134,11 @@ describe('checkSeededData', () => {
   it('FAIL-OPEN: no API key configured → unchecked, no fetch', async () => {
     vi.stubEnv('ZERODB_API_KEY', '')
     vi.stubEnv('AINATIVE_API_KEY', '')
+    // getAinativeApiKey() also falls back to the legacy API_Key env var — a
+    // real environment can have that set for unrelated purposes (confirmed
+    // live in this cloud session), which would otherwise make this "no key"
+    // test spuriously see a truthy key.
+    vi.stubEnv('API_Key', '')
     global.fetch = vi.fn() as any
     const res = await checkSeededData(`fetch('/api/db/tasks')`)
     expect(res.checked).toBe(false)

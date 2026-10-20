@@ -105,6 +105,11 @@ describe('logAgentRun', () => {
     it('returns early and warns when ZERODB_API_KEY and AINATIVE_API_KEY are both missing', async () => {
       delete process.env.ZERODB_API_KEY
       delete process.env.AINATIVE_API_KEY
+      // getAinativeApiKey() also falls back to the legacy API_Key env var,
+      // which beforeEach's `{ ...originalEnv, ... }` spread carries over from
+      // the real host environment (confirmed set in this cloud session) —
+      // delete it too so this "both missing" case is genuinely unconfigured.
+      delete process.env.API_Key
       global.fetch = vi.fn()
 
       await logAgentRun(BASE_DATA)
