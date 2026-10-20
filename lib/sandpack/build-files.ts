@@ -59,10 +59,17 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
     // Sandpack's plain react-ts template either, and none of these files is
     // ever the preview's entry point or renders anything a founder would
     // see in the preview. Skip these — they describe the real app's shell,
-    // not anything the preview sandbox needs or can run.
+    // not anything the preview sandbox needs or can run. Extended again
+    // (2026-10-20, static analysis, issue #1143) with the remaining official
+    // App Router special-file basenames not yet covered: loading/error
+    // (error.tsx is required to be a Client Component and sometimes imports
+    // next/navigation)/global-error (replaces the root layout when active —
+    // same <html>/<body> + possible next/font risk as layout.tsx)/not-found/
+    // default (parallel routes)/template — none of these is ever reachable
+    // from the preview's real entry ('/App.tsx') either.
     const basename = path.slice(path.lastIndexOf('/') + 1)
     if (
-      /^(layout|sitemap|robots|middleware|instrumentation|route|opengraph-image|twitter-image|icon|apple-icon|manifest)\.tsx?$/.test(
+      /^(layout|sitemap|robots|middleware|instrumentation|route|opengraph-image|twitter-image|icon|apple-icon|manifest|loading|error|global-error|not-found|default|template)\.tsx?$/.test(
         basename
       )
     ) {
