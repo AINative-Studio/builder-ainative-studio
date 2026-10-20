@@ -1479,6 +1479,31 @@ export async function resolveAppByZeroVoiceNumber(e164: string): Promise<AppEntr
   return match || null
 }
 
+/**
+ * Resolve a chatId back to its owning app entry (#1138), or null.
+ *
+ * Every other lookup in this file goes slug -> entry; nothing previously
+ * went the other direction even though chat-ws/route.ts has had `chatId`
+ * on every request since the route existed. Needed so a compliance gap
+ * found mid-generation (obedience-gate.ts) can be filed as a real backlog
+ * task scoped to the right {owner, company} — the task-store scopeKey
+ * convention (chat-store.ts's chatScopeKey) needs both. Same client-side-
+ * match-over-listAllAppsWithStatus() approach as resolveAppByZeroVoiceNumber
+ * above, for the same reason: no confirmed server-side filter on this
+ * table. Never returns a soft-deleted company (matches resolveApp()'s own
+ * contract) — a Gitea issue must never be filed against a deleted company.
+ */
+export async function resolveAppByChatId(chatId: string): Promise<AppEntry | null> {
+  const id = (chatId || '').trim()
+  if (!id) return null
+  const { apps, ok } = await listAllAppsWithStatus()
+  if (!ok) return null
+  const match = apps.find(
+    (a) => a.chatId === id && (a.lifecycleStatus || 'active') !== 'deleted',
+  )
+  return match || null
+}
+
 /** Resolve a slug to its most recent app entry (chatId + brand), or null. */
 export async function resolveApp(slug: string): Promise<AppEntry | null> {
   const { entry } = await resolveAppVerified(slug)
