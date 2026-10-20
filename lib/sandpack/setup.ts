@@ -117,8 +117,23 @@ export const templateFiles: Record<string, string> = {
    * fired first. Bounded to 3s so a genuinely blocked/offline Tailwind
    * script still reveals the (unstyled) content — unstyled is strictly
    * better than permanently invisible.
+   *
+   * WRONG PATH, FOUND LIVE (2026-10-19): this override originally lived at
+   * '/src/index.tsx'. Sandpack's own `react-ts` template (customSetup is
+   * react-ts in components/chat/sandpack-preview.tsx) ships its OWN default
+   * entry at ROOT '/index.tsx' (package.json main: "/index.tsx", with no
+   * Tailwind-wait logic at all — createRoot().render(<App/>) directly) —
+   * confirmed by reading the template source in
+   * @codesandbox/sandpack-react's REACT_TYPESCRIPT_TEMPLATE. A file map key
+   * only OVERRIDES the template file at the SAME path; '/src/index.tsx' and
+   * '/index.tsx' are different files, so the real entry point Sandpack
+   * actually boots from was never touched by this fix — the stock,
+   * wait-nothing version kept running on every real Sandpack preview the
+   * whole time. Confirmed live: wrench stayed blank 30+ seconds (past even
+   * Sandpack's own 15s watchdog) after this was believed fixed. The key
+   * MUST be '/index.tsx' (root), matching the template's real path exactly.
    */
-  '/src/index.tsx': `import React from 'react'
+  '/index.tsx': `import React from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
 
