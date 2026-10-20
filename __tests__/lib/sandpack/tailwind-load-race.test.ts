@@ -70,6 +70,30 @@ describe('Sandpack preview — Tailwind CDN load-order race (#1115/#1117/#1119/#
     expect(indexTsx).toContain('document.head.appendChild(')
   })
 
+  /**
+   * Real bug found live (2026-10-19/20, final layer): even once the
+   * Tailwind script genuinely loaded (confirmed: window.tailwind became a
+   * real object, not undefined -- the first time that happened all
+   * investigation), it still never produced a <style> tag, reproducibly,
+   * even 20+ seconds after load. Root cause, found by downloading and
+   * reading Tailwind's own CDN script source directly: it sets up a
+   * MutationObserver on document.documentElement watching for class/
+   * childList changes to trigger its compile step -- but that observer is
+   * only attached once the script executes, which happens AFTER React has
+   * already mounted and written its classNames into the DOM. The observer
+   * never sees that initial mutation, so nothing ever triggers the first
+   * scan. Fix: once the script loads, explicitly toggle a class on
+   * document.documentElement (add then immediately remove) to force a
+   * mutation the observer WILL see, triggering its compile pass on the
+   * DOM as it currently stands.
+   */
+  it('nudges a documentElement class change after Tailwind loads, to trigger its MutationObserver-based scan', () => {
+    const indexTsx = templateFiles['/index.tsx']
+    expect(indexTsx).toContain('_twScript.onload')
+    expect(indexTsx).toContain('document.documentElement.classList.add(')
+    expect(indexTsx).toContain('document.documentElement.classList.remove(')
+  })
+
   it('/index.tsx mounts React immediately (Tailwind needs real DOM content to scan)', () => {
     const indexTsx = templateFiles['/index.tsx']
     // The createRoot/render call must not be gated behind any wait — mount
