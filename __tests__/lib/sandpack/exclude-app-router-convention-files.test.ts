@@ -100,4 +100,29 @@ describe('buildSandpackFiles — excludes Next.js App Router convention files (#
     expect(built['/app/manifest.ts']).toBeUndefined()
     expect(Object.values(built).some(code => code.includes('next/og'))).toBe(false)
   })
+
+  /**
+   * Extended 2026-10-20 (static analysis, issue #1143 — same root-cause
+   * class again): the remaining official Next.js App Router special-file
+   * basenames not yet covered by the exclusion regex. None of these is ever
+   * reachable from the preview's real entry ('/App.tsx') either.
+   */
+  it('excludes loading.tsx, error.tsx, global-error.tsx, not-found.tsx, default.tsx, and template.tsx (#1143)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <div>hi</div> }",
+      '/app/loading.tsx': `export default function Loading() { return <div>Loading...</div> }`,
+      '/app/error.tsx': `'use client'\nimport { useRouter } from 'next/navigation'\nexport default function Error() { const router = useRouter(); return <button onClick={() => router.refresh()}>Retry</button> }`,
+      '/app/global-error.tsx': `import { Inter } from 'next/font/google'\nconst inter = Inter({ subsets: ['latin'] })\nexport default function GlobalError() { return <html><body className={inter.className}>Error</body></html> }`,
+      '/app/not-found.tsx': `export default function NotFound() { return <div>404</div> }`,
+      '/app/default.tsx': `export default function Default() { return null }`,
+      '/app/template.tsx': `export default function Template({ children }) { return <div>{children}</div> }`,
+    })
+    expect(built['/app/loading.tsx']).toBeUndefined()
+    expect(built['/app/error.tsx']).toBeUndefined()
+    expect(built['/app/global-error.tsx']).toBeUndefined()
+    expect(built['/app/not-found.tsx']).toBeUndefined()
+    expect(built['/app/default.tsx']).toBeUndefined()
+    expect(built['/app/template.tsx']).toBeUndefined()
+    expect(Object.values(built).some(code => code.includes('next/navigation') || code.includes('next/font/google'))).toBe(false)
+  })
 })
