@@ -12,6 +12,8 @@ import {
   listAllAppsWithStatus,
   listAppsForOwner,
   listAppsForOwnerWithStatus,
+  resolveApp,
+  resolveAppVerified,
 } from '@/lib/build/app-registry'
 
 /**
@@ -136,5 +138,92 @@ describe('listAppsForOwnerWithStatus', () => {
     vi.mocked(fetch).mockResolvedValueOnce(rowsResponse([row('ember-box', { ownerEmail: 'arif@8genc.com' })]))
     const apps = await listAppsForOwner('arif@8genc.com')
     expect(apps).toHaveLength(1)
+  })
+})
+
+/**
+ * Real bug (#1106, filed 2026-10-16): every read in this file (listAllApps,
+ * listAppsForOwner, resolveApp/resolveAppVerified, and anything built on
+ * them) fetched exactly ONE `?limit=1000` page of `builder_app_registry` —
+ * an append-only table that has very likely grown past 1000 total rows in
+ * production. Whichever rows fell past that single-page boundary went
+ * silently invisible: a real founder's older company could become
+ * unresolvable (danger-zone actions wrongly reject as "not_owner",
+ * /build/{slug} 404s unpredictably) with zero error surfaced anywhere.
+ * Fixed by paging through with `skip`, mirroring loop-enrollment.ts's
+ * fetchAllRows() (same rows API, same append-only-growth problem, on a
+ * sibling table) — bounded so a pathological table still can't hang a
+ * request.
+ */
+function pagedRowsFetch(pages: any[][]): ReturnType<typeof vi.fn> {
+  return vi.fn(async (url: string | URL | Request) => {
+    const match = String(url).match(/skip=(\d+)/)
+    const skip = match ? Number(match[1]) : 0
+    const pageIndex = skip / 1000
+    const rows = pages[pageIndex] ?? []
+    const hasMore = pageIndex < pages.length - 1
+    const body = { data: rows.map((r) => ({ row_data: r })), has_more: hasMore }
+    return { ok: true, status: 200, text: async () => JSON.stringify(body) } as unknown as Response
+  })
+}
+
+describe('builder_app_registry pagination (#1106)', () => {
+  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+  it('listAllAppsWithStatus finds a slug that only exists past the first 1000-row page', async () => {
+    const page0 = Array.from({ length: 1000 }, (_, i) => row(`co-${i}`))
+    const page1 = [row('beacon', { createdAt: '2026-10-19T00:00:00Z' })]
+    vi.stubGlobal('fetch', pagedRowsFetch([page0, page1]))
+    const result = await listAllAppsWithStatus()
+    expect(result.ok).toBe(true)
+    expect(result.apps.some((a) => a.slug === 'beacon')).toBe(true)
+    expect(result.apps).toHaveLength(1001)
+  })
+
+  it('resolveApp finds a slug whose only row is past the first page', async () => {
+    const page0 = Array.from({ length: 1000 }, (_, i) => row(`co-${i}`))
+    const page1 = [row('beacon', { createdAt: '2026-10-19T00:00:00Z' })]
+    vi.stubGlobal('fetch', pagedRowsFetch([page0, page1]))
+    const entry = await resolveApp('beacon')
+    expect(entry?.slug).toBe('beacon')
+  })
+
+  it('stops paginating once a page comes back short of the page size', async () => {
+    const fn = pagedRowsFetch([[row('only-one')]])
+    vi.stubGlobal('fetch', fn)
+    await listAllAppsWithStatus()
+    expect(fn).toHaveBeenCalledTimes(1)
+  })
+
+  it('is bounded — a pathological always-full-page response cannot hang the request forever', async () => {
+    const fullPage = Array.from({ length: 1000 }, (_, i) => row(`co-${i}`))
+    const fn = vi.fn(async () => {
+      const body = { data: fullPage.map((r) => ({ row_data: r })), has_more: true }
+      return { ok: true, status: 200, text: async () => JSON.stringify(body) } as unknown as Response
+    })
+    vi.stubGlobal('fetch', fn)
+    await listAllAppsWithStatus()
+    expect(fn.mock.calls.length).toBeLessThanOrEqual(50)
+  })
+
+  it('fails closed (ok:false, verified:false) when a LATER page fails, never returning a partial result as confirmed', async () => {
+    const page0 = Array.from({ length: 1000 }, (_, i) => row(`co-${i}`))
+    const fn = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).includes('skip=1000')) {
+        return { ok: false, status: 500, text: async () => '{"detail":"boom"}' } as unknown as Response
+      }
+      const body = { data: page0.map((r) => ({ row_data: r })), has_more: true }
+      return { ok: true, status: 200, text: async () => JSON.stringify(body) } as unknown as Response
+    })
+    vi.stubGlobal('fetch', fn)
+    const listResult = await listAllAppsWithStatus()
+    expect(listResult.ok).toBe(false)
+    expect(listResult.apps).toEqual([])
+
+    vi.stubGlobal('fetch', fn)
+    const verified = await resolveAppVerified('co-999')
+    expect(verified.verified).toBe(false)
+    expect(verified.entry).toBeNull()
   })
 })
