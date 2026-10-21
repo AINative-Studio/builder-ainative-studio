@@ -235,7 +235,16 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     // toward an unrelated ecommerce app. Word-boundary matching (below)
     // doesn't help here since 'brand' genuinely appears as a whole word —
     // the fix is removing it as a trigger, not tightening the match.
-    triggers: ['ecommerce', 'e-commerce', 'shop', 'store', 'sell products', 'products', 'catalog', 'checkout', 'cart', 'retail', 'dtc', 'merch', 'coffee', 'goods', 'inventory', 'orders'] },
+    // 'subscription box' added (#1102/#1113, found live: habanero-hub's "A
+    // subscription box for local, small-batch hot sauce makers" never
+    // scored ZeroCommerce at all — none of the existing triggers matched,
+    // so the obedience gate's findPrimitiveComplianceGaps() correctly
+    // never flagged a gap, because it never knew ZeroCommerce was relevant
+    // in the first place. Deliberately the two-word phrase, not bare
+    // 'subscription' — a SaaS subscription business ("a subscription-based
+    // project management tool") is NOT ecommerce, same false-positive risk
+    // the 'brand' removal above already learned the hard way.
+    triggers: ['ecommerce', 'e-commerce', 'shop', 'store', 'sell products', 'products', 'catalog', 'checkout', 'cart', 'retail', 'dtc', 'merch', 'coffee', 'goods', 'inventory', 'orders', 'subscription box'] },
   { name: 'ZeroVoice', category: 'business-ops',
     purpose: 'Programmable telephony (Twilio): calls, SMS, IVR, recording + transcription, DNC/TCPA',
     url: `${DOCS}/zerovoice/overview`,
