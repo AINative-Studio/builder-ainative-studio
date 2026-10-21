@@ -52,7 +52,10 @@ vi.mock('@/lib/build/document-store', () => ({
 vi.mock('@/lib/build/media-routine', () => ({ runMediaRoutines: h.runMediaRoutines }))
 vi.mock('@/lib/build/task-resolution-loop', () => ({ runTaskResolutions: h.runTaskResolutions }))
 vi.mock('@/lib/build/task-store', () => ({ createTask: h.createTask, listTasks: h.listTasks }))
-vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({
+  resolveApp: h.resolveApp,
+  createRegistryRowsCache: () => ({ current: null }),
+}))
 vi.mock('@/lib/build/comms-policy', () => ({ runNightlyCommsOutreach: h.runNightlyCommsOutreach }))
 vi.mock('@/lib/ainative/admin-plan-lookup', () => ({ fetchPlanByEmail: h.fetchPlanByEmail }))
 vi.mock('@/lib/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }))
@@ -98,33 +101,33 @@ describe('GET /api/build/nightly-loop — plan-tier-aware task throughput (#908)
     h.fetchPlanByEmail.mockResolvedValue({ plan: 'enterprise', email: 'founder@beacon.co', verified: true })
     await GET(req())
     expect(h.fetchPlanByEmail).toHaveBeenCalledWith('founder@beacon.co')
-    expect(h.runTaskResolutions).toHaveBeenCalledWith(expect.any(String), 'beacon', 'enterprise')
+    expect(h.runTaskResolutions).toHaveBeenCalledWith(expect.any(String), 'beacon', 'enterprise', expect.anything())
   })
 
   it('normalizes a core alias (launch/company) before passing it through', async () => {
     h.fetchPlanByEmail.mockResolvedValue({ plan: 'launch', email: 'founder@beacon.co', verified: true })
     await GET(req())
-    expect(h.runTaskResolutions).toHaveBeenCalledWith(expect.any(String), 'beacon', 'pro')
+    expect(h.runTaskResolutions).toHaveBeenCalledWith(expect.any(String), 'beacon', 'pro', expect.anything())
   })
 
   it('a plan-lookup that could not verify (verified:false) degrades to null — never fabricates a tier', async () => {
     h.fetchPlanByEmail.mockResolvedValue({ plan: null, email: null, verified: false, reason: 'http_500' })
     await GET(req())
-    expect(h.runTaskResolutions).toHaveBeenCalledWith(expect.any(String), 'beacon', null)
+    expect(h.runTaskResolutions).toHaveBeenCalledWith(expect.any(String), 'beacon', null, expect.anything())
   })
 
   it('a fetchPlanByEmail rejection degrades to null rather than throwing out of the loop', async () => {
     h.fetchPlanByEmail.mockRejectedValue(new Error('core unreachable'))
     const res = await GET(req())
     expect(res.status).toBe(200)
-    expect(h.runTaskResolutions).toHaveBeenCalledWith(expect.any(String), 'beacon', null)
+    expect(h.runTaskResolutions).toHaveBeenCalledWith(expect.any(String), 'beacon', null, expect.anything())
   })
 
   it('a guest ownerKey (no real email) skips the lookup entirely and degrades to null', async () => {
     h.listEnrolled.mockResolvedValue([{ ...APP_ENROLLMENT, ownerKey: 'guest:anon' }])
     await GET(req())
     expect(h.fetchPlanByEmail).not.toHaveBeenCalled()
-    expect(h.runTaskResolutions).toHaveBeenCalledWith(expect.any(String), 'beacon', null)
+    expect(h.runTaskResolutions).toHaveBeenCalledWith(expect.any(String), 'beacon', null, expect.anything())
   })
 
   it('a missing ownerKey skips the lookup and degrades to null (runTaskResolutions itself already no-ops without ownerKey upstream)', async () => {

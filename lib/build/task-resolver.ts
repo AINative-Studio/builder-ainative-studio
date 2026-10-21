@@ -50,7 +50,7 @@
 
 import { fetchRepoFiles, mergeTaskPR, createIssue } from '@/lib/git/gitea-client'
 import { commitTaskWithPR } from '@/lib/git/task-git-sync'
-import { resolveApp, setAppRailwayService } from '@/lib/build/app-registry'
+import { resolveApp, setAppRailwayService, type RegistryRowsCache } from '@/lib/build/app-registry'
 import { implementTask } from '@/lib/build/task-implementer'
 import { runCoverage } from '@/lib/build/coverage-runner'
 import { updateTask, type BuildTask } from '@/lib/build/task-store'
@@ -170,7 +170,12 @@ export function buildTaskIssueBody(task: { title: string; detail?: string; story
  * at every step. Never throws; every failure path returns a real ok:false
  * result AND records it via updateTask so the founder sees the real reason.
  */
-export async function resolveTask(scopeKey: string, task: BuildTask, slug: string): Promise<ResolveTaskResult> {
+export async function resolveTask(
+  scopeKey: string,
+  task: BuildTask,
+  slug: string,
+  registryRowsCache?: RegistryRowsCache,
+): Promise<ResolveTaskResult> {
   // Decision Trace (builder#685) — a real, queryable record of THIS task's
   // reasoning, connecting #670's backlog/BuildTask rows to the actual work
   // an agent did and why. Best-effort throughout: a trace-call failure
@@ -188,7 +193,7 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
 
   await updateTask(scopeKey, task.id, { stage: 'in_progress' })
 
-  const app = await resolveApp(slug)
+  const app = await resolveApp(slug, registryRowsCache)
   if (!app?.gitOrg) {
     return fail('Company is not git-provisioned yet — cannot resolve tasks without a Gitea repo.')
   }

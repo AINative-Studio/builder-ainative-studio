@@ -55,7 +55,10 @@ vi.mock('@/lib/build/document-store', () => ({
 vi.mock('@/lib/build/media-routine', () => ({ runMediaRoutines: h.runMediaRoutines }))
 vi.mock('@/lib/build/task-resolution-loop', () => ({ runTaskResolutions: h.runTaskResolutions }))
 vi.mock('@/lib/build/task-store', () => ({ createTask: h.createTask, listTasks: h.listTasks }))
-vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({
+  resolveApp: h.resolveApp,
+  createRegistryRowsCache: () => ({ current: null }),
+}))
 vi.mock('@/lib/build/comms-policy', () => ({ runNightlyCommsOutreach: h.runNightlyCommsOutreach }))
 vi.mock('@/lib/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }))
 

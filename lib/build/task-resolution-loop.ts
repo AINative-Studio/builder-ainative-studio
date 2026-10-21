@@ -29,6 +29,7 @@
 import { listTasks, needsSplit, type BuildTask } from '@/lib/build/task-store'
 import { resolveTask } from '@/lib/build/task-resolver'
 import { splitTask } from '@/lib/build/task-splitter'
+import type { RegistryRowsCache } from '@/lib/build/app-registry'
 
 /**
  * v1 scope: resolve at most this many `todo` tasks per company per nightly
@@ -138,6 +139,7 @@ export async function runTaskResolutions(
   scopeKey: string,
   slug: string,
   planTier?: string | null,
+  registryRowsCache?: RegistryRowsCache,
 ): Promise<{ attempted: number; completed: number }> {
   if (!scopeKey || !slug) return { attempted: 0, completed: 0 }
 
@@ -184,7 +186,7 @@ export async function runTaskResolutions(
     for (const task of due) {
       attempted += 1
       try {
-        const result = await resolveTask(scopeKey, task, slug)
+        const result = await resolveTask(scopeKey, task, slug, registryRowsCache)
         if (result.ok) completed += 1
       } catch {
         /* per-task failure is non-fatal — resolveTask already records the

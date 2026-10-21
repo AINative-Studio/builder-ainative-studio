@@ -863,7 +863,7 @@ export async function listAllApps(): Promise<AppEntry[]> {
 const MAX_REGISTRY_PAGES = 50
 const REGISTRY_PAGE_SIZE = 1000
 
-async function fetchAllRegistryRows(): Promise<{ rows: Array<{ row_data?: AppEntry }>; ok: boolean }> {
+async function fetchAllRegistryRowsUncached(): Promise<{ rows: Array<{ row_data?: AppEntry }>; ok: boolean }> {
   const all: Array<{ row_data?: AppEntry }> = []
   for (let page = 0; page < MAX_REGISTRY_PAGES; page++) {
     const skip = page * REGISTRY_PAGE_SIZE
@@ -881,6 +881,36 @@ async function fetchAllRegistryRows(): Promise<{ rows: Array<{ row_data?: AppEnt
     if (!hasMore || rows.length < REGISTRY_PAGE_SIZE) break
   }
   return { rows: all, ok: true }
+}
+
+/**
+ * Opaque holder a caller creates once (createRegistryRowsCache()) and passes
+ * into every resolveApp()/resolveAppVerified() call it makes within one
+ * bounded window (#1172). Collapses N concurrent full-table-scan reads into
+ * the one in-flight fetch chain they all actually wanted — built for the
+ * nightly loop, which calls resolveApp() twice per company across
+ * NIGHTLY_COMPANY_CONCURRENCY companies running in parallel, each
+ * independently re-paging the whole append-only registry table and
+ * drowning the ZeroDB rows endpoint in concurrent requests (confirmed live:
+ * `429 rate_limit_exceeded` on 9+ pages in one run, every resolveApp() call
+ * in that window returning null, tasksCompleted=0 of 31). A failed fetch is
+ * never cached — the next caller gets a fresh attempt rather than every
+ * company in the batch waiting out the window on one rate-limited read.
+ * Callers that don't pass a cache (every call site outside the nightly
+ * loop) keep today's always-fresh-per-call behavior unchanged.
+ */
+export type RegistryRowsCache = { current: Promise<{ rows: Array<{ row_data?: AppEntry }>; ok: boolean }> | null }
+export function createRegistryRowsCache(): RegistryRowsCache {
+  return { current: null }
+}
+
+async function fetchAllRegistryRows(cache?: RegistryRowsCache): Promise<{ rows: Array<{ row_data?: AppEntry }>; ok: boolean }> {
+  if (!cache) return fetchAllRegistryRowsUncached()
+  if (!cache.current) cache.current = fetchAllRegistryRowsUncached()
+  const pending = cache.current
+  const result = await pending
+  if (!result.ok && cache.current === pending) cache.current = null
+  return result
 }
 
 /**
@@ -1521,9 +1551,14 @@ export async function resolveAppByChatId(chatId: string): Promise<AppEntry | nul
   return match || null
 }
 
-/** Resolve a slug to its most recent app entry (chatId + brand), or null. */
-export async function resolveApp(slug: string): Promise<AppEntry | null> {
-  const { entry } = await resolveAppVerified(slug)
+/**
+ * Resolve a slug to its most recent app entry (chatId + brand), or null.
+ * Pass a `createRegistryRowsCache()` instance (see #1172) when making many
+ * of these calls within one bounded window, e.g. a concurrent batch job —
+ * every other caller can safely omit it.
+ */
+export async function resolveApp(slug: string, cache?: RegistryRowsCache): Promise<AppEntry | null> {
+  const { entry } = await resolveAppVerified(slug, cache)
   return entry
 }
 
@@ -1540,7 +1575,7 @@ export async function resolveApp(slug: string): Promise<AppEntry | null> {
  * signed-in customer off their own company's dashboard back to the
  * companies list on nothing more than a transient upstream hiccup.
  */
-export async function resolveAppVerified(slug: string): Promise<{ entry: AppEntry | null; verified: boolean }> {
+export async function resolveAppVerified(slug: string, cache?: RegistryRowsCache): Promise<{ entry: AppEntry | null; verified: boolean }> {
   // Real gap found live (2026-09-30, a misconfigured local dev environment):
   // `!configured()` used to return `verified: true` — "confirmed doesn't
   // exist" — for a slug this environment genuinely never checked at all
@@ -1559,7 +1594,7 @@ export async function resolveAppVerified(slug: string): Promise<{ entry: AppEntr
     // #1106: a single `?limit=1000` page can silently miss this slug's real
     // history once the table grows past one page — see fetchAllRegistryRows()'s
     // doc comment above listAllAppsWithStatus().
-    const { rows, ok } = await fetchAllRegistryRows()
+    const { rows, ok } = await fetchAllRegistryRows(cache)
     if (!ok) return { entry: null, verified: false }
     const matches = rows
       .map((r: { row_data?: AppEntry }) => r.row_data)

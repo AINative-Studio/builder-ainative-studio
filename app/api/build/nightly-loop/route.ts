@@ -55,7 +55,7 @@ import { buildDailyReport, dailyReportTitle } from '@/lib/build/document-prompts
 import { runMediaRoutines } from '@/lib/build/media-routine'
 import { createTask, listTasks } from '@/lib/build/task-store'
 import { runTaskResolutions } from '@/lib/build/task-resolution-loop'
-import { resolveApp } from '@/lib/build/app-registry'
+import { resolveApp, createRegistryRowsCache, type RegistryRowsCache } from '@/lib/build/app-registry'
 import { runNightlyCommsOutreach } from '@/lib/build/comms-policy'
 import { fetchPlanByEmail, type AdminPlanLookup } from '@/lib/ainative/admin-plan-lookup'
 import { normalizeTier } from '@/lib/ainative/plan'
@@ -178,10 +178,20 @@ export async function GET(request: NextRequest) {
       return normalizeTier(lookup.plan)
     }
 
+    // #1172: resolveApp() full-table-scans the append-only registry on
+    // every call (see fetchAllRegistryRows's own doc comment); runForCompany
+    // calls it twice per company, and NIGHTLY_COMPANY_CONCURRENCY runs
+    // several companies at once, so an unshared read fires dozens of
+    // concurrent full-table-pagination chains at the same ZeroDB endpoint
+    // and gets itself rate-limited (429s observed live, every resolveApp()
+    // in the window then returning null — tasksCompleted=0 of 31 in one
+    // run). One cache shared across the whole batch collapses that burst
+    // into effectively one read chain.
+    const registryRowsCache = createRegistryRowsCache()
     const outcomes = await mapWithConcurrency(
       batch,
       NIGHTLY_COMPANY_CONCURRENCY,
-      (e) => runForCompany(e, resolvePlanTier),
+      (e) => runForCompany(e, resolvePlanTier, registryRowsCache),
       { deadline },
     )
 
@@ -271,6 +281,7 @@ export async function GET(request: NextRequest) {
 async function runForCompany(
   e: LoopEnrollment,
   resolvePlanTier: (ownerKey: string | undefined) => Promise<string | null>,
+  registryRowsCache: RegistryRowsCache,
 ): Promise<CompanyOutcome> {
   const outcome: CompanyOutcome = {
     result: { companyId: e.companyId, briefing: null, taskId: null, status: 'error', detail: 'not run' },
@@ -280,7 +291,7 @@ async function runForCompany(
 
   // Best-effort: a registry lookup hiccup must never block dispatch — the
   // task still runs, it just surfaces no Gitea link in its result (core#8656).
-  const registryEntry = await resolveApp(e.companyId).catch(() => null)
+  const registryEntry = await resolveApp(e.companyId, registryRowsCache).catch(() => null)
 
   const r = await runNightlyLoop({
     companyId: e.companyId, companyName: e.companyName, track: e.track, goal: e.goal,
@@ -417,7 +428,7 @@ async function runForCompany(
   if (e.ownerKey) {
     try {
       const scopeKey = chatScopeKey(e.ownerKey, e.companyId)
-      const app = await resolveApp(e.companyId).catch(() => null)
+      const app = await resolveApp(e.companyId, registryRowsCache).catch(() => null)
       const m = await runMediaRoutines(scopeKey, {
         companyName: e.companyName,
         tagline: app?.tagline,
@@ -491,7 +502,7 @@ async function runForCompany(
     try {
       const scopeKey = chatScopeKey(e.ownerKey, e.companyId)
       const planTier = await resolvePlanTier(e.ownerKey).catch(() => null)
-      const t = await runTaskResolutions(scopeKey, e.companyId, planTier)
+      const t = await runTaskResolutions(scopeKey, e.companyId, planTier, registryRowsCache)
       outcome.tasksAttempted += t.attempted
       outcome.tasksCompleted += t.completed
     } catch (err) {

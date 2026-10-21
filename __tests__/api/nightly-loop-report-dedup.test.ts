@@ -42,7 +42,10 @@ vi.mock('@/lib/build/document-store', () => ({ createDocument: h.createDocument,
 vi.mock('@/lib/build/media-routine', () => ({ runMediaRoutines: h.runMediaRoutines }))
 vi.mock('@/lib/build/task-resolution-loop', () => ({ runTaskResolutions: h.runTaskResolutions }))
 vi.mock('@/lib/build/task-store', () => ({ createTask: h.createTask, listTasks: h.listTasks }))
-vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({
+  resolveApp: h.resolveApp,
+  createRegistryRowsCache: () => ({ current: null }),
+}))
 vi.mock('@/lib/build/comms-policy', () => ({ runNightlyCommsOutreach: h.runNightlyCommsOutreach }))
 vi.mock('@/lib/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }))
 
@@ -113,7 +116,7 @@ describe('GET /api/build/nightly-loop', () => {
 
   it('resolves the real AppEntry and grounds the media routine in the real tagline + color (not a bare company name)', async () => {
     await GET(req())
-    expect(h.resolveApp).toHaveBeenCalledWith('beacon')
+    expect(h.resolveApp).toHaveBeenCalledWith('beacon', expect.anything())
     expect(h.runMediaRoutines).toHaveBeenCalledWith(expect.any(String), {
       companyName: 'Beacon',
       tagline: 'Guiding growth',

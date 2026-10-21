@@ -66,7 +66,7 @@ describe('runTaskResolutions (#433)', () => {
     h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
     const res = await runTaskResolutions('a::b', 'my-co')
     expect(res).toEqual({ attempted: 1, completed: 1 })
-    expect(h.resolveTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ stage: 'todo' }), 'my-co')
+    expect(h.resolveTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ stage: 'todo' }), 'my-co', undefined)
   })
 
   it('counts an attempted-but-failed resolution honestly (not completed)', async () => {
@@ -104,7 +104,7 @@ describe('runTaskResolutions (#433)', () => {
     ])
     h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
     await runTaskResolutions('a::b', 'my-co')
-    expect(h.resolveTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 'older' }), 'my-co')
+    expect(h.resolveTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 'older' }), 'my-co', undefined)
   })
 
   it('never throws when listing tasks fails', async () => {
@@ -148,7 +148,7 @@ describe('runTaskResolutions skips oversized (needsSplit) tasks (#903)', () => {
     h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
     const res = await runTaskResolutions('a::b', 'my-co')
     expect(res).toEqual({ attempted: 1, completed: 1 })
-    expect(h.resolveTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 't1' }), 'my-co')
+    expect(h.resolveTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 't1' }), 'my-co', undefined)
   })
 
   it('still resolves an unestimated (null storyPoints) todo task — never blocks on a missing estimate', async () => {
@@ -166,7 +166,7 @@ describe('runTaskResolutions skips oversized (needsSplit) tasks (#903)', () => {
     h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
     const res = await runTaskResolutions('a::b', 'my-co')
     expect(res).toEqual({ attempted: 1, completed: 1 })
-    expect(h.resolveTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 'small' }), 'my-co')
+    expect(h.resolveTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 'small' }), 'my-co', undefined)
   })
 
   it('an oversized task never counts against the per-run tier limit (a paid tier still gets real throughput)', async () => {
@@ -217,7 +217,7 @@ describe('runTaskResolutions calls splitTask on oversized (needsSplit) tasks (#9
     h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
     const res = await runTaskResolutions('a::b', 'my-co')
     expect(h.splitTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 'big' }))
-    expect(h.resolveTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 'small' }), 'my-co')
+    expect(h.resolveTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 'small' }), 'my-co', undefined)
     expect(res).toEqual({ attempted: 1, completed: 1 })
   })
 
