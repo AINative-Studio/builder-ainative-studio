@@ -1180,6 +1180,7 @@ IMPORT RULES:
 - import { Search } from 'lucide-react'
 - NEVER import from @ainative/*, @/components/*, or npm aikit
 - NEVER use framer-motion, @radix-ui, or other unlisted packages
+- This is a PLAIN REACT SPA, NOT a Next.js app — NEVER import from 'next/image', 'next/link', 'next/navigation', 'next/font', 'next/dynamic', 'next/script', or any other 'next/*' module, and NEVER use 'react-icons' (it is not installed). Use a plain <img> tag, an <a> tag, and lucide-react icons instead.
 - export default function App() — always export default
 
 INTERACTIVITY (MANDATORY — the app must WORK, not just look good):
