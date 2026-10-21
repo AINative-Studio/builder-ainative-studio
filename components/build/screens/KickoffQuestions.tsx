@@ -25,7 +25,7 @@ export function KickoffQuestions() {
   const [index, setIndex] = useState(0)
   const [freeText, setFreeText] = useState('')
   const [proceeding, setProceeding] = useState(false)
-  const questions = getKickoffQuestions(state.track, state.growthIntent ?? false)
+  const questions = getKickoffQuestions(state.track, state.growthIntent ?? false, state.ecommerceIntent ?? false)
   const question = questions[index]
 
   const answer = (value: string) => {
