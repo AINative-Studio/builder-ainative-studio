@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { auth } from '@/app/(auth)/auth'
+import { requireAdmin } from '@/lib/auth/require-admin'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 /**
@@ -17,13 +17,18 @@ import { getAinativeApiKey } from '@/lib/build/env-keys'
  *   min_rating=4 (optional, only include rated ≥ this)
  *   status=success|validation_error|failure (optional)
  *   limit=1000 (default: 1000, max: 10000)
+ *
+ * Admin-gated (#1213): exports EVERY founder's prompts + generated code
+ * across the fleet, not the caller's own — the prior "any authenticated
+ * user" check let any signed-in founder download every other founder's
+ * generation prompts/code. Same class of gap #919 fixed for /admin/errors.
+ * Consumed by the real UI at /insights (the existing RLHF dashboard).
  */
 export async function GET(request: NextRequest) {
   try {
-    // Auth check — only authenticated users can export
-    const session = await auth()
-    if (!session?.user?.id) {
-      return Response.json({ error: 'Authentication required' }, { status: 401 })
+    const admin = await requireAdmin()
+    if (!admin.ok) {
+      return Response.json({ error: admin.message }, { status: admin.status })
     }
 
     const url = new URL(request.url)
