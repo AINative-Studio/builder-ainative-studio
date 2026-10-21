@@ -310,6 +310,17 @@ export interface NightlyRunHealth {
   tasksCompleted: number
   stalledCompanies: number
   elapsedMs: number
+  /**
+   * Set only when the route's whole invocation threw before it could
+   * finish aggregating a real outcome (see app/api/build/nightly-loop/
+   * route.ts's catch block) -- every other field above is then a zeroed
+   * placeholder, not a real measurement. Absent (not false) on every
+   * normal recording, so an older/normal row is never mistaken for an
+   * explicit "this run did not crash" assertion.
+   */
+  crashed?: boolean
+  /** Only present alongside crashed: true. */
+  errorMessage?: string
 }
 
 /** Persist one shard invocation's aggregate health. Best-effort, like recordRun(). */
