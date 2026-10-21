@@ -139,6 +139,16 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
 
   const builtinPaths = new Set(Object.keys(getBuiltinFiles()))
 
+  // Real bug found live (#1099 item 4, "LoginIcon is not defined"): a
+  // sibling generated file can genuinely define and export a local
+  // (non-library) component that another file uses in JSX without ever
+  // importing it — the file exists, so stubMissingLocalComponents() below
+  // (which only reacts to an import specifier that doesn't resolve) never
+  // sees anything wrong. Built once, before any file's own content is
+  // mutated by the injection passes below, so export statements are read
+  // from each file's original generated source.
+  const localExportMap = buildLocalExportMap(sandpackFiles, builtinPaths)
+
   for (const [path, code] of Object.entries(sandpackFiles)) {
     if (!path.endsWith('.tsx')) continue
     if (builtinPaths.has(path)) continue
@@ -337,6 +347,32 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
       }
     }
 
+    // Inject a missing import for a locally-defined sibling component used
+    // in JSX but never imported (see localExportMap comment above). Grouped
+    // by source file so multiple names from the same sibling become one
+    // import statement, same as the shadcn injection above.
+    {
+      const selfPath = normalizeForRelative(path)
+      const byFile = new Map<string, string[]>()
+      for (const [name, exportingPath] of localExportMap) {
+        if (exportingPath === selfPath) continue
+        if (!new RegExp(`<${name}[\\s/>]`).test(fixed)) continue
+        if (
+          new RegExp(`import\\s*\\{[^}]*\\b${name}\\b[^}]*\\}\\s*from`).test(fixed) ||
+          new RegExp(`import\\s+${name}\\b`).test(fixed)
+        ) continue
+        const rel = relativeImportPath(path, exportingPath)
+        if (!byFile.has(rel)) byFile.set(rel, [])
+        byFile.get(rel)!.push(name)
+      }
+      if (byFile.size > 0) {
+        const importLines = Array.from(byFile.entries()).map(
+          ([rel, names]) => `import { ${names.join(', ')} } from '${rel}'`
+        )
+        fixed = importLines.join('\n') + '\n' + fixed
+      }
+    }
+
     try { fixed = sanitizeForSandpack(fixed) } catch { /* keep fixed as-is */ }
 
     sandpackFiles[path] = fixed
@@ -425,6 +461,62 @@ function resolveRelativeImport(fromDir: string, spec: string): string | null {
   }
   const resolved = `/${parts.join('/')}`
   return /^\/[\w\-./]+$/.test(resolved) ? resolved : null
+}
+
+/**
+ * Scans every non-builtin generated file for a top-level named export
+ * (`export const/function/class Name`) and returns a name -> logical file
+ * path map, for injecting a missing import when another generated file
+ * uses that name in JSX without importing it (see #1099 item 4). A name
+ * exported from two genuinely different files is dropped entirely rather
+ * than guessed — an unresolved ambiguity is strictly safer than a wrong
+ * import.
+ */
+function buildLocalExportMap(sandpackFiles: Record<string, string>, builtinPaths: Set<string>): Map<string, string> {
+  const exportRe = /export\s+(?:const|function|class)\s+([A-Z]\w*)/g
+  const map = new Map<string, string>()
+  const ambiguous = new Set<string>()
+  for (const [path, code] of Object.entries(sandpackFiles)) {
+    if (builtinPaths.has(path) || !/\.(t|j)sx?$/.test(path)) continue
+    const normalized = normalizeForRelative(path)
+    let match: RegExpExecArray | null
+    exportRe.lastIndex = 0
+    while ((match = exportRe.exec(code))) {
+      const name = match[1]
+      const existing = map.get(name)
+      if (existing !== undefined && existing !== normalized) {
+        ambiguous.add(name)
+        continue
+      }
+      map.set(name, normalized)
+    }
+  }
+  for (const name of ambiguous) map.delete(name)
+  return map
+}
+
+/**
+ * buildSandpackFiles() mirrors every non-entry `/src/X` file to `/X` (see
+ * the assembly loop above) so a same-level relative import always resolves
+ * regardless of which style a file was generated under. Both copies carry
+ * identical content, so stripping the `/src/` prefix collapses them to the
+ * same logical path for cross-file export lookups and relative-path math.
+ */
+function normalizeForRelative(path: string): string {
+  return path.replace(/^\/src\//, '/')
+}
+
+/** Compute a relative import specifier from one generated file to another, via each file's logical (post-normalizeForRelative) path — independent of which /src-vs-root duplicate either side happens to be. */
+function relativeImportPath(fromPath: string, toPath: string): string {
+  const fromDir = normalizeForRelative(fromPath).replace(/\/[^/]*$/, '')
+  const toNoExt = normalizeForRelative(toPath).replace(/\.(t|j)sx?$/, '')
+  const fromParts = fromDir.split('/').filter(Boolean)
+  const toParts = toNoExt.split('/').filter(Boolean)
+  let common = 0
+  while (common < fromParts.length && common < toParts.length && fromParts[common] === toParts[common]) common++
+  const ups = fromParts.length - common
+  const rel = [...Array(ups).fill('..'), ...toParts.slice(common)].join('/')
+  return rel.startsWith('.') ? rel : `./${rel}`
 }
 
 /**
