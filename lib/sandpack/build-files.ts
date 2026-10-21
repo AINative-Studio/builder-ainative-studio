@@ -240,7 +240,16 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
       const imports: string[] = []
       for (const [mod, components] of Object.entries(shadcnMap)) {
         const used = components.filter(c =>
-          (new RegExp(`<${c}[\\s/>]|\\b${c}\\b`).test(fixed)) &&
+          // #1165: was `<${c}[\\s/>]|\\b${c}\\b` — the bare `\b${c}\b`
+          // fallback matched plain English prose containing the component
+          // name as an ordinary word (confirmed live: "Select mild,
+          // medium, or wild" in a founder's own copy text spuriously
+          // injected `import { Select } from './components/ui/select'`,
+          // a real, unused import with nothing to do with JSX at all).
+          // Only the real JSX-tag-opening pattern is a legitimate signal
+          // this component is actually rendered — matches the AIKit
+          // injection guard just below, which never had this bug.
+          new RegExp(`<${c}[\\s/>]`).test(fixed) &&
           !new RegExp(`import\\s+.*\\b${c}\\b.*from\\s+`).test(fixed)
         )
         if (used.length > 0) {
@@ -301,8 +310,22 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
           .map(s => s.trim())
           .filter(Boolean)
       )
+      // #1165: was a bare `\b${icon}\b` anywhere in the file — matched the
+      // icon name as an ordinary English word in prose/JSX text content,
+      // object keys, or unrelated identifiers with zero connection to an
+      // actual icon usage (confirmed live, habanero-hub: "Gift
+      // Subscriptions" link text, a "Jalapeño Sunrise" flavor name, the
+      // "Navigation" JSX comment, "Content-Type" header strings, and
+      // "Key features"/"Reorder & Share" copy each spuriously injected
+      // Gift/Sunrise/Navigation/Type/Key/Share into the lucide-react
+      // import, even though none was ever actually rendered). Real usage
+      // is either a JSX tag (`<Icon`) or the documented `icon: Icon` /
+      // `icon={Icon}` object-property-reference pattern (see this
+      // injection's own doc comment above, written for exactly that case)
+      // — require one of those, not a bare word appearing anywhere.
       const missingIcons = allLucideIcons.filter(icon =>
-        new RegExp(`\\b${icon}\\b`).test(fixed) && !alreadyImported.has(icon)
+        new RegExp(`<${icon}[\\s/>]|\\bicon:\\s*${icon}\\b|\\bicon=\\{${icon}\\}`).test(fixed) &&
+        !alreadyImported.has(icon)
       )
       if (missingIcons.length > 0) {
         if (existingImportMatch) {
