@@ -387,7 +387,20 @@ function stubMissingLocalComponents(sandpackFiles: Record<string, string>): void
     while ((match = importRe.exec(code))) {
       const resolved = resolveRelativeImport(dir, match[1])
       if (!resolved) continue
-      const candidates = [resolved, `${resolved}.tsx`, `${resolved}.ts`, `${resolved}/index.tsx`]
+      // #1165 follow-up: must check BOTH index.tsx and index.ts — the real
+      // AIKit builtin lives at /components/aikit/index.ts (a .ts file, not
+      // .tsx). Missing that candidate here made this treat the already-real
+      // './components/aikit' import as missing and synthesize a conflicting
+      // stub at /components/aikit.tsx, which then won module resolution over
+      // the real directory module and rendered MetricCard as undefined —
+      // confirmed live on habanero-hub even after the import-injection fix.
+      const candidates = [
+        resolved,
+        `${resolved}.tsx`,
+        `${resolved}.ts`,
+        `${resolved}/index.tsx`,
+        `${resolved}/index.ts`,
+      ]
       const exists = candidates.some((c) => c in sandpackFiles)
       if (!exists) toStub.add(`${resolved}.tsx`)
     }
