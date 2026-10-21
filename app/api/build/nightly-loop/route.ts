@@ -122,6 +122,13 @@ export async function GET(request: NextRequest) {
   const budgetMs = nightlyLoopBudgetMs()
   const deadline = startedAt + budgetMs
 
+  // Read before the try block (pure URL parsing, cannot throw on its own)
+  // so a crash during listEnrolled() or anything else below still lets the
+  // catch block record WHICH shard went down, not just that one did.
+  const params = new URL(request.url ?? 'https://localhost/').searchParams
+  const rawShard = params.get('shard')
+  const rawShards = params.get('shards')
+
   try {
     const enrolled = await listEnrolled()
 
@@ -129,9 +136,6 @@ export async function GET(request: NextRequest) {
     // calls. A malformed/out-of-range spec degrades to the whole list — see
     // selectShard; processing everyone is the safe failure mode for a nightly
     // cron, processing nobody would silently skip a night.
-    const params = new URL(request.url ?? 'https://localhost/').searchParams
-    const rawShard = params.get('shard')
-    const rawShards = params.get('shards')
     const batch = selectShard(enrolled, rawShard, rawShards)
     const sharded = batch.length !== enrolled.length
 
@@ -256,6 +260,33 @@ export async function GET(request: NextRequest) {
     })
   } catch (error) {
     logger.error('Nightly autonomous loop failed', error as Error)
+
+    // Real gap (#1141 follow-up): this catch previously returned 500 with
+    // no call to recordRunHealth() at all -- a shard that crashes outright
+    // (not merely degraded: budget-exhausted, stalled companies, etc, all
+    // captured by the success path above) left ZERO trace in the run-health
+    // history. A human reading listRecentRunHealth()/the #1142 health API
+    // would see only ever-healthy-looking runs and have no way to tell a
+    // totally silent, never-even-started shard apart from one that simply
+    // never fired. Record what's known (shard identity, elapsed time) with
+    // crashed: true so a true crash is visible instead of invisible.
+    await recordRunHealth({
+      shardIndex: rawShard !== null ? Number(rawShard) : null,
+      shardCount: rawShards !== null ? Number(rawShards) : null,
+      enrolled: 0,
+      processed: 0,
+      deferred: 0,
+      budgetExhausted: false,
+      dispatched: 0,
+      failed: 0,
+      tasksAttempted: 0,
+      tasksCompleted: 0,
+      stalledCompanies: 0,
+      elapsedMs: Date.now() - startedAt,
+      crashed: true,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    })
+
     return NextResponse.json({ error: 'Nightly loop failed' }, { status: 500 })
   }
 }
