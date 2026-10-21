@@ -4,6 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { auth } from '@/app/(auth)/auth';
 import { getRuleEnforcementService } from '@/lib/services/rule-enforcement.service';
 import { getRuleEnforcementDbService } from '@/lib/services/rule-enforcement-db.service';
 import { z } from 'zod';
@@ -38,24 +39,46 @@ const actionSchema = z.object({
     buildOutput: z.string().optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
   }),
-  userId: z.string(),
+  // projectId stays client-supplied (a free-form label, not a DB FK target).
+  // userId does NOT — see the real bug this fixes below.
   projectId: z.string(),
 });
 
 /**
  * POST /api/rules/validate
  * Validate an action against all applicable rules
+ *
+ * userId is resolved from the real signed-in session (#1213), never trusted
+ * from the request body. The route used to accept a client-supplied userId
+ * — the ONLY real caller (app/settings/rules/page.tsx) always sent the
+ * literal string 'playground', which is not a valid UUID and does not match
+ * any row in `users`. rule_enforcement_db.service.ts's saveReport()/
+ * recordViolation() insert into enforcement_reports.user_id / rule_violations
+ * .user_id, both NOT NULL uuid columns with a real FK into users(id) — every
+ * real validate call that found at least one violation (the entire point of
+ * this feature) threw a Postgres 22P02/FK error and 500'd before ever
+ * returning a report, making the Validation Playground and this route's own
+ * persistence completely non-functional. Also closes an unauthenticated
+ * write path: previously any caller could record a report/violation under
+ * an arbitrary userId with zero auth check.
  */
 export async function POST(request: NextRequest) {
   try {
+    const session = await auth();
+    const userId = (session as any)?.user?.id as string | undefined;
+    if (!userId) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+
     const body = await request.json();
 
     // Validate request body
     const validated = actionSchema.parse(body);
 
-    // Create action object
+    // Create action object — userId comes from the real session, never the body.
     const action: AgentAction = {
       ...validated,
+      userId,
       timestamp: new Date(),
     };
 
