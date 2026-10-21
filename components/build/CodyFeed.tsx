@@ -17,6 +17,12 @@ export function CodyFeed() {
   const doneCount = views.filter((v) => state.done[v]).length
   const currentPending = !state.done[state.view] && !state.genError[state.view]
   const currentFailed = !!state.genError[state.view]
+  // #1161: the view is done generating AND has an unactioned nudge — this is
+  // exactly the state lib/build/useAutoplay.ts (#1019) deliberately HOLDS
+  // autoplay on, so the founder is the next action, not Cody. Mirrors
+  // useAutoplay's own hold condition (nudge present, nudgeState undefined,
+  // current view done) so the status line and the actual pause always agree.
+  const waitingOnNudge = !!nudge && !currentPending && !currentFailed && nudgeState === undefined
 
   return (
     <div className="m-cody-feed">
@@ -31,6 +37,8 @@ export function CodyFeed() {
             <>Couldn&apos;t draft <span className="m-mono">{state.view}</span> — retrying / see artifact.</>
           ) : currentPending ? (
             <>Drafting <span className="m-mono">{state.view}</span> from your idea…</>
+          ) : waitingOnNudge ? (
+            <>Waiting on you — see the suggestion below.</>
           ) : (
             <>On <span className="m-mono">{state.view}</span>.</>
           )}
