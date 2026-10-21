@@ -509,3 +509,47 @@ describe('ecommerce ideas never get steered toward a competing SaaS platform', (
     expect(prompt).toContain('ZeroCommerce')
   })
 })
+
+// =======================================
+// Primitive architecture must be described correctly (same live
+// re-verification run, 2026-10-20 — a second, subtler defect: once the model
+// stopped naming Shopify, a businessModel artifact said "ZeroCommerce
+// checkout (hosted on ZeroDB)" — wrong. ZeroDB is the shared DATA layer, not
+// a hosting platform; hosting/runtime is AINative Cloud; every primitive is
+// its own independent service, never nested inside another primitive.
+// =======================================
+describe('primitive architecture is described correctly, not just non-competitively', () => {
+  const mugIdea = 'I want to sell handmade ceramic mugs and bowls online to customers across the US.'
+
+  it('every idea/implementation-facing view instructs correct hosting vs. data-layer framing', () => {
+    const views = Object.keys(ARTIFACT_PROMPTS).filter((v) => v !== 'codingStandards')
+    for (const track of ['app', 'company'] as const) {
+      const ctx = makeCtx({ idea: mugIdea, track })
+      for (const view of views) {
+        const prompt = (ARTIFACT_PROMPTS as Record<string, ArtifactSpec>)[view].user(ctx)
+        expect(prompt, `${view} (${track} track) must forbid "hosted on ZeroDB"`).toMatch(
+          /never say a primitive.*is "hosted on ZeroDB"/i,
+        )
+        expect(prompt, `${view} (${track} track) must name AINative Cloud as the hosting layer`).toMatch(
+          /AINative Cloud/,
+        )
+        expect(prompt, `${view} (${track} track) must clarify ZeroDB is a data layer, not hosting`).toMatch(
+          /ZeroDB is the shared DATA layer/,
+        )
+      }
+    }
+  })
+
+  it('instructs that primitives are independent services, never nested inside one another', () => {
+    const ctx = makeCtx({ idea: mugIdea, track: 'company' })
+    const prompt = ARTIFACT_PROMPTS.businessModel.user(ctx)
+    expect(prompt).toMatch(/independent business application or backend service/i)
+    expect(prompt).toMatch(/never nested inside one another/i)
+  })
+
+  it('gives the model the correct example framing for ZeroCommerce + ZeroDB + AINative Cloud', () => {
+    const ctx = makeCtx({ idea: mugIdea, track: 'company' })
+    const prompt = ARTIFACT_PROMPTS.businessModel.user(ctx)
+    expect(prompt).toContain('backed by ZeroDB for product/order data, hosted on AINative Cloud')
+  })
+})
