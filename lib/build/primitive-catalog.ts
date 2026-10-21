@@ -963,25 +963,46 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
   // instruction for what to do with it, which left every generated app to
   // either hand-roll a bare card-number/expiry/CVC form (worse UX, no
   // wallet support, poor PCI-scope hygiene) or not render a payment form at
-  // all. The publishable-key lookup below (storefront/_/stripe-config) does
-  // not exist on ZeroCommerce yet — tracked as ZeroCommerce#667 — so this
-  // instruction is written for the contract that issue defines, ready to
-  // work the moment it ships; until then this call 404s like any other
-  // not-yet-implemented endpoint (the proxy's existing honest-502/response-
-  // passthrough behavior surfaces that, not a silent failure).
+  // all.
+  // #1183 — re-verified EVERY shape below directly against
+  // AINative-Studio/ZeroCommerce's current source (app/api/v1/endpoints/
+  // storefront.py + its StorefrontCheckoutRequest/Response schemas,
+  // app/schemas/cart.py, app/models/product.py), not assumed. Two real
+  // corrections from the previous version of this block:
+  //  1. storefront/_/stripe-config is NOT pending (the old comment claimed
+  //     "does not exist yet, tracked as ZeroCommerce#667") — it is real and
+  //     live now, confirmed in storefront.py's get_storefront_stripe_config.
+  //  2. The checkout response has THREE more real fields the model was
+  //     never told about: order_id, payment_intent_id, and approval_url
+  //     (PayPal-only redirect — required when payment_provider is "paypal",
+  //     since PayPal's flow has no client_secret to confirm against).
+  //     Checkout also accepts payment_provider (defaults to "stripe") and
+  //     discount_code — never hardcode/omit payment_provider if the app
+  //     lets a shopper choose a payment method, and never guess a
+  //     discount-apply shape since discount_code IS the real one.
+  //  Also confirmed real: the product field is base_price (never price),
+  //  stock_quantity is deliberately NEVER exposed on the public storefront
+  //  product shape (no stock-level UI should be built from this response —
+  //  see _public_product_dict, which strips it), and shipping_address/
+  //  billing_address are sent as plain JSON objects (ZeroCommerce encrypts
+  //  them server-side on write — generated code never encrypts anything
+  //  itself).
   ZeroCommerce: () =>
     `call the same-origin proxy at \`/api/primitive/zerocommerce/{path}\` — NO Authorization header needed, the platform attaches the founder's real ZeroCommerce credential server-side; the path after \`zerocommerce/\` matches ZeroCommerce's own REST path exactly, with ONE exception: use the literal segment \`storefront/_\` exactly as shown below (do not substitute a real slug, a variable, or anything else in that position) — the proxy fills in this company's real store slug for you.\n` +
     '  Real call shape (copy this exactly, do not paraphrase — the store itself is provisioned once at checkout via POST /commerce/stores/onboard, confirmed live per #417; the generated app only ever reads/writes products, cart, and orders through this proxy, under the unauthenticated storefront/_ path):\n' +
     '  ```js\n' +
-    "  // List products in this company's real ZeroCommerce catalog\n" +
+    "  // List products in this company's real ZeroCommerce catalog. Each product is\n" +
+    "  // { id, name, description, base_price, media, created_at } — NEVER `price`,\n" +
+    "  // and there is NEVER a stock_quantity field here (it's a public, no-auth\n" +
+    "  // response — don't build a 'N in stock' UI from it).\n" +
     "  const res = await fetch('/api/primitive/zerocommerce/storefront/_/products')\n" +
-    '  const { products } = await res.json() // real catalog rows, not a hardcoded array\n' +
+    '  const { store, products, total, skip, limit } = await res.json() // real catalog rows, not a hardcoded array\n' +
     '\n' +
     "  // Create a cart (do this once per shopper session, e.g. on first \"add to cart\")\n" +
     "  const cartRes = await fetch('/api/primitive/zerocommerce/storefront/_/cart', {\n" +
     "    method: 'POST', credentials: 'include', // REQUIRED — carries the session cookie ZeroCommerce sets\n" +
     "  })\n" +
-    '  const cart = await cartRes.json() // real { id, store_id, session_id, items, ... }\n' +
+    '  const cart = await cartRes.json() // real { id, store_id, session_id, status, items, total_items, subtotal }\n' +
     '\n' +
     "  // Add an item to that cart — cart.id comes from the create-cart call above\n" +
     "  await fetch(`/api/primitive/zerocommerce/storefront/_/cart/${cart.id}/items`, {\n" +
@@ -989,18 +1010,33 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
     "    body: JSON.stringify({ product_id: product.id, quantity: 1 }), // unit_price is resolved server-side, do NOT send a client price\n" +
     '  })\n' +
     '\n' +
-    "  // Checkout that same cart — returns { order_id, status, total, currency, client_secret, payment_intent_id }\n" +
+    "  // Checkout that same cart. payment_provider defaults to \"stripe\" if omitted —\n" +
+    "  // pass it explicitly ('stripe' | 'paypal' | 'crypto') whenever the UI lets the\n" +
+    "  // shopper pick a payment method. discount_code is optional, real, and the\n" +
+    "  // ONLY coupon-apply field — never invent a separate /discounts/apply call.\n" +
     "  const checkoutRes = await fetch(`/api/primitive/zerocommerce/storefront/_/cart/${cart.id}/checkout`, {\n" +
     "    method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },\n" +
-    "    body: JSON.stringify({ customer_email: email, shipping_address: { address_line1, city, state, postal_code, country } }),\n" +
+    "    body: JSON.stringify({\n" +
+    "      customer_email: email,\n" +
+    "      shipping_address: { address_line1, city, state, postal_code, country }, // plain JSON — ZeroCommerce encrypts it server-side, you never do\n" +
+    "      payment_provider: 'stripe', // or 'paypal' / 'crypto' — see above\n" +
+    "      discount_code: discountCode || undefined, // optional\n" +
+    '    }),\n' +
     '  })\n' +
-    '  const { client_secret } = await checkoutRes.json()\n' +
+    '  // Real response: { order_id, status, total, currency, client_secret, payment_intent_id, approval_url }\n' +
+    '  // client_secret is set for Stripe/crypto, null for PayPal. approval_url is set\n' +
+    '  // ONLY for payment_provider:"paypal" — when present, redirect the shopper there\n' +
+    '  // to approve the order BEFORE any Stripe Elements code below runs; PayPal never\n' +
+    '  // uses client_secret at all.\n' +
+    '  const { order_id, client_secret, payment_intent_id, approval_url } = await checkoutRes.json()\n' +
+    '  if (approval_url) { window.location.href = approval_url; return } // PayPal path — stop here\n' +
     '\n' +
     "  // Render the REAL Stripe Payment Element for the actual payment step — this\n" +
     "  // is a SEPARATE, REQUIRED call, not optional polish: it surfaces Apple Pay /\n" +
     "  // Google Pay automatically when the shopper's browser/device supports them.\n" +
     "  // publishable_key and connected_account_id come from ZeroCommerce itself —\n" +
-    "  // NEVER hardcode or guess a Stripe publishable key.\n" +
+    "  // NEVER hardcode or guess a Stripe publishable key. This endpoint is real and\n" +
+    "  // live now (confirmed), not a future/pending contract.\n" +
     "  import { loadStripe } from '@stripe/stripe-js'\n" +
     "  import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js'\n" +
     '\n' +
@@ -1026,7 +1062,9 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
     'looks identical to the user. Also FORBIDDEN: calling /api/primitive/zerocommerce/commerce/products or ' +
     '/commerce/checkout — those paths do not exist and will 404 every time. Also FORBIDDEN: hand-rolling raw card-' +
     'number/expiry/CVC input fields instead of Stripe\'s real Elements/PaymentElement — this both fails PCI-scope ' +
-    'best practice and silently drops the Apple Pay/Google Pay eligibility the checkout response already supports.',
+    'best practice and silently drops the Apple Pay/Google Pay eligibility the checkout response already supports. ' +
+    'Also FORBIDDEN: reading or displaying a `price` field on a product (the real field is `base_price`) or a ' +
+    '`stock_quantity`/inventory-count field from the storefront products response (it is never present there).',
   // #525: AgentFlow shares the SAME confirmed gap — a real 83,084-char
   // generation for "a no-code visual agent workflow builder with drag and
   // drop flow building" never called /api/primitive/agentflow/ and had ZERO
