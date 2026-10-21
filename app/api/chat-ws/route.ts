@@ -53,6 +53,7 @@ import { logAgentRun } from '@/lib/services/agent-runs.service'
 import { isQuotaError, QUOTA_USER_MESSAGE } from '@/lib/quota-error'
 import { getBedrockClient, isBedrockEnabled } from '@/lib/bedrock-client'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
+import { applyChatBudget } from '@/lib/build/context-budget-chat'
 import {
   registerInFlightGeneration,
   unregisterInFlightGeneration,
@@ -572,9 +573,26 @@ export async function POST(request: NextRequest) {
           // Use CSS gradients + blur glows instead (already in the theme prompt)
           const imagePrompt = ''
 
+          // Context Budget Manager wiring (#1195): check the REAL session's
+          // conversation history against the real budget service and trim it
+          // if the budget is critical/exhausted, before it goes anywhere near
+          // the LLM. Fail-open by construction — applyChatBudget never
+          // throws and never blocks; on any failure (DB down, service bug,
+          // timeout) it hands back `previousMessages` completely untouched,
+          // so a budget-check failure can never break real chat generation.
+          const budgetResult = await applyChatBudget(responseId, userId, previousMessages)
+          if (budgetResult.budget) {
+            safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+              type: 'budget',
+              budget: budgetResult.budget,
+              trimmed: budgetResult.trimmed,
+              droppedCount: budgetResult.droppedCount,
+            })}\n\n`))
+          }
+
           // Build conversation messages
           const conversationMessages = [
-            ...previousMessages,
+            ...budgetResult.messages,
             { role: 'user' as const, content: enhancedPrompt }
           ]
 
@@ -1225,8 +1243,8 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                   // model. Bedrock Sonnet/Opus both support >8k output.
                   max_tokens: 16000,
                   system: llmSystemPrompt,
-                  messages: previousMessages.length > 0
-                    ? [...previousMessages.map((m: any) => ({ role: m.role, content: m.content })), { role: 'user', content: enhancedPrompt }]
+                  messages: budgetResult.messages.length > 0
+                    ? [...budgetResult.messages.map((m: any) => ({ role: m.role, content: m.content })), { role: 'user', content: enhancedPrompt }]
                     : [{ role: 'user', content: enhancedPrompt }],
                 })
 
@@ -1340,8 +1358,8 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               const singleTurnMessages = [
                 { role: 'system' as const, content: llmSystemPrompt },
                 // Merge conversation history into a single user message to keep it 2-message single-turn
-                { role: 'user' as const, content: previousMessages.length > 0
-                  ? `Previous context:\n${previousMessages.map(m => `${m.role}: ${m.content}`).join('\n')}\n\nNew request: ${enhancedPrompt}`
+                { role: 'user' as const, content: budgetResult.messages.length > 0
+                  ? `Previous context:\n${budgetResult.messages.map(m => `${m.role}: ${m.content}`).join('\n')}\n\nNew request: ${enhancedPrompt}`
                   : enhancedPrompt
                 },
               ]
