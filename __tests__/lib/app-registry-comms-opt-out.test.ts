@@ -8,6 +8,7 @@ vi.hoisted(() => {
 })
 
 import { setAppCommsOptOut } from '@/lib/build/app-registry'
+import { __resetRegistryCacheForTests } from '@/lib/build/app-registry'
 
 /**
  * #742 — setAppCommsOptOut persists a founder's "don't proactively contact me"
@@ -26,7 +27,7 @@ function okResponse(): Response {
 }
 
 describe('setAppCommsOptOut (#742)', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); __resetRegistryCacheForTests() })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('no-op (false) when the slug is not registered', async () => {

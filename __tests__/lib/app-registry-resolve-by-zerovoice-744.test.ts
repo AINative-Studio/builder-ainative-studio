@@ -7,7 +7,7 @@ vi.hoisted(() => {
   process.env.ZERODB_PROJECT_ID = 'proj-abc'
 })
 
-import { resolveAppByZeroVoiceNumber } from '@/lib/build/app-registry'
+import { resolveAppByZeroVoiceNumber, __resetRegistryCacheForTests } from '@/lib/build/app-registry'
 
 /**
  * #744 — resolveAppByZeroVoiceNumber(): reverse-lookup a company by its own
@@ -34,7 +34,7 @@ function row(slug: string, extra: Record<string, unknown> = {}): any {
 }
 
 describe('resolveAppByZeroVoiceNumber (#744)', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); __resetRegistryCacheForTests() })
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
