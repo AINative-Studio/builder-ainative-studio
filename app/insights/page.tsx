@@ -37,13 +37,15 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { AppHeader } from '@/components/shared/app-header'
-import { TrendingUp, Activity, CheckCircle, Edit } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { TrendingUp, Activity, CheckCircle, Edit, Download } from 'lucide-react'
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json())
 
 export default function InsightsPage() {
   const [timeRange, setTimeRange] = useState('7d')
   const [groupBy, setGroupBy] = useState('promptVersion')
+  const [exportError, setExportError] = useState<string | null>(null)
 
   const { data, isLoading, error } = useSWR(
     `/api/rlhf/insights?timeRange=${timeRange}&groupBy=${groupBy}`,
@@ -52,6 +54,30 @@ export default function InsightsPage() {
       refreshInterval: 30000, // Refresh every 30 seconds
     }
   )
+
+  // #1213 — real consumer for the previously-orphaned GET /api/rlhf/export.
+  // Admin-gated server-side; a non-admin gets a clear inline message rather
+  // than a silent failed download.
+  const exportTrainingData = async () => {
+    setExportError(null)
+    const days = timeRange === '1d' ? 1 : timeRange === '30d' ? 30 : 7
+    const res = await fetch(`/api/rlhf/export?days=${days}&format=jsonl`)
+    if (!res.ok) {
+      setExportError(
+        res.status === 403 ? 'Admin access required to export training data.' : 'Export failed.',
+      )
+      return
+    }
+    const blob = await res.blob()
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `rlhf-training-data-${new Date().toISOString().split('T')[0]}.jsonl`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    window.URL.revokeObjectURL(url)
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-black">
@@ -107,7 +133,24 @@ export default function InsightsPage() {
               </SelectContent>
             </Select>
           </div>
+
+          <Button
+            variant="outline"
+            size="sm"
+            className="ml-auto gap-2"
+            onClick={exportTrainingData}
+            data-testid="rlhf-export-button"
+          >
+            <Download className="h-4 w-4" />
+            Export Training Data
+          </Button>
         </div>
+
+        {exportError && (
+          <p className="text-sm text-red-600 dark:text-red-400 mb-4" data-testid="rlhf-export-error">
+            {exportError}
+          </p>
+        )}
 
         {/* No Data State */}
         {!isLoading && !error && (!data || !data.summary) && (
