@@ -609,6 +609,44 @@ describe('primitive-catalog additions (#410)', () => {
     })
   })
 
+  describe('#1164 fix — ZeroCommerce checkout UI renders real Stripe Elements, not a bare card form', () => {
+    it('instructs importing loadStripe from @stripe/stripe-js and Elements/PaymentElement from @stripe/react-stripe-js', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).toMatch(/loadStripe.*from '@stripe\/stripe-js'/)
+      expect(instruction).toMatch(/Elements.*PaymentElement.*from '@stripe\/react-stripe-js'/)
+    })
+
+    it('instructs calling storefront/_/stripe-config to get the publishable key — never hardcoding one', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).toMatch(/storefront\/_\/stripe-config/)
+      expect(instruction).toMatch(/NEVER hardcode or guess a Stripe publishable key/i)
+    })
+
+    it('instructs passing stripeAccount to loadStripe when a connected_account_id is present (Connect-routed merchants)', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).toMatch(/connected_account_id/)
+      expect(instruction).toMatch(/stripeAccount:\s*connected_account_id/)
+    })
+
+    it('instructs wrapping the payment form in <Elements> initialized with the real client_secret', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).toMatch(/<Elements stripe=\{stripePromise\} options=\{\{ clientSecret: client_secret \}\}>/)
+      expect(instruction).toMatch(/<PaymentElement/)
+    })
+
+    it('instructs calling stripe.confirmPayment to actually complete the payment', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).toMatch(/confirmPayment/)
+    })
+
+    it('the anti-pattern block forbids hand-rolled card-number/expiry/CVC fields, naming the PCI and wallet-eligibility reasons', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).toMatch(/FORBIDDEN: hand-rolling raw card-number\/expiry\/CVC input fields/)
+      expect(instruction).toMatch(/PCI-scope best practice/)
+      expect(instruction).toMatch(/Apple Pay\/Google Pay eligibility/)
+    })
+  })
+
   describe('#525 fix — AgentFlow runtime proxy compliance (real live generation never called it, and persisted nothing at all)', () => {
     // Real repro from #525: idea "a no-code visual agent workflow builder with
     // drag and drop flow building" produced 83,084 chars of generated code
