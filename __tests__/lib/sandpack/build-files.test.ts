@@ -210,6 +210,35 @@ export default function App() {
   })
 })
 
+/**
+ * Real production bug (#1165 follow-up, found live on habanero-hub AFTER the
+ * import-injection false-positive fix above): stubMissingLocalComponents's
+ * own existence check for a relative import only tried the extension
+ * candidates `.tsx`, `.ts`, and `/index.tsx` — never `/index.ts`. The real
+ * AIKit builtin module lives at /components/aikit/index.ts (a plain .ts
+ * file). A genuine `import { MetricCard } from './components/aikit'` was
+ * therefore treated as missing and got a conflicting inert stub synthesized
+ * at /components/aikit.tsx (default-export-only, no MetricCard), which then
+ * won module resolution over the real directory module — MetricCard resolved
+ * to undefined and crashed the whole preview with "Element type is invalid".
+ */
+describe('buildSandpackFiles — stubMissingLocalComponents must recognize a real .ts index module (#1165 follow-up)', () => {
+  it('does NOT synthesize a conflicting stub for a real AIKit import already satisfied by the builtin /components/aikit/index.ts', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "import { MetricCard } from './components/aikit'\nexport default function App(){ return <MetricCard title=\"x\" value=\"1\" /> }",
+    })
+    expect(built['/components/aikit.tsx']).toBeUndefined()
+    expect(built['/components/aikit/index.ts']).toBeDefined()
+  })
+
+  it('still stubs a genuinely missing relative import (no real file at any candidate extension)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "import Footer from './components/Footer'\nexport default function App(){ return <Footer/> }",
+    })
+    expect(built['/components/Footer.tsx']).toContain('Auto-stubbed')
+  })
+})
+
 describe('detectSandpackDependencies (#1097)', () => {
   it('detects lucide-react/recharts usage only in generated (non-builtin) files', () => {
     const built = buildSandpackFiles({
