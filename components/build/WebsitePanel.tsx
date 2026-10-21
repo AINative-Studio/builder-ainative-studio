@@ -22,6 +22,11 @@
  *      here; does NOT yet push it into an already-deployed company's live
  *      generated site (that needs a separate single-file-patch primitive for an
  *      arbitrary existing Gitea repo, which doesn't exist yet).
+ *   E. Project Source Download (#1187) — export the company's REAL generated app
+ *      code (not its data) as a working ZIP: the same multi-file source the live
+ *      Sandpack preview runs, plus real package.json/tsconfig/tailwind config and
+ *      AINative discovery files, so `npm install && npm run dev` just works. Distinct
+ *      from (C): that's the founder's DATA, this is their CODE.
  *
  * Chrome: reuses the `.modernist` `.m-live-card`, `.st` pills, `.m-chip`,
  * `.m-task-*` and `.m-infra-btns` classes already used by the Versions / Tasks
@@ -83,6 +88,10 @@ export function WebsitePanel({
   // ---- Export (C) ----
   const [exporting, setExporting] = useState<'json' | 'csv' | null>(null)
   const [exportError, setExportError] = useState<string | null>(null)
+
+  // ---- Export project ZIP (E, #1187) — the real app source, not your data. ----
+  const [exportingCode, setExportingCode] = useState(false)
+  const [codeExportError, setCodeExportError] = useState<string | null>(null)
 
   // ---- Brand / Logo (D, #492) ----
   const [logoUrl, setLogoUrl] = useState<string | null>(null)
@@ -245,7 +254,21 @@ export function WebsitePanel({
     }
   }
 
-  // ---- Export action ----
+  // Shared helper: turn a ZIP/file attachment Response into a real browser download.
+  const triggerDownload = (blob: Blob, cd: string, fallbackFilename: string) => {
+    const m = /filename="?([^"]+)"?/.exec(cd)
+    const filename = m ? m[1] : fallbackFilename
+    const link = document.createElement('a')
+    const objectUrl = URL.createObjectURL(blob)
+    link.href = objectUrl
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(objectUrl)
+  }
+
+  // ---- Export action (C, data) ----
   const exportData = async (format: 'json' | 'csv') => {
     if (!canManage) { onRequireUpgrade?.(); return }
     if (exporting) return
@@ -258,23 +281,34 @@ export function WebsitePanel({
         setExportError(d?.error || 'Export unavailable right now.')
         return
       }
-      // Turn the attachment into a real browser download.
       const blob = await res.blob()
-      const cd = res.headers.get('Content-Disposition') || ''
-      const m = /filename="?([^"]+)"?/.exec(cd)
-      const filename = m ? m[1] : `${companyId}-data.${format === 'csv' ? 'csv' : 'json'}`
-      const link = document.createElement('a')
-      const objectUrl = URL.createObjectURL(blob)
-      link.href = objectUrl
-      link.download = filename
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      URL.revokeObjectURL(objectUrl)
+      triggerDownload(blob, res.headers.get('Content-Disposition') || '', `${companyId}-data.${format === 'csv' ? 'csv' : 'json'}`)
     } catch {
       setExportError('Connection hiccup — try the export again.')
     } finally {
       setExporting(null)
+    }
+  }
+
+  // ---- Export action (E, #1187 — real project source ZIP) ----
+  const exportCode = async () => {
+    if (!canManage) { onRequireUpgrade?.(); return }
+    if (exportingCode) return
+    setExportingCode(true)
+    setCodeExportError(null)
+    try {
+      const res = await fetch(`/api/build/export-code?companyId=${encodeURIComponent(companyId)}`)
+      if (!res.ok) {
+        const d = await res.json().catch(() => null)
+        setCodeExportError(d?.error || 'Export unavailable right now.')
+        return
+      }
+      const blob = await res.blob()
+      triggerDownload(blob, res.headers.get('Content-Disposition') || '', `${companyId}-source.zip`)
+    } catch {
+      setCodeExportError('Connection hiccup — try the export again.')
+    } finally {
+      setExportingCode(false)
     }
   }
 
@@ -497,6 +531,29 @@ export function WebsitePanel({
         </div>
         {exportError && (
           <p className="m-mono m-ver-status is-error" data-testid="export-error">{exportError}</p>
+        )}
+      </div>
+
+      {/* ---- E. Project source download (#1187) — the real app code, not your data. ---- */}
+      <div className="m-website-section" data-testid="website-export-code">
+        <div className="m-mono m-website-section-h">Your code</div>
+        <p className="m-mono m-website-sub">
+          Download the real, working source of your app as a ZIP — the same files your live preview runs.
+          Unzip it and run <code>npm install &amp;&amp; npm run dev</code>.
+        </p>
+        <div className="m-infra-btns">
+          <button
+            className="btn-secondary"
+            data-testid="export-code"
+            disabled={exportingCode}
+            onClick={exportCode}
+            title={canManage ? 'Download your project as a ZIP' : 'Upgrade to export your project'}
+          >
+            {exportingCode ? 'Exporting…' : 'Download project ZIP'}
+          </button>
+        </div>
+        {codeExportError && (
+          <p className="m-mono m-ver-status is-error" data-testid="export-code-error">{codeExportError}</p>
         )}
       </div>
     </div>
