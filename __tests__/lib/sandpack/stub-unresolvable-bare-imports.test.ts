@@ -56,6 +56,20 @@ describe('stubUnresolvableBareImports', () => {
     expect(out.trim()).toBe('')
   })
 
+  it('drops an inline `type` specifier mixed with value specifiers, stubbing only the value ones, and the result is valid executable JS', () => {
+    // `import { type Variants, motion } from 'framer-motion'` — a very
+    // plausible real-world shape. Left unhandled, `type` ends up spliced
+    // into the generated identifier (`const type Variants = ...`), a
+    // SyntaxError this fallback would introduce on its own, worse than the
+    // crash it exists to prevent.
+    const code = "import { type Variants, motion } from 'framer-motion'\nfunction X() { return <motion.div /> }"
+    const out = fixJsxErrors(code)
+    expect(out).not.toMatch(/\btype Variants\b/)
+    expect(out).not.toMatch(/const Variants/)
+    const constLine = out.match(/const motion = new Proxy[^\n]*/)![0]
+    expect(() => new Function(constLine)()).not.toThrow()
+  })
+
   it('leaves allowlisted package imports (react, clsx, lucide-react, recharts, scoped stripe) untouched', () => {
     const code = [
       "import React, { useState } from 'react'",

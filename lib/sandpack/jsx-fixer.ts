@@ -77,8 +77,8 @@ export function fixJsxErrors(code: string): string {
   // left over.
   fixed = stubUnresolvableBareImports(fixed)
 
-  // Fix 0g: Same safety net, for the re-export shapes (`export {...} from
-  // 'pkg'`, `export * from 'pkg'`) that Fix 0f's import-only regexes never
+  // Fix 0i: Same safety net, for the re-export shapes (`export {...} from
+  // 'pkg'`, `export * from 'pkg'`) that Fix 0h's import-only regexes never
   // match (#1181) — Sandpack resolves the specifier on a re-export exactly
   // like a plain import, so it carries the identical whole-compile-crash
   // risk.
@@ -828,6 +828,11 @@ function stubUnresolvableReExports(code: string): string {
 
       const stubLines: string[] = []
       for (const raw of names.split(',').map((n) => n.trim()).filter(Boolean)) {
+        // Inline type-only specifier (`export { type Variants, motion } from
+        // 'pkg'`) has no runtime value — drop it rather than stub it, same
+        // as the import-side fix (would otherwise splice `type` into the
+        // exported const name and throw a SyntaxError).
+        if (/^type\s+[A-Za-z_$][\w$]*(?:\s+as\s+[A-Za-z_$][\w$]*)?$/.test(raw)) continue
         const aliasMatch = raw.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/)
         const exportedName = aliasMatch ? aliasMatch[2] : raw
         // Self-reference the binding that's ACTUALLY declared — the local
@@ -876,6 +881,13 @@ function parseImportClauseLocals(clause: string): string[] {
     const locals: string[] = []
     if (braceMatch[1]) locals.push(braceMatch[1])
     for (const raw of braceMatch[2].split(',').map((n) => n.trim()).filter(Boolean)) {
+      // Inline type-only specifier (`type Foo` / `type Foo as Bar`), e.g.
+      // `import { type Variants, motion } from 'framer-motion'` — has no
+      // runtime value, so drop it rather than stub it. Left unhandled, the
+      // literal word `type` ends up spliced into the stub as part of the
+      // identifier name (`const type Variants = ...`), a SyntaxError this
+      // fallback would otherwise introduce on its own.
+      if (/^type\s+[A-Za-z_$][\w$]*(?:\s+as\s+[A-Za-z_$][\w$]*)?$/.test(raw)) continue
       const aliasMatch = raw.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/)
       locals.push(aliasMatch ? aliasMatch[2] : raw)
     }

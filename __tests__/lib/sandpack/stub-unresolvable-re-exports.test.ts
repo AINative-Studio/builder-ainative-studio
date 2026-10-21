@@ -64,6 +64,18 @@ describe('stubUnresolvableReExports', () => {
     expect(out.trim()).toBe('')
   })
 
+  it('drops an inline `type` specifier mixed with value specifiers, stubbing only the value ones, and the result is valid executable JS', () => {
+    // `export { type Variants, motion } from 'framer-motion'` — left
+    // unhandled, `type` ends up spliced into the exported const's name
+    // (`export const type Variants = ...`), a SyntaxError.
+    const code = "export { type Variants, motion } from 'framer-motion'"
+    const out = fixJsxErrors(code)
+    expect(out).not.toMatch(/\btype Variants\b/)
+    expect(out).not.toMatch(/const Variants/)
+    const constLine = out.match(/export const motion = new Proxy[^\n]*/)![0].replace(/^export /, '')
+    expect(() => new Function(constLine)()).not.toThrow()
+  })
+
   it('drops `export * from` entirely — the re-exported binding names are unknowable from this file', () => {
     const code = "export * from 'some-unknown-lib'"
     const out = fixJsxErrors(code)
