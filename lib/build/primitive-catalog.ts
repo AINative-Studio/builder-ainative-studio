@@ -832,7 +832,8 @@ export function catalogPromptBlock(idea: string, track: 'app' | 'company' = 'com
   return (
     `AINATIVE PRIMITIVE CATALOG (compose from THESE real products — do not invent primitives):\n${full}\n${roleLine}\n` +
     `Most relevant to this idea (lead with these, add others only if the idea calls for them): ${names.join(', ')}.\n` +
-    `Pick the primitives THIS specific idea needs and say how each is used. Do not default to a generic set.`
+    `Pick the primitives THIS specific idea needs and say how each is used. Do not default to a generic set.\n\n` +
+    NEVER_RECOMMEND_COMPETITOR_BLOCK
   )
 }
 
@@ -1552,6 +1553,27 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
  * when the plan touches implementation, and do not invent third-party tools
  * for capabilities the platform already provides.
  */
+/**
+ * Found via a live production benchmark (2026-10-20): a plain "sell handmade
+ * ceramic mugs online" idea generated a Product Brief recommending "a
+ * Shopify-based online store" instead of ZeroCommerce — because the `brief`
+ * view had no grounding call at all, and no existing instruction anywhere
+ * forbade naming a competing SaaS platform. Shared by both
+ * primitiveGroundingBlock (implementation-detail artifacts) and
+ * catalogPromptBlock (the composition-plan view) so the rule can't drift
+ * out of sync between the two call sites.
+ */
+export const NEVER_RECOMMEND_COMPETITOR_BLOCK =
+  `ABSOLUTE RULE — NEVER RECOMMEND A COMPETING SAAS PLATFORM: if this idea involves selling products online, ` +
+  `do NOT write "build a Shopify store," "use Shopify," "a Shopify-based site," or recommend Shopify, ` +
+  `BigCommerce, WooCommerce, Squarespace Commerce, Wix Ecommerce, or any other third-party ecommerce SaaS ` +
+  `platform in ANY generated artifact — not as the implementation plan, not as a comparison, not as a fallback. ` +
+  `Builder generates real ecommerce apps that run on AINative's own ZeroCommerce primitive, never on a ` +
+  `competitor's platform. If the founder explicitly asks to build specifically ON Shopify itself (not just ` +
+  `"an online store," but Shopify by name, or wants a Shopify app/theme), do not attempt it inside Builder — ` +
+  `tell them Builder only builds on AINative's own primitives, and that cody-cli (AINative's standalone agent) ` +
+  `gives them full, unrestricted control to build directly on Shopify or any other platform of their choosing.`
+
 export function primitiveGroundingBlock(idea: string, track: 'app' | 'company' = 'company', role?: CompanyRole): string {
   const { foundational, selected } = selectPrimitives(idea, track, 6, role)
   const seen = new Set<string>()
@@ -1569,6 +1591,7 @@ export function primitiveGroundingBlock(idea: string, track: 'app' | 'company' =
     `already-selected AINative primitives by name instead of generic third-party tools. Do NOT invent or suggest ` +
     `third-party tools (e.g. OpenAI's embeddings API, Firebase, Stripe, Twilio, Auth0) for capabilities these ` +
     `primitives already provide — this idea's own composition table already committed to the list above, so this ` +
-    `artifact must stay consistent with it.`
+    `artifact must stay consistent with it.\n\n` +
+    NEVER_RECOMMEND_COMPETITOR_BLOCK
   )
 }

@@ -421,11 +421,17 @@ describe('#519 planning artifacts cite real AINative primitives', () => {
     expect(compPrompt).toContain('ZeroMemory')
   })
 
-  it('wedge/positioning/landing (marketing-copy artifacts) are left untouched — no primitive-grounding block injected', () => {
+  it('wedge/positioning/landing (marketing-copy artifacts) now carry the grounding block too', () => {
+    // Reversed from the original #519 scoping (which left these three ungrounded
+    // as "marketing copy, not implementation detail"). A live production benchmark
+    // (2026-10-20) found the brief view — which had NO grounding call at all —
+    // generated "Build a Shopify-based online store" for a plain ecommerce idea.
+    // Marketing/positioning prose is exactly where a competitor name can leak in,
+    // so every artifact view is now grounded, no exceptions.
     const ctx = makeCtx({ idea: journalingIdea, track: 'company' })
     for (const view of ['wedge', 'positioning', 'landing'] as const) {
       const prompt = ARTIFACT_PROMPTS[view].user(ctx)
-      expect(prompt, `${view} should not carry the #519 grounding block`).not.toMatch(
+      expect(prompt, `${view} should carry the grounding block`).toMatch(
         /already[- ]selected AINative primitives/i,
       )
     }
@@ -437,5 +443,69 @@ describe('#519 planning artifacts cite real AINative primitives', () => {
     // ZeroDB/ZeroMemory are foundational (always selected) — still present,
     // proving the block is real selection output, not conditional on a match.
     expect(prompt).toContain('ZeroDB')
+  })
+})
+
+// =======================================
+// Never recommend Shopify (live production bug, 2026-10-20)
+// =======================================
+describe('ecommerce ideas never get steered toward a competing SaaS platform', () => {
+  const mugIdea = 'I want to sell handmade ceramic mugs and bowls online to customers across the US.'
+
+  it('every idea/implementation-facing artifact view explicitly forbids recommending Shopify for an ecommerce idea, on both tracks', () => {
+    // codingStandards is deliberately excluded: it restates a FIXED canonical
+    // standards list verbatim ("do NOT invent new ones or drop any") and never
+    // discusses the idea's implementation choices, so it has no grounding call
+    // by design (see its own comment in artifact-prompts.ts).
+    const views = Object.keys(ARTIFACT_PROMPTS).filter((v) => v !== 'codingStandards')
+    for (const track of ['app', 'company'] as const) {
+      const ctx = makeCtx({ idea: mugIdea, track })
+      for (const view of views) {
+        const prompt = (ARTIFACT_PROMPTS as Record<string, ArtifactSpec>)[view].user(ctx)
+        expect(prompt, `${view} (${track} track) must forbid recommending Shopify`).toMatch(
+          /NEVER RECOMMEND A COMPETING SAAS PLATFORM/,
+        )
+        expect(prompt, `${view} (${track} track) must name Shopify as forbidden`).toMatch(/Shopify/)
+      }
+    }
+  })
+
+  it('codingStandards is deliberately exempt (restates a fixed canonical list, not idea-specific implementation choices)', () => {
+    const ctx = makeCtx({ idea: mugIdea, track: 'app' })
+    const prompt = ARTIFACT_PROMPTS.codingStandards.user(ctx)
+    expect(prompt).not.toMatch(/NEVER RECOMMEND A COMPETING SAAS PLATFORM/)
+  })
+
+  it('the brief view (previously ungrounded — the exact view that produced the real regression) now carries the grounding block', () => {
+    // Direct regression test: a live production run of this exact idea on the
+    // company track produced a generated Product Brief whose goals included
+    // "Build a Shopify-based online store with product catalog, checkout, and
+    // fulfillment workflows" — because `brief` had no primitiveGroundingBlock()
+    // call at all, unlike thesis/businessModel/plan30 (grounded for #519).
+    const ctx = makeCtx({ idea: mugIdea, track: 'company' })
+    const prompt = ARTIFACT_PROMPTS.brief.user(ctx)
+    expect(prompt).toMatch(/already[- ]selected AINative primitives/i)
+    expect(prompt).toMatch(/ZeroCommerce/)
+  })
+
+  it('the forbidden list names the real competing ecommerce SaaS platforms, not just Shopify', () => {
+    const ctx = makeCtx({ idea: mugIdea, track: 'company' })
+    const prompt = ARTIFACT_PROMPTS.brief.user(ctx)
+    for (const competitor of ['Shopify', 'BigCommerce', 'WooCommerce', 'Squarespace Commerce', 'Wix Ecommerce']) {
+      expect(prompt, `forbidden list must name ${competitor}`).toContain(competitor)
+    }
+  })
+
+  it('instructs redirecting an explicit "build on Shopify" request to cody-cli, not attempting it in Builder', () => {
+    const ctx = makeCtx({ idea: mugIdea, track: 'company' })
+    const prompt = ARTIFACT_PROMPTS.brief.user(ctx)
+    expect(prompt).toMatch(/cody-cli/)
+    expect(prompt).toMatch(/do not attempt it inside Builder/i)
+  })
+
+  it('ZeroCommerce itself is correctly selected (not forbidden) for an ecommerce idea', () => {
+    const ctx = makeCtx({ idea: mugIdea, track: 'company' })
+    const prompt = ARTIFACT_PROMPTS.comp.user(ctx)
+    expect(prompt).toContain('ZeroCommerce')
   })
 })
