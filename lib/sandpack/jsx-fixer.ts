@@ -77,6 +77,13 @@ export function fixJsxErrors(code: string): string {
   // left over.
   fixed = stubUnresolvableBareImports(fixed)
 
+  // Fix 0g: Same safety net, for the re-export shapes (`export {...} from
+  // 'pkg'`, `export * from 'pkg'`) that Fix 0f's import-only regexes never
+  // match (#1181) — Sandpack resolves the specifier on a re-export exactly
+  // like a plain import, so it carries the identical whole-compile-crash
+  // risk.
+  fixed = stubUnresolvableReExports(fixed)
+
   // Fix 1: DISABLED — balanceJsxTags adds closing tags in wrong context
   // causing "Unexpected token, expected ','" errors in Sandpack
   // fixed = balanceJsxTags(fixed)
@@ -774,6 +781,68 @@ function stubUnresolvableBareImports(code: string): string {
           .map((name) => `${indent}const ${name} = ${genericInertStub(name, isUsedAsJsxTag(code, name))};`)
           .join('\n') + '\n'
       )
+    }
+  )
+
+  return fixed
+}
+
+/**
+ * Generic safety net for re-export statements — the export-side counterpart
+ * to stubUnresolvableBareImports above. Sandpack resolves the specifier on
+ * `export ... from 'pkg'` exactly like a plain `import ... from 'pkg'`, so an
+ * unresolvable package reached via a re-export crashes the whole compile the
+ * same way, but none of the import-shaped regexes above ever match this
+ * syntax (there's no `import` keyword) — confirmed gap, #1181.
+ */
+function stubUnresolvableReExports(code: string): string {
+  let fixed = code
+
+  // `export * from 'pkg'` — the re-exported binding names are unknowable
+  // from this file alone, so there's nothing to stub; dropping it entirely
+  // is the only safe move (same precedent as dropping a side-effect-only
+  // import above).
+  fixed = fixed.replace(
+    /^([ \t]*)export\s+\*\s+from\s*['"]([^'".][^'"]*)['"]\s*;?[ \t]*$/gm,
+    (match, _indent: string, pkg: string) => (isAllowlistedPackage(pkg) ? match : '')
+  )
+
+  // `export * as Name from 'pkg'` — a namespace re-export; unlike the bare
+  // `export *` above, Name IS a real local binding, so it gets the same
+  // stub a namespace import would.
+  fixed = fixed.replace(
+    /^([ \t]*)export\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s*['"]([^'".][^'"]*)['"]\s*;?[ \t]*$/gm,
+    (match, indent: string, name: string, pkg: string) =>
+      isAllowlistedPackage(pkg)
+        ? match
+        : `${indent}export const ${name} = ${genericInertStub(name, isUsedAsJsxTag(code, name))};\n`
+  )
+
+  // `export { a, b as c } from 'pkg'` / `export type { ... } from 'pkg'`.
+  fixed = fixed.replace(
+    /^([ \t]*)export\s+(type\s+)?\{([^}]*)\}\s*from\s*['"]([^'".][^'"]*)['"]\s*;?[ \t]*$/gm,
+    (match, indent: string, typeOnly: string | undefined, names: string, pkg: string) => {
+      if (isAllowlistedPackage(pkg)) return match
+      // `export type { ... } from 'pkg'` has no runtime value — safe to drop.
+      if (typeOnly) return ''
+
+      const stubLines: string[] = []
+      for (const raw of names.split(',').map((n) => n.trim()).filter(Boolean)) {
+        const aliasMatch = raw.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/)
+        const exportedName = aliasMatch ? aliasMatch[2] : raw
+        const sourceName = aliasMatch ? aliasMatch[1] : raw
+        const stub = genericInertStub(sourceName, isUsedAsJsxTag(code, exportedName))
+        // `export { default } from 'pkg'` / `export { x as default } from
+        // 'pkg'` re-export as THIS module's default — `export const default`
+        // is a syntax error, so that one binding needs `export default`.
+        stubLines.push(
+          exportedName === 'default'
+            ? `${indent}export default ${stub};`
+            : `${indent}export const ${exportedName} = ${stub};`
+        )
+      }
+      if (stubLines.length === 0) return ''
+      return stubLines.join('\n') + '\n'
     }
   )
 
