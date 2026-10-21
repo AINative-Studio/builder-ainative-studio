@@ -26,6 +26,11 @@ export function fixJsxErrors(code: string): string {
   // Fix 0d: Sanitize broken/overlapping imports (most common AI generation error)
   fixed = sanitizeImports(fixed)
 
+  // Fix 0e: Stub remaining Next.js-only module specifiers that can appear in
+  // an ordinary generated file (next/navigation, next/font/google|local,
+  // next/dynamic, next/script) — see #1154.
+  fixed = stubNextOnlyModules(fixed)
+
   // Fix 1: DISABLED — balanceJsxTags adds closing tags in wrong context
   // causing "Unexpected token, expected ','" errors in Sandpack
   // fixed = balanceJsxTags(fixed)
@@ -37,6 +42,89 @@ export function fixJsxErrors(code: string): string {
   fixed = fixCommonSyntax(fixed)
 
   return fixed
+}
+
+/**
+ * Stub remaining Next.js-only module specifiers that can appear in an
+ * ordinary generated file (not just an excluded App Router convention file
+ * — see build-files.ts's basename exclusion, which only covers whole files
+ * like layout.tsx, not an ordinary component that happens to import one of
+ * these). Sandpack's preview sandbox is a plain react-ts template with no
+ * `next` dependency at all (components/chat/sandpack-preview.tsx's
+ * customSetup.dependencies never declares it, deliberately — adding it
+ * would reopen the unpkg-resolution-hang risk that file's own comment
+ * documents), so any of these fails the WHOLE compile with "Cannot find
+ * module" the same way next/image/next/link do (#1151): sandpack-bundler's
+ * collectAppBarrelUsage resolves every provided file's imports regardless
+ * of reachability, so one unresolvable specifier anywhere silently fails
+ * the entire compile with no error surfaced to the host page. Mirrors the
+ * existing stub-to-inert philosophy used elsewhere in this pipeline
+ * (build-files.ts's stubMissingLocalComponents, the react-icons stub below)
+ * rather than guessing at real behavior. See #1154.
+ */
+function stubNextOnlyModules(code: string): string {
+  let fixed = code
+
+  // next/navigation — client-side routing hooks/helpers.
+  fixed = fixed.replace(
+    /import\s+\{([^}]+)\}\s+from\s+['"]next\/navigation['"]\s*;?/g,
+    (_match, names: string) => stubNamedImports(names, (name) => NEXT_NAVIGATION_STUBS[name]),
+  )
+
+  // next/font/google, next/font/local — font factory functions; generated
+  // code only ever reads `.className`/`.style`/`.variable` off the result.
+  fixed = fixed.replace(
+    /import\s+\{([^}]+)\}\s+from\s+['"]next\/font\/(?:google|local)['"]\s*;?/g,
+    (_match, names: string) => stubNamedImports(names, () => FONT_FACTORY_STUB),
+  )
+
+  // next/dynamic — default import, e.g. `import dynamic from 'next/dynamic'`.
+  // Dropping lazy-loading for an inert placeholder avoids both the
+  // missing-module crash and a React.lazy-without-Suspense crash.
+  fixed = fixed.replace(
+    /import\s+(\w+)\s+from\s+['"]next\/dynamic['"]\s*;?/g,
+    (_match, name: string) => `const ${name} = (..._args) => () => null;`,
+  )
+
+  // next/script — default import, e.g. `import Script from 'next/script'`.
+  fixed = fixed.replace(
+    /import\s+(\w+)\s+from\s+['"]next\/script['"]\s*;?/g,
+    (_match, name: string) => `const ${name} = (_props) => null;`,
+  )
+
+  return fixed
+}
+
+const NEXT_NAVIGATION_STUBS: Record<string, string> = {
+  useRouter: "() => ({ push: () => {}, replace: () => {}, back: () => {}, forward: () => {}, refresh: () => {}, prefetch: () => {} })",
+  usePathname: "() => '/'",
+  useSearchParams: "() => new URLSearchParams()",
+  useParams: '() => ({})',
+  useSelectedLayoutSegment: '() => null',
+  useSelectedLayoutSegments: '() => []',
+  redirect: '() => {}',
+  permanentRedirect: '() => {}',
+  notFound: '() => {}',
+}
+
+const FONT_FACTORY_STUB = "(..._args) => ({ className: '', style: {}, variable: '' })"
+
+/**
+ * Rewrite a named-import clause (`Foo, Bar as Baz`) into `const` declarations
+ * using a per-name stub expression. A name with no known stub is dropped from
+ * the output entirely rather than guessed at — leaving it unresolved is no
+ * worse than before, and never risks a wrong behavior silently compiling.
+ */
+function stubNamedImports(names: string, stubFor: (name: string) => string | undefined): string {
+  const parts = names.split(',').map((n) => n.trim()).filter(Boolean)
+  const lines: string[] = []
+  for (const raw of parts) {
+    const [sourceName, aliasName] = raw.split(/\s+as\s+/).map((s) => s.trim())
+    const stub = stubFor(sourceName)
+    if (!stub) continue
+    lines.push(`const ${aliasName || sourceName} = ${stub};`)
+  }
+  return lines.length > 0 ? lines.join('\n') + '\n' : ''
 }
 
 /**
