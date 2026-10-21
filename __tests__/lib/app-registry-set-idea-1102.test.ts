@@ -8,6 +8,7 @@ vi.hoisted(() => {
 })
 
 import { setAppIdea } from '@/lib/build/app-registry'
+import { __resetRegistryCacheForTests } from '@/lib/build/app-registry'
 
 /**
  * #1102/#1113 — setAppIdea(): backfills `idea` onto a registry row created
@@ -34,7 +35,7 @@ function row(slug: string, extra: Record<string, unknown> = {}): any {
 }
 
 describe('setAppIdea (#1102/#1113)', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); __resetRegistryCacheForTests() })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('returns false when the slug is not registered', async () => {

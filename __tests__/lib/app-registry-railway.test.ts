@@ -8,7 +8,7 @@ vi.hoisted(() => {
   process.env.ZERODB_PROJECT_ID = 'proj-abc'
 })
 
-import { setAppRailwayService } from '@/lib/build/app-registry'
+import { setAppRailwayService, __resetRegistryCacheForTests } from '@/lib/build/app-registry'
 
 /**
  * #243 — setAppRailwayService persists a company's dedicated Railway service and is
@@ -30,6 +30,7 @@ function okResponse(): Response {
 describe('setAppRailwayService (#243)', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn())
+    __resetRegistryCacheForTests()
   })
   afterEach(() => {
     vi.unstubAllGlobals()

@@ -8,6 +8,7 @@ vi.hoisted(() => {
 })
 
 import { setAppCommsMode, setAppLastDigestAt } from '@/lib/build/app-registry'
+import { __resetRegistryCacheForTests } from '@/lib/build/app-registry'
 
 /**
  * #743 — setAppCommsMode persists the founder's chosen comms cadence mode
@@ -28,7 +29,7 @@ function okResponse(): Response {
 }
 
 describe('setAppCommsMode (#743)', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); __resetRegistryCacheForTests() })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('no-op (false) when the slug is not registered', async () => {
@@ -93,7 +94,7 @@ describe('setAppCommsMode (#743)', () => {
 })
 
 describe('setAppLastDigestAt (#743)', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); __resetRegistryCacheForTests() })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('no-op (false) when the slug is not registered', async () => {

@@ -8,6 +8,7 @@ vi.hoisted(() => {
 })
 
 import { setAppByoDomain } from '@/lib/build/app-registry'
+import { __resetRegistryCacheForTests } from '@/lib/build/app-registry'
 
 /**
  * #53 — setAppByoDomain persists a founder's CONNECTED (bring-your-own) domain and is
@@ -26,7 +27,7 @@ function okResponse(): Response {
 }
 
 describe('setAppByoDomain (#53)', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); __resetRegistryCacheForTests() })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('no-op (false) when the slug is not registered', async () => {

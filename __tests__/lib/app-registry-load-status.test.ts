@@ -14,6 +14,7 @@ import {
   listAppsForOwnerWithStatus,
   resolveApp,
   resolveAppVerified,
+  __resetRegistryCacheForTests,
 } from '@/lib/build/app-registry'
 
 /**
@@ -44,7 +45,7 @@ function row(slug: string, extra: Record<string, unknown> = {}): any {
 }
 
 describe('listAllAppsWithStatus', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); __resetRegistryCacheForTests() })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('reports ok:true with the real rows on a successful read', async () => {
@@ -107,7 +108,7 @@ describe('listAllAppsWithStatus', () => {
 })
 
 describe('listAppsForOwnerWithStatus', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); __resetRegistryCacheForTests() })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('filters to the owner\'s own apps and reports ok:true on success', async () => {
@@ -168,7 +169,7 @@ function pagedRowsFetch(pages: any[][]): ReturnType<typeof vi.fn> {
 }
 
 describe('builder_app_registry pagination (#1106)', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); __resetRegistryCacheForTests() })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('listAllAppsWithStatus finds a slug that only exists past the first 1000-row page', async () => {

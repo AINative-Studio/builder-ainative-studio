@@ -23,6 +23,7 @@ import {
   listAppsForOwner,
   claimCompanyProject,
   reconcilePlanFulfillment,
+  __resetRegistryCacheForTests,
 } from '@/lib/build/app-registry'
 
 // --------------- helpers ---------------
@@ -51,7 +52,7 @@ function row(slug: string, extra: Record<string, unknown> = {}): any {
 // registerApp
 // =======================================
 describe('registerApp', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); __resetRegistryCacheForTests() })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('returns false when slug is missing', async () => {
@@ -99,7 +100,7 @@ describe('registerApp', () => {
 // resolveApp
 // =======================================
 describe('resolveApp', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); __resetRegistryCacheForTests() })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('returns null when slug is empty (no fetch)', async () => {
@@ -182,7 +183,7 @@ describe('resolveApp', () => {
 // setAppDomain
 // =======================================
 describe('setAppDomain', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); __resetRegistryCacheForTests() })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('returns false when slug is not registered', async () => {
@@ -210,7 +211,7 @@ describe('setAppDomain', () => {
 // setAppOwner
 // =======================================
 describe('setAppOwner', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); __resetRegistryCacheForTests() })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('returns false (no fetch) when email is empty', async () => {
@@ -251,7 +252,7 @@ describe('setAppOwner', () => {
 // setAppPlan
 // =======================================
 describe('setAppPlan', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); __resetRegistryCacheForTests() })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('returns false when slug is not registered', async () => {
@@ -311,7 +312,7 @@ describe('setAppPlan', () => {
 // setAppProvisioned
 // =======================================
 describe('setAppProvisioned', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); __resetRegistryCacheForTests() })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('returns false when slug is not registered', async () => {
@@ -372,7 +373,7 @@ describe('setAppProvisioned', () => {
 // setAppLifecycle
 // =======================================
 describe('setAppLifecycle', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); __resetRegistryCacheForTests() })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('returns false when slug is not registered', async () => {
@@ -429,7 +430,7 @@ describe('setAppLifecycle', () => {
 // listAppsForOwner
 // =======================================
 describe('listAppsForOwner', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); __resetRegistryCacheForTests() })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('returns empty array when no email is provided (no fetch)', async () => {
@@ -525,6 +526,7 @@ describe('claimCompanyProject', () => {
     vi.stubGlobal('fetch', vi.fn())
     h.storeCompanyZerodbKey.mockClear()
     h.storeCompanyZerodbKey.mockResolvedValue(true)
+    __resetRegistryCacheForTests()
   })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
@@ -703,6 +705,7 @@ describe('reconcilePlanFulfillment', () => {
     vi.stubGlobal('fetch', vi.fn())
     h.storeCompanyZerodbKey.mockClear()
     h.storeCompanyZerodbKey.mockResolvedValue(true)
+    __resetRegistryCacheForTests()
   })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
@@ -726,31 +729,33 @@ describe('reconcilePlanFulfillment', () => {
   // would have done had the Stripe redirect completed.
   it('THE BUG: fixes a stale plan (null) AND claims a still-tmp_ key in one pass — the exact agentive repro', async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
-    // 1: resolveApp GET (inside reconcilePlanFulfillment itself)
+    // #1172: resolveApp()'s underlying registry read is now cached for a
+    // short window and invalidated on every write. reconcilePlanFulfillment's
+    // own resolveApp (1) and setAppPlan's internal resolveApp (2) are two
+    // reads of the SAME slug back-to-back with no write between them — the
+    // second one now HITS the cache rather than issuing its own fetch. So the
+    // real sequence is: 1 read (reused for both initial resolveApp calls) →
+    // setAppPlan's write (invalidates the cache) → claimCompanyProject's
+    // resolveApp is a fresh fetch again (cache just cleared) and must reflect
+    // that write (plan: 'pro') → the external claim POST → the final write.
     fetchMock.mockResolvedValueOnce(
       rowsResponse([row('agentive', {
         zerodbProjectId: 'proj-agentive', keyKind: 'tmp', claimToken: 'tok-1', plan: undefined,
       })]),
     )
-    // 2: resolveApp GET (inside setAppPlan)
-    fetchMock.mockResolvedValueOnce(
-      rowsResponse([row('agentive', {
-        zerodbProjectId: 'proj-agentive', keyKind: 'tmp', claimToken: 'tok-1', plan: undefined,
-      })]),
-    )
-    // 3: registerApp POST (setAppPlan's write)
+    // registerApp POST (setAppPlan's write)
     fetchMock.mockResolvedValueOnce(okResponse())
-    // 4: resolveApp GET (inside claimCompanyProject)
+    // resolveApp GET (inside claimCompanyProject) — fresh fetch, post-invalidation
     fetchMock.mockResolvedValueOnce(
       rowsResponse([row('agentive', {
         zerodbProjectId: 'proj-agentive', keyKind: 'tmp', claimToken: 'tok-1', plan: 'pro',
       })]),
     )
-    // 5: /api/v1/public/instant-db/claim POST → 200, real permanent key
+    // /api/v1/public/instant-db/claim POST → 200, real permanent key
     fetchMock.mockResolvedValueOnce({
       ok: true, status: 200, json: async () => ({ api_key: 'sk_agentive_real_key' }),
     } as unknown as Response)
-    // 6: registerApp POST (claimCompanyProject's write, flips to permanent)
+    // registerApp POST (claimCompanyProject's write, flips to permanent)
     fetchMock.mockResolvedValueOnce(okResponse())
 
     const res = await reconcilePlanFulfillment('agentive', 'pro', 'amadors-real-jwt')
@@ -863,5 +868,93 @@ describe('reconcilePlanFulfillment', () => {
     const res = await reconcilePlanFulfillment('acme', 'pro', 'jwt')
     expect(res.planFixed).toBe(true)
     expect(res.keyClaimed).toBe(false)
+  })
+})
+
+/**
+ * #1172 — resolveApp()/resolveAppVerified() each independently called
+ * fetchAllRegistryRows(), a full-table scan of the append-only
+ * builder_app_registry table. The nightly loop resolves ~23 companies at
+ * concurrency 8, each calling resolveApp() twice — confirmed live in Railway
+ * logs: dozens of concurrent/near-concurrent multi-page fetches blew through
+ * ZeroDB's 60 req/min rate limit, every resolveApp() call in that window
+ * failed closed (ok:false → null), and a full nightly run completed with
+ * tasksCompleted=0 of 31 attempted. No company's Gitea repo ever got an
+ * issue opened (task-resolver.ts's createIssue() never reached, since
+ * resolveTask() fails before it on a null app.gitOrg). A short-lived shared
+ * cache collapses a burst of near-simultaneous resolveApp() calls onto one
+ * real fetch, and is invalidated on every registry write (registerApp) so a
+ * caller that writes then immediately reads back never sees stale data.
+ */
+describe('fetchAllRegistryRows caching (#1172)', () => {
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); __resetRegistryCacheForTests() })
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+  it('coalesces two near-simultaneous resolveApp calls into a single real fetch', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(rowsResponse([row('acme')]))
+
+    const [a, b] = await Promise.all([resolveApp('acme'), resolveApp('acme')])
+    expect(a?.slug).toBe('acme')
+    expect(b?.slug).toBe('acme')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('a later call still gets a fresh fetch once the cache window has elapsed (no infinite staleness)', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+      fetchMock.mockResolvedValueOnce(rowsResponse([row('acme', { plan: 'pro' })]))
+      const first = await resolveApp('acme')
+      expect(first?.plan).toBe('pro')
+
+      vi.advanceTimersByTime(6_000) // past REGISTRY_CACHE_MS (5s)
+      fetchMock.mockResolvedValueOnce(rowsResponse([row('acme', { plan: 'business' })]))
+      const second = await resolveApp('acme')
+      expect(second?.plan).toBe('business')
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a failed fetch does not poison the cache — the next call retries for real rather than repeating ok:false', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(failResponse(429)) // rate-limited, the real #1172 shape
+    const first = await resolveApp('acme')
+    expect(first).toBeNull()
+
+    fetchMock.mockResolvedValueOnce(rowsResponse([row('acme')]))
+    const second = await resolveApp('acme')
+    expect(second?.slug).toBe('acme')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('a write (registerApp) invalidates the cache so the very next read is never stale', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(rowsResponse([row('acme', { plan: undefined })])) // populates the cache
+    const before = await resolveApp('acme')
+    expect(before?.plan).toBeUndefined()
+
+    fetchMock.mockResolvedValueOnce(okResponse()) // the write itself
+    const wrote = await registerApp({ slug: 'acme', chatId: 'chat-acme', plan: 'pro' } as any)
+    expect(wrote).toBe(true)
+
+    // Still within the cache's TTL window, but the write must have cleared it.
+    fetchMock.mockResolvedValueOnce(rowsResponse([row('acme', { plan: 'pro' })]))
+    const after = await resolveApp('acme')
+    expect(after?.plan).toBe('pro')
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('a rejected (thrown) fetch never produces an unhandled rejection from the cache bookkeeping', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockRejectedValueOnce(new Error('network down'))
+    const result = await resolveApp('acme')
+    expect(result).toBeNull()
+    // If the cache's internal `.then()` chain leaves the rejection
+    // unhandled, vitest surfaces it as a separate "Unhandled Rejection"
+    // failure for this test even though the assertion above passes —
+    // reaching this line at all is the real assertion.
   })
 })

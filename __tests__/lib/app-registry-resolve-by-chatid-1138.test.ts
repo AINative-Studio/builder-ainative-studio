@@ -7,7 +7,7 @@ vi.hoisted(() => {
   process.env.ZERODB_PROJECT_ID = 'proj-abc'
 })
 
-import { resolveAppByChatId } from '@/lib/build/app-registry'
+import { resolveAppByChatId, __resetRegistryCacheForTests } from '@/lib/build/app-registry'
 
 /**
  * #1138 — resolveAppByChatId(): reverse-lookup a company by the chatId
@@ -37,7 +37,7 @@ function row(slug: string, extra: Record<string, unknown> = {}): any {
 }
 
 describe('resolveAppByChatId (#1138)', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); __resetRegistryCacheForTests() })
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
