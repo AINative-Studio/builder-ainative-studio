@@ -23,13 +23,17 @@ export function fixJsxErrors(code: string): string {
   // Fix 0c: Rewrite hallucinated package names to known equivalents
   fixed = rewriteHallucinatedPackages(fixed)
 
-  // Fix 0c2: Stub icon libraries Sandpack's customSetup never declares as a
+  // Fix 0c2: Stub next/image and next/link — real Next.js modules that don't
+  // exist in Sandpack's plain react-ts template (see #1151)
+  fixed = stubNextOnlyImports(fixed)
+
+  // Fix 0c3: Stub icon libraries Sandpack's customSetup never declares as a
   // dependency (#1099 item 7). Only react-icons is pinned here because it's
   // the one real instance confirmed live; a bare substring check for other
   // unknown packages would be too broad to apply safely without its own repro.
   fixed = stubUnsupportedIconLibraries(fixed)
 
-  // Fix 0c3: Fix a malformed `import type, { X } from 'Y'` the model itself
+  // Fix 0c4: Fix a malformed `import type, { X } from 'Y'` the model itself
   // writes (#1099 item 6) -- a stray comma after `type` that should be a
   // space, i.e. `import type { X } from 'Y'`. Confirmed live: this is
   // upstream of any missing/wrong-path import (sanitizeImports/injection
@@ -314,6 +318,58 @@ function rewriteHallucinatedPackages(code: string): string {
       return `import { ${components.join(', ')} } from './components/aikit'${semi}`
     }
   )
+}
+
+/**
+ * Stub next/image and next/link imports with inline local passthrough
+ * components (#1151). The real deployed app target is Next.js
+ * (lib/build/company-scaffold.ts's Dockerfile uses .next/standalone), so the
+ * generation model has every reason to reach for <Image>/<Link> in ordinary
+ * hero/nav components — not just the already-excluded App Router convention
+ * files (layout.tsx etc, #1124/#1136/#1143). Sandpack's preview is a plain
+ * react-ts template with no `next` dependency at all
+ * (components/chat/sandpack-preview.tsx's customSetup.dependencies never
+ * declares it, deliberately — adding it as a real dependency would reopen
+ * the unpkg-resolution-hang risk that file's own comment documents), so an
+ * unresolvable next/image or next/link specifier in ANY generated file
+ * silently fails sandpack-bundler's whole-app compile (same
+ * collectAppBarrelUsage mechanism as #1124/#1125), not just the one file
+ * that used it.
+ *
+ * Mirrors #1099 item 7 / PR #1150's react-icons stub philosophy, but inline
+ * per-file (a local `const Image = ...` right where the import was) instead
+ * of pointing at a shared builtin file — avoids re-deriving this file's
+ * relative-depth-from-root the way the shadcn/AIKit injections in
+ * build-files.ts have to. A real <img>/<a> is a faithful enough stand-in for
+ * a preview: next/image-only props (fill, priority, quality, placeholder,
+ * sizes, loader) are dropped since they're not valid DOM attributes on a
+ * plain <img>; next/image's optional static-import src shape ({ src: '...' })
+ * is unwrapped to a plain string.
+ */
+function stubNextOnlyImports(code: string): string {
+  let fixed = code
+
+  const imageImport = /import\s+(\w+)(?:\s*,\s*\{[^}]*\})?\s+from\s+['"]next\/image['"]\s*;?\n?/
+  const imageMatch = fixed.match(imageImport)
+  if (imageMatch) {
+    const name = imageMatch[1]
+    fixed = fixed.replace(
+      imageImport,
+      `const ${name} = ({ src, alt, fill, priority, quality, placeholder, loader, sizes, ...rest }: any) => <img src={typeof src === 'object' && src !== null ? src.src : src} alt={alt || ''} {...rest} />\n`
+    )
+  }
+
+  const linkImport = /import\s+(\w+)(?:\s*,\s*\{[^}]*\})?\s+from\s+['"]next\/link['"]\s*;?\n?/
+  const linkMatch = fixed.match(linkImport)
+  if (linkMatch) {
+    const name = linkMatch[1]
+    fixed = fixed.replace(
+      linkImport,
+      `const ${name} = ({ href, children, prefetch, replace, scroll, ...rest }: any) => <a href={href} {...rest}>{children}</a>\n`
+    )
+  }
+
+  return fixed
 }
 
 /**
