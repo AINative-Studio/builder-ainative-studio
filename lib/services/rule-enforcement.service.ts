@@ -144,9 +144,31 @@ export class RuleEnforcementService {
     }
   }
 
+  /**
+   * #1193 — this was a bare `console.log` stub with a `// TODO: Fetch rule
+   * set from database` comment: it accepted ANY ruleSetId and silently
+   * succeeded whether or not a real rule set by that id actually existed,
+   * since there is no database-backed custom rule set storage anywhere in
+   * this codebase today (confirmed: RuleSet's own `isBuiltIn` field implies
+   * a non-built-in, DB-fetched set was designed for, but no table/ZeroDB
+   * schema/fetch path for one was ever built). That silent-success shape is
+   * exactly the deceptive-stub pattern the issue is about — a caller asking
+   * for a real custom rule set got no error and no rules, with no signal
+   * anything was wrong.
+   *
+   * The only real caller (app/api/rules/validate/route.ts) only ever passes
+   * 'built-in' — already loaded unconditionally by loadBuiltInRules() above,
+   * so re-"loading" it here is correctly a no-op, not a gap. Any OTHER
+   * ruleSetId has nowhere real to come from yet, so it throws loudly instead
+   * of pretending to succeed — a future caller that actually needs custom
+   * rule sets gets a clear signal to build real storage, not a silent no-op.
+   */
   private async loadRuleSet(ruleSetId: string): Promise<void> {
-    // TODO: Fetch rule set from database
-    console.log(`Loading rule set: ${ruleSetId}`);
+    if (ruleSetId === 'built-in') return; // already loaded by loadBuiltInRules() above
+    throw new Error(
+      `Unknown rule set "${ruleSetId}" — no database-backed custom rule set storage exists yet. ` +
+      `Only 'built-in' is currently supported.`,
+    );
   }
 
   private getApplicableRules(context: string): EnforcementRule[] {
