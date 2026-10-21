@@ -505,8 +505,8 @@ describe('primitive-catalog additions (#410)', () => {
     it('the composition block carries a literal code fence + explicit anti-pattern language for ZeroCommerce', () => {
       const block = codegenCompositionBlock(MUG_SHOP_IDEA, 'app')
       expect(block).toContain('ZeroCommerce')
-      expect(block).toMatch(/```js[\s\S]*fetch\('\/api\/primitive\/zerocommerce\/commerce\/products'\)/)
-      expect(block).toMatch(/fetch\('\/api\/primitive\/zerocommerce\/commerce\/checkout'/)
+      expect(block).toMatch(/```js[\s\S]*fetch\('\/api\/primitive\/zerocommerce\/storefront\/_\/products'\)/)
+      expect(block).toMatch(/fetch\('\/api\/primitive\/zerocommerce\/storefront\/_\/cart'/)
       expect(block).toMatch(/ANTI-PATTERN — FORBIDDEN/)
       // Names the EXACT observed failure mode, not a generic warning.
       expect(block).toMatch(/do NOT hand-roll a product catalog, shopping cart, or checkout using \/api\/db tables/i)
@@ -518,9 +518,12 @@ describe('primitive-catalog additions (#410)', () => {
     })
 
     it('RUNTIME_PROXY_PATH_SUBSTRINGS carries the real proxy paths so the #518 compliance validator catches an unwired ZeroCommerce selection', () => {
+      // #1167: corrected from the fictional /commerce/products, /commerce/checkout
+      // (confirmed via ZeroCommerce's real FastAPI router — products/checkout live
+      // under the unauthenticated /storefront/{slug}/... family, not /commerce/...).
       expect(RUNTIME_PROXY_PATH_SUBSTRINGS.ZeroCommerce).toEqual([
-        '/api/primitive/zerocommerce/commerce/products',
-        '/api/primitive/zerocommerce/commerce/checkout',
+        '/api/primitive/zerocommerce/storefront/_/products',
+        '/api/primitive/zerocommerce/storefront/_/cart',
       ])
       expect(getComplianceCheckedPrimitiveNames()).toContain('ZeroCommerce')
     })
@@ -528,7 +531,7 @@ describe('primitive-catalog additions (#410)', () => {
     it('getRuntimeProxyInstruction returns the same instruction text codegenCompositionBlock injects', () => {
       const instruction = getRuntimeProxyInstruction('ZeroCommerce')
       expect(instruction).toBeDefined()
-      expect(instruction).toMatch(/fetch\('\/api\/primitive\/zerocommerce\/commerce\/products'\)/)
+      expect(instruction).toMatch(/fetch\('\/api\/primitive\/zerocommerce\/storefront\/_\/products'\)/)
       expect(instruction).toMatch(/ANTI-PATTERN — FORBIDDEN/)
       const block = codegenCompositionBlock(MUG_SHOP_IDEA, 'app')
       expect(block).toContain(instruction!.split('\n')[0])
@@ -552,12 +555,57 @@ describe('primitive-catalog additions (#410)', () => {
       const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
       const compliantCode = `
         function App() {
-          useEffect(() => { fetch('/api/primitive/zerocommerce/commerce/products').then(r => r.json()).then(d => setProducts(d.products)) }, [])
-          async function checkout() { await fetch('/api/primitive/zerocommerce/commerce/checkout', { method: 'POST', body: JSON.stringify({ items: cart }) }) }
+          useEffect(() => { fetch('/api/primitive/zerocommerce/storefront/_/products').then(r => r.json()).then(d => setProducts(d.products)) }, [])
+          async function checkout() { await fetch('/api/primitive/zerocommerce/storefront/_/cart/' + cartId + '/checkout', { method: 'POST', body: JSON.stringify({ customer_email: email, shipping_address }) }) }
         }
       `
       const gaps = findPrimitiveComplianceGaps(compliantCode, MUG_SHOP_IDEA)
       expect(gaps).not.toContain('ZeroCommerce')
+    })
+  })
+
+  describe('#1167 fix — ZeroCommerce codegen instruction uses real storefront routes, not fictional /commerce/products|checkout', () => {
+    const MUG_SHOP_IDEA = 'an online shop selling handmade coffee mugs with a product catalog and checkout'
+
+    it('never instructs calling /commerce/products or /commerce/checkout (confirmed not to exist on the real API)', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).not.toMatch(/fetch\('\/api\/primitive\/zerocommerce\/commerce\/products'\)/)
+      expect(instruction).not.toMatch(/fetch\('\/api\/primitive\/zerocommerce\/commerce\/checkout'/)
+    })
+
+    it('instructs the literal storefront/_ placeholder segment, and tells the model not to substitute it', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).toMatch(/storefront\/_/)
+      expect(instruction).toMatch(/do not substitute a real slug/i)
+    })
+
+    it('covers the full real flow: list products, create cart, add item, checkout — not just products+checkout', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).toMatch(/storefront\/_\/products/)
+      expect(instruction).toMatch(/storefront\/_\/cart'/) // create-cart call (no trailing segment)
+      expect(instruction).toMatch(/storefront\/_\/cart\/\$\{cart\.id\}\/items/)
+      expect(instruction).toMatch(/storefront\/_\/cart\/\$\{cart\.id\}\/checkout/)
+    })
+
+    it('instructs credentials: "include" so the ZeroCommerce session cookie survives across calls', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).toMatch(/credentials:\s*'include'/)
+    })
+
+    it('instructs reading client_secret from the checkout response (needed for Stripe Elements)', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).toMatch(/client_secret/)
+    })
+
+    it('does not instruct sending a client-supplied unit_price when adding a cart item (server resolves it)', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).toMatch(/do NOT send a client price/i)
+    })
+
+    it('the anti-pattern block explicitly forbids the old fictional paths, not just hand-rolling', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).toMatch(/FORBIDDEN: calling \/api\/primitive\/zerocommerce\/commerce\/products/)
+      expect(instruction).toMatch(/404 every time/)
     })
   })
 

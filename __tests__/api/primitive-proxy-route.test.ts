@@ -796,4 +796,110 @@ describe('GET/POST /api/primitive/[primitive]/[...path] (#443)', () => {
       expect(h.resolveFounderCredential).toHaveBeenCalledTimes(1)
     })
   })
+
+  describe('ZeroCommerce storefront/_ slug injection + session forwarding (#1167)', () => {
+    it('rewrites the literal storefront/_ segment to the resolved company slug', async () => {
+      process.env.COMPANY_SLUG = 'kiln-and-co'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'zc-token' })
+      const fetchMock = vi.fn(async (url: string) => {
+        expect(url).toBe('https://zerocommerce.ainative.studio/api/v1/storefront/kiln-and-co/products')
+        return { status: 200, text: async () => JSON.stringify({ products: [] }), headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const res: any = await GET(req(), ctx('zerocommerce', ['storefront', '_', 'products']))
+      expect(res.status).toBe(200)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('rewrites storefront/_ for a nested cart path too (e.g. storefront/_/cart/{id}/checkout)', async () => {
+      process.env.COMPANY_SLUG = 'kiln-and-co'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'zc-token' })
+      const fetchMock = vi.fn(async (url: string) => {
+        expect(url).toBe('https://zerocommerce.ainative.studio/api/v1/storefront/kiln-and-co/cart/abc-123/checkout')
+        return { status: 201, text: async () => JSON.stringify({ order_id: 'o1', client_secret: 'pi_secret' }), headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const res: any = await POST(req({ method: 'POST' }), ctx('zerocommerce', ['storefront', '_', 'cart', 'abc-123', 'checkout']))
+      expect(res.status).toBe(201)
+    })
+
+    it('does NOT rewrite a non-ZeroCommerce primitive even if its path happens to contain storefront/_', async () => {
+      process.env.COMPANY_SLUG = 'acme'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'pipe-token' })
+      const fetchMock = vi.fn(async (url: string) => {
+        // zeropipeline has no storefront concept — the literal segment must
+        // pass through unchanged, proving the rewrite is ZeroCommerce-only.
+        expect(url).toBe('https://pipeline.ainative.studio/api/v1/storefront/_/products')
+        return { status: 200, text: async () => '{}', headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      await GET(req(), ctx('zeropipeline', ['storefront', '_', 'products']))
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('forwards an inbound X-Session-ID header to the real ZeroCommerce call', async () => {
+      process.env.COMPANY_SLUG = 'kiln-and-co'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'zc-token' })
+      const fetchMock = vi.fn(async (_url: string, init: any) => {
+        expect(init.headers['X-Session-ID']).toBe('shopper-session-abc')
+        return { status: 200, text: async () => '{}', headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      await GET(req({ headers: { 'X-Session-ID': 'shopper-session-abc' } }), ctx('zerocommerce', ['storefront', '_', 'cart']))
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('forwards an inbound Cookie header (session_id cookie) to the real ZeroCommerce call', async () => {
+      process.env.COMPANY_SLUG = 'kiln-and-co'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'zc-token' })
+      const fetchMock = vi.fn(async (_url: string, init: any) => {
+        expect(init.headers['Cookie']).toBe('session_id=shopper-session-xyz')
+        return { status: 200, text: async () => '{}', headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      await GET(req({ headers: { Cookie: 'session_id=shopper-session-xyz' } }), ctx('zerocommerce', ['storefront', '_', 'cart']))
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not forward a session header/cookie when the inbound request has none (first-ever call)', async () => {
+      process.env.COMPANY_SLUG = 'kiln-and-co'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'zc-token' })
+      const fetchMock = vi.fn(async (_url: string, init: any) => {
+        expect(init.headers['X-Session-ID']).toBeUndefined()
+        expect(init.headers['Cookie']).toBeUndefined()
+        return { status: 201, text: async () => '{}', headers: new Headers({ 'content-type': 'application/json' }) } as unknown as Response
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      await POST(req({ method: 'POST' }), ctx('zerocommerce', ['storefront', '_', 'cart']))
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('relays a Set-Cookie from the real ZeroCommerce response back to the shopper (cart-creation hands out a session)', async () => {
+      process.env.COMPANY_SLUG = 'kiln-and-co'
+      h.resolveFounderCredential.mockResolvedValue({ ok: true, accessToken: 'zc-token' })
+      const upstreamHeaders = new Headers({ 'content-type': 'application/json' })
+      upstreamHeaders.append('set-cookie', 'session_id=new-session-123; HttpOnly; SameSite=Lax')
+      const fetchMock = vi.fn(async () => ({
+        status: 201,
+        text: async () => JSON.stringify({ id: 'cart-1', session_id: 'new-session-123' }),
+        headers: upstreamHeaders,
+      } as unknown as Response))
+      vi.stubGlobal('fetch', fetchMock)
+
+      const res: any = await POST(req({ method: 'POST' }), ctx('zerocommerce', ['storefront', '_', 'cart']))
+      expect(res.status).toBe(201)
+      // NextResponse/Headers support multiple Set-Cookie values; verify at
+      // least the cookie value from the real response made it onto ours.
+      const setCookie = typeof res.headers.getSetCookie === 'function'
+        ? res.headers.getSetCookie().join(', ')
+        : res.headers.get('set-cookie') || ''
+      expect(setCookie).toContain('session_id=new-session-123')
+    })
+  })
 })

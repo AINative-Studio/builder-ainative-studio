@@ -946,24 +946,51 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
   // real call. Strengthened with the same treatment #521 gave the 8 newer
   // primitives: a literal, copy-pasteable fetch() snippet + an explicit
   // named anti-pattern to forbid, naming the EXACT failure mode observed.
+  // #1167 — the previous instruction here told the model to call
+  // /commerce/products and /commerce/checkout, which DO NOT EXIST on the
+  // real ZeroCommerce API (confirmed by reading its actual FastAPI router
+  // registration). `commerce/` IS a real prefix — but only for merchant
+  // account-management routes (commerce/stores, commerce/connect, etc.);
+  // products/cart/checkout for a store's own SHOPPERS live under the
+  // separate, unauthenticated `/storefront/{slug}/...` family instead. Every
+  // generated app following the old instruction 404'd on checkout. Fixed
+  // paths below; the literal `storefront/_` segment is REQUIRED exactly as
+  // shown — the proxy (app/api/primitive/[primitive]/[...path]/route.ts)
+  // swaps `_` for this company's real ZeroCommerce store slug server-side,
+  // since generated code has no way to know that slug itself.
   ZeroCommerce: () =>
-    `call the same-origin proxy at \`/api/primitive/zerocommerce/{path}\` — NO Authorization header needed, the platform attaches the founder's real ZeroCommerce credential server-side; the path after \`zerocommerce/\` matches ZeroCommerce's own REST path exactly.\n` +
-    '  Real call shape (copy this exactly, do not paraphrase — the store itself is provisioned once at checkout via POST /commerce/stores/onboard, confirmed live per #417; the generated app only ever reads/writes products, cart, and orders through this proxy):\n' +
+    `call the same-origin proxy at \`/api/primitive/zerocommerce/{path}\` — NO Authorization header needed, the platform attaches the founder's real ZeroCommerce credential server-side; the path after \`zerocommerce/\` matches ZeroCommerce's own REST path exactly, with ONE exception: use the literal segment \`storefront/_\` exactly as shown below (do not substitute a real slug, a variable, or anything else in that position) — the proxy fills in this company's real store slug for you.\n` +
+    '  Real call shape (copy this exactly, do not paraphrase — the store itself is provisioned once at checkout via POST /commerce/stores/onboard, confirmed live per #417; the generated app only ever reads/writes products, cart, and orders through this proxy, under the unauthenticated storefront/_ path):\n' +
     '  ```js\n' +
     "  // List products in this company's real ZeroCommerce catalog\n" +
-    "  const res = await fetch('/api/primitive/zerocommerce/commerce/products')\n" +
+    "  const res = await fetch('/api/primitive/zerocommerce/storefront/_/products')\n" +
     '  const { products } = await res.json() // real catalog rows, not a hardcoded array\n' +
     '\n' +
-    "  // Create a checkout session for the current cart\n" +
-    "  await fetch('/api/primitive/zerocommerce/commerce/checkout', {\n" +
-    "    method: 'POST', headers: { 'Content-Type': 'application/json' },\n" +
-    '    body: JSON.stringify({ items: cartItems }),\n' +
+    "  // Create a cart (do this once per shopper session, e.g. on first \"add to cart\")\n" +
+    "  const cartRes = await fetch('/api/primitive/zerocommerce/storefront/_/cart', {\n" +
+    "    method: 'POST', credentials: 'include', // REQUIRED — carries the session cookie ZeroCommerce sets\n" +
+    "  })\n" +
+    '  const cart = await cartRes.json() // real { id, store_id, session_id, items, ... }\n' +
+    '\n' +
+    "  // Add an item to that cart — cart.id comes from the create-cart call above\n" +
+    "  await fetch(`/api/primitive/zerocommerce/storefront/_/cart/${cart.id}/items`, {\n" +
+    "    method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },\n" +
+    "    body: JSON.stringify({ product_id: product.id, quantity: 1 }), // unit_price is resolved server-side, do NOT send a client price\n" +
     '  })\n' +
+    '\n' +
+    "  // Checkout that same cart — returns { order_id, status, total, currency, client_secret, payment_intent_id }\n" +
+    "  const checkoutRes = await fetch(`/api/primitive/zerocommerce/storefront/_/cart/${cart.id}/checkout`, {\n" +
+    "    method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },\n" +
+    "    body: JSON.stringify({ customer_email: email, shipping_address: { address_line1, city, state, postal_code, country } }),\n" +
+    '  })\n' +
+    '  const { client_secret } = await checkoutRes.json() // feed this to Stripe Elements — see the Stripe checkout UI instruction\n' +
     '  ```\n' +
     '  ANTI-PATTERN — FORBIDDEN: do NOT hand-roll a product catalog, shopping cart, or checkout using /api/db tables ' +
     'instead of calling the real ZeroCommerce proxy. If the feature is a product listing, cart, or checkout, it MUST ' +
-    'call GET/POST /api/primitive/zerocommerce/commerce/{products,checkout} — persisting products/cart/orders through ' +
-    'generic /api/db rows instead is a FAILING implementation even if the UI looks identical to the user.',
+    'call GET/POST /api/primitive/zerocommerce/storefront/_/{products,cart,cart/:id/items,cart/:id/checkout} — ' +
+    'persisting products/cart/orders through generic /api/db rows instead is a FAILING implementation even if the UI ' +
+    'looks identical to the user. Also FORBIDDEN: calling /api/primitive/zerocommerce/commerce/products or ' +
+    '/commerce/checkout — those paths do not exist and will 404 every time.',
   // #525: AgentFlow shares the SAME confirmed gap — a real 83,084-char
   // generation for "a no-code visual agent workflow builder with drag and
   // drop flow building" never called /api/primitive/agentflow/ and had ZERO
@@ -1358,7 +1385,9 @@ export const RUNTIME_PROXY_PATH_SUBSTRINGS: Record<string, string[]> = {
   // #524/#525/#527: was missing entirely for all 5 original founder-scoped
   // primitives, so the #518 post-generation compliance validator had no way
   // to catch an unwired selection of any of them. Now it does.
-  ZeroCommerce: ['/api/primitive/zerocommerce/commerce/products', '/api/primitive/zerocommerce/commerce/checkout'],
+  // #1167: corrected from the fictional /commerce/products, /commerce/checkout
+  // (those paths don't exist — see the RUNTIME_PROXIED_PRIMITIVES entry above).
+  ZeroCommerce: ['/api/primitive/zerocommerce/storefront/_/products', '/api/primitive/zerocommerce/storefront/_/cart'],
   ZeroPipeline: ['/api/primitive/zeropipeline/deals'],
   AgentFlow: ['/api/primitive/agentflow/projects/'],
   ZeroForms: ['/api/primitive/zeroforms/forms'],
