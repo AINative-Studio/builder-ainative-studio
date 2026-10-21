@@ -23,6 +23,19 @@ export function fixJsxErrors(code: string): string {
   // Fix 0c: Rewrite hallucinated package names to known equivalents
   fixed = rewriteHallucinatedPackages(fixed)
 
+  // Fix 0c2: Stub icon libraries Sandpack's customSetup never declares as a
+  // dependency (#1099 item 7). Only react-icons is pinned here because it's
+  // the one real instance confirmed live; a bare substring check for other
+  // unknown packages would be too broad to apply safely without its own repro.
+  fixed = stubUnsupportedIconLibraries(fixed)
+
+  // Fix 0c3: Fix a malformed `import type, { X } from 'Y'` the model itself
+  // writes (#1099 item 6) -- a stray comma after `type` that should be a
+  // space, i.e. `import type { X } from 'Y'`. Confirmed live: this is
+  // upstream of any missing/wrong-path import (sanitizeImports/injection
+  // below never touch it, since the statement already "has" its braces).
+  fixed = fixMalformedTypeImport(fixed)
+
   // Fix 0d: Sanitize broken/overlapping imports (most common AI generation error)
   fixed = sanitizeImports(fixed)
 
@@ -301,6 +314,56 @@ function rewriteHallucinatedPackages(code: string): string {
       return `import { ${components.join(', ')} } from './components/aikit'${semi}`
     }
   )
+}
+
+/**
+ * Replace a `react-icons/*` import with inline inert stub components.
+ *
+ * Real bug (confirmed live via #1099 item 7): the model sometimes reaches
+ * for react-icons (e.g. `import { FaRegCircle } from 'react-icons/fa'`)
+ * instead of the one icon library this preview actually supports
+ * (lucide-react, pinned in sandpack-preview.tsx's customSetup.dependencies).
+ * react-icons is never declared there, so Sandpack's bundler fails the
+ * WHOLE compile with "Cannot find module" for an icon used in one small
+ * spot. Mirrors stubMissingLocalComponents' philosophy in build-files.ts:
+ * degrade the one icon to rendering nothing rather than crash the preview.
+ * Declaring react-icons as a real dependency instead was deliberately not
+ * done here — this preview already pins exact dependency versions to avoid
+ * Sandpack/unpkg resolution hangs (see sandpack-preview.tsx's comment on
+ * why react/react-dom/prop-types are pinned), and adding an unpinned,
+ * previously-unused package would reopen exactly that risk for a library
+ * only ever seen as a model mistake, not an intentional choice.
+ */
+function stubUnsupportedIconLibraries(code: string): string {
+  return code.replace(
+    /import\s*\{([^}]*)\}\s*from\s*['"]react-icons\/[\w-]+['"]\s*;?/g,
+    (match, names: string) => {
+      const identifiers = names
+        .split(',')
+        .map((n: string) => n.trim())
+        .filter(Boolean)
+        .map((n: string) => {
+          const asMatch = n.match(/^(\S+)\s+as\s+(\S+)$/)
+          return asMatch ? asMatch[2] : n
+        })
+        .filter((n: string) => /^[A-Za-z_$][\w$]*$/.test(n))
+      if (identifiers.length === 0) return match
+      return identifiers
+        .map((id: string) => `const ${id} = (_props: any) => null // Auto-stubbed: react-icons is not supported in the preview sandbox (#1099)`)
+        .join('\n')
+    }
+  )
+}
+
+/**
+ * Fix a malformed `import type, { X } from 'Y'` the model writes (#1099
+ * item 6, confirmed live) -- a stray comma where a space belongs, producing
+ * invalid TS syntax (`Unexpected token`). Only touches this exact shape;
+ * a real `import Foo, { Bar } from 'baz'` (default + named) is untouched
+ * since it never has the literal word `type` right after `import`.
+ */
+function fixMalformedTypeImport(code: string): string {
+  return code.replace(/\bimport\s+type\s*,\s*\{/g, 'import type {')
 }
 
 /**

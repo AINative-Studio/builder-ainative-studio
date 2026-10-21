@@ -220,3 +220,65 @@ describe('code-validator: no false positives on valid code (#64 guard)', () => {
     })
   }
 })
+
+/**
+ * Real bug found live (#1099 item 6): both the duplicate-import de-dupe and
+ * the local-decl-shadow fix above mistook the bare `type` keyword in
+ * `import type { X } from 'y'` for a default-import binding name (the comma
+ * between a default and named import is optional in their regexes, so
+ * `type { X }` matched the same shape as `Default, { X }`). Every type-only
+ * import got unconditionally rebuilt into the invalid `import type, { X }
+ * from 'y'` -- exactly the malformed syntax the issue reported as a model
+ * mistake, except this code was introducing it itself on perfectly valid
+ * input. A file with two or more type-only imports also false-positived
+ * `findDuplicateTopLevelDeclaration` on the word "type" itself.
+ */
+describe('code-validator: type-only imports are not mistaken for default-import bindings (#1099 item 6)', () => {
+  it('leaves a single well-formed `import type { X }` unmodified', () => {
+    const code = [
+      "import type { Incident } from './types'",
+      'export default function App(){ return <div/> }',
+    ].join('\n')
+    const result = validateJavaScriptCode(code)
+    expect(result.valid).toBe(true)
+    expect(result.code).toContain("import type { Incident } from './types'")
+    expect(result.code).not.toContain('import type,')
+  })
+
+  it('does not false-positive a duplicate-identifier error on two type-only imports', () => {
+    const code = [
+      "import type { Incident } from './types'",
+      "import type { Order } from './orders'",
+      'export default function App(){ return <div/> }',
+    ].join('\n')
+    expect(findDuplicateTopLevelDeclaration(code)).toBeNull()
+    const result = validateJavaScriptCode(code)
+    expect(result.valid).toBe(true)
+    expect(result.code).not.toContain('import type,')
+  })
+
+  it('still de-dupes a genuinely duplicated named specifier inside a type-only import', () => {
+    const code = [
+      "import type { Incident } from './types'",
+      "import type { Incident, Order } from './types'", // Incident duplicated
+      'export default function App(){ return <div/> }',
+    ].join('\n')
+    const result = validateJavaScriptCode(code)
+    expect(result.valid).toBe(true)
+    expect(result.code).not.toContain('import type,')
+    const incidentBindings = (result.code.match(/\bIncident\b(?=[\s,}])/g) || [])
+    expect(incidentBindings.length).toBe(1)
+  })
+
+  it('still drops a type-only import whose name is shadowed by a local declaration', () => {
+    const code = [
+      "import type { Incident } from './types'",
+      'const Incident = { id: 1 };', // shadows the type import's binding
+      'export default function App(){ return <div/> }',
+    ].join('\n')
+    const result = validateJavaScriptCode(code)
+    expect(result.valid).toBe(true)
+    expect(result.code).not.toContain("import type { Incident }")
+    expect(result.code).not.toContain('import type,')
+  })
+})
