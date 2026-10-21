@@ -51,6 +51,7 @@
 
 import { NextRequest } from 'next/server'
 import { registerApp, resolveApp, resolveAppVerified } from '@/lib/build/app-registry'
+import { internalBaseUrl } from '@/lib/build/internal-base-url'
 import { logBuildOutcome } from '@/lib/build/learning'
 import {
   recordPendingProductGeneration,
@@ -250,7 +251,14 @@ export async function POST(request: NextRequest) {
   const color = /^#[0-9a-fA-F]{6}$/.test(String(b?.color || '')) ? String(b.color) : '#2f6d86'
   const designSystemId = typeof b?.designSystemId === 'string' ? b.designSystemId.slice(0, 40) : undefined
 
-  const base = process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin
+  // #1102/#1113 follow-up: was `process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin`
+  // — the service's own PUBLIC domain. Found live: two real force-generation
+  // calls for habanero-hub each silently vanished (zero deployment-health
+  // stages ever recorded, meaning runLandingPageGeneration's own fetch to
+  // ${base}/api/chat-ws below never got far enough to respond) — the same
+  // self-referential-round-trip-through-the-public-edge failure #1110/#1111
+  // already found and fixed for a sibling route. See internal-base-url.ts.
+  const base = internalBaseUrl(request.url)
   // Real bug (customer-reported, Meridian, 2026-09-10): this exact template
   // used to say "primary BRAND color" — 'brand' was (wrongly) a ZeroCommerce
   // trigger word in lib/build/primitive-catalog.ts, so EVERY Company-track
