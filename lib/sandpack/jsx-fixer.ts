@@ -48,6 +48,11 @@ export function fixJsxErrors(code: string): string {
   // next/dynamic, next/script) — see #1154.
   fixed = stubNextOnlyModules(fixed)
 
+  // Fix 0f: Stub legacy Pages Router module specifiers (next/router, next/head,
+  // next/document, next/app) that carry the same whole-compile-crash risk as
+  // next/image/next/link — see #1174.
+  fixed = stubLegacyPagesRouterImports(fixed)
+
   // Fix 1: DISABLED — balanceJsxTags adds closing tags in wrong context
   // causing "Unexpected token, expected ','" errors in Sandpack
   // fixed = balanceJsxTags(fixed)
@@ -112,6 +117,67 @@ function stubNextOnlyModules(code: string): string {
   return fixed
 }
 
+/**
+ * Stub legacy Pages Router module specifiers (next/router, next/head,
+ * next/document, next/app) the same way #1151/#1154's fixes stub App
+ * Router-only imports: none of these modules exist in Sandpack's plain
+ * react-ts template (no `next` dependency is ever declared — see
+ * components/chat/sandpack-preview.tsx's customSetup.dependencies), and an
+ * unresolvable import anywhere in the generated files silently fails
+ * sandpack-bundler's whole-app compile regardless of whether that file is
+ * reachable from the real entry point (collectAppBarrelUsage resolves every
+ * provided file's imports up front). The generation model is trained on a
+ * mix of App Router and the older Pages Router convention, so it reaches
+ * for these just as often as the App Router APIs already covered. See #1174.
+ */
+function stubLegacyPagesRouterImports(code: string): string {
+  let fixed = code
+
+  // next/router — Pages Router's useRouter() has a different shape than
+  // next/navigation's: callers read static fields (pathname/query/asPath)
+  // directly off the hook result rather than calling separate hooks.
+  fixed = fixed.replace(
+    /import\s+\{([^}]+)\}\s+from\s+['"]next\/router['"]\s*;?/g,
+    (_match, names: string) => stubNamedImportsAs(names, { useRouter: NEXT_ROUTER_STUB })
+  )
+  // Rare default/namespace usage of the deprecated `Router` singleton.
+  fixed = fixed.replace(
+    /import\s+Router\s+from\s+['"]next\/router['"]\s*;?/g,
+    `const Router = ${NEXT_ROUTER_STUB};`
+  )
+
+  // next/head — default-imported per-page <Head> component, used only for
+  // side-effect-free <title>/<meta> tags with no equivalent in a Sandpack
+  // iframe preview.
+  fixed = fixed.replace(
+    /import\s+(\w+)\s+from\s+['"]next\/head['"]\s*;?/g,
+    (_match, name: string) => `const ${name} = (_props: any) => null;`
+  )
+
+  // next/document — only ever imported from a _document.tsx, which Sandpack
+  // never treats as the preview's entry point, but stub for completeness
+  // rather than leaving a guaranteed "Cannot find module" if one somehow
+  // ends up in the files map.
+  fixed = fixed.replace(
+    /import\s+\{([^}]+)\}\s+from\s+['"]next\/document['"]\s*;?/g,
+    (_match, names: string) =>
+      stubNamedImportsAs(names, {
+        Html: '(props: any) => props.children ?? null',
+        Main: '() => null',
+        Head: '(_props: any) => null',
+        NextScript: '() => null',
+      })
+  )
+
+  // next/app — AppProps is a type-only import; dropping it leaves a dangling
+  // type reference, which Sandpack's transpile-only bundler strips rather
+  // than type-checks, so it compiles fine without a stub (same risk-free
+  // handling as #1150's type-import fix for a different malformed shape).
+  fixed = fixed.replace(/import\s+(?:type\s+)?\{\s*AppProps\s*\}\s+from\s+['"]next\/app['"]\s*;?\n?/g, '')
+
+  return fixed
+}
+
 const NEXT_NAVIGATION_STUBS: Record<string, string> = {
   useRouter: "() => ({ push: () => {}, replace: () => {}, back: () => {}, forward: () => {}, refresh: () => {}, prefetch: () => {} })",
   usePathname: "() => '/'",
@@ -125,6 +191,9 @@ const NEXT_NAVIGATION_STUBS: Record<string, string> = {
 }
 
 const FONT_FACTORY_STUB = "(..._args) => ({ className: '', style: {}, variable: '' })"
+
+const NEXT_ROUTER_STUB =
+  "() => ({ push: () => {}, replace: () => {}, back: () => {}, forward: () => {}, reload: () => {}, prefetch: () => Promise.resolve(), pathname: '/', asPath: '/', route: '/', query: {}, isReady: true, events: { on: () => {}, off: () => {}, emit: () => {} } })"
 
 /**
  * Rewrite a named-import clause (`Foo, Bar as Baz`) into `const` declarations
@@ -142,6 +211,15 @@ function stubNamedImports(names: string, stubFor: (name: string) => string | und
     lines.push(`const ${aliasName || sourceName} = ${stub};`)
   }
   return lines.length > 0 ? lines.join('\n') + '\n' : ''
+}
+
+/**
+ * Same as stubNamedImports, but looks up each stub from a plain
+ * Record<string,string> instead of a callback — the shape
+ * stubLegacyPagesRouterImports' call sites use (#1174).
+ */
+function stubNamedImportsAs(names: string, stubs: Record<string, string>): string {
+  return stubNamedImports(names, (name) => stubs[name])
 }
 
 /**
