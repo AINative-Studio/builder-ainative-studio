@@ -61,6 +61,29 @@ export function fixJsxErrors(code: string): string {
   // already proven insufficient for this exact failure mode — see #1174.
   fixed = stubFramerMotionImports(fixed)
 
+  // Fix 0h: Generic safety net for ANY remaining bare import of a package
+  // Sandpack doesn't actually have available (see
+  // components/chat/sandpack-preview.tsx's customSetup.dependencies for the
+  // real allowlist). Sandpack's bundler fails the ENTIRE compile on any
+  // unresolvable import anywhere in the file tree, regardless of whether
+  // it's reachable (confirmed mechanism, #1124/#1125) — the generation
+  // model can reach for any common React-ecosystem package not on that
+  // allowlist (date-fns, zod, axios, uuid, react-hook-form, framer-motion,
+  // react-icons, next/*, styled-components, etc.), and each one is equally
+  // capable of crashing the whole preview. Rather than hand-writing a new
+  // named stub per package every time one is discovered (#1179), this runs
+  // LAST so any more precise, package-specific stub already added above
+  // (or landed in a future fix) still wins — this only catches whatever's
+  // left over.
+  fixed = stubUnresolvableBareImports(fixed)
+
+  // Fix 0i: Same safety net, for the re-export shapes (`export {...} from
+  // 'pkg'`, `export * from 'pkg'`) that Fix 0h's import-only regexes never
+  // match (#1181) — Sandpack resolves the specifier on a re-export exactly
+  // like a plain import, so it carries the identical whole-compile-crash
+  // risk.
+  fixed = stubUnresolvableReExports(fixed)
+
   // Fix 1: DISABLED — balanceJsxTags adds closing tags in wrong context
   // causing "Unexpected token, expected ','" errors in Sandpack
   // fixed = balanceJsxTags(fixed)
@@ -684,4 +707,218 @@ function sanitizeImports(code: string): string {
   }
 
   return result.join('\n')
+}
+
+/**
+ * Root package names actually declared as Sandpack dependencies — see
+ * components/chat/sandpack-preview.tsx's `customSetup.dependencies`. The
+ * conditional ones (lucide-react/recharts/@stripe/*) are included
+ * unconditionally here because their trigger condition in that file is
+ * exactly "the generated code imports them" — the same condition that puts
+ * them in front of this function, so by the time a file reaches here they
+ * are always going to be added as a real dependency too.
+ */
+const ALLOWLISTED_PACKAGE_ROOTS = new Set([
+  'react',
+  'react-dom',
+  'prop-types',
+  'lucide-react',
+  'recharts',
+  '@stripe/stripe-js',
+  '@stripe/react-stripe-js',
+  'clsx',
+  'tailwind-merge',
+])
+
+/** The root package name a bare import specifier resolves against (handles subpaths and scoped packages). */
+function packageRoot(spec: string): string {
+  if (spec.startsWith('@')) return spec.split('/').slice(0, 2).join('/')
+  return spec.split('/')[0]
+}
+
+function isAllowlistedPackage(spec: string): boolean {
+  return ALLOWLISTED_PACKAGE_ROOTS.has(packageRoot(spec))
+}
+
+/**
+ * Generic safety net: stub out any bare (non-relative) import of a package
+ * that isn't actually available in Sandpack, so a whole-tree-crashing
+ * unresolvable import degrades to an inert no-op instead. This intentionally
+ * runs after every package-specific stub above (framer-motion, next/*,
+ * react-icons, etc. when present) — those are more faithful to each
+ * package's real behavior and always win when they've already consumed the
+ * import; this only ever sees what's left over.
+ *
+ * Each imported binding becomes its own inert `const`: a Proxy over a no-op
+ * function. Used as a JSX tag (`<Icon/>`, `<motion.div>`) it renders its
+ * children (or null); used as a value, hook, or nested property access
+ * (`Icon.Solid`, `useForm().register`) the `get` trap hands back the same
+ * stub so chained/destructured usage keeps working instead of throwing.
+ * Deliberately NOT a single shared helper — Sandpack's bundler sees each
+ * generated file in isolation, so the stub has to be self-contained per
+ * import site.
+ */
+function stubUnresolvableBareImports(code: string): string {
+  let fixed = code
+
+  // Side-effect-only bare imports, e.g. `import 'some-polyfill'`.
+  fixed = fixed.replace(
+    /^([ \t]*)import\s+['"]([^'".][^'"]*)['"]\s*;?[ \t]*$/gm,
+    (match, _indent: string, pkg: string) => (isAllowlistedPackage(pkg) ? match : '')
+  )
+
+  // Imports with bindings: default, namespace, named, or a mix.
+  fixed = fixed.replace(
+    /^([ \t]*)import\s+(type\s+)?([^'";]*?)\s*from\s*['"]([^'".][^'"]*)['"]\s*;?[ \t]*$/gm,
+    (match, indent: string, typeOnly: string | undefined, clause: string, pkg: string) => {
+      if (isAllowlistedPackage(pkg)) return match
+      // `import type {...}` bindings have no runtime value — safe to drop entirely.
+      if (typeOnly) return ''
+      const locals = parseImportClauseLocals(clause)
+      if (locals.length === 0) return ''
+      return (
+        locals
+          .map((name) => `${indent}const ${name} = ${genericInertStub(name, isUsedAsJsxTag(code, name))};`)
+          .join('\n') + '\n'
+      )
+    }
+  )
+
+  return fixed
+}
+
+/**
+ * Generic safety net for re-export statements — the export-side counterpart
+ * to stubUnresolvableBareImports above. Sandpack resolves the specifier on
+ * `export ... from 'pkg'` exactly like a plain `import ... from 'pkg'`, so an
+ * unresolvable package reached via a re-export crashes the whole compile the
+ * same way, but none of the import-shaped regexes above ever match this
+ * syntax (there's no `import` keyword) — confirmed gap, #1181.
+ */
+function stubUnresolvableReExports(code: string): string {
+  let fixed = code
+
+  // `export * from 'pkg'` — the re-exported binding names are unknowable
+  // from this file alone, so there's nothing to stub; dropping it entirely
+  // is the only safe move (same precedent as dropping a side-effect-only
+  // import above).
+  fixed = fixed.replace(
+    /^([ \t]*)export\s+\*\s+from\s*['"]([^'".][^'"]*)['"]\s*;?[ \t]*$/gm,
+    (match, _indent: string, pkg: string) => (isAllowlistedPackage(pkg) ? match : '')
+  )
+
+  // `export * as Name from 'pkg'` — a namespace re-export; unlike the bare
+  // `export *` above, Name IS a real local binding, so it gets the same
+  // stub a namespace import would.
+  fixed = fixed.replace(
+    /^([ \t]*)export\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s*['"]([^'".][^'"]*)['"]\s*;?[ \t]*$/gm,
+    (match, indent: string, name: string, pkg: string) =>
+      isAllowlistedPackage(pkg)
+        ? match
+        : `${indent}export const ${name} = ${genericInertStub(name, isUsedAsJsxTag(code, name))};\n`
+  )
+
+  // `export { a, b as c } from 'pkg'` / `export type { ... } from 'pkg'`.
+  fixed = fixed.replace(
+    /^([ \t]*)export\s+(type\s+)?\{([^}]*)\}\s*from\s*['"]([^'".][^'"]*)['"]\s*;?[ \t]*$/gm,
+    (match, indent: string, typeOnly: string | undefined, names: string, pkg: string) => {
+      if (isAllowlistedPackage(pkg)) return match
+      // `export type { ... } from 'pkg'` has no runtime value — safe to drop.
+      if (typeOnly) return ''
+
+      const stubLines: string[] = []
+      for (const raw of names.split(',').map((n) => n.trim()).filter(Boolean)) {
+        // Inline type-only specifier (`export { type Variants, motion } from
+        // 'pkg'`) has no runtime value — drop it rather than stub it, same
+        // as the import-side fix (would otherwise splice `type` into the
+        // exported const name and throw a SyntaxError).
+        if (/^type\s+[A-Za-z_$][\w$]*(?:\s+as\s+[A-Za-z_$][\w$]*)?$/.test(raw)) continue
+        const aliasMatch = raw.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/)
+        const exportedName = aliasMatch ? aliasMatch[2] : raw
+        // Self-reference the binding that's ACTUALLY declared — the local
+        // name on the export side (`exportedName`), never the package's
+        // original export name (`a` in `a as c`), which this file never
+        // declares at all and would throw ReferenceError at call time.
+        if (exportedName === 'default') {
+          // `export { default } from 'pkg'` / `export { x as default } from
+          // 'pkg'` re-export as THIS module's own default export.
+          // `export const default = ...` is a syntax error, and so is a
+          // bare `default` keyword used as a value inside the stub
+          // expression itself (reserved word) — give the self-reference its
+          // own non-reserved local name, wrapped in an IIFE that evaluates
+          // to just the stub value.
+          const stub = genericInertStub('__default', isUsedAsJsxTag(code, exportedName))
+          stubLines.push(`${indent}export default (function () { const __default = ${stub}; return __default })();`)
+        } else {
+          const stub = genericInertStub(exportedName, isUsedAsJsxTag(code, exportedName))
+          stubLines.push(`${indent}export const ${exportedName} = ${stub};`)
+        }
+      }
+      if (stubLines.length === 0) return ''
+      return stubLines.join('\n') + '\n'
+    }
+  )
+
+  return fixed
+}
+
+/** Whether `name` ever appears as a JSX tag in the file (`<Name`, `<Name.Sub>`), including self-closing/with-attrs/compound usage. */
+function isUsedAsJsxTag(code: string, name: string): boolean {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`<\\s*${escaped}(?:[\\s/>]|\\.[A-Za-z_$])`).test(code)
+}
+
+/** Extracts the local binding name(s) an import clause introduces (before `from`). */
+function parseImportClauseLocals(clause: string): string[] {
+  const trimmed = clause.trim()
+  if (!trimmed) return []
+
+  const namespaceMatch = trimmed.match(/^\*\s+as\s+([A-Za-z_$][\w$]*)$/)
+  if (namespaceMatch) return [namespaceMatch[1]]
+
+  const braceMatch = trimmed.match(/^(?:([A-Za-z_$][\w$]*)\s*,\s*)?\{([^}]*)\}$/)
+  if (braceMatch) {
+    const locals: string[] = []
+    if (braceMatch[1]) locals.push(braceMatch[1])
+    for (const raw of braceMatch[2].split(',').map((n) => n.trim()).filter(Boolean)) {
+      // Inline type-only specifier (`type Foo` / `type Foo as Bar`), e.g.
+      // `import { type Variants, motion } from 'framer-motion'` — has no
+      // runtime value, so drop it rather than stub it. Left unhandled, the
+      // literal word `type` ends up spliced into the stub as part of the
+      // identifier name (`const type Variants = ...`), a SyntaxError this
+      // fallback would otherwise introduce on its own.
+      if (/^type\s+[A-Za-z_$][\w$]*(?:\s+as\s+[A-Za-z_$][\w$]*)?$/.test(raw)) continue
+      const aliasMatch = raw.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/)
+      locals.push(aliasMatch ? aliasMatch[2] : raw)
+    }
+    return locals
+  }
+
+  const defaultMatch = trimmed.match(/^([A-Za-z_$][\w$]*)$/)
+  return defaultMatch ? [defaultMatch[1]] : []
+}
+
+/**
+ * A single inert value, shaped by whether `name` is ever used as a JSX tag
+ * elsewhere in the file:
+ *  - JSX-tag-shaped (`<Icon/>`, `<motion.div>`): calling it is what React
+ *    does during render, so it must return a valid node — the component's
+ *    children, or null.
+ *  - Otherwise treated as hook/utility-shaped (`useForm()`, `axios.get()`):
+ *    calling it returns the stub itself, so destructuring or chaining off
+ *    the result (`const { register } = useForm()`) never throws.
+ * Either way, property access (`Icon.Solid`, `useForm.something`) always
+ * hands back the same self-reference via the `get` trap instead of throwing
+ * on an unknown property.
+ *
+ * Deliberately no TS type annotations — Sandpack's bundler only transpiles
+ * (esbuild-style, no type-checking), so plain JS is all this needs, and it
+ * keeps the stub directly executable for a real runtime test
+ * (`new Function(...)`) rather than only a string-shape assertion.
+ */
+function genericInertStub(name: string, isJsxTag: boolean): string {
+  const callResult = isJsxTag
+    ? `(p && typeof p === 'object' && 'children' in p) ? (p.children ?? null) : null`
+    : name
+  return `new Proxy(function (...args) { const p = args[0]; return ${callResult} }, { get: () => ${name} })`
 }
