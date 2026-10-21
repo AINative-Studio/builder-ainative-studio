@@ -248,4 +248,30 @@ describe('detectSandpackDependencies (#1097)', () => {
     expect(usesLucideReact).toBe(true)
     expect(usesRecharts).toBe(false)
   })
+
+  describe('usesStripeJs (#1164 — ZeroCommerce checkout UI)', () => {
+    it('detects @stripe/stripe-js usage in generated code', () => {
+      const built = buildSandpackFiles({
+        '/App.tsx': "import { loadStripe } from '@stripe/stripe-js'\nexport default function App(){ return null }",
+      })
+      const { usesStripeJs } = detectSandpackDependencies(built)
+      expect(usesStripeJs).toBe(true)
+    })
+
+    it('detects @stripe/react-stripe-js usage in generated code', () => {
+      const built = buildSandpackFiles({
+        '/Checkout.tsx': "import { Elements, PaymentElement } from '@stripe/react-stripe-js'\nexport default function Checkout(){ return null }",
+      })
+      const { usesStripeJs } = detectSandpackDependencies(built)
+      expect(usesStripeJs).toBe(true)
+    })
+
+    it('is false when the generated app has no Stripe import at all', () => {
+      const built = buildSandpackFiles({
+        '/App.tsx': "export default function App(){ return <div>hello</div> }",
+      })
+      const { usesStripeJs } = detectSandpackDependencies(built)
+      expect(usesStripeJs).toBe(false)
+    })
+  })
 })

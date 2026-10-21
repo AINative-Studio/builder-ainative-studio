@@ -958,6 +958,17 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
   // shown — the proxy (app/api/primitive/[primitive]/[...path]/route.ts)
   // swaps `_` for this company's real ZeroCommerce store slug server-side,
   // since generated code has no way to know that slug itself.
+  // #1164 — extended with the real Stripe Elements checkout UI step (Apple
+  // Pay/Google Pay eligible) instead of stopping at client_secret with no
+  // instruction for what to do with it, which left every generated app to
+  // either hand-roll a bare card-number/expiry/CVC form (worse UX, no
+  // wallet support, poor PCI-scope hygiene) or not render a payment form at
+  // all. The publishable-key lookup below (storefront/_/stripe-config) does
+  // not exist on ZeroCommerce yet — tracked as ZeroCommerce#667 — so this
+  // instruction is written for the contract that issue defines, ready to
+  // work the moment it ships; until then this call 404s like any other
+  // not-yet-implemented endpoint (the proxy's existing honest-502/response-
+  // passthrough behavior surfaces that, not a silent failure).
   ZeroCommerce: () =>
     `call the same-origin proxy at \`/api/primitive/zerocommerce/{path}\` — NO Authorization header needed, the platform attaches the founder's real ZeroCommerce credential server-side; the path after \`zerocommerce/\` matches ZeroCommerce's own REST path exactly, with ONE exception: use the literal segment \`storefront/_\` exactly as shown below (do not substitute a real slug, a variable, or anything else in that position) — the proxy fills in this company's real store slug for you.\n` +
     '  Real call shape (copy this exactly, do not paraphrase — the store itself is provisioned once at checkout via POST /commerce/stores/onboard, confirmed live per #417; the generated app only ever reads/writes products, cart, and orders through this proxy, under the unauthenticated storefront/_ path):\n' +
@@ -983,14 +994,39 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
     "    method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },\n" +
     "    body: JSON.stringify({ customer_email: email, shipping_address: { address_line1, city, state, postal_code, country } }),\n" +
     '  })\n' +
-    '  const { client_secret } = await checkoutRes.json() // feed this to Stripe Elements — see the Stripe checkout UI instruction\n' +
+    '  const { client_secret } = await checkoutRes.json()\n' +
+    '\n' +
+    "  // Render the REAL Stripe Payment Element for the actual payment step — this\n" +
+    "  // is a SEPARATE, REQUIRED call, not optional polish: it surfaces Apple Pay /\n" +
+    "  // Google Pay automatically when the shopper's browser/device supports them.\n" +
+    "  // publishable_key and connected_account_id come from ZeroCommerce itself —\n" +
+    "  // NEVER hardcode or guess a Stripe publishable key.\n" +
+    "  import { loadStripe } from '@stripe/stripe-js'\n" +
+    "  import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js'\n" +
+    '\n' +
+    "  const cfgRes = await fetch('/api/primitive/zerocommerce/storefront/_/stripe-config')\n" +
+    '  const { publishable_key, connected_account_id } = await cfgRes.json()\n' +
+    '  const stripePromise = loadStripe(\n' +
+    '    publishable_key,\n' +
+    '    connected_account_id ? { stripeAccount: connected_account_id } : undefined,\n' +
+    '  )\n' +
+    '\n' +
+    '  // Wrap the payment form:\n' +
+    "  // <Elements stripe={stripePromise} options={{ clientSecret: client_secret }}>\n" +
+    '  //   <CheckoutForm />\n' +
+    '  // </Elements>\n' +
+    '  // Inside CheckoutForm: const stripe = useStripe(); const elements = useElements();\n' +
+    '  // render <PaymentElement /> plus a submit button that calls\n' +
+    '  // stripe.confirmPayment({ elements, confirmParams: { return_url } }) on click.\n' +
     '  ```\n' +
     '  ANTI-PATTERN — FORBIDDEN: do NOT hand-roll a product catalog, shopping cart, or checkout using /api/db tables ' +
     'instead of calling the real ZeroCommerce proxy. If the feature is a product listing, cart, or checkout, it MUST ' +
-    'call GET/POST /api/primitive/zerocommerce/storefront/_/{products,cart,cart/:id/items,cart/:id/checkout} — ' +
+    'call GET/POST /api/primitive/zerocommerce/storefront/_/{products,cart,cart/:id/items,cart/:id/checkout,stripe-config} — ' +
     'persisting products/cart/orders through generic /api/db rows instead is a FAILING implementation even if the UI ' +
     'looks identical to the user. Also FORBIDDEN: calling /api/primitive/zerocommerce/commerce/products or ' +
-    '/commerce/checkout — those paths do not exist and will 404 every time.',
+    '/commerce/checkout — those paths do not exist and will 404 every time. Also FORBIDDEN: hand-rolling raw card-' +
+    'number/expiry/CVC input fields instead of Stripe\'s real Elements/PaymentElement — this both fails PCI-scope ' +
+    'best practice and silently drops the Apple Pay/Google Pay eligibility the checkout response already supports.',
   // #525: AgentFlow shares the SAME confirmed gap — a real 83,084-char
   // generation for "a no-code visual agent workflow builder with drag and
   // drop flow building" never called /api/primitive/agentflow/ and had ZERO

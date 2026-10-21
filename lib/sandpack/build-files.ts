@@ -429,14 +429,24 @@ function resolveRelativeImport(fromDir: string, spec: string): string | null {
 
 /**
  * Detect whether the generated app's own files (excluding builtins) reference
- * lucide-react/recharts — see sandpack-preview.tsx's #1089/#1097 comment for why
- * this conservative substring check is safe (a false positive only costs what
- * unconditional declaration already cost; a false negative never happens because
- * the literal package-name substring can only appear via a real import).
+ * lucide-react/recharts/@stripe-js — see sandpack-preview.tsx's #1089/#1097
+ * comment for why this conservative substring check is safe (a false positive
+ * only costs what unconditional declaration already cost; a false negative
+ * never happens because the literal package-name substring can only appear
+ * via a real import).
+ *
+ * usesStripeJs (#1164): the ZeroCommerce checkout instruction
+ * (lib/build/primitive-catalog.ts) tells Cody to render Stripe's real
+ * Payment Element (loadStripe + Elements + PaymentElement) rather than a
+ * hand-rolled card-number form — that import needs `@stripe/stripe-js` and
+ * `@stripe/react-stripe-js` declared as Sandpack dependencies the same way
+ * lucide-react/recharts already are, or the preview bundle fails to resolve
+ * the import.
  */
 export function detectSandpackDependencies(sandpackFiles: Record<string, string>): {
   usesLucideReact: boolean
   usesRecharts: boolean
+  usesStripeJs: boolean
 } {
   const builtinPaths = new Set(Object.keys(getBuiltinFiles()))
   const generatedCode = Object.entries(sandpackFiles)
@@ -446,5 +456,6 @@ export function detectSandpackDependencies(sandpackFiles: Record<string, string>
   return {
     usesLucideReact: generatedCode.includes('lucide-react'),
     usesRecharts: generatedCode.includes('recharts'),
+    usesStripeJs: generatedCode.includes('@stripe/'),
   }
 }
