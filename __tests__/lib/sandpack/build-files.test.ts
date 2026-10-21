@@ -117,3 +117,74 @@ describe('detectSandpackDependencies (#1097)', () => {
     expect(usesRecharts).toBe(false)
   })
 })
+
+/**
+ * Real bugs logged live against #1099 (items 6 and 7) during overnight
+ * spot-checks, neither covered by #1122's stubMissingLocalComponents (that
+ * fix only patches a broken/missing relative import path — these two are a
+ * never-declared npm dependency and malformed syntax the model itself
+ * writes, both upstream of any "is this file missing" check).
+ */
+describe('buildSandpackFiles — react-icons stub + malformed type-import fix (#1099 items 6/7)', () => {
+  it('stubs a react-icons import instead of leaving an unresolvable "Cannot find module" dependency', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "import { FaRegCircle } from 'react-icons/fa'\nexport default function App(){ return <FaRegCircle/> }",
+    })
+    const app = built['/App.tsx']
+    expect(app).not.toContain("from 'react-icons")
+    expect(app).toContain('const FaRegCircle')
+  })
+
+  it('stubs multiple named react-icons imports, including an aliased one', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "import { FaRegCircle, FaHeart as HeartIcon } from 'react-icons/fa'\nexport default function App(){ return <div><FaRegCircle/><HeartIcon/></div> }",
+    })
+    const app = built['/App.tsx']
+    expect(app).not.toContain("from 'react-icons")
+    expect(app).toContain('const FaRegCircle')
+    expect(app).toContain('const HeartIcon')
+  })
+
+  it('leaves a real lucide-react import untouched (only react-icons is stubbed)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "import { Search } from 'lucide-react'\nexport default function App(){ return <Search/> }",
+    })
+    expect(built['/App.tsx']).toContain("from 'lucide-react'")
+  })
+
+  it('fixes a malformed "import type," comma into a valid type-only import', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "import type, { Incident } from './types'\nexport default function App(){ return <div/> }",
+    })
+    expect(built['/App.tsx']).toContain('import type { Incident }')
+    expect(built['/App.tsx']).not.toContain('import type,')
+  })
+
+  it('does not corrupt a genuinely well-formed "import type { X }" into the malformed comma shape (root cause, not just the jsx-fixer patch)', () => {
+    // Real root cause found this run: code-validator.ts's duplicate-import
+    // de-dupe (and its sibling local-decl-shadow fix) both mistook the bare
+    // `type` keyword for a default-import binding name, so EVERY type-only
+    // import -- not just one the model wrote malformed -- got rebuilt into
+    // the exact `import type, { X }` shape #1099 item 6 reported live.
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "import type { Incident } from './types'\nexport default function App(){ return <div/> }",
+    })
+    expect(built['/App.tsx']).toContain("import type { Incident } from './types'")
+    expect(built['/App.tsx']).not.toContain('import type,')
+  })
+
+  it('does not corrupt TWO type-only imports in the same file (also would have falsely tripped the duplicate-identifier check on the bare word "type")', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "import type { Incident } from './types'\nimport type { Order } from './orders'\nexport default function App(){ return <div/> }",
+    })
+    const app = built['/App.tsx']
+    expect(app).toContain("import type { Incident } from './types'")
+    expect(app).toContain("import type { Order } from './orders'")
+    expect(app).not.toContain('import type,')
+  })
+})
