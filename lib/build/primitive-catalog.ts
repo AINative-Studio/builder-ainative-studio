@@ -1571,6 +1571,15 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
  * primitiveGroundingBlock (implementation-detail artifacts) and
  * catalogPromptBlock (the composition-plan view) so the rule can't drift
  * out of sync between the two call sites.
+ *
+ * Same live re-verification run also caught a second, subtler defect: once
+ * the model stopped naming Shopify, a businessModel artifact instead said
+ * "ZeroCommerce checkout (hosted on ZeroDB)" — wrong architecture, not a
+ * competitor mention. ZeroDB is the shared DATA layer, not a hosting
+ * platform; hosting/runtime is AINative Cloud; every primitive is its own
+ * independent service, never nested inside another primitive. The second
+ * paragraph below fixes that class of error so swapping "wrong competitor"
+ * for "wrong internal architecture" doesn't quietly become the new bug.
  */
 export const NEVER_RECOMMEND_COMPETITOR_BLOCK =
   `ABSOLUTE RULE — NEVER RECOMMEND A COMPETING SAAS PLATFORM: if this idea involves selling products online, ` +
@@ -1581,7 +1590,16 @@ export const NEVER_RECOMMEND_COMPETITOR_BLOCK =
   `competitor's platform. If the founder explicitly asks to build specifically ON Shopify itself (not just ` +
   `"an online store," but Shopify by name, or wants a Shopify app/theme), do not attempt it inside Builder — ` +
   `tell them Builder only builds on AINative's own primitives, and that cody-cli (AINative's standalone agent) ` +
-  `gives them full, unrestricted control to build directly on Shopify or any other platform of their choosing.`
+  `gives them full, unrestricted control to build directly on Shopify or any other platform of their choosing.\n\n` +
+  `GET THE ARCHITECTURE RIGHT WHEN YOU DESCRIBE HOW PRIMITIVES FIT TOGETHER: ` +
+  `Hosting/runtime for every generated app happens on AINative Cloud — never say a primitive, a checkout flow, ` +
+  `or any other capability is "hosted on ZeroDB" or "hosted on" any other primitive. ZeroDB is the shared DATA ` +
+  `layer (tables, vector search, object storage) that primitives and generated apps use for persistence, not a ` +
+  `hosting/runtime platform. Every AINative primitive (ZeroCommerce included) is its own ` +
+  `independent business application or backend service — primitives are siblings that may each use ZeroDB for ` +
+  `data and AINative Cloud for hosting, never nested inside one another. The correct framing is, e.g., ` +
+  `"ZeroCommerce checkout (backed by ZeroDB for product/order data, hosted on AINative Cloud)" — never ` +
+  `"checkout hosted on ZeroDB."`
 
 export function primitiveGroundingBlock(idea: string, track: 'app' | 'company' = 'company', role?: CompanyRole): string {
   const { foundational, selected } = selectPrimitives(idea, track, 6, role)
