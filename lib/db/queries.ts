@@ -17,8 +17,6 @@ import {
   users,
   chat_ownerships,
   anonymous_chat_logs,
-  chats,
-  messages,
   sessions,
   design_tokens,
   generations,
@@ -29,8 +27,6 @@ import {
   type User,
   type ChatOwnership,
   type AnonymousChatLog,
-  type Chat,
-  type Message,
   type Session,
   type DesignToken,
   type Generation,
@@ -246,190 +242,6 @@ export async function createAnonymousChatLog({
     })
   } catch (error) {
     console.error('Failed to create anonymous chat log in database')
-    throw error
-  }
-}
-
-// ==================== US-002: Chat History Persistence ====================
-
-/**
- * Create a new chat
- */
-export async function createChat({
-  chatId,
-  userId,
-  name,
-}: {
-  chatId: string
-  userId: string
-  name?: string
-}): Promise<Chat[]> {
-  try {
-    return await db
-      .insert(chats)
-      .values({
-        id: chatId,
-        user_id: userId,
-        name: name || `Chat ${chatId.slice(0, 8)}`,
-      })
-      .returning()
-  } catch (error) {
-    console.error('Failed to create chat in database:', error)
-    throw error
-  }
-}
-
-/**
- * Get a single chat by ID
- */
-export async function getChat(chatId: string): Promise<Chat | undefined> {
-  try {
-    const [chat] = await db
-      .select()
-      .from(chats)
-      .where(eq(chats.id, chatId))
-    return chat
-  } catch (error) {
-    console.error('Failed to get chat from database:', error)
-    throw error
-  }
-}
-
-/**
- * Get all chats for a user
- */
-export async function getChatsByUserId(userId: string): Promise<Chat[]> {
-  try {
-    return await db
-      .select()
-      .from(chats)
-      .where(eq(chats.user_id, userId))
-      .orderBy(desc(chats.created_at))
-  } catch (error) {
-    console.error('Failed to get chats by user from database:', error)
-    throw error
-  }
-}
-
-/**
- * Update chat name
- */
-export async function updateChatName({
-  chatId,
-  name,
-}: {
-  chatId: string
-  name: string
-}): Promise<Chat[]> {
-  try {
-    return await db
-      .update(chats)
-      .set({
-        name,
-        updated_at: new Date(),
-      })
-      .where(eq(chats.id, chatId))
-      .returning()
-  } catch (error) {
-    console.error('Failed to update chat name in database:', error)
-    throw error
-  }
-}
-
-/**
- * Delete a chat (cascade will delete messages)
- */
-export async function deleteChat(chatId: string): Promise<void> {
-  try {
-    await db.delete(chats).where(eq(chats.id, chatId))
-  } catch (error) {
-    console.error('Failed to delete chat from database:', error)
-    throw error
-  }
-}
-
-/**
- * Create a new message in a chat
- */
-export async function createMessage({
-  messageId,
-  chatId,
-  role,
-  content,
-}: {
-  messageId: string
-  chatId: string
-  role: 'user' | 'assistant' | 'system'
-  content: string
-}): Promise<Message[]> {
-  try {
-    const result = await db
-      .insert(messages)
-      .values({
-        id: messageId,
-        chat_id: chatId,
-        role,
-        content,
-      })
-      .returning()
-
-    // Update chat's updated_at timestamp
-    await db
-      .update(chats)
-      .set({ updated_at: new Date() })
-      .where(eq(chats.id, chatId))
-
-    return result
-  } catch (error) {
-    console.error('Failed to create message in database:', error)
-    throw error
-  }
-}
-
-/**
- * Get all messages for a chat, ordered chronologically
- */
-export async function getMessagesByChatId(
-  chatId: string
-): Promise<Message[]> {
-  try {
-    return await db
-      .select()
-      .from(messages)
-      .where(eq(messages.chat_id, chatId))
-      .orderBy(asc(messages.created_at))
-  } catch (error) {
-    console.error('Failed to get messages from database:', error)
-    throw error
-  }
-}
-
-/**
- * Get a single message by ID
- */
-export async function getMessage(
-  messageId: string
-): Promise<Message | undefined> {
-  try {
-    const [message] = await db
-      .select()
-      .from(messages)
-      .where(eq(messages.id, messageId))
-    return message
-  } catch (error) {
-    console.error('Failed to get message from database:', error)
-    throw error
-  }
-}
-
-/**
- * Delete a message
- */
-export async function deleteMessage(messageId: string): Promise<void> {
-  try {
-    await db.delete(messages).where(eq(messages.id, messageId))
-  } catch (error) {
-    console.error('Failed to delete message from database:', error)
     throw error
   }
 }
