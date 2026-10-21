@@ -107,6 +107,109 @@ describe('buildSandpackFiles — shadcn/AIKit import-injection path correctness 
   })
 })
 
+/**
+ * Real production bug (#1165, found live on habanero-hub): the shadcn and
+ * lucide-react import-injection safety nets both matched a component/icon
+ * NAME as a bare word anywhere in the file — including plain English prose,
+ * JSX text content, object keys, and unrelated string literals with zero
+ * connection to an actual usage. Confirmed live: habanero-hub's real copy
+ * ("Select mild, medium, or wild", "Gift Subscriptions" link text, a
+ * "Jalapeño Sunrise" flavor name, a "Navigation" JSX comment, "Content-Type"
+ * header strings, "Key features"/"Reorder & Share" copy) spuriously injected
+ * `Select` (shadcn) and `Gift`/`Key`/`Navigation`/`Share`/`Sunrise`/`Type`
+ * (lucide-react) into the generated file, none of them ever actually
+ * rendered. Both injections now require a real usage signal: a JSX tag
+ * (`<Component`) for shadcn, or a JSX tag OR the documented `icon: Icon` /
+ * `icon={Icon}` object-property-reference pattern for lucide-react icons
+ * (the AIKit injection a few lines above never had this bug — it already
+ * required the strict JSX-tag pattern only).
+ */
+describe('buildSandpackFiles — import-injection false positives on prose/text content (#1165)', () => {
+  it('does NOT inject a shadcn import when the component name only appears as plain text, not JSX', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <p>Select mild, medium, or wild</p> }",
+    })
+    expect(built['/App.tsx']).not.toContain("from './components/ui/select'")
+  })
+
+  it('DOES inject a shadcn import when the component is genuinely used as a JSX tag', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <Select><SelectTrigger/></Select> }",
+    })
+    expect(built['/App.tsx']).toContain("from './components/ui/select'")
+  })
+
+  it('does NOT inject lucide-react icons that only appear as prose/text/unrelated identifiers', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': `export default function App(){
+        return <div>
+          <a href="#">Gift Subscriptions</a>
+          <p>Key features and benefits</p>
+          {/* Navigation */}
+          <p>Jalapeño Sunrise</p>
+          <p>Reorder & Share</p>
+        </div>
+      }`,
+    })
+    const app = built['/App.tsx']
+    // The real page CONTENT ("Gift Subscriptions", "Jalapeño Sunrise", etc.)
+    // legitimately stays — only a spurious lucide-react import is the bug.
+    expect(app).not.toMatch(/\{[^}]*\bGift\b[^}]*\}\s*from\s*'lucide-react'/)
+    expect(app).not.toMatch(/\{[^}]*\bNavigation\b[^}]*\}\s*from\s*'lucide-react'/)
+    expect(app).not.toMatch(/\{[^}]*\bSunrise\b[^}]*\}\s*from\s*'lucide-react'/)
+    expect(app).not.toMatch(/\{[^}]*\bShare\b[^}]*\}\s*from\s*'lucide-react'/)
+  })
+
+  it('DOES inject a lucide-react icon used as a real JSX tag', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <Flame/> }",
+    })
+    expect(built['/App.tsx']).toMatch(/import\s*\{[^}]*\bFlame\b[^}]*\}\s*from\s*'lucide-react'/)
+  })
+
+  it('DOES inject a lucide-react icon used via the documented icon-property pattern (icon: Icon)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "const items = [{ icon: Flame, title: 'Hot' }]\nexport default function App(){ return <div>{items[0].title}</div> }",
+    })
+    expect(built['/App.tsx']).toMatch(/import\s*\{[^}]*\bFlame\b[^}]*\}\s*from\s*'lucide-react'/)
+  })
+
+  it('DOES inject a lucide-react icon used via icon={Icon}', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "function Row({icon}){ return null }\nexport default function App(){ return <Row icon={Flame}/> }",
+    })
+    expect(built['/App.tsx']).toMatch(/import\s*\{[^}]*\bFlame\b[^}]*\}\s*from\s*'lucide-react'/)
+  })
+
+  it('reproduces the real habanero-hub false-positive case end to end: Select/Gift/Key/Navigation/Share/Sunrise/Type all absent, the model-intended icons preserved', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': `import { Flame, Package, Star, Truck, Shield, TrendingUp, Check, ArrowRight, Mail, MapPin, Phone } from 'lucide-react'
+import { MetricCard } from './components/aikit'
+export default function App() {
+  return (
+    <div>
+      <p>Select mild, medium, or wild—we match you with sauces that fit your spice tolerance.</p>
+      <li><a href="#">Gift Subscriptions</a></li>
+      <p aria-label="Key features and benefits">Features</p>
+      {/* Navigation */}
+      <p>Jalapeño Sunrise</p>
+      <p>Reorder & Share</p>
+      <MetricCard title="Small-Batch Makers" value="47+" />
+      <Flame />
+    </div>
+  )
+}`,
+    })
+    const app = built['/App.tsx']
+    expect(app).not.toContain("from './components/ui/select'")
+    const lucideImportLine = app.match(/import\s*\{[^}]*\}\s*from\s*'lucide-react'/)?.[0] ?? ''
+    for (const falsePositive of ['Gift', 'Key', 'Navigation', 'Sunrise', 'Type']) {
+      expect(lucideImportLine).not.toMatch(new RegExp(`\\b${falsePositive}\\b`))
+    }
+    expect(lucideImportLine).toContain('Flame')
+  })
+})
+
 describe('detectSandpackDependencies (#1097)', () => {
   it('detects lucide-react/recharts usage only in generated (non-builtin) files', () => {
     const built = buildSandpackFiles({
