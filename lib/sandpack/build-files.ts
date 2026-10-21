@@ -408,12 +408,15 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
  */
 function stubMissingLocalComponents(sandpackFiles: Record<string, string>): void {
   const builtinPaths = new Set(Object.keys(getBuiltinFiles()))
-  const importRe = /from\s+['"](\.\.?\/[^'"]+)['"]/g
+  // Captures the import clause too (not just the path) — #1122's original
+  // version only tracked WHICH paths were missing, not WHAT each importer
+  // actually needed from them. See needsDefault/namedExports below.
+  const importRe = /^[ \t]*import\s+(?:type\s+)?([^'";]*?)\s*from\s*['"](\.\.?\/[^'"]+)['"]/gm
 
   // Collect candidate missing paths first — mutating sandpackFiles while
   // iterating imports found across it could make a later stub's own file
   // content get re-scanned; two passes keeps this deterministic.
-  const toStub = new Set<string>()
+  const toStub = new Map<string, { needsDefault: boolean; namedExports: Set<string> }>()
 
   for (const [path, code] of Object.entries(sandpackFiles)) {
     if (builtinPaths.has(path) || !/\.(t|j)sx?$/.test(path)) continue
@@ -421,7 +424,8 @@ function stubMissingLocalComponents(sandpackFiles: Record<string, string>): void
     let match: RegExpExecArray | null
     importRe.lastIndex = 0
     while ((match = importRe.exec(code))) {
-      const resolved = resolveRelativeImport(dir, match[1])
+      const clause = match[1]
+      const resolved = resolveRelativeImport(dir, match[2])
       if (!resolved) continue
       // #1165 follow-up: must check BOTH index.tsx and index.ts — the real
       // AIKit builtin lives at /components/aikit/index.ts (a .ts file, not
@@ -438,17 +442,72 @@ function stubMissingLocalComponents(sandpackFiles: Record<string, string>): void
         `${resolved}/index.ts`,
       ]
       const exists = candidates.some((c) => c in sandpackFiles)
-      if (!exists) toStub.add(`${resolved}.tsx`)
+      if (!exists) {
+        const stubPath = `${resolved}.tsx`
+        const needs = toStub.get(stubPath) ?? { needsDefault: false, namedExports: new Set<string>() }
+        const { needsDefault, named } = parseMissingImportClause(clause)
+        needs.needsDefault ||= needsDefault
+        for (const n of named) needs.namedExports.add(n)
+        toStub.set(stubPath, needs)
+      }
     }
   }
 
-  for (const stubPath of toStub) {
+  for (const [stubPath, needs] of toStub) {
     if (stubPath in sandpackFiles) continue // a real pass already provided it
     const name = (stubPath.split('/').pop() || 'Missing').replace(/\.tsx$/, '')
     if (!/^[A-Za-z_$][\w$]*$/.test(name)) continue // not a valid component identifier, skip
-    sandpackFiles[stubPath] =
-      `import React from 'react'\n// Auto-stubbed: the generation did not produce this file (${stubPath}).\nexport default function ${name}() { return null }\n`
+
+    const lines = [
+      `import React from 'react'`,
+      `// Auto-stubbed: the generation did not produce this file (${stubPath}).`,
+    ]
+    // Default export, same as before — kept even when nothing observed a
+    // default import of this path, so a stub is never a strict regression
+    // of #1122's original always-default behavior.
+    if (needs.needsDefault || needs.namedExports.size === 0) {
+      lines.push(`export default function ${name}() { return null }`)
+    }
+    // #1122 follow-up: a genuinely missing sibling can just as easily be
+    // imported by NAME (`import { Footer } from './components/Footer'`) as
+    // by default. A default-only stub leaves that named binding undefined,
+    // so rendering it still throws "Element type is invalid" — the exact
+    // whole-preview crash this function exists to prevent, just reached via
+    // the named-import path instead. Stub every named export actually
+    // observed so each one resolves to an inert component too.
+    for (const named of needs.namedExports) {
+      if (!/^[A-Za-z_$][\w$]*$/.test(named)) continue
+      lines.push(`export const ${named} = () => null`)
+    }
+    sandpackFiles[stubPath] = lines.join('\n') + '\n'
   }
+}
+
+/** Parses an import clause into what a missing module stub must provide: a default export, and/or specific named exports (by their EXPORTED name, not any local alias — the stub is matched against the module's real export surface, which aliasing on the import side never changes). */
+function parseMissingImportClause(clause: string): { needsDefault: boolean; named: string[] } {
+  const trimmed = clause.trim()
+  if (!trimmed) return { needsDefault: false, named: [] }
+
+  if (/^\*\s+as\s+[A-Za-z_$][\w$]*$/.test(trimmed)) {
+    // `import * as X from '...'` never throws on a missing named export —
+    // X is just a (possibly empty) module namespace object. No stub needed.
+    return { needsDefault: false, named: [] }
+  }
+
+  const braceMatch = trimmed.match(/^(?:([A-Za-z_$][\w$]*)\s*,\s*)?\{([^}]*)\}$/)
+  if (braceMatch) {
+    const named: string[] = []
+    for (const raw of braceMatch[2].split(',').map((n) => n.trim()).filter(Boolean)) {
+      // Inline type-only specifier (`type Foo`) has no runtime value to stub.
+      if (/^type\s+[A-Za-z_$][\w$]*(?:\s+as\s+[A-Za-z_$][\w$]*)?$/.test(raw)) continue
+      const aliasMatch = raw.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/)
+      named.push(aliasMatch ? aliasMatch[1] : raw)
+    }
+    return { needsDefault: Boolean(braceMatch[1]), named }
+  }
+
+  const defaultMatch = trimmed.match(/^([A-Za-z_$][\w$]*)$/)
+  return { needsDefault: Boolean(defaultMatch), named: [] }
 }
 
 /** Resolve a relative import specifier against the importing file's directory. Returns null for anything that isn't a plain relative path this app's own files would use. */
