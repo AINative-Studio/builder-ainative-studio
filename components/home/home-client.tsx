@@ -25,7 +25,7 @@ import { Suggestions, Suggestion } from '@/components/ai-elements/suggestion'
 import { AppHeader } from '@/components/shared/app-header'
 import { trackEvent } from '@/components/analytics/google-analytics'
 import { useStreaming } from '@/contexts/streaming-context'
-import { ChatMessages } from '@/components/chat/chat-messages'
+import { ChatMessages, type ChatBudgetStatus } from '@/components/chat/chat-messages'
 import { ChatInput } from '@/components/chat/chat-input'
 import { PreviewPanel } from '@/components/chat/preview-panel'
 import { ResizableLayout } from '@/components/shared/resizable-layout'
@@ -104,6 +104,12 @@ export function HomeClient() {
   const [sandpackFiles, setSandpackFiles] = useState<Record<string, string> | null>(null)
   const [showFeedbackDialog, setShowFeedbackDialog] = useState(false)
   const [showUpgrade, setShowUpgrade] = useState<'limit-reached' | 'approaching-limit' | null>(null)
+  // Real Context Budget Manager status for the active chat session (#1195),
+  // reported by /api/chat-ws's `budget` SSE event. null until the first
+  // real budget check for this session resolves (new chats have no history
+  // to check yet, and a failed/timed-out budget check never sets this —
+  // chat keeps working, it just doesn't show a status).
+  const [budgetStatus, setBudgetStatus] = useState<ChatBudgetStatus | null>(null)
   const router = useRouter()
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const { startHandoff } = useStreaming()
@@ -347,6 +353,15 @@ export function HomeClient() {
                   case 'build_step':
                     // Add build step to the list
                     setBuildSteps((prev) => [...prev, data.step])
+                    break
+
+                  case 'budget':
+                    // Real Context Budget Manager status for this real
+                    // session (#1195) — only sent when the budget check
+                    // itself succeeded; a failed/timed-out check never
+                    // emits this event, so budgetStatus simply stays at
+                    // its previous value rather than showing stale/wrong data.
+                    setBudgetStatus(data.budget ? { ...data.budget, trimmed: data.trimmed, droppedCount: data.droppedCount } : null)
                     break
 
                   case 'chunk':
@@ -649,6 +664,10 @@ export function HomeClient() {
                     setBuildSteps((prev) => [...prev, data.step])
                     break
 
+                  case 'budget':
+                    setBudgetStatus(data.budget ? { ...data.budget, trimmed: data.trimmed, droppedCount: data.droppedCount } : null)
+                    break
+
                   case 'chunk':
                     accumulatedContent += data.content
                     setChatHistory((prev) => {
@@ -743,6 +762,7 @@ export function HomeClient() {
                     onStreamingStarted={() => setIsLoading(false)}
                     buildSteps={buildSteps}
                     sandpackFiles={sandpackFiles}
+                    budgetStatus={budgetStatus}
                     onFeedback={(type) => {
                       if (type === 'down') {
                         setShowFeedbackDialog(true)

@@ -27,6 +27,20 @@ interface Chat {
   url?: string
 }
 
+// Real context-budget status for the active chat session (#1195), reported
+// by app/api/chat-ws/route.ts's `budget` SSE event — the real session's
+// usage from the real Context Budget Manager service, never the
+// hardcoded demo-session/demo-user values from app/context-budget-demo.
+export interface ChatBudgetStatus {
+  usagePercentage: number
+  isWarning: boolean
+  isCritical: boolean
+  remaining: number
+  total: number
+  trimmed?: boolean
+  droppedCount?: number
+}
+
 interface ChatMessagesProps {
   chatHistory: ChatMessage[]
   isLoading: boolean
@@ -37,6 +51,7 @@ interface ChatMessagesProps {
   buildSteps?: string[]
   sandpackFiles?: Record<string, string> | null
   onFeedback?: (type: 'up' | 'down') => void
+  budgetStatus?: ChatBudgetStatus | null
 }
 
 export function ChatMessages({
@@ -49,6 +64,7 @@ export function ChatMessages({
   buildSteps = [],
   sandpackFiles,
   onFeedback,
+  budgetStatus,
 }: ChatMessagesProps) {
   const streamingStartedRef = useRef(false)
   const [buildTasks, setBuildTasks] = useState<BuildTask[]>([])
@@ -231,6 +247,39 @@ export function ChatMessages({
                             </div>
                           ))}
                         </div>
+                      </div>
+                    </div>
+                )}
+
+                {/* Real context budget status (#1195) — only surfaced once the
+                    real session's usage is actually warning/critical, or the
+                    budget service just trimmed real history to fit. Silent
+                    the rest of the time: a healthy budget shouldn't clutter
+                    the chat UI on every message. */}
+                {msg.type === 'user' &&
+                  index === chatHistory.length - 2 &&
+                  budgetStatus &&
+                  (budgetStatus.isWarning || budgetStatus.isCritical || budgetStatus.trimmed) && (
+                    <div
+                      className="mt-2 w-full max-w-2xl"
+                      data-testid="chat-context-budget-indicator"
+                    >
+                      <div
+                        className={`flex items-center gap-2 rounded-md border px-3 py-2 text-xs ${
+                          budgetStatus.isCritical
+                            ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200'
+                            : 'border-yellow-200 bg-yellow-50 text-yellow-800 dark:border-yellow-900 dark:bg-yellow-950 dark:text-yellow-200'
+                        }`}
+                      >
+                        <span className="font-medium">
+                          Context {budgetStatus.usagePercentage}% used
+                        </span>
+                        {budgetStatus.trimmed && (
+                          <span>
+                            — trimmed {budgetStatus.droppedCount ?? 0} earlier message
+                            {(budgetStatus.droppedCount ?? 0) === 1 ? '' : 's'} to stay in budget
+                          </span>
+                        )}
                       </div>
                     </div>
                 )}
