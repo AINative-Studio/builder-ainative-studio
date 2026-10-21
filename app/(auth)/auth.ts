@@ -7,10 +7,19 @@ import { DUMMY_PASSWORD } from '@/lib/constants'
 import type { DefaultJWT } from 'next-auth/jwt'
 import { shouldRefreshToken, refreshAINativeToken } from '@/lib/auth/tokenRefresh'
 import { authorizePhoneLogin } from '@/lib/auth/phone-login'
+import { assertAuthSecretOrThrow } from '@/lib/env-check'
 
 const isDevelopment = process.env.NODE_ENV === 'development'
 
-// Ensure AUTH_SECRET is always set — required by NextAuth
+// #1194 — hard-fails in production if AUTH_SECRET is missing, instead of
+// ever reaching the derived-fallback branch below. See
+// assertAuthSecretOrThrow's own doc comment (lib/env-check.ts) for why the
+// prior always-derive behavior was a real session-forgery risk.
+assertAuthSecretOrThrow(process.env.NODE_ENV, process.env.AUTH_SECRET)
+
+// Ensure AUTH_SECRET is always set — required by NextAuth. Unreachable in
+// production with AUTH_SECRET unset (the assertion above already threw) —
+// this remains the local-dev convenience path only.
 if (!process.env.AUTH_SECRET) {
   // Derive from any available secret so sessions work even if AUTH_SECRET is missing
   const seed = process.env.ANTHROPIC_API_KEY || process.env.AINATIVE_API_TOKEN || process.env.DATABASE_URL || 'ainative-builder-fallback'
