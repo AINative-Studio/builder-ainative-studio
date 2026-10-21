@@ -84,6 +84,34 @@ export function EvidenceGallery({ userId, projectId, gitBranch, onEvidenceSelect
     fetchEvidence()
   }
 
+  // #1213 — real consumer for the previously orphaned GET /api/artifacts/
+  // [id]. The Download button below existed with NO onClick at all; this
+  // lists the evidence's real artifacts (GET /api/evidence/[id]/artifacts,
+  // itself also unwired until now) and downloads the first one directly,
+  // or opens each in a new tab when there's more than one.
+  const [downloadingId, setDownloadingId] = useState<string | null>(null)
+
+  const handleDownload = async (evidenceId: string) => {
+    setDownloadingId(evidenceId)
+    try {
+      const res = await fetch(`/api/evidence/${evidenceId}/artifacts`)
+      if (!res.ok) throw new Error('Failed to list artifacts')
+      const data = await res.json()
+      const items: { id: string }[] = data.artifacts || []
+      if (items.length === 0) {
+        console.warn('No artifacts recorded for this evidence yet')
+        return
+      }
+      items.forEach((artifact) => {
+        window.open(`/api/artifacts/${artifact.id}`, '_blank')
+      })
+    } catch (error) {
+      console.error('Failed to download artifacts:', error)
+    } finally {
+      setDownloadingId(null)
+    }
+  }
+
   const getStatusIcon = (status: EvidenceStatus) => {
     switch (status) {
       case 'success':
@@ -283,7 +311,14 @@ export function EvidenceGallery({ userId, projectId, gitBranch, onEvidenceSelect
                         <Eye className="h-3 w-3 mr-1" />
                         View
                       </Button>
-                      <Button size="sm" variant="ghost">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={downloadingId === item.id}
+                        onClick={() => handleDownload(item.id)}
+                        data-testid={`evidence-download-${item.id}`}
+                        title="Download artifacts"
+                      >
                         <Download className="h-3 w-3" />
                       </Button>
                     </div>
