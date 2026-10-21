@@ -26,7 +26,26 @@ export const APP_KICKOFF_QUESTIONS: KickoffQuestion[] = [
   { id: 'track', text: 'What should it keep track of?', suggestions: ['Customers and contacts', 'Bookings', 'Orders and payments', 'Files and photos'] },
 ]
 
-export function getKickoffQuestions(track: 'app' | 'company', isGrowth: boolean): KickoffQuestion[] {
+// #1182 — commerce-specific kickoff questions for the "Launch an online
+// store" entry point on BuildStart.tsx, instead of the generic
+// COMPANY_NEW_BUSINESS_QUESTIONS set. Mirrors that set's shape and length
+// (3 questions) but asks what a store actually needs decided up front:
+// product type (shapes catalog fields), checkout model (shapes whether
+// ZeroCommerce's Customer-less guest flow is enough), and whether the
+// founder wants the Sales-role CRM pairing (ZeroPipeline/ZeroInvoice) made
+// explicit rather than left to BuildStart.tsx's optional role picker alone.
+export const COMPANY_ECOMMERCE_QUESTIONS: KickoffQuestion[] = [
+  { id: 'what-selling', text: 'What are you selling?', suggestions: ['Physical products', 'Digital products', 'Both'] },
+  { id: 'checkout-model', text: 'How should checkout work?', suggestions: ['Guest checkout', 'Customer accounts', 'Both'] },
+  { id: 'sales-pairing', text: 'Want a sales pipeline and invoicing alongside your store?', suggestions: ['Yes', 'Not yet'] },
+]
+
+export function getKickoffQuestions(
+  track: 'app' | 'company',
+  isGrowth: boolean,
+  isEcommerce?: boolean,
+): KickoffQuestion[] {
   if (track === 'app') return APP_KICKOFF_QUESTIONS
+  if (isEcommerce) return COMPANY_ECOMMERCE_QUESTIONS
   return isGrowth ? COMPANY_GROW_BUSINESS_QUESTIONS : COMPANY_NEW_BUSINESS_QUESTIONS
 }

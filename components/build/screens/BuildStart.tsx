@@ -3,16 +3,24 @@
 /**
  * BuildStart — funnel step 2 (Claude Design handoff). "Let's build something."
  *
- *   Surprise me   → an LLM invents a starter idea (POST /api/build/surprise-idea,
- *                   grounded in the real primitive catalog, biased toward
- *                   whatever primitives haven't shown up recently — falls back
- *                   to the static pool in lib/build/surprise-ideas.ts on any
- *                   failure/timeout), then the founder refines it in Intake.
- *   Build my idea → straight to Intake with a blank field.
+ *   Surprise me            → an LLM invents a starter idea (POST
+ *                            /api/build/surprise-idea, grounded in the real
+ *                            primitive catalog, biased toward whatever
+ *                            primitives haven't shown up recently — falls
+ *                            back to the static pool in
+ *                            lib/build/surprise-ideas.ts on any
+ *                            failure/timeout), then the founder refines it
+ *                            in Intake.
+ *   Build my idea          → straight to Intake with a blank field.
+ *   Launch an online store → (#1182) explicit commerce path — seeds the idea
+ *                            with a guaranteed ZeroCommerce trigger word,
+ *                            forces the Sales company role, and routes
+ *                            kickoff to commerce-specific questions, instead
+ *                            of depending on free-text keyword matching.
  *
- * Both commit the Company track (the funnel's "create a company" framing) and
- * route into the existing Intake → auth-wall → builder path. Rendered as the
- * `build` screen in the BuildApp state machine.
+ * All three commit the Company track (the funnel's "create a company"
+ * framing) and route into the existing Intake → auth-wall → builder path.
+ * Rendered as the `build` screen in the BuildApp state machine.
  */
 
 import { useRef, useState } from 'react'
@@ -54,6 +62,25 @@ export function BuildStart() {
     // built so the outcome is legible, instead of one undifferentiated
     // "company" — '' (no role picked) keeps today's behavior exactly.
     pickTrack('company', role || undefined)
+  }
+
+  // #1182 — explicit "Launch an online store" path, instead of relying
+  // solely on free-text keyword matching in primitive-catalog.ts to detect
+  // commerce intent. Three things, per the issue's own scoping:
+  //  1. Seed the idea text with a guaranteed ZeroCommerce trigger word
+  //     ('store' — see primitive-catalog.ts's ZeroCommerce triggers array)
+  //     so selectPrimitives() reliably composes ZeroCommerce without
+  //     depending on the founder's own prose happening to match.
+  //  2. Force role: 'sales' — the SAME existing COMPANY_ROLES mechanism
+  //     #448 already built — so ZeroPipeline/ZeroInvoice ride along
+  //     automatically, without a separate role-picker step.
+  //  3. SET_ECOMMERCE_INTENT routes KickoffQuestions.tsx to the
+  //     commerce-specific question set instead of the generic one.
+  const pickEcommerce = () => {
+    window.scrollTo(0, 0)
+    dispatch({ type: 'SET_IDEA', idea: 'Launch an online store' })
+    dispatch({ type: 'SET_ECOMMERCE_INTENT', value: true })
+    pickTrack('company', 'sales')
   }
 
   const pickSurprise = async () => {
@@ -129,6 +156,16 @@ export function BuildStart() {
 
           <button onClick={goIntake} className="btn-primary m-land-btn-block" style={{ padding: '18px 20px', fontSize: 15 }} data-testid="build-own-idea">
             Build my idea
+          </button>
+
+          <div className="m-land-or">OR</div>
+
+          {/* #1182 — explicit commerce entry point: guarantees ZeroCommerce
+              composition + the Sales role boost + commerce-specific kickoff
+              questions, instead of depending on the founder's free text
+              happening to match a trigger word. */}
+          <button onClick={pickEcommerce} className="btn-secondary m-land-btn-block" style={{ padding: '18px 20px', fontSize: 15 }} data-testid="build-ecommerce">
+            Launch an online store
           </button>
         </div>
 
