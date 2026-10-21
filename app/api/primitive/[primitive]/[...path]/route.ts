@@ -268,7 +268,24 @@ async function forward(
   const joinedPath = path.join('/')
   const needsTrailingSlash =
     primitiveName === 'zeroinvoice' && path.length === 1 && !joinedPath.endsWith('/')
-  const forwardedPath = needsTrailingSlash ? `${joinedPath}/` : joinedPath
+  // #1167 — ZeroCommerce's shopper-facing storefront routes are slug-scoped
+  // (/storefront/{slug}/...), but a generated app has no reliable way to
+  // know its own ZeroCommerce store slug (it's provisioned server-side at
+  // checkout time, never returned to the generated app's own runtime code).
+  // Codegen is instructed to call the literal placeholder segment
+  // `storefront/_` — the proxy swaps `_` for the already-resolved company
+  // slug here, the same "generated code never guesses what it can't know"
+  // pattern as the org_id injection above. Only rewrites that literal
+  // placeholder segment — a caller that already supplies a real slug is
+  // left untouched (there is no legitimate reason to, since no generated
+  // app can know a different company's slug, but this stays non-destructive
+  // either way).
+  const pathSegments = [...path]
+  if (primitiveName === 'zerocommerce' && pathSegments[0] === 'storefront' && pathSegments[1] === '_') {
+    pathSegments[1] = slug
+  }
+  const rewrittenJoinedPath = pathSegments.join('/')
+  const forwardedPath = needsTrailingSlash ? `${rewrittenJoinedPath}/` : rewrittenJoinedPath
   const searchString = search.toString()
   const targetUrl = `${base}/${forwardedPath}${searchString ? `?${searchString}` : ''}`
 
@@ -277,12 +294,30 @@ async function forward(
     body = await request.text().catch(() => undefined)
   }
 
+  // #1167 — ZeroCommerce's storefront endpoints identify the SHOPPER (not
+  // the founder) via a per-cart session: an `X-Session-ID` header or
+  // `session_id` cookie. Neither was ever forwarded — every storefront call
+  // silently got a brand-new random session on the real ZeroCommerce side
+  // (its own fallback for "no session identity provided"), so an add-item
+  // call and the checkout call that follows it never shared a cart. Forward
+  // both the inbound header and the inbound cookie header verbatim (the
+  // generated app's own fetch calls carry whichever one the browser/shopper
+  // already has) so cart continuity actually works; also relay any
+  // `Set-Cookie` the real ZeroCommerce response sends back, so a FIRST call
+  // (which creates the session) hands the browser a cookie for subsequent
+  // calls, exactly as it would if the generated app called ZeroCommerce
+  // directly.
+  const forwardedSessionHeader = request.headers.get('x-session-id')
+  const forwardedCookie = request.headers.get('cookie')
+
   const callPrimitive = (accessToken: string) =>
     fetch(targetUrl, {
       method: request.method,
       headers: {
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': request.headers.get('content-type') || 'application/json',
+        ...(forwardedSessionHeader ? { 'X-Session-ID': forwardedSessionHeader } : {}),
+        ...(forwardedCookie ? { Cookie: forwardedCookie } : {}),
       },
       body,
       signal: AbortSignal.timeout(20000),
@@ -311,9 +346,23 @@ async function forward(
     const text = await res.text().catch(() => '')
     // Forward the real primitive's response verbatim (status + body) — the
     // credential itself is never included in any response we send back.
+    const responseHeaders = new Headers({
+      'Content-Type': res.headers.get('content-type') || 'application/json',
+    })
+    // #1167 — relay the real ZeroCommerce Set-Cookie (session_id) back to the
+    // shopper's browser so the FIRST storefront call (cart creation) hands
+    // out a session the browser will carry on subsequent calls automatically
+    // — mirrors the Cookie/X-Session-ID forwarding above for the opposite
+    // direction. res.headers.get('set-cookie') loses repeated Set-Cookie
+    // lines under fetch's Headers merging; getSetCookie() (Node 18.14+/
+    // undici) preserves each one, matching this route's node runtime.
+    const setCookies = typeof (res.headers as any).getSetCookie === 'function'
+      ? (res.headers as any).getSetCookie()
+      : res.headers.get('set-cookie') ? [res.headers.get('set-cookie') as string] : []
+    for (const cookie of setCookies) responseHeaders.append('Set-Cookie', cookie)
     return new NextResponse(text, {
       status: res.status,
-      headers: { 'Content-Type': res.headers.get('content-type') || 'application/json' },
+      headers: responseHeaders,
     })
   } catch {
     return NextResponse.json({ error: 'primitive_unreachable' }, { status: 502 })
