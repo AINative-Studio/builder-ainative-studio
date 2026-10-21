@@ -53,6 +53,14 @@ export function fixJsxErrors(code: string): string {
   // next/image/next/link — see #1174.
   fixed = stubLegacyPagesRouterImports(fixed)
 
+  // Fix 0g: Stub framer-motion — same whole-compile-crash risk as next/image
+  // et al. (#1151/#1154/#1174): it is not declared as a Sandpack dependency
+  // (see components/chat/sandpack-preview.tsx's customSetup.dependencies),
+  // so any unresolvable import anywhere crashes the entire compile. The
+  // llmSystemPrompt already forbids it, but prompt-level bans alone have
+  // already proven insufficient for this exact failure mode — see #1174.
+  fixed = stubFramerMotionImports(fixed)
+
   // Fix 1: DISABLED — balanceJsxTags adds closing tags in wrong context
   // causing "Unexpected token, expected ','" errors in Sandpack
   // fixed = balanceJsxTags(fixed)
@@ -194,6 +202,35 @@ const FONT_FACTORY_STUB = "(..._args) => ({ className: '', style: {}, variable: 
 
 const NEXT_ROUTER_STUB =
   "() => ({ push: () => {}, replace: () => {}, back: () => {}, forward: () => {}, reload: () => {}, prefetch: () => Promise.resolve(), pathname: '/', asPath: '/', route: '/', query: {}, isReady: true, events: { on: () => {}, off: () => {}, emit: () => {} } })"
+
+/**
+ * Stub framer-motion's named exports with inert passthroughs. `motion.<tag>`
+ * is a Proxy that drops animation-only props (initial, animate, exit,
+ * transition, variants, the while-prefixed gesture props, the drag-prefixed
+ * props, layout, layoutId) and renders the plain tag with the rest, so a
+ * generated `<motion.div whileHover={{...}}>` still renders its children,
+ * just without the animation — unstyled-but-present is strictly better than
+ * crashing the whole preview (same philosophy as the next-module stubs and
+ * #1150's react-icons stub).
+ */
+function stubFramerMotionImports(code: string): string {
+  return code.replace(
+    /import\s+\{([^}]+)\}\s+from\s+['"]framer-motion['"]\s*;?/g,
+    (_match, names: string) => stubNamedImportsAs(names, FRAMER_MOTION_STUBS)
+  )
+}
+
+const FRAMER_MOTION_STUBS: Record<string, string> = {
+  motion:
+    "new Proxy({}, { get: (_t: any, tag: any) => ({ children, initial, animate, exit, transition, variants, whileHover, whileTap, whileInView, whileFocus, whileDrag, viewport, layout, layoutId, drag, dragConstraints, dragElastic, dragSnapToOrigin, dragMomentum, onAnimationComplete, custom, ...rest }: any) => { const Tag = tag as any; return <Tag {...rest}>{children}</Tag> } })",
+  AnimatePresence: '(props: any) => props.children ?? null',
+  LazyMotion: '(props: any) => props.children ?? null',
+  MotionConfig: '(props: any) => props.children ?? null',
+  useAnimation: '() => ({ start: () => Promise.resolve(), stop: () => {}, set: () => {} })',
+  useMotionValue: '(v: any) => ({ get: () => v, set: () => {}, onChange: () => () => {} })',
+  useSpring: '(v: any) => ({ get: () => v, set: () => {}, onChange: () => () => {} })',
+  useTransform: '(_v: any, _i: any, output: any) => ({ get: () => Array.isArray(output) ? output[0] : output })',
+}
 
 /**
  * Rewrite a named-import clause (`Foo, Bar as Baz`) into `const` declarations
