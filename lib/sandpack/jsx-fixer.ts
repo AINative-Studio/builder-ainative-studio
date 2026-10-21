@@ -830,16 +830,24 @@ function stubUnresolvableReExports(code: string): string {
       for (const raw of names.split(',').map((n) => n.trim()).filter(Boolean)) {
         const aliasMatch = raw.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/)
         const exportedName = aliasMatch ? aliasMatch[2] : raw
-        const sourceName = aliasMatch ? aliasMatch[1] : raw
-        const stub = genericInertStub(sourceName, isUsedAsJsxTag(code, exportedName))
-        // `export { default } from 'pkg'` / `export { x as default } from
-        // 'pkg'` re-export as THIS module's default — `export const default`
-        // is a syntax error, so that one binding needs `export default`.
-        stubLines.push(
-          exportedName === 'default'
-            ? `${indent}export default ${stub};`
-            : `${indent}export const ${exportedName} = ${stub};`
-        )
+        // Self-reference the binding that's ACTUALLY declared — the local
+        // name on the export side (`exportedName`), never the package's
+        // original export name (`a` in `a as c`), which this file never
+        // declares at all and would throw ReferenceError at call time.
+        if (exportedName === 'default') {
+          // `export { default } from 'pkg'` / `export { x as default } from
+          // 'pkg'` re-export as THIS module's own default export.
+          // `export const default = ...` is a syntax error, and so is a
+          // bare `default` keyword used as a value inside the stub
+          // expression itself (reserved word) — give the self-reference its
+          // own non-reserved local name, wrapped in an IIFE that evaluates
+          // to just the stub value.
+          const stub = genericInertStub('__default', isUsedAsJsxTag(code, exportedName))
+          stubLines.push(`${indent}export default (function () { const __default = ${stub}; return __default })();`)
+        } else {
+          const stub = genericInertStub(exportedName, isUsedAsJsxTag(code, exportedName))
+          stubLines.push(`${indent}export const ${exportedName} = ${stub};`)
+        }
       }
       if (stubLines.length === 0) return ''
       return stubLines.join('\n') + '\n'
