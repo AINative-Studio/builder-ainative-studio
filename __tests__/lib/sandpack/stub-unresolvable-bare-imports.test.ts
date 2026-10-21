@@ -57,16 +57,19 @@ describe('stubUnresolvableBareImports', () => {
   })
 
   it('drops an inline `type` specifier mixed with value specifiers, stubbing only the value ones, and the result is valid executable JS', () => {
-    // `import { type Variants, motion } from 'framer-motion'` — a very
-    // plausible real-world shape. Left unhandled, `type` ends up spliced
-    // into the generated identifier (`const type Variants = ...`), a
-    // SyntaxError this fallback would introduce on its own, worse than the
-    // crash it exists to prevent.
-    const code = "import { type Variants, motion } from 'framer-motion'\nfunction X() { return <motion.div /> }"
+    // `import { type Config, init } from 'some-unknown-lib'` — a plausible
+    // real-world shape for ANY package without its own dedicated stub (not
+    // framer-motion, whose `motion` export gets #1178's dedicated,
+    // JSX-returning stub instead — this generic fallback never sees it, since
+    // that more specific stub runs first and already consumed the import).
+    // Left unhandled, `type` ends up spliced into the generated identifier
+    // (`const type Config = ...`), a SyntaxError this fallback would
+    // introduce on its own, worse than the crash it exists to prevent.
+    const code = "import { type Config, init } from 'some-unknown-lib'\ninit()"
     const out = fixJsxErrors(code)
-    expect(out).not.toMatch(/\btype Variants\b/)
-    expect(out).not.toMatch(/const Variants/)
-    const constLine = out.match(/const motion = new Proxy[^\n]*/)![0]
+    expect(out).not.toMatch(/\btype Config\b/)
+    expect(out).not.toMatch(/const Config/)
+    const constLine = out.match(/const init = new Proxy[^\n]*/)![0]
     expect(() => new Function(constLine)()).not.toThrow()
   })
 
