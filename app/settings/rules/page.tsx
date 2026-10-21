@@ -29,7 +29,7 @@ import {
 } from '@/components/ui/select'
 import { AppHeader } from '@/components/shared/app-header'
 import { EnforcementDashboard } from '@/components/enforcement/enforcement-dashboard'
-import { Loader2, ShieldCheck, PlayCircle } from 'lucide-react'
+import { Loader2, ShieldCheck, PlayCircle, History } from 'lucide-react'
 import { useToast } from '@/components/ui/use-toast'
 import type {
   EnforcementReport,
@@ -103,6 +103,44 @@ export default function RulesSettingsPage() {
     fetchRules()
   }, [fetchRules])
 
+  // Violation history (#1213) — the real UI consumer for the previously
+  // orphaned GET /api/rules/stats + GET /api/rules/violations. Scoped to
+  // 'playground', the real projectId the Validation Playground above
+  // actually records reports/violations under (POST /api/rules/validate)
+  // — there is no other writer of this data in the app today.
+  const [stats, setStats] = useState<{
+    reports: { total: number; passed: number; failed: number; passRate: number }
+    topViolatedRules: { ruleId: string; count: number }[]
+  } | null>(null)
+  const [violations, setViolations] = useState<RuleViolation[]>([])
+  const [historyLoading, setHistoryLoading] = useState(true)
+
+  const fetchHistory = useCallback(async () => {
+    try {
+      setHistoryLoading(true)
+      const [statsRes, violationsRes] = await Promise.all([
+        fetch('/api/rules/stats?projectId=playground'),
+        fetch('/api/rules/violations?projectId=playground&limit=20'),
+      ])
+      if (statsRes.ok) {
+        const data = await statsRes.json()
+        setStats(data.stats || null)
+      }
+      if (violationsRes.ok) {
+        const data = await violationsRes.json()
+        setViolations(data.violations || [])
+      }
+    } catch {
+      // Best-effort — the rest of the page (rules table, playground) still works.
+    } finally {
+      setHistoryLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchHistory()
+  }, [fetchHistory])
+
   const toggleRule = async (rule: RuleRow) => {
     // Optimistic update.
     setRules((prev) =>
@@ -162,7 +200,9 @@ export default function RulesSettingsPage() {
         body: JSON.stringify({
           type: context,
           data: buildActionData(),
-          userId: 'playground',
+          // userId is resolved server-side from the real session (#1213) —
+          // never sent from the client. See the doc comment on
+          // app/api/rules/validate/route.ts's POST handler.
           projectId: 'playground',
         }),
       })
@@ -198,6 +238,10 @@ export default function RulesSettingsPage() {
         canAutoFix: data.report.canAutoFix,
         suggestions: data.report.suggestions || [],
       })
+      // Every validate call persists a report + any violations server-side
+      // (app/api/rules/validate/route.ts) — refresh the history so it's
+      // visible without a manual page reload.
+      fetchHistory()
     } catch (error) {
       toast({
         title: 'Validation failed',
@@ -432,6 +476,98 @@ export default function RulesSettingsPage() {
                   </TableBody>
                 </Table>
               </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Violation history (#1213) — real data from GET /api/rules/stats
+            + GET /api/rules/violations, the enforcement framework's own
+            persistence of every validation run above. */}
+        <Card className="mt-8">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <History className="h-5 w-5" /> Violation History
+            </CardTitle>
+            <CardDescription>
+              Past validation runs recorded by the playground above.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {historyLoading ? (
+              <div className="flex h-24 items-center justify-center">
+                <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+              </div>
+            ) : (
+              <>
+                {stats && (
+                  <div
+                    className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4"
+                    data-testid="rules-stats-summary"
+                  >
+                    <div>
+                      <div className="text-2xl font-bold">{stats.reports.total}</div>
+                      <p className="text-xs text-gray-600 dark:text-gray-400">Total runs</p>
+                    </div>
+                    <div>
+                      <div className="text-2xl font-bold">{stats.reports.passRate}%</div>
+                      <p className="text-xs text-gray-600 dark:text-gray-400">Pass rate</p>
+                    </div>
+                    <div>
+                      <div className="text-2xl font-bold">{stats.reports.failed}</div>
+                      <p className="text-xs text-gray-600 dark:text-gray-400">Failed runs</p>
+                    </div>
+                    <div>
+                      <div className="text-2xl font-bold">
+                        {stats.topViolatedRules[0]?.ruleId ?? '—'}
+                      </div>
+                      <p className="text-xs text-gray-600 dark:text-gray-400">Most violated rule</p>
+                    </div>
+                  </div>
+                )}
+
+                {violations.length === 0 ? (
+                  <div className="py-8 text-center text-gray-500 dark:text-gray-400" data-testid="rules-violations-empty">
+                    No violations recorded yet. Run the validation playground above.
+                  </div>
+                ) : (
+                  <div className="rounded-lg border">
+                    <Table data-testid="rules-violations-table">
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Rule</TableHead>
+                          <TableHead>Message</TableHead>
+                          <TableHead>Recorded</TableHead>
+                          <TableHead className="text-right">Fixed</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {violations.map((v: any, i: number) => (
+                          <TableRow key={v.id ?? i}>
+                            <TableCell>
+                              <code className="text-xs">{v.rule_id ?? v.ruleId}</code>
+                            </TableCell>
+                            <TableCell className="max-w-md truncate text-sm">
+                              {v.violation_message ?? v.message}
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground">
+                              {v.created_at ? new Date(v.created_at).toLocaleString() : '—'}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {v.fixed ? (
+                                <Badge className="bg-green-500/10 text-green-700 dark:text-green-400">
+                                  Fixed
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline">Open</Badge>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </>
             )}
           </CardContent>
         </Card>
