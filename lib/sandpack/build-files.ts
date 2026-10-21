@@ -97,13 +97,40 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
     }
   }
 
-  const mainFile = Object.keys(sandpackFiles).find(
-    f => f === '/src/App.tsx' || f === '/App.tsx'
-  ) || Object.keys(sandpackFiles).find(
-    f => f.endsWith('page.tsx') || f.endsWith('App.tsx')
-  ) || Object.keys(sandpackFiles)[0]
+  const builtinPathsForEntry = new Set(Object.keys(getBuiltinFiles()))
+  const generatedPaths = Object.keys(sandpackFiles).filter(f => !builtinPathsForEntry.has(f))
 
-  let mainCode = mainFile ? sandpackFiles[mainFile] : ''
+  const mainFile = generatedPaths.find(
+    f => f === '/src/App.tsx' || f === '/App.tsx'
+  ) || generatedPaths.find(
+    f => f.endsWith('page.tsx') || f.endsWith('App.tsx')
+  ) || null
+
+  // Real bug (#1099 item 8): a generation can produce only sibling
+  // component files with no App.tsx/page.tsx anywhere -- the one thing
+  // this pipeline genuinely cannot invent (mirrors company-scaffold.ts's
+  // hasDeployableEntrypoint(), which treats this exact condition as "not
+  // deployable yet" for the real deploy path). Previously this fell
+  // through to `Object.keys(sandpackFiles)[0]` -- an arbitrary BUILTIN
+  // file (shadcn/AIKit/template get spread into sandpackFiles first),
+  // producing nonsense entry content and a raw babel parse error instead
+  // of a clear message a founder could actually understand.
+  const NO_ENTRYPOINT_FALLBACK = [
+    "import React from 'react'",
+    'export default function App() {',
+    '  return (',
+    "    <div style={{ display: 'flex', minHeight: '100vh', alignItems: 'center', justifyContent: 'center', padding: '2rem', textAlign: 'center', fontFamily: 'system-ui, sans-serif' }}>",
+    '      <div>',
+    "        <h1 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.5rem' }}>This page hasn't been generated yet</h1>",
+    "        <p style={{ color: '#666' }}>No landing page content was produced for this company. Try regenerating, or check back shortly.</p>",
+    '      </div>',
+    '    </div>',
+    '  )',
+    '}',
+    '',
+  ].join('\n')
+
+  let mainCode = mainFile ? sandpackFiles[mainFile] : NO_ENTRYPOINT_FALLBACK
 
   mainCode = mainCode.replace(/from\s+['"]\.\/src\//g, "from './")
   mainCode = mainCode.replace(/from\s+['"]\.\/app\/page['"]/g, "from './app/page'")
