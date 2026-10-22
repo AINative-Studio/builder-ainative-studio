@@ -17,9 +17,10 @@
  * only, 0-radius, 2px dividers, IBM Plex Mono for metadata.
  */
 
-import { useRef, useEffect, useCallback } from 'react'
+import { useRef, useEffect, useCallback, useState } from 'react'
 import { signOut } from 'next-auth/react'
 import { isGuestSession, getDisplayName, getDisplayEmail } from '@/lib/build/account-session'
+import { creditsBadgeLabel, creditsMeterFillPercent } from '@/lib/build/value-moment'
 import type { Session } from 'next-auth'
 
 // ── Menu item descriptors ─────────────────────────────────────────────────────
@@ -47,8 +48,15 @@ export interface MenuItem {
 /**
  * Derive the ordered list of menu items for the given auth state.
  * Pure function — straightforward to unit-test without React.
+ *
+ * `creditsBadge` (#1258): when set (an authed founder with a known, bounded
+ * remaining-build count — e.g. "2 left"), it overrides the plain "Sign in"
+ * placeholder on the Credits row so the real number is visible without
+ * opening Account — the quota is no longer a surprise that only shows up
+ * AFTER it's exhausted. Omitted/empty for guests, unlimited tiers, or before
+ * the real status has loaded (never fabricate a count).
  */
-export function buildMenuItems(isGuest: boolean): MenuItem[] {
+export function buildMenuItems(isGuest: boolean, creditsBadge?: string): MenuItem[] {
   return [
     {
       id: 'portfolio',
@@ -62,7 +70,7 @@ export function buildMenuItems(isGuest: boolean): MenuItem[] {
       label: 'Credits',
       glyph: '⬡',
       enabled: !isGuest,
-      badge: isGuest ? 'Sign in' : undefined,
+      badge: isGuest ? 'Sign in' : (creditsBadge || undefined),
     },
     {
       id: 'billing',
@@ -129,7 +137,28 @@ export function AccountMenu({ session, open, onOpenChange, onScreen }: AccountMe
   const menuRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
 
-  const items = buildMenuItems(isGuest)
+  // #1258 — real remaining-build quota, fetched once per mount for a signed-in
+  // founder so the chip's meter and the Credits menu item show the honest
+  // current count instead of nothing (today) or a fake hardcoded fill
+  // (the old always-38% bar). Best-effort: a failed/slow fetch just leaves
+  // the meter at 0% and the badge unset — never blocks the menu from working.
+  const [credits, setCredits] = useState<{ used: number; limit: number; unlimited: boolean } | null>(null)
+  useEffect(() => {
+    if (isGuest) { setCredits(null); return }
+    let cancelled = false
+    fetch('/api/build/credits')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelled || !d || typeof d.used !== 'number') return
+        setCredits({ used: d.used, limit: d.limit, unlimited: !!d.unlimited })
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [isGuest])
+
+  const creditsBadge = creditsBadgeLabel(credits)
+  const meterFillPercent = creditsMeterFillPercent(credits)
+  const items = buildMenuItems(isGuest, creditsBadge)
 
   // Close on click-outside or Escape.
   const handleKeyDown = useCallback(
@@ -230,9 +259,21 @@ export function AccountMenu({ session, open, onOpenChange, onScreen }: AccountMe
         <span className="m-account-initials" aria-hidden="true">
           {initials}
         </span>
-        <span className="m-token-meter" aria-hidden="true">
-          <span style={{ width: '38%' }} />
-        </span>
+        {/* #1258: real remaining-build quota, not a fixed placeholder fill.
+            Hidden entirely for guests/unlimited tiers rather than showing a
+            meaningless bar. title gives sighted mouse users the exact count
+            without opening the menu; screen readers get it via aria-label. */}
+        {creditsBadge && (
+          <span
+            className="m-token-meter"
+            data-testid="account-chip-credits-meter"
+            role="img"
+            aria-label={`Free builds: ${creditsBadge}`}
+            title={`Free builds: ${creditsBadge}`}
+          >
+            <span style={{ width: `${meterFillPercent}%` }} />
+          </span>
+        )}
         <span className="m-acct-caret" aria-hidden="true">
           {open ? '▴' : '▾'}
         </span>

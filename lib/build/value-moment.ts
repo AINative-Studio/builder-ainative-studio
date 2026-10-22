@@ -147,6 +147,47 @@ export function buildsRemainingLine(status: {
   return `You've used ${Math.min(used, limit)} of ${limit} free builds.`
 }
 
+/**
+ * #1258 — a persistent, honest remaining-build indicator for the account
+ * chip/menu, instead of only learning the quota is gone from the upsell
+ * banner AFTER it's exhausted. Pulled from the same GET /api/build/credits
+ * shape as buildsRemainingLine above. '' (render nothing) for unlimited
+ * tiers or an unloaded/malformed status — we never fabricate a count.
+ */
+export function creditsBadgeLabel(status: {
+  used?: number
+  limit?: number
+  unlimited?: boolean
+} | null): string {
+  if (!status || status.unlimited) return ''
+  const used = status.used
+  const limit = status.limit
+  if (typeof used !== 'number' || typeof limit !== 'number' || limit <= 0) return ''
+  const remaining = Math.max(0, limit - used)
+  return `${remaining} left`
+}
+
+/**
+ * #1258 — how full the account chip's token-meter bar should render, as a
+ * percent string for inline style width (e.g. "67%"). Reads USED share of
+ * the allowance (a fuller bar = more consumed), clamped to [0,100]. '100%'
+ * once exhausted so the bar visibly maxes out before the upsell ever fires.
+ * Unlimited/unloaded/malformed status all render an empty bar (0%) rather
+ * than the old hardcoded always-38% placeholder — no status yet is not the
+ * same as "already a third used."
+ */
+export function creditsMeterFillPercent(status: {
+  used?: number
+  limit?: number
+  unlimited?: boolean
+} | null): number {
+  if (!status || status.unlimited) return 0
+  const used = status.used
+  const limit = status.limit
+  if (typeof used !== 'number' || typeof limit !== 'number' || limit <= 0) return 0
+  return Math.max(0, Math.min(100, Math.round((used / limit) * 100)))
+}
+
 // ── Gating decisions ─────────────────────────────────────────────────────────
 
 export type LimitAction = 'build' | 'pricing'
