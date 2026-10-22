@@ -44,6 +44,7 @@ import { ensureCompanyProfile } from '@/lib/build/company-profile'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
 import { fetchFileDownload } from '@/lib/build/media-schedule'
 import { resolveAttachmentBlocks, type ChatAttachmentRef } from '@/lib/build/chat-attachment'
+import { ASK_TOOL_DEFINITIONS, runAskTool } from '@/lib/build/ask-tools'
 
 export const runtime = 'nodejs'
 
@@ -625,7 +626,14 @@ export async function askCody(params: AskCodyParams): Promise<AskCodyResult | { 
     `work around it.\n` +
     `- PLAIN TEXT ONLY: no markdown, no asterisks, no headers — this chat renders raw text.\n` +
     `- Keep it to 2-4 sentences for simple questions; up to 6 sentences for status/next-steps questions.\n` +
-    `- No fluff, no disclaimers. Run it 24/7 via the nightly autonomous loop.`
+    `- No fluff, no disclaimers. Run it 24/7 via the nightly autonomous loop.\n` +
+    `- REAL DATA TOOLS (#1188): you have two tools — query_zerodb_table (reads real rows from one of ` +
+    `this company's own data tables, e.g. "products", "orders", "waitlist") and get_design_tokens (reads ` +
+    `this company's real saved brand color/logo). Whenever the founder asks what's actually stored ` +
+    `somewhere, how many records exist, or what their current brand color/logo is, CALL THE TOOL and ` +
+    `answer from its real result — never guess, invent row contents, or claim a table has data you ` +
+    `haven't actually read. If a tool returns an error (table doesn't exist, data layer unavailable), ` +
+    `say that plainly rather than making something up.`
 
   const tier = modelsForTier(tierName)
 
@@ -687,11 +695,44 @@ export async function askCody(params: AskCodyParams): Promise<AskCodyResult | { 
   if (claude) {
     const model = claude.provider === 'bedrock' ? tier.bedrockModel : claude.model
     try {
-      const res = await claude.client.messages.create({
-        model, max_tokens: 600, temperature: 0.7, system,
-        messages,
-      })
-      const answer = (res.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n').trim()
+      // #1188: real tool_use loop — up to MAX_TOOL_ROUNDS exchanges where the
+      // model can ask for real company data (a ZeroDB table read, the
+      // company's real brand tokens) before giving its final text answer.
+      // Bounded so a model that keeps calling tools can never hang this
+      // request indefinitely; hitting the bound just means the LAST response
+      // is treated as final (its text blocks, if any, are used as the
+      // answer) rather than looping forever.
+      const MAX_TOOL_ROUNDS = 4
+      let working: any[] = [...messages]
+      let res: any = null
+      for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+        res = await claude.client.messages.create({
+          model, max_tokens: 600, temperature: 0.7, system,
+          messages: working,
+          tools: ASK_TOOL_DEFINITIONS,
+        })
+        const toolUseBlocks = (res.content || []).filter((b: any) => b.type === 'tool_use')
+        if (res.stop_reason !== 'tool_use' || toolUseBlocks.length === 0) break
+
+        // Real tool execution (#1188): each tool_use block is dispatched to
+        // the actual MCP-equivalent handler (runAskTool → real ZeroDB/
+        // registry calls) — never a fabricated or hardcoded result — and fed
+        // back as a tool_result so the model's NEXT turn reasons over real data.
+        working = [...working, { role: 'assistant', content: res.content }]
+        const toolResults = await Promise.all(
+          toolUseBlocks.map(async (block: any) => {
+            const { result, isError } = await runAskTool(block.name, block.input || {}, { companyId })
+            return {
+              type: 'tool_result',
+              tool_use_id: block.id,
+              content: JSON.stringify(result),
+              ...(isError ? { is_error: true } : {}),
+            }
+          }),
+        )
+        working = [...working, { role: 'user', content: toolResults }]
+      }
+      const answer = (res?.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n').trim()
       if (answer) { await persist(answer); return { answer, provider: claude.provider, model } }
     } catch (e: any) {
       console.warn(`[build/ask] ${claude.provider} failed: ${e?.message?.slice(0, 80)}`)
