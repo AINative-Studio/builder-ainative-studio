@@ -203,7 +203,10 @@
   padding: 12px 24px; background: var(--color-surface);
   border-bottom: 2px solid var(--color-divider);
 }
-.m-brand { font-family: var(--font-heading); font-weight: 800; letter-spacing: -0.01em; font-size: 16px; }
+/* builder#1254: now a real <button> (was an inert <span>) — reset to look
+   identical to the old static text, matching the .m-topbar-name-btn pattern
+   already used for the other interactive control in this same topbar. */
+.m-brand { font-family: var(--font-heading); font-weight: 800; letter-spacing: -0.01em; font-size: 16px; background: none; border: none; padding: 0; cursor: pointer; color: inherit; }
 .m-trackpill { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; padding: 3px 8px; color: #fff; background: var(--track); }
 .m-topbar-artifact { margin-left: auto; font-size: 15px; color: var(--text-body-85); }
 .m-topbar-name-btn { background: none; border: none; font: inherit; cursor: text; padding: 2px 4px; border-radius: 2px; }

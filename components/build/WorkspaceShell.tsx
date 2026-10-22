@@ -63,11 +63,23 @@ export function WorkspaceShell({
   feed?: ReactNode
   children: ReactNode
 }) {
-  const { state } = useBuild()
+  const { state, dispatch } = useBuild()
   return (
     <div className="modernist m-ws" data-track={state.track}>
       <header className="m-topbar">
-        <span className="m-brand m-mono">Builder</span>
+        {/* builder#1254: this was a plain <span> — no onClick, no href, nothing
+            — so clicking "Builder" top-left did nothing, even though it reads
+            as a logo/home affordance on every other page of the app. A real
+            button, navigating to the same companies index the sibling
+            IndexPanel "My companies" control (below) already goes to. */}
+        <button
+          type="button"
+          className="m-brand m-mono"
+          data-testid="workspace-logo"
+          onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'companies' })}
+        >
+          Builder
+        </button>
         <span className={`m-trackpill m-mono is-${state.track}`}>
           {state.track === 'app' ? 'App Track' : 'Company Track'}
         </span>

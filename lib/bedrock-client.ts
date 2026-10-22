@@ -93,6 +93,21 @@ function isOpenAIShapedModel(model: string): boolean {
   )
 }
 
+// builder#1253: this was a bare fetch() with no AbortSignal — every other
+// upstream call in this codebase is time-boxed (see lib/build/committee-runner.ts's
+// own doctrine: "Every call is time-boxed with AbortSignal.timeout so a hung
+// vendor can never [hang the pipeline]"), but this one, the PRIMARY codegen
+// LLM call under Config C (Bedrock), was not. A stalled Bedrock connection —
+// no HTTP error, no response, just silence — left `await fetch(...)` pending
+// forever: the chat-ws SSE stream never reaches any of its controller.close()
+// call sites, so the client's reader.read() never sees `done`, and the
+// workspace preview sits on "Cody is building your app..." indefinitely with
+// no further client-visible network activity (the single POST stays pending,
+// which is exactly what was reported live). Bounded generously — real
+// generations legitimately take 60-120s (see chat-ws's own 15s SSE keepalive,
+// which exists specifically to survive that) — but no longer unbounded.
+const BEDROCK_INVOKE_TIMEOUT_MS = 120_000
+
 class BedrockMessages {
   constructor(
     private readonly region: string,
@@ -114,15 +129,24 @@ class BedrockMessages {
     if (params.system) body.system = params.system
     if (typeof params.temperature === 'number') body.temperature = params.temperature
 
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.bearer}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify(body),
-    })
+    let res: Response
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.bearer}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(BEDROCK_INVOKE_TIMEOUT_MS),
+      })
+    } catch (e: any) {
+      if (e?.name === 'TimeoutError' || e?.name === 'AbortError') {
+        throw new Error(`Bedrock invoke timed out after ${BEDROCK_INVOKE_TIMEOUT_MS}ms`)
+      }
+      throw e
+    }
 
     if (!res.ok) {
       const detail = await res.text().catch(() => '')
