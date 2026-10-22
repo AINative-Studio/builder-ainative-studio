@@ -176,4 +176,32 @@ describe('GET /api/build/nightly-loop — backlog task seeding (#898)', () => {
     expect(data.tasksAttempted).toBe(1)
     expect(data.tasksCompleted).toBe(1)
   })
+
+  // #1232 — the route must surface real merge/deploy outcomes, not just
+  // coverage-pass counts, so an admin can see real ship rate.
+  it('aggregates tasksMerged/tasksRedeployed from runTaskResolutions into the response', async () => {
+    h.runTaskResolutions.mockResolvedValue({ attempted: 1, completed: 1, merged: 1, redeployed: 1 })
+    const res = await GET(req())
+    const data = await res.json()
+    expect(data.tasksMerged).toBe(1)
+    expect(data.tasksRedeployed).toBe(1)
+  })
+
+  it('reports tasksMerged: 0 when a task completed (coverage-verified) but never merged — the real #1232 gap case', async () => {
+    h.runTaskResolutions.mockResolvedValue({ attempted: 1, completed: 1, merged: 0, redeployed: 0 })
+    const res = await GET(req())
+    const data = await res.json()
+    expect(data.tasksCompleted).toBe(1)
+    expect(data.tasksMerged).toBe(0)
+    expect(data.tasksRedeployed).toBe(0)
+  })
+
+  it('never throws when runTaskResolutions resolves without merged/redeployed fields (older mock/shape)', async () => {
+    h.runTaskResolutions.mockResolvedValue({ attempted: 1, completed: 1 })
+    const res = await GET(req())
+    expect(res.status).toBe(200)
+    const data = await res.json()
+    expect(data.tasksMerged).toBe(0)
+    expect(data.tasksRedeployed).toBe(0)
+  })
 })

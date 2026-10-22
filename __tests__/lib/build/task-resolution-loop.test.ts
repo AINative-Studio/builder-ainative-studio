@@ -56,8 +56,8 @@ beforeEach(() => {
 
 describe('runTaskResolutions (#433)', () => {
   it('returns 0/0 with no scope or slug', async () => {
-    expect(await runTaskResolutions('', 'slug')).toEqual({ attempted: 0, completed: 0 })
-    expect(await runTaskResolutions('a::b', '')).toEqual({ attempted: 0, completed: 0 })
+    expect(await runTaskResolutions('', 'slug')).toEqual({ attempted: 0, completed: 0, merged: 0, redeployed: 0 })
+    expect(await runTaskResolutions('a::b', '')).toEqual({ attempted: 0, completed: 0, merged: 0, redeployed: 0 })
     expect(h.listTasks).not.toHaveBeenCalled()
   })
 
@@ -65,7 +65,7 @@ describe('runTaskResolutions (#433)', () => {
     h.listTasks.mockResolvedValue([task()])
     h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
     const res = await runTaskResolutions('a::b', 'my-co')
-    expect(res).toEqual({ attempted: 1, completed: 1 })
+    expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0 })
     expect(h.resolveTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ stage: 'todo' }), 'my-co')
   })
 
@@ -73,7 +73,7 @@ describe('runTaskResolutions (#433)', () => {
     h.listTasks.mockResolvedValue([task()])
     h.resolveTask.mockResolvedValue({ ok: false, stage: 'failed', reason: 'coverage below floor' })
     const res = await runTaskResolutions('a::b', 'my-co')
-    expect(res).toEqual({ attempted: 1, completed: 0 })
+    expect(res).toEqual({ attempted: 1, completed: 0, merged: 0, redeployed: 0 })
   })
 
   it('skips tasks that are not in the todo stage', async () => {
@@ -84,7 +84,7 @@ describe('runTaskResolutions (#433)', () => {
       task({ stage: 'rejected' }),
     ])
     const res = await runTaskResolutions('a::b', 'my-co')
-    expect(res).toEqual({ attempted: 0, completed: 0 })
+    expect(res).toEqual({ attempted: 0, completed: 0, merged: 0, redeployed: 0 })
     expect(h.resolveTask).not.toHaveBeenCalled()
   })
 
@@ -109,19 +109,78 @@ describe('runTaskResolutions (#433)', () => {
 
   it('never throws when listing tasks fails', async () => {
     h.listTasks.mockRejectedValue(new Error('zerodb down'))
-    await expect(runTaskResolutions('a::b', 'my-co')).resolves.toEqual({ attempted: 0, completed: 0 })
+    await expect(runTaskResolutions('a::b', 'my-co')).resolves.toEqual({ attempted: 0, completed: 0, merged: 0, redeployed: 0 })
   })
 
   it('never throws when resolveTask itself throws — continues to the next task', async () => {
     h.listTasks.mockResolvedValue([task({ id: 't1' })])
     h.resolveTask.mockRejectedValue(new Error('llm call exploded'))
-    await expect(runTaskResolutions('a::b', 'my-co')).resolves.toEqual({ attempted: 1, completed: 0 })
+    await expect(runTaskResolutions('a::b', 'my-co')).resolves.toEqual({ attempted: 1, completed: 0, merged: 0, redeployed: 0 })
   })
 
   it('returns 0/0 when there are no tasks at all', async () => {
     h.listTasks.mockResolvedValue([])
     const res = await runTaskResolutions('a::b', 'my-co')
-    expect(res).toEqual({ attempted: 0, completed: 0 })
+    expect(res).toEqual({ attempted: 0, completed: 0, merged: 0, redeployed: 0 })
+  })
+})
+
+/**
+ * #1232 — `completed` alone (coverage-verified) can't tell an admin whether
+ * the founder's live app actually changed, since resolveTask()'s own
+ * best-effort auto-merge/redeploy (#468) never flips a completed task back
+ * to failed on a merge/deploy hiccup. runTaskResolutions() must surface
+ * resolveTask()'s real merged/redeployed outcome so the nightly-loop
+ * aggregate can report real ship rate, not just coverage-pass rate.
+ */
+describe('runTaskResolutions surfaces real merge/deploy outcomes (#1232)', () => {
+  it('counts merged and redeployed when resolveTask reports both true', async () => {
+    h.listTasks.mockResolvedValue([task()])
+    h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed', merged: true, redeployed: true })
+    const res = await runTaskResolutions('a::b', 'my-co')
+    expect(res).toEqual({ attempted: 1, completed: 1, merged: 1, redeployed: 1 })
+  })
+
+  it('counts a completed-but-unmerged task honestly (merged: 0) — the real #1232 gap case', async () => {
+    h.listTasks.mockResolvedValue([task()])
+    h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed', merged: false, redeployed: false })
+    const res = await runTaskResolutions('a::b', 'my-co')
+    expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0 })
+  })
+
+  it('counts a merged-but-not-redeployed task correctly (deploy was skipped/failed)', async () => {
+    h.listTasks.mockResolvedValue([task()])
+    h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed', merged: true, redeployed: false })
+    const res = await runTaskResolutions('a::b', 'my-co')
+    expect(res).toEqual({ attempted: 1, completed: 1, merged: 1, redeployed: 0 })
+  })
+
+  it('never counts merged/redeployed for a failed (not coverage-verified) task', async () => {
+    h.listTasks.mockResolvedValue([task()])
+    h.resolveTask.mockResolvedValue({ ok: false, stage: 'failed', reason: 'coverage below floor', merged: false, redeployed: false })
+    const res = await runTaskResolutions('a::b', 'my-co')
+    expect(res).toEqual({ attempted: 1, completed: 0, merged: 0, redeployed: 0 })
+  })
+
+  it('aggregates merged/redeployed counts correctly across several resolved tasks in one run', async () => {
+    h.listTasks.mockResolvedValue([
+      task({ id: 't1', createdAt: '2026-01-01T00:00:00.000Z' }),
+      task({ id: 't2', createdAt: '2026-01-02T00:00:00.000Z' }),
+      task({ id: 't3', createdAt: '2026-01-03T00:00:00.000Z' }),
+    ])
+    h.resolveTask
+      .mockResolvedValueOnce({ ok: true, stage: 'completed', merged: true, redeployed: true })
+      .mockResolvedValueOnce({ ok: true, stage: 'completed', merged: false, redeployed: false })
+      .mockResolvedValueOnce({ ok: false, stage: 'failed', reason: 'boom' })
+    const res = await runTaskResolutions('a::b', 'my-co', 'enterprise')
+    expect(res).toEqual({ attempted: 3, completed: 2, merged: 1, redeployed: 1 })
+  })
+
+  it('treats a missing merged/redeployed field on the resolver result as false (defensive — never throws on an older mock shape)', async () => {
+    h.listTasks.mockResolvedValue([task()])
+    h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
+    const res = await runTaskResolutions('a::b', 'my-co')
+    expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0 })
   })
 })
 
@@ -139,7 +198,7 @@ describe('runTaskResolutions skips oversized (needsSplit) tasks (#903)', () => {
       task({ id: 't8', storyPoints: 8 }),
     ])
     const res = await runTaskResolutions('a::b', 'my-co', 'enterprise')
-    expect(res).toEqual({ attempted: 0, completed: 0 })
+    expect(res).toEqual({ attempted: 0, completed: 0, merged: 0, redeployed: 0 })
     expect(h.resolveTask).not.toHaveBeenCalled()
   })
 
@@ -147,7 +206,7 @@ describe('runTaskResolutions skips oversized (needsSplit) tasks (#903)', () => {
     h.listTasks.mockResolvedValue([task({ id: 't1', storyPoints: 1 })])
     h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
     const res = await runTaskResolutions('a::b', 'my-co')
-    expect(res).toEqual({ attempted: 1, completed: 1 })
+    expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0 })
     expect(h.resolveTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 't1' }), 'my-co')
   })
 
@@ -155,7 +214,7 @@ describe('runTaskResolutions skips oversized (needsSplit) tasks (#903)', () => {
     h.listTasks.mockResolvedValue([task({ id: 'tn', storyPoints: null })])
     h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
     const res = await runTaskResolutions('a::b', 'my-co')
-    expect(res).toEqual({ attempted: 1, completed: 1 })
+    expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0 })
   })
 
   it('skips an oversized task but still resolves a smaller due task in the same run, under the tier limit', async () => {
@@ -165,7 +224,7 @@ describe('runTaskResolutions skips oversized (needsSplit) tasks (#903)', () => {
     ])
     h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
     const res = await runTaskResolutions('a::b', 'my-co')
-    expect(res).toEqual({ attempted: 1, completed: 1 })
+    expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0 })
     expect(h.resolveTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 'small' }), 'my-co')
   })
 
@@ -218,7 +277,7 @@ describe('runTaskResolutions calls splitTask on oversized (needsSplit) tasks (#9
     const res = await runTaskResolutions('a::b', 'my-co')
     expect(h.splitTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 'big' }))
     expect(h.resolveTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 'small' }), 'my-co')
-    expect(res).toEqual({ attempted: 1, completed: 1 })
+    expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0 })
   })
 
   it('never calls resolveTask directly on an oversized task, even after splitTask runs', async () => {
@@ -231,7 +290,7 @@ describe('runTaskResolutions calls splitTask on oversized (needsSplit) tasks (#9
     h.listTasks.mockResolvedValue([task({ id: 'big', storyPoints: 8 })])
     h.splitTask.mockResolvedValue({ ok: false, childIds: [], reason: 'LLM call failed' })
     const res = await runTaskResolutions('a::b', 'my-co')
-    expect(res).toEqual({ attempted: 0, completed: 0 })
+    expect(res).toEqual({ attempted: 0, completed: 0, merged: 0, redeployed: 0 })
   })
 
   it('never throws when splitTask itself throws — continues the run (other due tasks still resolve)', async () => {
@@ -241,7 +300,7 @@ describe('runTaskResolutions calls splitTask on oversized (needsSplit) tasks (#9
     ])
     h.splitTask.mockRejectedValue(new Error('splitter exploded'))
     h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
-    await expect(runTaskResolutions('a::b', 'my-co')).resolves.toEqual({ attempted: 1, completed: 1 })
+    await expect(runTaskResolutions('a::b', 'my-co')).resolves.toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0 })
   })
 
   it('an oversized task sent to splitTask still never counts against the per-run tier limit', async () => {
