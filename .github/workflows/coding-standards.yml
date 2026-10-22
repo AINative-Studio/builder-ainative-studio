@@ -103,6 +103,11 @@ jobs:
           echo "✅ TypeScript check passed (${errors} pre-existing errors)"
 
       - name: Build check
+        env:
+          # The app hard-fails its production build with no AUTH_SECRET set
+          # (see app/(auth)/auth.ts) -- this job never set one, so every real
+          # build attempt failed here regardless of the PR's own changes.
+          AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
         run: |
           echo "Running build..."
           pnpm build
