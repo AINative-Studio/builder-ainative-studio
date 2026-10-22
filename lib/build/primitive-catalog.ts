@@ -857,6 +857,77 @@ export function selectPrimitives(
 }
 
 /**
+ * Coach "team" framing (#1196) — a human-legible job title for a catalog
+ * primitive, used ONLY to phrase the free coach recommendation as "hire your
+ * team" rather than a raw primitive name a founder may not recognize. This is
+ * deliberately presentation-only: it does not add a parallel selection
+ * mechanism — every entry here maps 1:1 to a REAL catalog primitive name
+ * (verified by this file's own test suite), so "recommending a team member"
+ * always resolves to something the build will actually provision/compose,
+ * never a fabricated persona with no backing capability. Primitives with no
+ * entry here (foundational substrate, moonshot/vertical primitives) are never
+ * surfaced by the coach.
+ */
+const AGENT_PERSONA: Partial<Record<string, string>> = {
+  ZeroPipeline: 'Sales agent',
+  ZeroInvoice: 'Bookkeeper',
+  ZeroCRM: 'Customer-relationships agent',
+  ZeroCommerce: 'Storefront agent',
+  ZeroVoice: 'Phone & SMS agent',
+  ZeroERP: 'Operations agent',
+  ZeroForms: 'Intake agent',
+  ZeroBooks: 'Accountant',
+  ServiceOS: 'Support agent',
+  'Content Workflow': 'Marketing agent',
+  'Live Streaming': 'Broadcast agent',
+  OpenCapStack: 'Cap-table agent',
+  AgentFlow: 'Workflow-automation agent',
+  'Browser Agent': 'Research agent',
+  AINativeNGO: 'Programs & donor agent',
+  'Intent-Casting Marketplace': 'Marketplace agent',
+}
+
+/** One recommended "team member": a real primitive wearing a founder-legible job title. */
+export interface RecommendedTeamMember {
+  /** Real catalog primitive name (e.g. 'ZeroPipeline') — never fabricated. */
+  primitive: string
+  /** Human job title for the coach's copy (e.g. 'Sales agent'). */
+  role: string
+  /** The primitive's real one-line purpose, straight from the catalog. */
+  purpose: string
+}
+
+/**
+ * Free "coach" team recommendation (#1196). Deterministic — reuses the SAME
+ * idea→primitive scoring selectPrimitives() already runs for codegen/"Powering
+ * this", so the coach's advice and what the build actually composes can never
+ * diverge. Returns up to `max` non-foundational primitives that both (a) the
+ * idea genuinely matched/role-emphasized and (b) have a founder-legible job
+ * title in AGENT_PERSONA — foundational substrate (ZeroDB, AI Kit, etc.) is
+ * deliberately excluded since recommending "hire ZeroDB" reads as nonsense to
+ * a founder; it's always included regardless, not a differentiating "team" pick.
+ *
+ * This performs NO network/LLM call — it's a pure function over the already-
+ * captured idea text, callable the instant kickoff's 3 questions are answered.
+ */
+export function recommendTeam(
+  idea: string,
+  track: 'app' | 'company' = 'company',
+  role?: CompanyRole,
+  max = 3,
+): RecommendedTeamMember[] {
+  const { selected } = selectPrimitives(idea, track, 8, role)
+  const team: RecommendedTeamMember[] = []
+  for (const p of selected) {
+    const personaRole = AGENT_PERSONA[p.name]
+    if (!personaRole) continue
+    team.push({ primitive: p.name, role: personaRole, purpose: p.purpose })
+    if (team.length >= max) break
+  }
+  return team
+}
+
+/**
  * Render the catalog + the founder's most relevant primitives as a compact
  * block to inject into a generation/system prompt. Gives the model the FULL
  * catalog to choose from (so it isn't anchored on a hardcoded shortlist) while
