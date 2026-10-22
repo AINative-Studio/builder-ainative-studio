@@ -950,6 +950,29 @@ export function mcpDataProvisioningBlock(): string {
 const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = {
   ZeroDB: () => `call its REST API at \`https://api.ainative.studio/api/v1\` (Authorization: Bearer <AINATIVE_API_KEY>)`,
   'Instant DB': () => `call its REST API at \`https://api.ainative.studio/api/v1\` (Authorization: Bearer <AINATIVE_API_KEY>)`,
+  // AI Kit's generic fallback (no entry here) used to tell the model to
+  // `import its SDK \`@ainative/ai-kit-core\`` for "UI primitives"/"chat,
+  // tables, product cards, dashboards" — wrong package. Downloaded and
+  // inspected the real published @ainative/ai-kit-core@0.2.0 tarball
+  // (npm pack + read dist/*/index.d.ts across every export path: ./streaming,
+  // ./agents, ./state, ./store, ./search, ./context, ./summarization,
+  // ./session, ./auth, ./zerodb, ./design, ./rlhf): it is Builder's own
+  // backend agent/LLM SDK (AIStream, Agent, AgentSwarm, ToolRegistry,
+  // AuthMethod, ...) with zero React/JSX/component exports and no `react`
+  // dependency at all — not a UI library. The real React UI components
+  // (MetricCard, AIKitHeader, AIKitSidebar, AIKitTable, AIKitTimeline,
+  // AIKitBanner, AIKitAvatar, AIKitProductCard, ChatBubble,
+  // StreamingIndicator, EmptyState, ...) ship with every generated app
+  // already, unconditionally, as real local files — see
+  // lib/sandpack/aikit-bundle.ts, merged by lib/sandpack/setup.ts's
+  // getBuiltinFiles() at both /components/aikit and /src/components/aikit
+  // for every Sandpack sandbox — the same local path componentGuidanceBlock
+  // (primitive-graph.ts) already correctly points archetype-matched ideas
+  // at. An idea matching none of that graph's 11 archetypes got ONLY the
+  // wrong npm-package instruction, with nothing to override it.
+  'AI Kit': () =>
+    `import its real React UI components from the LOCAL \`./components/aikit\` module that ships with every generated app (NOT an npm package — do not add \`@ainative/ai-kit-core\` or \`@ainative/ai-kit\` to package.json, they are not the UI library here) — do not hand-build chat bubbles, tables, product cards, or metric/dashboard cards when one of these already exists:\n` +
+    "  import { MetricCard, AIKitHeader, AIKitSidebar, AIKitTable, AIKitTimeline, AIKitBanner, AIKitAvatar, AIKitProductCard, AIKitPagination, ChatBubble, StreamingIndicator, EmptyState, Skeleton } from './components/aikit'\n",
   // #524: ZeroCommerce was one of the ORIGINAL 5 founder-scoped primitives
   // (#443) — trusted on faith since then, never behaviorally live-tested. A
   // real production run for a "handmade coffee mugs" shop idea produced
@@ -1640,7 +1663,7 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
   if (lines.length === 0) {
     // No wireable primitive matched — still steer the model toward AI Kit + ZeroDB.
     lines.push(
-      `- AI Kit — import its SDK \`@ainative/ai-kit-core\` for UI components (do not hand-build chat/tables/cards).`,
+      `- AI Kit — import its real UI components from the local \`./components/aikit\` module (do not hand-build chat/tables/cards, and do not import an npm package for this).`,
       `- ZeroDB — persist all app data via its REST API at \`https://api.ainative.studio/api/v1\` (Authorization: Bearer <AINATIVE_API_KEY>).`,
     )
   }
@@ -1697,7 +1720,7 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
     `  A visitor clicking a button that does nothing — or worse, gets a native browser alert() dialog — is a\n` +
     `  worse experience than no button at all.\n\n` +
     `Rules:\n` +
-    `1. Import \`@ainative/ai-kit-core\` (and its React bindings) for UI primitives — do NOT rebuild chat, tables, product cards, or dashboards from scratch when an AI Kit component exists.\n` +
+    `1. Use AI Kit's real UI components from the LOCAL \`./components/aikit\` module (NOT an npm package) for UI primitives — do NOT rebuild chat, tables, product cards, or dashboards from scratch when an AI Kit component exists.\n` +
     `2. Persist through /api/db (above) — this is MANDATORY when the app saves any records. The generated app runs in the browser, so it does NOT have AINATIVE_API_KEY; NEVER put a Bearer key or secret in app code, and NEVER fetch() a primitive's apiBase directly unless this block explicitly said to. Each primitive above tells you EXACTLY how to call it under "To use:" — follow that literally (same-origin proxy path and method, no Authorization header for proxied primitives, a Bearer key only for ZeroDB/Instant DB via /api/db). For any primitive listed above framed as "already provisioned for this company server-side," treat its capability as already set up by the platform — build the UI around it, don't call its API from generated code.\n` +
     `3. Do NOT reimplement invoicing, CRM, ecommerce carts/checkout, telephony, cap-table math, or helpdesk ticketing when the matching primitive exists — model the app around composing it. Regenerating that business logic from scratch is a FAILING score.\n` +
     `4. Add a short comment above each data call noting the AINative product it composes (e.g. \`// ZeroDB — orders\`), so the wiring is auditable.\n` +
