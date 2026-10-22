@@ -208,4 +208,61 @@ describe('askCody tool_use loop (#1188)', () => {
     // ainative fallback / unavailable — never a crash.
     expect(result).toBeTruthy()
   })
+
+  // #1268: MAX_TOOL_ROUNDS only bounds the number of rounds, not any single
+  // round's own latency — a stalled round used to hang the whole request
+  // forever regardless of the round cap. Each call must carry its own
+  // AbortSignal so a stalled round fails fast instead.
+  it('passes an AbortSignal to every messages.create call in the loop (#1268)', async () => {
+    h.create.mockResolvedValueOnce({
+      stop_reason: 'tool_use',
+      content: [{ type: 'tool_use', id: 'toolu_3', name: 'query_zerodb_table', input: { table: 'products' } }],
+    })
+    h.create.mockResolvedValueOnce({
+      stop_reason: 'end_turn',
+      content: [{ type: 'text', text: 'Done.' }],
+    })
+    h.runAskTool.mockResolvedValue({ result: { table: 'products', rowCount: 0, rows: [] }, isError: false })
+
+    const { askCody } = await import('@/app/api/build/ask/route')
+    await askCody({
+      question: 'what is in products',
+      idea: 'a store',
+      companyName: 'Acme',
+      track: 'company',
+      companyId: 'acme',
+      scopeKey: 'owner:acme',
+      tier: 'hobbyist',
+      baseUrl: 'https://builder.ainative.studio',
+    })
+
+    expect(h.create).toHaveBeenCalledTimes(2)
+    for (const call of h.create.mock.calls) {
+      const [, options] = call
+      expect(options?.signal).toBeInstanceOf(AbortSignal)
+    }
+  })
+
+  it('a stalled round is caught by its own AbortSignal — never hangs despite the round cap (#1268)', async () => {
+    h.create.mockImplementation((_params: unknown, options: { signal?: AbortSignal }) => new Promise((_resolve, reject) => {
+      options?.signal?.addEventListener('abort', () => reject(new Error('This operation was aborted')))
+    }))
+
+    const { askCody } = await import('@/app/api/build/ask/route')
+    const pending = askCody({
+      question: 'what is in products',
+      idea: 'a store',
+      companyName: 'Acme',
+      track: 'company',
+      companyId: 'acme',
+      scopeKey: 'owner:acme',
+      tier: 'hobbyist',
+      baseUrl: 'https://builder.ainative.studio',
+    })
+    await vi.waitFor(() => expect(h.create).toHaveBeenCalled())
+    const [, options] = h.create.mock.calls[0]
+    options.signal.dispatchEvent(new Event('abort'))
+    const result = await pending
+    expect(result).toBeTruthy()
+  })
 })

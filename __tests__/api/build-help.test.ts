@@ -147,4 +147,34 @@ describe('POST /api/build/help (#60)', () => {
     const body = await res.json()
     expect(body.provider).toBe('ainative')
   })
+
+  // #1268: this messages.create call had no AbortSignal/timeout — a stalled
+  // upstream response hung the whole POST indefinitely, same bug class as
+  // #1253/#1266.
+  it('passes an AbortSignal to messages.create (#1268)', async () => {
+    h.getClaudeCompletion.mockReturnValue(claudeOk())
+    h.messagesCreate.mockResolvedValue({ content: [{ type: 'text', text: 'You own 100% of your code.' }] })
+
+    await POST(req({ question: 'do I own my code?' }))
+    expect(h.messagesCreate).toHaveBeenCalledTimes(1)
+    const [, options] = h.messagesCreate.mock.calls[0]
+    expect(options?.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('a stalled/aborted call falls back to the AINative model, never hangs (#1268)', async () => {
+    h.getClaudeCompletion.mockReturnValue(claudeOk())
+    h.messagesCreate.mockImplementation((_params: unknown, options: { signal?: AbortSignal }) => new Promise((_resolve, reject) => {
+      options?.signal?.addEventListener('abort', () => reject(new Error('This operation was aborted')))
+    }))
+    h.ainativeCreate.mockResolvedValue({ choices: [{ message: { content: 'Fallback grounded answer.' } }] })
+
+    const pending = POST(req({ question: 'do I own my code?' }))
+    await vi.waitFor(() => expect(h.messagesCreate).toHaveBeenCalled())
+    const [, options] = h.messagesCreate.mock.calls[0]
+    options.signal.dispatchEvent(new Event('abort'))
+    const res = await pending
+    const body = await res.json()
+    expect(body.provider).toBe('ainative')
+    expect(body.answer).toBe('Fallback grounded answer.')
+  })
 })

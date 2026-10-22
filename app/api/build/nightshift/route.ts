@@ -18,6 +18,12 @@ import { languageInstruction, normalizeLanguage } from '@/lib/build/content-lang
 
 export const runtime = 'nodejs'
 
+// #1266-class bug: this call had no AbortSignal/timeout, so a stalled
+// upstream response hung the whole GET indefinitely (same bug class as
+// #1253/#1266). Matches chat-summary.ts's timeout for a similarly short,
+// low-max_tokens prose call.
+const NIGHTSHIFT_SUMMARY_TIMEOUT_MS = 12_000
+
 export async function GET(request: NextRequest) {
   const url = new URL(request.url)
   const companyId = url.searchParams.get('companyId') || ''
@@ -48,19 +54,22 @@ export async function GET(request: NextRequest) {
   const claude = getClaudeCompletion()
   if (claude) {
     try {
-      const res = await claude.client.messages.create({
-        model: claude.model,
-        max_tokens: 120,
-        temperature: 0.5,
-        system:
-          `You are Cody, the AI co-founder operating "${companyName}" (idea: "${idea}"). ` +
-          `The nightly autonomous loop ran overnight; its recorded status is "${run.lastStatus || 'dispatched'}". ` +
-          `Write ONE short, honest sentence for the founder confirming the run happened and its status. ` +
-          `Do NOT invent or imply specifics about what was evaluated, what task ran, or what to do next — ` +
-          `you have no record of that, only the status. First person, no fluff.` +
-          (languageInstruction(contentLanguage) ? ` ${languageInstruction(contentLanguage)}` : ''),
-        messages: [{ role: 'user', content: 'Give me the morning summary.' }],
-      })
+      const res = await claude.client.messages.create(
+        {
+          model: claude.model,
+          max_tokens: 120,
+          temperature: 0.5,
+          system:
+            `You are Cody, the AI co-founder operating "${companyName}" (idea: "${idea}"). ` +
+            `The nightly autonomous loop ran overnight; its recorded status is "${run.lastStatus || 'dispatched'}". ` +
+            `Write ONE short, honest sentence for the founder confirming the run happened and its status. ` +
+            `Do NOT invent or imply specifics about what was evaluated, what task ran, or what to do next — ` +
+            `you have no record of that, only the status. First person, no fluff.` +
+            (languageInstruction(contentLanguage) ? ` ${languageInstruction(contentLanguage)}` : ''),
+          messages: [{ role: 'user', content: 'Give me the morning summary.' }],
+        },
+        { signal: AbortSignal.timeout(NIGHTSHIFT_SUMMARY_TIMEOUT_MS) },
+      )
       summary = (res.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n').trim()
     } catch {
       summary = null
