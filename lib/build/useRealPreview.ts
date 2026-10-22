@@ -21,7 +21,8 @@
  * document the founder read. Optional — a missing/unavailable dataModel just
  * means the prior idea-only behavior (chat-ws degrades gracefully server-side).
  *
- * Returns { previewUrl, status, chatId, files } for the Preview component.
+ * Returns { previewUrl, status, chatId, files, refreshKey } for the Preview
+ * component.
  */
 
 import { useEffect, useMemo, useReducer } from 'react'
@@ -208,7 +209,12 @@ export function useRealPreview(idea: string, enabled: boolean, dataModel?: unkno
 
   const previewUrl = g.chatId && g.status === 'ready' ? `/api/preview/${g.chatId}?r=${g.refreshKey}` : null
   // `files` is exposed so Preview.tsx can route a multi-file app to Sandpack (#291).
-  return { previewUrl, status: g.status, chatId: g.chatId, files: g.files, designConformance: g.designConformance }
+  // `refreshKey` is exposed too (#1255): it's the one REAL backend-activity signal
+  // during generation (bumped only on an actual chat-ws 'files'/'refresh' SSE
+  // event) — Preview uses its changes to keep the ribbon narrating genuine
+  // progress for the full generation call, instead of going quiet once the
+  // scripted deploy lines run out.
+  return { previewUrl, status: g.status, chatId: g.chatId, files: g.files, designConformance: g.designConformance, refreshKey: g.refreshKey }
 }
 
 /**
