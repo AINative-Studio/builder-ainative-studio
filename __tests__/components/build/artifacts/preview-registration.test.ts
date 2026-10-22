@@ -24,8 +24,17 @@ describe('livePreviewLabel (pure)', () => {
     expect(livePreviewLabel('ready', true)).toBe('Live in production')
   })
 
-  it('status=ready and registered=null (still in flight) shows "Live in production" — not yet known to be broken', () => {
-    expect(livePreviewLabel('ready', null)).toBe('Live in production')
+  it('builder#1256: status=ready and registered=null (still in flight) shows an honest in-between label, never "Live in production"', () => {
+    // Real, reproduced incident: a company's own workspace showed "Live in
+    // production" with a rendered chat UI while /api/build/my-companies
+    // never listed it (no registry row yet) and the standalone /build/{slug}
+    // URL showed "This preview is still being built" — two surfaces
+    // disagreeing about the same company because this chip promised a state
+    // the registry hadn't reached. registered:null means the register-app
+    // POST hasn't resolved — not yet confirmed live, same as registered:false
+    // is not yet confirmed broken.
+    expect(livePreviewLabel('ready', null)).toBe('Finishing up…')
+    expect(livePreviewLabel('ready', null)).not.toBe('Live in production')
   })
 
   it('status=error always shows "Preview unavailable" regardless of registered', () => {

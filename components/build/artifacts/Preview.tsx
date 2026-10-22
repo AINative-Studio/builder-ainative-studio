@@ -49,9 +49,26 @@ type PreviewStatus = 'idle' | 'generating' | 'ready' | 'error'
  * a stricter check), and the founder deserves to know that's still resolving
  * rather than seeing a confident "Live in production" claim. See the
  * register-app effect in Preview() for the full incident + evidence.
+ *
+ * builder#1256: `registered === null` (the register-app POST is in flight —
+ * it resolves + persists a durable deploy URL, so it's a real network round
+ * trip, not instant) used to ALSO show "Live in production", on the
+ * reasoning that it's "not yet known to be broken." That's the wrong default
+ * for a claim this specific: a real, reproduced incident showed a company's
+ * OWN workspace confidently claiming "Live in production" with a rendered
+ * chat UI, while `/api/build/my-companies` never listed it (no registry row
+ * existed yet) AND the standalone `/build/{slug}` URL — which resolves
+ * through that same registry — showed "This preview is still being built."
+ * Two surfaces disagreeing about the same company, because this chip
+ * promised a state the registry hadn't reached. Honest instead: a distinct
+ * in-between label for the genuinely-pending window, reserving "Live in
+ * production" for registered:true the same way the share-URL link below
+ * already does (shouldShowShareUrl has required registered===true since the
+ * original #77 fix — this chip was the one surface that never followed).
  */
 export function livePreviewLabel(status: PreviewStatus, registered: boolean | null): string {
   if (status === 'ready' && registered === false) return 'Fixing a generation error…'
+  if (status === 'ready' && registered === null) return 'Finishing up…'
   if (status === 'ready') return 'Live in production'
   if (status === 'error') return 'Preview unavailable'
   return 'Building your app…'
