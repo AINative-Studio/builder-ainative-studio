@@ -182,11 +182,25 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
   // this is for an app whose UI is driven by a chat/agent message stream,
   // not a static dashboard/table/card surface, which AI Kit above already
   // covers) — gated on explicit triggers instead.
+  // #1234: DISABLED (empty triggers → scorePrimitives/selectPrimitives can
+  // never match this entry) pending a real fix. The real published
+  // @ainative/ai-kit-a2ui@0.1.0-alpha.1 renderer does not match this
+  // instruction's shape — it has no `components` prop (the real optional
+  // prop is `initialComponents`), and more fundamentally it *requires* a
+  // live `agentUrl` WebSocket connection: `A2UIRenderer` unconditionally
+  // opens that connection on mount and gates ALL rendering on the connection
+  // state, showing only "Connecting to agent..." (or an error) until a real
+  // agent server answers. Nothing in this codegen pipeline provisions such a
+  // live WebSocket backend for a generated app, so selecting this primitive
+  // today guarantees a permanently non-functional core UI surface — the
+  // opposite of the catalog's purpose. Metadata/instruction text below is
+  // left intact for whoever builds the real backend; re-enable by restoring
+  // the trigger list once that exists and the real prop names are fixed.
   { name: 'A2UI', category: 'ui',
     purpose: 'Agent-to-User-Interface protocol: an agent/LLM describes UI as data (a flat component tree over a transport), the client renders it live — for apps whose UI is driven by an agent/chat message stream rather than hand-built screens',
     url: `${DOCS}/ai-kit/a2ui`,
     sdk: '@ainative/ai-kit-a2ui',
-    triggers: ['agent ui', 'agent-driven ui', 'generative ui', 'dynamic ui', 'agent describes', 'a2ui', 'agent builds the ui', 'ui from the agent', 'conversational interface builder'] },
+    triggers: [] },
   { name: 'Agent Cloud', category: 'agent-cloud', foundational: true,
     purpose: 'Run the built company autonomously: Agent Swarm, task dispatch, observability, deployments',
     url: `${DOCS}/agent-cloud/overview`,
@@ -1288,6 +1302,12 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
   // real wire shape is a FLAT array of components referencing each other by
   // string id in `children`, never nested component objects — that's the one
   // detail a model is likely to invent wrong without being told explicitly.
+  // #1234: this instruction's call shape does NOT match the real published
+  // API (no `components` prop; the real `A2UIRenderer` requires `agentUrl`
+  // and gates all rendering on a live WebSocket connection this pipeline
+  // never provisions) — left here for reference only while the catalog
+  // entry above is disabled (`triggers: []`). Do not re-enable without
+  // fixing this text first.
   A2UI: () =>
     `import \`A2UIRenderer\` from \`@ainative/ai-kit-a2ui\` (which depends on \`@ainative/ai-kit-a2ui-core\` for the transport/protocol types — both are real npm packages, add both to package.json) instead of hand-building a chat-driven or agent-described UI surface from scratch.\n` +
     '  Real call shape (copy this exactly, do not paraphrase):\n' +
