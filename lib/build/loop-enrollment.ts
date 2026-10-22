@@ -318,6 +318,14 @@ export interface NightlyRunHealth {
    */
   tasksMerged?: number
   tasksRedeployed?: number
+  /**
+   * How many orphaned `in_progress` tasks (a prior run killed mid-resolution
+   * — see task-resolution-loop.ts's isStaleInProgress) were recovered to
+   * `failed` this run. Optional for the same reason as tasksMerged/
+   * tasksRedeployed — an older/pre-this-field row is never mistaken for an
+   * explicit 0.
+   */
+  tasksReaped?: number
   stalledCompanies: number
   elapsedMs: number
   /**

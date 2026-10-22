@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const h = vi.hoisted(() => ({
   listTasks: vi.fn(),
+  updateTask: vi.fn(),
   resolveTask: vi.fn(),
   splitTask: vi.fn(),
 }))
@@ -18,7 +19,7 @@ const h = vi.hoisted(() => ({
 // actual behavior, not a re-description of a fake.
 vi.mock('@/lib/build/task-store', async () => {
   const actual = await vi.importActual<typeof import('@/lib/build/task-store')>('@/lib/build/task-store')
-  return { listTasks: h.listTasks, needsSplit: actual.needsSplit }
+  return { listTasks: h.listTasks, updateTask: h.updateTask, needsSplit: actual.needsSplit }
 })
 vi.mock('@/lib/build/task-resolver', () => ({ resolveTask: h.resolveTask }))
 vi.mock('@/lib/build/task-splitter', () => ({ splitTask: h.splitTask }))
@@ -29,6 +30,7 @@ import {
   maxTasksForTier,
   TASK_LIMIT_BY_TIER,
   FREE_TIER_TASK_LIMIT,
+  isStaleInProgress,
 } from '@/lib/build/task-resolution-loop'
 import type { BuildTask } from '@/lib/build/task-store'
 
@@ -49,6 +51,8 @@ const task = (over: Partial<BuildTask> = {}): BuildTask => ({
 
 beforeEach(() => {
   h.listTasks.mockReset()
+  h.updateTask.mockReset()
+  h.updateTask.mockResolvedValue(true)
   h.resolveTask.mockReset()
   h.splitTask.mockReset()
   h.splitTask.mockResolvedValue({ ok: true, childIds: ['c1', 'c2'] })
@@ -56,8 +60,8 @@ beforeEach(() => {
 
 describe('runTaskResolutions (#433)', () => {
   it('returns 0/0 with no scope or slug', async () => {
-    expect(await runTaskResolutions('', 'slug')).toEqual({ attempted: 0, completed: 0, merged: 0, redeployed: 0 })
-    expect(await runTaskResolutions('a::b', '')).toEqual({ attempted: 0, completed: 0, merged: 0, redeployed: 0 })
+    expect(await runTaskResolutions('', 'slug')).toEqual({ attempted: 0, completed: 0, merged: 0, redeployed: 0, reaped: 0 })
+    expect(await runTaskResolutions('a::b', '')).toEqual({ attempted: 0, completed: 0, merged: 0, redeployed: 0, reaped: 0 })
     expect(h.listTasks).not.toHaveBeenCalled()
   })
 
@@ -65,7 +69,7 @@ describe('runTaskResolutions (#433)', () => {
     h.listTasks.mockResolvedValue([task()])
     h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
     const res = await runTaskResolutions('a::b', 'my-co')
-    expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0 })
+    expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0, reaped: 0 })
     expect(h.resolveTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ stage: 'todo' }), 'my-co')
   })
 
@@ -73,19 +77,22 @@ describe('runTaskResolutions (#433)', () => {
     h.listTasks.mockResolvedValue([task()])
     h.resolveTask.mockResolvedValue({ ok: false, stage: 'failed', reason: 'coverage below floor' })
     const res = await runTaskResolutions('a::b', 'my-co')
-    expect(res).toEqual({ attempted: 1, completed: 0, merged: 0, redeployed: 0 })
+    expect(res).toEqual({ attempted: 1, completed: 0, merged: 0, redeployed: 0, reaped: 0 })
   })
 
   it('skips tasks that are not in the todo stage', async () => {
     h.listTasks.mockResolvedValue([
-      task({ stage: 'in_progress' }),
+      // A fresh (not stale — see the dedicated reaping describe below)
+      // in_progress task: genuinely still being worked, not orphaned.
+      task({ stage: 'in_progress', updatedAt: new Date().toISOString() }),
       task({ stage: 'completed' }),
       task({ stage: 'failed' }),
       task({ stage: 'rejected' }),
     ])
     const res = await runTaskResolutions('a::b', 'my-co')
-    expect(res).toEqual({ attempted: 0, completed: 0, merged: 0, redeployed: 0 })
+    expect(res).toEqual({ attempted: 0, completed: 0, merged: 0, redeployed: 0, reaped: 0 })
     expect(h.resolveTask).not.toHaveBeenCalled()
+    expect(h.updateTask).not.toHaveBeenCalled()
   })
 
   it('caps at MAX_TASKS_PER_COMPANY_PER_RUN (free-tier default) even with more todo tasks available, when no plan tier is given', async () => {
@@ -109,19 +116,19 @@ describe('runTaskResolutions (#433)', () => {
 
   it('never throws when listing tasks fails', async () => {
     h.listTasks.mockRejectedValue(new Error('zerodb down'))
-    await expect(runTaskResolutions('a::b', 'my-co')).resolves.toEqual({ attempted: 0, completed: 0, merged: 0, redeployed: 0 })
+    await expect(runTaskResolutions('a::b', 'my-co')).resolves.toEqual({ attempted: 0, completed: 0, merged: 0, redeployed: 0, reaped: 0 })
   })
 
   it('never throws when resolveTask itself throws — continues to the next task', async () => {
     h.listTasks.mockResolvedValue([task({ id: 't1' })])
     h.resolveTask.mockRejectedValue(new Error('llm call exploded'))
-    await expect(runTaskResolutions('a::b', 'my-co')).resolves.toEqual({ attempted: 1, completed: 0, merged: 0, redeployed: 0 })
+    await expect(runTaskResolutions('a::b', 'my-co')).resolves.toEqual({ attempted: 1, completed: 0, merged: 0, redeployed: 0, reaped: 0 })
   })
 
   it('returns 0/0 when there are no tasks at all', async () => {
     h.listTasks.mockResolvedValue([])
     const res = await runTaskResolutions('a::b', 'my-co')
-    expect(res).toEqual({ attempted: 0, completed: 0, merged: 0, redeployed: 0 })
+    expect(res).toEqual({ attempted: 0, completed: 0, merged: 0, redeployed: 0, reaped: 0 })
   })
 })
 
@@ -138,28 +145,28 @@ describe('runTaskResolutions surfaces real merge/deploy outcomes (#1232)', () =>
     h.listTasks.mockResolvedValue([task()])
     h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed', merged: true, redeployed: true })
     const res = await runTaskResolutions('a::b', 'my-co')
-    expect(res).toEqual({ attempted: 1, completed: 1, merged: 1, redeployed: 1 })
+    expect(res).toEqual({ attempted: 1, completed: 1, merged: 1, redeployed: 1, reaped: 0 })
   })
 
   it('counts a completed-but-unmerged task honestly (merged: 0) — the real #1232 gap case', async () => {
     h.listTasks.mockResolvedValue([task()])
     h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed', merged: false, redeployed: false })
     const res = await runTaskResolutions('a::b', 'my-co')
-    expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0 })
+    expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0, reaped: 0 })
   })
 
   it('counts a merged-but-not-redeployed task correctly (deploy was skipped/failed)', async () => {
     h.listTasks.mockResolvedValue([task()])
     h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed', merged: true, redeployed: false })
     const res = await runTaskResolutions('a::b', 'my-co')
-    expect(res).toEqual({ attempted: 1, completed: 1, merged: 1, redeployed: 0 })
+    expect(res).toEqual({ attempted: 1, completed: 1, merged: 1, redeployed: 0, reaped: 0 })
   })
 
   it('never counts merged/redeployed for a failed (not coverage-verified) task', async () => {
     h.listTasks.mockResolvedValue([task()])
     h.resolveTask.mockResolvedValue({ ok: false, stage: 'failed', reason: 'coverage below floor', merged: false, redeployed: false })
     const res = await runTaskResolutions('a::b', 'my-co')
-    expect(res).toEqual({ attempted: 1, completed: 0, merged: 0, redeployed: 0 })
+    expect(res).toEqual({ attempted: 1, completed: 0, merged: 0, redeployed: 0, reaped: 0 })
   })
 
   it('aggregates merged/redeployed counts correctly across several resolved tasks in one run', async () => {
@@ -173,14 +180,14 @@ describe('runTaskResolutions surfaces real merge/deploy outcomes (#1232)', () =>
       .mockResolvedValueOnce({ ok: true, stage: 'completed', merged: false, redeployed: false })
       .mockResolvedValueOnce({ ok: false, stage: 'failed', reason: 'boom' })
     const res = await runTaskResolutions('a::b', 'my-co', 'enterprise')
-    expect(res).toEqual({ attempted: 3, completed: 2, merged: 1, redeployed: 1 })
+    expect(res).toEqual({ attempted: 3, completed: 2, merged: 1, redeployed: 1, reaped: 0 })
   })
 
   it('treats a missing merged/redeployed field on the resolver result as false (defensive — never throws on an older mock shape)', async () => {
     h.listTasks.mockResolvedValue([task()])
     h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
     const res = await runTaskResolutions('a::b', 'my-co')
-    expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0 })
+    expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0, reaped: 0 })
   })
 })
 
@@ -198,7 +205,7 @@ describe('runTaskResolutions skips oversized (needsSplit) tasks (#903)', () => {
       task({ id: 't8', storyPoints: 8 }),
     ])
     const res = await runTaskResolutions('a::b', 'my-co', 'enterprise')
-    expect(res).toEqual({ attempted: 0, completed: 0, merged: 0, redeployed: 0 })
+    expect(res).toEqual({ attempted: 0, completed: 0, merged: 0, redeployed: 0, reaped: 0 })
     expect(h.resolveTask).not.toHaveBeenCalled()
   })
 
@@ -206,7 +213,7 @@ describe('runTaskResolutions skips oversized (needsSplit) tasks (#903)', () => {
     h.listTasks.mockResolvedValue([task({ id: 't1', storyPoints: 1 })])
     h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
     const res = await runTaskResolutions('a::b', 'my-co')
-    expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0 })
+    expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0, reaped: 0 })
     expect(h.resolveTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 't1' }), 'my-co')
   })
 
@@ -214,7 +221,7 @@ describe('runTaskResolutions skips oversized (needsSplit) tasks (#903)', () => {
     h.listTasks.mockResolvedValue([task({ id: 'tn', storyPoints: null })])
     h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
     const res = await runTaskResolutions('a::b', 'my-co')
-    expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0 })
+    expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0, reaped: 0 })
   })
 
   it('skips an oversized task but still resolves a smaller due task in the same run, under the tier limit', async () => {
@@ -224,7 +231,7 @@ describe('runTaskResolutions skips oversized (needsSplit) tasks (#903)', () => {
     ])
     h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
     const res = await runTaskResolutions('a::b', 'my-co')
-    expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0 })
+    expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0, reaped: 0 })
     expect(h.resolveTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 'small' }), 'my-co')
   })
 
@@ -277,7 +284,7 @@ describe('runTaskResolutions calls splitTask on oversized (needsSplit) tasks (#9
     const res = await runTaskResolutions('a::b', 'my-co')
     expect(h.splitTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 'big' }))
     expect(h.resolveTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 'small' }), 'my-co')
-    expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0 })
+    expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0, reaped: 0 })
   })
 
   it('never calls resolveTask directly on an oversized task, even after splitTask runs', async () => {
@@ -290,7 +297,7 @@ describe('runTaskResolutions calls splitTask on oversized (needsSplit) tasks (#9
     h.listTasks.mockResolvedValue([task({ id: 'big', storyPoints: 8 })])
     h.splitTask.mockResolvedValue({ ok: false, childIds: [], reason: 'LLM call failed' })
     const res = await runTaskResolutions('a::b', 'my-co')
-    expect(res).toEqual({ attempted: 0, completed: 0, merged: 0, redeployed: 0 })
+    expect(res).toEqual({ attempted: 0, completed: 0, merged: 0, redeployed: 0, reaped: 0 })
   })
 
   it('never throws when splitTask itself throws — continues the run (other due tasks still resolve)', async () => {
@@ -300,7 +307,7 @@ describe('runTaskResolutions calls splitTask on oversized (needsSplit) tasks (#9
     ])
     h.splitTask.mockRejectedValue(new Error('splitter exploded'))
     h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
-    await expect(runTaskResolutions('a::b', 'my-co')).resolves.toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0 })
+    await expect(runTaskResolutions('a::b', 'my-co')).resolves.toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0, reaped: 0 })
   })
 
   it('an oversized task sent to splitTask still never counts against the per-run tier limit', async () => {
@@ -420,5 +427,83 @@ describe('runTaskResolutions with a resolved plan tier (#908)', () => {
     await runTaskResolutions('a::b', 'my-co', 'starter')
     const resolvedIds = h.resolveTask.mock.calls.map((c) => c[1].id)
     expect(resolvedIds[0]).toBe('oldest')
+  })
+})
+
+/**
+ * Found during an overnight founder-dashboard-integrity sweep: resolveTask()
+ * writes `stage: 'in_progress'` before any of its real I/O and only reaches a
+ * terminal stage at the very end. If the nightly-loop process is killed in
+ * that window (maxDuration, a crash), the task was left at `in_progress`
+ * forever — invisible to every future run (which only ever selects `todo`),
+ * and the TasksPanel's "In Progress" count silently accumulated dead rows.
+ * isStaleInProgress()/the reap step in runTaskResolutions() recover it to a
+ * real, honest `failed` row instead.
+ */
+describe('isStaleInProgress (orphaned in_progress recovery)', () => {
+  it('is false for a non-in_progress task regardless of age', () => {
+    expect(isStaleInProgress(task({ stage: 'todo', updatedAt: '2000-01-01T00:00:00.000Z' }))).toBe(false)
+    expect(isStaleInProgress(task({ stage: 'completed', updatedAt: '2000-01-01T00:00:00.000Z' }))).toBe(false)
+    expect(isStaleInProgress(task({ stage: 'failed', updatedAt: '2000-01-01T00:00:00.000Z' }))).toBe(false)
+  })
+
+  it('is false for an in_progress task updated recently (genuinely still running)', () => {
+    const now = Date.parse('2026-06-01T00:10:00.000Z')
+    const t = task({ stage: 'in_progress', updatedAt: '2026-06-01T00:00:00.000Z' })
+    expect(isStaleInProgress(t, now)).toBe(false)
+  })
+
+  it('is true for an in_progress task whose updatedAt is well past the threshold', () => {
+    const now = Date.parse('2026-06-01T01:00:00.000Z')
+    const t = task({ stage: 'in_progress', updatedAt: '2026-06-01T00:00:00.000Z' })
+    expect(isStaleInProgress(t, now, 30 * 60 * 1000)).toBe(true)
+  })
+
+  it('falls back to createdAt when updatedAt is missing', () => {
+    const now = Date.parse('2026-06-01T01:00:00.000Z')
+    const t = task({ stage: 'in_progress', createdAt: '2026-06-01T00:00:00.000Z', updatedAt: '' })
+    expect(isStaleInProgress(t, now, 30 * 60 * 1000)).toBe(true)
+  })
+
+  it('is false when the timestamp cannot be parsed (never mistakenly reap on bad data)', () => {
+    const t = task({ stage: 'in_progress', createdAt: '', updatedAt: '' })
+    expect(isStaleInProgress(t)).toBe(false)
+  })
+})
+
+describe('runTaskResolutions reaps orphaned in_progress tasks', () => {
+  it('resets a stale in_progress task to failed with an honest reason, and never resolves it', async () => {
+    const stale = task({ id: 'stuck', stage: 'in_progress', updatedAt: '2000-01-01T00:00:00.000Z' })
+    h.listTasks.mockResolvedValue([stale])
+    const res = await runTaskResolutions('a::b', 'my-co')
+    expect(res).toEqual({ attempted: 0, completed: 0, merged: 0, redeployed: 0, reaped: 1 })
+    expect(h.updateTask).toHaveBeenCalledWith('a::b', 'stuck', expect.objectContaining({
+      stage: 'failed',
+      output: expect.stringMatching(/interrupted/i),
+    }))
+    expect(h.resolveTask).not.toHaveBeenCalled()
+  })
+
+  it('reaps multiple stale in_progress tasks in one run and still resolves real due todo tasks', async () => {
+    h.listTasks.mockResolvedValue([
+      task({ id: 'stuck1', stage: 'in_progress', updatedAt: '2000-01-01T00:00:00.000Z' }),
+      task({ id: 'stuck2', stage: 'in_progress', updatedAt: '2000-01-02T00:00:00.000Z' }),
+      task({ id: 'fresh', stage: 'todo' }),
+    ])
+    h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
+    const res = await runTaskResolutions('a::b', 'my-co')
+    expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0, reaped: 2 })
+    expect(h.resolveTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 'fresh' }), 'my-co')
+  })
+
+  it('never throws when the reap updateTask call itself fails — continues the run', async () => {
+    h.listTasks.mockResolvedValue([
+      task({ id: 'stuck', stage: 'in_progress', updatedAt: '2000-01-01T00:00:00.000Z' }),
+      task({ id: 'fresh', stage: 'todo' }),
+    ])
+    h.updateTask.mockRejectedValue(new Error('zerodb write failed'))
+    h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
+    const res = await runTaskResolutions('a::b', 'my-co')
+    expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0, reaped: 0 })
   })
 })
