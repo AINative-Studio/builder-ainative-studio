@@ -1055,6 +1055,28 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
     '  // render <PaymentElement /> plus a submit button that calls\n' +
     '  // stripe.confirmPayment({ elements, confirmParams: { return_url } }) on click.\n' +
     '  ```\n' +
+    '  MERCHANT-SIDE discount codes (#1209) — if the feature is a store-owner admin screen for creating/listing/\n' +
+    '  editing/deleting discount codes (NOT the shopper-side "enter a code at checkout" flow above, which already uses\n' +
+    '  discount_code on the checkout call), call the SAME proxy with the authenticated `commerce/discounts` path —\n' +
+    '  a different, merchant-only path from the unauthenticated `storefront/_/...` paths above, still through the\n' +
+    '  same `/api/primitive/zerocommerce/{path}` proxy with no Authorization header needed:\n' +
+    '  ```js\n' +
+    "  // List this store's real discount codes (admin-only)\n" +
+    "  const discRes = await fetch('/api/primitive/zerocommerce/commerce/discounts')\n" +
+    '  const discounts = await discRes.json()\n' +
+    '\n' +
+    "  // Create a real discount code (admin-only)\n" +
+    "  await fetch('/api/primitive/zerocommerce/commerce/discounts', {\n" +
+    "    method: 'POST', headers: { 'Content-Type': 'application/json' },\n" +
+    "    body: JSON.stringify({ code, discount_type, discount_value }), // real ZeroCommerce discount schema\n" +
+    '  })\n' +
+    '  ```\n' +
+    '  KNOWN LIMITATION, do not paper over it: `commerce/discounts` is gated server-side to users whose AINative role ' +
+    'claim is literally "admin" (platform staff), not "owns this store" — an ordinary founder may not carry that ' +
+    'role, in which case this returns a real 403 from ZeroCommerce (forwarded verbatim through the proxy, not a ' +
+    'crash). Unconfirmed against a live founder session as of #1209 — build the admin UI to call the real endpoint ' +
+    'and handle a 403 by showing "discount management isn\'t available for your account yet" rather than silently ' +
+    'failing or faking success with local state.\n' +
     '  ANTI-PATTERN — FORBIDDEN: do NOT hand-roll a product catalog, shopping cart, or checkout using /api/db tables ' +
     'instead of calling the real ZeroCommerce proxy. If the feature is a product listing, cart, or checkout, it MUST ' +
     'call GET/POST /api/primitive/zerocommerce/storefront/_/{products,cart,cart/:id/items,cart/:id/checkout,stripe-config} — ' +
@@ -1064,7 +1086,10 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
     'number/expiry/CVC input fields instead of Stripe\'s real Elements/PaymentElement — this both fails PCI-scope ' +
     'best practice and silently drops the Apple Pay/Google Pay eligibility the checkout response already supports. ' +
     'Also FORBIDDEN: reading or displaying a `price` field on a product (the real field is `base_price`) or a ' +
-    '`stock_quantity`/inventory-count field from the storefront products response (it is never present there).',
+    '`stock_quantity`/inventory-count field from the storefront products response (it is never present there). Also ' +
+    'FORBIDDEN: faking a "discount created" success state in local/component state for a merchant discount-code admin ' +
+    'screen instead of calling the real commerce/discounts endpoint above, or silently swallowing a 403 from it as ' +
+    'if it succeeded.',
   // #525: AgentFlow shares the SAME confirmed gap — a real 83,084-char
   // generation for "a no-code visual agent workflow builder with drag and
   // drop flow building" never called /api/primitive/agentflow/ and had ZERO
