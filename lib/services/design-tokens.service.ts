@@ -16,9 +16,30 @@ import { validateOrFallback, DEFAULT_DESIGN_TOKENS } from '../validators/design-
 import { cacheGet, cacheSet, cacheDelete } from '../redis'
 import { logger } from '../logger'
 import type { DesignSystem } from '../design-systems/types'
+import { getCircuitBreaker } from '../circuit-breaker'
 
 const CACHE_TTL_SECONDS = 24 * 60 * 60 // 24 hours
 const CACHE_KEY_PREFIX = 'design-tokens:'
+
+// Issue #1191: the design-tokens MCP server (lib/mcp/design-system-client.ts)
+// has no live deployment behind DESIGN_SYSTEM_MCP_URL in this app — every
+// real call eventually fails after 3 retries with exponential backoff
+// (~7s wasted per call). Without a breaker, a burst of requests during that
+// outage each individually pay the full retry tax before falling back.
+// After 3 consecutive failures within this process, stop attempting real
+// calls for 30s and go straight to the degraded default — the user-visible
+// message is carried on TokenExtractionResult.degradedReason so callers can
+// render it instead of silently serving defaults.
+const DESIGN_TOKENS_BREAKER_KEY = 'design-tokens-mcp'
+const DEGRADED_MESSAGE =
+  'Using default styling — your custom design tokens are temporarily unavailable.'
+
+function getDesignTokensBreaker() {
+  return getCircuitBreaker(DESIGN_TOKENS_BREAKER_KEY, {
+    failureThreshold: 3,
+    cooldownMs: 30_000,
+  })
+}
 
 export interface TokenExtractionOptions {
   extractDarkMode?: boolean
@@ -30,6 +51,14 @@ export interface TokenExtractionResult {
   tokens: DesignTokensResponse
   cached: boolean
   source: 'mcp' | 'cache' | 'default'
+  /**
+   * True when `tokens` are NOT the result of a real extraction — either the
+   * MCP call itself failed, or the circuit breaker was already open and
+   * short-circuited the attempt. Callers should surface `degradedReason`
+   * to the user rather than rendering defaults with no indication (#1191).
+   */
+  degraded: boolean
+  degradedReason?: string
 }
 
 /**
@@ -61,20 +90,28 @@ export async function extractDesignTokens(
         tokens: cached,
         cached: true,
         source: 'cache',
+        degraded: false,
       }
     }
   }
 
-  // Extract tokens using MCP client
-  try {
+  // Extract tokens using MCP client, through the circuit breaker (#1191).
+  // If the breaker is already open from recent consecutive failures, this
+  // short-circuits immediately — no real network attempt, no retry delay.
+  const breaker = getDesignTokensBreaker()
+  const breakerResult = await breaker.execute(async () => {
     const mcpClient = getMCPClient()
-    const extractedTokens = await mcpClient.extractTokens(templateCode, extractDarkMode)
+    return mcpClient.extractTokens(templateCode, extractDarkMode)
+  })
+
+  if (breakerResult.success) {
+    const extractedTokens = breakerResult.value ?? null
 
     // Validate extracted tokens
     const validatedTokens = validateOrFallback(extractedTokens)
 
     // Cache the results if templateId provided
-    if (templateId) {
+    if (templateId && extractedTokens) {
       await cacheTokens(templateId, validatedTokens)
       logger.info('Cached extracted design tokens', { templateId })
     }
@@ -83,16 +120,27 @@ export async function extractDesignTokens(
       tokens: validatedTokens,
       cached: false,
       source: extractedTokens ? 'mcp' : 'default',
+      degraded: !extractedTokens,
+      degradedReason: extractedTokens ? undefined : DEGRADED_MESSAGE,
     }
-  } catch (error) {
-    logger.error('Failed to extract design tokens from MCP', error as Error)
+  }
 
-    // Fall back to defaults
-    return {
-      tokens: DEFAULT_DESIGN_TOKENS,
-      cached: false,
-      source: 'default',
-    }
+  // Breaker either short-circuited (dependency known-down) or the call
+  // itself failed — either way, fall back to defaults and say so.
+  if (breakerResult.shortCircuited) {
+    logger.warn('Design tokens MCP circuit breaker is open — short-circuiting to defaults', {
+      templateId,
+    })
+  } else {
+    logger.error('Failed to extract design tokens from MCP', breakerResult.error as Error)
+  }
+
+  return {
+    tokens: DEFAULT_DESIGN_TOKENS,
+    cached: false,
+    source: 'default',
+    degraded: true,
+    degradedReason: DEGRADED_MESSAGE,
   }
 }
 
