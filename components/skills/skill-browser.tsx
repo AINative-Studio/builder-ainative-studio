@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Select,
@@ -96,6 +97,35 @@ function SkillCard({ skill, onSelect, isLoading }: SkillCardProps) {
         >
           {loading ? 'Loading...' : 'Load Skill'}
         </Button>
+      </CardFooter>
+    </Card>
+  )
+}
+
+function SkillCardSkeleton() {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-start justify-between">
+          <div className="flex-1">
+            <Skeleton className="h-5 w-32" />
+            <Skeleton className="h-4 w-12 mt-2" />
+          </div>
+          <Skeleton className="h-4 w-16" />
+        </div>
+      </CardHeader>
+      <CardContent>
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-5/6 mt-2" />
+        <Skeleton className="h-4 w-2/3 mt-2" />
+        <div className="flex flex-wrap gap-1 mt-3">
+          <Skeleton className="h-5 w-14 rounded-full" />
+          <Skeleton className="h-5 w-14 rounded-full" />
+          <Skeleton className="h-5 w-14 rounded-full" />
+        </div>
+      </CardContent>
+      <CardFooter>
+        <Skeleton className="h-9 w-full" />
       </CardFooter>
     </Card>
   )
@@ -319,11 +349,17 @@ export function SkillBrowser({ onSkillSelect, currentContext }: SkillBrowserProp
       {/* Skills Grid */}
       <ScrollArea className="flex-1">
         <div className="p-4">
-          {loading || searching ? (
-            <div className="flex items-center justify-center h-48" data-testid="skill-browser-loading">
+          {loading ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" data-testid="skill-browser-loading">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <SkillCardSkeleton key={i} />
+              ))}
+            </div>
+          ) : searching ? (
+            <div className="flex items-center justify-center h-48" data-testid="skill-browser-searching">
               <div className="text-center">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mx-auto mb-4" />
-                <p className="text-sm text-muted-foreground">{loading ? 'Loading skills...' : 'Searching...'}</p>
+                <p className="text-sm text-muted-foreground">Searching...</p>
               </div>
             </div>
           ) : filteredSkills.length === 0 ? (

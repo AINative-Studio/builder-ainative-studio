@@ -189,9 +189,25 @@ export function VersionsPanel({ companyId }: { companyId: string }) {
         </p>
       )}
 
-      {/* Body: loading → honest single-version / empty → the version list. */}
+      {/* Body: loading → skeleton matching the real card-list shape (#1190) /
+          honest single-version / empty → the version list. */}
       {!loaded ? (
-        <p className="m-mono m-task-empty" data-testid="versions-loading">loading versions…</p>
+        <ul className="m-task-list" data-testid="versions-loading">
+          {[1, 2, 3].map((i) => (
+            <li key={i} className="m-task-card m-version-card">
+              <div className="m-task-card-top">
+                <span className="m-shimmer" style={{ display: 'inline-block', width: 64, height: 16 }} />
+                <span className="m-shimmer" style={{ display: 'inline-block', width: 72, height: 16 }} />
+              </div>
+              <p className="m-task-title">
+                <span className="m-shimmer" style={{ display: 'inline-block', width: '70%', height: 14 }} />
+              </p>
+              <div className="m-task-card-foot m-mono">
+                <span className="m-shimmer" style={{ display: 'inline-block', width: 80, height: 12 }} />
+              </div>
+            </li>
+          ))}
+        </ul>
       ) : versions.length === 0 ? (
         <p className="m-mono m-task-empty" data-testid="versions-empty">
           No deploy history yet. As Cody ships changes to {companyId ? 'your company' : 'this company'},
