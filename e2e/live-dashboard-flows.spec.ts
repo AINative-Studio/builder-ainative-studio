@@ -33,6 +33,20 @@
  *                         (canManage={signedIn && !!activePlan} is false for
  *                         the seeded fixture) — never a real Railway
  *                         redeploy of production infra on an unpaid account.
+ *   9. Comms-mode select — switch Cody's morning-email cadence (Agile standup
+ *                         / Pair programming) and verify the real POST to
+ *                         /api/build/comms-mode actually persists the choice
+ *                         (survives a reload), not just a local toggle.
+ *  10. ZeroInvoice connect — click Connect, verify the real authorize POST
+ *                         opens a genuine new tab (never actually completing
+ *                         OAuth in it — that's ZeroInvoice's own flow, out of
+ *                         scope here), then click the honest self-reported
+ *                         "I've finished connecting" confirm button and
+ *                         verify the status label updates to Connected.
+ *  11. Hire-the-swarm CTA — click "Upgrade to hire the swarm" for the seeded
+ *                         (unpaid) founder and verify the real upgrade gate
+ *                         (goUpgrade → Pricing screen) — never a real Auto
+ *                         Mode/nightly-loop enrollment on an unpaid account.
  *
  * Same real infra as #1198: a REAL authenticated session
  * (E2E_TEST_EMAIL/E2E_TEST_PASSWORD) restoring a REAL, already-generated
@@ -338,5 +352,119 @@ test.describe('Live-dashboard interaction flows (#1203)', () => {
     await expect(page.getByTestId('redeploy-confirm')).toBeHidden()
     const onPricing = page.url().includes('pricing') || page.url().includes('screen=pricing')
     expect(onPricing, 'an unpaid founder clicking Redeploy must hit the real upgrade gate, never the real confirm dialog').toBe(true)
+  })
+
+  test('Comms-mode selector: switching Cody\'s morning-email cadence really persists', async ({ page }) => {
+    // Live.tsx's changeCommsMode() is optimistic-then-persist: it flips
+    // `commsMode` immediately, POSTs /api/build/comms-mode, and reverts on a
+    // real failure. The meaningful assertion isn't the dropdown's own value
+    // (that would pass even for a purely-local, unpersisted toggle) — it's
+    // that a FRESH page load reads back the same mode from the server,
+    // proving the real network round-trip actually landed.
+    const selector = page.getByTestId('comms-mode-selector')
+    await expect(selector).toBeVisible({ timeout: 15_000 })
+    const select = page.getByTestId('comms-mode-select')
+    await expect(select).toBeEnabled()
+
+    const current = await select.inputValue()
+    const next = current === 'agile' ? 'pairProgramming' : 'agile'
+
+    const postPromise = page.waitForResponse(
+      (resp) => resp.url().includes('/api/build/comms-mode') && resp.request().method() === 'POST',
+    )
+    await select.selectOption(next)
+    const postResp = await postPromise
+    expect(postResp.ok(), 'the real comms-mode POST must succeed for this signed-in founder').toBe(true)
+    await expect(select).toHaveValue(next)
+
+    // Reload and restore the same local build-state cache (a fresh page load
+    // of the real deep link) — if the change only lived in React state, this
+    // would read back the old default instead of the real persisted value.
+    const f = fixture!
+    await restoreLiveSession(page, {
+      baseUrl: BASE_URL,
+      email: EMAIL!,
+      password: PASSWORD!,
+      fixture: { slug: f.slug, companyName: f.companyName ?? undefined, idea: f.idea ?? undefined, track: f.track ?? 'company' },
+    })
+    await page.waitForSelector('[data-testid="systems-grid"]', { timeout: 20_000 })
+    await expect(page.getByTestId('comms-mode-select')).toHaveValue(next, { timeout: 15_000 })
+
+    // Restore the original mode so this spec doesn't leave the real company's
+    // setting permanently flipped across runs.
+    const restorePromise = page.waitForResponse(
+      (resp) => resp.url().includes('/api/build/comms-mode') && resp.request().method() === 'POST',
+    )
+    await page.getByTestId('comms-mode-select').selectOption(current)
+    await restorePromise
+  })
+
+  test('ZeroInvoice connect: clicking Connect opens a real authorize tab, and self-confirming updates the status', async ({ page, context }) => {
+    // ZeroInvoiceConnect.tsx's connect() POSTs /api/build/zeroinvoice with
+    // action:'authorize' and window.open()s the REAL authUrl it returns —
+    // this spec verifies that real round-trip actually opens a new tab, then
+    // immediately closes that tab without touching ZeroInvoice's own OAuth
+    // flow inside it (out of scope, and not something this spec should ever
+    // drive to completion). It never asserts a platform-verified "Connected"
+    // state — only the honest self-reported one the component itself claims.
+    const connectCard = page.getByTestId('zeroinvoice-connect')
+    await expect(connectCard).toBeVisible({ timeout: 15_000 })
+
+    const status = page.getByTestId('zeroinvoice-connect-status')
+    const alreadyConnected = (await status.textContent())?.includes('Connected')
+    if (alreadyConnected) {
+      test.skip(true, 'This real company already has a self-reported ZeroInvoice connection — covering the initial-connect flow another run')
+    }
+
+    const connectBtn = page.getByTestId('zeroinvoice-connect-btn')
+    await expect(connectBtn).toHaveText(/Connect ZeroInvoice/)
+
+    const postPromise = page.waitForResponse(
+      (resp) => resp.url().includes('/api/build/zeroinvoice') && resp.request().method() === 'POST',
+    )
+    const popupPromise = context.waitForEvent('page', { timeout: 10_000 })
+    await connectBtn.click()
+
+    const postResp = await postPromise
+    expect(postResp.ok(), 'the real zeroinvoice authorize POST must succeed for this signed-in founder').toBe(true)
+
+    const popup = await popupPromise
+    expect(popup.url(), 'Connect must open a real external authorize URL, not a blank/about tab').not.toBe('about:blank')
+    await popup.close()
+
+    await expect(status).toHaveText('Connect requested — finish in the new tab, then confirm below')
+    const confirmBtn = page.getByTestId('zeroinvoice-confirm-btn')
+    await expect(confirmBtn).toBeVisible()
+
+    const confirmPostPromise = page.waitForResponse(
+      (resp) => resp.url().includes('/api/build/zeroinvoice') && resp.request().method() === 'POST',
+    )
+    await confirmBtn.click()
+    const confirmResp = await confirmPostPromise
+    expect(confirmResp.ok(), 'the real zeroinvoice confirm POST must succeed').toBe(true)
+    await expect(status).toHaveText('✓ Connected (self-reported)')
+    await expect(confirmBtn).toBeHidden()
+  })
+
+  test('Hire-the-swarm CTA: upgrading without a paid plan hits the real upgrade gate', async ({ page }) => {
+    // Live.tsx wires the "Hire the swarm" card's button to goUpgrade() —
+    // signed-in founders go straight to the Pricing screen (real Stripe
+    // checkout lives there, covered separately by upgrade-journey.spec.ts).
+    // The seeded fixture carries no activePlan, so clicking this must route
+    // to Pricing and must NEVER silently enroll this real company into a
+    // real nightly Auto Mode loop.
+    const swarmCard = page.locator('.m-upsell')
+    await expect(swarmCard).toBeVisible({ timeout: 15_000 })
+
+    const upgradeBtn = page.getByTestId('swarm-upgrade')
+    await expect(upgradeBtn).toBeVisible()
+    await expect(upgradeBtn).toBeEnabled()
+    await expect(upgradeBtn).toHaveText(/Upgrade to hire the swarm/)
+
+    await upgradeBtn.click()
+    await page.waitForTimeout(1_000) // let the real goUpgrade navigation settle
+
+    const onPricing = page.url().includes('pricing') || page.url().includes('screen=pricing')
+    expect(onPricing, 'an unpaid founder clicking "Hire the swarm" must hit the real Pricing screen, never a free enrollment').toBe(true)
   })
 })
