@@ -115,8 +115,38 @@ describe('primitive-catalog codegen composition (#218)', () => {
 
   it('always steers toward AI Kit + ZeroDB even when no business-ops primitive matches', () => {
     const block = codegenCompositionBlock('xyzzy plugh nonsense idea', 'company')
-    expect(block).toContain('@ainative/ai-kit-core')
+    expect(block).toContain('./components/aikit')
     expect(block).toContain('https://api.ainative.studio/api/v1') // ZeroDB base
+  })
+
+  // #1236: the real published @ainative/ai-kit-core@0.2.0 (npm pack + inspected
+  // every dist/*/index.d.ts export path) is Builder's own backend agent/LLM SDK
+  // (AIStream, Agent, AgentSwarm, ToolRegistry, AuthMethod, ...) with zero React/
+  // JSX/component exports and no `react` dependency — not a UI library. Telling
+  // the model to import "UI primitives"/"chat, tables, product cards" from it
+  // guaranteed those surfaces would hit Sandpack's unresolvable-bare-import
+  // fallback (lib/sandpack/jsx-fixer.ts's stubUnresolvableBareImports, #1179)
+  // and render as silent no-ops. The real components ship locally with every
+  // generated app instead (lib/sandpack/aikit-bundle.ts, merged by
+  // lib/sandpack/setup.ts's getBuiltinFiles() at ./components/aikit for every
+  // Sandpack sandbox, unconditionally) — the composition block must point there.
+  it('AI Kit guidance points at the real local ./components/aikit module, never tells the model to import the non-UI @ainative/ai-kit-core npm package', () => {
+    const generic = codegenCompositionBlock('a generic note-taking app', 'company')
+    expect(generic).toContain('./components/aikit')
+    // The old, wrong instruction told the model to import UI primitives FROM
+    // this package. The fix may still name the package once, as an explicit
+    // anti-pattern warning (same style as A2UI's anti-pattern block) — so
+    // assert the specific wrong phrasing is gone, not that the string never
+    // appears at all.
+    expect(generic).not.toMatch(/import its SDK `@ainative\/ai-kit-core`/)
+    expect(generic).not.toMatch(/Import `@ainative\/ai-kit-core`.*for UI primitives/)
+
+    // Also true for an idea that DOES match an archetype in primitive-graph.ts —
+    // the generic composition line and Rule 1 must agree with componentGuidanceBlock,
+    // not contradict it with a second, wrong instruction.
+    const crm = codegenCompositionBlock('a B2B sales CRM to track deals and leads', 'company')
+    expect(crm).toContain('./components/aikit')
+    expect(crm).not.toMatch(/import its SDK `@ainative\/ai-kit-core`/)
   })
 
   it('produces materially different wiring for different ideas', () => {
