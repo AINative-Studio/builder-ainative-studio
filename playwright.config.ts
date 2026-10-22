@@ -1,4 +1,19 @@
 import { defineConfig, devices } from '@playwright/test'
+import dotenv from 'dotenv'
+import path from 'path'
+
+// Real-account specs (e.g. e2e/full-onboarding-provision.spec.ts,
+// e2e/e2e-session-restore.spec.ts) gate themselves on E2E_TEST_EMAIL /
+// E2E_TEST_PASSWORD rather than ever hardcoding a credential. Those values
+// live in .env.e2e.local (gitignored, never committed) so a local run with
+// that file present picks them up automatically instead of requiring every
+// contributor to export them into their shell by hand. Loaded here —
+// Playwright's own config entrypoint — rather than per-spec, so every
+// current and future env-gated spec benefits without duplicating the
+// dotenv call. Silently a no-op when the file doesn't exist (CI/most local
+// checkouts), matching every other env-gated spec's existing skip-not-fail
+// behavior.
+dotenv.config({ path: path.resolve(__dirname, '.env.e2e.local') })
 
 export default defineConfig({
   testDir: './e2e',

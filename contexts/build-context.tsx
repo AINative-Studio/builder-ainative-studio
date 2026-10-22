@@ -37,8 +37,19 @@ const BuildContext = createContext<BuildContextValue | null>(null)
 // localStorage key prefix for build state persistence (#284).
 const LS_PREFIX = 'ainative_build_'
 
-/** Fields we persist to localStorage for a given company slug. */
-type PersistedBuildState = Pick<
+/**
+ * Fields we persist to localStorage for a given company slug.
+ *
+ * Exported (alongside `buildStateStorageKey` below) so a test-only seam
+ * (#1198 — a Playwright helper restoring a Live-stage session for a known,
+ * already-seeded company) can write a payload under the exact same key and
+ * shape this file itself reads via `loadBuildState`, instead of a second,
+ * hand-maintained copy of this field list that silently drifts the moment a
+ * new field is added here. There is no new reachable surface in production
+ * from this export alone — it is a type and a pure key-formatting function,
+ * not a route or an API.
+ */
+export type PersistedBuildState = Pick<
   BuildState,
   'generated' | 'done' | 'genError' | 'builtCompany' | 'builtMVP'
   | 'wedgePicked' | 'answers' | 'companyName' | 'idea' | 'appSub'
@@ -46,8 +57,15 @@ type PersistedBuildState = Pick<
   | 'sawPreview' | 'designSystemId' | 'designStepDone'
 >
 
-function lsKey(slug: string) {
+/** The exact localStorage key `saveBuildState`/`loadBuildState` use for a
+ *  given company slug — exported for the same #1198 test-seam reason as
+ *  `PersistedBuildState` above. */
+export function buildStateStorageKey(slug: string): string {
   return `${LS_PREFIX}${slug}`
+}
+
+function lsKey(slug: string) {
+  return buildStateStorageKey(slug)
 }
 
 function loadBuildState(slug: string): Partial<PersistedBuildState> | null {
