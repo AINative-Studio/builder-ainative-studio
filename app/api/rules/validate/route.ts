@@ -106,15 +106,29 @@ export async function POST(request: NextRequest) {
     // Save report to database
     await dbService.saveReport(action.userId, action.projectId, report);
 
-    // Record violations
+    // Record violations, keeping the persisted row id alongside each one.
+    //
+    // #1193: recordViolation() already `.returning()`s the inserted row, but
+    // this route used to throw that away — which is why the auto-fix route's
+    // "mark violations as fixed" loop was an empty body commented "in a real
+    // implementation, we'd have violation IDs from the database". Surfacing
+    // `violationId` here is the whole of that missing plumbing: a caller can
+    // now hand the id back to POST /api/rules/auto-fix, which marks it via
+    // markViolationFixed() so the violation history and /api/rules/stats
+    // stop reporting auto-fixed violations as permanently pending.
+    const violationsWithIds: Array<Record<string, unknown>> = [];
     for (const result of report.results) {
       for (const violation of result.violations) {
-        await dbService.recordViolation(
+        const recorded = await dbService.recordViolation(
           result.ruleId,
           action.userId,
           action,
           violation
         );
+        violationsWithIds.push({
+          ...violation,
+          violationId: (recorded as { id?: string } | undefined)?.id,
+        });
       }
     }
 
@@ -128,7 +142,7 @@ export async function POST(request: NextRequest) {
         totalDuration: report.totalDuration,
         canAutoFix: report.canAutoFix,
         suggestions: report.suggestions,
-        violations: report.results.flatMap((r) => r.violations),
+        violations: violationsWithIds,
       },
     });
   } catch (error) {

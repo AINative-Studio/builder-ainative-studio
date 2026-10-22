@@ -196,13 +196,98 @@ export function getTokenSummary(tokens: DesignTokensResponse): string {
 }
 
 /**
- * Get active design tokens for a user
- * TODO: Implement user-specific design tokens storage and retrieval
+ * Shape of the `design_tokens` row this service cares about. Declared
+ * locally rather than imported from lib/db/schema so that this module stays
+ * importable without pulling in the `server-only` Drizzle graph.
+ */
+export interface StoredDesignTokenRow {
+  id?: string
+  tokens?: unknown
+}
+
+/**
+ * Turn a stored `design_tokens` row into a usable `DesignTokensResponse`,
+ * or null when it cannot be used.
+ *
+ * Split out from getActiveDesignTokens so the validation rules are directly
+ * unit-testable without a database (and without mocking a lazy import).
+ */
+export function parseStoredDesignTokenRow(
+  userId: string,
+  row: StoredDesignTokenRow | null | undefined
+): DesignTokensResponse | null {
+  if (!row?.tokens) {
+    logger.info('No active design tokens for user', { userId })
+    return null
+  }
+
+  const stored = row.tokens as Partial<DesignTokensResponse>
+
+  // The column is jsonb, so the shape is only as trustworthy as whatever
+  // wrote it. `light` is the one required half of a DesignTokensResponse;
+  // without it every downstream consumer (formatTokensForPrompt,
+  // generateCSSVariables) would throw on `tokens.light.colors`.
+  if (!stored.light?.colors || !stored.light?.typography) {
+    logger.warn('Active design token row has an unusable tokens payload', {
+      userId,
+      tokenId: row.id,
+    })
+    return null
+  }
+
+  logger.info('Loaded active design tokens for user', {
+    userId,
+    tokenId: row.id,
+    summary: getTokenSummary(stored as DesignTokensResponse),
+  })
+
+  return stored as DesignTokensResponse
+}
+
+/**
+ * Get the design token set a user has marked active.
+ *
+ * #1193 — this was a stub (`return null` behind a "not yet implemented" log)
+ * whose TODO claimed user-specific storage still had to be built. It did not:
+ * `design_tokens` is a real Postgres table with a `user_id` FK and an
+ * `is_active` flag, the seven /api/design-tokens routes already write to it
+ * with per-user ownership checks, and `getActiveDesignToken(userId)` in
+ * lib/db/queries.ts already runs precisely the query needed (the plural/
+ * singular name difference is why no grep ever connected the two). The stub
+ * meant a founder could upload and activate a palette through a fully working
+ * UI and have none of it reach the prompt: app/api/chat/route.ts hands this
+ * result to buildEnhancedPrompt, and lib/professional-prompt.ts gates the
+ * whole design-system block on it being truthy.
+ *
+ * Fails open to `null` on any problem — a token lookup must never break a
+ * founder's chat turn; the prompt simply falls back to no design-system
+ * block, exactly as it did while the stub was in place.
  */
 export async function getActiveDesignTokens(userId: string): Promise<DesignTokensResponse | null> {
-  // Placeholder implementation - returns null until user design tokens are implemented
-  logger.info('Getting active design tokens for user (not yet implemented)', { userId })
-  return null
+  // `anonymous` is app/api/chat/route.ts's sentinel for an unauthenticated
+  // caller; there is no such user row, so do not query for one.
+  if (!userId || userId === 'anonymous') {
+    return null
+  }
+
+  try {
+    // Imported lazily (and via the repo's '@/lib/db/queries' alias, which is
+    // how every other caller reaches it) so that pulling in this service for
+    // its pure helpers — tokensFromDesignSystem, formatTokensForPrompt — does
+    // not drag the `server-only` Drizzle/Postgres client into the module
+    // graph of a client component that only wants those helpers.
+    const { getActiveDesignToken } = await import('@/lib/db/queries')
+    return parseStoredDesignTokenRow(userId, await getActiveDesignToken(userId))
+  } catch (error) {
+    // logger.error's signature is (message, error, context) — pass the real
+    // Error through so its message/stack are captured, not an empty object.
+    logger.error(
+      'Failed to load active design tokens for user',
+      error instanceof Error ? error : new Error(String(error)),
+      { userId }
+    )
+    return null
+  }
 }
 
 /**
