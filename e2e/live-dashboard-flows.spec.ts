@@ -6,7 +6,7 @@
  * Playwright coverage exercising actual interactions, not just page-load
  * smoke tests." The existing e2e/session-restore.spec.ts (#1198) already
  * proves every stage-gated panel MOUNTS with real data; this file goes one
- * level deeper and drives the interactions inside five of them through a
+ * level deeper and drives the interactions inside eight of them through a
  * real browser:
  *
  *   1. Tasks panel      — filter by stage tab, open a task's VIEW detail.
@@ -22,6 +22,17 @@
  *                         autonomous run — see note below).
  *   5. Documents panel  — switch the Documents/Reports tabs and verify the
  *                         filtered body + generate-doc affordance.
+ *   6. Documents panel  — click "Export pitch deck" and verify the real
+ *                         paid-plan gate (same canExportDeck={activePlan!==''}
+ *                         wiring the seeded fixture leaves locked — never a
+ *                         real .pptx download on an unpaid account).
+ *   7. Media panel      — pick a different auto-media frequency for a kind
+ *                         and verify the real aria-checked radio state
+ *                         actually moves (not just a visual toggle).
+ *   8. Website panel    — click Redeploy and verify the real paid-plan gate
+ *                         (canManage={signedIn && !!activePlan} is false for
+ *                         the seeded fixture) — never a real Railway
+ *                         redeploy of production infra on an unpaid account.
  *
  * Same real infra as #1198: a REAL authenticated session
  * (E2E_TEST_EMAIL/E2E_TEST_PASSWORD) restoring a REAL, already-generated
@@ -245,5 +256,87 @@ test.describe('Live-dashboard interaction flows (#1203)', () => {
     // content (not Reports') comes back.
     await page.getByTestId('documents-tab-all').click()
     await expect(page.getByTestId('documents-tab-all')).toHaveAttribute('aria-selected', 'true')
+  })
+
+  test('Documents panel: exporting the pitch deck without a paid plan hits the real upgrade gate', async ({ page }) => {
+    // DocumentsPanel.tsx wires canExportDeck={activePlan !== ''} (Live.tsx) —
+    // the seeded fixture carries activePlan: '' (buildSeedPayload), so this
+    // real founder is genuinely unpaid. exportDeck() checks canExportDeck
+    // BEFORE ever calling POST /api/build/deck, so clicking the button here
+    // must route through onExportUpgrade (goUpgrade → pricing screen), never
+    // actually request or download a real .pptx.
+    const panel = page.getByTestId('documents-panel')
+    await expect(panel).toBeVisible({ timeout: 15_000 })
+
+    const exportSection = page.getByTestId('deck-export')
+    await expect(exportSection).toBeVisible()
+    const exportBtn = page.getByTestId('deck-export-btn')
+    await expect(exportBtn).toHaveText(/Export pitch deck \(paid\)/)
+    await expect(page.getByTestId('deck-export-locked')).toBeVisible()
+
+    const downloadPromise = page.waitForEvent('download', { timeout: 3_000 }).catch(() => null)
+    await exportBtn.click()
+    await page.waitForTimeout(1_000) // let the real onExportUpgrade navigation (if any) settle
+
+    const download = await downloadPromise
+    expect(download, 'an unpaid founder must never receive a real pitch-deck download').toBeNull()
+    const onPricing = page.url().includes('pricing') || page.url().includes('screen=pricing')
+    expect(onPricing, 'an unpaid founder clicking Export pitch deck must hit the real upgrade gate').toBe(true)
+  })
+
+  test('Media panel: picking a different auto-media frequency moves the real radio state', async ({ page }) => {
+    const panel = page.getByTestId('media-panel')
+    await expect(panel).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('media-loading')).toBeHidden({ timeout: 15_000 }).catch(() => {})
+
+    // Media generation itself may not be configured for this workspace —
+    // that's a real, legitimate state (see media-disabled-note's own comment
+    // in MediaPanel.tsx), distinct from "no media kinds render at all."
+    const firstFreqGroup = page.locator('[data-testid^="media-freq-"]').first()
+    if (!(await firstFreqGroup.isVisible({ timeout: 5_000 }).catch(() => false))) {
+      test.skip(true, 'No media kind rendered for this real company — nothing to set a frequency on')
+    }
+
+    // MediaPanel.tsx's initial freq state defaults BOTH kinds to 'weekly' —
+    // Monthly is never the default, so clicking it must move the real
+    // aria-checked radio off Weekly, proving this is one real radiogroup
+    // rather than independent toggles (not just asserting the clicked
+    // option's own state, which could pass even if siblings didn't update).
+    const monthlyOption = firstFreqGroup.getByTestId(/^media-freq-.+-monthly$/)
+    await expect(monthlyOption).toBeVisible()
+    const wasChecked = await monthlyOption.getAttribute('aria-checked')
+    if (wasChecked === 'true') {
+      test.skip(true, 'Monthly is already the active frequency for this real company — covering the toggle another run')
+    }
+
+    await monthlyOption.click()
+    await expect(monthlyOption).toHaveAttribute('aria-checked', 'true')
+    const otherChecked = await firstFreqGroup.locator('[role="radio"][aria-checked="true"]').count()
+    expect(otherChecked, 'exactly one frequency option is checked at a time').toBe(1)
+  })
+
+  test('Website panel: clicking Redeploy without a paid plan hits the real upgrade gate', async ({ page }) => {
+    // WebsitePanel.tsx's requestRedeploy() checks canManage BEFORE ever
+    // setting redeploy.phase to 'confirm' — canManage={signedIn &&
+    // !!activePlan} (Live.tsx), and the seeded fixture's activePlan is ''
+    // (buildSeedPayload), so this real founder is genuinely unpaid. Clicking
+    // Redeploy here must route straight to onRequireUpgrade (goUpgrade →
+    // pricing screen) and must NEVER reach the confirm dialog or trigger a
+    // real Railway redeploy of this company's live site.
+    const panel = page.getByTestId('website-panel')
+    await expect(panel).toBeVisible({ timeout: 15_000 })
+
+    const redeploySection = page.getByTestId('website-redeploy')
+    await expect(redeploySection).toBeVisible()
+    const redeployBtn = page.getByTestId('redeploy-btn')
+    await expect(redeployBtn).toBeVisible()
+    await expect(redeployBtn).toHaveAttribute('title', 'Upgrade to redeploy your app')
+
+    await redeployBtn.click()
+    await page.waitForTimeout(1_000) // let the real onRequireUpgrade navigation (if any) settle
+
+    await expect(page.getByTestId('redeploy-confirm')).toBeHidden()
+    const onPricing = page.url().includes('pricing') || page.url().includes('screen=pricing')
+    expect(onPricing, 'an unpaid founder clicking Redeploy must hit the real upgrade gate, never the real confirm dialog').toBe(true)
   })
 })
