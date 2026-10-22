@@ -244,5 +244,12 @@ export const ARTIFACT_PROMPTS: Record<string, ArtifactSpec> = {
   },
 }
 
-/** Views that have a real generation prompt (others use their static/special body). */
-export const GENERATED_VIEWS = new Set(Object.keys(ARTIFACT_PROMPTS))
+/**
+ * Views that have a real generation prompt (others use their static/special
+ * body). Re-exported from generated-views.ts (#1200) -- that module is the
+ * real source so useAutoplay.ts and ArtifactFrame.tsx can depend on just the
+ * Set<string> without pulling in this file's heavy module graph
+ * (primitive-catalog.ts et al). Kept here too so existing callers that
+ * import it from this file keep working unchanged.
+ */
+export { GENERATED_VIEWS } from './generated-views'

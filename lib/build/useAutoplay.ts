@@ -23,7 +23,7 @@ import {
   trackViews, viewBelongsToTrack, firstUnfinishedView,
   type BuildState, type BuildAction, type ArtifactView,
 } from '@/lib/build/state'
-import { GENERATED_VIEWS } from '@/lib/build/artifact-prompts'
+import { GENERATED_VIEWS } from '@/lib/build/generated-views'
 import { PRIMITIVE_MAP } from '@/lib/build/primitives'
 
 type Dispatch = React.Dispatch<BuildAction>
