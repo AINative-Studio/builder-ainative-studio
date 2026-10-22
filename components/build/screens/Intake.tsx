@@ -66,7 +66,9 @@ export function Intake() {
       <div className="m-chat-log">
         <p className="m-chat-cody"><span className="m-glyph">◇</span> Cody · your co-founder</p>
         <p className="m-chat-cody-turn">
-          Tell me your idea in a sentence or two. I&apos;ll ask 3 quick questions, then get to work.
+          Tell me your idea in a sentence or two. I&apos;ll ask 3 quick questions, then get to work —
+          I&apos;ll check in with you a few times along the way for a couple of real calls, but you
+          won&apos;t be stuck waiting on me.
         </p>
         {tooThin && (
           <p className="m-chat-cody-turn" data-testid="intake-idea-too-thin">

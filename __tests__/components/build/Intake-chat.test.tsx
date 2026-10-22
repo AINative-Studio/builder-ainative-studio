@@ -32,9 +32,19 @@ afterEach(() => {
 })
 
 describe('Intake — chat presentation (#E3.1)', () => {
-  it("Cody's first message is the exact backlog-specified line", () => {
+  it("Cody's first message opens with the backlog-specified line", () => {
     render(React.createElement(Intake))
-    expect(host.textContent).toContain("Tell me your idea in a sentence or two. I'll ask 3 quick questions, then get to work.")
+    expect(host.textContent).toContain("Tell me your idea in a sentence or two. I'll ask 3 quick questions, then get to work")
+  })
+
+  // #1258: the original line implied a fully hands-off pipeline, but real
+  // generation pauses for a handful of genuine product decisions (AI Kit
+  // Safety, ZeroDB Functions, Agent Observability, Instant DB) that a founder
+  // expecting zero interruptions hits as unplanned stops. Set honest
+  // expectations up front instead of promising silence.
+  it('sets honest expectations that Cody will check in a few times during generation', () => {
+    render(React.createElement(Intake))
+    expect(host.textContent).toContain("I'll check in with you a few times along the way")
   })
 
   it('still renders a real input the founder can type into and submit', () => {

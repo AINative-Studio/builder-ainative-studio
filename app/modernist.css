@@ -596,6 +596,9 @@
    freetext input sat flush against the Next button with no gap. Real
    layout, matching this file's existing .m-field/.btn-ghost conventions. */
 .m-kickoff-suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+/* #1258 — honest, low-key hint under "Not sure yet" so skipping a kickoff
+   question never leaves the founder wondering if it cost them anything. */
+.m-kickoff-not-sure-hint { font-size: 11px; color: var(--text-muted); margin: 8px 0 0; }
 .m-kickoff-freetext-row { display: flex; gap: 10px; margin-top: 14px; align-items: stretch; }
 .m-kickoff-freetext-row input { flex: 1; min-width: 0; padding: 10px 12px; border: 1.5px solid var(--neutral-line); font-family: var(--font-body); font-size: 14px; background: var(--color-surface); color: var(--color-text); }
 .m-kickoff-freetext-row .btn-primary { flex-shrink: 0; }

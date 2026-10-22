@@ -200,6 +200,9 @@ export function KickoffQuestions() {
           {NOT_SURE}
         </button>
       </div>
+      <p className="m-kickoff-not-sure-hint m-mono" data-testid="kickoff-not-sure-hint">
+        Cody will infer a reasonable answer either way — skipping won&apos;t hurt your Product Brief.
+      </p>
       <div className="m-kickoff-freetext-row">
         <input
           type="text"
