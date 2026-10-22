@@ -133,17 +133,27 @@ export function maxTasksForTier(tier: string | null | undefined): number {
  * lib/ainative/active-plan.ts's resolveActivePlan(). Omitted or
  * unresolvable, this degrades to the free-tier limit. Returns how many were
  * attempted + how many completed successfully. Never throws.
+ *
+ * #1232 — `completed` means coverage-verified, decided BEFORE resolveTask()
+ * attempts its own best-effort auto-merge + redeploy (#468); a merge/deploy
+ * hiccup never flips a completed task back to failed, so `completed` alone
+ * cannot tell an admin whether the founder's live app actually changed.
+ * `merged`/`redeployed` surface resolveTask()'s own in-memory outcome for
+ * that, so the nightly-loop aggregate can report real ship rate, not just
+ * coverage-pass rate.
  */
 export async function runTaskResolutions(
   scopeKey: string,
   slug: string,
   planTier?: string | null,
-): Promise<{ attempted: number; completed: number }> {
-  if (!scopeKey || !slug) return { attempted: 0, completed: 0 }
+): Promise<{ attempted: number; completed: number; merged: number; redeployed: number }> {
+  if (!scopeKey || !slug) return { attempted: 0, completed: 0, merged: 0, redeployed: 0 }
 
   const limit = maxTasksForTier(planTier)
   let attempted = 0
   let completed = 0
+  let merged = 0
+  let redeployed = 0
   try {
     const tasks = await listTasks(scopeKey)
     const todo = tasks.filter((t): t is BuildTask => t.stage === 'todo')
@@ -186,6 +196,8 @@ export async function runTaskResolutions(
       try {
         const result = await resolveTask(scopeKey, task, slug)
         if (result.ok) completed += 1
+        if (result.merged) merged += 1
+        if (result.redeployed) redeployed += 1
       } catch {
         /* per-task failure is non-fatal — resolveTask already records the
          * real reason on the task itself when it can; keep going either way. */
@@ -194,5 +206,5 @@ export async function runTaskResolutions(
   } catch {
     /* listing failure is non-fatal */
   }
-  return { attempted, completed }
+  return { attempted, completed, merged, redeployed }
 }

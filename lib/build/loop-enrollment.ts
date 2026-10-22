@@ -308,6 +308,16 @@ export interface NightlyRunHealth {
   failed: number
   tasksAttempted: number
   tasksCompleted: number
+  /**
+   * #1232 — real ship rate, not just coverage-pass rate: how many of
+   * tasksCompleted's coverage-verified tasks were actually auto-merged to
+   * main / redeployed to the founder's live app (resolveTask()'s own
+   * best-effort merge+deploy, #468, never flips completed back to failed on
+   * a hiccup — so completed alone can look healthy while PRs sit unmerged).
+   * Optional so an older/pre-#1232 row is never mistaken for an explicit 0.
+   */
+  tasksMerged?: number
+  tasksRedeployed?: number
   stalledCompanies: number
   elapsedMs: number
   /**
