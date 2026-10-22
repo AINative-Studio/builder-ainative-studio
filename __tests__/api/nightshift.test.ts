@@ -104,4 +104,37 @@ describe('GET /api/build/nightshift', () => {
     expect(data.hasRun).toBe(false)
     expect(h.getLastRun).not.toHaveBeenCalled()
   })
+
+  // #1268: this messages.create call had no AbortSignal/timeout — a stalled
+  // upstream response hung the whole GET indefinitely, same bug class as
+  // #1253/#1266.
+  it('passes an AbortSignal to messages.create (#1268)', async () => {
+    h.getLastRun.mockResolvedValue({ lastRunAt: '2026-09-02T04:00:00Z', lastStatus: 'ok', lastTaskId: 't-1' })
+    const create = vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'Ran overnight.' }] })
+    h.getClaudeCompletion.mockReturnValue({
+      client: { messages: { create } }, provider: 'anthropic' as const, model: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5',
+    })
+    await GET(req('companyId=beacon&companyName=Beacon&idea=an+idea'))
+    expect(create).toHaveBeenCalledTimes(1)
+    const [, options] = create.mock.calls[0]
+    expect(options?.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('a stalled/aborted call is caught — falls back to the honest default summary, never hangs (#1268)', async () => {
+    h.getLastRun.mockResolvedValue({ lastRunAt: '2026-09-02T04:00:00Z', lastStatus: 'ok', lastTaskId: 't-1' })
+    const create = vi.fn().mockImplementation((_params: unknown, options: { signal?: AbortSignal }) => new Promise((_resolve, reject) => {
+      options?.signal?.addEventListener('abort', () => reject(new Error('This operation was aborted')))
+    }))
+    h.getClaudeCompletion.mockReturnValue({
+      client: { messages: { create } }, provider: 'anthropic' as const, model: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5',
+    })
+    const pending = GET(req('companyId=beacon&companyName=Beacon&idea=an+idea'))
+    await vi.waitFor(() => expect(create).toHaveBeenCalled())
+    const [, options] = create.mock.calls[0]
+    options.signal.dispatchEvent(new Event('abort'))
+    const res = await pending
+    const data = await res.json()
+    expect(data.hasRun).toBe(true)
+    expect(data.summary).toContain('Beacon')
+  })
 })

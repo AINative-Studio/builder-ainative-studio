@@ -71,6 +71,12 @@ async function slugTaken(slug: string): Promise<boolean> {
 
 const MAX_NAMING_ATTEMPTS = 4
 
+// #1266-class bug: this call had no AbortSignal/timeout, so a stalled
+// upstream response hung proposeBrand() — and the whole POST, which awaits
+// it (retried up to MAX_NAMING_ATTEMPTS times on a real slug collision) —
+// indefinitely. Same bug class as #1253/#1266.
+const BRAND_PROPOSAL_TIMEOUT_MS = 20_000
+
 interface Brand { name: string; tagline: string; color: string }
 
 /** One real model call. Returns null on any failure (bad response, network,
@@ -84,10 +90,13 @@ async function proposeBrand(idea: string, avoidNames: string[]): Promise<Brand |
   const claude = getClaudeCompletion()
   if (claude) {
     try {
-      const res = await claude.client.messages.create({
-        model: claude.model, max_tokens: 200, temperature: 0.9, system: SYSTEM,
-        messages: [{ role: 'user', content: user }],
-      })
+      const res = await claude.client.messages.create(
+        {
+          model: claude.model, max_tokens: 200, temperature: 0.9, system: SYSTEM,
+          messages: [{ role: 'user', content: user }],
+        },
+        { signal: AbortSignal.timeout(BRAND_PROPOSAL_TIMEOUT_MS) },
+      )
       const text = (res.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n')
       const j = parseJson(text)
       if (j?.name) return { name: j.name, tagline: j.tagline || '', color: sanitizeColor(j.color) }

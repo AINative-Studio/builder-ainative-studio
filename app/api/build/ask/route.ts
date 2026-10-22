@@ -174,6 +174,12 @@ function looksLikePlainQuestion(question: string): boolean {
  *  filed for THIS message (the honest, safe default), never a crash. */
 const CLASSIFIER_TIMEOUT_MS = 6_000
 
+// #1266-class bug: the tool-use loop below bounds the number of ROUNDS
+// (MAX_TOOL_ROUNDS) but each individual messages.create() call itself had no
+// AbortSignal/timeout — a single stalled round still hung the whole request
+// indefinitely, same bug class as #1253/#1266, the round cap notwithstanding.
+const ASK_TOOL_LOOP_TIMEOUT_MS = 20_000
+
 /**
  * #774 (Gap 2): does `question` read as a genuine feature/change request,
  * even though detectEditIntent's deliberately-conservative imperative-verb
@@ -706,11 +712,14 @@ export async function askCody(params: AskCodyParams): Promise<AskCodyResult | { 
       let working: any[] = [...messages]
       let res: any = null
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-        res = await claude.client.messages.create({
-          model, max_tokens: 600, temperature: 0.7, system,
-          messages: working,
-          tools: ASK_TOOL_DEFINITIONS,
-        })
+        res = await claude.client.messages.create(
+          {
+            model, max_tokens: 600, temperature: 0.7, system,
+            messages: working,
+            tools: ASK_TOOL_DEFINITIONS,
+          },
+          { signal: AbortSignal.timeout(ASK_TOOL_LOOP_TIMEOUT_MS) },
+        )
         const toolUseBlocks = (res.content || []).filter((b: any) => b.type === 'tool_use')
         if (res.stop_reason !== 'tool_use' || toolUseBlocks.length === 0) break
 
