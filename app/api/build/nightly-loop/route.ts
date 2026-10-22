@@ -110,6 +110,8 @@ interface CompanyOutcome {
   /** #1232 — real ship rate alongside coverage-pass rate; see runTaskResolutions(). */
   tasksMerged: number
   tasksRedeployed: number
+  /** How many orphaned `in_progress` tasks were recovered this run — see task-resolution-loop.ts's isStaleInProgress. */
+  tasksReaped: number
   commsSent: boolean
   stalled: boolean
 }
@@ -204,6 +206,7 @@ export async function GET(request: NextRequest) {
     const tasksCompleted = completed.reduce((n, o) => n + (o.value?.tasksCompleted || 0), 0)
     const tasksMerged = completed.reduce((n, o) => n + (o.value?.tasksMerged || 0), 0)
     const tasksRedeployed = completed.reduce((n, o) => n + (o.value?.tasksRedeployed || 0), 0)
+    const tasksReaped = completed.reduce((n, o) => n + (o.value?.tasksReaped || 0), 0)
     const commsSent = completed.filter((o) => o.value?.commsSent).length
     const stalledCompanies = completed.filter((o) => o.value?.stalled).length
 
@@ -218,12 +221,20 @@ export async function GET(request: NextRequest) {
     logger.info('Nightly autonomous loop complete', {
       dispatched, total: results.length, processed: completed.length, deferred,
       failedCompanies, reportsWritten, mediaGenerated, tasksAttempted, tasksCompleted,
-      tasksMerged, tasksRedeployed,
+      tasksMerged, tasksRedeployed, tasksReaped,
       commsSent, stalledCompanies, elapsedMs, budgetExhausted,
     })
     if (stalledCompanies > 0) {
       logger.warn('Nightly loop: companies with a stalled agent swarm', {
         stalledCompanies, of: completed.length,
+      })
+    }
+    if (tasksReaped > 0) {
+      // A non-zero reap count means a PRIOR run was killed mid-resolution
+      // (task-resolution-loop.ts's isStaleInProgress) — worth its own log
+      // line so this doesn't just blend into the aggregate above.
+      logger.warn('Nightly loop: recovered orphaned in_progress tasks from a prior crashed/killed run', {
+        tasksReaped,
       })
     }
 
@@ -243,6 +254,7 @@ export async function GET(request: NextRequest) {
       tasksCompleted,
       tasksMerged,
       tasksRedeployed,
+      tasksReaped,
       stalledCompanies,
       elapsedMs,
     })
@@ -264,6 +276,7 @@ export async function GET(request: NextRequest) {
       tasksCompleted,
       tasksMerged,
       tasksRedeployed,
+      tasksReaped,
       commsSent,
       stalledCompanies,
       results,
@@ -293,6 +306,7 @@ export async function GET(request: NextRequest) {
       tasksCompleted: 0,
       tasksMerged: 0,
       tasksRedeployed: 0,
+      tasksReaped: 0,
       stalledCompanies: 0,
       elapsedMs: Date.now() - startedAt,
       crashed: true,
@@ -318,7 +332,7 @@ async function runForCompany(
   const outcome: CompanyOutcome = {
     result: { companyId: e.companyId, briefing: null, taskId: null, status: 'error', detail: 'not run' },
     reportWritten: false, mediaGenerated: 0, tasksAttempted: 0, tasksCompleted: 0,
-    tasksMerged: 0, tasksRedeployed: 0,
+    tasksMerged: 0, tasksRedeployed: 0, tasksReaped: 0,
     commsSent: false, stalled: false,
   }
 
@@ -540,6 +554,7 @@ async function runForCompany(
       outcome.tasksCompleted += t.completed
       outcome.tasksMerged += t.merged || 0
       outcome.tasksRedeployed += t.redeployed || 0
+      outcome.tasksReaped += t.reaped || 0
     } catch (err) {
       logger.warn('Task resolution run failed', { companyId: e.companyId, err: (err as Error)?.message })
     }
