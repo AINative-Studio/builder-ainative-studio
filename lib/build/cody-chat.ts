@@ -5,6 +5,12 @@
  */
 import { getClaudeCompletion } from '@/lib/build/claude-completion'
 
+// builder#1266: these two calls bypassed claude-completion.ts's own
+// completeText() timeout wrapper and called messages.create() raw -- same
+// unbounded-call bug class as #1253. A stalled upstream response hung
+// /api/build/cody-explain or /api/build/cody-summary forever with no error.
+const CODY_CHAT_CALL_TIMEOUT_MS = 20_000
+
 export interface SummaryResult {
   ok: boolean
   summary?: string
@@ -38,7 +44,7 @@ export async function explainBeforeBuilding(
         role: 'user',
         content: `Track: ${track}. About to build: ${view}. The founder's idea: ${idea}`,
       }],
-    })
+    }, { signal: AbortSignal.timeout(CODY_CHAT_CALL_TIMEOUT_MS) })
     const text = res?.content?.find((b: { type: string }) => b.type === 'text')?.text
     if (!text) return { ok: false, reason: 'empty_response' }
     return { ok: true, explanation: String(text).trim() }
@@ -63,7 +69,7 @@ export async function summarizeArtifactStep(
         role: 'user',
         content: `Track: ${track}. Step: ${view}. Generated content:\n${JSON.stringify(content).slice(0, 4000)}`,
       }],
-    })
+    }, { signal: AbortSignal.timeout(CODY_CHAT_CALL_TIMEOUT_MS) })
     const text = res?.content?.find((b: { type: string }) => b.type === 'text')?.text
     if (!text) return { ok: false, reason: 'empty_response' }
     return { ok: true, summary: String(text).trim() }
