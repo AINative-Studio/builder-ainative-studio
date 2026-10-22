@@ -347,7 +347,15 @@ export async function POST(request: NextRequest) {
                 prompt: message,
                 generatedCode: fullContent,
                 promptVersionId,
-                model,
+                // #1202: this referenced the non-streaming branch's `model`
+                // const, which isn't declared until after this streaming
+                // branch returns — a TDZ ReferenceError on every
+                // authenticated streaming request, silently swallowed by
+                // the .catch below (so generations still succeeded, but
+                // RLHF logging for streaming generations was silently
+                // broken). `llamaModel` is this branch's own equivalent,
+                // already in scope.
+                model: llamaModel,
                 templateUsed: templateMatch?.templateName || null,
                 generationTimeMs,
               }).catch(err => {
