@@ -280,9 +280,16 @@ export default function RulesSettingsPage() {
       if (typeof fixed.fileContent === 'string')
         setFileContent(fixed.fileContent)
 
+      // #1193: auto-fix now really marks the violations it fixed in the
+      // violation history (it previously ran an empty loop and reported
+      // success regardless). Say so when some could not be marked, rather
+      // than implying the history was updated.
       toast({
         title: 'Auto-fix applied',
-        description: `Fixed ${data.fixedCount} violation(s)`,
+        description:
+          data.unmarkedCount > 0
+            ? `Fixed ${data.fixedCount} violation(s); ${data.unmarkedCount} could not be marked fixed in history`
+            : `Fixed ${data.fixedCount} violation(s)`,
       })
       await runValidation()
     } catch (error) {
