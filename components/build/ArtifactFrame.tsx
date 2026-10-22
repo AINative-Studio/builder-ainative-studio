@@ -20,7 +20,7 @@
 import { useBuild } from '@/contexts/build-context'
 import { SHARED_LATE_VIEWS, trackViews } from '@/lib/build/state'
 import { collectPrior, serializeArtifact, applyEdit } from '@/lib/build/artifact-edit'
-import { GENERATED_VIEWS } from '@/lib/build/artifact-prompts'
+import { GENERATED_VIEWS } from '@/lib/build/generated-views'
 import { generateArtifact } from '@/lib/build/useAutoplay'
 import { CompanyNameEdit } from '@/components/build/CompanyNameEdit'
 import { useState, type ReactNode } from 'react'
