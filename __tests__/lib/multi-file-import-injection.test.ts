@@ -56,6 +56,25 @@ describe('multi-file import injection: no cross-module duplicates (#64)', () => 
     expect(strictParses(app)).toBe(true)
   })
 
+  // professional-prompt.ts tells the model VideoPlayer/StreamingText/MediaGallery
+  // are valid AIKit primitives (and even imports them itself in its own example
+  // at line 386) but AIKIT_COMPONENTS was missing all three, so a sub-component
+  // file using them with no explicit import sailed through generation unfixed
+  // and broke at render time with "X is not defined".
+  it('injects missing imports for VideoPlayer, StreamingText, and MediaGallery', () => {
+    const raw = [
+      "import React from 'react'",
+      'export default function App(){',
+      '  return <div><VideoPlayer src="a.mp4"/><StreamingText text="hi"/><MediaGallery items={[]}/></div>;',
+      '}',
+    ].join('\n')
+    const app = Object.values(parseMultiFileOutput(raw))[0]
+    expect(/import\s*\{[^}]*\bVideoPlayer\b[^}]*\}\s*from\s*['"]\.\/components\/aikit['"]/.test(app)).toBe(true)
+    expect(/import\s*\{[^}]*\bStreamingText\b[^}]*\}\s*from\s*['"]\.\/components\/aikit['"]/.test(app)).toBe(true)
+    expect(/import\s*\{[^}]*\bMediaGallery\b[^}]*\}\s*from\s*['"]\.\/components\/aikit['"]/.test(app)).toBe(true)
+    expect(strictParses(app)).toBe(true)
+  })
+
   // The rendered per-file code is sanitized after injection, so pre-existing
   // per-file defects (multi-line duplicate imports, stray-semicolon arrows) are
   // repaired before reaching Sandpack (builder#64 — found in live 5-run E2E).
