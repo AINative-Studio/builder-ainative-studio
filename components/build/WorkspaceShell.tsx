@@ -63,11 +63,23 @@ export function WorkspaceShell({
   feed?: ReactNode
   children: ReactNode
 }) {
-  const { state } = useBuild()
+  const { state, dispatch } = useBuild()
   return (
     <div className="modernist m-ws" data-track={state.track}>
       <header className="m-topbar">
-        <span className="m-brand m-mono">Builder</span>
+        {/* #1254: this used to be a plain, unclickable <span> — once inside a
+            workspace there was no way back to "My companies" short of editing
+            the URL by hand (which itself bounced back into the workspace, see
+            isExplicitScreenOnlyDeepLink). Same destination the IndexPanel's
+            own "My companies" quick-nav button above already dispatches. */}
+        <button
+          type="button"
+          className="m-brand m-mono m-brand-link"
+          onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'companies' })}
+          aria-label="Back to my companies"
+        >
+          Builder
+        </button>
         <span className={`m-trackpill m-mono is-${state.track}`}>
           {state.track === 'app' ? 'App Track' : 'Company Track'}
         </span>

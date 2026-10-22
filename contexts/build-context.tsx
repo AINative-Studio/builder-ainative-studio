@@ -279,6 +279,57 @@ export function isExplicitCompanyDeepLink(searchOrUrl: string): boolean {
 }
 
 /**
+ * Screens that are complete, standalone destinations requiring no
+ * `?company=` AND no auth-flow/resume-after-login role — an explicit
+ * `?screen=` deep link to one of these names a real destination exactly like
+ * isExplicitCompanyDeepLink's `?screen=&company=` pair does, even with no
+ * company param, and must not be silently overridden by the #669
+ * resume-pointer effect. See isExplicitScreenOnlyDeepLink.
+ *
+ * Deliberately excludes 'landing'/'login'/'signup'/'forgot'/'reset' (also in
+ * SCREENS_WITHOUT_COMPANY_CONTEXT): those participate in auth-wall/
+ * password-reset flows where resuming an in-flight build afterward is still
+ * the intended behavior, and 'landing' has no query params in the ordinary
+ * bare-reload case the resume-pointer effect exists to serve.
+ */
+const EXPLICIT_SCREEN_ONLY_DESTINATIONS = new Set(['companies', 'account', 'refer'])
+
+/**
+ * Does `?screen=` alone (no `?company=`) name an explicit, user-chosen
+ * destination that no async "helpful redirect" effect may override?
+ * (builder#1254)
+ *
+ * Real bug, root-caused by code reading: a founder navigating directly to
+ * `/build?screen=companies` (bookmark, shared link, typed URL) was silently
+ * bounced back into a stale, unrelated workspace instead. The #669
+ * resume-pointer effect below samples `state.screen` at mount (still
+ * 'landing', since the deep-link effect's own GOTO_SCREEN only lands in the
+ * NEXT commit — the same ordering #761/#1037 already document) and only
+ * re-checks it once `getSession()` resolves ~1-2s later, via `cur.screen` in
+ * `shouldResumeFromPointer`. By then `cur.screen` has become 'companies' —
+ * but 'companies' sits in RESUMABLE_ENTRY_SCREENS (a founder arriving there
+ * with no destination of their own IS meant to be resumable, e.g. after
+ * `shouldRouteToCompaniesIndex` routes a bare reload there), so the pointer
+ * effect could not tell "arrived here with no destination" apart from
+ * "explicitly asked for this screen by URL" and overrode the latter.
+ *
+ * `isExplicitCompanyDeepLink` already solves this for company-scoped screens
+ * via the required `?company=` param; this is the same guard for the
+ * screens that are valid destinations WITHOUT one.
+ */
+export function isExplicitScreenOnlyDeepLink(searchOrUrl: string): boolean {
+  try {
+    const raw = searchOrUrl || ''
+    const q = new URLSearchParams(raw.includes('?') ? raw.slice(raw.indexOf('?') + 1) : raw)
+    const screen = q.get('screen')
+    if (!screen) return false
+    return EXPLICIT_SCREEN_ONLY_DESTINATIONS.has(screen)
+  } catch {
+    return false
+  }
+}
+
+/**
  * Minimal shape of a persisted per-slug cache entry, for completeness checks.
  * Deliberately loose (every field optional): a real localStorage entry written
  * by an older deploy can be missing any of them.
@@ -397,6 +448,7 @@ export function shouldResumeFromPointer(input: {
   current?: { screen: string; appSub: string; idea: string }
 }): boolean {
   if (isExplicitCompanyDeepLink(input.search)) return false
+  if (isExplicitScreenOnlyDeepLink(input.search)) return false
   if (!input.pointer) return false
   if (!input.saved) return false
   if (!canResumeActiveBuild(input.session)) return false
@@ -604,7 +656,7 @@ export function BuildProvider({ children }: { children: ReactNode }) {
     // Short-circuit BEFORE reading or clearing anything: a deep link must leave
     // the pointer untouched, so a later bare reload can still resume from it
     // normally.
-    if (isExplicitCompanyDeepLink(search)) return
+    if (isExplicitCompanyDeepLink(search) || isExplicitScreenOnlyDeepLink(search)) return
     const pointer = loadActiveBuild()
     if (!pointer) return
     const saved = loadBuildState(pointer.slug)
