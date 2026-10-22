@@ -142,6 +142,43 @@ describe('useLiveProof — failure handling', () => {
   })
 })
 
+describe('useLiveProof — transient 503 retry (#1257)', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('retries once and recovers when a 503 is followed by a 200', async () => {
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => Promise.resolve({ ok: false, status: 503, json: () => Promise.resolve(null) } as Response))
+      .mockImplementationOnce(() => makeJsonResponse({ agents_active: 9, total_companies: 90 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useLiveProof())
+    await waitFor(() => expect(result.current.agentsActive).toBe(9), { timeout: 3000 })
+    expect(result.current.companiesBuilt).toBe(90)
+    // One initial attempt + one retry for this single poll cycle.
+    expect(fetchMock.mock.calls.length).toBe(2)
+  })
+
+  it('leaves proof null when both the initial attempt and the retry 503', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve({ ok: false, status: 503, json: () => Promise.resolve(null) } as Response))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useLiveProof())
+    await act(async () => { await new Promise((r) => setTimeout(r, 700)) })
+    expect(result.current.agentsActive).toBeNull()
+    expect(fetchMock.mock.calls.length).toBe(2)
+  })
+
+  it('does not retry a 4xx client error', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve(null) } as Response))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useLiveProof())
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)) })
+    expect(result.current.agentsActive).toBeNull()
+    expect(fetchMock.mock.calls.length).toBe(1)
+  })
+})
+
 describe('useLiveProof — interval refresh', () => {
   beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: false }))
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
