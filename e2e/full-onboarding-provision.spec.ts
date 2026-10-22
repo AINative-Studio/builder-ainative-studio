@@ -43,19 +43,38 @@ test.describe('Full onboarding → generation → provisioning (real account)', 
   // timeout below is ~30 minutes worst case — 35 minutes total, with margin.
   test.setTimeout(2_100_000)
 
-  async function login(page: Page) {
+  /**
+   * Returns true when login landed on My Companies (the account already has
+   * at least one company), false when it landed on the Fork/"Don't build
+   * from scratch." front door (a zero-company account — confirmed live
+   * 2026-10-21 against builder-e2e-test@ainative.studio, the exact #1197
+   * starting state this spec exists to fix).
+   *
+   * BuildApp.tsx's shouldRouteToCompaniesIndex only redirects a signed-in
+   * founder on the landing screen to 'companies' when their real
+   * /api/build/my-companies response has at least one entry — a founder
+   * with zero companies correctly stays on the landing/funnel front door
+   * instead (Polsia-parity front door, builder#1037's own doc comment). The
+   * old version of this helper assumed the account always already had
+   * companies, which stopped being true and left this whole spec unable to
+   * even get past login.
+   */
+  async function login(page: Page): Promise<boolean> {
     await page.goto(`${BASE_URL}/build?screen=login`, { waitUntil: 'domcontentloaded' })
     await page.locator('[data-testid="auth-email"]').fill(EMAIL!)
     await page.locator('[data-testid="auth-password"]').fill(PASSWORD!)
     await page.locator('[data-testid="auth-submit"]').click()
     // signIn() only updates the session in place (redirect: false) — the real
-    // success signal is afterAuth() actually navigating this signed-in
-    // account to My Companies (it already has companies). Waiting on that
-    // real screen, not a fixed sleep or an immediate deep-link past login,
-    // avoids racing the session write (confirmed live: a premature ?screen=
-    // navigation here landed back on signup, since Intake's own auth check
-    // hadn't yet seen the session as authenticated).
-    await expect(page.getByText('My companies')).toBeVisible({ timeout: 15_000 })
+    // success signal is the post-login screen actually resolving one of the
+    // two real destinations above. Waiting on that, not a fixed sleep or an
+    // immediate deep-link past login, avoids racing the session write
+    // (confirmed live: a premature ?screen= navigation here landed back on
+    // signup, since Intake's own auth check hadn't yet seen the session as
+    // authenticated).
+    const myCompanies = page.getByText('My companies')
+    const forkFrontDoor = page.getByText("Don't build from scratch.")
+    await expect(myCompanies.or(forkFrontDoor)).toBeVisible({ timeout: 15_000 })
+    return await myCompanies.isVisible().catch(() => false)
   }
 
   test('real founder path: idea → generation → Live → Provision cloud → real primitive status', async ({ page }) => {
@@ -73,13 +92,20 @@ test.describe('Full onboarding → generation → provisioning (real account)', 
       }
     })
 
-    await login(page)
+    const hadExistingCompanies = await login(page)
 
     // Real authenticated re-entry into the funnel: My Companies → "+ New
     // company" → Fork → "Build a Company →" → Intake. This is what a signed-in
     // founder with existing companies actually clicks — NOT the logged-out
     // Start/Build funnel (Sales-role picker only exists in that path).
-    await page.getByRole('button', { name: '+ New company' }).click()
+    //
+    // A zero-company account (confirmed live 2026-10-21 — see login() above)
+    // lands directly on the Fork front door after login, so there is no
+    // "+ New company" button to click — that control only exists on the My
+    // Companies screen this account doesn't have yet.
+    if (hadExistingCompanies) {
+      await page.getByRole('button', { name: '+ New company' }).click()
+    }
     await expect(page.getByText("Don't build from scratch.")).toBeVisible({ timeout: 10_000 })
     // This real re-entry path (pickTrack('company') with no role arg) has no
     // Sales/Marketing/Operations role picker — that only exists in the
@@ -107,6 +133,89 @@ test.describe('Full onboarding → generation → provisioning (real account)', 
     await expect(textarea).toBeVisible({ timeout: 10_000 })
     await textarea.fill(idea)
     await page.getByRole('button', { name: /Let Cody build it/i }).click()
+
+    // Real kickoff step found live (2026-10-21, not present when this spec was
+    // first written): KickoffQuestions.tsx now inserts exactly 3 one-at-a-time
+    // questions ("Who would you like to help?" etc — lib/build/kickoff-
+    // questions.ts's COMPANY_NEW_BUSINESS_QUESTIONS, always length 3 for every
+    // track/path) between Intake's submit and the real START_BUILD dispatch.
+    // "Not sure yet" (data-testid="kickoff-not-sure") answers each question
+    // with no opinion and is always present — the real, fastest genuine path
+    // through a step kickoff's own doc comment calls "never a hard gate".
+    //
+    // Each click must be followed by a real wait for the QUESTION TEXT to
+    // change before the next click — confirmed live (2026-10-21): clicking
+    // "Not sure yet" back-to-back with no wait left the screen showing
+    // question 1 ("Who would you like to help?") even after 5 rapid clicks,
+    // because KickoffQuestions.tsx's own answer() does a fire-and-forget
+    // fetch to /api/build/anon-draft before any of this screen's state
+    // visibly changes, and the "Not sure yet" button's data-testid is
+    // identical across all 3 questions (so a fast click-after-click can
+    // resolve against the same pre-transition DOM node/handler closure
+    // rather than genuinely progressing one question at a time). Bounded at
+    // 5 (comfortably above the real max of 3 questions) so a genuine product
+    // regression here fails loudly instead of looping forever.
+    // Real bug found live (2026-10-21) across SEVERAL earlier attempts at
+    // this loop, root-caused by direct diagnostic observation (a separate
+    // spec that polled the raw DOM every 2s with no clicks at all, proving
+    // kickoff is a genuinely static screen that never auto-advances or
+    // flickers on its own — so every prior stuck-at-question-1 failure was
+    // this spec's own bug, never the product's):
+    //
+    // `Locator.isVisible({ timeout })` is NOT a poll-until-true wait —
+    // unlike `expect(locator).toBeVisible({ timeout })` or
+    // `locator.waitFor({ state: 'visible', timeout })`, it evaluates the
+    // CURRENT DOM snapshot near-immediately; the `timeout` option only
+    // bounds its own actionability probing, not a real retry loop. Every
+    // earlier version of this block used `isVisible({ timeout })` (or no
+    // timeout at all) expecting it to wait for kickoff to first render —
+    // it doesn't, so the very first check routinely raced Intake's own real
+    // /api/build/brand LLM call (the brand-naming step that runs BEFORE
+    // GOTO_SCREEN('kickoff') ever dispatches) and read `false` simply
+    // because kickoff hadn't mounted YET. That broke the loop immediately,
+    // and DesignPicker's subsequent 60s wait then silently burned its whole
+    // budget while the real kickoff screen sat untouched at question 1 the
+    // entire time — explaining the exact, repeated symptom.
+    //
+    // `waitFor({ state: 'visible', timeout })` genuinely polls, which is
+    // what both the "did kickoff arrive" check and the "did it advance"
+    // check actually need. Bounded at 5 iterations (comfortably above the
+    // real max of 3 questions) so a genuine product regression fails loudly
+    // instead of looping forever.
+    const kickoffArrived = await page.getByTestId('kickoff-not-sure')
+      .waitFor({ state: 'visible', timeout: 30_000 }).then(() => true).catch(() => false)
+    console.log(`[kickoff] arrived=${kickoffArrived}`)
+    for (let i = 0; i < 5 && kickoffArrived; i++) {
+      const notSure = page.getByTestId('kickoff-not-sure')
+      const stillOnKickoff = await notSure.isVisible().catch(() => false)
+      console.log(`[kickoff] iteration ${i}: stillOnKickoff=${stillOnKickoff}`)
+      if (!stillOnKickoff) break
+      const questionText = await page.locator('.m-chat-cody-turn').first().textContent().catch(() => null)
+      console.log(`[kickoff] iteration ${i}: questionText=${JSON.stringify(questionText)}`)
+      await notSure.click()
+      // Wait for real forward progress: either the question text changes
+      // (next kickoff question) or the kickoff screen is gone entirely
+      // (proceed() fired START_BUILD and the workspace advanced).
+      //
+      // Confirmed live (2026-10-21): questions 1-2 advance (via plain
+      // setIndex) well under 10s, but the LAST question's click calls
+      // KickoffQuestions.tsx's own proceed() instead — a real async chain
+      // (getSession() + a POST to /api/build/credits) before GOTO_SCREEN
+      // ever fires, genuinely slower than a local state update. 30s gives
+      // that real round-trip real margin without being so long it masks an
+      // actual regression on the fast (non-last-question) path.
+      try {
+        await expect(async () => {
+          const stillThere = await page.getByTestId('kickoff-not-sure').isVisible().catch(() => false)
+          if (!stillThere) return // kickoff screen is gone — real forward progress
+          const nowText = await page.locator('.m-chat-cody-turn').first().textContent().catch(() => null)
+          expect(nowText).not.toBe(questionText)
+        }).toPass({ timeout: 30_000 })
+      } catch (e) {
+        console.log(`[kickoff] iteration ${i}: no forward progress detected within 30s — ${String(e).slice(0, 200)}`)
+        throw e
+      }
+    }
 
     // Real interrupt 1/2: DesignPicker (lib/build/useAutoplay.ts's
     // INTERRUPT_VIEWS — the only two views the whole Company track pauses
@@ -154,10 +263,64 @@ test.describe('Full onboarding → generation → provisioning (real account)', 
 
     // thesis: auto-drafts and auto-advances (not an INTERRUPT_VIEW) — no
     // click needed, just wait for it to clear into the next real interrupt.
+    //
+    // Real timing found live (2026-10-21), root-caused by reading
+    // lib/build/useAutoplay.ts directly rather than guessing: thesis is a
+    // GENERATED_VIEWS prose artifact (generateArtifact(), same file) with up
+    // to 5 real attempts, each independently bounded at 25s
+    // (ATTEMPT_TIMEOUT_MS) plus capped exponential backoff between them
+    // (0.8s/1.6s/3.2s/6.4s) — a worst-case single-artifact budget of roughly
+    // 125s + 12s ≈ 137s BEFORE the wedge interrupt is even reached. Once
+    // reached, useAutoplay.ts's own wedge-draft fetch (its dedicated
+    // `fetch('/api/build/artifact', { view: 'wedge', ... })` call, lines
+    // ~319-343) has NO retry loop and NO explicit timeout of its own — just
+    // one real LLM call relying on the platform's own request timeout. The
+    // original 120s wait here only covered time AFTER DesignPicker, with no
+    // margin for thesis's own worst case landing first — confirmed live:
+    // screenshotting the actual timeout showed the fully-drafted THESIS
+    // artifact on screen (not Wedge.tsx's content at all), meaning thesis
+    // alone had already consumed most/all of the budget. 5 minutes covers
+    // thesis's real worst case plus a real wedge draft fetch with margin.
+    //
+    // Real blocker found live (2026-10-21), root-caused from the real page
+    // snapshot at a timeout (not guessed): a CodyNudge card ("Cody suggests
+    // · Data Marketplace" — components/build/CodyNudge.tsx, rendered by
+    // CodyFeed.tsx whenever PRIMITIVE_MAP[state.view]?.nudge exists and
+    // hasn't been answered) appeared after thesis finished drafting.
+    // useAutoplay.ts's own guard (the `currentNudge && ... && state.view !==
+    // next` check, ~line 290) deliberately HOLDS autoplay — refuses to
+    // advance the view away — while a nudge for the CURRENT view is
+    // unanswered, exactly so a founder doesn't miss it mid-transition. A
+    // real founder dismisses or accepts it; this spec always dismisses
+    // ("Not now" — CodyNudge.tsx's own real NUDGE/dismissed dispatch, not a
+    // bypass) since accepting would start a real, billable market-data
+    // enrichment flow outside this spec's scope. No data-testid exists on
+    // this button (CodyNudge.tsx is plain text), so this polls for the
+    // exact copy and clicks it whenever it shows up, running CONCURRENTLY
+    // with the wedge wait below (not just once) because a nudge can appear
+    // at more than one artifact view as the document pipeline advances —
+    // confirmed by PRIMITIVE_MAP associating nudges with specific views,
+    // not just 'thesis'.
+    let dismissingNudges = true
+    const dismissNudgesLoop = (async () => {
+      while (dismissingNudges) {
+        const notNow = page.getByRole('button', { name: 'Not now' })
+        const seen = await notNow.isVisible().catch(() => false)
+        if (seen) {
+          console.log('[nudge] dismissing a Cody suggestion card')
+          await notNow.click().catch(() => {})
+        }
+        await page.waitForTimeout(3_000)
+      }
+    })()
 
-    // Real interrupt 2/2: Wedge — pick the drafted wedge, then confirm.
     const wedgeOpt = page.getByText('This is the right wedge')
-    await expect(wedgeOpt).toBeVisible({ timeout: 120_000 })
+    try {
+      await expect(wedgeOpt).toBeVisible({ timeout: 300_000 })
+    } finally {
+      dismissingNudges = false
+      await dismissNudgesLoop
+    }
     await wedgeOpt.click()
     await clickConfirmIfPresent('Sharper.')
 
@@ -175,12 +338,23 @@ test.describe('Full onboarding → generation → provisioning (real account)', 
     //
     // Log real progress every 20s ("N/7 artifacts drafted") so a genuinely
     // stuck draft is visible in CI output instead of only a full-timeout
-    // failure with no insight into WHERE.
+    // failure with no insight into WHERE. Also keeps dismissing any further
+    // CodyNudge card (same real "Not now" mechanism as the wedge wait above
+    // — PRIMITIVE_MAP associates nudges with several different views, not
+    // just 'thesis', so businessModel/positioning/landing/plan30 can each
+    // independently trigger one and autoplay HOLDS on each until answered).
     const progressPoll = setInterval(async () => {
       try {
         const text = await page.locator('text=/\\d+\\/7 artifacts drafted/').first().textContent({ timeout: 2_000 })
         if (text) console.log(`[progress] ${text}`)
       } catch { /* page may be mid-transition — skip this tick */ }
+      try {
+        const notNow = page.getByRole('button', { name: 'Not now' })
+        if (await notNow.isVisible({ timeout: 1_000 }).catch(() => false)) {
+          console.log('[nudge] dismissing a Cody suggestion card')
+          await notNow.click().catch(() => {})
+        }
+      } catch { /* benign — next tick will retry */ }
     }, 20_000)
     try {
       const seeLive = page.getByRole('button', { name: 'See it live →' })
@@ -276,5 +450,29 @@ test.describe('Full onboarding → generation → provisioning (real account)', 
     }).toPass({ timeout: 15_000 })
 
     await page.screenshot({ path: 'e2e/screenshots/full-onboarding-provisioned.png', fullPage: true })
+
+    // #1197 — persist the real seeded company's identity so other specs (in
+    // particular #1198's e2e/session-restore.spec.ts) can pick it up without
+    // ever re-running this ~20-35 minute real generation themselves. The URL
+    // is the authority for the slug: contexts/build-context.tsx's #648
+    // URL-sync effect keeps `?company=` in sync with `state.appSub` the whole
+    // time the Live screen is mounted, so reading it back here is reading the
+    // SAME value Live.tsx itself resolved `companyId` from — not a guess.
+    const liveUrl = new URL(page.url())
+    const seededSlug = liveUrl.searchParams.get('company')
+    expect(seededSlug, 'Live screen URL must carry the real ?company= slug once generation completes').toBeTruthy()
+    const fixture = {
+      slug: seededSlug,
+      companyName: await page.locator('h1, h2').first().textContent().catch(() => null),
+      idea,
+      track: 'company' as const,
+      seededAt: new Date().toISOString(),
+    }
+    const fs = await import('fs')
+    const path = await import('path')
+    const fixturePath = path.join(__dirname, 'fixtures', 'seeded-company.json')
+    fs.mkdirSync(path.dirname(fixturePath), { recursive: true })
+    fs.writeFileSync(fixturePath, JSON.stringify(fixture, null, 2))
+    console.log(`[seed] wrote real seeded-company fixture: ${JSON.stringify(fixture)}`)
   })
 })
