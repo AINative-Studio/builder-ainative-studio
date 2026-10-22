@@ -113,6 +113,21 @@ const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-5-20250929'
 const DEFAULT_MODEL = USE_CLAUDE_DIRECT ? CLAUDE_MODEL : (process.env.DEFAULT_MODEL || 'ministral-14b')
 const PAID_MODEL = process.env.PAID_MODEL || 'kimi-k2.6'
 
+// #1253: the primary Claude/Bedrock codegen call below had NO timeout at all —
+// the exact same hang this repo already diagnosed and fixed once before, in
+// lib/build/claude-completion.ts's completeText() ("Bedrock has no built-in
+// timeout option; the Anthropic SDK's default is effectively unbounded for
+// this use"). There, a hung call left a DocumentsPanel "Generating…" stuck
+// forever with no error. Here, the same unbounded call is the PRIMARY app
+// codegen path — a hang leaves the SSE stream open with zero further events,
+// which is exactly the live symptom reported against builder.ainative.studio:
+// chat-ws returns 200 (headers), the stream never closes, and the Preview
+// artifact never leaves "Cody is building your app…" with no error surfaced
+// anywhere. Bounded via Promise.race (provider-agnostic, same fix shape as
+// completeText) so a stalled call always falls through to the AINative
+// fallback chain below instead of hanging the whole generation indefinitely.
+const PRIMARY_CLAUDE_TIMEOUT_MS = Number(process.env.PRIMARY_CLAUDE_TIMEOUT_MS || 120_000)
+
 // Direct Anthropic-API client — lazy initialized on first use.
 let anthropicClient: any = null
 function getAnthropicDirectClient() {
@@ -1234,7 +1249,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               const genModel = _primaryClaude!.provider === 'bedrock' ? selectedGenModel : _primaryClaude!.model
               console.log(`🧠 Using ${genModel} via ${_primaryClaude!.provider}`)
               try {
-                const claudeResponse = await claude.messages.create({
+                const claudeCall = claude.messages.create({
                   model: genModel,
                   // #310: a complex multi-file app (aerosol was ~7700 tok) was hitting
                   // the 8192 ceiling → TRUNCATED mid-JSX → misnested-brace syntax
@@ -1247,6 +1262,11 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                     ? [...budgetResult.messages.map((m: any) => ({ role: m.role, content: m.content })), { role: 'user', content: enhancedPrompt }]
                     : [{ role: 'user', content: enhancedPrompt }],
                 })
+                // #1253: bound the call — see PRIMARY_CLAUDE_TIMEOUT_MS doc comment above.
+                const claudeTimeout = new Promise<never>((_, reject) => {
+                  setTimeout(() => reject(new Error('PRIMARY_CLAUDE_TIMEOUT')), PRIMARY_CLAUDE_TIMEOUT_MS)
+                })
+                const claudeResponse: any = await Promise.race([claudeCall, claudeTimeout])
 
                 fullContent = claudeResponse.content
                   .filter((block: any) => block.type === 'text')
