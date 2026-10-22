@@ -8,6 +8,17 @@
  *
  * Public endpoint, no auth: GET /api/v1/public/platform/intelligence.
  * Falls back to null (component hides the strip) rather than blocking render.
+ *
+ * #1257: a transient 503 was observed in production sandwiched between two
+ * otherwise-successful polls of /api/build/intelligence. The route handler
+ * itself (app/api/build/intelligence/route.ts) always returns 200 on every
+ * code path it controls — success or upstream failure — so a 503 reaching
+ * the browser did not originate from this route's own logic; it reads as an
+ * infra-level blip in front of the handler (edge/cold-start) rather than a
+ * server-side bug. The poll loop below already self-heals within 15s since
+ * a non-ok response just leaves the strip showing stale numbers, but a one-
+ * shot retry on a transient (5xx/network) failure closes the gap further
+ * with no added risk, so it's added here defensively.
  */
 
 import { useEffect, useState } from 'react'
@@ -32,8 +43,22 @@ export function useLiveProof(): LiveProof {
   useEffect(() => {
     let alive = true
     const ac = new AbortController()
+
+    // One-shot retry on a transient (5xx) response — a 503 from an edge/
+    // cold-start blip shouldn't cost a full 15s refresh cycle when a quick
+    // second attempt would likely succeed. Client errors (4xx) and an
+    // already-aborted signal are not retried.
+    const fetchOnce = () => fetch(INTELLIGENCE_URL, { signal: ac.signal })
+    const fetchWithRetry = async (): Promise<Response> => {
+      const res = await fetchOnce()
+      if (res.ok || !(res.status >= 500) || !alive) return res
+      await new Promise((r) => setTimeout(r, 500))
+      if (!alive || ac.signal.aborted) return res
+      return fetchOnce()
+    }
+
     const load = () => {
-      fetch(INTELLIGENCE_URL, { signal: ac.signal })
+      fetchWithRetry()
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
           if (!alive || !d) return
