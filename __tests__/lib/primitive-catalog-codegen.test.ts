@@ -1004,6 +1004,75 @@ describe('primitive-catalog additions (#410)', () => {
     })
   })
 
+  describe('#126 follow-up — A2UI (agent-described UI, now that @ainative/ai-kit-a2ui[-core] are real published npm packages)', () => {
+    // Real finding: A2UI was previously just a two-word substring inside AI
+    // Kit's purpose string, never its own catalog entry — nothing could have
+    // selected it, scored it, or told the model how to use it, and the real
+    // packages didn't even exist on npm until this session. Narrow-triggered
+    // like Stripe above, so it never competes with AI Kit's own (correct)
+    // selection for ordinary dashboard/table/card UI.
+    const A2UI_IDEA = 'a chat app where the agent decides what UI to show next, like a dynamic generative ui builder'
+
+    it('an agent-described-UI idea selects the A2UI primitive', () => {
+      const { names } = selectPrimitives(A2UI_IDEA, 'app')
+      expect(names).toContain('A2UI')
+    })
+
+    it('a generic chat/dashboard idea alone does NOT select A2UI — that stays AI Kit territory', () => {
+      const { names } = selectPrimitives('a chat interface for customer support with a dashboard', 'app')
+      expect(names).not.toContain('A2UI')
+    })
+
+    it('the composition block carries a literal A2UIRenderer code fence + explicit anti-pattern language, naming both real packages', () => {
+      const block = codegenCompositionBlock(A2UI_IDEA, 'app')
+      expect(block).toContain('@ainative/ai-kit-a2ui')
+      expect(block).toContain('@ainative/ai-kit-a2ui-core')
+      expect(block).toMatch(/```tsx[\s\S]*A2UIRenderer/)
+      expect(block).toMatch(/ANTI-PATTERN — FORBIDDEN/)
+      expect(block).toMatch(/flat id-referenced array/i)
+    })
+
+    it('explicitly warns against inventing a nested children shape — the real protocol is flat id references', () => {
+      const block = codegenCompositionBlock(A2UI_IDEA, 'app')
+      expect(block).toMatch(/children:\s*string\[\]/)
+      expect(block).toMatch(/never nested component objects|do NOT invent a nested/i)
+    })
+
+    it('RUNTIME_PROXY_PATH_SUBSTRINGS carries a real, greppable import signal (not a proxy path) so the #518 compliance validator can still catch an unwired selection', () => {
+      expect(RUNTIME_PROXY_PATH_SUBSTRINGS.A2UI).toEqual(['@ainative/ai-kit-a2ui'])
+      expect(getComplianceCheckedPrimitiveNames()).toContain('A2UI')
+    })
+
+    it('getRuntimeProxyInstruction returns the same instruction text codegenCompositionBlock injects', () => {
+      const instruction = getRuntimeProxyInstruction('A2UI')
+      expect(instruction).toBeDefined()
+      expect(instruction).toMatch(/A2UIRenderer/)
+      const block = codegenCompositionBlock(A2UI_IDEA, 'app')
+      expect(block).toContain(instruction!.split('\n')[0])
+    })
+
+    it('findPrimitiveComplianceGaps flags an A2UI idea whose generated code never imported the real renderer', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      const brokenCode = `
+        function AgentSurface({ messageType }) {
+          switch (messageType) { case 'card': return <Card />; default: return null }
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(brokenCode, A2UI_IDEA)
+      expect(gaps).toContain('A2UI')
+    })
+
+    it('findPrimitiveComplianceGaps does not flag A2UI when the real renderer IS imported', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      const compliantCode = `
+        import { A2UIRenderer } from '@ainative/ai-kit-a2ui'
+        function AgentSurface({ components }) { return <A2UIRenderer components={components} /> }
+      `
+      const gaps = findPrimitiveComplianceGaps(compliantCode, A2UI_IDEA)
+      expect(gaps).not.toContain('A2UI')
+    })
+  })
+
   describe('#642 fix — ServiceOS runtime proxy (found via a systematic gap sweep across the whole catalog)', () => {
     // Real finding (2026-09-10, following the ZeroInvoice #638/#639 fix): a
     // systematic cross-reference of every catalog primitive against

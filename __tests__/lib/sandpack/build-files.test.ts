@@ -274,6 +274,32 @@ describe('detectSandpackDependencies (#1097)', () => {
       expect(usesStripeJs).toBe(false)
     })
   })
+
+  describe('usesA2UI (#126 follow-up — agent-described UI)', () => {
+    it('detects @ainative/ai-kit-a2ui usage in generated code', () => {
+      const built = buildSandpackFiles({
+        '/App.tsx': "import { A2UIRenderer } from '@ainative/ai-kit-a2ui'\nexport default function App(){ return null }",
+      })
+      const { usesA2UI } = detectSandpackDependencies(built)
+      expect(usesA2UI).toBe(true)
+    })
+
+    it('detects direct @ainative/ai-kit-a2ui-core usage in generated code', () => {
+      const built = buildSandpackFiles({
+        '/App.tsx': "import { A2UITransport } from '@ainative/ai-kit-a2ui-core'\nexport default function App(){ return null }",
+      })
+      const { usesA2UI } = detectSandpackDependencies(built)
+      expect(usesA2UI).toBe(true)
+    })
+
+    it('is false when the generated app has no A2UI import at all', () => {
+      const built = buildSandpackFiles({
+        '/App.tsx': "export default function App(){ return <div>hello</div> }",
+      })
+      const { usesA2UI } = detectSandpackDependencies(built)
+      expect(usesA2UI).toBe(false)
+    })
+  })
 })
 
 /**

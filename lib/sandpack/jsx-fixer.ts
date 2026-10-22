@@ -728,6 +728,11 @@ const ALLOWLISTED_PACKAGE_ROOTS = new Set([
   '@stripe/react-stripe-js',
   'clsx',
   'tailwind-merge',
+  // #126 follow-up: A2UI composition instruction (lib/build/
+  // primitive-catalog.ts) — conditionally declared in sandpack-preview.tsx
+  // exactly like @stripe/* above, same trigger condition.
+  '@ainative/ai-kit-a2ui',
+  '@ainative/ai-kit-a2ui-core',
 ])
 
 /** The root package name a bare import specifier resolves against (handles subpaths and scoped packages). */

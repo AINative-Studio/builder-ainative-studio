@@ -167,10 +167,26 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     // adding a distinct field here.
     triggers: ['memory', 'remember', 'personalization', 'personalize', 'context', 'history', 'preferences'] },
   { name: 'AI Kit', category: 'ui', foundational: true,
-    purpose: 'UI component framework (React/Vue/Svelte/Next streaming chat, Safety, A2UI)',
+    purpose: 'UI component framework (React/Vue/Svelte/Next streaming chat, Safety)',
     url: `${DOCS}/ai-kit/overview`,
     sdk: '@ainative/ai-kit-core',
     triggers: ['ui', 'frontend', 'chat', 'interface', 'components', 'streaming'] },
+  // #126 follow-up: A2UI was previously just a two-word mention inside AI
+  // Kit's purpose string above — never its own catalog entry, never scored/
+  // selected independently, never given a "To use" instruction. The real
+  // packages (@ainative/ai-kit-a2ui-core, @ainative/ai-kit-a2ui) were
+  // unpublished until now (first npm publish, 2026-10-21) — nothing in the
+  // codegen prompt could have told the model to import them even in
+  // principle. Published, verified (install + real exports load), and now
+  // wired in. Foundational: false (NOT every app needs agent-described UI —
+  // this is for an app whose UI is driven by a chat/agent message stream,
+  // not a static dashboard/table/card surface, which AI Kit above already
+  // covers) — gated on explicit triggers instead.
+  { name: 'A2UI', category: 'ui',
+    purpose: 'Agent-to-User-Interface protocol: an agent/LLM describes UI as data (a flat component tree over a transport), the client renders it live — for apps whose UI is driven by an agent/chat message stream rather than hand-built screens',
+    url: `${DOCS}/ai-kit/a2ui`,
+    sdk: '@ainative/ai-kit-a2ui',
+    triggers: ['agent ui', 'agent-driven ui', 'generative ui', 'dynamic ui', 'agent describes', 'a2ui', 'agent builds the ui', 'ui from the agent', 'conversational interface builder'] },
   { name: 'Agent Cloud', category: 'agent-cloud', foundational: true,
     purpose: 'Run the built company autonomously: Agent Swarm, task dispatch, observability, deployments',
     url: `${DOCS}/agent-cloud/overview`,
@@ -1262,6 +1278,30 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
     '  ```\n' +
     "  If STRIPE_SECRET_KEY is not yet set, tell the founder plainly: \"Add your Stripe secret key in Website & infrastructure → Secrets, then I can wire this up\" — never fabricate a checkout flow or a fake success state while the key is missing.\n" +
     '  ANTI-PATTERN — FORBIDDEN: do NOT hand-roll a fake "payment successful" state, a client-side-only card form with no real charge, or an unrelated /api/db table pretending to be a payment ledger. If the feature is "take a real payment with my own Stripe account," it MUST call the real stripe.checkout.sessions.create (or stripe.paymentIntents.create) API — anything else is a FAILING implementation even if the UI looks identical to the user.',
+  // #126 follow-up: A2UI, like Stripe above, has no AINative-hosted API to
+  // proxy — it's a client-side rendering library (React component tree over
+  // a flat, ID-referenced message stream), not a REST surface. The two real
+  // packages (first published 2026-10-21, verified installable with real
+  // exports): @ainative/ai-kit-a2ui-core (framework-agnostic protocol/
+  // transport) and @ainative/ai-kit-a2ui (the React renderer, depends on the
+  // core package). The renderer takes components AND componentsById — the
+  // real wire shape is a FLAT array of components referencing each other by
+  // string id in `children`, never nested component objects — that's the one
+  // detail a model is likely to invent wrong without being told explicitly.
+  A2UI: () =>
+    `import \`A2UIRenderer\` from \`@ainative/ai-kit-a2ui\` (which depends on \`@ainative/ai-kit-a2ui-core\` for the transport/protocol types — both are real npm packages, add both to package.json) instead of hand-building a chat-driven or agent-described UI surface from scratch.\n` +
+    '  Real call shape (copy this exactly, do not paraphrase):\n' +
+    '  ```tsx\n' +
+    "  import { A2UIRenderer } from '@ainative/ai-kit-a2ui'\n" +
+    '\n' +
+    '  // `components` is the FLAT array of UI components the agent/LLM described for\n' +
+    "  // this turn — each has a stable `id` and a `children: string[]` of OTHER\n" +
+    '  // components\' ids (never nested component objects). A2UIRenderer resolves\n' +
+    '  // that id graph internally — do not pre-nest it yourself.\n' +
+    '  <A2UIRenderer components={components} onAction={(action) => { /* handle a component-emitted action, e.g. button click */ }} />\n' +
+    '  ```\n' +
+    '  Use this when the APP\'s feature is literally "the agent/LLM decides what UI to show next" (a conversational builder, an agent-driven onboarding flow, a chat surface whose response can render interactive widgets, not just text) — NOT for ordinary static dashboards/tables/cards, which AI Kit already covers.\n' +
+    '  ANTI-PATTERN — FORBIDDEN: do NOT hand-roll a custom "renders a message type via a switch statement" component tree, and do NOT invent a nested `children: Component[]` shape — the real protocol is a flat id-referenced array; a nested reimplementation will not match any real A2UI message stream. If the feature is agent-described/generative UI, it MUST render through the real `A2UIRenderer` — anything else is a FAILING implementation even if the UI looks identical to the user.',
   // #642: found via a systematic gap sweep across the whole primitive
   // catalog (2026-09-10, following the ZeroInvoice fix) — ServiceOS
   // (helpdesk) had real, common founder triggers (support, helpdesk,
@@ -1503,6 +1543,9 @@ export const RUNTIME_PROXY_PATH_SUBSTRINGS: Record<string, string[]> = {
   // Either literal string here is sufficient proof the real SDK was called,
   // not a hand-rolled fake success state.
   Stripe: ['stripe.checkout.sessions.create', 'stripe.paymentIntents.create'],
+  // #126 follow-up: same reasoning as Stripe above — A2UI has no proxy path,
+  // the real signal is the actual import from the real published package.
+  A2UI: ['@ainative/ai-kit-a2ui'],
   // #642: added once ServiceOS's real direct-JWT-bearer path was confirmed
   // live (see RUNTIME_PROXIED_PRIMITIVES's ServiceOS entry).
   ServiceOS: ['/api/primitive/serviceos/tickets'],

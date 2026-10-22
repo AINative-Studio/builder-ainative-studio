@@ -73,7 +73,10 @@
 - React / Vue / Svelte / Next.js: /docs/ai-kit/react · /docs/ai-kit/vue · /docs/ai-kit/svelte · /docs/ai-kit/nextjs
 - Core / Hooks / Observability: /docs/ai-kit/core · /docs/ai-kit/hooks · /docs/ai-kit/observability
 - **Safety** (prompt-injection, PII, moderation): https://docs.ainative.studio/docs/ai-kit/safety
-- **A2UI** (Agent-to-User-Interface protocol — agents describe UIs): https://docs.ainative.studio/docs/ai-kit/a2ui
+- **A2UI** (Agent-to-User-Interface protocol — agents describe UIs as a flat, ID-referenced
+  component tree; the client renders it live): `@ainative/ai-kit-a2ui-core` (framework-agnostic
+  protocol/transport, published 2026-10-21) + `@ainative/ai-kit-a2ui` (React renderer, same date).
+  Import `A2UIRenderer` from the renderer package. Docs: https://docs.ainative.studio/docs/ai-kit/a2ui
 
 ## 5. AGENT CLOUD — run the built company autonomously
 

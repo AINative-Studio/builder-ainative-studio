@@ -620,11 +620,18 @@ function relativeImportPath(fromPath: string, toPath: string): string {
  * `@stripe/react-stripe-js` declared as Sandpack dependencies the same way
  * lucide-react/recharts already are, or the preview bundle fails to resolve
  * the import.
+ *
+ * usesA2UI (#126 follow-up): same gap, for the A2UI composition instruction
+ * (lib/build/primitive-catalog.ts's A2UI entry) — `@ainative/ai-kit-a2ui`
+ * (the renderer) and its `@ainative/ai-kit-a2ui-core` dependency are real
+ * published npm packages (first published 2026-10-21) the preview bundle
+ * has no reason to already know about.
  */
 export function detectSandpackDependencies(sandpackFiles: Record<string, string>): {
   usesLucideReact: boolean
   usesRecharts: boolean
   usesStripeJs: boolean
+  usesA2UI: boolean
 } {
   const builtinPaths = new Set(Object.keys(getBuiltinFiles()))
   const generatedCode = Object.entries(sandpackFiles)
@@ -635,5 +642,6 @@ export function detectSandpackDependencies(sandpackFiles: Record<string, string>
     usesLucideReact: generatedCode.includes('lucide-react'),
     usesRecharts: generatedCode.includes('recharts'),
     usesStripeJs: generatedCode.includes('@stripe/'),
+    usesA2UI: generatedCode.includes('@ainative/ai-kit-a2ui'),
   }
 }
