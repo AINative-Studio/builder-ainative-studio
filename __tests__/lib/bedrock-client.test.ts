@@ -142,3 +142,82 @@ describe('bedrock-client — provider-aware response normalization (builder#895)
     ).rejects.toThrow(/403/)
   })
 })
+
+describe('bedrock-client — bounded timeout (builder#1253)', () => {
+  const originalFetch = global.fetch
+
+  afterEach(() => {
+    global.fetch = originalFetch
+    vi.restoreAllMocks()
+  })
+
+  /**
+   * Real, live production bug (builder#1253): POST /api/chat-ws returned
+   * HTTP 200 (the SSE stream started), but the client never saw a terminal
+   * event and the workspace preview sat on "Cody is building your app..."
+   * for 4+ minutes with zero further client-visible network activity.
+   *
+   * Root cause: this file's fetch() to the Bedrock runtime endpoint — the
+   * PRIMARY codegen call under Config C — carried no AbortSignal, unlike
+   * every other upstream call in this codebase (lib/zerodb-store.ts,
+   * lib/agent/zeromemory.ts, lib/build/committee-runner.ts, etc. — see that
+   * file's own stated doctrine: "every call is time-boxed ... so a hung
+   * vendor can never [hang the pipeline]"). A Bedrock connection that stalls
+   * with no response and no connection-level error left `await fetch(...)`
+   * pending forever: chat-ws's SSE stream never reached any of its
+   * controller.close() call sites, so the client's reader.read() never saw
+   * `done`. This test proves the call is now genuinely bounded — a fetch
+   * that hangs forever (never resolves, never rejects) still surfaces as a
+   * normal, catchable rejection within the configured timeout, instead of
+   * blocking the caller indefinitely.
+   */
+  it('passes an AbortSignal to fetch so a hung connection cannot block forever', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 1, output_tokens: 1 } }),
+    })
+    global.fetch = fetchMock as any
+
+    const client = new BedrockClient({
+      AWS_BEARER_TOKEN_BEDROCK: 'token',
+      BEDROCK_MODEL_ID: 'us.anthropic.claude-sonnet-4-6',
+    } as any)
+
+    await client.messages.create({ max_tokens: 10, messages: [{ role: 'user', content: 'hi' }] })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [, init] = fetchMock.mock.calls[0]
+    expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('converts a timed-out/aborted fetch into a clean, catchable Error instead of hanging', async () => {
+    // Simulate exactly what AbortSignal.timeout() produces when it fires on a
+    // genuinely hung connection: fetch rejects with a DOMException/Error named
+    // 'TimeoutError' (or 'AbortError' depending on the runtime).
+    global.fetch = vi.fn().mockRejectedValue(
+      Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }),
+    ) as any
+
+    const client = new BedrockClient({
+      AWS_BEARER_TOKEN_BEDROCK: 'token',
+      BEDROCK_MODEL_ID: 'us.anthropic.claude-sonnet-4-6',
+    } as any)
+
+    await expect(
+      client.messages.create({ max_tokens: 10, messages: [{ role: 'user', content: 'hi' }] }),
+    ).rejects.toThrow(/timed out/i)
+  })
+
+  it('still propagates a genuine non-timeout fetch failure unchanged (e.g. DNS/network error)', async () => {
+    global.fetch = vi.fn().mockRejectedValue(new Error('getaddrinfo ENOTFOUND bedrock-runtime')) as any
+
+    const client = new BedrockClient({
+      AWS_BEARER_TOKEN_BEDROCK: 'token',
+      BEDROCK_MODEL_ID: 'us.anthropic.claude-sonnet-4-6',
+    } as any)
+
+    await expect(
+      client.messages.create({ max_tokens: 10, messages: [{ role: 'user', content: 'hi' }] }),
+    ).rejects.toThrow(/ENOTFOUND/)
+  })
+})

@@ -27,6 +27,13 @@ const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
 })
 
+// builder#1266: these three calls had no AbortSignal/timeout at all -- the
+// same bug class as #1253 (primary codegen call hung forever on a stalled
+// upstream response). Reached only when USE_SUBAGENTS=true
+// (lib/agent/generation-mode.ts), but if that flag is ever enabled, a stalled
+// call here would hang the whole chat-ws generation identically to #1253.
+const SUBAGENT_CALL_TIMEOUT_MS = 90_000
+
 // Load agent profiles on startup
 const agentProfiles = loadAgentProfiles()
 console.log(
@@ -100,7 +107,7 @@ Provide structured spec:
           content: designPrompt,
         },
       ],
-    })
+    }, { signal: AbortSignal.timeout(SUBAGENT_CALL_TIMEOUT_MS) })
 
     const designSpec = response.content
       .filter((block) => block.type === 'text')
@@ -171,7 +178,7 @@ Use generate_react_component tool for output. Gradients/emoji stripped automatic
         },
       ],
       tools: [COMPONENT_GENERATION_TOOL],
-    })
+    }, { signal: AbortSignal.timeout(SUBAGENT_CALL_TIMEOUT_MS) })
 
     // Extract tool use result
     const toolUseBlock = response.content.find((block) => block.type === 'tool_use')
@@ -258,7 +265,7 @@ Report:
           content: validationPrompt,
         },
       ],
-    })
+    }, { signal: AbortSignal.timeout(SUBAGENT_CALL_TIMEOUT_MS) })
 
     const validationReport = response.content
       .filter((block) => block.type === 'text')

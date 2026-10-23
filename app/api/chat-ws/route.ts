@@ -20,6 +20,9 @@ import { buildRagContext } from '@/lib/build/rag-context'
 import { shouldDecompose, buildDecompositionPrompt, buildFixAndDecomposePrompt } from '@/lib/build/decomposition'
 import { selectModelForComplexity, modelSelectionReport } from '@/lib/build/model-select'
 import { recallPastPerformance, storeGenerationMemory, relateEntityToPrimitives } from '@/lib/agent/zeromemory'
+import { resolveAppByChatId } from '@/lib/build/app-registry'
+import { chatScopeKey } from '@/lib/build/chat-store'
+import { createTask } from '@/lib/build/task-store'
 import { buildVerifyPrompt, buildVerifyAgentOptions } from '@/lib/agent/verify-loop'
 import { getWorktreeTestFailure, clearWorktreeTestResult } from '@/lib/agent/test-runner'
 import { GenerationCheckpoint, resolveDegradation } from '@/lib/generation-checkpoint'
@@ -50,6 +53,7 @@ import { logAgentRun } from '@/lib/services/agent-runs.service'
 import { isQuotaError, QUOTA_USER_MESSAGE } from '@/lib/quota-error'
 import { getBedrockClient, isBedrockEnabled } from '@/lib/bedrock-client'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
+import { applyChatBudget } from '@/lib/build/context-budget-chat'
 import {
   registerInFlightGeneration,
   unregisterInFlightGeneration,
@@ -108,6 +112,21 @@ const USE_CLAUDE_DIRECT = USE_BEDROCK || !!(process.env.ANTHROPIC_API_KEY && pro
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-5-20250929'
 const DEFAULT_MODEL = USE_CLAUDE_DIRECT ? CLAUDE_MODEL : (process.env.DEFAULT_MODEL || 'ministral-14b')
 const PAID_MODEL = process.env.PAID_MODEL || 'kimi-k2.6'
+
+// #1253: the primary Claude/Bedrock codegen call below had NO timeout at all —
+// the exact same hang this repo already diagnosed and fixed once before, in
+// lib/build/claude-completion.ts's completeText() ("Bedrock has no built-in
+// timeout option; the Anthropic SDK's default is effectively unbounded for
+// this use"). There, a hung call left a DocumentsPanel "Generating…" stuck
+// forever with no error. Here, the same unbounded call is the PRIMARY app
+// codegen path — a hang leaves the SSE stream open with zero further events,
+// which is exactly the live symptom reported against builder.ainative.studio:
+// chat-ws returns 200 (headers), the stream never closes, and the Preview
+// artifact never leaves "Cody is building your app…" with no error surfaced
+// anywhere. Bounded via Promise.race (provider-agnostic, same fix shape as
+// completeText) so a stalled call always falls through to the AINative
+// fallback chain below instead of hanging the whole generation indefinitely.
+const PRIMARY_CLAUDE_TIMEOUT_MS = Number(process.env.PRIMARY_CLAUDE_TIMEOUT_MS || 120_000)
 
 // Direct Anthropic-API client — lazy initialized on first use.
 let anthropicClient: any = null
@@ -569,9 +588,26 @@ export async function POST(request: NextRequest) {
           // Use CSS gradients + blur glows instead (already in the theme prompt)
           const imagePrompt = ''
 
+          // Context Budget Manager wiring (#1195): check the REAL session's
+          // conversation history against the real budget service and trim it
+          // if the budget is critical/exhausted, before it goes anywhere near
+          // the LLM. Fail-open by construction — applyChatBudget never
+          // throws and never blocks; on any failure (DB down, service bug,
+          // timeout) it hands back `previousMessages` completely untouched,
+          // so a budget-check failure can never break real chat generation.
+          const budgetResult = await applyChatBudget(responseId, userId, previousMessages)
+          if (budgetResult.budget) {
+            safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+              type: 'budget',
+              budget: budgetResult.budget,
+              trimmed: budgetResult.trimmed,
+              droppedCount: budgetResult.droppedCount,
+            })}\n\n`))
+          }
+
           // Build conversation messages
           const conversationMessages = [
-            ...previousMessages,
+            ...budgetResult.messages,
             { role: 'user' as const, content: enhancedPrompt }
           ]
 
@@ -1177,6 +1213,7 @@ IMPORT RULES:
 - import { Search } from 'lucide-react'
 - NEVER import from @ainative/*, @/components/*, or npm aikit
 - NEVER use framer-motion, @radix-ui, or other unlisted packages
+- This is a PLAIN REACT SPA, NOT a Next.js app — NEVER import from 'next/image', 'next/link', 'next/navigation', 'next/font', 'next/dynamic', 'next/script', or any other 'next/*' module, and NEVER use 'react-icons' (it is not installed). Use a plain <img> tag, an <a> tag, and lucide-react icons instead.
 - export default function App() — always export default
 
 INTERACTIVITY (MANDATORY — the app must WORK, not just look good):
@@ -1212,7 +1249,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               const genModel = _primaryClaude!.provider === 'bedrock' ? selectedGenModel : _primaryClaude!.model
               console.log(`🧠 Using ${genModel} via ${_primaryClaude!.provider}`)
               try {
-                const claudeResponse = await claude.messages.create({
+                const claudeCall = claude.messages.create({
                   model: genModel,
                   // #310: a complex multi-file app (aerosol was ~7700 tok) was hitting
                   // the 8192 ceiling → TRUNCATED mid-JSX → misnested-brace syntax
@@ -1221,10 +1258,15 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                   // model. Bedrock Sonnet/Opus both support >8k output.
                   max_tokens: 16000,
                   system: llmSystemPrompt,
-                  messages: previousMessages.length > 0
-                    ? [...previousMessages.map((m: any) => ({ role: m.role, content: m.content })), { role: 'user', content: enhancedPrompt }]
+                  messages: budgetResult.messages.length > 0
+                    ? [...budgetResult.messages.map((m: any) => ({ role: m.role, content: m.content })), { role: 'user', content: enhancedPrompt }]
                     : [{ role: 'user', content: enhancedPrompt }],
                 })
+                // #1253: bound the call — see PRIMARY_CLAUDE_TIMEOUT_MS doc comment above.
+                const claudeTimeout = new Promise<never>((_, reject) => {
+                  setTimeout(() => reject(new Error('PRIMARY_CLAUDE_TIMEOUT')), PRIMARY_CLAUDE_TIMEOUT_MS)
+                })
+                const claudeResponse: any = await Promise.race([claudeCall, claudeTimeout])
 
                 fullContent = claudeResponse.content
                   .filter((block: any) => block.type === 'text')
@@ -1336,8 +1378,8 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               const singleTurnMessages = [
                 { role: 'system' as const, content: llmSystemPrompt },
                 // Merge conversation history into a single user message to keep it 2-message single-turn
-                { role: 'user' as const, content: previousMessages.length > 0
-                  ? `Previous context:\n${previousMessages.map(m => `${m.role}: ${m.content}`).join('\n')}\n\nNew request: ${enhancedPrompt}`
+                { role: 'user' as const, content: budgetResult.messages.length > 0
+                  ? `Previous context:\n${budgetResult.messages.map(m => `${m.role}: ${m.content}`).join('\n')}\n\nNew request: ${enhancedPrompt}`
                   : enhancedPrompt
                 },
               ]
@@ -1923,6 +1965,38 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
             // free-text memory content above. Fire-and-forget, never blocks.
             const { names: usedPrimitiveNames } = selectPrimitives(message, 'company', validRole)
             relateEntityToPrimitives(responseId, usedPrimitiveNames).catch(() => {})
+
+            // #1138: unresolved obedience-gate gaps (persistence, AIKit,
+            // primitive compliance, visitor tracking, fake lead capture, fake
+            // buttons, hardcoded toggles, AX) previously fed ONLY this
+            // ZeroMemory quality score — an internal recall signal a founder
+            // never sees. Every one of these gaps is a real, user-visible
+            // defect the generated app shipped with, yet none of them ever
+            // became a tracked backlog item, so the nightly task-resolution
+            // loop (task-resolution-loop.ts) had nothing to pick up and fix.
+            // File it as a plain `todo` task here — the existing resolver
+            // pipeline (task-resolver.ts, #905 "No Code Without An Issue")
+            // already opens a real Gitea issue for any `todo` row on its own,
+            // so this doesn't need to duplicate that. Detached (not awaited),
+            // same as relateEntityToPrimitives above: createTask's own
+            // story-point estimate is a real LLM call, and gating this SSE
+            // stream's close on it would add founder-visible latency for a
+            // best-effort bookkeeping row. A lookup/write failure here must
+            // never affect the response already served to the founder.
+            if (!obFinal.ok && chatId) {
+              resolveAppByChatId(chatId)
+                .then((app) => {
+                  if (!app?.slug) return null
+                  const scopeKey = chatScopeKey(app.ownerEmail || 'guest:anon', app.slug)
+                  return createTask(scopeKey, {
+                    title: `Fix generation compliance gap: ${obFinal.reasons[0] || 'obedience-gate check failed'}`,
+                    detail: obFinal.reasons.join('\n'),
+                    stage: 'todo',
+                    source: 'cody',
+                  })
+                })
+                .catch(() => {})
+            }
           } catch (memErr: any) {
             console.warn('[ZeroMemory] consolidate error (non-fatal):', memErr?.message || memErr)
           }

@@ -7,7 +7,7 @@ vi.hoisted(() => {
   process.env.ZERODB_PROJECT_ID = 'proj-abc'
 })
 
-import { migrateGuestCompanies } from '@/lib/build/app-registry'
+import { migrateGuestCompanies, __resetRegistryCacheForTests } from '@/lib/build/app-registry'
 
 /**
  * #49 — migrateGuestCompanies re-keys anonymous guest-built companies to a real
@@ -35,6 +35,7 @@ function row(slug: string, extra: Record<string, unknown> = {}): any {
 describe('migrateGuestCompanies (#49)', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn())
+    __resetRegistryCacheForTests()
   })
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -114,13 +115,23 @@ describe('migrateGuestCompanies (#49)', () => {
 
   it('processes a MIX: claims unowned, keeps own, skips foreign + unregistered', async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
-    // Order of slugs: mine (owned by me), free (unowned), rival (foreign), ghost (missing)
+    // #1172: resolveApp()'s underlying fetchAllRegistryRows() fetches the
+    // WHOLE table and filters client-side — the real server never returns a
+    // different, slug-filtered row set per call, and the registry-read cache
+    // now shares one fetch across calls made close together (this loop's
+    // four sequential resolveApp() calls). So every GET in this test must
+    // return the SAME full table; the per-slug filtering happens in
+    // resolveApp itself, exactly as it does against the real API. "ghost" is
+    // genuinely absent from the table (never registered), matching its
+    // expected skip below.
+    const fullTable = rowsResponse([
+      row('mine', { ownerEmail: 'founder@acme.com' }),
+      row('free'),
+      row('rival', { ownerEmail: 'x@y.com' }),
+    ])
     fetchMock
-      .mockResolvedValueOnce(rowsResponse([row('mine', { ownerEmail: 'founder@acme.com' })])) // mine: GET
-      .mockResolvedValueOnce(rowsResponse([row('free')])) // free: GET
+      .mockResolvedValueOnce(fullTable) // mine: GET (shared/cached across this burst)
       .mockResolvedValueOnce(okResponse()) // free: POST claim
-      .mockResolvedValueOnce(rowsResponse([row('rival', { ownerEmail: 'x@y.com' })])) // rival: GET
-      .mockResolvedValueOnce(rowsResponse([])) // ghost: GET (missing)
 
     const res = await migrateGuestCompanies(['mine', 'free', 'rival', 'ghost'], 'founder@acme.com')
     expect(res.migrated.sort()).toEqual(['free', 'mine'])

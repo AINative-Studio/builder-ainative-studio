@@ -203,7 +203,10 @@
   padding: 12px 24px; background: var(--color-surface);
   border-bottom: 2px solid var(--color-divider);
 }
-.m-brand { font-family: var(--font-heading); font-weight: 800; letter-spacing: -0.01em; font-size: 16px; }
+/* builder#1254: now a real <button> (was an inert <span>) — reset to look
+   identical to the old static text, matching the .m-topbar-name-btn pattern
+   already used for the other interactive control in this same topbar. */
+.m-brand { font-family: var(--font-heading); font-weight: 800; letter-spacing: -0.01em; font-size: 16px; background: none; border: none; padding: 0; cursor: pointer; color: inherit; }
 .m-trackpill { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.08em; padding: 3px 8px; color: #fff; background: var(--track); }
 .m-topbar-artifact { margin-left: auto; font-size: 15px; color: var(--text-body-85); }
 .m-topbar-name-btn { background: none; border: none; font: inherit; cursor: text; padding: 2px 4px; border-radius: 2px; }
@@ -596,6 +599,9 @@
    freetext input sat flush against the Next button with no gap. Real
    layout, matching this file's existing .m-field/.btn-ghost conventions. */
 .m-kickoff-suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+/* #1258 — honest, low-key hint under "Not sure yet" so skipping a kickoff
+   question never leaves the founder wondering if it cost them anything. */
+.m-kickoff-not-sure-hint { font-size: 11px; color: var(--text-muted); margin: 8px 0 0; }
 .m-kickoff-freetext-row { display: flex; gap: 10px; margin-top: 14px; align-items: stretch; }
 .m-kickoff-freetext-row input { flex: 1; min-width: 0; padding: 10px 12px; border: 1.5px solid var(--neutral-line); font-family: var(--font-body); font-size: 14px; background: var(--color-surface); color: var(--color-text); }
 .m-kickoff-freetext-row .btn-primary { flex-shrink: 0; }

@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { Plus } from 'lucide-react'
 import { AppHeader } from '@/components/shared/app-header'
+import { Skeleton } from '@/components/ui/skeleton'
 import useSWR from 'swr'
 
 interface V0Chat {
@@ -37,11 +38,26 @@ export function ChatsClient() {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {isLoading && (
-          <div className="flex items-center justify-center py-12">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 dark:border-white"></div>
-            <span className="ml-2 text-gray-600 dark:text-gray-300">
-              Loading chats...
-            </span>
+          <div data-testid="chats-loading">
+            <div className="mb-6 flex items-center justify-between">
+              <div>
+                <Skeleton className="h-8 w-24 mb-2" />
+                <Skeleton className="h-5 w-16" />
+              </div>
+              <Skeleton className="h-9 w-28" />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="border border-border dark:border-input rounded-lg p-6"
+                >
+                  <Skeleton className="h-5 w-3/4 mb-3" />
+                  <Skeleton className="h-4 w-20 mb-2" />
+                  <Skeleton className="h-4 w-32" />
+                </div>
+              ))}
+            </div>
           </div>
         )}
 

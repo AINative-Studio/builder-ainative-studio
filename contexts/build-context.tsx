@@ -37,8 +37,19 @@ const BuildContext = createContext<BuildContextValue | null>(null)
 // localStorage key prefix for build state persistence (#284).
 const LS_PREFIX = 'ainative_build_'
 
-/** Fields we persist to localStorage for a given company slug. */
-type PersistedBuildState = Pick<
+/**
+ * Fields we persist to localStorage for a given company slug.
+ *
+ * Exported (alongside `buildStateStorageKey` below) so a test-only seam
+ * (#1198 — a Playwright helper restoring a Live-stage session for a known,
+ * already-seeded company) can write a payload under the exact same key and
+ * shape this file itself reads via `loadBuildState`, instead of a second,
+ * hand-maintained copy of this field list that silently drifts the moment a
+ * new field is added here. There is no new reachable surface in production
+ * from this export alone — it is a type and a pure key-formatting function,
+ * not a route or an API.
+ */
+export type PersistedBuildState = Pick<
   BuildState,
   'generated' | 'done' | 'genError' | 'builtCompany' | 'builtMVP'
   | 'wedgePicked' | 'answers' | 'companyName' | 'idea' | 'appSub'
@@ -46,8 +57,15 @@ type PersistedBuildState = Pick<
   | 'sawPreview' | 'designSystemId' | 'designStepDone'
 >
 
-function lsKey(slug: string) {
+/** The exact localStorage key `saveBuildState`/`loadBuildState` use for a
+ *  given company slug — exported for the same #1198 test-seam reason as
+ *  `PersistedBuildState` above. */
+export function buildStateStorageKey(slug: string): string {
   return `${LS_PREFIX}${slug}`
+}
+
+function lsKey(slug: string) {
+  return buildStateStorageKey(slug)
 }
 
 function loadBuildState(slug: string): Partial<PersistedBuildState> | null {
@@ -261,6 +279,46 @@ export function isExplicitCompanyDeepLink(searchOrUrl: string): boolean {
 }
 
 /**
+ * Does a bare `?screen=<x>` (no `?company=`) name an EXPLICIT destination
+ * that no async "helpful redirect" effect may override? (builder#1254)
+ *
+ * isExplicitCompanyDeepLink above requires BOTH params by design — its own
+ * doc comment states "`?screen=` alone is not company-scoped, so neither
+ * alone is something to protect." That is the right call for a company-
+ * scoped screen (`ws`, `live`, …), where `?screen=` with no `?company=`
+ * really doesn't name a specific destination worth protecting. It is the
+ * WRONG call for a screen that has no per-company context at all —
+ * SCREENS_WITHOUT_COMPANY_CONTEXT (companies, account, login, …) — where
+ * the screen name alone IS the complete, explicit destination; a `company`
+ * param would never apply there regardless.
+ *
+ * Real, reproduced bug: a founder inside an active workspace navigates
+ * directly to `/build?screen=companies`. The deep-link-restore effect
+ * correctly dispatches GOTO_SCREEN('companies'). But the #669 resume-pointer
+ * effect (same mount, same race #1037/#1049 already named) saw
+ * `isExplicitCompanyDeepLink('?screen=companies')` return false — no
+ * `company` param — and, finding a stale pointer for the workspace the
+ * founder just left, silently dispatched GOTO_SCREEN back onto it ~1-2s
+ * later once getSession() resolved, bouncing the founder straight back
+ * into the session they were trying to leave. From their side: navigating
+ * to My companies "does nothing."
+ *
+ * Exported pure for the same reason as its sibling: testable without
+ * mounting BuildProvider (OOMs jsdom via useAutoplay).
+ */
+export function isExplicitScreenOnlyDeepLink(searchOrUrl: string): boolean {
+  try {
+    const raw = searchOrUrl || ''
+    const q = new URLSearchParams(raw.includes('?') ? raw.slice(raw.indexOf('?') + 1) : raw)
+    const screen = q.get('screen')
+    if (!screen) return false
+    return SCREENS_WITHOUT_COMPANY_CONTEXT.has(screen) && KNOWN_DEEP_LINK_SCREENS.includes(screen)
+  } catch {
+    return false
+  }
+}
+
+/**
  * Minimal shape of a persisted per-slug cache entry, for completeness checks.
  * Deliberately loose (every field optional): a real localStorage entry written
  * by an older deploy can be missing any of them.
@@ -379,6 +437,11 @@ export function shouldResumeFromPointer(input: {
   current?: { screen: string; appSub: string; idea: string }
 }): boolean {
   if (isExplicitCompanyDeepLink(input.search)) return false
+  // builder#1254: a bare ?screen=companies (or any other company-context-free
+  // screen) is just as explicit a destination as a full ?screen=&company=
+  // pair — see isExplicitScreenOnlyDeepLink's own doc comment for the real,
+  // reproduced bounce this closes.
+  if (isExplicitScreenOnlyDeepLink(input.search)) return false
   if (!input.pointer) return false
   if (!input.saved) return false
   if (!canResumeActiveBuild(input.session)) return false

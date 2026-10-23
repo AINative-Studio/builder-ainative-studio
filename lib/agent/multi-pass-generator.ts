@@ -11,6 +11,13 @@ import { extractComponentCode } from './component-generation-tool'
 import { validateGeneratedCode } from '../code-validator'
 import { PROFESSIONAL_SYSTEM_PROMPT } from '../professional-prompt'
 import { recallPastPerformance, storeGenerationMemory } from './zeromemory'
+import {
+  createGenerationBudget,
+  recordCall,
+  checkBudget,
+  budgetStopMessage,
+  type GenerationBudget,
+} from '../build/generation-budget'
 
 export interface GeneratedChunk {
   chunkId: string
@@ -34,17 +41,69 @@ export interface ProgressCallback {
 }
 
 /**
- * Execute a chunk plan by generating each phase
+ * Real per-phase output ceiling passed to the LLM (the `max_tokens` below).
+ * Exported and used by BOTH the API call and the #1192 cost pre-flight check,
+ * so the budget's worst-case estimate can never drift from what is actually
+ * requested — the bug class where a cap is computed against a stale ceiling.
  */
-export async function executeChunkPlan(
+export const CHUNK_MAX_TOKENS = 16000
+
+/**
+ * Rough prompt-size estimate for the pre-flight cost check (~4 chars/token,
+ * the standard approximation this repo already uses in
+ * lib/services/token-counter.service.ts). Only the worst-case OUTPUT cost
+ * needs to be exact for the cap to hold; input is the smaller term and a real
+ * count is recorded from the provider's own `usage` after the call.
+ */
+function estimatePromptTokens(prompt: string): number {
+  return Math.ceil(String(prompt || '').length / 4)
+}
+
+export interface ExecuteChunkPlanOptions {
+  /**
+   * Per-generation cost cap (#1192). Omit to use the configured default
+   * (GENERATION_BUDGET_USD / the tier table). Pass an explicit budget to share
+   * ONE cap across this loop and any other calls the same founder request
+   * makes.
+   */
+  budget?: GenerationBudget
+  /** Plan tier, used to pick the cap when `budget` is omitted. */
+  tier?: string
+}
+
+export interface ChunkPlanResult {
+  chunks: GeneratedChunk[]
+  /** Final accumulated spend for this generation. */
+  budget: GenerationBudget
+  /** Set when the loop was stopped early by the cost cap. */
+  budgetStop?: ReturnType<typeof budgetStopMessage>
+}
+
+/**
+ * Execute a chunk plan by generating each phase.
+ *
+ * #1192: this loop is the real runaway path — N phases at max_tokens 16000
+ * each, PLUS one retry per failed phase, so up to 2N full-size billed calls
+ * with (previously) no spend check between iterations. Every call now goes
+ * through the shared GenerationBudget, and the loop stops BEFORE a call that
+ * would cross the cap rather than discovering the overspend afterwards.
+ *
+ * Returns the chunks generated so far alongside the final budget; a
+ * cost-stopped run returns its PARTIAL chunks (not an empty array), so the
+ * founder keeps whatever really did get built.
+ */
+export async function executeChunkPlanWithBudget(
   plan: ChunkPlan,
   client: OpenAI,
   modelId: string,
   onProgress: ProgressCallback,
   chatId?: string,
-): Promise<GeneratedChunk[]> {
+  options: ExecuteChunkPlanOptions = {},
+): Promise<ChunkPlanResult> {
   const chunks: GeneratedChunk[] = []
   const totalPhases = plan.phases.length
+  let budget = options.budget
+    ?? createGenerationBudget({ model: modelId, tier: options.tier })
 
   // Recall past performance for similar prompts (Refs #43)
   const firstPrompt = plan.phases[0]?.prompt || ''
@@ -56,9 +115,35 @@ export async function executeChunkPlan(
 
   onProgress(0, totalPhases, 'Starting multi-phase generation...')
 
+  let budgetStop: ReturnType<typeof budgetStopMessage> | undefined
+
   for (let i = 0; i < plan.phases.length; i++) {
     const phase = plan.phases[i]
     const phaseNum = i + 1
+
+    // #1192: pre-flight cost check at the loop boundary. Charged at this
+    // phase's WORST CASE (the real max_tokens generateChunk uses), so a phase
+    // allowed here can never push spend past the cap.
+    const gate = checkBudget(budget, {
+      maxOutputTokens: CHUNK_MAX_TOKENS,
+      estimatedInputTokens: estimatePromptTokens(phase.prompt),
+    })
+    budget = gate.budget
+    if (!gate.allowed) {
+      budgetStop = budgetStopMessage(budget)
+      onProgress(phaseNum, totalPhases, budgetStop.message, {
+        budgetExceeded: true,
+        spentUsd: budget.spentUsd,
+        limitUsd: budget.limitUsd,
+        phasesCompleted: chunks.length,
+        phasesPlanned: totalPhases,
+      })
+      console.warn(
+        `🛑 [#1192] Multi-pass generation stopped by cost cap after ${chunks.length}/${totalPhases} phases: ` +
+        `spent $${budget.spentUsd.toFixed(4)} of $${budget.limitUsd.toFixed(2)} limit`,
+      )
+      break
+    }
 
     onProgress(phaseNum, totalPhases, `Generating ${phase.description}...`, {
       chunkId: phase.chunkId,
@@ -68,15 +153,40 @@ export async function executeChunkPlan(
     try {
       const chunk = await generateChunk(phase, client, modelId, phaseNum, totalPhases, onProgress)
       chunks.push(chunk)
+      budget = recordCall(budget, {
+        inputTokens: chunk.tokenUsage.input,
+        outputTokens: chunk.tokenUsage.output,
+      })
 
       if (!chunk.success) {
         onProgress(phaseNum, totalPhases, `Phase ${phaseNum} failed: ${chunk.error}`, {
           error: chunk.error
         })
 
-        // Try one retry on failure
+        // Try one retry on failure — but the retry is a REAL billed call, so it
+        // goes through the same cap. Previously a failing phase could double
+        // its own spend with no check at all.
+        const retryGate = checkBudget(budget, {
+          maxOutputTokens: CHUNK_MAX_TOKENS,
+          estimatedInputTokens: estimatePromptTokens(phase.prompt),
+        })
+        budget = retryGate.budget
+        if (!retryGate.allowed) {
+          budgetStop = budgetStopMessage(budget)
+          onProgress(phaseNum, totalPhases, `Phase ${phaseNum} failed; retry skipped — ${budgetStop.message}`, {
+            budgetExceeded: true,
+            spentUsd: budget.spentUsd,
+            limitUsd: budget.limitUsd,
+          })
+          break
+        }
+
         onProgress(phaseNum, totalPhases, `Retrying phase ${phaseNum}...`)
         const retryChunk = await generateChunk(phase, client, modelId, phaseNum, totalPhases, onProgress)
+        budget = recordCall(budget, {
+          inputTokens: retryChunk.tokenUsage.input,
+          outputTokens: retryChunk.tokenUsage.output,
+        })
 
         if (retryChunk.success) {
           chunks[chunks.length - 1] = retryChunk
@@ -110,22 +220,52 @@ export async function executeChunkPlan(
     }
   }
 
-  onProgress(totalPhases, totalPhases, 'All phases completed', {
-    successCount: chunks.filter(c => c.success).length,
-    totalChunks: chunks.length
-  })
+  // Honest completion message: a cost-stopped run did NOT complete all phases,
+  // and must not claim it did.
+  onProgress(
+    totalPhases,
+    totalPhases,
+    budgetStop
+      ? `Stopped after ${chunks.length} of ${totalPhases} phases — cost limit reached`
+      : 'All phases completed',
+    {
+      successCount: chunks.filter(c => c.success).length,
+      totalChunks: chunks.length,
+      ...(budgetStop ? { budgetExceeded: true, spentUsd: budget.spentUsd, limitUsd: budget.limitUsd } : {}),
+    },
+  )
 
   // Store generation result for cross-product learning (Refs #43)
   const successCount = chunks.filter(c => c.success).length
-  const allSuccess = successCount === chunks.length
+  // A budget-stopped run is NOT a success even if every phase it ran passed —
+  // recording it as one would teach the learning loop the wrong lesson.
+  const allSuccess = !budgetStop && successCount === chunks.length
   const quality = chunks.length > 0 ? successCount / chunks.length : 0
   storeGenerationMemory(firstPrompt.slice(0, 300), allSuccess, quality, {
     source: 'multi-pass-generator',
     totalPhases: chunks.length,
     successCount,
+    ...(budgetStop ? { stoppedByCostCap: true } : {}),
   }, chatId).catch(() => {})
 
-  return chunks
+  return { chunks, budget, budgetStop }
+}
+
+/**
+ * Backward-compatible wrapper — returns just the chunks, as this function has
+ * always done. The cost cap (#1192) still applies: callers that want to SEE the
+ * accumulated spend or the stop reason should call executeChunkPlanWithBudget.
+ */
+export async function executeChunkPlan(
+  plan: ChunkPlan,
+  client: OpenAI,
+  modelId: string,
+  onProgress: ProgressCallback,
+  chatId?: string,
+  options: ExecuteChunkPlanOptions = {},
+): Promise<GeneratedChunk[]> {
+  const result = await executeChunkPlanWithBudget(plan, client, modelId, onProgress, chatId, options)
+  return result.chunks
 }
 
 /**
@@ -199,7 +339,8 @@ DEPENDENCIES: ${phase.dependencies.join(', ')}
 
     const response = await client.chat.completions.create({
       model: modelId,
-      max_tokens: 16000,
+      // Shared with the #1192 cost pre-flight check so the two can never drift.
+      max_tokens: CHUNK_MAX_TOKENS,
       temperature: 0.7,
       messages: [
         { role: 'system', content: systemPrompt },

@@ -51,6 +51,12 @@ const ainative = new OpenAI({
 // coding-specialized — not the right fit for this help-center Q&A route).
 const AINATIVE_FALLBACK_MODEL = process.env.AINATIVE_HELP_MODEL || 'glm-5'
 
+// #1266-class bug: this call had no AbortSignal/timeout, so a stalled
+// upstream response hung the whole POST indefinitely (same bug class as
+// #1253/#1266). Matches artifact/route.ts's timeout for a similarly-sized
+// (500-1600 max_tokens) grounded-answer call.
+const HELP_ANSWER_TIMEOUT_MS = 20_000
+
 /** Build the grounded system prompt for a set of retrieved FAQ entries. */
 
 /** Map retrieved entries to lightweight citation objects for the response. */
@@ -89,13 +95,16 @@ export async function POST(request: NextRequest) {
   const claude = getClaudeCompletion()
   if (claude) {
     try {
-      const res = await claude.client.messages.create({
-        model: claude.model,
-        max_tokens: 500,
-        temperature: 0.4,
-        system,
-        messages: [{ role: 'user', content: question }],
-      })
+      const res = await claude.client.messages.create(
+        {
+          model: claude.model,
+          max_tokens: 500,
+          temperature: 0.4,
+          system,
+          messages: [{ role: 'user', content: question }],
+        },
+        { signal: AbortSignal.timeout(HELP_ANSWER_TIMEOUT_MS) },
+      )
       const answer = (res.content || [])
         .filter((b: any) => b.type === 'text')
         .map((b: any) => b.text)

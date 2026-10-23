@@ -115,8 +115,38 @@ describe('primitive-catalog codegen composition (#218)', () => {
 
   it('always steers toward AI Kit + ZeroDB even when no business-ops primitive matches', () => {
     const block = codegenCompositionBlock('xyzzy plugh nonsense idea', 'company')
-    expect(block).toContain('@ainative/ai-kit-core')
+    expect(block).toContain('./components/aikit')
     expect(block).toContain('https://api.ainative.studio/api/v1') // ZeroDB base
+  })
+
+  // #1236: the real published @ainative/ai-kit-core@0.2.0 (npm pack + inspected
+  // every dist/*/index.d.ts export path) is Builder's own backend agent/LLM SDK
+  // (AIStream, Agent, AgentSwarm, ToolRegistry, AuthMethod, ...) with zero React/
+  // JSX/component exports and no `react` dependency — not a UI library. Telling
+  // the model to import "UI primitives"/"chat, tables, product cards" from it
+  // guaranteed those surfaces would hit Sandpack's unresolvable-bare-import
+  // fallback (lib/sandpack/jsx-fixer.ts's stubUnresolvableBareImports, #1179)
+  // and render as silent no-ops. The real components ship locally with every
+  // generated app instead (lib/sandpack/aikit-bundle.ts, merged by
+  // lib/sandpack/setup.ts's getBuiltinFiles() at ./components/aikit for every
+  // Sandpack sandbox, unconditionally) — the composition block must point there.
+  it('AI Kit guidance points at the real local ./components/aikit module, never tells the model to import the non-UI @ainative/ai-kit-core npm package', () => {
+    const generic = codegenCompositionBlock('a generic note-taking app', 'company')
+    expect(generic).toContain('./components/aikit')
+    // The old, wrong instruction told the model to import UI primitives FROM
+    // this package. The fix may still name the package once, as an explicit
+    // anti-pattern warning (same style as A2UI's anti-pattern block) — so
+    // assert the specific wrong phrasing is gone, not that the string never
+    // appears at all.
+    expect(generic).not.toMatch(/import its SDK `@ainative\/ai-kit-core`/)
+    expect(generic).not.toMatch(/Import `@ainative\/ai-kit-core`.*for UI primitives/)
+
+    // Also true for an idea that DOES match an archetype in primitive-graph.ts —
+    // the generic composition line and Rule 1 must agree with componentGuidanceBlock,
+    // not contradict it with a second, wrong instruction.
+    const crm = codegenCompositionBlock('a B2B sales CRM to track deals and leads', 'company')
+    expect(crm).toContain('./components/aikit')
+    expect(crm).not.toMatch(/import its SDK `@ainative\/ai-kit-core`/)
   })
 
   it('produces materially different wiring for different ideas', () => {
@@ -505,8 +535,8 @@ describe('primitive-catalog additions (#410)', () => {
     it('the composition block carries a literal code fence + explicit anti-pattern language for ZeroCommerce', () => {
       const block = codegenCompositionBlock(MUG_SHOP_IDEA, 'app')
       expect(block).toContain('ZeroCommerce')
-      expect(block).toMatch(/```js[\s\S]*fetch\('\/api\/primitive\/zerocommerce\/commerce\/products'\)/)
-      expect(block).toMatch(/fetch\('\/api\/primitive\/zerocommerce\/commerce\/checkout'/)
+      expect(block).toMatch(/```js[\s\S]*fetch\('\/api\/primitive\/zerocommerce\/storefront\/_\/products'\)/)
+      expect(block).toMatch(/fetch\('\/api\/primitive\/zerocommerce\/storefront\/_\/cart'/)
       expect(block).toMatch(/ANTI-PATTERN — FORBIDDEN/)
       // Names the EXACT observed failure mode, not a generic warning.
       expect(block).toMatch(/do NOT hand-roll a product catalog, shopping cart, or checkout using \/api\/db tables/i)
@@ -518,9 +548,12 @@ describe('primitive-catalog additions (#410)', () => {
     })
 
     it('RUNTIME_PROXY_PATH_SUBSTRINGS carries the real proxy paths so the #518 compliance validator catches an unwired ZeroCommerce selection', () => {
+      // #1167: corrected from the fictional /commerce/products, /commerce/checkout
+      // (confirmed via ZeroCommerce's real FastAPI router — products/checkout live
+      // under the unauthenticated /storefront/{slug}/... family, not /commerce/...).
       expect(RUNTIME_PROXY_PATH_SUBSTRINGS.ZeroCommerce).toEqual([
-        '/api/primitive/zerocommerce/commerce/products',
-        '/api/primitive/zerocommerce/commerce/checkout',
+        '/api/primitive/zerocommerce/storefront/_/products',
+        '/api/primitive/zerocommerce/storefront/_/cart',
       ])
       expect(getComplianceCheckedPrimitiveNames()).toContain('ZeroCommerce')
     })
@@ -528,7 +561,7 @@ describe('primitive-catalog additions (#410)', () => {
     it('getRuntimeProxyInstruction returns the same instruction text codegenCompositionBlock injects', () => {
       const instruction = getRuntimeProxyInstruction('ZeroCommerce')
       expect(instruction).toBeDefined()
-      expect(instruction).toMatch(/fetch\('\/api\/primitive\/zerocommerce\/commerce\/products'\)/)
+      expect(instruction).toMatch(/fetch\('\/api\/primitive\/zerocommerce\/storefront\/_\/products'\)/)
       expect(instruction).toMatch(/ANTI-PATTERN — FORBIDDEN/)
       const block = codegenCompositionBlock(MUG_SHOP_IDEA, 'app')
       expect(block).toContain(instruction!.split('\n')[0])
@@ -552,12 +585,95 @@ describe('primitive-catalog additions (#410)', () => {
       const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
       const compliantCode = `
         function App() {
-          useEffect(() => { fetch('/api/primitive/zerocommerce/commerce/products').then(r => r.json()).then(d => setProducts(d.products)) }, [])
-          async function checkout() { await fetch('/api/primitive/zerocommerce/commerce/checkout', { method: 'POST', body: JSON.stringify({ items: cart }) }) }
+          useEffect(() => { fetch('/api/primitive/zerocommerce/storefront/_/products').then(r => r.json()).then(d => setProducts(d.products)) }, [])
+          async function checkout() { await fetch('/api/primitive/zerocommerce/storefront/_/cart/' + cartId + '/checkout', { method: 'POST', body: JSON.stringify({ customer_email: email, shipping_address }) }) }
         }
       `
       const gaps = findPrimitiveComplianceGaps(compliantCode, MUG_SHOP_IDEA)
       expect(gaps).not.toContain('ZeroCommerce')
+    })
+  })
+
+  describe('#1167 fix — ZeroCommerce codegen instruction uses real storefront routes, not fictional /commerce/products|checkout', () => {
+    const MUG_SHOP_IDEA = 'an online shop selling handmade coffee mugs with a product catalog and checkout'
+
+    it('never instructs calling /commerce/products or /commerce/checkout (confirmed not to exist on the real API)', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).not.toMatch(/fetch\('\/api\/primitive\/zerocommerce\/commerce\/products'\)/)
+      expect(instruction).not.toMatch(/fetch\('\/api\/primitive\/zerocommerce\/commerce\/checkout'/)
+    })
+
+    it('instructs the literal storefront/_ placeholder segment, and tells the model not to substitute it', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).toMatch(/storefront\/_/)
+      expect(instruction).toMatch(/do not substitute a real slug/i)
+    })
+
+    it('covers the full real flow: list products, create cart, add item, checkout — not just products+checkout', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).toMatch(/storefront\/_\/products/)
+      expect(instruction).toMatch(/storefront\/_\/cart'/) // create-cart call (no trailing segment)
+      expect(instruction).toMatch(/storefront\/_\/cart\/\$\{cart\.id\}\/items/)
+      expect(instruction).toMatch(/storefront\/_\/cart\/\$\{cart\.id\}\/checkout/)
+    })
+
+    it('instructs credentials: "include" so the ZeroCommerce session cookie survives across calls', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).toMatch(/credentials:\s*'include'/)
+    })
+
+    it('instructs reading client_secret from the checkout response (needed for Stripe Elements)', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).toMatch(/client_secret/)
+    })
+
+    it('does not instruct sending a client-supplied unit_price when adding a cart item (server resolves it)', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).toMatch(/do NOT send a client price/i)
+    })
+
+    it('the anti-pattern block explicitly forbids the old fictional paths, not just hand-rolling', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).toMatch(/FORBIDDEN: calling \/api\/primitive\/zerocommerce\/commerce\/products/)
+      expect(instruction).toMatch(/404 every time/)
+    })
+  })
+
+  describe('#1164 fix — ZeroCommerce checkout UI renders real Stripe Elements, not a bare card form', () => {
+    it('instructs importing loadStripe from @stripe/stripe-js and Elements/PaymentElement from @stripe/react-stripe-js', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).toMatch(/loadStripe.*from '@stripe\/stripe-js'/)
+      expect(instruction).toMatch(/Elements.*PaymentElement.*from '@stripe\/react-stripe-js'/)
+    })
+
+    it('instructs calling storefront/_/stripe-config to get the publishable key — never hardcoding one', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).toMatch(/storefront\/_\/stripe-config/)
+      expect(instruction).toMatch(/NEVER hardcode or guess a Stripe publishable key/i)
+    })
+
+    it('instructs passing stripeAccount to loadStripe when a connected_account_id is present (Connect-routed merchants)', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).toMatch(/connected_account_id/)
+      expect(instruction).toMatch(/stripeAccount:\s*connected_account_id/)
+    })
+
+    it('instructs wrapping the payment form in <Elements> initialized with the real client_secret', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).toMatch(/<Elements stripe=\{stripePromise\} options=\{\{ clientSecret: client_secret \}\}>/)
+      expect(instruction).toMatch(/<PaymentElement/)
+    })
+
+    it('instructs calling stripe.confirmPayment to actually complete the payment', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).toMatch(/confirmPayment/)
+    })
+
+    it('the anti-pattern block forbids hand-rolled card-number/expiry/CVC fields, naming the PCI and wallet-eligibility reasons', () => {
+      const instruction = getRuntimeProxyInstruction('ZeroCommerce')!
+      expect(instruction).toMatch(/FORBIDDEN: hand-rolling raw card-number\/expiry\/CVC input fields/)
+      expect(instruction).toMatch(/PCI-scope best practice/)
+      expect(instruction).toMatch(/Apple Pay\/Google Pay eligibility/)
     })
   })
 
@@ -915,6 +1031,63 @@ describe('primitive-catalog additions (#410)', () => {
       `
       const gaps = findPrimitiveComplianceGaps(compliantCode, STRIPE_IDEA)
       expect(gaps).not.toContain('Stripe')
+    })
+  })
+
+  describe('#1234 — A2UI is DISABLED (empty triggers) pending a real fix', () => {
+    // Real finding (#1234, following the #126-follow-up commit that first
+    // wired this primitive in): the composition instruction added for A2UI
+    // does not match the real published @ainative/ai-kit-a2ui@0.1.0-alpha.1
+    // API — confirmed by downloading the real package. There is no
+    // `components` prop; the real `A2UIRenderer` requires `agentUrl` and
+    // unconditionally opens a live WebSocket connection on mount, gating ALL
+    // rendering on that connection's state. Nothing in this codegen pipeline
+    // provisions a live agent-WebSocket backend for a generated app, so
+    // selecting this primitive guarantees a permanently non-functional core
+    // UI surface (stuck on "Connecting to agent..." or a crash) — the exact
+    // class of bug the overnight rendering-correctness sweep exists to catch.
+    // Disabled via an empty `triggers` array rather than deleting the entry,
+    // so the metadata/instruction text survives for whoever builds the real
+    // fix. These tests pin the disabled state, not the (currently broken)
+    // instruction content.
+    const A2UI_IDEA = 'a chat app where the agent decides what UI to show next, like a dynamic generative ui builder'
+
+    it('an agent-described-UI idea does NOT select the A2UI primitive while it is disabled', () => {
+      const { names } = selectPrimitives(A2UI_IDEA, 'app')
+      expect(names).not.toContain('A2UI')
+    })
+
+    it('a generic chat/dashboard idea alone does NOT select A2UI either — that stays AI Kit territory regardless', () => {
+      const { names } = selectPrimitives('a chat interface for customer support with a dashboard', 'app')
+      expect(names).not.toContain('A2UI')
+    })
+
+    it('the composition block for an A2UI-sounding idea never injects the (currently broken) A2UI instruction', () => {
+      const block = codegenCompositionBlock(A2UI_IDEA, 'app')
+      expect(block).not.toContain('@ainative/ai-kit-a2ui')
+      expect(block).not.toMatch(/A2UIRenderer/)
+    })
+
+    it('getRuntimeProxyInstruction still returns the (disabled-pending-fix) instruction text directly, for future reference', () => {
+      const instruction = getRuntimeProxyInstruction('A2UI')
+      expect(instruction).toBeDefined()
+      expect(instruction).toMatch(/A2UIRenderer/)
+    })
+
+    it('RUNTIME_PROXY_PATH_SUBSTRINGS still carries the A2UI entry (harmless while disabled — #518 compliance checks are gated on selection, see below)', () => {
+      expect(RUNTIME_PROXY_PATH_SUBSTRINGS.A2UI).toEqual(['@ainative/ai-kit-a2ui'])
+      expect(getComplianceCheckedPrimitiveNames()).toContain('A2UI')
+    })
+
+    it('findPrimitiveComplianceGaps never flags A2UI for any idea while it is disabled — it is gated on selection, so an un-selectable primitive is never "asked for"', async () => {
+      const { findPrimitiveComplianceGaps } = await import('@/lib/build/obedience-gate')
+      const codeThatNeverImportsTheRealRenderer = `
+        function AgentSurface({ messageType }) {
+          switch (messageType) { case 'card': return <Card />; default: return null }
+        }
+      `
+      const gaps = findPrimitiveComplianceGaps(codeThatNeverImportsTheRealRenderer, A2UI_IDEA)
+      expect(gaps).not.toContain('A2UI')
     })
   })
 

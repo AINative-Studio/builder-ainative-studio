@@ -8,6 +8,7 @@ vi.hoisted(() => {
 })
 
 import { claimSubdomain } from '@/lib/build/app-registry'
+import { __resetRegistryCacheForTests } from '@/lib/build/app-registry'
 
 /**
  * #78 — claimSubdomain is the PAID-gated action behind the "claim your subdomain"
@@ -25,7 +26,7 @@ function okResponse(): Response {
 }
 
 describe('claimSubdomain (#78)', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); __resetRegistryCacheForTests() })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('refuses (not_registered) when the slug is not registered — no write', async () => {

@@ -26,6 +26,14 @@ export interface PublicNavLink {
 const DEFAULT_LINKS: PublicNavLink[] = [
   { href: '/guides', label: 'Guides' },
   { href: '/about', label: 'About' },
+  // #1189 — app/evidence/page.tsx (the real gallery/timeline of automated
+  // proof: test runs, builds, coverage, deployments) has been reachable only
+  // by typing the URL directly since it shipped — no page anywhere linked to
+  // it. Its own copy ("Automated proof for every claim... Verify before you
+  // trust") is a trust/credibility pitch, the same register as About and
+  // Pricing, so it gets the same sitewide nav placement rather than a
+  // lower-key link buried on one other page.
+  { href: '/evidence', label: 'Evidence' },
   { href: '/help', label: 'Help' },
   { href: '/pricing', label: 'Pricing' },
 ]

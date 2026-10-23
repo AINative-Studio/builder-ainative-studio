@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Select,
@@ -27,6 +28,7 @@ import type {
   AgentSkill,
   SkillMetadata,
   SkillBrowserProps,
+  SkillRecommendation,
 } from '@/lib/types/agent-skills'
 
 interface SkillCardProps {
@@ -100,6 +102,35 @@ function SkillCard({ skill, onSelect, isLoading }: SkillCardProps) {
   )
 }
 
+function SkillCardSkeleton() {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-start justify-between">
+          <div className="flex-1">
+            <Skeleton className="h-5 w-32" />
+            <Skeleton className="h-4 w-12 mt-2" />
+          </div>
+          <Skeleton className="h-4 w-16" />
+        </div>
+      </CardHeader>
+      <CardContent>
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-5/6 mt-2" />
+        <Skeleton className="h-4 w-2/3 mt-2" />
+        <div className="flex flex-wrap gap-1 mt-3">
+          <Skeleton className="h-5 w-14 rounded-full" />
+          <Skeleton className="h-5 w-14 rounded-full" />
+          <Skeleton className="h-5 w-14 rounded-full" />
+        </div>
+      </CardContent>
+      <CardFooter>
+        <Skeleton className="h-9 w-full" />
+      </CardFooter>
+    </Card>
+  )
+}
+
 export function SkillBrowser({ onSkillSelect, currentContext }: SkillBrowserProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedTags, setSelectedTags] = useState<string[]>([])
@@ -108,9 +139,15 @@ export function SkillBrowser({ onSkillSelect, currentContext }: SkillBrowserProp
   const [filteredSkills, setFilteredSkills] = useState<SkillMetadata[]>([])
   const [availableTags, setAvailableTags] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
+  const [searching, setSearching] = useState(false)
   const [activeTab, setActiveTab] = useState<'all' | 'built-in' | 'custom'>('all')
+  const [builtInIds, setBuiltInIds] = useState<Set<string>>(new Set())
+  const [recommendations, setRecommendations] = useState<SkillRecommendation[]>([])
 
-  // Fetch skills
+  // Fetch skills (base listing — used for the Built-in/Custom tabs and the
+  // tag-filter chips, since GET /api/skills is the one route that returns
+  // the raw is_built_in flag; GET /api/skills/search returns mapped
+  // SkillMetadata, which doesn't carry it).
   useEffect(() => {
     const fetchSkills = async () => {
       try {
@@ -120,6 +157,7 @@ export function SkillBrowser({ onSkillSelect, currentContext }: SkillBrowserProp
 
         const data = await response.json()
         setSkills(data.skills)
+        setBuiltInIds(new Set(data.skills.filter((s: any) => s.is_built_in).map((s: any) => s.id)))
 
         // Extract unique tags
         const tags = new Set<string>()
@@ -137,44 +175,73 @@ export function SkillBrowser({ onSkillSelect, currentContext }: SkillBrowserProp
     fetchSkills()
   }, [])
 
-  // Filter and sort skills
+  // Real server-side search (#1213) — GET /api/skills/search, debounced.
+  // Was zero in-repo callers before this; this component previously only
+  // ever filtered the single full fetch above, client-side, in-memory.
   useEffect(() => {
-    let filtered = [...skills]
+    let cancelled = false
+    const timer = setTimeout(async () => {
+      setSearching(true)
+      try {
+        const params = new URLSearchParams()
+        if (searchQuery) params.set('query', searchQuery)
+        if (selectedTags.length > 0) params.set('tags', selectedTags.join(','))
+        params.set('sortBy', sortBy)
+        params.set('limit', '100')
 
-    // Filter by tab
-    if (activeTab === 'built-in') {
-      filtered = filtered.filter((s: any) => s.is_built_in)
-    } else if (activeTab === 'custom') {
-      filtered = filtered.filter((s: any) => !s.is_built_in)
+        const res = await fetch(`/api/skills/search?${params.toString()}`)
+        if (!res.ok) throw new Error('Search failed')
+        const data: { skills: SkillMetadata[] } = await res.json()
+        if (cancelled) return
+
+        let results = data.skills
+        if (activeTab === 'built-in') {
+          results = results.filter((s) => builtInIds.has(s.id))
+        } else if (activeTab === 'custom') {
+          results = results.filter((s) => !builtInIds.has(s.id))
+        }
+        setFilteredSkills(results)
+      } catch (error) {
+        console.error('Error searching skills:', error)
+      } finally {
+        if (!cancelled) setSearching(false)
+      }
+    }, 200)
+
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
     }
+  }, [searchQuery, selectedTags, sortBy, activeTab, builtInIds])
 
-    // Filter by search query
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase()
-      filtered = filtered.filter(
-        (skill) =>
-          skill.name.toLowerCase().includes(query) ||
-          skill.description.toLowerCase().includes(query) ||
-          skill.tags.some((tag) => tag.toLowerCase().includes(query))
-      )
+  // Real context-based recommendations (#1213) — POST /api/skills/recommend,
+  // zero in-repo callers before this. Only meaningful with a real
+  // currentContext (sessionId); skipped otherwise rather than sending a
+  // fabricated one.
+  useEffect(() => {
+    if (!currentContext?.sessionId) {
+      setRecommendations([])
+      return
     }
-
-    // Filter by selected tags
-    if (selectedTags.length > 0) {
-      filtered = filtered.filter((skill) =>
-        selectedTags.some((tag) => skill.tags.includes(tag))
-      )
-    }
-
-    // Sort
-    if (sortBy === 'name') {
-      filtered.sort((a, b) => a.name.localeCompare(b.name))
-    } else if (sortBy === 'recent') {
-      filtered.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-    }
-
-    setFilteredSkills(filtered)
-  }, [skills, searchQuery, selectedTags, sortBy, activeTab])
+    let cancelled = false
+    fetch('/api/skills/recommend', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: currentContext.sessionId,
+        projectId: currentContext.projectId,
+        currentFile: currentContext.currentFile,
+        gitContext: currentContext.gitContext,
+        tokenBudget: currentContext.tokenBudget,
+      }),
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.recommendations) setRecommendations(data.recommendations)
+      })
+      .catch(() => { /* best-effort — the browser works fine without recommendations */ })
+    return () => { cancelled = true }
+  }, [currentContext])
 
   const toggleTag = useCallback((tag: string) => {
     setSelectedTags((prev) =>
@@ -195,6 +262,7 @@ export function SkillBrowser({ onSkillSelect, currentContext }: SkillBrowserProp
             <Input
               type="text"
               placeholder="Search skills..."
+              data-testid="skill-browser-search"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-10"
@@ -247,14 +315,51 @@ export function SkillBrowser({ onSkillSelect, currentContext }: SkillBrowserProp
         </div>
       )}
 
+      {/* Recommended for you — real POST /api/skills/recommend results. */}
+      {recommendations.length > 0 && (
+        <div className="px-4 py-3 border-b bg-muted/30" data-testid="skill-recommendations">
+          <div className="flex items-center gap-2 mb-2">
+            <Star className="h-4 w-4 text-amber-500" />
+            <span className="text-sm font-medium">Recommended for you</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {recommendations.map((rec) => (
+              <Badge
+                key={rec.skill.id}
+                variant="secondary"
+                className="cursor-pointer"
+                title={rec.reason}
+                onClick={() => {
+                  const match = skills.find((s) => s.id === rec.skill.id)
+                  if (match) {
+                    fetch(`/api/skills/${match.id}`)
+                      .then((r) => (r.ok ? r.json() : null))
+                      .then((d) => d?.skill && onSkillSelect(d.skill))
+                      .catch(() => {})
+                  }
+                }}
+              >
+                {rec.skill.name} · {Math.round(rec.confidence * 100)}%
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Skills Grid */}
       <ScrollArea className="flex-1">
         <div className="p-4">
           {loading ? (
-            <div className="flex items-center justify-center h-48">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" data-testid="skill-browser-loading">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <SkillCardSkeleton key={i} />
+              ))}
+            </div>
+          ) : searching ? (
+            <div className="flex items-center justify-center h-48" data-testid="skill-browser-searching">
               <div className="text-center">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mx-auto mb-4" />
-                <p className="text-sm text-muted-foreground">Loading skills...</p>
+                <p className="text-sm text-muted-foreground">Searching...</p>
               </div>
             </div>
           ) : filteredSkills.length === 0 ? (

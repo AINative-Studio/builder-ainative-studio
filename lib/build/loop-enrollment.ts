@@ -308,8 +308,37 @@ export interface NightlyRunHealth {
   failed: number
   tasksAttempted: number
   tasksCompleted: number
+  /**
+   * #1232 — real ship rate, not just coverage-pass rate: how many of
+   * tasksCompleted's coverage-verified tasks were actually auto-merged to
+   * main / redeployed to the founder's live app (resolveTask()'s own
+   * best-effort merge+deploy, #468, never flips completed back to failed on
+   * a hiccup — so completed alone can look healthy while PRs sit unmerged).
+   * Optional so an older/pre-#1232 row is never mistaken for an explicit 0.
+   */
+  tasksMerged?: number
+  tasksRedeployed?: number
+  /**
+   * How many orphaned `in_progress` tasks (a prior run killed mid-resolution
+   * — see task-resolution-loop.ts's isStaleInProgress) were recovered to
+   * `failed` this run. Optional for the same reason as tasksMerged/
+   * tasksRedeployed — an older/pre-this-field row is never mistaken for an
+   * explicit 0.
+   */
+  tasksReaped?: number
   stalledCompanies: number
   elapsedMs: number
+  /**
+   * Set only when the route's whole invocation threw before it could
+   * finish aggregating a real outcome (see app/api/build/nightly-loop/
+   * route.ts's catch block) -- every other field above is then a zeroed
+   * placeholder, not a real measurement. Absent (not false) on every
+   * normal recording, so an older/normal row is never mistaken for an
+   * explicit "this run did not crash" assertion.
+   */
+  crashed?: boolean
+  /** Only present alongside crashed: true. */
+  errorMessage?: string
 }
 
 /** Persist one shard invocation's aggregate health. Best-effort, like recordRun(). */

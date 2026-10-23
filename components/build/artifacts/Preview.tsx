@@ -10,7 +10,7 @@
  * graceful message if generation fails. The Make-it-real banner is preserved.
  */
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useBuild } from '@/contexts/build-context'
 import { useRealPreview, type DesignConformanceSummary } from '@/lib/build/useRealPreview'
 import { shouldUseSandpack } from '@/lib/build/preview-engine'
@@ -49,12 +49,77 @@ type PreviewStatus = 'idle' | 'generating' | 'ready' | 'error'
  * a stricter check), and the founder deserves to know that's still resolving
  * rather than seeing a confident "Live in production" claim. See the
  * register-app effect in Preview() for the full incident + evidence.
+ *
+ * builder#1256: `registered === null` (the register-app POST is in flight —
+ * it resolves + persists a durable deploy URL, so it's a real network round
+ * trip, not instant) used to ALSO show "Live in production", on the
+ * reasoning that it's "not yet known to be broken." That's the wrong default
+ * for a claim this specific: a real, reproduced incident showed a company's
+ * OWN workspace confidently claiming "Live in production" with a rendered
+ * chat UI, while `/api/build/my-companies` never listed it (no registry row
+ * existed yet) AND the standalone `/build/{slug}` URL — which resolves
+ * through that same registry — showed "This preview is still being built."
+ * Two surfaces disagreeing about the same company, because this chip
+ * promised a state the registry hadn't reached. Honest instead: a distinct
+ * in-between label for the genuinely-pending window, reserving "Live in
+ * production" for registered:true the same way the share-URL link below
+ * already does (shouldShowShareUrl has required registered===true since the
+ * original #77 fix — this chip was the one surface that never followed).
  */
 export function livePreviewLabel(status: PreviewStatus, registered: boolean | null): string {
   if (status === 'ready' && registered === false) return 'Fixing a generation error…'
+  if (status === 'ready' && registered === null) return 'Finishing up…'
   if (status === 'ready') return 'Live in production'
   if (status === 'error') return 'Preview unavailable'
   return 'Building your app…'
+}
+
+/**
+ * Real finding (#1255, live verification — two full builds, "Morphic" and
+ * "Fluent"): the terminal ribbon's deploy narration (RIBBON_LINES.preview in
+ * useAutoplay.ts) is a short, fully scripted sequence — 4 fixed lines on fixed
+ * timers that total ~3.4s — written to cover the provision+deploy SCAFFOLDING
+ * around generation, not the actual code-generation call itself. It always
+ * ends on "deploy ▸ live at staging" and never advances again, even though
+ * real generation (useRealPreview → /api/chat-ws) is very often still running
+ * well behind it — this is the longest wait in the whole pipeline and the
+ * ribbon has nothing scripted left to say about it. A founder watching that
+ * log genuinely cannot tell "almost done" from "hung forever."
+ *
+ * There IS a real backend signal during generation: useRealPreview's SSE
+ * stream bumps refreshKey on every genuine chat-ws 'files'/'refresh' event.
+ * This function turns that real signal (plus elapsed time, for the quiet
+ * stretches between events) into an honest ribbon line, so the log keeps
+ * narrating genuine activity for the real generation duration instead of
+ * sitting frozen on stale deploy scaffolding. Returns null when there's
+ * nothing new to say (not generating, or no real signal has changed/elapsed
+ * enough yet) — callers must not append a line in that case.
+ */
+export function generationRibbonLine(
+  status: PreviewStatus,
+  refreshKey: number,
+  lastSeenRefreshKey: number,
+  msSinceLastLine: number,
+  heartbeatMs = 4000,
+): string | null {
+  if (status !== 'generating') return null
+  if (refreshKey > lastSeenRefreshKey) return 'generate ▸ writing app code…'
+  if (msSinceLastLine >= heartbeatMs) return 'generate ▸ still working — this can take a few minutes'
+  return null
+}
+
+/**
+ * Pure decision: the skeleton-loader sub-line under "Cody is building your
+ * app…" (#1255). The reporter's fallback suggestion — a distinct, honest
+ * "still generating" state once the wait has gone on long enough that
+ * silence alone would read as stalled, separate from the terminal ribbon so
+ * the ribbon's own staleness (see generationRibbonLine above) doesn't compound
+ * it. Returns null before the threshold — the plain "building…" line alone is
+ * accurate and doesn't need qualifying yet.
+ */
+export function stillGeneratingLine(elapsedMs: number, thresholdMs = 15_000): string | null {
+  if (elapsedMs < thresholdMs) return null
+  return 'Still generating your app — this can take several minutes for a complex build.'
 }
 
 /**
@@ -95,12 +160,54 @@ export function Preview() {
   // schema stays consistent with the document Cody showed them earlier in the
   // build. dataModel is generated well before preview in APP_VIEWS order, so
   // it's already in state.generated by the time this mounts.
-  const { previewUrl, status, chatId, files, designConformance } = useRealPreview(
+  const { previewUrl, status, chatId, files, designConformance, refreshKey } = useRealPreview(
     state.idea,
     state.view === 'preview' && !!state.idea,
     state.generated?.dataModel,
     state.designSystemId,
   )
+
+  // #1255: keep the terminal ribbon narrating REAL generation activity for as
+  // long as generation actually runs, instead of leaving it frozen on
+  // useAutoplay's scripted "deploy ▸ live at staging" — the ribbon's own
+  // script legitimately has nothing left to say once that line fires, but the
+  // real /api/chat-ws call behind this view is very often still in flight.
+  // Each genuine SSE 'files'/'refresh' event bumps refreshKey (a real signal);
+  // a quiet stretch between events still gets an honest heartbeat line so the
+  // log never again reads as stalled during the single longest wait in the
+  // pipeline. Pure decision lives in generationRibbonLine (above) — a single
+  // interval (started once per "generating" run, not recreated on every
+  // refreshKey bump) polls the latest status/refreshKey via refs and
+  // dispatches whenever there's something real to say.
+  const statusRef = useRef(status)
+  const refreshKeyRef = useRef(refreshKey)
+  statusRef.current = status
+  refreshKeyRef.current = refreshKey
+  // How long the CURRENT "generating" run has been going — drives both the
+  // ribbon heartbeat above and the skeleton's own "still generating" sub-line
+  // below (#1255). Starts fresh each time generation (re)enters 'generating'.
+  const [generatingElapsedMs, setGeneratingElapsedMs] = useState(0)
+  useEffect(() => {
+    if (status !== 'generating') { setGeneratingElapsedMs(0); return }
+    const startedAt = Date.now()
+    let lastSeenRefreshKey = refreshKeyRef.current
+    let lastLineAt = startedAt
+    const id = setInterval(() => {
+      setGeneratingElapsedMs(Date.now() - startedAt)
+      const line = generationRibbonLine(
+        statusRef.current, refreshKeyRef.current, lastSeenRefreshKey, Date.now() - lastLineAt,
+      )
+      if (line) {
+        dispatch({ type: 'RIBBON', line })
+        lastSeenRefreshKey = refreshKeyRef.current
+        lastLineAt = Date.now()
+      }
+    }, 1000)
+    return () => clearInterval(id)
+    // Intentionally keyed on `status` alone — refreshKey changes are read via
+    // the ref inside the interval, not re-triggering effect teardown/setup.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status])
   // Engine routing (#291): a genuinely multi-file app renders via Sandpack (real
   // bundler, resolves cross-file imports); single-file apps keep the hardened Babel
   // iframe. Only route to Sandpack once the app is READY and the payload qualifies.
@@ -401,6 +508,13 @@ export function Preview() {
               <div className="m-preview-skel">
                 {[92, 70, 84, 60].map((w, i) => <div key={i} className="m-shimmer m-gen-line" style={{ width: `${w}%` }} />)}
               </div>
+              {/* #1255: once the wait has gone on long enough that silence alone
+                  would read as stalled, say so honestly — distinct from (and not
+                  dependent on) the terminal ribbon above, so this surface doesn't
+                  inherit the ribbon's own staleness problem. */}
+              {stillGeneratingLine(generatingElapsedMs) && (
+                <p className="m-sub" data-testid="still-generating-line">{stillGeneratingLine(generatingElapsedMs)}</p>
+              )}
             </div>
           )}
         </div>

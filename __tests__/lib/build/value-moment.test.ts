@@ -8,6 +8,8 @@ import {
   sprintShareOfPlan,
   sprintCostLine,
   buildsRemainingLine,
+  creditsBadgeLabel,
+  creditsMeterFillPercent,
   decideLimitAction,
   shouldShowMvpUpsell,
   pricingFraming,
@@ -110,6 +112,46 @@ describe('buildsRemainingLine — real credits API numbers only', () => {
     expect(buildsRemainingLine({ unlimited: true, used: 0, limit: -1 })).toBe('')
     expect(buildsRemainingLine({ used: 1 })).toBe('')
     expect(buildsRemainingLine({ used: 1, limit: 0 })).toBe('')
+  })
+})
+
+// #1258 — persistent remaining-build indicator for the account chip/menu, so
+// the quota is visible before/during a build, not just after it's gone.
+describe('creditsBadgeLabel — compact "N left" for the account chip/menu', () => {
+  it('shows the real remaining count', () => {
+    expect(creditsBadgeLabel({ used: 1, limit: 3, unlimited: false })).toBe('2 left')
+  })
+
+  it('floors at 0 left once exhausted — never a negative count', () => {
+    expect(creditsBadgeLabel({ used: 5, limit: 3, unlimited: false })).toBe('0 left')
+  })
+
+  it('shows 0 left exactly at the limit', () => {
+    expect(creditsBadgeLabel({ used: 3, limit: 3, unlimited: false })).toBe('0 left')
+  })
+
+  it('is empty for unlimited plans, null/unloaded status, or malformed shapes — never fabricates', () => {
+    expect(creditsBadgeLabel(null)).toBe('')
+    expect(creditsBadgeLabel({ unlimited: true, used: 0, limit: -1 })).toBe('')
+    expect(creditsBadgeLabel({ used: 1 })).toBe('')
+    expect(creditsBadgeLabel({ used: 1, limit: 0 })).toBe('')
+  })
+})
+
+describe('creditsMeterFillPercent — honest meter fill, not a fixed placeholder', () => {
+  it('reflects the real used/limit share', () => {
+    expect(creditsMeterFillPercent({ used: 1, limit: 3, unlimited: false })).toBe(33)
+  })
+
+  it('clamps at 100 once exhausted, never over-fills past a bad count', () => {
+    expect(creditsMeterFillPercent({ used: 5, limit: 3, unlimited: false })).toBe(100)
+  })
+
+  it('is 0 (never the old hardcoded 38) for unlimited, null/unloaded, or malformed status', () => {
+    expect(creditsMeterFillPercent(null)).toBe(0)
+    expect(creditsMeterFillPercent({ unlimited: true, used: 0, limit: -1 })).toBe(0)
+    expect(creditsMeterFillPercent({ used: 1 })).toBe(0)
+    expect(creditsMeterFillPercent({ used: 1, limit: 0 })).toBe(0)
   })
 })
 

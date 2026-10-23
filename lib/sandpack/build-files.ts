@@ -43,11 +43,36 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
     // existed), so Sandpack's own dependency walker tried to resolve
     // next/font/google, failed with "Cannot find module", and silently
     // failed the whole compile with zero error surfaced to the parent page
-    // (confirmed live via Sandpack's own relayed console message). Skip
-    // these — they describe the real app's shell, not anything the preview
-    // sandbox needs or can run.
+    // (confirmed live via Sandpack's own relayed console message). The
+    // actual mechanism (confirmed by reading the self-hosted sandpack-
+    // bundler fork's source, src/bundler/bundler.ts): `collectAppBarrelUsage`
+    // scans every file's imports and calls `resolveAsync` on each specifier
+    // for ALL provided files, not just ones reachable from the real
+    // '/App.tsx' entry — so an unresolvable import in ANY generated file,
+    // reachable or not, rejects that shared promise and silently fails the
+    // whole compile. Extended (2026-10-20, static analysis, not yet an
+    // individually-confirmed-live repro the way layout.tsx was) to the same
+    // class of Next.js-only convention file carrying the identical risk:
+    // route handlers and middleware import `next/server`
+    // (NextRequest/NextResponse), and the image-metadata convention files
+    // import `ImageResponse` from `next/og` — neither module exists in
+    // Sandpack's plain react-ts template either, and none of these files is
+    // ever the preview's entry point or renders anything a founder would
+    // see in the preview. Skip these — they describe the real app's shell,
+    // not anything the preview sandbox needs or can run. Extended again
+    // (2026-10-20, static analysis, issue #1143) with the remaining official
+    // App Router special-file basenames not yet covered: loading/error
+    // (error.tsx is required to be a Client Component and sometimes imports
+    // next/navigation)/global-error (replaces the root layout when active —
+    // same <html>/<body> + possible next/font risk as layout.tsx)/not-found/
+    // default (parallel routes)/template — none of these is ever reachable
+    // from the preview's real entry ('/App.tsx') either.
     const basename = path.slice(path.lastIndexOf('/') + 1)
-    if (/^(layout|sitemap|robots)\.tsx?$/.test(basename)) {
+    if (
+      /^(layout|sitemap|robots|middleware|instrumentation|route|opengraph-image|twitter-image|icon|apple-icon|manifest|loading|error|global-error|not-found|default|template)\.tsx?$/.test(
+        basename
+      )
+    ) {
       continue
     }
     let content = rawContent
@@ -72,13 +97,40 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
     }
   }
 
-  const mainFile = Object.keys(sandpackFiles).find(
-    f => f === '/src/App.tsx' || f === '/App.tsx'
-  ) || Object.keys(sandpackFiles).find(
-    f => f.endsWith('page.tsx') || f.endsWith('App.tsx')
-  ) || Object.keys(sandpackFiles)[0]
+  const builtinPathsForEntry = new Set(Object.keys(getBuiltinFiles()))
+  const generatedPaths = Object.keys(sandpackFiles).filter(f => !builtinPathsForEntry.has(f))
 
-  let mainCode = mainFile ? sandpackFiles[mainFile] : ''
+  const mainFile = generatedPaths.find(
+    f => f === '/src/App.tsx' || f === '/App.tsx'
+  ) || generatedPaths.find(
+    f => f.endsWith('page.tsx') || f.endsWith('App.tsx')
+  ) || null
+
+  // Real bug (#1099 item 8): a generation can produce only sibling
+  // component files with no App.tsx/page.tsx anywhere -- the one thing
+  // this pipeline genuinely cannot invent (mirrors company-scaffold.ts's
+  // hasDeployableEntrypoint(), which treats this exact condition as "not
+  // deployable yet" for the real deploy path). Previously this fell
+  // through to `Object.keys(sandpackFiles)[0]` -- an arbitrary BUILTIN
+  // file (shadcn/AIKit/template get spread into sandpackFiles first),
+  // producing nonsense entry content and a raw babel parse error instead
+  // of a clear message a founder could actually understand.
+  const NO_ENTRYPOINT_FALLBACK = [
+    "import React from 'react'",
+    'export default function App() {',
+    '  return (',
+    "    <div style={{ display: 'flex', minHeight: '100vh', alignItems: 'center', justifyContent: 'center', padding: '2rem', textAlign: 'center', fontFamily: 'system-ui, sans-serif' }}>",
+    '      <div>',
+    "        <h1 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '0.5rem' }}>This page hasn't been generated yet</h1>",
+    "        <p style={{ color: '#666' }}>No landing page content was produced for this company. Try regenerating, or check back shortly.</p>",
+    '      </div>',
+    '    </div>',
+    '  )',
+    '}',
+    '',
+  ].join('\n')
+
+  let mainCode = mainFile ? sandpackFiles[mainFile] : NO_ENTRYPOINT_FALLBACK
 
   mainCode = mainCode.replace(/from\s+['"]\.\/src\//g, "from './")
   mainCode = mainCode.replace(/from\s+['"]\.\/app\/page['"]/g, "from './app/page'")
@@ -113,6 +165,16 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
   sandpackFiles['/App.tsx'] = mainCode
 
   const builtinPaths = new Set(Object.keys(getBuiltinFiles()))
+
+  // Real bug found live (#1099 item 4, "LoginIcon is not defined"): a
+  // sibling generated file can genuinely define and export a local
+  // (non-library) component that another file uses in JSX without ever
+  // importing it — the file exists, so stubMissingLocalComponents() below
+  // (which only reacts to an import specifier that doesn't resolve) never
+  // sees anything wrong. Built once, before any file's own content is
+  // mutated by the injection passes below, so export statements are read
+  // from each file's original generated source.
+  const localExportMap = buildLocalExportMap(sandpackFiles, builtinPaths)
 
   for (const [path, code] of Object.entries(sandpackFiles)) {
     if (!path.endsWith('.tsx')) continue
@@ -215,7 +277,16 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
       const imports: string[] = []
       for (const [mod, components] of Object.entries(shadcnMap)) {
         const used = components.filter(c =>
-          (new RegExp(`<${c}[\\s/>]|\\b${c}\\b`).test(fixed)) &&
+          // #1165: was `<${c}[\\s/>]|\\b${c}\\b` — the bare `\b${c}\b`
+          // fallback matched plain English prose containing the component
+          // name as an ordinary word (confirmed live: "Select mild,
+          // medium, or wild" in a founder's own copy text spuriously
+          // injected `import { Select } from './components/ui/select'`,
+          // a real, unused import with nothing to do with JSX at all).
+          // Only the real JSX-tag-opening pattern is a legitimate signal
+          // this component is actually rendered — matches the AIKit
+          // injection guard just below, which never had this bug.
+          new RegExp(`<${c}[\\s/>]`).test(fixed) &&
           !new RegExp(`import\\s+.*\\b${c}\\b.*from\\s+`).test(fixed)
         )
         if (used.length > 0) {
@@ -276,8 +347,22 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
           .map(s => s.trim())
           .filter(Boolean)
       )
+      // #1165: was a bare `\b${icon}\b` anywhere in the file — matched the
+      // icon name as an ordinary English word in prose/JSX text content,
+      // object keys, or unrelated identifiers with zero connection to an
+      // actual icon usage (confirmed live, habanero-hub: "Gift
+      // Subscriptions" link text, a "Jalapeño Sunrise" flavor name, the
+      // "Navigation" JSX comment, "Content-Type" header strings, and
+      // "Key features"/"Reorder & Share" copy each spuriously injected
+      // Gift/Sunrise/Navigation/Type/Key/Share into the lucide-react
+      // import, even though none was ever actually rendered). Real usage
+      // is either a JSX tag (`<Icon`) or the documented `icon: Icon` /
+      // `icon={Icon}` object-property-reference pattern (see this
+      // injection's own doc comment above, written for exactly that case)
+      // — require one of those, not a bare word appearing anywhere.
       const missingIcons = allLucideIcons.filter(icon =>
-        new RegExp(`\\b${icon}\\b`).test(fixed) && !alreadyImported.has(icon)
+        new RegExp(`<${icon}[\\s/>]|\\bicon:\\s*${icon}\\b|\\bicon=\\{${icon}\\}`).test(fixed) &&
+        !alreadyImported.has(icon)
       )
       if (missingIcons.length > 0) {
         if (existingImportMatch) {
@@ -286,6 +371,32 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
         } else {
           fixed = `import { ${missingIcons.join(', ')} } from 'lucide-react'\n${fixed}`
         }
+      }
+    }
+
+    // Inject a missing import for a locally-defined sibling component used
+    // in JSX but never imported (see localExportMap comment above). Grouped
+    // by source file so multiple names from the same sibling become one
+    // import statement, same as the shadcn injection above.
+    {
+      const selfPath = normalizeForRelative(path)
+      const byFile = new Map<string, string[]>()
+      for (const [name, exportingPath] of localExportMap) {
+        if (exportingPath === selfPath) continue
+        if (!new RegExp(`<${name}[\\s/>]`).test(fixed)) continue
+        if (
+          new RegExp(`import\\s*\\{[^}]*\\b${name}\\b[^}]*\\}\\s*from`).test(fixed) ||
+          new RegExp(`import\\s+${name}\\b`).test(fixed)
+        ) continue
+        const rel = relativeImportPath(path, exportingPath)
+        if (!byFile.has(rel)) byFile.set(rel, [])
+        byFile.get(rel)!.push(name)
+      }
+      if (byFile.size > 0) {
+        const importLines = Array.from(byFile.entries()).map(
+          ([rel, names]) => `import { ${names.join(', ')} } from '${rel}'`
+        )
+        fixed = importLines.join('\n') + '\n' + fixed
       }
     }
 
@@ -324,12 +435,15 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
  */
 function stubMissingLocalComponents(sandpackFiles: Record<string, string>): void {
   const builtinPaths = new Set(Object.keys(getBuiltinFiles()))
-  const importRe = /from\s+['"](\.\.?\/[^'"]+)['"]/g
+  // Captures the import clause too (not just the path) — #1122's original
+  // version only tracked WHICH paths were missing, not WHAT each importer
+  // actually needed from them. See needsDefault/namedExports below.
+  const importRe = /^[ \t]*import\s+(?:type\s+)?([^'";]*?)\s*from\s*['"](\.\.?\/[^'"]+)['"]/gm
 
   // Collect candidate missing paths first — mutating sandpackFiles while
   // iterating imports found across it could make a later stub's own file
   // content get re-scanned; two passes keeps this deterministic.
-  const toStub = new Set<string>()
+  const toStub = new Map<string, { needsDefault: boolean; namedExports: Set<string> }>()
 
   for (const [path, code] of Object.entries(sandpackFiles)) {
     if (builtinPaths.has(path) || !/\.(t|j)sx?$/.test(path)) continue
@@ -337,21 +451,90 @@ function stubMissingLocalComponents(sandpackFiles: Record<string, string>): void
     let match: RegExpExecArray | null
     importRe.lastIndex = 0
     while ((match = importRe.exec(code))) {
-      const resolved = resolveRelativeImport(dir, match[1])
+      const clause = match[1]
+      const resolved = resolveRelativeImport(dir, match[2])
       if (!resolved) continue
-      const candidates = [resolved, `${resolved}.tsx`, `${resolved}.ts`, `${resolved}/index.tsx`]
+      // #1165 follow-up: must check BOTH index.tsx and index.ts — the real
+      // AIKit builtin lives at /components/aikit/index.ts (a .ts file, not
+      // .tsx). Missing that candidate here made this treat the already-real
+      // './components/aikit' import as missing and synthesize a conflicting
+      // stub at /components/aikit.tsx, which then won module resolution over
+      // the real directory module and rendered MetricCard as undefined —
+      // confirmed live on habanero-hub even after the import-injection fix.
+      const candidates = [
+        resolved,
+        `${resolved}.tsx`,
+        `${resolved}.ts`,
+        `${resolved}/index.tsx`,
+        `${resolved}/index.ts`,
+      ]
       const exists = candidates.some((c) => c in sandpackFiles)
-      if (!exists) toStub.add(`${resolved}.tsx`)
+      if (!exists) {
+        const stubPath = `${resolved}.tsx`
+        const needs = toStub.get(stubPath) ?? { needsDefault: false, namedExports: new Set<string>() }
+        const { needsDefault, named } = parseMissingImportClause(clause)
+        needs.needsDefault ||= needsDefault
+        for (const n of named) needs.namedExports.add(n)
+        toStub.set(stubPath, needs)
+      }
     }
   }
 
-  for (const stubPath of toStub) {
+  for (const [stubPath, needs] of toStub) {
     if (stubPath in sandpackFiles) continue // a real pass already provided it
     const name = (stubPath.split('/').pop() || 'Missing').replace(/\.tsx$/, '')
     if (!/^[A-Za-z_$][\w$]*$/.test(name)) continue // not a valid component identifier, skip
-    sandpackFiles[stubPath] =
-      `import React from 'react'\n// Auto-stubbed: the generation did not produce this file (${stubPath}).\nexport default function ${name}() { return null }\n`
+
+    const lines = [
+      `import React from 'react'`,
+      `// Auto-stubbed: the generation did not produce this file (${stubPath}).`,
+    ]
+    // Default export, same as before — kept even when nothing observed a
+    // default import of this path, so a stub is never a strict regression
+    // of #1122's original always-default behavior.
+    if (needs.needsDefault || needs.namedExports.size === 0) {
+      lines.push(`export default function ${name}() { return null }`)
+    }
+    // #1122 follow-up: a genuinely missing sibling can just as easily be
+    // imported by NAME (`import { Footer } from './components/Footer'`) as
+    // by default. A default-only stub leaves that named binding undefined,
+    // so rendering it still throws "Element type is invalid" — the exact
+    // whole-preview crash this function exists to prevent, just reached via
+    // the named-import path instead. Stub every named export actually
+    // observed so each one resolves to an inert component too.
+    for (const named of needs.namedExports) {
+      if (!/^[A-Za-z_$][\w$]*$/.test(named)) continue
+      lines.push(`export const ${named} = () => null`)
+    }
+    sandpackFiles[stubPath] = lines.join('\n') + '\n'
   }
+}
+
+/** Parses an import clause into what a missing module stub must provide: a default export, and/or specific named exports (by their EXPORTED name, not any local alias — the stub is matched against the module's real export surface, which aliasing on the import side never changes). */
+function parseMissingImportClause(clause: string): { needsDefault: boolean; named: string[] } {
+  const trimmed = clause.trim()
+  if (!trimmed) return { needsDefault: false, named: [] }
+
+  if (/^\*\s+as\s+[A-Za-z_$][\w$]*$/.test(trimmed)) {
+    // `import * as X from '...'` never throws on a missing named export —
+    // X is just a (possibly empty) module namespace object. No stub needed.
+    return { needsDefault: false, named: [] }
+  }
+
+  const braceMatch = trimmed.match(/^(?:([A-Za-z_$][\w$]*)\s*,\s*)?\{([^}]*)\}$/)
+  if (braceMatch) {
+    const named: string[] = []
+    for (const raw of braceMatch[2].split(',').map((n) => n.trim()).filter(Boolean)) {
+      // Inline type-only specifier (`type Foo`) has no runtime value to stub.
+      if (/^type\s+[A-Za-z_$][\w$]*(?:\s+as\s+[A-Za-z_$][\w$]*)?$/.test(raw)) continue
+      const aliasMatch = raw.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/)
+      named.push(aliasMatch ? aliasMatch[1] : raw)
+    }
+    return { needsDefault: Boolean(braceMatch[1]), named }
+  }
+
+  const defaultMatch = trimmed.match(/^([A-Za-z_$][\w$]*)$/)
+  return { needsDefault: Boolean(defaultMatch), named: [] }
 }
 
 /** Resolve a relative import specifier against the importing file's directory. Returns null for anything that isn't a plain relative path this app's own files would use. */
@@ -367,15 +550,88 @@ function resolveRelativeImport(fromDir: string, spec: string): string | null {
 }
 
 /**
+ * Scans every non-builtin generated file for a top-level named export
+ * (`export const/function/class Name`) and returns a name -> logical file
+ * path map, for injecting a missing import when another generated file
+ * uses that name in JSX without importing it (see #1099 item 4). A name
+ * exported from two genuinely different files is dropped entirely rather
+ * than guessed — an unresolved ambiguity is strictly safer than a wrong
+ * import.
+ */
+function buildLocalExportMap(sandpackFiles: Record<string, string>, builtinPaths: Set<string>): Map<string, string> {
+  const exportRe = /export\s+(?:const|function|class)\s+([A-Z]\w*)/g
+  const map = new Map<string, string>()
+  const ambiguous = new Set<string>()
+  for (const [path, code] of Object.entries(sandpackFiles)) {
+    if (builtinPaths.has(path) || !/\.(t|j)sx?$/.test(path)) continue
+    const normalized = normalizeForRelative(path)
+    let match: RegExpExecArray | null
+    exportRe.lastIndex = 0
+    while ((match = exportRe.exec(code))) {
+      const name = match[1]
+      const existing = map.get(name)
+      if (existing !== undefined && existing !== normalized) {
+        ambiguous.add(name)
+        continue
+      }
+      map.set(name, normalized)
+    }
+  }
+  for (const name of ambiguous) map.delete(name)
+  return map
+}
+
+/**
+ * buildSandpackFiles() mirrors every non-entry `/src/X` file to `/X` (see
+ * the assembly loop above) so a same-level relative import always resolves
+ * regardless of which style a file was generated under. Both copies carry
+ * identical content, so stripping the `/src/` prefix collapses them to the
+ * same logical path for cross-file export lookups and relative-path math.
+ */
+function normalizeForRelative(path: string): string {
+  return path.replace(/^\/src\//, '/')
+}
+
+/** Compute a relative import specifier from one generated file to another, via each file's logical (post-normalizeForRelative) path — independent of which /src-vs-root duplicate either side happens to be. */
+function relativeImportPath(fromPath: string, toPath: string): string {
+  const fromDir = normalizeForRelative(fromPath).replace(/\/[^/]*$/, '')
+  const toNoExt = normalizeForRelative(toPath).replace(/\.(t|j)sx?$/, '')
+  const fromParts = fromDir.split('/').filter(Boolean)
+  const toParts = toNoExt.split('/').filter(Boolean)
+  let common = 0
+  while (common < fromParts.length && common < toParts.length && fromParts[common] === toParts[common]) common++
+  const ups = fromParts.length - common
+  const rel = [...Array(ups).fill('..'), ...toParts.slice(common)].join('/')
+  return rel.startsWith('.') ? rel : `./${rel}`
+}
+
+/**
  * Detect whether the generated app's own files (excluding builtins) reference
- * lucide-react/recharts — see sandpack-preview.tsx's #1089/#1097 comment for why
- * this conservative substring check is safe (a false positive only costs what
- * unconditional declaration already cost; a false negative never happens because
- * the literal package-name substring can only appear via a real import).
+ * lucide-react/recharts/@stripe-js — see sandpack-preview.tsx's #1089/#1097
+ * comment for why this conservative substring check is safe (a false positive
+ * only costs what unconditional declaration already cost; a false negative
+ * never happens because the literal package-name substring can only appear
+ * via a real import).
+ *
+ * usesStripeJs (#1164): the ZeroCommerce checkout instruction
+ * (lib/build/primitive-catalog.ts) tells Cody to render Stripe's real
+ * Payment Element (loadStripe + Elements + PaymentElement) rather than a
+ * hand-rolled card-number form — that import needs `@stripe/stripe-js` and
+ * `@stripe/react-stripe-js` declared as Sandpack dependencies the same way
+ * lucide-react/recharts already are, or the preview bundle fails to resolve
+ * the import.
+ *
+ * usesA2UI (#126 follow-up): same gap, for the A2UI composition instruction
+ * (lib/build/primitive-catalog.ts's A2UI entry) — `@ainative/ai-kit-a2ui`
+ * (the renderer) and its `@ainative/ai-kit-a2ui-core` dependency are real
+ * published npm packages (first published 2026-10-21) the preview bundle
+ * has no reason to already know about.
  */
 export function detectSandpackDependencies(sandpackFiles: Record<string, string>): {
   usesLucideReact: boolean
   usesRecharts: boolean
+  usesStripeJs: boolean
+  usesA2UI: boolean
 } {
   const builtinPaths = new Set(Object.keys(getBuiltinFiles()))
   const generatedCode = Object.entries(sandpackFiles)
@@ -385,5 +641,7 @@ export function detectSandpackDependencies(sandpackFiles: Record<string, string>
   return {
     usesLucideReact: generatedCode.includes('lucide-react'),
     usesRecharts: generatedCode.includes('recharts'),
+    usesStripeJs: generatedCode.includes('@stripe/'),
+    usesA2UI: generatedCode.includes('@ainative/ai-kit-a2ui'),
   }
 }

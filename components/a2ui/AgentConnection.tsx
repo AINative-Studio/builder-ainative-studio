@@ -175,19 +175,57 @@ export function useAgentConnection({
     [onMessage, onError]
   )
 
-  // Send action to agent
-  const sendAction = useCallback((action: string, context: any) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      const message: A2UIActionMessage = {
-        type: 'action',
-        payload: { action, context },
-        timestamp: Date.now(),
+  // Send action to agent.
+  //
+  // #1193: when the WebSocket is not open this used to log a warning and drop
+  // the action on the floor. There is no A2UI WebSocket server in this
+  // deployment (`next start`, no server.js; GET /api/a2ui answers an upgrade
+  // with 426 and points at the polling transport), so that branch was the
+  // normal case and user actions never reached an agent at all. Fall back to
+  // POST /api/a2ui/action, which forwards onto the same per-chat queue the
+  // polling transport drains, and report a real failure if nothing is
+  // listening rather than failing silently.
+  const sendAction = useCallback(
+    (action: string, context: any) => {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        const message: A2UIActionMessage = {
+          type: 'action',
+          payload: { action, context },
+          timestamp: Date.now(),
+        }
+        wsRef.current.send(JSON.stringify(message))
+        return
       }
-      wsRef.current.send(JSON.stringify(message))
-    } else {
-      console.warn('[A2UI] Cannot send action: WebSocket not connected')
-    }
-  }, [])
+
+      if (!chatId) {
+        console.warn('[A2UI] Cannot send action: no chatId for HTTP fallback')
+        return
+      }
+
+      void fetch('/api/a2ui/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chatId, action, context }),
+      })
+        .then(async (res) => {
+          if (res.ok) return
+          const body = await res.json().catch(() => ({}))
+          const reason = body?.reason ?? `http_${res.status}`
+          console.error('[A2UI] Action was not delivered to an agent:', reason)
+          onError?.(
+            new Error(
+              body?.message ??
+                `A2UI action "${action}" was not delivered (${reason})`
+            )
+          )
+        })
+        .catch((err) => {
+          console.error('[A2UI] Failed to POST action:', err)
+          onError?.(err instanceof Error ? err : new Error(String(err)))
+        })
+    },
+    [chatId, onError]
+  )
 
   // Connect to WebSocket
   const connect = useCallback(() => {

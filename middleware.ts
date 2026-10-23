@@ -140,6 +140,51 @@ export async function middleware(request: NextRequest) {
 
   // /build is the new public front door (the pivot UX) — anonymous users must be
   // able to Fork → Intake → watch Cody build before any auth wall.
+  //
+  // #1102/#1113 follow-up: /build/{slug} is meant to be a company's real,
+  // shareable PUBLIC URL (#207) — but that promise only holds for
+  // `track: 'company'` entries, which always go through a dedicated
+  // 'landing' generation step (COMPANY_VIEWS in lib/build/state.ts).
+  // `track: 'app'` entries have NO landing-page step at all (APP_VIEWS) —
+  // they're internal tools/products, and exposing one at a bare public URL
+  // just surfaces whatever internal UI the app happens to have (confirmed
+  // live: habanero-hub and tidemark both render real, working, but
+  // decidedly non-marketing internal app UI — a community feed, an
+  // order-management dashboard — to any anonymous visitor). Product
+  // decision: gate app-track's standalone preview behind the same auth wall
+  // every other non-public screen already uses, rather than exposing it.
+  // Matches exactly ONE path segment after /build/ (the [slug] dynamic
+  // route) — known static subpaths (mcp, prd-generator, gtm, strapi) and
+  // [slug]'s own crawler-facing resources (llms.txt, sitemap.xml,
+  // robots.txt, .well-known) all have further segments and never match.
+  const slugMatch = pathname.match(/^\/build\/([^/]+)\/?$/)
+  if (slugMatch) {
+    const slug = slugMatch[1]
+    try {
+      const entry = await resolveApp(slug)
+      if (entry?.track === 'app') {
+        if (!process.env.AUTH_SECRET) {
+          console.error('❌ Missing AUTH_SECRET environment variable. Please check your .env file.')
+          return NextResponse.next() // Let the app handle the error with better UI
+        }
+        const token = await getToken({
+          req: request,
+          secret: process.env.AUTH_SECRET,
+          secureCookie: !isDevelopmentEnvironment,
+        })
+        if (!token) {
+          return NextResponse.redirect(new URL('/login', request.url))
+        }
+      }
+    } catch (error) {
+      // Fail OPEN here, matching this route's existing anonymous-by-default
+      // contract (#207) — a lookup hiccup must never turn a real company's
+      // shareable link into a 401 for every visitor. Worst case on a
+      // genuine app-track entry during an outage: same (already-shipped)
+      // exposure this fix closes, not a new regression.
+      console.error('[middleware] app-track auth gate lookup failed', error)
+    }
+  }
   if (pathname.startsWith('/build')) {
     return NextResponse.next()
   }

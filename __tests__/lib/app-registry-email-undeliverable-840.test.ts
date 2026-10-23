@@ -8,6 +8,7 @@ vi.hoisted(() => {
 })
 
 import { setAppEmailUndeliverable, markEmailUndeliverableForAddress } from '@/lib/build/app-registry'
+import { __resetRegistryCacheForTests } from '@/lib/build/app-registry'
 
 /**
  * #840 — real, durable "this recipient is undeliverable" flag, set ONLY from
@@ -40,7 +41,7 @@ function row(slug: string, extra: Record<string, unknown> = {}): any {
 }
 
 describe('setAppEmailUndeliverable (#840)', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); __resetRegistryCacheForTests() })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('no-op (false) when the slug is not registered', async () => {
@@ -84,25 +85,28 @@ describe('setAppEmailUndeliverable (#840)', () => {
 })
 
 describe('markEmailUndeliverableForAddress (#840)', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); __resetRegistryCacheForTests() })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('flags every company owned by the given address', async () => {
-    // First call: the listAllAppsWithStatus read inside markEmailUndeliverableForAddress.
-    vi.mocked(fetch).mockResolvedValueOnce(
-      rowsResponse([
-        row('acme', { ownerEmail: 'admin@ainative.studio' }),
-        row('beta', { ownerEmail: 'admin@ainative.studio' }),
-        row('other', { ownerEmail: 'someone-else@x.com' }),
-      ]),
-    )
-    // Each setAppEmailUndeliverable call does its OWN resolveApp read + POST —
-    // one resolveApp read + one POST per owned company (acme, then beta).
+    // #1172: resolveApp()'s underlying registry read is now cached for a
+    // short window and invalidated on every write (registerApp), so the
+    // real call sequence here is: list (fetch 1) → acme's resolveApp HITS
+    // that same cached table (no fetch) → acme's write POST (fetch 2,
+    // invalidates the cache) → beta's resolveApp is now a fresh fetch again
+    // (fetch 3, cache was just cleared) → beta's write POST (fetch 4). Every
+    // GET must return the SAME full table (acme + beta + other) — the real
+    // server never returns a different, slug-filtered row set per call.
+    const fullTable = rowsResponse([
+      row('acme', { ownerEmail: 'admin@ainative.studio' }),
+      row('beta', { ownerEmail: 'admin@ainative.studio' }),
+      row('other', { ownerEmail: 'someone-else@x.com' }),
+    ])
     vi.mocked(fetch)
-      .mockResolvedValueOnce(rowsResponse([row('acme', { ownerEmail: 'admin@ainative.studio' })]))
-      .mockResolvedValueOnce(okResponse())
-      .mockResolvedValueOnce(rowsResponse([row('beta', { ownerEmail: 'admin@ainative.studio' })]))
-      .mockResolvedValueOnce(okResponse())
+      .mockResolvedValueOnce(fullTable) // list (inside markEmailUndeliverableForAddress)
+      .mockResolvedValueOnce(okResponse()) // acme: write (acme's resolveApp reuses the cached list read)
+      .mockResolvedValueOnce(fullTable) // beta: resolveApp, fresh fetch post-invalidation
+      .mockResolvedValueOnce(okResponse()) // beta: write
 
     const flagged = await markEmailUndeliverableForAddress('ADMIN@ainative.studio', 'bounced')
     expect(flagged.sort()).toEqual(['acme', 'beta'])

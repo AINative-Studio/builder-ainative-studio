@@ -345,6 +345,13 @@ export async function registerApp(e: Omit<AppEntry, 'createdAt'>): Promise<boole
       body: JSON.stringify({ row_data: { ...e, createdAt: new Date().toISOString() } }),
       signal: AbortSignal.timeout(15000),
     })
+    // #1172: registerApp is the ONE write chokepoint every setApp* helper
+    // routes through. A caller that writes then immediately reads back (e.g.
+    // reconcilePlanFulfillment's setAppPlan → claimCompanyProject sequence)
+    // must see its own write — drop the shared read cache on every
+    // successful write so the next resolveApp() call is a real, fresh fetch
+    // instead of a stale pre-write snapshot still inside the cache window.
+    if (res.ok) registryCache = null
     return res.ok
   } catch {
     return false
@@ -466,6 +473,23 @@ export async function setAppDomain(slug: string, domain: string): Promise<boolea
   const existing = await resolveApp(slug)
   if (!existing) return false
   return registerApp({ ...existing, domain })
+}
+
+/**
+ * Backfill a company's `idea` (#660/#696, landed 2026-09-11) onto a registry
+ * row created before that fix shipped (#1102/#1113 follow-up). `idea` is
+ * what Live.tsx's company-app/company-product generation triggers gate on
+ * (`state.idea && state.appSub`, see components/build/screens/Live.tsx) —
+ * a pre-#660 row with no `idea` at all silently never fires EITHER
+ * generation, regardless of track. Real root cause of habanero-hub never
+ * getting a landing page: not a track-based design choice, a one-day-early
+ * registration that missed the field entirely.
+ */
+export async function setAppIdea(slug: string, idea: string): Promise<boolean> {
+  const existing = await resolveApp(slug)
+  if (!existing) return false
+  if (existing.idea) return true // already has one — never overwrite a real idea
+  return registerApp({ ...existing, idea })
 }
 
 /**
@@ -846,7 +870,59 @@ export async function listAllApps(): Promise<AppEntry[]> {
 const MAX_REGISTRY_PAGES = 50
 const REGISTRY_PAGE_SIZE = 1000
 
+// #1172: resolveApp()/resolveAppVerified() — meant to look up ONE company by
+// slug — each call this full-table scan independently. The nightly loop
+// calls resolveApp() twice per company with NIGHTLY_COMPANY_CONCURRENCY=8
+// companies resolving in parallel; that's dozens of concurrent multi-page
+// fetchAllRegistryRows() calls against the same ZeroDB rows endpoint inside
+// one 60s window, confirmed live blowing through its 60 req/min rate limit
+// (every call failing closed with ok:false) and taking tasksCompleted to 0
+// of 31 attempted for an entire nightly run. A short-lived shared-promise
+// cache collapses any burst of concurrent callers onto a single real fetch —
+// long enough to cover one nightly-loop batch, short enough that a normal
+// (non-burst) caller is never more than a few seconds stale, which already
+// matches the staleness every caller here tolerates (an in-flight registry
+// write from the same moment isn't guaranteed visible to a concurrent read
+// either way).
+const REGISTRY_CACHE_MS = 5_000
+let registryCache: { at: number; promise: Promise<{ rows: Array<{ row_data?: AppEntry }>; ok: boolean }> } | null = null
+
+/** Test-only: clears the shared registry-fetch cache so each test's own mocked
+ * fetch response is actually exercised rather than silently reused from a
+ * previous test within the same file (module state persists across `it()`
+ * blocks in the same test file — see #1172). Call from `afterEach`/`beforeEach`
+ * in any suite asserting on `fetch` call counts or specific mocked responses
+ * for resolveApp/resolveAppVerified/listAllApps. */
+export function __resetRegistryCacheForTests(): void {
+  registryCache = null
+}
+
 async function fetchAllRegistryRows(): Promise<{ rows: Array<{ row_data?: AppEntry }>; ok: boolean }> {
+  const now = Date.now()
+  if (registryCache && now - registryCache.at < REGISTRY_CACHE_MS) {
+    return registryCache.promise
+  }
+  const promise = fetchAllRegistryRowsUncached()
+  registryCache = { at: now, promise }
+  // A failed fetch must not poison the cache for the full window — the next
+  // caller should get a fresh attempt, not a repeated ok:false. Must handle
+  // BOTH branches here (a plain `.then(onFulfilled)` with no onRejected still
+  // creates its own unobserved rejection when the underlying fetch throws —
+  // confirmed live via vitest's "Unhandled Rejection" on a mocked network
+  // failure — even though the original `promise` returned to the real caller
+  // below is independently awaited/caught by them).
+  promise.then(
+    (r) => {
+      if (!r.ok && registryCache?.promise === promise) registryCache = null
+    },
+    () => {
+      if (registryCache?.promise === promise) registryCache = null
+    },
+  )
+  return promise
+}
+
+async function fetchAllRegistryRowsUncached(): Promise<{ rows: Array<{ row_data?: AppEntry }>; ok: boolean }> {
   const all: Array<{ row_data?: AppEntry }> = []
   for (let page = 0; page < MAX_REGISTRY_PAGES; page++) {
     const skip = page * REGISTRY_PAGE_SIZE
@@ -1475,6 +1551,31 @@ export async function resolveAppByZeroVoiceNumber(e164: string): Promise<AppEntr
   if (!ok) return null
   const match = apps.find(
     (a) => a.zerovoiceE164 === number && (a.lifecycleStatus || 'active') !== 'deleted',
+  )
+  return match || null
+}
+
+/**
+ * Resolve a chatId back to its owning app entry (#1138), or null.
+ *
+ * Every other lookup in this file goes slug -> entry; nothing previously
+ * went the other direction even though chat-ws/route.ts has had `chatId`
+ * on every request since the route existed. Needed so a compliance gap
+ * found mid-generation (obedience-gate.ts) can be filed as a real backlog
+ * task scoped to the right {owner, company} — the task-store scopeKey
+ * convention (chat-store.ts's chatScopeKey) needs both. Same client-side-
+ * match-over-listAllAppsWithStatus() approach as resolveAppByZeroVoiceNumber
+ * above, for the same reason: no confirmed server-side filter on this
+ * table. Never returns a soft-deleted company (matches resolveApp()'s own
+ * contract) — a Gitea issue must never be filed against a deleted company.
+ */
+export async function resolveAppByChatId(chatId: string): Promise<AppEntry | null> {
+  const id = (chatId || '').trim()
+  if (!id) return null
+  const { apps, ok } = await listAllAppsWithStatus()
+  if (!ok) return null
+  const match = apps.find(
+    (a) => a.chatId === id && (a.lifecycleStatus || 'active') !== 'deleted',
   )
   return match || null
 }

@@ -6,16 +6,6 @@
 import { aikitFiles } from './aikit-bundle'
 import { shadcnFiles } from './shadcn-bundle'
 
-/** Dependencies available in every Sandpack sandbox */
-export const sandpackDependencies: Record<string, string> = {
-  'lucide-react': 'latest',
-  recharts: '2.15.0',
-  clsx: 'latest',
-  'tailwind-merge': 'latest',
-  'framer-motion': '11.0.0',
-  'date-fns': '3.6.0',
-}
-
 /**
  * External resources loaded via CDN (Tailwind JIT). Kept for backward
  * compatibility / any other caller that still reads this constant, but the

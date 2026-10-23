@@ -125,6 +125,28 @@ describe('useRealPreview — happy path (init + ready)', () => {
     expect(result.current.previewUrl).toMatch(/\?r=\d+/)
   })
 
+  // #1255: refreshKey is the one REAL backend-activity signal exposed during
+  // generation (bumped only on an actual chat-ws 'files'/'refresh' SSE
+  // event) — Preview.tsx uses its changes to keep the terminal ribbon
+  // narrating genuine progress instead of going stale once the scripted
+  // deploy lines (useAutoplay's RIBBON_LINES.preview) run out.
+  it('exposes refreshKey, incrementing on each real files/refresh SSE event', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(sseResponse([
+        sseEvent({ type: 'init', chatId: 'chat-refresh-key' }),
+        sseEvent({ type: 'refresh' }),
+        sseEvent({ type: 'files', files: { '/App.tsx': 'export default function App(){return null}' } }),
+      ]))
+      .mockResolvedValueOnce({ ok: true, text: async () => 'x'.padEnd(900) } as unknown as Response)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useRealPreview('Build a notes app', true))
+    await waitFor(() => expect(result.current.status).toBe('ready'), { timeout: 3000 })
+    // 2 real SSE bumps (refresh, files) + 1 more when the stream confirms
+    // renderable content at the end — never 0, proving the signal is real.
+    expect(result.current.refreshKey).toBeGreaterThanOrEqual(2)
+  })
+
   it('rehydrates the files map from the durable endpoint when the SSE stream had none (#333)', async () => {
     const files = {
       '/src/App.tsx': `import S from './components/S'\nexport default function App(){ return <S/> }`,

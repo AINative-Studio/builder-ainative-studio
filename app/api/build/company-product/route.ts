@@ -71,6 +71,7 @@
 
 import { NextRequest } from 'next/server'
 import { registerApp, resolveApp, resolveAppVerified } from '@/lib/build/app-registry'
+import { internalBaseUrl } from '@/lib/build/internal-base-url'
 import { logBuildOutcome } from '@/lib/build/learning'
 import {
   recordPendingProductGeneration,
@@ -245,7 +246,12 @@ export async function POST(request: NextRequest) {
   const name = String(b?.name || slug).slice(0, 120)
   const designSystemId = typeof b?.designSystemId === 'string' ? b.designSystemId.slice(0, 40) : undefined
 
-  const base = process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin
+  // #1102/#1113 follow-up: was `process.env.NEXT_PUBLIC_APP_URL || new URL(request.url).origin`
+  // — see internal-base-url.ts's doc comment for the full root-cause writeup
+  // (same self-referential-public-edge failure #1110/#1111 already found and
+  // fixed for a sibling route, confirmed again here live for company-app's
+  // identical pattern).
+  const base = internalBaseUrl(request.url)
   // Deliberately asks for a REAL, working tool — not marketing copy. No
   // landingPageOnly flag here (see company-app/route.ts's sibling comment):
   // this generation SHOULD be held to full primitive-compliance, because a

@@ -154,7 +154,7 @@ const AIKIT_COMPONENTS = [
   'TokenUsageBar', 'ConnectionStatus', 'AIKitHeader', 'AIKitSidebar', 'AIKitTable',
   'AIKitTimeline', 'AIKitBanner', 'AIKitAvatar', 'Skeleton', 'SkeletonCard',
   'EmptyState', 'AIKitProductCard', 'AIKitPagination', 'AIKitBreadcrumb',
-  'AIKitStepper', 'AgentTimeline',
+  'AIKitStepper', 'AgentTimeline', 'VideoPlayer', 'StreamingText', 'MediaGallery',
 ]
 
 /**

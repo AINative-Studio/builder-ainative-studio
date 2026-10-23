@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { auth } from '@/app/(auth)/auth'
+import { requireAdmin } from '@/lib/auth/require-admin'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 /**
@@ -9,12 +9,17 @@ import { getAinativeApiKey } from '@/lib/build/env-keys'
  *
  * Query params:
  *   days=7 (default: 7, max: 90)
+ *
+ * Admin-gated (#1213): this is cost/performance telemetry across every
+ * founder's generation runs, not per-account data — any authenticated
+ * founder is the wrong bar (same class of gap #919 fixed for /admin/errors).
+ * Consumed by the real UI at /admin/agent-metrics.
  */
 export async function GET(request: NextRequest) {
   try {
-    const session = await auth()
-    if (!session?.user?.id) {
-      return Response.json({ error: 'Authentication required' }, { status: 401 })
+    const admin = await requireAdmin()
+    if (!admin.ok) {
+      return Response.json({ error: admin.message }, { status: admin.status })
     }
 
     const url = new URL(request.url)

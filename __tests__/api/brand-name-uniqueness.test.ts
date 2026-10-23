@@ -162,4 +162,41 @@ describe('POST /api/build/brand — name uniqueness', () => {
     expect(json.slug).not.toBe('builder')
     expect(claude.client.messages.create).toHaveBeenCalledTimes(2)
   })
+
+  // #1268: proposeBrand()'s messages.create call had no AbortSignal/timeout
+  // — a stalled upstream response hung the whole POST (retried up to
+  // MAX_NAMING_ATTEMPTS times) indefinitely, same bug class as #1253/#1266.
+  it('passes an AbortSignal to messages.create (#1268)', async () => {
+    const claude = fakeClaude(['Wisplane'])
+    h.getClaudeCompletion.mockReturnValue(claude)
+    h.resolveApp.mockResolvedValue(null)
+
+    await POST(req({ idea: 'A tool for scheduling meetings', track: 'app' }))
+    expect(claude.client.messages.create).toHaveBeenCalledTimes(1)
+    const [, options] = claude.client.messages.create.mock.calls[0] as unknown as [unknown, { signal?: AbortSignal }]
+    expect(options?.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('a stalled/aborted call is caught — falls back to the idea-derived name, never hangs (#1268)', async () => {
+    const create = vi.fn().mockImplementation((_args: unknown, options: { signal?: AbortSignal }) => new Promise((_resolve, reject) => {
+      options?.signal?.addEventListener('abort', () => reject(new Error('This operation was aborted')))
+    }))
+    h.getClaudeCompletion.mockReturnValue({
+      client: { messages: { create } }, provider: 'anthropic' as const, model: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5',
+    })
+    h.resolveApp.mockResolvedValue(null)
+
+    const pending = POST(req({ idea: 'Build a scheduling assistant', track: 'app' }))
+    // proposeBrand() returning null (both tiers failed) breaks the retry
+    // loop immediately — one stalled call is enough to reach the
+    // idea-derived fallback, same as the existing "keeps failing outright"
+    // case above.
+    await vi.waitFor(() => expect(create).toHaveBeenCalled())
+    create.mock.calls[0][1]?.signal?.dispatchEvent(new Event('abort'))
+    const res = await pending
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.name).toBeTruthy()
+    expect(json.slug).toBeTruthy()
+  })
 })

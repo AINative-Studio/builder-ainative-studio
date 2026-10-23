@@ -242,7 +242,10 @@ describe('nightly-loop route — bounded wall clock (#1055 Problem A)', () => {
       enrolled: 10, processed: body.processed, deferred: body.deferred,
       budgetExhausted: body.budgetExhausted, dispatched: body.dispatched,
       failed: body.failed, tasksAttempted: body.tasksAttempted,
-      tasksCompleted: body.tasksCompleted, stalledCompanies: body.stalledCompanies,
+      tasksCompleted: body.tasksCompleted,
+      tasksMerged: body.tasksMerged, tasksRedeployed: body.tasksRedeployed,
+      tasksReaped: body.tasksReaped,
+      stalledCompanies: body.stalledCompanies,
       elapsedMs: body.elapsedMs,
     })
   })

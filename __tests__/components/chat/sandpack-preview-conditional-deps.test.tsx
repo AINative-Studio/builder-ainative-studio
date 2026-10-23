@@ -144,4 +144,36 @@ describe('SandpackPreview — conditional lucide-react/recharts dependency decla
     expect(deps).not.toHaveProperty('lucide-react')
     expect(deps).not.toHaveProperty('recharts')
   })
+
+  describe('@stripe/stripe-js + @stripe/react-stripe-js (#1164 — ZeroCommerce checkout UI)', () => {
+    it('does NOT declare either Stripe package when the app has no Stripe import', async () => {
+      await renderWithFiles({
+        '/App.tsx': "export default function App(){ return null }",
+      })
+      const deps = (globalThis as any).__lastSandpackCustomSetup?.dependencies
+      expect(deps).not.toHaveProperty('@stripe/stripe-js')
+      expect(deps).not.toHaveProperty('@stripe/react-stripe-js')
+    })
+
+    it('declares BOTH Stripe packages together when the app imports @stripe/stripe-js', async () => {
+      // The two packages are always declared as a pair (never one without the
+      // other) — a generated checkout always needs loadStripe from the first
+      // and Elements/PaymentElement from the second together.
+      await renderWithFiles({
+        '/Checkout.tsx': "import { loadStripe } from '@stripe/stripe-js'\nexport default function Checkout(){ return null }",
+      })
+      const deps = (globalThis as any).__lastSandpackCustomSetup?.dependencies
+      expect(deps).toHaveProperty('@stripe/stripe-js', '10.1.0')
+      expect(deps).toHaveProperty('@stripe/react-stripe-js', '7.0.0')
+    })
+
+    it('does not declare lucide-react/recharts just because Stripe is used (independent detection)', async () => {
+      await renderWithFiles({
+        '/Checkout.tsx': "import { loadStripe } from '@stripe/stripe-js'\nexport default function Checkout(){ return null }",
+      })
+      const deps = (globalThis as any).__lastSandpackCustomSetup?.dependencies
+      expect(deps).not.toHaveProperty('lucide-react')
+      expect(deps).not.toHaveProperty('recharts')
+    })
+  })
 })

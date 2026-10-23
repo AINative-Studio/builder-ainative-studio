@@ -518,7 +518,15 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
     )
 
     let seenImportNames = new Set<string>()
-    const importLineRegex = /^\s*import\s+(?:([A-Za-z_$][\w$]*)\s*,?\s*)?(?:\{([^}]*)\})?\s*(?:from\s+)?['"][^'"]+['"];?\s*$/
+    // The leading `type\s+` of a type-only import (`import type { X } from
+    // 'y'`) must be captured and consumed on its own -- it is NOT a default
+    // import binding. Without the dedicated group below, the old regex let
+    // `type` satisfy the default-name group (the comma after it is
+    // optional), so every single type-only import got unconditionally
+    // rebuilt a few lines down as `import type, { X } from 'y'` -- the
+    // exact malformed syntax reported live in #1099 item 6, on every file
+    // that used this completely ordinary TS import form, dupes or not.
+    const importLineRegex = /^\s*import\s+(type\s+)?(?:([A-Za-z_$][\w$]*)\s*,?\s*)?(?:\{([^}]*)\})?\s*(?:from\s+)?['"][^'"]+['"];?\s*$/
     const outLines: string[] = []
     let removedDupNames: string[] = []
     for (const rawLine of fixedCode.split('\n')) {
@@ -527,8 +535,9 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
       if (FILE_MARKER.test(rawLine.trim())) { seenImportNames = new Set(); outLines.push(rawLine); continue }
       const m = rawLine.match(importLineRegex)
       if (!m) { outLines.push(rawLine); continue }
-      const defaultName = m[1]
-      const named = m[2]
+      const isTypeOnly = !!m[1]
+      const defaultName = m[2]
+      const named = m[3]
       // Track/strip a duplicate default import
       let keepDefault = true
       if (defaultName) {
@@ -555,7 +564,7 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
         const parts: string[] = []
         if (defaultName && keepDefault) parts.push(defaultName)
         if (keptSpecs.length > 0) parts.push(`{ ${keptSpecs.join(', ')} }`)
-        outLines.push(`import ${parts.join(', ')} from ${source};`)
+        outLines.push(`import ${isTypeOnly ? 'type ' : ''}${parts.join(', ')} from ${source};`)
       } else {
         // default-only (or side-effect) import
         if (defaultName && !keepDefault) continue
@@ -582,8 +591,12 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
     if (localDecls.size > 0) {
       const removedShadowed: string[] = []
       fixedCode = fixedCode.replace(
-        /^(\s*import\s+)(?:([A-Za-z_$][\w$]*)\s*,?\s*)?\{([^}]*)\}(\s*from\s*['"][^'"]+['"];?)\s*$/gm,
-        (full, pre: string, def: string | undefined, specs: string, tail: string) => {
+        // Same `type\s+` pitfall as Fix 11 above (#1099 item 6): it must be
+        // its own capture group, consumed before the optional default-name
+        // group, or `import type { X } from 'y'` gets `type` mistaken for a
+        // default binding and rebuilt as the invalid `import type, { X }...`.
+        /^(\s*import\s+)(type\s+)?(?:([A-Za-z_$][\w$]*)\s*,?\s*)?\{([^}]*)\}(\s*from\s*['"][^'"]+['"];?)\s*$/gm,
+        (full, pre: string, typeKeyword: string | undefined, def: string | undefined, specs: string, tail: string) => {
           const kept = specs.split(',').map(s => s.trim()).filter(Boolean).filter(spec => {
             const bound = spec.split(/\s+as\s+/i).pop()!.trim()
             if (localDecls.has(bound)) { removedShadowed.push(bound); return false }
@@ -596,7 +609,7 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
           const parts: string[] = []
           if (keepDef) parts.push(def!)
           if (kept.length > 0) parts.push(`{ ${kept.join(', ')} }`)
-          return `${pre}${parts.join(', ')}${tail}`
+          return `${pre}${typeKeyword || ''}${parts.join(', ')}${tail}`
         },
       )
       if (removedShadowed.length > 0) {
@@ -890,8 +903,14 @@ export function findDuplicateTopLevelDeclaration(code: string): string | null {
     // names (App, imports) legitimately across files.
     if (FILE_MARKER.test(line)) { seen = new Set(); continue }
 
-    // import bindings: default + named specifiers
-    const imp = line.match(/^import\s+(?:([A-Za-z_$][\w$]*)\s*,?\s*)?(?:\{([^}]*)\})?\s*(?:from\s+)?['"][^'"]+['"];?$/)
+    // import bindings: default + named specifiers. The optional leading
+    // `type\s+` group must be consumed explicitly and separately from the
+    // default-name group below -- without it, `import type { Incident } from
+    // '...'` matches `type` itself as a "default import name" (since the
+    // comma between them is optional in the regex), so a file with two or
+    // more type-only imports falsely reports `type` as a duplicate
+    // identifier here (#1099 item 6).
+    const imp = line.match(/^import\s+(?:type\s+)?(?:([A-Za-z_$][\w$]*)\s*,?\s*)?(?:\{([^}]*)\})?\s*(?:from\s+)?['"][^'"]+['"];?$/)
     if (imp) {
       if (imp[1]) { const d = add(imp[1]); if (d) return d }
       if (imp[2] !== undefined) {

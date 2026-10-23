@@ -7,7 +7,7 @@ import { useBuild } from '@/contexts/build-context'
 import { trackEvent } from '@/components/analytics/google-analytics'
 import { trackMeta } from '@/components/analytics/meta-pixel'
 import { ProposalGate } from '@/components/build/ProposalGate'
-import { pricingFraming, pricingScreenHasRealApp } from '@/lib/build/value-moment'
+import { pricingFraming, pricingScreenHasRealApp, APP_GEN_MAX_TOKENS } from '@/lib/build/value-moment'
 import type { ArtifactView } from '@/lib/build/state'
 
 // Builder subscription tiers — the canonical AINative plan line (config/pricing.ts).
@@ -77,6 +77,30 @@ export function Pricing() {
         }
       })
       .catch(() => { /* silent — copy line only */ })
+    return () => { on = false }
+  }, [])
+
+  // Pre-commit credit cost estimate (#1213) — proxies AINative's real
+  // POST /v1/managed/estimate so a founder sees what ONE generation pass
+  // (the same APP_GEN_MAX_TOKENS cap chat-ws actually uses) costs on the
+  // featured tier's model, BEFORE picking a plan. Best-effort/silent: an
+  // anon or unauthenticated caller (or any upstream hiccup) just doesn't
+  // show the line rather than block the pricing screen.
+  const [estimate, setEstimate] = useState<{ credits: number; model: string } | null>(null)
+  useEffect(() => {
+    let on = true
+    fetch('/api/credits/estimate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-sonnet-4', estimated_tokens: APP_GEN_MAX_TOKENS }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (on && d && typeof d.estimated_credits === 'number' && typeof d.model === 'string') {
+          setEstimate({ credits: d.estimated_credits, model: d.model })
+        }
+      })
+      .catch(() => { /* silent — line just doesn't render */ })
     return () => { on = false }
   }, [])
   // Existing-subscriber recognition (#251) — the same hydration Live runs. An
@@ -196,6 +220,12 @@ export function Pricing() {
         <p className="m-cody-line" data-testid="ecosystem-runway-pricing">
           <span className="m-glyph">◇</span> Your builds composed AINative primitives — I extended your free
           runway from {runway.baseLimit} to {runway.limit} builds.
+        </p>
+      )}
+      {/* #1213 — pre-commit credit cost estimate, real AINative-priced number. */}
+      {estimate && (
+        <p className="m-reassure m-mono" data-testid="pricing-credit-estimate">
+          A full build pass on {estimate.model} runs ~{estimate.credits.toFixed(2)} credits.
         </p>
       )}
 

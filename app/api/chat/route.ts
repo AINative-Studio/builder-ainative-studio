@@ -81,6 +81,11 @@ export async function POST(request: NextRequest) {
     console.log('🎯 Checking for template match...')
     let templateMatch = null
     let customizedTemplateCode = null
+    // #1191: true when semantic template matching couldn't actually run
+    // (embedding dependency down, or its circuit breaker already open) —
+    // surfaced to the client so a degraded match isn't silently
+    // indistinguishable from "no good template exists".
+    let templateMatchDegraded = false
 
     try {
       const { getTemplateMatcherService } = await import('@/lib/services/template-matcher.service')
@@ -91,11 +96,13 @@ export async function POST(request: NextRequest) {
 
       const templateMatcher = getTemplateMatcherService()
       const matchResult = await templateMatcher.matchTemplate(message, true)
+      templateMatchDegraded = matchResult.semanticDegraded
 
       console.log('📋 Template match result:', {
         category: matchResult.templateCategory,
         confidence: matchResult.confidence,
-        matchType: matchResult.matchType
+        matchType: matchResult.matchType,
+        semanticDegraded: matchResult.semanticDegraded,
       })
 
       // If confidence is high enough, use template
@@ -225,7 +232,8 @@ export async function POST(request: NextRequest) {
                 chatId: responseId,
                 demo: `/preview/${responseId}`,
                 usingTemplate: true,
-                templateName: templateMatch?.templateName
+                templateName: templateMatch?.templateName,
+                templateMatchDegraded
               })}\n\n`))
 
               // Simulate streaming by sending the template in chunks
@@ -310,7 +318,8 @@ export async function POST(request: NextRequest) {
             // Send chatId immediately so preview can start
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({
               chatId: responseId,
-              demo: `/preview/${responseId}`
+              demo: `/preview/${responseId}`,
+              templateMatchDegraded
             })}\n\n`))
 
             for await (const chunk of stream!) {
@@ -338,7 +347,15 @@ export async function POST(request: NextRequest) {
                 prompt: message,
                 generatedCode: fullContent,
                 promptVersionId,
-                model,
+                // #1202: this referenced the non-streaming branch's `model`
+                // const, which isn't declared until after this streaming
+                // branch returns — a TDZ ReferenceError on every
+                // authenticated streaming request, silently swallowed by
+                // the .catch below (so generations still succeeded, but
+                // RLHF logging for streaming generations was silently
+                // broken). `llamaModel` is this branch's own equivalent,
+                // already in scope.
+                model: llamaModel,
                 templateUsed: templateMatch?.templateName || null,
                 generationTimeMs,
               }).catch(err => {

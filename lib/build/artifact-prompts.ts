@@ -77,7 +77,8 @@ export const ARTIFACT_PROMPTS: Record<string, ArtifactSpec> = {
       ctxPreamble(ctx) +
       'Write the INITIAL WEDGE — the single narrowest beachhead to win first. JSON: ' +
       'headline (the wedge in one line), segment (exact customer segment), motion (how you reach + convert them), ' +
-      'proofPlan (what proves the wedge works in 30 days). Schema: {"headline","segment","motion","proofPlan"}',
+      'proofPlan (what proves the wedge works in 30 days). Schema: {"headline","segment","motion","proofPlan"}' +
+      primitiveGroundingBlock(ctx.idea, ctx.track),
   },
   businessModel: {
     system: BASE_SYSTEM,
@@ -100,7 +101,8 @@ export const ARTIFACT_PROMPTS: Record<string, ArtifactSpec> = {
       'Write POSITIONING. JSON: statement (a sharp "for X, this is the Y that Z" positioning line), ' +
       'unlike (array of up to 3 things that make this company distinct, phrased as positive ' +
       'differentiators rather than named against specific competitors). ' +
-      'Schema: {"statement","unlike":[...]}',
+      'Schema: {"statement","unlike":[...]}' +
+      primitiveGroundingBlock(ctx.idea, ctx.track),
   },
   landing: {
     system: BASE_SYSTEM,
@@ -108,7 +110,8 @@ export const ARTIFACT_PROMPTS: Record<string, ArtifactSpec> = {
     user: (ctx) =>
       ctxPreamble(ctx) +
       'Write the LANDING PAGE hero. JSON: eyebrow (short uppercase kicker), headline (bold value prop, <=8 words), ' +
-      'sub (one supporting sentence), features (array of exactly 3 {h, d}). Schema: {"eyebrow","headline","sub","features":[{"h","d"}]}',
+      'sub (one supporting sentence), features (array of exactly 3 {h, d}). Schema: {"eyebrow","headline","sub","features":[{"h","d"}]}' +
+      primitiveGroundingBlock(ctx.idea, ctx.track),
   },
   plan30: {
     system: BASE_SYSTEM,
@@ -132,7 +135,12 @@ export const ARTIFACT_PROMPTS: Record<string, ArtifactSpec> = {
       ctxPreamble(ctx) +
       'Write the PRODUCT BRIEF. JSON: summary (what we\'re building, one sentence), goals (3 bullets), ' +
       'nonGoals (2 bullets — explicitly out of scope for v1), users (2-3 target user types). ' +
-      'Schema: {"summary","goals":[...],"nonGoals":[...],"users":[...]}',
+      'Schema: {"summary","goals":[...],"nonGoals":[...],"users":[...]}' +
+      // Found via a live production benchmark (2026-10-20): the brief view had no
+      // grounding call at all (unlike thesis/businessModel/plan30, fixed for the
+      // same class of bug in #519) and a plain ecommerce idea produced a goal of
+      // "Build a Shopify-based online store" instead of using ZeroCommerce.
+      primitiveGroundingBlock(ctx.idea, ctx.track),
   },
   prd: {
     system: BASE_SYSTEM,
@@ -141,7 +149,8 @@ export const ARTIFACT_PROMPTS: Record<string, ArtifactSpec> = {
       ctxPreamble(ctx) +
       'Write the PRODUCT REQUIREMENTS (PRD). JSON: overview (one paragraph), ' +
       'features (array of 4-6 {name, desc, priority:"P0"|"P1"|"P2"}), acceptance (3 acceptance criteria for v1). ' +
-      'Schema: {"overview","features":[{"name","desc","priority"}],"acceptance":[...]}',
+      'Schema: {"overview","features":[{"name","desc","priority"}],"acceptance":[...]}' +
+      primitiveGroundingBlock(ctx.idea, ctx.track),
   },
   comp: {
     system: BASE_SYSTEM,
@@ -164,7 +173,8 @@ export const ARTIFACT_PROMPTS: Record<string, ArtifactSpec> = {
     user: (ctx) =>
       ctxPreamble(ctx) +
       'Write the DATA MODEL. JSON: summary (one line), entities (array of 3-6 {name, fields:[field:type, ...]}) ' +
-      'as ZeroDB tables for this idea. Schema: {"summary","entities":[{"name","fields":[...]}]}',
+      'as ZeroDB tables for this idea. Schema: {"summary","entities":[{"name","fields":[...]}]}' +
+      primitiveGroundingBlock(ctx.idea, ctx.track),
   },
   memoryPolicy: {
     system: BASE_SYSTEM,
@@ -172,7 +182,8 @@ export const ARTIFACT_PROMPTS: Record<string, ArtifactSpec> = {
     user: (ctx) =>
       ctxPreamble(ctx) +
       'Write the MEMORY POLICY (what the agent remembers via ZeroMemory + privacy rules). JSON: ' +
-      'summary (one line), rules (3-4 bullets: what is remembered, retention, privacy). Schema: {"summary","rules":[...]}',
+      'summary (one line), rules (3-4 bullets: what is remembered, retention, privacy). Schema: {"summary","rules":[...]}' +
+      primitiveGroundingBlock(ctx.idea, ctx.track),
   },
   agentDef: {
     system: BASE_SYSTEM,
@@ -180,7 +191,8 @@ export const ARTIFACT_PROMPTS: Record<string, ArtifactSpec> = {
     user: (ctx) =>
       ctxPreamble(ctx) +
       'Write the AGENT DEFINITION — the agents that run this product. JSON: summary (one line), ' +
-      'agents (array of 2-4 {name, role}). Schema: {"summary","agents":[{"name","role"}]}',
+      'agents (array of 2-4 {name, role}). Schema: {"summary","agents":[{"name","role"}]}' +
+      primitiveGroundingBlock(ctx.idea, ctx.track),
   },
   codingStandards: {
     system: BASE_SYSTEM,
@@ -204,7 +216,8 @@ export const ARTIFACT_PROMPTS: Record<string, ArtifactSpec> = {
     user: (ctx) =>
       ctxPreamble(ctx) +
       'Write INTEGRATIONS. JSON: summary (one line), integrations (array of 2-5 {name, why}). ' +
-      'Schema: {"summary","integrations":[{"name","why"}]}',
+      'Schema: {"summary","integrations":[{"name","why"}]}' +
+      primitiveGroundingBlock(ctx.idea, ctx.track),
   },
   backlog: {
     system: BASE_SYSTEM,
@@ -212,7 +225,8 @@ export const ARTIFACT_PROMPTS: Record<string, ArtifactSpec> = {
     user: (ctx) =>
       ctxPreamble(ctx) +
       'Write the BUILD BACKLOG. JSON: summary (one line), items (array of 5-8 {title, size:"S"|"M"|"L"}) ' +
-      'in build order. Schema: {"summary","items":[{"title","size"}]}',
+      'in build order. Schema: {"summary","items":[{"title","size"}]}' +
+      primitiveGroundingBlock(ctx.idea, ctx.track),
   },
   sprintPlan: {
     system: BASE_SYSTEM,
@@ -225,9 +239,17 @@ export const ARTIFACT_PROMPTS: Record<string, ArtifactSpec> = {
       'sprint. JSON: summary (one line), epics (array of 2-4 {name (the epic), goal (what shipping it achieves), ' +
       'issues (2-4 concrete issue titles under this epic)}), firstSprint (array of 3-5 issue titles pulled from the ' +
       'epics that make up the first shippable sprint). Make everything specific to this app. ' +
-      'Schema: {"summary","epics":[{"name","goal","issues":[...]}],"firstSprint":[...]}',
+      'Schema: {"summary","epics":[{"name","goal","issues":[...]}],"firstSprint":[...]}' +
+      primitiveGroundingBlock(ctx.idea, ctx.track),
   },
 }
 
-/** Views that have a real generation prompt (others use their static/special body). */
-export const GENERATED_VIEWS = new Set(Object.keys(ARTIFACT_PROMPTS))
+/**
+ * Views that have a real generation prompt (others use their static/special
+ * body). Re-exported from generated-views.ts (#1200) -- that module is the
+ * real source so useAutoplay.ts and ArtifactFrame.tsx can depend on just the
+ * Set<string> without pulling in this file's heavy module graph
+ * (primitive-catalog.ts et al). Kept here too so existing callers that
+ * import it from this file keep working unchanged.
+ */
+export { GENERATED_VIEWS } from './generated-views'

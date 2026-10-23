@@ -183,7 +183,7 @@ export function SandpackPreview({ files, theme = 'light', className, showRefresh
   // --chat-id harness from drifting out of sync with what this component
   // actually does).
   const sandpackFiles = buildSandpackFiles(files)
-  const { usesLucideReact, usesRecharts } = detectSandpackDependencies(sandpackFiles)
+  const { usesLucideReact, usesRecharts, usesStripeJs, usesA2UI } = detectSandpackDependencies(sandpackFiles)
 
   if (sandpackFiles['/App.tsx']) {
     const mainCode = sandpackFiles['/App.tsx']
@@ -225,6 +225,19 @@ export function SandpackPreview({ files, theme = 'light', className, showRefresh
             'prop-types': '15.8.1',
             ...(usesLucideReact ? { 'lucide-react': '0.344.0' } : {}),
             ...(usesRecharts ? { 'recharts': '2.15.0' } : {}),
+            // #1164 — ZeroCommerce checkout UI renders Stripe's real Payment
+            // Element (Apple Pay/Google Pay eligible) rather than a
+            // hand-rolled card form; pinned for the same unpkg-resolution
+            // reliability reason as every other conditional dep above.
+            ...(usesStripeJs ? { '@stripe/stripe-js': '10.1.0', '@stripe/react-stripe-js': '7.0.0' } : {}),
+            // #126 follow-up: A2UI composition instruction (lib/build/
+            // primitive-catalog.ts) tells Cody to import the real renderer;
+            // same unpkg-resolution reliability reason as every other
+            // conditional dep above for pinning to the exact published
+            // version rather than a range. The renderer depends on the core
+            // package itself, so both must be declared or Sandpack's bundler
+            // can't resolve the renderer's own import of it.
+            ...(usesA2UI ? { '@ainative/ai-kit-a2ui': '0.1.0-alpha.1', '@ainative/ai-kit-a2ui-core': '0.1.0-alpha.1' } : {}),
             'clsx': '2.1.0',
             'tailwind-merge': '2.2.0',
           },

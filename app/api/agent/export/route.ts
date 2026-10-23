@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { auth } from '@/app/(auth)/auth'
+import { requireAdmin } from '@/lib/auth/require-admin'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 /**
@@ -12,12 +12,16 @@ import { getAinativeApiKey } from '@/lib/build/env-keys'
  *   limit=1000 (default: 1000, max: 10000)
  *   model=claude-sonnet-4 (optional filter)
  *   format=jsonl|json (default: jsonl)
+ *
+ * Admin-gated (#1213): exports every founder's agent-run telemetry
+ * (prompts/costs/errors), not just the caller's own — same reasoning as
+ * agent/metrics above. Consumed by the real UI at /admin/agent-metrics.
  */
 export async function GET(request: NextRequest) {
   try {
-    const session = await auth()
-    if (!session?.user?.id) {
-      return Response.json({ error: 'Authentication required' }, { status: 401 })
+    const admin = await requireAdmin()
+    if (!admin.ok) {
+      return Response.json({ error: admin.message }, { status: admin.status })
     }
 
     const url = new URL(request.url)

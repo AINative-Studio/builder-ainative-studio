@@ -107,6 +107,11 @@ interface CompanyOutcome {
   mediaGenerated: number
   tasksAttempted: number
   tasksCompleted: number
+  /** #1232 — real ship rate alongside coverage-pass rate; see runTaskResolutions(). */
+  tasksMerged: number
+  tasksRedeployed: number
+  /** How many orphaned `in_progress` tasks were recovered this run — see task-resolution-loop.ts's isStaleInProgress. */
+  tasksReaped: number
   commsSent: boolean
   stalled: boolean
 }
@@ -122,6 +127,13 @@ export async function GET(request: NextRequest) {
   const budgetMs = nightlyLoopBudgetMs()
   const deadline = startedAt + budgetMs
 
+  // Read before the try block (pure URL parsing, cannot throw on its own)
+  // so a crash during listEnrolled() or anything else below still lets the
+  // catch block record WHICH shard went down, not just that one did.
+  const params = new URL(request.url ?? 'https://localhost/').searchParams
+  const rawShard = params.get('shard')
+  const rawShards = params.get('shards')
+
   try {
     const enrolled = await listEnrolled()
 
@@ -129,9 +141,6 @@ export async function GET(request: NextRequest) {
     // calls. A malformed/out-of-range spec degrades to the whole list — see
     // selectShard; processing everyone is the safe failure mode for a nightly
     // cron, processing nobody would silently skip a night.
-    const params = new URL(request.url ?? 'https://localhost/').searchParams
-    const rawShard = params.get('shard')
-    const rawShards = params.get('shards')
     const batch = selectShard(enrolled, rawShard, rawShards)
     const sharded = batch.length !== enrolled.length
 
@@ -195,6 +204,9 @@ export async function GET(request: NextRequest) {
     const mediaGenerated = completed.reduce((n, o) => n + (o.value?.mediaGenerated || 0), 0)
     const tasksAttempted = completed.reduce((n, o) => n + (o.value?.tasksAttempted || 0), 0)
     const tasksCompleted = completed.reduce((n, o) => n + (o.value?.tasksCompleted || 0), 0)
+    const tasksMerged = completed.reduce((n, o) => n + (o.value?.tasksMerged || 0), 0)
+    const tasksRedeployed = completed.reduce((n, o) => n + (o.value?.tasksRedeployed || 0), 0)
+    const tasksReaped = completed.reduce((n, o) => n + (o.value?.tasksReaped || 0), 0)
     const commsSent = completed.filter((o) => o.value?.commsSent).length
     const stalledCompanies = completed.filter((o) => o.value?.stalled).length
 
@@ -209,11 +221,20 @@ export async function GET(request: NextRequest) {
     logger.info('Nightly autonomous loop complete', {
       dispatched, total: results.length, processed: completed.length, deferred,
       failedCompanies, reportsWritten, mediaGenerated, tasksAttempted, tasksCompleted,
+      tasksMerged, tasksRedeployed, tasksReaped,
       commsSent, stalledCompanies, elapsedMs, budgetExhausted,
     })
     if (stalledCompanies > 0) {
       logger.warn('Nightly loop: companies with a stalled agent swarm', {
         stalledCompanies, of: completed.length,
+      })
+    }
+    if (tasksReaped > 0) {
+      // A non-zero reap count means a PRIOR run was killed mid-resolution
+      // (task-resolution-loop.ts's isStaleInProgress) — worth its own log
+      // line so this doesn't just blend into the aggregate above.
+      logger.warn('Nightly loop: recovered orphaned in_progress tasks from a prior crashed/killed run', {
+        tasksReaped,
       })
     }
 
@@ -231,6 +252,9 @@ export async function GET(request: NextRequest) {
       failed: failedCompanies,
       tasksAttempted,
       tasksCompleted,
+      tasksMerged,
+      tasksRedeployed,
+      tasksReaped,
       stalledCompanies,
       elapsedMs,
     })
@@ -250,12 +274,45 @@ export async function GET(request: NextRequest) {
       mediaGenerated,
       tasksAttempted,
       tasksCompleted,
+      tasksMerged,
+      tasksRedeployed,
+      tasksReaped,
       commsSent,
       stalledCompanies,
       results,
     })
   } catch (error) {
     logger.error('Nightly autonomous loop failed', error as Error)
+
+    // Real gap (#1141 follow-up): this catch previously returned 500 with
+    // no call to recordRunHealth() at all -- a shard that crashes outright
+    // (not merely degraded: budget-exhausted, stalled companies, etc, all
+    // captured by the success path above) left ZERO trace in the run-health
+    // history. A human reading listRecentRunHealth()/the #1142 health API
+    // would see only ever-healthy-looking runs and have no way to tell a
+    // totally silent, never-even-started shard apart from one that simply
+    // never fired. Record what's known (shard identity, elapsed time) with
+    // crashed: true so a true crash is visible instead of invisible.
+    await recordRunHealth({
+      shardIndex: rawShard !== null ? Number(rawShard) : null,
+      shardCount: rawShards !== null ? Number(rawShards) : null,
+      enrolled: 0,
+      processed: 0,
+      deferred: 0,
+      budgetExhausted: false,
+      dispatched: 0,
+      failed: 0,
+      tasksAttempted: 0,
+      tasksCompleted: 0,
+      tasksMerged: 0,
+      tasksRedeployed: 0,
+      tasksReaped: 0,
+      stalledCompanies: 0,
+      elapsedMs: Date.now() - startedAt,
+      crashed: true,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    })
+
     return NextResponse.json({ error: 'Nightly loop failed' }, { status: 500 })
   }
 }
@@ -275,6 +332,7 @@ async function runForCompany(
   const outcome: CompanyOutcome = {
     result: { companyId: e.companyId, briefing: null, taskId: null, status: 'error', detail: 'not run' },
     reportWritten: false, mediaGenerated: 0, tasksAttempted: 0, tasksCompleted: 0,
+    tasksMerged: 0, tasksRedeployed: 0, tasksReaped: 0,
     commsSent: false, stalled: false,
   }
 
@@ -494,6 +552,9 @@ async function runForCompany(
       const t = await runTaskResolutions(scopeKey, e.companyId, planTier)
       outcome.tasksAttempted += t.attempted
       outcome.tasksCompleted += t.completed
+      outcome.tasksMerged += t.merged || 0
+      outcome.tasksRedeployed += t.redeployed || 0
+      outcome.tasksReaped += t.reaped || 0
     } catch (err) {
       logger.warn('Task resolution run failed', { companyId: e.companyId, err: (err as Error)?.message })
     }

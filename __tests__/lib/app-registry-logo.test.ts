@@ -8,6 +8,7 @@ vi.hoisted(() => {
 })
 
 import { setAppLogo } from '@/lib/build/app-registry'
+import { __resetRegistryCacheForTests } from '@/lib/build/app-registry'
 
 /**
  * #492 — setAppLogo persists a founder's uploaded logo/brand-mark url on the
@@ -26,7 +27,7 @@ function okResponse(): Response {
 }
 
 describe('setAppLogo (#492)', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); __resetRegistryCacheForTests() })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('no-op (false) when the slug is not registered', async () => {

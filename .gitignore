@@ -48,6 +48,10 @@ e2e/screenshots/
 e2e/ux-shots/
 e2e/test-results/
 playwright-report/
+# Real, run-specific seeded-company identity written by
+# full-onboarding-provision.spec.ts (#1197) for e2e/session-restore.spec.ts
+# (#1198) to pick up — a fresh slug every run, never meant to be committed.
+e2e/fixtures/seeded-company.json
 
 # E2E artifacts
 e2e-generation-preview.png

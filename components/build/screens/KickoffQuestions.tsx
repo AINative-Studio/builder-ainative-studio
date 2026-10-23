@@ -7,6 +7,17 @@
  * every question, matching the backlog doc's exact UI contract. Answering
  * (or skipping) all 3 always proceeds to generation — kickoff is never a
  * hard gate.
+ *
+ * #1196 — "coach" team recommendation. After the 3rd question, a free Cody
+ * turn recommends a small starting agent team (recommendTeam(), reusing the
+ * SAME idea→primitive scoring selectPrimitives() already drives for codegen
+ * and "Powering this" — so the advice and what actually gets built can never
+ * diverge) before the real auth-wall/credits/START_BUILD decision in
+ * proceed(). Purely a chat turn with one CTA: no new paywall, no LLM call.
+ * "Add more agents" routes to the EXISTING pricing screen — the real paid-
+ * tier gate this repo already has, not a second parallel one. An idea that
+ * matches no team-eligible primitive shows no coach turn at all and proceeds
+ * straight through, so kickoff is never a dead end.
  */
 
 import { useState } from 'react'
@@ -16,6 +27,7 @@ import { trackEvent } from '@/components/analytics/google-analytics'
 import { decideLimitAction } from '@/lib/build/value-moment'
 import { getKickoffQuestions } from '@/lib/build/kickoff-questions'
 import { getOrCreateAnonDraftToken } from '@/lib/build/anon-draft-token'
+import { recommendTeam, type RecommendedTeamMember } from '@/lib/build/primitive-catalog'
 
 const NOT_SURE = 'Not sure yet'
 
@@ -25,7 +37,10 @@ export function KickoffQuestions() {
   const [index, setIndex] = useState(0)
   const [freeText, setFreeText] = useState('')
   const [proceeding, setProceeding] = useState(false)
-  const questions = getKickoffQuestions(state.track, state.growthIntent ?? false)
+  // #1196 — null = coach turn not reached yet; [] = reached but nothing to
+  // recommend (skip straight through); non-empty = show the coach turn.
+  const [team, setTeam] = useState<RecommendedTeamMember[] | null>(null)
+  const questions = getKickoffQuestions(state.track, state.growthIntent ?? false, state.ecommerceIntent ?? false)
   const question = questions[index]
 
   const answer = (value: string) => {
@@ -50,7 +65,15 @@ export function KickoffQuestions() {
     if (index < questions.length - 1) {
       setIndex(index + 1)
     } else {
-      proceed()
+      // #1196 — show the free coach recommendation before the real
+      // auth-wall/credits decision, instead of jumping straight to proceed().
+      // Deterministic, no network/LLM call — safe to compute inline.
+      const recommended = recommendTeam(state.idea, state.track, state.role || undefined)
+      if (recommended.length > 0) {
+        setTeam(recommended)
+      } else {
+        proceed()
+      }
     }
   }
 
@@ -100,6 +123,52 @@ export function KickoffQuestions() {
     dispatch({ type: 'SET_RUNWAY_NOTE', note: runwayNote })
   }
 
+  // #1196 — the coach turn: shown once, after the real 3 kickoff questions,
+  // before proceed(). "Looks good, build it" is the SAME proceed() the
+  // no-recommendation path already calls — the coach adds a chat turn, not a
+  // new decision branch. "Add more agents" routes to the existing pricing
+  // screen (the real paid-tier gate) rather than inventing a second one.
+  if (team && team.length > 0) {
+    return (
+      <div className="modernist m-intake" data-track={state.track} data-testid="kickoff-coach">
+        <div className="m-chat-log">
+          <p className="m-chat-cody"><span className="m-glyph">◇</span> Cody · your co-founder</p>
+          <p className="m-chat-cody-turn" data-testid="kickoff-coach-intro">
+            Based on what you've told me, here's a starting team — free to try, grow it whenever you're ready:
+          </p>
+        </div>
+        <div className="m-kickoff-coach-team" data-testid="kickoff-coach-team">
+          {team.map((member) => (
+            <div key={member.primitive} className="m-kickoff-coach-member" data-testid="kickoff-coach-member">
+              <p className="m-kickoff-coach-role"><strong>{member.role}</strong> — {member.primitive}</p>
+              <p className="m-kickoff-coach-purpose">{member.purpose}</p>
+            </div>
+          ))}
+        </div>
+        <div className="m-kickoff-suggestions">
+          <button
+            type="button"
+            data-testid="kickoff-coach-accept"
+            className="btn-primary"
+            disabled={proceeding}
+            onClick={() => proceed()}
+          >
+            Looks good, build it →
+          </button>
+          <button
+            type="button"
+            data-testid="kickoff-coach-add-more"
+            className="btn-ghost"
+            disabled={proceeding}
+            onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'pricing' })}
+          >
+            Add more agents to the team
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   if (!question) return null
 
   return (
@@ -131,6 +200,9 @@ export function KickoffQuestions() {
           {NOT_SURE}
         </button>
       </div>
+      <p className="m-kickoff-not-sure-hint m-mono" data-testid="kickoff-not-sure-hint">
+        Cody will infer a reasonable answer either way — skipping won&apos;t hurt your Product Brief.
+      </p>
       <div className="m-kickoff-freetext-row">
         <input
           type="text"

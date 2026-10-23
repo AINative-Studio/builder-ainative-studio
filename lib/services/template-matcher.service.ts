@@ -2,6 +2,24 @@
 import OpenAI from 'openai'
 import { getRedisClient } from '@/lib/redis'
 import { logger } from '@/lib/logger'
+import { getCircuitBreaker } from '@/lib/circuit-breaker'
+
+// Issue #1191: semantic matching depends on a real OpenAI embeddings call
+// per category (5 calls per request). When OPENAI_API_KEY is unset/invalid
+// or OpenAI is down, calculateSemanticScore already caught the failure and
+// returned 0 — but silently, with no way for a caller to tell "no good
+// match" apart from "the dependency is broken". After 3 consecutive
+// failures, stop attempting new embedding calls for a cooldown window and
+// go straight to keyword-only scoring; TemplateMatchResult.semanticDegraded
+// tells the caller which case it actually is.
+const TEMPLATE_MATCHER_BREAKER_KEY = 'template-matcher-semantic'
+
+function getSemanticMatchingBreaker() {
+  return getCircuitBreaker(TEMPLATE_MATCHER_BREAKER_KEY, {
+    failureThreshold: 3,
+    cooldownMs: 30_000,
+  })
+}
 
 // Initialize OpenAI only if API key is available
 let openai: OpenAI | null = null
@@ -82,6 +100,13 @@ export interface TemplateMatchResult {
   templateCategory?: string
   confidence: number
   matchType: 'keyword' | 'semantic' | 'combined' | 'none'
+  /**
+   * True when semantic matching was requested but could not actually run
+   * (embedding dependency failing or circuit breaker open) — the result is
+   * keyword-only even though `combined` scoring was asked for. False when
+   * semantic matching succeeded, or was never requested. (#1191)
+   */
+  semanticDegraded: boolean
 }
 
 export interface TemplateEmbedding {
@@ -219,13 +244,21 @@ export class TemplateMatcherService {
   }
 
   /**
-   * Calculate semantic similarity score using embeddings
+   * Calculate semantic similarity score using embeddings.
+   *
+   * Routed through the shared circuit breaker (#1191): once the embedding
+   * dependency has failed 3 times in a row, further calls short-circuit
+   * immediately instead of attempting (and waiting on) another real
+   * OpenAI request. Returns null — rather than 0 — specifically when the
+   * result is degraded, so matchTemplate can distinguish "dependency
+   * unavailable" from a genuine low semantic score.
    */
   private async calculateSemanticScore(
     prompt: string,
     category: string
-  ): Promise<number> {
-    try {
+  ): Promise<number | null> {
+    const breaker = getSemanticMatchingBreaker()
+    const result = await breaker.execute(async () => {
       const [promptEmbedding, categoryEmbedding] = await Promise.all([
         this.generateEmbedding(prompt),
         this.getCategoryEmbedding(category),
@@ -235,10 +268,17 @@ export class TemplateMatcherService {
 
       // Normalize similarity from [-1, 1] to [0, 1]
       return (similarity + 1) / 2
-    } catch (error) {
-      logger.error('Failed to calculate semantic score', error as Error)
-      return 0
+    })
+
+    if (result.success) {
+      return result.value as number
     }
+
+    if (!result.shortCircuited) {
+      logger.error('Failed to calculate semantic score', result.error as Error)
+    }
+
+    return null
   }
 
   /**
@@ -253,6 +293,8 @@ export class TemplateMatcherService {
     useSemanticMatching: boolean = true
   ): Promise<TemplateMatchResult> {
     const startTime = Date.now()
+
+    let semanticDegraded = false
 
     try {
       const categories = Object.keys(CATEGORY_KEYWORDS)
@@ -271,9 +313,18 @@ export class TemplateMatcherService {
         let combinedScore = keywordScore
 
         if (useSemanticMatching) {
-          semanticScore = await this.calculateSemanticScore(prompt, category)
-          // Combined score: 60% keyword, 40% semantic
-          combinedScore = keywordScore * 0.6 + semanticScore * 0.4
+          const rawSemanticScore = await this.calculateSemanticScore(prompt, category)
+          if (rawSemanticScore === null) {
+            // Dependency unavailable (failed, or breaker already open) —
+            // fall back to keyword-only for this category and flag the
+            // overall result as degraded rather than pretending semantic
+            // scoring ran and simply found nothing (#1191).
+            semanticDegraded = true
+          } else {
+            semanticScore = rawSemanticScore
+            // Combined score: 60% keyword, 40% semantic
+            combinedScore = keywordScore * 0.6 + semanticScore * 0.4
+          }
         }
 
         scores.push({
@@ -301,6 +352,7 @@ export class TemplateMatcherService {
         semanticScore: bestMatch.semanticScore,
         elapsedTime,
         allScores: scores,
+        semanticDegraded,
       })
 
       // Return match only if confidence is above threshold
@@ -309,18 +361,21 @@ export class TemplateMatcherService {
           templateCategory: bestMatch.category,
           confidence,
           matchType: useSemanticMatching ? 'combined' : 'keyword',
+          semanticDegraded,
         }
       }
 
       return {
         confidence: 0,
         matchType: 'none',
+        semanticDegraded,
       }
     } catch (error) {
       logger.error('Template matching failed', error as Error)
       return {
         confidence: 0,
         matchType: 'none',
+        semanticDegraded: useSemanticMatching,
       }
     }
   }

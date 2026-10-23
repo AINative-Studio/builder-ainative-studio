@@ -3,6 +3,10 @@
  *
  * GET /api/design-tokens/versions
  *
+ * Cross-token overview, distinct from GET /api/design-tokens/[tokenId]/versions
+ * (that route's per-token history): groups every one of the user's design
+ * tokens by name with their version list and optional generation-usage stats.
+ *
  * Features:
  * - List all design token versions for a user
  * - Filter by token name (optional)
@@ -11,7 +15,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyJWT as verifyToken } from '@/lib/auth-jwt'
+import { getAuthenticatedUser } from '@/lib/design-tokens/auth-helper'
 import {
   getDesignTokensByUserId,
   getDesignTokenVersions,
@@ -21,24 +25,22 @@ import { logger } from '@/lib/logger'
 
 export async function GET(req: NextRequest) {
   try {
-    // Verify authentication
-    const token = req.headers.get('authorization')?.replace('Bearer ', '')
-    if (!token) {
+    // Verify authentication — resolved via the same next-auth session every
+    // other /api/design-tokens/* route uses (#1213). This route previously
+    // checked a raw `verifyJWT` bearer/cookie token instead, a DIFFERENT
+    // auth scheme from its siblings (getAuthenticatedUser(), session-based).
+    // A real signed-in founder's browser only carries the next-auth session
+    // cookie, never the separate auth-token JWT cookie, so this route 401'd
+    // for every real caller regardless of wiring — fixed before wiring it up.
+    const user = await getAuthenticatedUser()
+    if (!user) {
       return NextResponse.json(
-        { error: 'Unauthorized - missing token' },
+        { error: 'Unauthorized - please sign in' },
         { status: 401 }
       )
     }
 
-    const payload = await verifyToken(token)
-    if (!payload) {
-      return NextResponse.json(
-        { error: 'Unauthorized - invalid token' },
-        { status: 401 }
-      )
-    }
-
-    const userId = payload.userId as string
+    const userId = user.userId
 
     // Get query parameters
     const searchParams = req.nextUrl.searchParams

@@ -373,4 +373,35 @@ describe('RuleEnforcementService', () => {
       ).toBe(true);
     });
   });
+
+  // #1193 — loadRuleSet() was a bare console.log stub that silently
+  // "succeeded" for ANY ruleSetId, whether or not a real rule set by that id
+  // existed (no DB-backed custom rule set storage exists anywhere in this
+  // codebase). Fixed: 'built-in' is a correct no-op (already loaded by
+  // loadBuiltInRules() unconditionally), any other id throws instead of
+  // pretending to succeed.
+  describe('loadRuleSet via initialize() ruleSets (#1193)', () => {
+    it('initialize() with ruleSets: ["built-in"] succeeds (the one real caller\'s shape, app/api/rules/validate/route.ts)', async () => {
+      const s = new RuleEnforcementService();
+      await expect(
+        s.initialize(baseConfig()).then(() =>
+          // re-initialize with the real caller's exact ruleSets value
+          new RuleEnforcementService().initialize({ ...baseConfig(), ruleSets: ['built-in'] })
+        )
+      ).resolves.toBeUndefined();
+    });
+
+    it('initialize() with an unknown ruleSetId throws, instead of silently no-opping', async () => {
+      const s = new RuleEnforcementService();
+      await expect(
+        s.initialize({ ...baseConfig(), ruleSets: ['some-custom-set-that-does-not-exist'] })
+      ).rejects.toThrow(/Unknown rule set/);
+    });
+
+    it('initialize() with an empty ruleSets array (existing default) is unaffected', async () => {
+      const s = new RuleEnforcementService();
+      await expect(s.initialize(baseConfig())).resolves.toBeUndefined();
+      expect(s.getRules().length).toBeGreaterThanOrEqual(10);
+    });
+  });
 });

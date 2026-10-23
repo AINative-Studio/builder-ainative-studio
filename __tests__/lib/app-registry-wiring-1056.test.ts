@@ -8,6 +8,7 @@ vi.hoisted(() => {
 })
 
 import { setAppWiring } from '@/lib/build/app-registry'
+import { __resetRegistryCacheForTests } from '@/lib/build/app-registry'
 
 /**
  * #1056 — setAppWiring persists the `*Wired` flags computed by a fresh scan
@@ -28,7 +29,7 @@ function okResponse(): Response {
 }
 
 describe('setAppWiring (#1056)', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); __resetRegistryCacheForTests() })
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('no-op (false) when the slug is not registered', async () => {

@@ -167,10 +167,40 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     // adding a distinct field here.
     triggers: ['memory', 'remember', 'personalization', 'personalize', 'context', 'history', 'preferences'] },
   { name: 'AI Kit', category: 'ui', foundational: true,
-    purpose: 'UI component framework (React/Vue/Svelte/Next streaming chat, Safety, A2UI)',
+    purpose: 'UI component framework (React/Vue/Svelte/Next streaming chat, Safety)',
     url: `${DOCS}/ai-kit/overview`,
     sdk: '@ainative/ai-kit-core',
     triggers: ['ui', 'frontend', 'chat', 'interface', 'components', 'streaming'] },
+  // #126 follow-up: A2UI was previously just a two-word mention inside AI
+  // Kit's purpose string above — never its own catalog entry, never scored/
+  // selected independently, never given a "To use" instruction. The real
+  // packages (@ainative/ai-kit-a2ui-core, @ainative/ai-kit-a2ui) were
+  // unpublished until now (first npm publish, 2026-10-21) — nothing in the
+  // codegen prompt could have told the model to import them even in
+  // principle. Published, verified (install + real exports load), and now
+  // wired in. Foundational: false (NOT every app needs agent-described UI —
+  // this is for an app whose UI is driven by a chat/agent message stream,
+  // not a static dashboard/table/card surface, which AI Kit above already
+  // covers) — gated on explicit triggers instead.
+  // #1234: DISABLED (empty triggers → scorePrimitives/selectPrimitives can
+  // never match this entry) pending a real fix. The real published
+  // @ainative/ai-kit-a2ui@0.1.0-alpha.1 renderer does not match this
+  // instruction's shape — it has no `components` prop (the real optional
+  // prop is `initialComponents`), and more fundamentally it *requires* a
+  // live `agentUrl` WebSocket connection: `A2UIRenderer` unconditionally
+  // opens that connection on mount and gates ALL rendering on the connection
+  // state, showing only "Connecting to agent..." (or an error) until a real
+  // agent server answers. Nothing in this codegen pipeline provisions such a
+  // live WebSocket backend for a generated app, so selecting this primitive
+  // today guarantees a permanently non-functional core UI surface — the
+  // opposite of the catalog's purpose. Metadata/instruction text below is
+  // left intact for whoever builds the real backend; re-enable by restoring
+  // the trigger list once that exists and the real prop names are fixed.
+  { name: 'A2UI', category: 'ui',
+    purpose: 'Agent-to-User-Interface protocol: an agent/LLM describes UI as data (a flat component tree over a transport), the client renders it live — for apps whose UI is driven by an agent/chat message stream rather than hand-built screens',
+    url: `${DOCS}/ai-kit/a2ui`,
+    sdk: '@ainative/ai-kit-a2ui',
+    triggers: [] },
   { name: 'Agent Cloud', category: 'agent-cloud', foundational: true,
     purpose: 'Run the built company autonomously: Agent Swarm, task dispatch, observability, deployments',
     url: `${DOCS}/agent-cloud/overview`,
@@ -235,7 +265,16 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     // toward an unrelated ecommerce app. Word-boundary matching (below)
     // doesn't help here since 'brand' genuinely appears as a whole word —
     // the fix is removing it as a trigger, not tightening the match.
-    triggers: ['ecommerce', 'e-commerce', 'shop', 'store', 'sell products', 'products', 'catalog', 'checkout', 'cart', 'retail', 'dtc', 'merch', 'coffee', 'goods', 'inventory', 'orders'] },
+    // 'subscription box' added (#1102/#1113, found live: habanero-hub's "A
+    // subscription box for local, small-batch hot sauce makers" never
+    // scored ZeroCommerce at all — none of the existing triggers matched,
+    // so the obedience gate's findPrimitiveComplianceGaps() correctly
+    // never flagged a gap, because it never knew ZeroCommerce was relevant
+    // in the first place. Deliberately the two-word phrase, not bare
+    // 'subscription' — a SaaS subscription business ("a subscription-based
+    // project management tool") is NOT ecommerce, same false-positive risk
+    // the 'brand' removal above already learned the hard way.
+    triggers: ['ecommerce', 'e-commerce', 'shop', 'store', 'sell products', 'products', 'catalog', 'checkout', 'cart', 'retail', 'dtc', 'merch', 'coffee', 'goods', 'inventory', 'orders', 'subscription box'] },
   { name: 'ZeroVoice', category: 'business-ops',
     purpose: 'Programmable telephony (Twilio): calls, SMS, IVR, recording + transcription, DNC/TCPA',
     url: `${DOCS}/zerovoice/overview`,
@@ -818,6 +857,77 @@ export function selectPrimitives(
 }
 
 /**
+ * Coach "team" framing (#1196) — a human-legible job title for a catalog
+ * primitive, used ONLY to phrase the free coach recommendation as "hire your
+ * team" rather than a raw primitive name a founder may not recognize. This is
+ * deliberately presentation-only: it does not add a parallel selection
+ * mechanism — every entry here maps 1:1 to a REAL catalog primitive name
+ * (verified by this file's own test suite), so "recommending a team member"
+ * always resolves to something the build will actually provision/compose,
+ * never a fabricated persona with no backing capability. Primitives with no
+ * entry here (foundational substrate, moonshot/vertical primitives) are never
+ * surfaced by the coach.
+ */
+const AGENT_PERSONA: Partial<Record<string, string>> = {
+  ZeroPipeline: 'Sales agent',
+  ZeroInvoice: 'Bookkeeper',
+  ZeroCRM: 'Customer-relationships agent',
+  ZeroCommerce: 'Storefront agent',
+  ZeroVoice: 'Phone & SMS agent',
+  ZeroERP: 'Operations agent',
+  ZeroForms: 'Intake agent',
+  ZeroBooks: 'Accountant',
+  ServiceOS: 'Support agent',
+  'Content Workflow': 'Marketing agent',
+  'Live Streaming': 'Broadcast agent',
+  OpenCapStack: 'Cap-table agent',
+  AgentFlow: 'Workflow-automation agent',
+  'Browser Agent': 'Research agent',
+  AINativeNGO: 'Programs & donor agent',
+  'Intent-Casting Marketplace': 'Marketplace agent',
+}
+
+/** One recommended "team member": a real primitive wearing a founder-legible job title. */
+export interface RecommendedTeamMember {
+  /** Real catalog primitive name (e.g. 'ZeroPipeline') — never fabricated. */
+  primitive: string
+  /** Human job title for the coach's copy (e.g. 'Sales agent'). */
+  role: string
+  /** The primitive's real one-line purpose, straight from the catalog. */
+  purpose: string
+}
+
+/**
+ * Free "coach" team recommendation (#1196). Deterministic — reuses the SAME
+ * idea→primitive scoring selectPrimitives() already runs for codegen/"Powering
+ * this", so the coach's advice and what the build actually composes can never
+ * diverge. Returns up to `max` non-foundational primitives that both (a) the
+ * idea genuinely matched/role-emphasized and (b) have a founder-legible job
+ * title in AGENT_PERSONA — foundational substrate (ZeroDB, AI Kit, etc.) is
+ * deliberately excluded since recommending "hire ZeroDB" reads as nonsense to
+ * a founder; it's always included regardless, not a differentiating "team" pick.
+ *
+ * This performs NO network/LLM call — it's a pure function over the already-
+ * captured idea text, callable the instant kickoff's 3 questions are answered.
+ */
+export function recommendTeam(
+  idea: string,
+  track: 'app' | 'company' = 'company',
+  role?: CompanyRole,
+  max = 3,
+): RecommendedTeamMember[] {
+  const { selected } = selectPrimitives(idea, track, 8, role)
+  const team: RecommendedTeamMember[] = []
+  for (const p of selected) {
+    const personaRole = AGENT_PERSONA[p.name]
+    if (!personaRole) continue
+    team.push({ primitive: p.name, role: personaRole, purpose: p.purpose })
+    if (team.length >= max) break
+  }
+  return team
+}
+
+/**
  * Render the catalog + the founder's most relevant primitives as a compact
  * block to inject into a generation/system prompt. Gives the model the FULL
  * catalog to choose from (so it isn't anchored on a hardcoded shortlist) while
@@ -832,7 +942,8 @@ export function catalogPromptBlock(idea: string, track: 'app' | 'company' = 'com
   return (
     `AINATIVE PRIMITIVE CATALOG (compose from THESE real products — do not invent primitives):\n${full}\n${roleLine}\n` +
     `Most relevant to this idea (lead with these, add others only if the idea calls for them): ${names.join(', ')}.\n` +
-    `Pick the primitives THIS specific idea needs and say how each is used. Do not default to a generic set.`
+    `Pick the primitives THIS specific idea needs and say how each is used. Do not default to a generic set.\n\n` +
+    NEVER_RECOMMEND_COMPETITOR_BLOCK
   )
 }
 
@@ -924,6 +1035,29 @@ export function mcpDataProvisioningBlock(): string {
 const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = {
   ZeroDB: () => `call its REST API at \`https://api.ainative.studio/api/v1\` (Authorization: Bearer <AINATIVE_API_KEY>)`,
   'Instant DB': () => `call its REST API at \`https://api.ainative.studio/api/v1\` (Authorization: Bearer <AINATIVE_API_KEY>)`,
+  // AI Kit's generic fallback (no entry here) used to tell the model to
+  // `import its SDK \`@ainative/ai-kit-core\`` for "UI primitives"/"chat,
+  // tables, product cards, dashboards" — wrong package. Downloaded and
+  // inspected the real published @ainative/ai-kit-core@0.2.0 tarball
+  // (npm pack + read dist/*/index.d.ts across every export path: ./streaming,
+  // ./agents, ./state, ./store, ./search, ./context, ./summarization,
+  // ./session, ./auth, ./zerodb, ./design, ./rlhf): it is Builder's own
+  // backend agent/LLM SDK (AIStream, Agent, AgentSwarm, ToolRegistry,
+  // AuthMethod, ...) with zero React/JSX/component exports and no `react`
+  // dependency at all — not a UI library. The real React UI components
+  // (MetricCard, AIKitHeader, AIKitSidebar, AIKitTable, AIKitTimeline,
+  // AIKitBanner, AIKitAvatar, AIKitProductCard, ChatBubble,
+  // StreamingIndicator, EmptyState, ...) ship with every generated app
+  // already, unconditionally, as real local files — see
+  // lib/sandpack/aikit-bundle.ts, merged by lib/sandpack/setup.ts's
+  // getBuiltinFiles() at both /components/aikit and /src/components/aikit
+  // for every Sandpack sandbox — the same local path componentGuidanceBlock
+  // (primitive-graph.ts) already correctly points archetype-matched ideas
+  // at. An idea matching none of that graph's 11 archetypes got ONLY the
+  // wrong npm-package instruction, with nothing to override it.
+  'AI Kit': () =>
+    `import its real React UI components from the LOCAL \`./components/aikit\` module that ships with every generated app (NOT an npm package — do not add \`@ainative/ai-kit-core\` or \`@ainative/ai-kit\` to package.json, they are not the UI library here) — do not hand-build chat bubbles, tables, product cards, or metric/dashboard cards when one of these already exists:\n` +
+    "  import { MetricCard, AIKitHeader, AIKitSidebar, AIKitTable, AIKitTimeline, AIKitBanner, AIKitAvatar, AIKitProductCard, AIKitPagination, ChatBubble, StreamingIndicator, EmptyState, Skeleton } from './components/aikit'\n",
   // #524: ZeroCommerce was one of the ORIGINAL 5 founder-scoped primitives
   // (#443) — trusted on faith since then, never behaviorally live-tested. A
   // real production run for a "handmade coffee mugs" shop idea produced
@@ -936,24 +1070,150 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
   // real call. Strengthened with the same treatment #521 gave the 8 newer
   // primitives: a literal, copy-pasteable fetch() snippet + an explicit
   // named anti-pattern to forbid, naming the EXACT failure mode observed.
+  // #1167 — the previous instruction here told the model to call
+  // /commerce/products and /commerce/checkout, which DO NOT EXIST on the
+  // real ZeroCommerce API (confirmed by reading its actual FastAPI router
+  // registration). `commerce/` IS a real prefix — but only for merchant
+  // account-management routes (commerce/stores, commerce/connect, etc.);
+  // products/cart/checkout for a store's own SHOPPERS live under the
+  // separate, unauthenticated `/storefront/{slug}/...` family instead. Every
+  // generated app following the old instruction 404'd on checkout. Fixed
+  // paths below; the literal `storefront/_` segment is REQUIRED exactly as
+  // shown — the proxy (app/api/primitive/[primitive]/[...path]/route.ts)
+  // swaps `_` for this company's real ZeroCommerce store slug server-side,
+  // since generated code has no way to know that slug itself.
+  // #1164 — extended with the real Stripe Elements checkout UI step (Apple
+  // Pay/Google Pay eligible) instead of stopping at client_secret with no
+  // instruction for what to do with it, which left every generated app to
+  // either hand-roll a bare card-number/expiry/CVC form (worse UX, no
+  // wallet support, poor PCI-scope hygiene) or not render a payment form at
+  // all.
+  // #1183 — re-verified EVERY shape below directly against
+  // AINative-Studio/ZeroCommerce's current source (app/api/v1/endpoints/
+  // storefront.py + its StorefrontCheckoutRequest/Response schemas,
+  // app/schemas/cart.py, app/models/product.py), not assumed. Two real
+  // corrections from the previous version of this block:
+  //  1. storefront/_/stripe-config is NOT pending (the old comment claimed
+  //     "does not exist yet, tracked as ZeroCommerce#667") — it is real and
+  //     live now, confirmed in storefront.py's get_storefront_stripe_config.
+  //  2. The checkout response has THREE more real fields the model was
+  //     never told about: order_id, payment_intent_id, and approval_url
+  //     (PayPal-only redirect — required when payment_provider is "paypal",
+  //     since PayPal's flow has no client_secret to confirm against).
+  //     Checkout also accepts payment_provider (defaults to "stripe") and
+  //     discount_code — never hardcode/omit payment_provider if the app
+  //     lets a shopper choose a payment method, and never guess a
+  //     discount-apply shape since discount_code IS the real one.
+  //  Also confirmed real: the product field is base_price (never price),
+  //  stock_quantity is deliberately NEVER exposed on the public storefront
+  //  product shape (no stock-level UI should be built from this response —
+  //  see _public_product_dict, which strips it), and shipping_address/
+  //  billing_address are sent as plain JSON objects (ZeroCommerce encrypts
+  //  them server-side on write — generated code never encrypts anything
+  //  itself).
   ZeroCommerce: () =>
-    `call the same-origin proxy at \`/api/primitive/zerocommerce/{path}\` — NO Authorization header needed, the platform attaches the founder's real ZeroCommerce credential server-side; the path after \`zerocommerce/\` matches ZeroCommerce's own REST path exactly.\n` +
-    '  Real call shape (copy this exactly, do not paraphrase — the store itself is provisioned once at checkout via POST /commerce/stores/onboard, confirmed live per #417; the generated app only ever reads/writes products, cart, and orders through this proxy):\n' +
+    `call the same-origin proxy at \`/api/primitive/zerocommerce/{path}\` — NO Authorization header needed, the platform attaches the founder's real ZeroCommerce credential server-side; the path after \`zerocommerce/\` matches ZeroCommerce's own REST path exactly, with ONE exception: use the literal segment \`storefront/_\` exactly as shown below (do not substitute a real slug, a variable, or anything else in that position) — the proxy fills in this company's real store slug for you.\n` +
+    '  Real call shape (copy this exactly, do not paraphrase — the store itself is provisioned once at checkout via POST /commerce/stores/onboard, confirmed live per #417; the generated app only ever reads/writes products, cart, and orders through this proxy, under the unauthenticated storefront/_ path):\n' +
     '  ```js\n' +
-    "  // List products in this company's real ZeroCommerce catalog\n" +
-    "  const res = await fetch('/api/primitive/zerocommerce/commerce/products')\n" +
-    '  const { products } = await res.json() // real catalog rows, not a hardcoded array\n' +
+    "  // List products in this company's real ZeroCommerce catalog. Each product is\n" +
+    "  // { id, name, description, base_price, media, created_at } — NEVER `price`,\n" +
+    "  // and there is NEVER a stock_quantity field here (it's a public, no-auth\n" +
+    "  // response — don't build a 'N in stock' UI from it).\n" +
+    "  const res = await fetch('/api/primitive/zerocommerce/storefront/_/products')\n" +
+    '  const { store, products, total, skip, limit } = await res.json() // real catalog rows, not a hardcoded array\n' +
     '\n' +
-    "  // Create a checkout session for the current cart\n" +
-    "  await fetch('/api/primitive/zerocommerce/commerce/checkout', {\n" +
+    "  // Create a cart (do this once per shopper session, e.g. on first \"add to cart\")\n" +
+    "  const cartRes = await fetch('/api/primitive/zerocommerce/storefront/_/cart', {\n" +
+    "    method: 'POST', credentials: 'include', // REQUIRED — carries the session cookie ZeroCommerce sets\n" +
+    "  })\n" +
+    '  const cart = await cartRes.json() // real { id, store_id, session_id, status, items, total_items, subtotal }\n' +
+    '\n' +
+    "  // Add an item to that cart — cart.id comes from the create-cart call above\n" +
+    "  await fetch(`/api/primitive/zerocommerce/storefront/_/cart/${cart.id}/items`, {\n" +
+    "    method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },\n" +
+    "    body: JSON.stringify({ product_id: product.id, quantity: 1 }), // unit_price is resolved server-side, do NOT send a client price\n" +
+    '  })\n' +
+    '\n' +
+    "  // Checkout that same cart. payment_provider defaults to \"stripe\" if omitted —\n" +
+    "  // pass it explicitly ('stripe' | 'paypal' | 'crypto') whenever the UI lets the\n" +
+    "  // shopper pick a payment method. discount_code is optional, real, and the\n" +
+    "  // ONLY coupon-apply field — never invent a separate /discounts/apply call.\n" +
+    "  const checkoutRes = await fetch(`/api/primitive/zerocommerce/storefront/_/cart/${cart.id}/checkout`, {\n" +
+    "    method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },\n" +
+    "    body: JSON.stringify({\n" +
+    "      customer_email: email,\n" +
+    "      shipping_address: { address_line1, city, state, postal_code, country }, // plain JSON — ZeroCommerce encrypts it server-side, you never do\n" +
+    "      payment_provider: 'stripe', // or 'paypal' / 'crypto' — see above\n" +
+    "      discount_code: discountCode || undefined, // optional\n" +
+    '    }),\n' +
+    '  })\n' +
+    '  // Real response: { order_id, status, total, currency, client_secret, payment_intent_id, approval_url }\n' +
+    '  // client_secret is set for Stripe/crypto, null for PayPal. approval_url is set\n' +
+    '  // ONLY for payment_provider:"paypal" — when present, redirect the shopper there\n' +
+    '  // to approve the order BEFORE any Stripe Elements code below runs; PayPal never\n' +
+    '  // uses client_secret at all.\n' +
+    '  const { order_id, client_secret, payment_intent_id, approval_url } = await checkoutRes.json()\n' +
+    '  if (approval_url) { window.location.href = approval_url; return } // PayPal path — stop here\n' +
+    '\n' +
+    "  // Render the REAL Stripe Payment Element for the actual payment step — this\n" +
+    "  // is a SEPARATE, REQUIRED call, not optional polish: it surfaces Apple Pay /\n" +
+    "  // Google Pay automatically when the shopper's browser/device supports them.\n" +
+    "  // publishable_key and connected_account_id come from ZeroCommerce itself —\n" +
+    "  // NEVER hardcode or guess a Stripe publishable key. This endpoint is real and\n" +
+    "  // live now (confirmed), not a future/pending contract.\n" +
+    "  import { loadStripe } from '@stripe/stripe-js'\n" +
+    "  import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js'\n" +
+    '\n' +
+    "  const cfgRes = await fetch('/api/primitive/zerocommerce/storefront/_/stripe-config')\n" +
+    '  const { publishable_key, connected_account_id } = await cfgRes.json()\n' +
+    '  const stripePromise = loadStripe(\n' +
+    '    publishable_key,\n' +
+    '    connected_account_id ? { stripeAccount: connected_account_id } : undefined,\n' +
+    '  )\n' +
+    '\n' +
+    '  // Wrap the payment form:\n' +
+    "  // <Elements stripe={stripePromise} options={{ clientSecret: client_secret }}>\n" +
+    '  //   <CheckoutForm />\n' +
+    '  // </Elements>\n' +
+    '  // Inside CheckoutForm: const stripe = useStripe(); const elements = useElements();\n' +
+    '  // render <PaymentElement /> plus a submit button that calls\n' +
+    '  // stripe.confirmPayment({ elements, confirmParams: { return_url } }) on click.\n' +
+    '  ```\n' +
+    '  MERCHANT-SIDE discount codes (#1209) — if the feature is a store-owner admin screen for creating/listing/\n' +
+    '  editing/deleting discount codes (NOT the shopper-side "enter a code at checkout" flow above, which already uses\n' +
+    '  discount_code on the checkout call), call the SAME proxy with the authenticated `commerce/discounts` path —\n' +
+    '  a different, merchant-only path from the unauthenticated `storefront/_/...` paths above, still through the\n' +
+    '  same `/api/primitive/zerocommerce/{path}` proxy with no Authorization header needed:\n' +
+    '  ```js\n' +
+    "  // List this store's real discount codes (admin-only)\n" +
+    "  const discRes = await fetch('/api/primitive/zerocommerce/commerce/discounts')\n" +
+    '  const discounts = await discRes.json()\n' +
+    '\n' +
+    "  // Create a real discount code (admin-only)\n" +
+    "  await fetch('/api/primitive/zerocommerce/commerce/discounts', {\n" +
     "    method: 'POST', headers: { 'Content-Type': 'application/json' },\n" +
-    '    body: JSON.stringify({ items: cartItems }),\n' +
+    "    body: JSON.stringify({ code, discount_type, discount_value }), // real ZeroCommerce discount schema\n" +
     '  })\n' +
     '  ```\n' +
+    '  KNOWN LIMITATION, do not paper over it: `commerce/discounts` is gated server-side to users whose AINative role ' +
+    'claim is literally "admin" (platform staff), not "owns this store" — an ordinary founder may not carry that ' +
+    'role, in which case this returns a real 403 from ZeroCommerce (forwarded verbatim through the proxy, not a ' +
+    'crash). Unconfirmed against a live founder session as of #1209 — build the admin UI to call the real endpoint ' +
+    'and handle a 403 by showing "discount management isn\'t available for your account yet" rather than silently ' +
+    'failing or faking success with local state.\n' +
     '  ANTI-PATTERN — FORBIDDEN: do NOT hand-roll a product catalog, shopping cart, or checkout using /api/db tables ' +
     'instead of calling the real ZeroCommerce proxy. If the feature is a product listing, cart, or checkout, it MUST ' +
-    'call GET/POST /api/primitive/zerocommerce/commerce/{products,checkout} — persisting products/cart/orders through ' +
-    'generic /api/db rows instead is a FAILING implementation even if the UI looks identical to the user.',
+    'call GET/POST /api/primitive/zerocommerce/storefront/_/{products,cart,cart/:id/items,cart/:id/checkout,stripe-config} — ' +
+    'persisting products/cart/orders through generic /api/db rows instead is a FAILING implementation even if the UI ' +
+    'looks identical to the user. Also FORBIDDEN: calling /api/primitive/zerocommerce/commerce/products or ' +
+    '/commerce/checkout — those paths do not exist and will 404 every time. Also FORBIDDEN: hand-rolling raw card-' +
+    'number/expiry/CVC input fields instead of Stripe\'s real Elements/PaymentElement — this both fails PCI-scope ' +
+    'best practice and silently drops the Apple Pay/Google Pay eligibility the checkout response already supports. ' +
+    'Also FORBIDDEN: reading or displaying a `price` field on a product (the real field is `base_price`) or a ' +
+    '`stock_quantity`/inventory-count field from the storefront products response (it is never present there). Also ' +
+    'FORBIDDEN: faking a "discount created" success state in local/component state for a merchant discount-code admin ' +
+    'screen instead of calling the real commerce/discounts endpoint above, or silently swallowing a 403 from it as ' +
+    'if it succeeded.',
   // #525: AgentFlow shares the SAME confirmed gap — a real 83,084-char
   // generation for "a no-code visual agent workflow builder with drag and
   // drop flow building" never called /api/primitive/agentflow/ and had ZERO
@@ -1126,6 +1386,36 @@ const RUNTIME_PROXIED_PRIMITIVES: Record<string, (apiBase: string) => string> = 
     '  ```\n' +
     "  If STRIPE_SECRET_KEY is not yet set, tell the founder plainly: \"Add your Stripe secret key in Website & infrastructure → Secrets, then I can wire this up\" — never fabricate a checkout flow or a fake success state while the key is missing.\n" +
     '  ANTI-PATTERN — FORBIDDEN: do NOT hand-roll a fake "payment successful" state, a client-side-only card form with no real charge, or an unrelated /api/db table pretending to be a payment ledger. If the feature is "take a real payment with my own Stripe account," it MUST call the real stripe.checkout.sessions.create (or stripe.paymentIntents.create) API — anything else is a FAILING implementation even if the UI looks identical to the user.',
+  // #126 follow-up: A2UI, like Stripe above, has no AINative-hosted API to
+  // proxy — it's a client-side rendering library (React component tree over
+  // a flat, ID-referenced message stream), not a REST surface. The two real
+  // packages (first published 2026-10-21, verified installable with real
+  // exports): @ainative/ai-kit-a2ui-core (framework-agnostic protocol/
+  // transport) and @ainative/ai-kit-a2ui (the React renderer, depends on the
+  // core package). The renderer takes components AND componentsById — the
+  // real wire shape is a FLAT array of components referencing each other by
+  // string id in `children`, never nested component objects — that's the one
+  // detail a model is likely to invent wrong without being told explicitly.
+  // #1234: this instruction's call shape does NOT match the real published
+  // API (no `components` prop; the real `A2UIRenderer` requires `agentUrl`
+  // and gates all rendering on a live WebSocket connection this pipeline
+  // never provisions) — left here for reference only while the catalog
+  // entry above is disabled (`triggers: []`). Do not re-enable without
+  // fixing this text first.
+  A2UI: () =>
+    `import \`A2UIRenderer\` from \`@ainative/ai-kit-a2ui\` (which depends on \`@ainative/ai-kit-a2ui-core\` for the transport/protocol types — both are real npm packages, add both to package.json) instead of hand-building a chat-driven or agent-described UI surface from scratch.\n` +
+    '  Real call shape (copy this exactly, do not paraphrase):\n' +
+    '  ```tsx\n' +
+    "  import { A2UIRenderer } from '@ainative/ai-kit-a2ui'\n" +
+    '\n' +
+    '  // `components` is the FLAT array of UI components the agent/LLM described for\n' +
+    "  // this turn — each has a stable `id` and a `children: string[]` of OTHER\n" +
+    '  // components\' ids (never nested component objects). A2UIRenderer resolves\n' +
+    '  // that id graph internally — do not pre-nest it yourself.\n' +
+    '  <A2UIRenderer components={components} onAction={(action) => { /* handle a component-emitted action, e.g. button click */ }} />\n' +
+    '  ```\n' +
+    '  Use this when the APP\'s feature is literally "the agent/LLM decides what UI to show next" (a conversational builder, an agent-driven onboarding flow, a chat surface whose response can render interactive widgets, not just text) — NOT for ordinary static dashboards/tables/cards, which AI Kit already covers.\n' +
+    '  ANTI-PATTERN — FORBIDDEN: do NOT hand-roll a custom "renders a message type via a switch statement" component tree, and do NOT invent a nested `children: Component[]` shape — the real protocol is a flat id-referenced array; a nested reimplementation will not match any real A2UI message stream. If the feature is agent-described/generative UI, it MUST render through the real `A2UIRenderer` — anything else is a FAILING implementation even if the UI looks identical to the user.',
   // #642: found via a systematic gap sweep across the whole primitive
   // catalog (2026-09-10, following the ZeroInvoice fix) — ServiceOS
   // (helpdesk) had real, common founder triggers (support, helpdesk,
@@ -1348,7 +1638,9 @@ export const RUNTIME_PROXY_PATH_SUBSTRINGS: Record<string, string[]> = {
   // #524/#525/#527: was missing entirely for all 5 original founder-scoped
   // primitives, so the #518 post-generation compliance validator had no way
   // to catch an unwired selection of any of them. Now it does.
-  ZeroCommerce: ['/api/primitive/zerocommerce/commerce/products', '/api/primitive/zerocommerce/commerce/checkout'],
+  // #1167: corrected from the fictional /commerce/products, /commerce/checkout
+  // (those paths don't exist — see the RUNTIME_PROXIED_PRIMITIVES entry above).
+  ZeroCommerce: ['/api/primitive/zerocommerce/storefront/_/products', '/api/primitive/zerocommerce/storefront/_/cart'],
   ZeroPipeline: ['/api/primitive/zeropipeline/deals'],
   AgentFlow: ['/api/primitive/agentflow/projects/'],
   ZeroForms: ['/api/primitive/zeroforms/forms'],
@@ -1365,6 +1657,9 @@ export const RUNTIME_PROXY_PATH_SUBSTRINGS: Record<string, string[]> = {
   // Either literal string here is sufficient proof the real SDK was called,
   // not a hand-rolled fake success state.
   Stripe: ['stripe.checkout.sessions.create', 'stripe.paymentIntents.create'],
+  // #126 follow-up: same reasoning as Stripe above — A2UI has no proxy path,
+  // the real signal is the actual import from the real published package.
+  A2UI: ['@ainative/ai-kit-a2ui'],
   // #642: added once ServiceOS's real direct-JWT-bearer path was confirmed
   // live (see RUNTIME_PROXIED_PRIMITIVES's ServiceOS entry).
   ServiceOS: ['/api/primitive/serviceos/tickets'],
@@ -1459,7 +1754,7 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
   if (lines.length === 0) {
     // No wireable primitive matched — still steer the model toward AI Kit + ZeroDB.
     lines.push(
-      `- AI Kit — import its SDK \`@ainative/ai-kit-core\` for UI components (do not hand-build chat/tables/cards).`,
+      `- AI Kit — import its real UI components from the local \`./components/aikit\` module (do not hand-build chat/tables/cards, and do not import an npm package for this).`,
       `- ZeroDB — persist all app data via its REST API at \`https://api.ainative.studio/api/v1\` (Authorization: Bearer <AINATIVE_API_KEY>).`,
     )
   }
@@ -1516,7 +1811,7 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
     `  A visitor clicking a button that does nothing — or worse, gets a native browser alert() dialog — is a\n` +
     `  worse experience than no button at all.\n\n` +
     `Rules:\n` +
-    `1. Import \`@ainative/ai-kit-core\` (and its React bindings) for UI primitives — do NOT rebuild chat, tables, product cards, or dashboards from scratch when an AI Kit component exists.\n` +
+    `1. Use AI Kit's real UI components from the LOCAL \`./components/aikit\` module (NOT an npm package) for UI primitives — do NOT rebuild chat, tables, product cards, or dashboards from scratch when an AI Kit component exists.\n` +
     `2. Persist through /api/db (above) — this is MANDATORY when the app saves any records. The generated app runs in the browser, so it does NOT have AINATIVE_API_KEY; NEVER put a Bearer key or secret in app code, and NEVER fetch() a primitive's apiBase directly unless this block explicitly said to. Each primitive above tells you EXACTLY how to call it under "To use:" — follow that literally (same-origin proxy path and method, no Authorization header for proxied primitives, a Bearer key only for ZeroDB/Instant DB via /api/db). For any primitive listed above framed as "already provisioned for this company server-side," treat its capability as already set up by the platform — build the UI around it, don't call its API from generated code.\n` +
     `3. Do NOT reimplement invoicing, CRM, ecommerce carts/checkout, telephony, cap-table math, or helpdesk ticketing when the matching primitive exists — model the app around composing it. Regenerating that business logic from scratch is a FAILING score.\n` +
     `4. Add a short comment above each data call noting the AINative product it composes (e.g. \`// ZeroDB — orders\`), so the wiring is auditable.\n` +
@@ -1552,6 +1847,45 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
  * when the plan touches implementation, and do not invent third-party tools
  * for capabilities the platform already provides.
  */
+/**
+ * Found via a live production benchmark (2026-10-20): a plain "sell handmade
+ * ceramic mugs online" idea generated a Product Brief recommending "a
+ * Shopify-based online store" instead of ZeroCommerce — because the `brief`
+ * view had no grounding call at all, and no existing instruction anywhere
+ * forbade naming a competing SaaS platform. Shared by both
+ * primitiveGroundingBlock (implementation-detail artifacts) and
+ * catalogPromptBlock (the composition-plan view) so the rule can't drift
+ * out of sync between the two call sites.
+ *
+ * Same live re-verification run also caught a second, subtler defect: once
+ * the model stopped naming Shopify, a businessModel artifact instead said
+ * "ZeroCommerce checkout (hosted on ZeroDB)" — wrong architecture, not a
+ * competitor mention. ZeroDB is the shared DATA layer, not a hosting
+ * platform; hosting/runtime is AINative Cloud; every primitive is its own
+ * independent service, never nested inside another primitive. The second
+ * paragraph below fixes that class of error so swapping "wrong competitor"
+ * for "wrong internal architecture" doesn't quietly become the new bug.
+ */
+export const NEVER_RECOMMEND_COMPETITOR_BLOCK =
+  `ABSOLUTE RULE — NEVER RECOMMEND A COMPETING SAAS PLATFORM: if this idea involves selling products online, ` +
+  `do NOT write "build a Shopify store," "use Shopify," "a Shopify-based site," or recommend Shopify, ` +
+  `BigCommerce, WooCommerce, Squarespace Commerce, Wix Ecommerce, or any other third-party ecommerce SaaS ` +
+  `platform in ANY generated artifact — not as the implementation plan, not as a comparison, not as a fallback. ` +
+  `Builder generates real ecommerce apps that run on AINative's own ZeroCommerce primitive, never on a ` +
+  `competitor's platform. If the founder explicitly asks to build specifically ON Shopify itself (not just ` +
+  `"an online store," but Shopify by name, or wants a Shopify app/theme), do not attempt it inside Builder — ` +
+  `tell them Builder only builds on AINative's own primitives, and that cody-cli (AINative's standalone agent) ` +
+  `gives them full, unrestricted control to build directly on Shopify or any other platform of their choosing.\n\n` +
+  `GET THE ARCHITECTURE RIGHT WHEN YOU DESCRIBE HOW PRIMITIVES FIT TOGETHER: ` +
+  `Hosting/runtime for every generated app happens on AINative Cloud — never say a primitive, a checkout flow, ` +
+  `or any other capability is "hosted on ZeroDB" or "hosted on" any other primitive. ZeroDB is the shared DATA ` +
+  `layer (tables, vector search, object storage) that primitives and generated apps use for persistence, not a ` +
+  `hosting/runtime platform. Every AINative primitive (ZeroCommerce included) is its own ` +
+  `independent business application or backend service — primitives are siblings that may each use ZeroDB for ` +
+  `data and AINative Cloud for hosting, never nested inside one another. The correct framing is, e.g., ` +
+  `"ZeroCommerce checkout (backed by ZeroDB for product/order data, hosted on AINative Cloud)" — never ` +
+  `"checkout hosted on ZeroDB."`
+
 export function primitiveGroundingBlock(idea: string, track: 'app' | 'company' = 'company', role?: CompanyRole): string {
   const { foundational, selected } = selectPrimitives(idea, track, 6, role)
   const seen = new Set<string>()
@@ -1569,6 +1903,7 @@ export function primitiveGroundingBlock(idea: string, track: 'app' | 'company' =
     `already-selected AINative primitives by name instead of generic third-party tools. Do NOT invent or suggest ` +
     `third-party tools (e.g. OpenAI's embeddings API, Firebase, Stripe, Twilio, Auth0) for capabilities these ` +
     `primitives already provide — this idea's own composition table already committed to the list above, so this ` +
-    `artifact must stay consistent with it.`
+    `artifact must stay consistent with it.\n\n` +
+    NEVER_RECOMMEND_COMPETITOR_BLOCK
   )
 }

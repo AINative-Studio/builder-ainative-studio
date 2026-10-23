@@ -12,6 +12,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { DesignTokenUploadDialog } from "@/components/design-tokens/upload-dialog";
 import { DesignTokenPreview } from "@/components/design-tokens/preview";
 import { VersionHistory } from "@/components/design-tokens/version-history";
@@ -41,6 +42,33 @@ export default function DesignTokensPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
+
+  // Cross-token usage summary (#1213) — real consumer for the previously
+  // orphaned GET /api/design-tokens/versions?includeStats=true, distinct
+  // from the per-token history the table's "History" action already shows:
+  // this groups every token BY NAME across all its versions with real
+  // generation-usage counts, which nothing else on this page surfaces.
+  const [versionStats, setVersionStats] = useState<{
+    name: string
+    totalVersions: number
+    activeVersion: string | null
+    versions: { generationCount: number }[]
+  }[]>([]);
+
+  const fetchVersionStats = async () => {
+    try {
+      const response = await fetch("/api/design-tokens/versions?includeStats=true");
+      if (!response.ok) return; // best-effort — the table above still works without this
+      const data = await response.json();
+      setVersionStats(data.tokens || []);
+    } catch {
+      // best-effort
+    }
+  };
+
+  useEffect(() => {
+    fetchVersionStats();
+  }, []);
 
   // Fetch design tokens
   const fetchTokens = async () => {
@@ -188,6 +216,34 @@ export default function DesignTokensPage() {
           </Button>
         </div>
 
+        {/* Cross-token version/usage summary (#1213) */}
+        {versionStats.length > 0 && (
+          <div
+            className="grid grid-cols-1 gap-4 sm:grid-cols-3 rounded-lg border p-4"
+            data-testid="design-tokens-version-summary"
+          >
+            <div>
+              <div className="text-2xl font-bold">{versionStats.length}</div>
+              <p className="text-xs text-muted-foreground">Token families</p>
+            </div>
+            <div>
+              <div className="text-2xl font-bold">
+                {versionStats.reduce((sum, t) => sum + t.totalVersions, 0)}
+              </div>
+              <p className="text-xs text-muted-foreground">Total versions</p>
+            </div>
+            <div>
+              <div className="text-2xl font-bold">
+                {versionStats.reduce(
+                  (sum, t) => sum + t.versions.reduce((s, v) => s + (v.generationCount || 0), 0),
+                  0
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">Generations using a design token</p>
+            </div>
+          </div>
+        )}
+
         {/* Search */}
         <div className="flex items-center gap-2">
           <div className="relative flex-1 max-w-md">
@@ -206,8 +262,35 @@ export default function DesignTokensPage() {
 
         {/* Table */}
         {isLoading ? (
-          <div className="text-center py-12 text-muted-foreground">
-            Loading design tokens...
+          <div className="border rounded-lg" data-testid="design-tokens-loading">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Version</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <TableRow key={i}>
+                    <TableCell><Skeleton className="h-4 w-32" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-16" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-24" /></TableCell>
+                    <TableCell><Skeleton className="h-5 w-16 rounded-full" /></TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <Skeleton className="h-8 w-8 rounded-md" />
+                        <Skeleton className="h-8 w-8 rounded-md" />
+                        <Skeleton className="h-8 w-8 rounded-md" />
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </div>
         ) : paginatedTokens.length === 0 ? (
           <div className="text-center py-12 space-y-3">

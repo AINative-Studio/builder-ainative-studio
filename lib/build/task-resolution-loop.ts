@@ -26,9 +26,46 @@
  * smaller due tasks.
  */
 
-import { listTasks, needsSplit, type BuildTask } from '@/lib/build/task-store'
+import { listTasks, updateTask, needsSplit, type BuildTask } from '@/lib/build/task-store'
 import { resolveTask } from '@/lib/build/task-resolver'
 import { splitTask } from '@/lib/build/task-splitter'
+
+/**
+ * Found during an overnight founder-dashboard-integrity sweep: resolveTask()
+ * (task-resolver.ts) writes `stage: 'in_progress'` BEFORE any of its real I/O
+ * (Gitea read/write, the LLM implement call, `vitest --coverage` — which alone
+ * has a 120s RUN_TIMEOUT_MS) and only reaches a terminal `completed`/`failed`
+ * write at the very end. If the nightly-loop route's process is killed
+ * (its own `maxDuration`/`NIGHTLY_LOOP_BUDGET_MS`, a platform restart, an
+ * uncaught crash) in that window, the task is left at `in_progress` forever —
+ * runTaskResolutions() below only ever selects `stage === 'todo'` tasks, so a
+ * stuck `in_progress` row is invisible to every future nightly run: never
+ * retried, never marked failed. The founder's TasksPanel "In Progress" count
+ * silently accumulates dead entries with no way to tell a real in-flight task
+ * from an abandoned one.
+ *
+ * Fix: before selecting due `todo` tasks, reap any `in_progress` task whose
+ * `updatedAt` (stamped fresh the moment resolveTask set it to in_progress) is
+ * older than this threshold — the route's whole shared budget is ~300s, so 30
+ * minutes is generous margin against a false-positive reap of a genuinely
+ * still-running task, while still recovering within the same night.
+ */
+export const STALE_IN_PROGRESS_MS = 30 * 60 * 1000
+
+/**
+ * PURE — whether a task is an orphaned `in_progress` row that should be
+ * reaped rather than left stuck forever. See STALE_IN_PROGRESS_MS's doc.
+ */
+export function isStaleInProgress(
+  task: Pick<BuildTask, 'stage' | 'updatedAt' | 'createdAt'>,
+  now: number = Date.now(),
+  thresholdMs: number = STALE_IN_PROGRESS_MS,
+): boolean {
+  if (task.stage !== 'in_progress') return false
+  const ts = Date.parse(task.updatedAt || task.createdAt || '')
+  if (!Number.isFinite(ts)) return false
+  return now - ts > thresholdMs
+}
 
 /**
  * v1 scope: resolve at most this many `todo` tasks per company per nightly
@@ -133,19 +170,54 @@ export function maxTasksForTier(tier: string | null | undefined): number {
  * lib/ainative/active-plan.ts's resolveActivePlan(). Omitted or
  * unresolvable, this degrades to the free-tier limit. Returns how many were
  * attempted + how many completed successfully. Never throws.
+ *
+ * #1232 — `completed` means coverage-verified, decided BEFORE resolveTask()
+ * attempts its own best-effort auto-merge + redeploy (#468); a merge/deploy
+ * hiccup never flips a completed task back to failed, so `completed` alone
+ * cannot tell an admin whether the founder's live app actually changed.
+ * `merged`/`redeployed` surface resolveTask()'s own in-memory outcome for
+ * that, so the nightly-loop aggregate can report real ship rate, not just
+ * coverage-pass rate.
+ *
+ * `reaped` — how many orphaned `in_progress` rows (see isStaleInProgress's
+ * doc above) were recovered to `failed` this run, before any due `todo` task
+ * was attempted. A non-zero value is itself an operational signal worth
+ * surfacing (it means a prior run was killed mid-resolution), not just an
+ * implementation detail.
  */
 export async function runTaskResolutions(
   scopeKey: string,
   slug: string,
   planTier?: string | null,
-): Promise<{ attempted: number; completed: number }> {
-  if (!scopeKey || !slug) return { attempted: 0, completed: 0 }
+): Promise<{ attempted: number; completed: number; merged: number; redeployed: number; reaped: number }> {
+  if (!scopeKey || !slug) return { attempted: 0, completed: 0, merged: 0, redeployed: 0, reaped: 0 }
 
   const limit = maxTasksForTier(planTier)
   let attempted = 0
   let completed = 0
+  let merged = 0
+  let redeployed = 0
+  let reaped = 0
   try {
     const tasks = await listTasks(scopeKey)
+
+    // Reap tasks orphaned by a killed/crashed resolution run — see
+    // isStaleInProgress's doc above. Best-effort per task, same contract as
+    // every other step in this loop: one reap failure must never block the
+    // rest of this run.
+    for (const t of tasks) {
+      if (!isStaleInProgress(t)) continue
+      try {
+        await updateTask(scopeKey, t.id, {
+          stage: 'failed',
+          output: 'Interrupted — the automated resolution process did not finish (likely a timeout or crash). This task was not completed; it will need to be re-queued to retry.',
+        })
+        reaped += 1
+      } catch {
+        /* best-effort — a reap failure leaves the row stuck for another cycle, never throws */
+      }
+    }
+
     const todo = tasks.filter((t): t is BuildTask => t.stage === 'todo')
 
     // #903 (epic #900, depends on #902): a task estimated at 3/5/8 story
@@ -186,6 +258,8 @@ export async function runTaskResolutions(
       try {
         const result = await resolveTask(scopeKey, task, slug)
         if (result.ok) completed += 1
+        if (result.merged) merged += 1
+        if (result.redeployed) redeployed += 1
       } catch {
         /* per-task failure is non-fatal — resolveTask already records the
          * real reason on the task itself when it can; keep going either way. */
@@ -194,5 +268,5 @@ export async function runTaskResolutions(
   } catch {
     /* listing failure is non-fatal */
   }
-  return { attempted, completed }
+  return { attempted, completed, merged, redeployed, reaped }
 }

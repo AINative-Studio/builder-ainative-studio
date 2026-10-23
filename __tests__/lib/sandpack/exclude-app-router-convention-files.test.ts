@@ -61,4 +61,68 @@ describe('buildSandpackFiles — excludes Next.js App Router convention files (#
     expect(built['/src/components/AppLayout.tsx']).toBeDefined()
     expect(built['/components/AppLayout.tsx']).toBeDefined()
   })
+
+  /**
+   * Extended 2026-10-20 (static analysis, same root-cause class as the
+   * layout.tsx bug above — see build-files.ts's own comment): sandpack-
+   * bundler's collectAppBarrelUsage scans every provided file's imports,
+   * reachable or not, and calling resolveAsync on an unresolvable specifier
+   * anywhere silently fails the whole compile. route.ts/middleware.ts import
+   * `next/server`; the image-metadata convention files import `next/og` —
+   * neither exists in Sandpack's plain react-ts template.
+   */
+  it('excludes route.ts, middleware.ts, and instrumentation.ts (import next/server, never Sandpack-resolvable)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <div>hi</div> }",
+      '/app/api/widgets/route.ts': `import { NextRequest, NextResponse } from 'next/server'\nexport async function GET(req: NextRequest) { return NextResponse.json({ ok: true }) }`,
+      '/middleware.ts': `import { NextResponse } from 'next/server'\nexport function middleware() { return NextResponse.next() }`,
+      '/instrumentation.ts': `export function register() {}`,
+    })
+    expect(built['/app/api/widgets/route.ts']).toBeUndefined()
+    expect(built['/middleware.ts']).toBeUndefined()
+    expect(built['/instrumentation.ts']).toBeUndefined()
+    expect(Object.values(built).some(code => code.includes('next/server'))).toBe(false)
+  })
+
+  it('excludes the Next.js image-metadata convention files (import next/og, never Sandpack-resolvable)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <div>hi</div> }",
+      '/app/opengraph-image.tsx': `import { ImageResponse } from 'next/og'\nexport default function OG() { return new ImageResponse(<div/>) }`,
+      '/app/twitter-image.tsx': `import { ImageResponse } from 'next/og'\nexport default function Tw() { return new ImageResponse(<div/>) }`,
+      '/app/icon.tsx': `import { ImageResponse } from 'next/og'\nexport default function Icon() { return new ImageResponse(<div/>) }`,
+      '/app/apple-icon.tsx': `import { ImageResponse } from 'next/og'\nexport default function AppleIcon() { return new ImageResponse(<div/>) }`,
+      '/app/manifest.ts': `export default function manifest() { return {} }`,
+    })
+    expect(built['/app/opengraph-image.tsx']).toBeUndefined()
+    expect(built['/app/twitter-image.tsx']).toBeUndefined()
+    expect(built['/app/icon.tsx']).toBeUndefined()
+    expect(built['/app/apple-icon.tsx']).toBeUndefined()
+    expect(built['/app/manifest.ts']).toBeUndefined()
+    expect(Object.values(built).some(code => code.includes('next/og'))).toBe(false)
+  })
+
+  /**
+   * Extended 2026-10-20 (static analysis, issue #1143 — same root-cause
+   * class again): the remaining official Next.js App Router special-file
+   * basenames not yet covered by the exclusion regex. None of these is ever
+   * reachable from the preview's real entry ('/App.tsx') either.
+   */
+  it('excludes loading.tsx, error.tsx, global-error.tsx, not-found.tsx, default.tsx, and template.tsx (#1143)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <div>hi</div> }",
+      '/app/loading.tsx': `export default function Loading() { return <div>Loading...</div> }`,
+      '/app/error.tsx': `'use client'\nimport { useRouter } from 'next/navigation'\nexport default function Error() { const router = useRouter(); return <button onClick={() => router.refresh()}>Retry</button> }`,
+      '/app/global-error.tsx': `import { Inter } from 'next/font/google'\nconst inter = Inter({ subsets: ['latin'] })\nexport default function GlobalError() { return <html><body className={inter.className}>Error</body></html> }`,
+      '/app/not-found.tsx': `export default function NotFound() { return <div>404</div> }`,
+      '/app/default.tsx': `export default function Default() { return null }`,
+      '/app/template.tsx': `export default function Template({ children }) { return <div>{children}</div> }`,
+    })
+    expect(built['/app/loading.tsx']).toBeUndefined()
+    expect(built['/app/error.tsx']).toBeUndefined()
+    expect(built['/app/global-error.tsx']).toBeUndefined()
+    expect(built['/app/not-found.tsx']).toBeUndefined()
+    expect(built['/app/default.tsx']).toBeUndefined()
+    expect(built['/app/template.tsx']).toBeUndefined()
+    expect(Object.values(built).some(code => code.includes('next/navigation') || code.includes('next/font/google'))).toBe(false)
+  })
 })

@@ -21,6 +21,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
 import { AppHeader } from '@/components/shared/app-header'
 import {
   Cloud,
@@ -28,8 +29,7 @@ import {
   Rocket,
   ExternalLink,
   Search,
-  RefreshCw,
-  Loader2
+  RefreshCw
 } from 'lucide-react'
 import { useToast } from '@/components/ui/use-toast'
 
@@ -153,10 +153,49 @@ export default function DeploymentsPage() {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-black">
         <AppHeader />
-        <div className="container mx-auto px-4 py-8">
-          <div className="flex items-center justify-center h-64">
-            <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
+        <div className="container mx-auto px-4 py-8" data-testid="deployments-loading">
+          <div className="mb-6">
+            <Skeleton className="h-9 w-48 mb-2" />
+            <Skeleton className="h-5 w-72" />
           </div>
+          <Card>
+            <CardHeader>
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                  <Skeleton className="h-6 w-40 mb-2" />
+                  <Skeleton className="h-4 w-24" />
+                </div>
+                <Skeleton className="h-9 w-24" />
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-col sm:flex-row gap-4 mb-6">
+                <Skeleton className="h-10 flex-1" />
+                <Skeleton className="h-10 w-full sm:w-[180px]" />
+                <Skeleton className="h-10 w-full sm:w-[180px]" />
+              </div>
+              <div className="rounded-lg border">
+                <div className="border-b p-3">
+                  <div className="flex gap-4">
+                    <Skeleton className="h-4 w-20" />
+                    <Skeleton className="h-4 w-40" />
+                    <Skeleton className="h-4 w-20" />
+                    <Skeleton className="h-4 w-28" />
+                  </div>
+                </div>
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="border-b p-3 last:border-b-0">
+                    <div className="flex items-center gap-4">
+                      <Skeleton className="h-4 w-20" />
+                      <Skeleton className="h-4 w-48" />
+                      <Skeleton className="h-5 w-16 rounded-full" />
+                      <Skeleton className="h-4 w-28" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </div>
     )
