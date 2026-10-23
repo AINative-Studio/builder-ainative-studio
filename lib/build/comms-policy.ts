@@ -32,14 +32,17 @@
  *
  * POLICY (all four required by the issue):
  *  1. Genuine signal — `hasGenuineUpdate` inspects the REAL `NightlyRunResult`
- *     (never fabricates content). Only a 'dispatched' run with a real taskId
- *     counts as something to report; 'skipped' (no API key) and 'error' runs
- *     are honestly NOT reported as founder-facing "good news" outreach —
- *     an error is arguably interesting too, but this issue scopes the first
- *     real signal conservatively (a completed dispatch) rather than
- *     interrupting a founder's night over a routine dispatch hiccup a human
- *     operator would triage in logs, not an inbox ping. Extending to
- *     error-worthy outreach is a reasonable fast-follow, not done here.
+ *     (never fabricates content). A 'dispatched' run with a real taskId
+ *     counts as something to report. 'skipped' (no API key) is honestly NOT
+ *     reported — that's a configuration/operational state, not an event.
+ *     (#1309 — the fast-follow this doc comment originally called out):
+ *     a genuine 'error' run ALSO counts as something worth telling the
+ *     founder about, but ONLY when `result.detail` carries real, specific
+ *     information — a generic/empty detail still honestly skips, because a
+ *     founder getting "something went wrong" with zero information is worse
+ *     than getting nothing (it creates anxiety without actionable signal,
+ *     and breaks the "never fabricate" ethos just as badly as inventing
+ *     good news would).
  *  2. Frequency cap — at most one outreach email per company per
  *     COMMS_FREQUENCY_WINDOW_MS (default 24h), via the shared
  *     lib/build/frequency-cap.ts helper (built generically so #743's digest
@@ -85,12 +88,35 @@ export interface CommsOutreachResult {
 }
 
 /**
+ * A detail string counts as "real, specific information" only if it's a
+ * non-empty string with actual content beyond whitespace, AND isn't one of
+ * the known non-committal placeholders this codebase uses before/instead of
+ * a real diagnosis (e.g. the `outcome.result` seed in the nightly-loop route
+ * before the run has even executed). Deliberately conservative: when in
+ * doubt, this says "not specific enough" rather than risk a founder email
+ * with nothing useful in it.
+ */
+function hasRealDetail(detail: string | null | undefined): boolean {
+  const trimmed = (detail || '').trim()
+  if (!trimmed) return false
+  const GENERIC_PLACEHOLDERS = new Set(['not run', 'error', 'unknown', 'failed'])
+  return !GENERIC_PLACEHOLDERS.has(trimmed.toLowerCase())
+}
+
+/**
  * The real signal: is there something genuine to tell the founder tonight?
  * Never fabricates content — grounded entirely in the REAL NightlyRunResult
  * the swarm dispatch already produced. Pure + unit-testable.
+ *
+ * Two cases count (#1309 extends this from one to two):
+ *  - 'dispatched' with a real taskId — progress to report.
+ *  - 'error' with a real, specific `detail` — a problem worth flagging, but
+ *    only when there's actually something concrete to say about it.
  */
 export function hasGenuineUpdate(result: NightlyRunResult): boolean {
-  return result.status === 'dispatched' && Boolean(result.taskId)
+  if (result.status === 'dispatched') return Boolean(result.taskId)
+  if (result.status === 'error') return hasRealDetail(result.detail)
+  return false
 }
 
 /**
@@ -100,12 +126,34 @@ export function hasGenuineUpdate(result: NightlyRunResult): boolean {
  * that project so I could just click and go there") so the founder can jump
  * straight back in instead of navigating to the site and finding their
  * company again.
+ *
+ * (#1309) Two distinct shapes, by design — a founder must be able to tell
+ * from the subject/opening line alone whether this is "here's progress" or
+ * "here's a problem I ran into." The error body is grounded ONLY in
+ * `result.detail` (the real, already-validated-non-generic string) — never
+ * a fabricated diagnosis.
  */
 export function buildOutreachEmail(
   companyId: string,
   companyName: string,
   result: NightlyRunResult,
 ): { subject: string; text: string } {
+  const url = `${APP_URL}/build?screen=live&company=${encodeURIComponent(companyId)}`
+
+  if (result.status === 'error') {
+    const subject = `Cody ran into an issue overnight on ${companyName}`
+    const lines = [
+      `Hey — Cody here. I hit a snag on ${companyName}'s run last night and wanted to flag it rather than let it sit quietly.`,
+      '',
+      `What happened: ${result.detail}`,
+      '',
+      `Jump back in: ${url}`,
+      '',
+      `— Cody`,
+    ]
+    return { subject, text: lines.join('\n') }
+  }
+
   const subject = `Cody's overnight update on ${companyName}`
   const lines = [
     `Hey — Cody here with a quick update on ${companyName}.`,
@@ -115,7 +163,6 @@ export function buildOutreachEmail(
   if (result.briefing) {
     lines.push('', `Briefing that informed the run:`, result.briefing)
   }
-  const url = `${APP_URL}/build?screen=live&company=${encodeURIComponent(companyId)}`
   lines.push('', `Jump back in: ${url}`, '', `— Cody`)
   return { subject, text: lines.join('\n') }
 }
