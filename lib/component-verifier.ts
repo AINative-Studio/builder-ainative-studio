@@ -52,6 +52,13 @@ const AVAILABLE_COMPONENTS = [
   'AIKitSidebar', 'AIKitHeader', 'AIKitBreadcrumb', 'AIKitPagination',
   'AIKitStepper', 'AIKitTimeline', 'AIKitTable', 'AIKitRating',
   'AIKitProductCard', 'AIKitPriceCard', 'AIKitAvatar', 'AIKitBanner',
+  // #1277: these 7 are real AIKit primitives per multi-file-parser.ts's
+  // AIKIT_COMPONENTS safety-net list (the canonical "actually available"
+  // list) and dedupe-provided-components.ts's SCAFFOLD_PROVIDED_COMPONENTS
+  // -- missing here meant verifyComponents() flagged them "invalid" and
+  // told the model to replace a real, working primitive with a plain div.
+  'AgentCard', 'AgentTimeline', 'ConnectionStatus', 'GuardrailPanel',
+  'SafetyBadge', 'SwarmView', 'TokenUsageBar',
 ]
 
 // Component replacements for truly unavailable components

@@ -113,6 +113,19 @@ describe('verifyComponents', () => {
     expect(result.invalid).toEqual([])
     expect(result.replacements).toEqual({})
   })
+
+  // #1277: these 7 are real AIKit primitives per multi-file-parser.ts's
+  // AIKIT_COMPONENTS safety-net list -- they were missing here, which made
+  // verifyComponents() flag a real, working primitive as "invalid" and tell
+  // the model to replace it with a plain div.
+  it('treats every AIKit primitive from the canonical AIKIT_COMPONENTS list as valid', () => {
+    const result = verifyComponents([
+      'AgentCard', 'AgentTimeline', 'ConnectionStatus', 'GuardrailPanel',
+      'SafetyBadge', 'SwarmView', 'TokenUsageBar',
+    ])
+    expect(result.invalid).toEqual([])
+    expect(result.replacements).toEqual({})
+  })
 })
 
 describe('enhancePromptWithVerification', () => {
