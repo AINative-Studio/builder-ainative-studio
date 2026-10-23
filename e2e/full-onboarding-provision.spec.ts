@@ -269,6 +269,21 @@ test.describe('Full onboarding → generation → provisioning (real account)', 
       await coachAccept.click()
     }
 
+    // #1311 added a real 5-question founder-type assessment right after the
+    // coach turn, before DesignPicker (KickoffQuestions.tsx's phase ===
+    // 'founder-type' block, lib/build/founder-type.ts's FOUNDER_TYPE_QUESTIONS
+    // — deliberately single-choice with no free text/skip). Best-effort, same
+    // pattern as the coach check above: answer whichever option renders first
+    // on each question (the resulting classification only gates one extra
+    // review step for 'architect'-type founders elsewhere — irrelevant to
+    // what this spec verifies) until the phase clears on its own.
+    const founderTypeQuestion = page.getByTestId('founder-type-question')
+    for (let i = 0; i < 5; i++) {
+      const seen = await founderTypeQuestion.isVisible({ timeout: 5_000 }).catch(() => false)
+      if (!seen) break
+      await founderTypeQuestion.getByTestId('founder-type-option').first().click()
+    }
+
     // Real interrupt 1/2: DesignPicker (lib/build/useAutoplay.ts's
     // INTERRUPT_VIEWS — the only two views the whole Company track pauses
     // on for a real founder decision, not counting the coach turn above).
