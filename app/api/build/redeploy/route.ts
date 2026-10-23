@@ -22,7 +22,7 @@
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { deriveOwnerKey } from '@/lib/build/chat-store'
-import { resolveApp } from '@/lib/build/app-registry'
+import { resolveAppVerified } from '@/lib/build/app-registry'
 import { redeployCurrent, checkDeployHealth } from '@/lib/build/railway-deploy'
 import { logger } from '@/lib/logger'
 
@@ -41,7 +41,14 @@ export async function POST(request: NextRequest) {
   const companyId = String(body?.companyId || body?.slug || '').slice(0, 80).trim()
   if (!companyId) return Response.json({ error: 'companyId required' }, { status: 400 })
 
-  const entry = await resolveApp(companyId).catch(() => null)
+  // #832-class bug, continuing the sweep #1302/#1316/#1324/#1327/#1328/#1335
+  // already did: resolveApp()'s plain `null` return collapses "no such
+  // company" with "the registry read itself failed" — a transient ZeroDB
+  // hiccup used to falsely 404 "company not found" for a real, signed-in
+  // owner trying to redeploy their own live company. Fail closed with a
+  // retryable 503 on an unverified lookup instead.
+  const { entry, verified } = await resolveAppVerified(companyId).catch(() => ({ entry: null, verified: false }))
+  if (!verified) return Response.json({ error: 'lookup_failed' }, { status: 503 })
   if (!entry) return Response.json({ error: 'company not found' }, { status: 404 })
 
   // Owner-only: the signed-in account must own this company. Companies built

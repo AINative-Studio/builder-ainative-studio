@@ -15,7 +15,7 @@
 
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
-import { resolveApp, setAppCommsMode } from '@/lib/build/app-registry'
+import { resolveAppVerified, setAppCommsMode } from '@/lib/build/app-registry'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -41,7 +41,13 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: 'invalid_mode', allowed: [...VALID_MODES] }, { status: 400 })
   }
 
-  const app = await resolveApp(slug).catch(() => null)
+  // #832-class bug, continuing the sweep #1302/#1316/#1324/#1327/#1328/#1335
+  // already did: resolveApp()'s plain `null` return collapses "no such
+  // company" with "the registry read itself failed" — a transient ZeroDB
+  // hiccup used to falsely 404 "company_not_found" for a real, signed-in
+  // founder's own company. Fail closed with a retryable 503 instead.
+  const { entry: app, verified } = await resolveAppVerified(slug).catch(() => ({ entry: null, verified: false }))
+  if (!verified) return Response.json({ error: 'lookup_failed' }, { status: 503 })
   if (!app) return Response.json({ error: 'company_not_found' }, { status: 404 })
 
   const ok = await setAppCommsMode(slug, mode as 'agile' | 'pairProgramming')

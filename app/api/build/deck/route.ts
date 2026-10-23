@@ -29,7 +29,7 @@
 
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
-import { resolveApp } from '@/lib/build/app-registry'
+import { resolveAppVerified } from '@/lib/build/app-registry'
 import { documentScopeKey, listDocuments, getDocument } from '@/lib/build/document-store'
 import { DOCUMENT_PROMPTS, type DocGenContext } from '@/lib/build/document-prompts'
 import { completeText } from '@/lib/build/claude-completion'
@@ -146,7 +146,17 @@ async function handle(input: {
   if (!companyId) return Response.json({ error: 'companyId required' }, { status: 400 })
 
   // PAID GATE — read the company's plan from the persisted registry.
-  const entry = await resolveApp(companyId).catch(() => null)
+  // #832-class bug, continuing the sweep #1302/#1316/#1324/#1327/#1328/#1335
+  // already did: resolveApp()'s plain `null` return collapses "no plan on
+  // file" with "the registry read itself failed" — a transient ZeroDB
+  // hiccup used to 402 "upgrade to export" at a real, already-paying
+  // founder, the exact false-upsell anti-pattern #1327 fixed elsewhere.
+  // Fail closed with a retryable 503 on an unverified lookup instead; a
+  // confirmed unpaid company still gets the real 402 paywall.
+  const { entry, verified } = await resolveAppVerified(companyId).catch(() => ({ entry: null, verified: false }))
+  if (!verified) {
+    return Response.json({ error: 'lookup_failed', reason: "Couldn't confirm your plan just now — please try again in a moment." }, { status: 503 })
+  }
   if (!isPaid(entry?.plan)) {
     return Response.json(
       { error: 'payment_required', reason: 'The pitch-deck export is a paid deliverable. Upgrade to export.' },

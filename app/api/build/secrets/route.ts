@@ -22,7 +22,7 @@
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { deriveOwnerKey } from '@/lib/build/chat-store'
-import { resolveApp, type AppEntry } from '@/lib/build/app-registry'
+import { resolveAppVerified, type AppEntry } from '@/lib/build/app-registry'
 import {
   listServiceVariables,
   upsertServiceVariable,
@@ -52,7 +52,14 @@ async function authorizeCompany(
   }
   if (!companyId) return Response.json({ error: 'companyId required' }, { status: 400 })
 
-  const entry = await resolveApp(companyId).catch(() => null)
+  // #832-class bug, continuing the sweep #1302/#1316/#1324/#1327/#1328/#1335
+  // already did: resolveApp()'s plain `null` return collapses "no such
+  // company" with "the registry read itself failed" — a transient ZeroDB
+  // hiccup used to falsely 404 "company not found" and lock a real owner
+  // out of their own company's secrets. Fail closed with a retryable 503
+  // on an unverified lookup instead.
+  const { entry, verified } = await resolveAppVerified(companyId).catch(() => ({ entry: null, verified: false }))
+  if (!verified) return Response.json({ error: 'lookup_failed' }, { status: 503 })
   if (!entry) return Response.json({ error: 'company not found' }, { status: 404 })
 
   const owner = deriveOwnerKey(session as any)

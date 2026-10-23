@@ -26,7 +26,10 @@ const h = vi.hoisted(() => ({
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
 vi.mock('@/lib/build/app-registry', async (orig) => {
   const actual = await (orig as any)()
-  return { ...actual, resolveApp: h.resolveApp }
+  return {
+    ...actual,
+    resolveAppVerified: (slug: string) => h.resolveApp(slug).then((entry: any) => ({ entry, verified: true })),
+  }
 })
 vi.mock('@/lib/build/railway-deploy', async (orig) => {
   const actual = await (orig as any)()
@@ -123,6 +126,18 @@ describe('POST /api/build/redeploy (#63.A)', () => {
     const res = await redeployPOST(bodyReq({ companyId: 'acme' }))
     expect(res.status).toBe(502)
   })
+
+  // #832-class bug: a transient registry-read failure must never look like
+  // a confirmed "company not found" and block a real owner's redeploy.
+  it('503s with lookup_failed (never a false "company not found") on an unverified registry read', async () => {
+    h.auth.mockResolvedValue(REAL)
+    h.resolveApp.mockRejectedValue(new Error('registry timeout'))
+    const res = await redeployPOST(bodyReq({ companyId: 'acme' }))
+    expect(res.status).toBe(503)
+    const json = await res.json()
+    expect(json.error).toBe('lookup_failed')
+    expect(h.redeployCurrent).not.toHaveBeenCalled()
+  })
 })
 
 // ---------------- secrets ----------------
@@ -196,6 +211,18 @@ describe('/api/build/secrets (#63.B)', () => {
     expect(res.status).toBe(400)
     expect(h.deleteServiceVariable).not.toHaveBeenCalled()
   })
+
+  // #832-class bug: a transient registry-read failure must never look like
+  // a confirmed "company not found" and lock a real owner out of secrets.
+  it('GET 503s with lookup_failed (never a false "company not found") on an unverified registry read', async () => {
+    h.auth.mockResolvedValue(REAL)
+    h.resolveApp.mockRejectedValue(new Error('registry timeout'))
+    const res = await secretsGET(urlReq('companyId=acme'))
+    expect(res.status).toBe(503)
+    const json = await res.json()
+    expect(json.error).toBe('lookup_failed')
+    expect(h.listServiceVariables).not.toHaveBeenCalled()
+  })
 })
 
 // ---------------- export ----------------
@@ -243,6 +270,18 @@ describe('GET /api/build/export (#63.C)', () => {
     expect(res.headers.get('Content-Type')).toContain('text/csv')
     const text = await res.text()
     expect(text).toContain('# table: t')
+  })
+
+  // #832-class bug: a transient registry-read failure must never look like
+  // a confirmed "company not found" and block a real owner's data export.
+  it('503s with lookup_failed (never a false "company not found") on an unverified registry read', async () => {
+    h.auth.mockResolvedValue(REAL)
+    h.resolveApp.mockRejectedValue(new Error('registry timeout'))
+    const res = await exportGET(urlReq('companyId=acme&format=json'))
+    expect(res.status).toBe(503)
+    const json = await res.json()
+    expect(json.error).toBe('lookup_failed')
+    expect(h.buildCompanyExport).not.toHaveBeenCalled()
   })
 
   it('502 when the export build fails', async () => {
