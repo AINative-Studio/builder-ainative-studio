@@ -27,7 +27,7 @@
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { deriveOwnerKey, chatScopeKey } from '@/lib/build/chat-store'
-import { resolveApp } from '@/lib/build/app-registry'
+import { resolveAppVerified } from '@/lib/build/app-registry'
 import {
   listDeployments,
   redeployDeployment,
@@ -64,14 +64,23 @@ export async function GET(request: NextRequest) {
   if (!companyId) return Response.json({ versions: singleVersionFallback(), serviced: false })
 
   const scopeKey = await resolveScopeKey(companyId)
-  const entry = await resolveApp(companyId).catch(() => null)
+  // #832-class bug (#1327): resolveApp()'s plain `null` return collapsed "no
+  // such company/not provisioned" with "the registry read itself failed".
+  // Lower severity here than backlog's founder-facing gate copy (#1327's own
+  // triage) — a registry hiccup still only reaches the SAME honest
+  // single-version fallback this endpoint already serves for a genuinely
+  // unprovisioned company, never a false claim — but `serviced: false` on a
+  // real transient failure shouldn't look identical to a real "not
+  // provisioned yet" in case a caller ever wants to tell them apart.
+  const { entry, verified } = await resolveAppVerified(companyId).catch(() => ({ entry: null, verified: false }))
   const serviceId = entry?.railwayServiceId
 
-  // No dedicated Railway service (unpaid / not provisioned) → honest single
-  // version: the company is live on the durable host, but there is no deploy
-  // history to roll back through yet (#62 req 5 empty state).
+  // No dedicated Railway service (unpaid / not provisioned, OR the lookup
+  // itself failed) → honest single version: the company is live on the
+  // durable host, but there is no deploy history to roll back through yet
+  // (#62 req 5 empty state).
   if (!serviceId) {
-    return Response.json({ versions: singleVersionFallback(), serviced: false })
+    return Response.json({ versions: singleVersionFallback(), serviced: false, verified })
   }
 
   const [deployResult, metaIndex] = await Promise.all([
@@ -114,7 +123,15 @@ export async function POST(request: NextRequest) {
   const scopeKey = await resolveScopeKey(companyId)
   if (!scopeKey) return Response.json({ error: 'no scope' }, { status: 400 })
 
-  const entry = await resolveApp(companyId).catch(() => null)
+  // #832-class bug (#1327): resolveApp()'s plain `null` return collapsed "no
+  // dedicated service" with "the registry read itself failed" — a real,
+  // provisioned company's rollback (a deliberate, destructive-ish founder
+  // action, already confirmed in the UI before this request fires) got
+  // falsely rejected on a transient registry hiccup instead of failing
+  // closed with a retryable error. Fail closed with 503 only on a genuinely
+  // unverified lookup; a confirmed "no service" still 400s honestly.
+  const { entry, verified } = await resolveAppVerified(companyId).catch(() => ({ entry: null, verified: false }))
+  if (!verified) return Response.json({ error: 'lookup_failed' }, { status: 503 })
   const serviceId = entry?.railwayServiceId
   if (!serviceId) return Response.json({ error: 'no dedicated service to roll back' }, { status: 400 })
 
