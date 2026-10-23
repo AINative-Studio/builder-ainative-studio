@@ -49,6 +49,17 @@ export interface ProgressCallback {
 export const CHUNK_MAX_TOKENS = 16000
 
 /**
+ * Issue #1299: this per-phase call had no timeout/AbortSignal at all, unlike
+ * the primary Claude call (#1253/#1259) it's a sibling of on the live
+ * chunked-generation path (executeChunkPlan/executeChunkPlanWithBudget, wired
+ * into app/api/chat-ws's multi-pass generation). A hung upstream response
+ * here stalled a phase indefinitely with no error surfaced. Sized to match
+ * PRIMARY_CLAUDE_TIMEOUT_MS's default (120s) since this call shares the same
+ * CHUNK_MAX_TOKENS=16000 output ceiling.
+ */
+const CHUNK_GENERATION_TIMEOUT_MS = Number(process.env.CHUNK_GENERATION_TIMEOUT_MS || 120_000)
+
+/**
  * Rough prompt-size estimate for the pre-flight cost check (~4 chars/token,
  * the standard approximation this repo already uses in
  * lib/services/token-counter.service.ts). Only the worst-case OUTPUT cost
@@ -337,16 +348,19 @@ DEPENDENCIES: ${phase.dependencies.join(', ')}
 
     onProgress(phaseNum, totalPhases, `Calling LLM API for phase ${phaseNum}...`)
 
-    const response = await client.chat.completions.create({
-      model: modelId,
-      // Shared with the #1192 cost pre-flight check so the two can never drift.
-      max_tokens: CHUNK_MAX_TOKENS,
-      temperature: 0.7,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: phase.prompt }
-      ],
-    })
+    const response = await client.chat.completions.create(
+      {
+        model: modelId,
+        // Shared with the #1192 cost pre-flight check so the two can never drift.
+        max_tokens: CHUNK_MAX_TOKENS,
+        temperature: 0.7,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: phase.prompt }
+        ],
+      },
+      { signal: AbortSignal.timeout(CHUNK_GENERATION_TIMEOUT_MS) },
+    )
 
     const rawResponse = response.choices?.[0]?.message?.content || ''
     const tokenUsage = {
