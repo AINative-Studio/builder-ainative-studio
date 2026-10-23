@@ -120,12 +120,21 @@ test.describe('Live-dashboard interaction flows (#1203)', () => {
     await completedTab.click()
     await expect(completedTab).toHaveAttribute('aria-selected', 'true')
 
-    // Either real completed tasks render, or the real per-stage empty state
-    // does — both are legitimate real states for a real company, so assert
-    // on whichever one actually shows rather than assuming history exists.
+    // Either real completed tasks render, the real per-stage empty state
+    // does (TasksPanel.tsx: some OTHER stage has tasks, this one doesn't),
+    // or the real total-empty state does (no tasks at all — the realistic
+    // case for a freshly seeded company) — three legitimate real states, so
+    // assert on whichever one actually shows.
+    //
+    // Real test bug found live (2026-10-23, first real execution of this
+    // test): only checked tasks-stage-empty/task-list, missing TasksPanel's
+    // OWN third real testid (tasks-empty, rendered when `total === 0` —
+    // exactly this seeded company's real state) — timed out even though the
+    // panel was rendering correctly.
     const stageEmpty = page.getByTestId('tasks-stage-empty')
+    const totalEmpty = page.getByTestId('tasks-empty')
     const taskList = page.getByTestId('task-list')
-    await expect(stageEmpty.or(taskList)).toBeVisible({ timeout: 10_000 })
+    await expect(stageEmpty.or(totalEmpty).or(taskList)).toBeVisible({ timeout: 10_000 })
 
     if (await taskList.isVisible().catch(() => false)) {
       // A real task exists for this stage — open its VIEW detail and verify
@@ -198,10 +207,18 @@ test.describe('Live-dashboard interaction flows (#1203)', () => {
 
     // A real Cody turn follows — either the live "thinking…" indicator while
     // /api/build/ask is in flight, or (once it resolves) a rendered answer.
-    // Whichever is visible when we check, the real end state is a non-empty
-    // assistant message once asking completes — never fabricated here.
-    await expect(page.getByTestId('chat-cody-thinking').or(page.locator('.m-chat-cody-turn').last()))
-      .toBeVisible({ timeout: 15_000 })
+    //
+    // Real test bug found live (2026-10-23, first real execution of this
+    // suite once #1203's env/credential fixes landed): `.or()` builds a
+    // UNION locator, not a short-circuiting "whichever resolves first" check
+    // — `toBeVisible()` throws a strict-mode violation the instant BOTH
+    // sides of the union match simultaneously, which they do here on any
+    // chat with a prior turn already rendered (a real, pre-existing
+    // `.m-chat-cody-turn` from before this message, plus the new
+    // `chat-cody-thinking` indicator). The real end state this test
+    // actually needs is the same either way — thinking hides, the last turn
+    // has real, non-empty text — so just wait for that directly instead of
+    // this redundant, fragile intermediate check.
     await expect(page.getByTestId('chat-cody-thinking')).toBeHidden({ timeout: 45_000 })
     const lastCodyTurn = page.locator('.m-chat-cody-turn').last()
     await expect(lastCodyTurn).toBeVisible()
