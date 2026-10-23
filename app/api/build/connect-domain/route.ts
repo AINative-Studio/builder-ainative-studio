@@ -23,7 +23,7 @@
 
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
-import { resolveApp, setAppByoDomain } from '@/lib/build/app-registry'
+import { resolveAppVerified, setAppByoDomain } from '@/lib/build/app-registry'
 import {
   createCustomDomain,
   getCustomDomainStatus,
@@ -73,7 +73,15 @@ export async function POST(request: NextRequest) {
   const token = (session as any)?.accessToken
   if (!token) return Response.json({ ok: false, reason: 'signin' })
 
-  const app = await resolveApp(slug).catch(() => null)
+  // #832-class bug: resolveApp()'s plain `null` return collapsed "no such
+  // company" with "the registry read itself failed" — a transient ZeroDB
+  // hiccup here would falsely tell an authenticated founder, mid-domain-
+  // connect, that their own real, running company doesn't exist (same
+  // anti-pattern already fixed for /build/{slug} (#1302) and growth/status).
+  const { entry: app, verified } = await resolveAppVerified(slug).catch(
+    () => ({ entry: null as Awaited<ReturnType<typeof resolveAppVerified>>['entry'], verified: false }),
+  )
+  if (!verified) return Response.json({ ok: false, reason: 'lookup_failed' }, { status: 503 })
   if (!app) return Response.json({ ok: false, error: 'company not found' }, { status: 404 })
 
   const svc = railwayServiceFor(app)
@@ -116,7 +124,10 @@ export async function GET(request: NextRequest) {
   const domainParam = normalizeDomain(url.searchParams.get('domain') || '')
   if (!slug) return Response.json({ ok: false, error: 'slug required' }, { status: 400 })
 
-  const app = await resolveApp(slug).catch(() => null)
+  const { entry: app, verified } = await resolveAppVerified(slug).catch(
+    () => ({ entry: null as Awaited<ReturnType<typeof resolveAppVerified>>['entry'], verified: false }),
+  )
+  if (!verified) return Response.json({ ok: false, reason: 'lookup_failed' }, { status: 503 })
   if (!app) return Response.json({ ok: false, error: 'company not found' }, { status: 404 })
 
   // Default to the already-connected domain on the company when none is passed, so a

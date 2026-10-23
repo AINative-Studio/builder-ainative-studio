@@ -16,7 +16,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const h = vi.hoisted(() => ({
   auth: vi.fn(),
-  resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(),
   setAppByoDomain: vi.fn(async () => true),
   createCustomDomain: vi.fn(),
   getCustomDomainStatus: vi.fn(),
@@ -26,7 +26,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
 vi.mock('@/lib/build/app-registry', () => ({
-  resolveApp: h.resolveApp,
+  resolveAppVerified: h.resolveAppVerified,
   setAppByoDomain: h.setAppByoDomain,
 }))
 vi.mock('@/lib/build/railway-deploy', async () => {
@@ -47,6 +47,10 @@ function postReq(body: unknown) {
 }
 function getReq(qs: string) {
   return { url: `https://builder.ainative.studio/api/build/connect-domain?${qs}` } as any
+}
+/** A confirmed resolveAppVerified() result — either a real entry or a confirmed miss. */
+function verified(entry: Record<string, unknown> | null) {
+  return { entry, verified: true }
 }
 
 const PROVISIONED = {
@@ -80,13 +84,29 @@ describe('POST /api/build/connect-domain', () => {
   })
 
   it('404 when the company is not registered', async () => {
-    h.resolveApp.mockResolvedValueOnce(null)
+    h.resolveAppVerified.mockResolvedValueOnce(verified(null))
     const res = await POST(postReq({ slug: 'ghost', domain: 'myco.com' }))
     expect(res.status).toBe(404)
   })
 
+  it('503 lookup_failed when the registry read itself fails (NOT a false 404)', async () => {
+    h.resolveAppVerified.mockResolvedValueOnce({ entry: null, verified: false })
+    const res = await POST(postReq({ slug: 'acme', domain: 'myco.com' }))
+    const body = await res.json()
+    expect(res.status).toBe(503)
+    expect(body.reason).toBe('lookup_failed')
+  })
+
+  it('503 lookup_failed when resolveAppVerified rejects outright', async () => {
+    h.resolveAppVerified.mockRejectedValueOnce(new Error('zerodb timeout'))
+    const res = await POST(postReq({ slug: 'acme', domain: 'myco.com' }))
+    const body = await res.json()
+    expect(res.status).toBe(503)
+    expect(body.reason).toBe('lookup_failed')
+  })
+
   it('needs_provision for a shared-origin (non-provisioned) company', async () => {
-    h.resolveApp.mockResolvedValueOnce({ slug: 'acme', chatId: 'c1' }) // no railwayServiceId
+    h.resolveAppVerified.mockResolvedValueOnce(verified({ slug: 'acme', chatId: 'c1' })) // no railwayServiceId
     const res = await POST(postReq({ slug: 'acme', domain: 'myco.com' }))
     const body = await res.json()
     expect(body.ok).toBe(false)
@@ -95,7 +115,7 @@ describe('POST /api/build/connect-domain', () => {
   })
 
   it('connects a domain on a provisioned company and returns DNS records + status', async () => {
-    h.resolveApp.mockResolvedValueOnce(PROVISIONED)
+    h.resolveAppVerified.mockResolvedValueOnce(verified(PROVISIONED))
     h.createCustomDomain.mockResolvedValueOnce({
       ok: true, id: 'cd-1', domain: 'myco.com', status: 'verifying',
       dnsRecords: [{ type: 'CNAME', name: 'myco.com', value: 'acme.up.railway.app' }],
@@ -121,15 +141,23 @@ describe('GET /api/build/connect-domain', () => {
   })
 
   it('reports not-connected when no domain is known', async () => {
-    h.resolveApp.mockResolvedValueOnce(PROVISIONED) // no byoDomain
+    h.resolveAppVerified.mockResolvedValueOnce(verified(PROVISIONED)) // no byoDomain
     const res = await GET(getReq('slug=acme'))
     const body = await res.json()
     expect(body.connected).toBe(false)
     expect(body.status).toBeNull()
   })
 
+  it('503 lookup_failed on GET when the registry read itself fails (NOT a false 404)', async () => {
+    h.resolveAppVerified.mockResolvedValueOnce({ entry: null, verified: false })
+    const res = await GET(getReq('slug=acme'))
+    const body = await res.json()
+    expect(res.status).toBe(503)
+    expect(body.reason).toBe('lookup_failed')
+  })
+
   it('advances pending → verifying via the DoH pre-check when Railway has not seen DNS', async () => {
-    h.resolveApp.mockResolvedValueOnce(PROVISIONED)
+    h.resolveAppVerified.mockResolvedValueOnce(verified(PROVISIONED))
     h.getCustomDomainStatus.mockResolvedValueOnce({ ok: true, id: 'cd-1', status: 'pending', dnsRecords: [] })
     h.checkDnsRecord.mockResolvedValueOnce(true) // DNS now resolves toward the target
     const res = await GET(getReq('slug=acme&domain=myco.com'))
@@ -139,7 +167,7 @@ describe('GET /api/build/connect-domain', () => {
   })
 
   it('surfaces an already-connected domain on a bare re-open (idempotent)', async () => {
-    h.resolveApp.mockResolvedValueOnce({ ...PROVISIONED, byoDomain: 'myco.com', byoDomainStatus: 'live' })
+    h.resolveAppVerified.mockResolvedValueOnce(verified({ ...PROVISIONED, byoDomain: 'myco.com', byoDomainStatus: 'live' }))
     h.getCustomDomainStatus.mockResolvedValueOnce({ ok: true, id: 'cd-1', status: 'live', dnsRecords: [] })
     const res = await GET(getReq('slug=acme')) // no domain param
     const body = await res.json()
@@ -149,7 +177,7 @@ describe('GET /api/build/connect-domain', () => {
   })
 
   it('does NOT report live when only DNS resolves (cert still issuing)', async () => {
-    h.resolveApp.mockResolvedValueOnce(PROVISIONED)
+    h.resolveAppVerified.mockResolvedValueOnce(verified(PROVISIONED))
     h.getCustomDomainStatus.mockResolvedValueOnce({ ok: true, id: 'cd-1', status: 'pending', dnsRecords: [] })
     h.checkDnsRecord.mockResolvedValueOnce(true)
     const res = await GET(getReq('slug=acme&domain=myco.com'))
