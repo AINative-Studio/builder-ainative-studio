@@ -120,15 +120,18 @@ export async function POST(request: NextRequest) {
 
   // 3. Fallback: AINative-hosted chat completion, same grounding.
   try {
-    const res = await ainative.chat.completions.create({
-      model: AINATIVE_FALLBACK_MODEL,
-      max_tokens: 500,
-      temperature: 0.4,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: question },
-      ],
-    })
+    const res = await ainative.chat.completions.create(
+      {
+        model: AINATIVE_FALLBACK_MODEL,
+        max_tokens: 500,
+        temperature: 0.4,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: question },
+        ],
+      },
+      { signal: AbortSignal.timeout(HELP_ANSWER_TIMEOUT_MS) },
+    )
     const answer = res.choices?.[0]?.message?.content?.trim()
     if (answer) {
       return Response.json({ answer, sources, provider: 'ainative', model: AINATIVE_FALLBACK_MODEL })

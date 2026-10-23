@@ -23,6 +23,16 @@ const llama = new OpenAI({
     : (process.env.AINATIVE_API_URL || 'https://api.ainative.studio') + '/v1',
 })
 
+// #1266-class bug: these calls had no AbortSignal/timeout at all — a
+// stalled upstream response hung this legacy route's whole POST (streaming
+// or not) indefinitely. Same bug class as #1253/#1266/#1299. Sized to match
+// PRIMARY_CLAUDE_TIMEOUT_MS (app/api/chat-ws/route.ts) for the streaming
+// call, since it shares the same 16000 max_tokens ceiling; the
+// non-streaming call's max_tokens is a fifth of that, so a shorter budget
+// is enough.
+const LLAMA_STREAM_TIMEOUT_MS = 120_000
+const LLAMA_COMPLETION_TIMEOUT_MS = 30_000
+
 // Available components for LLAMA to use
 const AVAILABLE_COMPONENTS = [
   'Button', 'Card', 'CardHeader', 'CardTitle', 'CardDescription', 'CardContent', 'CardFooter',
@@ -298,13 +308,16 @@ export async function POST(request: NextRequest) {
       const llamaModel = process.env.LLAMA_MODEL || 'kimi-k2'
       console.log(`Starting LLAMA streaming generation (model: ${llamaModel}, env: ${isLocal ? 'local' : 'cloud'})...`)
 
-      const stream = await llama.chat.completions.create({
-            model: llamaModel,
-            messages: conversationMessages,
-            temperature: 0.7,
-            max_tokens: 16000,
-            stream: true,
-          })
+      const stream = await llama.chat.completions.create(
+            {
+              model: llamaModel,
+              messages: conversationMessages,
+              temperature: 0.7,
+              max_tokens: 16000,
+              stream: true,
+            },
+            { signal: AbortSignal.timeout(LLAMA_STREAM_TIMEOUT_MS) },
+          )
 
       // Create a TransformStream to handle the streaming response
       const encoder = new TextEncoder()
@@ -390,12 +403,15 @@ export async function POST(request: NextRequest) {
     // Non-streaming mode (fallback)
     console.log('Starting LLAMA generation with professional prompt...')
     const model = process.env.LLAMA_MODEL || 'kimi-k2'
-    const result = await llama.chat.completions.create({
-      model,
-      messages: conversationMessages,
-      temperature: 0.7,
-      max_tokens: 3000,
-    })
+    const result = await llama.chat.completions.create(
+      {
+        model,
+        messages: conversationMessages,
+        temperature: 0.7,
+        max_tokens: 3000,
+      },
+      { signal: AbortSignal.timeout(LLAMA_COMPLETION_TIMEOUT_MS) },
+    )
     console.log('LLAMA generation completed! Generated:', result.choices[0].message.content?.substring(0, 100) + '...')
 
     const generatedContent = result.choices[0].message.content

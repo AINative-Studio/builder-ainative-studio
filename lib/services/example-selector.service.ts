@@ -28,6 +28,11 @@ const SIMILARITY_THRESHOLD = 0.7
 const MAX_EXAMPLES = 3
 const CACHE_TTL = 3600 // 1 hour in seconds
 
+// #1266-class bug: this embeddings call had no AbortSignal/timeout — a
+// stalled OpenAI response hung example selection (and its caller)
+// indefinitely. Same bug class as #1253/#1266/#1299.
+const EMBEDDING_TIMEOUT_MS = 15_000
+
 /**
  * Generate embedding for text using OpenAI
  *
@@ -43,11 +48,14 @@ async function generateEmbedding(text: string): Promise<number[]> {
 
   const openai = new OpenAI({ apiKey })
 
-  const response = await openai.embeddings.create({
-    model: 'text-embedding-3-small', // Smaller, faster model
-    input: text,
-    encoding_format: 'float'
-  })
+  const response = await openai.embeddings.create(
+    {
+      model: 'text-embedding-3-small', // Smaller, faster model
+      input: text,
+      encoding_format: 'float'
+    },
+    { signal: AbortSignal.timeout(EMBEDDING_TIMEOUT_MS) },
+  )
 
   return response.data[0].embedding
 }

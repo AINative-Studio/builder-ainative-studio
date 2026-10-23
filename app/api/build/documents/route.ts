@@ -58,6 +58,14 @@ const AINATIVE_MODEL = process.env.BUILD_DOC_MODEL || 'claude-sonnet-4.5'
 // core's own suggested live replacement.
 const AINATIVE_FALLBACK = 'qwen-coder-32b'
 
+// #1266-class bug: these fallback calls had no AbortSignal/timeout, so a
+// stalled AINative response hung generateDocMarkdown() (and the whole POST,
+// which awaits it across both fallback models) indefinitely. Same bug class
+// as #1253/#1266/#1299. 45s matches claude-completion.ts's
+// COMPLETE_TEXT_TIMEOUT_MS, since this call targets the same ~1800 max_tokens
+// scale as the primary completeText() call a few lines above.
+const DOC_FALLBACK_TIMEOUT_MS = 45_000
+
 /** Resolve the durable documents scope key from the SERVER session + company slug. */
 async function resolveScopeKey(companyId: string): Promise<string> {
   const slug = String(companyId || '').trim()
@@ -88,15 +96,18 @@ async function generateDocMarkdown(spec: { system: string; user: string }): Prom
   // 2) Fallback: AINative chat-completions.
   for (const model of [AINATIVE_MODEL, AINATIVE_FALLBACK]) {
     try {
-      const res = await ainative.chat.completions.create({
-        model,
-        max_tokens: 1800,
-        temperature: 0.5,
-        messages: [
-          { role: 'system', content: spec.system },
-          { role: 'user', content: spec.user },
-        ],
-      })
+      const res = await ainative.chat.completions.create(
+        {
+          model,
+          max_tokens: 1800,
+          temperature: 0.5,
+          messages: [
+            { role: 'system', content: spec.system },
+            { role: 'user', content: spec.user },
+          ],
+        },
+        { signal: AbortSignal.timeout(DOC_FALLBACK_TIMEOUT_MS) },
+      )
       const text = res.choices?.[0]?.message?.content || ''
       if (text && text.trim().length > 40) return text.trim()
     } catch (e: any) {

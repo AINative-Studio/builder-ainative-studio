@@ -14,6 +14,12 @@ import { getCircuitBreaker } from '@/lib/circuit-breaker'
 // tells the caller which case it actually is.
 const TEMPLATE_MATCHER_BREAKER_KEY = 'template-matcher-semantic'
 
+// #1266-class bug: this embeddings call had no AbortSignal/timeout — a hang
+// (unlike a fast rejection) never resolves OR rejects, so it would never even
+// register as a failure against the circuit breaker above, let alone fail
+// fast for the caller. Same bug class as #1253/#1266/#1299.
+const EMBEDDING_TIMEOUT_MS = 15_000
+
 function getSemanticMatchingBreaker() {
   return getCircuitBreaker(TEMPLATE_MATCHER_BREAKER_KEY, {
     failureThreshold: 3,
@@ -168,10 +174,13 @@ export class TemplateMatcherService {
     }
 
     try {
-      const response = await openai.embeddings.create({
-        model: 'text-embedding-3-small',
-        input: text,
-      })
+      const response = await openai.embeddings.create(
+        {
+          model: 'text-embedding-3-small',
+          input: text,
+        },
+        { signal: AbortSignal.timeout(EMBEDDING_TIMEOUT_MS) },
+      )
 
       return response.data[0].embedding
     } catch (error) {
