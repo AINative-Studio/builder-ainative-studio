@@ -963,6 +963,11 @@ const KNOWN_AVAILABLE_COMPONENTS = new Set<string>([
   'DropdownMenu', 'DropdownMenuTrigger', 'DropdownMenuContent', 'DropdownMenuItem',
   'DropdownMenuLabel', 'DropdownMenuSeparator',
   'Sheet', 'SheetTrigger', 'SheetContent', 'ScrollArea', 'ScrollBar', 'Toggle', 'Command',
+  // Drifted out of sync with lib/sandpack/shadcn-bundle.ts's real exports
+  // (same root-cause class as #1277/#1278/#1281/#1283/#1285) -- already
+  // fixed in component-verifier.ts's AVAILABLE_COMPONENTS and
+  // component-detector.ts's NON_ROOT_NAMES, but not here.
+  'DialogOverlay', 'CircularProgress', 'Toast', 'ToastTitle', 'ToastDescription',
   // AIKit primitives
   'MetricCard', 'AIKitPriceCard', 'AIKitRating', 'AgentCard', 'SwarmView', 'SafetyBadge',
   'GuardrailPanel', 'ChatBubble', 'StreamingIndicator', 'CodeDisplay', 'TokenUsageBar',

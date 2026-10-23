@@ -48,6 +48,22 @@ describe('findUnresolvedComponents (#76)', () => {
     expect(findUnresolvedComponents(code)).toEqual([])
   })
 
+  // Round 4 of the same drift class as #1277/#1278/#1281 (fixed in
+  // component-verifier.ts's AVAILABLE_COMPONENTS and component-detector.ts's
+  // NON_ROOT_NAMES, but not here): these real shadcn primitives were
+  // missing from this file's own KNOWN_AVAILABLE_COMPONENTS set.
+  it('does NOT flag DialogOverlay/CircularProgress/Toast*/RadioGroup*', () => {
+    const code = [
+      "import React from 'react'",
+      'export default function App(){',
+      '  return <div><Dialog><DialogOverlay/></Dialog><CircularProgress/>',
+      '    <Toast><ToastTitle/><ToastDescription/></Toast>',
+      '    <RadioGroup><RadioGroupItem/></RadioGroup></div>;',
+      '}',
+    ].join('\n')
+    expect(findUnresolvedComponents(code)).toEqual([])
+  })
+
   // Same drift class as #1277/#1278/#1281: real shadcn primitives missing
   // from this file's own KNOWN_AVAILABLE_COMPONENTS set.
   it('does NOT flag DropdownMenu*/ScrollBar/Tooltip* shadcn primitives', () => {
