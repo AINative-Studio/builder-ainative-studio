@@ -679,7 +679,14 @@ export async function POST(request: NextRequest) {
           // past builds via ZeroMemory recall. Best-effort + timeout-bounded — an
           // empty/failed recall yields '' (no-op), so it never blocks generation.
           const ragBlock = await buildRagContext(message, recallPastPerformance)
-          if (ragBlock) console.log(`🧠 RAG context injected (${ragBlock.length} chars from ZeroMemory)`)
+          if (ragBlock) {
+            console.log(`🧠 RAG context injected (${ragBlock.length} chars from ZeroMemory)`)
+            // #1307 — this cross-build recall is real (ZeroMemory genuinely
+            // contributed something), but was never surfaced to the founder:
+            // a small, honest build_step line, gated on ragBlock actually
+            // being non-empty so it's never a fake/always-on claim.
+            safeEnqueue(encoder.encode(`data: ${JSON.stringify({ type: 'build_step', step: 'Drawing on patterns from past builds…' })}\n\n`))
+          }
           // #532: keep the generated app's schema consistent with the dataModel
           // artifact the founder already reviewed (when one was passed through).
           if (dataModelBlock) console.log(`🗂️  Data model context injected (${dataModelBlock.length} chars from founder's reviewed artifact)`)

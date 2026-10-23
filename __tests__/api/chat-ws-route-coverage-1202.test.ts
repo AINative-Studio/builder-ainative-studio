@@ -537,6 +537,30 @@ describe('POST /api/chat-ws — route-level coverage (#1202)', () => {
     expect(budgetEvent.droppedCount).toBe(1)
   })
 
+  // #1307 — ZeroMemory's cross-build recall is real but was never surfaced
+  // to the founder. A small, honest build_step line should appear ONLY when
+  // the RAG recall actually contributed something (buildRagContext resolved
+  // non-empty) — never as a fake/always-on claim.
+  it('emits a "Drawing on patterns from past builds…" build_step when ZeroMemory RAG recall contributes real context (#1307)', async () => {
+    const { buildRagContext } = await import('@/lib/build/rag-context')
+    ;(buildRagContext as any).mockResolvedValueOnce('\n\nPast build context: ...')
+    const { POST } = await import('@/app/api/chat-ws/route')
+    const req = mockJsonRequest('http://localhost/api/chat-ws', { message: 'Build a CRM' })
+    const res = await POST(req)
+    const { events } = await drainSSE(res)
+    const ragStep = events.find((e) => e.type === 'build_step' && e.step === 'Drawing on patterns from past builds…')
+    expect(ragStep).toBeTruthy()
+  })
+
+  it('never claims to draw on past builds when ZeroMemory RAG recall returns nothing (default mock)', async () => {
+    const { POST } = await import('@/app/api/chat-ws/route')
+    const req = mockJsonRequest('http://localhost/api/chat-ws', { message: 'Build a CRM' })
+    const res = await POST(req)
+    const { events } = await drainSSE(res)
+    const ragStep = events.find((e) => e.type === 'build_step' && e.step === 'Drawing on patterns from past builds…')
+    expect(ragStep).toBeUndefined()
+  })
+
   it('routes through the AINative single-turn fallback and reports validated completion', async () => {
     const { POST } = await import('@/app/api/chat-ws/route')
     const req = mockJsonRequest('http://localhost/api/chat-ws', {
