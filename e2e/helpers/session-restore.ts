@@ -162,6 +162,23 @@ export async function restoreLiveSession(
 ): Promise<void> {
   await loginRealTestAccount(page, opts.baseUrl, opts.email, opts.password)
 
+  // Real bug found live (2026-10-23, first fully-green run of the onboarding
+  // spec that feeds this fixture): resolve-app's registry read is a real
+  // ZeroDB call, and a test suite starting immediately after the seed spec's
+  // registerApp() write can genuinely race its own propagation — confirmed
+  // live, a direct curl to resolve-app moments after a real "write_failed"
+  // 502 from comms-mode/zeroinvoice returned the row correctly. Not a code
+  // bug (registryCache is cleared on write, TTL is only 5s) — real
+  // eventual-consistency on the underlying store. Give it real margin here,
+  // once, instead of every downstream test independently retrying its own
+  // POST against a company that server-side genuinely doesn't resolve yet.
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const res = await page.request.get(`${opts.baseUrl}/api/build/resolve-app?slug=${encodeURIComponent(opts.fixture.slug)}`).catch(() => null)
+    const body = await res?.json().catch(() => null)
+    if (body?.chatId) break
+    await page.waitForTimeout(2_000)
+  }
+
   const key = buildStateStorageKey(opts.fixture.slug)
   const payload = buildSeedPayload(opts.fixture)
   await page.evaluate(
