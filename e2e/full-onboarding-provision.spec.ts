@@ -488,14 +488,25 @@ test.describe('Full onboarding → generation → provisioning (real account)', 
 
     // #1197 — persist the real seeded company's identity so other specs (in
     // particular #1198's e2e/session-restore.spec.ts) can pick it up without
-    // ever re-running this ~20-35 minute real generation themselves. The URL
-    // is the authority for the slug: contexts/build-context.tsx's #648
-    // URL-sync effect keeps `?company=` in sync with `state.appSub` the whole
-    // time the Live screen is mounted, so reading it back here is reading the
-    // SAME value Live.tsx itself resolved `companyId` from — not a guess.
-    const liveUrl = new URL(page.url())
-    const seededSlug = liveUrl.searchParams.get('company')
-    expect(seededSlug, 'Live screen URL must carry the real ?company= slug once generation completes').toBeTruthy()
+    // ever re-running this ~20-35 minute real generation themselves.
+    //
+    // Real bug found live (2026-10-23): this used to read `?company=` off
+    // page.url(), on the premise that contexts/build-context.tsx's #648
+    // URL-sync effect (computeSyncedUrl) keeps it in sync with Live.tsx's
+    // own `companyId`. Traced the real code — computeSyncedUrl only ever
+    // SETS `?screen=` and conditionally DELETES `?company=`/`?view=` on
+    // screens with no company context (SCREENS_WITHOUT_COMPANY_CONTEXT);
+    // it never SETS `?company=`. Confirmed live: a real, fully-provisioned
+    // run ("Cloud provisioned", live primitives, working /build/{slug} link)
+    // had no `?company=` in the URL at all — Live.tsx's own `companyId`
+    // (state.appSub || …) never depended on the URL param to begin with,
+    // since this screen is reached by in-app navigation, not a `?company=`
+    // deep link. The "View site ↗" link's real href (liveHref in Live.tsx,
+    // always `/build/{companyId}`) is the same real value Live.tsx resolved
+    // and was on-screen the whole time — read the slug from there instead.
+    const viewSiteHref = await page.getByRole('link', { name: /View site/i }).getAttribute('href')
+    const seededSlug = viewSiteHref ? viewSiteHref.replace(/^\/build\//, '') : null
+    expect(seededSlug, 'Live screen must show a real "View site" link carrying the /build/{slug} once generation completes').toBeTruthy()
     const fixture = {
       slug: seededSlug,
       companyName: await page.locator('h1, h2').first().textContent().catch(() => null),
