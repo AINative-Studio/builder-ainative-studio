@@ -251,11 +251,24 @@ test.describe('Full onboarding → generation → provisioning (real account)', 
       }
     }
 
+    // #1196 added a real coach-recommendation turn right after the 3
+    // kickoff questions, before DesignPicker — "Looks good, build it" calls
+    // the same proceed() the no-recommendation path already used (see
+    // KickoffQuestions.tsx's data-testid="kickoff-coach-accept"). Not every
+    // idea matches a team-eligible primitive, so this screen is skipped
+    // entirely in that case — best-effort, same pattern as
+    // clickConfirmIfPresent above.
+    const coachAccept = page.getByTestId('kickoff-coach-accept')
+    const coachSeen = await coachAccept.isVisible({ timeout: 10_000 }).catch(() => false)
+    if (coachSeen) {
+      await coachAccept.click()
+    }
+
     // Real interrupt 1/2: DesignPicker (lib/build/useAutoplay.ts's
     // INTERRUPT_VIEWS — the only two views the whole Company track pauses
-    // on for a real founder decision). "Skip — let Cody pick" is the
-    // fastest genuine path through it; this is a real dispatch
-    // (SKIP_DESIGN_SYSTEM), not a bypass of the step.
+    // on for a real founder decision, not counting the coach turn above).
+    // "Skip — let Cody pick" is the fastest genuine path through it; this is
+    // a real dispatch (SKIP_DESIGN_SYSTEM), not a bypass of the step.
     const designSkip = page.getByTestId('design-picker-skip')
     await expect(designSkip).toBeVisible({ timeout: 60_000 })
     await designSkip.click()
@@ -395,8 +408,12 @@ test.describe('Full onboarding → generation → provisioning (real account)', 
     // founder's dashboard mount triggers this same dual generation), not a
     // test artifact. Confirmed live: one real run's registration landed at
     // the ~8min mark, missing an 8-minute wait here by mere seconds — 10
-    // minutes of real margin.
-    await expect(page.getByText('building your site…')).toBeHidden({ timeout: 600_000 })
+    // minutes of real margin. Confirmed live again (2026-10-22): a 10-minute
+    // margin itself was insufficient on a real run — the dashboard shell was
+    // fully rendered (B2B is yours — setting it up now., all panels present)
+    // while registration was still genuinely in flight, not hung. Widened to
+    // 15 minutes of real margin to match the documented worst-case variance.
+    await expect(page.getByText('building your site…')).toBeHidden({ timeout: 900_000 })
 
     // Before provisioning: every founder-scoped primitive should read
     // "Planned" (not silently claiming to be live with no real credential).
