@@ -19,6 +19,14 @@ const AVAILABLE_COMPONENTS = [
   'Accordion', 'AccordionItem', 'AccordionTrigger', 'AccordionContent',
   'Alert', 'AlertTitle', 'AlertDescription',
   'Popover', 'PopoverTrigger', 'PopoverContent',
+  // Drifted out of sync with lib/sandpack/shadcn-bundle.ts's real exports
+  // (same root-cause class as #1277/#1278/#1281) -- these shadcn names
+  // were missing, so a generated app using one got actively steered toward
+  // a plain div replacement instead.
+  'DropdownMenu', 'DropdownMenuTrigger', 'DropdownMenuContent', 'DropdownMenuItem',
+  'DropdownMenuLabel', 'DropdownMenuSeparator',
+  'ScrollArea', 'ScrollBar', 'Slider', 'Switch', 'Textarea',
+  'Tooltip', 'TooltipTrigger', 'TooltipContent', 'TooltipProvider',
   // Recharts (data visualization)
   'ReLineChart', 'Line', 'ReBarChart', 'Bar', 'RePieChart', 'Pie', 'Cell',
   'AreaChart', 'Area', 'RadarChart', 'Radar',
@@ -44,6 +52,13 @@ const AVAILABLE_COMPONENTS = [
   'AIKitSidebar', 'AIKitHeader', 'AIKitBreadcrumb', 'AIKitPagination',
   'AIKitStepper', 'AIKitTimeline', 'AIKitTable', 'AIKitRating',
   'AIKitProductCard', 'AIKitPriceCard', 'AIKitAvatar', 'AIKitBanner',
+  // #1277: these 7 are real AIKit primitives per multi-file-parser.ts's
+  // AIKIT_COMPONENTS safety-net list (the canonical "actually available"
+  // list) and dedupe-provided-components.ts's SCAFFOLD_PROVIDED_COMPONENTS
+  // -- missing here meant verifyComponents() flagged them "invalid" and
+  // told the model to replace a real, working primitive with a plain div.
+  'AgentCard', 'AgentTimeline', 'ConnectionStatus', 'GuardrailPanel',
+  'SafetyBadge', 'SwarmView', 'TokenUsageBar',
 ]
 
 // Component replacements for truly unavailable components
@@ -67,7 +82,6 @@ const COMPONENT_REPLACEMENTS: Record<string, string> = {
 
   // Data display
   'DataTable': 'Table',
-  'ScrollArea': 'div with overflow-auto styling',
   'Command': 'div with command styling',
   'HoverCard': 'div with hover card styling',
 }

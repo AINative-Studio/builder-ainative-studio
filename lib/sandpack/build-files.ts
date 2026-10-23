@@ -269,10 +269,23 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
         'ui/separator': ['Separator'],
         'ui/progress': ['Progress', 'CircularProgress'],
         'ui/alert': ['Alert', 'AlertTitle', 'AlertDescription'],
-        'ui/dialog': ['Dialog', 'DialogContent', 'DialogHeader', 'DialogTitle', 'DialogDescription', 'DialogFooter'],
+        'ui/dialog': ['Dialog', 'DialogOverlay', 'DialogContent', 'DialogHeader', 'DialogTitle', 'DialogDescription', 'DialogFooter'],
         'ui/select': ['Select', 'SelectTrigger', 'SelectValue', 'SelectContent', 'SelectItem'],
         'ui/checkbox': ['Checkbox', 'RadioGroup', 'RadioGroupItem'],
         'ui/accordion': ['Accordion', 'AccordionItem', 'AccordionTrigger', 'AccordionContent'],
+        // This map had drifted out of sync with lib/sandpack/shadcn-bundle.ts's
+        // real export surface — same shape as #1248 (AIKIT_COMPONENTS missing
+        // VideoPlayer/StreamingText/MediaGallery). A model using any of these
+        // without an explicit import sailed through this safety net unfixed.
+        'ui/popover': ['Popover', 'PopoverTrigger', 'PopoverContent'],
+        'ui/switch': ['Switch'],
+        'ui/textarea': ['Textarea'],
+        'ui/tooltip': ['Tooltip', 'TooltipProvider', 'TooltipTrigger', 'TooltipContent'],
+        'ui/dropdown-menu': ['DropdownMenu', 'DropdownMenuTrigger', 'DropdownMenuContent', 'DropdownMenuItem', 'DropdownMenuLabel', 'DropdownMenuSeparator'],
+        'ui/scroll-area': ['ScrollArea', 'ScrollBar'],
+        'ui/skeleton': ['Skeleton'],
+        'ui/slider': ['Slider'],
+        'ui/toast': ['Toast', 'ToastDescription', 'ToastTitle'],
       }
       const imports: string[] = []
       for (const [mod, components] of Object.entries(shadcnMap)) {

@@ -530,6 +530,17 @@ export async function GET(
     'Accordion', 'AccordionItem', 'AccordionTrigger', 'AccordionContent',
     'Toast', 'ToastTitle', 'ToastDescription', 'Alert', 'AlertTitle', 'AlertDescription',
     'Popover', 'PopoverTrigger', 'PopoverContent',
+    // Drifted out of sync with lib/sandpack/shadcn-bundle.ts's real exports
+    // and public/shadcn-components.js (same root-cause class as
+    // #1277/#1278/#1281/#1283) -- these real shadcn names were missing, so
+    // they fell through this safety net unflagged, never got copied onto
+    // window from `allComponents` below, and rendered as inert placeholder
+    // divs instead of the real component.
+    'Switch', 'Textarea', 'Slider',
+    'Tooltip', 'TooltipProvider', 'TooltipTrigger', 'TooltipContent',
+    'DropdownMenu', 'DropdownMenuTrigger', 'DropdownMenuContent', 'DropdownMenuItem',
+    'DropdownMenuSeparator', 'DropdownMenuLabel',
+    'ScrollArea', 'ScrollBar',
     // AIKit
     'StreamingIndicator', 'VideoPlayer', 'CodeDisplay', 'StreamingText', 'ChatBubble',
     'MediaGallery', 'Skeleton', 'SkeletonCard', 'MetricCard', 'EmptyState',
@@ -1304,6 +1315,16 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
               Toast, ToastTitle, ToastDescription,
               Alert, AlertTitle, AlertDescription,
               Popover, PopoverTrigger, PopoverContent,
+              // Drifted out of sync with lib/sandpack/shadcn-bundle.ts's real
+              // exports (same root-cause class as #1277/#1278/#1281/#1283) --
+              // these were never destructured here, so they never got copied
+              // onto window by the Object.keys(allComponents) loop below and
+              // stayed undefined for the compiled app's separate script scope.
+              Switch, Textarea, Slider,
+              Tooltip, TooltipProvider, TooltipTrigger, TooltipContent,
+              DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
+              DropdownMenuSeparator, DropdownMenuLabel,
+              ScrollArea, ScrollBar,
               cn } = window.ShadcnComponents || {};
 
       // Check all shadcn components
@@ -1319,6 +1340,11 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
         Toast, ToastTitle, ToastDescription,
         Alert, AlertTitle, AlertDescription,
         Popover, PopoverTrigger, PopoverContent,
+        Switch, Textarea, Slider,
+        Tooltip, TooltipProvider, TooltipTrigger, TooltipContent,
+        DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
+        DropdownMenuSeparator, DropdownMenuLabel,
+        ScrollArea, ScrollBar,
         cn
       };
 
@@ -1563,6 +1589,11 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
             'RadioGroupItem', 'Accordion', 'AccordionItem', 'AccordionTrigger',
             'AccordionContent', 'Toast', 'ToastTitle', 'ToastDescription',
             'Alert', 'AlertTitle', 'AlertDescription', 'Popover', 'PopoverTrigger', 'PopoverContent',
+            'Switch', 'Textarea', 'Slider',
+            'Tooltip', 'TooltipProvider', 'TooltipTrigger', 'TooltipContent',
+            'DropdownMenu', 'DropdownMenuTrigger', 'DropdownMenuContent', 'DropdownMenuItem',
+            'DropdownMenuSeparator', 'DropdownMenuLabel',
+            'ScrollArea', 'ScrollBar',
             ..._iconNames,
           // AIKit / AINative Primitive components
           'StreamingIndicator', 'VideoPlayer', 'CodeDisplay', 'StreamingText',

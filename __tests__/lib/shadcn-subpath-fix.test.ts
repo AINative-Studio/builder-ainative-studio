@@ -49,4 +49,21 @@ describe('fixWrongShadcnSubpaths', () => {
     const out = fixJsxErrors(code)
     expect(out).toMatch(/\{ Card \} from '\.\.\/components\/ui\/card'/)
   })
+
+  // This SHADCN map had drifted out of sync with lib/sandpack/shadcn-bundle.ts's
+  // real exports: DropdownMenu*, ScrollArea/ScrollBar, and Toast* were real
+  // exports this map never covered, so a wrong-subpath import for any of them
+  // (e.g. hallucinated onto ui/button) was never re-routed — same unfixed
+  // "Element type is invalid" crash this file exists to prevent.
+  it('re-routes DropdownMenu, ScrollArea, and Toast off the wrong ui/* file', () => {
+    const code = [
+      "import { DropdownMenu, DropdownMenuContent } from './components/ui/button'",
+      "import { ScrollArea } from './components/ui/button'",
+      "import { Toast, ToastTitle } from './components/ui/button'",
+    ].join('\n')
+    const out = fixJsxErrors(code)
+    expect(out).toMatch(/\{ DropdownMenu, DropdownMenuContent \} from '\.\/components\/ui\/dropdown-menu'/)
+    expect(out).toMatch(/\{ ScrollArea \} from '\.\/components\/ui\/scroll-area'/)
+    expect(out).toMatch(/\{ Toast, ToastTitle \} from '\.\/components\/ui\/toast'/)
+  })
 })

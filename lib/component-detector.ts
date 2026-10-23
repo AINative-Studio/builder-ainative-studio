@@ -83,6 +83,14 @@ const NON_ROOT_NAMES = new Set<string>([
   'AccordionContent', 'Toast', 'ToastTitle', 'ToastDescription',
   'Alert', 'AlertTitle', 'AlertDescription', 'Popover', 'PopoverTrigger', 'PopoverContent',
   'Switch', 'Slider', 'Tooltip', 'TooltipTrigger', 'TooltipContent', 'TooltipProvider',
+  // Drifted out of sync with lib/sandpack/shadcn-bundle.ts's real exports
+  // (same root-cause class as #1277/#1278/#1281) -- without these, a
+  // generated app's own local `const DropdownMenu = ...` / `const ScrollArea
+  // = ...` redeclaration (e.g. a flattener-injected external-import stub)
+  // could be mistaken for the app's actual root component by priority 3's
+  // PascalCase/JSX scan above.
+  'DropdownMenu', 'DropdownMenuTrigger', 'DropdownMenuContent', 'DropdownMenuItem',
+  'DropdownMenuLabel', 'DropdownMenuSeparator', 'ScrollArea', 'ScrollBar',
   // AIKit / AINative primitives
   'StreamingIndicator', 'VideoPlayer', 'CodeDisplay', 'StreamingText',
   'ChatBubble', 'MediaGallery', 'Skeleton', 'SkeletonCard', 'MetricCard', 'EmptyState',

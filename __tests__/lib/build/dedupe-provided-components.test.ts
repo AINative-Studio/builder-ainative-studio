@@ -179,4 +179,34 @@ describe('dedupeProvidedComponents', () => {
       expect(SCAFFOLD_PROVIDED_COMPONENTS).toContain(name)
     }
   })
+
+  // Round 4 of the same drift class as #1277/#1278/#1281 (fixed in
+  // component-verifier.ts's AVAILABLE_COMPONENTS and component-detector.ts's
+  // NON_ROOT_NAMES, but not here): these real shadcn exports were missing
+  // from this list, so a generated app redeclaring one of them locally
+  // never got deduped and kept the "Identifier has already been declared"
+  // crash.
+  it('SCAFFOLD_PROVIDED_COMPONENTS includes RadioGroup/DialogOverlay/CircularProgress/Toast*', () => {
+    for (const name of [
+      'RadioGroup', 'RadioGroupItem', 'DialogOverlay', 'CircularProgress',
+      'Toast', 'ToastTitle', 'ToastDescription',
+    ]) {
+      expect(SCAFFOLD_PROVIDED_COMPONENTS).toContain(name)
+    }
+  })
+
+  // Same root-cause class as #1277/#1278/#1281: these are real shadcn
+  // exports (lib/sandpack/shadcn-bundle.ts) that were missing from this
+  // list, so a generated app redeclaring one of them locally never got
+  // deduped and kept the "Identifier has already been declared" crash.
+  it('SCAFFOLD_PROVIDED_COMPONENTS includes the real shadcn exports that had drifted out of sync', () => {
+    for (const name of [
+      'DropdownMenu', 'DropdownMenuTrigger', 'DropdownMenuContent', 'DropdownMenuItem',
+      'DropdownMenuLabel', 'DropdownMenuSeparator',
+      'ScrollArea', 'ScrollBar', 'Slider', 'Switch', 'Textarea',
+      'Tooltip', 'TooltipTrigger', 'TooltipContent', 'TooltipProvider',
+    ]) {
+      expect(SCAFFOLD_PROVIDED_COMPONENTS).toContain(name)
+    }
+  })
 })
