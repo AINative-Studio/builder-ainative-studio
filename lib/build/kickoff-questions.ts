@@ -14,10 +14,21 @@ export const COMPANY_NEW_BUSINESS_QUESTIONS: KickoffQuestion[] = [
   { id: 'pricing', text: 'How would you like to get paid?', suggestions: ['Monthly subscription', 'Per job', 'One-time purchase'] },
 ]
 
+// #1306 — id of the optional existing-site-URL question appended below.
+// Exported so KickoffQuestions.tsx can recognize this specific answer and
+// trigger the real fetch+assess pass instead of treating it as a plain
+// free-text answer.
+export const SITE_URL_QUESTION_ID = 'existing-site-url'
+
 export const COMPANY_GROW_BUSINESS_QUESTIONS: KickoffQuestion[] = [
   { id: 'today', text: 'What does your business do today, and where?', suggestions: [] },
   { id: 'blocker', text: "What's holding the business back most?", suggestions: ['Finding customers', 'Booking and scheduling', 'Getting paid', 'Too much admin'] },
   { id: 'customers', text: 'Who are your customers today?', suggestions: ['Homeowners', 'Other businesses', 'Both'] },
+  // #1306 — real, bounded scope: a growth-intent founder can tell Cody their
+  // existing site so it can run a light, honest assessment on it (title/meta/
+  // headings). Free text only, always skippable via "Not sure yet" like
+  // every other kickoff question — never a hard gate.
+  { id: SITE_URL_QUESTION_ID, text: 'Do you have an existing website? Paste the link.', suggestions: [] },
 ]
 
 export const APP_KICKOFF_QUESTIONS: KickoffQuestion[] = [

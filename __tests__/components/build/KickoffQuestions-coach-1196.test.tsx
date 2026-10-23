@@ -29,6 +29,7 @@ vi.mock('@/contexts/build-context', () => ({
 }))
 
 import { KickoffQuestions } from '@/components/build/screens/KickoffQuestions'
+import { FOUNDER_TYPE_QUESTIONS } from '@/lib/build/founder-type'
 
 let host: HTMLElement
 let root: Root
@@ -61,6 +62,17 @@ async function answerAllQuestions() {
   for (let i = 0; i < 3; i++) {
     const notSure = host.querySelector('[data-testid="kickoff-not-sure"]') as HTMLButtonElement
     await act(async () => { notSure.click(); await tick() })
+  }
+  // #1311 — the main kickoff questions now hand off to 5 founder-type
+  // questions before the coach/proceed decision. Pick 'hustler' throughout
+  // so no extra architect review step shows up and this helper still lands
+  // exactly where it used to (the coach turn or proceed()).
+  for (let i = 0; i < FOUNDER_TYPE_QUESTIONS.length; i++) {
+    const hustlerOpt = FOUNDER_TYPE_QUESTIONS[i].options.find((o) => o.type === 'hustler')!
+    const btn = host.querySelector(
+      `[data-testid="founder-type-option"][data-value="${hustlerOpt.value}"]`,
+    ) as HTMLButtonElement
+    await act(async () => { btn.click(); await tick() })
   }
 }
 

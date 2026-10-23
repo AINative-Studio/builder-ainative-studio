@@ -70,6 +70,20 @@ export interface WedgeDraft {
 }
 export type PrivacyAnswer = 'raw' | 'embeddings-only'
 
+// #1306 — the real (light) assessment of a growth-intent founder's existing
+// site: a fetch + small honest parse (lib/build/site-assessment.ts), never a
+// stub. null = not attempted yet for this build.
+export interface ExistingSiteAssessment {
+  url: string
+  ok: boolean
+  assessment: import('./site-assessment').SiteAssessment | null
+  error: string
+}
+
+// #1311 — founder working-style classification (lib/build/founder-type.ts).
+// '' = not yet classified (the founder-type questions haven't been answered).
+export type FounderTypeValue = import('./founder-type').FounderType | ''
+
 export interface PendingQuestion {
   q: string
   sub: string
@@ -171,6 +185,19 @@ export interface BuildState {
   // "has the founder made a decision here" signal, set true by EITHER
   // PICK_DESIGN_SYSTEM or an explicit skip.
   designStepDone: boolean
+  // #1306 — set once a growth-intent founder's existing-site URL has been
+  // fetched and parsed during kickoff (or the attempt failed honestly).
+  // null = no assessment attempted yet for this build.
+  existingSiteAssessment: ExistingSiteAssessment | null
+  // #1311 — founder working-style classification, set once the 5 founder-
+  // type kickoff questions are answered. '' = not yet classified.
+  founderType: FounderTypeValue
+  // #1311 — the ONE bounded behavioral hook wired from founderType: an
+  // 'architect'-type founder gets one extra review/confirmation step before
+  // a build proceeds past kickoff; 'hustler'/'operator' do not. Set true by
+  // SET_FOUNDER_TYPE('architect'), cleared by CLEAR_FOUNDER_REVIEW once the
+  // founder confirms. See KickoffQuestions.tsx for where this is read.
+  founderReviewPending: boolean
 }
 
 /** Full-bleed build overlays that can cover the workspace during autoplay (04-SCREENS §3). */
@@ -229,6 +256,9 @@ export const initialBuildState: BuildState = {
   runwayNote: '',
   designSystemId: '',
   designStepDone: false,
+  existingSiteAssessment: null,
+  founderType: '',
+  founderReviewPending: false,
 }
 
 export type BuildAction =
@@ -311,6 +341,18 @@ export type BuildAction =
   // Ecosystem runway note (#324 GR-15) — set from the server's credits response
   // at the moment a build earns (or doesn't earn) the primitive-composition bonus.
   | { type: 'SET_RUNWAY_NOTE'; note: string }
+  // #1306 — a growth-intent founder's existing-site fetch+parse succeeded.
+  | { type: 'SET_SITE_ASSESSMENT'; url: string; assessment: ExistingSiteAssessment['assessment'] }
+  // #1306 — the fetch/parse failed (invalid URL, timeout, non-200). Never
+  // silent — always a clear, honest message for the founder.
+  | { type: 'SITE_ASSESSMENT_FAIL'; url: string; error: string }
+  // #1311 — the 5 founder-type kickoff questions have been scored via the
+  // deterministic classifyFounderType(). Also sets founderReviewPending
+  // (true only for 'architect') — the one bounded behavioral hook.
+  | { type: 'SET_FOUNDER_TYPE'; founderType: import('./founder-type').FounderType }
+  // #1311 — the architect-only extra review step has been confirmed; clears
+  // the pending flag so kickoff can proceed to the real build decision.
+  | { type: 'CLEAR_FOUNDER_REVIEW' }
 
 export function buildReducer(state: BuildState, action: BuildAction): BuildState {
   switch (action.type) {
@@ -320,6 +362,30 @@ export function buildReducer(state: BuildState, action: BuildAction): BuildState
       return { ...state, idea: action.idea }
     case 'SET_RUNWAY_NOTE':
       return { ...state, runwayNote: action.note }
+    case 'SET_SITE_ASSESSMENT':
+      return {
+        ...state,
+        existingSiteAssessment: {
+          url: action.url, ok: true, assessment: action.assessment, error: '',
+        },
+      }
+    case 'SITE_ASSESSMENT_FAIL':
+      return {
+        ...state,
+        existingSiteAssessment: {
+          url: action.url, ok: false, assessment: null, error: action.error,
+        },
+      }
+    case 'SET_FOUNDER_TYPE':
+      return {
+        ...state,
+        founderType: action.founderType,
+        // #1311 — the one bounded behavioral hook: only 'architect' asks for
+        // an extra review step before a build proceeds.
+        founderReviewPending: action.founderType === 'architect',
+      }
+    case 'CLEAR_FOUNDER_REVIEW':
+      return { ...state, founderReviewPending: false }
     case 'PICK_TRACK':
       return {
         ...state,

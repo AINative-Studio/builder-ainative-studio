@@ -18,6 +18,23 @@
  * tier gate this repo already has, not a second parallel one. An idea that
  * matches no team-eligible primitive shows no coach turn at all and proceeds
  * straight through, so kickoff is never a dead end.
+ *
+ * #1306 — a growth-intent founder's last kickoff question (site-url) is
+ * answered with a real URL: a light, honest fetch+parse pass
+ * (lib/build/site-assessment.ts) runs and its summary is shown back to the
+ * founder right here, before moving on. A failed fetch shows a clear, honest
+ * message — never a silent crash or a faked "all good".
+ *
+ * #1311 — after the main questions (and any site assessment), 5 short
+ * founder-type questions classify the founder's working style
+ * (lib/build/founder-type.ts, a deterministic mapping — no LLM call). The
+ * one bounded behavioral hook: an 'architect' classification shows one
+ * extra review/confirm step before the real build decision in proceed();
+ * 'hustler'/'operator' skip straight through.
+ *
+ * Phase order: main questions -> site assessment (growth only, if answered)
+ * -> founder-type questions -> architect review (architect only) -> coach
+ * team turn -> proceed().
  */
 
 import { useState } from 'react'
@@ -25,11 +42,15 @@ import { useSession, getSession } from 'next-auth/react'
 import { useBuild } from '@/contexts/build-context'
 import { trackEvent } from '@/components/analytics/google-analytics'
 import { decideLimitAction } from '@/lib/build/value-moment'
-import { getKickoffQuestions } from '@/lib/build/kickoff-questions'
+import { getKickoffQuestions, SITE_URL_QUESTION_ID } from '@/lib/build/kickoff-questions'
 import { getOrCreateAnonDraftToken } from '@/lib/build/anon-draft-token'
 import { recommendTeam, type RecommendedTeamMember } from '@/lib/build/primitive-catalog'
+import { fetchAndAssessSite } from '@/lib/build/site-assessment'
+import { FOUNDER_TYPE_QUESTIONS, classifyFounderType, type FounderTypeAnswers } from '@/lib/build/founder-type'
 
 const NOT_SURE = 'Not sure yet'
+
+type Phase = 'questions' | 'founder-type' | 'founder-review' | 'coach'
 
 export function KickoffQuestions() {
   const { state, dispatch } = useBuild()
@@ -42,6 +63,17 @@ export function KickoffQuestions() {
   const [team, setTeam] = useState<RecommendedTeamMember[] | null>(null)
   const questions = getKickoffQuestions(state.track, state.growthIntent ?? false, state.ecommerceIntent ?? false)
   const question = questions[index]
+
+  // #1306 — honest, founder-facing summary line of the last assessment
+  // attempt (success or failure). '' = nothing to show yet.
+  const [siteAssessmentLine, setSiteAssessmentLine] = useState('')
+  const [assessingSite, setAssessingSite] = useState(false)
+
+  // #1311 — phase state machine driving what's shown after the main
+  // questions are done.
+  const [phase, setPhase] = useState<Phase>('questions')
+  const [founderTypeIndex, setFounderTypeIndex] = useState(0)
+  const [founderTypeAnswers, setFounderTypeAnswers] = useState<FounderTypeAnswers>({})
 
   const answer = (value: string) => {
     const trimmed = value.trim() && value !== NOT_SURE ? value.trim() : undefined
@@ -62,18 +94,90 @@ export function KickoffQuestions() {
         step: `kickoff-${nextStep}`,
       }),
     }).catch(() => {})
+
+    const advance = () => {
+      if (index < questions.length - 1) {
+        setIndex(index + 1)
+      } else {
+        // #1311 — move to the founder-type phase instead of going straight
+        // to the coach/proceed decision.
+        setPhase('founder-type')
+      }
+    }
+
+    // #1306 — a real URL was given for the existing-site question: run the
+    // light fetch+assess pass and show the honest result BEFORE moving on
+    // (so the founder sees the result on the question screen, not a blank
+    // flash through to the next phase). Skipping ("Not sure yet" -> trimmed
+    // undefined) never attempts a fetch and advances immediately.
+    if (question.id === SITE_URL_QUESTION_ID && trimmed) {
+      setAssessingSite(true)
+      fetchAndAssessSite(trimmed).then((result) => {
+        setAssessingSite(false)
+        if (result.ok) {
+          dispatch({ type: 'SET_SITE_ASSESSMENT', url: trimmed, assessment: result.assessment })
+          setSiteAssessmentLine(result.assessment.summary)
+        } else {
+          dispatch({ type: 'SITE_ASSESSMENT_FAIL', url: trimmed, error: result.error })
+          setSiteAssessmentLine(result.error)
+        }
+      })
+      return
+    }
+
+    advance()
+  }
+
+  // #1306 — once the site-assessment result is shown, the founder taps
+  // through to continue (mirrors every other kickoff question's own
+  // explicit "move on" action rather than auto-advancing out from under
+  // them while they're still reading the summary).
+  const continueAfterSiteAssessment = () => {
+    setSiteAssessmentLine('')
     if (index < questions.length - 1) {
       setIndex(index + 1)
     } else {
-      // #1196 — show the free coach recommendation before the real
-      // auth-wall/credits decision, instead of jumping straight to proceed().
-      // Deterministic, no network/LLM call — safe to compute inline.
-      const recommended = recommendTeam(state.idea, state.track, state.role || undefined)
-      if (recommended.length > 0) {
-        setTeam(recommended)
-      } else {
-        proceed()
-      }
+      setPhase('founder-type')
+    }
+  }
+
+  // #1311 — one founder-type question answered: record it, advance, or (on
+  // the last one) classify and either show the architect review step or go
+  // straight on to the coach/proceed decision.
+  const answerFounderType = (value: 'architect' | 'hustler' | 'operator') => {
+    const q = FOUNDER_TYPE_QUESTIONS[founderTypeIndex]
+    const next = { ...founderTypeAnswers, [q.id]: value }
+    setFounderTypeAnswers(next)
+    if (founderTypeIndex < FOUNDER_TYPE_QUESTIONS.length - 1) {
+      setFounderTypeIndex(founderTypeIndex + 1)
+      return
+    }
+    const classification = classifyFounderType(next)
+    dispatch({ type: 'SET_FOUNDER_TYPE', founderType: classification })
+    if (classification === 'architect') {
+      setPhase('founder-review')
+    } else {
+      goToCoachOrProceed()
+    }
+  }
+
+  // #1311 — the architect founder confirmed the extra review step; clear the
+  // pending flag and continue exactly like any other classification would.
+  const confirmFounderReview = () => {
+    dispatch({ type: 'CLEAR_FOUNDER_REVIEW' })
+    goToCoachOrProceed()
+  }
+
+  // #1196 — shared tail of the flow: show the coach recommendation if the
+  // idea matches a team-eligible primitive, otherwise go straight to
+  // proceed(). Deterministic, no network/LLM call — safe to compute inline.
+  const goToCoachOrProceed = () => {
+    const recommended = recommendTeam(state.idea, state.track, state.role || undefined)
+    if (recommended.length > 0) {
+      setTeam(recommended)
+      setPhase('coach')
+    } else {
+      proceed()
     }
   }
 
@@ -123,12 +227,13 @@ export function KickoffQuestions() {
     dispatch({ type: 'SET_RUNWAY_NOTE', note: runwayNote })
   }
 
-  // #1196 — the coach turn: shown once, after the real 3 kickoff questions,
-  // before proceed(). "Looks good, build it" is the SAME proceed() the
-  // no-recommendation path already calls — the coach adds a chat turn, not a
-  // new decision branch. "Add more agents" routes to the existing pricing
-  // screen (the real paid-tier gate) rather than inventing a second one.
-  if (team && team.length > 0) {
+  // #1196 — the coach turn: shown once, after the real kickoff + founder-type
+  // questions, before proceed(). "Looks good, build it" is the SAME
+  // proceed() the no-recommendation path already calls — the coach adds a
+  // chat turn, not a new decision branch. "Add more agents" routes to the
+  // existing pricing screen (the real paid-tier gate) rather than inventing
+  // a second one.
+  if (phase === 'coach' && team && team.length > 0) {
     return (
       <div className="modernist m-intake" data-track={state.track} data-testid="kickoff-coach">
         <div className="m-chat-log">
@@ -169,7 +274,90 @@ export function KickoffQuestions() {
     )
   }
 
+  // #1311 — the architect-only extra review step: a brief, honest recap
+  // before the real build decision fires. One click continues exactly where
+  // any other founder-type classification would (goToCoachOrProceed).
+  if (phase === 'founder-review') {
+    return (
+      <div className="modernist m-intake" data-track={state.track} data-testid="founder-review-step">
+        <div className="m-chat-log">
+          <p className="m-chat-cody"><span className="m-glyph">◇</span> Cody · your co-founder</p>
+          <p className="m-chat-cody-turn">
+            You said you'd like to review things before I run with them — so before I start building,
+            here's what I've got: <strong>{state.idea || 'your idea'}</strong>. Want me to go ahead?
+          </p>
+        </div>
+        <div className="m-kickoff-suggestions">
+          <button
+            type="button"
+            data-testid="founder-review-confirm"
+            className="btn-primary"
+            disabled={proceeding}
+            onClick={() => confirmFounderReview()}
+          >
+            Yes, go ahead →
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // #1311 — the 5 founder-type questions, shown after the main kickoff
+  // questions. Single-choice (no free text / skip — this classification is
+  // a quick multiple-choice, not an open question) via FOUNDER_TYPE_QUESTIONS.
+  if (phase === 'founder-type') {
+    const ftQuestion = FOUNDER_TYPE_QUESTIONS[founderTypeIndex]
+    if (!ftQuestion) return null
+    return (
+      <div className="modernist m-intake" data-track={state.track} data-testid="founder-type-question">
+        <div className="m-chat-log">
+          <p className="m-chat-cody"><span className="m-glyph">◇</span> Cody · your co-founder</p>
+          <p className="m-chat-cody-turn">{ftQuestion.text}</p>
+        </div>
+        <div className="m-kickoff-suggestions">
+          {ftQuestion.options.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              data-testid="founder-type-option"
+              data-value={opt.value}
+              className="btn-ghost"
+              disabled={proceeding}
+              onClick={() => answerFounderType(opt.type)}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
   if (!question) return null
+
+  // #1306 — the site-assessment result is showing: give the founder an
+  // explicit way to continue instead of the normal question UI (there's
+  // nothing left to answer on this question once a result/error is in).
+  if (siteAssessmentLine) {
+    return (
+      <div className="modernist m-intake" data-track={state.track}>
+        <div className="m-chat-log">
+          <p className="m-chat-cody"><span className="m-glyph">◇</span> Cody · your co-founder</p>
+          <p className="m-chat-cody-turn" data-testid="kickoff-site-assessment-result">{siteAssessmentLine}</p>
+        </div>
+        <div className="m-kickoff-suggestions">
+          <button
+            type="button"
+            data-testid="kickoff-site-assessment-continue"
+            className="btn-primary"
+            onClick={() => continueAfterSiteAssessment()}
+          >
+            Continue →
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="modernist m-intake" data-track={state.track}>
@@ -177,6 +365,13 @@ export function KickoffQuestions() {
         <p className="m-chat-cody"><span className="m-glyph">◇</span> Cody · your co-founder</p>
         <p className="m-chat-cody-turn">{question.text}</p>
       </div>
+      {/* #1306 — "checking" placeholder shown while the fetch is in flight;
+          the result itself renders via the early return above once ready. */}
+      {assessingSite && (
+        <p className="m-kickoff-site-assessment m-mono" data-testid="kickoff-site-assessing">
+          Checking that site…
+        </p>
+      )}
       <div className="m-kickoff-suggestions">
         {question.suggestions.map((s) => (
           <button
