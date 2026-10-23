@@ -152,6 +152,20 @@ describe('detectRootComponent', () => {
       const r = detectRootComponent(code)
       expect(r.name).toBe('Aurora')
     })
+
+    // DropdownMenu/ScrollArea are real shadcn exports that had drifted out
+    // of this module's own NON_ROOT_NAMES skip-set (same root-cause class as
+    // #1277/#1278/#1281) -- a local stub redeclaration of one of them could
+    // otherwise be mistaken for the app's actual root component.
+    it('skips a locally-redeclared DropdownMenu/ScrollArea stub when scanning', () => {
+      const code = `
+        const DropdownMenu = ({ children }) => <div>{children}</div>
+        const ScrollArea = ({ children }) => <div className="overflow-auto">{children}</div>
+        function Orbit() { return <div>orbit</div> }
+      `
+      const r = detectRootComponent(code)
+      expect(r.name).toBe('Orbit')
+    })
   })
 
   describe('priority 4 — known-name tiebreaker', () => {
