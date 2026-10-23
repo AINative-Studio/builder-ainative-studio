@@ -24,7 +24,19 @@ vi.mock('@/lib/build/danger-zone', async (orig) => {
   const actual = await (orig as any)()
   return { ...actual, applyDangerAction: h.applyDangerAction }
 })
-vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+// resolveAppVerified() shim (#1324/#1327/#1337 pattern): delegates to the
+// same resolveApp mock, so a rejected/null mock naturally produces
+// verified:false / a confirmed-null entry via this shim's own .catch/shape.
+vi.mock('@/lib/build/app-registry', () => ({
+  resolveAppVerified: async (slug: string) => {
+    try {
+      const entry = await h.resolveApp(slug)
+      return { entry, verified: true }
+    } catch {
+      return { entry: null, verified: false }
+    }
+  },
+}))
 vi.mock('@/lib/logger', () => ({ logger: { info: vi.fn(), error: vi.fn() } }))
 
 import { POST } from '@/app/api/build/danger/route'
@@ -109,6 +121,16 @@ describe('ownership authorization (#649)', () => {
     h.resolveApp.mockResolvedValue({ slug: 'acme', ownerEmail: 'ada@x.com' })
     const res = await POST(req({ action: 'pause', companyId: 'acme', companyName: 'Acme' }))
     expect(res.status).toBe(200)
+  })
+
+  it('#832-class: 503 (not 403 "not_owner") when the registry read itself fails — never a false ownership denial on a destructive endpoint', async () => {
+    h.auth.mockResolvedValue(REAL)
+    h.resolveApp.mockRejectedValue(new Error('ZeroDB timeout'))
+    const res = await POST(req({ action: 'delete', companyId: 'acme', companyName: 'Acme', confirm: 'Acme' }))
+    expect(res.status).toBe(503)
+    const body = await res.json()
+    expect(body.error).toBe('unverified')
+    expect(h.applyDangerAction).not.toHaveBeenCalled()
   })
 })
 
