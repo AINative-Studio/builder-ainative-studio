@@ -184,6 +184,33 @@ describe('runClaudeModelSmokeTest', () => {
     expect(result.error).toMatch(/404/)
   })
 
+  it('direct Anthropic path: bounds the call with an AbortSignal timeout (issue #1297)', async () => {
+    anthropicCreateMock.mockResolvedValueOnce({
+      model: 'claude-sonnet-4-5-20250929',
+      content: [{ type: 'text', text: 'ok' }],
+    })
+
+    const env = cleanEnv({ ANTHROPIC_API_KEY: 'sk-ant-test-key' })
+    await runClaudeModelSmokeTest(env)
+
+    expect(anthropicCreateMock).toHaveBeenCalledTimes(1)
+    const [, options] = anthropicCreateMock.mock.calls[0]
+    expect(options?.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('direct Anthropic path: a hung/aborted call is reported as a clean failure instead of hanging the caller (issue #1297)', async () => {
+    const abortError = new Error('Request was aborted.')
+    abortError.name = 'AbortError'
+    anthropicCreateMock.mockRejectedValueOnce(abortError)
+
+    const env = cleanEnv({ ANTHROPIC_API_KEY: 'sk-ant-test-key' })
+    const result = await runClaudeModelSmokeTest(env)
+
+    expect(result.ok).toBe(false)
+    expect(result.provider).toBe('anthropic')
+    expect(result.error).toMatch(/abort/i)
+  })
+
   it('prefers Bedrock over direct Anthropic when both are configured (matches getPrimaryClaudeClient precedence)', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
