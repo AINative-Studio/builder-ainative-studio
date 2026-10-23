@@ -507,11 +507,30 @@ test.describe('Full onboarding → generation → provisioning (real account)', 
     const viewSiteHref = await page.getByRole('link', { name: /View site/i }).getAttribute('href')
     const seededSlug = viewSiteHref ? viewSiteHref.replace(/^\/build\//, '') : null
     expect(seededSlug, 'Live screen must show a real "View site" link carrying the /build/{slug} once generation completes').toBeTruthy()
+
+    // Real gap found live (2026-10-23, first real execution of the
+    // downstream suites this fixture feeds): the saved fixture never carried
+    // `appChatId`/`productChatId`, even though SeedCompanyFixture (and the
+    // localStorage shape restoreLiveSession/buildSeedPayload builds from it)
+    // has real fields for both. Without them, a restored session's
+    // `state.appChatId` is empty, so Live.tsx's `appReady` genuinely (and
+    // correctly) shows "building your site…"/"setting it up now" instead of
+    // the fully-provisioned dashboard this spec just finished confirming —
+    // not a bug in the restore seam, just an incomplete fixture. Read both
+    // real chatIds back from the same resolve-app endpoint this spec polled
+    // throughout, right before writing the fixture, so downstream specs
+    // restore the SAME real, already-generated state instead of a partial one.
+    const [appResolved, productResolved] = await Promise.all([
+      page.request.get(`${BASE_URL}/api/build/resolve-app?slug=${encodeURIComponent(seededSlug!)}`).then((r) => r.json()).catch(() => null),
+      page.request.get(`${BASE_URL}/api/build/resolve-app?slug=${encodeURIComponent(seededSlug! + '-product')}`).then((r) => r.json()).catch(() => null),
+    ])
     const fixture = {
       slug: seededSlug,
       companyName: await page.locator('h1, h2').first().textContent().catch(() => null),
       idea,
       track: 'company' as const,
+      appChatId: appResolved?.chatId || undefined,
+      productChatId: productResolved?.chatId || undefined,
       seededAt: new Date().toISOString(),
     }
     const fs = await import('fs')
