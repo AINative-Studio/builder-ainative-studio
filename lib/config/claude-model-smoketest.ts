@@ -21,6 +21,12 @@
 
 import { getBedrockClient } from '@/lib/bedrock-client'
 
+// #1253/#1266/#1268/#1295-class bug: the direct-Anthropic path below had no
+// timeout/AbortSignal at all, so a hung upstream call could hang this health
+// probe (hit directly by Railway/uptime monitors, see #39) indefinitely
+// instead of reporting a fast, specific failure.
+const HEALTH_SMOKETEST_TIMEOUT_MS = 15_000
+
 export type ClaudeSmokeTestProvider = 'bedrock' | 'anthropic' | 'none'
 
 export interface ClaudeSmokeTestResult {
@@ -123,11 +129,14 @@ export async function runClaudeModelSmokeTest(
     try {
       const { default: Anthropic } = await import('@anthropic-ai/sdk')
       const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 0 })
-      const res = await client.messages.create({
-        model: requestedModel,
-        max_tokens: 1,
-        messages: [{ role: 'user', content: 'ping' }],
-      })
+      const res = await client.messages.create(
+        {
+          model: requestedModel,
+          max_tokens: 1,
+          messages: [{ role: 'user', content: 'ping' }],
+        },
+        { signal: AbortSignal.timeout(HEALTH_SMOKETEST_TIMEOUT_MS) },
+      )
       const latencyMs = Date.now() - start
       const respondedModel: string | undefined = res?.model
       // The exact failure mode from the original incident: the API silently
