@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { resolveApp } from '@/lib/build/app-registry'
+import { resolveAppVerified } from '@/lib/build/app-registry'
 import { StandalonePreviewRegenerate } from '@/components/build/StandalonePreviewRegenerate'
 import { StandalonePreviewFrame } from '@/components/build/StandalonePreviewFrame'
 
@@ -16,11 +16,11 @@ import { StandalonePreviewFrame } from '@/components/build/StandalonePreviewFram
 
 export const runtime = 'nodejs'
 
-// resolveApp() reads live per-slug company/app data on every request, and
-// the rendered shell embeds that app's current chatId/color/name — without
-// an explicit directive Next.js can still apply its default long-lived
-// static caching (`s-maxage=31536000`) to this route, serving a stale
-// resolution after a deploy or an app update (#818). Force per-request
+// resolveAppVerified() reads live per-slug company/app data on every request,
+// and the rendered shell embeds that app's current chatId/color/name —
+// without an explicit directive Next.js can still apply its default
+// long-lived static caching (`s-maxage=31536000`) to this route, serving a
+// stale resolution after a deploy or an app update (#818). Force per-request
 // rendering so this always reflects the latest data.
 export const dynamic = 'force-dynamic'
 
@@ -28,7 +28,7 @@ interface Props { params: Promise<{ slug: string }> }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params
-  const entry = await resolveApp(slug).catch(() => null)
+  const { entry } = await resolveAppVerified(slug)
   const name = entry?.name || slug
   return {
     title: entry ? `${name} — built on AINative` : `${slug} — AINative Builder`,
@@ -39,10 +39,34 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function AppSubdirPage({ params }: Props) {
   const { slug } = await params
-  const entry = await resolveApp(slug).catch(() => null)
+  const { entry, verified } = await resolveAppVerified(slug)
   const color = entry?.color && /^#[0-9a-fA-F]{6}$/.test(entry.color) ? entry.color : '#2f6d86'
 
   if (!entry?.chatId) {
+    // `verified: false` means the registry lookup itself failed (rate limit,
+    // timeout, a ZeroDB-side outage like core#7395) — NOT a confirmed "no
+    // such company." This page used to call the plain resolveApp(), whose
+    // ambiguous `null` return collapses both cases identically (the exact
+    // anti-pattern #832 fixed for the resolve-app API route and
+    // build-context.tsx's deep-link check, but this public rendering
+    // surface — the actual page priority-1 rendering checks hit — was never
+    // given the same fix). Telling a real visitor "still being built" for an
+    // app that is actually live and complete, just because one registry read
+    // hiccupped, is indistinguishable from a genuinely broken/stuck preview.
+    if (!verified) {
+      return (
+        <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', fontFamily: 'system-ui', background: '#f3f2f2' }}>
+          <div style={{ textAlign: 'center', maxWidth: 460, padding: 24 }}>
+            <div style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12, color: '#7d7979' }}>AINATIVE BUILDER</div>
+            <h1 style={{ fontSize: 28, margin: '10px 0' }}>We couldn&apos;t load this preview.</h1>
+            <p style={{ color: '#444' }}>
+              Something went wrong looking up <strong>{slug}</strong>. This is usually temporary —{' '}
+              <a href={`/build/${slug}`} style={{ color }}>reload the page</a> in a moment.
+            </p>
+          </div>
+        </div>
+      )
+    }
     return (
       <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', fontFamily: 'system-ui', background: '#f3f2f2' }}>
         <div style={{ textAlign: 'center', maxWidth: 460, padding: 24 }}>

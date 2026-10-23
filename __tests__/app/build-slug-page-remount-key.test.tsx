@@ -22,12 +22,15 @@ beforeAll(() => {
  */
 
 vi.mock('@/lib/build/app-registry', () => ({
-  resolveApp: vi.fn(async (slug: string) => ({
-    chatId: `chat-${slug}`,
-    name: `Company ${slug}`,
-    color: '#2f6d86',
-    idea: 'a test idea',
-    track: 'company',
+  resolveAppVerified: vi.fn(async (slug: string) => ({
+    entry: {
+      chatId: `chat-${slug}`,
+      name: `Company ${slug}`,
+      color: '#2f6d86',
+      idea: 'a test idea',
+      track: 'company',
+    },
+    verified: true,
   })),
 }))
 
