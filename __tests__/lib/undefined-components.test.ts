@@ -100,6 +100,29 @@ describe('findUnresolvedComponents (#76)', () => {
     expect(findUnresolvedComponents(code)).toEqual([])
   })
 
+  // #1304: the reverse of the round 1-4 drift class above. 'SheetTrigger',
+  // 'SheetContent' and 'Toggle' aren't real anywhere (not in
+  // lib/sandpack/shadcn-bundle.ts, not lucide icons, not in the preview
+  // route's own knownComponents safety net) -- unlike 'Sheet'/'Command',
+  // which are real lucide icon names and get rescued by the preview
+  // runtime's catch-all icon loader even with no explicit const. Before the
+  // fix this file's KNOWN_AVAILABLE_COMPONENTS falsely claimed all of them
+  // were safe, so a generated app using Sheet/Toggle shipped a silent dead
+  // placeholder div instead of retrying generation.
+  it('flags SheetTrigger/SheetContent/Toggle as unresolved (#1304)', () => {
+    const code = [
+      "import React from 'react'",
+      'export default function App(){',
+      '  return <div><Sheet><SheetTrigger/><SheetContent/></Sheet><Toggle/></div>;',
+      '}',
+    ].join('\n')
+    const out = findUnresolvedComponents(code)
+    expect(out).toContain('SheetTrigger')
+    expect(out).toContain('SheetContent')
+    expect(out).toContain('Toggle')
+    expect(out).not.toContain('Sheet')
+  })
+
   it('does NOT flag React built-ins (Fragment, Suspense)', () => {
     const code = 'export default function App(){ return <Suspense><Fragment/></Suspense>; }'
     expect(findUnresolvedComponents(code)).toEqual([])

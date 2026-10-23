@@ -962,7 +962,18 @@ const KNOWN_AVAILABLE_COMPONENTS = new Set<string>([
   'RadioGroup', 'RadioGroupItem', 'Popover', 'PopoverTrigger', 'PopoverContent',
   'DropdownMenu', 'DropdownMenuTrigger', 'DropdownMenuContent', 'DropdownMenuItem',
   'DropdownMenuLabel', 'DropdownMenuSeparator',
-  'Sheet', 'SheetTrigger', 'SheetContent', 'ScrollArea', 'ScrollBar', 'Toggle', 'Command',
+  // 'SheetTrigger'/'SheetContent'/'Toggle' deliberately NOT listed here (#1304):
+  // unlike 'Sheet'/'Command' (real lucide icon names, rescued by the preview
+  // runtime's catch-all `window[name] = icon` loop even with no explicit
+  // const), these three are neither real shadcn exports (not in
+  // lib/sandpack/shadcn-bundle.ts) nor lucide icons nor in the preview
+  // route's own knownComponents safety net -- component-verifier.ts's
+  // COMPONENT_REPLACEMENTS already judges 'Sheet'/'Command' to need
+  // replacement, but this set's claim that they're "available" suppressed
+  // that judgment, so a generated app using them got a silent dead
+  // placeholder div (not a crash, but not the real UI either) instead of
+  // the retry-on-unresolved-component path everything else here gets.
+  'Sheet', 'ScrollArea', 'ScrollBar', 'Command',
   // Drifted out of sync with lib/sandpack/shadcn-bundle.ts's real exports
   // (same root-cause class as #1277/#1278/#1281/#1283/#1285) -- already
   // fixed in component-verifier.ts's AVAILABLE_COMPONENTS and
