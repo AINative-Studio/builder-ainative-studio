@@ -22,6 +22,7 @@ vi.mock('@/contexts/build-context', () => ({
 }))
 
 import { KickoffQuestions } from '@/components/build/screens/KickoffQuestions'
+import { FOUNDER_TYPE_QUESTIONS } from '@/lib/build/founder-type'
 
 let host: HTMLElement
 let root: Root
@@ -65,6 +66,17 @@ describe('KickoffQuestions — Company track (#E3.2)', () => {
     for (let i = 0; i < 3; i++) {
       const notSure = host.querySelector('[data-testid="kickoff-not-sure"]') as HTMLButtonElement
       await act(async () => { notSure.click() })
+    }
+    // #1311 — the main questions now hand off to 5 founder-type questions
+    // before the real build decision. Answer 'hustler' throughout so no
+    // extra architect review step shows up and the flow reaches proceed()
+    // exactly as it did before that phase existed.
+    for (let i = 0; i < FOUNDER_TYPE_QUESTIONS.length; i++) {
+      const hustlerOpt = FOUNDER_TYPE_QUESTIONS[i].options.find((o) => o.type === 'hustler')!
+      const btn = host.querySelector(
+        `[data-testid="founder-type-option"][data-value="${hustlerOpt.value}"]`,
+      ) as HTMLButtonElement
+      await act(async () => { btn.click() })
     }
     const calledTypes = dispatchMock.mock.calls.map((c) => c[0].type)
     expect(calledTypes).toContain('DEFER_BUILD')
