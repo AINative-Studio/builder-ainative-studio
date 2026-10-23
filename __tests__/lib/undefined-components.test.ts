@@ -48,6 +48,27 @@ describe('findUnresolvedComponents (#76)', () => {
     expect(findUnresolvedComponents(code)).toEqual([])
   })
 
+  // Same drift class as #1277/#1278/#1281: real shadcn primitives missing
+  // from this file's own KNOWN_AVAILABLE_COMPONENTS set.
+  it('does NOT flag DropdownMenu*/ScrollBar/Tooltip* shadcn primitives', () => {
+    const code = [
+      "import React from 'react'",
+      'export default function App(){',
+      '  return <DropdownMenu><DropdownMenuTrigger/><DropdownMenuContent>',
+      '    <DropdownMenuItem/><DropdownMenuLabel/><DropdownMenuSeparator/>',
+      '  </DropdownMenuContent></DropdownMenu>;',
+      '}',
+    ].join('\n')
+    expect(findUnresolvedComponents(code)).toEqual([])
+    const code2 = [
+      "import React from 'react'",
+      'export default function App(){',
+      '  return <div><ScrollBar/><Tooltip><TooltipTrigger/><TooltipContent/><TooltipProvider/></Tooltip></div>;',
+      '}',
+    ].join('\n')
+    expect(findUnresolvedComponents(code2)).toEqual([])
+  })
+
   // #1281: VideoPlayer/StreamingText/MediaGallery are real AIKit primitives
   // (see lib/sandpack/aikit-bundle.ts) that were missing from this file's own
   // KNOWN_AVAILABLE_COMPONENTS set, unlike the five sibling lists elsewhere

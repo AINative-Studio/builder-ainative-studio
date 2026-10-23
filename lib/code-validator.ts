@@ -958,9 +958,11 @@ const KNOWN_AVAILABLE_COMPONENTS = new Set<string>([
   'Tabs', 'TabsList', 'TabsTrigger', 'TabsContent', 'Progress', 'Checkbox',
   'Accordion', 'AccordionItem', 'AccordionTrigger', 'AccordionContent',
   'Alert', 'AlertTitle', 'AlertDescription', 'Textarea', 'Switch', 'Slider', 'Tooltip',
+  'TooltipTrigger', 'TooltipContent', 'TooltipProvider',
   'RadioGroup', 'RadioGroupItem', 'Popover', 'PopoverTrigger', 'PopoverContent',
   'DropdownMenu', 'DropdownMenuTrigger', 'DropdownMenuContent', 'DropdownMenuItem',
-  'Sheet', 'SheetTrigger', 'SheetContent', 'ScrollArea', 'Toggle', 'Command',
+  'DropdownMenuLabel', 'DropdownMenuSeparator',
+  'Sheet', 'SheetTrigger', 'SheetContent', 'ScrollArea', 'ScrollBar', 'Toggle', 'Command',
   // AIKit primitives
   'MetricCard', 'AIKitPriceCard', 'AIKitRating', 'AgentCard', 'SwarmView', 'SafetyBadge',
   'GuardrailPanel', 'ChatBubble', 'StreamingIndicator', 'CodeDisplay', 'TokenUsageBar',
