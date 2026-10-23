@@ -34,7 +34,14 @@ describe('AINative/OpenAI-proxy fallback calls carry a timeout signal (#1299)', 
 
     const fnIdx = src.indexOf('async function runClaudePass(')
     expect(fnIdx).toBeGreaterThan(-1)
-    const fnBody = src.slice(fnIdx, fnIdx + 2200)
+    // #1331: a fixed-size window this tight (2200) silently broke once #1296
+    // independently added its own timeout handling + comments to this same
+    // function's primary-call branch — the combined (clean-merge, non-
+    // conflicting) result pushed the fallback's timeout call past the old
+    // window with no textual conflict to flag it. 3000 is a deliberately
+    // generous margin past the function's current ~2528-char body, not a
+    // tight fit, so a future small addition here doesn't retrigger this.
+    const fnBody = src.slice(fnIdx, fnIdx + 3000)
     expect(fnBody).toContain("process.env.DEFAULT_MODEL || 'qwen-coder-32b'")
     expect(fnBody).toContain('{ signal: AbortSignal.timeout(PRIMARY_CLAUDE_TIMEOUT_MS) }')
   })
