@@ -38,6 +38,15 @@ export const SCAFFOLD_PROVIDED_COMPONENTS = [
   'Tabs', 'TabsList', 'TabsTrigger', 'TabsContent', 'Progress', 'Checkbox',
   'Accordion', 'AccordionItem', 'AccordionTrigger', 'AccordionContent',
   'Alert', 'AlertTitle', 'AlertDescription', 'Popover', 'PopoverTrigger', 'PopoverContent',
+  // Drifted out of sync with lib/sandpack/shadcn-bundle.ts's real exports
+  // (same root-cause class as #1277/#1278/#1281/#1283/#1285) -- already
+  // fixed in component-verifier.ts's AVAILABLE_COMPONENTS and
+  // component-detector.ts's NON_ROOT_NAMES, but not here. Without these, a
+  // generated app that both imports AND locally redefines one of these real
+  // shadcn names was never deduped, so it kept the "Identifier has already
+  // been declared" crash this module exists to prevent.
+  'RadioGroup', 'RadioGroupItem', 'DialogOverlay', 'CircularProgress',
+  'Toast', 'ToastTitle', 'ToastDescription',
   // AIKit
   'MetricCard', 'AIKitPriceCard', 'AIKitRating', 'AgentCard', 'SwarmView', 'SafetyBadge',
   'GuardrailPanel', 'ChatBubble', 'StreamingIndicator', 'CodeDisplay', 'TokenUsageBar',
