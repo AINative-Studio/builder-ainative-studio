@@ -687,6 +687,156 @@
     }, children);
   };
 
+  // Switch Component
+  // Added for issue #1285 (component-name list drift, round 3): this file is
+  // a standalone, hand-maintained duplicate of lib/sandpack/shadcn-bundle.ts's
+  // real exports -- Switch/Textarea/Slider/Tooltip*/DropdownMenu*/ScrollArea/
+  // ScrollBar/Skeleton were all real shadcn primitives that bundle exports but
+  // this one never defined, so a generated app using any of them fell through
+  // app/api/preview/[id]/route.ts's `allComponents` check as undefined and
+  // crashed with "X is not defined" / "Element type is invalid" in the live
+  // preview (same root-cause class as #1277/#1278/#1281/#1283).
+  const Switch = ({ checked, onCheckedChange, className = '', ...props }) => {
+    return React.createElement('button', {
+      role: 'switch',
+      'aria-checked': checked,
+      type: 'button',
+      onClick: () => onCheckedChange && onCheckedChange(!checked),
+      className: cn(
+        'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+        checked ? 'bg-slate-900' : 'bg-slate-200',
+        className
+      ),
+      ...props
+    }, React.createElement('span', {
+      className: cn(
+        'inline-block h-4 w-4 transform rounded-full bg-white transition-transform',
+        checked ? 'translate-x-6' : 'translate-x-1'
+      )
+    }));
+  };
+
+  // Textarea Component
+  const Textarea = ({ className = '', ...props }) => {
+    return React.createElement('textarea', {
+      className: cn(
+        'flex min-h-[80px] w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-400 disabled:opacity-50',
+        className
+      ),
+      ...props
+    });
+  };
+
+  // Slider Component
+  const Slider = ({ value = [50], onValueChange, min = 0, max = 100, step = 1, className = '', ...props }) => {
+    return React.createElement('input', {
+      type: 'range',
+      min: min,
+      max: max,
+      step: step,
+      value: value[0],
+      onChange: (e) => onValueChange && onValueChange([Number(e.target.value)]),
+      className: cn(
+        'w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-slate-900',
+        className
+      ),
+      ...props
+    });
+  };
+
+  // Tooltip Components
+  const TooltipProvider = ({ children }) => children;
+
+  const Tooltip = ({ children }) => {
+    return React.createElement('div', { className: 'relative inline-block' }, children);
+  };
+
+  const TooltipTrigger = ({ children, asChild, className = '', ...props }) => {
+    return React.createElement('div', { className: cn('inline-block', className), ...props }, children);
+  };
+
+  const TooltipContent = ({ children, className = '', ...props }) => {
+    return React.createElement('div', {
+      className: cn(
+        'absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1.5 bg-slate-900 text-white text-xs rounded-md whitespace-nowrap',
+        className
+      ),
+      ...props
+    }, children);
+  };
+
+  // DropdownMenu Components
+  const DropdownMenu = ({ children }) => {
+    const [isOpen, setIsOpen] = React.useState(false);
+
+    return React.createElement('div', {
+      className: 'relative inline-block'
+    },
+      React.Children.map(children, child => {
+        if (child) {
+          return React.cloneElement(child, { isOpen, setIsOpen });
+        }
+        return child;
+      })
+    );
+  };
+
+  const DropdownMenuTrigger = ({ children, isOpen, setIsOpen, asChild, className = '', ...props }) => {
+    return React.createElement('div', {
+      onClick: () => setIsOpen && setIsOpen(!isOpen),
+      className: className,
+      ...props
+    }, children);
+  };
+
+  const DropdownMenuContent = ({ children, isOpen, align = 'start', className = '', ...props }) => {
+    if (!isOpen) return null;
+
+    return React.createElement('div', {
+      className: cn(
+        'absolute z-50 mt-2 min-w-[180px] rounded-md border bg-white shadow-lg py-1',
+        align === 'end' ? 'right-0' : 'left-0',
+        className
+      ),
+      ...props
+    }, children);
+  };
+
+  const DropdownMenuItem = ({ children, onClick, className = '', ...props }) => {
+    return React.createElement('button', {
+      type: 'button',
+      onClick: onClick,
+      className: cn('w-full text-left px-3 py-2 text-sm hover:bg-slate-100 transition-colors', className),
+      ...props
+    }, children);
+  };
+
+  const DropdownMenuSeparator = () => {
+    return React.createElement('div', { className: 'my-1 h-px bg-slate-200' });
+  };
+
+  const DropdownMenuLabel = ({ children, className = '', ...props }) => {
+    return React.createElement('div', {
+      className: cn('px-3 py-2 text-xs font-semibold text-slate-500 uppercase', className),
+      ...props
+    }, children);
+  };
+
+  // ScrollArea Components
+  const ScrollArea = ({ children, className = '', ...props }) => {
+    return React.createElement('div', { className: cn('overflow-auto', className), ...props }, children);
+  };
+
+  const ScrollBar = () => null;
+
+  // Skeleton Component
+  const Skeleton = ({ className = '', ...props }) => {
+    return React.createElement('div', {
+      className: cn('animate-pulse bg-slate-200 rounded-md', className),
+      ...props
+    });
+  };
+
   // Make components globally available
   if (typeof window !== 'undefined') {
     window.ShadcnComponents = {
@@ -746,6 +896,23 @@
       Popover,
       PopoverTrigger,
       PopoverContent,
+      // Added for #1285 (see comment above the Switch definition)
+      Switch,
+      Textarea,
+      Slider,
+      TooltipProvider,
+      Tooltip,
+      TooltipTrigger,
+      TooltipContent,
+      DropdownMenu,
+      DropdownMenuTrigger,
+      DropdownMenuContent,
+      DropdownMenuItem,
+      DropdownMenuSeparator,
+      DropdownMenuLabel,
+      ScrollArea,
+      ScrollBar,
+      Skeleton,
       // Utility
       cn
     };
