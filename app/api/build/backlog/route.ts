@@ -19,7 +19,7 @@
 
 import { NextRequest } from 'next/server'
 import { selectPrimitives } from '@/lib/build/primitive-catalog'
-import { resolveApp } from '@/lib/build/app-registry'
+import { resolveAppVerified } from '@/lib/build/app-registry'
 import { auth } from '@/app/(auth)/auth'
 import { deriveOwnerKey, chatScopeKey } from '@/lib/build/chat-store'
 import { createTask, listTasks } from '@/lib/build/task-store'
@@ -42,6 +42,9 @@ export interface BacklogResult {
   gate: string
   primitiveNames: string[]
   isProvisioned: boolean
+  /** #1327: the registry lookup itself failed (transient) — `gate` is an
+   *  honest "couldn't check" message, not a real plan/domain claim either way. */
+  lookupFailed?: boolean
 }
 
 export async function GET(request: NextRequest) {
@@ -54,12 +57,26 @@ export async function GET(request: NextRequest) {
   let isProvisioned = false
   let hasDomain = false
   let hasPlan = false
+  // #1327: the plain resolveApp() this used to call can't tell "genuinely
+  // unpaid/no domain" apart from "the registry read itself failed" — same
+  // anti-pattern as #1302/#1303/#1316/#1317/#1324/#1325/#1328/#1329. Item-level
+  // status/blockedBy stay the existing safe default (under-claim as blocked,
+  // never over-claim as queued) on a failed lookup — this file's own real
+  // consumer (ask/route.ts's fetchBacklogSummary) never reads them, only
+  // titles. The one thing that DOES get cited verbatim is `gate` below, so
+  // that's the branch that needs an honest third state, not a wrong claim in
+  // either direction.
+  let lookupFailed = false
 
   if (companyId) {
-    const entry = await resolveApp(companyId).catch(() => null)
-    isProvisioned = Boolean(entry?.zerodbProjectId)
-    hasDomain = Boolean(entry?.domain)
-    hasPlan = Boolean(entry?.plan)
+    const { entry, verified } = await resolveAppVerified(companyId)
+    if (verified) {
+      isProvisioned = Boolean(entry?.zerodbProjectId)
+      hasDomain = Boolean(entry?.domain)
+      hasPlan = Boolean(entry?.plan)
+    } else {
+      lookupFailed = true
+    }
   }
 
   const { foundational, selected, names } = selectPrimitives(idea, track, 6)
@@ -128,12 +145,17 @@ export async function GET(request: NextRequest) {
   }
 
   // Conversion gate message — Cody cites this to explain the path to a real app.
-  const gate = hasPlan && hasDomain
-    ? `${companyName} is on a plan with a domain — these items are actively queued for the next nightly loop.`
-    : !hasPlan
-      ? `Your preview is a WORKING app right now — click it, add records, the data persists (the platform data layer is live in the sandbox). What a plan adds: your own domain, real user authentication, the production backend for ${selected.slice(0, 3).map((p) => p.name).join(', ')}, and the 24/7 autonomous loop. Kick the tires first — pay when you want it running for real users.`
-      : `You're on a plan — grab a custom domain and I'll deploy the full stack. The frontend is live; I'm building the backend now.`
+  // #1327: a failed lookup gets its own honest branch — never assert either
+  // "you need a plan" or "you're all set" when the real answer is "couldn't
+  // check", since either claim has a real chance of being flatly wrong.
+  const gate = lookupFailed
+    ? `I couldn't check ${companyName}'s plan/domain status just now — ask again in a moment and I'll have a real answer.`
+    : hasPlan && hasDomain
+      ? `${companyName} is on a plan with a domain — these items are actively queued for the next nightly loop.`
+      : !hasPlan
+        ? `Your preview is a WORKING app right now — click it, add records, the data persists (the platform data layer is live in the sandbox). What a plan adds: your own domain, real user authentication, the production backend for ${selected.slice(0, 3).map((p) => p.name).join(', ')}, and the 24/7 autonomous loop. Kick the tires first — pay when you want it running for real users.`
+        : `You're on a plan — grab a custom domain and I'll deploy the full stack. The frontend is live; I'm building the backend now.`
 
-  const result: BacklogResult = { built, queued, gate, primitiveNames: names, isProvisioned }
+  const result: BacklogResult = { built, queued, gate, primitiveNames: names, isProvisioned, lookupFailed }
   return Response.json(result)
 }

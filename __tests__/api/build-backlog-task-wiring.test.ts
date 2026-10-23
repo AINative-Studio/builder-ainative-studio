@@ -24,7 +24,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const h = vi.hoisted(() => ({
   auth: vi.fn(),
-  resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(),
   createTask: vi.fn(),
   listTasks: vi.fn(),
   deriveOwnerKey: vi.fn(() => 'owner'),
@@ -32,7 +32,7 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
-vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({ resolveAppVerified: h.resolveAppVerified }))
 vi.mock('@/lib/build/task-store', () => ({
   createTask: h.createTask,
   listTasks: h.listTasks,
@@ -48,9 +48,14 @@ function req(url: string) {
   return { url } as any
 }
 
+/** Shorthand for the common case: a verified registry read with this entry. */
+function verified(entry: any) {
+  return { entry, verified: true }
+}
+
 beforeEach(() => {
   h.auth.mockReset()
-  h.resolveApp.mockReset()
+  h.resolveAppVerified.mockReset()
   h.createTask.mockReset().mockResolvedValue(null)
   h.listTasks.mockReset().mockResolvedValue([])
 })
@@ -58,7 +63,7 @@ beforeEach(() => {
 describe('GET /api/build/backlog — real task wiring (#670)', () => {
   it('creates a real todo task for each queued item once paid + domain', async () => {
     h.auth.mockResolvedValue({ user: { email: 'founder@example.com' } })
-    h.resolveApp.mockResolvedValue({ zerodbProjectId: 'proj_1', domain: 'acme.com', plan: 'launch' })
+    h.resolveAppVerified.mockResolvedValue(verified({ zerodbProjectId: 'proj_1', domain: 'acme.com', plan: 'launch' }))
 
     const res = await GET(req('http://x/api/build/backlog?idea=CRM+for+sales+teams&companyName=Acme&companyId=acme'))
     const body = await res.json()
@@ -78,7 +83,7 @@ describe('GET /api/build/backlog — real task wiring (#670)', () => {
 
   it('never creates duplicate tasks for items already tracked in this scope', async () => {
     h.auth.mockResolvedValue({ user: { email: 'founder@example.com' } })
-    h.resolveApp.mockResolvedValue({ zerodbProjectId: 'proj_1', domain: 'acme.com', plan: 'launch' })
+    h.resolveAppVerified.mockResolvedValue(verified({ zerodbProjectId: 'proj_1', domain: 'acme.com', plan: 'launch' }))
     h.listTasks.mockResolvedValue([
       { id: 't1', scopeKey: 'scope-key', title: 'Authentication + user accounts (OAuth, JWT, sessions)', stage: 'todo', source: 'cody', createdAt: '', updatedAt: '' },
     ])
@@ -91,7 +96,7 @@ describe('GET /api/build/backlog — real task wiring (#670)', () => {
 
   it('creates no tasks when not signed in, even if the company is paid + has a domain', async () => {
     h.auth.mockResolvedValue(null)
-    h.resolveApp.mockResolvedValue({ zerodbProjectId: 'proj_1', domain: 'acme.com', plan: 'launch' })
+    h.resolveAppVerified.mockResolvedValue(verified({ zerodbProjectId: 'proj_1', domain: 'acme.com', plan: 'launch' }))
 
     await GET(req('http://x/api/build/backlog?idea=CRM&companyName=Acme&companyId=acme'))
 
@@ -100,7 +105,7 @@ describe('GET /api/build/backlog — real task wiring (#670)', () => {
 
   it('creates no tasks while still blocked (no plan or no domain)', async () => {
     h.auth.mockResolvedValue({ user: { email: 'founder@example.com' } })
-    h.resolveApp.mockResolvedValue({ zerodbProjectId: 'proj_1', domain: null, plan: null })
+    h.resolveAppVerified.mockResolvedValue(verified({ zerodbProjectId: 'proj_1', domain: null, plan: null }))
 
     const res = await GET(req('http://x/api/build/backlog?idea=CRM&companyName=Acme&companyId=acme'))
     const body = await res.json()
@@ -115,6 +120,25 @@ describe('GET /api/build/backlog — real task wiring (#670)', () => {
     await GET(req('http://x/api/build/backlog?idea=CRM&companyName=Acme'))
 
     expect(h.createTask).not.toHaveBeenCalled()
-    expect(h.resolveApp).not.toHaveBeenCalled()
+    expect(h.resolveAppVerified).not.toHaveBeenCalled()
+  })
+
+  // Real bug fix (#1327): a transient registry-read failure used to be
+  // indistinguishable from a confirmed "no plan/no domain" — both defaulted
+  // hasPlan/hasDomain to false. Item-level status staying 'blocked' is the
+  // existing safe under-claim default (unchanged), but the `gate` string Cody
+  // cites verbatim must say "couldn't check," never assert either plan state.
+  it('an unverified lookup never asserts a plan/domain claim in `gate`, and creates no tasks', async () => {
+    h.auth.mockResolvedValue({ user: { email: 'founder@example.com' } })
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+
+    const res = await GET(req('http://x/api/build/backlog?idea=CRM&companyName=Acme&companyId=acme'))
+    const body = await res.json()
+
+    expect(body.lookupFailed).toBe(true)
+    expect(body.gate).toMatch(/couldn't check/i)
+    expect(body.gate).not.toMatch(/pay when|grab a custom domain|actively queued/i)
+    expect(body.queued.every((i: any) => i.status === 'blocked')).toBe(true)
+    expect(h.createTask).not.toHaveBeenCalled()
   })
 })
