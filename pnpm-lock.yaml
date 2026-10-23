@@ -51,6 +51,9 @@ importers:
       '@codesandbox/sandpack-themes':
         specifier: ^2.0.21
         version: 2.0.21
+      '@humeai/voice-react':
+        specifier: 0.3.0-beta.6
+        version: 0.3.0-beta.6(bufferutil@4.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       '@modelcontextprotocol/sdk':
         specifier: ^1.30.0
         version: 1.30.0(zod@4.3.6)
@@ -180,6 +183,9 @@ importers:
       form-data:
         specifier: ^4.0.4
         version: 4.0.5
+      hume:
+        specifier: ^0.16.1
+        version: 0.16.1(bufferutil@4.1.0)
       ioredis:
         specifier: ^5.8.0
         version: 5.10.0
@@ -1519,6 +1525,12 @@ packages:
     engines: {node: '>=18.14.1'}
     peerDependencies:
       hono: ^4
+
+  '@humeai/voice-react@0.3.0-beta.6':
+    resolution: {integrity: sha512-MYVE3TL4vVje+XAW2IcdsrwSmXNoILHpj/uvdKVtndflHNkDIQG8/ogvTCDF93wTiBT+vwMNFXeYO3D1irLVww==}
+    peerDependencies:
+      react: '>=18.2.0'
+      react-dom: '>=18.2.0'
 
   '@iconify/types@2.0.0':
     resolution: {integrity: sha512-+wluvCrRhXrhyOmRDJ3q8mux9JkKy5SJ/v8ol2tu4FVjyYvtEzkc/3pK15ET6RKg4b4w4BmTk1+gsCUhf21Ykg==}
@@ -4710,6 +4722,9 @@ packages:
     resolution: {integrity: sha512-ZYP5VBHshaDAiVZxjbRVcFJpc+4xGgT0bK3vzy1HLN8jTO975HEbuYzZJcHoQEY5K1a0z8YayJkyVETa08eNTg==}
     engines: {node: '>=18'}
 
+  date-fns@3.6.0:
+    resolution: {integrity: sha512-fRHTG8g/Gif+kSh50gaGEdToemgfj74aRX3swtiouboip5JDLAyDE9F11nHMIcvOaXeOC6D7SpNhi7uFyB7Uww==}
+
   dateformat@4.6.3:
     resolution: {integrity: sha512-2P0p0pFGzHS5EMnhdxQi7aJN+iMheud0UhG4dlE1DLAlvL8JHjJJTX/CSm4JXwV0Ka5nGk3zC5mcb5bUQUxxMA==}
 
@@ -5533,6 +5548,10 @@ packages:
 
   humanize-ms@1.2.1:
     resolution: {integrity: sha512-Fl70vYtsAFb/C06PTS9dZBo7ihau+Tu/DNCk/OyHhea07S+aeMWpFFkUaXRa8fI+ScZbEI8dfSxwY7gxZ9SAVQ==}
+
+  hume@0.16.1:
+    resolution: {integrity: sha512-L1W0u4Bft0xQLRZ6Ywou4atszrArPI/WZHbUJ0mRkk/8YKm6D4yVRDDxQA3S1tER/73nvLXAPVVpbIptFoBDtQ==}
+    engines: {node: '>=18.0.0'}
 
   iconv-lite@0.6.3:
     resolution: {integrity: sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==}
@@ -9663,6 +9682,18 @@ snapshots:
     dependencies:
       hono: 4.12.30
 
+  '@humeai/voice-react@0.3.0-beta.6(bufferutil@4.1.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
+    dependencies:
+      date-fns: 3.6.0
+      hume: 0.16.1(bufferutil@4.1.0)
+      react: 19.1.0
+      react-dom: 19.1.0(react@19.1.0)
+      type-fest: 4.41.0
+      zod: 3.25.76
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
   '@iconify/types@2.0.0': {}
 
   '@iconify/utils@3.1.0':
@@ -13276,6 +13307,8 @@ snapshots:
       whatwg-mimetype: 4.0.0
       whatwg-url: 14.2.0
 
+  date-fns@3.6.0: {}
+
   dateformat@4.6.3: {}
 
   dayjs@1.11.19: {}
@@ -14202,6 +14235,14 @@ snapshots:
   humanize-ms@1.2.1:
     dependencies:
       ms: 2.1.3
+
+  hume@0.16.1(bufferutil@4.1.0):
+    dependencies:
+      ws: 8.19.0(bufferutil@4.1.0)
+      zod: 3.25.76
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   iconv-lite@0.6.3:
     dependencies:
