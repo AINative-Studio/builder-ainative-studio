@@ -26,11 +26,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
  */
 
 const h = vi.hoisted(() => ({
-  resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(),
   hasFounderCredential: vi.fn(),
 }))
 
-vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({ resolveAppVerified: h.resolveAppVerified }))
 vi.mock('@/lib/build/primitive-credentials', async () => {
   const actual = await vi.importActual<typeof import('@/lib/build/primitive-credentials')>('@/lib/build/primitive-credentials')
   return { ...actual, hasFounderCredential: h.hasFounderCredential }
@@ -46,7 +46,7 @@ describe('mintPreviewPrimitiveTokens — contentworkflow token gap (#814)', () =
   })
 
   it('mints a real, verifiable contentworkflow token when the slug/chatId binding matches — WITHOUT ever calling hasFounderCredential for it', async () => {
-    h.resolveApp.mockResolvedValue({ slug: 'agentive-product', chatId: 'chat-1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'agentive-product', chatId: 'chat-1' }, verified: true })
 
     const tokens = await mintPreviewPrimitiveTokens('agentive-product', 'chat-1')
 
@@ -62,7 +62,7 @@ describe('mintPreviewPrimitiveTokens — contentworkflow token gap (#814)', () =
   })
 
   it('mints a contentworkflow token even when EVERY founder-scoped primitive has no stored credential (contentworkflow is not one of them)', async () => {
-    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-2' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-2' }, verified: true })
     h.hasFounderCredential.mockResolvedValue(false)
 
     const tokens = await mintPreviewPrimitiveTokens('acme', 'chat-2')
@@ -72,7 +72,7 @@ describe('mintPreviewPrimitiveTokens — contentworkflow token gap (#814)', () =
   })
 
   it('mints BOTH a founder-scoped token and the contentworkflow token when a founder credential does exist for one primitive', async () => {
-    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-3' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-3' }, verified: true })
     h.hasFounderCredential.mockImplementation(async (_slug: string, primitive: string) => primitive === 'zeropipeline')
 
     const tokens = await mintPreviewPrimitiveTokens('acme', 'chat-3')
@@ -83,15 +83,15 @@ describe('mintPreviewPrimitiveTokens — contentworkflow token gap (#814)', () =
   })
 
   it('does NOT mint a contentworkflow token when the slug/chatId binding does not match (same binding check as every other primitive)', async () => {
-    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'a-different-chat-id' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'a-different-chat-id' }, verified: true })
 
     const tokens = await mintPreviewPrimitiveTokens('acme', 'chat-3')
 
     expect(tokens.contentworkflow).toBeUndefined()
   })
 
-  it('does NOT mint a contentworkflow token when the slug has no registry entry at all', async () => {
-    h.resolveApp.mockResolvedValue(null)
+  it('does NOT mint a contentworkflow token when the slug has no registry entry at all (a confirmed miss)', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: true })
 
     const tokens = await mintPreviewPrimitiveTokens('never-provisioned', 'chat-4')
 
@@ -101,6 +101,32 @@ describe('mintPreviewPrimitiveTokens — contentworkflow token gap (#814)', () =
   it('mints nothing at all (fails closed) when no slug is supplied', async () => {
     const tokens = await mintPreviewPrimitiveTokens(null, 'chat-5')
     expect(tokens).toEqual({})
-    expect(h.resolveApp).not.toHaveBeenCalled()
+    expect(h.resolveAppVerified).not.toHaveBeenCalled()
+  })
+
+  // New coverage: a transient registry-read failure (`verified: false`) must
+  // not silently disable this preview session's tokens for its whole
+  // lifetime — the same false-miss risk #832/#1302 fixed for the public
+  // /build/{slug} page, just landing here on the token-minting path instead
+  // (where a miss means every /api/db write from the embedded iframe, waitlist
+  // and visitor tracking included, 401s until the iframe reloads).
+  it('retries once and mints a real token when the FIRST resolveAppVerified call is an unverified (transient) failure', async () => {
+    h.resolveAppVerified
+      .mockResolvedValueOnce({ entry: null, verified: false })
+      .mockResolvedValueOnce({ entry: { slug: 'acme', chatId: 'chat-6' }, verified: true })
+
+    const tokens = await mintPreviewPrimitiveTokens('acme', 'chat-6')
+
+    expect(tokens.contentworkflow).toBeTruthy()
+    expect(h.resolveAppVerified).toHaveBeenCalledTimes(2)
+  })
+
+  it('mints nothing (fails closed, no infinite retry) when BOTH resolveAppVerified calls come back unverified', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+
+    const tokens = await mintPreviewPrimitiveTokens('acme', 'chat-7')
+
+    expect(tokens).toEqual({})
+    expect(h.resolveAppVerified).toHaveBeenCalledTimes(2)
   })
 })
