@@ -6,11 +6,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
  */
 
 const h = vi.hoisted(() => ({
-  resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(),
   listVisitors: vi.fn(),
 }))
 
-vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({ resolveAppVerified: h.resolveAppVerified }))
 vi.mock('@/lib/build/visitor-metrics', () => ({ listVisitors: h.listVisitors }))
 
 import { GET } from '@/app/api/build/visitors/route'
@@ -27,19 +27,33 @@ describe('GET /api/build/visitors', () => {
   it('requires a slug', async () => {
     const res: any = await GET(getReq('http://localhost/api/build/visitors'))
     expect(res.status).toBe(400)
-    expect(h.resolveApp).not.toHaveBeenCalled()
+    expect(h.resolveAppVerified).not.toHaveBeenCalled()
   })
 
-  it('returns an honest visitors:0, entries:[] for an unknown company — never 404s the dashboard', async () => {
-    h.resolveApp.mockResolvedValue(null)
+  it('returns an honest visitors:0, entries:[] for a CONFIRMED-absent company — never 404s the dashboard', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: true })
     const res: any = await GET(getReq('http://localhost/api/build/visitors?slug=ghost'))
     const json = await res.json()
     expect(json).toEqual({ visitors: 0, entries: [] })
     expect(h.listVisitors).not.toHaveBeenCalled()
   })
 
+  // Real bug fix (#1316-class): a transient registry-read failure used to be
+  // indistinguishable from a confirmed-absent company — both returned
+  // visitors:0/entries:[], which the Live dashboard's hero metric and
+  // VisitorsPanel then showed as a confident "0 visitors" for a company that
+  // may have real pageviews.
+  it('fails closed (503) on an UNVERIFIED lookup — never fabricates visitors:0', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+    const res: any = await GET(getReq('http://localhost/api/build/visitors?slug=beacon'))
+    expect(res.status).toBe(503)
+    const json = await res.json()
+    expect(json).toEqual({ ok: false, reason: 'lookup_failed' })
+    expect(h.listVisitors).not.toHaveBeenCalled()
+  })
+
   it('returns the real count and entries from the company\'s own ZeroDB project, passing both projectId and chatId through', async () => {
-    h.resolveApp.mockResolvedValue({ slug: 'beacon', zerodbProjectId: 'proj-beacon', chatId: 'chat-beacon' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'beacon', zerodbProjectId: 'proj-beacon', chatId: 'chat-beacon' }, verified: true })
     const entries = [
       { path: '/api/preview/chat-beacon', visitedAt: '2026-10-19T00:00:00.000Z' },
       { path: '/api/preview/chat-beacon', visitedAt: '2026-10-18T00:00:00.000Z' },
@@ -52,7 +66,7 @@ describe('GET /api/build/visitors', () => {
   })
 
   it('a never-visited, provisioned company honestly reads 0/[] — never fabricated', async () => {
-    h.resolveApp.mockResolvedValue({ slug: 'fresh', zerodbProjectId: 'proj-fresh', chatId: 'chat-fresh' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'fresh', zerodbProjectId: 'proj-fresh', chatId: 'chat-fresh' }, verified: true })
     h.listVisitors.mockResolvedValue([])
     const res: any = await GET(getReq('http://localhost/api/build/visitors?slug=fresh'))
     const json = await res.json()
@@ -64,7 +78,7 @@ describe('GET /api/build/visitors', () => {
   // chatId through, so listVisitors can scope the shared-project fallback
   // correctly instead of reading nothing.
   it('an unprovisioned company (no zerodbProjectId) still passes chatId through for shared-project scoping', async () => {
-    h.resolveApp.mockResolvedValue({ slug: 'pulsar', chatId: 'chat-pulsar' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'pulsar', chatId: 'chat-pulsar' }, verified: true })
     const entries = [{ path: '/api/preview/chat-pulsar', visitedAt: '2026-10-19T00:00:00.000Z' }]
     h.listVisitors.mockResolvedValue(entries)
     const res: any = await GET(getReq('http://localhost/api/build/visitors?slug=pulsar'))

@@ -6,11 +6,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
  */
 
 const h = vi.hoisted(() => ({
-  resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(),
   listWaitlist: vi.fn(),
 }))
 
-vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({ resolveAppVerified: h.resolveAppVerified }))
 vi.mock('@/lib/build/waitlist-metrics', () => ({ listWaitlist: h.listWaitlist }))
 
 import { GET } from '@/app/api/build/waitlist/route'
@@ -27,19 +27,32 @@ describe('GET /api/build/waitlist', () => {
   it('requires a slug', async () => {
     const res: any = await GET(getReq('http://localhost/api/build/waitlist'))
     expect(res.status).toBe(400)
-    expect(h.resolveApp).not.toHaveBeenCalled()
+    expect(h.resolveAppVerified).not.toHaveBeenCalled()
   })
 
-  it('returns an honest entries:[] for an unknown company — never 404s the dashboard', async () => {
-    h.resolveApp.mockResolvedValue(null)
+  it('returns an honest entries:[] for a CONFIRMED-absent company — never 404s the dashboard', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: true })
     const res: any = await GET(getReq('http://localhost/api/build/waitlist?slug=ghost'))
     const json = await res.json()
     expect(json).toEqual({ entries: [] })
     expect(h.listWaitlist).not.toHaveBeenCalled()
   })
 
+  // Real bug fix (#1316-class): a transient registry-read failure used to be
+  // indistinguishable from a confirmed-absent company — both returned
+  // entries:[], which the Live dashboard's hero metric and WaitlistPanel then
+  // showed as a confident "0 signups" for a company that may have real leads.
+  it('fails closed (503) on an UNVERIFIED lookup — never fabricates entries:[]', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+    const res: any = await GET(getReq('http://localhost/api/build/waitlist?slug=agentive'))
+    expect(res.status).toBe(503)
+    const json = await res.json()
+    expect(json).toEqual({ ok: false, reason: 'lookup_failed' })
+    expect(h.listWaitlist).not.toHaveBeenCalled()
+  })
+
   it('returns the real entries from the company\'s own ZeroDB project', async () => {
-    h.resolveApp.mockResolvedValue({ slug: 'agentive', zerodbProjectId: 'proj-agentive' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'agentive', zerodbProjectId: 'proj-agentive' }, verified: true })
     h.listWaitlist.mockResolvedValue([{ email: 'a@x.com', joinedAt: '2026-09-20T00:00:00.000Z' }])
     const res: any = await GET(getReq('http://localhost/api/build/waitlist?slug=agentive'))
     const json = await res.json()
@@ -48,7 +61,7 @@ describe('GET /api/build/waitlist', () => {
   })
 
   it('a never-signed-up, provisioned company honestly reads [] — never fabricated', async () => {
-    h.resolveApp.mockResolvedValue({ slug: 'fresh', zerodbProjectId: 'proj-fresh' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'fresh', zerodbProjectId: 'proj-fresh' }, verified: true })
     h.listWaitlist.mockResolvedValue([])
     const res: any = await GET(getReq('http://localhost/api/build/waitlist?slug=fresh'))
     const json = await res.json()

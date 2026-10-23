@@ -11,7 +11,7 @@
  */
 
 import { NextRequest } from 'next/server'
-import { resolveApp } from '@/lib/build/app-registry'
+import { resolveAppVerified } from '@/lib/build/app-registry'
 import { listVisitors } from '@/lib/build/visitor-metrics'
 
 export const runtime = 'nodejs'
@@ -20,7 +20,18 @@ export async function GET(request: NextRequest) {
   const slug = request.nextUrl.searchParams.get('slug')?.trim()
   if (!slug) return Response.json({ ok: false, reason: 'slug required' }, { status: 400 })
 
-  const app = await resolveApp(slug).catch(() => null)
+  // #1316-class fix: see app/api/build/waitlist/route.ts's matching comment —
+  // same anti-pattern, same fix. The plain `resolveApp()` this used to call
+  // can't tell a confirmed-absent company apart from a registry read that
+  // merely failed, and this route turned both into a confident
+  // `visitors: 0` — fabricating "no visits yet" for the Live dashboard's
+  // hero metric + VisitorsPanel during a transient hiccup. Fails closed
+  // (503) only on a genuinely unverified lookup; a confirmed-absent company
+  // still honestly reads visitors:0/entries:[] below.
+  const { entry: app, verified } = await resolveAppVerified(slug)
+  if (!verified) {
+    return Response.json({ ok: false, reason: 'lookup_failed' }, { status: 503 })
+  }
   if (!app) return Response.json({ visitors: 0, entries: [] })
 
   const entries = await listVisitors(app.zerodbProjectId, app.chatId)

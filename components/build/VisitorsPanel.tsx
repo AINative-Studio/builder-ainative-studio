@@ -35,14 +35,23 @@ function csvEscape(value: string): string {
 
 export function VisitorsPanel({ companyId }: Props) {
   const [loaded, setLoaded] = useState(false)
+  // Real bug fix: mirrors WaitlistPanel.tsx verbatim — a non-ok response used
+  // to be treated identically to a confirmed, genuinely-empty visitor list.
+  // The route now returns a distinct failure (503) when the registry lookup
+  // itself couldn't be verified (see app/api/build/visitors/route.ts), so
+  // this panel can say so honestly instead of fabricating "no visits yet."
+  const [loadError, setLoadError] = useState(false)
   const [entries, setEntries] = useState<VisitorEntry[]>([])
 
   const load = useCallback(async () => {
     try {
       const res = await fetch(`/api/build/visitors?slug=${encodeURIComponent(companyId)}`)
-      const data = res.ok ? await res.json() : null
+      if (!res.ok) { setLoadError(true); setEntries([]); return }
+      const data = await res.json().catch(() => null)
       setEntries(Array.isArray(data?.entries) ? data.entries : [])
+      setLoadError(false)
     } catch {
+      setLoadError(true)
       setEntries([])
     } finally {
       setLoaded(true)
@@ -77,7 +86,11 @@ export function VisitorsPanel({ companyId }: Props) {
         </span>
       </div>
 
-      {entries.length === 0 ? (
+      {loadError ? (
+        <p className="m-mono m-metric-note" data-testid="visitors-error">
+          Couldn&apos;t load visits right now — try refreshing.
+        </p>
+      ) : entries.length === 0 ? (
         <p className="m-mono m-metric-note" data-testid="visitors-empty">
           No visits yet — real pageviews from your landing page will show up here.
         </p>
