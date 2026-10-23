@@ -15,6 +15,7 @@ import { PricingNudge } from '@/components/build/PricingNudge'
 import { DecisionModal } from '@/components/build/DecisionModal'
 import { JourneyBar } from '@/components/build/JourneyBar'
 import { CodyChatPanel } from '@/components/build/CodyChatPanel'
+import { VoiceToggle } from '@/components/build/VoiceToggle'
 import type { ReactNode } from 'react'
 
 /** Index (jump-to-any-screen) panel — quick nav to any generated artifact. */
@@ -94,7 +95,10 @@ export function WorkspaceShell({
         <main className="m-center">
           {state.overlay.kind !== 'none' ? <BuildOverlays /> : children}
         </main>
-        <aside className="m-cody-chat"><CodyChatPanel /></aside>
+        <aside className="m-cody-chat">
+          <CodyChatPanel />
+          <VoiceToggle />
+        </aside>
       </div>
       <DecisionModal />
     </div>
