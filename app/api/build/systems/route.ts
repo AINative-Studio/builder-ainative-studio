@@ -12,7 +12,7 @@
 
 import { NextRequest } from 'next/server'
 import { buildSystems, type SystemProvisioningFlags } from '@/lib/build/business-systems'
-import { resolveApp } from '@/lib/build/app-registry'
+import { resolveAppVerified } from '@/lib/build/app-registry'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 export const runtime = 'nodejs'
@@ -36,7 +36,20 @@ export async function GET(request: NextRequest) {
   const instanceUrls: Record<string, string> = {}
 
   if (companyId) {
-    const entry = await resolveApp(companyId).catch(() => null)
+    // #832-class bug: resolveApp()'s plain `null` return collapses "no such
+    // company" with "the registry read itself failed". A transient ZeroDB
+    // hiccup here used to make this route confidently report every primitive
+    // as unprovisioned/unwired for a fully paid, provisioned company — the
+    // Live dashboard's main business-systems panel showing a false "nothing
+    // is set up yet". Fail closed with a 503 on an unverified lookup instead
+    // of fabricating that state; Live.tsx's fetch already no-ops on a non-ok
+    // response and keeps whatever it last knew, rather than overwriting it.
+    const { entry, verified } = await resolveAppVerified(companyId).catch(
+      () => ({ entry: null as Awaited<ReturnType<typeof resolveAppVerified>>['entry'], verified: false }),
+    )
+    if (!verified) {
+      return Response.json({ error: 'lookup_failed' }, { status: 503 })
+    }
     const projectId = entry?.zerodbProjectId
     provisioned = Boolean(projectId)
     flags = {

@@ -12,7 +12,9 @@ const h = vi.hoisted(() => ({
   getAinativeApiKey: vi.fn(() => ''),
 }))
 
-vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({
+  resolveAppVerified: (slug: string) => h.resolveApp(slug).then((entry: any) => ({ entry, verified: true })),
+}))
 vi.mock('@/lib/build/env-keys', () => ({ getAinativeApiKey: h.getAinativeApiKey }))
 
 const IDEA =
