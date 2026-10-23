@@ -103,7 +103,17 @@ jobs:
           echo "✅ TypeScript check passed (${errors} pre-existing errors)"
 
       - name: Build check
+        env:
+          # The app hard-fails its production build with no AUTH_SECRET set
+          # (see app/(auth)/auth.ts) -- this job never set one, so every real
+          # build attempt failed here regardless of the PR's own changes.
+          # Falls back to an ephemeral per-run secret (ref #1153) when the
+          # repo secret isn't configured: `next build` only needs some
+          # value present to pass its startup guard, never signs or
+          # verifies a real session here, so a throwaway value is safe.
+          AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
         run: |
           echo "Running build..."
+          export AUTH_SECRET="${AUTH_SECRET:-$(openssl rand -base64 32)}"
           pnpm build
           echo "✅ Build successful"
