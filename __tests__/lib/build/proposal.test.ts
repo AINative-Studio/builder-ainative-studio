@@ -145,22 +145,22 @@ describe('buildProposal', () => {
   it('uses generic copy and a fallback name when no company name is given', () => {
     const p = buildProposal({ idea: 'a coffee brand selling beans online', plan: PLAN })
     expect(p.companyName).toBe('')
-    expect(p.headline).toBe('You’ve seen it work. Here’s what Cody builds next.')
+    expect(p.headline).toBe('You’ve seen it work. Here’s what I’m building next.')
     expect(p.subline).toContain('your company')
   })
 
   it('claims "you’ve seen it work" only when sawPreview (default true) (#310/#311)', () => {
     const seen = buildProposal({ companyName: 'Riff', idea: 'crm', plan: PLAN, sawPreview: true })
-    expect(seen.headline).toBe('You’ve seen Riff work. Here’s what Cody builds next.')
+    expect(seen.headline).toBe('You’ve seen Riff work. Here’s what I’m building next.')
     expect(seen.subline).toContain('your app is running')
 
     const unseen = buildProposal({ companyName: 'Riff', idea: 'crm', plan: PLAN, sawPreview: false })
-    expect(unseen.headline).toBe('Here’s what Cody is building for Riff.')
+    expect(unseen.headline).toBe('Here’s what I’m building for Riff.')
     expect(unseen.subline).toContain('your app is on the way')
     expect(unseen.subline).not.toContain('your app is running')
 
     const unseenNoName = buildProposal({ idea: 'crm', plan: PLAN, sawPreview: false })
-    expect(unseenNoName.headline).toBe('Here’s what Cody is building.')
+    expect(unseenNoName.headline).toBe('Here’s what I’m building.')
   })
 
   it('trims whitespace-only company names to empty', () => {
