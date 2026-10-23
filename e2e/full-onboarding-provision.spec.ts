@@ -256,9 +256,40 @@ test.describe('Full onboarding → generation → provisioning (real account)', 
       }
     }
 
-    // #1196 added a real coach-recommendation turn right after the 3
-    // kickoff questions, before DesignPicker — "Looks good, build it" calls
-    // the same proceed() the no-recommendation path already used (see
+    // Real phase order, confirmed from KickoffQuestions.tsx's own source
+    // (not guessed — a first attempt at this got the order backwards and
+    // failed live): after the 3 main kickoff questions, the phase state
+    // machine goes founder-type (#1311) -> founder-review (conditional,
+    // only for an 'architect'-classified founder) -> coach (#1196,
+    // conditional on a team-eligible primitive match) -> DesignPicker.
+    //
+    // #1311's 5-question founder-type assessment (phase === 'founder-type',
+    // lib/build/founder-type.ts's FOUNDER_TYPE_QUESTIONS — deliberately
+    // single-choice, no free text/skip). Always answers the FIRST option on
+    // each question — 4 of 5 are 'hustler' (only the 2nd question's first
+    // option is 'architect'), so the majority-vote scoring
+    // (lib/build/founder-type.ts's classifyFounderType) classifies as
+    // 'hustler' overall (4 > 1), which skips the founder-review gate below
+    // entirely, keeping this spec on its fastest real path.
+    const founderTypeQuestion = page.getByTestId('founder-type-question')
+    for (let i = 0; i < 5; i++) {
+      const seen = await founderTypeQuestion.isVisible({ timeout: 5_000 }).catch(() => false)
+      if (!seen) break
+      await founderTypeQuestion.getByTestId('founder-type-option').first().click()
+    }
+
+    // founder-review (KickoffQuestions.tsx phase === 'founder-review') only
+    // renders for an 'architect'-classified founder — shouldn't fire given
+    // the hustler-biased answers above, but handled best-effort in case the
+    // scoring ever changes underneath this spec.
+    const founderReviewConfirm = page.getByTestId('founder-review-confirm')
+    const founderReviewSeen = await founderReviewConfirm.isVisible({ timeout: 5_000 }).catch(() => false)
+    if (founderReviewSeen) {
+      await founderReviewConfirm.click()
+    }
+
+    // #1196's coach-recommendation turn — "Looks good, build it" calls the
+    // same proceed() the no-recommendation path already used (see
     // KickoffQuestions.tsx's data-testid="kickoff-coach-accept"). Not every
     // idea matches a team-eligible primitive, so this screen is skipped
     // entirely in that case — best-effort, same pattern as
@@ -267,21 +298,6 @@ test.describe('Full onboarding → generation → provisioning (real account)', 
     const coachSeen = await coachAccept.isVisible({ timeout: 10_000 }).catch(() => false)
     if (coachSeen) {
       await coachAccept.click()
-    }
-
-    // #1311 added a real 5-question founder-type assessment right after the
-    // coach turn, before DesignPicker (KickoffQuestions.tsx's phase ===
-    // 'founder-type' block, lib/build/founder-type.ts's FOUNDER_TYPE_QUESTIONS
-    // — deliberately single-choice with no free text/skip). Best-effort, same
-    // pattern as the coach check above: answer whichever option renders first
-    // on each question (the resulting classification only gates one extra
-    // review step for 'architect'-type founders elsewhere — irrelevant to
-    // what this spec verifies) until the phase clears on its own.
-    const founderTypeQuestion = page.getByTestId('founder-type-question')
-    for (let i = 0; i < 5; i++) {
-      const seen = await founderTypeQuestion.isVisible({ timeout: 5_000 }).catch(() => false)
-      if (!seen) break
-      await founderTypeQuestion.getByTestId('founder-type-option').first().click()
     }
 
     // Real interrupt 1/2: DesignPicker (lib/build/useAutoplay.ts's
