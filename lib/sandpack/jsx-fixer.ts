@@ -305,6 +305,11 @@ const SHADCN_COMPONENT_FILE: Record<string, string> = {
   Switch: 'switch', Textarea: 'textarea', Slider: 'slider',
   Tooltip: 'tooltip', TooltipProvider: 'tooltip', TooltipTrigger: 'tooltip', TooltipContent: 'tooltip',
   Skeleton: 'skeleton',
+  // Drifted out of sync with shadcn-bundle.ts's real exports, same shape as
+  // #1248 — these would stay on whatever wrong ui/* path the model wrote.
+  DropdownMenu: 'dropdown-menu', DropdownMenuTrigger: 'dropdown-menu', DropdownMenuContent: 'dropdown-menu', DropdownMenuItem: 'dropdown-menu', DropdownMenuLabel: 'dropdown-menu', DropdownMenuSeparator: 'dropdown-menu',
+  ScrollArea: 'scroll-area', ScrollBar: 'scroll-area',
+  Toast: 'toast', ToastTitle: 'toast', ToastDescription: 'toast',
 }
 
 /**

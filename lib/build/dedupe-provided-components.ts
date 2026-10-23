@@ -45,6 +45,10 @@ export const SCAFFOLD_PROVIDED_COMPONENTS = [
   // generated app that both imports AND locally redefines one of these real
   // shadcn names was never deduped, so it kept the "Identifier has already
   // been declared" crash this module exists to prevent.
+  'DropdownMenu', 'DropdownMenuTrigger', 'DropdownMenuContent', 'DropdownMenuItem',
+  'DropdownMenuLabel', 'DropdownMenuSeparator',
+  'ScrollArea', 'ScrollBar', 'Slider', 'Switch', 'Textarea',
+  'Tooltip', 'TooltipTrigger', 'TooltipContent', 'TooltipProvider',
   'RadioGroup', 'RadioGroupItem', 'DialogOverlay', 'CircularProgress',
   'Toast', 'ToastTitle', 'ToastDescription',
   // AIKit

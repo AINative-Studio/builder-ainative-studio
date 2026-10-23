@@ -88,6 +88,44 @@ describe('verifyComponents', () => {
     expect(result.valid.sort()).toEqual(['Button', 'Card'])
     expect(result.invalid).toEqual(['Form'])
   })
+
+  it('ScrollArea is a real shadcn primitive and must NOT be actively replaced with a div (#1277/#1278/#1281-class drift)', () => {
+    // Before this fix, ScrollArea was in COMPONENT_REPLACEMENTS as "truly
+    // unavailable" even though it's a real export of shadcn-bundle.ts --
+    // the exact opposite of what AVAILABLE_COMPONENTS should say.
+    const result = verifyComponents(['ScrollArea'])
+    expect(result.valid).toEqual(['ScrollArea'])
+    expect(result.invalid).toEqual([])
+    expect(result.replacements).toEqual({})
+  })
+
+  // These shadcn names are real exports of lib/sandpack/shadcn-bundle.ts
+  // but were missing from this file's own AVAILABLE_COMPONENTS copy (same
+  // drift class as #1277/#1278/#1281) -- a generated app using one of them
+  // got actively steered toward a plain div replacement instead.
+  it('treats every real shadcn primitive from shadcn-bundle.ts as valid', () => {
+    const result = verifyComponents([
+      'DropdownMenu', 'DropdownMenuTrigger', 'DropdownMenuContent', 'DropdownMenuItem',
+      'DropdownMenuLabel', 'DropdownMenuSeparator',
+      'ScrollArea', 'ScrollBar', 'Slider', 'Switch', 'Textarea',
+      'Tooltip', 'TooltipTrigger', 'TooltipContent', 'TooltipProvider',
+    ])
+    expect(result.invalid).toEqual([])
+    expect(result.replacements).toEqual({})
+  })
+
+  // #1277: these 7 are real AIKit primitives per multi-file-parser.ts's
+  // AIKIT_COMPONENTS safety-net list -- they were missing here, which made
+  // verifyComponents() flag a real, working primitive as "invalid" and tell
+  // the model to replace it with a plain div.
+  it('treats every AIKit primitive from the canonical AIKIT_COMPONENTS list as valid', () => {
+    const result = verifyComponents([
+      'AgentCard', 'AgentTimeline', 'ConnectionStatus', 'GuardrailPanel',
+      'SafetyBadge', 'SwarmView', 'TokenUsageBar',
+    ])
+    expect(result.invalid).toEqual([])
+    expect(result.replacements).toEqual({})
+  })
 })
 
 describe('enhancePromptWithVerification', () => {

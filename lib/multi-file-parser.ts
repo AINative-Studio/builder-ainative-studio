@@ -170,6 +170,14 @@ const AIKIT_COMPONENTS = [
  * used by lib/sandpack/jsx-fixer.ts's fixWrongShadcnSubpaths and
  * components/chat/sandpack-preview.tsx's shadcn auto-inject block — keep
  * these three in sync if a new shadcn component is added to the bundle.
+ *
+ * That drift already happened: lib/sandpack/shadcn-bundle.ts exports
+ * DropdownMenu*, ScrollArea/ScrollBar, Skeleton, Slider, and Toast* (added
+ * after this map was first written), but none of them were ever added here
+ * — same silent-crash shape as #1248 (AIKIT_COMPONENTS missing
+ * VideoPlayer/StreamingText/MediaGallery). Added below; also closed the
+ * same gap in lib/sandpack/build-files.ts's shadcnMap and
+ * lib/sandpack/jsx-fixer.ts's SHADCN map.
  */
 const SHADCN_COMPONENT_FILE: Record<string, string> = {
   Button: 'button',
@@ -190,6 +198,11 @@ const SHADCN_COMPONENT_FILE: Record<string, string> = {
   Select: 'select', SelectTrigger: 'select', SelectValue: 'select', SelectContent: 'select', SelectItem: 'select',
   Switch: 'switch', Textarea: 'textarea',
   Tooltip: 'tooltip', TooltipProvider: 'tooltip', TooltipTrigger: 'tooltip', TooltipContent: 'tooltip',
+  DropdownMenu: 'dropdown-menu', DropdownMenuTrigger: 'dropdown-menu', DropdownMenuContent: 'dropdown-menu', DropdownMenuItem: 'dropdown-menu', DropdownMenuLabel: 'dropdown-menu', DropdownMenuSeparator: 'dropdown-menu',
+  ScrollArea: 'scroll-area', ScrollBar: 'scroll-area',
+  Skeleton: 'skeleton',
+  Slider: 'slider',
+  Toast: 'toast', ToastTitle: 'toast', ToastDescription: 'toast',
 }
 
 /**
