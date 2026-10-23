@@ -197,12 +197,20 @@ async function runClaudePass(system: string, user: string, maxTokens = 16000, mo
       // On Bedrock, use the caller's model (the same tier the gen used) so a complex
       // app's repair stays on the strong model instead of the cheaper default (#306).
       const model = (primary.provider === 'bedrock' && modelOverride) ? modelOverride : primary.model
-      const resp = await primary.client.messages.create({
+      const call = primary.client.messages.create({
         model,
         max_tokens: maxTokens,
         system,
         messages: [{ role: 'user', content: user }],
       })
+      // Same bug class as #1253/#1266/#1268: this repair/decomposition pass had
+      // no timeout at all, so a hung upstream call here left the obedience-gate
+      // retry loop (and the SSE stream it's part of) stuck indefinitely instead
+      // of falling through to the AINative fallback below. Bound it the same way.
+      const timeout = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('RUN_CLAUDE_PASS_TIMEOUT')), PRIMARY_CLAUDE_TIMEOUT_MS)
+      })
+      const resp: any = await Promise.race([call, timeout])
       return (resp.content || [])
         .filter((b: any) => b.type === 'text')
         .map((b: any) => b.text)
