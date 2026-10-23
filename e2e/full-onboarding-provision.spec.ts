@@ -39,9 +39,14 @@ test.describe('Full onboarding → generation → provisioning (real account)', 
   // consistently take 7+ minutes, and the two CONCURRENT app generations
   // that follow (company-app + company-product, each a full agent-timeout →
   // fallback → validation → repair cycle contending for the same LLM
-  // capacity) can themselves take 8+ minutes. Sum of every step's own
-  // timeout below is ~30 minutes worst case — 35 minutes total, with margin.
-  test.setTimeout(2_100_000)
+  // capacity) can themselves take 8+ minutes. Confirmed live again
+  // (2026-10-22, two consecutive real runs): that pair's own real ceiling is
+  // higher than first measured — each is bounded by its own real 780s (13min)
+  // AbortSignal, and a run genuinely took 17.5min without either aborting or
+  // completing. The "building your site…" wait below was widened to 30
+  // minutes of real margin to match; raise this overall budget to keep
+  // matching headroom above it.
+  test.setTimeout(2_700_000)
 
   /**
    * Returns true when login landed on My Companies (the account already has
@@ -412,8 +417,21 @@ test.describe('Full onboarding → generation → provisioning (real account)', 
     // margin itself was insufficient on a real run — the dashboard shell was
     // fully rendered (B2B is yours — setting it up now., all panels present)
     // while registration was still genuinely in flight, not hung. Widened to
-    // 15 minutes of real margin to match the documented worst-case variance.
-    await expect(page.getByText('building your site…')).toBeHidden({ timeout: 900_000 })
+    // 15 minutes, then confirmed STILL insufficient on a second real run
+    // (17.5min). Traced the real ceiling: app/api/build/company-app/route.ts
+    // and company-product/route.ts each bound their own chat-ws call with
+    // `signal: AbortSignal.timeout(780_000)` (13 real minutes), run fully
+    // concurrently, and chat-ws's own internal pipeline (primary Claude
+    // agent → quota/fallback → AINative path → validation → auto-retry →
+    // obedience/decomposition repair passes) can itself chain several real
+    // LLM calls inside that 13-minute envelope before either resolves or
+    // aborts. 15 minutes of margin is not safely above a real 13-minute×2
+    // concurrent ceiling plus network/DB overhead — widened to 30 minutes of
+    // real margin, which IS safely above it. This is genuine production
+    // latency, not a hang: provisionCompany()'s own auto-retry (Live.tsx,
+    // MAX_AUTO_PROVISION_ATTEMPTS=8, linear backoff) independently confirms
+    // generation recovers on its own without this test's involvement.
+    await expect(page.getByText('building your site…')).toBeHidden({ timeout: 1_800_000 })
 
     // Before provisioning: every founder-scoped primitive should read
     // "Planned" (not silently claiming to be live with no real credential).
