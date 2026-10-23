@@ -26,7 +26,7 @@
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { parseDangerRequest, applyDangerAction } from '@/lib/build/danger-zone'
-import { resolveApp } from '@/lib/build/app-registry'
+import { resolveAppVerified } from '@/lib/build/app-registry'
 import { logger } from '@/lib/logger'
 
 export const runtime = 'nodejs'
@@ -46,7 +46,21 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: parsed.error || 'invalid request' }, { status: 400 })
   }
 
-  const entry = await resolveApp(parsed.value.slug).catch(() => null)
+  // #832-class fix: resolveApp()'s plain `null` collapses "no such company" /
+  // "never claimed" with "the registry read itself failed" — a transient
+  // ZeroDB hiccup used to bounce the REAL owner off a pause/offline/delete
+  // action with a flat 403 "not_owner", on their own company, same as #1327
+  // already fixed for backlog/versions. resolveAppVerified() tells the two
+  // apart so a hiccup gets an honest, retryable answer instead of a false
+  // ownership denial on a destructive endpoint.
+  const { entry, verified } = await resolveAppVerified(parsed.value.slug).catch(() => ({ entry: null, verified: false }))
+  if (!verified) {
+    logger.info('danger-zone action deferred — could not verify ownership', {
+      action: parsed.value.action,
+      companyId: parsed.value.companyId,
+    })
+    return Response.json({ error: 'unverified', message: 'Could not verify ownership right now — try again in a moment.' }, { status: 503 })
+  }
   const ownerEmail = entry?.ownerEmail?.trim().toLowerCase()
   if (!ownerEmail || ownerEmail !== email) {
     logger.info('danger-zone action rejected — not the owner', {
