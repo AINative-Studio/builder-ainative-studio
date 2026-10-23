@@ -24,7 +24,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
 vi.mock('@/lib/build/app-registry', () => ({
-  resolveApp: h.resolveApp,
+  resolveAppVerified: (slug: string) => h.resolveApp(slug).then((entry: any) => ({ entry, verified: true })),
   setAppCommsMode: h.setAppCommsMode,
 }))
 
@@ -79,6 +79,17 @@ describe('POST /api/build/comms-mode (#743)', () => {
     h.resolveApp.mockResolvedValue(null)
     const res: any = await POST(postReq({ slug: 'ghost', mode: 'agile' }))
     expect(res.status).toBe(404)
+    expect(h.setAppCommsMode).not.toHaveBeenCalled()
+  })
+
+  // #832-class bug: a transient registry-read failure must never look like
+  // a confirmed "company_not_found" for a real founder's own company.
+  it('503s with lookup_failed (never a false "company_not_found") on an unverified registry read', async () => {
+    h.resolveApp.mockRejectedValue(new Error('registry timeout'))
+    const res: any = await POST(postReq({ slug: 'acme', mode: 'agile' }))
+    expect(res.status).toBe(503)
+    const json = await res.json()
+    expect(json.error).toBe('lookup_failed')
     expect(h.setAppCommsMode).not.toHaveBeenCalled()
   })
 

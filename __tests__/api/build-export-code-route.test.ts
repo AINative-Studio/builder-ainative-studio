@@ -16,7 +16,10 @@ const h = vi.hoisted(() => ({
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
 vi.mock('@/lib/build/app-registry', async (orig) => {
   const actual = await (orig as any)()
-  return { ...actual, resolveApp: h.resolveApp }
+  return {
+    ...actual,
+    resolveAppVerified: (slug: string) => h.resolveApp(slug).then((entry: any) => ({ entry, verified: true })),
+  }
 })
 vi.mock('@/lib/build/ready-gate', async (orig) => {
   const actual = await (orig as any)()
@@ -74,6 +77,18 @@ describe('GET /api/build/export-code', () => {
     h.resolveApp.mockResolvedValue(null)
     const res = await GET(urlReq('companyId=nope'))
     expect(res.status).toBe(404)
+  })
+
+  // #832-class bug: a transient registry-read failure must never look like
+  // a confirmed "company not found" and block a real owner's code export.
+  it('503s with lookup_failed (never a false "company not found") on an unverified registry read', async () => {
+    h.auth.mockResolvedValue(REAL)
+    h.resolveApp.mockRejectedValue(new Error('registry timeout'))
+    const res = await GET(urlReq('companyId=acme'))
+    expect(res.status).toBe(503)
+    const json = await res.json()
+    expect(json.error).toBe('lookup_failed')
+    expect(h.resolveStoredApp).not.toHaveBeenCalled()
   })
 
   it('403 when the signed-in user does not own the company', async () => {

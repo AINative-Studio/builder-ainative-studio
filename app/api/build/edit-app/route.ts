@@ -30,7 +30,7 @@
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { deriveOwnerKey, chatScopeKey } from '@/lib/build/chat-store'
-import { resolveApp } from '@/lib/build/app-registry'
+import { resolveAppVerified } from '@/lib/build/app-registry'
 import { createTask } from '@/lib/build/task-store'
 import { resolveTask } from '@/lib/build/task-resolver'
 
@@ -45,7 +45,21 @@ export async function POST(request: NextRequest) {
     return Response.json({ ok: false, reason: 'companyId and request are required' }, { status: 400 })
   }
 
-  const app = await resolveApp(companyId).catch(() => null)
+  // #832-class bug, continuing the sweep #1302/#1316/#1324/#1327/#1328/#1335
+  // already did: resolveApp()'s plain `null` return collapses "no such
+  // company/not git-provisioned" with "the registry read itself failed" —
+  // a transient ZeroDB hiccup used to tell a real, already-paying founder
+  // "it needs a paid plan first", the exact false-upsell anti-pattern #1327
+  // fixed elsewhere. Fail closed with a retryable reason on an unverified
+  // lookup instead; a confirmed not-git-provisioned company still gets the
+  // real, honest message.
+  const { entry: app, verified } = await resolveAppVerified(companyId).catch(() => ({ entry: null, verified: false }))
+  if (!verified) {
+    return Response.json(
+      { ok: false, stage: 'failed', reason: "Couldn't confirm this company's status just now (a temporary hiccup on our end) — please try again in a moment." },
+      { status: 200 },
+    )
+  }
   if (!app?.gitOrg) {
     return Response.json(
       { ok: false, stage: 'failed', reason: 'This company is not git-provisioned yet, so there is no repo to edit. It needs a paid plan first.' },

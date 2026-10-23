@@ -30,7 +30,9 @@ const h = vi.hoisted(() => ({
   makeZeroVoiceCall: vi.fn(),
 }))
 
-vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({
+  resolveAppVerified: (slug: string) => h.resolveApp(slug).then((entry: any) => ({ entry, verified: true })),
+}))
 vi.mock('@/lib/build/primitive-credentials', () => ({ resolveFounderCredential: h.resolveFounderCredential }))
 vi.mock('@/lib/build/zerovoice', () => ({
   sendZeroVoiceSms: h.sendZeroVoiceSms,
@@ -99,6 +101,17 @@ describe('POST /api/build/company-comms (#733)', () => {
     h.resolveApp.mockResolvedValue(null)
     const res: any = await POST(postReq({ slug: 'ghost', action: 'sms', to: '+15550002222', body: 'hi' }))
     expect(res.status).toBe(404)
+    expect(h.resolveFounderCredential).not.toHaveBeenCalled()
+  })
+
+  // #832-class bug: a transient registry-read failure must never look like
+  // a confirmed "company_not_found" for a real, provisioned company.
+  it('503s with lookup_failed (never a false "company_not_found") on an unverified registry read', async () => {
+    h.resolveApp.mockRejectedValue(new Error('registry timeout'))
+    const res: any = await POST(postReq({ slug: 'acme', action: 'sms', to: '+15550002222', body: 'hi' }))
+    expect(res.status).toBe(503)
+    const json = await res.json()
+    expect(json.reason).toBe('lookup_failed')
     expect(h.resolveFounderCredential).not.toHaveBeenCalled()
   })
 

@@ -23,7 +23,9 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
-vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({
+  resolveAppVerified: (slug: string) => h.resolveApp(slug).then((entry: any) => ({ entry, verified: true })),
+}))
 vi.mock('@/lib/build/document-store', () => ({
   documentScopeKey: h.documentScopeKey,
   listDocuments: h.listDocuments,
@@ -74,6 +76,17 @@ describe('POST /api/build/deck (#69) — paid gate', () => {
     h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'c', plan: '' })
     const res = await POST(postReq({ companyId: 'acme' }))
     expect(res.status).toBe(402)
+  })
+
+  // #832-class bug, same anti-pattern #1327 fixed elsewhere: a transient
+  // registry-read failure must never 402 "upgrade to export" at a real,
+  // already-paying founder — that's a false upsell, not a paywall.
+  it('503s with lookup_failed (never a false 402 payment_required) on an unverified registry read', async () => {
+    h.resolveApp.mockRejectedValue(new Error('registry timeout'))
+    const res = await POST(postReq({ companyId: 'acme', idea: 'x' }))
+    expect(res.status).toBe(503)
+    const body = await res.json()
+    expect(body.error).toBe('lookup_failed')
   })
 })
 

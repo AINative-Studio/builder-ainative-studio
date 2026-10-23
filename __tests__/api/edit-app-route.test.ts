@@ -19,7 +19,9 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
 vi.mock('@/lib/build/chat-store', () => ({ deriveOwnerKey: h.deriveOwnerKey, chatScopeKey: h.chatScopeKey }))
-vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({
+  resolveAppVerified: (slug: string) => h.resolveApp(slug).then((entry: any) => ({ entry, verified: true })),
+}))
 vi.mock('@/lib/build/task-store', () => ({ createTask: h.createTask }))
 vi.mock('@/lib/build/task-resolver', () => ({ resolveTask: h.resolveTask }))
 
@@ -48,6 +50,20 @@ describe('POST /api/build/edit-app', () => {
     const json = await res.json()
     expect(json.ok).toBe(false)
     expect(json.reason).toMatch(/not git-provisioned/i)
+    expect(h.createTask).not.toHaveBeenCalled()
+    expect(h.resolveTask).not.toHaveBeenCalled()
+  })
+
+  // #832-class bug, same anti-pattern #1327 fixed elsewhere: a transient
+  // registry-read failure must never be told to a real, already-paying
+  // founder as "it needs a paid plan first" — that's a false upsell.
+  it('never claims "needs a paid plan" on an unverified registry read — surfaces a retryable failure instead', async () => {
+    h.resolveApp.mockRejectedValue(new Error('registry timeout'))
+    const res = await POST(req({ companyId: 'ember-box', request: 'change the headline' }))
+    const json = await res.json()
+    expect(json.ok).toBe(false)
+    expect(json.reason).not.toMatch(/paid plan/i)
+    expect(json.reason).toMatch(/try again/i)
     expect(h.createTask).not.toHaveBeenCalled()
     expect(h.resolveTask).not.toHaveBeenCalled()
   })
