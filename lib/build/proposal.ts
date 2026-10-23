@@ -295,11 +295,11 @@ export function buildProposal(opts: {
   // founder actually has. Before the value moment, present it as the plan.
   const headline = sawPreview
     ? (companyName
-        ? `You’ve seen ${companyName} work. Here’s what Cody builds next.`
-        : 'You’ve seen it work. Here’s what Cody builds next.')
+        ? `You’ve seen ${companyName} work. Here’s what I’m building next.`
+        : 'You’ve seen it work. Here’s what I’m building next.')
     : (companyName
-        ? `Here’s what Cody is building for ${companyName}.`
-        : 'Here’s what Cody is building.')
+        ? `Here’s what I’m building for ${companyName}.`
+        : 'Here’s what I’m building.')
 
   const running = sawPreview ? 'your app is running' : 'your app is on the way'
   const subline = n > 0

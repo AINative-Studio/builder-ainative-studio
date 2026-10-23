@@ -21,11 +21,13 @@ const SUMMARY_SYSTEM_PROMPT = `You explain a single step of a founder's business
 Rules:
 - 3 sentences or fewer.
 - No jargon: never use the words "wedge", "PRD", "data model", "memory policy", "AI-native", "swarm", or "provision".
+- Be concrete, not generic: name the real mechanism in plain language instead of a vague placeholder. Say "I'm having our research specialist pull real data" rather than generic filler like "working on it" or the banned "dispatching our swarm" -- both ends are wrong, the goal is plain-language specificity in between.
 - Say what this step is and why it matters to the founder, not how it was generated.`
 
 const EXPLAIN_SYSTEM_PROMPT = `You tell a founder what you are about to build and which business goal it tests, before you start building it.
 Rules:
 - One or two plain sentences, no jargon.
+- Be concrete, not generic: name the real mechanism in plain language. Say "I'm having our research specialist pull real data" rather than generic filler like "working on it" or the banned "dispatching our swarm".
 - Say what you're building and why it matters to the business, then nothing else -- the founder will be asked to confirm separately.`
 
 export async function explainBeforeBuilding(

@@ -1009,8 +1009,8 @@ export function Live() {
             {gates.swarm
               ? 'The full agent swarm is running your company.'
               : gates.nightlyLoop
-                ? 'Cody runs the nightly loop on your company — enrolled.'
-                : 'Cody is building and running your company. Custom domains unlocked.'}
+                ? 'I run the nightly loop on your company — enrolled.'
+                : "I'm building and running your company. Custom domains unlocked."}
           </span>
           <div className="m-live-funnel-cta">
             <span className="m-chip">✓ {PLAN_LABEL[activePlan] || activePlan}</span>
@@ -1243,9 +1243,9 @@ export function Live() {
             )}
             <p className="m-live-card-body">
               {activePlan
-                ? `On ${PLAN_LABEL[activePlan] || activePlan}. ${gates.nightlyLoop ? 'Cody runs the nightly loop on your company.' : 'Cody is building and running your company.'}`
+                ? `On ${PLAN_LABEL[activePlan] || activePlan}. ${gates.nightlyLoop ? 'I run the nightly loop on your company.' : "I'm building and running your company."}`
                 : enrolled
-                  ? 'Enrolled. Cody runs the nightly loop on your company.'
+                  ? 'Enrolled. I run the nightly loop on your company.'
                   : 'Works while you sleep · $49/mo'}
             </p>
             <button className="btn-primary" data-testid="swarm-upgrade" disabled={!!activePlan} onClick={goUpgrade}>
@@ -1464,6 +1464,12 @@ export function Live() {
                 <p className="m-mono m-metric-note">
                   Own ZeroDB project · Pipeline & Invoices read live data.
                   {zerovoiceE164 ? ' Voice/SMS is real — see ZeroVoice below.' : ' Helpdesk & Voice still simulated.'}
+                  {/* #1310: honest, factual trust line — this company's data
+                      genuinely lives in its own isolated ZeroDB project with
+                      its own credentials, not a shared pool (see
+                      lib/build/company-zerodb-credentials.ts). No additional
+                      compliance claims — only what's actually true today. */}
+                  {' '}Your data lives in its own isolated database — never shared with another company.
                 </p>
               )}
             </div>
