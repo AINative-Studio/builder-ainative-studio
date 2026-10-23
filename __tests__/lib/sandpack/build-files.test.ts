@@ -2,6 +2,38 @@ import { describe, it, expect } from 'vitest'
 import { buildSandpackFiles, detectSandpackDependencies } from '@/lib/sandpack/build-files'
 
 /**
+ * This shadcnMap had drifted out of sync with lib/sandpack/shadcn-bundle.ts's
+ * real export surface: Popover, Switch, Textarea, Tooltip, DropdownMenu*,
+ * ScrollArea/ScrollBar, Skeleton, Slider, and Toast* were all real exports
+ * this map never covered — same unfixed-crash shape as #1248
+ * (AIKIT_COMPONENTS missing VideoPlayer/StreamingText/MediaGallery). A model
+ * using any of these without an explicit import sailed through this
+ * render-time safety net unfixed and crashed with "X is not defined".
+ */
+describe('buildSandpackFiles — shadcn injection covers the full bundle surface', () => {
+  it('injects imports for DropdownMenu, ScrollArea, Slider, Toast, Popover, Switch, Textarea, and Tooltip', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <div><DropdownMenu><DropdownMenuContent/></DropdownMenu><ScrollArea/><Slider/><Toast/><Popover/><Switch/><Textarea/><Tooltip/></div> }",
+    })
+    expect(built['/App.tsx']).toContain("from './components/ui/dropdown-menu'")
+    expect(built['/App.tsx']).toContain("from './components/ui/scroll-area'")
+    expect(built['/App.tsx']).toContain("from './components/ui/slider'")
+    expect(built['/App.tsx']).toContain("from './components/ui/toast'")
+    expect(built['/App.tsx']).toContain("from './components/ui/popover'")
+    expect(built['/App.tsx']).toContain("from './components/ui/switch'")
+    expect(built['/App.tsx']).toContain("from './components/ui/textarea'")
+    expect(built['/App.tsx']).toContain("from './components/ui/tooltip'")
+  })
+
+  it('resolves the newly-injected shadcn files for real on disk', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <ScrollArea/> }",
+    })
+    expect(built['/components/ui/scroll-area.tsx']).toBeDefined()
+  })
+})
+
+/**
  * Real production bug (found live, 2026-10-15, during issue #1089's
  * overnight spot-check loop): the shadcn/AIKit import-injection safety net
  * always prepended './components/ui/X' (and './components/aikit') to a

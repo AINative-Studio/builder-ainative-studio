@@ -75,6 +75,26 @@ describe('multi-file import injection: no cross-module duplicates (#64)', () => 
     expect(strictParses(app)).toBe(true)
   })
 
+  // SHADCN_COMPONENT_FILE (added for #1087) drifted out of sync with
+  // lib/sandpack/shadcn-bundle.ts's real exports: DropdownMenu*, ScrollArea/
+  // ScrollBar, Skeleton, Slider, and Toast* were all added to the bundle
+  // after this map was written, but never added here — same unfixed-crash
+  // shape as the VideoPlayer/StreamingText/MediaGallery gap above.
+  it('injects missing imports for DropdownMenu, ScrollArea, Slider, and Toast', () => {
+    const raw = [
+      "import React from 'react'",
+      'export default function App(){',
+      '  return <div><DropdownMenu><DropdownMenuTrigger/><DropdownMenuContent><DropdownMenuItem>Hi</DropdownMenuItem></DropdownMenuContent></DropdownMenu><ScrollArea><div/></ScrollArea><Slider/><Toast><ToastTitle/></Toast></div>;',
+      '}',
+    ].join('\n')
+    const app = Object.values(parseMultiFileOutput(raw))[0]
+    expect(/import\s*\{[^}]*\bDropdownMenu\b[^}]*\}\s*from\s*['"]\.\/components\/ui\/dropdown-menu['"]/.test(app)).toBe(true)
+    expect(/import\s*\{[^}]*\bScrollArea\b[^}]*\}\s*from\s*['"]\.\/components\/ui\/scroll-area['"]/.test(app)).toBe(true)
+    expect(/import\s*\{[^}]*\bSlider\b[^}]*\}\s*from\s*['"]\.\/components\/ui\/slider['"]/.test(app)).toBe(true)
+    expect(/import\s*\{[^}]*\bToast\b[^}]*\}\s*from\s*['"]\.\/components\/ui\/toast['"]/.test(app)).toBe(true)
+    expect(strictParses(app)).toBe(true)
+  })
+
   // The rendered per-file code is sanitized after injection, so pre-existing
   // per-file defects (multi-line duplicate imports, stray-semicolon arrows) are
   // repaired before reaching Sandpack (builder#64 — found in live 5-run E2E).
