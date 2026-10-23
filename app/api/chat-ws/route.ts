@@ -679,7 +679,17 @@ export async function POST(request: NextRequest) {
           // past builds via ZeroMemory recall. Best-effort + timeout-bounded — an
           // empty/failed recall yields '' (no-op), so it never blocks generation.
           const ragBlock = await buildRagContext(message, recallPastPerformance)
-          if (ragBlock) console.log(`🧠 RAG context injected (${ragBlock.length} chars from ZeroMemory)`)
+          if (ragBlock) {
+            console.log(`🧠 RAG context injected (${ragBlock.length} chars from ZeroMemory)`)
+            // #1307: tell the founder, in plain language, when a real cross-build
+            // learning actually influenced this generation — previously this was
+            // a server-only console.log, so the founder watching the SSE stream
+            // had zero signal that output was quietly informed by a past build.
+            safeEnqueue(encoder.encode(`data: ${JSON.stringify({
+              type: 'build_step',
+              step: "I'm pulling in something I learned from a similar build",
+            })}\n\n`))
+          }
           // #532: keep the generated app's schema consistent with the dataModel
           // artifact the founder already reviewed (when one was passed through).
           if (dataModelBlock) console.log(`🗂️  Data model context injected (${dataModelBlock.length} chars from founder's reviewed artifact)`)
