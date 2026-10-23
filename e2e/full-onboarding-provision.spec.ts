@@ -1,5 +1,6 @@
 /**
- * Full onboarding → generation → provisioning E2E (2026-09-13).
+ * Full onboarding → generation E2E (2026-09-13; provisioning step REMOVED
+ * 2026-10-23 — see the note right before the old provisioning block below).
  *
  * Real gap this closes: no existing e2e spec drove the complete real founder
  * path all the way through — landing-funnel.spec.ts covers Landing → Start →
@@ -8,17 +9,24 @@
  * verification pass claimed "Cody built a real company using AINative
  * primitives" by calling /api/chat-ws directly with a made-up chatId — which
  * never goes through Intake's real submit (POST /api/build/brand, credits
- * metering, START_BUILD) or Live's real "Provision cloud" action (POST
- * /api/build/provision, which actually issues per-company primitive
- * credentials). A company built that way has generated CODE that calls real
- * primitive endpoints, but no real credentials behind them — a materially
- * weaker claim than "a founder can build a company end-to-end and it works."
+ * metering, START_BUILD). A company built that way has generated CODE that
+ * calls real primitive endpoints, but no real credentials behind them — a
+ * materially weaker claim than "a founder can build a company end-to-end and
+ * it works."
  *
  * This spec drives the ACTUAL UI a signed-in founder uses: log in → My
  * Companies → "+ New company" → Fork ("Build a Company →") → Intake (type +
- * submit a real idea) → wait for real generation → Live dashboard → click
- * "Provision cloud" → confirm the systems grid's real/planned badges reflect
- * genuine provisioning, not a fabricated state.
+ * submit a real idea) → wait for real generation → Live dashboard renders
+ * with the real/planned systems grid.
+ *
+ * DELIBERATELY STOPS before "Provision cloud": that action issues a real,
+ * live Instant DB project via the shared, rate-limited AINative platform
+ * endpoint (POST /api/v1/public/instant-db) — this repo's own CLAUDE.md
+ * already forbids triggering that path from anywhere but a real founder's
+ * own authenticated session. An E2E test that clicks the real button has the
+ * identical effect to calling the endpoint directly. Never add that click
+ * back into this spec without an explicit, separate decision with the user
+ * about how to test provisioning safely.
  *
  * Requires E2E_TEST_EMAIL / E2E_TEST_PASSWORD env vars for a real account —
  * skips (not fails) when absent, since this hits real production infra and
@@ -30,7 +38,7 @@ const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || 'https://builder.ainative.st
 const EMAIL = process.env.E2E_TEST_EMAIL
 const PASSWORD = process.env.E2E_TEST_PASSWORD
 
-test.describe('Full onboarding → generation → provisioning (real account)', () => {
+test.describe('Full onboarding → generation (real account, never provisions)', () => {
   test.skip(!EMAIL || !PASSWORD, 'E2E_TEST_EMAIL/E2E_TEST_PASSWORD not set — skipping real-account flow')
   // The Company track drafts 7 real documents (design, thesis, wedge,
   // businessModel, positioning, landing, plan30 — lib/build/state.ts's
@@ -82,7 +90,7 @@ test.describe('Full onboarding → generation → provisioning (real account)', 
     return await myCompanies.isVisible().catch(() => false)
   }
 
-  test('real founder path: idea → generation → Live → Provision cloud → real primitive status', async ({ page }) => {
+  test('real founder path: idea → generation → Live dashboard renders (never provisions)', async ({ page }) => {
     // Direct network visibility into /api/build/company-app — server-side
     // Railway logs alone left it ambiguous whether this route was ever even
     // called on a run vs. called-but-still-running, since it only logs on
@@ -464,58 +472,37 @@ test.describe('Full onboarding → generation → provisioning (real account)', 
     // generation recovers on its own without this test's involvement.
     await expect(page.getByText('building your site…')).toBeHidden({ timeout: 1_800_000 })
 
-    // Before provisioning: every founder-scoped primitive should read
-    // "Planned" (not silently claiming to be live with no real credential).
+    // Every founder-scoped primitive should read "Planned" (not silently
+    // claiming to be live with no real credential) once generation is done.
     const plannedBefore = await grid.locator('[data-testid="system-status-badge"][data-status="planned"]').count()
     expect(plannedBefore).toBeGreaterThan(0)
 
-    // Click the real "Provision cloud" action — this is what actually issues
-    // per-company primitive credentials (POST /api/build/provision), not a
-    // cosmetic state flip. Wait on the REAL network response (not just the
-    // button's text flipping) — confirmed live: a plain .click() here left
-    // no /api/build/provision request in server logs at all on one run,
-    // most likely because the systems grid's own background refresh
-    // (Live.tsx's /api/build/systems re-fetch) re-rendered this exact button
-    // out from under an in-flight click, same class of race as the earlier
-    // DesignPicker/Wedge confirm-button issue.
-    const provisionBtn = page.getByRole('button', { name: /Provision cloud/i })
-    await expect(provisionBtn).toBeVisible({ timeout: 10_000 })
-    // Confirmed live: the click genuinely lands and provisionCompany() genuinely
-    // starts (button flips to "Provisioning…", a real busy state) well within
-    // 60s — but the real call itself (a ZeroDB project create + up to 6 real
-    // founder-scoped primitive credential captures, per provision/route.ts)
-    // can take longer than that to actually resolve. 3 minutes of margin.
-    const [provisionResponse] = await Promise.all([
-      page.waitForResponse((res) => res.url().includes('/api/build/provision') && res.request().method() === 'POST', { timeout: 180_000 }),
-      provisionBtn.click(),
-    ])
-    const provisionBody = await provisionResponse.json().catch(() => null)
-    if (!provisionResponse.ok()) {
-      console.log(`[provision] status=${provisionResponse.status()} body=${JSON.stringify(provisionBody)}`)
-    }
-    expect(provisionResponse.ok()).toBe(true)
-    expect(provisionBody?.ok).toBe(true)
-
-    // The button's own text should now reflect the real, just-confirmed state.
-    await expect(page.getByRole('button', { name: /Cloud provisioned/i })).toBeVisible({ timeout: 15_000 })
-
-    // After provisioning: at least one system should now read "Live" — a real
-    // status change driven by a real credential, not fabricated. Real gap
-    // found live: provisionCompany() (Live.tsx) fires the systems-grid
-    // refresh (GET /api/build/systems) as a SEPARATE, unawaited fetch AFTER
-    // setProvision() already resolved — so the "Cloud provisioned" button
-    // text and the honest "Pipeline & Invoices read live data" banner (both
-    // driven by the synchronous provision state) can be visible well before
-    // the systems grid's own badges have actually re-rendered from their
-    // independent refetch. Wait on that real network response explicitly,
-    // not just the button text.
-    await page.waitForResponse((res) => res.url().includes('/api/build/systems') && res.status() === 200, { timeout: 30_000 }).catch(() => {})
-    await expect(async () => {
-      const liveAfter = await grid.locator('[data-testid="system-status-badge"][data-status="live"]').count()
-      expect(liveAfter).toBeGreaterThan(0)
-    }).toPass({ timeout: 15_000 })
-
-    await page.screenshot({ path: 'e2e/screenshots/full-onboarding-provisioned.png', fullPage: true })
+    // DELIBERATELY STOPS HERE — never clicks "Provision cloud".
+    //
+    // Real incident (2026-10-23): this spec used to click the real
+    // "Provision cloud" button here, which calls POST /api/build/provision
+    // -> provisionInstantDb() -> a real, live POST to
+    // https://api.ainative.studio/api/v1/public/instant-db — the SAME
+    // shared, rate-limited Instant DB resource this repo's own CLAUDE.md
+    // already says is for real founders only, provisioned through their own
+    // authenticated session, never from a service-level/test path. Running
+    // this spec repeatedly during a debugging session burned real quota
+    // against the live platform ("Rate limit exceeded: max 5 instant
+    // databases per IP per day") — an actual violation of that rule, not a
+    // hypothetical one. A test clicking the real UI button has exactly the
+    // same effect as calling the endpoint directly; routing it through a
+    // browser click doesn't make it exempt.
+    //
+    // Provisioning must be verified by a real founder/customer flow, never
+    // by an automated test run repeatedly in this sandbox. If #1203 (or any
+    // future work) needs provisioning coverage, that requires an explicit,
+    // deliberate decision with the user about how to test it safely (e.g. a
+    // dedicated, pre-approved test account provisioned at most once, not a
+    // spec that re-provisions on every run) — not a default "click the
+    // button" step in a loop-driven E2E suite.
+    //
+    // Everything below this line only verifies the PRE-provisioning state
+    // (generation + Live dashboard rendering), which is safe to run freely.
 
     // #1197 — persist the real seeded company's identity so other specs (in
     // particular #1198's e2e/session-restore.spec.ts) can pick it up without
@@ -546,11 +533,12 @@ test.describe('Full onboarding → generation → provisioning (real account)', 
     // has real fields for both. Without them, a restored session's
     // `state.appChatId` is empty, so Live.tsx's `appReady` genuinely (and
     // correctly) shows "building your site…"/"setting it up now" instead of
-    // the fully-provisioned dashboard this spec just finished confirming —
-    // not a bug in the restore seam, just an incomplete fixture. Read both
-    // real chatIds back from the same resolve-app endpoint this spec polled
+    // the real generated dashboard this spec just finished confirming — not
+    // a bug in the restore seam, just an incomplete fixture. Read both real
+    // chatIds back from the same resolve-app endpoint this spec polled
     // throughout, right before writing the fixture, so downstream specs
-    // restore the SAME real, already-generated state instead of a partial one.
+    // restore the SAME real, already-generated (but never provisioned)
+    // state instead of a partial one.
     const [appResolved, productResolved] = await Promise.all([
       page.request.get(`${BASE_URL}/api/build/resolve-app?slug=${encodeURIComponent(seededSlug!)}`).then((r) => r.json()).catch(() => null),
       page.request.get(`${BASE_URL}/api/build/resolve-app?slug=${encodeURIComponent(seededSlug! + '-product')}`).then((r) => r.json()).catch(() => null),
