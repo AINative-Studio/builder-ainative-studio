@@ -466,7 +466,20 @@ export function Live() {
     }
 
     if (!state.appChatId && state.idea && state.appSub) {
-      const MAX_APP_POLL_ATTEMPTS = 60 // ~5 min at 5s apart — matches company-product's own budget
+      // Real bug found live (2026-10-22, three consecutive real E2E runs):
+      // this budget was 60 attempts (~5min at 5s apart), but
+      // company-app/route.ts's own server-side generation call is bounded by
+      // `AbortSignal.timeout(780_000)` — a real 13-minute ceiling, not 5.
+      // Once this client-side loop hit its cap, it just silently stopped
+      // (the `if (n < MAX)` guard does nothing when false) — "building your
+      // site…" froze forever with no error and no further requests, even
+      // though the server-side generation could legitimately still be
+      // running for 8 more real minutes. Confirmed live: resolve-app kept
+      // returning chatId:null for 33+ minutes purely because nothing was
+      // polling anymore, not because generation itself was stuck — a
+      // founder would have had to manually reload the page to recover.
+      // Widened to comfortably exceed the real 780s server-side ceiling.
+      const MAX_APP_POLL_ATTEMPTS = 240 // ~20 min at 5s apart — real margin above company-app's 780s (13min) AbortSignal
       const pollForApp = (n: number) => {
         fetch(`/api/build/resolve-app?slug=${encodeURIComponent(state.appSub)}`)
           .then((r) => (r.ok ? r.json() : null))
@@ -527,7 +540,10 @@ export function Live() {
     // racing a proxy timeout the client doesn't control.
     if (!state.productChatId && state.idea && state.appSub) {
       const productSlug = `${state.appSub}-product`
-      const MAX_POLL_ATTEMPTS = 60 // ~5 min at 5s apart — a real generation + repair round-trip can take several minutes
+      // Same budget mismatch as pollForApp above (see its comment): widened
+      // to real margin above company-product/route.ts's own 780s (13min)
+      // AbortSignal, instead of silently giving up at 5 minutes.
+      const MAX_POLL_ATTEMPTS = 240 // ~20 min at 5s apart — real margin above company-product's 780s (13min) AbortSignal
       const pollForProduct = (n: number) => {
         fetch(`/api/build/resolve-app?slug=${encodeURIComponent(productSlug)}`)
           .then((r) => (r.ok ? r.json() : null))
@@ -886,7 +902,7 @@ export function Live() {
   // retry) is safe.
   const autoProvisionAttemptsRef = useRef(0)
   const autoProvisionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const MAX_AUTO_PROVISION_ATTEMPTS = 8 // ~1min + 2+3+4+5+6+7+8min backoff ≈ covers company-app's ~5min budget with margin
+  const MAX_AUTO_PROVISION_ATTEMPTS = 8 // ~1+2+3+4+5+6+7+8=36min backoff ≈ covers pollForApp's real ~20min budget (see its comment) with margin
   useEffect(() => {
     if (!signedIn || !companyId) return
     if (!provision.checked || provision.provisioned || provision.busy) return
