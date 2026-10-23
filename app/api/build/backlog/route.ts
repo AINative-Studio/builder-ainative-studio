@@ -19,7 +19,7 @@
 
 import { NextRequest } from 'next/server'
 import { selectPrimitives } from '@/lib/build/primitive-catalog'
-import { resolveApp } from '@/lib/build/app-registry'
+import { resolveAppVerified } from '@/lib/build/app-registry'
 import { auth } from '@/app/(auth)/auth'
 import { deriveOwnerKey, chatScopeKey } from '@/lib/build/chat-store'
 import { createTask, listTasks } from '@/lib/build/task-store'
@@ -31,7 +31,7 @@ export interface BacklogItem {
   title: string
   status: 'built' | 'queued' | 'blocked'
   /** Why blocked (only set when status === 'blocked') */
-  blockedBy?: 'subscription' | 'domain'
+  blockedBy?: 'subscription' | 'domain' | 'unverified'
   primitive?: string
 }
 
@@ -42,6 +42,15 @@ export interface BacklogResult {
   gate: string
   primitiveNames: string[]
   isProvisioned: boolean
+  /**
+   * #832-class bug (#1327): false when the registry lookup itself failed
+   * (ZeroDB hiccup/timeout), as opposed to a confirmed "no entry yet" —
+   * callers that want to tell these apart (e.g. a UI that should show "we
+   * couldn't check your plan" instead of a sales pitch) can key off this.
+   * Always true when companyId is empty (nothing to look up — see #1302's
+   * own convention for the same distinction).
+   */
+  verified: boolean
 }
 
 export async function GET(request: NextRequest) {
@@ -54,9 +63,18 @@ export async function GET(request: NextRequest) {
   let isProvisioned = false
   let hasDomain = false
   let hasPlan = false
+  // #832-class bug (#1327): resolveApp()'s plain `null` return collapsed "no
+  // registry entry yet" with "the registry read itself failed" — on a
+  // transient ZeroDB hiccup, hasPlan/hasDomain silently became `false`,
+  // which flipped every queued item's blockedBy to 'subscription' and made
+  // `gate` confidently pitch a plan to a real, already-paying, provisioned
+  // founder. `verified` lets this route tell the two apart; see its use
+  // below for exactly how each is handled.
+  let verified = true
 
   if (companyId) {
-    const entry = await resolveApp(companyId).catch(() => null)
+    const { entry, verified: v } = await resolveAppVerified(companyId).catch(() => ({ entry: null, verified: false }))
+    verified = v
     isProvisioned = Boolean(entry?.zerodbProjectId)
     hasDomain = Boolean(entry?.domain)
     hasPlan = Boolean(entry?.plan)
@@ -76,9 +94,15 @@ export async function GET(request: NextRequest) {
   // QUEUED: real backend, auth, and each idea-selected business-op primitive.
   const queued: BacklogItem[] = []
 
-  const blockedStatus = hasPlan && hasDomain ? 'queued' : 'blocked'
-  const blockedBy: 'subscription' | 'domain' | undefined =
-    !hasPlan ? 'subscription' : !hasDomain ? 'domain' : undefined
+  // On an unverified lookup, deliberately never claim 'queued' (the real
+  // plan/domain state is unknown, so "actively queued" would be an equally
+  // unearned claim in the other direction) AND never claim blockedBy:
+  // 'subscription' (a real, paying founder must never be told to pay again).
+  // 'unverified' names the actual honest reason: this route couldn't check.
+  const blockedStatus = !verified ? 'blocked' : hasPlan && hasDomain ? 'queued' : 'blocked'
+  const blockedBy: 'subscription' | 'domain' | 'unverified' | undefined = !verified
+    ? 'unverified'
+    : !hasPlan ? 'subscription' : !hasDomain ? 'domain' : undefined
 
   // Core backend is always queued — it requires a plan to build for real.
   queued.push(
@@ -128,12 +152,18 @@ export async function GET(request: NextRequest) {
   }
 
   // Conversion gate message — Cody cites this to explain the path to a real app.
-  const gate = hasPlan && hasDomain
-    ? `${companyName} is on a plan with a domain — these items are actively queued for the next nightly loop.`
-    : !hasPlan
-      ? `Your preview is a WORKING app right now — click it, add records, the data persists (the platform data layer is live in the sandbox). What a plan adds: your own domain, real user authentication, the production backend for ${selected.slice(0, 3).map((p) => p.name).join(', ')}, and the 24/7 autonomous loop. Kick the tires first — pay when you want it running for real users.`
-      : `You're on a plan — grab a custom domain and I'll deploy the full stack. The frontend is live; I'm building the backend now.`
+  // On an unverified lookup, the honest answer is "I couldn't check" — never
+  // the sales pitch (which would wrongly tell a real, paying founder they
+  // still need to buy a plan) and never the "actively queued" claim either
+  // (the real plan/domain state is genuinely unknown here).
+  const gate = !verified
+    ? `I couldn't confirm your plan/domain status just now (a temporary hiccup on our end) — ask me again in a moment and I'll have a real answer.`
+    : hasPlan && hasDomain
+      ? `${companyName} is on a plan with a domain — these items are actively queued for the next nightly loop.`
+      : !hasPlan
+        ? `Your preview is a WORKING app right now — click it, add records, the data persists (the platform data layer is live in the sandbox). What a plan adds: your own domain, real user authentication, the production backend for ${selected.slice(0, 3).map((p) => p.name).join(', ')}, and the 24/7 autonomous loop. Kick the tires first — pay when you want it running for real users.`
+        : `You're on a plan — grab a custom domain and I'll deploy the full stack. The frontend is live; I'm building the backend now.`
 
-  const result: BacklogResult = { built, queued, gate, primitiveNames: names, isProvisioned }
+  const result: BacklogResult = { built, queued, gate, primitiveNames: names, isProvisioned, verified }
   return Response.json(result)
 }

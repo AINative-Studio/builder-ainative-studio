@@ -32,7 +32,9 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
-vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({
+  resolveAppVerified: (slug: string) => h.resolveApp(slug).then((entry: any) => ({ entry, verified: true })),
+}))
 vi.mock('@/lib/build/task-store', () => ({
   createTask: h.createTask,
   listTasks: h.listTasks,
