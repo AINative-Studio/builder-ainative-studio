@@ -190,8 +190,15 @@ export function Live() {
     let alive = true
     fetch(`/api/build/visitors?slug=${encodeURIComponent(companyId)}`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (alive) setVisitors(typeof d?.visitors === 'number' ? d.visitors : 0) })
-      .catch(() => { if (alive) setVisitors(0) })
+      // Real bug fix: a non-ok response (now the honest 503 the route
+      // returns when a registry read fails — see
+      // app/api/build/visitors/route.ts) used to fall through to
+      // `setVisitors(0)` below, fabricating a confident "0 visitors" hero
+      // metric on a transient hiccup. Leaving it unset keeps the existing
+      // '—' placeholder (same one shown before the fetch resolves at all)
+      // instead of claiming a real count that was never actually read.
+      .then((d) => { if (alive && typeof d?.visitors === 'number') setVisitors(d.visitors) })
+      .catch(() => {})
     return () => { alive = false }
   }, [companyId])
   // Real waitlist count (#844) — was a permanent, hardcoded 0 even though the
@@ -202,8 +209,12 @@ export function Live() {
     let alive = true
     fetch(`/api/build/waitlist?slug=${encodeURIComponent(companyId)}`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (alive) setWaitlistCount(Array.isArray(d?.entries) ? d.entries.length : 0) })
-      .catch(() => { if (alive) setWaitlistCount(0) })
+      // Real bug fix: mirrors the visitors fetch above verbatim — a non-ok
+      // response (the honest 503 the route now returns on a failed registry
+      // read) used to fabricate a confident "0 signups" hero metric instead
+      // of leaving the honest '—' placeholder up.
+      .then((d) => { if (alive && Array.isArray(d?.entries)) setWaitlistCount(d.entries.length) })
+      .catch(() => {})
     return () => { alive = false }
   }, [companyId])
   const { status: sessionStatus } = useSession()

@@ -32,14 +32,24 @@ function csvEscape(value: string): string {
 
 export function WaitlistPanel({ companyId }: Props) {
   const [loaded, setLoaded] = useState(false)
+  // Real bug fix: a non-ok response used to be treated identically to a
+  // confirmed, genuinely-empty list — both rendered the same "No signups
+  // yet" copy. The route now returns a distinct failure (503) when the
+  // registry lookup itself couldn't be verified (see
+  // app/api/build/waitlist/route.ts), and this panel needs to tell that
+  // apart from a real empty waitlist instead of fabricating "no signups."
+  const [loadError, setLoadError] = useState(false)
   const [entries, setEntries] = useState<WaitlistEntry[]>([])
 
   const load = useCallback(async () => {
     try {
       const res = await fetch(`/api/build/waitlist?slug=${encodeURIComponent(companyId)}`)
-      const data = res.ok ? await res.json() : null
+      if (!res.ok) { setLoadError(true); setEntries([]); return }
+      const data = await res.json().catch(() => null)
       setEntries(Array.isArray(data?.entries) ? data.entries : [])
+      setLoadError(false)
     } catch {
+      setLoadError(true)
       setEntries([])
     } finally {
       setLoaded(true)
@@ -74,7 +84,11 @@ export function WaitlistPanel({ companyId }: Props) {
         </span>
       </div>
 
-      {entries.length === 0 ? (
+      {loadError ? (
+        <p className="m-mono m-metric-note" data-testid="waitlist-error">
+          Couldn&apos;t load signups right now — try refreshing.
+        </p>
+      ) : entries.length === 0 ? (
         <p className="m-mono m-metric-note" data-testid="waitlist-empty">
           No signups yet — real emails from your landing page's waitlist form will show up here.
         </p>
