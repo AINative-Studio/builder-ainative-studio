@@ -128,6 +128,14 @@ const PAID_MODEL = process.env.PAID_MODEL || 'kimi-k2.6'
 // fallback chain below instead of hanging the whole generation indefinitely.
 const PRIMARY_CLAUDE_TIMEOUT_MS = Number(process.env.PRIMARY_CLAUDE_TIMEOUT_MS || 120_000)
 
+// #1299: the auto-retry/repair loop's AINative `generate()` callback (below,
+// in the POST handler) had no timeout either — runValidationRetryLoop has no
+// bound of its own around the callback it's given, so a hung call here stuck
+// the whole repair loop (and the SSE stream) indefinitely, same symptom class
+// as #1253. Sized smaller than PRIMARY_CLAUDE_TIMEOUT_MS since this call's
+// max_tokens (8192) is half the primary call's ceiling.
+const REPAIR_RETRY_TIMEOUT_MS = Number(process.env.REPAIR_RETRY_TIMEOUT_MS || 90_000)
+
 // Direct Anthropic-API client — lazy initialized on first use.
 let anthropicClient: any = null
 function getAnthropicDirectClient() {
@@ -215,11 +223,18 @@ async function runClaudePass(system: string, user: string, maxTokens = 16000, mo
   // 'nous-coder' is FULLY DEPRECATED, no upstream at all (core's registry
   // hard-fails it — confirmed live during #360 investigation).
   try {
-    const res = await ainativeClient.chat.completions.create({
-      model: process.env.DEFAULT_MODEL || 'qwen-coder-32b',
-      max_tokens: maxTokens,
-      messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
-    })
+    // #1299: this fallback itself had no timeout — a hang here (after the
+    // primary Claude call above already failed/timed out) still stalled the
+    // obedience-gate retry loop indefinitely with nothing left to fall back
+    // to. Bound it the same way as the primary call just above.
+    const res = await ainativeClient.chat.completions.create(
+      {
+        model: process.env.DEFAULT_MODEL || 'qwen-coder-32b',
+        max_tokens: maxTokens,
+        messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+      },
+      { signal: AbortSignal.timeout(PRIMARY_CLAUDE_TIMEOUT_MS) },
+    )
     return res.choices?.[0]?.message?.content || ''
   } catch (err: any) {
     console.warn('[runClaudePass] AINative fallback also failed:', err?.message?.slice(0, 80))
@@ -1556,30 +1571,33 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                 console.log(`🔁 Repair attempt ${attempt}/${total} with ${model}`)
               },
               generate: async (model, error, brokenCode) => {
-                const res = await ainativeClient.chat.completions.create({
-                  model,
-                  max_tokens: 8192,
-                  temperature: 0.5, // lower temp on repair — favor correctness
-                  messages: [
-                    {
-                      role: 'system',
-                      content:
-                        'You fix broken React code. Return ONLY valid, complete React code wrapped in ```jsx markers. ' +
-                        'Every JSX tag closed, every string terminated, every bracket matched, and every component ' +
-                        'used in JSX must be defined here, imported, or a known primitive — never reference an undefined component.',
-                    },
-                    {
-                      role: 'user',
-                      content:
-                        // builder#531: center the window on the error's own line
-                        // instead of a flat prefix slice — a large/multi-file
-                        // generation's real defect can be well past char 8000,
-                        // which fed the repair model code that looked fine and
-                        // guaranteed every retry attempt failed the same way.
-                        `${buildRepairPrompt(message, error)}\n\nBROKEN CODE:\n\`\`\`jsx\n${extractErrorWindow(brokenCode || fullContent, error)}\n\`\`\``,
-                    },
-                  ],
-                })
+                const res = await ainativeClient.chat.completions.create(
+                  {
+                    model,
+                    max_tokens: 8192,
+                    temperature: 0.5, // lower temp on repair — favor correctness
+                    messages: [
+                      {
+                        role: 'system',
+                        content:
+                          'You fix broken React code. Return ONLY valid, complete React code wrapped in ```jsx markers. ' +
+                          'Every JSX tag closed, every string terminated, every bracket matched, and every component ' +
+                          'used in JSX must be defined here, imported, or a known primitive — never reference an undefined component.',
+                      },
+                      {
+                        role: 'user',
+                        content:
+                          // builder#531: center the window on the error's own line
+                          // instead of a flat prefix slice — a large/multi-file
+                          // generation's real defect can be well past char 8000,
+                          // which fed the repair model code that looked fine and
+                          // guaranteed every retry attempt failed the same way.
+                          `${buildRepairPrompt(message, error)}\n\nBROKEN CODE:\n\`\`\`jsx\n${extractErrorWindow(brokenCode || fullContent, error)}\n\`\`\``,
+                      },
+                    ],
+                  },
+                  { signal: AbortSignal.timeout(REPAIR_RETRY_TIMEOUT_MS) },
+                )
                 return res.choices?.[0]?.message?.content || ''
               },
               validate: (raw) => validateGeneratedCode(raw),

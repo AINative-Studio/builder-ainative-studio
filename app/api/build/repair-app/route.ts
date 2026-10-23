@@ -45,6 +45,13 @@ const ainativeClient = new OpenAI({
 
 const REPAIR_MODELS = ['qwen-coder-32b', 'gpt-oss-20b', 'ministral-14b']
 
+// #1299: this repair call had no timeout — runValidationRetryLoop (lib/
+// generation-retry.ts) has no bound of its own around the generate()
+// callback it's given, so a hung upstream call here left this request (and
+// the retry loop's maxRetries=3 budget) stuck indefinitely instead of
+// honestly failing within this route's maxDuration=120s.
+const REPAIR_CALL_TIMEOUT_MS = Number(process.env.REPAIR_CALL_TIMEOUT_MS || 30_000)
+
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null)
   const chatId = String(body?.chatId || '').trim()
@@ -62,21 +69,24 @@ export async function POST(request: NextRequest) {
         models: REPAIR_MODELS,
         prompt: extractErrorWindow(stored.code, error),
         generate: async (model, err, brokenCode) => {
-          const res = await ainativeClient.chat.completions.create({
-            model,
-            max_tokens: 8192,
-            temperature: 0.5,
-            messages: [
-              {
-                role: 'system',
-                content:
-                  'You fix broken React code. Return ONLY valid, complete React code wrapped in ```jsx markers. ' +
-                  'Every JSX tag closed, every string terminated, every bracket matched, and every component ' +
-                  'used in JSX must be defined here, imported, or a known primitive — never reference an undefined component.',
-              },
-              { role: 'user', content: buildRepairPrompt(brokenCode, err) },
-            ],
-          })
+          const res = await ainativeClient.chat.completions.create(
+            {
+              model,
+              max_tokens: 8192,
+              temperature: 0.5,
+              messages: [
+                {
+                  role: 'system',
+                  content:
+                    'You fix broken React code. Return ONLY valid, complete React code wrapped in ```jsx markers. ' +
+                    'Every JSX tag closed, every string terminated, every bracket matched, and every component ' +
+                    'used in JSX must be defined here, imported, or a known primitive — never reference an undefined component.',
+                },
+                { role: 'user', content: buildRepairPrompt(brokenCode, err) },
+              ],
+            },
+            { signal: AbortSignal.timeout(REPAIR_CALL_TIMEOUT_MS) },
+          )
           return res.choices?.[0]?.message?.content || ''
         },
         validate: (raw) => {
