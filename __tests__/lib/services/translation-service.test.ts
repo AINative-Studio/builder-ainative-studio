@@ -133,7 +133,8 @@ describe('translateToEnglish', () => {
         messages: expect.arrayContaining([
           expect.objectContaining({ role: 'system', content: expect.stringContaining('Spanish') }),
         ]),
-      })
+      }),
+      expect.objectContaining({ signal: expect.anything() })
     )
   })
 

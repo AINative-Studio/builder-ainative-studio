@@ -104,10 +104,13 @@ async function proposeBrand(idea: string, avoidNames: string[]): Promise<Brand |
   }
 
   try {
-    const res = await ainative.chat.completions.create({
-      model: 'claude-sonnet-4.5', max_tokens: 200, temperature: 0.9,
-      messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: user }],
-    })
+    const res = await ainative.chat.completions.create(
+      {
+        model: 'claude-sonnet-4.5', max_tokens: 200, temperature: 0.9,
+        messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: user }],
+      },
+      { signal: AbortSignal.timeout(BRAND_PROPOSAL_TIMEOUT_MS) },
+    )
     const j = parseJson(res.choices?.[0]?.message?.content || '')
     if (j?.name) return { name: j.name, tagline: j.tagline || '', color: sanitizeColor(j.color) }
   } catch { /* fall through — caller decides what happens on a null return */ }

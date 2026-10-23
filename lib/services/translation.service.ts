@@ -21,6 +21,11 @@ export interface TranslationResult extends LanguageDetectionResult {
   wasTranslated: boolean
 }
 
+// #1266-class bug: this call had no AbortSignal/timeout — a stalled OpenAI
+// response hung the whole translation (and its caller) indefinitely. Same
+// bug class as #1253/#1266/#1299.
+const TRANSLATION_TIMEOUT_MS = 20_000
+
 // Language detection patterns (simple keyword-based for common UI terms)
 const LANGUAGE_PATTERNS: Record<SupportedLanguage, RegExp[]> = {
   en: [
@@ -152,21 +157,24 @@ export async function translateToEnglish(
       ? languageNames[sourceLanguage]
       : 'the source language'
 
-    const response = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
-      messages: [
-        {
-          role: 'system',
-          content: `You are a translator. Translate the following text from ${sourceLangName} to English. Preserve the meaning and intent. Return ONLY the translated text, no explanations.`
-        },
-        {
-          role: 'user',
-          content: text
-        }
-      ],
-      temperature: 0.3,
-      max_tokens: 500
-    })
+    const response = await openai.chat.completions.create(
+      {
+        model: 'gpt-3.5-turbo',
+        messages: [
+          {
+            role: 'system',
+            content: `You are a translator. Translate the following text from ${sourceLangName} to English. Preserve the meaning and intent. Return ONLY the translated text, no explanations.`
+          },
+          {
+            role: 'user',
+            content: text
+          }
+        ],
+        temperature: 0.3,
+        max_tokens: 500
+      },
+      { signal: AbortSignal.timeout(TRANSLATION_TIMEOUT_MS) },
+    )
 
     const translated = response.choices[0]?.message?.content || text
 

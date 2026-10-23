@@ -767,10 +767,13 @@ export async function askCody(params: AskCodyParams): Promise<AskCodyResult | { 
       : m.content,
   }))
   try {
-    const res = await ainative.chat.completions.create({
-      model: tier.ainativeModel, max_tokens: 600, temperature: 0.7,
-      messages: [{ role: 'system', content: system }, ...fallbackMessages],
-    })
+    const res = await ainative.chat.completions.create(
+      {
+        model: tier.ainativeModel, max_tokens: 600, temperature: 0.7,
+        messages: [{ role: 'system', content: system }, ...fallbackMessages],
+      },
+      { signal: AbortSignal.timeout(ASK_TOOL_LOOP_TIMEOUT_MS) },
+    )
     const answer = res.choices?.[0]?.message?.content?.trim()
     if (answer) { await persist(answer); return { answer, provider: 'ainative', model: tier.ainativeModel } }
   } catch (e: any) {
