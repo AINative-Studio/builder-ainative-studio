@@ -948,6 +948,7 @@ const KNOWN_AVAILABLE_COMPONENTS = new Set<string>([
   'ConnectionStatus', 'AIKitHeader', 'AIKitSidebar', 'AIKitTable', 'AIKitTimeline',
   'AIKitBanner', 'AIKitAvatar', 'Skeleton', 'SkeletonCard', 'EmptyState', 'AIKitProductCard',
   'AIKitPagination', 'AIKitBreadcrumb', 'AIKitStepper', 'AgentTimeline',
+  'VideoPlayer', 'StreamingText', 'MediaGallery',
   // recharts (real names + the "Re"-prefixed aliases the prompt uses) — the
   // import injector resolves all of these, so they are effectively available.
   'ResponsiveContainer', 'LineChart', 'Line', 'BarChart', 'Bar', 'PieChart', 'Pie', 'Cell',
