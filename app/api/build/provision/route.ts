@@ -47,7 +47,7 @@
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { getPlanStatus, isPaidTier } from '@/lib/ainative/plan'
-import { resolveApp, setAppProvisioned, setAppOwner } from '@/lib/build/app-registry'
+import { resolveAppVerified, setAppProvisioned, setAppOwner } from '@/lib/build/app-registry'
 import { deployPersistent } from '@/lib/build/deploy'
 import {
   provisionInstantDb,
@@ -223,7 +223,20 @@ export async function POST(request: NextRequest) {
 
   // Resolve the company so we can attach provisioning to its registry entry and
   // hand the deploy seam its chatId. Must be registered first (built app exists).
-  const existing = await resolveApp(slug).catch(() => null)
+  //
+  // #832-class bug: resolveApp()'s plain `null` return collapses "no such
+  // company" with "the registry read itself failed" — a transient ZeroDB
+  // hiccup here used to tell a real, already-provisioned founder their
+  // company is 'not_registered' (same anti-pattern already fixed for
+  // connect-domain, backlog, and others — see #1265's sweep). The client's
+  // provisionCompany() already self-heals through this (the call is
+  // idempotent and the auto-provision effect retries with backoff), but the
+  // route itself should still tell the two cases apart rather than fabricate
+  // a confident answer.
+  const { entry: existing, verified } = await resolveAppVerified(slug).catch(
+    () => ({ entry: null as Awaited<ReturnType<typeof resolveAppVerified>>['entry'], verified: false }),
+  )
+  if (!verified) return Response.json({ ok: false, reason: 'lookup_failed' }, { status: 503 })
   if (!existing?.chatId) {
     return Response.json({ ok: false, reason: 'not_registered' }, { status: 404 })
   }
@@ -766,7 +779,17 @@ export async function POST(request: NextRequest) {
 /** GET ?slug= — read a company's current provisioning status. */
 export async function GET(request: NextRequest) {
   const slug = new URL(request.url).searchParams.get('slug') || ''
-  const entry = await resolveApp(slug).catch(() => null)
+  // #832-class bug: a transient registry-read failure must not report the
+  // same confident `{ provisioned: false }` as a genuinely unprovisioned
+  // company — Live.tsx's trial-countdown fetch and auto-provision effect
+  // both treat `checked: true, provisioned: false` as a real, resolved
+  // answer (see its own `checked` doc comment). Mirrors the honest 503
+  // already used by /api/build/visitors and /api/build/waitlist for the
+  // same class of failure.
+  const { entry, verified } = await resolveAppVerified(slug).catch(
+    () => ({ entry: null as Awaited<ReturnType<typeof resolveAppVerified>>['entry'], verified: false }),
+  )
+  if (!verified) return Response.json({ ok: false, reason: 'lookup_failed' }, { status: 503 })
   if (!entry) return Response.json({ provisioned: false })
   const isTrial = entry.keyKind === 'tmp'
   // A tmp_ trial must always report a real expiry so Live's "Free trial: Xh left"
