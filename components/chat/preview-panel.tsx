@@ -161,18 +161,6 @@ export function PreviewPanel({
                   className="w-full h-full"
                 />
               </Suspense>
-            ) : currentChat?.demo ? (
-              /* Fallback: iframe preview for older/cached previews */
-              <WebPreviewBody
-                src={
-                  currentChat.demo?.startsWith('/preview/')
-                    ? `/api${currentChat.demo}`
-                    : currentChat.demo?.startsWith('/api/preview/')
-                    ? currentChat.demo
-                    : currentChat.demo || ''
-                }
-                key={refreshKey}
-              />
             ) : useA2UI && currentChat ? (
               <A2UIPreviewWithFallback
                 chatId={currentChat.id}
@@ -193,15 +181,16 @@ export function PreviewPanel({
                 }}
               />
             ) : currentChat?.demo ? (
+              /* Fallback: iframe preview for older/cached previews */
               <WebPreviewBody
-                key={refreshKey}
-                src={currentChat.demo.startsWith('/preview/')
-                  ? `/api${currentChat.demo}`
-                  : currentChat.demo.startsWith('/api/preview/')
-                  ? currentChat.demo
-                  : currentChat.demo
+                src={
+                  currentChat.demo?.startsWith('/preview/')
+                    ? `/api${currentChat.demo}`
+                    : currentChat.demo?.startsWith('/api/preview/')
+                    ? currentChat.demo
+                    : currentChat.demo || ''
                 }
-                className="w-full h-full"
+                key={refreshKey}
               />
             ) : (
               <div className="flex-1 flex items-center justify-center">

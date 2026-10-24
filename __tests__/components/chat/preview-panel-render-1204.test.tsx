@@ -162,25 +162,26 @@ describe('PreviewPanel — real preview-mode selection + control wiring coverage
     expect(setIsFullscreen).toHaveBeenCalledWith(true)
   })
 
-  it('real finding: the A2UI toggle button exists and is clickable, but A2UI mode is genuinely unreachable in the current branch order', async () => {
-    // The outer content gate is `currentChat?.demo || useSandpack` (line 146).
-    // Inside, branch order checks useSandpack, then currentChat?.demo (the
-    // cached-iframe branch), BEFORE useA2UI is ever checked. So A2UI only
-    // gets checked when neither useSandpack nor demo won first — which can't
-    // happen, since one of them had to be true to pass the outer gate at
-    // all. Confirmed by reading the real branch order directly, not assumed.
-    // Flagging as a real, separate dead-code finding rather than fixing it
-    // inline here (out of scope for a #1204 coverage pass).
+  it('#1354 fix: clicking the A2UI toggle now actually switches the cached-iframe preview to the real A2UI mode', async () => {
+    // Branch order was fixed to check `useA2UI && currentChat` before the
+    // cached-iframe `currentChat?.demo` branch, so the toggle is no longer
+    // dead code.
     const { PreviewPanel } = await import('@/components/chat/preview-panel')
     render(React.createElement(PreviewPanel, baseProps({ currentChat: { id: 'chat-1', demo: '/preview/abc' } })))
+
+    expect(host.querySelector('iframe')).not.toBeNull()
+    expect(host.querySelector('[data-testid="stub-a2ui"]')).toBeNull()
 
     const a2uiBtn = navButton('lucide-zap')
     expect(a2uiBtn).toBeTruthy()
     await act(async () => { a2uiBtn.click() })
 
-    // Still shows the cached iframe, never the A2UI stub — the real,
-    // if surprising, behavior of this component today.
-    expect(host.querySelector('[data-testid="stub-a2ui"]')).toBeNull()
+    expect(host.querySelector('[data-testid="stub-a2ui"]')?.textContent).toBe('a2ui:chat-1')
+    expect(host.querySelector('iframe')).toBeNull()
+
+    // Toggling back off returns to the cached iframe.
+    await act(async () => { a2uiBtn.click() })
     expect(host.querySelector('iframe')).not.toBeNull()
+    expect(host.querySelector('[data-testid="stub-a2ui"]')).toBeNull()
   })
 })
