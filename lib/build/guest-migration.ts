@@ -44,16 +44,18 @@ export function collectGuestCompanySlugs(currentSlug?: string): string[] {
 
 /**
  * Migrate the guest's in-progress companies to the now-authenticated account.
- * Resolves to the server's { migrated, skipped } summary, or a null-ish result
- * on any failure. NEVER throws — the caller runs this after a successful sign-in
- * and must not let a migration hiccup surface as an auth error.
+ * Resolves to the server's { migrated, skipped, failed } summary, or a
+ * null-ish result on any failure. NEVER throws — the caller runs this after a
+ * successful sign-in and must not let a migration hiccup surface as an auth
+ * error. `failed` slugs had a transient server-side lookup failure (distinct
+ * from a confirmed `skipped`) — see migrateGuestCompanies() in app-registry.ts.
  */
 export async function migrateGuestWork(
   currentSlug?: string,
   fetchImpl: typeof fetch = fetch,
-): Promise<{ migrated: string[]; skipped: string[] } | null> {
+): Promise<{ migrated: string[]; skipped: string[]; failed: string[] } | null> {
   const slugs = collectGuestCompanySlugs(currentSlug)
-  if (slugs.length === 0) return { migrated: [], skipped: [] }
+  if (slugs.length === 0) return { migrated: [], skipped: [], failed: [] }
 
   try {
     const res = await fetchImpl('/api/build/migrate', {
@@ -67,6 +69,7 @@ export async function migrateGuestWork(
     return {
       migrated: Array.isArray(data.migrated) ? data.migrated : [],
       skipped: Array.isArray(data.skipped) ? data.skipped : [],
+      failed: Array.isArray(data.failed) ? data.failed : [],
     }
   } catch {
     return null

@@ -27,7 +27,7 @@ describe('POST /api/build/migrate (#49)', () => {
   beforeEach(() => {
     h.auth.mockReset()
     h.migrateGuestCompanies.mockReset()
-    h.migrateGuestCompanies.mockResolvedValue({ migrated: [], skipped: [] })
+    h.migrateGuestCompanies.mockResolvedValue({ migrated: [], skipped: [], failed: [] })
   })
 
   it('401 when there is no session', async () => {
@@ -48,12 +48,12 @@ describe('POST /api/build/migrate (#49)', () => {
 
   it('migrates for a real account using the SESSION email (ignores body email)', async () => {
     h.auth.mockResolvedValue({ user: { email: 'founder@acme.com', type: 'ainative' } })
-    h.migrateGuestCompanies.mockResolvedValue({ migrated: ['acme'], skipped: [] })
+    h.migrateGuestCompanies.mockResolvedValue({ migrated: ['acme'], skipped: [], failed: [] })
 
     const res = await POST(req({ slugs: ['acme', 'beta'], email: 'attacker@evil.com' }))
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body).toEqual({ ok: true, migrated: ['acme'], skipped: [] })
+    expect(body).toEqual({ ok: true, migrated: ['acme'], skipped: [], failed: [] })
 
     // Called with the session email, NOT the body-supplied one.
     const [slugsArg, emailArg] = h.migrateGuestCompanies.mock.calls[0]
@@ -63,7 +63,7 @@ describe('POST /api/build/migrate (#49)', () => {
 
   it('accepts a single { slug } and normalizes/trims it', async () => {
     h.auth.mockResolvedValue({ user: { email: 'founder@acme.com', type: 'ainative' } })
-    h.migrateGuestCompanies.mockResolvedValue({ migrated: ['acme'], skipped: [] })
+    h.migrateGuestCompanies.mockResolvedValue({ migrated: ['acme'], skipped: [], failed: [] })
     await POST(req({ slug: '  acme  ' }))
     const [slugsArg] = h.migrateGuestCompanies.mock.calls[0]
     expect(slugsArg).toEqual(['acme'])
@@ -74,7 +74,7 @@ describe('POST /api/build/migrate (#49)', () => {
     const res = await POST(req({}))
     expect(res.status).toBe(200)
     const body = await res.json()
-    expect(body).toEqual({ ok: true, migrated: [], skipped: [] })
+    expect(body).toEqual({ ok: true, migrated: [], skipped: [], failed: [] })
     expect(h.migrateGuestCompanies).not.toHaveBeenCalled()
   })
 
@@ -86,13 +86,14 @@ describe('POST /api/build/migrate (#49)', () => {
     expect(slugsArg.length).toBe(25)
   })
 
-  it('still returns ok with skipped=slugs when migrateGuestCompanies rejects', async () => {
+  it('still returns ok with failed=slugs (not skipped) when migrateGuestCompanies rejects', async () => {
     h.auth.mockResolvedValue({ user: { email: 'founder@acme.com', type: 'ainative' } })
     h.migrateGuestCompanies.mockRejectedValue(new Error('zerodb down'))
     const res = await POST(req({ slugs: ['acme'] }))
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.ok).toBe(true)
-    expect(body.skipped).toEqual(['acme'])
+    expect(body.skipped).toEqual([])
+    expect(body.failed).toEqual(['acme'])
   })
 })

@@ -44,13 +44,13 @@ describe('migrateGuestCompanies (#49)', () => {
 
   it('returns empty when no email is given (nothing to migrate into)', async () => {
     const res = await migrateGuestCompanies(['acme'], '')
-    expect(res).toEqual({ migrated: [], skipped: [] })
+    expect(res).toEqual({ migrated: [], skipped: [], failed: [] })
     expect(fetch).not.toHaveBeenCalled()
   })
 
   it('returns empty when the slug list is empty', async () => {
     const res = await migrateGuestCompanies([], 'founder@acme.com')
-    expect(res).toEqual({ migrated: [], skipped: [] })
+    expect(res).toEqual({ migrated: [], skipped: [], failed: [] })
     expect(fetch).not.toHaveBeenCalled()
   })
 
@@ -118,20 +118,23 @@ describe('migrateGuestCompanies (#49)', () => {
     // #1172: resolveApp()'s underlying fetchAllRegistryRows() fetches the
     // WHOLE table and filters client-side — the real server never returns a
     // different, slug-filtered row set per call, and the registry-read cache
-    // now shares one fetch across calls made close together (this loop's
-    // four sequential resolveApp() calls). So every GET in this test must
-    // return the SAME full table; the per-slug filtering happens in
-    // resolveApp itself, exactly as it does against the real API. "ghost" is
-    // genuinely absent from the table (never registered), matching its
-    // expected skip below.
-    const fullTable = rowsResponse([
+    // shares one fetch across calls made close together. So every GET in this
+    // test must return the SAME full table; the per-slug filtering happens in
+    // resolveAppVerified itself, exactly as it does against the real API.
+    // "ghost" is genuinely absent from the table (never registered), matching
+    // its expected skip below.
+    const fullTable = () => rowsResponse([
       row('mine', { ownerEmail: 'founder@acme.com' }),
       row('free'),
       row('rival', { ownerEmail: 'x@y.com' }),
     ])
     fetchMock
-      .mockResolvedValueOnce(fullTable) // mine: GET (shared/cached across this burst)
-      .mockResolvedValueOnce(okResponse()) // free: POST claim
+      .mockResolvedValueOnce(fullTable()) // mine: GET (shared/cached across this burst)
+      .mockResolvedValueOnce(okResponse()) // free: POST claim — registerApp() clears the
+      // registry cache on a successful write (#49's own invalidation, so a write is never
+      // immediately followed by a stale read), so the remaining slugs below force a REAL
+      // re-fetch rather than reusing the first GET.
+      .mockResolvedValueOnce(fullTable()) // rival/ghost: re-GET after the cache invalidation
 
     const res = await migrateGuestCompanies(['mine', 'free', 'rival', 'ghost'], 'founder@acme.com')
     expect(res.migrated.sort()).toEqual(['free', 'mine'])
@@ -145,5 +148,29 @@ describe('migrateGuestCompanies (#49)', () => {
     const res = await migrateGuestCompanies(['acme'], 'founder@acme.com')
     expect(res.migrated).toEqual([])
     expect(res.skipped).toEqual(['acme'])
+    expect(res.failed).toEqual([])
+  })
+
+  it('#832-class: marks a slug FAILED (not skipped) when the registry READ itself fails — ' +
+    'a transient lookup failure during sign-in must never look identical to "not yours"/"never existed"', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    // resolveAppVerified's underlying fetchAllRegistryRows() gets a non-ok
+    // response → verified: false, not a confirmed miss.
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503, text: async () => '' } as unknown as Response)
+    const res = await migrateGuestCompanies(['acme'], 'founder@acme.com')
+    expect(res.migrated).toEqual([])
+    expect(res.skipped).toEqual([])
+    expect(res.failed).toEqual(['acme'])
+    const posts = fetchMock.mock.calls.filter((c: any[]) => c[1]?.method === 'POST')
+    expect(posts.length).toBe(0)
+  })
+
+  it('#832-class: a thrown error on the lookup also lands in failed, never skipped', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockRejectedValueOnce(new Error('network down'))
+    const res = await migrateGuestCompanies(['acme'], 'founder@acme.com')
+    expect(res.migrated).toEqual([])
+    expect(res.skipped).toEqual([])
+    expect(res.failed).toEqual(['acme'])
   })
 })
