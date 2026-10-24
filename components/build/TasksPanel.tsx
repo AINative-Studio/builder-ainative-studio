@@ -71,6 +71,12 @@ export function TasksPanel({ companyId }: { companyId: string }) {
   const [tasks, setTasks] = useState<BuildTask[]>([])
   const [counts, setCounts] = useState<Record<string, number>>({})
   const [loaded, setLoaded] = useState(false)
+  // A failed load (non-ok response, or the fetch itself throwing) used to be
+  // swallowed into the same empty `tasks: []` shape as a genuinely empty
+  // backlog — showing "No tasks yet" when the real answer was "couldn't
+  // check." This tells the two apart (same fix shape as WaitlistPanel/
+  // VisitorsPanel/GrowthPanel).
+  const [loadError, setLoadError] = useState(false)
   const [tab, setTab] = useState<FilterTab>('all')
   const [selected, setSelected] = useState<BuildTask | null>(null)
 
@@ -78,14 +84,15 @@ export function TasksPanel({ companyId }: { companyId: string }) {
     let alive = true
     setLoaded(false)
     fetch(`/api/build/tasks?companyId=${encodeURIComponent(companyId)}`)
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`load failed: ${r.status}`))))
       .then((d) => {
         if (!alive) return
         setTasks(Array.isArray(d?.tasks) ? d.tasks : [])
         setCounts(d?.counts && typeof d.counts === 'object' ? d.counts : {})
+        setLoadError(false)
         setLoaded(true)
       })
-      .catch(() => { if (alive) setLoaded(true) })
+      .catch(() => { if (alive) { setLoadError(true); setLoaded(true) } })
     return () => { alive = false }
   }, [companyId])
 
@@ -135,13 +142,17 @@ export function TasksPanel({ companyId }: { companyId: string }) {
       </div>
 
       {/* Body: honest empty state, or the filtered task cards. */}
-      {loaded && total === 0 ? (
+      {!loaded ? (
+        <p className="m-mono m-task-empty" data-testid="tasks-loading">loading tasks…</p>
+      ) : loadError ? (
+        <p className="m-mono m-task-empty" data-testid="tasks-error">
+          Couldn&apos;t load your tasks right now — try refreshing.
+        </p>
+      ) : total === 0 ? (
         <p className="m-mono m-task-empty" data-testid="tasks-empty">
           No tasks yet. As Cody and the swarm work on {companyId ? 'your company' : 'this company'},
           dispatched tasks appear here with live status. Enroll the nightly loop and it shows as a Recurring task.
         </p>
-      ) : !loaded ? (
-        <p className="m-mono m-task-empty" data-testid="tasks-loading">loading tasks…</p>
       ) : visible.length === 0 ? (
         <p className="m-mono m-task-empty" data-testid="tasks-stage-empty">
           No {STAGE_LABELS[(tab as TaskStage)] || 'matching'} tasks.
