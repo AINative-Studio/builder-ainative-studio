@@ -1493,7 +1493,18 @@ export async function fulfillPaidPlan(
   // form is what lands on the row from here on.
   const plan = canonicalPaidPlan(rawPlan)
 
-  const existing = await resolveApp(slug).catch(() => null)
+  // #832-class bug: the caller (POST /api/webhooks/stripe) already confirms
+  // this slug exists via resolveAppVerified() before calling in — but this
+  // function used to re-resolve it with a plain `resolveApp(slug).catch(() =>
+  // null)`, whose single `null` collapses "confirmed not registered" with "the
+  // registry read itself failed." A transient hiccup on THIS second lookup
+  // reported `not_registered`, which the webhook route treats as a
+  // deterministic refusal (200 ack, no retry) — silently discarding a real
+  // payment for a company the caller had just verified exists. Using
+  // resolveAppVerified() here too lets the caller distinguish the two.
+  const lookup = await resolveAppVerified(slug).catch(() => ({ entry: null, verified: false }))
+  if (!lookup.verified) return { ...base, reason: 'lookup_failed' }
+  const existing = lookup.entry
   if (!existing) return { ...base, reason: 'not_registered' }
 
   let planSet = false

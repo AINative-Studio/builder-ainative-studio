@@ -116,6 +116,26 @@ describe('fulfillPaidPlan (#1012)', () => {
     expect(r).toEqual({ ok: false, planSet: false, keyClaimed: false, keyClaimPending: false, reason: 'not_registered' })
   })
 
+  it('reports lookup_failed (never not_registered) when the registry read itself fails, not a confirmed miss', async () => {
+    // #832-class bug: a transient registry-read failure used to be
+    // indistinguishable from a confirmed "no such company" — both collapsed
+    // to a plain `null` and the same `not_registered` reason, which the
+    // webhook route (app/api/webhooks/stripe/route.ts) treats as a
+    // deterministic refusal and ACKs 200, permanently discarding a real
+    // payment. Simulate the registry rows GET itself failing (not an empty
+    // result).
+    h.fetchMock.mockImplementation(async () => {
+      throw new Error('ZeroDB unreachable')
+    })
+    const { fulfillPaidPlan } = await import('@/lib/build/app-registry')
+    const r = await fulfillPaidPlan('agentive', 'pro')
+    expect(r.reason).toBe('lookup_failed')
+    expect(r.reason).not.toBe('not_registered')
+    expect(r.ok).toBe(false)
+    expect(r.planSet).toBe(false)
+    expect(writtenRows()).toHaveLength(0)
+  })
+
   it('refuses a plan id that is not a real paid tier (never stamps a free plan)', async () => {
     stubRegistry(TMP_APP)
     const { fulfillPaidPlan } = await import('@/lib/build/app-registry')
