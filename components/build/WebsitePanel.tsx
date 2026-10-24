@@ -107,6 +107,12 @@ export function WebsitePanel({
   // ---- Brand / Logo (D, #492) ----
   const [logoUrl, setLogoUrl] = useState<string | null>(null)
   const [logoLoaded, setLogoLoaded] = useState(false)
+  // A failed logo load (non-ok response, or a thrown fetch) used to be
+  // swallowed into the same `logoUrl: null` shape as "no logo set," so a
+  // founder who already uploaded a logo saw "Upload a logo" (not "Replace
+  // logo") with no current-logo thumbnail and no indication anything was
+  // wrong. Same fix shape as the Secrets section just above.
+  const [logoLoadError, setLogoLoadError] = useState(false)
   const [logoBusy, setLogoBusy] = useState(false)
   const [logoNotice, setLogoNotice] = useState('')
   const logoInputRef = useRef<HTMLInputElement>(null)
@@ -134,9 +140,9 @@ export function WebsitePanel({
   const loadLogo = useCallback(() => {
     let alive = true
     fetch(`/api/build/logo?companyId=${encodeURIComponent(companyId)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (alive) { setLogoUrl(d?.url || null); setLogoLoaded(true) } })
-      .catch(() => { if (alive) setLogoLoaded(true) })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`load failed: ${r.status}`))))
+      .then((d) => { if (alive) { setLogoUrl(d?.url || null); setLogoLoadError(false); setLogoLoaded(true) } })
+      .catch(() => { if (alive) { setLogoLoadError(true); setLogoLoaded(true) } })
     return () => { alive = false }
   }, [companyId])
 
@@ -388,6 +394,11 @@ export function WebsitePanel({
           <p className="m-mono m-task-empty" data-testid="logo-loading">loading logo…</p>
         ) : (
           <>
+            {logoLoadError && (
+              <p className="m-mono m-ver-status is-error" data-testid="logo-load-error">
+                Couldn&apos;t check your current logo — it may already be set. Try refreshing before uploading.
+              </p>
+            )}
             {logoUrl && (
               <a
                 className="m-media-thumb-link"
