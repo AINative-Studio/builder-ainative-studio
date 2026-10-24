@@ -27,7 +27,7 @@ export function Pipeline() {
       </div>
       <div className="m-kanban m-seams">
         {COLUMNS.map((col) => {
-          const total = col.deals.reduce((s, d) => s + parseInt(d.v) || 0, 0)
+          const total = col.deals.reduce((s, d) => s + (parseInt(d.v.replace(/[^0-9]/g, ''), 10) || 0), 0)
           return (
             <div key={col.stage} className="m-kan-col">
               <div className="m-kan-head m-mono">{col.stage} · {col.deals.length} · ${total}k</div>
