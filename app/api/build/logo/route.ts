@@ -140,9 +140,22 @@ export async function POST(request: NextRequest) {
   }
 
   const url = logoAssetUrl(fileId)
-  const saved = await setAppLogo(companyId, { logoUrl: url, logoFileId: fileId })
+  const result = await setAppLogo(companyId, { logoUrl: url, logoFileId: fileId })
 
   // The file exists and its url works even if the registry write hiccuped —
   // return the url either way and be honest about whether it's durably saved.
-  return Response.json({ url, saved })
+  //
+  // #1486: `saved: false` used to be the ONLY signal here, so a transient
+  // registry READ failure inside setAppLogo (which skips the write entirely)
+  // was indistinguishable from the write itself failing — both rendered as
+  // the flat, unactionable "I couldn't save that logo." setAppLogo now
+  // reports WHICH happened, so a retryable hiccup says so.
+  return Response.json({
+    url,
+    saved: result.ok,
+    ...(result.ok ? {} : { reason: result.reason }),
+    ...(result.reason === 'lookup_failed'
+      ? { retryable: true, message: 'Your logo uploaded, but I couldn’t reach the company registry to save it — try again shortly.' }
+      : {}),
+  })
 }

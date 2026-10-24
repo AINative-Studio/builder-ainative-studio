@@ -359,6 +359,73 @@ export async function registerApp(e: Omit<AppEntry, 'createdAt'>): Promise<boole
 }
 
 /**
+ * The ONE read-before-write lookup every `setApp*` setter in this file uses
+ * (#1486, #832-class).
+ *
+ * THE BUG THIS CLOSES: all ~24 setters here share the shape
+ *
+ *     const existing = await resolveApp(slug)
+ *     if (!existing) return false
+ *
+ * and `resolveApp()`'s single `null` collapses "no such company" with "the
+ * registry read itself failed" (see resolveAppVerified's doc comment). A
+ * transient ZeroDB hiccup on that read therefore made every one of these
+ * setters return `false`, which each caller reports as a generic WRITE
+ * failure — "I couldn't save that logo" — when the write was never attempted
+ * and the real cause was an unrelated, transient READ failure.
+ *
+ * Severity note (why this is a one-pass fix and not a #1454-class emergency):
+ * the collapse here is in the SAFE direction by construction. A failed lookup
+ * can only make a setter no-op (write nothing, return false) — it can never
+ * write wrong data or act on the wrong company, because `existing` is the
+ * base object being spread into the write. So this is a message-honesty bug,
+ * not a data-safety one.
+ *
+ * WHAT THIS RETURNS: the resolved entry plus `verified`, so a setter can tell
+ * its caller (or at minimum this file's own log) which of the two happened.
+ * `reason` is the string a richer-returning setter surfaces verbatim.
+ *
+ * WHY IT LOGS HERE rather than at each of 24 call sites: these setters are
+ * overwhelmingly called fire-and-forget (`.catch(() => {})`) by routes that
+ * have ALREADY resolved the company with `resolveAppVerified()` and failed
+ * closed with a 503 before calling in (comms-mode, zeroinvoice, danger-zone,
+ * connect-domain). For those, the setter's own boolean never reaches a human,
+ * so widening ~24 signatures would be churn with no user-visible payoff —
+ * but a server-side log still turns an otherwise-invisible transient read
+ * failure into something diagnosable. `op` names the setter so the log line
+ * identifies which write was skipped.
+ *
+ * Uses `console.warn` deliberately, NOT `@/lib/logger`: this module is
+ * statically imported by `middleware.ts` (Edge runtime), and lib/logger pulls
+ * in pino + a Drizzle/Postgres connection — a Node-only dependency that
+ * breaks the Railway build from here (the same Edge-runtime constraint
+ * already documented on claimCompanyProject's dynamic imports below).
+ */
+async function resolveAppForWrite(
+  slug: string,
+  op: string,
+): Promise<{ entry: AppEntry | null; verified: boolean; reason?: 'lookup_failed' | 'not_registered' }> {
+  const lookup = await resolveAppVerified(slug).catch(() => ({ entry: null, verified: false }))
+  if (!lookup.verified) {
+    console.warn(
+      `[app-registry] ${op}(${slug}): registry lookup FAILED (transient) — write skipped, not a confirmed-missing company`,
+    )
+    return { entry: null, verified: false, reason: 'lookup_failed' }
+  }
+  if (!lookup.entry) return { entry: null, verified: true, reason: 'not_registered' }
+  return { entry: lookup.entry, verified: true }
+}
+
+/** The honest outcome of a registry write that had to read first (#1486).
+ *  `lookup_failed` is RETRYABLE (the read hiccuped, the write never ran);
+ *  `not_registered` is a confirmed, deterministic refusal. */
+export type RegistryWriteReason = 'lookup_failed' | 'not_registered' | 'write_failed' | 'invalid_input'
+export interface RegistryWriteResult {
+  ok: boolean
+  reason?: RegistryWriteReason
+}
+
+/**
  * Persist a founder-uploaded logo / brand mark on a company (#492). Appends an
  * updated row carrying the existing entry plus the new logoUrl/logoFileId, so
  * resolveApp() (latest-wins) surfaces it on the next dashboard load. No-op
@@ -366,22 +433,30 @@ export async function registerApp(e: Omit<AppEntry, 'createdAt'>): Promise<boole
  *
  * Idempotent no-op success (true) when the SAME fileId is already stored, so
  * re-reading the current logo never appends a churn row.
+ *
+ * #1486: returns the honest {ok, reason} rather than a bare boolean — this is
+ * the one setter in this file whose return value IS a founder-facing message
+ * (POST /api/build/logo echoes it as `saved`, which the upload UI renders as
+ * "I couldn't save that logo"). A transient registry read hiccup used to be
+ * indistinguishable there from a real write failure; `reason:
+ * 'lookup_failed'` lets that route tell the founder to retry instead.
  */
 export async function setAppLogo(
   slug: string,
   fields: { logoUrl: string; logoFileId?: string },
-): Promise<boolean> {
+): Promise<RegistryWriteResult> {
   const logoUrl = (fields.logoUrl || '').trim()
-  if (!logoUrl) return false
-  const existing = await resolveApp(slug)
-  if (!existing) return false
-  if (existing.logoUrl === logoUrl && existing.logoFileId === fields.logoFileId) return true
-  return registerApp({
+  if (!logoUrl) return { ok: false, reason: 'invalid_input' }
+  const { entry: existing, reason } = await resolveAppForWrite(slug, 'setAppLogo')
+  if (!existing) return { ok: false, reason }
+  if (existing.logoUrl === logoUrl && existing.logoFileId === fields.logoFileId) return { ok: true }
+  const ok = await registerApp({
     ...existing,
     logoUrl,
     logoFileId: fields.logoFileId,
     logoUpdatedAt: new Date().toISOString(),
   })
+  return { ok, reason: ok ? undefined : 'write_failed' }
 }
 
 /**
@@ -399,7 +474,7 @@ export async function setAppEmailUndeliverable(
   slug: string,
   reason: string,
 ): Promise<boolean> {
-  const existing = await resolveApp(slug)
+  const { entry: existing } = await resolveAppForWrite(slug, 'setAppEmailUndeliverable')
   if (!existing) return false
   if (existing.emailUndeliverableReason === reason && existing.emailUndeliverableAt) return true
   return registerApp({
@@ -454,7 +529,7 @@ export async function markEmailUndeliverableForAddress(
  * registered.
  */
 export async function setAppCommsOptOut(slug: string, optOut: boolean): Promise<boolean> {
-  const existing = await resolveApp(slug)
+  const { entry: existing } = await resolveAppForWrite(slug, 'setAppCommsOptOut')
   if (!existing) return false
   if ((existing.commsOptOut ?? false) === optOut) return true
   return registerApp({
@@ -470,7 +545,7 @@ export async function setAppCommsOptOut(slug: string, optOut: boolean): Promise<
  * (latest-wins) surfaces it. No-op (returns false) if the slug isn't registered.
  */
 export async function setAppDomain(slug: string, domain: string): Promise<boolean> {
-  const existing = await resolveApp(slug)
+  const { entry: existing } = await resolveAppForWrite(slug, 'setAppDomain')
   if (!existing) return false
   return registerApp({ ...existing, domain })
 }
@@ -486,7 +561,7 @@ export async function setAppDomain(slug: string, domain: string): Promise<boolea
  * registration that missed the field entirely.
  */
 export async function setAppIdea(slug: string, idea: string): Promise<boolean> {
-  const existing = await resolveApp(slug)
+  const { entry: existing } = await resolveAppForWrite(slug, 'setAppIdea')
   if (!existing) return false
   if (existing.idea) return true // already has one — never overwrite a real idea
   return registerApp({ ...existing, idea })
@@ -504,7 +579,7 @@ export async function setAppLifecycle(
   slug: string,
   status: 'active' | 'offline' | 'deleted',
 ): Promise<boolean> {
-  const existing = await resolveApp(slug)
+  const { entry: existing } = await resolveAppForWrite(slug, 'setAppLifecycle')
   if (!existing) return false
   if ((existing.lifecycleStatus || 'active') === status) return true
   return registerApp({ ...existing, lifecycleStatus: status, lifecycleAt: new Date().toISOString() })
@@ -525,7 +600,7 @@ export async function setAppByoDomain(
 ): Promise<boolean> {
   const host = (fields.domain || '').trim().toLowerCase()
   if (!host) return false
-  const existing = await resolveApp(slug)
+  const { entry: existing } = await resolveAppForWrite(slug, 'setAppByoDomain')
   if (!existing) return false
   // Nothing changed → skip the write (avoid churn on repeat polls).
   if (
@@ -555,7 +630,7 @@ export async function setAppZeroVoice(
   fields: { numberId: string; e164: string },
 ): Promise<boolean> {
   if (!fields.numberId || !fields.e164) return false
-  const existing = await resolveApp(slug)
+  const { entry: existing } = await resolveAppForWrite(slug, 'setAppZeroVoice')
   if (!existing) return false
   // Already recorded this exact number → nothing to write.
   if (existing.zerovoiceNumberId === fields.numberId) return true
@@ -580,7 +655,7 @@ export async function setAppCommsMode(
   mode: 'agile' | 'pairProgramming',
 ): Promise<boolean> {
   if (mode !== 'agile' && mode !== 'pairProgramming') return false
-  const existing = await resolveApp(slug)
+  const { entry: existing } = await resolveAppForWrite(slug, 'setAppCommsMode')
   if (!existing) return false
   if ((existing.commsMode || 'agile') === mode) return true
   return registerApp({ ...existing, commsMode: mode })
@@ -595,7 +670,7 @@ export async function setAppCommsMode(
  */
 export async function setAppLastDigestAt(slug: string, atIso: string): Promise<boolean> {
   if (!atIso) return false
-  const existing = await resolveApp(slug)
+  const { entry: existing } = await resolveAppForWrite(slug, 'setAppLastDigestAt')
   if (!existing) return false
   return registerApp({ ...existing, lastDigestAt: atIso })
 }
@@ -619,7 +694,7 @@ export async function setAppWiring(
   slug: string,
   flags: Record<string, boolean>,
 ): Promise<boolean> {
-  const existing = await resolveApp(slug)
+  const { entry: existing } = await resolveAppForWrite(slug, 'setAppWiring')
   if (!existing) return false
   const existingRecord = existing as unknown as Record<string, unknown>
   const unchanged = existing.wiringScannedAt && Object.entries(flags).every(
@@ -644,7 +719,7 @@ export async function setAppGrowthAdTest(
   fields: { campaignId: string },
 ): Promise<boolean> {
   if (!fields.campaignId) return false
-  const existing = await resolveApp(slug)
+  const { entry: existing } = await resolveAppForWrite(slug, 'setAppGrowthAdTest')
   if (!existing) return false
   if (existing.growthAdTestCampaignId === fields.campaignId) return true
   return registerApp({
@@ -665,7 +740,7 @@ export async function setAppGrowthAdBudgetFunded(
   fields: { paymentIntentId: string; requestedCents: number; realCents: number },
 ): Promise<boolean> {
   if (!fields.paymentIntentId) return false
-  const existing = await resolveApp(slug)
+  const { entry: existing } = await resolveAppForWrite(slug, 'setAppGrowthAdBudgetFunded')
   if (!existing) return false
   if (existing.growthAdBudgetPaymentIntentId === fields.paymentIntentId) return true
   return registerApp({
@@ -682,7 +757,7 @@ export async function setAppGrowthAdInsights(
   slug: string,
   fields: { clicks: number; cpcCents: number },
 ): Promise<boolean> {
-  const existing = await resolveApp(slug)
+  const { entry: existing } = await resolveAppForWrite(slug, 'setAppGrowthAdInsights')
   if (!existing) return false
   return registerApp({
     ...existing,
@@ -700,7 +775,7 @@ export async function setAppGrowthAdInsights(
  * redirect itself.
  */
 export async function setAppZeroInvoiceConnectClicked(slug: string): Promise<boolean> {
-  const existing = await resolveApp(slug)
+  const { entry: existing } = await resolveAppForWrite(slug, 'setAppZeroInvoiceConnectClicked')
   if (!existing) return false
   return registerApp({
     ...existing,
@@ -715,7 +790,7 @@ export async function setAppZeroInvoiceConnectClicked(slug: string): Promise<boo
  * company, right after successfully creating a twin).
  */
 export async function setAppContentWorkflowTwinId(slug: string, twinId: string): Promise<boolean> {
-  const existing = await resolveApp(slug)
+  const { entry: existing } = await resolveAppForWrite(slug, 'setAppContentWorkflowTwinId')
   if (!existing) return false
   return registerApp({
     ...existing,
@@ -731,7 +806,7 @@ export async function setAppContentWorkflowTwinId(slug: string, twinId: string):
  * platform-verified state, only ever a founder's own honest report.
  */
 export async function setAppZeroInvoiceConnectConfirmed(slug: string): Promise<boolean> {
-  const existing = await resolveApp(slug)
+  const { entry: existing } = await resolveAppForWrite(slug, 'setAppZeroInvoiceConnectConfirmed')
   if (!existing) return false
   return registerApp({
     ...existing,
@@ -749,7 +824,7 @@ export async function setAppZeroInvoiceConnectConfirmed(slug: string): Promise<b
 export async function setAppOwner(slug: string, ownerEmail: string): Promise<boolean> {
   const email = (ownerEmail || '').trim().toLowerCase()
   if (!email) return false
-  const existing = await resolveApp(slug)
+  const { entry: existing } = await resolveAppForWrite(slug, 'setAppOwner')
   if (!existing) return false
   if ((existing.ownerEmail || '').toLowerCase() === email) return true
   return registerApp({ ...existing, ownerEmail: email })
@@ -1021,7 +1096,7 @@ export async function listAllAppsWithStatus(): Promise<{ apps: AppEntry[]; ok: b
  * No-op (false) if slug isn't registered.
  */
 export async function setAppPlan(slug: string, plan: string): Promise<boolean> {
-  const existing = await resolveApp(slug)
+  const { entry: existing } = await resolveAppForWrite(slug, 'setAppPlan')
   if (!existing) return false
   // #841: Pro and up auto-enroll into the nightly improvement loop (was
   // Business+ only).
@@ -1134,7 +1209,7 @@ export async function setAppProvisioned(
     railwayDeployedAt?: string
   },
 ): Promise<boolean> {
-  const existing = await resolveApp(slug)
+  const { entry: existing } = await resolveAppForWrite(slug, 'setAppProvisioned')
   if (!existing) return false
   return registerApp({
     ...existing,
@@ -1166,7 +1241,7 @@ export async function setAppRailwayService(
   fields: { railwayServiceId: string; deployUrl?: string; domain?: string },
 ): Promise<boolean> {
   if (!fields.railwayServiceId) return false
-  const existing = await resolveApp(slug)
+  const { entry: existing } = await resolveAppForWrite(slug, 'setAppRailwayService')
   if (!existing) return false
   // Already recorded this exact service → nothing to write.
   if (existing.railwayServiceId === fields.railwayServiceId) return true
@@ -1194,7 +1269,7 @@ export async function setAppGitRepo(
   fields: { gitRepoUrl: string; gitRepoId: string; gitOrg: string },
 ): Promise<boolean> {
   if (!fields.gitRepoUrl || !fields.gitRepoId || !fields.gitOrg) return false
-  const existing = await resolveApp(slug)
+  const { entry: existing } = await resolveAppForWrite(slug, 'setAppGitRepo')
   if (!existing) return false
   // Already recorded this exact repo → nothing to write.
   if (existing.gitRepoId === fields.gitRepoId) return true
@@ -1223,8 +1298,17 @@ export async function claimCompanyProject(
   slug: string,
   jwt: string,
 ): Promise<{ ok: boolean; claimed: boolean; reason?: string }> {
-  const existing = await resolveApp(slug)
-  if (!existing) return { ok: false, claimed: false, reason: 'not_registered' }
+  // #1486: `reason` here is already a free-form string every caller only ever
+  // logs, so distinguishing the transient read from a confirmed-missing
+  // company costs nothing and breaks no contract. It matters on this path in
+  // particular — the caller (subscription/verify) treats a non-ok claim as
+  // terminal for that checkout round-trip, and there is no webhook retry
+  // behind it (see reconcilePlanFulfillment's doc comment), so a read hiccup
+  // mislabeled `not_registered` is indistinguishable in the logs from a
+  // genuinely unregistered slug when someone later debugs why a real paying
+  // founder never got their permanent key.
+  const { entry: existing, reason: lookupReason } = await resolveAppForWrite(slug, 'claimCompanyProject')
+  if (!existing) return { ok: false, claimed: false, reason: lookupReason }
   // Nothing to claim: never provisioned, or already permanent.
   if (!existing.zerodbProjectId || existing.keyKind !== 'tmp') {
     return { ok: true, claimed: false, reason: existing.keyKind === 'permanent' ? 'already_permanent' : 'not_tmp' }
@@ -1380,7 +1464,15 @@ export async function reconcilePlanFulfillment(
   const plan = canonicalPaidPlan(corePlan)
 
   try {
-    const existing = await resolveApp(slug)
+    // #1486: log-only here by design. This function's contract is
+    // deliberately "best-effort and silent on failure" (see the doc comment
+    // above) — it runs on every Live dashboard load and must never turn a
+    // plain page load into a visible error, so there is no honest caller-
+    // facing distinction to surface. resolveAppForWrite still separates the
+    // transient read from a confirmed-missing company in the server log,
+    // which is what someone debugging "why is this paying founder still on
+    // keyKind: tmp" actually needs.
+    const { entry: existing } = await resolveAppForWrite(slug, 'reconcilePlanFulfillment')
     if (!existing) return { planFixed, keyClaimed }
 
     if (existing.plan !== plan) {

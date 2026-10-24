@@ -33,13 +33,16 @@ describe('setAppLogo (#492)', () => {
   it('no-op (false) when the slug is not registered', async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValueOnce(rowsResponse([]))
-    const ok = await setAppLogo('ghost', { logoUrl: '/api/build/logo?id=abc' })
-    expect(ok).toBe(false)
+    const res = await setAppLogo('ghost', { logoUrl: '/api/build/logo?id=abc' })
+    expect(res.ok).toBe(false)
+    // #1486: a CONFIRMED-absent company still reports the same refusal as before.
+    expect(res.reason).toBe('not_registered')
   })
 
   it('no-op (false) when no logoUrl provided (no fetch)', async () => {
-    const ok = await setAppLogo('acme', { logoUrl: '' })
-    expect(ok).toBe(false)
+    const res = await setAppLogo('acme', { logoUrl: '' })
+    expect(res.ok).toBe(false)
+    expect(res.reason).toBe('invalid_input')
     expect(fetch).not.toHaveBeenCalled()
   })
 
@@ -49,11 +52,11 @@ describe('setAppLogo (#492)', () => {
       rowsResponse([{ slug: 'acme', chatId: 'chat-1', createdAt: '2026-08-01T00:00:00Z' }]),
     )
     fetchMock.mockResolvedValueOnce(okResponse())
-    const ok = await setAppLogo('acme', {
+    const res = await setAppLogo('acme', {
       logoUrl: '/api/build/logo?id=bca483b8-8c88-46a7-b226-bcfedf3c8a15',
       logoFileId: 'bca483b8-8c88-46a7-b226-bcfedf3c8a15',
     })
-    expect(ok).toBe(true)
+    expect(res.ok).toBe(true)
     const postCall = fetchMock.mock.calls.find((c: any[]) => c[1]?.method === 'POST')
     const body = JSON.parse(String(postCall?.[1]?.body || '{}'))
     expect(body.row_data.logoUrl).toBe('/api/build/logo?id=bca483b8-8c88-46a7-b226-bcfedf3c8a15')
@@ -86,8 +89,8 @@ describe('setAppLogo (#492)', () => {
         logoUrl: '/api/build/logo?id=abc', logoFileId: 'abc',
       }]),
     )
-    const ok = await setAppLogo('acme', { logoUrl: '/api/build/logo?id=abc', logoFileId: 'abc' })
-    expect(ok).toBe(true)
+    const res = await setAppLogo('acme', { logoUrl: '/api/build/logo?id=abc', logoFileId: 'abc' })
+    expect(res.ok).toBe(true)
     // No POST — nothing changed.
     const postCall = fetchMock.mock.calls.find((c: any[]) => c[1]?.method === 'POST')
     expect(postCall).toBeUndefined()
@@ -102,8 +105,8 @@ describe('setAppLogo (#492)', () => {
       }]),
     )
     fetchMock.mockResolvedValueOnce(okResponse())
-    const ok = await setAppLogo('acme', { logoUrl: '/api/build/logo?id=new', logoFileId: 'new' })
-    expect(ok).toBe(true)
+    const res = await setAppLogo('acme', { logoUrl: '/api/build/logo?id=new', logoFileId: 'new' })
+    expect(res.ok).toBe(true)
     const postCall = fetchMock.mock.calls.find((c: any[]) => c[1]?.method === 'POST')
     expect(postCall).toBeDefined()
     const body = JSON.parse(String(postCall?.[1]?.body || '{}'))

@@ -242,7 +242,7 @@ describe('#1202 POST /api/build/logo', () => {
     auth.auth.mockResolvedValue({ user: { email: 'founder@x.com' } })
     appRegistry.resolveAppVerified.mockResolvedValue(verified({ ownerEmail: 'founder@x.com' }))
     mediaSchedule.uploadMediaFile.mockResolvedValue('file-id-123')
-    appRegistry.setAppLogo.mockResolvedValue(true)
+    appRegistry.setAppLogo.mockResolvedValue({ ok: true })
     const { POST } = await import('@/app/api/build/logo/route')
 
     const file = new File([new Uint8Array([1, 2, 3])], 'logo.png', { type: 'image/png' })
@@ -252,5 +252,47 @@ describe('#1202 POST /api/build/logo', () => {
     const body = await res.json()
     expect(body.url).toContain('file-id-123')
     expect(body.saved).toBe(true)
+  })
+
+  /**
+   * #1486 — setAppLogo's boolean used to collapse "this company isn't
+   * registered" and "the registry READ hiccuped, so the write never ran" into
+   * the same `saved: false`, which this route rendered as the flat,
+   * unactionable "I couldn't save that logo." The two now read differently.
+   */
+  it('reports a transient registry lookup failure as retryable, not a flat save failure (#1486)', async () => {
+    auth.auth.mockResolvedValue({ user: { email: 'founder@x.com' } })
+    appRegistry.resolveAppVerified.mockResolvedValue(verified({ ownerEmail: 'founder@x.com' }))
+    mediaSchedule.uploadMediaFile.mockResolvedValue('file-id-123')
+    appRegistry.setAppLogo.mockResolvedValue({ ok: false, reason: 'lookup_failed' })
+    const { POST } = await import('@/app/api/build/logo/route')
+
+    const file = new File([new Uint8Array([1, 2, 3])], 'logo.png', { type: 'image/png' })
+    const res = await POST(multipartRequest('http://localhost/api/build/logo', { companyId: 'acme', file }))
+
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    // The uploaded file still exists and its url still works.
+    expect(body.url).toContain('file-id-123')
+    expect(body.saved).toBe(false)
+    expect(body.reason).toBe('lookup_failed')
+    expect(body.retryable).toBe(true)
+    expect(String(body.message)).toMatch(/try again/i)
+  })
+
+  it('a confirmed-unregistered company is NOT reported as retryable (#1486)', async () => {
+    auth.auth.mockResolvedValue({ user: { email: 'founder@x.com' } })
+    appRegistry.resolveAppVerified.mockResolvedValue(verified({ ownerEmail: 'founder@x.com' }))
+    mediaSchedule.uploadMediaFile.mockResolvedValue('file-id-123')
+    appRegistry.setAppLogo.mockResolvedValue({ ok: false, reason: 'not_registered' })
+    const { POST } = await import('@/app/api/build/logo/route')
+
+    const file = new File([new Uint8Array([1, 2, 3])], 'logo.png', { type: 'image/png' })
+    const res = await POST(multipartRequest('http://localhost/api/build/logo', { companyId: 'acme', file }))
+
+    const body = await res.json()
+    expect(body.saved).toBe(false)
+    expect(body.reason).toBe('not_registered')
+    expect(body.retryable).toBeUndefined()
   })
 })
