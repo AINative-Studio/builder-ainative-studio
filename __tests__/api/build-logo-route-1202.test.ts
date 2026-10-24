@@ -94,7 +94,7 @@ describe('#1202 GET /api/build/logo', () => {
   })
 
   it("returns the company's current logo url", async () => {
-    appRegistry.resolveApp.mockResolvedValue({ logoUrl: 'https://bucket/current-logo.png' })
+    appRegistry.resolveAppVerified.mockResolvedValue(verified({ logoUrl: 'https://bucket/current-logo.png' }))
     const { GET } = await import('@/app/api/build/logo/route')
 
     const res = await GET(mockGetRequest('http://localhost/api/build/logo?companyId=acme'))
@@ -105,7 +105,7 @@ describe('#1202 GET /api/build/logo', () => {
   })
 
   it('returns a null url when the company has no logo yet', async () => {
-    appRegistry.resolveApp.mockResolvedValue({ logoUrl: undefined })
+    appRegistry.resolveAppVerified.mockResolvedValue(verified({ logoUrl: undefined }))
     const { GET } = await import('@/app/api/build/logo/route')
 
     const res = await GET(mockGetRequest('http://localhost/api/build/logo?companyId=acme'))
@@ -113,6 +113,32 @@ describe('#1202 GET /api/build/logo', () => {
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.url).toBeNull()
+  })
+
+  // #832-class bug: a transient registry-read failure used to be swallowed into
+  // a 200 OK `{ url: null }` — the SAME shape as "no logo set" — which
+  // WebsitePanel's loadLogo() (only treats a non-ok HTTP status as a load
+  // error) could never tell apart from a real, confirmed "no logo".
+  it('returns 503 lookup_failed when the registry read itself fails (NOT a false null url)', async () => {
+    appRegistry.resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+    const { GET } = await import('@/app/api/build/logo/route')
+
+    const res = await GET(mockGetRequest('http://localhost/api/build/logo?companyId=acme'))
+
+    expect(res.status).toBe(503)
+    const body = await res.json()
+    expect(body.error).toBe('lookup_failed')
+  })
+
+  it('returns 503 lookup_failed on GET when resolveAppVerified rejects outright', async () => {
+    appRegistry.resolveAppVerified.mockRejectedValue(new Error('zerodb timeout'))
+    const { GET } = await import('@/app/api/build/logo/route')
+
+    const res = await GET(mockGetRequest('http://localhost/api/build/logo?companyId=acme'))
+
+    expect(res.status).toBe(503)
+    const body = await res.json()
+    expect(body.error).toBe('lookup_failed')
   })
 })
 

@@ -16,7 +16,7 @@
 
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
-import { claimSubdomain, resolveApp } from '@/lib/build/app-registry'
+import { claimSubdomain, resolveAppVerified } from '@/lib/build/app-registry'
 
 export const runtime = 'nodejs'
 
@@ -42,6 +42,13 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   const slug = new URL(request.url).searchParams.get('slug') || ''
-  const entry = await resolveApp(slug)
+
+  // #832-class bug (#1454): a plain resolveApp() collapsed "not claimed" with
+  // "the registry read itself failed," falsely telling a founder mid-poll that
+  // their already-claimed subdomain isn't claimed during a transient hiccup.
+  const { entry, verified } = await resolveAppVerified(slug).catch(
+    () => ({ entry: null as Awaited<ReturnType<typeof resolveAppVerified>>['entry'], verified: false }),
+  )
+  if (!verified) return Response.json({ claimed: false, unverified: true }, { status: 503 })
   return Response.json({ claimed: entry?.subdomainClaimed === true })
 }
