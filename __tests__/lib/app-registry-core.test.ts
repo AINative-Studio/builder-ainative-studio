@@ -537,6 +537,16 @@ describe('claimCompanyProject', () => {
     expect(res).toEqual({ ok: false, claimed: false, reason: 'not_registered' })
   })
 
+  // #1492: an unverified lookup (the read itself failed) must not be reported
+  // as the confirmed-absent `not_registered` — same anti-pattern already fixed
+  // on claimSubdomain/fulfillPaidPlan, left out of #1486's setter-only sweep.
+  it('#1492: returns lookup_failed (not not_registered) when the registry read itself is unverified', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(failResponse(500))
+    const res = await claimCompanyProject('acme', 'jwt-token')
+    expect(res).toEqual({ ok: false, claimed: false, reason: 'lookup_failed' })
+  })
+
   it('returns not_tmp when there is no zerodbProjectId (never provisioned)', async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValueOnce(rowsResponse([row('acme')]))
@@ -856,7 +866,17 @@ describe('reconcilePlanFulfillment', () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockRejectedValueOnce(new Error('registry unreachable'))
     const res = await reconcilePlanFulfillment('acme', 'pro', 'jwt')
-    expect(res).toEqual({ planFixed: false, keyClaimed: false })
+    expect(res).toEqual({ planFixed: false, keyClaimed: false, lookupFailed: true })
+  })
+
+  // #1492: a transient registry-read failure must be distinguishable from a
+  // confirmed no-op (e.g. "already on the right plan") — both used to collapse
+  // to the identical {planFixed:false, keyClaimed:false}.
+  it('#1492: marks lookupFailed on an unverified initial registry read (non-ok response, not a rejection)', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(failResponse(500))
+    const res = await reconcilePlanFulfillment('acme', 'pro', 'jwt')
+    expect(res).toEqual({ planFixed: false, keyClaimed: false, lookupFailed: true })
   })
 
   it('does not attempt a claim when there is no zerodbProjectId (never provisioned)', async () => {

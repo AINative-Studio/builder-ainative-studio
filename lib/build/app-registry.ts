@@ -1276,12 +1276,22 @@ export async function setAppGitRepo(
  *
  * Idempotent: no-op success if already permanent or nothing to claim. Returns
  * { ok, claimed, reason? } so the caller can log without failing checkout.
+ *
+ * #1492 (follow-up to #1486/#832): this used to resolve with a plain,
+ * unverified `resolveApp(slug)`, whose single `null` collapsed "confirmed not
+ * registered" with "the registry read itself failed." A transient hiccup
+ * therefore returned `not_registered` — telling a real, paying founder mid-
+ * claim that their own company doesn't exist, the same anti-pattern already
+ * fixed on claimSubdomain/fulfillPaidPlan. Now distinguishable via the
+ * `lookup_failed` reason, left out of #1486's setter sweep only because this
+ * function already returns a structured result rather than a bare boolean.
  */
 export async function claimCompanyProject(
   slug: string,
   jwt: string,
 ): Promise<{ ok: boolean; claimed: boolean; reason?: string }> {
-  const existing = await resolveApp(slug)
+  const { entry: existing, verified } = await resolveAppVerified(slug)
+  if (!verified) return { ok: false, claimed: false, reason: 'lookup_failed' }
   if (!existing) return { ok: false, claimed: false, reason: 'not_registered' }
   // Nothing to claim: never provisioned, or already permanent.
   if (!existing.zerodbProjectId || existing.keyKind !== 'tmp') {
@@ -1427,9 +1437,17 @@ export async function reconcilePlanFulfillment(
   slug: string,
   corePlan: string,
   jwt: string,
-): Promise<{ planFixed: boolean; keyClaimed: boolean }> {
+): Promise<{ planFixed: boolean; keyClaimed: boolean; lookupFailed?: boolean }> {
   let planFixed = false
   let keyClaimed = false
+  // #1492 (follow-up to #1486/#832): a transient registry-read failure used to
+  // be indistinguishable from "nothing to reconcile" — both silently returned
+  // {planFixed:false, keyClaimed:false}. The sole current caller
+  // (subscription/status/route.ts) discards this return value entirely
+  // (`.catch(() => {})`), so this stays best-effort and still never throws;
+  // `lookupFailed` exists so a future caller, or logging, can tell a real
+  // hiccup apart from a confirmed no-op.
+  let lookupFailed = false
   if (!slug || !corePlan || !jwt) return { planFixed, keyClaimed }
   // Never stamp a non-paid tier (enforced here, not merely assumed of callers).
   if (!isPaidPlanId(corePlan)) return { planFixed, keyClaimed }
@@ -1438,7 +1456,8 @@ export async function reconcilePlanFulfillment(
   const plan = canonicalPaidPlan(corePlan)
 
   try {
-    const existing = await resolveApp(slug)
+    const { entry: existing, verified } = await resolveAppVerified(slug)
+    if (!verified) return { planFixed, keyClaimed, lookupFailed: true }
     if (!existing) return { planFixed, keyClaimed }
 
     if (existing.plan !== plan) {
@@ -1448,12 +1467,13 @@ export async function reconcilePlanFulfillment(
     if (existing.zerodbProjectId && existing.keyKind === 'tmp' && existing.claimToken) {
       const claim = await claimCompanyProject(slug, jwt).catch(() => null)
       keyClaimed = Boolean(claim?.ok && claim.claimed)
+      if (claim?.reason === 'lookup_failed') lookupFailed = true
     }
   } catch {
     /* best-effort — a reconciliation hiccup must never surface to the founder */
   }
 
-  return { planFixed, keyClaimed }
+  return lookupFailed ? { planFixed, keyClaimed, lookupFailed } : { planFixed, keyClaimed }
 }
 
 /**
