@@ -1,7 +1,7 @@
 'use server'
 
 import { z } from 'zod'
-import { signIn, signOut } from './auth'
+import { signIn, signOut, AINativeBackendUnavailable } from './auth'
 import { createUser, getUser } from '@/lib/db/queries'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
@@ -56,6 +56,19 @@ export async function signInAction(
       return {
         type: 'error',
         message: error.issues[0].message,
+      }
+    }
+
+    // #1465 — distinct from a wrong password: AINative's own auth backend
+    // is unreachable/erroring. Checked via `instanceof` (rather than
+    // switching on error.type, whose declared type is next-auth's own
+    // closed ErrorType union and can't include our custom string) so a
+    // real outage never gets misread as the founder having mistyped their
+    // password.
+    if (error instanceof AINativeBackendUnavailable) {
+      return {
+        type: 'error',
+        message: "We couldn't reach sign-in right now — try again in a moment.",
       }
     }
 

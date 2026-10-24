@@ -213,6 +213,28 @@ export async function checkSmsDeliveryFailureAlert(errorCode?: string): Promise<
   })
 }
 
+/**
+ * Alert on a confirmed AINative auth-backend outage (#1465). Called from
+ * app/(auth)/auth.ts's authenticateWithAINative whenever the AINative login
+ * or profile call throws, 5xx's, or returns something unparseable — i.e.
+ * every login is blocked by AINative itself, not by one user's bad password.
+ * Respects the same 5-minute cooldown as every other alert here — an
+ * ongoing outage must alert ONCE, not once per blocked login attempt.
+ * `detail` is a short internal description of WHAT failed (status code,
+ * which call) — never the email/password being authenticated.
+ */
+export async function checkAINativeAuthOutageAlert(detail?: string): Promise<void> {
+  if (!shouldSendAlert('ainative-auth-outage')) return
+  await sendSlackAlert({
+    title: 'AINative auth backend unavailable — logins are blocked',
+    message: detail
+      ? `AINative's own auth backend failed during a login attempt: ${detail}.`
+      : "AINative's own auth backend failed during a login attempt.",
+    severity: 'critical',
+    timestamp: new Date(),
+  })
+}
+
 // Main alerting function
 export async function checkAlerts(): Promise<void> {
   const alerts: AlertRule[] = [
