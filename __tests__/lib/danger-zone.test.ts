@@ -12,17 +12,18 @@ const h = vi.hoisted(() => ({
   // #SEP-02 — applyDangerAction's delete case now also looks up the entry
   // (to find what to release) and attempts real resource release; these
   // tests only exercise pause/resume/offline/delete's existing loop+lifecycle
-  // behavior, so resolveApp resolving to an entry with neither
-  // zerovoiceNumberId nor byoDomainId set is a safe, inert default — no
-  // release call fires for any of these pre-existing test cases.
-  resolveApp: vi.fn(),
+  // behavior, so resolveAppVerified resolving to a confirmed entry with
+  // neither zerovoiceNumberId nor byoDomainId set is a safe, inert default —
+  // no release call fires for any of these pre-existing test cases.
+  resolveAppVerified: vi.fn(),
   releaseZeroVoiceNumber: vi.fn(),
   deleteCustomDomain: vi.fn(),
 }))
 vi.mock('@/lib/build/loop-enrollment', () => ({ setLoopEnabled: h.setLoopEnabled }))
-vi.mock('@/lib/build/app-registry', () => ({ setAppLifecycle: h.setAppLifecycle, resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({ setAppLifecycle: h.setAppLifecycle, resolveAppVerified: h.resolveAppVerified }))
 vi.mock('@/lib/build/zerovoice', () => ({ releaseZeroVoiceNumber: h.releaseZeroVoiceNumber }))
 vi.mock('@/lib/build/railway-deploy', () => ({ deleteCustomDomain: h.deleteCustomDomain }))
+vi.mock('@/lib/logger', () => ({ logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn() } }))
 
 import { parseDangerRequest, applyDangerAction } from '@/lib/build/danger-zone'
 
@@ -86,7 +87,7 @@ describe('applyDangerAction (#57)', () => {
   beforeEach(() => {
     h.setLoopEnabled.mockReset().mockResolvedValue(true)
     h.setAppLifecycle.mockReset().mockResolvedValue(true)
-    h.resolveApp.mockReset().mockResolvedValue({ slug: 'acme' }) // no zerovoiceNumberId/byoDomainId — no release call fires
+    h.resolveAppVerified.mockReset().mockResolvedValue({ verified: true, entry: { slug: 'acme' } }) // no zerovoiceNumberId/byoDomainId — no release call fires
     h.releaseZeroVoiceNumber.mockReset()
     h.deleteCustomDomain.mockReset()
   })

@@ -28,7 +28,7 @@
  * tell the founder it couldn't look that up.
  */
 
-import { resolveApp } from '@/lib/build/app-registry'
+import { resolveAppVerified } from '@/lib/build/app-registry'
 import { resolveCompanyZerodbKey } from '@/lib/build/company-zerodb-credentials'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
 
@@ -86,11 +86,22 @@ export interface AskToolContext {
  *  app/api/db/[table]/route.ts's resolveScope — the shared project's own key
  *  for the shared/legacy project, the company's OWN stored key otherwise.
  *  Never falls back to the shared key for a per-company project (#806/#844):
- *  that is precisely the cross-tenant mis-scoping this module must avoid. */
+ *  that is precisely the cross-tenant mis-scoping this module must avoid.
+ *
+ *  Uses resolveAppVerified rather than resolveApp so a transient registry-read
+ *  failure (`verified: false`) can never look identical to a genuinely
+ *  unprovisioned company (`verified: true`, no entry) — the former must not
+ *  silently fall through to the SHARED project, which is exactly the
+ *  cross-tenant leak this function exists to prevent. */
 async function resolveDataScope(
   companyId: string,
 ): Promise<{ projectId: string; apiKey: string } | { error: string }> {
-  const app = await resolveApp(companyId).catch(() => null)
+  const { entry: app, verified } = await resolveAppVerified(companyId).catch(
+    () => ({ entry: null as Awaited<ReturnType<typeof resolveAppVerified>>['entry'], verified: false }),
+  )
+  if (!verified) {
+    return { error: "This company's data project could not be confirmed right now — try again in a moment." }
+  }
   const projectId = app?.zerodbProjectId || SHARED_PROJECT_ID
   if (projectId === SHARED_PROJECT_ID) {
     const apiKey = getAinativeApiKey()
@@ -181,10 +192,17 @@ export interface DesignTokensResult {
  * Real tool_use handler: read the company's own currently-saved brand tokens
  * (AppEntry.color/logoUrl/logoUpdatedAt, #492) — genuine per-company data,
  * never a fabricated palette. Never throws.
+ *
+ * Distinguishes a confirmed miss from a failed lookup (resolveAppVerified):
+ * a transient registry-read hiccup must never be told to the founder as the
+ * flatly false "Company not found."
  */
 export async function getDesignTokens(ctx: AskToolContext): Promise<DesignTokensResult> {
   try {
-    const app = await resolveApp(ctx.companyId)
+    const { entry: app, verified } = await resolveAppVerified(ctx.companyId)
+    if (!verified) {
+      return { hasBrandColor: false, hasLogo: false, error: 'Could not confirm this company right now — try again in a moment.' }
+    }
     if (!app) {
       return { hasBrandColor: false, hasLogo: false, error: 'Company not found.' }
     }
