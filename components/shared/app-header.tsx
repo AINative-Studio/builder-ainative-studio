@@ -14,6 +14,7 @@ import { BookOpen, HelpCircle, Info, LayoutTemplate, Rocket, Settings, Tag } fro
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -178,6 +179,9 @@ export function AppHeader({ className = '' }: AppHeaderProps) {
               </svg>
               AINative Platform
             </DialogTitle>
+            <DialogDescription className="sr-only">
+              About the AINative AI-powered UI generation platform
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 text-sm text-gray-600 dark:text-gray-300">
             <p>
