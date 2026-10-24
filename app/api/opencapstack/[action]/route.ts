@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyAppDataToken } from '@/lib/build/app-data-token'
-import { resolveApp } from '@/lib/build/app-registry'
+import { resolveAppVerified } from '@/lib/build/app-registry'
 import { loginServiceAccount } from '@/lib/build/opencapstack'
 
 /**
@@ -92,7 +92,15 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     )
   }
 
-  const entry = await resolveApp(slug).catch(() => null)
+  // #832-class: a transient registry-read failure must never look identical
+  // to "confirmed, no cap-table provisioned" — a founder's generated app
+  // retrying this call on a real hiccup would otherwise get a confident 404
+  // instead of a retryable error, same shape already fixed for
+  // connect-domain/provision/redeploy/etc. (#1335/#1337/#1392/#1265).
+  const { entry, verified } = await resolveAppVerified(slug)
+  if (!verified) {
+    return NextResponse.json({ error: 'lookup_failed' }, { status: 503 })
+  }
   const companyId = entry?.opencapstackCompanyId
   if (!companyId) {
     return NextResponse.json(
