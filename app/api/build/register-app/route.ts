@@ -11,7 +11,11 @@
 
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
-import { registerApp, resolveApp, resolveAppVerified, type AppEntry } from '@/lib/build/app-registry'
+// #1481: `resolveApp` is deliberately NOT imported here. All three lookups in
+// this file go through resolveAppVerified(), which tells "confirmed absent"
+// apart from "the read failed"; dropping the import keeps the unverified
+// variant from being reached for again by reflex.
+import { registerApp, resolveAppVerified, type AppEntry } from '@/lib/build/app-registry'
 import { deployPersistent } from '@/lib/build/deploy'
 import { resolveStoredApp } from '@/lib/build/ready-gate'
 import { checkSeededData, type SeededDataCheck } from '@/lib/build/seed-check'
@@ -111,7 +115,47 @@ export async function POST(request: NextRequest) {
   // an anonymous/unclaimed slug, since "no owner recorded" doesn't mean
   // "nobody's build" — it may just mean a guest build. A caller who is not
   // the confirmed owner still gets the original safe auto-suffix behavior.
-  const requestedOwner = await resolveApp(requestedSlug).catch(() => null)
+  //
+  // #832-class bug (#1481): this lookup used to be a plain
+  // `resolveApp(requestedSlug).catch(() => null)`, whose single `null` collapses
+  // "confirmed: no company owns this slug" with "the registry read itself
+  // failed." That reintroduced the very Meridian bug the paragraph above
+  // describes, by a different route: a transient ZeroDB hiccup made
+  // `requestedOwner` null, which made `callerIsOwner` false, which sent a real,
+  // authenticated founder regenerating their own live build down the
+  // auto-suffix path — silently abandoning the `{slug}.ainative.studio` URL
+  // they had already shared.
+  //
+  // Unlike the other two verified lookups in this file, an unverified read here
+  // is answered with a retryable 503 rather than "assume not the owner and carry
+  // on," because THIS lookup feeds two irreversible decisions at once:
+  //
+  //   1. `callerIsOwner` — an identity decision. Guessing it wrong costs the
+  //      founder their live, already-shared slug. firstFreeSlug() can safely
+  //      assume-the-worst because it just walks to the next suffix inside a
+  //      bounded loop and writes nothing; there is no equally safe default here.
+  //   2. `existing` (see its own comment below) — the registry is append-only /
+  //      latest-wins, so a null `existing` makes this handler append a row that
+  //      SHADOWS the entry's provision-time fields (zerodbProjectId, plan,
+  //      domain, ownerEmail…). On an unverified read that row would be written
+  //      from a wrongly-empty base, orphaning a real founder's provisioned
+  //      resources — and because the bad row is then the latest, a retry can't
+  //      undo it.
+  //
+  // Failing the request keeps the founder's registration un-attempted and
+  // retryable (the client re-runs register-app), which is strictly recoverable;
+  // either wrong guess above is not. Matches the honest `lookup_failed` 503
+  // shape already used by the GET below, /api/build/provision, claim-subdomain,
+  // and connect-domain.
+  const { entry: requestedOwner, verified: ownerVerified } = await resolveAppVerified(requestedSlug).catch(
+    () => ({ entry: null as AppEntry | null, verified: false }),
+  )
+  if (!ownerVerified) {
+    return Response.json(
+      { ok: false, unverified: true, reason: 'lookup_failed', retry: true },
+      { status: 503 },
+    )
+  }
   const callerEmail = await auth()
     .then((s) => ((s as any)?.user?.email as string | undefined)?.trim().toLowerCase())
     .catch(() => undefined)
