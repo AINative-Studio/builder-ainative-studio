@@ -768,23 +768,41 @@ export async function setAppOwner(slug: string, ownerEmail: string): Promise<boo
  * DIFFERENT ownerEmail is skipped (never stolen); a row already owned by THIS
  * email is a no-op success (idempotent, so re-running the migration on repeat
  * logins is harmless). Unregistered slugs are skipped. Returns the slugs that
- * were newly migrated plus the ones skipped, so the caller can log without
- * failing the sign-in path.
+ * were newly migrated, the ones skipped (confirmed unowned-by-someone-else or
+ * confirmed never registered), and the ones whose lookup itself failed, so the
+ * caller can log without failing the sign-in path.
+ *
+ * #832-class bug (found 2026-10-24 sweeping other `resolveApp(...).catch(() =>
+ * null)` call sites after #1434/PR #1435): this used to resolve each slug with
+ * plain `resolveApp(slug).catch(() => null)`, whose single `null` collapses
+ * "confirmed not registered" with "the registry read itself failed." A
+ * transient hiccup during sign-in — exactly when this runs — silently dropped
+ * a founder's real, in-progress guest company into the same `skipped` bucket
+ * as a slug that is genuinely someone else's or never existed, with nothing
+ * in the response to tell the caller it's worth retrying. Using
+ * resolveAppVerified() lets a failed lookup land in its own `failed` bucket
+ * instead.
  */
 export async function migrateGuestCompanies(
   slugs: string[],
   ownerEmail: string,
-): Promise<{ migrated: string[]; skipped: string[] }> {
+): Promise<{ migrated: string[]; skipped: string[]; failed: string[] }> {
   const email = (ownerEmail || '').trim().toLowerCase()
   const migrated: string[] = []
   const skipped: string[] = []
+  const failed: string[] = []
   if (!email || !Array.isArray(slugs) || slugs.length === 0) {
-    return { migrated, skipped }
+    return { migrated, skipped, failed }
   }
   // De-duplicate + drop empties so a repeated slug isn't processed twice.
   const unique = Array.from(new Set(slugs.map((s) => (s || '').trim()).filter(Boolean)))
   for (const slug of unique) {
-    const existing = await resolveApp(slug).catch(() => null)
+    const lookup = await resolveAppVerified(slug).catch(() => ({ entry: null, verified: false }))
+    if (!lookup.verified) {
+      failed.push(slug)
+      continue
+    }
+    const existing = lookup.entry
     if (!existing) {
       skipped.push(slug)
       continue
@@ -805,7 +823,7 @@ export async function migrateGuestCompanies(
     if (ok) migrated.push(slug)
     else skipped.push(slug)
   }
-  return { migrated, skipped }
+  return { migrated, skipped, failed }
 }
 
 /**
