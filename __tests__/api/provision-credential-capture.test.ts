@@ -54,7 +54,8 @@ vi.mock('@/lib/build/primitive-credentials', () => ({
 // as controllable mocks (h.provision*) back backfillMissingCredentials's own
 // tests further below.
 vi.mock('@/lib/build/app-registry', () => ({
-  resolveApp: vi.fn(async () => null), setAppProvisioned: vi.fn(async () => true), setAppOwner: vi.fn(async () => true),
+  resolveAppVerified: vi.fn(async () => ({ entry: null, verified: true })),
+  setAppProvisioned: vi.fn(async () => true), setAppOwner: vi.fn(async () => true),
 }))
 vi.mock('@/lib/build/deploy', () => ({ deployPersistent: vi.fn(async () => ({ url: '', dnsPointable: false })) }))
 vi.mock('@/lib/build/instant-db', () => ({

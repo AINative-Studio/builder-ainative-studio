@@ -29,6 +29,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 const h = vi.hoisted(() => ({
   auth: vi.fn(async () => null as any),
   resolveApp: vi.fn<(...args: any[]) => Promise<any>>(),
+  // #832-class fix: the route now calls resolveAppVerified(), not resolveApp().
+  // Overridden directly (not via h.resolveApp) only by the lookup_failed tests
+  // below — every other test keeps setting h.resolveApp as before, and this
+  // wraps it into the {entry, verified:true} shape the route now expects.
+  resolveAppVerifiedOverride: null as null | { entry: any; verified: boolean },
   // #1021: the #73 MCP wedge's own gate + provisioner, so the MCP branch can be
   // driven independently of the real ENABLE_MCP_PROVISION env flag.
   isMcpProvisionEnabled: vi.fn(() => false),
@@ -50,7 +55,11 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
 vi.mock('@/lib/build/app-registry', () => ({
-  resolveApp: h.resolveApp,
+  resolveAppVerified: async (...args: any[]) => {
+    if (h.resolveAppVerifiedOverride) return h.resolveAppVerifiedOverride
+    const entry = await h.resolveApp(...args)
+    return { entry, verified: true }
+  },
   setAppProvisioned: h.setAppProvisioned,
   setAppOwner: h.setAppOwner,
 }))
@@ -92,7 +101,7 @@ vi.mock('@/lib/build/primitive-credentials', () => ({
 }))
 vi.mock('@/lib/build/company-zerodb-credentials', () => ({ storeCompanyZerodbKey: h.storeCompanyZerodbKey }))
 
-import { POST } from '@/app/api/build/provision/route'
+import { POST, GET } from '@/app/api/build/provision/route'
 
 function postRequest(body: Record<string, unknown>): any {
   return {
@@ -114,6 +123,7 @@ describe('POST /api/build/provision — permanent/tmp gating follows the REAL li
       user: { email: 'admin@ainative.studio' },
     })
     h.resolveApp.mockReset().mockResolvedValue(unprovisionedCompany())
+    h.resolveAppVerifiedOverride = null
     h.setAppProvisioned.mockReset().mockResolvedValue(true)
     h.setAppOwner.mockReset().mockResolvedValue(true)
     h.storeCompanyZerodbKey.mockReset().mockResolvedValue(true)
@@ -336,6 +346,73 @@ describe('POST /api/build/provision — permanent/tmp gating follows the REAL li
     expect(h.provisionInstantDb).toHaveBeenCalledWith('founder-real-jwt', false)
     expect(body.keyKind).toBe('tmp')
   })
+
+  // ── #832-class bug: a registry-lookup failure must not read as 'not_registered' ──
+  it('503s with lookup_failed instead of fabricating "not_registered" on an unverified registry read', async () => {
+    h.resolveAppVerifiedOverride = { entry: null, verified: false }
+
+    const res = await POST(postRequest({ slug: 'flo' }))
+    const body = await res.json()
+
+    expect(res.status).toBe(503)
+    expect(body).toEqual({ ok: false, reason: 'lookup_failed' })
+    expect(h.provisionInstantDb).not.toHaveBeenCalled()
+  })
+
+  it('still returns the honest 404 not_registered for a CONFIRMED miss (verified: true, no entry)', async () => {
+    h.resolveAppVerifiedOverride = { entry: null, verified: true }
+
+    const res = await POST(postRequest({ slug: 'flo' }))
+    const body = await res.json()
+
+    expect(res.status).toBe(404)
+    expect(body).toEqual({ ok: false, reason: 'not_registered' })
+  })
+})
+
+describe('GET /api/build/provision — honest failure on an unverified registry lookup (#832-class)', () => {
+  function getRequest(slug: string): any {
+    return { url: `https://builder.ainative.studio/api/build/provision?slug=${slug}` }
+  }
+
+  beforeEach(() => {
+    h.resolveAppVerifiedOverride = null
+  })
+
+  it('503s with lookup_failed instead of fabricating `{ provisioned: false }` on an unverified registry read', async () => {
+    h.resolveAppVerifiedOverride = { entry: null, verified: false }
+
+    const res = await GET(getRequest('flo'))
+    const body = await res.json()
+
+    expect(res.status).toBe(503)
+    expect(body).toEqual({ ok: false, reason: 'lookup_failed' })
+  })
+
+  it('still returns the honest `{ provisioned: false }` for a CONFIRMED miss (verified: true, no entry)', async () => {
+    h.resolveAppVerifiedOverride = { entry: null, verified: true }
+
+    const res = await GET(getRequest('flo'))
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body).toEqual({ provisioned: false })
+  })
+
+  it('reports a real provisioned company honestly', async () => {
+    h.resolveAppVerifiedOverride = {
+      entry: { slug: 'flo', chatId: 'chat-flo-1', zerodbProjectId: 'proj-perm', keyKind: 'permanent' },
+      verified: true,
+    }
+
+    const res = await GET(getRequest('flo'))
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.provisioned).toBe(true)
+    expect(body.zerodbProjectId).toBe('proj-perm')
+    expect(body.keyKind).toBe('permanent')
+  })
 })
 
 /**
@@ -366,6 +443,7 @@ describe('POST /api/build/provision — the #73 MCP path honors the same resolve
       user: { email: 'founder@example.com' },
     })
     h.resolveApp.mockReset().mockResolvedValue(unprovisionedCompany())
+    h.resolveAppVerifiedOverride = null
     h.setAppProvisioned.mockReset().mockResolvedValue(true)
     h.setAppOwner.mockReset().mockResolvedValue(true)
     h.storeCompanyZerodbKey.mockReset().mockResolvedValue(true)
