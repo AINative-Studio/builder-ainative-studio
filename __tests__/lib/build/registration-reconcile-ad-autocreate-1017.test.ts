@@ -19,7 +19,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
  */
 
 const listAllAppsWithStatus = vi.fn()
+/**
+ * The real registry read reconcileRegistration performs (#1494 — swapped from
+ * the ambiguous resolveApp()). `resolveAppVerified` below is the mock the
+ * module actually imports; `resolveApp` stays as the test-local handle for the
+ * CONFIRMED answers (a real entry, or a real "no such company"), so the
+ * existing cases read unchanged. The UNVERIFIED third shape is set on
+ * `resolveAppVerified` directly at its own use sites.
+ */
 const resolveApp = vi.fn()
+const resolveAppVerified = vi.fn(async (...a: unknown[]) => ({
+  entry: await resolveApp(...a),
+  verified: true,
+}))
 const fetchDeploymentHealthStages = vi.fn()
 const classifyRegistrationHealth = vi.fn()
 const reportDeploymentHealthStage = vi.fn()
@@ -29,7 +41,7 @@ const autoCreateAdTestCampaign = vi.fn()
 
 vi.mock('@/lib/build/app-registry', () => ({
   listAllAppsWithStatus: (...a: unknown[]) => listAllAppsWithStatus(...a),
-  resolveApp: (...a: unknown[]) => resolveApp(...a),
+  resolveAppVerified: (...a: unknown[]) => resolveAppVerified(...a),
 }))
 vi.mock('@/lib/build/deployment-health', () => ({
   fetchDeploymentHealthStages: (...a: unknown[]) => fetchDeploymentHealthStages(...a),
@@ -60,6 +72,10 @@ const FLO = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  resolveAppVerified.mockImplementation(async (...a: unknown[]) => ({
+    entry: await resolveApp(...a),
+    verified: true,
+  }))
   resolveApp.mockResolvedValue(FLO)
   fetchDeploymentHealthStages.mockResolvedValue({ ok: true, stages: [] })
   classifyRegistrationHealth.mockReturnValue('stuck')

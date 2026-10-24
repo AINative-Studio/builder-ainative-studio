@@ -22,7 +22,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
  */
 
 const listAllAppsWithStatus = vi.fn()
+/**
+ * The real registry read reconcileRegistration performs (#1494 — swapped from
+ * the ambiguous resolveApp()). `resolveAppVerified` below is the mock the
+ * module actually imports; `resolveApp` stays as the test-local handle for the
+ * CONFIRMED answers (a real entry, or a real "no such company"), so the
+ * existing cases read unchanged. The UNVERIFIED third shape is set on
+ * `resolveAppVerified` directly at its own use sites.
+ */
 const resolveApp = vi.fn()
+const resolveAppVerified = vi.fn(async (...a: unknown[]) => ({
+  entry: await resolveApp(...a),
+  verified: true,
+}))
 const fetchDeploymentHealthStages = vi.fn()
 const classifyRegistrationHealth = vi.fn()
 const reportDeploymentHealthStage = vi.fn()
@@ -31,7 +43,7 @@ const runGitCommit = vi.fn()
 
 vi.mock('@/lib/build/app-registry', () => ({
   listAllAppsWithStatus: (...a: unknown[]) => listAllAppsWithStatus(...a),
-  resolveApp: (...a: unknown[]) => resolveApp(...a),
+  resolveAppVerified: (...a: unknown[]) => resolveAppVerified(...a),
 }))
 vi.mock('@/lib/build/deployment-health', () => ({
   fetchDeploymentHealthStages: (...a: unknown[]) => fetchDeploymentHealthStages(...a),
@@ -65,6 +77,10 @@ const FLO = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  resolveAppVerified.mockImplementation(async (...a: unknown[]) => ({
+    entry: await resolveApp(...a),
+    verified: true,
+  }))
   resolveApp.mockResolvedValue(FLO)
   fetchDeploymentHealthStages.mockResolvedValue({ ok: true, stages: [] })
   classifyRegistrationHealth.mockReturnValue('stuck')
@@ -256,7 +272,7 @@ describe('reconcileRegistration — idempotency and leaving the wrong cases alon
     expect(res.disposition).toBe('unverifiable')
   })
 
-  it('does nothing for a slug with no registry row at all', async () => {
+  it('does nothing for a slug CONFIRMED to have no registry row at all', async () => {
     resolveApp.mockResolvedValue(null)
 
     const res = await reconcileRegistration('ghost')
@@ -264,6 +280,37 @@ describe('reconcileRegistration — idempotency and leaving the wrong cases alon
     expect(fetchDeploymentHealthStages).not.toHaveBeenCalled()
     expect(runReadyGate).not.toHaveBeenCalled()
     expect(res.reason).toBe('no_registry_entry')
+  })
+
+  // -------------------------------------------------------------------------
+  // #1494 — an unverified registry read is not "no registry entry"
+  // -------------------------------------------------------------------------
+  it('reports lookup_failed (NOT no_registry_entry) when the registry read could not be completed (#1494)', async () => {
+    resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+
+    const res = await reconcileRegistration('flo')
+
+    // The disposition was already honestly 'unknown' — that part is unchanged.
+    expect(res.disposition).toBe('unknown')
+    expect(res.reconciled).toBe(false)
+    // Only the reason changes: retryable, not a confirmed "it isn't there".
+    expect(res.reason).toBe('lookup_failed')
+    // FAILS CLOSED, unchanged: no stage read, no gate, no commit, no stage write.
+    expect(fetchDeploymentHealthStages).not.toHaveBeenCalled()
+    expect(runReadyGate).not.toHaveBeenCalled()
+    expect(runGitCommit).not.toHaveBeenCalled()
+    expect(reportDeploymentHealthStage).not.toHaveBeenCalled()
+  })
+
+  it('counts an unverified lookup as skipped in a single-company sweep, never reconciled (#1494)', async () => {
+    resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+
+    const res = await runRegistrationReconcileSweep({ dryRun: false, slug: 'flo' })
+
+    expect(res.reconciled).toBe(0)
+    expect(res.committed).toBe(0)
+    expect(res.skipped).toBe(1)
+    expect(res.results[0].reason).toBe('lookup_failed')
   })
 
   it('does nothing for a registry row with no chatId — there is no generation to verify', async () => {
@@ -276,7 +323,19 @@ describe('reconcileRegistration — idempotency and leaving the wrong cases alon
   })
 
   it('never throws — a reconciliation hiccup must not surface to the founder', async () => {
-    resolveApp.mockRejectedValue(new Error('registry down'))
+    // A rejecting registry read is #1494's unverified case, so it is reported
+    // as the retryable `lookup_failed` rather than an opaque error string.
+    resolveAppVerified.mockRejectedValue(new Error('registry down'))
+
+    await expect(reconcileRegistration('flo')).resolves.toMatchObject({
+      reconciled: false,
+      disposition: 'unknown',
+      reason: 'lookup_failed',
+    })
+  })
+
+  it('still never throws when a LATER collaborator throws (the generic catch-all path)', async () => {
+    fetchDeploymentHealthStages.mockRejectedValue(new Error('core down'))
 
     await expect(reconcileRegistration('flo')).resolves.toMatchObject({ reconciled: false })
   })

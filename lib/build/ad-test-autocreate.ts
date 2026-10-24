@@ -49,7 +49,7 @@
  * gate rather than quietly re-scoping the old one.
  */
 
-import { resolveApp, setAppGrowthAdTest } from '@/lib/build/app-registry'
+import { resolveAppVerified, setAppGrowthAdTest } from '@/lib/build/app-registry'
 import {
   createAdTestCampaign,
   growthAdTestingEnabled,
@@ -89,7 +89,17 @@ export async function autoCreateAdTestCampaign(slug: string): Promise<AutoCreate
   if (!slug?.trim()) return { created: false, reason: 'slug_required' }
 
   try {
-    const app = await resolveApp(slug)
+    // #1494: resolveAppVerified(), not resolveApp(). A transient registry read
+    // failure used to come back as the SAME `null` a confirmed-missing company
+    // returns, so a real founder's company was reported as
+    // `company_not_found` — a confirmed, terminal-sounding answer — when the
+    // read simply never completed. The outcome is the same either way (no
+    // campaign is created, which is the safe direction), but the REASON must
+    // tell the #1015 reconciliation sweep and anyone reading a log that this
+    // one is worth retrying rather than a company that genuinely isn't there.
+    const lookup = await resolveAppVerified(slug).catch(() => ({ entry: null, verified: false }))
+    if (!lookup.verified) return { created: false, reason: 'lookup_failed' }
+    const app = lookup.entry
     if (!app) return { created: false, reason: 'company_not_found' }
 
     // IDEMPOTENCE. Shared with the manual endpoint and the funding webhook via

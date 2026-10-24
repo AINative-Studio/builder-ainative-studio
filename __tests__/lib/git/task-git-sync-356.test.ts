@@ -247,7 +247,7 @@ describe('task-git-sync (#356 GIT-3)', () => {
   describe('integration patterns (mocked)', () => {
     it('task start flow: create branch', () => {
       const steps = [
-        'resolveApp (get gitOrg)',
+        'resolveAppVerified (get gitOrg)',
         'createTaskBranch (from main)',
       ]
       expect(steps).toHaveLength(2)
@@ -256,7 +256,7 @@ describe('task-git-sync (#356 GIT-3)', () => {
     it('task complete flow: commit + optional PR', () => {
       const steps = [
         'validateTaskSync',
-        'resolveApp (get gitOrg)',
+        'resolveAppVerified (get gitOrg)',
         'createBranchForTask (ensure branch)',
         'pushFilesToBranch',
         'getBranch (updated SHA)',

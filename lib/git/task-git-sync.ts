@@ -29,7 +29,7 @@ import {
   validateFileMap,
   type FileMap,
 } from './company-repo'
-import { resolveApp } from '@/lib/build/app-registry'
+import { resolveAppVerified } from '@/lib/build/app-registry'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -259,8 +259,19 @@ export async function createBranchForTask(
     return { ok: false, reason: 'slug is required' }
   }
 
-  // Look up company's git repo
-  const app = await resolveApp(slug)
+  // Look up company's git repo.
+  //
+  // #1494: resolveAppVerified(), so a transient registry read failure stops
+  // reporting itself as the confirmed `company_not_git_provisioned`. Both
+  // outcomes are the same safe no-op (no branch is created), but a provisioned
+  // company looked UNPROVISIONED on a hiccup — a misleading terminal-sounding
+  // reason for something a retry would fix. `.catch()` because this read sits
+  // outside the try block below and this function must never throw.
+  const lookup = await resolveAppVerified(slug).catch(() => ({ entry: null, verified: false }))
+  if (!lookup.verified) {
+    return { ok: false, reason: 'registry_lookup_failed' }
+  }
+  const app = lookup.entry
   if (!app?.gitOrg) {
     return { ok: false, reason: 'company_not_git_provisioned' }
   }
@@ -305,8 +316,15 @@ export async function commitTaskChanges(opts: TaskCommitOpts): Promise<TaskGitRe
     return { ok: false, reason: validation.reason }
   }
 
-  // Look up company's git repo
-  const app = await resolveApp(opts.slug)
+  // Look up company's git repo (#1494 — same distinction as
+  // createBranchForTask above: an unverified read is retryable, a confirmed
+  // missing gitOrg is not, and collapsing them hid real, provisioned
+  // companies behind "not git provisioned").
+  const lookup = await resolveAppVerified(opts.slug).catch(() => ({ entry: null, verified: false }))
+  if (!lookup.verified) {
+    return { ok: false, reason: 'registry_lookup_failed' }
+  }
+  const app = lookup.entry
   if (!app?.gitOrg) {
     return { ok: false, reason: 'company_not_git_provisioned' }
   }

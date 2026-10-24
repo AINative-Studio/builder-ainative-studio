@@ -71,7 +71,7 @@
  *    reconcileRegistration's own comment at that branch.
  */
 
-import { listAllAppsWithStatus, resolveApp, type AppEntry } from '@/lib/build/app-registry'
+import { listAllAppsWithStatus, resolveAppVerified, type AppEntry } from '@/lib/build/app-registry'
 import {
   fetchDeploymentHealthStages,
   classifyRegistrationHealth,
@@ -187,7 +187,19 @@ export async function reconcileRegistration(
   const dryRun = opts.dryRun === true
 
   try {
-    const entry = await resolveApp(slug)
+    // #1494: the mildest of this sweep's unverified-lookup sites — the
+    // disposition was already honestly `'unknown'` rather than a
+    // confirmed-gone one, and the sweep already treats this company as
+    // skipped (the FAILS CLOSED posture in the header). Only the `reason`
+    // needed aligning: a failed read used to borrow `no_registry_entry`,
+    // which reads as "this company isn't in the registry" — a confirmed fact
+    // the read never established. `lookup_failed` says retry; the company is
+    // picked up again on the next sweep either way.
+    const lookup = await resolveAppVerified(slug).catch(() => ({ entry: null, verified: false }))
+    if (!lookup.verified) {
+      return { slug, disposition: 'unknown', reconciled: false, reason: 'lookup_failed' }
+    }
+    const entry = lookup.entry
     if (!entry) {
       return { slug, disposition: 'unknown', reconciled: false, reason: 'no_registry_entry' }
     }
