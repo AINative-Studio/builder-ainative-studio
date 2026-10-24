@@ -50,6 +50,8 @@
     "@babel/preset-react": "^7.29.7",
     "@codesandbox/sandpack-react": "^2.20.0",
     "@codesandbox/sandpack-themes": "^2.0.21",
+    "@elevenlabs/client": "1.30.0",
+    "@elevenlabs/react": "1.19.1",
     "@humeai/voice-react": "0.3.0-beta.6",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@monaco-editor/react": "^4.7.0",
