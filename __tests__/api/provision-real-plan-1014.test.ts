@@ -62,7 +62,19 @@ vi.mock('@/lib/build/app-registry', () => ({
   },
   setAppProvisioned: h.setAppProvisioned,
   setAppOwner: h.setAppOwner,
+  // #1486: the route distinguishes setAppProvisioned's "the registry read
+  // itself failed" throw from a confirmed write failure using this guard.
+  isRegistryLookupUnverified: (err: unknown) =>
+    err instanceof Error && err.name === 'RegistryLookupUnverifiedError',
 }))
+
+/** Stands in for app-registry's own RegistryLookupUnverifiedError (#1486). */
+class FakeRegistryLookupUnverifiedError extends Error {
+  constructor(setter: string, slug: string) {
+    super(`[app-registry] registry lookup unverified for ${setter}(${slug}) — the registry read itself failed, the write was not attempted`)
+    this.name = 'RegistryLookupUnverifiedError'
+  }
+}
 // isPaidTier is the REAL implementation on purpose — the tier vocabulary
 // (enterprise/pro/business/cody_vcto vs hobbyist/starter) is exactly what
 // this gate's correctness depends on, so stubbing it would test nothing.
@@ -602,5 +614,97 @@ describe('POST /api/build/provision — the #73 MCP path honors the same resolve
     expect(body.provisionedVia).toBeUndefined()
     expect(h.provisionInstantDb).toHaveBeenCalledWith('founder-real-jwt', false)
     expect(body.keyKind).toBe('tmp')
+  })
+})
+
+/**
+ * #1486 — setAppProvisioned() does its OWN registry read before writing, and
+ * that read now THROWS RegistryLookupUnverifiedError when it cannot be
+ * completed, instead of returning the same `false` it returns for a
+ * confirmed-missing company.
+ *
+ * Both setAppProvisioned call sites in this route run AFTER a real, billable
+ * ZeroDB project has already been created, so the throw must NOT escape as a
+ * 500: that would report a successful provision as failed and invite the
+ * client to retry, creating a SECOND project against a shared, rate-limited
+ * quota. The route already carries `persisted` as an honesty flag, so the
+ * throw collapses back into `persisted: false` with the real reason logged.
+ */
+describe('POST /api/build/provision — unverified setAppProvisioned lookup (#1486)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    h.auth.mockReset().mockResolvedValue({
+      ainativeToken: 'founder-real-jwt',
+      user: { email: 'founder@example.com' },
+    })
+    h.resolveApp.mockReset().mockResolvedValue(unprovisionedCompany())
+    h.resolveAppVerifiedOverride = null
+    h.setAppOwner.mockReset().mockResolvedValue(true)
+    h.storeCompanyZerodbKey.mockReset().mockResolvedValue(true)
+    h.getPlanStatus.mockReset().mockResolvedValue({ tier: 'enterprise', verified: true })
+    h.provisionInstantDb
+      .mockReset()
+      .mockResolvedValue({ ok: true, projectId: 'proj-perm', keyKind: 'permanent', apiKey: 'sk_real' })
+    h.isMcpProvisionEnabled.mockReset().mockReturnValue(false)
+    h.provisionZeroDbViaMcp.mockReset()
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('Instant DB path: reports persisted:false and still 200s (never a 500 that invites a re-provision)', async () => {
+    h.setAppProvisioned
+      .mockReset()
+      .mockRejectedValue(new FakeRegistryLookupUnverifiedError('setAppProvisioned', 'flo'))
+
+    const res = await POST(postRequest({ slug: 'flo' }))
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.ok).toBe(true)
+    // The REAL project genuinely exists and is reported as such ...
+    expect(body.zerodbProjectId).toBe('proj-perm')
+    // ... and the registry write is honestly reported as not landed.
+    expect(body.persisted).toBe(false)
+  })
+
+  it('MCP path: reports persisted:false and still 200s', async () => {
+    h.isMcpProvisionEnabled.mockReturnValue(true)
+    h.provisionZeroDbViaMcp.mockResolvedValue({ ok: true, projectId: 'mcp-proj-1', tablesCreated: [] })
+    h.setAppProvisioned
+      .mockReset()
+      .mockRejectedValue(new FakeRegistryLookupUnverifiedError('setAppProvisioned', 'flo'))
+
+    const res = await POST(postRequest({ slug: 'flo' }))
+    const body = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(body.ok).toBe(true)
+    expect(body.provisionedVia).toBe('mcp')
+    expect(body.persisted).toBe(false)
+  })
+
+  it('still reports persisted:true on the happy path (regression guard)', async () => {
+    h.setAppProvisioned.mockReset().mockResolvedValue(true)
+
+    const res = await POST(postRequest({ slug: 'flo' }))
+    const body = await res.json()
+
+    expect(body.persisted).toBe(true)
+  })
+
+  it('still reports persisted:false on a genuine, confirmed write failure (unchanged)', async () => {
+    h.setAppProvisioned.mockReset().mockResolvedValue(false)
+
+    const res = await POST(postRequest({ slug: 'flo' }))
+    const body = await res.json()
+
+    expect(body.persisted).toBe(false)
+  })
+
+  it('re-throws an UNRELATED setAppProvisioned error rather than silently reporting persisted:false', async () => {
+    h.setAppProvisioned.mockReset().mockRejectedValue(new Error('something else entirely'))
+
+    await expect(POST(postRequest({ slug: 'flo' }))).rejects.toThrow('something else entirely')
   })
 })

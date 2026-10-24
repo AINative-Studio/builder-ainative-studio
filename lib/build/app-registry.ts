@@ -335,6 +335,64 @@ export interface AppEntry {
   createdAt: string
 }
 
+/**
+ * Thrown by every `setApp*` setter below when the registry lookup it needs
+ * BEFORE writing could not be completed at all (#1486).
+ *
+ * WHY THIS EXISTS: each setter is shaped
+ * `const existing = await resolveApp(slug); if (!existing) return false`, and
+ * `resolveApp()` returns the SAME `null` for "no such company" and "the
+ * registry read itself failed" (the #832 anti-pattern). A transient ZeroDB
+ * hiccup therefore made every one of these setters return `false` — reported
+ * up to the caller as a generic WRITE failure ("I couldn't save that logo")
+ * when nothing was ever wrong with the write: the READ never completed, so
+ * the setter correctly refused to act and then lied about why.
+ *
+ * This bug class fails SAFE (a failed lookup can only make a setter no-op,
+ * never silently write wrong data onto the wrong company), so the fix keeps
+ * every setter's `Promise<boolean>` signature — changing ~20 setters' return
+ * types would ripple through every real caller at once. Instead the two cases
+ * that already behave correctly are untouched (confirmed success → `true`,
+ * confirmed absence → `false`) and the previously-silent third case becomes a
+ * real, named, catchable error: visible in logs/Sentry, distinguishable with
+ * `isRegistryLookupUnverified(err)` by any caller that wants to retry, and
+ * already swallowed by the many callers that invoke these setters as
+ * `.catch(() => false)` best-effort writes.
+ */
+export class RegistryLookupUnverifiedError extends Error {
+  readonly slug: string
+  readonly setter: string
+  constructor(setter: string, slug: string) {
+    super(`[app-registry] registry lookup unverified for ${setter}(${slug}) — the registry read itself failed, the write was not attempted`)
+    this.name = 'RegistryLookupUnverifiedError'
+    this.slug = slug
+    this.setter = setter
+  }
+}
+
+/** True when `err` is the distinct "the registry read failed, so this write
+ *  was never attempted" signal thrown by the `setApp*` setters (#1486) — as
+ *  opposed to a confirmed "no such company" (which is still a plain `false`
+ *  return) or any other real error. Lets a caller that cares retry/surface a
+ *  503 instead of reporting a bogus write failure. */
+export function isRegistryLookupUnverified(err: unknown): err is RegistryLookupUnverifiedError {
+  return err instanceof RegistryLookupUnverifiedError
+}
+
+/**
+ * The ONE lookup every `setApp*` setter below performs before writing
+ * (#1486). Returns the confirmed entry, or `null` for a CONFIRMED "no such
+ * company"; throws `RegistryLookupUnverifiedError` when the read itself could
+ * not be completed, so an unverified lookup can never be reported as a write
+ * failure. Replaces the `const existing = await resolveApp(slug)` /
+ * `if (!existing) return false` pair that collapsed the two.
+ */
+async function requireVerifiedApp(setter: string, slug: string): Promise<AppEntry | null> {
+  const lookup = await resolveAppVerified(slug).catch(() => ({ entry: null, verified: false }))
+  if (!lookup.verified) throw new RegistryLookupUnverifiedError(setter, slug)
+  return lookup.entry
+}
+
 /** Register (or update) a slug → chatId mapping. Appends a row; latest wins on read. */
 export async function registerApp(e: Omit<AppEntry, 'createdAt'>): Promise<boolean> {
   if (!configured() || !e.slug || !e.chatId) return false
@@ -373,7 +431,7 @@ export async function setAppLogo(
 ): Promise<boolean> {
   const logoUrl = (fields.logoUrl || '').trim()
   if (!logoUrl) return false
-  const existing = await resolveApp(slug)
+  const existing = await requireVerifiedApp('setAppLogo', slug)
   if (!existing) return false
   if (existing.logoUrl === logoUrl && existing.logoFileId === fields.logoFileId) return true
   return registerApp({
@@ -399,7 +457,7 @@ export async function setAppEmailUndeliverable(
   slug: string,
   reason: string,
 ): Promise<boolean> {
-  const existing = await resolveApp(slug)
+  const existing = await requireVerifiedApp('setAppEmailUndeliverable', slug)
   if (!existing) return false
   if (existing.emailUndeliverableReason === reason && existing.emailUndeliverableAt) return true
   return registerApp({
@@ -454,7 +512,7 @@ export async function markEmailUndeliverableForAddress(
  * registered.
  */
 export async function setAppCommsOptOut(slug: string, optOut: boolean): Promise<boolean> {
-  const existing = await resolveApp(slug)
+  const existing = await requireVerifiedApp('setAppCommsOptOut', slug)
   if (!existing) return false
   if ((existing.commsOptOut ?? false) === optOut) return true
   return registerApp({
@@ -470,7 +528,7 @@ export async function setAppCommsOptOut(slug: string, optOut: boolean): Promise<
  * (latest-wins) surfaces it. No-op (returns false) if the slug isn't registered.
  */
 export async function setAppDomain(slug: string, domain: string): Promise<boolean> {
-  const existing = await resolveApp(slug)
+  const existing = await requireVerifiedApp('setAppDomain', slug)
   if (!existing) return false
   return registerApp({ ...existing, domain })
 }
@@ -486,7 +544,7 @@ export async function setAppDomain(slug: string, domain: string): Promise<boolea
  * registration that missed the field entirely.
  */
 export async function setAppIdea(slug: string, idea: string): Promise<boolean> {
-  const existing = await resolveApp(slug)
+  const existing = await requireVerifiedApp('setAppIdea', slug)
   if (!existing) return false
   if (existing.idea) return true // already has one — never overwrite a real idea
   return registerApp({ ...existing, idea })
@@ -504,7 +562,7 @@ export async function setAppLifecycle(
   slug: string,
   status: 'active' | 'offline' | 'deleted',
 ): Promise<boolean> {
-  const existing = await resolveApp(slug)
+  const existing = await requireVerifiedApp('setAppLifecycle', slug)
   if (!existing) return false
   if ((existing.lifecycleStatus || 'active') === status) return true
   return registerApp({ ...existing, lifecycleStatus: status, lifecycleAt: new Date().toISOString() })
@@ -525,7 +583,7 @@ export async function setAppByoDomain(
 ): Promise<boolean> {
   const host = (fields.domain || '').trim().toLowerCase()
   if (!host) return false
-  const existing = await resolveApp(slug)
+  const existing = await requireVerifiedApp('setAppByoDomain', slug)
   if (!existing) return false
   // Nothing changed → skip the write (avoid churn on repeat polls).
   if (
@@ -555,7 +613,7 @@ export async function setAppZeroVoice(
   fields: { numberId: string; e164: string },
 ): Promise<boolean> {
   if (!fields.numberId || !fields.e164) return false
-  const existing = await resolveApp(slug)
+  const existing = await requireVerifiedApp('setAppZeroVoice', slug)
   if (!existing) return false
   // Already recorded this exact number → nothing to write.
   if (existing.zerovoiceNumberId === fields.numberId) return true
@@ -580,7 +638,7 @@ export async function setAppCommsMode(
   mode: 'agile' | 'pairProgramming',
 ): Promise<boolean> {
   if (mode !== 'agile' && mode !== 'pairProgramming') return false
-  const existing = await resolveApp(slug)
+  const existing = await requireVerifiedApp('setAppCommsMode', slug)
   if (!existing) return false
   if ((existing.commsMode || 'agile') === mode) return true
   return registerApp({ ...existing, commsMode: mode })
@@ -595,7 +653,7 @@ export async function setAppCommsMode(
  */
 export async function setAppLastDigestAt(slug: string, atIso: string): Promise<boolean> {
   if (!atIso) return false
-  const existing = await resolveApp(slug)
+  const existing = await requireVerifiedApp('setAppLastDigestAt', slug)
   if (!existing) return false
   return registerApp({ ...existing, lastDigestAt: atIso })
 }
@@ -619,7 +677,7 @@ export async function setAppWiring(
   slug: string,
   flags: Record<string, boolean>,
 ): Promise<boolean> {
-  const existing = await resolveApp(slug)
+  const existing = await requireVerifiedApp('setAppWiring', slug)
   if (!existing) return false
   const existingRecord = existing as unknown as Record<string, unknown>
   const unchanged = existing.wiringScannedAt && Object.entries(flags).every(
@@ -644,7 +702,7 @@ export async function setAppGrowthAdTest(
   fields: { campaignId: string },
 ): Promise<boolean> {
   if (!fields.campaignId) return false
-  const existing = await resolveApp(slug)
+  const existing = await requireVerifiedApp('setAppGrowthAdTest', slug)
   if (!existing) return false
   if (existing.growthAdTestCampaignId === fields.campaignId) return true
   return registerApp({
@@ -665,7 +723,7 @@ export async function setAppGrowthAdBudgetFunded(
   fields: { paymentIntentId: string; requestedCents: number; realCents: number },
 ): Promise<boolean> {
   if (!fields.paymentIntentId) return false
-  const existing = await resolveApp(slug)
+  const existing = await requireVerifiedApp('setAppGrowthAdBudgetFunded', slug)
   if (!existing) return false
   if (existing.growthAdBudgetPaymentIntentId === fields.paymentIntentId) return true
   return registerApp({
@@ -682,7 +740,7 @@ export async function setAppGrowthAdInsights(
   slug: string,
   fields: { clicks: number; cpcCents: number },
 ): Promise<boolean> {
-  const existing = await resolveApp(slug)
+  const existing = await requireVerifiedApp('setAppGrowthAdInsights', slug)
   if (!existing) return false
   return registerApp({
     ...existing,
@@ -700,7 +758,7 @@ export async function setAppGrowthAdInsights(
  * redirect itself.
  */
 export async function setAppZeroInvoiceConnectClicked(slug: string): Promise<boolean> {
-  const existing = await resolveApp(slug)
+  const existing = await requireVerifiedApp('setAppZeroInvoiceConnectClicked', slug)
   if (!existing) return false
   return registerApp({
     ...existing,
@@ -715,7 +773,7 @@ export async function setAppZeroInvoiceConnectClicked(slug: string): Promise<boo
  * company, right after successfully creating a twin).
  */
 export async function setAppContentWorkflowTwinId(slug: string, twinId: string): Promise<boolean> {
-  const existing = await resolveApp(slug)
+  const existing = await requireVerifiedApp('setAppContentWorkflowTwinId', slug)
   if (!existing) return false
   return registerApp({
     ...existing,
@@ -731,7 +789,7 @@ export async function setAppContentWorkflowTwinId(slug: string, twinId: string):
  * platform-verified state, only ever a founder's own honest report.
  */
 export async function setAppZeroInvoiceConnectConfirmed(slug: string): Promise<boolean> {
-  const existing = await resolveApp(slug)
+  const existing = await requireVerifiedApp('setAppZeroInvoiceConnectConfirmed', slug)
   if (!existing) return false
   return registerApp({
     ...existing,
@@ -749,7 +807,7 @@ export async function setAppZeroInvoiceConnectConfirmed(slug: string): Promise<b
 export async function setAppOwner(slug: string, ownerEmail: string): Promise<boolean> {
   const email = (ownerEmail || '').trim().toLowerCase()
   if (!email) return false
-  const existing = await resolveApp(slug)
+  const existing = await requireVerifiedApp('setAppOwner', slug)
   if (!existing) return false
   if ((existing.ownerEmail || '').toLowerCase() === email) return true
   return registerApp({ ...existing, ownerEmail: email })
@@ -1021,7 +1079,7 @@ export async function listAllAppsWithStatus(): Promise<{ apps: AppEntry[]; ok: b
  * No-op (false) if slug isn't registered.
  */
 export async function setAppPlan(slug: string, plan: string): Promise<boolean> {
-  const existing = await resolveApp(slug)
+  const existing = await requireVerifiedApp('setAppPlan', slug)
   if (!existing) return false
   // #841: Pro and up auto-enroll into the nightly improvement loop (was
   // Business+ only).
@@ -1134,7 +1192,7 @@ export async function setAppProvisioned(
     railwayDeployedAt?: string
   },
 ): Promise<boolean> {
-  const existing = await resolveApp(slug)
+  const existing = await requireVerifiedApp('setAppProvisioned', slug)
   if (!existing) return false
   return registerApp({
     ...existing,
@@ -1166,7 +1224,7 @@ export async function setAppRailwayService(
   fields: { railwayServiceId: string; deployUrl?: string; domain?: string },
 ): Promise<boolean> {
   if (!fields.railwayServiceId) return false
-  const existing = await resolveApp(slug)
+  const existing = await requireVerifiedApp('setAppRailwayService', slug)
   if (!existing) return false
   // Already recorded this exact service → nothing to write.
   if (existing.railwayServiceId === fields.railwayServiceId) return true
@@ -1194,7 +1252,7 @@ export async function setAppGitRepo(
   fields: { gitRepoUrl: string; gitRepoId: string; gitOrg: string },
 ): Promise<boolean> {
   if (!fields.gitRepoUrl || !fields.gitRepoId || !fields.gitOrg) return false
-  const existing = await resolveApp(slug)
+  const existing = await requireVerifiedApp('setAppGitRepo', slug)
   if (!existing) return false
   // Already recorded this exact repo → nothing to write.
   if (existing.gitRepoId === fields.gitRepoId) return true

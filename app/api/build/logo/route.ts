@@ -25,7 +25,7 @@
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { deriveOwnerKey, chatScopeKey } from '@/lib/build/chat-store'
-import { resolveAppVerified, setAppLogo } from '@/lib/build/app-registry'
+import { resolveAppVerified, setAppLogo, isRegistryLookupUnverified } from '@/lib/build/app-registry'
 import { uploadMediaFile, fetchFileDownload } from '@/lib/build/media-schedule'
 import {
   validateLogoUpload,
@@ -140,9 +140,25 @@ export async function POST(request: NextRequest) {
   }
 
   const url = logoAssetUrl(fileId)
-  const saved = await setAppLogo(companyId, { logoUrl: url, logoFileId: fileId })
+
+  // #1486 — the exact case that issue names: setAppLogo does its OWN registry
+  // read before writing, and a transient failure on THAT read used to come
+  // back as the same `false` a confirmed-missing company returns, so the
+  // founder was told the logo "couldn't be saved" when nothing was wrong with
+  // the write — the lookup never completed. It now throws a distinct error for
+  // that case, so this route can say `retryable: true` honestly instead of
+  // presenting an unrelated read hiccup as a permanent save failure.
+  let saved = false
+  let retryable = false
+  try {
+    saved = await setAppLogo(companyId, { logoUrl: url, logoFileId: fileId })
+  } catch (err) {
+    if (!isRegistryLookupUnverified(err)) throw err
+    console.error(`[logo] ${(err as Error).message}`)
+    retryable = true
+  }
 
   // The file exists and its url works even if the registry write hiccuped —
   // return the url either way and be honest about whether it's durably saved.
-  return Response.json({ url, saved })
+  return Response.json({ url, saved, ...(retryable ? { retryable: true } : {}) })
 }

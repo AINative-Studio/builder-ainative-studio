@@ -47,7 +47,7 @@
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { getPlanStatus, isPaidTier } from '@/lib/ainative/plan'
-import { resolveAppVerified, setAppProvisioned, setAppOwner } from '@/lib/build/app-registry'
+import { resolveAppVerified, setAppProvisioned, setAppOwner, isRegistryLookupUnverified } from '@/lib/build/app-registry'
 import { deployPersistent } from '@/lib/build/deploy'
 import {
   provisionInstantDb,
@@ -100,6 +100,34 @@ export const maxDuration = 60
  * does) is what caused this bug in the first place.
  */
 const ASSUMED_TOKEN_LIFETIME_SECONDS = 45 * 60
+
+/**
+ * #1486: setAppProvisioned() does its OWN registry read before writing, and
+ * that read now THROWS (RegistryLookupUnverifiedError) when it cannot be
+ * completed, instead of returning the same `false` it returns for a
+ * confirmed-missing company.
+ *
+ * Both call sites below run AFTER a real, already-created ZeroDB project
+ * exists (a genuine, billable side effect), so letting that throw escape the
+ * route would turn a successful provision into a 500 and invite the client to
+ * retry — creating a SECOND project against a shared, rate-limited quota
+ * (CODY.md Rule 5's whole concern). The route already reports `persisted` as
+ * an honesty flag, so this collapses the throw back into `persisted: false`
+ * and logs the real reason, keeping the distinction visible in logs/Sentry
+ * without re-provisioning anything.
+ */
+async function persistProvisioning(
+  slug: string,
+  fields: Parameters<typeof setAppProvisioned>[1],
+): Promise<boolean> {
+  try {
+    return await setAppProvisioned(slug, fields)
+  } catch (err) {
+    if (!isRegistryLookupUnverified(err)) throw err
+    console.error(`[provision] ${(err as Error).message}`)
+    return false
+  }
+}
 
 /**
  * #443: a founder-scoped primitive (ZeroCommerce, AgentFlow, …) has no
@@ -414,7 +442,7 @@ export async function POST(request: NextRequest) {
       const keyKind: 'permanent' | 'tmp' = isPaid ? 'permanent' : 'tmp'
       const trialExpiresAt =
         keyKind === 'tmp' ? new Date(Date.now() + TRIAL_WINDOW_MS).toISOString() : undefined
-      const persisted = await setAppProvisioned(slug, {
+      const persisted = await persistProvisioning(slug, {
         zerodbProjectId: mcp.projectId,
         keyKind,
         // Only ever set for a tmp_ trial — a permanent (paid) project never
@@ -675,7 +703,7 @@ export async function POST(request: NextRequest) {
   // Persist provisioning onto the company's registry entry so Live/systems read
   // real per-company primitives going forward. We store the project id + key kind
   // (+ claim token for tmp_), NOT the raw api_key (data-plane secret).
-  const persisted = await setAppProvisioned(slug, {
+  const persisted = await persistProvisioning(slug, {
     zerodbProjectId: prov.projectId,
     keyKind: prov.keyKind,
     claimToken: prov.claimToken,
