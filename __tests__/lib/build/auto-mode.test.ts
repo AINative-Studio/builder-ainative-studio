@@ -279,9 +279,9 @@ describe('run store I/O (#58)', () => {
     expect(run?.duration).toBe('8h') // newest acme auto row wins; 'other' + 'run' excluded
   })
 
-  it('getAutoRun returns null on a non-ok response', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, text: async () => '' } as Response))
-    expect(await getAutoRun('acme')).toBeNull()
+  it('getAutoRun throws on a non-ok response (never confused with a genuinely run-free company)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 503, text: async () => '' } as Response))
+    await expect(getAutoRun('acme')).rejects.toThrow()
   })
 
   it('stopAutoRun appends a stopped row carrying the current run fields', async () => {
@@ -311,9 +311,13 @@ describe('run store I/O (#58)', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('store calls swallow network errors', async () => {
+  it('startAutoRun swallows a network error to null (inert write, never fabricated)', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('boom')))
     expect(await startAutoRun({ companyId: 'acme', duration: '1h' })).toBeNull()
-    expect(await getAutoRun('acme')).toBeNull()
+  })
+
+  it('getAutoRun propagates a network error instead of swallowing it to null', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('boom')))
+    await expect(getAutoRun('acme')).rejects.toThrow('boom')
   })
 })

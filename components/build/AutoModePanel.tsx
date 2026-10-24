@@ -56,18 +56,25 @@ export function AutoModePanel({ companyId, companyName, track = 'company', unloc
   const [notice, setNotice] = useState<string | null>(null)
   // A ticking clock so the countdown re-renders every second without refetching.
   const [nowMs, setNowMs] = useState(() => Date.now())
+  // A failed status check used to collapse into the same `run: null` shape as
+  // a confirmed-idle company, showing the START button on a transient hiccup
+  // even when a run was genuinely active — and starting again fires a real,
+  // unguarded second swarm dispatch. This tells the two apart and blocks
+  // START while the real status can't be confirmed.
+  const [loadError, setLoadError] = useState(false)
 
   const load = useCallback(() => {
     let alive = true
     fetch(`/api/build/auto-mode?companyId=${encodeURIComponent(companyId)}`)
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`load failed: ${r.status}`))))
       .then((d: AutoModeApi | null) => {
         if (!alive) return
         setConfigured(d?.configured !== false)
         setRun(d?.run ?? null)
+        setLoadError(false)
         setLoaded(true)
       })
-      .catch(() => { if (alive) setLoaded(true) })
+      .catch(() => { if (alive) { setLoadError(true); setLoaded(true) } })
     return () => { alive = false }
   }, [companyId])
 
@@ -84,6 +91,9 @@ export function AutoModePanel({ companyId, companyName, track = 'company', unloc
   const start = async () => {
     if (busy) return
     if (!unlocked) { onUpgrade(); return }
+    // Never start blind to whether a run is already active — the backend
+    // has no idempotency guard against a second dispatch.
+    if (loadError) { setNotice("Couldn't confirm Auto Mode's status — refresh before starting."); return }
     setBusy(true); setNotice(null)
     try {
       const r = await fetch('/api/build/auto-mode', {
@@ -157,6 +167,12 @@ export function AutoModePanel({ companyId, companyName, track = 'company', unloc
         <p className="m-mono m-metric-note" data-testid="auto-mode-disabled-note">
           Auto Mode isn’t available in this environment yet. Nothing was faked — it’ll switch on
           once the autonomous loop is configured for {companyName}.
+        </p>
+      ) : loadError ? (
+        // Honest: we don't know if a run is active, so never show the IDLE
+        // start button here — that could fire an unguarded second dispatch.
+        <p className="m-mono m-metric-note" data-testid="auto-mode-error">
+          Couldn&apos;t check Auto Mode&apos;s status right now — try refreshing before starting or stopping a run.
         </p>
       ) : progress.running ? (
         // ---- RUNNING: live progress ----------------------------------------
