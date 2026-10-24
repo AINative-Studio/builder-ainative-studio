@@ -16,17 +16,17 @@ const h = vi.hoisted(() => ({
   deployCompanyFromGitea: vi.fn(),
   companyDeployEnabled: vi.fn(() => true),
   setAppRailwayService: vi.fn(async () => true),
-  resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(),
   handlePRWebhook: vi.fn(async () => ({ ok: true, verdict: 'approve', summary: 'ok' })),
 }))
-const { deployCompanyFromGitea, companyDeployEnabled, setAppRailwayService, resolveApp, handlePRWebhook } = h
+const { deployCompanyFromGitea, companyDeployEnabled, setAppRailwayService, resolveAppVerified, handlePRWebhook } = h
 
 vi.mock('@/lib/build/company-deploy', () => ({
   deployCompanyFromGitea: h.deployCompanyFromGitea,
   companyDeployEnabled: h.companyDeployEnabled,
 }))
 vi.mock('@/lib/build/app-registry', () => ({
-  resolveApp: h.resolveApp,
+  resolveAppVerified: h.resolveAppVerified,
   setAppRailwayService: h.setAppRailwayService,
 }))
 vi.mock('@/lib/build/instant-db', () => ({
@@ -56,14 +56,14 @@ describe('handlePushRedeploy (pure orchestration, #392)', () => {
     deployCompanyFromGitea.mockReset()
     companyDeployEnabled.mockReset().mockReturnValue(true)
     setAppRailwayService.mockReset().mockResolvedValue(true)
-    resolveApp.mockReset()
+    resolveAppVerified.mockReset()
   })
 
-  it('ignores a push to a non-main branch — never calls resolveApp at all', async () => {
+  it('ignores a push to a non-main branch — never calls resolveAppVerified at all', async () => {
     const result = await handlePushRedeploy(pushPayload({ ref: 'refs/heads/task/foo' }))
     expect(result.ok).toBe(true)
     expect(result.reason).toMatch(/ignored_branch/)
-    expect(resolveApp).not.toHaveBeenCalled()
+    expect(resolveAppVerified).not.toHaveBeenCalled()
   })
 
   it('rejects a payload missing repository info, never throws', async () => {
@@ -72,16 +72,24 @@ describe('handlePushRedeploy (pure orchestration, #392)', () => {
     expect(result.reason).toBe('invalid_payload')
   })
 
-  it('is a silent no-op for a company unknown to the registry', async () => {
-    resolveApp.mockResolvedValue(null)
+  it('is a silent no-op for a company CONFIRMED unknown to the registry', async () => {
+    resolveAppVerified.mockResolvedValue({ entry: null, verified: true })
     const result = await handlePushRedeploy(pushPayload())
     expect(result.ok).toBe(true)
     expect(result.reason).toBe('unknown_company')
     expect(deployCompanyFromGitea).not.toHaveBeenCalled()
   })
 
+  it('never masks a failed registry lookup as "unknown_company" — surfaces lookup_failed and skips the redeploy', async () => {
+    resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+    const result = await handlePushRedeploy(pushPayload())
+    expect(result.ok).toBe(false)
+    expect(result.reason).toBe('lookup_failed')
+    expect(deployCompanyFromGitea).not.toHaveBeenCalled()
+  })
+
   it('is a silent no-op for a company that has NEVER been deployed (no railwayServiceId) — never auto-provisions', async () => {
-    resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', workspaceId: 'ws-1' })
+    resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1', workspaceId: 'ws-1' }, verified: true })
     const result = await handlePushRedeploy(pushPayload())
     expect(result.ok).toBe(true)
     expect(result.reason).toBe('not_yet_provisioned')
@@ -89,7 +97,7 @@ describe('handlePushRedeploy (pure orchestration, #392)', () => {
   })
 
   it('skips cleanly when RAILWAY_DEPLOY_ENABLED is off, even for an already-provisioned company', async () => {
-    resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', workspaceId: 'ws-1', railwayServiceId: 'company-acme' })
+    resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1', workspaceId: 'ws-1', railwayServiceId: 'company-acme' }, verified: true })
     companyDeployEnabled.mockReturnValue(false)
     const result = await handlePushRedeploy(pushPayload())
     expect(result.ok).toBe(true)
@@ -98,7 +106,7 @@ describe('handlePushRedeploy (pure orchestration, #392)', () => {
   })
 
   it('redeploys an already-provisioned company on a real main-branch push, alreadyProvisioned=true', async () => {
-    resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', workspaceId: 'ws-1', railwayServiceId: 'company-acme' })
+    resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1', workspaceId: 'ws-1', railwayServiceId: 'company-acme' }, verified: true })
     deployCompanyFromGitea.mockResolvedValue({
       ok: true,
       serviceName: 'company-acme',
@@ -115,14 +123,14 @@ describe('handlePushRedeploy (pure orchestration, #392)', () => {
   })
 
   it('falls back to BUILDER_WORKSPACE_ID when the company has no persisted workspaceId', async () => {
-    resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', railwayServiceId: 'company-acme' })
+    resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1', railwayServiceId: 'company-acme' }, verified: true })
     deployCompanyFromGitea.mockResolvedValue({ ok: true, serviceName: 'company-acme' })
     await handlePushRedeploy(pushPayload())
     expect(deployCompanyFromGitea).toHaveBeenCalledWith('5d2376e1-d4f0-4193-9a7f-84e4543a8f9a', 'acme', true)
   })
 
   it('surfaces a real deploy failure honestly — never fabricates success', async () => {
-    resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', workspaceId: 'ws-1', railwayServiceId: 'company-acme' })
+    resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1', workspaceId: 'ws-1', railwayServiceId: 'company-acme' }, verified: true })
     deployCompanyFromGitea.mockResolvedValue({ ok: false, reason: 'railway up failed: build error' })
     const result = await handlePushRedeploy(pushPayload())
     expect(result.ok).toBe(false)
@@ -131,7 +139,7 @@ describe('handlePushRedeploy (pure orchestration, #392)', () => {
   })
 
   it('never throws — a thrown collaborator error is caught and surfaced as a structured failure', async () => {
-    resolveApp.mockRejectedValue(new Error('zerodb timeout'))
+    resolveAppVerified.mockRejectedValue(new Error('zerodb timeout'))
     const result = await handlePushRedeploy(pushPayload())
     expect(result.ok).toBe(false)
     expect(result.reason).toMatch(/zerodb timeout/)
@@ -143,13 +151,13 @@ describe('POST /api/webhooks/gitea — push event routing (#392)', () => {
     deployCompanyFromGitea.mockReset()
     companyDeployEnabled.mockReset().mockReturnValue(true)
     setAppRailwayService.mockReset().mockResolvedValue(true)
-    resolveApp.mockReset()
+    resolveAppVerified.mockReset()
     handlePRWebhook.mockClear()
   })
   afterEach(() => vi.restoreAllMocks())
 
   it('responds immediately for a push event WITHOUT waiting for the redeploy to finish', async () => {
-    resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', workspaceId: 'ws-1', railwayServiceId: 'company-acme' })
+    resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1', workspaceId: 'ws-1', railwayServiceId: 'company-acme' }, verified: true })
     let resolveDeploy: (v: any) => void = () => {}
     deployCompanyFromGitea.mockReturnValue(new Promise((resolve) => { resolveDeploy = resolve }))
 
@@ -170,7 +178,7 @@ describe('POST /api/webhooks/gitea — push event routing (#392)', () => {
     const res = await POST(req('push', pushPayload({ ref: 'refs/heads/task/foo' })))
     const json = await res.json()
     expect(json.ok).toBe(true)
-    expect(resolveApp).not.toHaveBeenCalled()
+    expect(resolveAppVerified).not.toHaveBeenCalled()
   })
 
   it('unrelated events are ignored, unaffected by the new push handling', async () => {

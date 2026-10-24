@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { handlePRWebhook, type GiteaWebhookPayload } from '@/lib/git/committee-pr-gate'
 import { syncTaskFromPREvent } from '@/lib/git/task-sync-from-git'
 import { deployCompanyFromGitea, companyDeployEnabled } from '@/lib/build/company-deploy'
-import { resolveApp, setAppRailwayService } from '@/lib/build/app-registry'
+import { resolveAppVerified, setAppRailwayService } from '@/lib/build/app-registry'
 import { BUILDER_WORKSPACE_ID } from '@/lib/build/instant-db'
 
 /**
@@ -68,7 +68,16 @@ export async function handlePushRedeploy(payload: GiteaPushPayload): Promise<Pus
   const slug = repository.name
 
   try {
-    const entry = await resolveApp(slug)
+    // #832-class bug, continuing the sweep #1302/#1316/#1324/#1327/#1328/
+    // #1335/#1337/#1392/#1423 already did: resolveApp()'s plain `null`
+    // return collapsed "no such company" with "the registry read itself
+    // failed". Worse here than most siblings — this path is fire-and-forget
+    // (the POST handler never awaits it, see below), so a transient ZeroDB
+    // hiccup used to silently skip the redeploy for a real, already-
+    // provisioned company's push with an `ok: true` result: no retry, no
+    // error logged, nothing to ever notice the deploy never happened.
+    const { entry, verified } = await resolveAppVerified(slug)
+    if (!verified) return { ok: false, reason: 'lookup_failed' }
     if (!entry) return { ok: true, reason: 'unknown_company' }
     if (!entry.railwayServiceId) return { ok: true, reason: 'not_yet_provisioned' }
     if (!companyDeployEnabled()) return { ok: true, reason: 'deploy_disabled' }
