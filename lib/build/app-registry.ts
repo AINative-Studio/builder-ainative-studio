@@ -1052,7 +1052,15 @@ export async function setAppPlan(slug: string, plan: string): Promise<boolean> {
 export async function claimSubdomain(
   slug: string,
 ): Promise<{ ok: boolean; claimed: boolean; reason?: string }> {
-  const existing = await resolveApp(slug)
+  // #832-class bug (#1454): this used to resolve with a plain `resolveApp(slug)`,
+  // whose single `null` collapses "confirmed not registered" with "the registry
+  // read itself failed." A transient ZeroDB hiccup therefore returned
+  // `not_registered`, which the POST route maps to a 404 — telling a real,
+  // paying founder mid-claim that their own company doesn't exist. Same fix
+  // already applied to fulfillPaidPlan() below and connect-domain's routes.
+  const lookup = await resolveAppVerified(slug).catch(() => ({ entry: null, verified: false }))
+  if (!lookup.verified) return { ok: false, claimed: false, reason: 'lookup_failed' }
+  const existing = lookup.entry
   if (!existing) return { ok: false, claimed: false, reason: 'not_registered' }
   // Paid gate — a subdomain can only be claimed on a paid plan (#78). Asks the
   // consolidated predicate (#762) rather than a local literal set, which used to

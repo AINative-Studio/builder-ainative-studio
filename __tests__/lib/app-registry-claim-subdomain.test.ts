@@ -38,6 +38,29 @@ describe('claimSubdomain (#78)', () => {
     expect(postCall).toBeUndefined()
   })
 
+  // #1454: a failed registry read must land in its own bucket. Pre-fix this used a
+  // plain resolveApp(), whose single `null` reported `not_registered` — which the
+  // POST route maps to a 404, telling a real paying founder mid-claim that their
+  // own company doesn't exist. `lookup_failed` is retryable; `not_registered` isn't.
+  it('reports lookup_failed (not not_registered) when the registry read itself fails — no write', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503, text: async () => 'upstream timeout' } as unknown as Response)
+    const res = await claimSubdomain('acme')
+    expect(res).toEqual({ ok: false, claimed: false, reason: 'lookup_failed' })
+    const postCall = fetchMock.mock.calls.find((c: any[]) => c[1]?.method === 'POST')
+    expect(postCall).toBeUndefined()
+  })
+
+  it('reports lookup_failed when the registry read throws outright — no write', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockRejectedValueOnce(new Error('zerodb network error'))
+    const res = await claimSubdomain('acme')
+    expect(res.reason).toBe('lookup_failed')
+    expect(res.ok).toBe(false)
+    const postCall = fetchMock.mock.calls.find((c: any[]) => c[1]?.method === 'POST')
+    expect(postCall).toBeUndefined()
+  })
+
   it('refuses (not_paid) for an unpaid company — no write', async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValueOnce(
