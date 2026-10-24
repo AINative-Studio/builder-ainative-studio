@@ -18,7 +18,7 @@ import { activityState, ribbonLine, ACTIVITY_EMPTY_LINE } from '@/lib/build/auto
 import { buildSystems, type BusinessSystem } from '@/lib/build/business-systems'
 import { DomainModal } from '@/components/build/DomainModal'
 import { MenuChip } from '@/components/build/MenuChip'
-import { planUnlocks, type ActivePlan } from '@/lib/build/state'
+import { planUnlocks, nextJourneyStep, type ActivePlan } from '@/lib/build/state'
 import { useSession } from 'next-auth/react'
 import { SystemStatusBadge } from '@/components/build/SystemStatusBadge'
 import { SystemSaving } from '@/components/build/SystemSaving'
@@ -685,6 +685,22 @@ export function Live() {
     dispatch({ type: 'GOTO_SCREEN', screen: 'ws' })
   }
 
+  // #1467 (BLD-05): a persistent, dedicated return path back into the
+  // journey — distinct from openGraph/rescopeWedge above (general-purpose
+  // nav) and from Pricing's seePreviewFirst / Account's "Back to app"
+  // (buried in unrelated screens). nextJourneyStep reads the SAME
+  // trackViews+state.done source JourneyBar's breadcrumb uses, so this
+  // control always points at the real next unfinished artifact — never a
+  // second, invented notion of "next." null means every view in the track
+  // is already done (the real shape once autoplay finishes, which is what
+  // COMPANY_DONE/MVP_DONE wait for) — there's no "next" to continue to, so
+  // this just returns the founder to the top of their plan instead.
+  const journeyStep = nextJourneyStep(state)
+  const continueJourney = () => {
+    if (journeyStep) dispatch({ type: 'GOTO_VIEW', view: journeyStep.view })
+    dispatch({ type: 'GOTO_SCREEN', screen: 'ws' })
+  }
+
   // Hydrate the persisted Cody conversation on mount (#52) so reload/re-login
   // restores the thread exactly where the founder left off — not an empty box.
   // The GET scopes by the SERVER session (owner) + companyId; an honest empty
@@ -997,6 +1013,19 @@ export function Live() {
           <MenuChip />
         </div>
       </header>
+
+      {/* #1467 (BLD-05): persistent return path back into the journey. "See it
+          live" (COMPANY_DONE/MVP_DONE) is a one-way screen change to Live —
+          this is the dedicated, clearly-labeled control back, distinct from
+          openGraph/rescopeWedge below (general-purpose nav further down the
+          page) and from Pricing's seePreviewFirst / Account's "Back to app"
+          (buried in unrelated screens, see state.ts's #1033 comment). Placed
+          right under the masthead so it's visible without scrolling. */}
+      <div className="m-live-continue-journey">
+        <button className="btn-ghost" data-testid="continue-journey-cta" onClick={continueJourney}>
+          {journeyStep ? `Continue to ${journeyStep.title} →` : '← Back to your plan'}
+        </button>
+      </div>
 
       {/* Upgrade path (#207 · #252 · #748). FOUR states, always giving an OBVIOUS
           next step (the gap the founder hit — "couldn't figure out how to pay",

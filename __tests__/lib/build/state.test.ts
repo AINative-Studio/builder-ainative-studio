@@ -7,6 +7,7 @@ import {
   initialBuildState,
   APP_VIEWS,
   COMPANY_VIEWS,
+  nextJourneyStep,
   type BuildState,
   type BuildAction,
   type ActivePlan,
@@ -496,6 +497,54 @@ describe('buildReducer — MVP_DONE / COMPANY_DONE', () => {
       { type: 'COMPANY_DONE' },
     )
     expect(s.view).toBe('design')
+  })
+})
+
+// #1467 (BLD-05): Live.tsx's "Continue to next step" control needs to know
+// what the next journey step actually is, from the SAME source JourneyBar
+// uses (trackViews + state.done) — not a second, invented notion of "next."
+// nextJourneyStep reuses firstUnfinishedView's own lookup rather than
+// duplicating it.
+describe('nextJourneyStep', () => {
+  it('returns the first undone view in track order, same as firstUnfinishedView', () => {
+    const state: BuildState = {
+      ...initialBuildState,
+      track: 'company',
+      done: { design: 'done', thesis: 'done' }, // wedge is next
+    }
+    const step = nextJourneyStep(state)
+    expect(step).not.toBeNull()
+    expect(step!.view).toBe('wedge')
+  })
+
+  it('carries a human title for the next view, matching ARTIFACT_TITLES', () => {
+    const state: BuildState = { ...initialBuildState, track: 'company', done: {} }
+    const step = nextJourneyStep(state)
+    expect(step).not.toBeNull()
+    expect(step!.view).toBe('design')
+    expect(step!.title).toBe('Design System')
+  })
+
+  it('returns null (journey complete) once every track view is done — the real shape COMPANY_DONE leaves behind, since autoplay marks every view done before COMPANY_DONE ever fires', () => {
+    const allDone = Object.fromEntries(COMPANY_VIEWS.map((v) => [v, 'done']))
+    const state: BuildState = { ...initialBuildState, track: 'company', done: allDone, builtCompany: true }
+    expect(nextJourneyStep(state)).toBeNull()
+  })
+
+  it('returns null once every App-track view is done (builtMVP flow)', () => {
+    const allDone = Object.fromEntries(APP_VIEWS.map((v) => [v, 'done']))
+    const state: BuildState = { ...initialBuildState, track: 'app', done: allDone, builtMVP: true }
+    expect(nextJourneyStep(state)).toBeNull()
+  })
+
+  it('treats an "edited" status the same as "done" — an edited artifact is still finished', () => {
+    const state: BuildState = {
+      ...initialBuildState,
+      track: 'company',
+      done: { design: 'edited', thesis: 'done' },
+    }
+    const step = nextJourneyStep(state)
+    expect(step!.view).toBe('wedge')
   })
 })
 

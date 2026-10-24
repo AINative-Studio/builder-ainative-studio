@@ -6,6 +6,8 @@
  * is vanilla JS; this is the React port (reducer + context in build-context.tsx).
  */
 
+import { ARTIFACT_TITLES } from '@/lib/build/titles'
+
 export type Screen =
   | 'landing'     // public marketing front door (Claude Design handoff): 4-beat
                   // pinned-scroll hero, shown to cold/logged-out visitors before
@@ -757,6 +759,32 @@ export function firstUnfinishedView(
 ): string {
   const seq = trackViews(track)
   return seq.find((v) => !done[v] && !genError[v]) ?? seq[seq.length - 1]
+}
+
+/**
+ * #1467 (BLD-05): what Live.tsx's "Continue to next step" control should
+ * point at. Reuses trackViews + state.done — the SAME source JourneyBar's
+ * breadcrumb reads (not a second, invented notion of "next step") — rather
+ * than hand-rolling a fresh lookup here. Deliberately does NOT reuse
+ * firstUnfinishedView's genError check: Live is reached only after a track
+ * fully completes (COMPANY_DONE/MVP_DONE), by which point every view either
+ * generated successfully or the founder already saw/handled its error inline
+ * on the artifact itself — genError is not the right signal for "what's left
+ * to walk through" here.
+ *
+ * Returns null once every view in the track is done — there genuinely is no
+ * next step (the real shape left behind once a track's own autoplay marks
+ * every view 'done'/'edited' before COMPANY_DONE/MVP_DONE ever fires). The
+ * caller decides what to show instead (see Live.tsx).
+ */
+export function nextJourneyStep(
+  state: Pick<BuildState, 'track' | 'done'>,
+): { view: ArtifactView; title: string } | null {
+  const seq = trackViews(state.track)
+  const done = state.done ?? {}
+  const next = seq.find((v) => !done[v])
+  if (!next) return null
+  return { view: next as ArtifactView, title: ARTIFACT_TITLES[next] ?? next }
 }
 
 /**
