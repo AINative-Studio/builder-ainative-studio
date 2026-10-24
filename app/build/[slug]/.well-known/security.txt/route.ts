@@ -7,6 +7,7 @@ export const runtime = 'nodejs'
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params
   const content = await resolveDiscoveryFile(slug, 'security.txt')
+  if (content === undefined) return new Response('Service unavailable', { status: 503 })
   if (content == null) return new Response('Not found', { status: 404 })
   return new Response(content, { headers: { 'Content-Type': discoveryContentType('security.txt') } })
 }
