@@ -14,7 +14,7 @@
  * no relational join between the two stores, so keeping this alongside the
  * registry avoids a second, disconnected system of record.
  *
- * Encryption: reuses credentials.service.ts's AES-256-GCM implementation
+ * Encryption: reuses credentials-crypto.ts's AES-256-GCM implementation
  * verbatim (same DEPLOYMENT_ENCRYPTION_KEY, same IV/auth-tag shape) rather
  * than a second crypto implementation for the same threat model.
  *
@@ -26,7 +26,10 @@
  * surfaced honestly; callers must fail closed, never retry indefinitely.
  */
 
-import { encryptToken, decryptToken } from '@/lib/services/credentials.service'
+// Import the PURE crypto helpers, not credentials.service, which statically
+// pulls in the drizzle/Postgres chain (~3.5s of Vite transform) that this
+// module has no use for -- see lib/services/credentials-crypto.ts (#1489).
+import { encryptToken, decryptToken } from '@/lib/services/credentials-crypto'
 import { refreshAINativeToken, shouldRefreshToken } from '@/lib/auth/tokenRefresh'
 import { ainativeFetch } from '@/lib/ainative/client'
 import { getAinativeApiKey } from '@/lib/build/env-keys'

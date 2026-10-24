@@ -26,7 +26,7 @@
  *
  * Storage/encryption: deliberately mirrors lib/build/primitive-credentials.ts
  * verbatim — same ZeroDB REST append-only rows / latest-wins read, same
- * AES-256-GCM encryptToken/decryptToken from lib/services/credentials.service,
+ * AES-256-GCM encryptToken/decryptToken from lib/services/credentials-crypto,
  * same trust boundary. It is a SEPARATE table from `builder_app_registry` on
  * purpose: the registry is read broadly across the codebase and returns whole
  * rows, so a raw data-plane secret there would be a real exposure.
@@ -42,7 +42,10 @@
  * mis-scoping this fixes, and would re-introduce the silent 403.
  */
 
-import { encryptToken, decryptToken } from '@/lib/services/credentials.service'
+// Import the PURE crypto helpers, not credentials.service, which statically
+// pulls in the drizzle/Postgres chain (~3.5s of Vite transform) that this
+// module has no use for -- see lib/services/credentials-crypto.ts (#1489).
+import { encryptToken, decryptToken } from '@/lib/services/credentials-crypto'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 const AINATIVE_API = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
