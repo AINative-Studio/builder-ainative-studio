@@ -2,23 +2,26 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 /**
  * #1188 — real tool_use handlers for the Live-dashboard "Ask Cody" chat.
- * Mocks only the I/O boundary (resolveApp, resolveCompanyZerodbKey, global
- * fetch) per this session's established convention (see
+ * Mocks only the I/O boundary (resolveAppVerified, resolveCompanyZerodbKey,
+ * global fetch) per this session's established convention (see
  * __tests__/api/build-ask-project-resolution.test.ts) — the tool logic itself
  * (scoping, flattening, error shaping) runs for real.
  */
 
 const h = vi.hoisted(() => ({
-  resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(),
   resolveCompanyZerodbKey: vi.fn(),
 }))
-vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({ resolveAppVerified: h.resolveAppVerified }))
 vi.mock('@/lib/build/company-zerodb-credentials', () => ({ resolveCompanyZerodbKey: h.resolveCompanyZerodbKey }))
 
 const originalFetch = global.fetch
 
+/** Confirmed result — mirrors resolveAppVerified's real return shape. */
+const confirmed = (entry: any) => ({ entry, verified: true })
+
 beforeEach(() => {
-  h.resolveApp.mockReset()
+  h.resolveAppVerified.mockReset()
   h.resolveCompanyZerodbKey.mockReset()
   global.fetch = originalFetch
   process.env.ZERODB_API_KEY = 'test-shared-key'
@@ -36,7 +39,7 @@ describe('queryZerodbTable (#1188)', () => {
   })
 
   it('reads real rows from the COMPANY-SCOPED project using its own stored key, not the shared key', async () => {
-    h.resolveApp.mockResolvedValue({ zerodbProjectId: 'company-proj-123' })
+    h.resolveAppVerified.mockResolvedValue(confirmed({ zerodbProjectId: 'company-proj-123' }))
     h.resolveCompanyZerodbKey.mockResolvedValue({ ok: true, apiKey: 'company-scoped-key' })
     const fetchSpy = vi.fn().mockResolvedValue({
       ok: true,
@@ -64,7 +67,7 @@ describe('queryZerodbTable (#1188)', () => {
   })
 
   it('uses the shared project + shared key for an unprovisioned company (honest legacy fallback)', async () => {
-    h.resolveApp.mockResolvedValue(null)
+    h.resolveAppVerified.mockResolvedValue(confirmed(null))
     const fetchSpy = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [] }) })
     global.fetch = fetchSpy as any
 
@@ -78,7 +81,7 @@ describe('queryZerodbTable (#1188)', () => {
   })
 
   it('NEVER falls back to the shared key when the company has its own project but no stored key (#806 anti-pattern)', async () => {
-    h.resolveApp.mockResolvedValue({ zerodbProjectId: 'company-proj-999' })
+    h.resolveAppVerified.mockResolvedValue(confirmed({ zerodbProjectId: 'company-proj-999' }))
     h.resolveCompanyZerodbKey.mockResolvedValue({ ok: false, reason: 'not_stored' })
     const fetchSpy = vi.fn()
     global.fetch = fetchSpy as any
@@ -93,7 +96,7 @@ describe('queryZerodbTable (#1188)', () => {
   })
 
   it('returns an honest "table does not exist" error on a 404, never fabricated rows', async () => {
-    h.resolveApp.mockResolvedValue(null)
+    h.resolveAppVerified.mockResolvedValue(confirmed(null))
     global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 404, text: async () => 'not found' }) as any
 
     const { queryZerodbTable } = await import('@/lib/build/ask-tools')
@@ -105,7 +108,7 @@ describe('queryZerodbTable (#1188)', () => {
   })
 
   it('clamps limit to the 1-20 range', async () => {
-    h.resolveApp.mockResolvedValue(null)
+    h.resolveAppVerified.mockResolvedValue(confirmed(null))
     const fetchSpy = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [] }) })
     global.fetch = fetchSpy as any
 
@@ -117,7 +120,7 @@ describe('queryZerodbTable (#1188)', () => {
   })
 
   it('never throws on a network failure — returns a structured error', async () => {
-    h.resolveApp.mockResolvedValue(null)
+    h.resolveAppVerified.mockResolvedValue(confirmed(null))
     global.fetch = vi.fn().mockRejectedValue(new Error('ECONNRESET')) as any
 
     const { queryZerodbTable } = await import('@/lib/build/ask-tools')
@@ -126,15 +129,29 @@ describe('queryZerodbTable (#1188)', () => {
     expect(result.rows).toEqual([])
     expect(result.error).toContain('ECONNRESET')
   })
+
+  it('NEVER falls back to the shared project when the registry lookup itself fails (verified:false)', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+    const fetchSpy = vi.fn()
+    global.fetch = fetchSpy as any
+
+    const { queryZerodbTable } = await import('@/lib/build/ask-tools')
+    const result = await queryZerodbTable({ companyId: 'acme' }, { table: 'products' })
+
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(result.rowCount).toBe(0)
+    expect(result.rows).toEqual([])
+    expect(result.error).toMatch(/could not be confirmed/i)
+  })
 })
 
 describe('getDesignTokens (#1188)', () => {
   it('returns the real stored brand color and logo for a provisioned company', async () => {
-    h.resolveApp.mockResolvedValue({
+    h.resolveAppVerified.mockResolvedValue(confirmed({
       color: '#FF6B35',
       logoUrl: 'https://builder.ainative.studio/api/logo/acme',
       logoUpdatedAt: '2026-10-10T00:00:00Z',
-    })
+    }))
     const { getDesignTokens } = await import('@/lib/build/ask-tools')
     const result = await getDesignTokens({ companyId: 'acme' })
     expect(result).toEqual({
@@ -147,7 +164,7 @@ describe('getDesignTokens (#1188)', () => {
   })
 
   it('honestly reports no brand color/logo for a company that never set one', async () => {
-    h.resolveApp.mockResolvedValue({ name: 'Acme' })
+    h.resolveAppVerified.mockResolvedValue(confirmed({ name: 'Acme' }))
     const { getDesignTokens } = await import('@/lib/build/ask-tools')
     const result = await getDesignTokens({ companyId: 'acme' })
     expect(result.hasBrandColor).toBe(false)
@@ -157,23 +174,33 @@ describe('getDesignTokens (#1188)', () => {
   })
 
   it('returns a structured error (never throws) when the company is not found', async () => {
-    h.resolveApp.mockResolvedValue(null)
+    h.resolveAppVerified.mockResolvedValue(confirmed(null))
     const { getDesignTokens } = await import('@/lib/build/ask-tools')
     const result = await getDesignTokens({ companyId: 'unknown' })
     expect(result.error).toBe('Company not found.')
   })
 
-  it('never throws when resolveApp rejects', async () => {
-    h.resolveApp.mockRejectedValue(new Error('zerodb unreachable'))
+  it('never throws when resolveAppVerified rejects', async () => {
+    h.resolveAppVerified.mockRejectedValue(new Error('zerodb unreachable'))
     const { getDesignTokens } = await import('@/lib/build/ask-tools')
     const result = await getDesignTokens({ companyId: 'acme' })
     expect(result.error).toContain('zerodb unreachable')
+  })
+
+  it('distinguishes a failed lookup from a confirmed miss — never claims "Company not found" on a transient failure', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+    const { getDesignTokens } = await import('@/lib/build/ask-tools')
+    const result = await getDesignTokens({ companyId: 'acme' })
+    expect(result.hasBrandColor).toBe(false)
+    expect(result.hasLogo).toBe(false)
+    expect(result.error).not.toBe('Company not found.')
+    expect(result.error).toMatch(/could not confirm/i)
   })
 })
 
 describe('runAskTool dispatch (#1188)', () => {
   it('dispatches query_zerodb_table and returns isError:false on a real success', async () => {
-    h.resolveApp.mockResolvedValue(null)
+    h.resolveAppVerified.mockResolvedValue(confirmed(null))
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ data: [{ row_data: { name: 'Widget' }, row_id: '1' }] }),
@@ -186,7 +213,7 @@ describe('runAskTool dispatch (#1188)', () => {
   })
 
   it('dispatches get_design_tokens', async () => {
-    h.resolveApp.mockResolvedValue({ color: '#000' })
+    h.resolveAppVerified.mockResolvedValue(confirmed({ color: '#000' }))
     const { runAskTool } = await import('@/lib/build/ask-tools')
     const { result, isError } = await runAskTool('get_design_tokens', {}, { companyId: 'acme' })
     expect(isError).toBe(false)
@@ -201,7 +228,7 @@ describe('runAskTool dispatch (#1188)', () => {
   })
 
   it('marks isError:true for a query_zerodb_table result that has a real table name but still errored (404)', async () => {
-    h.resolveApp.mockResolvedValue(null)
+    h.resolveAppVerified.mockResolvedValue(confirmed(null))
     global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 404, text: async () => 'not found' }) as any
     const { runAskTool } = await import('@/lib/build/ask-tools')
     const { result, isError } = await runAskTool('query_zerodb_table', { table: 'ghost' }, { companyId: 'acme' })
