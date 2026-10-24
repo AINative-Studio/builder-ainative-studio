@@ -186,6 +186,25 @@ export function MobileMenu({ onInfoDialogOpen }: MobileMenuProps) {
                   <Button
                     variant="ghost"
                     className="w-full justify-start h-auto p-3 text-left"
+                    onClick={() => {
+                      onInfoDialogOpen()
+                      closeMenu()
+                    }}
+                  >
+                    <div className="flex items-center gap-3 w-full">
+                      <Info className="h-4 w-4 flex-shrink-0" />
+                      <div className="flex-1">
+                        <div className="font-medium">Platform Info</div>
+                        <div className="text-sm text-muted-foreground">
+                          About the AINative platform
+                        </div>
+                      </div>
+                    </div>
+                  </Button>
+
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-start h-auto p-3 text-left"
                     asChild
                   >
                     <Link
