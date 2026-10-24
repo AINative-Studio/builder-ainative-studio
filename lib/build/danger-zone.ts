@@ -11,9 +11,10 @@
  */
 
 import { setLoopEnabled } from '@/lib/build/loop-enrollment'
-import { setAppLifecycle, resolveApp } from '@/lib/build/app-registry'
+import { setAppLifecycle, resolveAppVerified } from '@/lib/build/app-registry'
 import { releaseZeroVoiceNumber } from '@/lib/build/zerovoice'
 import { deleteCustomDomain } from '@/lib/build/railway-deploy'
+import { logger } from '@/lib/logger'
 
 export type DangerAction = 'pause' | 'resume' | 'offline' | 'delete'
 
@@ -80,6 +81,14 @@ export interface DangerOutcome {
   lifecycleChanged?: boolean
   zerovoiceReleased?: boolean
   byoDomainReleased?: boolean
+  /** Set when the registry lookup for provisioned resources (zerovoiceNumberId/
+   *  byoDomainId) could not be confirmed — distinct from "nothing was
+   *  provisioned." The lifecycle flip still proceeds (the founder's company
+   *  still disappears from their view, as they expect), but a real phone
+   *  number or domain may be left orphaned/unreleased and need a manual
+   *  follow-up, rather than this looking identical to a clean "nothing to
+   *  release" delete. */
+  resourceReleaseUnverified?: boolean
   detail?: string
 }
 
@@ -121,7 +130,20 @@ export async function applyDangerAction(req: DangerRequest, founderJwt?: string)
 
       let zerovoiceReleased: boolean | undefined
       let byoDomainReleased: boolean | undefined
-      const entry = await resolveApp(req.slug).catch(() => null)
+      const { entry, verified } = await resolveAppVerified(req.slug).catch(
+        () => ({ entry: null as Awaited<ReturnType<typeof resolveAppVerified>>['entry'], verified: false }),
+      )
+      if (!verified) {
+        // Could not confirm whether this company had a provisioned ZeroVoice
+        // number / BYO domain to release — must not look identical to a
+        // confirmed "nothing was provisioned." The lifecycle flip below still
+        // proceeds (same "must never block delete" reasoning as a release
+        // call itself failing), but resourceReleaseUnverified flags that a
+        // real resource may be left orphaned and need a manual follow-up.
+        logger.warn('danger-zone delete: could not verify registry entry before releasing resources', {
+          companyId: req.companyId, slug: req.slug,
+        })
+      }
       if (entry?.zerovoiceNumberId && founderJwt) {
         const released = await releaseZeroVoiceNumber(founderJwt, entry.zerovoiceNumberId)
         zerovoiceReleased = released.ok
@@ -132,7 +154,10 @@ export async function applyDangerAction(req: DangerRequest, founderJwt?: string)
       }
 
       const lifecycleChanged = await setAppLifecycle(req.slug, 'deleted')
-      return { ok: true, action: 'delete', loopChanged, lifecycleChanged, zerovoiceReleased, byoDomainReleased }
+      return {
+        ok: true, action: 'delete', loopChanged, lifecycleChanged, zerovoiceReleased, byoDomainReleased,
+        resourceReleaseUnverified: verified ? undefined : true,
+      }
     }
     default:
       return { ok: false, action: req.action, detail: 'unhandled action' }
