@@ -25,7 +25,7 @@
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { deriveOwnerKey, chatScopeKey } from '@/lib/build/chat-store'
-import { resolveApp, resolveAppVerified, setAppLogo } from '@/lib/build/app-registry'
+import { resolveAppVerified, setAppLogo } from '@/lib/build/app-registry'
 import { uploadMediaFile, fetchFileDownload } from '@/lib/build/media-schedule'
 import {
   validateLogoUpload,
@@ -61,7 +61,19 @@ export async function GET(request: NextRequest) {
 
   const companyId = String(request.nextUrl.searchParams.get('companyId') || '').slice(0, 80).trim()
   if (!companyId) return Response.json({ error: 'missing_company' }, { status: 400 })
-  const entry = await resolveApp(companyId).catch(() => null)
+
+  // #832-class bug (#1454): a plain resolveApp().catch(() => null) returned a
+  // 200 OK with `{ url: null }` on a registry-read failure — the SAME shape as
+  // "no logo set" — which WebsitePanel's loadLogo() can't distinguish from a
+  // real success (it only treats a non-ok HTTP status as a load error, per
+  // its own #492/#1473 fix). That left the one gap the client-side fix
+  // couldn't close: the server itself fabricating success on a lookup
+  // failure, silently regressing the founder's logo thumbnail/"Replace logo"
+  // button back to "Upload a logo" on a transient registry hiccup.
+  const { entry, verified } = await resolveAppVerified(companyId).catch(
+    () => ({ entry: null as Awaited<ReturnType<typeof resolveAppVerified>>['entry'], verified: false }),
+  )
+  if (!verified) return Response.json({ error: 'lookup_failed' }, { status: 503 })
   return Response.json({ url: entry?.logoUrl || null })
 }
 

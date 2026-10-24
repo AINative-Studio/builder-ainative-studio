@@ -17,7 +17,7 @@ const chatStore = vi.hoisted(() => ({
 }))
 vi.mock('@/lib/build/chat-store', () => chatStore)
 
-const appRegistry = vi.hoisted(() => ({ resolveApp: vi.fn(), resolveAppVerified: vi.fn(), setAppLogo: vi.fn() }))
+const appRegistry = vi.hoisted(() => ({ resolveAppVerified: vi.fn(), setAppLogo: vi.fn() }))
 vi.mock('@/lib/build/app-registry', () => appRegistry)
 
 /** A confirmed resolveAppVerified() result — either a real entry or a confirmed miss. */
@@ -94,7 +94,7 @@ describe('#1202 GET /api/build/logo', () => {
   })
 
   it("returns the company's current logo url", async () => {
-    appRegistry.resolveApp.mockResolvedValue({ logoUrl: 'https://bucket/current-logo.png' })
+    appRegistry.resolveAppVerified.mockResolvedValue(verified({ logoUrl: 'https://bucket/current-logo.png' }))
     const { GET } = await import('@/app/api/build/logo/route')
 
     const res = await GET(mockGetRequest('http://localhost/api/build/logo?companyId=acme'))
@@ -105,7 +105,7 @@ describe('#1202 GET /api/build/logo', () => {
   })
 
   it('returns a null url when the company has no logo yet', async () => {
-    appRegistry.resolveApp.mockResolvedValue({ logoUrl: undefined })
+    appRegistry.resolveAppVerified.mockResolvedValue(verified({ logoUrl: undefined }))
     const { GET } = await import('@/app/api/build/logo/route')
 
     const res = await GET(mockGetRequest('http://localhost/api/build/logo?companyId=acme'))
@@ -113,6 +113,33 @@ describe('#1202 GET /api/build/logo', () => {
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.url).toBeNull()
+  })
+
+  // #832-class bug (#1454): a plain resolveApp().catch(() => null) returned a
+  // 200 { url: null } on a registry-read failure — the SAME shape as "no logo
+  // set" — which WebsitePanel's #1473 loadLogo() client-side check can't
+  // distinguish from a real success (it only treats a non-ok status as an
+  // error). This is the one gap that client-side fix couldn't close.
+  it('returns 503 lookup_failed when the registry read itself fails (NOT a fabricated null url)', async () => {
+    appRegistry.resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+    const { GET } = await import('@/app/api/build/logo/route')
+
+    const res = await GET(mockGetRequest('http://localhost/api/build/logo?companyId=acme'))
+
+    expect(res.status).toBe(503)
+    const body = await res.json()
+    expect(body.error).toBe('lookup_failed')
+  })
+
+  it('returns 503 lookup_failed when resolveAppVerified rejects outright', async () => {
+    appRegistry.resolveAppVerified.mockRejectedValue(new Error('zerodb timeout'))
+    const { GET } = await import('@/app/api/build/logo/route')
+
+    const res = await GET(mockGetRequest('http://localhost/api/build/logo?companyId=acme'))
+
+    expect(res.status).toBe(503)
+    const body = await res.json()
+    expect(body.error).toBe('lookup_failed')
   })
 })
 
