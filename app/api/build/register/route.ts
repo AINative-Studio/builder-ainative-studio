@@ -14,12 +14,12 @@
  * (core POST /api/v1/auth/resend-verification) so the UI can offer "check your
  * email / resend" rather than silently dead-ending the founder at login.
  *
- * Body (register):     { email, password, phone? }   (gclid + utm come from the cookies)
+ * Body (register):     { email, password, phone?, anonDraftToken? }   (gclid + utm come from the cookies)
  * Body (resend):       { action:'resend', email }
  * Body (login-check):  { action:'login-check', email, password }
  * Body (send-otp):     { action:'send-otp', phone }
  * Body (verify-otp):   { action:'verify-otp', phone, code }
- * Returns (register):    { ok, email, verificationRequired, gclidAttached } | { ok:false, error }
+ * Returns (register):    { ok, email, verificationRequired, gclidAttached, draft } | { ok:false, error }
  * Returns (resend):      { ok } | { ok:false, error }
  * Returns (login-check): { ok } | { ok:false, errorCode?, error }
  * Returns (send-otp):    { ok:true, expiresAt } | { ok:false, reason }
@@ -43,6 +43,21 @@
  * from core's real, working account) and sends via Twilio's Messages API
  * directly, gated on ZEROVOICE_OTP_ENABLED + the TWILIO_* vars being set —
  * see lib/build/otp.ts's header for the full detail.
+ *
+ * #1466 (BLD-03) — a pre-auth idea generated anonymously ("Surprise me",
+ * or answered kickoff questions) is autosaved server-side keyed by a
+ * browser-scoped cookie token (lib/build/anon-draft-token.ts +
+ * lib/build/anon-drafts.ts), but nothing on THIS route ever read it back,
+ * so the idea was silently lost through signup. The client now sends the
+ * token as `anonDraftToken`; on a successful registration we best-effort
+ * load the draft and return its idea/track/answers so the client can seed
+ * the new workspace instead of starting blank — same posture as the CAPI
+ * report and recordFounderPhone calls below: a failure here never blocks
+ * registration. The draft row itself is left for the existing 30-day purge
+ * cron (app/api/cron/purge-anon-drafts/route.ts) — anon-drafts.ts has no
+ * delete-by-token primitive today, and these rows are low-value/low-risk
+ * (no PII, append-only, already time-boxed), so adding one just to tidy up
+ * immediately after a successful attach isn't worth the new surface area.
  */
 
 import { NextRequest } from 'next/server'
@@ -51,6 +66,7 @@ import { reportMetaConversion, fbcFromRequest, fbpFromRequest } from '@/lib/buil
 import { createHash } from 'crypto'
 import { sendOtp, sendOtpEmail, verifyOtp, toE164, checkOtpRateLimit } from '@/lib/build/otp'
 import { recordFounderPhone, markFounderPhoneVerified } from '@/lib/build/founder-phones'
+import { loadAnonDraft } from '@/lib/build/anon-drafts'
 import { turnstileEnabled, verifyTurnstileToken } from '@/lib/turnstile'
 
 export const runtime = 'nodejs'
@@ -289,12 +305,25 @@ export async function POST(request: NextRequest) {
     if (normalizedPhone) {
       recordFounderPhone(email, normalizedPhone).catch(() => {})
     }
+    // #1466 — best-effort attach of the pre-auth anon draft (if the client
+    // submitted a token and a draft was actually saved for it). Never
+    // throws past this point: a draft-load failure must not fail
+    // registration, which has already succeeded against core above.
+    const anonDraftToken = typeof b?.anonDraftToken === 'string' ? b.anonDraftToken : ''
+    let draft: { idea: string; track: string; answers: Record<string, string> } | null = null
+    if (anonDraftToken) {
+      try {
+        const loaded = await loadAnonDraft(anonDraftToken)
+        if (loaded) draft = { idea: loaded.idea, track: loaded.track, answers: loaded.answers }
+      } catch { /* best-effort — registration already succeeded */ }
+    }
     return Response.json({
       ok: true,
       email,
       verificationRequired: Boolean(verificationRequired),
       gclidAttached: Boolean(gclid),
       metaEventId,
+      draft,
     })
   } catch (e: any) {
     return Response.json({ ok: false, error: String(e?.message || e).slice(0, 120) }, { status: 502 })
