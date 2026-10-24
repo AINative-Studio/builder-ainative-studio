@@ -11,7 +11,7 @@
 
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
-import { registerApp, resolveApp, resolveAppVerified, type AppEntry } from '@/lib/build/app-registry'
+import { registerApp, resolveAppVerified, type AppEntry } from '@/lib/build/app-registry'
 import { deployPersistent } from '@/lib/build/deploy'
 import { resolveStoredApp } from '@/lib/build/ready-gate'
 import { checkSeededData, type SeededDataCheck } from '@/lib/build/seed-check'
@@ -111,7 +111,53 @@ export async function POST(request: NextRequest) {
   // an anonymous/unclaimed slug, since "no owner recorded" doesn't mean
   // "nobody's build" — it may just mean a guest build. A caller who is not
   // the confirmed owner still gets the original safe auto-suffix behavior.
-  const requestedOwner = await resolveApp(requestedSlug).catch(() => null)
+  //
+  // #1481: was `resolveApp(requestedSlug).catch(() => null)` — a transient
+  // registry-read failure was INDISTINGUISHABLE from a confirmed "this slug
+  // is free," and that one ambiguous `null` feeds THREE separate decisions
+  // below, every one of which fails in a DESTRUCTIVE direction:
+  //
+  //   1. The collision check itself. `requestedOwner` is the first term of
+  //      the `slug` ternary, so a null short-circuits the whole condition —
+  //      an unverified lookup does NOT auto-suffix (as the issue supposed),
+  //      it registers straight over `requestedSlug`, bypassing the collision
+  //      safety net entirely and letting this build land on top of a
+  //      DIFFERENT founder's real, live slug.
+  //   2. `existing` (below) becomes null, so the append + latest-wins write
+  //      lays down a fresh row carrying NONE of the provision-time fields —
+  //      zerodbProjectId, plan, domain, ownerEmail — silently orphaning a
+  //      real founder's provisioned company. `existing`'s own comment says
+  //      this is exactly what must never happen.
+  //   3. `!existing` is the "genuinely brand-new company" signal for the
+  //      welcome email (#758), so an established founder gets re-welcomed.
+  //
+  // Unlike firstFreeSlug()'s candidate probe — where "unverified" has a
+  // genuinely safe direction to fall in (treat it as taken, try the next
+  // suffix, no state written) — there is NO safe default here: both answers
+  // write a destructive row. So this path fails CLOSED with a retryable 503,
+  // matching this route's own GET handler (#1427) and the ~25 other
+  // slug-resolving routes in app/api/build. Registration is client-triggered
+  // and re-run on every regeneration, so a retry is cheap; losing a live
+  // {slug}.ainative.studio URL or orphaning a provisioned project is not.
+  const { entry: requestedOwner, verified: ownerLookupVerified } =
+    await resolveAppVerified(requestedSlug).catch(() => ({ entry: null, verified: false }))
+  if (!ownerLookupVerified) {
+    console.error(
+      `[register-app] ${requestedSlug}: registry lookup unverified — refusing to register on an unknown ` +
+        'collision/ownership state (would risk overwriting another founder\'s slug or orphaning provisioned fields)',
+    )
+    await reportDeploymentHealthStage(
+      'builder_app_generation',
+      requestedSlug,
+      'register',
+      'failed',
+      'Registry ownership lookup unverified (lookup_failed) — registration refused, retryable.',
+    )
+    return Response.json(
+      { ok: false, status: 'lookup_failed', reason: 'lookup_failed', unverified: true, retry: true },
+      { status: 503 },
+    )
+  }
   const callerEmail = await auth()
     .then((s) => ((s as any)?.user?.email as string | undefined)?.trim().toLowerCase())
     .catch(() => undefined)
@@ -136,7 +182,12 @@ export async function POST(request: NextRequest) {
   // fields (zerodbProjectId, plan, domain, ownerEmail…) and silently orphan them.
   // Safe to reuse requestedOwner here: when slug !== requestedSlug (a real
   // collision was just resolved), the freshly-picked slug is confirmed free,
-  // so `existing` is correctly null for it — no second resolveApp call needed.
+  // so `existing` is correctly null for it — no second lookup needed. And
+  // when slug === requestedSlug, `requestedOwner` is now a VERIFIED answer
+  // (#1481 returns 503 above rather than reaching here on an unverified
+  // one), so a null here really does mean "confirmed brand-new company"
+  // rather than "couldn't check" — which is what both the provision-field
+  // carry-forward and the `!existing` welcome-email signal depend on.
   const existing = slug === requestedSlug ? requestedOwner : null
 
   // SEEDED-DATA CHECK (#343): for data-backed apps (code reads/writes through
