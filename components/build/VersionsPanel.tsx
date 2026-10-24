@@ -74,20 +74,27 @@ type RollbackState =
 export function VersionsPanel({ companyId }: { companyId: string }) {
   const [versions, setVersions] = useState<AppVersion[]>([])
   const [loaded, setLoaded] = useState(false)
+  // A failed load (non-ok response, or the fetch itself throwing) used to be
+  // swallowed into the same empty `versions: []` shape as a genuinely fresh
+  // company with no deploy history — showing "No deploy history yet" when
+  // the real answer was "couldn't check." This tells the two apart (same
+  // fix shape as WaitlistPanel/VisitorsPanel/GrowthPanel/TasksPanel).
+  const [loadError, setLoadError] = useState(false)
   const [serviced, setServiced] = useState(false)
   const [rollback, setRollback] = useState<RollbackState>({ phase: 'idle' })
 
   const load = useCallback(() => {
     let alive = true
     fetch(`/api/build/versions?companyId=${encodeURIComponent(companyId)}`)
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`load failed: ${r.status}`))))
       .then((d) => {
         if (!alive) return
         setVersions(Array.isArray(d?.versions) ? d.versions : [])
         setServiced(!!d?.serviced)
+        setLoadError(false)
         setLoaded(true)
       })
-      .catch(() => { if (alive) setLoaded(true) })
+      .catch(() => { if (alive) { setLoadError(true); setLoaded(true) } })
     return () => { alive = false }
   }, [companyId])
 
@@ -208,6 +215,10 @@ export function VersionsPanel({ companyId }: { companyId: string }) {
             </li>
           ))}
         </ul>
+      ) : loadError ? (
+        <p className="m-mono m-task-empty" data-testid="versions-error">
+          Couldn&apos;t load your deploy history right now — try refreshing.
+        </p>
       ) : versions.length === 0 ? (
         <p className="m-mono m-task-empty" data-testid="versions-empty">
           No deploy history yet. As Cody ships changes to {companyId ? 'your company' : 'this company'},
