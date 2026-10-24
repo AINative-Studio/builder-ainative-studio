@@ -28,7 +28,7 @@
 
 import { NextRequest } from 'next/server'
 import { createHmac, timingSafeEqual } from 'crypto'
-import { resolveApp, setAppGrowthAdBudgetFunded, setAppGrowthAdTest } from '@/lib/build/app-registry'
+import { resolveAppVerified, setAppGrowthAdBudgetFunded, setAppGrowthAdTest } from '@/lib/build/app-registry'
 import { activateAdTestCampaign, createAdTestCampaign } from '@/lib/build/ad-testing'
 
 export const runtime = 'nodejs'
@@ -98,7 +98,17 @@ export async function POST(request: NextRequest) {
 
   const { slug, paymentIntentId, requestedAmountCents, adBudgetCents } = payload
 
-  const app = await resolveApp(slug).catch(() => null)
+  // #832-class bug, continuing the sweep #1302/#1316/#1324/#1327/#1328/#1335/
+  // #1337/#1392/#1423 already did: resolveApp()'s plain `null` return
+  // collapsed "no such company" with "the registry read itself failed" — a
+  // transient ZeroDB hiccup here would 404 "company_not_found" on core's
+  // Stripe-triggered callback for a founder who JUST paid for ad credits.
+  // Core treats a 404 as permanent (no retry), so the campaign this founder
+  // paid for would never activate and nothing would ever tell anyone.
+  const { entry: app, verified } = await resolveAppVerified(slug).catch(
+    () => ({ entry: null as Awaited<ReturnType<typeof resolveAppVerified>>['entry'], verified: false }),
+  )
+  if (!verified) return Response.json({ ok: false, reason: 'lookup_failed' }, { status: 503 })
   if (!app) return Response.json({ ok: false, reason: 'company_not_found' }, { status: 404 })
 
   await setAppGrowthAdBudgetFunded(slug, {

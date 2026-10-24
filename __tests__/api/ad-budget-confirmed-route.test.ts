@@ -28,7 +28,7 @@ function signPayload(payload: object, secret = SECRET): string {
 }
 
 const h = vi.hoisted(() => ({
-  resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(),
   setAppGrowthAdBudgetFunded: vi.fn(async () => true),
   setAppGrowthAdTest: vi.fn(async () => true),
   createAdTestCampaign: vi.fn(),
@@ -36,7 +36,7 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/build/app-registry', () => ({
-  resolveApp: h.resolveApp,
+  resolveAppVerified: h.resolveAppVerified,
   setAppGrowthAdBudgetFunded: h.setAppGrowthAdBudgetFunded,
   setAppGrowthAdTest: h.setAppGrowthAdTest,
 }))
@@ -58,7 +58,7 @@ const nowSec = () => Math.floor(Date.now() / 1000)
 beforeEach(() => {
   vi.clearAllMocks()
   process.env.BUILDER_CALLBACK_SECRET = SECRET
-  h.resolveApp.mockResolvedValue(APP)
+  h.resolveAppVerified.mockResolvedValue({ entry: APP, verified: true })
   h.setAppGrowthAdBudgetFunded.mockResolvedValue(true)
   h.setAppGrowthAdTest.mockResolvedValue(true)
   h.createAdTestCampaign.mockResolvedValue({ ok: true, campaignId: 'camp_123' })
@@ -127,7 +127,7 @@ describe('POST /api/webhooks/ad-budget-confirmed (#449)', () => {
   })
 
   it('does not create a duplicate campaign for a company that already has one', async () => {
-    h.resolveApp.mockResolvedValue({ ...APP, growthAdTestCampaignId: 'camp_existing' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { ...APP, growthAdTestCampaignId: 'camp_existing' }, verified: true })
     const { POST } = await import('@/app/api/webhooks/ad-budget-confirmed/route')
     const payload = { slug: 'acme', paymentIntentId: 'pi_2', requestedAmountCents: 1000, adBudgetCents: 800, ts: nowSec() }
     const token = signPayload(payload)
@@ -143,12 +143,36 @@ describe('POST /api/webhooks/ad-budget-confirmed (#449)', () => {
   })
 
   it('404s on an unknown company', async () => {
-    h.resolveApp.mockResolvedValue(null)
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: true })
     const { POST } = await import('@/app/api/webhooks/ad-budget-confirmed/route')
     const payload = { slug: 'nope', paymentIntentId: 'pi_3', requestedAmountCents: 1000, adBudgetCents: 800, ts: nowSec() }
     const token = signPayload(payload)
     const res: any = await POST(req(payload, token))
     expect(res.status).toBe(404)
+  })
+
+  it('503s with lookup_failed (never a fabricated 404) when the registry read itself fails', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+    const { POST } = await import('@/app/api/webhooks/ad-budget-confirmed/route')
+    const payload = { slug: 'acme', paymentIntentId: 'pi_4', requestedAmountCents: 1000, adBudgetCents: 800, ts: nowSec() }
+    const token = signPayload(payload)
+    const res: any = await POST(req(payload, token))
+    const json = await res.json()
+    expect(res.status).toBe(503)
+    expect(json).toEqual({ ok: false, reason: 'lookup_failed' })
+    expect(h.setAppGrowthAdBudgetFunded).not.toHaveBeenCalled()
+    expect(h.createAdTestCampaign).not.toHaveBeenCalled()
+    expect(h.activateAdTestCampaign).not.toHaveBeenCalled()
+  })
+
+  it('503s with lookup_failed when resolveAppVerified itself rejects, never fabricating a 404', async () => {
+    h.resolveAppVerified.mockRejectedValue(new Error('zerodb timeout'))
+    const { POST } = await import('@/app/api/webhooks/ad-budget-confirmed/route')
+    const payload = { slug: 'acme', paymentIntentId: 'pi_5', requestedAmountCents: 1000, adBudgetCents: 800, ts: nowSec() }
+    const token = signPayload(payload)
+    const res: any = await POST(req(payload, token))
+    expect(res.status).toBe(503)
+    expect(h.setAppGrowthAdBudgetFunded).not.toHaveBeenCalled()
   })
 })
 
@@ -169,7 +193,7 @@ describe('POST /api/webhooks/ad-budget-confirmed — activation (#1017)', () => 
   const FUNDED = { slug: 'acme', paymentIntentId: 'pi_act', requestedAmountCents: 1000, adBudgetCents: 800, ts: nowSec() }
 
   it('ACTIVATES the existing PAUSED campaign rather than creating a duplicate', async () => {
-    h.resolveApp.mockResolvedValue({ ...APP, growthAdTestCampaignId: 'camp_auto_1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { ...APP, growthAdTestCampaignId: 'camp_auto_1' }, verified: true })
     h.activateAdTestCampaign.mockResolvedValue({ ok: true, campaignId: 'camp_auto_1' })
     const { POST } = await import('@/app/api/webhooks/ad-budget-confirmed/route')
     const res: any = await POST(req(FUNDED, signPayload(FUNDED)))
@@ -183,7 +207,7 @@ describe('POST /api/webhooks/ad-budget-confirmed — activation (#1017)', () => 
   })
 
   it('records the funding BEFORE attempting activation, so a failed activation never loses the payment', async () => {
-    h.resolveApp.mockResolvedValue({ ...APP, growthAdTestCampaignId: 'camp_auto_1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { ...APP, growthAdTestCampaignId: 'camp_auto_1' }, verified: true })
     h.activateAdTestCampaign.mockResolvedValue({ ok: false, reason: 'Campaign cannot be activated' })
     const { POST } = await import('@/app/api/webhooks/ad-budget-confirmed/route')
     const res: any = await POST(req(FUNDED, signPayload(FUNDED)))
@@ -198,7 +222,7 @@ describe('POST /api/webhooks/ad-budget-confirmed — activation (#1017)', () => 
   })
 
   it('does NOT activate anything when the company has no campaign yet — it creates one (still PAUSED)', async () => {
-    h.resolveApp.mockResolvedValue({ ...APP })
+    h.resolveAppVerified.mockResolvedValue({ entry: { ...APP }, verified: true })
     const { POST } = await import('@/app/api/webhooks/ad-budget-confirmed/route')
     const res: any = await POST(req(FUNDED, signPayload(FUNDED)))
     const json = await res.json()
@@ -209,7 +233,7 @@ describe('POST /api/webhooks/ad-budget-confirmed — activation (#1017)', () => 
   })
 
   it('never activates on an unverified/forged callback — no payment, no activation', async () => {
-    h.resolveApp.mockResolvedValue({ ...APP, growthAdTestCampaignId: 'camp_auto_1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { ...APP, growthAdTestCampaignId: 'camp_auto_1' }, verified: true })
     const { POST } = await import('@/app/api/webhooks/ad-budget-confirmed/route')
     const res: any = await POST(req(FUNDED, signPayload(FUNDED, 'wrong-secret')))
     expect(res.status).toBe(401)
@@ -217,7 +241,7 @@ describe('POST /api/webhooks/ad-budget-confirmed — activation (#1017)', () => 
   })
 
   it('never activates on a stale/replayed callback', async () => {
-    h.resolveApp.mockResolvedValue({ ...APP, growthAdTestCampaignId: 'camp_auto_1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { ...APP, growthAdTestCampaignId: 'camp_auto_1' }, verified: true })
     const stale = { ...FUNDED, ts: nowSec() - 60 * 60 }
     const { POST } = await import('@/app/api/webhooks/ad-budget-confirmed/route')
     const res: any = await POST(req(stale, signPayload(stale)))
@@ -226,7 +250,7 @@ describe('POST /api/webhooks/ad-budget-confirmed — activation (#1017)', () => 
   })
 
   it('never activates for an unknown company', async () => {
-    h.resolveApp.mockResolvedValue(null)
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: true })
     const { POST } = await import('@/app/api/webhooks/ad-budget-confirmed/route')
     const res: any = await POST(req(FUNDED, signPayload(FUNDED)))
     expect(res.status).toBe(404)
@@ -234,7 +258,7 @@ describe('POST /api/webhooks/ad-budget-confirmed — activation (#1017)', () => 
   })
 
   it('never throws when activation itself rejects', async () => {
-    h.resolveApp.mockResolvedValue({ ...APP, growthAdTestCampaignId: 'camp_auto_1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { ...APP, growthAdTestCampaignId: 'camp_auto_1' }, verified: true })
     h.activateAdTestCampaign.mockRejectedValue(new Error('ECONNRESET'))
     const { POST } = await import('@/app/api/webhooks/ad-budget-confirmed/route')
     const res: any = await POST(req(FUNDED, signPayload(FUNDED)))
