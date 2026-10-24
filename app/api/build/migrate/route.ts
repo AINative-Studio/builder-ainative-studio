@@ -15,7 +15,9 @@
  * skipped, never stolen (see migrateGuestCompanies).
  *
  * Body: { slugs: string[] }   (single { slug } is also accepted)
- * Returns: { ok, migrated: string[], skipped: string[] } | { ok:false, error }
+ * Returns: { ok, migrated: string[], skipped: string[], failed: string[] } | { ok:false, error }
+ * `failed` slugs had a transient registry-lookup failure (not a confirmed
+ * "not yours"/"not registered") — worth a client-side retry.
  */
 
 import { NextRequest } from 'next/server'
@@ -50,12 +52,12 @@ export async function POST(request: NextRequest) {
     .slice(0, MAX_SLUGS)
 
   if (slugs.length === 0) {
-    return Response.json({ ok: true, migrated: [], skipped: [] })
+    return Response.json({ ok: true, migrated: [], skipped: [], failed: [] })
   }
 
-  const { migrated, skipped } = await migrateGuestCompanies(slugs, email).catch(
-    () => ({ migrated: [] as string[], skipped: slugs }),
+  const { migrated, skipped, failed } = await migrateGuestCompanies(slugs, email).catch(
+    () => ({ migrated: [] as string[], skipped: [] as string[], failed: slugs }),
   )
 
-  return Response.json({ ok: true, migrated, skipped })
+  return Response.json({ ok: true, migrated, skipped, failed })
 }

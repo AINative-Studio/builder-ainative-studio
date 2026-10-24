@@ -85,7 +85,7 @@ describe('migrateGuestWork (#49)', () => {
     } as unknown as Response)
 
     const res = await migrateGuestWork('acme', fetchImpl as unknown as typeof fetch)
-    expect(res).toEqual({ migrated: ['acme'], skipped: [] })
+    expect(res).toEqual({ migrated: ['acme'], skipped: [], failed: [] })
 
     const [url, init] = fetchImpl.mock.calls[0]
     expect(url).toBe('/api/build/migrate')
@@ -98,7 +98,7 @@ describe('migrateGuestWork (#49)', () => {
     delete (globalThis as any).window
     const fetchImpl = vi.fn()
     const res = await migrateGuestWork(undefined, fetchImpl as unknown as typeof fetch)
-    expect(res).toEqual({ migrated: [], skipped: [] })
+    expect(res).toEqual({ migrated: [], skipped: [], failed: [] })
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
