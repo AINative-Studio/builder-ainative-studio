@@ -15,22 +15,30 @@
 import { db } from '@/lib/db'
 import { deployment_credentials } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
-import { createCipheriv, createDecipheriv, randomBytes, timingSafeEqual } from 'crypto'
+import { timingSafeEqual } from 'crypto'
 import { logger } from '@/lib/logger'
+import {
+  encryptToken,
+  decryptToken,
+  type EncryptedCredential,
+} from '@/lib/services/credentials-crypto'
+
+/**
+ * The pure AES-256-GCM helpers now live in ./credentials-crypto so that
+ * callers wanting only encryption do not transitively import this module's
+ * drizzle/Postgres chain (#1489). Re-exported here so this module's public
+ * API is unchanged for existing importers and tests.
+ */
+export {
+  encryptToken,
+  decryptToken,
+  type EncryptedCredential,
+} from '@/lib/services/credentials-crypto'
 
 /**
  * Supported deployment platforms
  */
 export type Platform = 'vercel' | 'netlify' | 'railway' | 'ainative-cloud'
-
-/**
- * Encrypted credential data structure
- */
-interface EncryptedCredential {
-  encryptedToken: string
-  iv: string
-  authTag: string
-}
 
 /**
  * Credential record from database
@@ -44,68 +52,6 @@ interface CredentialRecord {
   auth_tag: string
   created_at: Date
   updated_at: Date
-}
-
-/**
- * Get encryption key from environment variable
- * @throws Error if DEPLOYMENT_ENCRYPTION_KEY is not set
- */
-function getEncryptionKey(): Buffer {
-  const key = process.env.DEPLOYMENT_ENCRYPTION_KEY
-
-  if (!key) {
-    throw new Error('DEPLOYMENT_ENCRYPTION_KEY environment variable is not set')
-  }
-
-  // Key should be 32 bytes (256 bits) in hex format
-  if (key.length !== 64) {
-    throw new Error('DEPLOYMENT_ENCRYPTION_KEY must be 32 bytes (64 hex characters)')
-  }
-
-  return Buffer.from(key, 'hex')
-}
-
-/**
- * Encrypt a token using AES-256-GCM
- * @param token - Plain text token to encrypt
- * @returns Encrypted token with IV and auth tag
- */
-export function encryptToken(token: string): EncryptedCredential {
-  const key = getEncryptionKey()
-  const iv = randomBytes(16) // 128-bit IV for GCM mode
-
-  const cipher = createCipheriv('aes-256-gcm', key, iv)
-
-  let encrypted = cipher.update(token, 'utf8', 'hex')
-  encrypted += cipher.final('hex')
-
-  const authTag = cipher.getAuthTag()
-
-  return {
-    encryptedToken: encrypted,
-    iv: iv.toString('hex'),
-    authTag: authTag.toString('hex'),
-  }
-}
-
-/**
- * Decrypt a token using AES-256-GCM
- * @param encryptedData - Encrypted credential data
- * @returns Decrypted plain text token
- * @throws Error if authentication fails
- */
-export function decryptToken(encryptedData: EncryptedCredential): string {
-  const key = getEncryptionKey()
-  const iv = Buffer.from(encryptedData.iv, 'hex')
-  const authTag = Buffer.from(encryptedData.authTag, 'hex')
-
-  const decipher = createDecipheriv('aes-256-gcm', key, iv)
-  decipher.setAuthTag(authTag)
-
-  let decrypted = decipher.update(encryptedData.encryptedToken, 'hex', 'utf8')
-  decrypted += decipher.final('utf8')
-
-  return decrypted
 }
 
 /**
