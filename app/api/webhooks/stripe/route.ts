@@ -388,13 +388,20 @@ export async function POST(request: NextRequest) {
   }
 
   // A reported (not thrown) WRITE failure is equally transient and equally
-  // retryable. Every other `!ok` reason — `not_a_paid_plan`, `not_registered`,
-  // `missing_args` — is a deterministic refusal that a retry would reproduce
-  // exactly, so those stay 200 acks below.
-  if (!result.ok && result.reason === 'plan_write_failed') {
-    console.error('[webhooks/stripe] plan write FAILED — asking the sender to retry', { slug, plan })
+  // retryable. Same for `lookup_failed`: fulfillPaidPlan() re-resolves the
+  // slug internally, and its own registry read can transiently fail even
+  // though the resolveAppVerified() check above just confirmed the company
+  // exists — that is a "couldn't check (again)", not a decision, so it must
+  // not be collapsed into the deterministic refusals below. Every other
+  // `!ok` reason — `not_a_paid_plan`, `not_registered`, `missing_args` — is a
+  // deterministic refusal that a retry would reproduce exactly, so those stay
+  // 200 acks below.
+  if (!result.ok && (result.reason === 'plan_write_failed' || result.reason === 'lookup_failed')) {
+    console.error('[webhooks/stripe] fulfillment lookup/write FAILED — asking the sender to retry', {
+      slug, plan, reason: result.reason,
+    })
     return Response.json(
-      { ok: false, reason: 'plan_write_failed', retryable: true, type, slug, plan },
+      { ok: false, reason: result.reason, retryable: true, type, slug, plan },
       { status: 503 },
     )
   }
