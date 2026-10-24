@@ -191,6 +191,22 @@ describe('POST /api/webhooks/stripe — fulfillment write failure (#1012 review 
     expect(json.retryable).toBe(true)
   })
 
+  it('a reported lookup_failed from fulfillPaidPlan is also transient → 5xx, not a 200 ack', async () => {
+    // fulfillPaidPlan() re-resolves the slug internally; that second lookup
+    // can transiently fail even though resolveAppVerified() above already
+    // confirmed the company exists. Must not collapse into the same 200 ack
+    // as a deterministic refusal like not_registered.
+    h.fulfillPaidPlan.mockResolvedValue({
+      ok: false, planSet: false, keyClaimed: false, keyClaimPending: false, reason: 'lookup_failed',
+    })
+    const { POST } = await import('@/app/api/webhooks/stripe/route')
+    const res: any = await POST(callbackReq(completedPayload()))
+    expect(res.status).toBeGreaterThanOrEqual(500)
+    const json = await res.json()
+    expect(json.reason).toBe('lookup_failed')
+    expect(json.retryable).toBe(true)
+  })
+
   it('a DETERMINISTIC refusal (not_a_paid_plan) still acks 200 — retrying cannot help', async () => {
     h.fulfillPaidPlan.mockResolvedValue({
       ok: false, planSet: false, keyClaimed: false, keyClaimPending: false, reason: 'not_a_paid_plan',
