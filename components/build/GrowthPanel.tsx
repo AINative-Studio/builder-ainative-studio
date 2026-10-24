@@ -96,6 +96,17 @@ function formatCents(cents: number | undefined): string {
 export function GrowthPanel({ companyId, companyName, onUpgrade, provisioned = true }: Props) {
   const [loaded, setLoaded] = useState(false)
   const [available, setAvailable] = useState(true)
+  // Real bug fix: a non-ok status response (e.g. the route's own #832-class
+  // `lookup_failed` 503 on a transient registry hiccup) used to be swallowed
+  // into `null` and treated identically to a successful, empty response —
+  // `available` defaulted to true and every funding field stayed undefined,
+  // which rendered the IDLE "FUND TEST CAMPAIGN" prompt as though no campaign
+  // existed yet. For a founder who already has a funded, running campaign,
+  // that invites a second real Stripe charge for ad spend that's already
+  // happening. WaitlistPanel/VisitorsPanel already distinguish this case
+  // (`loadError`) — this panel now matches that pattern instead of
+  // fabricating an idle state out of a failed read.
+  const [loadError, setLoadError] = useState(false)
   const [state, setState] = useState<GrowthState>({})
   const [amountCents, setAmountCents] = useState<number>(1000)
   const [busy, setBusy] = useState(false)
@@ -109,7 +120,10 @@ export function GrowthPanel({ companyId, companyName, onUpgrade, provisioned = t
     if (!provisioned) { setLoaded(true); return () => {} }
     let alive = true
     fetch(`/api/build/growth/status?slug=${encodeURIComponent(companyId)}`)
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => {
+        if (!r.ok) throw new Error(`growth/status ${r.status}`)
+        return r.json()
+      })
       .then((d: any) => {
         if (!alive) return
         setAvailable(d?.available !== false)
@@ -121,9 +135,14 @@ export function GrowthPanel({ companyId, companyName, onUpgrade, provisioned = t
           cpcCents: d?.cpcCents,
           insightsSyncedAt: d?.insightsSyncedAt,
         })
+        setLoadError(false)
         setLoaded(true)
       })
-      .catch(() => { if (alive) setLoaded(true) })
+      .catch(() => {
+        if (!alive) return
+        setLoadError(true)
+        setLoaded(true)
+      })
     return () => { alive = false }
   }, [companyId, provisioned])
 
@@ -216,7 +235,12 @@ export function GrowthPanel({ companyId, companyName, onUpgrade, provisioned = t
         <span className="m-chip">Automated ad testing</span>
       </div>
 
-      {!available ? (
+      {loadError ? (
+        <p className="m-mono m-metric-note" data-testid="growth-error">
+          Couldn&apos;t load your campaign status right now — try refreshing before funding
+          anything, in case a campaign is already running.
+        </p>
+      ) : !available ? (
         <p className="m-mono m-metric-note" data-testid="growth-disabled-note">
           Growth isn’t available in this environment yet. Nothing was faked — it’ll switch on
           once ad testing is configured.
