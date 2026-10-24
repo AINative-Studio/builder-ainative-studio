@@ -71,18 +71,17 @@ describe('BudgetMeter — real status/formatting/gating coverage (#1204)', () =>
   })
 
   it('renders the real usage percentage text and the real visual progress-bar fill width', () => {
-    // Real finding: components/ui/progress.tsx destructures `value` out of
-    // props and never forwards it to ProgressPrimitive.Root — only the
-    // Indicator's inline transform uses it. Radix's own Root therefore never
-    // receives a real value, so aria-valuenow stays null and data-state
-    // stays 'indeterminate' regardless of the real visual fill shown here.
-    // Filed as a separate a11y bug (not fixed inline, scope discipline) —
-    // asserted here via the real inline transform, the actually-correct
-    // signal this component renders.
     render(React.createElement(BudgetMeter, { budget: makeBudget({ usagePercentage: 73 }) }))
     expect(host.textContent).toContain('73%')
     const indicator = host.querySelector('[role="progressbar"] > div') as HTMLElement
     expect(indicator.style.transform).toBe('translateX(-27%)')
+  })
+
+  it('exposes the real percentage to assistive technology via aria-valuenow (#1395 fix)', () => {
+    render(React.createElement(BudgetMeter, { budget: makeBudget({ usagePercentage: 73 }) }))
+    const bar = host.querySelector('[role="progressbar"]') as HTMLElement
+    expect(bar.getAttribute('aria-valuenow')).toBe('73')
+    expect(bar.getAttribute('data-state')).toBe('loading')
   })
 
   it('shows the real formatted used/total/remaining token counts when showDetails is genuinely true (the default)', () => {
