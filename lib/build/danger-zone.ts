@@ -11,7 +11,7 @@
  */
 
 import { setLoopEnabled } from '@/lib/build/loop-enrollment'
-import { setAppLifecycle, resolveAppVerified } from '@/lib/build/app-registry'
+import { setAppLifecycle, resolveAppVerified, isRegistryLookupUnverified } from '@/lib/build/app-registry'
 import { releaseZeroVoiceNumber } from '@/lib/build/zerovoice'
 import { deleteCustomDomain } from '@/lib/build/railway-deploy'
 import { logger } from '@/lib/logger'
@@ -93,6 +93,30 @@ export interface DangerOutcome {
 }
 
 /**
+ * #1486: setAppLifecycle() does its OWN registry read before writing and now
+ * THROWS (RegistryLookupUnverifiedError) when that read cannot be completed,
+ * rather than returning the same `false` a confirmed-missing company returns.
+ *
+ * applyDangerAction's documented contract (see its header below) is that a
+ * failed store surfaces as `*Changed: false` rather than a thrown error, so
+ * the caller can report partial success truthfully — a founder clicking
+ * "delete" must never get a 500. This keeps that contract while logging the
+ * real distinction, so an unverified lookup is still visible in logs instead
+ * of masquerading as a confirmed write failure.
+ */
+async function setLifecycleOrFalse(slug: string, status: 'offline' | 'deleted'): Promise<boolean> {
+  try {
+    return await setAppLifecycle(slug, status)
+  } catch (err) {
+    if (!isRegistryLookupUnverified(err)) throw err
+    logger.warn('danger-zone: registry lookup unverified, lifecycle flip not attempted', {
+      slug, status, err: (err as Error).message,
+    })
+    return false
+  }
+}
+
+/**
  * Apply a parsed Danger Zone action to the real stores. Mapping:
  *   - pause   → disable the nightly loop (setLoopEnabled false)
  *   - resume  → re-enable the nightly loop (setLoopEnabled true)
@@ -122,7 +146,7 @@ export async function applyDangerAction(req: DangerRequest, founderJwt?: string)
       return { ok: true, action: 'resume', loopChanged }
     }
     case 'offline': {
-      const lifecycleChanged = await setAppLifecycle(req.slug, 'offline')
+      const lifecycleChanged = await setLifecycleOrFalse(req.slug, 'offline')
       return { ok: true, action: 'offline', lifecycleChanged }
     }
     case 'delete': {
@@ -153,7 +177,7 @@ export async function applyDangerAction(req: DangerRequest, founderJwt?: string)
         byoDomainReleased = released.ok
       }
 
-      const lifecycleChanged = await setAppLifecycle(req.slug, 'deleted')
+      const lifecycleChanged = await setLifecycleOrFalse(req.slug, 'deleted')
       return {
         ok: true, action: 'delete', loopChanged, lifecycleChanged, zerovoiceReleased, byoDomainReleased,
         resourceReleaseUnverified: verified ? undefined : true,

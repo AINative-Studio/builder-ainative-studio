@@ -18,7 +18,22 @@ const chatStore = vi.hoisted(() => ({
 vi.mock('@/lib/build/chat-store', () => chatStore)
 
 const appRegistry = vi.hoisted(() => ({ resolveAppVerified: vi.fn(), setAppLogo: vi.fn() }))
-vi.mock('@/lib/build/app-registry', () => appRegistry)
+vi.mock('@/lib/build/app-registry', () => ({
+  ...appRegistry,
+  // #1486: the route distinguishes setAppLogo's "the registry read itself
+  // failed" throw from a confirmed write failure using this guard, so the mock
+  // must expose the REAL predicate against the real error class.
+  isRegistryLookupUnverified: (err: unknown) =>
+    err instanceof Error && err.name === 'RegistryLookupUnverifiedError',
+}))
+
+/** Stands in for app-registry's own RegistryLookupUnverifiedError (#1486). */
+class FakeRegistryLookupUnverifiedError extends Error {
+  constructor(setter: string, slug: string) {
+    super(`[app-registry] registry lookup unverified for ${setter}(${slug}) — the registry read itself failed, the write was not attempted`)
+    this.name = 'RegistryLookupUnverifiedError'
+  }
+}
 
 /** A confirmed resolveAppVerified() result — either a real entry or a confirmed miss. */
 function verified(entry: Record<string, unknown> | null) {
@@ -252,5 +267,56 @@ describe('#1202 POST /api/build/logo', () => {
     const body = await res.json()
     expect(body.url).toContain('file-id-123')
     expect(body.saved).toBe(true)
+  })
+  // ---- #1486: an UNVERIFIED registry lookup inside setAppLogo ----
+  //
+  // The exact case issue #1486 names: setAppLogo does its own registry read
+  // before writing, and a transient failure on THAT read used to come back as
+  // the same `false` a confirmed-missing company returns — so the founder was
+  // told the logo couldn't be saved when the write was never attempted.
+  it('reports saved:false + retryable:true (not a bogus permanent save failure) on an unverified lookup', async () => {
+    auth.auth.mockResolvedValue({ user: { email: 'founder@x.com' } })
+    appRegistry.resolveAppVerified.mockResolvedValue(verified({ ownerEmail: 'founder@x.com' }))
+    mediaSchedule.uploadMediaFile.mockResolvedValue('file-id-123')
+    appRegistry.setAppLogo.mockRejectedValue(new FakeRegistryLookupUnverifiedError('setAppLogo', 'acme'))
+    const { POST } = await import('@/app/api/build/logo/route')
+
+    const file = new File([new Uint8Array([1, 2, 3])], 'logo.png', { type: 'image/png' })
+    const res = await POST(multipartRequest('http://localhost/api/build/logo', { companyId: 'acme', file }))
+
+    // The upload itself genuinely succeeded — the url must still come back.
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.url).toContain('file-id-123')
+    expect(body.saved).toBe(false)
+    expect(body.retryable).toBe(true)
+  })
+
+  it('reports saved:false WITHOUT retryable on a genuine, confirmed write failure', async () => {
+    auth.auth.mockResolvedValue({ user: { email: 'founder@x.com' } })
+    appRegistry.resolveAppVerified.mockResolvedValue(verified({ ownerEmail: 'founder@x.com' }))
+    mediaSchedule.uploadMediaFile.mockResolvedValue('file-id-123')
+    appRegistry.setAppLogo.mockResolvedValue(false)
+    const { POST } = await import('@/app/api/build/logo/route')
+
+    const file = new File([new Uint8Array([1, 2, 3])], 'logo.png', { type: 'image/png' })
+    const res = await POST(multipartRequest('http://localhost/api/build/logo', { companyId: 'acme', file }))
+
+    const body = await res.json()
+    expect(body.saved).toBe(false)
+    expect(body.retryable).toBeUndefined()
+  })
+
+  it('re-throws an UNRELATED setAppLogo error rather than reporting it as retryable', async () => {
+    auth.auth.mockResolvedValue({ user: { email: 'founder@x.com' } })
+    appRegistry.resolveAppVerified.mockResolvedValue(verified({ ownerEmail: 'founder@x.com' }))
+    mediaSchedule.uploadMediaFile.mockResolvedValue('file-id-123')
+    appRegistry.setAppLogo.mockRejectedValue(new Error('something else entirely'))
+    const { POST } = await import('@/app/api/build/logo/route')
+
+    const file = new File([new Uint8Array([1, 2, 3])], 'logo.png', { type: 'image/png' })
+    await expect(
+      POST(multipartRequest('http://localhost/api/build/logo', { companyId: 'acme', file })),
+    ).rejects.toThrow('something else entirely')
   })
 })

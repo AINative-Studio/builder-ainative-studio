@@ -15,7 +15,7 @@
 
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
-import { resolveAppVerified, setAppCommsMode } from '@/lib/build/app-registry'
+import { resolveAppVerified, setAppCommsMode, isRegistryLookupUnverified } from '@/lib/build/app-registry'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -50,7 +50,23 @@ export async function POST(request: NextRequest) {
   if (!verified) return Response.json({ error: 'lookup_failed' }, { status: 503 })
   if (!app) return Response.json({ error: 'company_not_found' }, { status: 404 })
 
-  const ok = await setAppCommsMode(slug, mode as 'agile' | 'pairProgramming')
+  // #1486: setAppCommsMode performs its OWN registry read before writing, and
+  // that read can fail independently of the verified one above (they're
+  // separate fetches a cache-window apart). It now THROWS
+  // RegistryLookupUnverifiedError for that case rather than returning the same
+  // `false` it returns for a confirmed-missing company — so the founder gets
+  // the retryable 503 this route already has for an unverified lookup, not a
+  // 502 "write_failed" blaming a write that was never attempted.
+  let ok: boolean
+  try {
+    ok = await setAppCommsMode(slug, mode as 'agile' | 'pairProgramming')
+  } catch (err) {
+    if (isRegistryLookupUnverified(err)) {
+      console.error(`[comms-mode] ${(err as Error).message}`)
+      return Response.json({ error: 'lookup_failed' }, { status: 503 })
+    }
+    throw err
+  }
   if (!ok) return Response.json({ ok: false, reason: 'write_failed' }, { status: 502 })
 
   return Response.json({ ok: true, mode })

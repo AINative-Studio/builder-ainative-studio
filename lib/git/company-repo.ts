@@ -21,7 +21,7 @@ import {
   addCollaborator,
   type GiteaPermission,
 } from './gitea-client'
-import { resolveApp, setAppGitRepo } from '@/lib/build/app-registry'
+import { resolveApp, setAppGitRepo, isRegistryLookupUnverified } from '@/lib/build/app-registry'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -272,8 +272,32 @@ export async function provisionCompanyRepo(opts: {
     return { ok: false, reason: 'initial_commit_failed', gitRepoUrl, gitRepoId, gitOrg }
   }
 
-  // Record in app-registry
-  const recorded = await setAppGitRepo(opts.slug, { gitRepoUrl, gitRepoId, gitOrg })
+  // Record in app-registry.
+  //
+  // #1486: setAppGitRepo() does its OWN registry read before writing and now
+  // THROWS (RegistryLookupUnverifiedError) when that read cannot be completed,
+  // rather than returning the same `false` a confirmed-missing company
+  // returns. The real Gitea repo above already exists at this point, so this
+  // must not become a throw out of provisionCompanyRepo (the caller would
+  // report provisioning as failed for a repo that genuinely succeeded, and a
+  // retry's own idempotency check reads this very registry field). Keep the
+  // existing `{ ok: true }` + warning contract, but log the two cases
+  // distinguishably so a transient read failure is never recorded as a
+  // confirmed registry write failure.
+  // This function's documented contract is that it NEVER throws (repo
+  // provisioning must never break the main build path), so an unrelated error
+  // is caught here too — just logged as itself rather than as an unverified
+  // lookup, so the two stay distinguishable.
+  let recorded = false
+  try {
+    recorded = await setAppGitRepo(opts.slug, { gitRepoUrl, gitRepoId, gitOrg })
+  } catch (err) {
+    if (isRegistryLookupUnverified(err)) {
+      console.warn(`[company-repo] Repo created but registry lookup was unverified for ${opts.slug} — not recorded, safe to retry: ${err.message}`)
+    } else {
+      console.warn(`[company-repo] Repo created but registry write threw for ${opts.slug}: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
   if (!recorded) {
     console.warn(`[company-repo] Repo created but registry update failed for ${opts.slug}`)
   }
