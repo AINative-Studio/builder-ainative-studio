@@ -13,7 +13,7 @@ const h = vi.hoisted(() => ({
   mergeTaskPR: vi.fn(),
   createIssue: vi.fn(),
   commitTaskWithPR: vi.fn(),
-  resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(),
   setAppRailwayService: vi.fn(),
   implementTask: vi.fn(),
   runCoverage: vi.fn(),
@@ -28,7 +28,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/lib/git/gitea-client', () => ({ fetchRepoFiles: h.fetchRepoFiles, mergeTaskPR: h.mergeTaskPR, createIssue: h.createIssue }))
 vi.mock('@/lib/git/task-git-sync', () => ({ commitTaskWithPR: h.commitTaskWithPR }))
-vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp, setAppRailwayService: h.setAppRailwayService }))
+vi.mock('@/lib/build/app-registry', () => ({ resolveAppVerified: h.resolveAppVerified, setAppRailwayService: h.setAppRailwayService }))
 vi.mock('@/lib/build/task-implementer', () => ({ implementTask: h.implementTask }))
 vi.mock('@/lib/build/coverage-runner', () => ({ runCoverage: h.runCoverage }))
 vi.mock('@/lib/build/task-store', () => ({ updateTask: h.updateTask }))
@@ -75,7 +75,7 @@ beforeEach(() => {
 
 describe('resolveTask — end-to-end orchestration', () => {
   it('marks in_progress immediately, before any other step', async () => {
-    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1' }, verified: true })
     h.fetchRepoFiles.mockResolvedValue({})
     h.implementTask.mockResolvedValue({ ok: true, files: { 'a.ts': 'x' } })
     h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/1' })
@@ -85,8 +85,8 @@ describe('resolveTask — end-to-end orchestration', () => {
     expect(h.updateTask).toHaveBeenNthCalledWith(1, 'owner::slug', 't_abc123', { stage: 'in_progress' })
   })
 
-  it('fails honestly when the company is not git-provisioned', async () => {
-    h.resolveApp.mockResolvedValue({ gitOrg: undefined })
+  it('fails honestly when a VERIFIED lookup confirms the company is not git-provisioned', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: undefined }, verified: true })
     const result = await resolveTask('owner::slug', TASK, 'slug')
     expect(result.ok).toBe(false)
     expect(result.stage).toBe('failed')
@@ -97,7 +97,7 @@ describe('resolveTask — end-to-end orchestration', () => {
   })
 
   it('fails honestly when the current repo state cannot be fetched from Gitea', async () => {
-    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1' }, verified: true })
     h.fetchRepoFiles.mockResolvedValue(null)
     const result = await resolveTask('owner::slug', TASK, 'slug')
     expect(result.ok).toBe(false)
@@ -106,7 +106,7 @@ describe('resolveTask — end-to-end orchestration', () => {
   })
 
   it('fails honestly when the implementation step fails — never commits a broken/fabricated result', async () => {
-    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1' }, verified: true })
     h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
     h.implementTask.mockResolvedValue({ ok: false, reason: 'Story is ambiguous.' })
     const result = await resolveTask('owner::slug', TASK, 'slug')
@@ -116,7 +116,7 @@ describe('resolveTask — end-to-end orchestration', () => {
   })
 
   it('fails honestly when the git commit fails — never marks completed on an uncommitted change', async () => {
-    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1' }, verified: true })
     h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
     h.implementTask.mockResolvedValue({ ok: true, files: { 'a.ts': 'new' } })
     h.commitTaskWithPR.mockResolvedValue({ ok: false, reason: 'commit_push_failed' })
@@ -127,7 +127,7 @@ describe('resolveTask — end-to-end orchestration', () => {
   })
 
   it('completes with a real PR + real coverage number on a full success', async () => {
-    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1' }, verified: true })
     h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
     h.implementTask.mockResolvedValue({ ok: true, files: { 'b.ts': 'new' } })
     h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/42', prNumber: 42 })
@@ -153,7 +153,7 @@ describe('resolveTask — end-to-end orchestration', () => {
    * attempt above, or after a 'failed' coverage outcome).
    */
   it('#1086: persists the real branch name from commitTaskWithPR onto the task row', async () => {
-    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1' }, verified: true })
     h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
     h.implementTask.mockResolvedValue({ ok: true, files: { 'b.ts': 'new' } })
     h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/42', prNumber: 42, branchName: 'task/t_abc123' })
@@ -167,7 +167,7 @@ describe('resolveTask — end-to-end orchestration', () => {
   })
 
   it('#1086: omits giteaBranch (does not clear it) when commitTaskWithPR reports no branchName', async () => {
-    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1' }, verified: true })
     h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
     h.implementTask.mockResolvedValue({ ok: true, files: { 'b.ts': 'new' } })
     h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/42', prNumber: 42 })
@@ -184,7 +184,7 @@ describe('resolveTask — end-to-end orchestration', () => {
 
   describe('#905 — open a real Gitea issue before implementation begins', () => {
     function setupSuccess() {
-      h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+      h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1' }, verified: true })
       h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
       h.implementTask.mockResolvedValue({ ok: true, files: { 'b.ts': 'new' } })
       h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/42', prNumber: 42 })
@@ -276,7 +276,7 @@ describe('resolveTask — end-to-end orchestration', () => {
     })
 
     it('still proceeds to implement when the company is git-provisioned but has no org set at all would already have failed earlier — sanity: createIssue uses the resolved gitOrg', async () => {
-      h.resolveApp.mockResolvedValue({ gitOrg: 'ws-custom' })
+      h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-custom' }, verified: true })
       h.fetchRepoFiles.mockResolvedValue({})
       h.implementTask.mockResolvedValue({ ok: true, files: { 'a.ts': 'x' } })
       h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/1' })
@@ -289,7 +289,7 @@ describe('resolveTask — end-to-end orchestration', () => {
 
   describe('#468 — auto-merge + redeploy on completion', () => {
     function setupSuccess() {
-      h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1', workspaceId: 'workspace-1' })
+      h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1', workspaceId: 'workspace-1' }, verified: true })
       h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
       h.implementTask.mockResolvedValue({ ok: true, files: { 'b.ts': 'new' } })
       h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/42', prNumber: 42 })
@@ -305,7 +305,7 @@ describe('resolveTask — end-to-end orchestration', () => {
     })
 
     it('never attempts to merge a FAILED task (below coverage floor)', async () => {
-      h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+      h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1' }, verified: true })
       h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
       h.implementTask.mockResolvedValue({ ok: true, files: { 'b.ts': 'new' } })
       h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/7', prNumber: 7 })
@@ -332,7 +332,7 @@ describe('resolveTask — end-to-end orchestration', () => {
     })
 
     it('passes alreadyProvisioned=true (idempotent redeploy) when the company already has a railwayServiceId', async () => {
-      h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1', workspaceId: 'workspace-1', railwayServiceId: 'company-slug' })
+      h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1', workspaceId: 'workspace-1', railwayServiceId: 'company-slug' }, verified: true })
       h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
       h.implementTask.mockResolvedValue({ ok: true, files: { 'b.ts': 'new' } })
       h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/42', prNumber: 42 })
@@ -346,7 +346,7 @@ describe('resolveTask — end-to-end orchestration', () => {
     })
 
     it('falls back to BUILDER_WORKSPACE_ID when the company has no persisted workspaceId', async () => {
-      h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+      h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1' }, verified: true })
       h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
       h.implementTask.mockResolvedValue({ ok: true, files: { 'b.ts': 'new' } })
       h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/42', prNumber: 42 })
@@ -429,7 +429,7 @@ describe('resolveTask — end-to-end orchestration', () => {
   })
 
   it('fails when the real coverage number is below the floor — even though the commit succeeded', async () => {
-    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1' }, verified: true })
     h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
     h.implementTask.mockResolvedValue({ ok: true, files: { 'b.ts': 'new' } })
     h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/7' })
@@ -442,7 +442,7 @@ describe('resolveTask — end-to-end orchestration', () => {
   })
 
   it('runs coverage against the MERGED full tree (existing + changed), not just the diff', async () => {
-    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1' }, verified: true })
     h.fetchRepoFiles.mockResolvedValue({ 'unchanged.ts': 'stays the same', 'changed.ts': 'old' })
     h.implementTask.mockResolvedValue({ ok: true, files: { 'changed.ts': 'new' } })
     h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/1' })
@@ -455,7 +455,7 @@ describe('resolveTask — end-to-end orchestration', () => {
   })
 
   it('accepts a genuinely untestable app on implementation alone (matches core issue_resolution_loop.py principle)', async () => {
-    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1' }, verified: true })
     h.fetchRepoFiles.mockResolvedValue({})
     h.implementTask.mockResolvedValue({ ok: true, files: { 'a.ts': 'x' } })
     h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/1' })
@@ -472,7 +472,7 @@ describe('resolveTask — end-to-end orchestration', () => {
 // decision, not just the final stage.
 describe('resolveTask — Decision Trace (#685)', () => {
   it('starts a trace naming the task, scoped to the task scopeKey', async () => {
-    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1' }, verified: true })
     h.fetchRepoFiles.mockResolvedValue({})
     h.implementTask.mockResolvedValue({ ok: true, files: { 'a.ts': 'x' } })
     h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/1' })
@@ -483,7 +483,7 @@ describe('resolveTask — Decision Trace (#685)', () => {
   })
 
   it('records a step for each real pipeline stage on a full success', async () => {
-    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1' }, verified: true })
     h.fetchRepoFiles.mockResolvedValue({ 'existing.ts': 'x' })
     h.implementTask.mockResolvedValue({ ok: true, files: { 'a.ts': 'x' } })
     h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/1' })
@@ -495,7 +495,7 @@ describe('resolveTask — Decision Trace (#685)', () => {
   })
 
   it('completes the trace with success:true on a completed task', async () => {
-    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1' }, verified: true })
     h.fetchRepoFiles.mockResolvedValue({})
     h.implementTask.mockResolvedValue({ ok: true, files: { 'a.ts': 'x' } })
     h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/1' })
@@ -506,7 +506,7 @@ describe('resolveTask — Decision Trace (#685)', () => {
   })
 
   it('completes the trace with success:false and the real reason on failure', async () => {
-    h.resolveApp.mockResolvedValue({ gitOrg: undefined })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: undefined }, verified: true })
 
     await resolveTask('owner::slug', TASK, 'slug')
     expect(h.completeDecisionTrace).toHaveBeenCalledWith('trace-1', expect.stringMatching(/not git-provisioned/i), false)
@@ -514,7 +514,7 @@ describe('resolveTask — Decision Trace (#685)', () => {
 
   it('never fails task resolution when startDecisionTrace itself fails (returns null)', async () => {
     h.startDecisionTrace.mockResolvedValue(null)
-    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1' }, verified: true })
     h.fetchRepoFiles.mockResolvedValue({})
     h.implementTask.mockResolvedValue({ ok: true, files: { 'a.ts': 'x' } })
     h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/1' })
@@ -534,7 +534,7 @@ describe('resolveTask — Decision Trace (#685)', () => {
 // production because this wiring never existed.
 describe('resolveTask — deployment-health stage reporting (#868)', () => {
   it('reports each real stage ok on a full success', async () => {
-    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1' }, verified: true })
     h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
     h.implementTask.mockResolvedValue({ ok: true, files: { 'b.ts': 'new' } })
     h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/42', prNumber: 42 })
@@ -561,7 +561,7 @@ describe('resolveTask — deployment-health stage reporting (#868)', () => {
   })
 
   it('reports "implement" failed when the company is not git-provisioned', async () => {
-    h.resolveApp.mockResolvedValue({ gitOrg: undefined })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: undefined }, verified: true })
 
     await resolveTask('owner::slug', TASK, 'slug')
 
@@ -571,7 +571,7 @@ describe('resolveTask — deployment-health stage reporting (#868)', () => {
   })
 
   it('reports "commit" failed when the git commit fails', async () => {
-    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1' }, verified: true })
     h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
     h.implementTask.mockResolvedValue({ ok: true, files: { 'a.ts': 'new' } })
     h.commitTaskWithPR.mockResolvedValue({ ok: false, reason: 'commit_push_failed' })
@@ -588,7 +588,7 @@ describe('resolveTask — deployment-health stage reporting (#868)', () => {
   })
 
   it('reports "coverage" failed when coverage is below the floor, without attempting merge/deploy', async () => {
-    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1' }, verified: true })
     h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
     h.implementTask.mockResolvedValue({ ok: true, files: { 'b.ts': 'new' } })
     h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/7', prNumber: 7 })
@@ -606,7 +606,7 @@ describe('resolveTask — deployment-health stage reporting (#868)', () => {
   })
 
   it('reports "merge" skipped (not failed) when auto-merge does not succeed', async () => {
-    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1' }, verified: true })
     h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
     h.implementTask.mockResolvedValue({ ok: true, files: { 'b.ts': 'new' } })
     h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/42', prNumber: 42 })
@@ -624,7 +624,7 @@ describe('resolveTask — deployment-health stage reporting (#868)', () => {
   })
 
   it('reports "deploy" ok after a successful merge + redeploy', async () => {
-    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1', workspaceId: 'workspace-1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1', workspaceId: 'workspace-1' }, verified: true })
     h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
     h.implementTask.mockResolvedValue({ ok: true, files: { 'b.ts': 'new' } })
     h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/42', prNumber: 42 })
@@ -639,7 +639,7 @@ describe('resolveTask — deployment-health stage reporting (#868)', () => {
   })
 
   it('reports "deploy" failed (never downgrades the completed task) when deployCompanyFromGitea throws', async () => {
-    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1', workspaceId: 'workspace-1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1', workspaceId: 'workspace-1' }, verified: true })
     h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
     h.implementTask.mockResolvedValue({ ok: true, files: { 'b.ts': 'new' } })
     h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/42', prNumber: 42 })
@@ -654,4 +654,145 @@ describe('resolveTask — deployment-health stage reporting (#868)', () => {
     expect(h.reportDeploymentHealthStage).toHaveBeenCalledWith('builder_company_task', 't_abc123', 'deploy', 'failed', expect.any(String))
   })
 
+})
+
+// ---------------------------------------------------------------------------
+// #1483 — an UNVERIFIED company lookup must never permanently fail a real task
+// ---------------------------------------------------------------------------
+
+/**
+ * #832-class bug. resolveTask() used to resolve the company with a plain
+ * resolveApp(slug), whose single falsy result collapses "this company
+ * genuinely has no Gitea org yet" with "the registry read itself failed," and
+ * sent BOTH to fail(). fail() is terminal here: it writes `stage: 'failed'`,
+ * and runTaskResolutions() (lib/build/task-resolution-loop.ts) only ever
+ * selects `stage === 'todo'`, so nothing in the codebase ever retries a
+ * failed task — a single transient ZeroDB hiccup permanently destroyed a
+ * legitimate backlog task for an already-git-provisioned company, with a
+ * misleading "not git-provisioned" reason.
+ *
+ * The deferral path returns the task to `todo` — this pipeline's real,
+ * existing retry mechanism, the same contract task-resolution-loop.ts already
+ * documents for a failed splitTask() ("leaves the parent untouched — still
+ * `todo` — for a future nightly retry").
+ */
+describe('resolveTask — unverified company lookup defers instead of failing (#1483)', () => {
+  const unverified = [
+    ['the registry read reports verified:false', { entry: null, verified: false }],
+    ['the registry read is configured-but-unreadable with a stale entry', { entry: { gitOrg: 'ws-1' }, verified: false }],
+  ] as const
+
+  for (const [label, lookup] of unverified) {
+    describe(`when ${label}`, () => {
+      beforeEach(() => {
+        h.resolveAppVerified.mockResolvedValue(lookup)
+      })
+
+      it("NEVER writes stage:'failed' — the task must not be permanently lost", async () => {
+        await resolveTask('owner::slug', TASK, 'slug')
+
+        // The load-bearing assertion for this whole fix: no updateTask call
+        // anywhere in this pass may set the terminal 'failed' stage.
+        const stages = h.updateTask.mock.calls.map((c) => c[2]?.stage)
+        expect(stages).not.toContain('failed')
+      })
+
+      it("returns the task to 'todo' so the nightly loop's due list picks it up again", async () => {
+        await resolveTask('owner::slug', TASK, 'slug')
+
+        expect(h.updateTask).toHaveBeenLastCalledWith(
+          'owner::slug',
+          't_abc123',
+          expect.objectContaining({ stage: 'todo' }),
+        )
+      })
+
+      it("reports a deferred, not-ok outcome carrying no verdict about the work", async () => {
+        const result = await resolveTask('owner::slug', TASK, 'slug')
+
+        expect(result.ok).toBe(false)
+        expect(result.stage).toBe('deferred')
+        expect(result.stage).not.toBe('failed')
+        // Honest about WHY, and never the misleading not-git-provisioned claim.
+        expect(result.reason).toMatch(/could not be read|could not confirm/i)
+        expect(result.reason).not.toMatch(/not git-provisioned/i)
+      })
+
+      it('attempts no real work — no issue, no repo read, no LLM call, no commit', async () => {
+        await resolveTask('owner::slug', TASK, 'slug')
+
+        expect(h.createIssue).not.toHaveBeenCalled()
+        expect(h.fetchRepoFiles).not.toHaveBeenCalled()
+        expect(h.implementTask).not.toHaveBeenCalled()
+        expect(h.commitTaskWithPR).not.toHaveBeenCalled()
+      })
+
+      it("records the health stage as 'skipped', never 'failed' — a read hiccup must not pollute the real failure rate", async () => {
+        await resolveTask('owner::slug', TASK, 'slug')
+
+        expect(h.reportDeploymentHealthStage).toHaveBeenCalledWith(
+          'builder_company_task',
+          't_abc123',
+          'implement',
+          'skipped',
+          expect.any(String),
+        )
+        expect(h.reportDeploymentHealthStage).not.toHaveBeenCalledWith(
+          'builder_company_task',
+          't_abc123',
+          'implement',
+          'failed',
+          expect.anything(),
+        )
+      })
+    })
+  }
+
+  it('defers (never fails) when resolveAppVerified itself throws', async () => {
+    h.resolveAppVerified.mockRejectedValue(new Error('zerodb connection reset'))
+
+    const result = await resolveTask('owner::slug', TASK, 'slug')
+
+    expect(result.stage).toBe('deferred')
+    const stages = h.updateTask.mock.calls.map((c) => c[2]?.stage)
+    expect(stages).not.toContain('failed')
+    expect(h.implementTask).not.toHaveBeenCalled()
+  })
+
+  it('still resolves a legitimate task normally when the verified lookup succeeds', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1' }, verified: true })
+    h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
+    h.implementTask.mockResolvedValue({ ok: true, files: { 'b.ts': 'new' } })
+    h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/7', prNumber: 7 })
+    h.runCoverage.mockResolvedValue({ coveragePercent: 88, testable: true, passed: true })
+
+    const result = await resolveTask('owner::slug', TASK, 'slug')
+
+    expect(result.ok).toBe(true)
+    expect(result.stage).toBe('completed')
+    expect(h.implementTask).toHaveBeenCalled()
+  })
+
+  // Source-level guard: the whole bug class is reintroduced the moment anyone
+  // swaps this file back to the unverified resolveApp(). Mirrors the same
+  // guard the #1454/#1477 fix added for claim-subdomain.
+  it('never reintroduces the unverified resolveApp() in task-resolver.ts', async () => {
+    const fs = await import('node:fs')
+    const path = await import('node:path')
+    const src = fs.readFileSync(path.join(process.cwd(), 'lib/build/task-resolver.ts'), 'utf8')
+    expect(src).toContain('resolveAppVerified')
+
+    // Strip comments first: the explanatory doc comments deliberately NAME the
+    // old `resolveApp(slug)` call to explain the bug, so a naive whole-file
+    // match would flag its own documentation.
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '')
+
+    // The import must be the verified one, and no bare resolveApp( call may
+    // survive anywhere in real code.
+    expect(code).toMatch(/import \{ resolveAppVerified,/)
+    expect(code).not.toMatch(/\bresolveApp(?!Verified)\s*\(/)
+    expect(code).not.toMatch(/\bresolveApp(?!Verified)\b/)
+  })
 })

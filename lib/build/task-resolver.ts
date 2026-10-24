@@ -40,6 +40,21 @@
  * attempted again for a task that already has one (no duplicate issues on a
  * retried/resumed task).
  *
+ * #1483 — a third, non-terminal outcome: `deferred`. The pipeline's original
+ * "single attempt, then `failed`" contract (above) quietly assumed every
+ * failure was a real verdict about the work. It wasn't: the company-registry
+ * lookup that gates everything used an unverified resolveApp(), whose falsy
+ * result collapsed "this company genuinely has no Gitea repo" with "the
+ * registry read itself failed," and sent both to fail(). Since `failed` is
+ * terminal here — task-resolution-loop.ts's runTaskResolutions() only ever
+ * selects `stage === 'todo'`, so nothing in the codebase retries a failed
+ * task — one transient ZeroDB hiccup permanently destroyed real backlog work
+ * under a misleading reason. A lookup we could not verify now DEFERS: the task
+ * goes back to `todo` (the loop's real retry mechanism, the same contract it
+ * already uses for a failed splitTask()), the health stage is `skipped` rather
+ * than `failed`, and no verdict is recorded. "Couldn't check" never again
+ * collapses into "confirmed not ready."
+ *
  * #906 — the issue body's "## Estimate" section now carries the task's REAL
  * Fibonacci storyPoints/estimateRationale (populated at creation time by
  * #902's lib/build/story-estimator.ts), matching
@@ -50,7 +65,7 @@
 
 import { fetchRepoFiles, mergeTaskPR, createIssue } from '@/lib/git/gitea-client'
 import { commitTaskWithPR } from '@/lib/git/task-git-sync'
-import { resolveApp, setAppRailwayService } from '@/lib/build/app-registry'
+import { resolveAppVerified, setAppRailwayService } from '@/lib/build/app-registry'
 import { implementTask } from '@/lib/build/task-implementer'
 import { runCoverage } from '@/lib/build/coverage-runner'
 import { updateTask, type BuildTask } from '@/lib/build/task-store'
@@ -63,7 +78,24 @@ export const COVERAGE_FLOOR = 80
 
 export interface ResolveTaskResult {
   ok: boolean
-  stage: 'completed' | 'failed'
+  /**
+   * The outcome of THIS pass.
+   *
+   * #1483 — `'deferred'` is a third, non-terminal outcome: this pass could not
+   * determine whether the work was even possible (the company registry read
+   * itself failed), so nothing was attempted and nothing was concluded. The
+   * task is handed back to the backlog as `todo`, which is this pipeline's
+   * existing, real retry mechanism (runTaskResolutions() selects on
+   * `stage === 'todo'`) — the same contract task-resolution-loop.ts already
+   * uses for a failed splitTask(): "leaves the parent untouched — still
+   * `todo` — for a future nightly retry."
+   *
+   * `ok` is false for a deferral (nothing shipped), but unlike `'failed'` it
+   * carries NO verdict about the task or the company. Deliberately NOT a
+   * TaskStage: the persisted stage vocabulary stays the six values in
+   * task-store.ts's TASK_STAGES, and a deferred task persists as `todo`.
+   */
+  stage: 'completed' | 'failed' | 'deferred'
   reason?: string
   prUrl?: string
   coveragePercent?: number | null
@@ -186,9 +218,48 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
     return { ok: false, stage: 'failed', reason }
   }
 
+  /**
+   * #1483 — the honest outcome for "we could not determine anything."
+   *
+   * Distinct from fail() in every way that matters: it returns the task to
+   * `todo` (NOT `failed`), so the nightly loop's due-list selection
+   * (`stage === 'todo'` in task-resolution-loop.ts) genuinely picks it up on
+   * the next pass; it reports the deployment-health stage as 'skipped', not
+   * 'failed', so a transient infrastructure hiccup never pollutes the real
+   * failure rate; and it completes the decision trace honestly as "not
+   * attempted" rather than recording a verdict the pipeline never reached.
+   *
+   * The `todo` write is an explicit revert, not a no-op: resolveTask() sets
+   * `in_progress` before this point, so simply returning would leave the row
+   * stranded at `in_progress` until the 30-minute stale reaper in
+   * task-resolution-loop.ts moved it to... `failed` — reintroducing the exact
+   * bug this fixes, just delayed by half an hour.
+   */
+  const defer = async (reason: string, healthStage: DeploymentHealthStageName = 'implement'): Promise<ResolveTaskResult> => {
+    await updateTask(scopeKey, task.id, { stage: 'todo', output: reason })
+    if (traceId) await completeDecisionTrace(traceId, reason, false)
+    await reportDeploymentHealthStage('builder_company_task', task.id, healthStage, 'skipped', reason)
+    return { ok: false, stage: 'deferred', reason }
+  }
+
   await updateTask(scopeKey, task.id, { stage: 'in_progress' })
 
-  const app = await resolveApp(slug)
+  // #832-class bug (#1483): this used to read a plain `resolveApp(slug)`, whose
+  // single falsy result collapses "this company genuinely has no Gitea org yet"
+  // with "the registry read itself failed." Both then hit fail() — which is NOT
+  // a soft retry: it marks a real backlog task `failed` permanently, with a
+  // misleading reason, and `failed` is a terminal stage here (the nightly loop
+  // only ever selects `stage === 'todo'`, so nothing ever retries it). A single
+  // transient ZeroDB hiccup could therefore permanently destroy a legitimate
+  // task for an already-git-provisioned company — real work lost, not just a
+  // wrong read. resolveAppVerified() separates the two: a confirmed miss still
+  // fails honestly, an unverified read defers for a real future retry.
+  const { entry: app, verified } = await resolveAppVerified(slug).catch(
+    () => ({ entry: null as Awaited<ReturnType<typeof resolveAppVerified>>['entry'], verified: false }),
+  )
+  if (!verified) {
+    return defer('Could not confirm this company’s git provisioning — the company registry could not be read. Left queued to retry.')
+  }
   if (!app?.gitOrg) {
     return fail('Company is not git-provisioned yet — cannot resolve tasks without a Gitea repo.')
   }
