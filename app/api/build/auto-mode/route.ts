@@ -106,8 +106,15 @@ export async function GET(request: NextRequest) {
     const run = await getAutoRun(companyId)
     return Response.json({ ...base, run, progress: runProgress(run, Date.now()) })
   } catch (err) {
+    // Real bug fix: a thrown/failed lookup used to return the SAME
+    // `run: null` + status 200 shape as a confirmed run-free company. The
+    // panel then showed the IDLE "START AUTO MODE" button on a transient
+    // hiccup even when a run was genuinely active — and starting again is
+    // an unguarded second swarm dispatch (see getAutoRun's doc comment).
+    // A non-ok status lets the client tell "couldn't check" apart from
+    // "confirmed no run" instead of fabricating the latter.
     logger.warn('auto-mode GET failed', { companyId, err: (err as Error)?.message })
-    return Response.json({ ...base, run: null, progress: runProgress(null, Date.now()) })
+    return Response.json({ ...base, run: null, progress: runProgress(null, Date.now()), failed: true }, { status: 503 })
   }
 }
 

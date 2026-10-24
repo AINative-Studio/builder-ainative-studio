@@ -326,21 +326,30 @@ export async function stopAutoRun(input: {
   }
 }
 
-/** The latest 'auto' run row for a company (start OR stop), or null. Never throws. */
+/**
+ * The latest 'auto' run row for a company (start OR stop), or null when the
+ * store is unconfigured/the company genuinely has no rows.
+ *
+ * Real bug fix: this used to swallow a failed lookup (non-ok response, or
+ * the fetch itself throwing) into the SAME `null` a genuinely-run-free
+ * company gets — the exact #832-class ambiguity already fixed for
+ * `resolveApp()`. AutoModePanel's GET route then showed the IDLE "START
+ * AUTO MODE" button on a transient hiccup even when a run was actually
+ * active, and clicking it fires a real, unguarded second swarm dispatch
+ * (`startAutoRun` has no idempotency check) — a genuine double-dispatch
+ * risk, not just a display glitch. A lookup failure now THROWS so the one
+ * caller (the GET route) can tell it apart from a confirmed empty run.
+ */
 export async function getAutoRun(companyId: string): Promise<AutoRun | null> {
   if (!autoModeConfigured() || !companyId) return null
-  try {
-    const res = await fetch(`${rowsUrl()}?limit=500`, { headers: headers(), signal: AbortSignal.timeout(20000) })
-    if (!res.ok) return null
-    const data = JSON.parse(await res.text())
-    const rows = Array.isArray(data) ? data : data.data || data.rows || []
-    return latestAutoRun(
-      rows.map((r: { row_data?: AutoRun }) => r.row_data).filter(Boolean) as AutoRun[],
-      companyId,
-    )
-  } catch {
-    return null
-  }
+  const res = await fetch(`${rowsUrl()}?limit=500`, { headers: headers(), signal: AbortSignal.timeout(20000) })
+  if (!res.ok) throw new Error(`auto-mode rows fetch failed: ${res.status}`)
+  const data = JSON.parse(await res.text())
+  const rows = Array.isArray(data) ? data : data.data || data.rows || []
+  return latestAutoRun(
+    rows.map((r: { row_data?: AutoRun }) => r.row_data).filter(Boolean) as AutoRun[],
+    companyId,
+  )
 }
 
 /**
