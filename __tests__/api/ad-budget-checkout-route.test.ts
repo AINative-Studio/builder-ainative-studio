@@ -17,7 +17,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const h = vi.hoisted(() => ({
   auth: vi.fn(),
   getPlanStatus: vi.fn(),
-  resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(),
   growthAdTestingEnabled: vi.fn(() => true),
 }))
 
@@ -27,11 +27,16 @@ vi.mock('@/lib/ainative/plan', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/ainative/plan')>()),
   getPlanStatus: h.getPlanStatus,
 }))
-vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({ resolveAppVerified: h.resolveAppVerified }))
 vi.mock('@/lib/build/ad-testing', () => ({ growthAdTestingEnabled: h.growthAdTestingEnabled }))
 
 function postReq(body: unknown) {
   return { json: async () => body } as any
+}
+
+/** A confirmed resolveAppVerified() result — either a real entry or a confirmed miss. */
+function verified(entry: Record<string, unknown> | null) {
+  return { entry, verified: true }
 }
 
 const APP = { slug: 'acme', chatId: 'c1', createdAt: '2026-01-01' }
@@ -41,7 +46,7 @@ beforeEach(() => {
   h.growthAdTestingEnabled.mockReturnValue(true)
   h.auth.mockResolvedValue({ accessToken: 'tok' })
   h.getPlanStatus.mockResolvedValue({ tier: 'pro' })
-  h.resolveApp.mockResolvedValue(APP)
+  h.resolveAppVerified.mockResolvedValue(verified(APP))
 })
 
 describe('POST /api/build/growth/ad-budget-checkout (#449)', () => {
@@ -168,7 +173,7 @@ describe('POST /api/build/growth/ad-budget-checkout (#449)', () => {
   })
 
   it('404s on an unknown company — company resolution is UNCHANGED (#1017)', async () => {
-    h.resolveApp.mockResolvedValue(null)
+    h.resolveAppVerified.mockResolvedValue(verified(null))
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     const { POST } = await import('@/app/api/build/growth/ad-budget-checkout/route')
@@ -176,6 +181,31 @@ describe('POST /api/build/growth/ad-budget-checkout (#449)', () => {
     expect(res.status).toBe(404)
     // No company, no charge — never reaches Stripe.
     expect(fetchMock).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  // #832-class bug: a transient registry-read failure must never be presented
+  // as a confident "company not found" to a founder mid real-money checkout.
+  it('503 lookup_failed when the registry read itself fails (NOT a false 404)', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { POST } = await import('@/app/api/build/growth/ad-budget-checkout/route')
+    const res: any = await POST(postReq({ slug: 'acme', amountCents: 1000 }))
+    const json = await res.json()
+    expect(res.status).toBe(503)
+    expect(json).toEqual({ ok: false, reason: 'lookup_failed' })
+    expect(fetchMock).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('503 lookup_failed when resolveAppVerified rejects outright', async () => {
+    h.resolveAppVerified.mockRejectedValue(new Error('zerodb timeout'))
+    const { POST } = await import('@/app/api/build/growth/ad-budget-checkout/route')
+    const res: any = await POST(postReq({ slug: 'acme', amountCents: 1000 }))
+    const json = await res.json()
+    expect(res.status).toBe(503)
+    expect(json.reason).toBe('lookup_failed')
     vi.unstubAllGlobals()
   })
 

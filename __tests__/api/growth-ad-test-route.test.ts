@@ -27,7 +27,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const h = vi.hoisted(() => ({
   auth: vi.fn(),
   getPlanStatus: vi.fn(),
-  resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(),
   setAppGrowthAdTest: vi.fn(async () => true),
   createAdTestCampaign: vi.fn(),
   growthAdTestingEnabled: vi.fn(() => true),
@@ -41,7 +41,7 @@ vi.mock('@/lib/ainative/plan', async (importOriginal) => ({
   getPlanStatus: h.getPlanStatus,
 }))
 vi.mock('@/lib/build/app-registry', () => ({
-  resolveApp: h.resolveApp,
+  resolveAppVerified: h.resolveAppVerified,
   setAppGrowthAdTest: h.setAppGrowthAdTest,
 }))
 vi.mock('@/lib/build/ad-testing', () => ({
@@ -61,6 +61,11 @@ function postReq(body: unknown) {
   return { json: async () => body } as any
 }
 
+/** A confirmed resolveAppVerified() result — either a real entry or a confirmed miss. */
+function verified(entry: Record<string, unknown> | null) {
+  return { entry, verified: true }
+}
+
 const WITHOUT_CAMPAIGN = { slug: 'acme', chatId: 'c1', name: 'Acme', createdAt: '2026-08-01T00:00:00Z' }
 const WITH_CAMPAIGN = { ...WITHOUT_CAMPAIGN, growthAdTestCampaignId: 'camp-existing' }
 
@@ -70,7 +75,7 @@ beforeEach(() => {
   h.growthAdTestingCredentialConfigured.mockReturnValue(true)
   h.auth.mockResolvedValue({ accessToken: 'tok', user: { email: 'f@x.com' } })
   h.getPlanStatus.mockResolvedValue({ tier: 'pro' })
-  h.resolveApp.mockResolvedValue(WITHOUT_CAMPAIGN)
+  h.resolveAppVerified.mockResolvedValue(verified(WITHOUT_CAMPAIGN))
   h.setAppGrowthAdTest.mockResolvedValue(true)
 })
 
@@ -152,9 +157,20 @@ describe('POST /api/build/growth/ad-test (#449)', () => {
   })
 
   it('404s when the company does not exist', async () => {
-    h.resolveApp.mockResolvedValue(null)
+    h.resolveAppVerified.mockResolvedValue(verified(null))
     const res: any = await POST(postReq({ slug: 'nope' }))
     expect(res.status).toBe(404)
+  })
+
+  // #832-class bug: a transient registry-read failure must never be presented
+  // as a confident "company not found" to a founder creating their ad campaign.
+  it('503 lookup_failed when the registry read itself fails (NOT a false 404)', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+    const res: any = await POST(postReq({ slug: 'acme' }))
+    const json = await res.json()
+    expect(res.status).toBe(503)
+    expect(json).toEqual({ ok: false, reason: 'lookup_failed' })
+    expect(h.createAdTestCampaign).not.toHaveBeenCalled()
   })
 
   it('creates a real campaign for a paid, signed-in founder and persists it', async () => {
@@ -179,14 +195,14 @@ describe('POST /api/build/growth/ad-test (#449)', () => {
   })
 
   it('falls back to the slug when the company has no stored name', async () => {
-    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'c1', createdAt: '2026-08-01T00:00:00Z' })
+    h.resolveAppVerified.mockResolvedValue(verified({ slug: 'acme', chatId: 'c1', createdAt: '2026-08-01T00:00:00Z' }))
     h.createAdTestCampaign.mockResolvedValue({ ok: true, campaignId: 'camp-new' })
     await POST(postReq({ slug: 'acme' }))
     expect(h.createAdTestCampaign).toHaveBeenCalledWith(expect.objectContaining({ companyName: 'acme' }))
   })
 
   it('short-circuits to the existing campaign for a company that already has one — never calls createAdTestCampaign again', async () => {
-    h.resolveApp.mockResolvedValue(WITH_CAMPAIGN)
+    h.resolveAppVerified.mockResolvedValue(verified(WITH_CAMPAIGN))
     const res: any = await POST(postReq({ slug: 'acme' }))
     const json = await res.json()
     expect(json).toEqual({ ok: true, campaignId: 'camp-existing' })

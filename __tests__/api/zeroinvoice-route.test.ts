@@ -16,7 +16,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const h = vi.hoisted(() => ({
   auth: vi.fn(),
-  resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(),
   setAppZeroInvoiceConnectClicked: vi.fn(async () => true),
   setAppZeroInvoiceConnectConfirmed: vi.fn(async () => true),
   getZeroInvoiceAuthorizeUrl: vi.fn(),
@@ -24,7 +24,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
 vi.mock('@/lib/build/app-registry', () => ({
-  resolveApp: h.resolveApp,
+  resolveAppVerified: h.resolveAppVerified,
   setAppZeroInvoiceConnectClicked: h.setAppZeroInvoiceConnectClicked,
   setAppZeroInvoiceConnectConfirmed: h.setAppZeroInvoiceConnectConfirmed,
 }))
@@ -36,12 +36,17 @@ function postReq(body: unknown) {
   return { json: async () => body } as any
 }
 
+/** A confirmed resolveAppVerified() result — either a real entry or a confirmed miss. */
+function verified(entry: Record<string, unknown> | null) {
+  return { entry, verified: true }
+}
+
 const APP = { slug: 'acme', chatId: 'c1', createdAt: '2026-08-01T00:00:00Z' }
 
 beforeEach(() => {
   vi.clearAllMocks()
   h.auth.mockResolvedValue({ accessToken: 'tok', user: { email: 'f@x.com' } })
-  h.resolveApp.mockResolvedValue(APP)
+  h.resolveAppVerified.mockResolvedValue(verified(APP))
   h.setAppZeroInvoiceConnectClicked.mockResolvedValue(true)
   h.setAppZeroInvoiceConnectConfirmed.mockResolvedValue(true)
 })
@@ -62,9 +67,20 @@ describe('POST /api/build/zeroinvoice (#418)', () => {
   })
 
   it('404s when the company does not exist', async () => {
-    h.resolveApp.mockResolvedValue(null)
+    h.resolveAppVerified.mockResolvedValue(verified(null))
     const res: any = await POST(postReq({ slug: 'nope' }))
     expect(res.status).toBe(404)
+  })
+
+  // #832-class bug: a transient registry-read failure must never be presented
+  // as a confident "company not found" to a founder connecting ZeroInvoice.
+  it('503 lookup_failed when the registry read itself fails (NOT a false 404)', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+    const res: any = await POST(postReq({ slug: 'acme' }))
+    const json = await res.json()
+    expect(res.status).toBe(503)
+    expect(json).toEqual({ ok: false, reason: 'lookup_failed' })
+    expect(h.getZeroInvoiceAuthorizeUrl).not.toHaveBeenCalled()
   })
 
   it('returns the real authUrl and records the click on success', async () => {
@@ -110,7 +126,7 @@ describe('POST /api/build/zeroinvoice (#418)', () => {
     })
 
     it('still 404s on an unknown company', async () => {
-      h.resolveApp.mockResolvedValue(null)
+      h.resolveAppVerified.mockResolvedValue(verified(null))
       const res: any = await POST(postReq({ slug: 'nope', action: 'confirm' }))
       expect(res.status).toBe(404)
       expect(h.setAppZeroInvoiceConnectConfirmed).not.toHaveBeenCalled()

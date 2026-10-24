@@ -30,7 +30,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const h = vi.hoisted(() => ({
   auth: vi.fn(),
   getPlanStatus: vi.fn(),
-  resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(),
   setAppZeroVoice: vi.fn(async () => true),
   provisionZeroVoiceNumber: vi.fn(),
   zeroVoiceProvisionEnabled: vi.fn(() => true),
@@ -47,7 +47,7 @@ vi.mock('@/lib/ainative/plan', async (importOriginal) => ({
   getPlanStatus: h.getPlanStatus,
 }))
 vi.mock('@/lib/build/app-registry', () => ({
-  resolveApp: h.resolveApp,
+  resolveAppVerified: h.resolveAppVerified,
   setAppZeroVoice: h.setAppZeroVoice,
 }))
 vi.mock('@/lib/build/zerovoice', () => ({
@@ -68,6 +68,11 @@ function postReq(body: unknown) {
   return { json: async () => body } as any
 }
 
+/** A confirmed resolveAppVerified() result — either a real entry or a confirmed miss. */
+function verified(entry: Record<string, unknown> | null) {
+  return { entry, verified: true }
+}
+
 const UNPROVISIONED = { slug: 'acme', chatId: 'c1', createdAt: '2026-08-01T00:00:00Z' }
 const PROVISIONED = { ...UNPROVISIONED, zerovoiceProvisioned: true, zerovoiceNumberId: 'num-existing', zerovoiceE164: '+15551234567' }
 
@@ -77,7 +82,7 @@ beforeEach(() => {
   h.zeroVoiceProvisionEnabled.mockReturnValue(true)
   h.auth.mockResolvedValue({ accessToken: 'tok', user: { email: 'f@x.com' } })
   h.getPlanStatus.mockResolvedValue({ tier: 'pro' })
-  h.resolveApp.mockResolvedValue(UNPROVISIONED)
+  h.resolveAppVerified.mockResolvedValue(verified(UNPROVISIONED))
   h.setAppZeroVoice.mockResolvedValue(true)
   h.captureFounderCredentialForProxy.mockResolvedValue(true)
   h.configureSmsRelay.mockResolvedValue({ ok: true })
@@ -156,9 +161,20 @@ describe('POST /api/build/zerovoice (#415)', () => {
   })
 
   it('404s when the company does not exist', async () => {
-    h.resolveApp.mockResolvedValue(null)
+    h.resolveAppVerified.mockResolvedValue(verified(null))
     const res: any = await POST(postReq({ slug: 'nope' }))
     expect(res.status).toBe(404)
+  })
+
+  // #832-class bug: a transient registry-read failure must never be presented
+  // as a confident "company not found" to a founder provisioning a number.
+  it('503 lookup_failed when the registry read itself fails (NOT a false 404)', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+    const res: any = await POST(postReq({ slug: 'acme' }))
+    const json = await res.json()
+    expect(res.status).toBe(503)
+    expect(json).toEqual({ ok: false, reason: 'lookup_failed' })
+    expect(h.provisionZeroVoiceNumber).not.toHaveBeenCalled()
   })
 
   it('provisions a real number for a paid, signed-in founder and persists it', async () => {
@@ -177,7 +193,7 @@ describe('POST /api/build/zerovoice (#415)', () => {
   })
 
   it('short-circuits to the existing number for an already-provisioned company — never calls the provisioning client', async () => {
-    h.resolveApp.mockResolvedValue(PROVISIONED)
+    h.resolveAppVerified.mockResolvedValue(verified(PROVISIONED))
     const res: any = await POST(postReq({ slug: 'acme' }))
     const json = await res.json()
     expect(json).toEqual({ ok: true, numberId: 'num-existing', e164: '+15551234567' })
@@ -205,7 +221,7 @@ describe('POST /api/build/zerovoice (#415)', () => {
     })
 
     it('also captures the credential on the already-provisioned short-circuit (backfill for companies provisioned before #522)', async () => {
-      h.resolveApp.mockResolvedValue(PROVISIONED)
+      h.resolveAppVerified.mockResolvedValue(verified(PROVISIONED))
       await POST(postReq({ slug: 'acme' }))
       expect(h.captureFounderCredentialForProxy).toHaveBeenCalledWith(
         expect.anything(),
@@ -240,7 +256,7 @@ describe('POST /api/build/zerovoice (#415)', () => {
     })
 
     it('also (re-)configures both relays on the already-provisioned short-circuit — idempotent backfill', async () => {
-      h.resolveApp.mockResolvedValue(PROVISIONED)
+      h.resolveAppVerified.mockResolvedValue(verified(PROVISIONED))
       await POST(postReq({ slug: 'acme' }))
       expect(h.configureSmsRelay).toHaveBeenCalledWith('tok', 'num-existing', expect.any(String), 'test-shared-secret')
       expect(h.configureVoiceRelay).toHaveBeenCalledWith('tok', 'num-existing', expect.any(String), 'test-shared-secret')
