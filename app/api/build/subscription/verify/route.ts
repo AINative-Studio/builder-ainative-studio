@@ -40,7 +40,7 @@ import {
   claimCompanyProject,
   setAppOwner,
   setAppRailwayService,
-  resolveApp,
+  resolveAppVerified,
 } from '@/lib/build/app-registry'
 import { markConverted } from '@/lib/build/learning'
 import { reportConversion, gclidFromRequest } from '@/lib/build/conversions'
@@ -130,9 +130,20 @@ export async function POST(request: NextRequest) {
       // only fires on a genuinely paid, loop-eligible, NOT-already-enrolled
       // company, so a retried verify call never double-dispatches.
       if (enrolled) {
-        resolveApp(slug)
-          .then(async (entry) => {
-            if (!entry) return
+        resolveAppVerified(slug)
+          .then(async ({ entry, verified }) => {
+            if (!entry) {
+              // #1427: a confirmed miss (verified: true) is a real "no such
+              // company" — nothing to do. But `verified: false` means the
+              // registry read ITSELF failed, not that the company doesn't
+              // exist; logging it (rather than silently no-op'ing the same
+              // as a confirmed miss) is the only honesty available on a
+              // best-effort path that must never fail checkout confirmation
+              // outright. The nightly cron tick still picks the company up
+              // later either way.
+              if (!verified) console.error(`[subscription/verify] resolveAppVerified lookup_failed for ${slug} — initial dispatch skipped`)
+              return
+            }
             const wasEnrolled = await isEnrolled(slug)
             if (!shouldStartInitialRun({ paid: true, planUnlocksLoop: enrolled, alreadyEnrolled: wasEnrolled })) return
             const track = entry.track === 'company' ? 'company' : 'app'
@@ -214,7 +225,14 @@ export async function POST(request: NextRequest) {
     let deployed: boolean | undefined
     if (slug && companyDeployEnabled()) {
       try {
-        const entry = await resolveApp(slug).catch(() => null)
+        const { entry, verified } = await resolveAppVerified(slug).catch(() => ({ entry: null, verified: false }))
+        // #1427: a transient registry-read failure (verified: false) used to
+        // look identical to "company genuinely has no chatId yet," silently
+        // skipping real deploy provisioning for a founder who just paid —
+        // never fail the checkout confirmation over it, but log it so it's
+        // distinguishable from a real not-yet-chatted company. The next
+        // verify call (e.g. a page refresh) retries this idempotently either way.
+        if (!entry && !verified) console.error(`[subscription/verify] resolveAppVerified lookup_failed for ${slug} — deploy provisioning skipped`)
         const alreadyProvisioned = Boolean(entry?.railwayServiceId)
         const shouldProvision = shouldProvisionDeployService({
           paid: true,

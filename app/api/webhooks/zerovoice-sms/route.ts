@@ -44,7 +44,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
-import { resolveAppByZeroVoiceNumber, resolveApp } from '@/lib/build/app-registry'
+import { resolveAppByZeroVoiceNumber, resolveAppVerified } from '@/lib/build/app-registry'
 import { createIssue } from '@/lib/git/gitea-client'
 import { sendZeroVoiceSms } from '@/lib/build/zerovoice'
 import { resolveFounderCredential, type FounderScopedPrimitive, type ResolvedCredential } from '@/lib/build/primitive-credentials'
@@ -138,9 +138,14 @@ export async function handleInboundSms(payload: InboundSmsPayload): Promise<SmsC
       // number, since the shared number isn't any one company's own) —
       // resolveApp() already exists in app-registry.ts for this exact case
       // (e.g. app/api/build/zerovoice/route.ts uses it the same way).
-      const companyApp = await resolveApp(shared.resolvedSlug).catch(() => null)
+      // #1427: was `resolveApp(...).catch(() => null)`, which collapses a
+      // transient registry-read failure into the same `company_not_found`
+      // reason as a real "no such company" — SMS webhooks aren't typically
+      // retried on a 200, so a founder's incoming text was silently dropped
+      // on a hiccup with no way to tell the two apart in logs.
+      const { entry: companyApp, verified } = await resolveAppVerified(shared.resolvedSlug).catch(() => ({ entry: null, verified: false }))
       if (!companyApp) {
-        return { ok: false, reason: 'shared_number_company_not_found' }
+        return { ok: false, reason: verified ? 'shared_number_company_not_found' : 'shared_number_lookup_failed' }
       }
       if (!body) return { ok: false, reason: 'empty_body' }
 

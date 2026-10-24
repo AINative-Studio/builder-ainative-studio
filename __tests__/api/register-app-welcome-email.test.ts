@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 const h = vi.hoisted(() => ({
   registerApp: vi.fn(),
   resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(async (slug: string) => ({ entry: await h.resolveApp(slug), verified: true })),
   deployPersistent: vi.fn(),
   checkAppReady: vi.fn(),
   resolveStoredApp: vi.fn(),
@@ -26,7 +27,7 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
-vi.mock('@/lib/build/app-registry', () => ({ registerApp: h.registerApp, resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({ registerApp: h.registerApp, resolveApp: h.resolveApp, resolveAppVerified: h.resolveAppVerified }))
 vi.mock('@/lib/build/deploy', () => ({ deployPersistent: h.deployPersistent }))
 vi.mock('@/lib/build/ready-gate', () => ({ checkAppReady: h.checkAppReady, resolveStoredApp: h.resolveStoredApp }))
 vi.mock('@/lib/build/seed-check', () => ({ checkSeededData: h.checkSeededData }))
@@ -52,6 +53,7 @@ async function flush() {
 describe('POST /api/build/register-app — welcome email (#758)', () => {
   beforeEach(() => {
     Object.values(h).forEach((fn) => fn.mockReset())
+    h.resolveAppVerified.mockImplementation(async (slug: string) => ({ entry: await h.resolveApp(slug), verified: true }))
     h.checkAppReady.mockResolvedValue({ checked: true, ok: true })
     h.deployPersistent.mockResolvedValue({ url: 'https://builder.ainative.studio/build/acme', dnsPointable: false })
     h.resolveApp.mockResolvedValue(null)

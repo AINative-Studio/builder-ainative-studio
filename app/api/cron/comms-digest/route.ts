@@ -49,7 +49,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { listEnrolled } from '@/lib/build/loop-enrollment'
-import { resolveApp, setAppLastDigestAt } from '@/lib/build/app-registry'
+import { resolveAppVerified, setAppLastDigestAt } from '@/lib/build/app-registry'
 import { listDocuments } from '@/lib/build/document-store'
 import { chatScopeKey } from '@/lib/build/chat-store'
 import { getCommitsSince } from '@/lib/git/gitea-client'
@@ -100,7 +100,16 @@ export async function runCommsDigestSweep(opts: { dryRun: boolean }): Promise<{
   let failed = 0
 
   for (const e of enrolled) {
-    const app = await resolveApp(e.companyId).catch(() => null)
+    // #1427: was `resolveApp(...).catch(() => null)` — a transient registry-
+    // read failure silently skipped that founder's digest for the day under
+    // the exact same `no_owner_email` reason as a real "no owner recorded,"
+    // with nothing in the run's own results to tell the two apart.
+    const { entry: app, verified: appVerified } = await resolveAppVerified(e.companyId).catch(() => ({ entry: null, verified: false }))
+    if (!appVerified) {
+      skipped += 1
+      results.push({ companyId: e.companyId, mode: 'agile', sent: false, reason: 'lookup_failed' })
+      continue
+    }
     const recipient = app?.ownerEmail
     const mode: 'agile' | 'pairProgramming' = app?.commsMode === 'pairProgramming' ? 'pairProgramming' : 'agile'
 

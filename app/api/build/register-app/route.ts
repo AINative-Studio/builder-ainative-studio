@@ -11,7 +11,7 @@
 
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
-import { registerApp, resolveApp, type AppEntry } from '@/lib/build/app-registry'
+import { registerApp, resolveApp, resolveAppVerified, type AppEntry } from '@/lib/build/app-registry'
 import { deployPersistent } from '@/lib/build/deploy'
 import { resolveStoredApp } from '@/lib/build/ready-gate'
 import { checkSeededData, type SeededDataCheck } from '@/lib/build/seed-check'
@@ -34,8 +34,15 @@ export const runtime = 'nodejs'
 async function firstFreeSlug(base: string): Promise<string> {
   for (let n = 2; n <= 50; n++) {
     const candidate = `${base}-${n}`.slice(0, 40)
-    const taken = await resolveApp(candidate).catch(() => null)
-    if (!taken) return candidate
+    // #1427: was `resolveApp(candidate).catch(() => null)` — a transient
+    // registry-read failure looked IDENTICAL to "confirmed free," handing
+    // back a candidate slug that might already be a different real
+    // company's, risking a genuine slug collision. Only a CONFIRMED miss
+    // (verified: true, entry: null) is actually free; an unverified failure
+    // is treated the same as "taken" — safe direction, since the loop just
+    // tries the next suffix instead (capped at 50, so this can't hang).
+    const { entry, verified } = await resolveAppVerified(candidate).catch(() => ({ entry: null, verified: false }))
+    if (!entry && verified) return candidate
   }
   return `${base}-${Date.now().toString(36)}`.slice(0, 40)
 }
@@ -289,6 +296,10 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   const slug = new URL(request.url).searchParams.get('slug') || ''
-  const entry = await resolveApp(slug)
+  // #1427: was a bare `await resolveApp(slug)` with no catch at all — a
+  // registry-read failure threw, 500ing the request instead of returning
+  // an honest, retryable response.
+  const { entry, verified } = await resolveAppVerified(slug).catch(() => ({ entry: null, verified: false }))
+  if (!verified) return Response.json({ error: 'lookup_failed' }, { status: 503 })
   return Response.json({ entry })
 }

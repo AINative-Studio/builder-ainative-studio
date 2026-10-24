@@ -29,9 +29,9 @@ const h = vi.hoisted(() => ({
   deployCompanyFromGitea: vi.fn(),
   companyDeployEnabled: vi.fn(() => true),
   setAppRailwayService: vi.fn(async () => true),
-  resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(),
 }))
-const { deployCompanyFromGitea, companyDeployEnabled, setAppRailwayService, resolveApp } = h
+const { deployCompanyFromGitea, companyDeployEnabled, setAppRailwayService, resolveAppVerified } = h
 
 vi.mock('@/lib/build/company-deploy', () => ({
   deployCompanyFromGitea: h.deployCompanyFromGitea,
@@ -45,7 +45,7 @@ vi.mock('@/lib/build/app-registry', () => ({
   claimCompanyProject: vi.fn(async () => ({ ok: true, claimed: false })),
   setAppOwner: vi.fn(async () => true),
   setAppRailwayService: h.setAppRailwayService,
-  resolveApp: h.resolveApp,
+  resolveAppVerified: h.resolveAppVerified,
 }))
 vi.mock('@/lib/build/learning', () => ({ markConverted: vi.fn(async () => {}) }))
 vi.mock('@/lib/build/conversions', () => ({
@@ -89,7 +89,7 @@ describe('POST /api/build/subscription/verify — #389 real deploy trigger', () 
     deployCompanyFromGitea.mockReset()
     companyDeployEnabled.mockReset().mockReturnValue(true)
     setAppRailwayService.mockReset().mockResolvedValue(true)
-    resolveApp.mockReset()
+    resolveAppVerified.mockReset()
   })
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -107,7 +107,7 @@ describe('POST /api/build/subscription/verify — #389 real deploy trigger', () 
   it('does NOT deploy when Railway deploy is disabled (cost-safe), even if paid', async () => {
     companyDeployEnabled.mockReturnValue(false)
     ;(fetch as any).mockResolvedValue(coreVerify(true))
-    resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1' })
+    resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1' }, verified: true })
     const res = await POST(req({ session_id: 'cs_test', slug: 'acme' }))
     const json = await res.json()
     expect(json.paid).toBe(true)
@@ -116,7 +116,7 @@ describe('POST /api/build/subscription/verify — #389 real deploy trigger', () 
 
   it('deploys ONCE on a paid verify and persists the returned serviceName', async () => {
     ;(fetch as any).mockResolvedValue(coreVerify(true))
-    resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', workspaceId: 'ws-1' })
+    resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1', workspaceId: 'ws-1' }, verified: true })
     deployCompanyFromGitea.mockResolvedValue({
       ok: true,
       serviceName: 'company-acme',
@@ -139,7 +139,7 @@ describe('POST /api/build/subscription/verify — #389 real deploy trigger', () 
 
   it('falls back to BUILDER_WORKSPACE_ID when the company has no persisted workspaceId', async () => {
     ;(fetch as any).mockResolvedValue(coreVerify(true))
-    resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1' })
+    resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1' }, verified: true })
     deployCompanyFromGitea.mockResolvedValue({ ok: true, serviceName: 'company-acme' })
     await POST(req({ session_id: 'cs_test', slug: 'acme' }))
     expect(deployCompanyFromGitea).toHaveBeenCalledWith('5d2376e1-d4f0-4193-9a7f-84e4543a8f9a', 'acme', false)
@@ -147,12 +147,15 @@ describe('POST /api/build/subscription/verify — #389 real deploy trigger', () 
 
   it('is IDEMPOTENT — passes alreadyProvisioned=true for an already-deployed company (redeploy, not a 2nd service)', async () => {
     ;(fetch as any).mockResolvedValue(coreVerify(true))
-    resolveApp.mockResolvedValue({
-      slug: 'acme',
-      chatId: 'chat-1',
-      workspaceId: 'ws-1',
-      railwayServiceId: 'company-acme',
-      deployUrl: 'https://company-acme-production.up.railway.app',
+    resolveAppVerified.mockResolvedValue({
+      entry: {
+        slug: 'acme',
+        chatId: 'chat-1',
+        workspaceId: 'ws-1',
+        railwayServiceId: 'company-acme',
+        deployUrl: 'https://company-acme-production.up.railway.app',
+      },
+      verified: true,
     })
     deployCompanyFromGitea.mockResolvedValue({
       ok: true,
@@ -167,7 +170,7 @@ describe('POST /api/build/subscription/verify — #389 real deploy trigger', () 
 
   it('is a normal, non-error SKIP when the company has no Gitea repo yet — checkout still succeeds', async () => {
     ;(fetch as any).mockResolvedValue(coreVerify(true))
-    resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', workspaceId: 'ws-1' })
+    resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1', workspaceId: 'ws-1' }, verified: true })
     deployCompanyFromGitea.mockResolvedValue({ ok: false, reason: 'no_repo' })
     const res = await POST(req({ session_id: 'cs_test', slug: 'acme' }))
     const json = await res.json()
@@ -179,7 +182,7 @@ describe('POST /api/build/subscription/verify — #389 real deploy trigger', () 
 
   it('NEVER fails checkout confirmation when deployCompanyFromGitea throws', async () => {
     ;(fetch as any).mockResolvedValue(coreVerify(true))
-    resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', workspaceId: 'ws-1' })
+    resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1', workspaceId: 'ws-1' }, verified: true })
     deployCompanyFromGitea.mockRejectedValue(new Error('railway CLI unavailable'))
     const res = await POST(req({ session_id: 'cs_test', slug: 'acme' }))
     const json = await res.json()
@@ -191,10 +194,24 @@ describe('POST /api/build/subscription/verify — #389 real deploy trigger', () 
 
   it('skips the deploy attempt entirely when the company has no chatId yet (never fully created)', async () => {
     ;(fetch as any).mockResolvedValue(coreVerify(true))
-    resolveApp.mockResolvedValue({ slug: 'acme' })
+    resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme' }, verified: true })
     const res = await POST(req({ session_id: 'cs_test', slug: 'acme' }))
     const json = await res.json()
     expect(json.paid).toBe(true)
     expect(deployCompanyFromGitea).not.toHaveBeenCalled()
+  })
+
+  it('#1427: a transient registry-read failure (verified: false) skips deploy without throwing, logged distinctly from a confirmed no-chatId company', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    ;(fetch as any).mockResolvedValue(coreVerify(true))
+    resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+    const res = await POST(req({ session_id: 'cs_test', slug: 'acme' }))
+    const json = await res.json()
+    expect(res.status).toBe(200)
+    expect(json.paid).toBe(true)
+    expect(json.deployed).toBeUndefined()
+    expect(deployCompanyFromGitea).not.toHaveBeenCalled()
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('lookup_failed'))
+    errorSpy.mockRestore()
   })
 })

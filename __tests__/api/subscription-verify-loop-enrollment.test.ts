@@ -24,7 +24,7 @@ const h = vi.hoisted(() => ({
   companyDeployEnabled: vi.fn(() => false),
   setAppPlan: vi.fn(async () => true),
   setAppRailwayService: vi.fn(async () => true),
-  resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(),
   enrollCompany: vi.fn(async () => true),
   isEnrolled: vi.fn(async () => false),
   runNightlyLoop: vi.fn(async () => ({ companyId: 'acme', briefing: null, taskId: 'task-1', status: 'dispatched', detail: 'task queued for the swarm' })),
@@ -42,7 +42,7 @@ vi.mock('@/lib/build/app-registry', () => ({
   claimCompanyProject: vi.fn(async () => ({ ok: true, claimed: false })),
   setAppOwner: vi.fn(async () => true),
   setAppRailwayService: h.setAppRailwayService,
-  resolveApp: h.resolveApp,
+  resolveAppVerified: h.resolveAppVerified,
 }))
 vi.mock('@/lib/build/learning', () => ({ markConverted: vi.fn(async () => {}) }))
 vi.mock('@/lib/build/conversions', () => ({
@@ -99,7 +99,7 @@ describe('POST /api/build/subscription/verify — #464 real loop-enrollment brid
     h.deployCompanyFromGitea.mockReset().mockResolvedValue({ ok: false, reason: 'no_repo' })
     h.companyDeployEnabled.mockReset().mockReturnValue(false)
     h.setAppPlan.mockReset().mockResolvedValue(true)
-    h.resolveApp.mockReset()
+    h.resolveAppVerified.mockReset()
     h.enrollCompany.mockReset().mockResolvedValue(true)
     h.isEnrolled.mockReset().mockResolvedValue(false)
     h.runNightlyLoop.mockReset().mockResolvedValue({ companyId: 'acme', briefing: null, taskId: 'task-1', status: 'dispatched', detail: 'task queued for the swarm' })
@@ -111,7 +111,7 @@ describe('POST /api/build/subscription/verify — #464 real loop-enrollment brid
 
   it('enrolls a Business-plan company into the REAL loop-enrollment store', async () => {
     ;(fetch as any).mockResolvedValue(coreVerify('business'))
-    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', name: 'Acme', track: 'app', ownerEmail: 'Founder@Acme.com' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1', name: 'Acme', track: 'app', ownerEmail: 'Founder@Acme.com' }, verified: true })
     const res = await POST(req({ session_id: 'cs_test', slug: 'acme' }))
     const json = await res.json()
     expect(json.enrolled).toBe(true)
@@ -130,7 +130,7 @@ describe('POST /api/build/subscription/verify — #464 real loop-enrollment brid
   // backlog task exists immediately rather than waiting on the next cron tick.
   it('#813 — fires ONE immediate runNightlyLoop dispatch right after enrolling a freshly-enrolled Business+ company', async () => {
     ;(fetch as any).mockResolvedValue(coreVerify('business'))
-    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', name: 'Acme', track: 'app', ownerEmail: 'Founder@Acme.com' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1', name: 'Acme', track: 'app', ownerEmail: 'Founder@Acme.com' }, verified: true })
     await POST(req({ session_id: 'cs_test', slug: 'acme' }))
     await flush()
     expect(h.runNightlyLoop).toHaveBeenCalledTimes(1)
@@ -140,7 +140,7 @@ describe('POST /api/build/subscription/verify — #464 real loop-enrollment brid
   it('#813 — does NOT fire a second dispatch for an ALREADY-enrolled company (idempotent on retry/refresh)', async () => {
     h.isEnrolled.mockResolvedValue(true)
     ;(fetch as any).mockResolvedValue(coreVerify('business'))
-    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', name: 'Acme' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1', name: 'Acme' }, verified: true })
     await POST(req({ session_id: 'cs_test', slug: 'acme' }))
     await flush()
     expect(h.enrollCompany).not.toHaveBeenCalled()
@@ -149,7 +149,7 @@ describe('POST /api/build/subscription/verify — #464 real loop-enrollment brid
 
   it('#841 — DOES dispatch for pro (was non-loop-eligible before #841 corrected the gate to Pro+)', async () => {
     ;(fetch as any).mockResolvedValue(coreVerify('pro'))
-    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', name: 'Acme' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1', name: 'Acme' }, verified: true })
     await POST(req({ session_id: 'cs_test', slug: 'acme' }))
     await flush()
     expect(h.runNightlyLoop).toHaveBeenCalledTimes(1)
@@ -158,7 +158,7 @@ describe('POST /api/build/subscription/verify — #464 real loop-enrollment brid
   it('#813 — never fails checkout confirmation when runNightlyLoop rejects (best-effort dispatch)', async () => {
     h.runNightlyLoop.mockRejectedValue(new Error('agent swarm unavailable'))
     ;(fetch as any).mockResolvedValue(coreVerify('business'))
-    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', name: 'Acme' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1', name: 'Acme' }, verified: true })
     const res = await POST(req({ session_id: 'cs_test', slug: 'acme' }))
     const json = await res.json()
     await flush()
@@ -174,7 +174,7 @@ describe('POST /api/build/subscription/verify — #464 real loop-enrollment brid
     h.enrollCompany.mockImplementation(async () => { order.push('enroll'); return true })
     h.runNightlyLoop.mockImplementation(async () => { order.push('dispatch'); return { companyId: 'acme', briefing: null, taskId: 't-1', status: 'dispatched', detail: '' } })
     ;(fetch as any).mockResolvedValue(coreVerify('business'))
-    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', name: 'Acme' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1', name: 'Acme' }, verified: true })
     await POST(req({ session_id: 'cs_test', slug: 'acme' }))
     await flush()
     expect(order).toEqual(['enroll', 'dispatch'])
@@ -182,7 +182,7 @@ describe('POST /api/build/subscription/verify — #464 real loop-enrollment brid
 
   it('enrolls an Enterprise-plan company too', async () => {
     ;(fetch as any).mockResolvedValue(coreVerify('enterprise'))
-    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', name: 'Acme', track: 'company' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1', name: 'Acme', track: 'company' }, verified: true })
     await POST(req({ session_id: 'cs_test', slug: 'acme' }))
     await flush()
     expect(h.enrollCompany).toHaveBeenCalledWith(expect.objectContaining({ companyId: 'acme', track: 'company' }))
@@ -190,7 +190,7 @@ describe('POST /api/build/subscription/verify — #464 real loop-enrollment brid
 
   it('enrolls a cody_vcto-plan company too', async () => {
     ;(fetch as any).mockResolvedValue(coreVerify('cody_vcto'))
-    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', name: 'Acme' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1', name: 'Acme' }, verified: true })
     await POST(req({ session_id: 'cs_test', slug: 'acme' }))
     await flush()
     expect(h.enrollCompany).toHaveBeenCalled()
@@ -198,7 +198,7 @@ describe('POST /api/build/subscription/verify — #464 real loop-enrollment brid
 
   it('#841 — DOES enroll a pro-plan company (was Business+ only)', async () => {
     ;(fetch as any).mockResolvedValue(coreVerify('pro'))
-    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', name: 'Acme' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1', name: 'Acme' }, verified: true })
     const res = await POST(req({ session_id: 'cs_test', slug: 'acme' }))
     const json = await res.json()
     expect(json.enrolled).toBe(true)
@@ -209,7 +209,7 @@ describe('POST /api/build/subscription/verify — #464 real loop-enrollment brid
   it('does NOT double-enroll an already-enrolled company (guarded by isEnrolled)', async () => {
     h.isEnrolled.mockResolvedValue(true)
     ;(fetch as any).mockResolvedValue(coreVerify('business'))
-    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', name: 'Acme' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1', name: 'Acme' }, verified: true })
     await POST(req({ session_id: 'cs_test', slug: 'acme' }))
     await flush()
     expect(h.isEnrolled).toHaveBeenCalledWith('acme')
@@ -218,7 +218,7 @@ describe('POST /api/build/subscription/verify — #464 real loop-enrollment brid
 
   it('defaults track to "app" when the registry entry has no track', async () => {
     ;(fetch as any).mockResolvedValue(coreVerify('business'))
-    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', name: 'Acme' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1', name: 'Acme' }, verified: true })
     await POST(req({ session_id: 'cs_test', slug: 'acme' }))
     await flush()
     expect(h.enrollCompany).toHaveBeenCalledWith(expect.objectContaining({ track: 'app' }))
@@ -226,7 +226,7 @@ describe('POST /api/build/subscription/verify — #464 real loop-enrollment brid
 
   it('falls back to slug as companyName when the registry entry has no name', async () => {
     ;(fetch as any).mockResolvedValue(coreVerify('business'))
-    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1' }, verified: true })
     await POST(req({ session_id: 'cs_test', slug: 'acme' }))
     await flush()
     expect(h.enrollCompany).toHaveBeenCalledWith(expect.objectContaining({ companyName: 'acme' }))
@@ -234,7 +234,7 @@ describe('POST /api/build/subscription/verify — #464 real loop-enrollment brid
 
   it('omits ownerKey when the company has no ownerEmail yet (anonymous build)', async () => {
     ;(fetch as any).mockResolvedValue(coreVerify('business'))
-    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', name: 'Acme' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1', name: 'Acme' }, verified: true })
     await POST(req({ session_id: 'cs_test', slug: 'acme' }))
     await flush()
     expect(h.enrollCompany).toHaveBeenCalledWith(expect.objectContaining({ ownerKey: undefined }))
@@ -259,7 +259,7 @@ describe('POST /api/build/subscription/verify — #464 real loop-enrollment brid
   it('never fails checkout confirmation when enrollCompany rejects', async () => {
     h.enrollCompany.mockRejectedValue(new Error('zerodb unavailable'))
     ;(fetch as any).mockResolvedValue(coreVerify('business'))
-    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', name: 'Acme' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1', name: 'Acme' }, verified: true })
     const res = await POST(req({ session_id: 'cs_test', slug: 'acme' }))
     const json = await res.json()
     await flush()
@@ -273,20 +273,33 @@ describe('POST /api/build/subscription/verify — #464 real loop-enrollment brid
   it('never fails checkout confirmation when isEnrolled rejects', async () => {
     h.isEnrolled.mockRejectedValue(new Error('zerodb unavailable'))
     ;(fetch as any).mockResolvedValue(coreVerify('business'))
-    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1', name: 'Acme' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', chatId: 'chat-1', name: 'Acme' }, verified: true })
     const res = await POST(req({ session_id: 'cs_test', slug: 'acme' }))
     await flush()
     expect(res.status).toBe(200)
     expect((await res.json()).ok).toBe(true)
   })
 
-  it('never fails checkout confirmation when resolveApp resolves null (registry lookup miss)', async () => {
+  it('never fails checkout confirmation when resolveAppVerified resolves a confirmed miss (verified: true, entry: null)', async () => {
     ;(fetch as any).mockResolvedValue(coreVerify('business'))
-    h.resolveApp.mockResolvedValue(null)
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: true })
     const res = await POST(req({ session_id: 'cs_test', slug: 'acme' }))
     await flush()
     expect(res.status).toBe(200)
     expect((await res.json()).ok).toBe(true)
     expect(h.enrollCompany).not.toHaveBeenCalled()
+  })
+
+  it('#1427: never fails checkout confirmation when the registry read itself fails (verified: false), and logs it distinctly from a confirmed miss', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    ;(fetch as any).mockResolvedValue(coreVerify('business'))
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+    const res = await POST(req({ session_id: 'cs_test', slug: 'acme' }))
+    await flush()
+    expect(res.status).toBe(200)
+    expect((await res.json()).ok).toBe(true)
+    expect(h.enrollCompany).not.toHaveBeenCalled()
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('lookup_failed'))
+    errorSpy.mockRestore()
   })
 })

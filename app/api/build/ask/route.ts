@@ -34,7 +34,7 @@ import {
   buildMessagesWithHistory,
   type ChatAttachment,
 } from '@/lib/build/chat-store'
-import { resolveApp } from '@/lib/build/app-registry'
+import { resolveApp, resolveAppVerified } from '@/lib/build/app-registry'
 import { planUnlocks } from '@/lib/build/state'
 import { processConversation } from '@/lib/agent/zeromemory'
 import { detectEditIntent, QUESTION_STARTERS } from '@/lib/build/edit-intent'
@@ -355,10 +355,19 @@ export async function askCody(params: AskCodyParams): Promise<AskCodyResult | { 
   // never fetched for that turn at all. Confirmed root cause of the false "I
   // don't have a way to check your git provisioning status" answer (issue
   // #748) — the data was resolvable, just never resolved for that question
-  // shape. Best-effort: any resolution failure yields null, which the honest-
-  // status block below treats the same as "not provisioned" (never as "must
-  // be live" — the safe default is to under-claim, not over-claim).
-  const app = companyId ? await resolveApp(companyId).catch(() => null) : null
+  // shape.
+  // #1427: was `resolveApp(companyId).catch(() => null)`, which collapses
+  // "no such company" with "the registry read itself failed" — the exact
+  // #832 anti-pattern. A transient failure here used to make Cody plainly
+  // tell the founder their company "has NOT been provisioned yet" and that
+  // ZeroVoice "isn't wired up," both of which may well be false; the honest
+  // answer on a failed check is "couldn't check," not "confirmed not set up."
+  // provisioningInstructions/zerovoiceInstructions below branch on
+  // `appVerified` the same way gateInstructions already branches on
+  // `planVerified` above.
+  const { entry: app, verified: appVerified } = companyId
+    ? await resolveAppVerified(companyId).catch(() => ({ entry: null, verified: false }))
+    : { entry: null, verified: true }
 
   // Real "edit an already-deployed app from chat" capability (#582). Requires
   // the company to be git-provisioned (paid + provisioned, see #689) — the
@@ -504,7 +513,14 @@ export async function askCody(params: AskCodyParams): Promise<AskCodyResult | { 
   // paid-tier gate (Pro+, #841) that provisioning itself is not, so the two
   // must not be conflated into one generic "set things up" instruction.
   const nightlyLoopUnlocked = Boolean(activePlan) && planUnlocks(activePlan).nightlyLoop
-  const provisioningInstructions = isProvisioned
+  const provisioningInstructions = !appVerified
+    ? // #1427: the registry read itself failed this turn — this is NOT a
+      // confirmed "not provisioned" answer, and must not be presented as one.
+      `- Your company's provisioning status could not be confirmed for this message (a temporary check, ` +
+      `not a real answer). Do NOT say provisioning hasn't happened, and do NOT say it's live either — if ` +
+      `it's relevant to their question, say the status isn't available right now and to refresh or check ` +
+      `back shortly, otherwise just answer their actual question.\n`
+    : isProvisioned
     ? `- PROVISIONING STATUS: this company IS provisioned — it has a real per-company cloud project ` +
       `(ZeroDB project id on file). You CAN and MUST answer questions about provisioning/setup status ` +
       `directly and confidently; never say you "don't have a way to check" — you do, and it says live.\n`
@@ -535,7 +551,13 @@ export async function askCody(params: AskCodyParams): Promise<AskCodyResult | { 
   // `app.zerovoiceE164` (lib/build/app-registry.ts) already carry the real
   // answer — this block puts it in front of Cody explicitly, the same way
   // provisioningInstructions does for general cloud provisioning.
-  const zerovoiceInstructions = app?.zerovoiceProvisioned && app?.zerovoiceE164
+  const zerovoiceInstructions = !appVerified
+    ? // #1427: same unverified-registry-read gap as provisioningInstructions —
+      // never assert ZeroVoice is wired up OR not wired up on an unconfirmed check.
+      `- Your ZeroVoice (SMS/calling) status could not be confirmed for this message (a temporary check, ` +
+      `not a real answer). Do NOT say a number is live, and do NOT say it isn't — if asked, say status ` +
+      `isn't available right now and to check back shortly.\n`
+    : app?.zerovoiceProvisioned && app?.zerovoiceE164
     ? `- ZEROVOICE STATUS: this company HAS a real, live ZeroVoice phone number (${app.zerovoiceE164}) — ` +
       `SMS and voice are ALREADY wired up and working. If asked whether this company can text/call, or ` +
       `whether ZeroVoice is connected, answer YES confidently and reference the real number. NEVER say ` +
