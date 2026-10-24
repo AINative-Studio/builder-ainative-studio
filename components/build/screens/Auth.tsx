@@ -13,6 +13,7 @@ import { getRefCode } from '@/lib/build/attribution'
 import { decideLimitAction } from '@/lib/build/value-moment'
 import { toE164 } from '@/lib/build/phone'
 import { TurnstileWidget } from '@/components/turnstile-widget'
+import { getOrCreateAnonDraftToken } from '@/lib/build/anon-draft-token'
 
 export function BrandPanel() {
   return (
@@ -492,9 +493,15 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
         // eventual paid conversion attributes to the Google Ads click). New /build
         // surface — NOT the legacy (auth) actions.
         const normalizedPhone = phone.trim() ? toE164(phone) : null
+        // #1466 — carry the anon draft token so register/route.ts can reattach
+        // whatever pre-auth idea/kickoff-answers were autosaved under it
+        // (lib/build/anon-drafts.ts) to this brand-new account.
         const res = await fetch('/api/build/register', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password, phone: normalizedPhone || undefined, turnstileToken }),
+          body: JSON.stringify({
+            email, password, phone: normalizedPhone || undefined, turnstileToken,
+            anonDraftToken: getOrCreateAnonDraftToken(),
+          }),
         })
         const d = await res.json().catch(() => null)
         if (!d?.ok) {
@@ -508,6 +515,22 @@ export function Auth({ mode }: { mode: Extract<Screen, 'login' | 'signup' | 'for
         // deterministic event id it used, so Meta dedups the Pixel/CAPI pair
         // instead of double-counting the conversion.
         trackMeta('CompleteRegistration', { content_name: state.track }, d.metaEventId)
+        // #1466 — seed the workspace from the reattached anon draft (if any)
+        // BEFORE any pendingBuild/afterAuth routing below, so a founder who
+        // lost their in-browser state (e.g. a failed-login restart) still
+        // lands with their real idea/track/answers restored rather than a
+        // blank funnel. Only fills in what pendingBuild doesn't already
+        // have — an in-memory pendingBuild (same-session) stays authoritative.
+        if (d.draft?.idea && !state.pendingBuild) {
+          dispatch({ type: 'SET_IDEA', idea: d.draft.idea })
+          if (d.draft.track === 'app' || d.draft.track === 'company') {
+            dispatch({ type: 'PICK_TRACK', track: d.draft.track })
+          }
+          const answers = d.draft.answers && typeof d.draft.answers === 'object' ? d.draft.answers : {}
+          for (const key of Object.keys(answers)) {
+            dispatch({ type: 'SET_ANSWER', key, value: answers[key] })
+          }
+        }
         // #74 — if core says email verification is still required, don't pretend
         // the founder is logged in: show the verify-email + resend state instead
         // of auto-signing-in (which would 403 at login and dead-end silently).
