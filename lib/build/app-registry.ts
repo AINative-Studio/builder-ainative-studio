@@ -1276,12 +1276,37 @@ export async function setAppGitRepo(
  *
  * Idempotent: no-op success if already permanent or nothing to claim. Returns
  * { ok, claimed, reason? } so the caller can log without failing checkout.
+ *
+ * #1492 (same bug class as #1486/#1491, different fix shape): this function's
+ * own pre-write lookup used a plain `resolveApp(slug)`, whose single `null`
+ * return collapses "this company is confirmed not registered" with "the
+ * registry read itself failed" (the #832 anti-pattern). A transient ZeroDB
+ * hiccup therefore reported `reason: 'not_registered'` — a DETERMINISTIC
+ * refusal that every caller treats as final and never retries — for a company
+ * that exists and still has a real, unspent claimToken sitting on it. The
+ * consequence is the exact live failure #1012/#855 were filed for: a genuinely
+ * paying founder left on a 72h tmp_ key that silently expires, with every
+ * subsequent `/api/db` write for their live app 502ing (fail-closed per #806).
+ *
+ * Unlike the 22 `setApp*` setters (#1491), this function already returns a
+ * structured result with a `reason`, so it needs no throw-based signal: the
+ * unverified read becomes its own explicit `reason: 'lookup_failed'`, distinct
+ * from the confirmed `'not_registered'`. Both are still `ok: false`, so no
+ * caller's control flow changes — `subscription/verify` checks only `r?.ok`,
+ * and `fulfillPaidPlan`/`reconcilePlanFulfillment` check only
+ * `claim?.ok && claim.claimed` — but the two causes are now distinguishable in
+ * logs and to any future caller that wants to retry one and not the other.
+ * Mirrors `fulfillPaidPlan`'s own `lookup_failed` reason, added for the
+ * identical reason on the identical lookup.
  */
 export async function claimCompanyProject(
   slug: string,
   jwt: string,
 ): Promise<{ ok: boolean; claimed: boolean; reason?: string }> {
-  const existing = await resolveApp(slug)
+  const lookup = await resolveAppVerified(slug).catch(() => ({ entry: null, verified: false }))
+  // "Couldn't check" must never be reported as "confirmed not registered."
+  if (!lookup.verified) return { ok: false, claimed: false, reason: 'lookup_failed' }
+  const existing = lookup.entry
   if (!existing) return { ok: false, claimed: false, reason: 'not_registered' }
   // Nothing to claim: never provisioned, or already permanent.
   if (!existing.zerodbProjectId || existing.keyKind !== 'tmp') {
@@ -1367,6 +1392,31 @@ export async function claimCompanyProject(
   }
 }
 
+/** Result of `reconcilePlanFulfillment` (#855). */
+export interface ReconcilePlanFulfillmentResult {
+  /** A stale registry plan was found and corrected on this pass. */
+  planFixed: boolean
+  /** A still-tmp_ Instant DB project was upgraded to permanent on this pass. */
+  keyClaimed: boolean
+  /**
+   * #1492: the registry READ this reconciliation needs never completed, so
+   * nothing was checked and nothing was repaired — as opposed to the (far more
+   * common) confirmed "checked, and there was genuinely nothing to fix", which
+   * leaves this field absent.
+   *
+   * DELIBERATELY OPTIONAL. Both real callers today fire-and-forget
+   * (`reconcilePlanFulfillment(...).catch(() => {})` in
+   * GET /api/build/subscription/status, and the doc-only references in
+   * webhooks/stripe), so none of them reads this field at all — making it
+   * optional keeps the existing two-field result shape byte-identical on every
+   * path that previously returned it, while giving an unverified read somewhere
+   * truthful to land instead of masquerading as a clean no-op. A caller that
+   * wants to retry or alert on a consumed-but-unverified repair attempt can now
+   * see the difference.
+   */
+  lookupFailed?: boolean
+}
+
 /**
  * Reconcile a company's stale plan/key state against its founder's REAL,
  * CURRENT core plan (real, live bug fix — agentive/amador@selfpreneur.com,
@@ -1427,7 +1477,7 @@ export async function reconcilePlanFulfillment(
   slug: string,
   corePlan: string,
   jwt: string,
-): Promise<{ planFixed: boolean; keyClaimed: boolean }> {
+): Promise<ReconcilePlanFulfillmentResult> {
   let planFixed = false
   let keyClaimed = false
   if (!slug || !corePlan || !jwt) return { planFixed, keyClaimed }
@@ -1438,7 +1488,18 @@ export async function reconcilePlanFulfillment(
   const plan = canonicalPaidPlan(corePlan)
 
   try {
-    const existing = await resolveApp(slug)
+    // #1492: this lookup used a plain `resolveApp(slug)`, whose single `null`
+    // return made a FAILED registry read indistinguishable from a confirmed
+    // "no such company" — both exited as a bare `{planFixed:false,
+    // keyClaimed:false}`, i.e. "checked, and there was genuinely nothing to
+    // repair." That is the worst possible lie for THIS function specifically:
+    // it is the ONLY retry that a real paying founder whose Stripe redirect
+    // died ever gets (see the doc comment above), it runs on every Live
+    // dashboard load, and a transient hiccup silently consumed one of those
+    // attempts while reporting a clean no-op. `lookupFailed` now says so.
+    const lookup = await resolveAppVerified(slug).catch(() => ({ entry: null, verified: false }))
+    if (!lookup.verified) return { planFixed, keyClaimed, lookupFailed: true }
+    const existing = lookup.entry
     if (!existing) return { planFixed, keyClaimed }
 
     if (existing.plan !== plan) {

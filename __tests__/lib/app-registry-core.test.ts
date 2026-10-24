@@ -852,11 +852,19 @@ describe('reconcilePlanFulfillment', () => {
     expect(res.keyClaimed).toBe(false)
   })
 
-  it('never throws — a claim/setAppPlan failure downgrades to {planFixed:false, keyClaimed:false} silently', async () => {
+  // #1492: this used to assert `toEqual({ planFixed: false, keyClaimed: false })`
+  // on an unreachable registry — i.e. it PINNED the bug, asserting that a failed
+  // read is reported identically to a confirmed "nothing to repair." The
+  // never-throws contract is the real invariant here and is unchanged; the
+  // unverified read is now additionally flagged. See the dedicated
+  // app-registry-claim-reconcile-unverified-1492 suite for the full matrix.
+  it('never throws — an unreachable registry stays a silent no-op (now flagged lookupFailed)', async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockRejectedValueOnce(new Error('registry unreachable'))
     const res = await reconcilePlanFulfillment('acme', 'pro', 'jwt')
-    expect(res).toEqual({ planFixed: false, keyClaimed: false })
+    expect(res.planFixed).toBe(false)
+    expect(res.keyClaimed).toBe(false)
+    expect(res.lookupFailed).toBe(true)
   })
 
   it('does not attempt a claim when there is no zerodbProjectId (never provisioned)', async () => {
