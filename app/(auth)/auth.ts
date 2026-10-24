@@ -1,5 +1,5 @@
 import { compare } from 'bcrypt-ts'
-import NextAuth, { type DefaultSession } from 'next-auth'
+import NextAuth, { AuthError, type DefaultSession } from 'next-auth'
 import Credentials from 'next-auth/providers/credentials'
 import { createGuestUser, getUser } from '@/lib/db/queries'
 import { authConfig } from './auth.config'
@@ -8,6 +8,7 @@ import type { DefaultJWT } from 'next-auth/jwt'
 import { shouldRefreshToken, refreshAINativeToken } from '@/lib/auth/tokenRefresh'
 import { authorizePhoneLogin } from '@/lib/auth/phone-login'
 import { assertAuthSecretOrThrow } from '@/lib/env-check'
+import { checkAINativeAuthOutageAlert } from '@/lib/jobs/alerting'
 
 const isDevelopment = process.env.NODE_ENV === 'development'
 
@@ -64,6 +65,31 @@ async function resolveDefaultWorkspace(
   return fallback
 }
 
+/**
+ * #1465 — distinct from a genuinely wrong password. Thrown (never returned,
+ * so next-auth's internals re-throw it untouched instead of collapsing it
+ * into a generic CredentialsSignin — see @auth/core's callback handler,
+ * which only rewraps non-AuthError throws) whenever AINative's own backend
+ * is unreachable, errors, or returns something authenticateWithAINative
+ * can't parse. A backend outage blocking every login is a P0 incident, not
+ * user error, and must never silently fall through to the local-DB
+ * fallback path in authorize() below (that fallback is only correct for a
+ * genuinely wrong password).
+ */
+export class AINativeBackendUnavailable extends AuthError {
+  static type = 'AINativeBackendUnavailable'
+}
+
+/**
+ * Fire the outage alert + throw the tagged error (#1465). Shared by every
+ * "AINative itself is broken" exit below so the alert call-site and the
+ * thrown type can't drift out of sync.
+ */
+async function failAINativeOutage(detail: string): Promise<never> {
+  await checkAINativeAuthOutageAlert(detail)
+  throw new AINativeBackendUnavailable()
+}
+
 // AINative Authentication Helper
 async function authenticateWithAINative(email: string, password: string) {
   try {
@@ -76,48 +102,70 @@ async function authenticateWithAINative(email: string, password: string) {
     })
 
     if (!response.ok) {
-      console.error('[AINative Auth] Login failed:', response.status)
-      return null
+      // 401 (and the email-not-verified 403, handled separately by
+      // app/api/build/register/route.ts's login-check) is a genuine
+      // credentials/account problem — let authorize() fall through to the
+      // local-DB path and ultimately next-auth's own CredentialsSignin.
+      // Anything else (5xx, 429, etc.) means the backend itself is unwell.
+      if (response.status === 401) {
+        console.error('[AINative Auth] Login failed: wrong credentials (401)')
+        return null
+      }
+      console.error('[AINative Auth] Login failed — backend status:', response.status)
+      return await failAINativeOutage(`authenticateWithAINative: /v1/auth/login returned ${response.status}`)
     }
 
     const data = await response.json()
 
-    if (data.access_token) {
-      // Get user profile with token
-      const profileResponse = await fetch(`${process.env.AINATIVE_API_BASE_URL}/v1/auth/me`, {
-        headers: {
-          'Authorization': `Bearer ${data.access_token}`,
-        },
-      })
-
-      if (profileResponse.ok) {
-        const profile = await profileResponse.json()
-        console.log('[AINative Auth] Successfully authenticated:', profile.email)
-        // Every AINative user has a permanent default workspace. Resolve it
-        // authoritatively via /api/v1/workspaces (ordered), not the /me org
-        // fields which can be null/wrong for multi-org users.
-        const workspace = await resolveDefaultWorkspace(data.access_token, {
-          id: profile.organization_uuid || null,
-          name: profile.organization_name || null,
-        })
-        return {
-          id: profile.id,
-          email: profile.email,
-          name: profile.full_name || profile.username,
-          type: 'ainative' as const,
-          accessToken: data.access_token,
-          refreshToken: data.refresh_token,
-          expiresIn: data.expires_in,
-          workspaceId: workspace.id,
-          workspaceName: workspace.name,
-        }
-      }
+    if (!data.access_token) {
+      // 200 with no token is a malformed response, not a wrong password.
+      console.error('[AINative Auth] Login response missing access_token')
+      return await failAINativeOutage('authenticateWithAINative: /v1/auth/login response missing access_token')
     }
 
-    return null
+    // Get user profile with token
+    const profileResponse = await fetch(`${process.env.AINATIVE_API_BASE_URL}/v1/auth/me`, {
+      headers: {
+        'Authorization': `Bearer ${data.access_token}`,
+      },
+    })
+
+    if (!profileResponse.ok) {
+      console.error('[AINative Auth] Profile fetch failed — status:', profileResponse.status)
+      return await failAINativeOutage(`authenticateWithAINative: /v1/auth/me returned ${profileResponse.status}`)
+    }
+
+    const profile = await profileResponse.json()
+    console.log('[AINative Auth] Successfully authenticated:', profile.email)
+    // Every AINative user has a permanent default workspace. Resolve it
+    // authoritatively via /api/v1/workspaces (ordered), not the /me org
+    // fields which can be null/wrong for multi-org users.
+    const workspace = await resolveDefaultWorkspace(data.access_token, {
+      id: profile.organization_uuid || null,
+      name: profile.organization_name || null,
+    })
+    return {
+      id: profile.id,
+      email: profile.email,
+      name: profile.full_name || profile.username,
+      type: 'ainative' as const,
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      expiresIn: data.expires_in,
+      workspaceId: workspace.id,
+      workspaceName: workspace.name,
+    }
   } catch (error) {
-    console.error('[AINative Auth] Error:', error)
-    return null
+    // AINativeBackendUnavailable from failAINativeOutage above must pass
+    // through untouched (next-auth's callback handler only re-wraps
+    // non-AuthError throws — see this file's AINativeBackendUnavailable
+    // doc comment). Anything else landing here — a thrown network error,
+    // a malformed/non-JSON response body, etc. — is just as much "AINative
+    // is unreachable/broken" as a 5xx, never a wrong password. Never logs
+    // `password` or the raw error (which could echo request details).
+    if (error instanceof AINativeBackendUnavailable) throw error
+    console.error('[AINative Auth] Unexpected error:', (error as Error)?.name)
+    return await failAINativeOutage(`authenticateWithAINative: unexpected error (${(error as Error)?.name ?? 'unknown'})`)
   }
 }
 
