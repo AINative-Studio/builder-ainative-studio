@@ -22,6 +22,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const h = vi.hoisted(() => ({
   listEnrolled: vi.fn<() => Promise<any[]>>(async () => []),
   resolveApp: vi.fn<(slug: string) => Promise<any>>(async () => null),
+  resolveAppVerified: vi.fn<(slug: string) => Promise<{ entry: any; verified: boolean }>>(async (slug: string): Promise<{ entry: any; verified: boolean }> => ({ entry: await h.resolveApp(slug), verified: true })),
   setAppLastDigestAt: vi.fn<(slug: string, at: string) => Promise<boolean>>(async () => true),
   listDocuments: vi.fn<(scopeKey: string) => Promise<any[]>>(async () => []),
   getCommitsSince: vi.fn<(org: string, repo: string, sinceIso: string) => Promise<any[]>>(async () => []),
@@ -34,6 +35,7 @@ const h = vi.hoisted(() => ({
 vi.mock('@/lib/build/loop-enrollment', () => ({ listEnrolled: h.listEnrolled }))
 vi.mock('@/lib/build/app-registry', () => ({
   resolveApp: h.resolveApp,
+  resolveAppVerified: h.resolveAppVerified,
   setAppLastDigestAt: h.setAppLastDigestAt,
 }))
 vi.mock('@/lib/build/document-store', () => ({ listDocuments: h.listDocuments }))
@@ -69,6 +71,7 @@ beforeEach(() => {
   process.env.CRON_SECRET = 'shh'
   h.listEnrolled.mockResolvedValue([])
   h.resolveApp.mockResolvedValue(null)
+  h.resolveAppVerified.mockImplementation(async (slug: string) => ({ entry: await h.resolveApp(slug), verified: true }))
   h.setAppLastDigestAt.mockResolvedValue(true)
   h.listDocuments.mockResolvedValue([])
   h.getCommitsSince.mockResolvedValue([])
@@ -252,6 +255,16 @@ describe('runCommsDigestSweep — general behavior (#743)', () => {
     h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'c1', createdAt: '2026-08-01T00:00:00Z' })
     const result = await runCommsDigestSweep({ dryRun: false })
     expect(result.skipped).toBe(1)
+    expect(result.results[0].reason).toBe('no_owner_email')
+    expect(h.sendCompanyEmail).not.toHaveBeenCalled()
+  })
+
+  it('#1427: skips with an honest lookup_failed reason (distinct from no_owner_email) when the registry read itself fails', async () => {
+    h.listEnrolled.mockResolvedValue([ENROLLED_AGILE])
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+    const result = await runCommsDigestSweep({ dryRun: false })
+    expect(result.skipped).toBe(1)
+    expect(result.results[0].reason).toBe('lookup_failed')
     expect(h.sendCompanyEmail).not.toHaveBeenCalled()
   })
 

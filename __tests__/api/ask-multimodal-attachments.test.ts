@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
   auth: vi.fn(),
   resolveActivePlan: vi.fn(),
   resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(async (slug: string) => ({ entry: await h.resolveApp(slug), verified: true })),
   loadChatWithFallback: vi.fn(),
   saveExchange: vi.fn(),
   processConversation: vi.fn(),
@@ -24,7 +25,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
 vi.mock('@/lib/ainative/active-plan', () => ({ resolveActivePlan: h.resolveActivePlan }))
-vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp, resolveAppVerified: h.resolveAppVerified }))
 vi.mock('@/lib/build/chat-store', async () => {
   const actual = await vi.importActual<typeof import('@/lib/build/chat-store')>('@/lib/build/chat-store')
   return {
@@ -59,6 +60,7 @@ const DOC_ATTACHMENT = { fileId: 'f-2', url: '/api/build/documents/upload?id=f-2
 
 beforeEach(() => {
   Object.values(h).forEach((fn) => fn.mockReset())
+  h.resolveAppVerified.mockImplementation(async (slug: string) => ({ entry: await h.resolveApp(slug), verified: true }))
   h.auth.mockResolvedValue(null)
   h.resolveActivePlan.mockResolvedValue({ plan: '', verified: true })
   h.resolveApp.mockResolvedValue(null)

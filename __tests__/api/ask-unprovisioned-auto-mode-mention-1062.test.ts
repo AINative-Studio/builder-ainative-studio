@@ -23,14 +23,15 @@ const h = vi.hoisted(() => ({
   resolveActivePlan: vi.fn(async () => ({ plan: '' })),
   loadChatWithFallback: vi.fn(async () => []),
   saveExchange: vi.fn(async () => true),
-  resolveApp: vi.fn(async (): Promise<Record<string, unknown> | null> => null),
+  resolveApp: vi.fn(async (_slug?: string): Promise<Record<string, unknown> | null> => null),
+  resolveAppVerified: vi.fn(async (slug: string) => ({ entry: await h.resolveApp(slug), verified: true })),
 }))
 
 vi.mock('@/lib/build/claude-completion', () => ({ getClaudeCompletion: h.getClaudeCompletion }))
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
 vi.mock('@/lib/ainative/plan', () => ({ getPlanStatus: h.getPlanStatus }))
 vi.mock('@/lib/ainative/active-plan', () => ({ resolveActivePlan: h.resolveActivePlan }))
-vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp, resolveAppVerified: h.resolveAppVerified }))
 vi.mock('@/lib/build/chat-store', async () => {
   const actual = await vi.importActual<typeof import('@/lib/build/chat-store')>('@/lib/build/chat-store')
   return {

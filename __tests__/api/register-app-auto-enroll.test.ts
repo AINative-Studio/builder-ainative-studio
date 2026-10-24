@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 const h = vi.hoisted(() => ({
   registerApp: vi.fn(),
   resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(async (slug: string) => ({ entry: await h.resolveApp(slug), verified: true })),
   deployPersistent: vi.fn(),
   checkAppReady: vi.fn(),
   resolveStoredApp: vi.fn(),
@@ -28,7 +29,7 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
-vi.mock('@/lib/build/app-registry', () => ({ registerApp: h.registerApp, resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({ registerApp: h.registerApp, resolveApp: h.resolveApp, resolveAppVerified: h.resolveAppVerified }))
 vi.mock('@/lib/build/deploy', () => ({ deployPersistent: h.deployPersistent }))
 vi.mock('@/lib/build/ready-gate', () => ({ checkAppReady: h.checkAppReady, resolveStoredApp: h.resolveStoredApp }))
 vi.mock('@/lib/build/seed-check', () => ({ checkSeededData: h.checkSeededData }))
@@ -53,6 +54,7 @@ async function flush() {
 describe('POST /api/build/register-app — auto-enroll into the nightly loop', () => {
   beforeEach(() => {
     Object.values(h).forEach((fn) => fn.mockReset())
+    h.resolveAppVerified.mockImplementation(async (slug: string) => ({ entry: await h.resolveApp(slug), verified: true }))
     // checked:true skips register-app's own 3x/2s re-check retry loop (a
     // store-miss recovery mechanism, unrelated to what THIS test file
     // covers) — checked:false here would make every test wait ~6 real
