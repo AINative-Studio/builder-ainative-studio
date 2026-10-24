@@ -17,14 +17,10 @@ beforeAll(() => {
  * already covered for DesignPicker/Conflict/Wedge/RescopeIntent) had zero
  * test coverage.
  *
- * Found a real display bug while writing this: every column's total
- * genuinely renders as "$0k" because parseInt('$18k') returns NaN (parseInt
- * stops at the leading '$', a non-digit char), and `sum || 0` silently
- * coerces the NaN result to 0. Filed separately as issue #1445 per scope
- * discipline — this test asserts the REAL current output ($0k on every
- * column), not the intended-but-broken correct sum, so it won't mask a fix
- * later: once #1445 lands, these specific assertions will start failing and
- * must be updated to the real fixed totals at that point.
+ * Originally found a real display bug while writing this: every column's
+ * total rendered as "$0k" because parseInt('$18k') returned NaN. Filed as
+ * issue #1445, fixed in PR #1456 (strips non-digits before parseInt) — the
+ * totals test below now asserts the real correct per-column sums.
  */
 
 let host: HTMLElement
@@ -72,12 +68,14 @@ describe('Pipeline — real static kanban/agent rendering coverage (#1204)', () 
     expect(headers[3]).toContain('· 1 ·')
   })
 
-  it('REAL BUG (filed as #1445): every column total renders as $0k due to parseInt(\'$18k\') => NaN', () => {
+  it('renders the real per-column dollar total, fixed in #1456 (was always $0k per #1445)', () => {
     render(React.createElement(Pipeline))
 
     const headers = Array.from(host.querySelectorAll('.m-kan-head')).map((el) => el.textContent)
-    // Honest assertion of the CURRENT broken behavior, not the intended sum.
-    headers.forEach((h) => expect(h).toContain('$0k'))
+    expect(headers[0]).toContain('$18k') // Qualified: Northwind Ops $18k
+    expect(headers[1]).toContain('$36k') // In conversation: Acme $24k + Bolt $12k
+    expect(headers[2]).toContain('$32k') // Proposal: Vertex Health $32k
+    expect(headers[3]).toContain('$0k')  // Closed won: Pike Manufacturing is genuinely $0k
   })
 
   it('renders every real deal card with its company/value/next-step/agent, and marks the real won deal', () => {
