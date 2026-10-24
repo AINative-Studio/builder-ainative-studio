@@ -159,13 +159,13 @@ export const WebPreviewUrl = ({
   )
 }
 
-export type WebPreviewBodyProps = ComponentProps<'iframe'> & {
-  loading?: ReactNode
+export type WebPreviewBodyProps = Omit<ComponentProps<'iframe'>, 'loading'> & {
+  loadingIndicator?: ReactNode
 }
 
 export const WebPreviewBody = ({
   className,
-  loading,
+  loadingIndicator,
   src,
   ...props
 }: WebPreviewBodyProps) => {
@@ -187,7 +187,7 @@ export const WebPreviewBody = ({
         title="Preview"
         {...props}
       />
-      {loading}
+      {loadingIndicator}
     </div>
   )
 }

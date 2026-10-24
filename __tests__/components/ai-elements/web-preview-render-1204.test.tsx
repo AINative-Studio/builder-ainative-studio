@@ -141,14 +141,8 @@ describe('WebPreview context + primitives — real url/sync/precedence coverage 
     expect(iframe.hasAttribute('src')).toBe(false)
   })
 
-  it('renders the real loading node alongside the iframe when given', () => {
-    // WebPreviewBodyProps intersects ComponentProps<'iframe'> (which has its
-    // own native loading?: 'eager' | 'lazy') with this component's own
-    // loading?: ReactNode override — a real pre-existing type ambiguity in
-    // the component's own prop types that confuses createElement's overload
-    // resolution here, unrelated to what this test verifies. Cast narrowly
-    // rather than loosening the assertions below.
-    const bodyProps = { loading: React.createElement('p', null, 'Building…') } as unknown as React.ComponentProps<typeof WebPreviewBody>
+  it('renders the real loading indicator node alongside the iframe when given', () => {
+    const bodyProps = { loadingIndicator: React.createElement('p', null, 'Building…') }
     render(React.createElement(WebPreview, { defaultUrl: '/x' }, React.createElement(WebPreviewBody, bodyProps)))
     expect(host.textContent).toContain('Building…')
   })
