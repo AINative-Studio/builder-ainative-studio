@@ -13,7 +13,16 @@ const h = vi.hoisted(() => ({
   mergeTaskPR: vi.fn(),
   createIssue: vi.fn(),
   commitTaskWithPR: vi.fn(),
+  /**
+   * The ENTRY the registry resolves for this slug. #1483 swapped the resolver
+   * from resolveApp() to resolveAppVerified(), so this now feeds the `entry`
+   * half of that call's `{ entry, verified }` shape — see resolveAppVerified
+   * below, which wraps it with `verified: true` (a real, confirmed read) by
+   * default. Tests that need the OTHER half — an unverified lookup, where the
+   * registry read itself failed — override `resolveAppVerified` directly.
+   */
   resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(),
   setAppRailwayService: vi.fn(),
   implementTask: vi.fn(),
   runCoverage: vi.fn(),
@@ -28,7 +37,11 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/lib/git/gitea-client', () => ({ fetchRepoFiles: h.fetchRepoFiles, mergeTaskPR: h.mergeTaskPR, createIssue: h.createIssue }))
 vi.mock('@/lib/git/task-git-sync', () => ({ commitTaskWithPR: h.commitTaskWithPR }))
-vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp, setAppRailwayService: h.setAppRailwayService }))
+vi.mock('@/lib/build/app-registry', () => ({
+  resolveApp: h.resolveApp,
+  resolveAppVerified: h.resolveAppVerified,
+  setAppRailwayService: h.setAppRailwayService,
+}))
 vi.mock('@/lib/build/task-implementer', () => ({ implementTask: h.implementTask }))
 vi.mock('@/lib/build/coverage-runner', () => ({ runCoverage: h.runCoverage }))
 vi.mock('@/lib/build/task-store', () => ({ updateTask: h.updateTask }))
@@ -62,6 +75,15 @@ const TASK: BuildTask = {
 
 beforeEach(() => {
   Object.values(h).forEach((fn) => fn.mockReset())
+  // #1483 — default every test to a VERIFIED lookup (the registry really was
+  // read) whose entry is whatever that test set on h.resolveApp. This keeps
+  // the existing suite expressing exactly what it did before the
+  // resolveApp() → resolveAppVerified() swap, while letting the new tests
+  // below override `verified` to exercise the unverified-read path.
+  h.resolveAppVerified.mockImplementation(async () => ({
+    entry: (await h.resolveApp()) ?? null,
+    verified: true,
+  }))
   h.updateTask.mockResolvedValue(true)
   h.mergeTaskPR.mockResolvedValue(false)
   h.createIssue.mockResolvedValue({ ok: true, issueNumber: 101, url: 'https://git.ainative.studio/ws-1/slug/issues/101' })
@@ -85,8 +107,10 @@ describe('resolveTask — end-to-end orchestration', () => {
     expect(h.updateTask).toHaveBeenNthCalledWith(1, 'owner::slug', 't_abc123', { stage: 'in_progress' })
   })
 
-  it('fails honestly when the company is not git-provisioned', async () => {
-    h.resolveApp.mockResolvedValue({ gitOrg: undefined })
+  it('fails honestly when the company is CONFIRMED not git-provisioned', async () => {
+    // #1483 — the real, verified miss: the registry WAS read and this company
+    // genuinely has no Gitea org. Still terminal, still the original message.
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: undefined }, verified: true })
     const result = await resolveTask('owner::slug', TASK, 'slug')
     expect(result.ok).toBe(false)
     expect(result.stage).toBe('failed')
@@ -654,4 +678,109 @@ describe('resolveTask — deployment-health stage reporting (#868)', () => {
     expect(h.reportDeploymentHealthStage).toHaveBeenCalledWith('builder_company_task', 't_abc123', 'deploy', 'failed', expect.any(String))
   })
 
+})
+
+/**
+ * #1483 — an UNVERIFIED registry lookup must never be treated as a verdict.
+ *
+ * resolveApp() returned the same null/missing-gitOrg shape for "this company
+ * genuinely has no Gitea org" and "the registry read itself failed," and both
+ * fed the terminal fail() path. Nothing in this codebase ever re-picks a
+ * `failed` task (lib/build/task-resolution-loop.ts's runTaskResolutions()
+ * selects ONLY `stage === 'todo'`), so a transient ZeroDB hiccup permanently
+ * burned real, legitimate work on an already-git-provisioned company — with a
+ * flatly wrong reason. An inconclusive lookup now returns the task to `todo`
+ * so the existing retry selection genuinely picks it up again.
+ */
+describe('resolveTask — unverified registry lookup is retried, never failed (#1483)', () => {
+  const unverified = () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+  }
+
+  it('does NOT mark the task failed when the registry read itself failed', async () => {
+    unverified()
+    const result = await resolveTask('owner::slug', TASK, 'slug')
+
+    expect(result.ok).toBe(false)
+    expect(result.stage).not.toBe('failed')
+    // The whole point: no `failed` write ever reaches the durable row.
+    const stagesWritten = h.updateTask.mock.calls.map((c: any[]) => c[2]?.stage)
+    expect(stagesWritten).not.toContain('failed')
+  })
+
+  it('returns the task to `todo` so the nightly loop’s todo-only selection retries it', async () => {
+    unverified()
+    await resolveTask('owner::slug', TASK, 'slug')
+
+    // `todo` is the ONLY stage runTaskResolutions() will pick up again —
+    // leaving it `in_progress` would strand it until the 30-minute reaper
+    // moved it to `failed` anyway.
+    expect(h.updateTask).toHaveBeenLastCalledWith(
+      'owner::slug', 't_abc123',
+      { stage: 'todo', output: expect.any(String) },
+    )
+  })
+
+  it('reports a distinguishable `deferred` stage, not `failed`', async () => {
+    unverified()
+    const result = await resolveTask('owner::slug', TASK, 'slug')
+    expect(result.stage).toBe('deferred')
+  })
+
+  it('never blames the founder for being un-provisioned on a read it could not perform', async () => {
+    unverified()
+    const result = await resolveTask('owner::slug', TASK, 'slug')
+    expect(result.reason).not.toMatch(/not git-provisioned/i)
+    expect(result.reason).toMatch(/temporary|retried|could not confirm/i)
+  })
+
+  it('does not run the pipeline — no issue, no implement, no commit, no coverage', async () => {
+    unverified()
+    await resolveTask('owner::slug', TASK, 'slug')
+
+    expect(h.createIssue).not.toHaveBeenCalled()
+    expect(h.fetchRepoFiles).not.toHaveBeenCalled()
+    expect(h.implementTask).not.toHaveBeenCalled()
+    expect(h.commitTaskWithPR).not.toHaveBeenCalled()
+    expect(h.runCoverage).not.toHaveBeenCalled()
+  })
+
+  it('records NO failed deployment-health stage — no real stage ran to fail', async () => {
+    unverified()
+    await resolveTask('owner::slug', TASK, 'slug')
+
+    // A confirmed miss reports `implement: failed`; an inconclusive read must
+    // not fabricate that verdict in the health timeline.
+    expect(h.reportDeploymentHealthStage).not.toHaveBeenCalled()
+  })
+
+  it('closes the decision trace as unsuccessful, without claiming a failure reason it never established', async () => {
+    unverified()
+    await resolveTask('owner::slug', TASK, 'slug')
+
+    expect(h.completeDecisionTrace).toHaveBeenCalledWith('trace-1', expect.any(String), false)
+  })
+
+  it('treats a THROWN registry lookup as unverified too, not as a confirmed miss', async () => {
+    h.resolveAppVerified.mockRejectedValue(new Error('ZeroDB unreachable'))
+    const result = await resolveTask('owner::slug', TASK, 'slug')
+
+    expect(result.stage).toBe('deferred')
+    expect(h.updateTask).toHaveBeenLastCalledWith(
+      'owner::slug', 't_abc123',
+      { stage: 'todo', output: expect.any(String) },
+    )
+  })
+
+  it('still proceeds normally on a verified lookup with a real gitOrg (no regression)', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'ws-1' }, verified: true })
+    h.fetchRepoFiles.mockResolvedValue({ 'a.ts': 'old' })
+    h.implementTask.mockResolvedValue({ ok: true, files: { 'b.ts': 'new' } })
+    h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/9' })
+    h.runCoverage.mockResolvedValue({ coveragePercent: 92, testable: true, passed: true })
+
+    const result = await resolveTask('owner::slug', TASK, 'slug')
+    expect(result.ok).toBe(true)
+    expect(result.stage).toBe('completed')
+  })
 })
