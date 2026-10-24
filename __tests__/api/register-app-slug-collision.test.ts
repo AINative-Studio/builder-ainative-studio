@@ -168,15 +168,99 @@ describe('POST /api/build/register-app — slug collision handling', () => {
     expect(json.slug).toBe('meridian-2')
   })
 
-  it('never fails registration when the collision check itself throws', async () => {
+  /**
+   * #1481: this test used to assert the OPPOSITE — that a thrown owner lookup
+   * fail-opens to a 200 on the requested slug. That fail-open is the bug: the
+   * same unverified `null` also empties `existing`, and the registry is
+   * append-only/latest-wins, so registration would append a row from a
+   * wrongly-empty base and shadow the entry's real provision-time fields
+   * (zerodbProjectId, plan, domain, ownerEmail). An honest, retryable 503 is
+   * recoverable; that orphaning write is not.
+   */
+  it('#1481: fails with a retryable 503 when the owner lookup itself throws, instead of registering from an empty base', async () => {
     h.resolveApp.mockRejectedValue(new Error('zerodb timeout'))
+    h.resolveAppVerified.mockRejectedValue(new Error('zerodb timeout'))
     const res = await POST(req({ slug: 'acme', chatId: 'chat-1', name: 'Acme', track: 'app' }))
+    expect(res.status).toBe(503)
+    const json = await res.json()
+    expect(json.ok).toBe(false)
+    expect(json.reason).toBe('lookup_failed')
+    expect(json.unverified).toBe(true)
+    expect(json.retry).toBe(true)
+    // The decisive property: nothing was written from a wrongly-empty base.
+    expect(h.registerApp).not.toHaveBeenCalled()
+  })
+
+  /**
+   * #1481: the third, missed resolveApp() call site in this route — the one
+   * feeding the owner-reclaim check. An unverified read (verified: false, no
+   * throw) made `requestedOwner` null, so `callerIsOwner` went false and a real
+   * authenticated founder regenerating their own live build was auto-suffixed
+   * to `{slug}-2`, abandoning the `{slug}.ainative.studio` URL they had already
+   * shared. Exactly the Meridian bug this code was written to prevent, reached
+   * through a different failure path.
+   */
+  it('#1481: does NOT auto-suffix the real owner when the owner lookup is unverified — returns 503', async () => {
+    h.resolveAppVerified.mockImplementation(async (slug: string) => {
+      if (slug === 'meridian') return { entry: null, verified: false } // transient hiccup
+      return { entry: null, verified: true }
+    })
+    h.auth.mockResolvedValue({ user: { email: 'admin@ainative.studio' } })
+    const res = await POST(req({ slug: 'meridian', chatId: 'new-chat', name: 'Meridian', track: 'company' }))
+    expect(res.status).toBe(503)
+    const json = await res.json()
+    expect(json.reason).toBe('lookup_failed')
+    // The live slug is neither reassigned nor suffixed away.
+    expect(json.slug).toBeUndefined()
+    expect(json.slugChanged).toBeUndefined()
+    expect(h.registerApp).not.toHaveBeenCalled()
+    expect(h.deployPersistent).not.toHaveBeenCalled()
+  })
+
+  it('#1481: a CONFIRMED miss (verified, no entry) still registers the requested slug as-is', async () => {
+    // The confirmed-absent path must be untouched by the fix — only an
+    // unverified read is rejected, never a genuine "nobody owns this slug."
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: true })
+    const res = await POST(req({ slug: 'brand-new', chatId: 'chat-1', name: 'Brand New', track: 'app' }))
     expect(res.status).toBe(200)
     const json = await res.json()
     expect(json.ok).toBe(true)
-    // Falls back to the requested slug (fail-open — a broken lookup must
-    // never block a real registration).
-    expect(json.slug).toBe('acme')
+    expect(json.slug).toBe('brand-new')
+    expect(json.slugChanged).toBeNull()
+  })
+
+  it('#1481: a CONFIRMED non-owner collision still auto-suffixes (the fix does not disable the safety net)', async () => {
+    // A real, verified entry owned by someone else must still lose the naming
+    // collision — this is a confirmed answer, not a failed read.
+    h.resolveAppVerified.mockImplementation(async (slug: string) => {
+      if (slug === 'dwello') {
+        return { entry: { slug: 'dwello', chatId: 'someone-elses-chat', ownerEmail: 'founder@example.com' }, verified: true }
+      }
+      return { entry: null, verified: true }
+    })
+    h.auth.mockResolvedValue({ user: { email: 'someone-else@example.com' } })
+    const res = await POST(req({ slug: 'dwello', chatId: 'my-chat', name: 'Dwello', track: 'company' }))
+    expect(res.status).toBe(200)
+    const json = await res.json()
+    expect(json.slug).toBe('dwello-2')
+    expect(json.slugChanged).toBe('dwello-2')
+  })
+
+  it('#1481: the route no longer imports the unverified resolveApp()', async () => {
+    // Structural guard: all three lookups in this file must stay on
+    // resolveAppVerified(), so the #832-class anti-pattern can't be
+    // reintroduced here by reflex.
+    const fs = await import('node:fs/promises')
+    const src = await fs.readFile(
+      new URL('../../app/api/build/register-app/route.ts', import.meta.url),
+      'utf8',
+    )
+    const code = src
+      .split('\n')
+      .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*') && !l.trim().startsWith('/*'))
+      .join('\n')
+    expect(code).not.toMatch(/\bresolveApp\s*\(/)
+    expect(code).toMatch(/resolveAppVerified\s*\(/)
   })
 
   // #1427: firstFreeSlug used to treat a transient registry-read failure
@@ -185,10 +269,15 @@ describe('POST /api/build/register-app — slug collision handling', () => {
   // only accepts a CONFIRMED miss (verified: true) and keeps walking the
   // suffix chain past an unverified (verified: false) candidate instead.
   it('#1427: skips a candidate suffix whose check failed (verified: false) instead of treating it as free', async () => {
-    h.resolveApp.mockImplementation(async (slug: string) =>
-      slug === 'dwello' ? { slug: 'dwello', chatId: 'someone-elses-chat', name: 'Dwello', track: 'company' } : null,
-    )
+    // #1481: the owner lookup for the REQUESTED slug now also goes through
+    // resolveAppVerified (it was the third, missed resolveApp call site), so
+    // dwello's real owning entry has to come back from this mock rather than
+    // the legacy resolveApp one — otherwise no collision fires at all and the
+    // suffix chain this test is about never gets walked.
     h.resolveAppVerified.mockImplementation(async (slug: string) => {
+      if (slug === 'dwello') {
+        return { entry: { slug: 'dwello', chatId: 'someone-elses-chat', name: 'Dwello', track: 'company' }, verified: true }
+      }
       if (slug === 'dwello-2') return { entry: null, verified: false } // transient failure — NOT confirmed free
       return { entry: null, verified: true } // dwello-3 is genuinely free
     })
