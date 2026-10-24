@@ -53,11 +53,15 @@
  * load the draft and return its idea/track/answers so the client can seed
  * the new workspace instead of starting blank — same posture as the CAPI
  * report and recordFounderPhone calls below: a failure here never blocks
- * registration. The draft row itself is left for the existing 30-day purge
- * cron (app/api/cron/purge-anon-drafts/route.ts) — anon-drafts.ts has no
- * delete-by-token primitive today, and these rows are low-value/low-risk
- * (no PII, append-only, already time-boxed), so adding one just to tidy up
- * immediately after a successful attach isn't worth the new surface area.
+ * registration.
+ *
+ * #1476 — the draft row is then best-effort deleted via the token (a real
+ * delete-by-token primitive now exists in anon-drafts.ts), closing the
+ * reuse window a successfully-attached token would otherwise leave open
+ * for up to 30 days until the purge cron runs. Deletion is attempted only
+ * after the draft has actually been returned to the client; a delete
+ * failure never affects the response — the row just waits for the purge
+ * cron as before.
  */
 
 import { NextRequest } from 'next/server'
@@ -66,7 +70,7 @@ import { reportMetaConversion, fbcFromRequest, fbpFromRequest } from '@/lib/buil
 import { createHash } from 'crypto'
 import { sendOtp, sendOtpEmail, verifyOtp, toE164, checkOtpRateLimit } from '@/lib/build/otp'
 import { recordFounderPhone, markFounderPhoneVerified } from '@/lib/build/founder-phones'
-import { loadAnonDraft } from '@/lib/build/anon-drafts'
+import { loadAnonDraft, deleteAnonDraft } from '@/lib/build/anon-drafts'
 import { turnstileEnabled, verifyTurnstileToken } from '@/lib/turnstile'
 
 export const runtime = 'nodejs'
@@ -316,6 +320,10 @@ export async function POST(request: NextRequest) {
         const loaded = await loadAnonDraft(anonDraftToken)
         if (loaded) draft = { idea: loaded.idea, track: loaded.track, answers: loaded.answers }
       } catch { /* best-effort — registration already succeeded */ }
+      // #1476 — the token has now been attached (or we at least tried); delete
+      // it so it can't be replayed for up to 30 days. Best-effort: never let a
+      // cleanup failure affect the already-built response below.
+      try { await deleteAnonDraft(anonDraftToken) } catch { /* purge cron catches it */ }
     }
     return Response.json({
       ok: true,
