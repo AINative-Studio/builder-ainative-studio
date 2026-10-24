@@ -33,7 +33,7 @@
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { getPlanStatus, isPaidTier } from '@/lib/ainative/plan'
-import { resolveApp, setAppZeroVoice } from '@/lib/build/app-registry'
+import { resolveAppVerified, setAppZeroVoice } from '@/lib/build/app-registry'
 import { provisionZeroVoiceNumber, zeroVoiceProvisionEnabled, configureSmsRelay, configureVoiceRelay } from '@/lib/build/zerovoice'
 import { captureFounderCredentialForProxy } from '@/app/api/build/provision/route'
 
@@ -118,7 +118,14 @@ export async function POST(request: NextRequest) {
     return Response.json({ ok: false, reason: 'tier', tier, unverified: !tierResolved })
   }
 
-  const app = await resolveApp(slug).catch(() => null)
+  // #832-class bug: resolveApp()'s plain `null` return collapsed "no such
+  // company" with "the registry read itself failed" — a transient ZeroDB
+  // hiccup here would falsely block a founder from provisioning their own
+  // company's phone number with "company not found".
+  const { entry: app, verified } = await resolveAppVerified(slug).catch(
+    () => ({ entry: null as Awaited<ReturnType<typeof resolveAppVerified>>['entry'], verified: false }),
+  )
+  if (!verified) return Response.json({ ok: false, reason: 'lookup_failed' }, { status: 503 })
   if (!app) return Response.json({ ok: false, reason: 'company_not_found' }, { status: 404 })
 
   // Already provisioned — return the existing number rather than attempting

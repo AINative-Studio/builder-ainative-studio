@@ -17,8 +17,13 @@ const chatStore = vi.hoisted(() => ({
 }))
 vi.mock('@/lib/build/chat-store', () => chatStore)
 
-const appRegistry = vi.hoisted(() => ({ resolveApp: vi.fn(), setAppLogo: vi.fn() }))
+const appRegistry = vi.hoisted(() => ({ resolveApp: vi.fn(), resolveAppVerified: vi.fn(), setAppLogo: vi.fn() }))
 vi.mock('@/lib/build/app-registry', () => appRegistry)
+
+/** A confirmed resolveAppVerified() result — either a real entry or a confirmed miss. */
+function verified(entry: Record<string, unknown> | null) {
+  return { entry, verified: true }
+}
 
 const mediaSchedule = vi.hoisted(() => ({ uploadMediaFile: vi.fn(), fetchFileDownload: vi.fn() }))
 vi.mock('@/lib/build/media-schedule', () => mediaSchedule)
@@ -141,7 +146,7 @@ describe('#1202 POST /api/build/logo', () => {
 
   it('returns 404 when the company does not exist', async () => {
     auth.auth.mockResolvedValue({ user: { email: 'founder@x.com' } })
-    appRegistry.resolveApp.mockResolvedValue(null)
+    appRegistry.resolveAppVerified.mockResolvedValue(verified(null))
     const { POST } = await import('@/app/api/build/logo/route')
 
     const res = await POST(multipartRequest('http://localhost/api/build/logo', { companyId: 'acme' }))
@@ -149,9 +154,23 @@ describe('#1202 POST /api/build/logo', () => {
     expect(res.status).toBe(404)
   })
 
+  // #832-class bug: a transient registry-read failure must never be presented
+  // as a confident "company not found" to a real owner uploading their logo.
+  it('returns 503 lookup_failed when the registry read itself fails (NOT a false 404)', async () => {
+    auth.auth.mockResolvedValue({ user: { email: 'founder@x.com' } })
+    appRegistry.resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+    const { POST } = await import('@/app/api/build/logo/route')
+
+    const res = await POST(multipartRequest('http://localhost/api/build/logo', { companyId: 'acme' }))
+
+    expect(res.status).toBe(503)
+    const body = await res.json()
+    expect(body.error).toBe('lookup_failed')
+  })
+
   it('returns 403 when the signed-in account does not own the company', async () => {
     auth.auth.mockResolvedValue({ user: { email: 'founder@x.com' } })
-    appRegistry.resolveApp.mockResolvedValue({ ownerEmail: 'someone-else@x.com' })
+    appRegistry.resolveAppVerified.mockResolvedValue(verified({ ownerEmail: 'someone-else@x.com' }))
     const { POST } = await import('@/app/api/build/logo/route')
 
     const res = await POST(multipartRequest('http://localhost/api/build/logo', { companyId: 'acme' }))
@@ -161,7 +180,7 @@ describe('#1202 POST /api/build/logo', () => {
 
   it('returns 400 when no file is attached', async () => {
     auth.auth.mockResolvedValue({ user: { email: 'founder@x.com' } })
-    appRegistry.resolveApp.mockResolvedValue({ ownerEmail: 'founder@x.com' })
+    appRegistry.resolveAppVerified.mockResolvedValue(verified({ ownerEmail: 'founder@x.com' }))
     const { POST } = await import('@/app/api/build/logo/route')
 
     const res = await POST(multipartRequest('http://localhost/api/build/logo', { companyId: 'acme' }))
@@ -171,7 +190,7 @@ describe('#1202 POST /api/build/logo', () => {
 
   it('returns 400 for an unsupported file type', async () => {
     auth.auth.mockResolvedValue({ user: { email: 'founder@x.com' } })
-    appRegistry.resolveApp.mockResolvedValue({ ownerEmail: 'founder@x.com' })
+    appRegistry.resolveAppVerified.mockResolvedValue(verified({ ownerEmail: 'founder@x.com' }))
     const { POST } = await import('@/app/api/build/logo/route')
 
     const file = new File(['not an image'], 'notes.txt', { type: 'text/plain' })
@@ -182,7 +201,7 @@ describe('#1202 POST /api/build/logo', () => {
 
   it('returns 502 when the storage upload fails', async () => {
     auth.auth.mockResolvedValue({ user: { email: 'founder@x.com' } })
-    appRegistry.resolveApp.mockResolvedValue({ ownerEmail: 'founder@x.com' })
+    appRegistry.resolveAppVerified.mockResolvedValue(verified({ ownerEmail: 'founder@x.com' }))
     mediaSchedule.uploadMediaFile.mockResolvedValue(null)
     const { POST } = await import('@/app/api/build/logo/route')
 
@@ -194,7 +213,7 @@ describe('#1202 POST /api/build/logo', () => {
 
   it('uploads the logo and persists it on the company, returning the url', async () => {
     auth.auth.mockResolvedValue({ user: { email: 'founder@x.com' } })
-    appRegistry.resolveApp.mockResolvedValue({ ownerEmail: 'founder@x.com' })
+    appRegistry.resolveAppVerified.mockResolvedValue(verified({ ownerEmail: 'founder@x.com' }))
     mediaSchedule.uploadMediaFile.mockResolvedValue('file-id-123')
     appRegistry.setAppLogo.mockResolvedValue(true)
     const { POST } = await import('@/app/api/build/logo/route')

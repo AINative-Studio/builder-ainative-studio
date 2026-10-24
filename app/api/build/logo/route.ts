@@ -25,7 +25,7 @@
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { deriveOwnerKey, chatScopeKey } from '@/lib/build/chat-store'
-import { resolveApp, setAppLogo } from '@/lib/build/app-registry'
+import { resolveApp, resolveAppVerified, setAppLogo } from '@/lib/build/app-registry'
 import { uploadMediaFile, fetchFileDownload } from '@/lib/build/media-schedule'
 import {
   validateLogoUpload,
@@ -82,7 +82,14 @@ export async function POST(request: NextRequest) {
   if (!companyId) return Response.json({ error: 'missing_company' }, { status: 400 })
 
   // Owner-only: the signed-in account must own this company (mirrors redeploy/secrets).
-  const entry = await resolveApp(companyId).catch(() => null)
+  // #832-class bug: resolveApp()'s plain `null` return collapsed "no such
+  // company" with "the registry read itself failed" — a transient ZeroDB
+  // hiccup here would falsely block a real owner from uploading their own
+  // company's logo with "company not found".
+  const { entry, verified } = await resolveAppVerified(companyId).catch(
+    () => ({ entry: null as Awaited<ReturnType<typeof resolveAppVerified>>['entry'], verified: false }),
+  )
+  if (!verified) return Response.json({ error: 'lookup_failed' }, { status: 503 })
   if (!entry) return Response.json({ error: 'company not found' }, { status: 404 })
   const owner = deriveOwnerKey(session as any)
   if (!entry.ownerEmail || entry.ownerEmail.trim().toLowerCase() !== owner) {

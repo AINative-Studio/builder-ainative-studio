@@ -8,7 +8,7 @@
 
 import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
-import { resolveApp, setAppGrowthAdInsights } from '@/lib/build/app-registry'
+import { resolveAppVerified, setAppGrowthAdInsights } from '@/lib/build/app-registry'
 import { fetchAdTestInsights } from '@/lib/build/ad-testing'
 
 export const runtime = 'nodejs'
@@ -23,7 +23,14 @@ export async function POST(request: NextRequest) {
     return Response.json({ ok: false, reason: 'signin' })
   }
 
-  const app = await resolveApp(slug).catch(() => null)
+  // #832-class bug: resolveApp()'s plain `null` return collapsed "no such
+  // company" with "the registry read itself failed" — a transient ZeroDB
+  // hiccup here would falsely tell a founder their company doesn't exist
+  // while just trying to refresh their Growth card's ad insights.
+  const { entry: app, verified } = await resolveAppVerified(slug).catch(
+    () => ({ entry: null as Awaited<ReturnType<typeof resolveAppVerified>>['entry'], verified: false }),
+  )
+  if (!verified) return Response.json({ ok: false, reason: 'lookup_failed' }, { status: 503 })
   if (!app) return Response.json({ ok: false, reason: 'company_not_found' }, { status: 404 })
   if (!app.growthAdTestCampaignId) {
     return Response.json({ ok: false, reason: 'no_campaign' })
