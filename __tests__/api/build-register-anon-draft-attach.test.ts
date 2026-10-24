@@ -23,6 +23,7 @@ const h = vi.hoisted(() => ({
   fbpFromRequest: vi.fn(),
   loadAnonDraft: vi.fn(),
   saveAnonDraft: vi.fn(),
+  deleteAnonDraft: vi.fn(),
 }))
 
 vi.mock('@/lib/build/conversions', () => ({ gclidFromRequest: h.gclidFromRequest }))
@@ -34,6 +35,7 @@ vi.mock('@/lib/build/meta-capi', () => ({
 vi.mock('@/lib/build/anon-drafts', () => ({
   loadAnonDraft: h.loadAnonDraft,
   saveAnonDraft: h.saveAnonDraft,
+  deleteAnonDraft: h.deleteAnonDraft,
 }))
 
 import * as anonDrafts from '@/lib/build/anon-drafts'
@@ -67,6 +69,7 @@ describe('POST /api/build/register — anon draft attach on signup (#1466)', () 
     h.fbpFromRequest.mockReset().mockReturnValue(undefined)
     h.loadAnonDraft.mockReset()
     h.saveAnonDraft.mockReset()
+    h.deleteAnonDraft.mockReset().mockResolvedValue({ ok: true, deleted: 1 })
     fetchMock = vi.fn().mockResolvedValue(
       coreOk({ email_verification_required: false, user: { email_verified: true } }),
     )
@@ -155,5 +158,45 @@ describe('POST /api/build/register — anon draft attach on signup (#1466)', () 
     }))
     expect(res.status).toBe(409)
     expect(h.loadAnonDraft).not.toHaveBeenCalled()
+  })
+
+  // #1476 — close the reuse window a successfully-attached token would
+  // otherwise leave open for up to 30 days.
+  it('deletes the real anon draft token after a successful attach (#1476)', async () => {
+    h.loadAnonDraft.mockResolvedValue({
+      idea: 'A marketplace for vintage synths', track: 'company', answers: {}, step: 'kickoff-2',
+    })
+    const res = await POST(req({
+      email: 'founder@example.com', password: 'longenough1', anonDraftToken: 'tok-to-delete',
+    }))
+    expect(res.status).toBe(200)
+    expect(h.deleteAnonDraft).toHaveBeenCalledWith('tok-to-delete')
+  })
+
+  it('never calls deleteAnonDraft when no anonDraftToken was submitted', async () => {
+    const res = await POST(req({ email: 'founder@example.com', password: 'longenough1' }))
+    expect(res.status).toBe(200)
+    expect(h.deleteAnonDraft).not.toHaveBeenCalled()
+  })
+
+  it('still deletes the token even when loadAnonDraft found no draft for it', async () => {
+    h.loadAnonDraft.mockResolvedValue(null)
+    const res = await POST(req({
+      email: 'founder@example.com', password: 'longenough1', anonDraftToken: 'tok-empty-but-delete',
+    }))
+    expect(res.status).toBe(200)
+    expect(h.deleteAnonDraft).toHaveBeenCalledWith('tok-empty-but-delete')
+  })
+
+  it('is best-effort: a deleteAnonDraft rejection never blocks the response', async () => {
+    h.loadAnonDraft.mockResolvedValue({ idea: 'x', track: 'app', answers: {}, step: 'kickoff-1' })
+    h.deleteAnonDraft.mockRejectedValue(new Error('zerodb timeout'))
+    const res = await POST(req({
+      email: 'founder@example.com', password: 'longenough1', anonDraftToken: 'tok-delete-fails',
+    }))
+    const body = await res.json()
+    expect(res.status).toBe(200)
+    expect(body.ok).toBe(true)
+    expect(body.draft).toEqual({ idea: 'x', track: 'app', answers: {} })
   })
 })
