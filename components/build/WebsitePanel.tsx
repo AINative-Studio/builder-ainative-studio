@@ -80,6 +80,17 @@ export function WebsitePanel({
   // remediation removing a FAILED-deploy service with zero live traffic),
   // which is misleading about what actually happened.
   const [secretsReason, setSecretsReason] = useState<string | null>(null)
+  // Real bug fix: a non-ok response or a thrown fetch used to collapse into
+  // the SAME shape as a confirmed `available: false` — showing "Secrets
+  // become available once your app has its own deploy service" (or the
+  // #881 service_not_found message) on a transient lookup hiccup (401/403/
+  // 503/network error) for a company that genuinely HAS secrets configured.
+  // That's a worse fabrication than the siblings this pattern already fixed
+  // (Waitlist/Visitors/Growth/Tasks/Versions/AutoMode): it hides real
+  // credential rows and tells the founder their deploy service isn't set up
+  // when it actually is. Distinguish "couldn't check" from "confirmed
+  // unavailable" instead of defaulting to the latter.
+  const [secretsLoadError, setSecretsLoadError] = useState(false)
   const [newName, setNewName] = useState('')
   const [newValue, setNewValue] = useState('')
   const [secretBusy, setSecretBusy] = useState(false)
@@ -104,15 +115,16 @@ export function WebsitePanel({
     if (!canManage) { setSecretsLoaded(true); return }
     let alive = true
     fetch(`/api/build/secrets?companyId=${encodeURIComponent(companyId)}`)
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`load failed: ${r.status}`))))
       .then((d) => {
         if (!alive) return
         setSecrets(Array.isArray(d?.secrets) ? d.secrets : [])
         setSecretsAvailable(!!d?.available)
         setSecretsReason(typeof d?.reason === 'string' ? d.reason : null)
+        setSecretsLoadError(false)
         setSecretsLoaded(true)
       })
-      .catch(() => { if (alive) setSecretsLoaded(true) })
+      .catch(() => { if (alive) { setSecretsLoadError(true); setSecretsLoaded(true) } })
     return () => { alive = false }
   }, [companyId, canManage])
 
@@ -430,6 +442,12 @@ export function WebsitePanel({
           </button>
         ) : !secretsLoaded ? (
           <p className="m-mono m-task-empty" data-testid="secrets-loading">loading secrets…</p>
+        ) : secretsLoadError ? (
+          // Honest: we don't know whether secrets exist or a service is
+          // configured — never claim either on a lookup we couldn't confirm.
+          <p className="m-mono m-task-empty" data-testid="secrets-load-error">
+            Couldn&apos;t load secrets right now — try refreshing.
+          </p>
         ) : !secretsAvailable && secrets.length === 0 ? (
           <p className="m-mono m-task-empty" data-testid="secrets-unavailable">
             {secretsReason === 'service_not_found'
