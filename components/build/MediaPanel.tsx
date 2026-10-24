@@ -128,6 +128,13 @@ export function MediaPanel({
   const [configured, setConfigured] = useState(false)
   const [nextRuns, setNextRuns] = useState<Record<string, string | null>>({})
   const [loaded, setLoaded] = useState(false)
+  // A failed load (non-ok response, or the fetch itself throwing) used to be
+  // swallowed into the same shape as a genuinely fresh workspace — showing
+  // "not configured" / "No media yet" / "Not scheduled" when real routines
+  // and assets exist. A founder re-starting a routine that's already running
+  // risks a real duplicate generation cost. Same fix shape as WaitlistPanel/
+  // TasksPanel/etc.
+  const [loadError, setLoadError] = useState(false)
   // Per-kind selected frequency (before START), busy flags and per-kind notices.
   const [freq, setFreq] = useState<Record<MediaKind, MediaFrequency>>({ image: 'weekly', video: 'weekly' })
   /**
@@ -153,20 +160,21 @@ export function MediaPanel({
   const load = useCallback(() => {
     let alive = true
     fetch(`/api/build/media?companyId=${encodeURIComponent(companyId)}`)
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`load failed: ${r.status}`))))
       .then((d) => {
-        if (!alive || !d) { if (alive) setLoaded(true); return }
-        setRoutines(Array.isArray(d.routines) ? d.routines : [])
-        setAssets(Array.isArray(d.assets) ? d.assets : [])
-        setConfigured(Boolean(d.configured))
-        setNextRuns(d.nextRuns || {})
+        if (!alive) return
+        setRoutines(Array.isArray(d?.routines) ? d.routines : [])
+        setAssets(Array.isArray(d?.assets) ? d.assets : [])
+        setConfigured(Boolean(d?.configured))
+        setNextRuns(d?.nextRuns || {})
         // Reflect any persisted frequency back into the selectors.
         const next: Record<MediaKind, MediaFrequency> = { image: 'weekly', video: 'weekly' }
-        for (const r of (d.routines || []) as Routine[]) next[r.mediaKind] = r.frequency
+        for (const r of (d?.routines || []) as Routine[]) next[r.mediaKind] = r.frequency
         setFreq(next)
+        setLoadError(false)
         setLoaded(true)
       })
-      .catch(() => { if (alive) setLoaded(true) })
+      .catch(() => { if (alive) { setLoadError(true); setLoaded(true) } })
     return () => { alive = false }
   }, [companyId])
 
@@ -276,6 +284,10 @@ export function MediaPanel({
 
       {!loaded ? (
         <p className="m-mono m-task-empty" data-testid="media-loading">loading media…</p>
+      ) : loadError ? (
+        <p className="m-mono m-task-empty" data-testid="media-error">
+          Couldn&apos;t load your media right now — try refreshing.
+        </p>
       ) : (
         <>
           {!configured && (

@@ -100,6 +100,12 @@ export function DocumentsPanel({
   const [docs, setDocs] = useState<DocumentSummary[]>([])
   const [counts, setCounts] = useState<Record<Tab, number>>({ all: 0, document: 0, report: 0 })
   const [loaded, setLoaded] = useState(false)
+  // A failed load (non-ok response, or the fetch itself throwing) used to be
+  // swallowed into the same empty `docs: []` shape as a genuinely empty
+  // library — showing "No documents yet" (with a generate CTA) when the real
+  // answer was "couldn't check," which risks a founder re-generating starter
+  // docs they already have. Same fix shape as WaitlistPanel/TasksPanel/etc.
+  const [loadError, setLoadError] = useState(false)
   const [viewing, setViewing] = useState<FullDocument | null>(null)
   const [viewLoading, setViewLoading] = useState(false)
   const [viewError, setViewError] = useState<string | null>(null)
@@ -118,14 +124,15 @@ export function DocumentsPanel({
   const load = useCallback(() => {
     let alive = true
     fetch(`/api/build/documents?companyId=${encodeURIComponent(companyId)}`)
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`load failed: ${r.status}`))))
       .then((d) => {
         if (!alive) return
         setDocs(Array.isArray(d?.documents) ? d.documents : [])
         if (d?.counts) setCounts({ all: d.counts.all || 0, document: d.counts.document || 0, report: d.counts.report || 0 })
+        setLoadError(false)
         setLoaded(true)
       })
-      .catch(() => { if (alive) setLoaded(true) })
+      .catch(() => { if (alive) { setLoadError(true); setLoaded(true) } })
     return () => { alive = false }
   }, [companyId])
 
@@ -357,9 +364,13 @@ export function DocumentsPanel({
         <p className="m-mono m-ver-status is-error" data-testid="documents-gen-error">{genError}</p>
       )}
 
-      {/* Body: loading → honest empty / list. */}
+      {/* Body: loading → honest error / empty / list. */}
       {!loaded ? (
         <p className="m-mono m-task-empty" data-testid="documents-loading">loading documents…</p>
+      ) : loadError ? (
+        <p className="m-mono m-task-empty" data-testid="documents-error">
+          Couldn&apos;t load your documents right now — try refreshing.
+        </p>
       ) : visible.length === 0 ? (
         <div data-testid="documents-empty">
           <p className="m-mono m-task-empty">
