@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 const h = vi.hoisted(() => ({
   registerApp: vi.fn(),
   resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(async (slug: string) => ({ entry: await h.resolveApp(slug), verified: true })),
   deployPersistent: vi.fn(),
   checkAppReady: vi.fn(),
   resolveStoredApp: vi.fn(),
@@ -28,7 +29,7 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
-vi.mock('@/lib/build/app-registry', () => ({ registerApp: h.registerApp, resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({ registerApp: h.registerApp, resolveApp: h.resolveApp, resolveAppVerified: h.resolveAppVerified }))
 vi.mock('@/lib/build/deploy', () => ({ deployPersistent: h.deployPersistent }))
 vi.mock('@/lib/build/ready-gate', () => ({ checkAppReady: h.checkAppReady, resolveStoredApp: h.resolveStoredApp }))
 vi.mock('@/lib/build/seed-check', () => ({ checkSeededData: h.checkSeededData }))
@@ -45,7 +46,7 @@ vi.mock('@/lib/git/company-repo', () => ({
 vi.mock('@/lib/build/instant-db', () => ({ BUILDER_WORKSPACE_ID: 'builder-ws-default' }))
 vi.mock('@/lib/build/loop-enrollment', () => ({ enrollCompany: h.enrollCompany, isEnrolled: h.isEnrolled }))
 
-import { POST } from '@/app/api/build/register-app/route'
+import { POST, GET } from '@/app/api/build/register-app/route'
 
 function req(body: unknown) {
   return { json: async () => body } as any
@@ -54,6 +55,7 @@ function req(body: unknown) {
 describe('POST /api/build/register-app — slug collision handling', () => {
   beforeEach(() => {
     Object.values(h).forEach((fn) => fn.mockReset())
+    h.resolveAppVerified.mockImplementation(async (slug: string) => ({ entry: await h.resolveApp(slug), verified: true }))
     h.checkAppReady.mockResolvedValue({ checked: true, ok: true })
     h.deployPersistent.mockResolvedValue({ url: 'https://builder.ainative.studio/build/acme', dnsPointable: false })
     h.resolveStoredApp.mockResolvedValue(null)
@@ -176,6 +178,54 @@ describe('POST /api/build/register-app — slug collision handling', () => {
     // never block a real registration).
     expect(json.slug).toBe('acme')
   })
+
+  // #1427: firstFreeSlug used to treat a transient registry-read failure
+  // on a candidate exactly like a confirmed-free slug, risking a genuine
+  // collision with whatever company actually owns that candidate. Now it
+  // only accepts a CONFIRMED miss (verified: true) and keeps walking the
+  // suffix chain past an unverified (verified: false) candidate instead.
+  it('#1427: skips a candidate suffix whose check failed (verified: false) instead of treating it as free', async () => {
+    h.resolveApp.mockImplementation(async (slug: string) =>
+      slug === 'dwello' ? { slug: 'dwello', chatId: 'someone-elses-chat', name: 'Dwello', track: 'company' } : null,
+    )
+    h.resolveAppVerified.mockImplementation(async (slug: string) => {
+      if (slug === 'dwello-2') return { entry: null, verified: false } // transient failure — NOT confirmed free
+      return { entry: null, verified: true } // dwello-3 is genuinely free
+    })
+    const res = await POST(req({ slug: 'dwello', chatId: 'my-chat', name: 'Dwello', track: 'company' }))
+    const json = await res.json()
+    expect(json.slug).toBe('dwello-3')
+  })
+})
+
+describe('GET /api/build/register-app — honest lookup_failed on a registry-read failure (#1427)', () => {
+  beforeEach(() => {
+    Object.values(h).forEach((fn) => fn.mockReset())
+    h.resolveAppVerified.mockImplementation(async (slug: string) => ({ entry: await h.resolveApp(slug), verified: true }))
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  function getReq(slug: string) {
+    return { url: `https://builder.ainative.studio/api/build/register-app?slug=${slug}` } as any
+  }
+
+  it('returns the entry on a confirmed resolution', async () => {
+    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-1' })
+    const res = await GET(getReq('acme'))
+    const json = await res.json()
+    expect(res.status).toBe(200)
+    expect(json.entry).toEqual({ slug: 'acme', chatId: 'chat-1' })
+  })
+
+  it('#1427: returns an honest 503 lookup_failed instead of a bare 500 when the registry read fails', async () => {
+    h.resolveAppVerified.mockRejectedValue(new Error('zerodb timeout'))
+    const res = await GET(getReq('acme'))
+    expect(res.status).toBe(503)
+    const json = await res.json()
+    expect(json.error).toBe('lookup_failed')
+  })
 })
 
 // #660: idea is now persisted at registration so a LATER page load (fresh
@@ -186,6 +236,7 @@ describe('POST /api/build/register-app — slug collision handling', () => {
 describe('POST /api/build/register-app — idea persistence (#660)', () => {
   beforeEach(() => {
     Object.values(h).forEach((fn) => fn.mockReset())
+    h.resolveAppVerified.mockImplementation(async (slug: string) => ({ entry: await h.resolveApp(slug), verified: true }))
     h.checkAppReady.mockResolvedValue({ checked: true, ok: true })
     h.deployPersistent.mockResolvedValue({ url: 'https://builder.ainative.studio/build/ember-box', dnsPointable: false })
     h.resolveStoredApp.mockResolvedValue(null)

@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
   getPlanStatus: vi.fn(),
   resolveActivePlan: vi.fn(),
   resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(),
   loadChatWithFallback: vi.fn(),
   saveExchange: vi.fn(),
   processConversation: vi.fn(),
@@ -31,7 +32,7 @@ const h = vi.hoisted(() => ({
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
 vi.mock('@/lib/ainative/plan', () => ({ getPlanStatus: h.getPlanStatus }))
 vi.mock('@/lib/ainative/active-plan', () => ({ resolveActivePlan: h.resolveActivePlan }))
-vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp, resolveAppVerified: h.resolveAppVerified }))
 vi.mock('@/lib/build/chat-store', () => ({
   deriveOwnerKey: () => 'guest:anon',
   chatScopeKey: (owner: string, slug: string) => `${owner}::${slug}`,
@@ -79,7 +80,7 @@ beforeEach(() => {
 
 describe('POST /api/build/ask — real ZeroVoice status grounding (#780)', () => {
   it('tells Cody ZeroVoice IS live, with the real number, when the company has one provisioned', async () => {
-    h.resolveApp.mockResolvedValue({ zerovoiceProvisioned: true, zerovoiceE164: '+19377642838' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { zerovoiceProvisioned: true, zerovoiceE164: '+19377642838' }, verified: true })
 
     await POST(req({ question: 'can this handle two-way SMS?', idea: 'a field service company', companyId: 'fieldko' }))
 
@@ -89,7 +90,7 @@ describe('POST /api/build/ask — real ZeroVoice status grounding (#780)', () =>
   })
 
   it('tells Cody ZeroVoice is NOT provisioned, honestly, when the company has no number', async () => {
-    h.resolveApp.mockResolvedValue({ zerovoiceProvisioned: false })
+    h.resolveAppVerified.mockResolvedValue({ entry: { zerovoiceProvisioned: false }, verified: true })
 
     await POST(req({ question: 'can this handle two-way SMS?', idea: 'a field service company', companyId: 'acme' }))
 
@@ -98,18 +99,28 @@ describe('POST /api/build/ask — real ZeroVoice status grounding (#780)', () =>
   })
 
   it('treats a provisioned flag with no real e164 as NOT provisioned (never half-true)', async () => {
-    h.resolveApp.mockResolvedValue({ zerovoiceProvisioned: true, zerovoiceE164: undefined })
+    h.resolveAppVerified.mockResolvedValue({ entry: { zerovoiceProvisioned: true, zerovoiceE164: undefined }, verified: true })
 
     await POST(req({ question: 'can this handle two-way SMS?', idea: 'a field service company', companyId: 'acme' }))
 
     expect(capturedSystem).toMatch(/has NOT provisioned a ZeroVoice phone number yet/)
   })
 
-  it('degrades to the not-provisioned framing when the company cannot be resolved at all (fail closed, never fabricate)', async () => {
-    h.resolveApp.mockResolvedValue(null)
+  it('degrades to the not-provisioned framing when the company is CONFIRMED gone (verified: true, entry: null — a real "no such company")', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: true })
 
     await POST(req({ question: 'can this handle two-way SMS?', idea: 'a field service company', companyId: 'ghost' }))
 
     expect(capturedSystem).toMatch(/has NOT provisioned a ZeroVoice phone number yet/)
+  })
+
+  it('#1427: degrades to an honest "could not be confirmed" hedge, NOT the confident not-provisioned claim, when the registry read itself fails (verified: false)', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+
+    await POST(req({ question: 'can this handle two-way SMS?', idea: 'a field service company', companyId: 'fieldko' }))
+
+    expect(capturedSystem).toMatch(/ZeroVoice.*status could not be confirmed/i)
+    expect(capturedSystem).not.toMatch(/has NOT provisioned a ZeroVoice phone number yet/)
+    expect(capturedSystem).not.toMatch(/HAS a real, live ZeroVoice phone number/)
   })
 })

@@ -22,6 +22,7 @@ const h = vi.hoisted(() => ({
   getClaudeCompletion: vi.fn(),
   runAskTool: vi.fn(),
   resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(async (slug: string) => ({ entry: await h.resolveApp(slug), verified: true })),
   resolveActivePlan: vi.fn(),
   loadChatWithFallback: vi.fn(),
   saveExchange: vi.fn(),
@@ -37,7 +38,7 @@ vi.mock('@/lib/build/ask-tools', async () => {
   const actual = await vi.importActual<typeof import('@/lib/build/ask-tools')>('@/lib/build/ask-tools')
   return { ...actual, runAskTool: h.runAskTool }
 })
-vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp, resolveAppVerified: h.resolveAppVerified }))
 vi.mock('@/lib/ainative/active-plan', () => ({ resolveActivePlan: h.resolveActivePlan }))
 vi.mock('@/lib/build/chat-store', async () => {
   const actual = await vi.importActual<typeof import('@/lib/build/chat-store')>('@/lib/build/chat-store')

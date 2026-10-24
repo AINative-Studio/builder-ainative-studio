@@ -22,7 +22,7 @@ vi.hoisted(() => {
 
 const h = vi.hoisted(() => ({
   resolveAppByZeroVoiceNumber: vi.fn(),
-  resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(),
   handleSharedNumberSms: vi.fn(),
   sendSharedSms: vi.fn(),
   askCody: vi.fn(),
@@ -32,7 +32,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/lib/build/app-registry', () => ({
   resolveAppByZeroVoiceNumber: h.resolveAppByZeroVoiceNumber,
-  resolveApp: h.resolveApp,
+  resolveAppVerified: h.resolveAppVerified,
 }))
 vi.mock('@/lib/build/shared-cody-number', () => ({ handleSharedNumberSms: h.handleSharedNumberSms }))
 vi.mock('@/lib/build/otp', () => ({ sendSharedSms: h.sendSharedSms }))
@@ -88,11 +88,30 @@ describe('POST /api/webhooks/zerovoice-sms — shared-number routing (#936)', ()
   it('runs askCody() and sends ITS reply via sendSharedSms when a company IS resolved', async () => {
     h.resolveAppByZeroVoiceNumber.mockResolvedValue(null)
     h.handleSharedNumberSms.mockResolvedValue({ replyText: null, resolvedSlug: 'acme', resolvedOwnerEmail: 'a@b.com' })
-    h.resolveApp.mockResolvedValue({ slug: 'acme', name: 'Acme', chatId: 'c1', idea: 'an idea', track: 'company', gitOrg: null })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', name: 'Acme', chatId: 'c1', idea: 'an idea', track: 'company', gitOrg: null }, verified: true })
     h.askCody.mockResolvedValue({ answer: 'Your app is live.' })
     h.sendSharedSms.mockResolvedValue({ ok: true })
     const res = await POST(req({ To: '+19377642838', From: '+15550001111', Body: 'what is my status' }))
     expect(h.askCody).toHaveBeenCalled()
     expect(h.sendSharedSms).toHaveBeenCalledWith('+15550001111', 'Your app is live.')
+  })
+
+  it('#1427: distinguishes a confirmed miss from a failed lookup in the honest failure reason', async () => {
+    h.resolveAppByZeroVoiceNumber.mockResolvedValue(null)
+    h.handleSharedNumberSms.mockResolvedValue({ replyText: null, resolvedSlug: 'ghost', resolvedOwnerEmail: null })
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: true }) // confirmed: no such company
+    const res = await POST(req({ To: '+19377642838', From: '+15550001111', Body: 'hi' }))
+    const data = await res.json()
+    expect(data.reason).toBe('shared_number_company_not_found')
+  })
+
+  it('#1427: never fabricates "company not found" when the registry read itself fails (verified: false)', async () => {
+    h.resolveAppByZeroVoiceNumber.mockResolvedValue(null)
+    h.handleSharedNumberSms.mockResolvedValue({ replyText: null, resolvedSlug: 'acme', resolvedOwnerEmail: null })
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: false }) // transient registry-read failure
+    const res = await POST(req({ To: '+19377642838', From: '+15550001111', Body: 'hi' }))
+    const data = await res.json()
+    expect(data.reason).toBe('shared_number_lookup_failed')
+    expect(h.askCody).not.toHaveBeenCalled()
   })
 })

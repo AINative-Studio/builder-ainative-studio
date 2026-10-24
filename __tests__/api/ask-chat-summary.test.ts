@@ -10,13 +10,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const h = vi.hoisted(() => ({
   auth: vi.fn(),
   resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(async (slug: string) => ({ entry: await h.resolveApp(slug), verified: true })),
   loadChatWithFallback: vi.fn(),
   ensureChatSummary: vi.fn(),
   ensureCompanyProfile: vi.fn(),
 }))
 
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
-vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp, resolveAppVerified: h.resolveAppVerified }))
 vi.mock('@/lib/build/chat-store', () => ({
   deriveOwnerKey: () => 'guest:anon',
   chatScopeKey: (owner: string, slug: string) => `${owner}::${slug}`,
@@ -38,6 +39,7 @@ function req(url: string) {
 
 beforeEach(() => {
   Object.values(h).forEach((fn) => fn.mockReset())
+  h.resolveAppVerified.mockImplementation(async (slug: string) => ({ entry: await h.resolveApp(slug), verified: true }))
   h.auth.mockResolvedValue(null)
   h.resolveApp.mockResolvedValue(null)
   h.ensureCompanyProfile.mockResolvedValue(null)
