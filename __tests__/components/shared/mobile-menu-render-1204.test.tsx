@@ -15,11 +15,9 @@ beforeAll(() => {
  * test coverage. ChatSelector already has its own dedicated coverage this
  * pass — mocked here at its real exported boundary.
  *
- * Real finding (confirmed by reading the full source, filed as issue #1365
- * rather than fixed inline): the `onInfoDialogOpen` prop is destructured but
- * genuinely never called anywhere in this component — AppHeader's Info
- * dialog is unreachable from mobile. Tests below assert this real (if
- * surprising) behavior, not the originally-assumed wiring.
+ * #1365 fix: a "Platform Info" menu item now calls `onInfoDialogOpen` (and
+ * closes the mobile menu), making AppHeader's Info dialog reachable on
+ * mobile. Previously `onInfoDialogOpen` was destructured but never called.
  */
 
 let sessionData: { user: { id: string } } | null = null
@@ -159,7 +157,7 @@ describe('MobileMenu — real open/close/escape/session-gating coverage (#1204)'
     expect(linkTexts.some((t) => t?.includes('Deploy to Railway'))).toBe(true)
   })
 
-  it('real finding: onInfoDialogOpen is genuinely never called by this component, even with a full real interaction pass (filed as #1365, not fixed inline)', async () => {
+  it('#1365 fix: clicking the real "Platform Info" menu item calls onInfoDialogOpen and closes the menu', async () => {
     vi.useFakeTimers()
     const onInfoDialogOpen = vi.fn()
     sessionData = { user: { id: 'u1' } }
@@ -167,12 +165,13 @@ describe('MobileMenu — real open/close/escape/session-gating coverage (#1204)'
     render(React.createElement(MobileMenu, { onInfoDialogOpen }))
 
     await act(async () => { openMenuBtn().click() })
-    const links = Array.from(document.body.querySelectorAll('a, button'))
-    for (const el of links) {
-      await act(async () => { (el as HTMLElement).click() })
-    }
-    await act(async () => { vi.advanceTimersByTime(300) })
+    const infoBtn = Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent?.includes('Platform Info')) as HTMLButtonElement
+    expect(infoBtn).toBeTruthy()
+    await act(async () => { infoBtn.click() })
 
-    expect(onInfoDialogOpen).not.toHaveBeenCalled()
+    expect(onInfoDialogOpen).toHaveBeenCalledTimes(1)
+
+    await act(async () => { vi.advanceTimersByTime(300) })
+    expect(document.body.querySelector('.fixed.inset-0.z-50')).toBeNull()
   })
 })
