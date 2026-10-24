@@ -18,7 +18,7 @@
  * — no new persistence needed, no backfill required.
  */
 
-import { resolveApp } from '@/lib/build/app-registry'
+import { resolveAppVerified } from '@/lib/build/app-registry'
 import { resolveStoredApp } from '@/lib/build/ready-gate'
 import { generateAINativeFileSet } from '@/lib/ainative-file-generator'
 
@@ -45,15 +45,24 @@ export function discoveryContentType(key: DiscoveryFileKey): string {
 }
 
 /**
- * Resolve one discovery file's real content for a registered slug. Returns
- * null when the slug isn't a real, registered company or has no durable
- * generated code to derive metadata from — the caller should 404 honestly,
- * never fabricate content for a company that doesn't exist.
+ * Resolve one discovery file's real content for a registered slug.
+ *
+ * Returns `null` when the slug is confirmed absent (or has no durable
+ * generated code to derive metadata from) — the caller should 404 honestly,
+ * never fabricate content for a company that doesn't exist. Returns
+ * `undefined` when the registry lookup itself could not be verified (#1432,
+ * same `resolveApp(...).catch(() => null)` anti-pattern as #832/#1392/#1423):
+ * a transient hiccup must never look identical to a confirmed miss, since a
+ * real registered company's `llms.txt`/etc. 404ing during a ZeroDB blip is
+ * indistinguishable, to the crawler hitting it, from that company never
+ * having existed. Callers should surface this as a retryable failure (503),
+ * not a 404.
  */
-export async function resolveDiscoveryFile(slug: string, key: DiscoveryFileKey): Promise<string | null> {
+export async function resolveDiscoveryFile(slug: string, key: DiscoveryFileKey): Promise<string | null | undefined> {
   const clean = String(slug || '').trim()
   if (!clean) return null
-  const entry = await resolveApp(clean).catch(() => null)
+  const { entry, verified } = await resolveAppVerified(clean)
+  if (!verified) return undefined
   if (!entry?.chatId) return null
   const stored = await resolveStoredApp(entry.chatId).catch(() => null)
   if (!stored?.code) return null
