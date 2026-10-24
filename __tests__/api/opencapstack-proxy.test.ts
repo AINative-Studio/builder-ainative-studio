@@ -33,11 +33,11 @@ import { mintAppDataToken } from '@/lib/build/app-data-token'
  */
 
 const h = vi.hoisted(() => ({
-  resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(),
   loginServiceAccount: vi.fn(),
 }))
 
-vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({ resolveAppVerified: h.resolveAppVerified }))
 vi.mock('@/lib/build/opencapstack', () => ({ loginServiceAccount: h.loginServiceAccount }))
 
 function req(action: string, token?: string) {
@@ -56,7 +56,7 @@ describe('GET /api/opencapstack/[action]', () => {
 
   beforeEach(() => {
     global.fetch = vi.fn()
-    h.resolveApp.mockReset()
+    h.resolveAppVerified.mockReset()
     h.loginServiceAccount.mockReset()
   })
   afterEach(() => {
@@ -68,33 +68,43 @@ describe('GET /api/opencapstack/[action]', () => {
     const { GET } = await import('@/app/api/opencapstack/[action]/route')
     const res = await GET(req('company'), { params: Promise.resolve({ action: 'company' }) })
     expect(res.status).toBe(401)
-    expect(h.resolveApp).not.toHaveBeenCalled()
+    expect(h.resolveAppVerified).not.toHaveBeenCalled()
   })
 
   it('rejects a present-but-forged token — fails closed', async () => {
     const { GET } = await import('@/app/api/opencapstack/[action]/route')
     const res = await GET(req('company', 'forged.token.here'), { params: Promise.resolve({ action: 'company' }) })
     expect(res.status).toBe(401)
-    expect(h.resolveApp).not.toHaveBeenCalled()
+    expect(h.resolveAppVerified).not.toHaveBeenCalled()
   })
 
   it('an unknown action returns 404, never silently no-ops', async () => {
     const { GET } = await import('@/app/api/opencapstack/[action]/route')
     const res = await GET(req('create', realToken), { params: Promise.resolve({ action: 'create' }) })
     expect(res.status).toBe(404)
-    expect(h.resolveApp).not.toHaveBeenCalled()
+    expect(h.resolveAppVerified).not.toHaveBeenCalled()
   })
 
-  it('returns 404 when the app has no opencapstackCompanyId provisioned yet', async () => {
-    h.resolveApp.mockResolvedValue({ slug: 'beacon', chatId: 'chat-1' })
+  it('returns 404 when the app has no opencapstackCompanyId provisioned yet (a CONFIRMED miss)', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'beacon', chatId: 'chat-1' }, verified: true })
     const { GET } = await import('@/app/api/opencapstack/[action]/route')
     const res = await GET(req('company', realToken), { params: Promise.resolve({ action: 'company' }) })
     expect(res.status).toBe(404)
     expect(h.loginServiceAccount).not.toHaveBeenCalled()
   })
 
+  it('#832-class: a transient registry-read failure returns a retryable 503, never a confident 404', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+    const { GET } = await import('@/app/api/opencapstack/[action]/route')
+    const res = await GET(req('company', realToken), { params: Promise.resolve({ action: 'company' }) })
+    expect(res.status).toBe(503)
+    const body = await res.json()
+    expect(body.error).toBe('lookup_failed')
+    expect(h.loginServiceAccount).not.toHaveBeenCalled()
+  })
+
   it('returns an honest error when the service-account login fails', async () => {
-    h.resolveApp.mockResolvedValue({ slug: 'beacon', opencapstackCompanyId: 'ocs-123' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'beacon', opencapstackCompanyId: 'ocs-123' }, verified: true })
     h.loginServiceAccount.mockResolvedValue({ ok: false, reason: 'no_service_account' })
     const { GET } = await import('@/app/api/opencapstack/[action]/route')
     const res = await GET(req('company', realToken), { params: Promise.resolve({ action: 'company' }) })
@@ -103,7 +113,7 @@ describe('GET /api/opencapstack/[action]', () => {
   })
 
   it('company: forwards to the real upstream endpoint with the stored companyId once login succeeds', async () => {
-    h.resolveApp.mockResolvedValue({ slug: 'beacon', opencapstackCompanyId: 'ocs-123' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'beacon', opencapstackCompanyId: 'ocs-123' }, verified: true })
     h.loginServiceAccount.mockResolvedValue({ ok: true, token: 'real-ocs-token' })
     ;(global.fetch as any).mockResolvedValue({ ok: true, json: async () => ({ companyId: 'ocs-123', name: 'Beacon' }) })
     const { GET } = await import('@/app/api/opencapstack/[action]/route')
@@ -115,7 +125,7 @@ describe('GET /api/opencapstack/[action]', () => {
   })
 
   it('propagates a real upstream error status honestly, never masks it as success', async () => {
-    h.resolveApp.mockResolvedValue({ slug: 'beacon', opencapstackCompanyId: 'ocs-123' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'beacon', opencapstackCompanyId: 'ocs-123' }, verified: true })
     h.loginServiceAccount.mockResolvedValue({ ok: true, token: 'real-ocs-token' })
     ;(global.fetch as any).mockResolvedValue({ ok: false, status: 404, json: async () => ({ message: 'not found' }) })
     const { GET } = await import('@/app/api/opencapstack/[action]/route')
@@ -125,12 +135,12 @@ describe('GET /api/opencapstack/[action]', () => {
 
   it('a different company only ever looks up its OWN stored opencapstackCompanyId', async () => {
     const otherToken = mintAppDataToken('proj-other-456', 'acme', Math.floor(Date.now() / 1000))
-    h.resolveApp.mockResolvedValue({ slug: 'acme', opencapstackCompanyId: 'ocs-999' })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'acme', opencapstackCompanyId: 'ocs-999' }, verified: true })
     h.loginServiceAccount.mockResolvedValue({ ok: true, token: 'real-ocs-token' })
     ;(global.fetch as any).mockResolvedValue({ ok: true, json: async () => ({ companyId: 'ocs-999' }) })
     const { GET } = await import('@/app/api/opencapstack/[action]/route')
     await GET(req('company', otherToken), { params: Promise.resolve({ action: 'company' }) })
-    expect(h.resolveApp).toHaveBeenCalledWith('acme')
+    expect(h.resolveAppVerified).toHaveBeenCalledWith('acme')
     const [url] = (global.fetch as any).mock.calls[0]
     expect(String(url)).toContain('/companies/ocs-999')
   })

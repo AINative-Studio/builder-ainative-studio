@@ -31,7 +31,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyPrimitiveProxyToken } from '@/lib/build/primitive-proxy-token'
 import { resolveFounderCredential, type FounderScopedPrimitive } from '@/lib/build/primitive-credentials'
-import { resolveApp, setAppContentWorkflowTwinId } from '@/lib/build/app-registry'
+import { resolveAppVerified, setAppContentWorkflowTwinId } from '@/lib/build/app-registry'
 import { createDefaultTwin } from '@/lib/build/content-workflow'
 
 export const runtime = 'nodejs'
@@ -56,7 +56,15 @@ async function forwardContentWorkflow(request: NextRequest, path: string[], slug
     return NextResponse.json({ error: 'primitive_unavailable', reason: 'service_key_not_configured' }, { status: 502 })
   }
 
-  const app = await resolveApp(slug).catch(() => null)
+  // #832-class: a transient registry-read failure must never look identical
+  // to "this company genuinely has no twin yet" — that would auto-provision
+  // a SECOND, orphaned twin on every retry during a hiccup instead of
+  // reusing the real cached one, same false-negative shape already fixed
+  // for connect-domain/provision/opencapstack/etc. (#1335/#1337/#1392).
+  const { entry: app, verified } = await resolveAppVerified(slug)
+  if (!verified) {
+    return NextResponse.json({ error: 'primitive_unavailable', reason: 'lookup_failed' }, { status: 503 })
+  }
   let twinId = app?.contentWorkflowTwinId
 
   // Lazily auto-provision ONE twin per company on first real call — a
