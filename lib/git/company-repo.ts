@@ -21,7 +21,12 @@ import {
   addCollaborator,
   type GiteaPermission,
 } from './gitea-client'
-import { resolveApp, setAppGitRepo, isRegistryLookupUnverified } from '@/lib/build/app-registry'
+import {
+  resolveApp,
+  resolveAppVerified,
+  setAppGitRepo,
+  isRegistryLookupUnverified,
+} from '@/lib/build/app-registry'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -315,6 +320,13 @@ export async function provisionCompanyRepo(opts: {
  *
  * Returns true on success. Never throws. If the company has no repo yet,
  * returns false (the caller should provision first).
+ *
+ * #1494: the `false` for "no repo yet" and the `false` for "the registry read
+ * that would have told us about the repo never completed" are deliberately
+ * the SAME value — this function's `Promise<boolean>` contract is relied on by
+ * every caller, and refusing to commit is the safe direction in both cases.
+ * What changes is that the unverified read is now LOGGED as itself, so an
+ * operator reading the logs is not told a provisioned company has no repo.
  */
 export async function commitRegeneration(opts: {
   slug: string
@@ -326,7 +338,15 @@ export async function commitRegeneration(opts: {
   const validation = validateFileMap(opts.files)
   if (!validation.valid) return false
 
-  const existing = await resolveApp(opts.slug)
+  const lookup = await resolveAppVerified(opts.slug).catch(() => ({ entry: null, verified: false }))
+  if (!lookup.verified) {
+    // NOT "no repo yet" — we genuinely do not know. Same safe no-op, honest log.
+    console.warn(
+      `[company-repo] commitRegeneration skipped for ${opts.slug}: registry lookup unverified (the read failed) — repo state unknown, safe to retry`,
+    )
+    return false
+  }
+  const existing = lookup.entry
   if (!existing?.gitRepoId || !existing.gitOrg) {
     return false // No repo yet — caller should provision first
   }
@@ -347,6 +367,11 @@ export async function commitRegeneration(opts: {
  * Grant a human user write access to a company's repo. The default is read-only
  * mirror + edits-via-Cody; this explicitly grants write permission to a specific
  * user (per locked decision #3: optional human collaborator).
+ *
+ * #1494: as in commitRegeneration above, a failed registry read keeps the same
+ * safe `false` (refusing to grant write access on an unknown lookup is exactly
+ * right — never grant on a guess), but is logged distinguishably from the
+ * confirmed "this company has no Gitea org" so the retryable case is visible.
  */
 export async function grantHumanWrite(
   slug: string,
@@ -355,7 +380,14 @@ export async function grantHumanWrite(
 ): Promise<boolean> {
   if (!configured()) return false
 
-  const existing = await resolveApp(slug)
+  const lookup = await resolveAppVerified(slug).catch(() => ({ entry: null, verified: false }))
+  if (!lookup.verified) {
+    console.warn(
+      `[company-repo] grantHumanWrite refused for ${slug}: registry lookup unverified (the read failed) — never granting write access on an unknown lookup, safe to retry`,
+    )
+    return false
+  }
+  const existing = lookup.entry
   if (!existing?.gitOrg) return false
 
   return addCollaborator(existing.gitOrg, slug, username, permission)

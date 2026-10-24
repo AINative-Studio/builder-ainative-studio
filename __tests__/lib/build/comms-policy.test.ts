@@ -17,6 +17,9 @@ import type { NightlyRunResult } from '@/lib/build/autonomous-loop'
  *    the real reason) for opt-out, no genuine update, a second call within
  *    the frequency window, no founder email, an unresolvable company, and a
  *    failed send.
+ *  - (#1494) An UNVERIFIED registry read is reported as `lookup_failed`, not
+ *    as the confirmed `company_not_found` — same safe skip, retryable reason,
+ *    and it does not burn the frequency cap either.
  *  - A failed send does not consume the frequency cap (a real send is the
  *    only thing allowed to burn the once-per-window allowance).
  *  - buildOutreachEmail: the error case is framed CLEARLY DIFFERENTLY from
@@ -25,11 +28,11 @@ import type { NightlyRunResult } from '@/lib/build/autonomous-loop'
  */
 
 const h = vi.hoisted(() => ({
-  resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(),
   sendCompanyEmail: vi.fn(),
 }))
 
-vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/app-registry', () => ({ resolveAppVerified: h.resolveAppVerified }))
 vi.mock('@/lib/build/company-email', () => ({ sendCompanyEmail: h.sendCompanyEmail }))
 
 import { hasGenuineUpdate, runNightlyCommsOutreach, buildOutreachEmail } from '@/lib/build/comms-policy'
@@ -45,6 +48,13 @@ function makeResult(overrides: Partial<NightlyRunResult> = {}): NightlyRunResult
     ...overrides,
   }
 }
+
+/**
+ * A CONFIRMED resolveAppVerified() answer (#1494) — a real entry, or a real
+ * "no such company". The unverified shape (`verified: false`) is written out
+ * explicitly at its use sites so it can never be read as a confirmed miss.
+ */
+const verified = (entry: Record<string, unknown> | null) => ({ entry, verified: true })
 
 function makeApp(overrides: Record<string, unknown> = {}) {
   return {
@@ -101,13 +111,13 @@ describe('hasGenuineUpdate', () => {
 
 describe('runNightlyCommsOutreach', () => {
   beforeEach(() => {
-    h.resolveApp.mockReset()
+    h.resolveAppVerified.mockReset()
     h.sendCompanyEmail.mockReset()
     __resetFrequencyCapForTests()
   })
 
   it('sends on the first genuine run for a company', async () => {
-    h.resolveApp.mockResolvedValue(makeApp())
+    h.resolveAppVerified.mockResolvedValue(verified(makeApp()))
     h.sendCompanyEmail.mockResolvedValue({ ok: true, id: 'email-1' })
 
     const result = await runNightlyCommsOutreach('acme', 'Acme AI', makeResult())
@@ -128,7 +138,7 @@ describe('runNightlyCommsOutreach', () => {
   })
 
   it('blocks a second outreach for the same company within the frequency window', async () => {
-    h.resolveApp.mockResolvedValue(makeApp())
+    h.resolveAppVerified.mockResolvedValue(verified(makeApp()))
     h.sendCompanyEmail.mockResolvedValue({ ok: true, id: 'email-1' })
 
     const first = await runNightlyCommsOutreach('acme', 'Acme AI', makeResult())
@@ -141,18 +151,18 @@ describe('runNightlyCommsOutreach', () => {
 
   it('does not block a DIFFERENT company within the same window', async () => {
     h.sendCompanyEmail.mockResolvedValue({ ok: true, id: 'email-1' })
-    h.resolveApp.mockResolvedValueOnce(makeApp({ slug: 'acme' }))
+    h.resolveAppVerified.mockResolvedValueOnce(verified(makeApp({ slug: 'acme' })))
     const first = await runNightlyCommsOutreach('acme', 'Acme AI', makeResult())
     expect(first.status).toBe('sent')
 
-    h.resolveApp.mockResolvedValueOnce(makeApp({ slug: 'beacon', ownerEmail: 'founder@beacon.co' }))
+    h.resolveAppVerified.mockResolvedValueOnce(verified(makeApp({ slug: 'beacon', ownerEmail: 'founder@beacon.co' })))
     const second = await runNightlyCommsOutreach('beacon', 'Beacon', makeResult())
     expect(second.status).toBe('sent')
     expect(h.sendCompanyEmail).toHaveBeenCalledTimes(2)
   })
 
   it('skips honestly when the founder has opted out', async () => {
-    h.resolveApp.mockResolvedValue(makeApp({ commsOptOut: true }))
+    h.resolveAppVerified.mockResolvedValue(verified(makeApp({ commsOptOut: true })))
 
     const result = await runNightlyCommsOutreach('acme', 'Acme AI', makeResult())
 
@@ -161,7 +171,7 @@ describe('runNightlyCommsOutreach', () => {
   })
 
   it('skips honestly when there is nothing genuine to report', async () => {
-    h.resolveApp.mockResolvedValue(makeApp())
+    h.resolveAppVerified.mockResolvedValue(verified(makeApp()))
 
     const result = await runNightlyCommsOutreach(
       'acme',
@@ -174,7 +184,7 @@ describe('runNightlyCommsOutreach', () => {
   })
 
   it('skips honestly when there is no founder email on file', async () => {
-    h.resolveApp.mockResolvedValue(makeApp({ ownerEmail: undefined }))
+    h.resolveAppVerified.mockResolvedValue(verified(makeApp({ ownerEmail: undefined })))
 
     const result = await runNightlyCommsOutreach('acme', 'Acme AI', makeResult())
 
@@ -182,8 +192,8 @@ describe('runNightlyCommsOutreach', () => {
     expect(h.sendCompanyEmail).not.toHaveBeenCalled()
   })
 
-  it('skips honestly when the company cannot be resolved', async () => {
-    h.resolveApp.mockResolvedValue(null)
+  it('skips honestly when the company is CONFIRMED not to exist', async () => {
+    h.resolveAppVerified.mockResolvedValue(verified(null))
 
     const result = await runNightlyCommsOutreach('ghost', 'Ghost Co', makeResult())
 
@@ -191,8 +201,32 @@ describe('runNightlyCommsOutreach', () => {
     expect(h.sendCompanyEmail).not.toHaveBeenCalled()
   })
 
+  // -------------------------------------------------------------------------
+  // #1494 — an unverified registry read is NOT a confirmed missing company
+  // -------------------------------------------------------------------------
+  it('skips with lookup_failed (NOT company_not_found) when the registry read could not be completed (#1494)', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+
+    const result = await runNightlyCommsOutreach('acme', 'Acme AI', makeResult())
+
+    expect(result).toEqual({ status: 'skipped', reason: 'lookup_failed' })
+    // Safe direction unchanged: no email goes out on an unknown lookup.
+    expect(h.sendCompanyEmail).not.toHaveBeenCalled()
+  })
+
+  it('does not burn the frequency cap on an unverified lookup — the next run can still reach the founder (#1494)', async () => {
+    h.resolveAppVerified.mockResolvedValueOnce({ entry: null, verified: false })
+    const first = await runNightlyCommsOutreach('acme', 'Acme AI', makeResult())
+    expect(first).toEqual({ status: 'skipped', reason: 'lookup_failed' })
+
+    h.resolveAppVerified.mockResolvedValueOnce(verified(makeApp()))
+    h.sendCompanyEmail.mockResolvedValueOnce({ ok: true, id: 'email-1' })
+    const second = await runNightlyCommsOutreach('acme', 'Acme AI', makeResult())
+    expect(second).toEqual({ status: 'sent', emailId: 'email-1' })
+  })
+
   it('reports send_failed honestly and does not consume the frequency cap on failure', async () => {
-    h.resolveApp.mockResolvedValue(makeApp())
+    h.resolveAppVerified.mockResolvedValue(verified(makeApp()))
     h.sendCompanyEmail.mockResolvedValueOnce({ ok: false, reason: 'resend_error' })
 
     const first = await runNightlyCommsOutreach('acme', 'Acme AI', makeResult())
@@ -205,19 +239,19 @@ describe('runNightlyCommsOutreach', () => {
     expect(second).toEqual({ status: 'sent', emailId: 'email-2' })
   })
 
-  it('never throws even if resolveApp itself throws', async () => {
-    h.resolveApp.mockRejectedValue(new Error('zerodb down'))
+  it('never throws even if the registry lookup itself throws — reported as lookup_failed (#1494)', async () => {
+    h.resolveAppVerified.mockRejectedValue(new Error('zerodb down'))
 
     const result = await runNightlyCommsOutreach('acme', 'Acme AI', makeResult())
 
-    expect(result.status).toBe('skipped')
+    expect(result).toEqual({ status: 'skipped', reason: 'lookup_failed' })
     expect(h.sendCompanyEmail).not.toHaveBeenCalled()
   })
 
   // #1309 — the real gap this issue closes: a genuine error run previously
   // produced ZERO founder communication.
   it('sends an error-framed outreach for a genuine error run with real detail', async () => {
-    h.resolveApp.mockResolvedValue(makeApp())
+    h.resolveAppVerified.mockResolvedValue(verified(makeApp()))
     h.sendCompanyEmail.mockResolvedValue({ ok: true, id: 'email-err-1' })
 
     const result = await runNightlyCommsOutreach(
@@ -233,7 +267,7 @@ describe('runNightlyCommsOutreach', () => {
   })
 
   it('still honestly skips an error run with no real detail to share', async () => {
-    h.resolveApp.mockResolvedValue(makeApp())
+    h.resolveAppVerified.mockResolvedValue(verified(makeApp()))
 
     const result = await runNightlyCommsOutreach(
       'acme',
@@ -246,7 +280,7 @@ describe('runNightlyCommsOutreach', () => {
   })
 
   it('an error-outreach send still respects the per-company frequency cap', async () => {
-    h.resolveApp.mockResolvedValue(makeApp())
+    h.resolveAppVerified.mockResolvedValue(verified(makeApp()))
     h.sendCompanyEmail.mockResolvedValue({ ok: true, id: 'email-err-1' })
 
     const first = await runNightlyCommsOutreach(
@@ -266,7 +300,7 @@ describe('runNightlyCommsOutreach', () => {
   })
 
   it('an opted-out founder still never gets an error outreach email', async () => {
-    h.resolveApp.mockResolvedValue(makeApp({ commsOptOut: true }))
+    h.resolveAppVerified.mockResolvedValue(verified(makeApp({ commsOptOut: true })))
 
     const result = await runNightlyCommsOutreach(
       'acme',

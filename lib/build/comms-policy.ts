@@ -59,7 +59,7 @@
  *     nit, unlike an email landing in an inbox overnight.
  */
 
-import { resolveApp, type AppEntry } from '@/lib/build/app-registry'
+import { resolveAppVerified, type AppEntry } from '@/lib/build/app-registry'
 import { sendCompanyEmail } from '@/lib/build/company-email'
 import { checkFrequencyCap, recordFrequencyCapHit } from '@/lib/build/frequency-cap'
 import type { NightlyRunResult } from '@/lib/build/autonomous-loop'
@@ -79,6 +79,13 @@ export type CommsSkipReason =
   | 'rate_limited'
   | 'no_founder_email'
   | 'company_not_found'
+  /**
+   * #1494: the registry read itself could not be completed, so whether this
+   * company exists is UNKNOWN. Distinct from `company_not_found` (a confirmed
+   * "no such company") — the outcome is the same tonight (no email), but one
+   * says the company is gone and the other says to try again.
+   */
+  | 'lookup_failed'
   | 'send_failed'
 
 export interface CommsOutreachResult {
@@ -170,7 +177,9 @@ export function buildOutreachEmail(
 /**
  * Decide whether to reach out about tonight's run, and if so, send it.
  * Checks — in order, each an honest early-exit, never a fabricated success:
- *   1. Company resolves in the registry (need a real founder email + name).
+ *   1. Company resolves in the registry (need a real founder email + name) —
+ *      and, per #1494, an unverified read is reported as `lookup_failed`
+ *      rather than borrowing `company_not_found`'s confirmed-gone wording.
  *   2. Opt-out (`commsOptOut`) is not set.
  *   3. There's a genuine update to report (`hasGenuineUpdate`).
  *   4. The per-company frequency cap allows it.
@@ -184,7 +193,12 @@ export async function runNightlyCommsOutreach(
   result: NightlyRunResult,
 ): Promise<CommsOutreachResult> {
   try {
-    const app: AppEntry | null = await resolveApp(companyId)
+    // #1494: resolveAppVerified(), so "the registry read failed" never reports
+    // itself as the confirmed `company_not_found`. Either way tonight's email
+    // is skipped (the safe direction), but only one of the two is retryable.
+    const lookup = await resolveAppVerified(companyId).catch(() => ({ entry: null, verified: false }))
+    if (!lookup.verified) return { status: 'skipped', reason: 'lookup_failed' }
+    const app: AppEntry | null = lookup.entry
     if (!app) return { status: 'skipped', reason: 'company_not_found' }
 
     if (app.commsOptOut) return { status: 'skipped', reason: 'opted_out' }

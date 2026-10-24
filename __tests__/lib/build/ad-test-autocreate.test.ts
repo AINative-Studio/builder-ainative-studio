@@ -21,7 +21,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
  */
 
 const h = vi.hoisted(() => ({
-  resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(),
   setAppGrowthAdTest: vi.fn(async () => true),
   createAdTestCampaign: vi.fn(),
   growthAdTestingEnabled: vi.fn(() => true),
@@ -31,7 +31,7 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/build/app-registry', () => ({
-  resolveApp: h.resolveApp,
+  resolveAppVerified: h.resolveAppVerified,
   setAppGrowthAdTest: h.setAppGrowthAdTest,
 }))
 vi.mock('@/lib/build/ad-testing', () => ({
@@ -54,9 +54,17 @@ const APP = {
   createdAt: '2026-01-01',
 }
 
+/**
+ * A CONFIRMED resolveAppVerified() answer — a real entry, or a real
+ * "no such company" (#1494). The third shape, `{ entry: null, verified: false }`,
+ * is the unverified read and is written out explicitly at each use site so it
+ * never gets mistaken for a confirmed miss.
+ */
+const verified = (entry: Record<string, unknown> | null) => ({ entry, verified: true })
+
 beforeEach(() => {
   vi.clearAllMocks()
-  h.resolveApp.mockResolvedValue({ ...APP })
+  h.resolveAppVerified.mockResolvedValue(verified({ ...APP }))
   h.setAppGrowthAdTest.mockResolvedValue(true)
   h.createAdTestCampaign.mockResolvedValue({ ok: true, campaignId: 'camp_auto_1' })
   h.growthAdTestingEnabled.mockReturnValue(true)
@@ -107,7 +115,7 @@ describe('autoCreateAdTestCampaign (#1017)', () => {
   })
 
   it('is a strict no-op when the company already has a campaign id (idempotent)', async () => {
-    h.resolveApp.mockResolvedValue({ ...APP, growthAdTestCampaignId: 'camp_existing' })
+    h.resolveAppVerified.mockResolvedValue(verified({ ...APP, growthAdTestCampaignId: 'camp_existing' }))
     const { autoCreateAdTestCampaign } = await import('@/lib/build/ad-test-autocreate')
     const result = await autoCreateAdTestCampaign('acme')
     expect(result).toEqual({ created: false, campaignId: 'camp_existing', reason: 'already_exists' })
@@ -121,7 +129,7 @@ describe('autoCreateAdTestCampaign (#1017)', () => {
     const result = await autoCreateAdTestCampaign('acme')
     expect(result).toEqual({ created: false, reason: 'disabled' })
     expect(h.createAdTestCampaign).not.toHaveBeenCalled()
-    expect(h.resolveApp).not.toHaveBeenCalled()
+    expect(h.resolveAppVerified).not.toHaveBeenCalled()
   })
 
   it('fails closed when no Marketing API credential is configured, without calling Meta', async () => {
@@ -132,11 +140,32 @@ describe('autoCreateAdTestCampaign (#1017)', () => {
     expect(h.createAdTestCampaign).not.toHaveBeenCalled()
   })
 
-  it('reports honestly when the company is not in the registry', async () => {
-    h.resolveApp.mockResolvedValue(null)
+  it('reports honestly when the company is CONFIRMED not in the registry', async () => {
+    h.resolveAppVerified.mockResolvedValue(verified(null))
     const { autoCreateAdTestCampaign } = await import('@/lib/build/ad-test-autocreate')
     const result = await autoCreateAdTestCampaign('nope')
     expect(result).toEqual({ created: false, reason: 'company_not_found' })
+    expect(h.createAdTestCampaign).not.toHaveBeenCalled()
+  })
+
+  // -------------------------------------------------------------------------
+  // #1494 — an UNVERIFIED registry read is not a confirmed missing company
+  // -------------------------------------------------------------------------
+  it('reports lookup_failed (NOT company_not_found) when the registry read could not be completed (#1494)', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: false })
+    const { autoCreateAdTestCampaign } = await import('@/lib/build/ad-test-autocreate')
+    const result = await autoCreateAdTestCampaign('acme')
+    expect(result).toEqual({ created: false, reason: 'lookup_failed' })
+    // Safe direction unchanged: nothing is created, nothing is persisted.
+    expect(h.createAdTestCampaign).not.toHaveBeenCalled()
+    expect(h.setAppGrowthAdTest).not.toHaveBeenCalled()
+  })
+
+  it('reports lookup_failed when resolveAppVerified itself rejects, and still never throws (#1494)', async () => {
+    h.resolveAppVerified.mockRejectedValue(new Error('ZeroDB down'))
+    const { autoCreateAdTestCampaign } = await import('@/lib/build/ad-test-autocreate')
+    const result = await autoCreateAdTestCampaign('acme')
+    expect(result).toEqual({ created: false, reason: 'lookup_failed' })
     expect(h.createAdTestCampaign).not.toHaveBeenCalled()
   })
 
@@ -149,7 +178,7 @@ describe('autoCreateAdTestCampaign (#1017)', () => {
   })
 
   it('falls back to the slug when the registry entry has no name', async () => {
-    h.resolveApp.mockResolvedValue({ ...APP, name: undefined })
+    h.resolveAppVerified.mockResolvedValue(verified({ ...APP, name: undefined }))
     const { autoCreateAdTestCampaign } = await import('@/lib/build/ad-test-autocreate')
     await autoCreateAdTestCampaign('acme')
     expect(h.createAdTestCampaign).toHaveBeenCalledWith(
@@ -158,10 +187,13 @@ describe('autoCreateAdTestCampaign (#1017)', () => {
   })
 
   it('never throws when a collaborator throws', async () => {
-    h.resolveApp.mockRejectedValue(new Error('ZeroDB down'))
+    // A non-registry collaborator, so this still covers the generic
+    // catch-all reason path. (A throwing registry READ is #1494's
+    // `lookup_failed` case, pinned separately above.)
+    h.createAdTestCampaign.mockRejectedValue(new Error('Meta API down'))
     const { autoCreateAdTestCampaign } = await import('@/lib/build/ad-test-autocreate')
     const result = await autoCreateAdTestCampaign('acme')
     expect(result.created).toBe(false)
-    expect(result.reason).toContain('ZeroDB down')
+    expect(result.reason).toContain('Meta API down')
   })
 })

@@ -167,7 +167,7 @@ describe('#907 — end-to-end wiring: createBranchForTask / commitTaskChanges / 
 
   it('createBranchForTask creates/looks-up the ISSUE-NUMBERED branch name when given an issue number', async () => {
     vi.doMock('@/lib/build/app-registry', () => ({
-      resolveApp: vi.fn(async () => ({ gitOrg: 'ws-1' })),
+      resolveAppVerified: vi.fn(async () => ({ entry: { gitOrg: 'ws-1' }, verified: true })),
     }))
     const calledUrls: string[] = []
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
@@ -202,7 +202,7 @@ describe('#907 — end-to-end wiring: createBranchForTask / commitTaskChanges / 
 
   it('createBranchForTask falls back to task/{taskId} when no issue number is given', async () => {
     vi.doMock('@/lib/build/app-registry', () => ({
-      resolveApp: vi.fn(async () => ({ gitOrg: 'ws-1' })),
+      resolveAppVerified: vi.fn(async () => ({ entry: { gitOrg: 'ws-1' }, verified: true })),
     }))
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       const u = String(url)
@@ -224,7 +224,7 @@ describe('#907 — end-to-end wiring: createBranchForTask / commitTaskChanges / 
 
   it('commitTaskChanges + commitTaskWithPR: commit message has Refs #N, PR body has Closes #N, branch is issue-numbered — all three use the SAME branch name (no create/lookup mismatch)', async () => {
     vi.doMock('@/lib/build/app-registry', () => ({
-      resolveApp: vi.fn(async () => ({ gitOrg: 'ws-1' })),
+      resolveAppVerified: vi.fn(async () => ({ entry: { gitOrg: 'ws-1' }, verified: true })),
     }))
     const commitMessages: string[] = []
     const prBodies: string[] = []
@@ -281,7 +281,7 @@ describe('#907 — end-to-end wiring: createBranchForTask / commitTaskChanges / 
 
   it('commitTaskChanges falls back to today\'s behavior (no Refs/Closes, plain task/{taskId} branch) when the task has no issue number', async () => {
     vi.doMock('@/lib/build/app-registry', () => ({
-      resolveApp: vi.fn(async () => ({ gitOrg: 'ws-1' })),
+      resolveAppVerified: vi.fn(async () => ({ entry: { gitOrg: 'ws-1' }, verified: true })),
     }))
     const commitMessages: string[] = []
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {

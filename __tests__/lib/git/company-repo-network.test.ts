@@ -22,7 +22,10 @@ vi.mock('@/lib/git/gitea-client', () => ({
 
 vi.mock('@/lib/build/app-registry', () => ({
   resolveApp: vi.fn(),
+  resolveAppVerified: vi.fn(),
   setAppGitRepo: vi.fn(),
+  isRegistryLookupUnverified: (err: unknown) =>
+    err instanceof Error && err.name === 'RegistryLookupUnverifiedError',
 }))
 
 import {
@@ -30,7 +33,7 @@ import {
   provisionCompanyRepo as giteaProvisionRepo,
   addCollaborator,
 } from '@/lib/git/gitea-client'
-import { resolveApp, setAppGitRepo } from '@/lib/build/app-registry'
+import { resolveApp, resolveAppVerified, setAppGitRepo } from '@/lib/build/app-registry'
 import {
   provisionCompanyRepo,
   commitRegeneration,
@@ -38,6 +41,17 @@ import {
 } from '@/lib/git/company-repo'
 
 const VALID_FILES = { 'App.tsx': 'export default function App() { return null }' }
+
+/**
+ * A CONFIRMED resolveAppVerified() answer (#1494) — a real entry, or a real
+ * "no such company". commitRegeneration and grantHumanWrite read through
+ * resolveAppVerified so an unverified read (`{ entry: null, verified: false }`,
+ * spelled out at its use sites) is logged as itself instead of masquerading as
+ * "no repo yet" / "no git org". provisionCompanyRepo's own idempotency
+ * pre-flight still uses plain resolveApp (deliberately out of #1494's scope —
+ * gitea-client's ensureOrg/createRepo are independently idempotent).
+ */
+const verifiedApp = (entry: Record<string, unknown> | null) => ({ entry, verified: true })
 
 describe('#1201 lib/git/company-repo — network-touching functions', () => {
   beforeEach(() => {
@@ -198,23 +212,59 @@ describe('#1201 lib/git/company-repo — network-touching functions', () => {
       vi.mocked(configured).mockReturnValue(true)
       const result = await commitRegeneration({ slug: 'my-co', files: { 'x.css': 'a' } })
       expect(result).toBe(false)
-      expect(resolveApp).not.toHaveBeenCalled()
+      expect(resolveAppVerified).not.toHaveBeenCalled()
     })
 
-    it('returns false when the company has no repo provisioned yet', async () => {
+    it('returns false when the company is CONFIRMED to have no repo provisioned yet', async () => {
       vi.mocked(configured).mockReturnValue(true)
-      vi.mocked(resolveApp).mockResolvedValue(null)
+      vi.mocked(resolveAppVerified).mockResolvedValue(verifiedApp(null) as never)
 
       const result = await commitRegeneration({ slug: 'my-co', files: VALID_FILES })
       expect(result).toBe(false)
+      // A CONFIRMED miss is not the unverified case and must not be logged as one.
+      expect(console.warn).not.toHaveBeenCalledWith(
+        expect.stringContaining('registry lookup unverified')
+      )
+    })
+
+    // -----------------------------------------------------------------------
+    // #1494 — an unverified registry read is not "no repo yet"
+    // -----------------------------------------------------------------------
+    it('still returns false on an UNVERIFIED registry read, but logs it distinguishably from "no repo yet" (#1494)', async () => {
+      vi.mocked(configured).mockReturnValue(true)
+      vi.mocked(resolveAppVerified).mockResolvedValue({ entry: null, verified: false } as never)
+
+      const result = await commitRegeneration({ slug: 'my-co', files: VALID_FILES })
+
+      // The boolean contract is deliberately unchanged — refusing to commit is
+      // the safe direction either way.
+      expect(result).toBe(false)
+      // Safe direction: no push attempted at all.
+      expect(fetch).not.toHaveBeenCalled()
+      expect(console.warn).toHaveBeenCalledWith(
+        expect.stringContaining('registry lookup unverified')
+      )
+      expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('safe to retry'))
+    })
+
+    it('treats a rejecting registry read as unverified and never throws (#1494)', async () => {
+      vi.mocked(configured).mockReturnValue(true)
+      vi.mocked(resolveAppVerified).mockRejectedValue(new Error('zerodb timeout'))
+
+      await expect(
+        commitRegeneration({ slug: 'my-co', files: VALID_FILES })
+      ).resolves.toBe(false)
+      expect(fetch).not.toHaveBeenCalled()
+      expect(console.warn).toHaveBeenCalledWith(
+        expect.stringContaining('registry lookup unverified')
+      )
     })
 
     it('pushes a regeneration commit when a repo already exists', async () => {
       vi.mocked(configured).mockReturnValue(true)
-      vi.mocked(resolveApp).mockResolvedValue({
-        gitRepoId: 'repo-1',
-        gitOrg: 'org-1',
-      } as never)
+      vi.mocked(resolveAppVerified).mockResolvedValue(
+        verifiedApp({ gitRepoId: 'repo-1', gitOrg: 'org-1' }) as never
+      )
       vi.mocked(fetch).mockResolvedValue({ ok: true, status: 200 } as Response)
 
       const result = await commitRegeneration({
@@ -232,7 +282,7 @@ describe('#1201 lib/git/company-repo — network-touching functions', () => {
 
     it('returns false when the regeneration push itself fails', async () => {
       vi.mocked(configured).mockReturnValue(true)
-      vi.mocked(resolveApp).mockResolvedValue({ gitRepoId: 'repo-1', gitOrg: 'org-1' } as never)
+      vi.mocked(resolveAppVerified).mockResolvedValue(verifiedApp({ gitRepoId: 'repo-1', gitOrg: 'org-1' }) as never)
       vi.mocked(fetch).mockResolvedValue({ ok: false, status: 503 } as Response)
 
       const result = await commitRegeneration({ slug: 'my-co', files: VALID_FILES })
@@ -245,20 +295,49 @@ describe('#1201 lib/git/company-repo — network-touching functions', () => {
       vi.mocked(configured).mockReturnValue(false)
       const result = await grantHumanWrite('my-co', 'alice')
       expect(result).toBe(false)
-      expect(resolveApp).not.toHaveBeenCalled()
+      expect(resolveAppVerified).not.toHaveBeenCalled()
     })
 
-    it('returns false when the company has no git org on record', async () => {
+    it('returns false when the company is CONFIRMED to have no git org on record', async () => {
       vi.mocked(configured).mockReturnValue(true)
-      vi.mocked(resolveApp).mockResolvedValue(null)
+      vi.mocked(resolveAppVerified).mockResolvedValue(verifiedApp(null) as never)
 
       const result = await grantHumanWrite('my-co', 'alice')
       expect(result).toBe(false)
+      expect(console.warn).not.toHaveBeenCalledWith(
+        expect.stringContaining('registry lookup unverified')
+      )
+    })
+
+    // -----------------------------------------------------------------------
+    // #1494 — never grant write access on an unknown lookup
+    // -----------------------------------------------------------------------
+    it('refuses (false) on an UNVERIFIED registry read and logs it distinguishably from "no git org" (#1494)', async () => {
+      vi.mocked(configured).mockReturnValue(true)
+      vi.mocked(resolveAppVerified).mockResolvedValue({ entry: null, verified: false } as never)
+
+      const result = await grantHumanWrite('my-co', 'alice')
+
+      expect(result).toBe(false)
+      // The whole point of the safe direction here: no access is granted on a
+      // lookup we could not complete.
+      expect(addCollaborator).not.toHaveBeenCalled()
+      expect(console.warn).toHaveBeenCalledWith(
+        expect.stringContaining('registry lookup unverified')
+      )
+    })
+
+    it('treats a rejecting registry read as unverified and never throws (#1494)', async () => {
+      vi.mocked(configured).mockReturnValue(true)
+      vi.mocked(resolveAppVerified).mockRejectedValue(new Error('zerodb timeout'))
+
+      await expect(grantHumanWrite('my-co', 'alice')).resolves.toBe(false)
+      expect(addCollaborator).not.toHaveBeenCalled()
     })
 
     it('delegates to addCollaborator with the default "write" permission', async () => {
       vi.mocked(configured).mockReturnValue(true)
-      vi.mocked(resolveApp).mockResolvedValue({ gitOrg: 'org-1' } as never)
+      vi.mocked(resolveAppVerified).mockResolvedValue(verifiedApp({ gitOrg: 'org-1' }) as never)
       vi.mocked(addCollaborator).mockResolvedValue(true)
 
       const result = await grantHumanWrite('my-co', 'alice')
@@ -269,7 +348,7 @@ describe('#1201 lib/git/company-repo — network-touching functions', () => {
 
     it('passes through an explicit non-default permission', async () => {
       vi.mocked(configured).mockReturnValue(true)
-      vi.mocked(resolveApp).mockResolvedValue({ gitOrg: 'org-1' } as never)
+      vi.mocked(resolveAppVerified).mockResolvedValue(verifiedApp({ gitOrg: 'org-1' }) as never)
       vi.mocked(addCollaborator).mockResolvedValue(true)
 
       await grantHumanWrite('my-co', 'alice', 'read')

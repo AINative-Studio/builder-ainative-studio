@@ -22,7 +22,7 @@ afterEach(() => {
 describe('commitTaskChanges — real error detail (#698 follow-up)', () => {
   it('includes the real thrown message in the failure reason instead of a bare constant', async () => {
     vi.doMock('@/lib/build/app-registry', () => ({
-      resolveApp: vi.fn(async () => ({ gitOrg: 'ws-1' })),
+      resolveAppVerified: vi.fn(async () => ({ entry: { gitOrg: 'ws-1' }, verified: true })),
     }))
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       const u = String(url)
