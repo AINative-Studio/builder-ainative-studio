@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { parse as babelParse } from '@babel/parser'
 import { flattenMultiFile, parseFiles, hasLocalImports } from '@/lib/build/flatten-multifile'
+import { detectRootComponent } from '@/lib/component-detector'
 
 const multi = [
   '// --- FILE: src/App.tsx ---',
@@ -209,5 +210,118 @@ describe('flatten-multifile (#308)', () => {
     ].join('\n')
     const files = parseFiles(withInlineBackticks)
     expect(files['src/App.tsx']).toContain('`inline`')
+  })
+
+  // Real bug found via static analysis + a direct @babel/core repro (this
+  // loop's overnight rendering-correctness sweep): an anonymous default
+  // export (`export default function(){}`, `export default () => {}`,
+  // `export default class {}`) is just as common a way for a generated
+  // sibling component to export itself as the already-handled
+  // `export default function Foo(){}` shape. Confirmed two distinct real
+  // failure modes, both only reachable through THIS flattener (not the
+  // Sandpack multi-file editor path) because the sibling never goes through
+  // `lib/component-detector.ts`'s own anonymous-default-export handling on
+  // its own — only the single combined blob does, AFTER this file's own
+  // (previously unconditional) export-stripping regexes have already run on
+  // each child individually:
+  //   1. `export default function(){}` / `export default class {}` used to
+  //      strip to a bare, nameless `function(){}` / `class {}` STATEMENT —
+  //      itself a SyntaxError ("A class name is required" / "Unexpected
+  //      token") at the real app/api/preview/[id]/route.ts Babel-transform
+  //      step, which the route turns into `window.__BABEL_FAILED__ = true`
+  //      and skips rendering entirely — a true blank page. By the time that
+  //      route's own `detectRootComponent()` safety net runs on the combined
+  //      blob, the literal `export default` text is already gone (mangled
+  //      into the invalid bare statement), so it can't catch or fix this.
+  //   2. `export default () => {}` (or any other non-identifier expression)
+  //      didn't match any stripping regex at all, so the literal `export
+  //      default` text survived into the final blob. `detectRootComponent()`
+  //      DOES then find it — but as the FIRST (and only) `export default` in
+  //      the whole blob, so it silently votes the SIBLING's anonymous export
+  //      as the page's root component instead of the real (already-named)
+  //      App — the real page layout never renders, just the sibling's
+  //      fragment, with no error or blank-page signal at all.
+  describe('anonymous default export in a sibling file (no name to bind)', () => {
+    it('sibling with `export default function(){}` is named, not left as an invalid bare statement', () => {
+      const raw = [
+        '// --- FILE: src/App.tsx ---',
+        "import Footer from './Footer'",
+        'export default function App(){ return (<div><Footer/></div>) }',
+        '// --- FILE: src/Footer.tsx ---',
+        'export default function(){ return <footer>F</footer> }',
+      ].join('\n')
+      const out = flattenMultiFile(raw)
+      expect(out).not.toMatch(/\bfunction\s*\(/) // no nameless function statement
+      expect(out).not.toMatch(/export\s+default/)
+      expect(() =>
+        babelParse(out, { sourceType: 'script', plugins: ['jsx', 'typescript'] }),
+      ).not.toThrow()
+      // The import's own local binding name is what App's JSX actually uses —
+      // naming the sibling anything else would leave <Footer/> unresolved.
+      expect(out).toMatch(/function\s+Footer\s*\(/)
+    })
+
+    it('sibling with `export default class {}` is named, not left as an invalid bare statement', () => {
+      const raw = [
+        '// --- FILE: src/App.tsx ---',
+        "import Footer from './Footer'",
+        'export default function App(){ return (<div><Footer/></div>) }',
+        '// --- FILE: src/Footer.tsx ---',
+        'export default class { render(){ return <footer>F</footer> } }',
+      ].join('\n')
+      const out = flattenMultiFile(raw)
+      expect(out).not.toMatch(/\bclass\s*\{/) // no nameless class statement
+      expect(out).not.toMatch(/export\s+default/)
+      expect(() =>
+        babelParse(out, { sourceType: 'script', plugins: ['jsx', 'typescript'] }),
+      ).not.toThrow()
+      expect(out).toMatch(/class\s+Footer\b/)
+    })
+
+    it('sibling with `export default () => {}` is named, not left as a dangling export statement', () => {
+      const raw = [
+        '// --- FILE: src/App.tsx ---',
+        "import Footer from './Footer'",
+        'export default function App(){ return (<div><h1>Real App</h1><Footer/></div>) }',
+        '// --- FILE: src/Footer.tsx ---',
+        "export default () => { return <footer>F</footer> }",
+      ].join('\n')
+      const out = flattenMultiFile(raw)
+      expect(out).not.toMatch(/export\s+default/)
+      expect(out).toMatch(/const\s+Footer\s*=/)
+
+      // The real regression: before the fix, detectRootComponent() found the
+      // sibling's leftover `export default` and voted IT as the page's root
+      // component instead of the real App — the actual layout (the <h1>)
+      // would never render. Confirm the real App is what gets detected now.
+      const detection = detectRootComponent(out)
+      expect(detection.name).toBe('App')
+      expect(detection.source).toBe('pascalcase-jsx')
+    })
+
+    it('the entry file itself (App.tsx) with an anonymous default export is named `App`', () => {
+      // A lone FILE-marker with no local imports hits flattenMultiFile's
+      // documented no-op shortcut (paths.length <= 1) and is intentionally
+      // returned unchanged — app/api/preview/[id]/route.ts's OWN
+      // detectRootComponent() call already handles a genuinely single-file
+      // anonymous default export on its own (there's only one `export
+      // default` in the whole blob, so no sibling can be misdetected as the
+      // root the way the multi-file case above demonstrates). Covered by
+      // this suite's own "single-file input is returned unchanged" test;
+      // not re-asserted here.
+
+      // Multi-file path (App has local imports, so it goes through the
+      // real appBody = stripImportsAndExports(appCode, 'App') call).
+      const multiFile = [
+        '// --- FILE: src/App.tsx ---',
+        "import Footer from './Footer'",
+        'export default () => { return (<div><Footer/></div>) }',
+        '// --- FILE: src/Footer.tsx ---',
+        'export default function Footer(){ return <footer>F</footer> }',
+      ].join('\n')
+      const out2 = flattenMultiFile(multiFile)
+      expect(out2).not.toMatch(/export\s+default/)
+      expect(out2).toMatch(/const\s+App\s*=/)
+    })
   })
 })
