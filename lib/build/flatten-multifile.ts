@@ -168,6 +168,21 @@ function nameAnonymousDefaultExport(code: string, fallbackName: string): string 
  * harmless stub (a no-op component for PascalCase names, `undefined` for
  * anything else) instead of silently vanishing — better a missing/blank
  * section than the whole app throwing before anything renders.
+ *
+ * Found this run (continuing the same bug class, now via static analysis +
+ * a direct repro against this function): the regex above only matched a
+ * line with a `{...}` named clause — a BARE DEFAULT import from an external
+ * package (`import Modal from 'some-ui-lib'`, no named clause at all) never
+ * matched it, so it fell through untouched into the generic unconditional
+ * import-strip regex below with no stub generated, leaving `<Modal/>` as an
+ * undeclared bare identifier — the identical crash/blank-section outcome as
+ * the Dispatch bug, just for a default import instead of a named one.
+ * Widened the regex to also recognize a bare default-only import (no `{}`),
+ * so it now covers all three shapes a generated sibling actually uses:
+ * `import Default from 'pkg'`, `import { Named } from 'pkg'`, and the
+ * combined `import Default, { Named } from 'pkg'` — each stubbed the same
+ * way. A relative or GLOBALLY_PROVIDED_PACKAGES import is untouched exactly
+ * as before.
  */
 function stripImportsAndExports(code: string, fallbackName = 'DefaultComponent'): string {
   const stubs: string[] = []
@@ -176,12 +191,13 @@ function stripImportsAndExports(code: string, fallbackName = 'DefaultComponent')
   const named = nameAnonymousDefaultExport(code, fallbackName)
 
   const withStubbedExternals = named.replace(
-    /^\s*import\s+(?:(\w+)\s*,\s*)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"];?\s*$/gm,
-    (full, defaultName: string | undefined, named: string, pkg: string) => {
+    /^\s*import\s+(?:(\w+)(?:\s*,\s*\{([^}]*)\})?|\{([^}]*)\})\s*from\s*['"]([^'"]+)['"];?\s*$/gm,
+    (full, defaultOnly: string | undefined, namedWithDefault: string | undefined, namedOnly: string | undefined, pkg: string) => {
       if (GLOBALLY_PROVIDED_PACKAGES.has(pkg) || pkg.startsWith('./') || pkg.startsWith('../')) return full
+      const namedClause = namedWithDefault ?? namedOnly ?? ''
       const names = [
-        ...(defaultName ? [defaultName] : []),
-        ...named.split(',').map((n) => n.trim().split(/\s+as\s+/).pop()!.trim()).filter(Boolean),
+        ...(defaultOnly ? [defaultOnly] : []),
+        ...namedClause.split(',').map((n) => n.trim().split(/\s+as\s+/).pop()!.trim()).filter(Boolean),
       ]
       for (const name of names) {
         if (stubbed.has(name)) continue

@@ -118,6 +118,54 @@ describe('flatten-multifile (#308)', () => {
     expect(() => babelParse(out, { sourceType: 'module', plugins: ['jsx', 'typescript'] })).not.toThrow()
   })
 
+  /**
+   * Found this run (static analysis + direct repro against this function,
+   * continuing the Dispatch bug class above): the stub regex only matched a
+   * line with a `{...}` named clause. A BARE DEFAULT import from an
+   * external, non-backed package (`import Modal from 'some-ui-lib'`, no
+   * named clause at all) never matched it, so it fell through untouched
+   * into the generic unconditional import-strip regex below with no stub
+   * generated — leaving `<Modal/>` as an undeclared bare identifier, the
+   * same ReferenceError-class crash as the named-import case, just reached
+   * via a plain default import instead.
+   */
+  it('stubs a bare DEFAULT import from a package NOT backed by preview globals', () => {
+    const defaultOnlyImport = [
+      '// --- FILE: src/App.tsx ---',
+      "import Header from './components/Header'",
+      "import Modal from 'some-ui-lib'",
+      'export default function App(){ return (<div><Header/><Modal>hi</Modal></div>) }',
+      '// --- FILE: src/components/Header.tsx ---',
+      'export default function Header(){ return <header>H</header> }',
+    ].join('\n')
+    const out = flattenMultiFile(defaultOnlyImport)
+    expect(out).not.toMatch(/from\s*['"]some-ui-lib['"]/)
+    expect(out).toMatch(/function Modal\b/)
+    expect(out).toMatch(/stub:.*some-ui-lib/)
+    expect(() => babelParse(out, { sourceType: 'module', plugins: ['jsx', 'typescript'] })).not.toThrow()
+  })
+
+  /**
+   * Same gap, combined clause: `import Default, { Named } from 'pkg'` from a
+   * non-backed external package must stub BOTH the default and named
+   * bindings, not just one or the other.
+   */
+  it('stubs both halves of a combined default+named import from a package NOT backed by preview globals', () => {
+    const combinedImport = [
+      '// --- FILE: src/App.tsx ---',
+      "import Header from './components/Header'",
+      "import Styled, { css } from 'styled-components'",
+      'export default function App(){ return (<div><Header/><Styled>hi</Styled></div>) }',
+      '// --- FILE: src/components/Header.tsx ---',
+      'export default function Header(){ return <header>H</header> }',
+    ].join('\n')
+    const out = flattenMultiFile(combinedImport)
+    expect(out).not.toMatch(/from\s*['"]styled-components['"]/)
+    expect(out).toMatch(/function Styled\b/)
+    expect(out).toMatch(/const css = undefined/)
+    expect(() => babelParse(out, { sourceType: 'module', plugins: ['jsx', 'typescript'] })).not.toThrow()
+  })
+
   it('does NOT stub imports from packages the preview scaffold genuinely backs (react, recharts, lucide-react)', () => {
     const safeImports = [
       '// --- FILE: src/App.tsx ---',
