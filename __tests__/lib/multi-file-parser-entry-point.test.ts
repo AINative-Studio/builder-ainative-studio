@@ -121,4 +121,36 @@ describe('parseMultiFileOutput: entry-point synthesis for a mainFile with no App
       expect(files['/src/App.tsx']).toMatch(/^import \w+ from '\.\/page'\nexport default \w+$/)
     })
   })
+
+  // Follow-up hardening (same run as #1519/#1520): the fix above denylisted only
+  // `class`/`function`/`async` (the one repro'd shape). The underlying flaw is
+  // general -- `/export\s+default\s+(\w+)/` captures ANY word right after
+  // `default `, reserved or not -- so other reserved words right after
+  // `export default ` reproduce the identical guaranteed-SyntaxError failure
+  // through the same mechanism. Covered via the full reserved-word set instead
+  // of a 3-item denylist.
+  describe('mainFile default-exports a reserved-word-prefixed expression (extractDefaultExport must not capture any JS keyword)', () => {
+    it('`export default new Foo()` does not capture "new"', () => {
+      const raw = [
+        '// --- FILE: /src/page.tsx ---',
+        'class HomePage { render() { return <div>hi</div> } }',
+        'export default new HomePage()',
+      ].join('\n')
+      const files = parseMultiFileOutput(raw, 'test prompt')
+      expect(files['/src/App.tsx']).toBeDefined()
+      expect(files['/src/App.tsx']).not.toMatch(/\bimport\s+new\b/)
+    })
+
+    it('`export default typeof window !== \'undefined\' ? A : B` does not capture "typeof"', () => {
+      const raw = [
+        '// --- FILE: /src/page.tsx ---',
+        'function A() { return <div>a</div> }',
+        'function B() { return <div>b</div> }',
+        "export default typeof window !== 'undefined' ? A : B",
+      ].join('\n')
+      const files = parseMultiFileOutput(raw, 'test prompt')
+      expect(files['/src/App.tsx']).toBeDefined()
+      expect(files['/src/App.tsx']).not.toMatch(/\bimport\s+typeof\b/)
+    })
+  })
 })

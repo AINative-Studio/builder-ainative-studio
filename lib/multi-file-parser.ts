@@ -123,16 +123,34 @@ function normalizeFilePath(path: string): string {
  * Fix: match a named class export explicitly (requiring the captured name be
  * followed by `extends` or `{`, so the anonymous `class extends X {` shape
  * can't mis-capture `extends` as the name), and guard the bare-identifier
- * fallback against ever returning the `class`/`function`/`async` keywords
- * themselves.
+ * fallback against ever returning a JS reserved word.
+ *
+ * Follow-up hardening (same run): the original fix only denylisted
+ * `class`/`function`/`async` — the three shapes a repro was written for —
+ * but the bare-identifier regex's underlying flaw is general: `\w+` greedily
+ * captures ANY word right after `default `, reserved or not, so
+ * `export default new Foo()`, `export default typeof x !== 'undefined' ? x
+ * : y`, `export default void 0`, etc. would reproduce the identical
+ * guaranteed-SyntaxError failure (`import new from './page'` etc.) through
+ * the exact same mechanism, just with a different reserved word. Replaced
+ * the 3-item denylist with the full ES reserved-word set so the guard covers
+ * the bug class, not just the one repro'd shape.
  */
+const JS_RESERVED_WORDS = new Set([
+  'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger',
+  'default', 'delete', 'do', 'else', 'export', 'extends', 'finally', 'for',
+  'function', 'if', 'import', 'in', 'instanceof', 'new', 'return', 'super',
+  'switch', 'this', 'throw', 'try', 'typeof', 'var', 'void', 'while', 'with',
+  'yield', 'let', 'static', 'await', 'async', 'null', 'true', 'false',
+])
+
 function extractDefaultExport(code: string): string | null {
   const namedFn = code.match(/export\s+default\s+function\s+(\w+)/)
   if (namedFn) return namedFn[1]
   const namedClass = code.match(/export\s+default\s+class\s+(\w+)\s*(?:extends\b|\{)/)
   if (namedClass) return namedClass[1]
   const bareRef = code.match(/export\s+default\s+(\w+)/)
-  if (bareRef && !['class', 'function', 'async'].includes(bareRef[1])) return bareRef[1]
+  if (bareRef && !JS_RESERVED_WORDS.has(bareRef[1])) return bareRef[1]
   const fnDecl = code.match(/function\s+([A-Z]\w+)\s*\(/)
   return fnDecl ? fnDecl[1] : null
 }
