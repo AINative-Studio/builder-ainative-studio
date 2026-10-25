@@ -187,8 +187,13 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
       },
     }
   }
-  // export default class {} / class extends X {}
-  const anonClass = code.match(/export\s+default\s+class(\s+extends\s+\w+)?\s*\{/)
+  // export default class {} / class extends X {} / class extends X.Y {}
+  // The extends target must allow dotted member expressions (`\w+` alone
+  // missed them) — `export default class extends React.Component {` is a
+  // common anonymous-class shape in generated code and this regex simply
+  // never matched it, falling through all the way to priority 3/4 and
+  // either mis-detecting an unrelated component or returning null.
+  const anonClass = code.match(/export\s+default\s+class(\s+extends\s+[\w.]+)?\s*\{/)
   if (anonClass) {
     return {
       name: ANON_DEFAULT_NAME,

@@ -3,9 +3,10 @@
 import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { SEED_SHOWCASE, SHOWCASE_CATEGORIES, type ShowcaseEntry } from '@/lib/showcase-data'
+import { detectRootComponent } from '@/lib/component-detector'
 
 // Build a self-contained HTML page that renders React code using CDN scripts
-function buildPreviewHtml(code: string): string {
+export function buildPreviewHtml(code: string): string {
   let cleanCode = code
 
   // Handle multi-file output — extract only the main App file
@@ -21,12 +22,22 @@ function buildPreviewHtml(code: string): string {
   const fenceMatch = cleanCode.match(/```(?:jsx?|tsx?)\s*\n([\s\S]*?)```/)
   if (fenceMatch) cleanCode = fenceMatch[1]
 
-  // Detect component name BEFORE stripping exports
-  const exportMatch = cleanCode.match(/export\s+default\s+function\s+([A-Z]\w+)/)
-  const exportConstMatch = cleanCode.match(/export\s+default\s+([A-Z]\w+)/)
-  const funcDeclMatch = cleanCode.match(/^function\s+([A-Z]\w+)/m)
-  const constDeclMatch = cleanCode.match(/^const\s+([A-Z]\w+)\s*=/m)
-  const componentName = exportMatch?.[1] || funcDeclMatch?.[1] || exportConstMatch?.[1] || constDeclMatch?.[1] || 'App'
+  // Detect the root component to render BEFORE stripping exports — reuses
+  // the same comprehensive, already-tested detector (builder#82) the live
+  // preview route and code-validator rely on, instead of this page's own
+  // narrower 4-regex cascade (issue #1523). The old bare-identifier branch
+  // (`export\s+default\s+([A-Z]\w+)`, requiring an uppercase first char) never
+  // matched a class-exported or anonymous component, silently falling back to
+  // the literal string 'App' — this showcase preview would then render its
+  // generic "Preview" placeholder instead of the real generated component for
+  // any dynamic entry shaped that way. `detectRootComponent` also covers the
+  // anonymous-export case via a `rewrite`, which must be applied before the
+  // `export default` strip below.
+  const detection = detectRootComponent(cleanCode)
+  if (detection.rewrite) {
+    cleanCode = cleanCode.replace(detection.rewrite.find, detection.rewrite.replace)
+  }
+  const componentName = detection.name || 'App'
 
   // Strip imports and exports
   cleanCode = cleanCode

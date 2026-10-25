@@ -100,6 +100,20 @@ describe('detectRootComponent', () => {
       const rewritten = code.replace(r.rewrite!.find, r.rewrite!.replace)
       expect(rewritten).toContain(`class ${ANON_DEFAULT_NAME} {`)
     })
+
+    it('detects anonymous `export default class extends React.Component {}` (dotted extends target)', () => {
+      // Regression: the extends-target group used to be `\w+`, which cannot
+      // match a dotted member expression, so this common anonymous-class
+      // shape never matched at all and fell through to priority 3/4.
+      const code = `export default class extends React.Component {\n  render() { return <div/> }\n}`
+      const r = detectRootComponent(code)
+      expect(r.name).toBe(ANON_DEFAULT_NAME)
+      expect(r.source).toBe('default-export-anonymous')
+      expect(r.rewrite).toBeDefined()
+      const rewritten = code.replace(r.rewrite!.find, r.rewrite!.replace)
+      expect(rewritten).toContain(`class ${ANON_DEFAULT_NAME} extends React.Component {`)
+      expect(rewritten).not.toMatch(/export\s+default/)
+    })
   })
 
   describe('priority 3 — PascalCase component returning JSX (no default export)', () => {
