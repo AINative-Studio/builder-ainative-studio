@@ -245,15 +245,17 @@ describe('provisionCompanyRepo wires in createRepoWebhook (#1092)', () => {
       .mockResolvedValueOnce(
         jsonResponse(201, { id: 5, type: 'gitea', config: { url: TARGET }, events: ['push', 'pull_request'], active: true }),
       )
+      // #1531 — setRepoTopics PUT (now also wired into provisionCompanyRepo)
+      .mockResolvedValueOnce(jsonResponse(204, undefined))
 
     const result = await provisionCompanyRepo('acme-workspace', 'acme')
 
     expect(result?.org.username).toBe('ws-acme')
     expect(result?.repo.name).toBe('acme')
-    // 6 calls total: ensureOrg(2) + createRepo(2) + webhook(2)
-    expect(fetch).toHaveBeenCalledTimes(6)
-    const lastCall = vi.mocked(fetch).mock.calls[5]
-    expect(String(lastCall[0])).toContain('/hooks')
+    // 7 calls total: ensureOrg(2) + createRepo(2) + webhook(2) + topics(1)
+    expect(fetch).toHaveBeenCalledTimes(7)
+    const hookCall = vi.mocked(fetch).mock.calls[5]
+    expect(String(hookCall[0])).toContain('/hooks')
   })
 
   it('still returns the org+repo when the webhook step fails — never blocks provisioning', async () => {
@@ -268,6 +270,8 @@ describe('provisionCompanyRepo wires in createRepoWebhook (#1092)', () => {
       .mockResolvedValueOnce(jsonResponse(500, { message: 'gitea down' }))
       // webhook create also fails
       .mockResolvedValueOnce(jsonResponse(500, { message: 'gitea down' }))
+      // #1531 — setRepoTopics still runs after the webhook step, regardless of its outcome
+      .mockResolvedValueOnce(jsonResponse(204, undefined))
 
     const result = await provisionCompanyRepo('acme-workspace', 'acme')
 
