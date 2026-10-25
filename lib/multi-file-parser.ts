@@ -103,12 +103,38 @@ function normalizeFilePath(path: string): string {
   return path
 }
 
-/** Extract the default export name from a component file */
+/**
+ * Extract the default export name from a component file.
+ *
+ * Real bug (overnight-loop static sweep, 2026-10-25): the bare-identifier
+ * alternative below (`export\s+default\s+(\w+)`) used to run BEFORE any
+ * class-aware check, so for a class component -- `export default class Foo
+ * extends React.Component {` or even the fully anonymous `export default
+ * class extends React.Component {` -- `\w+` greedily grabbed the reserved
+ * word `class` itself right after `default `, since the only prior
+ * alternative requires the literal `function` keyword and never matches a
+ * class at all. The caller (parseMultiFileOutput's "ensure entry point
+ * exists" fallback) then synthesized `import class from './page'` --
+ * `class` can never be a binding identifier, so this is a guaranteed Babel
+ * SyntaxError / blank preview. Because the match was non-null (the string
+ * "class"), the `|| 'GeneratedMainPage'` fallback #1507 added for a
+ * genuinely-unmatched anonymous export never engaged either.
+ *
+ * Fix: match a named class export explicitly (requiring the captured name be
+ * followed by `extends` or `{`, so the anonymous `class extends X {` shape
+ * can't mis-capture `extends` as the name), and guard the bare-identifier
+ * fallback against ever returning the `class`/`function`/`async` keywords
+ * themselves.
+ */
 function extractDefaultExport(code: string): string | null {
-  const match = code.match(/export\s+default\s+function\s+(\w+)/)
-    || code.match(/export\s+default\s+(\w+)/)
-    || code.match(/function\s+([A-Z]\w+)\s*\(/)
-  return match ? match[1] : null
+  const namedFn = code.match(/export\s+default\s+function\s+(\w+)/)
+  if (namedFn) return namedFn[1]
+  const namedClass = code.match(/export\s+default\s+class\s+(\w+)\s*(?:extends\b|\{)/)
+  if (namedClass) return namedClass[1]
+  const bareRef = code.match(/export\s+default\s+(\w+)/)
+  if (bareRef && !['class', 'function', 'async'].includes(bareRef[1])) return bareRef[1]
+  const fnDecl = code.match(/function\s+([A-Z]\w+)\s*\(/)
+  return fnDecl ? fnDecl[1] : null
 }
 
 /** Recharts components that may be used in generated code */

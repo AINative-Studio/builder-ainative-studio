@@ -68,4 +68,57 @@ describe('parseMultiFileOutput: entry-point synthesis for a mainFile with no App
     const files = parseMultiFileOutput(raw, 'test prompt')
     expect(files['/src/App.tsx']).toContain('real app')
   })
+
+  // Real bug (overnight-loop static sweep, 2026-10-25): extractDefaultExport()'s
+  // second alternative, `/export\s+default\s+(\w+)/`, matches the reserved
+  // word `class` itself whenever mainFile's default export is a class
+  // component — named OR anonymous, with or without `extends` — because
+  // `\w+` greedily grabs the literal keyword right after `default `, and the
+  // first alternative (which requires the literal `function` keyword) never
+  // matches a class at all. The synthesized entry point then does
+  // `import class from './page'` — `class` is a reserved word and can never
+  // be a binding identifier, so this is a guaranteed Babel SyntaxError /
+  // blank preview, not a degraded one. Because the match is non-null (it's
+  // the string "class"), the `|| 'GeneratedMainPage'` fallback #1507 added
+  // for a genuinely-unmatched anonymous export never engages either.
+  describe('mainFile default-exports a class component (extractDefaultExport must not capture the "class" keyword)', () => {
+    it('named class component with `extends`', () => {
+      const raw = [
+        '// --- FILE: /src/page.tsx ---',
+        "import React from 'react'",
+        'export default class HomePage extends React.Component {',
+        '  render() { return <div>hi</div> }',
+        '}',
+      ].join('\n')
+      const files = parseMultiFileOutput(raw, 'test prompt')
+      expect(files['/src/App.tsx']).toBeDefined()
+      expect(files['/src/App.tsx']).not.toMatch(/\bimport\s+class\b/)
+      expect(files['/src/App.tsx']).toMatch(/^import HomePage from '\.\/page'\nexport default HomePage$/)
+    })
+
+    it('named class component with no `extends`', () => {
+      const raw = [
+        '// --- FILE: /src/page.tsx ---',
+        'export default class HomePage {',
+        '  render() { return <div>hi</div> }',
+        '}',
+      ].join('\n')
+      const files = parseMultiFileOutput(raw, 'test prompt')
+      expect(files['/src/App.tsx']).not.toMatch(/\bimport\s+class\b/)
+      expect(files['/src/App.tsx']).toMatch(/^import HomePage from '\.\/page'\nexport default HomePage$/)
+    })
+
+    it('anonymous class component falls back to the #1507 placeholder, not the "class" keyword', () => {
+      const raw = [
+        '// --- FILE: /src/page.tsx ---',
+        'export default class extends React.Component {',
+        '  render() { return <div>hi</div> }',
+        '}',
+      ].join('\n')
+      const files = parseMultiFileOutput(raw, 'test prompt')
+      expect(files['/src/App.tsx']).toBeDefined()
+      expect(files['/src/App.tsx']).not.toMatch(/\bimport\s+class\b/)
+      expect(files['/src/App.tsx']).toMatch(/^import \w+ from '\.\/page'\nexport default \w+$/)
+    })
+  })
 })
