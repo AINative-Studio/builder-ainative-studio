@@ -53,14 +53,15 @@ import { chatScopeKey } from '@/lib/build/chat-store'
 import { createDocument, hasReportForDate, pruneDuplicateReports } from '@/lib/build/document-store'
 import { buildDailyReport, dailyReportTitle } from '@/lib/build/document-prompts'
 import { runMediaRoutines } from '@/lib/build/media-routine'
-import { createTask, listTasks } from '@/lib/build/task-store'
+import { createTask, listTasks, updateTask, stageFromSwarmStatus } from '@/lib/build/task-store'
 import { runTaskResolutions } from '@/lib/build/task-resolution-loop'
 import { resolveApp } from '@/lib/build/app-registry'
 import { runNightlyCommsOutreach } from '@/lib/build/comms-policy'
 import { fetchPlanByEmail, type AdminPlanLookup } from '@/lib/ainative/admin-plan-lookup'
+import { getAinativeApiKey } from '@/lib/build/env-keys'
 import { normalizeTier } from '@/lib/ainative/plan'
 import { mapWithConcurrency, selectShard } from '@/lib/build/concurrent-map'
-import { assessSwarmHealth, MAX_TASKS_CHECKED, type SwarmHealthVerdict } from '@/lib/build/swarm-task-health'
+import { assessSwarmHealth, readTaskStatus, MAX_TASKS_CHECKED, type SwarmHealthVerdict } from '@/lib/build/swarm-task-health'
 import { logger } from '@/lib/logger'
 import type { LoopEnrollment } from '@/lib/build/loop-enrollment'
 
@@ -494,11 +495,9 @@ async function runForCompany(
     // todo task from the SAME description already sent to the swarm, so
     // there is something concrete for the resolver to actually implement.
     //
-    // 'app' track only: the resolver's pipeline commits a code diff to the
+    // 'app' track: the resolver's pipeline commits a code diff to the
     // company's Gitea repo and coverage-gates it — meaningful for an app's
-    // "bug fix / UX polish / small feature" description, not for the
-    // 'company' track's business-ops description (positioning, pipeline,
-    // outreach), which has no repo to commit into.
+    // "bug fix / UX polish / small feature" description.
     //
     // IDEMPOTENT: skip if this company already has an unresolved nightly
     // task (todo or in_progress, source:'recurring') so a slow/failing
@@ -534,6 +533,73 @@ async function runForCompany(
         }
       } catch (err) {
         logger.warn('Nightly backlog task seed failed', { companyId: e.companyId, err: (err as Error)?.message })
+      }
+    } else if (e.track === 'company') {
+      // #1521 — 'company' track had NO backlog visibility at all: the swarm
+      // dispatch above (dispatchSwarmTask → runNightlyLoop) IS real work —
+      // real task_id, real agent_types ['architect','data','docs'] — but
+      // nothing ever recorded it as a build_tasks row, so a company-track
+      // founder's Live dashboard / Tasks panel showed an empty backlog every
+      // night even while Cody was genuinely working. Confirmed live: every
+      // enrolled company-track company (paid and free) has real nightly
+      // run-event history with status:'dispatched', going back weeks — the
+      // work was never missing, only its visibility.
+      //
+      // Unlike 'app' track, there is no separate resolver pipeline to pick
+      // this up later — the swarm dispatch already happened above, in THIS
+      // same request. So: (1) first, true up LAST night's row (if one
+      // exists and carries a real swarm task_id) to its real current stage
+      // via the same core status-read endpoint swarmHealth already used
+      // this run, so a founder sees real todo→in_progress→completed/failed
+      // transitions across nights instead of a pile of rows stuck at
+      // 'in_progress' forever; (2) then seed tonight's row already
+      // reflecting what just happened (stage from r.status, same
+      // stageFromSwarmStatus() mapping app/api/build/swarm/route.ts already
+      // uses for this exact swarm-dispatch-outcome → BuildTask-stage shape).
+      try {
+        const scopeKey = chatScopeKey(e.ownerKey, e.companyId)
+        const existing = await listTasks(scopeKey)
+        const priorUnresolved = existing.find(
+          (t) => t.source === 'recurring' && t.taskId && (t.stage === 'todo' || t.stage === 'in_progress'),
+        )
+
+        // Step 1: true up last night's row (if any) to its real current stage.
+        let priorStageAfterUpdate = priorUnresolved?.stage ?? null
+        const key = getAinativeApiKey()
+        if (priorUnresolved && key) {
+          const state = await readTaskStatus(
+            { taskId: String(priorUnresolved.taskId), dispatchedAt: priorUnresolved.updatedAt },
+            key,
+          ).catch(() => null)
+          if (state) {
+            const realStage = stageFromSwarmStatus(state.status)
+            if (realStage !== priorUnresolved.stage) {
+              await updateTask(scopeKey, priorUnresolved.id, { stage: realStage })
+            }
+            priorStageAfterUpdate = realStage
+          }
+        }
+
+        // Step 2: seed tonight's row — only once the prior one has actually
+        // finished (completed/failed/rejected), same no-duplicate-while-
+        // unresolved guard the app-track branch uses above.
+        const priorStillUnresolved = priorStageAfterUpdate === 'todo' || priorStageAfterUpdate === 'in_progress'
+        if (!priorStillUnresolved && r.status === 'dispatched' && r.taskId) {
+          const detail = await buildNightlySeedDescription(
+            scopeKey,
+            { companyId: e.companyId, companyName: e.companyName, track: e.track, goal: e.goal },
+            r.briefing,
+          )
+          await createTask(scopeKey, {
+            title: `Nightly backlog: ${e.companyName}`,
+            detail,
+            stage: 'in_progress',
+            source: 'recurring',
+            taskId: r.taskId,
+          })
+        }
+      } catch (err) {
+        logger.warn('Company-track nightly backlog seed/update failed', { companyId: e.companyId, err: (err as Error)?.message })
       }
     }
 
