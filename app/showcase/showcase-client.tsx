@@ -3,9 +3,10 @@
 import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { SEED_SHOWCASE, SHOWCASE_CATEGORIES, type ShowcaseEntry } from '@/lib/showcase-data'
+import { detectRootComponent } from '@/lib/component-detector'
 
 // Build a self-contained HTML page that renders React code using CDN scripts
-function buildPreviewHtml(code: string): string {
+export function buildPreviewHtml(code: string): string {
   let cleanCode = code
 
   // Handle multi-file output — extract only the main App file
@@ -21,12 +22,18 @@ function buildPreviewHtml(code: string): string {
   const fenceMatch = cleanCode.match(/```(?:jsx?|tsx?)\s*\n([\s\S]*?)```/)
   if (fenceMatch) cleanCode = fenceMatch[1]
 
-  // Detect component name BEFORE stripping exports
-  const exportMatch = cleanCode.match(/export\s+default\s+function\s+([A-Z]\w+)/)
-  const exportConstMatch = cleanCode.match(/export\s+default\s+([A-Z]\w+)/)
-  const funcDeclMatch = cleanCode.match(/^function\s+([A-Z]\w+)/m)
-  const constDeclMatch = cleanCode.match(/^const\s+([A-Z]\w+)\s*=/m)
-  const componentName = exportMatch?.[1] || funcDeclMatch?.[1] || exportConstMatch?.[1] || constDeclMatch?.[1] || 'App'
+  // Detect component name BEFORE stripping exports. Uses the same shared,
+  // well-tested detector as code-validator.ts and the preview route (#1523)
+  // instead of a narrower ad-hoc regex set — the old 4-regex version here
+  // never matched an anonymous arrow/class default export (`export default
+  // () => {...}` / `export default class extends X {...}`), so those always
+  // fell through to the literal fallback 'App', which doesn't exist in the
+  // generated code, producing a blank preview.
+  const detection = detectRootComponent(cleanCode)
+  if (detection.rewrite) {
+    cleanCode = cleanCode.replace(detection.rewrite.find, detection.rewrite.replace)
+  }
+  const componentName = detection.name || 'App'
 
   // Strip imports and exports
   cleanCode = cleanCode
