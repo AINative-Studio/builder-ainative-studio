@@ -82,6 +82,72 @@ function baseName(path: string): string {
 const GLOBALLY_PROVIDED_PACKAGES = new Set(['react', 'react-dom', 'lucide-react', 'recharts'])
 
 /**
+ * Give an anonymous default export a real name before stripImportsAndExports'
+ * own export-stripping regexes run on it.
+ *
+ * Real bug (found this run via static analysis + a direct @babel/core repro,
+ * not yet filed): `export default function(){...}`, `export default
+ * class {...}`, and `export default () => {...}` (or any other inline
+ * default-export expression) are all common, ordinary ways a generated
+ * sibling component names itself — just as common as the already-handled
+ * `export default function Foo(){...}` / `export default Foo;` shapes. None
+ * of them survive this file's existing export-stripping regexes intact:
+ * - `export default function(){}` only matches the "export default
+ *   function" → "function" regex below, which doesn't check for a name —
+ *   it produces a bare `function(){}` STATEMENT, which is itself a
+ *   SyntaxError (function declarations require a name).
+ * - `export default class {}` is the same shape, same failure
+ *   (`class {}` statement — "A class name is required").
+ * - `export default () => {...}` (or any non-identifier expression) matches
+ *   NONE of the regexes below (they only strip a bare trailing identifier
+ *   reference), so the literal `export` keyword survives into the flattened
+ *   single-file output.
+ *
+ * That flattened output is injected into a plain, non-module `<script>` tag
+ * by app/api/preview/[id]/route.ts (the single-file preview powering
+ * /build/{slug} share pages for single-file apps) — no import/export syntax
+ * is valid there at all. Confirmed directly against this file's real
+ * @babel/core dependency: ALL THREE shapes throw at the Babel-transform step
+ * itself (either "Unexpected token" for the two malformed statements, or "A
+ * class name is required"), which route.ts's own try/catch turns into
+ * `window.__BABEL_FAILED__ = true` — the component-detection step is then
+ * skipped entirely, so the preview silently stays blank. Exactly the
+ * "blank page" crash class this repo's rendering-correctness effort exists
+ * to catch, just reached through this flattener instead of build-files.ts.
+ *
+ * `fallbackName` lets a caller that knows the importer's own local binding
+ * name (inline(), below, for a sibling file) give the synthetic declaration
+ * THAT name, so `<Footer/>` keeps resolving to the real component instead of
+ * falling back to route.ts's separate generic undefined-tag placeholder.
+ * Conservative like the rest of this file: a default-export expression that
+ * ISN'T the file's trailing statement (something follows it) is left
+ * untouched rather than guessing where it ends.
+ */
+function nameAnonymousDefaultExport(code: string, fallbackName: string): string {
+  const namedFunction = code.replace(
+    /(^|\n)(\s*)export\s+default\s+function(\s*)\(/,
+    (_m, pre: string, indent: string) => `${pre}${indent}export default function ${fallbackName}(`,
+  )
+  if (namedFunction !== code) return namedFunction
+
+  const namedClass = code.replace(
+    /(^|\n)(\s*)export\s+default\s+class(\s*)(\{|extends\b)/,
+    (_m, pre: string, indent: string, _sp: string, after: string) =>
+      `${pre}${indent}export default class ${fallbackName} ${after}`,
+  )
+  if (namedClass !== code) return namedClass
+
+  const trailingMatch = code.match(/(^|\n)(\s*)export\s+default\s+([\s\S]+?);?\s*$/)
+  if (trailingMatch && trailingMatch.index !== undefined && !/^[A-Za-z_$][\w$]*$/.test(trailingMatch[3].trim())) {
+    const prefix = code.slice(0, trailingMatch.index)
+    const [, pre, indent, expr] = trailingMatch
+    return `${prefix}${pre}${indent}const ${fallbackName} = ${expr};\nexport default ${fallbackName};`
+  }
+
+  return code
+}
+
+/**
  * Real bug found live (Dispatch, 2026-09-11): stripImportsAndExports used to
  * strip EVERY import line unconditionally, including named imports from
  * arbitrary external packages (e.g. `import { Card, Button, Dialog, Input }
@@ -103,11 +169,13 @@ const GLOBALLY_PROVIDED_PACKAGES = new Set(['react', 'react-dom', 'lucide-react'
  * anything else) instead of silently vanishing — better a missing/blank
  * section than the whole app throwing before anything renders.
  */
-function stripImportsAndExports(code: string): string {
+function stripImportsAndExports(code: string, fallbackName = 'DefaultComponent'): string {
   const stubs: string[] = []
   const stubbed = new Set<string>()
 
-  const withStubbedExternals = code.replace(
+  const named = nameAnonymousDefaultExport(code, fallbackName)
+
+  const withStubbedExternals = named.replace(
     /^\s*import\s+(?:(\w+)\s*,\s*)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"];?\s*$/gm,
     (full, defaultName: string | undefined, named: string, pkg: string) => {
       if (GLOBALLY_PROVIDED_PACKAGES.has(pkg) || pkg.startsWith('./') || pkg.startsWith('../')) return full
@@ -173,8 +241,10 @@ export function flattenMultiFile(raw: string): string {
   const appCode = files[appPath]
 
   if (!hasLocalImports(appCode)) {
-    // App doesn't import siblings — single-file render is fine.
-    return stripImportsAndExports(appCode)
+    // App doesn't import siblings — single-file render is fine. 'App' as the
+    // fallback name (an anonymous default export only) also matches
+    // app/api/preview/[id]/route.ts's own page-component-detection name list.
+    return stripImportsAndExports(appCode, 'App')
   }
 
   // Map local module basenames → their file code, so we inline in dependency order.
@@ -193,7 +263,12 @@ export function flattenMultiFile(raw: string): string {
       if (child && !seen.has(base)) {
         seen.add(base)
         inline(child) // transitive deps first
-        inlined.push(`// inlined from ${base}\n${stripImportsAndExports(child)}`)
+        // Prefer the importer's own local binding name (defaultName) as the
+        // fallback for an anonymous default export, so <Footer/> still
+        // resolves to the real component after naming it — falling back to
+        // the file's basename only for a named-import clause, where there's
+        // no single importer-local name to prefer.
+        inlined.push(`// inlined from ${base}\n${stripImportsAndExports(child, defaultName || base)}`)
       } else if (!child && defaultName && !seen.has(defaultName)) {
         // DANGLING import (builder#308): App imports a component the model never
         // emitted a file for (e.g. aerosol imported Cart/Footer with no Cart.tsx).
@@ -206,6 +281,6 @@ export function flattenMultiFile(raw: string): string {
   }
   inline(appCode)
 
-  const appBody = stripImportsAndExports(appCode)
+  const appBody = stripImportsAndExports(appCode, 'App')
   return [...stubbed, ...inlined, appBody].join('\n\n')
 }
