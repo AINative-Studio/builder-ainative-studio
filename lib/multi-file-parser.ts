@@ -65,11 +65,18 @@ export function parseMultiFileOutput(rawOutput: string, userPrompt?: string): Re
       f => f.includes('page.tsx') || f.includes('Page.tsx') || f.includes('App.tsx')
     )
     if (mainFile) {
-      // Create an App.tsx that re-exports the main component
-      const componentName = extractDefaultExport(files[mainFile])
-      if (componentName) {
-        files['/src/App.tsx'] = `import ${componentName} from '${mainFile.replace(/^\/src/, '.').replace(/\.tsx$/, '')}'\nexport default ${componentName}`
-      }
+      // Create an App.tsx that re-exports the main component. A default-export
+      // import binds positionally, not by name, so the local identifier here
+      // never has to match whatever (if anything) mainFile's export is called
+      // — extractDefaultExport() is only a best-effort naming nicety. Without
+      // this fallback, a mainFile whose default export is anonymous (e.g.
+      // `export default () => {...}`, matching none of extractDefaultExport's
+      // three regexes) silently produced NO entry point at all: Sandpack's
+      // fixed '/index.tsx' always does `import App from './App'`, so a
+      // missing entry is a guaranteed blank/crashed preview, not a degraded
+      // one — exactly the priority-1 failure this loop exists to catch.
+      const componentName = extractDefaultExport(files[mainFile]) || 'GeneratedMainPage'
+      files['/src/App.tsx'] = `import ${componentName} from '${mainFile.replace(/^\/src/, '.').replace(/\.tsx$/, '')}'\nexport default ${componentName}`
     }
   }
 
