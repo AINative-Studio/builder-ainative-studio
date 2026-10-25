@@ -1,7 +1,7 @@
 import { ImageResponse } from 'next/og'
 
 export const runtime = 'edge'
-export const alt = 'AINative Builder — Build production-ready React apps with AI in seconds'
+export const alt = 'AINative Builder — AI that builds AND runs your company'
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
 
@@ -42,20 +42,20 @@ export default async function Image() {
 
         {/* headline */}
         <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', fontSize: 76, fontWeight: 800, color: 'white', lineHeight: 1.05, letterSpacing: -2, marginBottom: 20 }}>
-            <div style={{ display: 'flex' }}>Build React apps</div>
-            <div style={{ display: 'flex' }}>with AI in seconds</div>
+          <div style={{ display: 'flex', flexDirection: 'column', fontSize: 72, fontWeight: 800, color: 'white', lineHeight: 1.05, letterSpacing: -2, marginBottom: 20 }}>
+            <div style={{ display: 'flex' }}>AI that builds AND</div>
+            <div style={{ display: 'flex' }}>runs your company</div>
           </div>
           <div style={{ fontSize: 30, color: 'rgba(255,255,255,0.9)', lineHeight: 1.3, maxWidth: 900 }}>
-            Production-ready, fully-interactive apps from a prompt — persistent
-            ZeroDB storage and AINative primitives built in.
+            Describe an idea and Cody builds a real product plus the CRM, billing,
+            and support behind it — running on AINative primitives you own.
           </div>
         </div>
 
         {/* bottom row: pills + url */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', gap: 14 }}>
-            {['Claude Sonnet 4', 'ZeroDB', 'Agent-Native', 'SEO + AX'].map((f) => (
+            {['ZeroDB', 'ZeroPipeline', 'ZeroInvoice', 'ZeroCommerce'].map((f) => (
               <div key={f} style={{ display: 'flex', padding: '12px 22px', borderRadius: 9999, background: 'rgba(255,255,255,0.18)', color: 'white', fontSize: 20, fontWeight: 600 }}>
                 {f}
               </div>
