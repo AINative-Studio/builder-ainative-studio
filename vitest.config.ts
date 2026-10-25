@@ -28,22 +28,30 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
-      // Scope coverage to the core builder business logic we own + test. Measuring
-      // the whole repo would dilute the number with hundreds of untested legacy UI
-      // files (making the % meaningless and CI useless). `lib/build` + `lib/growth`
-      // is where the testable logic lives; it currently sits at ~98%/100%.
-      include: ['lib/build/**', 'lib/growth/**', 'lib/help/**'],
+      // #1199: widened from lib/build+lib/growth+lib/help (the old scope, ~98%)
+      // to the two directories where UNIT tests are the right tool — lib/** in
+      // full and components/**. Measured directly before widening (2026-10-25):
+      // lib/ alone was 88.9%, components/ alone was 62.93%, and the two TOGETHER
+      // are 84.51% statements / 85.92% branches / 85.86% functions / 84.51%
+      // lines — already above the 80% floor below, so this widening is a real
+      // regression guard from day one, not an aspirational target nobody meets.
+      //
+      // app/** is deliberately excluded: its page.tsx/layout.tsx files are thin
+      // routing/composition shells meant to be covered by Playwright E2E (see
+      // app/api/** route handlers for the one exception that DOES get real unit
+      // coverage already — a good candidate for a future widening once its own
+      // aggregate is measured, per #1199's own staged-rollout framing).
+      include: ['lib/**', 'components/**'],
       exclude: [
         'node_modules/',
         '__tests__/',
         '*.config.{js,ts}',
         '.next/',
         'coverage/',
-        // Thin React hooks / re-export shims measured elsewhere; keep them in the
-        // number but never let a barrel file game the threshold.
+        '**/*.d.ts',
       ],
-      // CI gate: fail the run if core builder logic regresses below 80%. We are
-      // well above this today (statements ~98%, branches ~87%); the floor guards
+      // CI gate: fail the run if lib/+components/ coverage regresses below 80%.
+      // Measured well above this today (see note above); the floor guards
       // against future regressions. Raise as coverage climbs.
       thresholds: {
         statements: 80,
