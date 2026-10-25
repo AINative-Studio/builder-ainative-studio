@@ -228,4 +228,65 @@ export default function FounderDashboard() {
     expect(result.success).toBe(true)
     expect(result.html).toContain('Dashboard')
   })
+
+  describe('raw multi-file generator output (// --- FILE: ... ---)', () => {
+    // chat-ws/route.ts passes `finalContent` into buildInSandbox() with no
+    // multi-file check — it can be the raw `// --- FILE: ... ---` blob the
+    // generator actually produces, not a single file's code.
+    const MULTI_FILE_SIBLING_FIRST = `// --- FILE: src/components/Sidebar.tsx ---
+export default function Sidebar() {
+  return <aside>Nav</aside>
+}
+
+// --- FILE: src/App.tsx ---
+export default function App() {
+  return <div><h1>Real Founder App</h1></div>
+}
+`
+
+    function renderScriptSentToSandbox(): string {
+      const filesArg = mockRunSequence.mock.calls[0][0]
+      return filesArg['render.jsx']
+    }
+
+    it('picks the App file\'s own component, not a sibling that appears earlier in the raw blob', async () => {
+      mockIsE2BEnabled.mockReturnValue(true)
+      mockRunSequence.mockResolvedValue({
+        commandResults: [
+          { exitCode: 0, stdout: '', stderr: '', timedOut: false },
+          { exitCode: 0, stdout: '', stderr: '', timedOut: false },
+        ],
+        files: { 'output.html': '<div><h1>Real Founder App</h1></div>' },
+      })
+
+      const result = await buildInSandbox(MULTI_FILE_SIBLING_FIRST)
+
+      expect(result.success).toBe(true)
+      const script = renderScriptSentToSandbox()
+      // The render script must look for the real root component...
+      expect(script).toContain(`globalThis['App']`)
+      // ...and must never have shipped the sibling's own code at all (the
+      // old behavior rendered this fragment instead of the real App). Not a
+      // bare `.not.toContain('Sidebar')` -- the stub boilerplate below
+      // legitimately contains 'AIKitSidebar'.
+      expect(script).not.toContain('globalThis.Sidebar')
+      expect(script).not.toContain('<aside>Nav</aside>')
+    })
+
+    it('leaves genuinely single-file output (no FILE markers) completely unchanged', async () => {
+      mockIsE2BEnabled.mockReturnValue(true)
+      mockRunSequence.mockResolvedValue({
+        commandResults: [
+          { exitCode: 0, stdout: '', stderr: '', timedOut: false },
+          { exitCode: 0, stdout: '', stderr: '', timedOut: false },
+        ],
+        files: { 'output.html': REAL_HTML },
+      })
+
+      await buildInSandbox(SIMPLE_COMPONENT)
+
+      const script = renderScriptSentToSandbox()
+      expect(script).toContain(`globalThis['App']`)
+    })
+  })
 })
