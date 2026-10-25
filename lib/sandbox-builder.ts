@@ -41,6 +41,53 @@ function stripMarkdownFence(componentCode: string): string {
   return codeMatch ? codeMatch[1] : componentCode
 }
 
+const FILE_MARKER = /^\/\/\s*---\s*FILE:\s*(.+?)\s*---\s*$/
+
+/**
+ * `finalContent` reaching buildInSandbox() can be the RAW multi-file
+ * generator output (`// --- FILE: path --- ` markers, same format
+ * lib/multi-file-parser.ts splits) — confirmed live: chat-ws/route.ts's
+ * background "instant preview" SSR call passes it through unconditionally,
+ * with no multi-file check. detectComponentName()/buildRenderScript() below
+ * only understand a single file's worth of code: fed the whole raw blob,
+ * detectComponentName()'s un-flagged regex grabs the FIRST
+ * `export default function Name` in the ENTIRE blob, which is a sibling
+ * component's if the model emitted it before the real App/page file. The
+ * frozen SSR snapshot then silently renders that sibling fragment instead
+ * of the founder's real app (app/api/preview/[id]/route.ts serves this
+ * exact snapshot as a fallback when there's no live code to re-render).
+ * Extract just the App/page file's own content first so the single-file
+ * assumption below actually holds. PURE.
+ */
+function extractMainFileContent(rawOutput: string): string {
+  const lines = rawOutput.split('\n')
+  const files: Record<string, string> = {}
+  let currentFile: string | null = null
+  let currentContent: string[] = []
+  for (const line of lines) {
+    const match = line.match(FILE_MARKER)
+    if (match) {
+      if (currentFile) files[currentFile] = currentContent.join('\n').trim()
+      currentFile = match[1].trim()
+      currentContent = []
+    } else {
+      currentContent.push(line)
+    }
+  }
+  if (currentFile) files[currentFile] = currentContent.join('\n').trim()
+
+  // No markers found at all -- genuinely single-file input, untouched.
+  const names = Object.keys(files)
+  if (names.length === 0) return rawOutput
+
+  const mainFile =
+    names.find(f => /(^|\/)App\.tsx$/i.test(f)) ||
+    names.find(f => /(^|\/)page\.tsx$/i.test(f)) ||
+    names[0]
+
+  return mainFile ? files[mainFile] : rawOutput
+}
+
 /**
  * Detect the founder's component's name from its default export, falling
  * back to 'App'. PURE.
@@ -165,7 +212,7 @@ export async function buildInSandbox(componentCode: string): Promise<BuildResult
     }
   }
 
-  const stripped = stripMarkdownFence(componentCode)
+  const stripped = extractMainFileContent(stripMarkdownFence(componentCode))
   const compName = detectComponentName(stripped)
   const renderScript = buildRenderScript(stripped, compName)
 
