@@ -39,6 +39,7 @@ import { planUnlocks } from '@/lib/build/state'
 import { processConversation } from '@/lib/agent/zeromemory'
 import { detectEditIntent, QUESTION_STARTERS } from '@/lib/build/edit-intent'
 import { createIssue, listIssues } from '@/lib/git/gitea-client'
+import { createTask } from '@/lib/build/task-store'
 import { ensureChatSummary } from '@/lib/build/chat-summary'
 import { ensureCompanyProfile } from '@/lib/build/company-profile'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
@@ -411,23 +412,50 @@ export async function askCody(params: AskCodyParams): Promise<AskCodyResult | { 
   //     complaint or an aside that isn't obviously a request) — ONLY run
   //     when the heuristic didn't already resolve it, to bound the extra
   //     latency/cost to the cases that actually need it.
-  // Either path files a REAL Gitea issue in the company's own repo before
-  // the system prompt is built, so `realWorkFiledThisTurn` can gate whether
-  // "I'll wire that"/"it's in the queue" language is actually true this turn.
-  let realWorkFiledThisTurn: { issueNumber: number; title: string } | null = null
-  if (companyId && app?.gitOrg && paid && !editTriggered) {
+  // Either path files REAL tracked work before the system prompt is built, so
+  // `realWorkFiledThisTurn` can gate whether "I'll wire that"/"it's in the
+  // queue" language is actually true this turn. An app-track founder with a
+  // git-provisioned repo gets a real Gitea issue (unchanged). A company-track
+  // founder (#1533) has no code repo to file an issue against — a genuine
+  // request from them was previously tracked NOWHERE (no Gitea issue, since
+  // `app.gitOrg` can structurally never be set for a track with no code to
+  // commit; no build_tasks row either, since this was the only code path that
+  // created one for a chat-originated request). That branch now creates a
+  // plain build_tasks row instead, using the same primitive the nightly-loop
+  // backlog-seeding path (#1522) and /api/build/tasks already read/write —
+  // it surfaces in the founder's real Tasks panel via listTasksForCompany().
+  let realWorkFiledThisTurn:
+    | { kind: 'issue'; issueNumber: number; title: string }
+    | { kind: 'task'; title: string }
+    | null = null
+  if (companyId && paid && !editTriggered) {
     const looksLikeAGenuineRequest = await isLikelyChangeRequest(question)
     if (looksLikeAGenuineRequest) {
       const title = question.length > 80 ? `${question.slice(0, 79)}…` : question
-      const created = await createIssue(
-        app.gitOrg,
-        companyId,
-        title,
-        `${question}\n\n---\nFiled automatically from a founder chat message (#774) — Cody said or was about to say ` +
-          `this is queued/being worked on, so a real tracked issue backs that claim.`,
-      ).catch(() => null)
-      if (created?.ok && created.issueNumber) {
-        realWorkFiledThisTurn = { issueNumber: created.issueNumber, title }
+      if (app?.gitOrg) {
+        const created = await createIssue(
+          app.gitOrg,
+          companyId,
+          title,
+          `${question}\n\n---\nFiled automatically from a founder chat message (#774) — Cody said or was about to say ` +
+            `this is queued/being worked on, so a real tracked issue backs that claim.`,
+        ).catch(() => null)
+        if (created?.ok && created.issueNumber) {
+          realWorkFiledThisTurn = { kind: 'issue', issueNumber: created.issueNumber, title }
+        }
+      } else if (track === 'company' && scopeKey) {
+        const created = await createTask(scopeKey, {
+          title,
+          detail:
+            `${question}\n\nFiled automatically from a founder chat message (#1533) — Cody said or was about to ` +
+            `say this is queued/being worked on, so a real tracked task backs that claim. (Company-track venture ` +
+            `— no code repo exists yet to file a Gitea issue against.)`,
+          source: 'cody',
+          stage: 'todo',
+        }).catch(() => null)
+        if (created) {
+          realWorkFiledThisTurn = { kind: 'task', title }
+        }
       }
     }
   }
@@ -478,7 +506,13 @@ export async function askCody(params: AskCodyParams): Promise<AskCodyResult | { 
         ? `When they ask for a change or feature: confirm you're on it in first person ` +
           `("I'll wire that next — it's in the queue for tonight's run"), name the concrete backlog items ` +
           `it maps to, and point at the real levers they already have (Auto Mode, the nightly loop, ` +
-          `regenerating the app from the workspace).${realWorkFiledThisTurn ? ` A real tracked issue (#${realWorkFiledThisTurn.issueNumber}) was just filed in their company repo for this — you may reference it directly.` : ''}\n`
+          `regenerating the app from the workspace).${
+            realWorkFiledThisTurn?.kind === 'issue'
+              ? ` A real tracked issue (#${realWorkFiledThisTurn.issueNumber}) was just filed in their company repo for this — you may reference it directly.`
+              : realWorkFiledThisTurn?.kind === 'task'
+                ? ` A real tracked task was just added to their backlog for this — you may reference it directly (it's visible in their Tasks panel).`
+                : ''
+          }\n`
         : `If they ask for a change or feature and no real task was just dispatched for it (you'll know because ` +
           `neither an edit task nor a tracked issue was created this turn), do NOT say "I'll wire that" or "it's ` +
           `queued" — those claims are ONLY true when real work was just dispatched. Instead say you've noted it and ` +
