@@ -256,8 +256,22 @@ export function flattenMultiFile(raw: string): string {
   const seen = new Set<string>()
   const stubbed: string[] = []
   const inline = (code: string) => {
-    for (const m of code.matchAll(/import\s+(?:(\w+)|\{([^}]*)\})\s+from\s*['"]\.\.?\/([^'"]+)['"]/g)) {
-      const base = baseName(m[3])
+    // A local import's default binding may be combined with a named clause on
+    // the same line (`import Hero, { HeroProps } from './Hero'`) — common
+    // when a sibling also exports a TS prop-type alongside its default
+    // component. The old regex only matched a BARE default (`(\w+)`) or a
+    // BARE named clause (`\{([^}]*)\}`), never both — so this combined shape
+    // matched neither alternative, the import line was silently dropped by
+    // stripImportsAndExports' unconditional import-stripping below, and
+    // `defaultName` was never inlined OR stubbed: `<Hero/>` referenced a
+    // wholly undeclared identifier and threw at render. The optional
+    // trailing `(?:\s*,\s*\{[^}]*\})?` absorbs the named clause without
+    // capturing it — this function never needed named-binding names, only
+    // the default name and the local path.
+    for (const m of code.matchAll(
+      /import\s+(?:(\w+)(?:\s*,\s*\{[^}]*\})?|\{[^}]*\})\s+from\s*['"]\.\.?\/([^'"]+)['"]/g,
+    )) {
+      const base = baseName(m[2])
       const child = byBase[base]
       const defaultName = m[1]
       if (child && !seen.has(base)) {

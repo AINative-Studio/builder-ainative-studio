@@ -63,6 +63,32 @@ describe('flatten-multifile (#308)', () => {
     expect(out).toContain('function App')
   })
 
+  /**
+   * Real bug found this run via static analysis + a direct repro: a sibling
+   * import combining a default binding with a named clause on the same line
+   * (`import Hero, { HeroProps } from './Hero'` — common when the sibling
+   * also exports a TS prop-type alongside its default component) matched
+   * NEITHER of inline()'s two old alternatives (bare default / bare named),
+   * so the import was never inlined or stubbed. stripImportsAndExports then
+   * unconditionally stripped the import line anyway, leaving `<Hero/>`
+   * referencing a wholly undeclared identifier — a ReferenceError at render,
+   * i.e. the blank-page crash class this flattener exists to prevent.
+   */
+  it('inlines a sibling imported with a combined default+named clause', () => {
+    const combined = [
+      '// --- FILE: src/App.tsx ---',
+      "import Hero, { HeroProps } from './components/Hero'",
+      'export default function App(){ return <Hero/> }',
+      '// --- FILE: src/components/Hero.tsx ---',
+      'export interface HeroProps { title: string }',
+      'export default function Hero(props: HeroProps){ return <section>{props.title}</section> }',
+    ].join('\n')
+    const out = flattenMultiFile(combined)
+    expect(out).toMatch(/function Hero\b/)
+    expect(out).not.toMatch(/import\s+Hero/)
+    expect(out).not.toMatch(/stub:/) // real component, must NOT fall back to a stub
+  })
+
   it('stubs a DANGLING import the generator never emitted (aerosol Cart/Footer bug)', () => {
     const dangling = [
       '// --- FILE: src/App.tsx ---',
