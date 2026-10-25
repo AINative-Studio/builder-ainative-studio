@@ -392,6 +392,52 @@ export async function createRepoWebhook(
   }
 }
 
+/**
+ * Builder's own repo-topic marker (#1531). Stamped on every provisioned
+ * company repo so ANY agent or human — in this codebase or a completely
+ * different one — can answer "is this Builder's?" via a single read-only
+ * API call (`GET /repos/search?topic=ainative-builder`, the exact endpoint
+ * a peer session already used while investigating an unrelated repo and
+ * couldn't self-verify ownership for, having to ask across sessions
+ * instead). The free-text `description` createRepo() already sets
+ * ("AINative company: {slug}") identifies the COMPANY but not the fact
+ * that Builder specifically owns/provisioned the repo, and isn't
+ * machine-filterable the way a topic is.
+ */
+export const BUILDER_REPO_TOPIC = 'ainative-builder'
+
+/**
+ * Replace a repo's topic list with Builder's own marker (idempotent — Gitea's
+ * PUT topics endpoint is a full replace, and re-setting the same single topic
+ * is a no-op 204 either way). Best-effort, same shape/convention as
+ * createRepoWebhook: a topic hiccup must never block the repo itself (the
+ * more critical half of provisioning) from being created or used.
+ */
+export async function setRepoTopics(
+  org: string,
+  repo: string,
+  topics: string[] = [BUILDER_REPO_TOPIC],
+): Promise<{ ok: boolean; reason?: string }> {
+  if (!configured()) return { ok: false, reason: 'not_configured' }
+  if (!org) return { ok: false, reason: 'no_org' }
+  const repoName = repoNameForSlug(repo)
+  if (!repoName) return { ok: false, reason: 'no_repo' }
+
+  try {
+    const res = await giteaFetch(
+      `/repos/${encodeURIComponent(org)}/${encodeURIComponent(repoName)}/topics`,
+      { method: 'PUT', body: JSON.stringify({ topics }) },
+    )
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      return { ok: false, reason: `gitea setRepoTopics ${org}/${repoName} failed: ${res.status} ${text}`.slice(0, 300) }
+    }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, reason: `setRepoTopics threw: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300) }
+  }
+}
+
 /** The Builder route Gitea webhooks POST to — same convention every other
  *  module deriving the app's own public URL already uses (lib/build/deploy.ts,
  *  comms-policy.ts, winback-email.ts, etc: `NEXT_PUBLIC_APP_URL` with a
@@ -412,10 +458,11 @@ export function webhookTargetUrl(): string {
  * repo URL/id onto the AppEntry is done by the caller via setAppGitRepo
  * (lib/build/app-registry).
  *
- * The webhook step never blocks or fails this function (see createRepoWebhook's
- * doc) — a webhook hiccup is logged to console, never thrown, so a transient
- * Gitea issue on the webhook call can never prevent a company's repo (the more
- * critical half of provisioning) from being created.
+ * The webhook and topic steps never block or fail this function (see
+ * createRepoWebhook's / setRepoTopics's own docs) — a hiccup on either is
+ * logged to console, never thrown, so a transient Gitea issue can never
+ * prevent a company's repo (the more critical half of provisioning) from
+ * being created.
  */
 export async function provisionCompanyRepo(
   workspaceId: string,
@@ -435,6 +482,13 @@ export async function provisionCompanyRepo(
   )
   if (!hookResult.ok) {
     console.error(`[gitea] createRepoWebhook failed for ${org.username}/${repo.name}: ${hookResult.reason}`)
+  }
+
+  // #1531 — stamp the Builder-ownership topic so this repo is self-identifying
+  // via Gitea's own search API, not just a human/agent asking across sessions.
+  const topicResult = await setRepoTopics(org.username, repo.name)
+  if (!topicResult.ok) {
+    console.error(`[gitea] setRepoTopics failed for ${org.username}/${repo.name}: ${topicResult.reason}`)
   }
 
   return { org, repo }
