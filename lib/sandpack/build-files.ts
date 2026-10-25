@@ -418,9 +418,97 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
     sandpackFiles[path] = fixed
   }
 
+  fixExportShapeMismatches(sandpackFiles)
   stubMissingLocalComponents(sandpackFiles)
 
   return sandpackFiles
+}
+
+/**
+ * Real bug class matching "Element type is invalid": a sibling component
+ * file genuinely EXISTS and its import specifier resolves fine, but the
+ * importing file requests the WRONG export shape — a bare default import
+ * (`import Footer from './components/Footer'`) of a file that only exports
+ * a NAMED `Footer` (`export const Footer = ...`), or the inverse
+ * (`import { Footer } from './components/Footer'` of a file that only has
+ * `export default function Footer()`). Neither case throws at parse time —
+ * the specifier resolves, the file exists — but the imported binding is
+ * `undefined` at runtime, so `<Footer/>` throws exactly "Element type is
+ * invalid: ... got: undefined", indistinguishable to the user from a
+ * genuinely missing component. None of this file's other safety nets catch
+ * it: stubMissingLocalComponents() only reacts to a specifier that doesn't
+ * resolve to any file at all, and the missing-local-export injector above
+ * only ever ADDS a brand-new import — it never corrects an EXISTING one.
+ *
+ * Deliberately conservative — only rewrites the single-binding, unambiguous
+ * shape (no mixed `import Foo, { Bar }` clauses): a bare default import
+ * whose identifier exactly matches one of the target's real named exports,
+ * or a single named import whose specifier the target does NOT export by
+ * name but DOES export as its default. A genuinely missing/misspelled
+ * export (neither shape matches) is left alone rather than guessed at.
+ */
+function fixExportShapeMismatches(sandpackFiles: Record<string, string>): void {
+  const builtinPaths = new Set(Object.keys(getBuiltinFiles()))
+  const importRe = /^[ \t]*import\s+([^'";]*?)\s*from\s*['"](\.\.?\/[^'"]+)['"]/gm
+
+  const shapeCache = new Map<string, { hasDefault: boolean; named: Set<string> } | null>()
+  function shapeOf(resolved: string): { hasDefault: boolean; named: Set<string> } | null {
+    if (shapeCache.has(resolved)) return shapeCache.get(resolved)!
+    const candidates = [resolved, `${resolved}.tsx`, `${resolved}.ts`, `${resolved}/index.tsx`, `${resolved}/index.ts`]
+    const real = candidates.find((c) => c in sandpackFiles)
+    const shape = real
+      ? {
+          hasDefault: /export\s+default\b/.test(sandpackFiles[real]),
+          named: new Set(
+            [...sandpackFiles[real].matchAll(/export\s+(?:const|function|class)\s+([A-Za-z_$][\w$]*)/g)].map(
+              (m) => m[1],
+            ),
+          ),
+        }
+      : null
+    shapeCache.set(resolved, shape)
+    return shape
+  }
+
+  for (const [path, code] of Object.entries(sandpackFiles)) {
+    if (builtinPaths.has(path) || !/\.(t|j)sx?$/.test(path)) continue
+    const dir = path.slice(0, path.lastIndexOf('/')) || ''
+    const edits: { from: string; to: string }[] = []
+    let match: RegExpExecArray | null
+    importRe.lastIndex = 0
+    while ((match = importRe.exec(code))) {
+      const clause = match[1].trim()
+      if (/^type\s/.test(clause)) continue
+      const resolved = resolveRelativeImport(dir, match[2])
+      if (!resolved) continue
+      const shape = shapeOf(resolved)
+      if (!shape) continue // genuinely missing — stubMissingLocalComponents' job
+
+      const bareDefault = clause.match(/^([A-Za-z_$][\w$]*)$/)
+      if (bareDefault && !shape.hasDefault && shape.named.has(bareDefault[1])) {
+        const name = bareDefault[1]
+        const replaced = match[0].replace(new RegExp(`import\\s+${name}\\b`), `import { ${name} }`)
+        if (replaced !== match[0]) edits.push({ from: match[0], to: replaced })
+        continue
+      }
+
+      const singleNamed = clause.match(/^\{\s*([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?\s*\}$/)
+      if (singleNamed) {
+        const exported = singleNamed[1]
+        const local = singleNamed[2] || singleNamed[1]
+        if (!shape.named.has(exported) && shape.hasDefault) {
+          const aliasPart = singleNamed[2] ? `\\s+as\\s+${local}` : ''
+          const replaced = match[0].replace(new RegExp(`\\{\\s*${exported}(?:${aliasPart})?\\s*\\}`), local)
+          if (replaced !== match[0]) edits.push({ from: match[0], to: replaced })
+        }
+      }
+    }
+    if (edits.length > 0) {
+      let fixed = code
+      for (const { from, to } of edits) fixed = fixed.replace(from, to)
+      sandpackFiles[path] = fixed
+    }
+  }
 }
 
 /**
