@@ -89,12 +89,43 @@ function extractMainFileContent(rawOutput: string): string {
 }
 
 /**
+ * A component declared plainly and exported only via a trailing bare list
+ * (`function App() {...}` then, separately, `export { App }`) is a valid,
+ * common export shape (shadcn/ui's own canonical source convention) that the
+ * `export default function Name` regex below cannot see at all — it has no
+ * `export default` anywhere. Excludes re-exports (`export { X } from './Y'`),
+ * since those don't declare a local identifier this single-file script can
+ * reference. Mirrors the equivalent helper added for the same bug class in
+ * lib/sandpack/build-files.ts (#1541). PURE.
+ */
+function extractBareExportListNames(code: string): string[] {
+  const names: string[] = []
+  const re = /export\s*\{([^}]*)\}\s*(from\s*['"][^'"]+['"])?\s*;?/g
+  let match: RegExpExecArray | null
+  while ((match = re.exec(code))) {
+    if (match[2]) continue // re-export, not a local declaration
+    for (const entry of match[1].split(',')) {
+      const trimmed = entry.trim()
+      if (!trimmed || trimmed.startsWith('type ')) continue
+      const aliased = trimmed.match(/^(\w+)\s+as\s+(\w+)$/)
+      const external = aliased ? aliased[2] : /^\w+$/.test(trimmed) ? trimmed : null
+      if (external) names.push(external)
+    }
+  }
+  return names
+}
+
+/**
  * Detect the founder's component's name from its default export, falling
- * back to 'App'. PURE.
+ * back to a bare `export { Name }` list export (#1541-class gap — see
+ * extractBareExportListNames() above) and finally to 'App'. PURE.
  */
 function detectComponentName(code: string): string {
   const nameMatch = code.match(/export\s+default\s+function\s+(\w+)/)
-  return nameMatch ? nameMatch[1] : 'App'
+  if (nameMatch) return nameMatch[1]
+  const bareNames = extractBareExportListNames(code)
+  const pascalCased = bareNames.find(n => /^[A-Z]/.test(n))
+  return pascalCased || bareNames[0] || 'App'
 }
 
 /**
@@ -108,8 +139,20 @@ function buildRenderScript(rawCode: string, compName: string): string {
 
   // Handle export default — convert to a globalThis assignment so the
   // render script below can find it without a module system.
+  const hasDefaultExport = /export\s+default\s+/.test(code)
   code = code.replace(/export\s+default\s+function\s+(\w+)/g, 'globalThis.$1 = function $1')
   code = code.replace(/export\s+default\s+/g, 'globalThis.__Default__ = ')
+
+  // #1541-class gap: a component declared plainly and exported only via a
+  // trailing bare `export { Name }` list (no `export default` anywhere) has
+  // no globalThis assignment at all from the regexes above — `compName` is
+  // still the real declared identifier (detectComponentName() resolves it
+  // from the same bare list), so expose it directly by referencing it in
+  // its own declaration scope. `typeof` guards against a ReferenceError if
+  // detection still guessed wrong.
+  const exposeBareExport = hasDefaultExport
+    ? ''
+    : `try { globalThis['${compName}'] = typeof ${compName} !== 'undefined' ? ${compName} : globalThis['${compName}']; } catch (e) {}`
 
   return `
 const React = require('react');
@@ -148,6 +191,7 @@ const chartStub = ({children, className, ...p}) => React.createElement('div', {
 
 // Component code
 ${code}
+${exposeBareExport}
 
 // Find and render the component
 const Comp = globalThis['${compName}'] || globalThis.__Default__ || null;
