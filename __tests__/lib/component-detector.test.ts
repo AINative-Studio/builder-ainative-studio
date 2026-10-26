@@ -50,6 +50,46 @@ describe('detectRootComponent', () => {
       expect(r.source).toBe('default-export-named')
     })
 
+    it('#1536: falls through past React.memo(Foo) instead of false-capturing "React" as the component name', () => {
+      // Real bug: [A-Z]\w* greedily matched just "React" ('.' isn't a \w
+      // char), and isPascalCase('React') is true, so this used to return
+      // { name: 'React' } immediately — a confident WRONG answer (React is
+      // the imported namespace, not a component) that never fell through to
+      // priority 3's real PascalCase/JSX scan, which finds the actual
+      // component (Dashboard). The runtime then tried to render the React
+      // namespace object as the root component.
+      const code = `
+        import React from "react";
+        function Dashboard() {
+          return (<div>Hello</div>);
+        }
+        export default React.memo(Dashboard);
+      `
+      const r = detectRootComponent(code)
+      expect(r.name).not.toBe('React')
+      expect(r.name).toBe('Dashboard')
+    })
+
+    it('#1536: falls through past React.forwardRef(Foo) the same way', () => {
+      const code = `
+        import React from "react";
+        const Widget = (props, ref) => <div ref={ref}>hi</div>;
+        export default React.forwardRef(Widget);
+      `
+      const r = detectRootComponent(code)
+      expect(r.name).not.toBe('React')
+    })
+
+    it('#1536: still detects a genuine bare-reference default export (no regression)', () => {
+      const code = `
+        function Foo() { return <div>foo</div> }
+        export default Foo;
+      `
+      const r = detectRootComponent(code)
+      expect(r.name).toBe('Foo')
+      expect(r.source).toBe('default-export-named')
+    })
+
     it('prefers the default export over PascalCase / known names', () => {
       // Both a Dashboard (known name) and a default export exist — default wins.
       const code = `

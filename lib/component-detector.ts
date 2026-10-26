@@ -169,7 +169,22 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
   const defClass = code.match(/export\s+default\s+class\s+([A-Z]\w*)/)
   if (defClass) return { name: defClass[1], source: 'default-export-named' }
   // export default Foo   (bare reference to a PascalCase name — NOT a keyword)
-  const defRef = code.match(/export\s+default\s+([A-Z]\w*)\s*;?/)
+  //
+  // #1536: without the negative lookahead below, `export default
+  // React.memo(Dashboard)` / `React.forwardRef(Dashboard)` greedily matched
+  // just `React` (`.` isn't a `\w` char, so [A-Z]\w* stops there) and
+  // isPascalCase('React') is true — this branch returned `{ name: 'React' }`
+  // immediately, a confident WRONG answer (React is the imported namespace
+  // object, not a component), never falling through to priority 3's real
+  // PascalCase/JSX scan that would find the actual component (Dashboard).
+  // The runtime then tries to render the React namespace as the root
+  // component — exactly the "Element type is invalid" crash class this
+  // detector exists to prevent. React.memo/forwardRef wrapping a named
+  // default export is an extremely common, idiomatic pattern. The lookahead
+  // rejects a captured identifier immediately followed by `.`, `(`, or `[`
+  // (member access, call, or index expression) so this branch only matches a
+  // genuine bare reference, letting the real case correctly fall through.
+  const defRef = code.match(/export\s+default\s+([A-Z]\w*)(?![.\w(\[])\s*;?/)
   if (defRef && isPascalCase(defRef[1])) {
     return { name: defRef[1], source: 'default-export-named' }
   }
