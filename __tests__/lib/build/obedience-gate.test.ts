@@ -6,6 +6,7 @@ import {
   findPrimitiveComplianceGaps,
   hasVisitorTrackingGap,
   hasFakeLeadCaptureGap,
+  hasAlertInLeadCaptureGap,
   hasFakeButtonGap,
   hasHardcodedToggleGap,
   hasAxLandmarkGap,
@@ -223,6 +224,102 @@ function App(){
     expect(r.fakeLeadCaptureGap).toBe(false)
     const prompt = buildObediencePrompt('a landing page', r)
     expect(prompt).not.toMatch(/PERSIST THE EMAIL\/WAITLIST CAPTURE FORM/)
+  })
+})
+
+describe('obedience-gate: hasAlertInLeadCaptureGap (#1581, flipsight)', () => {
+  // Real shape found live on flipsight's deployed handleEarlyAccess: persists
+  // the email via /api/db (correctly — NOT a fakeLeadCaptureGap) but ALSO
+  // calls alert() as the success notification. A native alert() blocks the
+  // page's entire main thread until a human manually dismisses it; a real
+  // visitor submitting this form hit what looked like a completely frozen,
+  // dead page.
+  const PERSISTS_BUT_ALERTS = `
+function App(){
+  const [email, setEmail] = useState('')
+  const handleEarlyAccess = async (e) => {
+    e.preventDefault()
+    await fetch('/api/db/waitlist', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email, joinedAt: new Date().toISOString() }) }).catch(()=>{})
+    alert("You're on the list!")
+    setEmail('')
+  }
+  return (<form onSubmit={handleEarlyAccess}><input type="email" value={email} onChange={e=>setEmail(e.target.value)} /></form>)
+}`
+
+  // Same real shape, but the alert() lives OUTSIDE any lead-capture handler
+  // (e.g. a delete-confirm dialog elsewhere in the app) — must not false-positive.
+  const PERSISTS_NO_ALERT_PLUS_UNRELATED_ALERT = `
+function App(){
+  const [email, setEmail] = useState('')
+  const handleEarlyAccess = async (e) => {
+    e.preventDefault()
+    await fetch('/api/db/waitlist', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email }) }).catch(()=>{})
+    setEmail('')
+  }
+  const handleDelete = (id) => { if (confirm('Delete this item?')) { alert('Deleted'); } }
+  return (<form onSubmit={handleEarlyAccess}><input type="email" value={email} onChange={e=>setEmail(e.target.value)} /></form>)
+}`
+
+  // Local copies (the originals above are scoped to the earlier describe block).
+  const REAL_PERSISTED = `
+function App(){
+  const [email, setEmail] = useState('')
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    await fetch('/api/db/waitlist', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email }) }).catch(()=>{})
+    setEmail('')
+  }
+  return (<form onSubmit={handleSubmit}><input type="email" value={email} onChange={e=>setEmail(e.target.value)} /></form>)
+}`
+
+  const FAKE_ALERT = `
+function App(){
+  const [email, setEmail] = useState('')
+  const handleEarlyAccess = (e) => {
+    e.preventDefault()
+    if (email.trim()) { alert(\`Thanks! We'll contact you at \${email}\`); setEmail('') }
+  }
+  return (<form onSubmit={handleEarlyAccess}><input type="email" value={email} onChange={e=>setEmail(e.target.value)} /></form>)
+}`
+
+  it('THE BUG: flags a lead-capture handler that persists AND alerts (the real flipsight repro)', () => {
+    expect(hasAlertInLeadCaptureGap(PERSISTS_BUT_ALERTS)).toBe(true)
+  })
+
+  it('does NOT flag a lead-capture handler that persists without alert()', () => {
+    expect(hasAlertInLeadCaptureGap(REAL_PERSISTED)).toBe(false)
+  })
+
+  it('does NOT flag an alert()-only fake handler (that is hasFakeLeadCaptureGap/hasFakeButtonGap\'s job, not this gap\'s)', () => {
+    expect(hasAlertInLeadCaptureGap(FAKE_ALERT)).toBe(false)
+  })
+
+  it('does NOT flag an unrelated alert() outside the lead-capture handler (e.g. a delete confirm)', () => {
+    expect(hasAlertInLeadCaptureGap(PERSISTS_NO_ALERT_PLUS_UNRELATED_ALERT)).toBe(false)
+  })
+
+  it('does NOT flag an app with no email capture form at all', () => {
+    expect(hasAlertInLeadCaptureGap('function App(){return <div>hi</div>}')).toBe(false)
+  })
+
+  it('checkObedience surfaces alertInLeadCaptureGap and a reason string', () => {
+    const r = checkObedience(PERSISTS_BUT_ALERTS, 'a landing page')
+    expect(r.alertInLeadCaptureGap).toBe(true)
+    expect(r.fakeLeadCaptureGap).toBe(false)
+    expect(r.reasons.some((x) => x.includes('alert()') && x.includes('freezes'))).toBe(true)
+  })
+
+  it('buildObediencePrompt includes the alert()-removal instruction when this gap fires', () => {
+    const r = checkObedience(PERSISTS_BUT_ALERTS, 'a landing page')
+    const prompt = buildObediencePrompt('a landing page', r)
+    expect(prompt).toMatch(/REMOVE alert\(\) FROM THE EMAIL\/WAITLIST CAPTURE SUCCESS UI/)
+  })
+
+  it('buildObediencePrompt omits the alert-removal section when the form already avoids alert()', () => {
+    const r = checkObedience(REAL_PERSISTED, 'a landing page')
+    expect(r.alertInLeadCaptureGap).toBe(false)
+    const prompt = buildObediencePrompt('a landing page', r)
+    expect(prompt).not.toMatch(/REMOVE alert\(\) FROM THE EMAIL\/WAITLIST CAPTURE SUCCESS UI/)
   })
 })
 
