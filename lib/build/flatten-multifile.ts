@@ -169,11 +169,50 @@ function nameAnonymousDefaultExport(code: string, fallbackName: string): string 
  * anything else) instead of silently vanishing — better a missing/blank
  * section than the whole app throwing before anything renders.
  */
+/**
+ * Strip a bare, local `export { Name }` / `export { Name, Other }` list
+ * (NOT a default export — those are handled separately above/below) —
+ * same bug class as #1498/#1499 (build-files.ts), #1506/#1507 + #1519/#1520
+ * (multi-file-parser.ts) and #1515/#1516 + #1587/#1588 (sandbox-builder.ts):
+ * a generated sibling component commonly names itself via `function Foo(){}`
+ * + a trailing `export { Foo }`, just as often as a `export default`. None
+ * of stripImportsAndExports' other regexes match this shape (they only
+ * touch `export default ...` and `export (const|let|function|class) ...`
+ * declaration exports), so the literal `export { Foo }` line survived
+ * flattening verbatim — invalid syntax in the plain, non-module `<script>`
+ * tag app/api/preview/[id]/route.ts injects this flattened output into,
+ * throwing at the Babel-transform step and blanking the whole preview.
+ *
+ * The underlying declaration (`function Foo(){}`) is already correctly
+ * inlined above this line, so the fix only needs to drop the export
+ * wrapper — not rename anything. The one exception is a renaming alias
+ * (`export { Foo as Bar }`): since callers only ever reference the
+ * declared name (`Foo`) in JSX, not the alias, a `const Bar = Foo;` binding
+ * is emitted so either spelling resolves. `as default` is a no-op alias
+ * (the declared name already IS what the importer treats as the default)
+ * and is dropped silently, matching this file's existing behavior for a
+ * plain `export default Foo;` (also never renames).
+ */
+function stripBareNamedExports(code: string): string {
+  return code.replace(/^\s*export\s*\{([^}]*)\}\s*;?\s*$/gm, (_m, namesClause: string) => {
+    const aliases = namesClause
+      .split(',')
+      .map((n) => n.trim())
+      .filter(Boolean)
+      .map((n) => {
+        const [local, alias] = n.split(/\s+as\s+/).map((p) => p.trim())
+        return alias && alias !== 'default' && alias !== local ? `const ${alias} = ${local};` : ''
+      })
+      .filter(Boolean)
+    return aliases.join('\n')
+  })
+}
+
 function stripImportsAndExports(code: string, fallbackName = 'DefaultComponent'): string {
   const stubs: string[] = []
   const stubbed = new Set<string>()
 
-  const named = nameAnonymousDefaultExport(code, fallbackName)
+  const named = nameAnonymousDefaultExport(stripBareNamedExports(code), fallbackName)
 
   // #1529: this only matched an import with a `{...}` named clause — a BARE
   // default-only import from a non-backed external package (`import Modal
