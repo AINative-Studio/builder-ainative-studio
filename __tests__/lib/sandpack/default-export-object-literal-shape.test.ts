@@ -66,8 +66,14 @@ describe('buildSandpackFiles — does not rewrite a named import into a default 
         "import { Footer } from './components/Footer'",
         'export default function App() { return <Footer/> }',
       ].join('\n'),
+      // A `let`-assigned local, not a `function|class|const` declaration —
+      // deliberately NOT the shape fixMissingExports() (an earlier, separate
+      // fixer in this same pipeline) would itself add a bare `export` to,
+      // which would otherwise make `Footer` a genuinely, correctly-named
+      // export before this file's own logic ever runs, masking the exact
+      // bare-default-reference case this test means to isolate.
       '/components/Footer.tsx': [
-        'function Footer() { return null }',
+        'let Footer; Footer = () => null',
         'export default Footer',
       ].join('\n'),
     })
