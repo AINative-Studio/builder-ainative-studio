@@ -356,6 +356,12 @@ Recharts and all chart components render ONLY as JSX elements (\`<LineChart>...<
 // <blockquote>"This completely changed how our team handles compliance reviews."</blockquote>
 \`\`\`
 
+**C7. Never use native \`alert()\`/\`confirm()\`/\`prompt()\` dialogs.** A native browser dialog is synchronous — it freezes the entire tab until dismissed — and looks like a broken, unstyled popup on an otherwise professional page. Use inline UI feedback instead: a local \`useState\` success/error message rendered in place, an \`<AIKitBanner>\`, or a toggled confirmation view — never a blocking native dialog.
+\`\`\`jsx
+// ❌ WRONG: alert(\`Thanks for signing up! We'll email \${email}\`)
+// ✅ CORRECT: setSubmitted(true)  // then render a success message/banner from that state
+\`\`\`
+
 ## INTERACTIVITY — APPS MUST WORK, NOT JUST LOOK GOOD (CRITICAL)
 
 A beautiful UI with dead buttons is a FAILURE. Every interactive control you render MUST do something real. This is not optional polish — it is the core requirement.

@@ -421,8 +421,68 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
   fixMissingExports(sandpackFiles)
   fixExportShapeMismatches(sandpackFiles)
   stubMissingLocalComponents(sandpackFiles)
+  fixNativeDialogCalls(sandpackFiles)
 
   return sandpackFiles
+}
+
+/**
+ * Real bug found live (#1559, `huddle`): a generated handler's native,
+ * synchronous `alert()`/`confirm()`/`prompt()` call blocks the calling
+ * thread until dismissed. In the real `/build` preview iframe this reads as
+ * a frozen, unresponsive tab the instant a founder clicks the control that
+ * calls it — confirmed live by clicking `huddle`'s real "Get Early Access"
+ * button, which froze all further interaction until the native dialog was
+ * dismissed. It's also a trust/polish problem independent of the freeze: a
+ * native browser dialog box on an otherwise professionally-styled page
+ * reads as broken, not as a real working feature.
+ *
+ * A live confirmed query found 82 generations using `alert()` somewhere in
+ * their code — a recurring content-generation pattern, not an isolated
+ * incident. Regenerating all of them isn't realistic; this rewrites the
+ * calls in-place for the preview the same way the other safety nets in this
+ * file repair generation gaps without needing a regeneration.
+ *
+ * Each matched call is rewritten to a same-signature, non-blocking shim
+ * defined once at the top of the file: `alert` fires a console message
+ * instead of a modal, `confirm` returns `true` (the dialog never actually
+ * blocks on a real answer, so proceeding is the least-surprising default —
+ * matches what a real founder clicking through their own happy path would
+ * expect), and `prompt` returns its default-value argument (or `''`). A
+ * negative lookbehind keeps this from matching a method call on some other
+ * object (e.g. a notification library's own `toast.alert(...)`) — only a
+ * bare `alert(`/`window.alert(` call (and the `confirm`/`prompt` siblings)
+ * is rewritten.
+ */
+function fixNativeDialogCalls(sandpackFiles: Record<string, string>): void {
+  const builtinPaths = new Set(Object.keys(getBuiltinFiles()))
+  const dialogCallRe = /(?<![.\w$])(?:window\.)?(alert|confirm|prompt)\s*\(/
+  const globalDialogCallRe = /(?<![.\w$])(?:window\.)?(alert|confirm|prompt)\s*\(/g
+
+  const SHIM = [
+    "function __sandpackSafeAlert(message) { if (typeof console !== 'undefined') console.info('[preview alert]', message) }",
+    "function __sandpackSafeConfirm(message) { if (typeof console !== 'undefined') console.info('[preview confirm]', message); return true }",
+    "function __sandpackSafePrompt(message, defaultValue) { if (typeof console !== 'undefined') console.info('[preview prompt]', message); return defaultValue !== undefined ? defaultValue : '' }",
+  ].join('\n')
+
+  for (const [path, code] of Object.entries(sandpackFiles)) {
+    if (!/\.(t|j)sx?$/.test(path)) continue
+    if (builtinPaths.has(path)) continue
+    if (!dialogCallRe.test(code)) continue
+
+    const fixed = code.replace(globalDialogCallRe, (_match, fn: string) => {
+      const capitalized = fn.charAt(0).toUpperCase() + fn.slice(1)
+      return `__sandpackSafe${capitalized}(`
+    })
+
+    // A leading "use client"/"use strict" directive must stay the very
+    // first statement in the file — insert the shim just after it instead
+    // of before, so the directive is never displaced from position 0.
+    const directiveMatch = fixed.match(/^(['"]use (?:client|strict)['"];?\s*\n)/)
+    sandpackFiles[path] = directiveMatch
+      ? directiveMatch[1] + SHIM + '\n' + fixed.slice(directiveMatch[1].length)
+      : SHIM + '\n' + fixed
+  }
 }
 
 /**
