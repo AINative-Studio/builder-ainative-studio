@@ -43,10 +43,12 @@ describe('Live screen — auto-provision on first engagement (#748)', () => {
     expect(source).toContain('#748: auto-provision on first real engagement')
   })
 
-  it('the auto-provision effect only fires for a signed-in founder with a real company id', () => {
+  it('the auto-provision effect fires for a real company id regardless of sign-in state (#1585)', () => {
     const idx = source.indexOf('const autoProvisionAttemptsRef = useRef(0)')
     const block = source.slice(idx, idx + 1200)
-    expect(block).toMatch(/if \(!signedIn \|\| !companyId\) return/)
+    expect(block).toMatch(/if \(!companyId\) return/)
+    // Must NOT bail out for an anonymous founder — that was the #1585 bug.
+    expect(block).not.toMatch(/if \(!signedIn/)
   })
 
   it('the auto-provision effect waits for the real provisioning status to be checked before firing', () => {
@@ -81,22 +83,33 @@ describe('Live screen — auto-provision on first engagement (#748)', () => {
     expect(block).toMatch(/return \(\) => \{\s*if \(autoProvisionTimerRef\.current\)/)
   })
 
-  it('the auto-provision effect calls the SAME provisionCompany() the manual button uses, not a separate/duplicated path', () => {
+  it('the auto-provision effect calls the SAME provisionCompany() the manual button uses, passing allowAnonymous (#1585)', () => {
     const idx = source.indexOf('const autoProvisionAttemptsRef = useRef(0)')
     const block = source.slice(idx, idx + 1200)
-    expect(block).toMatch(/await provisionCompany\(\)/)
+    expect(block).toMatch(/await provisionCompany\(\{\s*allowAnonymous:\s*true\s*\}\)/)
   })
 
   it('provisionCompany itself still guards against concurrent/duplicate calls (busy || provisioned short-circuit)', () => {
-    const idx = source.indexOf('const provisionCompany = async (): Promise<')
+    const idx = source.indexOf('const provisionCompany = async (opts')
     expect(idx).toBeGreaterThan(-1)
     const block = source.slice(idx, idx + 400)
     expect(block).toMatch(/if \(provision\.busy \|\| provision\.provisioned\) return 'ok'/)
   })
 
+  it('provisionCompany only bounces to signup when signed out AND the caller did not opt into anonymous provisioning (#1585)', () => {
+    const idx = source.indexOf('const provisionCompany = async (opts')
+    expect(idx).toBeGreaterThan(-1)
+    const block = source.slice(idx, idx + 400)
+    expect(block).toMatch(/if \(!signedIn && !opts\?\.allowAnonymous\) \{ dispatch\(\{ type: 'GOTO_SCREEN', screen: 'signup' \}\); return 'error' \}/)
+  })
+
+  it('the manual "Provision cloud now" CTA still requires sign-in (unchanged funnel) — only the auto-provision effect bypasses it', () => {
+    expect(source).toMatch(/data-testid="provision-now-cta"[\s\S]{0,80}onClick=\{\(\) => provisionCompany\(\)\}/)
+  })
+
   it('provisionCompany distinguishes the transient not_registered reason from a real error', () => {
-    const idx = source.indexOf('const provisionCompany = async (): Promise<')
-    const block = source.slice(idx, idx + 1400)
+    const idx = source.indexOf('const provisionCompany = async (opts')
+    const block = source.slice(idx, idx + 1600)
     expect(block).toMatch(/d\?\.reason === 'not_registered'/)
   })
 

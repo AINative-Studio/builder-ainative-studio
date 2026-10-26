@@ -900,9 +900,22 @@ export function Live() {
   // failure — the auto-provision effect below must retry through it rather
   // than giving up after one attempt, or a founder on a genuinely fresh
   // company falls back to a banner whose CTA also just silently fails.
-  const provisionCompany = async (): Promise<'ok' | 'not_registered' | 'error'> => {
+  // #1585: `allowAnonymous` lets the auto-provision effect below provision an
+  // anonymous founder's company instead of bouncing them to signup.
+  // /api/build/provision (and provisionInstantDb underneath it) was always
+  // built to support this — "anonymous OR signed-in-but-unpaid" gets a real
+  // tmp_ 72h-trial project with no auth required (see that route's own doc
+  // comment) — but this function's unconditional signedIn gate meant that
+  // path was never actually reachable for a company built anonymously. Real
+  // incident this closes: an anonymous "Build a Company" session reaches a
+  // fully live, publicly shareable /build/{slug} the moment generation
+  // finishes — the manual "Provision cloud now" CTA still requires signing in
+  // (a deliberate funnel, unchanged here), but auto-provision used to no-op
+  // for the same anonymous founder, leaving their company's real waitlist
+  // writes falling through to the shared fallback project and vanishing.
+  const provisionCompany = async (opts?: { allowAnonymous?: boolean }): Promise<'ok' | 'not_registered' | 'error'> => {
     if (provision.busy || provision.provisioned) return 'ok'
-    if (!signedIn) { dispatch({ type: 'GOTO_SCREEN', screen: 'signup' }); return 'error' }
+    if (!signedIn && !opts?.allowAnonymous) { dispatch({ type: 'GOTO_SCREEN', screen: 'signup' }); return 'error' }
     setProvision((p) => ({ ...p, busy: true }))
     try {
       const res = await fetch('/api/build/provision', {
@@ -938,12 +951,21 @@ export function Live() {
   // dashboard but was NEVER provisioned — no owner, no ZeroDB project, no
   // primitives, no auth — because provisioning only ever happened via that one
   // manual button. Fires the first time we know for sure (via the GET above,
-  // `checked: true`) that a SIGNED-IN founder's company is not yet
-  // provisioned, and RETRIES with backoff on a 'not_registered' response
-  // (real, live-observed race: a brand-new company's registry row is written
-  // by the detached background company-app generation this screen kicks off,
-  // which can take real minutes — the first auto-provision attempt landing
-  // before that completes must not be treated as a permanent failure).
+  // `checked: true`) that this company is not yet provisioned, and RETRIES
+  // with backoff on a 'not_registered' response (real, live-observed race: a
+  // brand-new company's registry row is written by the detached background
+  // company-app generation this screen kicks off, which can take real minutes
+  // — the first auto-provision attempt landing before that completes must not
+  // be treated as a permanent failure).
+  // #1585: deliberately NOT gated on `signedIn` — an anonymous "Build a
+  // Company" session reaches this exact screen the instant generation
+  // finishes (COMPANY_DONE), and /build/{slug} is already live and
+  // publicly shareable at that point regardless of whether the founder ever
+  // signs in. Gating this on signedIn (as it used to be) left every such
+  // company's real waitlist/visitor writes silently falling through to the
+  // shared fallback project — provisionInstantDb has always supported a real,
+  // unauthenticated tmp_ 72h-trial project for exactly this case (see its own
+  // doc comment), this screen just never called it for an anonymous founder.
   // Idempotent by construction: provisionCompany() itself no-ops when
   // `provision.busy || provision.provisioned`, and /api/build/provision's own
   // handler short-circuits on `existing.zerodbProjectId` — so calling this
@@ -953,14 +975,14 @@ export function Live() {
   const autoProvisionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const MAX_AUTO_PROVISION_ATTEMPTS = 8 // ~1+2+3+4+5+6+7+8=36min backoff ≈ covers pollForApp's real ~20min budget (see its comment) with margin
   useEffect(() => {
-    if (!signedIn || !companyId) return
+    if (!companyId) return
     if (!provision.checked || provision.provisioned || provision.busy) return
     if (autoProvisionTimerRef.current) return // a retry is already scheduled
     if (autoProvisionAttemptsRef.current >= MAX_AUTO_PROVISION_ATTEMPTS) return
 
     const attempt = async () => {
       autoProvisionAttemptsRef.current += 1
-      const result = await provisionCompany()
+      const result = await provisionCompany({ allowAnonymous: true })
       if (result === 'not_registered' && autoProvisionAttemptsRef.current < MAX_AUTO_PROVISION_ATTEMPTS) {
         // Linear backoff (1min, 2min, 3min, …) — company-app generation is a
         // real background LLM+deploy pipeline, not a fast operation.
@@ -976,7 +998,7 @@ export function Live() {
       if (autoProvisionTimerRef.current) { clearTimeout(autoProvisionTimerRef.current); autoProvisionTimerRef.current = null }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signedIn, companyId, provision.checked, provision.provisioned, provision.busy])
+  }, [companyId, provision.checked, provision.provisioned, provision.busy])
 
   // FIX-5: per-project brand color so every company's dashboard looks distinct,
   // not identical. Falls back to the track accent.
@@ -1101,7 +1123,7 @@ export function Live() {
             <button
               className="btn-primary"
               data-testid="provision-now-cta"
-              onClick={provisionCompany}
+              onClick={() => provisionCompany()}
               disabled={provision.busy}
             >
               {provision.busy ? 'Provisioning…' : provisionPending ? 'Try again →' : 'Provision cloud now →'}
@@ -1512,7 +1534,7 @@ export function Live() {
                 {/* Provision the real per-company cloud (#243): own ZeroDB project + persistent host. */}
                 <button
                   className="btn-secondary"
-                  onClick={provisionCompany}
+                  onClick={() => provisionCompany()}
                   disabled={provision.busy || provision.provisioned}
                   title={provision.provisioned ? 'This company has its own ZeroDB project' : 'Create a real per-company ZeroDB project + persistent deploy'}
                 >
