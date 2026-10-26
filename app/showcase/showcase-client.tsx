@@ -3,9 +3,10 @@
 import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { SEED_SHOWCASE, SHOWCASE_CATEGORIES, type ShowcaseEntry } from '@/lib/showcase-data'
+import { detectRootComponent } from '@/lib/component-detector'
 
 // Build a self-contained HTML page that renders React code using CDN scripts
-function buildPreviewHtml(code: string): string {
+export function buildPreviewHtml(code: string): string {
   let cleanCode = code
 
   // Handle multi-file output — extract only the main App file
@@ -21,12 +22,26 @@ function buildPreviewHtml(code: string): string {
   const fenceMatch = cleanCode.match(/```(?:jsx?|tsx?)\s*\n([\s\S]*?)```/)
   if (fenceMatch) cleanCode = fenceMatch[1]
 
-  // Detect component name BEFORE stripping exports
-  const exportMatch = cleanCode.match(/export\s+default\s+function\s+([A-Z]\w+)/)
-  const exportConstMatch = cleanCode.match(/export\s+default\s+([A-Z]\w+)/)
-  const funcDeclMatch = cleanCode.match(/^function\s+([A-Z]\w+)/m)
-  const constDeclMatch = cleanCode.match(/^const\s+([A-Z]\w+)\s*=/m)
-  const componentName = exportMatch?.[1] || funcDeclMatch?.[1] || exportConstMatch?.[1] || constDeclMatch?.[1] || 'App'
+  // #1527: detect the component name BEFORE stripping exports, via the same
+  // shared, already-tested detector lib/code-validator.ts and
+  // app/api/preview/[id]/route.ts use (per #1523's consolidation direction).
+  // The 4 ad-hoc regexes this replaced only matched NAMED default exports —
+  // `export default () => {...}` / `export default class extends X {...}`
+  // (a common shape in generated showcase entries) matched none of them, so
+  // componentName fell back to the literal string 'App', which doesn't exist
+  // anywhere in the generated code. The compiled preview's
+  // `typeof App !== "undefined" ? App : null` then always evaluated to
+  // null — the showcase preview iframe rendered blank for any entry using an
+  // anonymous default export.
+  const detection = detectRootComponent(cleanCode)
+  // Anonymous default exports have no name to bind AND the blanket
+  // `export default` strip below would leave an anonymous *statement* (a
+  // syntax error). Apply the detector's rewrite here to give the component a
+  // stable, bindable name FIRST — same pattern as app/api/preview/[id]/route.ts.
+  if (detection.rewrite && cleanCode.includes(detection.rewrite.find)) {
+    cleanCode = cleanCode.replace(detection.rewrite.find, detection.rewrite.replace)
+  }
+  const componentName = detection.name || 'App'
 
   // Strip imports and exports
   cleanCode = cleanCode
