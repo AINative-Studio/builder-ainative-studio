@@ -862,6 +862,42 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
     })
   }
 
+  // Fix NATIVE BLOCKING DIALOGS (#1559/#1565 real bug, ported from the Sandpack
+  // pipeline's fixNativeDialogCalls in lib/sandpack/build-files.ts — this is the
+  // SINGLE-FILE preview's equivalent of that fix): a generated handler's native,
+  // synchronous alert()/confirm()/prompt() call blocks the ENTIRE page's main
+  // thread until a human manually dismisses it. Confirmed live on `flipsight`'s
+  // single-file preview specifically (app/api/preview/[id]/route.ts, NOT
+  // Sandpack) — #1565 only patched buildSandpackFiles(), leaving this call path
+  // uncovered; the exact same company still hangs here. A server-side query
+  // found 82 generations using alert() somewhere in their code, so this is a
+  // recurring content-generation pattern. Rewrites each call in-place to a
+  // same-signature, non-blocking shim (confirm() returns true — the least-
+  // surprising default for a founder clicking through their own happy path;
+  // prompt() returns its default-value argument or ''). The negative lookbehind
+  // keeps this from rewriting an unrelated method call sharing one of these
+  // names (e.g. toast.alert(...)).
+  {
+    const dialogCallRe = /(?<![.\w$])(?:window\.)?(alert|confirm|prompt)\s*\(/
+    const globalDialogCallRe = /(?<![.\w$])(?:window\.)?(alert|confirm|prompt)\s*\(/g
+    if (dialogCallRe.test(fixedCode)) {
+      const SHIM = [
+        "function __previewSafeAlert(message) { if (typeof console !== 'undefined') console.info('[preview alert]', message) }",
+        "function __previewSafeConfirm(message) { if (typeof console !== 'undefined') console.info('[preview confirm]', message); return true }",
+        "function __previewSafePrompt(message, defaultValue) { if (typeof console !== 'undefined') console.info('[preview prompt]', message); return defaultValue !== undefined ? defaultValue : '' }",
+      ].join('\n')
+      fixedCode = fixedCode.replace(globalDialogCallRe, (_match, fn: string) => {
+        const capitalized = fn.charAt(0).toUpperCase() + fn.slice(1)
+        return `__previewSafe${capitalized}(`
+      })
+      const directiveMatch = fixedCode.match(/^(['"]use (?:client|strict)['"];?\s*\n)/)
+      fixedCode = directiveMatch
+        ? directiveMatch[1] + SHIM + '\n' + fixedCode.slice(directiveMatch[1].length)
+        : SHIM + '\n' + fixedCode
+      fixes.push('Neutralized blocking native alert()/confirm()/prompt() call(s) — a real browser dialog freezes the entire preview tab until manually dismissed (#1559)')
+    }
+  }
+
   return { code: fixedCode, fixes }
 }
 

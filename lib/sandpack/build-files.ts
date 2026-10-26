@@ -478,6 +478,20 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
  * object (e.g. a notification library's own `toast.alert(...)`) — only a
  * bare `alert(`/`window.alert(` call (and the `confirm`/`prompt` siblings)
  * is rewritten.
+ *
+ * #1559 follow-up: the IDENTICAL fix was also ported into
+ * lib/code-validator.ts's autoFixCode() (called by sanitizeForSandpack(),
+ * which THIS pipeline already runs earlier via buildSandpackFiles() — see the
+ * `sanitizeForSandpack(fixed)` calls above) for the single-file Babel preview
+ * path, which this Sandpack-only fix never covered (confirmed live:
+ * `flipsight` still hung after this landed, since it renders single-file, not
+ * Sandpack). Both now use the SAME `__previewSafe*` shim names on purpose —
+ * sanitizeForSandpack() already neutralizes any dialog call before this
+ * function ever runs, so in practice this loop is usually a no-op for
+ * Sandpack too; it's kept as a second, independent safety net (same
+ * philosophy as the other fixers in this pipeline) rather than relying on a
+ * single call path, and the shared naming means output is identical no
+ * matter which pass actually did the rewrite.
  */
 function fixNativeDialogCalls(sandpackFiles: Record<string, string>): void {
   const builtinPaths = new Set(Object.keys(getBuiltinFiles()))
@@ -485,9 +499,9 @@ function fixNativeDialogCalls(sandpackFiles: Record<string, string>): void {
   const globalDialogCallRe = /(?<![.\w$])(?:window\.)?(alert|confirm|prompt)\s*\(/g
 
   const SHIM = [
-    "function __sandpackSafeAlert(message) { if (typeof console !== 'undefined') console.info('[preview alert]', message) }",
-    "function __sandpackSafeConfirm(message) { if (typeof console !== 'undefined') console.info('[preview confirm]', message); return true }",
-    "function __sandpackSafePrompt(message, defaultValue) { if (typeof console !== 'undefined') console.info('[preview prompt]', message); return defaultValue !== undefined ? defaultValue : '' }",
+    "function __previewSafeAlert(message) { if (typeof console !== 'undefined') console.info('[preview alert]', message) }",
+    "function __previewSafeConfirm(message) { if (typeof console !== 'undefined') console.info('[preview confirm]', message); return true }",
+    "function __previewSafePrompt(message, defaultValue) { if (typeof console !== 'undefined') console.info('[preview prompt]', message); return defaultValue !== undefined ? defaultValue : '' }",
   ].join('\n')
 
   for (const [path, code] of Object.entries(sandpackFiles)) {
@@ -497,7 +511,7 @@ function fixNativeDialogCalls(sandpackFiles: Record<string, string>): void {
 
     const fixed = code.replace(globalDialogCallRe, (_match, fn: string) => {
       const capitalized = fn.charAt(0).toUpperCase() + fn.slice(1)
-      return `__sandpackSafe${capitalized}(`
+      return `__previewSafe${capitalized}(`
     })
 
     // A leading "use client"/"use strict" directive must stay the very

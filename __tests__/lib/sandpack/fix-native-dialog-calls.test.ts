@@ -26,9 +26,9 @@ describe('buildSandpackFiles — fixNativeDialogCalls neutralizes blocking nativ
       ].join('\n'),
     })
     const code = built['/src/App.tsx']
-    expect(code).toContain('__sandpackSafeAlert(`Thanks')
+    expect(code).toContain('__previewSafeAlert(`Thanks')
     expect(code).not.toMatch(/(?<![.\w$])alert\(/)
-    expect(code).toContain('function __sandpackSafeAlert(message)')
+    expect(code).toContain('function __previewSafeAlert(message)')
   })
 
   it('rewrites window.alert() the same way as a bare alert()', () => {
@@ -38,7 +38,7 @@ describe('buildSandpackFiles — fixNativeDialogCalls neutralizes blocking nativ
         "export default function App() { return (<button onClick={() => window.alert('hi')}>Go</button>) }",
       ].join('\n'),
     })
-    expect(built['/src/App.tsx']).toContain("__sandpackSafeAlert('hi')")
+    expect(built['/src/App.tsx']).toContain("__previewSafeAlert('hi')")
     expect(built['/src/App.tsx']).not.toMatch(/window\.alert\(/)
   })
 
@@ -58,10 +58,10 @@ describe('buildSandpackFiles — fixNativeDialogCalls neutralizes blocking nativ
       ].join('\n'),
     })
     const code = built['/src/App.tsx']
-    expect(code).toContain("__sandpackSafeConfirm('Are you sure?')")
-    expect(code).toContain("__sandpackSafePrompt('New name', 'Untitled')")
-    expect(code).toContain('function __sandpackSafeConfirm(message)')
-    expect(code).toContain('function __sandpackSafePrompt(message, defaultValue)')
+    expect(code).toContain("__previewSafeConfirm('Are you sure?')")
+    expect(code).toContain("__previewSafePrompt('New name', 'Untitled')")
+    expect(code).toContain('function __previewSafeConfirm(message)')
+    expect(code).toContain('function __previewSafePrompt(message, defaultValue)')
   })
 
   it('does not touch a method call named alert/confirm on another object', () => {
@@ -74,7 +74,7 @@ describe('buildSandpackFiles — fixNativeDialogCalls neutralizes blocking nativ
     })
     const code = built['/src/App.tsx']
     expect(code).toContain("toast.alert('hi')")
-    expect(code).not.toContain('__sandpackSafeAlert')
+    expect(code).not.toContain('__previewSafeAlert')
   })
 
   it('leaves a file with no dialog calls completely untouched', () => {
@@ -98,6 +98,6 @@ describe('buildSandpackFiles — fixNativeDialogCalls neutralizes blocking nativ
     })
     const code = built['/src/App.tsx']
     expect(code.split('\n')[0]).toBe("'use client'")
-    expect(code).toContain('__sandpackSafeAlert')
+    expect(code).toContain('__previewSafeAlert')
   })
 })
