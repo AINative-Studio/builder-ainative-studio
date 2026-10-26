@@ -487,3 +487,28 @@ describe('buildSandpackFiles — fixMissingExports injects a real export onto a 
     expect(built['/components/Shared.tsx']).toMatch(/^export function Nav\b/m)
   })
 })
+
+describe('buildSandpackFiles — main-file default-export synthesis handles more than `export default function Name` (#1523-class)', () => {
+  it('synthesizes a default export for a root component declared as an arrow const with only a bare `export { Name }` list (real crash: /index.tsx does `import App from \'./App\'`, which resolved to undefined pre-fix)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "const HomePage = () => { return <div>hi</div> }\nexport { HomePage }",
+    })
+    expect(built['/App.tsx']).toMatch(/export default HomePage\s*$/m)
+  })
+
+  it('synthesizes a default export for a root component declared as a class, not just a function', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "class HomePage extends React.Component { render() { return <div>hi</div> } }\nexport { HomePage }",
+    })
+    expect(built['/App.tsx']).toMatch(/export default HomePage\s*$/m)
+  })
+
+  it('picks the LAST JSX-returning component, not the first declaration in the file, when a sibling helper is declared earlier', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "const Helper = () => { return <span>not root</span> }\nconst HomePage = () => { return <div><Helper/></div> }\nexport { Helper, HomePage }",
+    })
+    expect(built['/App.tsx']).toMatch(/export default HomePage\s*$/m)
+  })
+})
