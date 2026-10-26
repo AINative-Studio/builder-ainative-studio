@@ -459,11 +459,12 @@ function fixExportShapeMismatches(sandpackFiles: Record<string, string>): void {
     const shape = real
       ? {
           hasDefault: /export\s+default\b/.test(sandpackFiles[real]),
-          named: new Set(
-            [...sandpackFiles[real].matchAll(/export\s+(?:const|function|class)\s+([A-Za-z_$][\w$]*)/g)].map(
+          named: new Set([
+            ...[...sandpackFiles[real].matchAll(/export\s+(?:const|function|class)\s+([A-Za-z_$][\w$]*)/g)].map(
               (m) => m[1],
             ),
-          ),
+            ...extractBareExportListNames(sandpackFiles[real]),
+          ]),
         }
       : null
     shapeCache.set(resolved, shape)
@@ -666,10 +667,14 @@ function buildLocalExportMap(sandpackFiles: Record<string, string>, builtinPaths
   for (const [path, code] of Object.entries(sandpackFiles)) {
     if (builtinPaths.has(path) || !/\.(t|j)sx?$/.test(path)) continue
     const normalized = normalizeForRelative(path)
+    const names = new Set<string>()
     let match: RegExpExecArray | null
     exportRe.lastIndex = 0
-    while ((match = exportRe.exec(code))) {
-      const name = match[1]
+    while ((match = exportRe.exec(code))) names.add(match[1])
+    for (const name of extractBareExportListNames(code)) {
+      if (/^[A-Z]\w*$/.test(name)) names.add(name)
+    }
+    for (const name of names) {
       const existing = map.get(name)
       if (existing !== undefined && existing !== normalized) {
         ambiguous.add(name)
@@ -680,6 +685,50 @@ function buildLocalExportMap(sandpackFiles: Record<string, string>, builtinPaths
   }
   for (const name of ambiguous) map.delete(name)
   return map
+}
+
+/**
+ * Real gap found live (same "Element type is invalid" bug class #1498
+ * already fixed for `export const/function/class Name`): a component
+ * declared WITHOUT an inline `export` keyword and exported only via a
+ * trailing bare list — `function Footer() { ... }` then, separately,
+ * `export { Footer }` — is invisible to the `export\s+(?:const|function|
+ * class)\s+Name` regex both `shapeOf()` and `buildLocalExportMap()` rely
+ * on, even though the file IS a genuinely valid export. This is not an
+ * exotic shape: it's shadcn/ui's own canonical source convention (declare,
+ * then `export { Button, buttonVariants }` at the bottom) — exactly the
+ * style an LLM asked to produce shadcn-style components is likely to
+ * reach for.
+ *
+ * Missing it means: (1) `fixExportShapeMismatches()` never corrects a
+ * wrong bare-default import of such a file (its named set reads as empty,
+ * so the bareDefault branch's `shape.named.has(name)` check always
+ * fails), and (2) `buildLocalExportMap()` never offers this component for
+ * missing-import injection when a sibling uses it in JSX without
+ * importing it — both leaving a real, existing, correctly-exported
+ * component to resolve as `undefined` at render time.
+ *
+ * Deliberately excludes re-exports (`export { X } from './Y'`) — this
+ * only reads what a file exports of ITS OWN local declarations, same
+ * scope as the regex it supplements.
+ */
+function extractBareExportListNames(code: string): string[] {
+  const names: string[] = []
+  const re = /export\s*\{([^}]*)\}(?!\s*from)/g
+  let match: RegExpExecArray | null
+  while ((match = re.exec(code))) {
+    for (const entry of match[1].split(',')) {
+      const trimmed = entry.trim()
+      if (!trimmed || /^type\s/.test(trimmed)) continue
+      const asMatch = trimmed.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/)
+      if (asMatch) {
+        names.push(asMatch[2])
+      } else if (/^[A-Za-z_$][\w$]*$/.test(trimmed)) {
+        names.push(trimmed)
+      }
+    }
+  }
+  return names
 }
 
 /**
