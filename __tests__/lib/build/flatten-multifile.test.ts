@@ -402,4 +402,74 @@ describe('flatten-multifile (#308)', () => {
       expect(out2).toMatch(/const\s+App\s*=/)
     })
   })
+
+  describe('sibling exported only via a bare `export { Name }` list, no default export (#1523)', () => {
+    // Real bug found this run via static analysis + a direct repro against
+    // this file's own exported functions (not yet filed as its own issue —
+    // #1523 already tracks exactly this bug class: a naive default-export
+    // regex that doesn't recognize a component exported via a bare named
+    // `export { Name }` list, already found and fixed in build-files.ts
+    // (#1498/#1499), multi-file-parser.ts (#1506/#1507, #1519/#1520), and
+    // sandbox-builder.ts (#1515/#1516, #1587/#1588). This is a 4th,
+    // previously-unfixed instance in this file's own stripImportsAndExports:
+    // none of its export-stripping regexes match a NAMED (non-`default`)
+    // export list, so `export { Header }` survives flattening verbatim. The
+    // flattened output is injected into a plain, non-module <script> tag by
+    // app/api/preview/[id]/route.ts — `export` is not valid syntax there at
+    // all, so this throws at the Babel-transform step and the whole preview
+    // goes blank, exactly the "blank page" crash class this repo's
+    // rendering-correctness effort exists to catch.
+    it('a sibling whose only export is `export { Header }` is inlined without leaving export syntax behind', () => {
+      const raw = [
+        '// --- FILE: src/App.tsx ---',
+        "import { Header } from './components/Header'",
+        'export default function App(){ return (<div><Header/></div>) }',
+        '// --- FILE: src/components/Header.tsx ---',
+        'function Header(){ return <header>Brand</header> }',
+        'export { Header }',
+      ].join('\n')
+      const out = flattenMultiFile(raw)
+      expect(out).not.toMatch(/export\s*\{/)
+      expect(out).toMatch(/function\s+Header\s*\(/)
+      expect(() =>
+        babelParse(out, { sourceType: 'script', plugins: ['jsx', 'typescript'] }),
+      ).not.toThrow()
+    })
+
+    it('a multi-name bare export list (`export { Header, Footer }`) is stripped for both names', () => {
+      const raw = [
+        '// --- FILE: src/App.tsx ---',
+        "import { Header, Footer } from './components/Chrome'",
+        'export default function App(){ return (<div><Header/><Footer/></div>) }',
+        '// --- FILE: src/components/Chrome.tsx ---',
+        'function Header(){ return <header>H</header> }',
+        'function Footer(){ return <footer>F</footer> }',
+        'export { Header, Footer }',
+      ].join('\n')
+      const out = flattenMultiFile(raw)
+      expect(out).not.toMatch(/export\s*\{/)
+      expect(out).toMatch(/function\s+Header\s*\(/)
+      expect(out).toMatch(/function\s+Footer\s*\(/)
+      expect(() =>
+        babelParse(out, { sourceType: 'script', plugins: ['jsx', 'typescript'] }),
+      ).not.toThrow()
+    })
+
+    it('an aliased bare export (`export { Header as default }`) is stripped, keeping the real declared name', () => {
+      const raw = [
+        '// --- FILE: src/App.tsx ---',
+        "import Header from './components/Header'",
+        'export default function App(){ return (<div><Header/></div>) }',
+        '// --- FILE: src/components/Header.tsx ---',
+        'function Header(){ return <header>Brand</header> }',
+        'export { Header as default }',
+      ].join('\n')
+      const out = flattenMultiFile(raw)
+      expect(out).not.toMatch(/export\s*\{/)
+      expect(out).toMatch(/function\s+Header\s*\(/)
+      expect(() =>
+        babelParse(out, { sourceType: 'script', plugins: ['jsx', 'typescript'] }),
+      ).not.toThrow()
+    })
+  })
 })
