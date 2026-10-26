@@ -140,6 +140,29 @@ describe('detectRootComponent', () => {
       const rewritten = code.replace(r.rewrite!.find, r.rewrite!.replace)
       expect(rewritten).toContain(`class ${ANON_DEFAULT_NAME} {`)
     })
+
+    it('#1524: detects anonymous `export default class extends React.Component {}` (dotted extends target)', () => {
+      // Real bug: the extends-target group only allowed \w+ (a single
+      // identifier), so a DOTTED base class never matched at all — an
+      // extremely common real-world shape. With no match, detection fell
+      // through this priority entirely, and since there's no PascalCase
+      // declaration for a genuinely anonymous class, priority 3 found
+      // nothing either — the function returned { name: null, source: 'none'
+      // }, "no renderable component," even though a real one exists.
+      const code = `export default class extends React.Component {\n  render() { return <div/> }\n}`
+      const r = detectRootComponent(code)
+      expect(r.name).toBe(ANON_DEFAULT_NAME)
+      expect(r.source).toBe('default-export-anonymous')
+      const rewritten = code.replace(r.rewrite!.find, r.rewrite!.replace)
+      expect(rewritten).toContain(`class ${ANON_DEFAULT_NAME} extends React.Component {`)
+    })
+
+    it('#1524: still detects anonymous `export default class extends Component {}` (plain identifier extends target)', () => {
+      const code = `export default class extends Component {\n  render() { return <div/> }\n}`
+      const r = detectRootComponent(code)
+      expect(r.name).toBe(ANON_DEFAULT_NAME)
+      expect(r.source).toBe('default-export-anonymous')
+    })
   })
 
   describe('priority 3 — PascalCase component returning JSX (no default export)', () => {

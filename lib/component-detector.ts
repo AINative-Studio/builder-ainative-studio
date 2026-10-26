@@ -202,8 +202,18 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
       },
     }
   }
-  // export default class {} / class extends X {}
-  const anonClass = code.match(/export\s+default\s+class(\s+extends\s+\w+)?\s*\{/)
+  // export default class {} / class extends X {} / class extends React.Component {}
+  //
+  // #1524: the extends-target group only allowed `\w+` — a single identifier
+  // — so `export default class extends React.Component { ... }` (an
+  // anonymous class component extending a DOTTED member expression, an
+  // extremely common real-world shape) never matched at all. With no match,
+  // detection fell through this priority entirely; for a genuinely anonymous
+  // class there's no PascalCase-named declaration for priority 3 to find
+  // either, so the function incorrectly returned the "no renderable
+  // component" case even though a real, renderable component exists. Widened
+  // to `[\w.]+` so a dotted base class matches too.
+  const anonClass = code.match(/export\s+default\s+class(\s+extends\s+[\w.]+)?\s*\{/)
   if (anonClass) {
     return {
       name: ANON_DEFAULT_NAME,
