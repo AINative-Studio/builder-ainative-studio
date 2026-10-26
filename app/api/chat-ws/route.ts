@@ -1765,6 +1765,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                   (ob.primitiveComplianceGaps.length > after.primitiveComplianceGaps.length) ||
                   (ob.visitorTrackingGap && !after.visitorTrackingGap) ||
                   (ob.fakeLeadCaptureGap && !after.fakeLeadCaptureGap) ||
+                  (ob.alertInLeadCaptureGap && !after.alertInLeadCaptureGap) ||
                   (ob.fakeButtonGap && !after.fakeButtonGap) ||
                   (ob.hardcodedToggleGap && !after.hardcodedToggleGap) ||
                   (ob.axLandmarkGap && !after.axLandmarkGap) ||
@@ -1874,6 +1875,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                     (ob.primitiveComplianceGaps.length > after.primitiveComplianceGaps.length) ||
                     (ob.visitorTrackingGap && !after.visitorTrackingGap) ||
                     (ob.fakeLeadCaptureGap && !after.fakeLeadCaptureGap) ||
+                    (ob.alertInLeadCaptureGap && !after.alertInLeadCaptureGap) ||
                     (ob.fakeButtonGap && !after.fakeButtonGap) ||
                     (ob.hardcodedToggleGap && !after.hardcodedToggleGap) ||
                     (ob.axLandmarkGap && !after.axLandmarkGap) ||
@@ -1981,6 +1983,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               primitiveComplianceGaps: obFinal.primitiveComplianceGaps,
               visitorTrackingGap: obFinal.visitorTrackingGap,
               fakeLeadCaptureGap: obFinal.fakeLeadCaptureGap,
+              alertInLeadCaptureGap: obFinal.alertInLeadCaptureGap,
               fakeButtonGap: obFinal.fakeButtonGap,
               hardcodedToggleGap: obFinal.hardcodedToggleGap,
               axLandmarkGap: obFinal.axLandmarkGap,
