@@ -102,4 +102,27 @@ describe('preview route error pages — the recovery button must actually regene
     expect(html).toContain('action: &quot;regenerate&quot;')
     expect(html).not.toContain('action: &quot;reload&quot;')
   })
+
+  /**
+   * #1592 — a third dead end in this same file, found live (fluent): the
+   * React ErrorBoundary that catches a RUNTIME crash in the generated app
+   * (confirmed live: "TypeError: destroy is not a function", a real React
+   * hook misuse in the generated code) renders a "Refining your app" card
+   * whose own copy says "Try regenerating" — but, unlike the other two error
+   * pages in this file, never actually rendered a button to do it. A founder
+   * hitting a real runtime crash (not a generation failure, not a missing
+   * component — an app that rendered then threw) had no recovery path at
+   * all from this screen.
+   */
+  it('the React ErrorBoundary (a runtime crash in the generated app) embeds a real regenerate button, not just "try regenerating" copy (#1592)', async () => {
+    h.getPreview.mockReturnValue('function App() { return <div>Hello</div> }')
+    const req = new NextRequest('https://builder.ainative.studio/api/preview/some-chat-id')
+    const res = await GET(req, { params: Promise.resolve({ id: 'some-chat-id' }) })
+    const html = await res.text()
+
+    expect(html).toContain('Refining your app')
+    expect(html).toContain("type: 'ainative-preview-nav'")
+    expect(html).toContain("action: 'regenerate'")
+    expect(html).toContain('↻ Regenerate')
+  })
 })
