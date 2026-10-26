@@ -127,6 +127,10 @@ describe('public/shadcn-components.js — defines + exports the full shadcn surf
       useState: (initial: any) => [initial, () => {}],
       Children: { map: (children: any, fn: any) => (Array.isArray(children) ? children.map(fn) : children ? [fn(children)] : children) },
       cloneElement: (el: any, extra: any) => ({ ...el, props: { ...el.props, ...extra } }),
+      // Select (#1539-class runtime bug) switched to real context instead of
+      // prop-drilling, so the module-level eval below now calls these too.
+      createContext: (defaultValue: any) => ({ _defaultValue: defaultValue, Provider: 'Provider' }),
+      useContext: (ctx: any) => ctx._defaultValue,
     }
     const fakeWindow: any = {}
     const fn = new Function('window', 'React', source + '\nreturn window.ShadcnComponents;')
