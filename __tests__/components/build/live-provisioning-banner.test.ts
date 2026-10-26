@@ -45,7 +45,7 @@ describe('Live screen — 4th CTA state for signed-in-but-not-yet-provisioned (#
   it('the provisioning banner CTA actually triggers provisionCompany, not goUpgrade', () => {
     const idx = source.indexOf('data-testid="provisioning-banner"')
     const block = source.slice(idx, idx + 900)
-    expect(block).toMatch(/onClick=\{provisionCompany\}/)
+    expect(block).toMatch(/onClick=\{\(\) => provisionCompany\(\)\}/)
     expect(block).not.toMatch(/onClick=\{goUpgrade\}/)
   })
 
