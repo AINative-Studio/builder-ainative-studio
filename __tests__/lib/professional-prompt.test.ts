@@ -55,6 +55,32 @@ describe('PROFESSIONAL_SYSTEM_PROMPT — never fabricate a named person/testimon
 })
 
 /**
+ * #1559 — real, live-confirmed bug: company "huddle"'s "Get Early Access"
+ * waitlist form called `alert(...)` to confirm a submission. A native
+ * browser alert blocks the ENTIRE page until manually dismissed — on the
+ * sandboxed preview iframe this reproduced as the whole tab appearing
+ * frozen/unresponsive (click succeeded, every subsequent interaction timed
+ * out until the dialog was dismissed). A server-side sweep of the
+ * `generations` table (server-filtered on `generated_code` containing
+ * "alert(") found 82 rows using this pattern — a real, recurring
+ * content-generation gap, not an isolated incident. C7 closes it.
+ */
+describe('PROFESSIONAL_SYSTEM_PROMPT — never use native alert/confirm/prompt (C7, #1559)', () => {
+  it('explicitly forbids native alert/confirm/prompt dialogs', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/[Nn]ever use native `?alert`?\/`?confirm`?\/`?prompt`?/)
+  })
+
+  it('explains WHY: a real alert blocks the whole page until manually dismissed', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/blocks the ENTIRE page/)
+  })
+
+  it('gives a concrete WRONG/CORRECT example using real in-page state instead', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/\/\/ ❌ WRONG: blocks the whole page until manually dismissed/)
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/\/\/ ✅ CORRECT: real in-page state, never blocks/)
+  })
+})
+
+/**
  * #815 — real, live-confirmed bug: /build/agentive-product rendered TWO real
  * <aside> elements simultaneously at every viewport width — the correct
  * desktop sidebar, and a second "mobile" drawer with className="translate-x-0"
