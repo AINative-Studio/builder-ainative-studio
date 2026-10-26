@@ -28,6 +28,7 @@ function withSandpackCors(
 ) {
   return async (request: NextRequest, ctx: { params: Promise<{ table: string }> }): Promise<NextResponse> => {
     const response = await handler(request, ctx)
+    response.headers.set('x-debug-1561-marker', 'cors-wrapper-ran')
     const origin = request.headers.get('origin')
     if (origin && isAllowedSandpackOrigin(origin, SANDPACK_BUNDLER_BASE_URL)) {
       for (const [key, value] of Object.entries(sandpackCorsHeaders(origin))) {
