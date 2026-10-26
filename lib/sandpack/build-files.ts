@@ -17,6 +17,23 @@
 import { fixJsxErrors } from './jsx-fixer'
 import { getBuiltinFiles } from './setup'
 import { sanitizeForSandpack } from '../code-validator'
+import { sandpackDbTokenShim } from './db-token-shim'
+
+/**
+ * #1561 — when provided, injects the db-token-shim module (see that file's
+ * doc comment for the full root-cause writeup) as /db-token-shim.ts and
+ * imports it FIRST in /index.tsx, before the real app's own `import App
+ * from './App'` — so window.fetch is patched before any of the generated
+ * app's own code can call it. `origin` is the real Builder origin
+ * (builder.ainative.studio in production) the Sandpack bundler's iframe
+ * must call back to; `dbToken` is the same per-company signed token the
+ * single-file preview's dbTokenShim attaches, minted via
+ * lib/build/preview-tokens.ts.
+ */
+export interface SandpackDbShimOptions {
+  origin: string
+  dbToken: string
+}
 
 /**
  * Build the final Sandpack `files` map from a generated app's raw files map,
@@ -25,8 +42,16 @@ import { sanitizeForSandpack } from '../code-validator'
  * the React/AIKit/shadcn/lucide import-injection safety nets + final de-dupe on
  * every generated .tsx file.
  */
-export function buildSandpackFiles(files: Record<string, string>): Record<string, string> {
+export function buildSandpackFiles(files: Record<string, string>, shim?: SandpackDbShimOptions): Record<string, string> {
   const sandpackFiles: Record<string, string> = { ...getBuiltinFiles() }
+
+  if (shim?.origin && shim?.dbToken) {
+    sandpackFiles['/db-token-shim.ts'] = sandpackDbTokenShim(shim.origin, shim.dbToken)
+    const indexEntry = sandpackFiles['/index.tsx']
+    if (indexEntry && !indexEntry.includes("'./db-token-shim'")) {
+      sandpackFiles['/index.tsx'] = `import './db-token-shim'\n${indexEntry}`
+    }
+  }
 
   for (const [rawPath, rawContent] of Object.entries(files)) {
     const path = rawPath

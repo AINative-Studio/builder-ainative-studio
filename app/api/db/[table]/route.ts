@@ -1,6 +1,53 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyAppDataToken } from '@/lib/build/app-data-token'
 import { resolveCompanyZerodbKey } from '@/lib/build/company-zerodb-credentials'
+import { isAllowedSandpackOrigin, sandpackCorsHeaders } from '@/lib/sandpack/cors'
+
+/**
+ * #1561 — the Sandpack bundler's iframe (a genuinely different origin from
+ * builder.ainative.studio, serving each preview from its own per-sandbox
+ * subdomain) calls this route cross-origin, via the rewritten absolute-URL
+ * fetch shim (lib/sandpack/db-token-shim.ts). Without these headers the
+ * browser blocks the response as a CORS violation even though the request
+ * itself reached the server and completed successfully — a real create/
+ * update/delete would silently appear to fail from the generated app's
+ * perspective (confirmed live symptom on `silo-product`, #1561's original
+ * report).
+ *
+ * Every exported handler below is wrapped so CORS headers land on every
+ * response path (success AND error — a founder's "why doesn't this ever
+ * work" debugging session needs to actually SEE the real error, not have
+ * the browser swallow it as an opaque network failure) without touching
+ * each handler's own internal logic.
+ */
+const SANDPACK_BUNDLER_BASE_URL =
+  process.env.NEXT_PUBLIC_SANDPACK_BUNDLER_URL || 'https://2-19-8-sandpack.codesandbox.io'
+
+function withSandpackCors(
+  handler: (request: NextRequest, ctx: { params: Promise<{ table: string }> }) => Promise<NextResponse>,
+) {
+  return async (request: NextRequest, ctx: { params: Promise<{ table: string }> }): Promise<NextResponse> => {
+    const response = await handler(request, ctx)
+    const origin = request.headers.get('origin')
+    if (origin && isAllowedSandpackOrigin(origin, SANDPACK_BUNDLER_BASE_URL)) {
+      for (const [key, value] of Object.entries(sandpackCorsHeaders(origin))) {
+        response.headers.set(key, value)
+      }
+    }
+    return response
+  }
+}
+
+/** CORS preflight — the Sandpack shim's cross-origin POST/PUT/DELETE calls
+ *  (Content-Type: application/json, a custom x-ainative-db-token header)
+ *  trigger a real browser preflight before the actual request is sent. */
+export async function OPTIONS(request: NextRequest) {
+  const origin = request.headers.get('origin')
+  if (origin && isAllowedSandpackOrigin(origin, SANDPACK_BUNDLER_BASE_URL)) {
+    return new NextResponse(null, { status: 204, headers: sandpackCorsHeaders(origin) })
+  }
+  return new NextResponse(null, { status: 204 })
+}
 
 /**
  * ZeroDB Proxy API — lets a generated app do CRUD without exposing an API key.
@@ -197,7 +244,7 @@ const KEY_UNAVAILABLE = (reason: string) =>
   )
 
 // GET /api/db/{table} — list or query rows
-export async function GET(
+async function getHandler(
   request: NextRequest,
   { params }: { params: Promise<{ table: string }> }
 ) {
@@ -245,7 +292,7 @@ export async function GET(
 }
 
 // POST /api/db/{table} — insert row(s)
-export async function POST(
+async function postHandler(
   request: NextRequest,
   { params }: { params: Promise<{ table: string }> }
 ) {
@@ -301,7 +348,7 @@ export async function POST(
 }
 
 // PUT /api/db/{table}?id=xxx — update row
-export async function PUT(
+async function putHandler(
   request: NextRequest,
   { params }: { params: Promise<{ table: string }> }
 ) {
@@ -322,7 +369,7 @@ export async function PUT(
 }
 
 // DELETE /api/db/{table}?id=xxx — delete row
-export async function DELETE(
+async function deleteHandler(
   request: NextRequest,
   { params }: { params: Promise<{ table: string }> }
 ) {
@@ -338,3 +385,8 @@ export async function DELETE(
 
   return zerodbFetch(API_KEY, 'DELETE', `/v1/projects/${PROJECT_ID}/database/tables/${table}/rows/${rowId}`)
 }
+
+export const GET = withSandpackCors(getHandler)
+export const POST = withSandpackCors(postHandler)
+export const PUT = withSandpackCors(putHandler)
+export const DELETE = withSandpackCors(deleteHandler)
