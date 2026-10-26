@@ -81,6 +81,33 @@ describe('PROFESSIONAL_SYSTEM_PROMPT — never use native alert/confirm/prompt (
 })
 
 /**
+ * #1572 — real, live-confirmed bug: a real showcase entry's generated app
+ * fetched /api/db/workouts (a table that had never been written to yet — a
+ * normal, expected state for a freshly-generated app, since ZeroDB creates a
+ * table on first WRITE, not on read) and only ever set state on the success
+ * path. The real response was a genuine 404, which the app's own useEffect
+ * never handled: loading never cleared, and the page was stuck on "Loading
+ * workouts..." forever — worse than a crash, which at least shows an error
+ * boundary. C8 closes that gap.
+ */
+describe('PROFESSIONAL_SYSTEM_PROMPT — every fetch needs a real error/empty state (C8, #1572)', () => {
+  it('explicitly requires handling a non-ok/404 response, not just the success path', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/[Ee]very data fetch needs a real error\/empty state/)
+  })
+
+  it('explains WHY: a 404 on an empty table is normal, not a failure, but loading must still clear', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/NORMAL, expected state for a freshly-generated app/)
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/NEVER leave the loading flag set forever/)
+  })
+
+  it('gives a concrete WRONG/CORRECT example covering success, empty, and error paths', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/\/\/ ❌ WRONG: loading never clears on a fetch error or non-ok response/)
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/\.catch\(\(\) => setWorkouts\(\[\]\)\)/)
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/\.finally\(\(\) => setLoading\(false\)\)/)
+  })
+})
+
+/**
  * #815 — real, live-confirmed bug: /build/agentive-product rendered TWO real
  * <aside> elements simultaneously at every viewport width — the correct
  * desktop sidebar, and a second "mobile" drawer with className="translate-x-0"

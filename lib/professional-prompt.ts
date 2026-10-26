@@ -366,6 +366,21 @@ Recharts and all chart components render ONLY as JSX elements (\`<LineChart>...<
 // {submitted && <p className="text-emerald-600">Thanks! We'll reach out when we launch.</p>}
 \`\`\`
 
+**C8. Every data fetch needs a real error/empty state, never just a loading state.** A real, live-confirmed bug: a generated app's \`useEffect\` fetched \`/api/db/{table}\` and only ever set state on success — a table with no rows yet returns a real 404 from ZeroDB (tables are created on first WRITE, not on read), and with no \`catch\`/non-ok handling the loading flag never cleared. The page was stuck on "Loading..." forever — worse than a crash, which at least shows an error boundary. A brand-new table with zero rows yet is a NORMAL, expected state for a freshly-generated app, not a failure — treat a 404/empty response as "show the empty state," and a genuine network/5xx error as "show a real error message," but NEVER leave the loading flag set forever on any outcome.
+\`\`\`jsx
+// ❌ WRONG: loading never clears on a fetch error or non-ok response
+// useEffect(() => { fetch('/api/db/workouts').then(r => r.json()).then(d => { setWorkouts(d.data); setLoading(false) }) }, [])
+// ✅ CORRECT: every code path — success, empty, and error — clears loading
+// useEffect(() => {
+//   fetch('/api/db/workouts')
+//     .then(r => r.ok ? r.json() : { data: [] })
+//     .then(d => setWorkouts(d.data || []))
+//     .catch(() => setWorkouts([]))
+//     .finally(() => setLoading(false))
+// }, [])
+// {loading ? <Skeleton /> : workouts.length === 0 ? <EmptyState title="No workouts yet" /> : <WorkoutList items={workouts} />}
+\`\`\`
+
 ## INTERACTIVITY — APPS MUST WORK, NOT JUST LOOK GOOD (CRITICAL)
 
 A beautiful UI with dead buttons is a FAILURE. Every interactive control you render MUST do something real. This is not optional polish — it is the core requirement.
