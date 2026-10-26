@@ -16,21 +16,16 @@
  *   Real run: npx tsx scripts/backfill-gitea-org-per-workspace.ts --execute
  *   Single company (either mode): npx tsx scripts/backfill-gitea-org-per-workspace.ts --slug=acme [--execute]
  *
- * WORKSPACE RESOLUTION — currently BLOCKED, see builder#1555:
- * `AppEntry.ownerEmail` is the only trustworthy input (the stored
- * `AppEntry.workspaceId` field is itself a separate instance of the exact
- * same #1543 bug, written via the same shared constant on the ZeroDB-
- * registry side — never read it as ground truth here). Resolving a real
- * workspaceId from that email requires a core-side admin lookup that does
- * not exist yet (core's `/api/v1/workspaces` needs a live user's own bearer
- * token, which an offline backfill run over the whole historical registry
- * does not have). `resolveFounderWorkspaceId` (./backfill-gitea-org-per-workspace-logic.ts,
+ * WORKSPACE RESOLUTION, see builder#1555 (core PR #9214, confirmed live
+ * 2026-10-26): `AppEntry.ownerEmail` is the only trustworthy input (the
+ * stored `AppEntry.workspaceId` field is itself a separate instance of the
+ * exact same #1543 bug, written via the same shared constant on the
+ * ZeroDB-registry side — never read it as ground truth here).
+ * `resolveFounderWorkspaceId` (./backfill-gitea-org-per-workspace-logic.ts,
  * split out so it's unit-testable without this file's top-level main() call
- * firing on import) is the single seam this script calls for that
- * resolution — swap its body for the real admin call once builder#1555
- * lands; every other piece of this script (enumeration, idempotency,
- * dry-run reporting, the actual transfer + registry update) is already real
- * and ready to run.
+ * firing on import) calls core's real admin endpoint (`GET /api/v1/admin/
+ * users/by-email/{email}/workspaces`, authenticated with Builder's existing
+ * service key — no new credential needed) to resolve it.
  *
  * Requires GITEA_BASE_URL + GITEA_ADMIN_TOKEN, and ZERODB_API_KEY (or
  * AINATIVE_API_KEY) + ZERODB_PROJECT_ID to enumerate companies — e.g. via
@@ -40,6 +35,7 @@
 export {}
 
 import { listAllAppsWithStatus, type AppEntry } from '../lib/build/app-registry'
+import { BUILDER_WORKSPACE_ID } from '../lib/build/instant-db'
 import { configured, getRepo, orgNameForWorkspace, transferRepo } from '../lib/git/gitea-client'
 import { resolveFounderWorkspaceId } from './backfill-gitea-org-per-workspace-logic'
 
@@ -47,8 +43,13 @@ const EXECUTE = process.argv.includes('--execute')
 const SLUG_ARG = process.argv.find((a) => a.startsWith('--slug='))
 const ONLY_SLUG = SLUG_ARG ? SLUG_ARG.slice('--slug='.length).trim() : null
 
-/** The shared platform org every repo provisioned before #1544 landed in. */
-const SHARED_WORKSPACE_ID = process.env.BUILDER_WORKSPACE_ID || ''
+/** The shared platform org every repo provisioned before #1544 landed in.
+ *  Imported from the SAME constant every provisioning call site reads
+ *  (lib/build/instant-db.ts) rather than re-deriving from an env var here —
+ *  this script had been reading `process.env.BUILDER_WORKSPACE_ID`, which
+ *  does not exist; the real var is `AINATIVE_BUILDER_WORKSPACE_ID`, and the
+ *  constant already has the correct live-default fallback baked in. */
+const SHARED_WORKSPACE_ID = BUILDER_WORKSPACE_ID
 
 type Disposition =
   | 'would_transfer'
@@ -74,10 +75,6 @@ async function main() {
 
   if (!configured()) {
     console.error('✗ Gitea is not configured (GITEA_BASE_URL/GITEA_ADMIN_TOKEN unset) — migration did not run.')
-    process.exit(1)
-  }
-  if (!SHARED_WORKSPACE_ID) {
-    console.error('✗ BUILDER_WORKSPACE_ID is not set in this environment — cannot identify the shared org to migrate OUT of.')
     process.exit(1)
   }
   const sharedOrg = orgNameForWorkspace(SHARED_WORKSPACE_ID)
