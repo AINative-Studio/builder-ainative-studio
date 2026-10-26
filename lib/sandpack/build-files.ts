@@ -451,11 +451,12 @@ function fixExportShapeMismatches(sandpackFiles: Record<string, string>): void {
   const builtinPaths = new Set(Object.keys(getBuiltinFiles()))
   const importRe = /^[ \t]*import\s+([^'";]*?)\s*from\s*['"](\.\.?\/[^'"]+)['"]/gm
 
-  const shapeCache = new Map<string, { hasDefault: boolean; named: Set<string> } | null>()
-  function shapeOf(resolved: string): { hasDefault: boolean; named: Set<string> } | null {
+  const shapeCache = new Map<string, { hasDefault: boolean; named: Set<string>; defaultRhs: string | null } | null>()
+  function shapeOf(resolved: string): { hasDefault: boolean; named: Set<string>; defaultRhs: string | null } | null {
     if (shapeCache.has(resolved)) return shapeCache.get(resolved)!
     const candidates = [resolved, `${resolved}.tsx`, `${resolved}.ts`, `${resolved}/index.tsx`, `${resolved}/index.ts`]
     const real = candidates.find((c) => c in sandpackFiles)
+    const defaultRhsMatch = real ? sandpackFiles[real].match(/export\s+default\s+([^\n;]*)/) : null
     const shape = real
       ? {
           hasDefault: /export\s+default\b/.test(sandpackFiles[real]),
@@ -464,6 +465,7 @@ function fixExportShapeMismatches(sandpackFiles: Record<string, string>): void {
               (m) => m[1],
             ),
           ),
+          defaultRhs: defaultRhsMatch ? defaultRhsMatch[1].trim() : null,
         }
       : null
     shapeCache.set(resolved, shape)
@@ -496,7 +498,7 @@ function fixExportShapeMismatches(sandpackFiles: Record<string, string>): void {
       if (singleNamed) {
         const exported = singleNamed[1]
         const local = singleNamed[2] || singleNamed[1]
-        if (!shape.named.has(exported) && shape.hasDefault) {
+        if (!shape.named.has(exported) && shape.hasDefault && defaultExportIsSuitableSingleTarget(shape.defaultRhs, exported)) {
           const aliasPart = singleNamed[2] ? `\\s+as\\s+${local}` : ''
           const replaced = match[0].replace(new RegExp(`\\{\\s*${exported}(?:${aliasPart})?\\s*\\}`), local)
           if (replaced !== match[0]) edits.push({ from: match[0], to: replaced })
@@ -509,6 +511,44 @@ function fixExportShapeMismatches(sandpackFiles: Record<string, string>): void {
       sandpackFiles[path] = fixed
     }
   }
+}
+
+/**
+ * Real gap found live (overnight loop static analysis, #1539 — "Element
+ * type is invalid ... but got: object" on silo-product's cold load):
+ * `fixExportShapeMismatches()`'s `singleNamed` branch used to treat ANY
+ * `export default` text in a target file as proof the default export IS
+ * the single named component being imported — it never checked what the
+ * default export's own value actually is.
+ *
+ * Two shapes make that assumption wrong:
+ *  - `export default { Footer }` — a plain OBJECT literal referencing the
+ *    component (a plausible model mistake, confusing object-shorthand
+ *    export with re-exporting the component itself). `shape.hasDefault`
+ *    reads true, there's no real named export either, so the old code
+ *    rewrote `import { Footer } from './Footer'` (correctly resolves to
+ *    `undefined` per real ES semantics — already broken, but at least
+ *    throws the FAMILIAR "got: undefined" message) into `import Footer
+ *    from './Footer'`, which binds `Footer` to the whole object, not the
+ *    function — rendering `<Footer/>` then throws "Element type is
+ *    invalid ... but got: object" instead. The "fix" changed the crash
+ *    signature, it didn't fix anything.
+ *  - `export default SomethingElse` — a bare reference to a genuinely
+ *    DIFFERENT identifier than the one being imported. "Has a default" is
+ *    not "is the thing being imported by this other name."
+ *
+ * Deliberately permissive otherwise (unnamed/anonymous `export default
+ * function () {...}` or `export default class {...}`, or a bare reference
+ * that DOES match the requested name) — those are exactly the safe shapes
+ * this correction exists to handle, same conservative philosophy as the
+ * rest of this function's own doc comment.
+ */
+function defaultExportIsSuitableSingleTarget(defaultRhs: string | null, exported: string): boolean {
+  if (defaultRhs === null) return true
+  if (defaultRhs.startsWith('{') || defaultRhs.startsWith('[')) return false
+  const bareRef = defaultRhs.match(/^([A-Za-z_$][\w$]*)\s*;?\s*$/)
+  if (bareRef && bareRef[1] !== exported) return false
+  return true
 }
 
 /**
