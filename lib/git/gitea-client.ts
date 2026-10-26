@@ -240,6 +240,54 @@ export async function createRepo(
 }
 
 /**
+ * Transfer a repo to a different org (#1545 — migrating repos provisioned
+ * before #1543/#1544 out of the single shared platform org into their real
+ * founder's own workspace org). Real, documented Gitea contract: `POST
+ * /repos/{owner}/{repo}/transfer` with `{new_owner}` — Gitea executes org-to-
+ * org repo transfers synchronously (no pending-invite step when the new
+ * owner is an org the admin token already controls, which every `ws-*` org
+ * this client creates always is), returning the repo's updated representation
+ * under its new `full_name`.
+ *
+ * IDEMPOTENT in the same spirit as ensureOrg/createRepo: if the repo is
+ * already under `toOrg` (checked via a pre-flight getRepo), this is a no-op
+ * success rather than an error — a migration script re-run after a partial
+ * failure must never fail on the rows it already fixed. Returns null when
+ * unconfigured or inputs are invalid, OR when the source repo genuinely
+ * doesn't exist under `fromOrg` (a 404 there is a real "nothing to
+ * transfer," not a failure to surface). THROWS on any other non-ok status
+ * (auth/server error, or Gitea refusing the transfer for a reason this
+ * caller should see, e.g. a name collision in the destination org).
+ */
+export async function transferRepo(
+  fromOrg: string,
+  toOrg: string,
+  slug: string,
+): Promise<GiteaRepo | null> {
+  if (!configured() || !fromOrg || !toOrg) return null
+  const repo = repoNameForSlug(slug)
+  if (!repo) return null
+
+  // Already there (a prior run got this far, or it was never actually in
+  // fromOrg to begin with) → idempotent no-op.
+  const already = await getRepo(toOrg, repo)
+  if (already) return already
+
+  const existing = await getRepo(fromOrg, repo)
+  if (!existing) return null
+
+  const res = await giteaFetch(
+    `/repos/${encodeURIComponent(fromOrg)}/${encodeURIComponent(repo)}/transfer`,
+    { method: 'POST', body: JSON.stringify({ new_owner: toOrg }) },
+  )
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`gitea transferRepo ${fromOrg}/${repo} -> ${toOrg} failed: ${res.status} ${text}`.slice(0, 300))
+  }
+  return (await res.json()) as GiteaRepo
+}
+
+/**
  * Grant a human collaborator access to a company repo (#349, decision 3) — the
  * OPTIONAL human-write grant on top of the founder's read-only mirror. Gitea's
  * add-collaborator endpoint is a PUT and is idempotent by nature (re-granting the
