@@ -9,6 +9,7 @@ import {
   hasAlertInLeadCaptureGap,
   hasFakeButtonGap,
   hasHardcodedToggleGap,
+  hasUnpersistedComposerGap,
   hasAxLandmarkGap,
   hasAxManifestGap,
   hasAxJsonLdGap,
@@ -602,6 +603,105 @@ function App(){
     expect(r.hardcodedToggleGap).toBe(false)
     const prompt = buildObediencePrompt('a gallery app', r)
     expect(prompt).not.toMatch(/PERSIST THE FAVORITE\/LIKE\/SAVE TOGGLE/)
+  })
+})
+
+describe('obedience-gate: unpersisted feed composer (#1598, agentis — real bug, found live)', () => {
+  // The real repro shape: a feed with hardcoded seed posts, a broadcast
+  // composer that prepends to the array (instant optimistic UI), AND the
+  // mandated visitor-tracking beacon ALSO present — the exact condition that
+  // made the old blunt usesDataLayer(code) short-circuit miss this entirely
+  // (the file DOES call /api/db, just for something unrelated to the feed).
+  const AGENTIS_APP = `
+function App(){
+  const [posts, setPosts] = useState([
+    { id: 1, author: 'GPT-Analyst', text: 'Markets looking bullish today' },
+    { id: 2, author: 'CreativeForge', text: 'New art drop incoming' },
+  ])
+  const [draft, setDraft] = useState('')
+  useEffect(() => { fetch('/api/db/visitors', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ path: '/' }) }).catch(() => {}) }, [])
+  const handleBroadcast = () => {
+    const newPost = { id: Date.now(), author: 'You', text: draft }
+    setPosts(prev => [newPost, ...prev])
+    setDraft('')
+  }
+  return (<div>
+    <input value={draft} onChange={e=>setDraft(e.target.value)} />
+    <button onClick={handleBroadcast}>Broadcast</button>
+    {posts.map(p => <div key={p.id}>{p.author}: {p.text}</div>)}
+  </div>)
+}`
+
+  const PERSISTED_AGENTIS_APP = `
+function App(){
+  const [posts, setPosts] = useState([])
+  const [draft, setDraft] = useState('')
+  useEffect(() => { fetch('/api/db/posts').then(r=>r.json()).then(d=>setPosts(d.data||[])) }, [])
+  const handleBroadcast = async () => {
+    const saved = await fetch('/api/db/posts', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ author: 'You', text: draft }) }).then(r=>r.json()).catch(()=>null)
+    setPosts(prev => [saved?.data || saved, ...prev])
+    setDraft('')
+  }
+  return (<div><input value={draft} onChange={e=>setDraft(e.target.value)} /><button onClick={handleBroadcast}>Broadcast</button>{posts.map(p => <div key={p.id}>{p.author}: {p.text}</div>)}</div>)
+}`
+
+  it('THE BUG: flags a broadcast/post composer that appends to a hardcoded array (the real agentis repro)', () => {
+    expect(hasUnpersistedComposerGap(AGENTIS_APP)).toBe(true)
+  })
+
+  it('CRITICAL: still flags it even though the file DOES call /api/db for something unrelated (the mandated visitor beacon) — this is exactly the bug hasPersistenceGap could not catch', () => {
+    expect(usesDataLayer(AGENTIS_APP)).toBe(true) // confirms the file-wide check alone would wrongly call this "fine"
+    expect(hasPersistenceGap(AGENTIS_APP, 'Where AI agents meet, trade, and thrive')).toBe(false) // the OLD gap really does miss it
+    expect(hasUnpersistedComposerGap(AGENTIS_APP)).toBe(true) // the NEW gap catches it anyway
+  })
+
+  it('does NOT flag when the feed is actually loaded from and posted through /api/db', () => {
+    expect(hasUnpersistedComposerGap(PERSISTED_AGENTIS_APP)).toBe(false)
+  })
+
+  it('does NOT flag an app with no composer-on-hardcoded-array pattern at all', () => {
+    expect(hasUnpersistedComposerGap('function App(){return <div>hi</div>}')).toBe(false)
+  })
+
+  it('does NOT flag a lead-capture form (different shape — single capture + static success, not an append-to-visible-list)', () => {
+    const LEAD_CAPTURE_APP = `
+function App(){
+  const [email, setEmail] = useState('')
+  const [submitted, setSubmitted] = useState(false)
+  const handleSubmit = (e) => { e.preventDefault(); setSubmitted(true) }
+  return (<form onSubmit={handleSubmit}><input type="email" value={email} onChange={e=>setEmail(e.target.value)} /><button>Join</button></form>)
+}`
+    expect(hasUnpersistedComposerGap(LEAD_CAPTURE_APP)).toBe(false)
+  })
+
+  it('does NOT flag a favorite toggle (the sibling hardcodedToggleGap\'s own territory, not this one)', () => {
+    const TOGGLE_APP = `
+function App(){
+  const [artPieces, setArtPieces] = useState([{ id: 1, favorited: false }])
+  const toggleFavorite = (id) => { setArtPieces(prev => prev.map(piece => piece.id === id ? { ...piece, favorited: !piece.favorited } : piece)) }
+  return (<div>{artPieces.map(p => <button key={p.id} onClick={()=>toggleFavorite(p.id)}>♡</button>)}</div>)
+}`
+    expect(hasUnpersistedComposerGap(TOGGLE_APP)).toBe(false)
+  })
+
+  it('checkObedience surfaces unpersistedComposerGap and a reason string', () => {
+    const r = checkObedience(AGENTIS_APP, 'Where AI agents meet, trade, and thrive')
+    expect(r.unpersistedComposerGap).toBe(true)
+    expect(r.reasons.some((x) => x.includes('feed/composer') && x.includes('hardcoded array'))).toBe(true)
+  })
+
+  it('buildObediencePrompt includes the real POST call shape when this gap fires', () => {
+    const r = checkObedience(AGENTIS_APP, 'a social feed for AI agents')
+    const prompt = buildObediencePrompt('a social feed for AI agents', r)
+    expect(prompt).toMatch(/PERSIST THE FEED\/COMPOSER/)
+    expect(prompt).toMatch(/method: 'POST'/)
+  })
+
+  it('buildObediencePrompt omits the composer section when the feed already persists', () => {
+    const r = checkObedience(PERSISTED_AGENTIS_APP, 'a social feed for AI agents')
+    expect(r.unpersistedComposerGap).toBe(false)
+    const prompt = buildObediencePrompt('a social feed for AI agents', r)
+    expect(prompt).not.toMatch(/PERSIST THE FEED\/COMPOSER/)
   })
 })
 

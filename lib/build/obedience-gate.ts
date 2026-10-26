@@ -219,6 +219,70 @@ export function hasHardcodedToggleGap(code: string): boolean {
 }
 
 /**
+ * Real, live bug found live (#1598, agentis — "a social feed for AI agents"):
+ * a feed/composer UI (type a message, click Post/Broadcast/Send, it appears
+ * in the feed immediately) is genuine user-generated content, silently lost
+ * on reload — same defect class as the toggle/lead-capture gaps above, a
+ * THIRD distinct UI shape (append-to-a-list via a composer input + submit,
+ * not a form that then shows a static success state, and not a per-item
+ * boolean flip). `hasPersistenceGap` structurally cannot catch this even
+ * though it DOES require list + onClick/onSubmit: `usesDataLayer(code)`
+ * short-circuits the ENTIRE check the moment the file calls `/api/db`
+ * ANYWHERE — including the mandated visitor-tracking beacon every generated
+ * app includes regardless of its core feature. A file can legitimately call
+ * `/api/db/visitors` while its actual composer/feed feature never touches
+ * `/api/db` at all; the blunt file-wide `usesDataLayer` check can't tell
+ * those apart. `PERSISTENCE_IDEA_HINTS` also has no keyword for a social/
+ * feed/marketplace shape ("Where AI agents meet, trade, and thrive" matches
+ * none of them) — confirming this needs its own unconditional, shape-based
+ * detector, exactly like the toggle gap, not an idea-hint addition (an idea
+ * keyword list can never enumerate every possible app shape).
+ */
+function extractComposerHandlerBody(code: string): string | null {
+  const nameMatch = code.match(
+    /\b(handlePost|handleBroadcast|handleSend|handlePublish|handleCreatePost|handleSubmitPost|handleShare)\s*[:=]/,
+  )
+  if (!nameMatch) return null
+  // Grab a bounded window AFTER the handler's own name/assignment — large
+  // enough to cover a realistic handler body, but scoped to THIS handler
+  // rather than the whole file, so an unrelated /api/db call elsewhere
+  // (e.g. the mandated visitor beacon) can never hide a missing persistence
+  // call inside this specific handler. Bounded, not brace-matched, to stay
+  // a cheap regex-only check consistent with every other detector here.
+  const start = nameMatch.index ?? 0
+  return code.slice(start, start + 600)
+}
+
+function looksLikeUnpersistedComposer(code: string): boolean {
+  // A hardcoded seed array of post/feed-shaped objects to append to.
+  const hasHardcodedArray = /useState\(\s*\[\s*\{/.test(code)
+  // A composer: a text input/textarea PAIRED with a submit handler whose
+  // name suggests posting/broadcasting/sending content (not a generic form
+  // submit — that's `looksLikeLeadCapture`'s territory, a different shape:
+  // single capture + static success state, never an append-to-a-visible-list).
+  const hasComposerHandler =
+    /\b(handlePost|handleBroadcast|handleSend|handlePublish|handleCreatePost|handleSubmitPost|handleShare)\s*[:=]/.test(code)
+  // The composer's own setter PREPENDS/APPENDS a new item onto the existing
+  // array — `setX(prev => [newItem, ...prev])` or `[...prev, newItem]` — the
+  // exact "it shows up immediately" optimistic-UI shape that makes the bug
+  // invisible without a reload. A toggle (per-item field flip via `.map`)
+  // does not match this and is the sibling check's own territory instead.
+  const hasListAppend = /set\w+\(\s*\(?prev\)?\s*=>\s*\[(?:[\s\S]{0,80}\.\.\.prev|prev,)[\s\S]{0,200}\]\s*\)/.test(code)
+  return hasHardcodedArray && hasComposerHandler && hasListAppend
+}
+
+export function hasUnpersistedComposerGap(code: string): boolean {
+  if (!looksLikeUnpersistedComposer(code)) return false
+  // Feature-scoped, not file-wide: #1598's exact bug was that a blunt
+  // whole-file `usesDataLayer` check gets fooled by an unrelated /api/db
+  // call anywhere else in the file (e.g. the mandated visitor beacon). Check
+  // only the composer handler's OWN body for a /api/db call.
+  const handlerBody = extractComposerHandlerBody(code)
+  if (!handlerBody) return false
+  return !usesDataLayer(handlerBody)
+}
+
+/**
  * #483/#563: does the code fire the mandated visitor-tracking beacon
  * (`POST /api/db/visitors` on mount)? Real gap fix — the founder's Live
  * dashboard showed a "visitors" count that was a permanent, hardcoded 0 with
@@ -489,6 +553,12 @@ export interface ObedienceResult {
   /** Real bug (found live): a favorite/like/save toggle on a hardcoded array
    *  — genuine interaction silently lost on reload. */
   hardcodedToggleGap: boolean
+  /** Real bug (found live, #1598): a feed/composer (post/broadcast/send) that
+   *  appends to a hardcoded array — genuine user-generated content silently
+   *  lost on reload, invisible to the blunt file-wide usesDataLayer() check
+   *  when the file calls /api/db for something unrelated (e.g. the mandated
+   *  visitor beacon) but never for the composer's own feature. */
+  unpersistedComposerGap: boolean
   /** AX compliance: no root `<main aria-label>` landmark (checklist item 1). */
   axLandmarkGap: boolean
   /** AX compliance: no hidden agent action manifest (checklist item 5). */
@@ -543,6 +613,7 @@ export function checkObedience(
   const alertInLeadCaptureGap = hasAlertInLeadCaptureGap(code)
   const fakeButtonGap = hasFakeButtonGap(code)
   const hardcodedToggleGap = hasHardcodedToggleGap(code)
+  const unpersistedComposerGap = hasUnpersistedComposerGap(code)
   const axLandmarkGap = hasAxLandmarkGap(code)
   const axManifestGap = hasAxManifestGap(code)
   const axJsonLdGap = hasAxJsonLdGap(code)
@@ -576,6 +647,9 @@ export function checkObedience(
   if (hardcodedToggleGap) {
     reasons.push('A favorite/like/save toggle on a hardcoded list resets on reload — must persist via /api/db.')
   }
+  if (unpersistedComposerGap) {
+    reasons.push('A feed/composer (post/broadcast/send) appends to a hardcoded array — genuine content is lost on reload, must persist via /api/db.')
+  }
   if (axLandmarkGap) {
     reasons.push('No root <main aria-label="..."> landmark — required so AI agents can parse and navigate the page.')
   }
@@ -600,7 +674,7 @@ export function checkObedience(
   if (axComplexWidgetRoleGap) {
     reasons.push('A complex widget (tabs or a live status/loading region) is missing its ARIA role — agents/screen readers get no signal about its behavior.')
   }
-  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, visitorTrackingGap, fakeLeadCaptureGap, alertInLeadCaptureGap, fakeButtonGap, hardcodedToggleGap, axLandmarkGap, axManifestGap, axJsonLdGap, axSkipNavGap, axNavLabelGap, axSectionLabelGap, axAgentAttributesGap, axComplexWidgetRoleGap, reasons }
+  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, visitorTrackingGap, fakeLeadCaptureGap, alertInLeadCaptureGap, fakeButtonGap, hardcodedToggleGap, unpersistedComposerGap, axLandmarkGap, axManifestGap, axJsonLdGap, axSkipNavGap, axNavLabelGap, axSectionLabelGap, axAgentAttributesGap, axComplexWidgetRoleGap, reasons }
 }
 
 /**
@@ -693,6 +767,19 @@ export function buildObediencePrompt(idea: string, result: ObedienceResult): str
       "   fetch(`/api/db/<table>?id=${item.id}`, { method: 'PUT', headers: {'Content-Type':'application/json'},",
       "     body: JSON.stringify({ favorited: !item.favorited }) }).catch(() => {})",
       '   Keep the same instant-feeling UI (update local state immediately, PUT in the background).',
+      '',
+    )
+  }
+  if (result.unpersistedComposerGap) {
+    parts.push(
+      '6b) PERSIST THE FEED/COMPOSER (post/broadcast/send) — it currently only prepends the new item to a',
+      '    hardcoded, in-memory array (useState([{...}])), so every post vanishes the instant the page reloads.',
+      '    Load the feed from /api/db on mount, and POST each new item the same way:',
+      "    useEffect(() => { fetch('/api/db/<table>').then(r=>r.json()).then(d=>setItems(d.data||seedItems)) }, [])",
+      "    const handlePost = async () => { const saved = await fetch('/api/db/<table>', { method: 'POST',",
+      "      headers: {'Content-Type':'application/json'}, body: JSON.stringify({ text, postedAt: new Date().toISOString() })",
+      '      }).then(r=>r.json()).catch(()=>null); setItems(prev => [saved?.data || saved, ...prev]) }',
+      '    Keep the same instant-feeling optimistic UI — only the persistence is missing.',
       '',
     )
   }
@@ -818,6 +905,7 @@ export function narrowToPrimitiveComplianceOnly(gaps: string[]): ObedienceResult
     alertInLeadCaptureGap: false,
     fakeButtonGap: false,
     hardcodedToggleGap: false,
+    unpersistedComposerGap: false,
     axLandmarkGap: false,
     axManifestGap: false,
     axJsonLdGap: false,
