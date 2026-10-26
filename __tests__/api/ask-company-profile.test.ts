@@ -68,13 +68,31 @@ describe('GET /api/build/ask — company profile (#693)', () => {
     expect(h.ensureCompanyProfile).toHaveBeenCalledWith('guest:anon::ember-box')
   })
 
-  it('returns profile: null when none exists yet', async () => {
+  it('returns profile: null when none exists yet, WITHOUT consulting ZeroMemory at all (#1542 — real production bug)', async () => {
     h.loadChatWithFallback.mockResolvedValue([])
-    h.ensureCompanyProfile.mockResolvedValue(null)
+    // Real production repro, live-verified: company "ember-box", zero real
+    // chat turns (confirmed via this same route's own `turns` response),
+    // yet "What Cody has learned" served exactly this fabricated content —
+    // an invented brand-color preference and an invented unrelated company
+    // name ("Ledgerly") that was never discussed. Root cause:
+    // ensureCompanyProfile's internal "nothing new to reflect" fallback
+    // returned whatever ZeroMemory already had stored for this scope key —
+    // with no check against the real turn count. Mocking it to return
+    // exactly this fabricated profile and asserting it's never even CALLED
+    // for zero turns is the real regression guard.
+    h.ensureCompanyProfile.mockResolvedValue({
+      summary: 'A founder building Ledgerly who likes blue and async code.',
+      preferences: ['likes blue'],
+      behaviors: ['prefers async code'],
+      facts: ['building Ledgerly'],
+      memoryCount: 5,
+      lastInteraction: '2026-09-12T23:40:02Z',
+    })
 
     const res = await GET(req('https://x/api/build/ask?companyId=ember-box'))
     const json = await res.json()
     expect(json.profile).toBeNull()
+    expect(h.ensureCompanyProfile).not.toHaveBeenCalled()
   })
 
   it('does not attempt a profile lookup when there is no companyId', async () => {

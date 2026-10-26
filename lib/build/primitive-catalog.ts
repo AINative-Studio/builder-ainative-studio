@@ -1798,8 +1798,13 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
     `      await fetch('/api/db/waitlist', { method: 'POST', headers: {'Content-Type':'application/json'},\n` +
     `        body: JSON.stringify({ email, joinedAt: new Date().toISOString() }) }).catch(() => {});\n` +
     `      setSubmitted(true); setEmail('') }\n` +
-    `  Keep whatever success UI you'd naturally build (toast/alert/inline message) — only the persistence is\n` +
-    `  mandatory; best-effort, a failed save must never block the visitor-facing success state.\n` +
+    `  Keep whatever success UI you'd naturally build (toast/inline message) — only the persistence is\n` +
+    `  mandatory; best-effort, a failed save must never block the visitor-facing success state. NEVER use\n` +
+    `  \`alert()\` as that success UI (real gap fix, #1581 — found live: a generated app's waitlist handler DID\n` +
+    `  persist the real email correctly, but also called \`alert('...')\` to tell the visitor — a native alert()\n` +
+    `  blocks the page's entire main thread until a human manually dismisses it, freezing the page completely;\n` +
+    `  a real visitor submitting the form hit what looked like a dead, frozen tab). Use a toast or an inline\n` +
+    `  message element instead — never a blocking dialog.\n` +
     `- NO FAKE OR DEAD BUTTONS (real gap fix — found live on a real founder's landing page: a top-nav "Sign In"\n` +
     `  button whose only handler was \`onClick={() => alert('Sign In')}\`, and a SECOND "Get Early Access" button\n` +
     `  with no onClick/href at all): every button/link that LOOKS clickable MUST do something real when clicked.\n` +

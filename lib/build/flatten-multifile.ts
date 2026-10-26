@@ -175,13 +175,25 @@ function stripImportsAndExports(code: string, fallbackName = 'DefaultComponent')
 
   const named = nameAnonymousDefaultExport(code, fallbackName)
 
+  // #1529: this only matched an import with a `{...}` named clause — a BARE
+  // default-only import from a non-backed external package (`import Modal
+  // from 'some-ui-lib'`, no named clause at all) never matched, so it fell
+  // through untouched into the generic unconditional import-strip below,
+  // which removes the line with NO stub generated. Any JSX reference to that
+  // import (`<Modal/>`) became a bare, wholly undeclared identifier in the
+  // flattened output — a ReferenceError at render, the same outcome the
+  // named-import case (Dispatch, 2026-09-11, see the doc comment above) was
+  // already fixed for. The named clause is now optional, covering all three
+  // shapes a generated sibling actually uses: bare default-only, bare
+  // named-only, and the combined default+named clause.
   const withStubbedExternals = named.replace(
-    /^\s*import\s+(?:(\w+)\s*,\s*)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"];?\s*$/gm,
-    (full, defaultName: string | undefined, named: string, pkg: string) => {
+    /^\s*import\s+(?:(\w+)(?:\s*,\s*\{([^}]*)\})?|\{([^}]*)\})\s*from\s*['"]([^'"]+)['"];?\s*$/gm,
+    (full, defaultName: string | undefined, namedWithDefault: string | undefined, namedOnly: string | undefined, pkg: string) => {
       if (GLOBALLY_PROVIDED_PACKAGES.has(pkg) || pkg.startsWith('./') || pkg.startsWith('../')) return full
+      const namedClause = namedWithDefault ?? namedOnly ?? ''
       const names = [
         ...(defaultName ? [defaultName] : []),
-        ...named.split(',').map((n) => n.trim().split(/\s+as\s+/).pop()!.trim()).filter(Boolean),
+        ...namedClause.split(',').map((n) => n.trim().split(/\s+as\s+/).pop()!.trim()).filter(Boolean),
       ]
       for (const name of names) {
         if (stubbed.has(name)) continue
@@ -256,8 +268,25 @@ export function flattenMultiFile(raw: string): string {
   const seen = new Set<string>()
   const stubbed: string[] = []
   const inline = (code: string) => {
-    for (const m of code.matchAll(/import\s+(?:(\w+)|\{([^}]*)\})\s+from\s*['"]\.\.?\/([^'"]+)['"]/g)) {
-      const base = baseName(m[3])
+    // #1517: the old regex only matched a BARE default import (`import Hero
+    // from './Hero'`) or a BARE named-only import (`import { HeroProps }
+    // from './Hero'`) — never a combined clause on one line (`import Hero,
+    // { HeroProps } from './Hero'`), an ordinary shape when a sibling
+    // component also exports a TS prop-type alongside its default export.
+    // The combined form matched neither alternative, so the import was never
+    // detected here at all: never inlined (the byBase lookup never
+    // attempted) and never stubbed by the dangling-import fallback either
+    // (that only fires when the regex matched but no child file exists).
+    // stripImportsAndExports()'s own unconditional import-stripping regex
+    // still removed the import LINE from App's code regardless, leaving
+    // `<Hero/>` referencing a wholly undeclared identifier — a
+    // ReferenceError at render in the single-file preview's non-module
+    // <script> tag. The named clause is now absorbed (but not captured) as
+    // an optional trailing group on the default-name alternative, so a bare
+    // default-only or bare named-only import still matches exactly as
+    // before — only the previously-unmatched combined clause is new.
+    for (const m of code.matchAll(/import\s+(?:(\w+)(?:\s*,\s*\{[^}]*\})?|\{[^}]*\})\s+from\s*['"]\.\.?\/([^'"]+)['"]/g)) {
+      const base = baseName(m[2])
       const child = byBase[base]
       const defaultName = m[1]
       if (child && !seen.has(base)) {

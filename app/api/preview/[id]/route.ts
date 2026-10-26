@@ -7,125 +7,17 @@ import { detectRootComponent } from '@/lib/component-detector'
 import { flattenMultiFile } from '@/lib/build/flatten-multifile'
 import { convertTemplateLiteralAttrsToConcat } from '@/lib/build/template-literal-to-concat'
 import { dedupeProvidedComponents } from '@/lib/build/dedupe-provided-components'
-import { mintAppDataToken } from '@/lib/build/app-data-token'
-import { mintPrimitiveProxyToken } from '@/lib/build/primitive-proxy-token'
-import { hasFounderCredential, type FounderScopedPrimitive } from '@/lib/build/primitive-credentials'
+import type { FounderScopedPrimitive } from '@/lib/build/primitive-credentials'
+// #1561 — mintPreviewDbToken/mintPreviewPrimitiveTokens/FOUNDER_SCOPED_PRIMITIVES
+// extracted to lib/build/preview-tokens.ts so app/build/[slug]/page.tsx can
+// mint the SAME tokens server-side for the Sandpack multi-file preview,
+// without a second hand-maintained copy of this binding-check logic.
+// Re-exported from here too (existing tests import them from this route
+// file directly) so this extraction is not a breaking change for callers.
+import { mintPreviewDbToken, mintPreviewPrimitiveTokens, FOUNDER_SCOPED_PRIMITIVES } from '@/lib/build/preview-tokens'
+export { mintPreviewPrimitiveTokens, FOUNDER_SCOPED_PRIMITIVES }
 // Sucrase removed — builds were failing. Using client-side Babel.
 // The key fix is using models that produce COMPLETE code (not maverick 512-tok)
-
-// Real bug found live (Dispatch, 2026-09-11): this list only ever had the
-// original 4 founder-scoped primitives (#443) — every one added since
-// (zerocrm #414/#655, zerovoice #522, zeroinvoice #638/#639, serviceos #642,
-// livestreaming/socialgraph #644) was missing, so the preview iframe could
-// NEVER mint a proxy token for them, regardless of whether the company
-// actually has a real credential captured. Confirmed live: Dispatch's
-// zeropipeline call itself 401'd for an unrelated reason (no credential was
-// ever captured for this specific company), but any company that DOES have
-// e.g. a real serviceos/zerovoice credential would hit this exact same
-// silent 401 in preview — the missing entry, not a credential problem.
-// Keep this in sync with FounderScopedPrimitive's real union (all 10
-// members). contentworkflow is deliberately excluded from THIS list (it
-// uses Builder's own service key, not a founder credential, so it is never
-// gated on hasFounderCredential) — but it IS still minted a proxy token,
-// unconditionally, by mintPreviewPrimitiveTokens below (#814). The proxy
-// route's resolveSlug() requires a signed {slug, primitive} binding token
-// for every primitive in the no-COMPANY_SLUG (preview) case, contentworkflow
-// included, regardless of which downstream credential model it uses — so
-// "needs no founder credential" is NOT the same as "needs no preview token."
-// The earlier version of this comment conflated the two, which is exactly
-// how contentworkflow ended up permanently 401ing in preview.
-export const FOUNDER_SCOPED_PRIMITIVES: FounderScopedPrimitive[] = [
-  'zerocommerce', 'zeropipeline', 'agentflow', 'zeroforms', 'zerocrm',
-  'zerovoice', 'zeroinvoice', 'serviceos', 'livestreaming', 'socialgraph',
-]
-
-/**
- * Both token minters below resolve the slug's registry entry the same way:
- * `resolveApp()`'s plain `null` collapses "no such company" with "the
- * registry read itself failed" (ZeroDB rate limit, timeout, brief outage —
- * the same ambiguity #832/#1302 already fixed for the public /build/{slug}
- * page). Here the stakes are different but real: a transient hiccup during
- * ONE preview load mints no token at all, so every /api/db call the
- * embedded iframe makes for the rest of that session — including the
- * waitlist-signup and visitor-tracking writes every landing page fires on
- * mount — silently 401s, with no retry until the iframe is reloaded. Since
- * `resolveAppVerified()`'s failure branch reflects a one-off upstream
- * hiccup rather than a cached bad result (#1172's cache only remembers
- * successful reads), a single immediate retry is enough to ride out most of
- * them instead of failing closed for the whole preview session.
- */
-async function resolveAppForPreviewToken(slug: string) {
-  const { resolveAppVerified } = await import('@/lib/build/app-registry')
-  const first = await resolveAppVerified(slug)
-  if (first.verified) return first.entry
-  const retry = await resolveAppVerified(slug)
-  return retry.entry
-}
-
-/**
- * Per-app data token (#331): when the embedder passes ?slug=, mint the signed
- * token that scopes this app's /api/db calls to ITS OWN ZeroDB project — but
- * ONLY if the slug's registered chatId matches THIS preview id (the binding
- * check: naming someone else's slug on your own preview mints nothing). The
- * token is injected as a fetch shim so generated code needs no changes.
- */
-async function mintPreviewDbToken(slug: string | null, previewId: string): Promise<string> {
-  if (!slug || !/^[a-z0-9-]{1,64}$/i.test(slug)) return ''
-  try {
-    const entry = await resolveAppForPreviewToken(slug)
-    if (!entry || entry.chatId !== previewId || !entry.zerodbProjectId) return ''
-    return mintAppDataToken(entry.zerodbProjectId, slug, Math.floor(Date.now() / 1000))
-  } catch {
-    return ''
-  }
-}
-
-/**
- * #443 — same binding check as mintPreviewDbToken, one token per founder-
- * scoped primitive the company actually has a stored credential for (skips
- * primitives that were never provisioned, rather than minting a token that
- * would just 502 at request time). Cheap: HMAC only, no network call beyond
- * the existence check against the already-fetched registry entry.
- *
- * #814 — contentworkflow is deliberately NOT in FOUNDER_SCOPED_PRIMITIVES (it
- * uses Builder's own service key, never a per-founder credential), so it was
- * ALWAYS skipped by the hasFounderCredential loop below and could never get a
- * token in the preview iframe — a real, confirmed 401
- * (missing_or_invalid_token) on every contentworkflow call from inside
- * preview, even though the actual downstream call needs no founder
- * credential at all. The proxy route's resolveSlug() still requires a signed
- * primitive-proxy token in the no-COMPANY_SLUG (preview) case for EVERY
- * primitive, contentworkflow included — so it still needs a real
- * {slug, primitive} binding token, just minted unconditionally on the same
- * slug/chatId binding check as the founder-scoped ones, never gated on
- * hasFounderCredential (there is no founder credential to check for this
- * primitive; gating on one that structurally never exists is the bug).
- */
-export async function mintPreviewPrimitiveTokens(slug: string | null, previewId: string): Promise<Partial<Record<FounderScopedPrimitive | 'contentworkflow', string>>> {
-  const tokens: Partial<Record<FounderScopedPrimitive | 'contentworkflow', string>> = {}
-  if (!slug || !/^[a-z0-9-]{1,64}$/i.test(slug)) return tokens
-  try {
-    const entry = await resolveAppForPreviewToken(slug)
-    if (!entry || entry.chatId !== previewId) return tokens
-    const iat = Math.floor(Date.now() / 1000)
-    await Promise.all(
-      FOUNDER_SCOPED_PRIMITIVES.map(async (p) => {
-        if (await hasFounderCredential(slug, p)) {
-          tokens[p] = mintPrimitiveProxyToken(slug, p, iat)
-        }
-      }),
-    )
-    // #814 — no founder-credential gate: contentworkflow's binding is proof
-    // of "this is really company X's preview," not proof of a per-founder
-    // credential (it never has one). mintPrimitiveProxyToken's signed
-    // {slug, primitive} payload is exactly that binding shape regardless of
-    // which primitive name is passed, so it's reused as-is here.
-    tokens.contentworkflow = mintPrimitiveProxyToken(slug, 'contentworkflow', iat)
-  } catch {
-    return {}
-  }
-  return tokens
-}
 
 /** The injected fetch shim: attaches the app's data token on same-origin
  *  /api/db, /api/memory/ (#496), /api/browser-agent/ (#499),

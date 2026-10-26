@@ -356,10 +356,37 @@ Recharts and all chart components render ONLY as JSX elements (\`<LineChart>...<
 // <blockquote>"This completely changed how our team handles compliance reviews."</blockquote>
 \`\`\`
 
-**C7. Never use native \`alert()\`/\`confirm()\`/\`prompt()\` dialogs.** A native browser dialog is synchronous — it freezes the entire tab until dismissed — and looks like a broken, unstyled popup on an otherwise professional page. Use inline UI feedback instead: a local \`useState\` success/error message rendered in place, an \`<AIKitBanner>\`, or a toggled confirmation view — never a blocking native dialog.
+**C7. Never use native \`alert\`/\`confirm\`/\`prompt\` dialogs.** A real, live-confirmed bug: a form handler called \`alert(...)\` to "confirm" a submission — this blocks the ENTIRE page (a real browser-native modal, not styled UI) until a real user manually dismisses it, which on a sandboxed preview can look and feel completely frozen. Even outside a sandbox, a native alert box looks broken/unprofessional on a page that is otherwise fully styled. Use real in-page UI instead: a \`useState\` toast/inline-message that renders and auto-dismisses, a styled success banner, or disabling the submit button with inline text — anything that is part of the rendered page, never a blocking native dialog.
 \`\`\`jsx
-// ❌ WRONG: alert(\`Thanks for signing up! We'll email \${email}\`)
-// ✅ CORRECT: setSubmitted(true)  // then render a success message/banner from that state
+// ❌ WRONG: blocks the whole page until manually dismissed
+// const handleSubmit = () => { alert('Thanks for signing up!'); setEmail('') }
+// ✅ CORRECT: real in-page state, never blocks
+// const [submitted, setSubmitted] = useState(false)
+// const handleSubmit = () => { setSubmitted(true); setEmail('') }
+// {submitted && <p className="text-emerald-600">Thanks! We'll reach out when we launch.</p>}
+\`\`\`
+
+**C8. Every data fetch needs a real error/empty state, never just a loading state.** A real, live-confirmed bug: a generated app's \`useEffect\` fetched \`/api/db/{table}\` and only ever set state on success — a table with no rows yet returns a real 404 from ZeroDB (tables are created on first WRITE, not on read), and with no \`catch\`/non-ok handling the loading flag never cleared. The page was stuck on "Loading..." forever — worse than a crash, which at least shows an error boundary. A brand-new table with zero rows yet is a NORMAL, expected state for a freshly-generated app, not a failure — treat a 404/empty response as "show the empty state," and a genuine network/5xx error as "show a real error message," but NEVER leave the loading flag set forever on any outcome.
+\`\`\`jsx
+// ❌ WRONG: loading never clears on a fetch error or non-ok response
+// useEffect(() => { fetch('/api/db/workouts').then(r => r.json()).then(d => { setWorkouts(d.data); setLoading(false) }) }, [])
+// ✅ CORRECT: every code path — success, empty, and error — clears loading
+// useEffect(() => {
+//   fetch('/api/db/workouts')
+//     .then(r => r.ok ? r.json() : { data: [] })
+//     .then(d => setWorkouts(d.data || []))
+//     .catch(() => setWorkouts([]))
+//     .finally(() => setLoading(false))
+// }, [])
+// {loading ? <Skeleton /> : workouts.length === 0 ? <EmptyState title="No workouts yet" /> : <WorkoutList items={workouts} />}
+\`\`\`
+
+**C9. A nav bar "Log in" / "Sign in" button on a pre-launch waitlist page has nowhere real to go — don't add one, or wire it to the real waitlist capture.** A real, live-confirmed bug, found twice independently: a generated landing page's nav bar included a "Log in" or "Get Started" button alongside the real hero waitlist form — but a pre-launch product with no users yet has no real account system for that button to open. Both times the button rendered with no \`onClick\` at all: a dead no-op, violating this doc's own "no decorative buttons" rule. This is a distinct, specific case of that general rule — call it out explicitly because the generic rule alone wasn't preventing it: a landing page's nav bar is a very common place to reflexively add a "Log in" button as standard chrome, without stopping to ask whether there's anything real for it to do yet. If the page is a waitlist/early-access page with no real login system, do NOT add a second nav CTA that has nothing to open — either omit it, or make it scroll to / focus the same real email capture the hero already has (never a fake modal, never an unwired button).
+\`\`\`jsx
+// ❌ WRONG: a second nav CTA with no real destination
+// <nav><button>Log in</button><button onClick={...}>Get Early Access</button></nav>
+// ✅ CORRECT: one real CTA, or a nav button that routes to the SAME real capture
+// <nav><button onClick={() => emailInputRef.current?.focus()}>Get Early Access</button></nav>
 \`\`\`
 
 ## INTERACTIVITY — APPS MUST WORK, NOT JUST LOOK GOOD (CRITICAL)
