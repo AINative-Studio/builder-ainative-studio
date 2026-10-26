@@ -480,22 +480,57 @@ export function Live() {
     //   - an unconfirmed read → generate NOTHING this pass, and let the
     //     existing poll/next mount retry. Failing closed costs a founder a
     //     short wait; failing open costs a real, billable generation.
+    // #1583: an UNCONFIRMED resolve-app read (verified:false, or the fetch
+    // itself failing/erroring) used to be a dead end — #1041 correctly ruled
+    // out treating it as "buy a generation" (a transient registry hiccup must
+    // never mint a speculative, billable codegen call), but nothing ever
+    // re-asked the question either. A founder whose FIRST read happened to
+    // land during a brief ZeroDB blip got stuck on "building your product…"
+    // forever, even though the very next read would likely have confirmed
+    // the company one way or the other in seconds. Same root cause as the
+    // sibling MAX_*_POLL_ATTEMPTS bug below (giving up permanently on a
+    // transient condition) — fixed the same way, a bounded retry instead of
+    // a bare early return. RETRY_DELAYS_MS backs off rather than hammering a
+    // registry that may be under real load; the last retry is far enough out
+    // (5 min) to ride out anything shorter than a genuine outage without
+    // keeping the tab busy-polling.
+    const UNVERIFIED_RETRY_DELAYS_MS = [2000, 5000, 15000, 30000, 60000, 120000, 300000]
     const generateIfGenuinelyMissing = (
       slug: string,
       onFound: (chatId: string) => void,
       startGeneration: () => void,
+      retryAttempt = 0,
     ) => {
       fetch(`/api/build/resolve-app?slug=${encodeURIComponent(slug)}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
           if (!alive) return
           if (d?.chatId) { onFound(String(d.chatId)); return }
-          // Only a CONFIRMED miss may buy a generation.
-          if (d && d.verified === false) return
-          if (!d) return
+          // An UNCONFIRMED read (d is null/falsy, or the server's own honest
+          // verified:false) must never buy a generation — but it must also
+          // never be the last word. Re-ask, bounded, instead of stopping.
+          if (!d || d.verified === false) {
+            if (retryAttempt < UNVERIFIED_RETRY_DELAYS_MS.length) {
+              setTimeout(
+                () => { if (alive) generateIfGenuinelyMissing(slug, onFound, startGeneration, retryAttempt + 1) },
+                UNVERIFIED_RETRY_DELAYS_MS[retryAttempt],
+              )
+            }
+            return
+          }
           startGeneration()
         })
-        .catch(() => { /* could not check — never speculate into a paid call */ })
+        .catch(() => {
+          // A network-level failure is exactly as unconfirmed as a non-ok
+          // response — same bounded retry, never a silent permanent stop.
+          if (!alive) return
+          if (retryAttempt < UNVERIFIED_RETRY_DELAYS_MS.length) {
+            setTimeout(
+              () => { if (alive) generateIfGenuinelyMissing(slug, onFound, startGeneration, retryAttempt + 1) },
+              UNVERIFIED_RETRY_DELAYS_MS[retryAttempt],
+            )
+          }
+        })
     }
 
     if (!state.appChatId && state.idea && state.appSub) {
@@ -525,10 +560,7 @@ export function Live() {
             if (n < MAX_APP_POLL_ATTEMPTS) setTimeout(() => { if (alive) pollForApp(n + 1) }, 5000)
           })
       }
-      generateIfGenuinelyMissing(
-        state.appSub,
-        (chatId) => { setAppReady(true); dispatch({ type: 'SET_APP_CHATID', chatId }) },
-        () => {
+      const startCompanyAppGeneration = () => {
       fetch('/api/build/company-app', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -547,10 +579,31 @@ export function Live() {
           if (!alive) return
           // A cached/recovered hit resolves the chatId immediately, no polling.
           if (d?.chatId) { setAppReady(true); dispatch({ type: 'SET_APP_CHATID', chatId: d.chatId }); return }
-          if (d?.status === 'processing') pollForApp(1)
+          if (d?.status === 'processing') { pollForApp(1); return }
+          // #1583: 'unverified' (the registry/pending-state read inside this
+          // route couldn't be confirmed — see company-app/route.ts's own
+          // `verified`/`pendingVerified` checks) used to be silently dropped
+          // here: neither the chatId branch nor the 'processing' branch
+          // fires, so nothing happens — ever. "building your site…" was
+          // left permanently frozen even though the real underlying
+          // condition (a transient registry hiccup) resolves itself within
+          // seconds in practice. Re-run the FULL existence check (not just
+          // re-POST blindly) — generateIfGenuinelyMissing already re-reads
+          // resolve-app first, so a generation that actually DID start
+          // (just couldn't be confirmed this one time) is adopted via
+          // onFound instead of double-triggered.
+          if (d?.status === 'unverified') {
+            setTimeout(() => {
+              if (alive) generateIfGenuinelyMissing(state.appSub, (chatId) => { setAppReady(true); dispatch({ type: 'SET_APP_CHATID', chatId }) }, startCompanyAppGeneration)
+            }, 5000)
+          }
         })
         .catch(() => { if (alive) pollForApp(1) })
-        },
+      }
+      generateIfGenuinelyMissing(
+        state.appSub,
+        (chatId) => { setAppReady(true); dispatch({ type: 'SET_APP_CHATID', chatId }) },
+        startCompanyAppGeneration,
       )
     }
     // Real gap (customer-reported, Meridian, 2026-09-10, issue #620): the
@@ -589,10 +642,7 @@ export function Live() {
             if (n < MAX_POLL_ATTEMPTS) setTimeout(() => { if (alive) pollForProduct(n + 1) }, 5000)
           })
       }
-      generateIfGenuinelyMissing(
-        productSlug,
-        (chatId) => { dispatch({ type: 'SET_PRODUCT_CHATID', chatId }) },
-        () => {
+      const startCompanyProductGeneration = () => {
       fetch('/api/build/company-product', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -605,10 +655,26 @@ export function Live() {
           if (!alive) return
           // A cached hit resolves the chatId immediately without any polling.
           if (d?.chatId) { dispatch({ type: 'SET_PRODUCT_CHATID', chatId: d.chatId }); return }
-          if (d?.status === 'processing') pollForProduct(1)
+          if (d?.status === 'processing') { pollForProduct(1); return }
+          // #1583: same gap as company-app's sibling fix above — 'unverified'
+          // (company-product/route.ts's own verified/pendingVerified checks
+          // couldn't confirm the registry/pending-state read) used to be
+          // silently dropped: neither branch above fires, nothing retries,
+          // ever. Re-run the full existence check rather than blindly
+          // re-POSTing — a generation that DID actually start is adopted via
+          // onFound instead of double-triggered.
+          if (d?.status === 'unverified') {
+            setTimeout(() => {
+              if (alive) generateIfGenuinelyMissing(productSlug, (chatId) => { dispatch({ type: 'SET_PRODUCT_CHATID', chatId }) }, startCompanyProductGeneration)
+            }, 5000)
+          }
         })
         .catch(() => { if (alive) pollForProduct(1) })
-        },
+      }
+      generateIfGenuinelyMissing(
+        productSlug,
+        (chatId) => { dispatch({ type: 'SET_PRODUCT_CHATID', chatId }) },
+        startCompanyProductGeneration,
       )
     }
     // The visible nightshift — the real last nightly run + morning summary.
