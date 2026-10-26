@@ -175,13 +175,25 @@ function stripImportsAndExports(code: string, fallbackName = 'DefaultComponent')
 
   const named = nameAnonymousDefaultExport(code, fallbackName)
 
+  // #1529: this only matched an import with a `{...}` named clause — a BARE
+  // default-only import from a non-backed external package (`import Modal
+  // from 'some-ui-lib'`, no named clause at all) never matched, so it fell
+  // through untouched into the generic unconditional import-strip below,
+  // which removes the line with NO stub generated. Any JSX reference to that
+  // import (`<Modal/>`) became a bare, wholly undeclared identifier in the
+  // flattened output — a ReferenceError at render, the same outcome the
+  // named-import case (Dispatch, 2026-09-11, see the doc comment above) was
+  // already fixed for. The named clause is now optional, covering all three
+  // shapes a generated sibling actually uses: bare default-only, bare
+  // named-only, and the combined default+named clause.
   const withStubbedExternals = named.replace(
-    /^\s*import\s+(?:(\w+)\s*,\s*)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"];?\s*$/gm,
-    (full, defaultName: string | undefined, named: string, pkg: string) => {
+    /^\s*import\s+(?:(\w+)(?:\s*,\s*\{([^}]*)\})?|\{([^}]*)\})\s*from\s*['"]([^'"]+)['"];?\s*$/gm,
+    (full, defaultName: string | undefined, namedWithDefault: string | undefined, namedOnly: string | undefined, pkg: string) => {
       if (GLOBALLY_PROVIDED_PACKAGES.has(pkg) || pkg.startsWith('./') || pkg.startsWith('../')) return full
+      const namedClause = namedWithDefault ?? namedOnly ?? ''
       const names = [
         ...(defaultName ? [defaultName] : []),
-        ...named.split(',').map((n) => n.trim().split(/\s+as\s+/).pop()!.trim()).filter(Boolean),
+        ...namedClause.split(',').map((n) => n.trim().split(/\s+as\s+/).pop()!.trim()).filter(Boolean),
       ]
       for (const name of names) {
         if (stubbed.has(name)) continue
