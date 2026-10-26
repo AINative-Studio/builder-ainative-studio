@@ -118,6 +118,12 @@ export async function runReadyGate(
 export interface GitCommitTargets {
   gitRepoId?: string
   zerodbProjectId?: string
+  // #1543: the founder's real per-workspace Gitea org (same value as the
+  // registry's own #250 `workspaceId` field) — read here so a NEW repo
+  // provisioned by the reconciliation sweep (no founder session available,
+  // see this file's doc comment) lands in the SAME org a session-having
+  // caller would have used, instead of the shared platform-wide org.
+  workspaceId?: string
 }
 
 export interface GitCommitResult {
@@ -144,6 +150,13 @@ export async function runGitCommit(opts: {
   chatId: string
   existing: GitCommitTargets | null | undefined
   taskLabel?: string
+  // #1543: the founder's real per-workspace Gitea org, when the caller has
+  // one (a signed-in session). Falls back to existing.workspaceId (the
+  // registry's stored #250 value) for the session-less reconciler path, and
+  // only then to the shared platform constant — see the ordering comment
+  // below for why that last fallback is a deliberate, narrow safety net,
+  // never the normal case.
+  workspaceId?: string
 }): Promise<GitCommitResult> {
   const { slug, chatId, existing, taskLabel } = opts
   let committed = false
@@ -163,8 +176,18 @@ export async function runGitCommit(opts: {
         committed = await commitRegeneration({ slug, files: fileMap, taskLabel })
       } else if (existing?.zerodbProjectId) {
         attempted = true
+        // #1543: provisioning a NEW repo now must land in the founder's own
+        // workspace org, not the single shared platform org every company's
+        // repo was previously filed under (ws-<BUILDER_WORKSPACE_ID>). Prefer
+        // the caller's explicit, session-resolved workspaceId; fall back to
+        // whatever the registry already has on file for this company
+        // (existing.workspaceId — the #250 field, set at the company's own
+        // provision time); only use the shared constant if neither is
+        // available, so this never fails a commit outright for want of an
+        // identity a best-effort caller genuinely couldn't resolve.
+        const resolvedWorkspaceId = opts.workspaceId || existing?.workspaceId || BUILDER_WORKSPACE_ID
         const git = await provisionCompanyRepo({
-          workspaceId: BUILDER_WORKSPACE_ID,
+          workspaceId: resolvedWorkspaceId,
           slug,
           files: fileMap,
         })

@@ -225,9 +225,31 @@ export function Live() {
   const gates = planUnlocks(activePlan)
   // Existing-subscriber recognition (#251): if the signed-in user ALREADY has an
   // AINative paid plan, hydrate activePlan from it so we never ask them to pay
-  // again. Runs once when signed in and no plan is set yet.
+  // again.
+  //
+  // #1538 real bug: this used to gate on `!activePlan` alone — but activePlan is
+  // part of PersistedBuildState (contexts/build-context.tsx), restored from
+  // localStorage on every mount, including a HARD REFRESH. A stale/empty value
+  // left over from before a founder paid (or any other reason activePlan was
+  // truthy-but-wrong) made this condition permanently skip reconciliation for
+  // that company for the rest of the session — so a founder who just completed
+  // a real Stripe checkout could reload repeatedly and never re-check core,
+  // continuing to see "Free"/"Upgrade" even though core's own records were (or
+  // would soon be) correct. Confirmed live: silo-product, toby+builderqa...,
+  // real Pro checkout, still "Free" after a hard refresh minutes later.
+  //
+  // Fix: track "have we asked core about THIS company yet" with a ref keyed
+  // by companyId (not a bare boolean) — Live never remounts on a company
+  // switch (no key={companyId} at its call site, BuildApp.tsx), so a plain
+  // once-per-mount ref would wrongly keep skipping reconciliation for a
+  // SECOND company switched to within the same session. A genuinely-already-
+  // known paid plan for the CURRENT company still only triggers one check
+  // (same real behavior as before for the common case), but a stale/empty
+  // persisted value can no longer permanently suppress reconciliation.
+  const planReconciliationAttemptedForRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!signedIn || activePlan) return
+    if (!signedIn || planReconciliationAttemptedForRef.current === companyId) return
+    planReconciliationAttemptedForRef.current = companyId
     // #844 follow-up (real bug, agentive/amador@selfpreneur.com): pass this
     // company's slug so the route can reconcile a stale plan/tmp_ key state
     // against the founder's REAL current plan — see reconcilePlanFulfillment's
@@ -238,7 +260,7 @@ export function Live() {
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => { if (d?.plan) dispatch({ type: 'SET_ACTIVE_PLAN', plan: d.plan }) })
       .catch(() => {})
-  }, [signedIn, activePlan, dispatch, companyId])
+  }, [signedIn, dispatch, companyId])
 
   // Trial state (#207): an unpaid company runs on a 72h tmp_ project. We surface a
   // countdown + upgrade CTA so the founder has an obvious, intuitive path to pay.

@@ -34,10 +34,24 @@ vi.mock('@/lib/build/useRealPreview', () => ({
   useRealPreview: () => h.previewReturn,
 }))
 
+// #1574 regression — mountCount lets a test tell "SandpackPreview re-rendered
+// in place" apart from "SandpackPreview actually remounted" (a real React
+// effect, driven by its `key` changing). The distinction matters because
+// Sandpack's bundler compiles once per mount: a prop update alone (e.g.
+// dbToken arriving after the bundle already started running shim-less)
+// never gets the generated app's /api/db calls patched, even though every
+// prop the component receives looks correct afterward.
+let sandpackMountCount = 0
 vi.mock('@/components/chat/sandpack-preview', () => ({
-  SandpackPreview: ({ files }: { files: Record<string, string> }) => (
-    React.createElement('div', { 'data-testid': 'mock-sandpack', 'data-file-count': Object.keys(files || {}).length })
-  ),
+  SandpackPreview: ({ files, dbToken, dbOrigin }: { files: Record<string, string>; dbToken?: string; dbOrigin?: string }) => {
+    React.useEffect(() => { sandpackMountCount += 1 }, [])
+    return React.createElement('div', {
+      'data-testid': 'mock-sandpack',
+      'data-file-count': Object.keys(files || {}).length,
+      'data-db-token': dbToken || '',
+      'data-db-origin': dbOrigin || '',
+    })
+  },
 }))
 
 const baseState = {
@@ -82,6 +96,7 @@ afterEach(() => {
   h.dispatch.mockClear()
   h.state = {}
   h.previewReturn = {}
+  sandpackMountCount = 0
 })
 
 async function importPreview() {
@@ -167,6 +182,47 @@ describe('Preview — live-status chip + banners (render)', () => {
 
     expect(registerCalls).toBe(2)
     expect(host.textContent).toContain('Live in production')
+  })
+
+  it('#1551: repair attempted but still fails — retries up to the cap, then shows an honest stuck state with a real Try again button (never the stale "is repairing it" copy)', async () => {
+    h.state = { ...baseState }
+    h.previewReturn = { previewUrl: '/api/preview/chat-1', status: 'ready', chatId: 'chat-1', files: null, designConformance: null, refreshKey: 0 }
+
+    let registerCalls = 0
+    let repairCalls = 0
+    fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/build/register-app')) {
+        registerCalls += 1
+        return Promise.resolve({ ok: false, json: async () => ({ retry: true, error: 'SyntaxError: unexpected token' }) })
+      }
+      if (String(url).includes('/api/build/repair-app')) {
+        repairCalls += 1
+        return Promise.resolve({ ok: true, json: async () => ({ recovered: false }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const Preview = await importPreview()
+    render(React.createElement(Preview))
+    // Flush enough microtask turns for every bounded repair+retry cycle to settle.
+    for (let i = 0; i < 10; i++) await flush()
+
+    // More than one repair attempt was made (a bounded cap, not a single shot).
+    expect(repairCalls).toBeGreaterThan(1)
+    expect(registerCalls).toBeGreaterThan(1)
+
+    // The terminal state is honest: it must NOT claim an active repair is in
+    // progress once every attempt has concluded and failed.
+    expect(host.textContent).not.toContain('is repairing it')
+
+    const banner = host.querySelector('[data-testid="register-failed-banner"]')
+    expect(banner).not.toBeNull()
+    expect(host.querySelector('.m-share-bar')).toBeNull()
+
+    // A real retry affordance — not a dead end.
+    const retryButton = host.querySelector('[data-testid="register-retry-button"]') as HTMLButtonElement | null
+    expect(retryButton).not.toBeNull()
   })
 
   it('register-app rejects permanently (no retry/error): shows the honest register-failed banner, no share bar', async () => {
@@ -284,6 +340,117 @@ describe('Preview — live-status chip + banners (render)', () => {
 
     expect(host.querySelector('[data-testid="sandpack-preview-mount"]')).not.toBeNull()
     expect(host.querySelector('iframe')).toBeNull()
+  })
+
+  // #1574 — a real company's Sandpack multi-file preview rendered inside
+  // the founder's own in-session Live dashboard (THIS component, not the
+  // standalone /build/{slug} share page) had no server boundary to mint a
+  // per-company data token from, so a generated app's /api/db writes
+  // silently landed in the wrong ZeroDB project (confirmed live on
+  // `groundwork`: a clean-looking waitlist signup never reached the
+  // founder's own dashboard). Fetches the token via the new
+  // /api/build/sandpack-token route and passes it through to
+  // SandpackPreview as soon as chatId+appSub are known.
+  it('fetches a real dbToken via /api/build/sandpack-token and passes it + the real origin into SandpackPreview (#1574)', async () => {
+    h.state = { ...baseState }
+    h.previewReturn = {
+      previewUrl: '/api/preview/chat-1', status: 'ready', chatId: 'chat-1', refreshKey: 0, designConformance: null,
+      files: { '/App.tsx': 'export default function App() { return null }', '/components/Foo.tsx': 'export default function Foo(){return null}' },
+    }
+    const tokenUrls: string[] = []
+    fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/build/sandpack-token')) {
+        tokenUrls.push(String(url))
+        return Promise.resolve({ ok: true, json: async () => ({ dbToken: 'real-signed-db-token', primitiveTokens: {} }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const Preview = await importPreview()
+    render(React.createElement(Preview))
+    await flush()
+    await flush()
+    await flush()
+
+    const mount = host.querySelector('[data-testid="mock-sandpack"]')
+    expect(mount).not.toBeNull()
+    expect(mount?.getAttribute('data-db-token')).toBe('real-signed-db-token')
+    expect(mount?.getAttribute('data-db-origin')).toBeTruthy()
+    expect(tokenUrls.length).toBeGreaterThan(0)
+    expect(tokenUrls[0]).toContain('slug=plumber-crm')
+    expect(tokenUrls[0]).toContain('chatId=chat-1')
+  })
+
+  it('renders Sandpack with an empty dbToken while the mint is still in flight — never blocks the preview on it', async () => {
+    h.state = { ...baseState }
+    h.previewReturn = {
+      previewUrl: '/api/preview/chat-1', status: 'ready', chatId: 'chat-1', refreshKey: 0, designConformance: null,
+      files: { '/App.tsx': 'export default function App() { return null }', '/components/Foo.tsx': 'export default function Foo(){return null}' },
+    }
+    fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/build/sandpack-token')) return new Promise(() => {}) // never resolves
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const Preview = await importPreview()
+    render(React.createElement(Preview))
+    await flush()
+    await flush()
+
+    const mount = host.querySelector('[data-testid="mock-sandpack"]')
+    expect(mount).not.toBeNull()
+    expect(mount?.getAttribute('data-db-token')).toBe('')
+  })
+
+  // #1574 real-world repro (live-confirmed on 3 companies: groundwork, wrench,
+  // shutter — waitlist signups showed a clean "You're on the list" success UI
+  // but never reached ZeroDB): the dbToken fetch resolves on a later tick, same
+  // as production's real network round trip. Before the fix, SandpackPreview
+  // re-rendered IN PLACE when sandpackDbToken populated — the mock's own
+  // data-db-token attribute looked correct (which is why the two tests above
+  // kept passing), but it never actually remounted, so Sandpack's bundler never
+  // recompiled with the db-token-shim module included. This test is the one
+  // that would have caught it: it asserts a real second mount happens once the
+  // token lands, not just that the final props look right.
+  it('remounts SandpackPreview once the async dbToken arrives, so the bundler recompiles WITH the shim (#1574)', async () => {
+    h.state = { ...baseState }
+    h.previewReturn = {
+      previewUrl: '/api/preview/chat-1', status: 'ready', chatId: 'chat-1', refreshKey: 0, designConformance: null,
+      files: { '/App.tsx': 'export default function App() { return null }', '/components/Foo.tsx': 'export default function Foo(){return null}' },
+    }
+    let resolveToken: (v: any) => void = () => {}
+    fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/build/sandpack-token')) {
+        return new Promise((resolve) => { resolveToken = resolve })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const Preview = await importPreview()
+    render(React.createElement(Preview))
+    await flush()
+    await flush()
+
+    // Still pending: mounted once already, with no token.
+    expect(sandpackMountCount).toBe(1)
+    expect(host.querySelector('[data-testid="mock-sandpack"]')?.getAttribute('data-db-token')).toBe('')
+
+    // Token arrives on a later tick, exactly like the real network round trip.
+    await act(async () => {
+      resolveToken({ ok: true, json: async () => ({ dbToken: 'real-signed-db-token', primitiveTokens: {} }) })
+      await flush()
+      await flush()
+    })
+
+    const mount = host.querySelector('[data-testid="mock-sandpack"]')
+    expect(mount?.getAttribute('data-db-token')).toBe('real-signed-db-token')
+    // The real assertion: a second, genuine mount — not just an updated prop
+    // on the same instance — so the bundler's compile actually included the
+    // shim from the start.
+    expect(sandpackMountCount).toBe(2)
   })
 
   it('a ready single-file app renders the sandboxed iframe (no allow-same-origin) with the slug token', async () => {

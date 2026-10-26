@@ -129,6 +129,30 @@ describe('Git integration modules (#349)', () => {
       expect(routeContent).toContain('gitProvisioned')
     })
 
+    // #1543: a new repo must land in the founder's own workspace org, not
+    // the single shared platform org every company's repo was previously
+    // filed under (ensureOrg(BUILDER_WORKSPACE_ID) unconditionally — see
+    // lib/git/gitea-client.ts, which was always correctly generic; every
+    // call site just hardcoded the shared constant instead of the real,
+    // already-resolved session.workspaceId). Asserted as source-text wiring,
+    // matching this file's own convention for this route (see the test
+    // immediately above) — the resolution logic itself (priority order,
+    // every fallback) is unit-tested directly in register-app-core.test.ts's
+    // "workspace org resolution (#1543)" suite.
+    it('provision route resolves the Gitea org from the real session workspaceId, not just the shared constant', async () => {
+      const fs = await import('fs')
+      const routeContent = fs.readFileSync(
+        'app/api/build/provision/route.ts',
+        'utf-8'
+      )
+      const gitProvisionBlock = routeContent.slice(
+        routeContent.indexOf('Provision per-company Gitea repo'),
+        routeContent.indexOf('Provision per-company Gitea repo') + 2000,
+      )
+      expect(gitProvisionBlock).toContain('(session as any)?.workspaceId')
+      expect(gitProvisionBlock).toContain('BUILDER_WORKSPACE_ID')
+    })
+
     // #1015: the commit itself moved OUT of the route body and into the shared
     // lib/build/register-app-core.ts, so the server-side reconciliation sweep
     // (for companies whose browser died before Preview.tsx ever called this

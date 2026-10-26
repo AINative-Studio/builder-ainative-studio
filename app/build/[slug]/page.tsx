@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { resolveAppVerified } from '@/lib/build/app-registry'
 import { StandalonePreviewRegenerate } from '@/components/build/StandalonePreviewRegenerate'
 import { StandalonePreviewFrame } from '@/components/build/StandalonePreviewFrame'
+import { mintPreviewDbToken } from '@/lib/build/preview-tokens'
 
 /**
  * /build/{slug} (#207 · FIX-2) — the REAL, shareable URL for a generated company
@@ -81,6 +82,18 @@ export default async function AppSubdirPage({ params }: Props) {
     )
   }
 
+  // #1561 — mint the SAME per-company data token the single-file preview's
+  // dbTokenShim attaches, server-side, right here: this Server Component
+  // already has slug+chatId resolved from the verified registry entry, so
+  // this needs no new public token-minting route (unlike components/build/
+  // artifacts/Preview.tsx's in-session client case, which has no such
+  // server boundary and is a documented fast-follow). Passed down so
+  // StandalonePreviewFrame can inject the Sandpack db-token-shim when
+  // routing through Sandpack (multi-file apps) instead of the same-origin
+  // iframe (which needs no shim — dbTokenShim already covers it server-side).
+  const dbToken = await mintPreviewDbToken(slug, entry.chatId)
+  const appOrigin = (process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio').replace(/\/+$/, '')
+
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#fff' }}>
       {/* #844 follow-up: this used to repeat the company name + tagline right
@@ -110,7 +123,14 @@ export default async function AppSubdirPage({ params }: Props) {
           exact same precaution app/demo/page.tsx already takes
           (`key={currentPreview}`) when its own local state swaps which
           company's preview is shown without a full page navigation. */}
-      <StandalonePreviewFrame key={slug} chatId={entry.chatId} slug={slug} title={entry.name || slug} />
+      <StandalonePreviewFrame
+        key={slug}
+        chatId={entry.chatId}
+        slug={slug}
+        title={entry.name || slug}
+        dbToken={dbToken}
+        dbOrigin={appOrigin}
+      />
       <StandalonePreviewRegenerate slug={slug} idea={entry.idea} track={entry.track} name={entry.name} />
     </div>
   )

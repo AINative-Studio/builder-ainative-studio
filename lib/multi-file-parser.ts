@@ -123,12 +123,35 @@ function normalizeFilePath(path: string): string {
   return path
 }
 
-/** Extract the default export name from a component file */
+/**
+ * Extract the default export name from a component file.
+ *
+ * #1519: for a class-component mainFile (`export default class HomePage
+ * extends React.Component {` or `export default class HomePage {`), the
+ * named-function alternative never matched (no `function` keyword), so the
+ * bare-identifier fallback (`/export\s+default\s+(\w+)/`) ran next and
+ * greedily captured the reserved word `class` itself — the first `\w+` run
+ * immediately after `default `. The caller then synthesized
+ * `import class from './page'` — `class` is a reserved word and can never be
+ * a binding identifier, a guaranteed Babel SyntaxError at render. Worse: the
+ * match was non-null ("class" is truthy), so the `|| 'GeneratedMainPage'`
+ * safety net the caller already has for a failed extraction never engaged —
+ * this bug silently defeated that very fallback for the class-component
+ * case. An explicit named-class alternative (with a trailing `extends`/`{`
+ * lookahead so a fully anonymous `class extends X {` doesn't mis-capture
+ * `extends` as the name) is checked before the bare-identifier fallback, and
+ * that fallback is guarded against ever returning the `class`/`function`/
+ * `async` keywords themselves — a genuinely anonymous class now correctly
+ * returns null, letting the caller's own GeneratedMainPage fallback engage.
+ */
 function extractDefaultExport(code: string): string | null {
   const match = code.match(/export\s+default\s+function\s+(\w+)/)
+    || code.match(/export\s+default\s+class\s+(\w+)\s*(?:extends\b|\{)/)
     || code.match(/export\s+default\s+(\w+)/)
     || code.match(/function\s+([A-Z]\w+)\s*\(/)
-  return match ? match[1] : null
+  if (!match) return null
+  if (match[1] === 'class' || match[1] === 'function' || match[1] === 'async') return null
+  return match[1]
 }
 
 /** Recharts components that may be used in generated code */

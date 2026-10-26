@@ -39,6 +39,7 @@ import { planUnlocks } from '@/lib/build/state'
 import { processConversation } from '@/lib/agent/zeromemory'
 import { detectEditIntent, QUESTION_STARTERS } from '@/lib/build/edit-intent'
 import { createIssue, listIssues } from '@/lib/git/gitea-client'
+import { createTask } from '@/lib/build/task-store'
 import { ensureChatSummary } from '@/lib/build/chat-summary'
 import { ensureCompanyProfile } from '@/lib/build/company-profile'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
@@ -411,23 +412,57 @@ export async function askCody(params: AskCodyParams): Promise<AskCodyResult | { 
   //     complaint or an aside that isn't obviously a request) — ONLY run
   //     when the heuristic didn't already resolve it, to bound the extra
   //     latency/cost to the cases that actually need it.
-  // Either path files a REAL Gitea issue in the company's own repo before
-  // the system prompt is built, so `realWorkFiledThisTurn` can gate whether
-  // "I'll wire that"/"it's in the queue" language is actually true this turn.
-  let realWorkFiledThisTurn: { issueNumber: number; title: string } | null = null
-  if (companyId && app?.gitOrg && paid && !editTriggered) {
-    const looksLikeAGenuineRequest = await isLikelyChangeRequest(question)
-    if (looksLikeAGenuineRequest) {
-      const title = question.length > 80 ? `${question.slice(0, 79)}…` : question
-      const created = await createIssue(
-        app.gitOrg,
-        companyId,
-        title,
-        `${question}\n\n---\nFiled automatically from a founder chat message (#774) — Cody said or was about to say ` +
-          `this is queued/being worked on, so a real tracked issue backs that claim.`,
-      ).catch(() => null)
-      if (created?.ok && created.issueNumber) {
-        realWorkFiledThisTurn = { issueNumber: created.issueNumber, title }
+  // Either path (Gitea issue or build_tasks row) grounds "I'll wire
+  // that"/"it's in the queue" before the system prompt is built, so
+  // `realWorkFiledThisTurn` can gate whether that language is actually true
+  // this turn.
+  //
+  // #1533: a company-track venture (business plan/thesis/cap table — no
+  // generated code) can never acquire app.gitOrg — provisionCompanyRepo
+  // requires a real file map to commit (lib/git/company-repo.ts's
+  // validateFileMap), which a company-track venture never produces. So
+  // #774's Gitea-issue path below always and structurally skips this track,
+  // regardless of plan — a paying company-track founder's genuine request
+  // was tracked nowhere at all. Fix: the SAME classifier, same paid/
+  // !editTriggered gate, but file a plain build_tasks row (source: 'cody')
+  // instead — the same primitive #1522's nightly-seeding branch already
+  // uses for this track, just triggered from chat instead of the nightly
+  // loop. Tagged by `kind` so the prompt text below never claims a Gitea
+  // issue/repo exists when only a task row does.
+  let realWorkFiledThisTurn:
+    | { kind: 'issue'; issueNumber: number; title: string }
+    | { kind: 'task'; title: string }
+    | null = null
+  if (companyId && paid && !editTriggered) {
+    if (app?.gitOrg) {
+      const looksLikeAGenuineRequest = await isLikelyChangeRequest(question)
+      if (looksLikeAGenuineRequest) {
+        const title = question.length > 80 ? `${question.slice(0, 79)}…` : question
+        const created = await createIssue(
+          app.gitOrg,
+          companyId,
+          title,
+          `${question}\n\n---\nFiled automatically from a founder chat message (#774) — Cody said or was about to say ` +
+            `this is queued/being worked on, so a real tracked issue backs that claim.`,
+        ).catch(() => null)
+        if (created?.ok && created.issueNumber) {
+          realWorkFiledThisTurn = { kind: 'issue', issueNumber: created.issueNumber, title }
+        }
+      }
+    } else if (track === 'company' && scopeKey) {
+      const looksLikeAGenuineRequest = await isLikelyChangeRequest(question)
+      if (looksLikeAGenuineRequest) {
+        const title = question.length > 80 ? `${question.slice(0, 79)}…` : question
+        const created = await createTask(scopeKey, {
+          title,
+          detail: `${question}\n\nFiled automatically from a founder chat message (#1533) — no code repo exists ` +
+            `for a company-track venture, so this is tracked as a build task rather than a Gitea issue.`,
+          source: 'cody',
+          stage: 'todo',
+        }).catch(() => null)
+        if (created) {
+          realWorkFiledThisTurn = { kind: 'task', title }
+        }
       }
     }
   }
@@ -478,7 +513,13 @@ export async function askCody(params: AskCodyParams): Promise<AskCodyResult | { 
         ? `When they ask for a change or feature: confirm you're on it in first person ` +
           `("I'll wire that next — it's in the queue for tonight's run"), name the concrete backlog items ` +
           `it maps to, and point at the real levers they already have (Auto Mode, the nightly loop, ` +
-          `regenerating the app from the workspace).${realWorkFiledThisTurn ? ` A real tracked issue (#${realWorkFiledThisTurn.issueNumber}) was just filed in their company repo for this — you may reference it directly.` : ''}\n`
+          `regenerating the app from the workspace).` +
+          (realWorkFiledThisTurn?.kind === 'issue'
+            ? ` A real tracked issue (#${realWorkFiledThisTurn.issueNumber}) was just filed in their company repo for this — you may reference it directly.`
+            : realWorkFiledThisTurn?.kind === 'task'
+              ? ` A real backlog task was just created for this — reference it as a tracked task, never as a filed issue or a repo (this company has no code repo).`
+              : '') +
+          `\n`
         : `If they ask for a change or feature and no real task was just dispatched for it (you'll know because ` +
           `neither an edit task nor a tracked issue was created this turn), do NOT say "I'll wire that" or "it's ` +
           `queued" — those claims are ONLY true when real work was just dispatched. Instead say you've noted it and ` +
@@ -862,19 +903,40 @@ export async function GET(request: NextRequest) {
   const companyProjectId = await resolveCompanyProjectId(companyId)
   const turns = await loadChatWithFallback(scopeKey, undefined, companyProjectId).catch(() => [])
 
-  // Chat handoff summary (#608): "where we left off" for a returning founder,
-  // regenerated only when enough new turns warrant it (ensureChatSummary is
-  // internally best-effort — never throws, never blocks the thread load).
-  const companyName = String(params.get('companyName') || 'the company').slice(0, 120)
-  const idea = String(params.get('idea') || '').slice(0, 3000)
-  const summaryResult = await ensureChatSummary(scopeKey, companyName, idea, turns).catch(() => null)
+  // #1542: real, live-confirmed bug — a brand-new company with ZERO real
+  // chat turns (this GET's own `turns` above, the ground truth) was still
+  // served a fully-populated, confident "where we left off" summary AND a
+  // "What Cody has learned" profile, both describing a conversation that
+  // never happened (a fabricated brand-color preference, an invented
+  // unrelated company name, a fabricated creation date mentioned
+  // elsewhere). Root cause: ensureChatSummary/ensureCompanyProfile each
+  // independently decide whether to REGENERATE against their own storage,
+  // but when regeneration isn't warranted they fall back to returning
+  // whatever is already stored under `scopeKey` — with no check against
+  // the one piece of ground truth this route already has. If that scope
+  // key was ever previously written to (a reused test slug, a stale row
+  // from before this company existed, a scope-key collision at WRITE
+  // time elsewhere) that stale content is served forever, confidently,
+  // regardless of whether THIS conversation ever happened. A company with
+  // zero real turns has no legitimate "where we left off" to report —
+  // skip both entirely rather than trust either store's own judgment.
+  let summaryResult: Awaited<ReturnType<typeof ensureChatSummary>> = null
+  let profileResult: Awaited<ReturnType<typeof ensureCompanyProfile>> = null
+  if (turns.length > 0) {
+    // Chat handoff summary (#608): "where we left off" for a returning founder,
+    // regenerated only when enough new turns warrant it (ensureChatSummary is
+    // internally best-effort — never throws, never blocks the thread load).
+    const companyName = String(params.get('companyName') || 'the company').slice(0, 120)
+    const idea = String(params.get('idea') || '').slice(0, 3000)
+    summaryResult = await ensureChatSummary(scopeKey, companyName, idea, turns).catch(() => null)
 
-  // "What Cody has learned" (#693): a synthesized profile of real founder-Cody
-  // memories, reflected only when enough new ones have accumulated
-  // (ensureCompanyProfile is internally best-effort — never throws, never
-  // blocks the thread load). Independent of the chat summary above — this
-  // reads from ZeroMemory's own synthesis, not the raw turn history.
-  const profileResult = await ensureCompanyProfile(scopeKey).catch(() => null)
+    // "What Cody has learned" (#693): a synthesized profile of real founder-Cody
+    // memories, reflected only when enough new ones have accumulated
+    // (ensureCompanyProfile is internally best-effort — never throws, never
+    // blocks the thread load). Independent of the chat summary above — this
+    // reads from ZeroMemory's own synthesis, not the raw turn history.
+    profileResult = await ensureCompanyProfile(scopeKey).catch(() => null)
+  }
 
   return Response.json({ turns, summary: summaryResult?.summary || null, profile: profileResult })
 }

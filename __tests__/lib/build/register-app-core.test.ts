@@ -149,6 +149,82 @@ describe('runGitCommit', () => {
     expect(res).toEqual({ attempted: true, committed: true })
   })
 
+  // #1543 — a NEW repo must land in the founder's own workspace org, not the
+  // single shared platform org every company's repo was previously filed
+  // under (ws-<BUILDER_WORKSPACE_ID>, a hardcoded constant). Three sources,
+  // in priority order: an explicit caller-supplied workspaceId (a real
+  // session), the registry's own existing.workspaceId (the reconciler path,
+  // no session available), and only then the shared constant as a narrow
+  // last-resort fallback.
+  describe('workspace org resolution (#1543)', () => {
+    it('uses the explicit opts.workspaceId (a real founder session) when provided', async () => {
+      resolveStoredApp.mockResolvedValue({ code: 'x', files: null })
+      toFileMapForCommit.mockReturnValue({ 'App.tsx': 'x' })
+      provisionCompanyRepo.mockResolvedValue({ ok: true })
+
+      await runGitCommit({
+        slug: 'my-slug',
+        chatId: 'chat_1',
+        existing: { zerodbProjectId: 'proj_1' },
+        workspaceId: 'ws-real-founder-123',
+      })
+
+      expect(provisionCompanyRepo).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceId: 'ws-real-founder-123' }),
+      )
+    })
+
+    it('falls back to existing.workspaceId (the registry-stored value) when no session workspaceId is given', async () => {
+      resolveStoredApp.mockResolvedValue({ code: 'x', files: null })
+      toFileMapForCommit.mockReturnValue({ 'App.tsx': 'x' })
+      provisionCompanyRepo.mockResolvedValue({ ok: true })
+
+      await runGitCommit({
+        slug: 'my-slug',
+        chatId: 'chat_1',
+        existing: { zerodbProjectId: 'proj_1', workspaceId: 'ws-from-registry-456' },
+      })
+
+      expect(provisionCompanyRepo).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceId: 'ws-from-registry-456' }),
+      )
+    })
+
+    it('prefers the explicit session workspaceId over a stale existing.workspaceId', async () => {
+      resolveStoredApp.mockResolvedValue({ code: 'x', files: null })
+      toFileMapForCommit.mockReturnValue({ 'App.tsx': 'x' })
+      provisionCompanyRepo.mockResolvedValue({ ok: true })
+
+      await runGitCommit({
+        slug: 'my-slug',
+        chatId: 'chat_1',
+        existing: { zerodbProjectId: 'proj_1', workspaceId: 'ws-stale-registry' },
+        workspaceId: 'ws-current-session',
+      })
+
+      expect(provisionCompanyRepo).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceId: 'ws-current-session' }),
+      )
+    })
+
+    it('falls back to the shared platform constant only when neither a session nor a registry workspaceId is available', async () => {
+      resolveStoredApp.mockResolvedValue({ code: 'x', files: null })
+      toFileMapForCommit.mockReturnValue({ 'App.tsx': 'x' })
+      provisionCompanyRepo.mockResolvedValue({ ok: true })
+
+      await runGitCommit({
+        slug: 'my-slug',
+        chatId: 'chat_1',
+        existing: { zerodbProjectId: 'proj_1' },
+      })
+
+      const call = provisionCompanyRepo.mock.calls[0][0]
+      expect(call.workspaceId).toBeTruthy()
+      expect(call.workspaceId).not.toBe('ws-real-founder-123')
+      expect(call.workspaceId).not.toBe('ws-from-registry-456')
+    })
+  })
+
   it('does NOT attempt (and reports no stage) for a company with neither a repo nor a project', async () => {
     resolveStoredApp.mockResolvedValue({ code: 'x', files: null })
     toFileMapForCommit.mockReturnValue({ 'App.tsx': 'x' })

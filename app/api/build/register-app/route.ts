@@ -224,9 +224,16 @@ export async function POST(request: NextRequest) {
   // free build, and an unowned entry is invisible to /api/build/my-companies.
   // Never overwrite a DIFFERENT existing owner (no stealing).
   let ownerEmail = existing?.ownerEmail || undefined
+  // #1543: the founder's real per-workspace Gitea org, read from the SAME
+  // session the ownerEmail stamp above already resolves — so a repo
+  // provisioned below (runGitCommit) lands in this founder's own workspace
+  // org instead of the single shared platform org every company's repo was
+  // previously filed under.
+  let sessionWorkspaceId: string | undefined
   try {
     const session = await auth()
     const email = ((session as any)?.user?.email as string | undefined)?.trim().toLowerCase()
+    sessionWorkspaceId = (session as any)?.workspaceId as string | undefined
     if (email) {
       const current = (existing?.ownerEmail || '').toLowerCase()
       if (!current || current === email) ownerEmail = email
@@ -305,6 +312,7 @@ export async function POST(request: NextRequest) {
     chatId,
     existing,
     taskLabel: b.taskLabel,
+    workspaceId: sessionWorkspaceId,
   })
 
   // #1017: the founder's build is now genuinely complete — the ready gate

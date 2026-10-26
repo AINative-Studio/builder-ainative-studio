@@ -47,6 +47,7 @@
 // module has no use for -- see lib/services/credentials-crypto.ts (#1489).
 import { encryptToken, decryptToken } from '@/lib/services/credentials-crypto'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
+import { TRIAL_WINDOW_MS } from '@/lib/build/instant-db'
 
 const AINATIVE_API = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 const TABLE = 'builder_company_zerodb_keys'
@@ -149,9 +150,12 @@ export interface ResolvedZerodbKey {
   /**
    * Why resolution failed. 'not_stored' is the expected case for a company
    * provisioned before this fix shipped (#806) — it must surface as a real
-   * error, never a shared-key fallback.
+   * error, never a shared-key fallback. 'trial_expired' (#1579) is a tmp_ key
+   * past its 72h window — detected here, before ever calling ZeroDB, so the
+   * caller gets an honest, distinct reason instead of ZeroDB's own opaque
+   * 401 AUTH_REQUIRED.
    */
-  reason?: 'not_stored' | 'decrypt_failed' | 'unconfigured' | 'lookup_failed'
+  reason?: 'not_stored' | 'decrypt_failed' | 'unconfigured' | 'lookup_failed' | 'trial_expired'
 }
 
 /** Latest stored row for a projectId, or null. */
@@ -187,6 +191,20 @@ async function resolveStoredRow(projectId: string): Promise<StoredZerodbKeyRow |
  * surfaced honestly) rather than retrying with the shared key — using a key
  * that isn't scoped to the target project is precisely the cross-tenant
  * mis-scoping bug this module fixes.
+ *
+ * TRIAL EXPIRY (#1579): a `tmp_` key minted for an anonymous/unpaid provision
+ * is only valid for `TRIAL_WINDOW_MS` (72h) — ZeroDB itself enforces this and
+ * starts rejecting it with a 401 after that window, regardless of anything
+ * Builder does. There is no refresh path for an unclaimed tmp_ project: core's
+ * key-mint endpoint (mintProjectScopedKey, #1013) requires the Builder admin
+ * identity to OWN the project, and tmp_ anonymous provisions explicitly are
+ * NOT admin-owned (see fileProjectUnderBuilderWorkspace's own doc comment in
+ * instant-db.ts) — minting a replacement key would 404. So this checks the
+ * stored row's own age up front and returns the honest 'trial_expired' reason
+ * BEFORE ever calling ZeroDB, rather than passing a doomed request through to
+ * get back ZeroDB's generic, hard-to-diagnose 401. A company that's since been
+ * claimed/paid has its row's keyKind flipped to 'permanent' by the claim flow
+ * (claimCompanyProject), so a real paid company is never affected by this.
  */
 export async function resolveCompanyZerodbKey(projectId: string): Promise<ResolvedZerodbKey> {
   if (!projectId) return { ok: false, reason: 'not_stored' }
@@ -198,6 +216,12 @@ export async function resolveCompanyZerodbKey(projectId: string): Promise<Resolv
     return { ok: false, reason: 'lookup_failed' }
   }
   if (!row) return { ok: false, reason: 'not_stored' }
+  if (row.keyKind === 'tmp' && row.createdAt) {
+    const mintedAt = new Date(row.createdAt).getTime()
+    if (Number.isFinite(mintedAt) && Date.now() - mintedAt > TRIAL_WINDOW_MS) {
+      return { ok: false, reason: 'trial_expired' }
+    }
+  }
   try {
     const apiKey = decryptToken({ encryptedToken: row.encryptedKey, iv: row.iv, authTag: row.authTag })
     if (!apiKey) return { ok: false, reason: 'decrypt_failed' }

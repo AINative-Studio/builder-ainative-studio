@@ -280,7 +280,39 @@ export function Preview() {
   // 404'd forever, because the registry never actually got a row. `registered`
   // now tracks the real outcome so the UI can stop claiming a URL exists when
   // the server just refused to create it.
+  // #1574 — the Sandpack multi-file preview rendered HERE (inside the
+  // founder's own in-session Live dashboard) has no server boundary to mint
+  // a per-company data token from directly, unlike the standalone
+  // /build/{slug} share page (StandalonePreviewFrame, a Server Component —
+  // see app/build/[slug]/page.tsx). Without one, a generated app's /api/db
+  // calls silently fall through to app/api/db/[table]/route.ts's
+  // legacy/shared-project fallback: the write still 200s, so the UI shows a
+  // clean success, but it lands in the wrong ZeroDB project — invisible to
+  // the founder's own dashboard. Mints the SAME token via a tiny client-
+  // fetchable route (GET /api/build/sandpack-token) once chatId+appSub are
+  // known, mirroring the server-side mint exactly (same binding check, same
+  // lib/build/preview-tokens.ts functions).
+  const [sandpackDbToken, setSandpackDbToken] = useState('')
+  useEffect(() => {
+    if (!chatId || !state.appSub) return
+    let cancelled = false
+    fetch(`/api/build/sandpack-token?slug=${encodeURIComponent(state.appSub)}&chatId=${encodeURIComponent(chatId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!cancelled && d?.dbToken) setSandpackDbToken(String(d.dbToken)) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [chatId, state.appSub])
+
   const [registered, setRegistered] = useState<boolean | null>(null)
+  // #1551: a single repair+retry cycle wasn't always enough — an LLM repair
+  // attempt can itself fail to fix the real syntax error on the first try,
+  // same as chat-ws's own in-request retries assume. retryKey is bumped only
+  // by the user's explicit "Try again" click below; it is NOT part of the
+  // bounded in-effect repair loop, which tracks its own attempt count locally
+  // so this effect still runs exactly once per real registration attempt.
+  const [retryKey, setRetryKey] = useState(0)
+  const [repairing, setRepairing] = useState(false)
+  const MAX_REPAIR_ATTEMPTS = 3
   useEffect(() => {
     if (status !== 'ready' || !chatId || !state.appSub) return
     dispatch({ type: 'SET_APP_CHATID', chatId })
@@ -305,9 +337,11 @@ export function Preview() {
       if (d?.slugChanged) dispatch({ type: 'RESTORE_BUILD', partial: { appSub: String(d.slugChanged) } })
     }
 
-    tryRegister().then(async ({ ok, d }) => {
+    setRepairing(false)
+    const attempt = async (repairAttemptsLeft: number): Promise<void> => {
+      const { ok, d } = await tryRegister().catch(() => ({ ok: false, d: null as any }))
       if (cancelled) return
-      if (ok) { setRegistered(true); adopt(d); return }
+      if (ok) { setRegistered(true); setRepairing(false); adopt(d); return }
 
       // Real bug fix (follow-up to the `registered` tri-state above): a 422
       // here carries `retry:true` + the exact parse error — computed
@@ -316,27 +350,33 @@ export function Preview() {
       // path forward except starting over. Actually consume it: call the
       // repair endpoint (re-generates the STORED broken code with the real
       // error fed back — the same repair loop chat-ws uses for its own
-      // in-request retries, see app/api/build/repair-app), then re-attempt
-      // registration once on a successful repair.
-      if (d?.retry && d?.error) {
+      // in-request retries, see app/api/build/repair-app). #1551: one repair
+      // attempt isn't always enough, so retry the repair+register cycle up
+      // to MAX_REPAIR_ATTEMPTS times before giving up — a single stubborn
+      // LLM repair miss shouldn't permanently strand the founder.
+      if (d?.retry && d?.error && repairAttemptsLeft > 0) {
+        setRepairing(true)
         const repaired = await fetch('/api/build/repair-app', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ chatId, error: d.error }),
         }).then((r) => r.json()).catch(() => null)
         if (cancelled) return
         if (repaired?.recovered) {
-          const retry = await tryRegister().catch(() => ({ ok: false, d: null }))
-          if (cancelled) return
-          setRegistered(retry.ok)
-          if (retry.ok) adopt(retry.d)
-          return
+          return attempt(repairAttemptsLeft - 1)
         }
+        // Repair call succeeded but didn't fix it (or errored) — the cap
+        // isn't exhausted on a transient repair-call failure, so still
+        // consume one attempt and try the cycle again.
+        return attempt(repairAttemptsLeft - 1)
       }
+      setRepairing(false)
       setRegistered(false)
-    }).catch(() => { if (!cancelled) setRegistered(false) })
+    }
+
+    attempt(MAX_REPAIR_ATTEMPTS)
 
     return () => { cancelled = true }
-  }, [status, chatId, state.appSub])
+  }, [status, chatId, state.appSub, retryKey])
 
   // Product rule (#78): the {slug}.ainative.studio subdomain must NOT be surfaced
   // until the company is on a PAID plan AND has explicitly CLAIMED the subdomain — and
@@ -430,13 +470,31 @@ export function Preview() {
           gate rejected this build (a real syntax error), but the UI used to
           keep showing "Live in production" + a copyable link that 404s
           forever — the founder had no idea anything was wrong. Honest instead:
-          say so, and never render the share bar above until registered:true. */}
+          say so, and never render the share bar above until registered:true.
+          #1551: the repair+retry cycle (above) is now bounded but can still
+          exhaust its attempts — once it does, `repairing` is back to false
+          and this must stop claiming an active repair is underway, offering
+          a real "Try again" button instead of a permanently stale message. */}
       {status === 'ready' && registered === false && (
         <div className="m-cody-banner" data-testid="register-failed-banner">
-          <p>
-            <span className="m-glyph">◇</span> Cody hit a generation error while finishing your app and is
-            repairing it — the preview below is real, but the shareable link isn&apos;t ready yet.
-          </p>
+          {repairing ? (
+            <p>
+              <span className="m-glyph">◇</span> Cody hit a generation error while finishing your app and is
+              repairing it — the preview below is real, but the shareable link isn&apos;t ready yet.
+            </p>
+          ) : (
+            <p>
+              <span className="m-glyph">◇</span> Cody couldn&apos;t finish repairing a generation error in your
+              app. The preview below is real, but the shareable link isn&apos;t ready yet.{' '}
+              <button
+                className="btn-secondary"
+                data-testid="register-retry-button"
+                onClick={() => { setRegistered(null); setRetryKey((k) => k + 1) }}
+              >
+                Try again
+              </button>
+            </p>
+          )}
         </div>
       )}
 
@@ -481,7 +539,32 @@ export function Preview() {
             // Sandpack runs in its own CodeSandbox sandbox origin (isolated by
             // construction), so it doesn't need our iframe sandbox attrs. (#291)
             <div className="m-preview-frame" style={{ height: '100%' }} data-testid="sandpack-preview-mount">
-              <SandpackPreview files={files} timeoutMs={15000} onTimeout={() => setSandpackTimedOut(true)} />
+              <SandpackPreview
+                // #1574 — sandpackDbToken arrives asynchronously (the
+                // /api/build/sandpack-token fetch above), after this component's
+                // first render. Without a key tied to its readiness, React just
+                // re-renders SandpackPreview in place: buildSandpackFiles() DOES
+                // compute a files map with the db-token-shim included on that
+                // second render, but SandpackProvider doesn't remount just
+                // because its `files` prop changed, so the bundler's already-
+                // running iframe never re-executes /index.tsx's import list to
+                // pick up the newly-added shim module. The generated app keeps
+                // running with window.fetch unpatched — every /api/db call it
+                // makes goes straight to the Sandpack bundler's own origin and
+                // 404s silently, caught by the generated app's own
+                // `.catch(() => {})` success-UI pattern (confirmed live on 3
+                // real companies: groundwork, wrench, shutter — waitlist
+                // signups showed "You're on the list" but never reached
+                // ZeroDB). Keying on token-readiness forces exactly one clean
+                // remount once the real token lands, so the shim is present
+                // from that compile's first line.
+                key={sandpackDbToken ? 'tok' : 'pending'}
+                files={files}
+                timeoutMs={15000}
+                onTimeout={() => setSandpackTimedOut(true)}
+                dbToken={sandpackDbToken}
+                dbOrigin={typeof window !== 'undefined' ? window.location.origin : undefined}
+              />
             </div>
           ) : previewUrl ? (
             <iframe

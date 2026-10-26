@@ -27,6 +27,36 @@ export interface DocGenContext {
   track: 'app' | 'company'
 }
 
+/**
+ * True when `idea` carries no real description beyond the company's own name —
+ * e.g. idea "silo" for a company named "silo" or "Silo". #1540: this was the
+ * real stored idea for a live, paid company, and with nothing else to ground
+ * in, document generation pattern-matched the bare name to a real, unrelated
+ * public company sharing it and confidently produced THAT company's roadmap.
+ *
+ * Deliberately narrow: strips the company name out of the idea (as a whole
+ * word, not a substring) and only flags it bare if nothing but filler words
+ * ("a", "company", "called", "inc", punctuation) remains. A short but REAL
+ * idea — "street art gallery" (#1083's own case) — must still pass through
+ * untouched; the fix here is specifically for "no idea was given at all,
+ * just the name," not for brevity in general.
+ */
+const IDEA_FILLER_WORDS = new Set([
+  'a', 'an', 'the', 'is', 'called', 'company', 'inc', 'llc', 'co', 'startup',
+  'app', 'product', 'for', 'business', 'named',
+])
+export function isBareNameIdea(idea: string, companyName: string): boolean {
+  const name = companyName.trim().toLowerCase()
+  if (!name) return false
+  const nameWords = new Set(name.split(/\W+/).filter(Boolean))
+  const ideaWords = idea
+    .toLowerCase()
+    .split(/\W+/)
+    .filter(Boolean)
+  if (ideaWords.length === 0) return false
+  return ideaWords.every((w) => nameWords.has(w) || IDEA_FILLER_WORDS.has(w))
+}
+
 /** A generation spec for one durable document type. */
 export interface DocPromptSpec {
   /** Default title for the generated document. */
@@ -66,6 +96,14 @@ const STRUCTURE_CONTRACT =
   'substitute a more common or more familiar adjacent business concept for what was ' +
   'actually said, even if the idea is short. A short idea is still a specific, real ' +
   'business — represent exactly what it says, not the nearest well-known pitch shape.\n' +
+  '- NEVER research or describe a DIFFERENT, real company that happens to share this ' +
+  'company\'s name (e.g. a well-known public company with the same or a similar name). ' +
+  'This is a distinct company founded by this specific founder, not that other entity, ' +
+  'even when the idea text gives you very little else to go on. If the idea is too thin ' +
+  'to say anything concrete and specific, say so honestly in the Executive Summary ' +
+  '(e.g. "Not enough detail was provided to ground this document — ask the founder for ' +
+  'more about their specific product, customers, and market.") rather than filling the ' +
+  'gap with a real company\'s actual history, roadmap, or sourced facts.\n' +
   '- Executive Summary: 2–4 tight sentences a founder can act on.\n' +
   '- Key Findings: 4–8 specific, concrete bullets grounded in THIS company/idea. ' +
   'Each finding is a real claim, not a platitude.\n' +

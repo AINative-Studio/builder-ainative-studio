@@ -182,6 +182,67 @@ describe('resolveCompanyZerodbKey', () => {
     expect(resolved.apiKey).toBeUndefined()
   })
 
+  it('FAILS CLOSED with trial_expired for a tmp_ key past its 72h window — never passes an expired key through to ZeroDB (#1579)', async () => {
+    const expired = {
+      projectId: 'proj-expired',
+      keyKind: 'tmp',
+      encryptedKey: 'irrelevant',
+      iv: 'irrelevant',
+      authTag: 'irrelevant',
+      createdAt: new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString(), // 73h ago
+    }
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ data: [{ row_data: expired }] }) }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { resolveCompanyZerodbKey } = await load()
+    const resolved = await resolveCompanyZerodbKey('proj-expired')
+    expect(resolved.ok).toBe(false)
+    expect(resolved.reason).toBe('trial_expired')
+    expect(resolved.apiKey).toBeUndefined()
+    // Only one fetch (the row lookup) — the (irrelevant/undecryptable) key is
+    // never even attempted, let alone handed to a caller.
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('a tmp_ key still inside its 72h window resolves normally', async () => {
+    let storedRow: any = null
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: any, init: any) => {
+        const u = String(url)
+        if (init?.method === 'POST' && u.includes('/rows')) {
+          storedRow = JSON.parse(init.body).row_data
+          return { ok: true, status: 200, json: async () => ({}) }
+        }
+        if (u.includes('/rows?')) {
+          return { ok: true, status: 200, json: async () => ({ data: [{ row_data: storedRow }] }) }
+        }
+        return { ok: true, status: 200, json: async () => ({}) }
+      }),
+    )
+    const { storeCompanyZerodbKey, resolveCompanyZerodbKey } = await load()
+    await storeCompanyZerodbKey('proj-fresh', 'tmp_still_good', { keyKind: 'tmp' })
+    const resolved = await resolveCompanyZerodbKey('proj-fresh')
+    expect(resolved.ok).toBe(true)
+    expect(resolved.apiKey).toBe('tmp_still_good')
+  })
+
+  it('a permanent (claimed/paid) key is never subject to the trial-expiry check, however old', async () => {
+    const old = {
+      projectId: 'proj-paid',
+      keyKind: 'permanent',
+      encryptedKey: 'irrelevant',
+      iv: 'irrelevant',
+      authTag: 'irrelevant',
+      createdAt: new Date(Date.now() - 1000 * 24 * 60 * 60 * 1000).toISOString(), // 1000 days ago
+    }
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ data: [{ row_data: old }] }) })))
+    const { resolveCompanyZerodbKey } = await load()
+    const resolved = await resolveCompanyZerodbKey('proj-paid')
+    // Falls through to the real decrypt attempt (fails here only because the
+    // fixture's key isn't real ciphertext) — the point is it's NOT trial_expired.
+    expect(resolved.reason).not.toBe('trial_expired')
+  })
+
   it('FAILS CLOSED with unconfigured when the store itself has no credentials', async () => {
     process.env.ZERODB_API_KEY = ''
     process.env.AINATIVE_API_KEY = ''
