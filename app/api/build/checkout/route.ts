@@ -35,6 +35,18 @@ export async function POST(request: NextRequest) {
         // on that company's Live dashboard with the plan unlocked.
         success_url: `${APP}/build?screen=live${companyId ? `&company=${encodeURIComponent(companyId)}` : ''}&upgraded=1&session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${APP}/build${companyId ? `?screen=live&company=${encodeURIComponent(companyId)}` : ''}`,
+        // #1538 — the company slug, round-tripped by core onto the Stripe
+        // Checkout Session's AND the resulting subscription's metadata (core
+        // fix: POST /pricing/checkout now merges this into what it sends to
+        // stripe_service.create_checkout_session, which already propagates
+        // metadata onto subscription_data.metadata). Without this, core's
+        // planned webhook relay to Builder's own /api/webhooks/stripe has no
+        // way to learn which company a given Stripe event belongs to — the
+        // success_url's ?company= query param is a browser-redirect
+        // destination Stripe never sees or echoes back on its own objects.
+        // Omitted when there's no real company context (e.g. a bare
+        // pricing-page checkout with no company yet) — never sent empty.
+        ...(companyId ? { metadata: { company_slug: companyId } } : {}),
       }),
       signal: AbortSignal.timeout(25000),
     })
