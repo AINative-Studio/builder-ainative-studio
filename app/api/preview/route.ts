@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
+import { detectRootComponent } from '@/lib/component-detector'
 
 function generateNonce(): string {
   return crypto.randomBytes(16).toString('base64')
@@ -16,7 +17,26 @@ export async function POST(request: NextRequest) {
 
     // Extract the React component code from the markdown
     const codeMatch = code.match(/```(?:typescript|tsx|jsx|javascript|js)?\n([\s\S]*?)```/);
-    const componentCode = codeMatch ? codeMatch[1] : code;
+    let componentCode = codeMatch ? codeMatch[1] : code;
+
+    // Detect the root component BEFORE stripping exports (same approach as
+    // app/api/preview/[id]/route.ts, via lib/component-detector.ts). The old
+    // `.replace(/export\s+default\s+/g, 'const Component = ')` only handled an
+    // `export default` immediately followed by the component itself — a root
+    // exported only via a bare `export { Name }` list, or `export default Name`
+    // referencing a component declared earlier in the file, left `Component`
+    // undefined and crashed the preview (the same bug class as #1523/#1596).
+    const detection = detectRootComponent(componentCode)
+    if (detection.rewrite && componentCode.includes(detection.rewrite.find)) {
+      componentCode = componentCode.replace(detection.rewrite.find, detection.rewrite.replace)
+    }
+    const detectedComponentName = detection.name || 'App'
+    // Strip export statements (not just `export default`) so e.g. a trailing
+    // `export { Name }` list doesn't survive into the non-module <script> below,
+    // where any top-level `export` keyword is a hard SyntaxError.
+    componentCode = componentCode
+      .replace(/export\s+default\s+/g, '')
+      .replace(/export\s+/g, '')
 
     // Create a simple HTML page that renders the React component
     const html = `
@@ -49,7 +69,9 @@ export async function POST(request: NextRequest) {
 <body>
     <div id="root"></div>
     <script type="text/babel">
-      ${componentCode.replace(/export\s+default\s+/g, 'const Component = ')}
+      ${componentCode}
+
+      const Component = ${detectedComponentName};
 
       const App = () => {
         return <Component />
