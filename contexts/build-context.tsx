@@ -319,6 +319,46 @@ export function isExplicitScreenOnlyDeepLink(searchOrUrl: string): boolean {
 }
 
 /**
+ * Does a bare `?screen=<x>` name a company-scoped screen (`ws`, `live`, …)
+ * with NO `?company=` to go with it? (builder#1549)
+ *
+ * Real, reproduced bug: navigating straight to `/build?screen=ws` (back
+ * button, a bookmark, a link with no `company` param) during an in-progress
+ * build. The deep-link-restore effect below used to treat ANY recognized
+ * `?screen=` value as a complete destination and unconditionally dispatch
+ * GOTO_SCREEN(scr) — landing on a blank 'ws' with nothing seeded, since the
+ * `if (company)` branch that would have restored state never ran. That
+ * SYNCHRONOUS dispatch commits `state.screen` to 'ws' in the very same mount
+ * pass, before the #669 resume-pointer effect's own `state.screen !==
+ * 'landing'` guard is evaluated — so a real, resumable in-progress build gets
+ * silently discarded in favor of a screen that was never actually asked for
+ * on its own terms (the founder has no slug in mind; `ws` is meaningless
+ * without one).
+ *
+ * This mirrors isExplicitScreenOnlyDeepLink's own reasoning in the opposite
+ * direction: that function protects a company-context-FREE screen
+ * (companies, account, …) as already complete on its own. This one instead
+ * identifies when a company-scoped screen is INCOMPLETE on its own, so the
+ * caller can decline to treat it as a real destination and defer to the
+ * resume-pointer effect instead.
+ *
+ * Exported pure for the same reason as its siblings: testable without
+ * mounting BuildProvider (OOMs jsdom via useAutoplay).
+ */
+export function isUnresumableBareScreenDeepLink(searchOrUrl: string): boolean {
+  try {
+    const raw = searchOrUrl || ''
+    const q = new URLSearchParams(raw.includes('?') ? raw.slice(raw.indexOf('?') + 1) : raw)
+    const screen = q.get('screen')
+    const company = (q.get('company') || '').trim()
+    if (!screen || company) return false
+    return KNOWN_DEEP_LINK_SCREENS.includes(screen) && !SCREENS_WITHOUT_COMPANY_CONTEXT.has(screen)
+  } catch {
+    return false
+  }
+}
+
+/**
  * Minimal shape of a persisted per-slug cache entry, for completeness checks.
  * Deliberately loose (every field optional): a real localStorage entry written
  * by an older deploy can be missing any of them.
@@ -515,6 +555,13 @@ export function BuildProvider({ children }: { children: ReactNode }) {
 
   // Harmless in normal use; only a known screen is honored.
   useEffect(() => {
+    const search = window.location.search
+    // builder#1549: a bare ?screen=ws (or any other company-scoped screen)
+    // with no ?company= names no real destination — don't commit GOTO_SCREEN
+    // to it below, which would silently discard a real in-progress build by
+    // blocking the #669 resume-pointer effect's own 'landing' check in this
+    // same mount pass. See isUnresumableBareScreenDeepLink's doc comment.
+    if (isUnresumableBareScreenDeepLink(search)) return
     const q = new URLSearchParams(window.location.search)
     const scr = q.get('screen')
     if (scr && KNOWN_DEEP_LINK_SCREENS.includes(scr)) {
