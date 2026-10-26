@@ -250,7 +250,15 @@ function extractFulfillment(event: Record<string, any>): {
   const obj = event?.data?.object || {}
   const md = obj?.metadata || {}
 
-  const slug = String(event?.slug || md?.slug || md?.company || md?.company_id || obj?.client_reference_id || '').trim()
+  // `company_slug` is the real metadata field this fix's own checkout route
+  // (app/api/build/checkout/route.ts) now sends to core, and core's webhook
+  // relay forwards it verbatim onto the Stripe session/subscription object's
+  // metadata (confirmed directly with core's relay implementation, #1538).
+  // Without this, the whole slug-passthrough chain this PR exists to fix
+  // would still silently resolve to an empty slug on every real delivery.
+  const slug = String(
+    event?.slug || md?.slug || md?.company_slug || md?.company || md?.company_id || obj?.client_reference_id || '',
+  ).trim()
   const plan = String(event?.plan || event?.plan_id || md?.plan_id || md?.plan || obj?.plan?.id || '').trim()
 
   // Paid-ness: core's flat callback states it outright; a raw Stripe session
