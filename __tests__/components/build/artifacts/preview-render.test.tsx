@@ -169,6 +169,47 @@ describe('Preview — live-status chip + banners (render)', () => {
     expect(host.textContent).toContain('Live in production')
   })
 
+  it('#1551: repair attempted but still fails — retries up to the cap, then shows an honest stuck state with a real Try again button (never the stale "is repairing it" copy)', async () => {
+    h.state = { ...baseState }
+    h.previewReturn = { previewUrl: '/api/preview/chat-1', status: 'ready', chatId: 'chat-1', files: null, designConformance: null, refreshKey: 0 }
+
+    let registerCalls = 0
+    let repairCalls = 0
+    fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/build/register-app')) {
+        registerCalls += 1
+        return Promise.resolve({ ok: false, json: async () => ({ retry: true, error: 'SyntaxError: unexpected token' }) })
+      }
+      if (String(url).includes('/api/build/repair-app')) {
+        repairCalls += 1
+        return Promise.resolve({ ok: true, json: async () => ({ recovered: false }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const Preview = await importPreview()
+    render(React.createElement(Preview))
+    // Flush enough microtask turns for every bounded repair+retry cycle to settle.
+    for (let i = 0; i < 10; i++) await flush()
+
+    // More than one repair attempt was made (a bounded cap, not a single shot).
+    expect(repairCalls).toBeGreaterThan(1)
+    expect(registerCalls).toBeGreaterThan(1)
+
+    // The terminal state is honest: it must NOT claim an active repair is in
+    // progress once every attempt has concluded and failed.
+    expect(host.textContent).not.toContain('is repairing it')
+
+    const banner = host.querySelector('[data-testid="register-failed-banner"]')
+    expect(banner).not.toBeNull()
+    expect(host.querySelector('.m-share-bar')).toBeNull()
+
+    // A real retry affordance — not a dead end.
+    const retryButton = host.querySelector('[data-testid="register-retry-button"]') as HTMLButtonElement | null
+    expect(retryButton).not.toBeNull()
+  })
+
   it('register-app rejects permanently (no retry/error): shows the honest register-failed banner, no share bar', async () => {
     h.state = { ...baseState }
     h.previewReturn = { previewUrl: '/api/preview/chat-1', status: 'ready', chatId: 'chat-1', files: null, designConformance: null, refreshKey: 0 }
