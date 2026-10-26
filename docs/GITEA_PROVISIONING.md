@@ -181,3 +181,86 @@ Check lib/agent/committee-review.ts for configuration.
 - Human write access is **explicitly granted** via `grantHumanWrite()`
 - Webhook signatures are **HMAC-SHA256 verified**
 - Admin token should have **minimal required scopes**
+
+## Incident: every company's repo was filed under one shared org, not per-founder (#1543, Oct 2026)
+
+**What the "Org/Repo Structure" table above has always said is correct** —
+`ensureOrg(workspaceId)` (`lib/git/gitea-client.ts`) is, and always was,
+generic: it creates/fetches whatever org a caller passes in, with no
+hardcoding inside the client itself (confirmed via `git show
+c614fb8c:lib/git/gitea-client.ts`, the original #354/GIT-1 merge).
+
+**What actually happened:** every real call site — `runGitCommit()` in
+`lib/build/register-app-core.ts`, and both `provisionCompanyRepo()` calls in
+`app/api/build/provision/route.ts` — passed a single fixed constant,
+`BUILDER_WORKSPACE_ID` (`lib/build/instant-db.ts`), instead of each
+founder's real, already-resolved `session.workspaceId` (set at login via
+`resolveDefaultWorkspace()` in `app/(auth)/auth.ts`). So instead of the
+intended shape —
+
+```
+Organization: ws-<founder-A-workspace-id>
+└── Repository: acme-corp
+
+Organization: ws-<founder-B-workspace-id>
+└── Repository: beta-inc
+```
+
+— every company on the platform, regardless of which founder owned it,
+landed in the exact same org:
+
+```
+Organization: ws-<BUILDER_WORKSPACE_ID>   (one org, platform-wide)
+├── Repository: acme-corp     (founder A's company)
+├── Repository: beta-inc      (founder B's company)
+└── Repository: ...every other company ever created
+```
+
+**How this was found:** live-testing the company-track chat→task fix
+(#1533/#1534) on 2026-10-25 — multiple company-track ventures, across
+different founder accounts, were each individually confirmed (by asking
+Cody directly, and by re-reading the actual provisioning code) to already
+have a real Gitea repo, which contradicted the assumption that
+company-track ventures never acquire one. Tracing *why* led straight to
+this call-site bug, not a company-track-specific issue at all.
+
+**The fix (PR #1544):** thread the real session `workspaceId` through at
+both call sites that can provision a *new* repo. `runGitCommit()` now takes
+an optional `workspaceId` param and resolves in priority order:
+
+1. The caller's explicit, session-resolved `workspaceId` (the normal case —
+   `register-app/route.ts` and `provision/route.ts` both already resolve a
+   session earlier in their handlers for other reasons; this just reads
+   `session.workspaceId` off the same resolution).
+2. `existing.workspaceId` — the registry's own stored value (the #250
+   field on `AppEntry`), for the session-less server-side reconciliation
+   sweep (`registration-reconcile.ts`), which deliberately never borrows or
+   impersonates a founder session.
+3. `BUILDER_WORKSPACE_ID` — the shared constant, only as a last resort when
+   neither of the above could be resolved. Never fails a commit outright
+   for want of an identity a best-effort caller genuinely couldn't get.
+
+**What this fix does NOT do:**
+
+- **Does not migrate existing repos.** 36+ real companies were already
+  provisioned under the shared org (`ws-<BUILDER_WORKSPACE_ID>`) before this
+  fix landed. They stay there — this only changes where a *new* repo gets
+  created going forward. A migration (moving existing repos into their
+  founder's correct org, vs. leaving them grandfathered permanently) is a
+  real, separate product decision, not made here.
+- **Does not touch the identical ZeroDB-side pattern.** `AppEntry.workspaceId`
+  itself (the #250 field this fix's fallback reads) is ALSO always written
+  as `BUILDER_WORKSPACE_ID` today (`fileProjectUnderBuilderWorkspace()` in
+  `lib/build/instant-db.ts`) — every company's ZeroDB project is filed under
+  the same single shared core Organization too. That file's own comment
+  says this is current, deliberate behavior pending core support for a real
+  `workspace_id` on project creation (core PR #6460 referenced there) — it
+  may not be the identical bug, and wasn't investigated as part of #1543.
+  If it IS later confirmed to be the same mistake, note that fixing it
+  would also fix this fix's own fallback #2 above, since `existing.workspaceId`
+  is populated by that exact code path.
+
+Refs: #354 (GIT-1 — the original locked "one org per workspace" decision
+this corrects course back to), #1543 (this incident), #1544 (the fix),
+`lib/build/register-app-core.test.ts`'s "workspace org resolution (#1543)"
+suite (the resolution-priority logic, unit-tested).

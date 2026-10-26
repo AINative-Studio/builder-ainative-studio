@@ -752,8 +752,15 @@ export async function POST(request: NextRequest) {
     // git-provisioned too, not just multi-file ones.
     const fileMap = toFileMapForCommit(stored)
     if (fileMap) {
+      // #1543: this founder's real per-workspace Gitea org, from the SAME
+      // session resolved above (jwt/ownerEmail) — a repo provisioned here
+      // now lands under the founder's own workspace org instead of the
+      // single shared platform org every company's repo was previously
+      // filed under. Falls back to the shared constant only when no real
+      // session workspace could be resolved (never fails provisioning for
+      // want of it).
       const git = await provisionCompanyRepo({
-        workspaceId: BUILDER_WORKSPACE_ID,
+        workspaceId: (session as any)?.workspaceId || BUILDER_WORKSPACE_ID,
         slug,
         files: fileMap,
       })
