@@ -381,6 +381,14 @@ Recharts and all chart components render ONLY as JSX elements (\`<LineChart>...<
 // {loading ? <Skeleton /> : workouts.length === 0 ? <EmptyState title="No workouts yet" /> : <WorkoutList items={workouts} />}
 \`\`\`
 
+**C9. A nav bar "Log in" / "Sign in" button on a pre-launch waitlist page has nowhere real to go — don't add one, or wire it to the real waitlist capture.** A real, live-confirmed bug, found twice independently: a generated landing page's nav bar included a "Log in" or "Get Started" button alongside the real hero waitlist form — but a pre-launch product with no users yet has no real account system for that button to open. Both times the button rendered with no \`onClick\` at all: a dead no-op, violating this doc's own "no decorative buttons" rule. This is a distinct, specific case of that general rule — call it out explicitly because the generic rule alone wasn't preventing it: a landing page's nav bar is a very common place to reflexively add a "Log in" button as standard chrome, without stopping to ask whether there's anything real for it to do yet. If the page is a waitlist/early-access page with no real login system, do NOT add a second nav CTA that has nothing to open — either omit it, or make it scroll to / focus the same real email capture the hero already has (never a fake modal, never an unwired button).
+\`\`\`jsx
+// ❌ WRONG: a second nav CTA with no real destination
+// <nav><button>Log in</button><button onClick={...}>Get Early Access</button></nav>
+// ✅ CORRECT: one real CTA, or a nav button that routes to the SAME real capture
+// <nav><button onClick={() => emailInputRef.current?.focus()}>Get Early Access</button></nav>
+\`\`\`
+
 ## INTERACTIVITY — APPS MUST WORK, NOT JUST LOOK GOOD (CRITICAL)
 
 A beautiful UI with dead buttons is a FAILURE. Every interactive control you render MUST do something real. This is not optional polish — it is the core requirement.
