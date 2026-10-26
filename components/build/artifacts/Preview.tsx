@@ -540,6 +540,25 @@ export function Preview() {
             // construction), so it doesn't need our iframe sandbox attrs. (#291)
             <div className="m-preview-frame" style={{ height: '100%' }} data-testid="sandpack-preview-mount">
               <SandpackPreview
+                // #1574 — sandpackDbToken arrives asynchronously (the
+                // /api/build/sandpack-token fetch above), after this component's
+                // first render. Without a key tied to its readiness, React just
+                // re-renders SandpackPreview in place: buildSandpackFiles() DOES
+                // compute a files map with the db-token-shim included on that
+                // second render, but SandpackProvider doesn't remount just
+                // because its `files` prop changed, so the bundler's already-
+                // running iframe never re-executes /index.tsx's import list to
+                // pick up the newly-added shim module. The generated app keeps
+                // running with window.fetch unpatched — every /api/db call it
+                // makes goes straight to the Sandpack bundler's own origin and
+                // 404s silently, caught by the generated app's own
+                // `.catch(() => {})` success-UI pattern (confirmed live on 3
+                // real companies: groundwork, wrench, shutter — waitlist
+                // signups showed "You're on the list" but never reached
+                // ZeroDB). Keying on token-readiness forces exactly one clean
+                // remount once the real token lands, so the shim is present
+                // from that compile's first line.
+                key={sandpackDbToken ? 'tok' : 'pending'}
                 files={files}
                 timeoutMs={15000}
                 onTimeout={() => setSandpackTimedOut(true)}
