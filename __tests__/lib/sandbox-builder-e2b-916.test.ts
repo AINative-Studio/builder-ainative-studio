@@ -289,4 +289,113 @@ export default function App() {
       expect(script).toContain(`globalThis['App']`)
     })
   })
+
+  describe('bare `export { Name }` list export with no `export default` (#1541-class gap)', () => {
+    // shadcn/ui's own canonical convention: declare, then export via a
+    // trailing bare list. Neither the old detectComponentName() regex nor
+    // the export-default globalThis conversion in buildRenderScript() could
+    // see this at all -- the component would resolve to `null` at render
+    // time ("Component not found"), not a crash, so this needs a script
+    // inspection to catch (the mocked E2B result always reports success).
+    const BARE_EXPORT_ONLY = `
+function LandingPage() {
+  return <div className="app"><h1>Hello Founder</h1></div>
+}
+
+export { LandingPage }
+`
+
+    function renderScriptSentToSandbox(): string {
+      const filesArg = mockRunSequence.mock.calls[0][0]
+      return filesArg['render.jsx']
+    }
+
+    it('detects the real declared name and exposes it on globalThis, not the "App" fallback', async () => {
+      mockIsE2BEnabled.mockReturnValue(true)
+      mockRunSequence.mockResolvedValue({
+        commandResults: [
+          { exitCode: 0, stdout: '', stderr: '', timedOut: false },
+          { exitCode: 0, stdout: '', stderr: '', timedOut: false },
+        ],
+        files: { 'output.html': REAL_HTML },
+      })
+
+      const result = await buildInSandbox(BARE_EXPORT_ONLY)
+
+      expect(result.success).toBe(true)
+      const script = renderScriptSentToSandbox()
+      expect(script).toContain(`globalThis['LandingPage']`)
+      // The real bug: pre-fix, the component name fell back to the
+      // hardcoded 'App', which this file never declares at all.
+      expect(script).toContain("typeof LandingPage !== 'undefined'")
+    })
+
+    it('resolves an aliased bare export (`export { Internal as External }`) by its external name', async () => {
+      mockIsE2BEnabled.mockReturnValue(true)
+      mockRunSequence.mockResolvedValue({
+        commandResults: [
+          { exitCode: 0, stdout: '', stderr: '', timedOut: false },
+          { exitCode: 0, stdout: '', stderr: '', timedOut: false },
+        ],
+        files: { 'output.html': REAL_HTML },
+      })
+
+      const aliased = `
+function Internal() {
+  return <div className="app"><h1>Hello Founder</h1></div>
+}
+
+export { Internal as FounderPage }
+`
+      const result = await buildInSandbox(aliased)
+
+      expect(result.success).toBe(true)
+      const script = renderScriptSentToSandbox()
+      expect(script).toContain(`globalThis['FounderPage']`)
+      expect(script).toContain("typeof FounderPage !== 'undefined'")
+    })
+
+    it('does not treat a re-export (`export { X } from "./Y"`) as a local declaration', async () => {
+      mockIsE2BEnabled.mockReturnValue(true)
+      mockRunSequence.mockResolvedValue({
+        commandResults: [
+          { exitCode: 0, stdout: '', stderr: '', timedOut: false },
+          { exitCode: 0, stdout: '', stderr: '', timedOut: false },
+        ],
+        files: { 'output.html': REAL_HTML },
+      })
+
+      const reExportOnly = `
+export { Something } from './other-file'
+
+function App() {
+  return <div className="app"><h1>Hello Founder</h1></div>
+}
+`
+      const result = await buildInSandbox(reExportOnly)
+
+      expect(result.success).toBe(true)
+      const script = renderScriptSentToSandbox()
+      // Falls back to 'App' (the real local declaration), never the
+      // unresolvable re-exported name from another file.
+      expect(script).toContain(`globalThis['App']`)
+      expect(script).not.toContain("typeof Something")
+    })
+
+    it('leaves a real `export default` component untouched (no spurious bare-export expose line)', async () => {
+      mockIsE2BEnabled.mockReturnValue(true)
+      mockRunSequence.mockResolvedValue({
+        commandResults: [
+          { exitCode: 0, stdout: '', stderr: '', timedOut: false },
+          { exitCode: 0, stdout: '', stderr: '', timedOut: false },
+        ],
+        files: { 'output.html': REAL_HTML },
+      })
+
+      await buildInSandbox(SIMPLE_COMPONENT)
+
+      const script = renderScriptSentToSandbox()
+      expect(script).not.toContain("typeof App !== 'undefined'")
+    })
+  })
 })
