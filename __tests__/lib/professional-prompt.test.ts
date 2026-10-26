@@ -31,6 +31,30 @@ describe('PROFESSIONAL_SYSTEM_PROMPT — security baseline (C5)', () => {
 })
 
 /**
+ * #1540 — real, live-confirmed bug: a generated landing page for company
+ * "silo" shipped a fabricated testimonial ("Sarah Martinez, Head of Security"
+ * — a specific invented name, role, quote, and a precise-sounding "cut
+ * compliance audit time by 70%" metric) presented as a real customer, on a
+ * real paying company's live page. The prompt previously only encouraged
+ * testimonials as a layout-variety device (Rule 5/Rule in ANTI-PATTERNS
+ * sections) with no honesty guardrail at all. C6 closes that gap.
+ */
+describe('PROFESSIONAL_SYSTEM_PROMPT — never fabricate a named person/testimonial (C6, #1540)', () => {
+  it('explicitly forbids inventing a named customer with a fabricated quote/metric', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/[Nn]ever fabricate a named person, customer, or quote/)
+  })
+
+  it('gives a concrete WRONG/CORRECT example matching the fabricated real-world case', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/Sarah Martinez/)
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/generic\/unattributed, no invented person or invented statistic/i)
+  })
+
+  it('offers a real alternative (generic/omit) rather than just a prohibition', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/omit the section rather than invent/i)
+  })
+})
+
+/**
  * #815 — real, live-confirmed bug: /build/agentive-product rendered TWO real
  * <aside> elements simultaneously at every viewport width — the correct
  * desktop sidebar, and a second "mobile" drawer with className="translate-x-0"
