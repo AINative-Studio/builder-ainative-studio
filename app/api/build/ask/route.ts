@@ -903,19 +903,40 @@ export async function GET(request: NextRequest) {
   const companyProjectId = await resolveCompanyProjectId(companyId)
   const turns = await loadChatWithFallback(scopeKey, undefined, companyProjectId).catch(() => [])
 
-  // Chat handoff summary (#608): "where we left off" for a returning founder,
-  // regenerated only when enough new turns warrant it (ensureChatSummary is
-  // internally best-effort — never throws, never blocks the thread load).
-  const companyName = String(params.get('companyName') || 'the company').slice(0, 120)
-  const idea = String(params.get('idea') || '').slice(0, 3000)
-  const summaryResult = await ensureChatSummary(scopeKey, companyName, idea, turns).catch(() => null)
+  // #1542: real, live-confirmed bug — a brand-new company with ZERO real
+  // chat turns (this GET's own `turns` above, the ground truth) was still
+  // served a fully-populated, confident "where we left off" summary AND a
+  // "What Cody has learned" profile, both describing a conversation that
+  // never happened (a fabricated brand-color preference, an invented
+  // unrelated company name, a fabricated creation date mentioned
+  // elsewhere). Root cause: ensureChatSummary/ensureCompanyProfile each
+  // independently decide whether to REGENERATE against their own storage,
+  // but when regeneration isn't warranted they fall back to returning
+  // whatever is already stored under `scopeKey` — with no check against
+  // the one piece of ground truth this route already has. If that scope
+  // key was ever previously written to (a reused test slug, a stale row
+  // from before this company existed, a scope-key collision at WRITE
+  // time elsewhere) that stale content is served forever, confidently,
+  // regardless of whether THIS conversation ever happened. A company with
+  // zero real turns has no legitimate "where we left off" to report —
+  // skip both entirely rather than trust either store's own judgment.
+  let summaryResult: Awaited<ReturnType<typeof ensureChatSummary>> = null
+  let profileResult: Awaited<ReturnType<typeof ensureCompanyProfile>> = null
+  if (turns.length > 0) {
+    // Chat handoff summary (#608): "where we left off" for a returning founder,
+    // regenerated only when enough new turns warrant it (ensureChatSummary is
+    // internally best-effort — never throws, never blocks the thread load).
+    const companyName = String(params.get('companyName') || 'the company').slice(0, 120)
+    const idea = String(params.get('idea') || '').slice(0, 3000)
+    summaryResult = await ensureChatSummary(scopeKey, companyName, idea, turns).catch(() => null)
 
-  // "What Cody has learned" (#693): a synthesized profile of real founder-Cody
-  // memories, reflected only when enough new ones have accumulated
-  // (ensureCompanyProfile is internally best-effort — never throws, never
-  // blocks the thread load). Independent of the chat summary above — this
-  // reads from ZeroMemory's own synthesis, not the raw turn history.
-  const profileResult = await ensureCompanyProfile(scopeKey).catch(() => null)
+    // "What Cody has learned" (#693): a synthesized profile of real founder-Cody
+    // memories, reflected only when enough new ones have accumulated
+    // (ensureCompanyProfile is internally best-effort — never throws, never
+    // blocks the thread load). Independent of the chat summary above — this
+    // reads from ZeroMemory's own synthesis, not the raw turn history.
+    profileResult = await ensureCompanyProfile(scopeKey).catch(() => null)
+  }
 
   return Response.json({ turns, summary: summaryResult?.summary || null, profile: profileResult })
 }

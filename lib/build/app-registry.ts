@@ -393,14 +393,26 @@ async function requireVerifiedApp(setter: string, slug: string): Promise<AppEntr
   return lookup.entry
 }
 
-/** Register (or update) a slug → chatId mapping. Appends a row; latest wins on read. */
-export async function registerApp(e: Omit<AppEntry, 'createdAt'>): Promise<boolean> {
+/**
+ * Register (or update) a slug → chatId mapping. Appends a row; latest wins on read.
+ *
+ * #1542 (side-finding): `createdAt` was unconditionally restamped to "now" on
+ * EVERY call, including every edit of an already-registered company — so a
+ * company's registry `createdAt` drifted forward on each change rather than
+ * preserving its real original creation time, meaning "when was this company
+ * created" had no honest answer anywhere in the registry. Every setApp* caller
+ * that's updating an EXISTING entry already spreads `...existing` (which
+ * carries the real original `createdAt`) into this call — only stamp "now"
+ * when the caller didn't supply one, i.e. a genuinely new registration.
+ */
+export async function registerApp(e: Omit<AppEntry, 'createdAt'> & { createdAt?: string }): Promise<boolean> {
   if (!configured() || !e.slug || !e.chatId) return false
   try {
+    const { createdAt, ...rest } = e
     const res = await fetch(rowsUrl(), {
       method: 'POST',
       headers: headers(),
-      body: JSON.stringify({ row_data: { ...e, createdAt: new Date().toISOString() } }),
+      body: JSON.stringify({ row_data: { ...rest, createdAt: createdAt || new Date().toISOString() } }),
       signal: AbortSignal.timeout(15000),
     })
     // #1172: registerApp is the ONE write chokepoint every setApp* helper
