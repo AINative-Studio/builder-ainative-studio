@@ -31,6 +31,112 @@ describe('PROFESSIONAL_SYSTEM_PROMPT — security baseline (C5)', () => {
 })
 
 /**
+ * #1540 — real, live-confirmed bug: a generated landing page for company
+ * "silo" shipped a fabricated testimonial ("Sarah Martinez, Head of Security"
+ * — a specific invented name, role, quote, and a precise-sounding "cut
+ * compliance audit time by 70%" metric) presented as a real customer, on a
+ * real paying company's live page. The prompt previously only encouraged
+ * testimonials as a layout-variety device (Rule 5/Rule in ANTI-PATTERNS
+ * sections) with no honesty guardrail at all. C6 closes that gap.
+ */
+describe('PROFESSIONAL_SYSTEM_PROMPT — never fabricate a named person/testimonial (C6, #1540)', () => {
+  it('explicitly forbids inventing a named customer with a fabricated quote/metric', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/[Nn]ever fabricate a named person, customer, or quote/)
+  })
+
+  it('gives a concrete WRONG/CORRECT example matching the fabricated real-world case', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/Sarah Martinez/)
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/generic\/unattributed, no invented person or invented statistic/i)
+  })
+
+  it('offers a real alternative (generic/omit) rather than just a prohibition', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/omit the section rather than invent/i)
+  })
+})
+
+/**
+ * #1559 — real, live-confirmed bug: company "huddle"'s "Get Early Access"
+ * waitlist form called `alert(...)` to confirm a submission. A native
+ * browser alert blocks the ENTIRE page until manually dismissed — on the
+ * sandboxed preview iframe this reproduced as the whole tab appearing
+ * frozen/unresponsive (click succeeded, every subsequent interaction timed
+ * out until the dialog was dismissed). A server-side sweep of the
+ * `generations` table (server-filtered on `generated_code` containing
+ * "alert(") found 82 rows using this pattern — a real, recurring
+ * content-generation gap, not an isolated incident. C7 closes it.
+ */
+describe('PROFESSIONAL_SYSTEM_PROMPT — never use native alert/confirm/prompt (C7, #1559)', () => {
+  it('explicitly forbids native alert/confirm/prompt dialogs', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/[Nn]ever use native `?alert`?\/`?confirm`?\/`?prompt`?/)
+  })
+
+  it('explains WHY: a real alert blocks the whole page until manually dismissed', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/blocks the ENTIRE page/)
+  })
+
+  it('gives a concrete WRONG/CORRECT example using real in-page state instead', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/\/\/ ❌ WRONG: blocks the whole page until manually dismissed/)
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/\/\/ ✅ CORRECT: real in-page state, never blocks/)
+  })
+})
+
+/**
+ * #1572 — real, live-confirmed bug: a real showcase entry's generated app
+ * fetched /api/db/workouts (a table that had never been written to yet — a
+ * normal, expected state for a freshly-generated app, since ZeroDB creates a
+ * table on first WRITE, not on read) and only ever set state on the success
+ * path. The real response was a genuine 404, which the app's own useEffect
+ * never handled: loading never cleared, and the page was stuck on "Loading
+ * workouts..." forever — worse than a crash, which at least shows an error
+ * boundary. C8 closes that gap.
+ */
+describe('PROFESSIONAL_SYSTEM_PROMPT — every fetch needs a real error/empty state (C8, #1572)', () => {
+  it('explicitly requires handling a non-ok/404 response, not just the success path', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/[Ee]very data fetch needs a real error\/empty state/)
+  })
+
+  it('explains WHY: a 404 on an empty table is normal, not a failure, but loading must still clear', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/NORMAL, expected state for a freshly-generated app/)
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/NEVER leave the loading flag set forever/)
+  })
+
+  it('gives a concrete WRONG/CORRECT example covering success, empty, and error paths', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/\/\/ ❌ WRONG: loading never clears on a fetch error or non-ok response/)
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/\.catch\(\(\) => setWorkouts\(\[\]\)\)/)
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/\.finally\(\(\) => setLoading\(false\)\)/)
+  })
+})
+
+/**
+ * #1576 — real, live-confirmed bug, found twice independently on real
+ * companies (beacon's "Get Started", wrench's "Log in"): a generated
+ * landing page's nav bar included a secondary CTA button alongside the real
+ * hero waitlist form, with no onClick at all — a dead no-op. A pre-launch
+ * product with no users yet has no real account system for a "Log in"
+ * button to open. C9 closes this gap explicitly, since the general
+ * no-decorative-buttons rule alone wasn't preventing this specific,
+ * recurring shape.
+ */
+describe('PROFESSIONAL_SYSTEM_PROMPT — no dead nav "Log in" CTA on a pre-launch page (C9, #1576)', () => {
+  it('explicitly calls out the nav-bar Log in / Sign in button case', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/nav bar "Log in" \/ "Sign in" button on a pre-launch waitlist page/)
+  })
+
+  it('explains WHY: no real account system exists yet for the button to open', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/has no real account system for that button to open/)
+  })
+
+  it('offers a real alternative: omit it, or route to the same real email capture', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/either omit it, or make it scroll to \/ focus the same real email capture/)
+  })
+
+  it('gives a concrete WRONG/CORRECT example', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/\/\/ ❌ WRONG: a second nav CTA with no real destination/)
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/\/\/ ✅ CORRECT: one real CTA, or a nav button that routes to the SAME real capture/)
+  })
+})
+
+/**
  * #815 — real, live-confirmed bug: /build/agentive-product rendered TWO real
  * <aside> elements simultaneously at every viewport width — the correct
  * desktop sidebar, and a second "mobile" drawer with className="translate-x-0"

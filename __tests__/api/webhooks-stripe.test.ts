@@ -212,6 +212,25 @@ describe('POST /api/webhooks/stripe (#1012) — checkout.session.completed', () 
     expect(h.fulfillPaidPlan).toHaveBeenCalledWith('castlo', 'business')
   })
 
+  it('accepts metadata.company_slug — the real field core relays from this PR\'s own checkout metadata (#1538)', async () => {
+    const { POST } = await import('@/app/api/webhooks/stripe/route')
+    const payload = {
+      type: 'checkout.session.completed',
+      ts: nowSec(),
+      data: {
+        object: {
+          id: 'cs_test_789',
+          payment_status: 'paid',
+          status: 'complete',
+          metadata: { company_slug: 'ledra', plan_id: 'pro' },
+        },
+      },
+    }
+    const res: any = await POST(callbackReq(payload))
+    expect(res.status).toBe(200)
+    expect(h.fulfillPaidPlan).toHaveBeenCalledWith('ledra', 'pro')
+  })
+
   it('rejects a signed callback that names no company at all, and fulfills nothing', async () => {
     const { POST } = await import('@/app/api/webhooks/stripe/route')
     const res: any = await POST(callbackReq(completedPayload({ slug: '' })))

@@ -57,6 +57,59 @@ describe('parseMultiFileOutput: entry-point synthesis for a mainFile with no App
     expect(files['/src/App.tsx']).toContain("from './page'")
   })
 
+  it('#1519: synthesizes a real entry point for a named class component with extends (not `import class from`)', () => {
+    // Real bug: extractDefaultExport()'s bare-identifier fallback regex
+    // (/export\s+default\s+(\w+)/) greedily captured the reserved word
+    // "class" itself for any class-component export — never-null, so the
+    // existing || 'GeneratedMainPage' safety net never engaged. The
+    // synthesized entry point was `import class from './page'` — a
+    // guaranteed Babel SyntaxError at render.
+    const raw = [
+      '// --- FILE: /src/page.tsx ---',
+      "import React from 'react'",
+      'export default class HomePage extends React.Component {',
+      '  render() { return <div>hi</div> }',
+      '}',
+    ].join('\n')
+    const files = parseMultiFileOutput(raw, 'test prompt')
+    expect(files['/src/App.tsx']).toBeDefined()
+    expect(files['/src/App.tsx']).not.toMatch(/import\s+class\s+from/)
+    expect(files['/src/App.tsx']).toContain('import HomePage ')
+    expect(files['/src/App.tsx']).toMatch(/export default HomePage$/)
+  })
+
+  it('#1519: synthesizes a real entry point for a named class component with no extends', () => {
+    const raw = [
+      '// --- FILE: /src/page.tsx ---',
+      'export default class HomePage {',
+      '  render() { return <div>hi</div> }',
+      '}',
+    ].join('\n')
+    const files = parseMultiFileOutput(raw, 'test prompt')
+    expect(files['/src/App.tsx']).not.toMatch(/import\s+class\s+from/)
+    expect(files['/src/App.tsx']).toContain('import HomePage ')
+  })
+
+  it('#1519/#1523: synthesizes a real entry point for a fully anonymous class component, never mis-capturing "class"/"extends" as the name', () => {
+    // A genuinely anonymous class has no literal name to extract. Post-#1523
+    // this call site's naming moved onto the shared detectRootComponent()
+    // (PR #1526), which returns its own synthetic name for an anonymous
+    // default export — '__PreviewDefault', not the old one-off
+    // 'GeneratedMainPage' fallback string. Either name is a correct fix for
+    // the original #1519 bug (mis-capturing "class"/"extends" itself); this
+    // assertion tracks the actual current behavior post-migration.
+    const raw = [
+      '// --- FILE: /src/page.tsx ---',
+      "import React from 'react'",
+      'export default class extends React.Component {',
+      '  render() { return <div>hi</div> }',
+      '}',
+    ].join('\n')
+    const files = parseMultiFileOutput(raw, 'test prompt')
+    expect(files['/src/App.tsx']).not.toMatch(/import\s+(class|extends)\s+from/)
+    expect(files['/src/App.tsx']).toMatch(/import\s+(GeneratedMainPage|__PreviewDefault)\s+/)
+  })
+
   it('does not overwrite an already-present /src/App.tsx', () => {
     const raw = [
       '// --- FILE: /src/App.tsx ---',

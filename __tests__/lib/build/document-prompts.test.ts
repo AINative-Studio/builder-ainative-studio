@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   DOCUMENT_PROMPTS,
   isGeneratableDocType,
+  isBareNameIdea,
   dailyReportTitle,
   buildDailyReport,
   type DocGenContext,
@@ -46,6 +47,12 @@ describe('DOCUMENT_PROMPTS (#64 quality bar)', () => {
     expect(u).toContain('ShelfMind')
     expect(u).toContain('AI inventory copilot')
   })
+  it('instructs the model never to research a different real company sharing the name (#1540)', () => {
+    for (const t of ['research', 'roadmap', 'mission', 'market'] as const) {
+      const spec = DOCUMENT_PROMPTS[t]!
+      expect(spec.system.toLowerCase()).toContain('never research or describe a different, real company')
+    }
+  })
   it('produces sensible per-type default titles', () => {
     expect(DOCUMENT_PROMPTS.research!.title(ctx)).toContain('ShelfMind')
     expect(DOCUMENT_PROMPTS.roadmap!.title(ctx)).toContain('Roadmap')
@@ -75,6 +82,37 @@ describe('DOCUMENT_PROMPTS (#64 quality bar)', () => {
       expect(sys).toContain('literal')
       expect(sys).toContain('do not substitute')
     }
+  })
+})
+
+// ---------- isBareNameIdea (#1540) ----------
+describe('isBareNameIdea (#1540) — real production case: company "silo", idea "silo"', () => {
+  it('flags the exact real-world case: idea is just the company name', () => {
+    expect(isBareNameIdea('silo', 'silo')).toBe(true)
+  })
+  it('flags case/whitespace variations of the bare name', () => {
+    expect(isBareNameIdea('  Silo  ', 'silo')).toBe(true)
+    expect(isBareNameIdea('SILO', 'Silo')).toBe(true)
+  })
+  it('flags the name plus only filler words, with no real description', () => {
+    expect(isBareNameIdea('a company called silo', 'silo')).toBe(true)
+    expect(isBareNameIdea('silo inc', 'silo')).toBe(true)
+    expect(isBareNameIdea('the silo app', 'silo')).toBe(true)
+  })
+  it('does NOT flag a genuinely short but real idea (#1083 non-regression: "street art gallery")', () => {
+    expect(isBareNameIdea('street art gallery', 'wallkind')).toBe(false)
+  })
+  it('does NOT flag a real idea that happens to start with the company name', () => {
+    expect(isBareNameIdea('silo is a data security and access control platform', 'silo')).toBe(false)
+  })
+  it('does NOT flag a real idea unrelated in wording to the company name', () => {
+    expect(isBareNameIdea('AI inventory copilot for small retailers', 'ShelfMind')).toBe(false)
+  })
+  it('treats an empty idea as not bare (the existing length<3 guard already rejects it)', () => {
+    expect(isBareNameIdea('', 'silo')).toBe(false)
+  })
+  it('never throws on a missing/empty company name', () => {
+    expect(isBareNameIdea('silo', '')).toBe(false)
   })
 })
 

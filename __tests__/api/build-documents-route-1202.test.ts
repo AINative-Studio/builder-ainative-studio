@@ -42,6 +42,19 @@ const docPrompts = vi.hoisted(() => ({
     },
   },
   isGeneratableDocType: vi.fn((t: string) => t === 'research'),
+  // Real implementation (not a stub) so #1540's bare-name-idea guard is
+  // actually exercised by these route tests, not just unit-tested in
+  // isolation — the route's own idea.length<3 check is a pure string guard
+  // too, so this keeps the same fidelity.
+  isBareNameIdea: (idea: string, companyName: string) => {
+    const name = companyName.trim().toLowerCase()
+    if (!name) return false
+    const nameWords = new Set(name.split(/\W+/).filter(Boolean))
+    const filler = new Set(['a', 'an', 'the', 'is', 'called', 'company', 'inc', 'llc', 'co', 'startup', 'app', 'product', 'for', 'business', 'named'])
+    const ideaWords = idea.toLowerCase().split(/\W+/).filter(Boolean)
+    if (ideaWords.length === 0) return false
+    return ideaWords.every((w) => nameWords.has(w) || filler.has(w))
+  },
 }))
 vi.mock('@/lib/build/document-prompts', () => docPrompts)
 
@@ -211,6 +224,47 @@ describe('#1202 POST /api/build/documents', () => {
     )
 
     expect(res.status).toBe(400)
+  })
+
+  it('mode A: returns 422 when the idea is just the company name, not a real description (#1540)', async () => {
+    auth.auth.mockResolvedValue({ user: { email: 'founder@x.com' } })
+    const { POST } = await import('@/app/api/build/documents/route')
+
+    const res = await POST(
+      mockJsonRequest('http://localhost/api/build/documents', {
+        companyId: 'silo',
+        companyName: 'silo',
+        generate: true,
+        type: 'research',
+        idea: 'silo',
+      })
+    )
+
+    expect(res.status).toBe(422)
+    const body = await res.json()
+    expect(body.error).toBe('idea_too_sparse_to_ground')
+    expect(docStore.createDocument).not.toHaveBeenCalled()
+    expect(completion.completeText).not.toHaveBeenCalled()
+  })
+
+  it('mode A: a real (if short) idea that is not just the company name still generates (#1540 non-regression)', async () => {
+    auth.auth.mockResolvedValue({ user: { email: 'founder@x.com' } })
+    completion.completeText.mockResolvedValue({ text: 'A real generated research document body, written out fully.' })
+    docStore.createDocument.mockResolvedValue({ id: 'doc-4', title: 'Research for wallkind' })
+    const { POST } = await import('@/app/api/build/documents/route')
+
+    const res = await POST(
+      mockJsonRequest('http://localhost/api/build/documents', {
+        companyId: 'wallkind',
+        companyName: 'wallkind',
+        generate: true,
+        type: 'research',
+        idea: 'street art gallery',
+      })
+    )
+
+    expect(res.status).toBe(200)
+    expect(docStore.createDocument).toHaveBeenCalledTimes(1)
   })
 
   it('mode A: generates via the primary Claude stack and persists', async () => {

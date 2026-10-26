@@ -17,6 +17,23 @@
 import { fixJsxErrors } from './jsx-fixer'
 import { getBuiltinFiles } from './setup'
 import { sanitizeForSandpack } from '../code-validator'
+import { sandpackDbTokenShim } from './db-token-shim'
+
+/**
+ * #1561 — when provided, injects the db-token-shim module (see that file's
+ * doc comment for the full root-cause writeup) as /db-token-shim.ts and
+ * imports it FIRST in /index.tsx, before the real app's own `import App
+ * from './App'` — so window.fetch is patched before any of the generated
+ * app's own code can call it. `origin` is the real Builder origin
+ * (builder.ainative.studio in production) the Sandpack bundler's iframe
+ * must call back to; `dbToken` is the same per-company signed token the
+ * single-file preview's dbTokenShim attaches, minted via
+ * lib/build/preview-tokens.ts.
+ */
+export interface SandpackDbShimOptions {
+  origin: string
+  dbToken: string
+}
 
 /**
  * Build the final Sandpack `files` map from a generated app's raw files map,
@@ -25,8 +42,16 @@ import { sanitizeForSandpack } from '../code-validator'
  * the React/AIKit/shadcn/lucide import-injection safety nets + final de-dupe on
  * every generated .tsx file.
  */
-export function buildSandpackFiles(files: Record<string, string>): Record<string, string> {
+export function buildSandpackFiles(files: Record<string, string>, shim?: SandpackDbShimOptions): Record<string, string> {
   const sandpackFiles: Record<string, string> = { ...getBuiltinFiles() }
+
+  if (shim?.origin && shim?.dbToken) {
+    sandpackFiles['/db-token-shim.ts'] = sandpackDbTokenShim(shim.origin, shim.dbToken)
+    const indexEntry = sandpackFiles['/index.tsx']
+    if (indexEntry && !indexEntry.includes("'./db-token-shim'")) {
+      sandpackFiles['/index.tsx'] = `import './db-token-shim'\n${indexEntry}`
+    }
+  }
 
   for (const [rawPath, rawContent] of Object.entries(files)) {
     const path = rawPath
@@ -418,10 +443,173 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
     sandpackFiles[path] = fixed
   }
 
+  fixMissingExports(sandpackFiles)
   fixExportShapeMismatches(sandpackFiles)
   stubMissingLocalComponents(sandpackFiles)
+  fixNativeDialogCalls(sandpackFiles)
 
   return sandpackFiles
+}
+
+/**
+ * Real bug found live (#1559, `huddle`): a generated handler's native,
+ * synchronous `alert()`/`confirm()`/`prompt()` call blocks the calling
+ * thread until dismissed. In the real `/build` preview iframe this reads as
+ * a frozen, unresponsive tab the instant a founder clicks the control that
+ * calls it — confirmed live by clicking `huddle`'s real "Get Early Access"
+ * button, which froze all further interaction until the native dialog was
+ * dismissed. It's also a trust/polish problem independent of the freeze: a
+ * native browser dialog box on an otherwise professionally-styled page
+ * reads as broken, not as a real working feature.
+ *
+ * A live confirmed query found 82 generations using `alert()` somewhere in
+ * their code — a recurring content-generation pattern, not an isolated
+ * incident. Regenerating all of them isn't realistic; this rewrites the
+ * calls in-place for the preview the same way the other safety nets in this
+ * file repair generation gaps without needing a regeneration.
+ *
+ * Each matched call is rewritten to a same-signature, non-blocking shim
+ * defined once at the top of the file: `alert` fires a console message
+ * instead of a modal, `confirm` returns `true` (the dialog never actually
+ * blocks on a real answer, so proceeding is the least-surprising default —
+ * matches what a real founder clicking through their own happy path would
+ * expect), and `prompt` returns its default-value argument (or `''`). A
+ * negative lookbehind keeps this from matching a method call on some other
+ * object (e.g. a notification library's own `toast.alert(...)`) — only a
+ * bare `alert(`/`window.alert(` call (and the `confirm`/`prompt` siblings)
+ * is rewritten.
+ *
+ * #1559 follow-up: the IDENTICAL fix was also ported into
+ * lib/code-validator.ts's autoFixCode() (called by sanitizeForSandpack(),
+ * which THIS pipeline already runs earlier via buildSandpackFiles() — see the
+ * `sanitizeForSandpack(fixed)` calls above) for the single-file Babel preview
+ * path, which this Sandpack-only fix never covered (confirmed live:
+ * `flipsight` still hung after this landed, since it renders single-file, not
+ * Sandpack). Both now use the SAME `__previewSafe*` shim names on purpose —
+ * sanitizeForSandpack() already neutralizes any dialog call before this
+ * function ever runs, so in practice this loop is usually a no-op for
+ * Sandpack too; it's kept as a second, independent safety net (same
+ * philosophy as the other fixers in this pipeline) rather than relying on a
+ * single call path, and the shared naming means output is identical no
+ * matter which pass actually did the rewrite.
+ */
+function fixNativeDialogCalls(sandpackFiles: Record<string, string>): void {
+  const builtinPaths = new Set(Object.keys(getBuiltinFiles()))
+  const dialogCallRe = /(?<![.\w$])(?:window\.)?(alert|confirm|prompt)\s*\(/
+  const globalDialogCallRe = /(?<![.\w$])(?:window\.)?(alert|confirm|prompt)\s*\(/g
+
+  const SHIM = [
+    "function __previewSafeAlert(message) { if (typeof console !== 'undefined') console.info('[preview alert]', message) }",
+    "function __previewSafeConfirm(message) { if (typeof console !== 'undefined') console.info('[preview confirm]', message); return true }",
+    "function __previewSafePrompt(message, defaultValue) { if (typeof console !== 'undefined') console.info('[preview prompt]', message); return defaultValue !== undefined ? defaultValue : '' }",
+  ].join('\n')
+
+  for (const [path, code] of Object.entries(sandpackFiles)) {
+    if (!/\.(t|j)sx?$/.test(path)) continue
+    if (builtinPaths.has(path)) continue
+    if (!dialogCallRe.test(code)) continue
+
+    const fixed = code.replace(globalDialogCallRe, (_match, fn: string) => {
+      const capitalized = fn.charAt(0).toUpperCase() + fn.slice(1)
+      return `__previewSafe${capitalized}(`
+    })
+
+    // A leading "use client"/"use strict" directive must stay the very
+    // first statement in the file — insert the shim just after it instead
+    // of before, so the directive is never displaced from position 0.
+    const directiveMatch = fixed.match(/^(['"]use (?:client|strict)['"];?\s*\n)/)
+    sandpackFiles[path] = directiveMatch
+      ? directiveMatch[1] + SHIM + '\n' + fixed.slice(directiveMatch[1].length)
+      : SHIM + '\n' + fixed
+  }
+}
+
+/**
+ * Real bug class matching "Element type is invalid" (#1539, silo-product):
+ * a sibling component file genuinely EXISTS and genuinely DEFINES the
+ * requested identifier as a top-level `function Name(...)` / `const Name =`
+ * / `class Name` — but the generation never wrote an `export` keyword on it
+ * at all. Confirmed live: silo-product's App.tsx does
+ * `import SiloList from './components/SiloList'` and SiloList.tsx genuinely
+ * defines `function SiloList({ ... }) { ... }`, with zero occurrences of the
+ * word "export" anywhere in the file. The import specifier resolves (the
+ * file exists), so stubMissingLocalComponents() — which only reacts to a
+ * specifier matching NO file at all — never fires. And
+ * fixExportShapeMismatches() (below) only REDIRECTS between an existing
+ * default export and an existing named export; a file with NEITHER has
+ * nothing for it to redirect to, so that safety net's two branches also
+ * both silently decline. The result: neither existing safety net catches
+ * this, and `<SiloList/>` throws exactly "Element type is invalid: ...
+ * got: undefined" — the component was real, present, and fully-written;
+ * it just forgot to say `export`.
+ *
+ * Fix: for each relative import, if the target file defines (but doesn't
+ * export) a top-level declaration whose name matches what the import
+ * clause actually asks for (a bare default import's local identifier, or
+ * a named import's specifier), prepend the word `export` directly onto
+ * that declaration line — the identifier is exactly what a real
+ * generation almost certainly meant to export, so adding the export is
+ * the correct, minimal repair, not a guess. Deliberately produces the
+ * SAME `export (const|function|class) Name` shape fixExportShapeMismatches'
+ * own shapeOf() already recognizes (not a separate `export { Name }`
+ * re-export line, which that function's shape-detection regex does not
+ * match) — runs BEFORE fixExportShapeMismatches so a file fixed here
+ * already has a real, correctly-detected matching export shape by the
+ * time that pass looks at it and rewrites the IMPORTING file's clause to
+ * match (nothing left for it to redirect, it just reads the shape).
+ *
+ * Deliberately conservative: only matches a clause asking for an
+ * identifier that is unambiguously defined (exactly once) in the target
+ * file and not already exported under any name — never invents a new
+ * identifier, never touches a file with a genuine naming mismatch.
+ */
+function fixMissingExports(sandpackFiles: Record<string, string>): void {
+  const builtinPaths = new Set(Object.keys(getBuiltinFiles()))
+  const importRe = /^[ \t]*import\s+([^'";]*?)\s*from\s*['"](\.\.?\/[^'"]+)['"]/gm
+  // Captures the exact unexported declaration line so it can be rewritten
+  // in place (group 1: leading whitespace, group 2: function|class|const).
+  const declRe = (name: string) => new RegExp(`^([ \\t]*)(function|class|const)\\s+${name}\\b`, 'm')
+  const alreadyExportedRe = (name: string) =>
+    new RegExp(`export\\s+(?:default\\s+)?(?:function|class|const)\\s+${name}\\b|export\\s*\\{[^}]*\\b${name}\\b[^}]*\\}`)
+
+  function resolveTargetPath(resolved: string): string | null {
+    const candidates = [resolved, `${resolved}.tsx`, `${resolved}.ts`, `${resolved}/index.tsx`, `${resolved}/index.ts`]
+    return candidates.find((c) => c in sandpackFiles) ?? null
+  }
+
+  for (const [path, code] of Object.entries(sandpackFiles)) {
+    if (builtinPaths.has(path) || !/\.(t|j)sx?$/.test(path)) continue
+    const dir = path.slice(0, path.lastIndexOf('/')) || ''
+    let match: RegExpExecArray | null
+    importRe.lastIndex = 0
+    while ((match = importRe.exec(code))) {
+      const clause = match[1].trim()
+      if (/^type\s/.test(clause)) continue
+      const resolved = resolveRelativeImport(dir, match[2])
+      if (!resolved) continue
+      const targetPath = resolveTargetPath(resolved)
+      if (!targetPath) continue // genuinely missing — stubMissingLocalComponents' job
+
+      const wanted: string[] = []
+      const bareDefault = clause.match(/^([A-Za-z_$][\w$]*)$/)
+      if (bareDefault) wanted.push(bareDefault[1])
+      const namedList = clause.match(/^\{([^}]*)\}$/)
+      if (namedList) {
+        for (const part of namedList[1].split(',')) {
+          const name = part.trim().split(/\s+as\s+/)[0].trim()
+          if (name) wanted.push(name)
+        }
+      }
+
+      for (const name of wanted) {
+        const targetCode = sandpackFiles[targetPath]
+        if (alreadyExportedRe(name).test(targetCode)) continue
+        const declMatch = targetCode.match(declRe(name))
+        if (!declMatch) continue
+        sandpackFiles[targetPath] = targetCode.replace(declRe(name), `${declMatch[1]}export ${declMatch[2]} ${name}`)
+      }
+    }
+  }
 }
 
 /**
@@ -460,11 +648,12 @@ function fixExportShapeMismatches(sandpackFiles: Record<string, string>): void {
     const shape = real
       ? {
           hasDefault: /export\s+default\b/.test(sandpackFiles[real]),
-          named: new Set(
-            [...sandpackFiles[real].matchAll(/export\s+(?:const|function|class)\s+([A-Za-z_$][\w$]*)/g)].map(
+          named: new Set([
+            ...[...sandpackFiles[real].matchAll(/export\s+(?:const|function|class)\s+([A-Za-z_$][\w$]*)/g)].map(
               (m) => m[1],
             ),
-          ),
+            ...extractBareExportListNames(sandpackFiles[real]),
+          ]),
           defaultRhs: defaultRhsMatch ? defaultRhsMatch[1].trim() : null,
         }
       : null
@@ -706,10 +895,14 @@ function buildLocalExportMap(sandpackFiles: Record<string, string>, builtinPaths
   for (const [path, code] of Object.entries(sandpackFiles)) {
     if (builtinPaths.has(path) || !/\.(t|j)sx?$/.test(path)) continue
     const normalized = normalizeForRelative(path)
+    const names = new Set<string>()
     let match: RegExpExecArray | null
     exportRe.lastIndex = 0
-    while ((match = exportRe.exec(code))) {
-      const name = match[1]
+    while ((match = exportRe.exec(code))) names.add(match[1])
+    for (const name of extractBareExportListNames(code)) {
+      if (/^[A-Z]\w*$/.test(name)) names.add(name)
+    }
+    for (const name of names) {
       const existing = map.get(name)
       if (existing !== undefined && existing !== normalized) {
         ambiguous.add(name)
@@ -720,6 +913,50 @@ function buildLocalExportMap(sandpackFiles: Record<string, string>, builtinPaths
   }
   for (const name of ambiguous) map.delete(name)
   return map
+}
+
+/**
+ * Real gap found live (same "Element type is invalid" bug class #1498
+ * already fixed for `export const/function/class Name`): a component
+ * declared WITHOUT an inline `export` keyword and exported only via a
+ * trailing bare list — `function Footer() { ... }` then, separately,
+ * `export { Footer }` — is invisible to the `export\s+(?:const|function|
+ * class)\s+Name` regex both `shapeOf()` and `buildLocalExportMap()` rely
+ * on, even though the file IS a genuinely valid export. This is not an
+ * exotic shape: it's shadcn/ui's own canonical source convention (declare,
+ * then `export { Button, buttonVariants }` at the bottom) — exactly the
+ * style an LLM asked to produce shadcn-style components is likely to
+ * reach for.
+ *
+ * Missing it means: (1) `fixExportShapeMismatches()` never corrects a
+ * wrong bare-default import of such a file (its named set reads as empty,
+ * so the bareDefault branch's `shape.named.has(name)` check always
+ * fails), and (2) `buildLocalExportMap()` never offers this component for
+ * missing-import injection when a sibling uses it in JSX without
+ * importing it — both leaving a real, existing, correctly-exported
+ * component to resolve as `undefined` at render time.
+ *
+ * Deliberately excludes re-exports (`export { X } from './Y'`) — this
+ * only reads what a file exports of ITS OWN local declarations, same
+ * scope as the regex it supplements.
+ */
+function extractBareExportListNames(code: string): string[] {
+  const names: string[] = []
+  const re = /export\s*\{([^}]*)\}(?!\s*from)/g
+  let match: RegExpExecArray | null
+  while ((match = re.exec(code))) {
+    for (const entry of match[1].split(',')) {
+      const trimmed = entry.trim()
+      if (!trimmed || /^type\s/.test(trimmed)) continue
+      const asMatch = trimmed.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/)
+      if (asMatch) {
+        names.push(asMatch[2])
+      } else if (/^[A-Za-z_$][\w$]*$/.test(trimmed)) {
+        names.push(trimmed)
+      }
+    }
+  }
+  return names
 }
 
 /**

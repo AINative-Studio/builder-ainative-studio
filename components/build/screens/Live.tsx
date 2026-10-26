@@ -225,9 +225,31 @@ export function Live() {
   const gates = planUnlocks(activePlan)
   // Existing-subscriber recognition (#251): if the signed-in user ALREADY has an
   // AINative paid plan, hydrate activePlan from it so we never ask them to pay
-  // again. Runs once when signed in and no plan is set yet.
+  // again.
+  //
+  // #1538 real bug: this used to gate on `!activePlan` alone — but activePlan is
+  // part of PersistedBuildState (contexts/build-context.tsx), restored from
+  // localStorage on every mount, including a HARD REFRESH. A stale/empty value
+  // left over from before a founder paid (or any other reason activePlan was
+  // truthy-but-wrong) made this condition permanently skip reconciliation for
+  // that company for the rest of the session — so a founder who just completed
+  // a real Stripe checkout could reload repeatedly and never re-check core,
+  // continuing to see "Free"/"Upgrade" even though core's own records were (or
+  // would soon be) correct. Confirmed live: silo-product, toby+builderqa...,
+  // real Pro checkout, still "Free" after a hard refresh minutes later.
+  //
+  // Fix: track "have we asked core about THIS company yet" with a ref keyed
+  // by companyId (not a bare boolean) — Live never remounts on a company
+  // switch (no key={companyId} at its call site, BuildApp.tsx), so a plain
+  // once-per-mount ref would wrongly keep skipping reconciliation for a
+  // SECOND company switched to within the same session. A genuinely-already-
+  // known paid plan for the CURRENT company still only triggers one check
+  // (same real behavior as before for the common case), but a stale/empty
+  // persisted value can no longer permanently suppress reconciliation.
+  const planReconciliationAttemptedForRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!signedIn || activePlan) return
+    if (!signedIn || planReconciliationAttemptedForRef.current === companyId) return
+    planReconciliationAttemptedForRef.current = companyId
     // #844 follow-up (real bug, agentive/amador@selfpreneur.com): pass this
     // company's slug so the route can reconcile a stale plan/tmp_ key state
     // against the founder's REAL current plan — see reconcilePlanFulfillment's
@@ -238,7 +260,7 @@ export function Live() {
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => { if (d?.plan) dispatch({ type: 'SET_ACTIVE_PLAN', plan: d.plan }) })
       .catch(() => {})
-  }, [signedIn, activePlan, dispatch, companyId])
+  }, [signedIn, dispatch, companyId])
 
   // Trial state (#207): an unpaid company runs on a 72h tmp_ project. We surface a
   // countdown + upgrade CTA so the founder has an obvious, intuitive path to pay.
@@ -458,22 +480,57 @@ export function Live() {
     //   - an unconfirmed read → generate NOTHING this pass, and let the
     //     existing poll/next mount retry. Failing closed costs a founder a
     //     short wait; failing open costs a real, billable generation.
+    // #1583: an UNCONFIRMED resolve-app read (verified:false, or the fetch
+    // itself failing/erroring) used to be a dead end — #1041 correctly ruled
+    // out treating it as "buy a generation" (a transient registry hiccup must
+    // never mint a speculative, billable codegen call), but nothing ever
+    // re-asked the question either. A founder whose FIRST read happened to
+    // land during a brief ZeroDB blip got stuck on "building your product…"
+    // forever, even though the very next read would likely have confirmed
+    // the company one way or the other in seconds. Same root cause as the
+    // sibling MAX_*_POLL_ATTEMPTS bug below (giving up permanently on a
+    // transient condition) — fixed the same way, a bounded retry instead of
+    // a bare early return. RETRY_DELAYS_MS backs off rather than hammering a
+    // registry that may be under real load; the last retry is far enough out
+    // (5 min) to ride out anything shorter than a genuine outage without
+    // keeping the tab busy-polling.
+    const UNVERIFIED_RETRY_DELAYS_MS = [2000, 5000, 15000, 30000, 60000, 120000, 300000]
     const generateIfGenuinelyMissing = (
       slug: string,
       onFound: (chatId: string) => void,
       startGeneration: () => void,
+      retryAttempt = 0,
     ) => {
       fetch(`/api/build/resolve-app?slug=${encodeURIComponent(slug)}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
           if (!alive) return
           if (d?.chatId) { onFound(String(d.chatId)); return }
-          // Only a CONFIRMED miss may buy a generation.
-          if (d && d.verified === false) return
-          if (!d) return
+          // An UNCONFIRMED read (d is null/falsy, or the server's own honest
+          // verified:false) must never buy a generation — but it must also
+          // never be the last word. Re-ask, bounded, instead of stopping.
+          if (!d || d.verified === false) {
+            if (retryAttempt < UNVERIFIED_RETRY_DELAYS_MS.length) {
+              setTimeout(
+                () => { if (alive) generateIfGenuinelyMissing(slug, onFound, startGeneration, retryAttempt + 1) },
+                UNVERIFIED_RETRY_DELAYS_MS[retryAttempt],
+              )
+            }
+            return
+          }
           startGeneration()
         })
-        .catch(() => { /* could not check — never speculate into a paid call */ })
+        .catch(() => {
+          // A network-level failure is exactly as unconfirmed as a non-ok
+          // response — same bounded retry, never a silent permanent stop.
+          if (!alive) return
+          if (retryAttempt < UNVERIFIED_RETRY_DELAYS_MS.length) {
+            setTimeout(
+              () => { if (alive) generateIfGenuinelyMissing(slug, onFound, startGeneration, retryAttempt + 1) },
+              UNVERIFIED_RETRY_DELAYS_MS[retryAttempt],
+            )
+          }
+        })
     }
 
     if (!state.appChatId && state.idea && state.appSub) {
@@ -503,10 +560,7 @@ export function Live() {
             if (n < MAX_APP_POLL_ATTEMPTS) setTimeout(() => { if (alive) pollForApp(n + 1) }, 5000)
           })
       }
-      generateIfGenuinelyMissing(
-        state.appSub,
-        (chatId) => { setAppReady(true); dispatch({ type: 'SET_APP_CHATID', chatId }) },
-        () => {
+      const startCompanyAppGeneration = () => {
       fetch('/api/build/company-app', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -525,10 +579,31 @@ export function Live() {
           if (!alive) return
           // A cached/recovered hit resolves the chatId immediately, no polling.
           if (d?.chatId) { setAppReady(true); dispatch({ type: 'SET_APP_CHATID', chatId: d.chatId }); return }
-          if (d?.status === 'processing') pollForApp(1)
+          if (d?.status === 'processing') { pollForApp(1); return }
+          // #1583: 'unverified' (the registry/pending-state read inside this
+          // route couldn't be confirmed — see company-app/route.ts's own
+          // `verified`/`pendingVerified` checks) used to be silently dropped
+          // here: neither the chatId branch nor the 'processing' branch
+          // fires, so nothing happens — ever. "building your site…" was
+          // left permanently frozen even though the real underlying
+          // condition (a transient registry hiccup) resolves itself within
+          // seconds in practice. Re-run the FULL existence check (not just
+          // re-POST blindly) — generateIfGenuinelyMissing already re-reads
+          // resolve-app first, so a generation that actually DID start
+          // (just couldn't be confirmed this one time) is adopted via
+          // onFound instead of double-triggered.
+          if (d?.status === 'unverified') {
+            setTimeout(() => {
+              if (alive) generateIfGenuinelyMissing(state.appSub, (chatId) => { setAppReady(true); dispatch({ type: 'SET_APP_CHATID', chatId }) }, startCompanyAppGeneration)
+            }, 5000)
+          }
         })
         .catch(() => { if (alive) pollForApp(1) })
-        },
+      }
+      generateIfGenuinelyMissing(
+        state.appSub,
+        (chatId) => { setAppReady(true); dispatch({ type: 'SET_APP_CHATID', chatId }) },
+        startCompanyAppGeneration,
       )
     }
     // Real gap (customer-reported, Meridian, 2026-09-10, issue #620): the
@@ -567,10 +642,7 @@ export function Live() {
             if (n < MAX_POLL_ATTEMPTS) setTimeout(() => { if (alive) pollForProduct(n + 1) }, 5000)
           })
       }
-      generateIfGenuinelyMissing(
-        productSlug,
-        (chatId) => { dispatch({ type: 'SET_PRODUCT_CHATID', chatId }) },
-        () => {
+      const startCompanyProductGeneration = () => {
       fetch('/api/build/company-product', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -583,10 +655,26 @@ export function Live() {
           if (!alive) return
           // A cached hit resolves the chatId immediately without any polling.
           if (d?.chatId) { dispatch({ type: 'SET_PRODUCT_CHATID', chatId: d.chatId }); return }
-          if (d?.status === 'processing') pollForProduct(1)
+          if (d?.status === 'processing') { pollForProduct(1); return }
+          // #1583: same gap as company-app's sibling fix above — 'unverified'
+          // (company-product/route.ts's own verified/pendingVerified checks
+          // couldn't confirm the registry/pending-state read) used to be
+          // silently dropped: neither branch above fires, nothing retries,
+          // ever. Re-run the full existence check rather than blindly
+          // re-POSTing — a generation that DID actually start is adopted via
+          // onFound instead of double-triggered.
+          if (d?.status === 'unverified') {
+            setTimeout(() => {
+              if (alive) generateIfGenuinelyMissing(productSlug, (chatId) => { dispatch({ type: 'SET_PRODUCT_CHATID', chatId }) }, startCompanyProductGeneration)
+            }, 5000)
+          }
         })
         .catch(() => { if (alive) pollForProduct(1) })
-        },
+      }
+      generateIfGenuinelyMissing(
+        productSlug,
+        (chatId) => { dispatch({ type: 'SET_PRODUCT_CHATID', chatId }) },
+        startCompanyProductGeneration,
       )
     }
     // The visible nightshift — the real last nightly run + morning summary.
@@ -878,9 +966,22 @@ export function Live() {
   // failure — the auto-provision effect below must retry through it rather
   // than giving up after one attempt, or a founder on a genuinely fresh
   // company falls back to a banner whose CTA also just silently fails.
-  const provisionCompany = async (): Promise<'ok' | 'not_registered' | 'error'> => {
+  // #1585: `allowAnonymous` lets the auto-provision effect below provision an
+  // anonymous founder's company instead of bouncing them to signup.
+  // /api/build/provision (and provisionInstantDb underneath it) was always
+  // built to support this — "anonymous OR signed-in-but-unpaid" gets a real
+  // tmp_ 72h-trial project with no auth required (see that route's own doc
+  // comment) — but this function's unconditional signedIn gate meant that
+  // path was never actually reachable for a company built anonymously. Real
+  // incident this closes: an anonymous "Build a Company" session reaches a
+  // fully live, publicly shareable /build/{slug} the moment generation
+  // finishes — the manual "Provision cloud now" CTA still requires signing in
+  // (a deliberate funnel, unchanged here), but auto-provision used to no-op
+  // for the same anonymous founder, leaving their company's real waitlist
+  // writes falling through to the shared fallback project and vanishing.
+  const provisionCompany = async (opts?: { allowAnonymous?: boolean }): Promise<'ok' | 'not_registered' | 'error'> => {
     if (provision.busy || provision.provisioned) return 'ok'
-    if (!signedIn) { dispatch({ type: 'GOTO_SCREEN', screen: 'signup' }); return 'error' }
+    if (!signedIn && !opts?.allowAnonymous) { dispatch({ type: 'GOTO_SCREEN', screen: 'signup' }); return 'error' }
     setProvision((p) => ({ ...p, busy: true }))
     try {
       const res = await fetch('/api/build/provision', {
@@ -916,12 +1017,21 @@ export function Live() {
   // dashboard but was NEVER provisioned — no owner, no ZeroDB project, no
   // primitives, no auth — because provisioning only ever happened via that one
   // manual button. Fires the first time we know for sure (via the GET above,
-  // `checked: true`) that a SIGNED-IN founder's company is not yet
-  // provisioned, and RETRIES with backoff on a 'not_registered' response
-  // (real, live-observed race: a brand-new company's registry row is written
-  // by the detached background company-app generation this screen kicks off,
-  // which can take real minutes — the first auto-provision attempt landing
-  // before that completes must not be treated as a permanent failure).
+  // `checked: true`) that this company is not yet provisioned, and RETRIES
+  // with backoff on a 'not_registered' response (real, live-observed race: a
+  // brand-new company's registry row is written by the detached background
+  // company-app generation this screen kicks off, which can take real minutes
+  // — the first auto-provision attempt landing before that completes must not
+  // be treated as a permanent failure).
+  // #1585: deliberately NOT gated on `signedIn` — an anonymous "Build a
+  // Company" session reaches this exact screen the instant generation
+  // finishes (COMPANY_DONE), and /build/{slug} is already live and
+  // publicly shareable at that point regardless of whether the founder ever
+  // signs in. Gating this on signedIn (as it used to be) left every such
+  // company's real waitlist/visitor writes silently falling through to the
+  // shared fallback project — provisionInstantDb has always supported a real,
+  // unauthenticated tmp_ 72h-trial project for exactly this case (see its own
+  // doc comment), this screen just never called it for an anonymous founder.
   // Idempotent by construction: provisionCompany() itself no-ops when
   // `provision.busy || provision.provisioned`, and /api/build/provision's own
   // handler short-circuits on `existing.zerodbProjectId` — so calling this
@@ -931,14 +1041,14 @@ export function Live() {
   const autoProvisionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const MAX_AUTO_PROVISION_ATTEMPTS = 8 // ~1+2+3+4+5+6+7+8=36min backoff ≈ covers pollForApp's real ~20min budget (see its comment) with margin
   useEffect(() => {
-    if (!signedIn || !companyId) return
+    if (!companyId) return
     if (!provision.checked || provision.provisioned || provision.busy) return
     if (autoProvisionTimerRef.current) return // a retry is already scheduled
     if (autoProvisionAttemptsRef.current >= MAX_AUTO_PROVISION_ATTEMPTS) return
 
     const attempt = async () => {
       autoProvisionAttemptsRef.current += 1
-      const result = await provisionCompany()
+      const result = await provisionCompany({ allowAnonymous: true })
       if (result === 'not_registered' && autoProvisionAttemptsRef.current < MAX_AUTO_PROVISION_ATTEMPTS) {
         // Linear backoff (1min, 2min, 3min, …) — company-app generation is a
         // real background LLM+deploy pipeline, not a fast operation.
@@ -954,7 +1064,7 @@ export function Live() {
       if (autoProvisionTimerRef.current) { clearTimeout(autoProvisionTimerRef.current); autoProvisionTimerRef.current = null }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signedIn, companyId, provision.checked, provision.provisioned, provision.busy])
+  }, [companyId, provision.checked, provision.provisioned, provision.busy])
 
   // FIX-5: per-project brand color so every company's dashboard looks distinct,
   // not identical. Falls back to the track accent.
@@ -1079,7 +1189,7 @@ export function Live() {
             <button
               className="btn-primary"
               data-testid="provision-now-cta"
-              onClick={provisionCompany}
+              onClick={() => provisionCompany()}
               disabled={provision.busy}
             >
               {provision.busy ? 'Provisioning…' : provisionPending ? 'Try again →' : 'Provision cloud now →'}
@@ -1490,7 +1600,7 @@ export function Live() {
                 {/* Provision the real per-company cloud (#243): own ZeroDB project + persistent host. */}
                 <button
                   className="btn-secondary"
-                  onClick={provisionCompany}
+                  onClick={() => provisionCompany()}
                   disabled={provision.busy || provision.provisioned}
                   title={provision.provisioned ? 'This company has its own ZeroDB project' : 'Create a real per-company ZeroDB project + persistent deploy'}
                 >

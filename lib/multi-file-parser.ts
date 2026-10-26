@@ -5,6 +5,7 @@
 
 import { generateAINativeFileSet } from './ainative-file-generator'
 import { sanitizeForSandpack } from './code-validator'
+import { detectRootComponent } from './component-detector'
 
 const FILE_MARKER = /^\/\/\s*---\s*FILE:\s*(.+?)\s*---\s*$/
 
@@ -68,14 +69,33 @@ export function parseMultiFileOutput(rawOutput: string, userPrompt?: string): Re
       // Create an App.tsx that re-exports the main component. A default-export
       // import binds positionally, not by name, so the local identifier here
       // never has to match whatever (if anything) mainFile's export is called
-      // — extractDefaultExport() is only a best-effort naming nicety. Without
-      // this fallback, a mainFile whose default export is anonymous (e.g.
-      // `export default () => {...}`, matching none of extractDefaultExport's
-      // three regexes) silently produced NO entry point at all: Sandpack's
+      // — the name is a cosmetic naming nicety only. Without this fallback, a
+      // mainFile whose default export is anonymous (e.g. `export default ()
+      // => {...}`) could silently produce NO entry point at all: Sandpack's
       // fixed '/index.tsx' always does `import App from './App'`, so a
       // missing entry is a guaranteed blank/crashed preview, not a degraded
       // one — exactly the priority-1 failure this loop exists to catch.
-      const componentName = extractDefaultExport(files[mainFile]) || 'GeneratedMainPage'
+      //
+      // Naming source (#1523): uses component-detector.ts's detectRootComponent()
+      // instead of this file's own extractDefaultExport() — the latter is one of
+      // several independently-hand-rolled "pull a name out of `export default`
+      // text" regexes that have each shipped their own bugs this cycle (#1498,
+      // #1500/#1517, #1506/#1519, #1515), including capturing bare JS reserved
+      // words (`class`, `new`, `typeof`, ...) as the "name". detectRootComponent()
+      // is the one shared, well-tested implementation (already used by
+      // code-validator.ts and the preview route) and its priority-1 regexes
+      // require the captured name to start with `[A-Z]`, which structurally
+      // excludes every lowercase reserved word with no denylist needed. Its
+      // `rewrite` field (for binding an anonymous export to a synthetic name) is
+      // irrelevant here — we never rewrite mainFile's own source, we only need a
+      // cosmetic local binding name for the import statement above, and
+      // `detectRootComponent` always returns a non-rewrite-dependent `name` of
+      // its own (including the synthetic `__PreviewDefault` for an anonymous
+      // export) for exactly that purpose. extractDefaultExport() itself is left
+      // in place (see below) rather than removed, since PR #1520 is still open
+      // against its body — removing it here would conflict with that unmerged
+      // PR for no functional benefit.
+      const componentName = detectRootComponent(files[mainFile]).name || 'GeneratedMainPage'
       files['/src/App.tsx'] = `import ${componentName} from '${mainFile.replace(/^\/src/, '.').replace(/\.tsx$/, '')}'\nexport default ${componentName}`
     }
   }
@@ -103,12 +123,35 @@ function normalizeFilePath(path: string): string {
   return path
 }
 
-/** Extract the default export name from a component file */
+/**
+ * Extract the default export name from a component file.
+ *
+ * #1519: for a class-component mainFile (`export default class HomePage
+ * extends React.Component {` or `export default class HomePage {`), the
+ * named-function alternative never matched (no `function` keyword), so the
+ * bare-identifier fallback (`/export\s+default\s+(\w+)/`) ran next and
+ * greedily captured the reserved word `class` itself — the first `\w+` run
+ * immediately after `default `. The caller then synthesized
+ * `import class from './page'` — `class` is a reserved word and can never be
+ * a binding identifier, a guaranteed Babel SyntaxError at render. Worse: the
+ * match was non-null ("class" is truthy), so the `|| 'GeneratedMainPage'`
+ * safety net the caller already has for a failed extraction never engaged —
+ * this bug silently defeated that very fallback for the class-component
+ * case. An explicit named-class alternative (with a trailing `extends`/`{`
+ * lookahead so a fully anonymous `class extends X {` doesn't mis-capture
+ * `extends` as the name) is checked before the bare-identifier fallback, and
+ * that fallback is guarded against ever returning the `class`/`function`/
+ * `async` keywords themselves — a genuinely anonymous class now correctly
+ * returns null, letting the caller's own GeneratedMainPage fallback engage.
+ */
 function extractDefaultExport(code: string): string | null {
   const match = code.match(/export\s+default\s+function\s+(\w+)/)
+    || code.match(/export\s+default\s+class\s+(\w+)\s*(?:extends\b|\{)/)
     || code.match(/export\s+default\s+(\w+)/)
     || code.match(/function\s+([A-Z]\w+)\s*\(/)
-  return match ? match[1] : null
+  if (!match) return null
+  if (match[1] === 'class' || match[1] === 'function' || match[1] === 'async') return null
+  return match[1]
 }
 
 /** Recharts components that may be used in generated code */

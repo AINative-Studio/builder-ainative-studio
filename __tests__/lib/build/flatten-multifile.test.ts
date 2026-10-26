@@ -39,6 +39,29 @@ describe('flatten-multifile (#308)', () => {
     expect(out).not.toMatch(/export\s+default/)
   })
 
+  it('#1517: inlines a sibling imported via a COMBINED default+named clause (import Hero, { HeroProps } from \'./Hero\')', () => {
+    // Real bug: the old regex only matched a BARE default import or a BARE
+    // named-only import — never a combined clause on one line, an ordinary
+    // shape when a sibling also exports a TS prop-type alongside its default
+    // export. The combined form matched neither alternative, so the import
+    // was never detected: never inlined, never stubbed by the dangling-
+    // import fallback either. stripImportsAndExports() still removed the
+    // import LINE from App's code regardless, leaving `<Hero/>` referencing
+    // a wholly undeclared identifier — a ReferenceError at render.
+    const raw = [
+      '// --- FILE: App.tsx ---',
+      "import Hero, { HeroProps } from './Hero'",
+      'export default function App() { return <Hero/> }',
+      '// --- FILE: Hero.tsx ---',
+      'export interface HeroProps { title: string }',
+      'export default function Hero(props: HeroProps) { return <div>{props.title}</div> }',
+    ].join('\n')
+    const out = flattenMultiFile(raw)
+    expect(out).toContain('function Hero')
+    expect(out).toContain('function App')
+    expect(out).not.toMatch(/import\s+\w+.*from\s*['"]\.\.?\//)
+  })
+
   it('places children BEFORE App (definitions available when App renders)', () => {
     const out = flattenMultiFile(multi)
     expect(out.indexOf('function Header')).toBeLessThan(out.indexOf('function App'))
@@ -115,6 +138,61 @@ describe('flatten-multifile (#308)', () => {
     expect(out).toMatch(/function Label\b/)
     expect(out).toMatch(/stub:.*@radix-ui\/react-dialog/)
     // A real parse must succeed — no ReferenceError-class failure at runtime.
+    expect(() => babelParse(out, { sourceType: 'module', plugins: ['jsx', 'typescript'] })).not.toThrow()
+  })
+
+  it('#1529: stubs a BARE default-only import from a non-backed external package', () => {
+    // Real bug: the stub regex only matched an import with a `{...}` named
+    // clause — a bare default-only import (no named clause at all) never
+    // matched, so it fell through into the generic unconditional
+    // import-strip with NO stub generated. <Modal/> became a bare,
+    // undeclared identifier in the flattened output.
+    const raw = [
+      '// --- FILE: App.tsx ---',
+      "import Header from './components/Header'",
+      "import Modal from 'some-ui-lib'",
+      'export default function App(){ return (<div><Header/><Modal>hi</Modal></div>) }',
+      '// --- FILE: components/Header.tsx ---',
+      'export default function Header(){ return <header>H</header> }',
+    ].join('\n')
+    const out = flattenMultiFile(raw)
+    expect(out).not.toMatch(/from\s*['"]some-ui-lib['"]/)
+    expect(out).toMatch(/function Modal\b/)
+    expect(out).toMatch(/stub:.*some-ui-lib/)
+    expect(() => babelParse(out, { sourceType: 'module', plugins: ['jsx', 'typescript'] })).not.toThrow()
+  })
+
+  it('#1529: stubs BOTH names in a combined default+named import from a non-backed external package', () => {
+    const raw = [
+      '// --- FILE: App.tsx ---',
+      "import Header from './components/Header'",
+      "import Icon, { Spinner } from 'some-icon-lib'",
+      'export default function App(){ return (<div><Header/><Icon/><Spinner/></div>) }',
+      '// --- FILE: components/Header.tsx ---',
+      'export default function Header(){ return <header>H</header> }',
+    ].join('\n')
+    const out = flattenMultiFile(raw)
+    expect(out).not.toMatch(/from\s*['"]some-icon-lib['"]/)
+    expect(out).toMatch(/function Icon\b/)
+    expect(out).toMatch(/function Spinner\b/)
+    expect(() => babelParse(out, { sourceType: 'module', plugins: ['jsx', 'typescript'] })).not.toThrow()
+  })
+
+  it('#1529: stubs a bare default-only external import even when App has NO local siblings (single-file-render early-exit path)', () => {
+    // A distinct code path from the above: when App imports no local
+    // siblings at all, flattenMultiFile() takes an early "single-file
+    // render is fine" branch that still calls stripImportsAndExports
+    // directly — this exercises that branch, not the multi-file inline() one.
+    const raw = [
+      '// --- FILE: App.tsx ---',
+      "import Modal from 'some-ui-lib'",
+      'export default function App(){ return <Modal>hi</Modal> }',
+      '// --- FILE: unrelated.tsx ---',
+      'export const x = 1',
+    ].join('\n')
+    const out = flattenMultiFile(raw)
+    expect(out).not.toMatch(/from\s*['"]some-ui-lib['"]/)
+    expect(out).toMatch(/function Modal\b/)
     expect(() => babelParse(out, { sourceType: 'module', plugins: ['jsx', 'typescript'] })).not.toThrow()
   })
 

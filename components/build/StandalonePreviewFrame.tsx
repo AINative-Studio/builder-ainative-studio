@@ -43,9 +43,20 @@ interface Props {
   chatId: string
   slug: string
   title: string
+  /** #1561 — the per-company data token (same one dbTokenShim attaches for
+   *  the iframe path), minted server-side by the caller (app/build/[slug]/
+   *  page.tsx, which already has slug+chatId from a verified registry read).
+   *  Passed through to SandpackPreview so its file bundle gets the
+   *  equivalent fetch-rewriting shim. Optional — a company with no token
+   *  (minting failed, or this is called from a context with no binding)
+   *  renders Sandpack exactly as before #1561 (no shim injected). */
+  dbToken?: string
+  /** The real Builder origin (builder.ainative.studio in production) the
+   *  Sandpack bundler's iframe must call back to — see dbToken above. */
+  dbOrigin?: string
 }
 
-export function StandalonePreviewFrame({ chatId, slug, title }: Props) {
+export function StandalonePreviewFrame({ chatId, slug, title, dbToken, dbOrigin }: Props) {
   const [files, setFiles] = useState<Record<string, string> | null>(null)
   const [checkedFiles, setCheckedFiles] = useState(false)
   const [sandpackTimedOut, setSandpackTimedOut] = useState(false)
@@ -73,6 +84,8 @@ export function StandalonePreviewFrame({ chatId, slug, title }: Props) {
           className="w-full h-full"
           timeoutMs={15000}
           onTimeout={() => setSandpackTimedOut(true)}
+          dbToken={dbToken}
+          dbOrigin={dbOrigin}
         />
       </div>
     )
