@@ -141,6 +141,61 @@ describe('flatten-multifile (#308)', () => {
     expect(() => babelParse(out, { sourceType: 'module', plugins: ['jsx', 'typescript'] })).not.toThrow()
   })
 
+  it('#1529: stubs a BARE default-only import from a non-backed external package', () => {
+    // Real bug: the stub regex only matched an import with a `{...}` named
+    // clause — a bare default-only import (no named clause at all) never
+    // matched, so it fell through into the generic unconditional
+    // import-strip with NO stub generated. <Modal/> became a bare,
+    // undeclared identifier in the flattened output.
+    const raw = [
+      '// --- FILE: App.tsx ---',
+      "import Header from './components/Header'",
+      "import Modal from 'some-ui-lib'",
+      'export default function App(){ return (<div><Header/><Modal>hi</Modal></div>) }',
+      '// --- FILE: components/Header.tsx ---',
+      'export default function Header(){ return <header>H</header> }',
+    ].join('\n')
+    const out = flattenMultiFile(raw)
+    expect(out).not.toMatch(/from\s*['"]some-ui-lib['"]/)
+    expect(out).toMatch(/function Modal\b/)
+    expect(out).toMatch(/stub:.*some-ui-lib/)
+    expect(() => babelParse(out, { sourceType: 'module', plugins: ['jsx', 'typescript'] })).not.toThrow()
+  })
+
+  it('#1529: stubs BOTH names in a combined default+named import from a non-backed external package', () => {
+    const raw = [
+      '// --- FILE: App.tsx ---',
+      "import Header from './components/Header'",
+      "import Icon, { Spinner } from 'some-icon-lib'",
+      'export default function App(){ return (<div><Header/><Icon/><Spinner/></div>) }',
+      '// --- FILE: components/Header.tsx ---',
+      'export default function Header(){ return <header>H</header> }',
+    ].join('\n')
+    const out = flattenMultiFile(raw)
+    expect(out).not.toMatch(/from\s*['"]some-icon-lib['"]/)
+    expect(out).toMatch(/function Icon\b/)
+    expect(out).toMatch(/function Spinner\b/)
+    expect(() => babelParse(out, { sourceType: 'module', plugins: ['jsx', 'typescript'] })).not.toThrow()
+  })
+
+  it('#1529: stubs a bare default-only external import even when App has NO local siblings (single-file-render early-exit path)', () => {
+    // A distinct code path from the above: when App imports no local
+    // siblings at all, flattenMultiFile() takes an early "single-file
+    // render is fine" branch that still calls stripImportsAndExports
+    // directly — this exercises that branch, not the multi-file inline() one.
+    const raw = [
+      '// --- FILE: App.tsx ---',
+      "import Modal from 'some-ui-lib'",
+      'export default function App(){ return <Modal>hi</Modal> }',
+      '// --- FILE: unrelated.tsx ---',
+      'export const x = 1',
+    ].join('\n')
+    const out = flattenMultiFile(raw)
+    expect(out).not.toMatch(/from\s*['"]some-ui-lib['"]/)
+    expect(out).toMatch(/function Modal\b/)
+    expect(() => babelParse(out, { sourceType: 'module', plugins: ['jsx', 'typescript'] })).not.toThrow()
+  })
+
   it('does NOT stub imports from packages the preview scaffold genuinely backs (react, recharts, lucide-react)', () => {
     const safeImports = [
       '// --- FILE: src/App.tsx ---',
