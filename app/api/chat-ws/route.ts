@@ -1768,6 +1768,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                   (ob.alertInLeadCaptureGap && !after.alertInLeadCaptureGap) ||
                   (ob.fakeButtonGap && !after.fakeButtonGap) ||
                   (ob.hardcodedToggleGap && !after.hardcodedToggleGap) ||
+                  (ob.unpersistedComposerGap && !after.unpersistedComposerGap) ||
                   (ob.axLandmarkGap && !after.axLandmarkGap) ||
                   (ob.axManifestGap && !after.axManifestGap) ||
                   (ob.axJsonLdGap && !after.axJsonLdGap) ||
@@ -1878,6 +1879,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                     (ob.alertInLeadCaptureGap && !after.alertInLeadCaptureGap) ||
                     (ob.fakeButtonGap && !after.fakeButtonGap) ||
                     (ob.hardcodedToggleGap && !after.hardcodedToggleGap) ||
+                    (ob.unpersistedComposerGap && !after.unpersistedComposerGap) ||
                     (ob.axLandmarkGap && !after.axLandmarkGap) ||
                     (ob.axManifestGap && !after.axManifestGap) ||
                     (ob.axJsonLdGap && !after.axJsonLdGap) ||
@@ -1986,6 +1988,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               alertInLeadCaptureGap: obFinal.alertInLeadCaptureGap,
               fakeButtonGap: obFinal.fakeButtonGap,
               hardcodedToggleGap: obFinal.hardcodedToggleGap,
+              unpersistedComposerGap: obFinal.unpersistedComposerGap,
               axLandmarkGap: obFinal.axLandmarkGap,
               axManifestGap: obFinal.axManifestGap,
               axJsonLdGap: obFinal.axJsonLdGap,
