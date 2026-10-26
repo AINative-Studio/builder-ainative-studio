@@ -44,7 +44,7 @@ describe('Live screen — 4th CTA state for signed-in-but-not-yet-provisioned (#
 
   it('the provisioning banner CTA actually triggers provisionCompany, not goUpgrade', () => {
     const idx = source.indexOf('data-testid="provisioning-banner"')
-    const block = source.slice(idx, idx + 900)
+    const block = source.slice(idx, idx + 1600)
     expect(block).toMatch(/onClick=\{\(\) => provisionCompany\(\)\}/)
     expect(block).not.toMatch(/onClick=\{goUpgrade\}/)
   })
@@ -60,6 +60,66 @@ describe('Live screen — 4th CTA state for signed-in-but-not-yet-provisioned (#
     const idx = source.indexOf('data-testid="provision-now-cta"')
     expect(idx).toBeGreaterThan(-1)
     const nearby = source.slice(idx, idx + 200)
-    expect(nearby).toMatch(/disabled=\{provision\.busy\}/)
+    expect(nearby).toMatch(/disabled=\{provision\.busy/)
+  })
+})
+
+/**
+ * Issue #1591 — real incident: live-testing #1585/#1586's auto-provision fix
+ * on `dwello` hit core's real, non-transient "max 5 instant databases per IP
+ * per day" rate limit. Before this fix, a rate-limited provision attempt
+ * (reason:'provision_failed', status:429) was indistinguishable from any
+ * other failure from the UI's perspective — the founder silently fell
+ * through to the generic "Nothing's been provisioned yet. Click below..."
+ * copy, which falsely implies retrying now will help and that this
+ * "normally happens automatically", when in fact every retry today will
+ * fail identically until the daily window resets.
+ */
+describe('Live screen — honest rate-limit state for provisioning (#1591)', () => {
+  const source = fs.readFileSync(
+    path.join(process.cwd(), 'components/build/screens/Live.tsx'),
+    'utf8',
+  )
+
+  it('provisionCompany() can resolve to a rate_limited result distinct from not_registered/error', () => {
+    expect(source).toMatch(/'ok' \| 'not_registered' \| 'rate_limited' \| 'error'/)
+  })
+
+  it('detects the rate limit from the real /api/build/provision response shape (reason + status), not generic failure', () => {
+    expect(source).toMatch(/d\?\.reason === 'provision_failed' && d\?\.status === 429/)
+  })
+
+  it('a rate-limited result never reschedules the auto-provision retry loop', () => {
+    const idx = source.indexOf('const attempt = async () => {')
+    expect(idx).toBeGreaterThan(-1)
+    const block = source.slice(idx, idx + 500)
+    expect(block).toMatch(/result === 'not_registered'/)
+    expect(block).not.toMatch(/result === 'rate_limited'/)
+  })
+
+  it('the provisioning banner shows distinct, honest copy when rate-limited — checked before the generic fallback copy', () => {
+    const idx = source.indexOf('data-testid="provisioning-banner"')
+    const block = source.slice(idx, idx + 1200)
+    const rateLimitedIdx = block.indexOf('provisionRateLimited')
+    const fallbackIdx = block.indexOf("Nothing's been provisioned yet")
+    expect(rateLimitedIdx).toBeGreaterThan(-1)
+    expect(fallbackIdx).toBeGreaterThan(-1)
+    expect(rateLimitedIdx).toBeLessThan(fallbackIdx)
+    expect(block).toMatch(/resets daily|try again later/i)
+    expect(block).not.toMatch(/provisionRateLimited[\s\S]{0,80}normally happens automatically/)
+  })
+
+  it('the primary CTA disables and relabels while rate-limited, instead of offering a doomed retry', () => {
+    const idx = source.indexOf('data-testid="provision-now-cta"')
+    const block = source.slice(idx, idx + 300)
+    expect(block).toMatch(/disabled=\{provision\.busy \|\| provisionRateLimited\}/)
+    expect(block).toMatch(/provisionRateLimited \? 'Limit reached'/)
+  })
+
+  it('the secondary infrastructure-card CTA also disables while rate-limited', () => {
+    const idx = source.indexOf("{/* Provision the real per-company cloud (#243)")
+    expect(idx).toBeGreaterThan(-1)
+    const block = source.slice(idx, idx + 600)
+    expect(block).toMatch(/disabled=\{provision\.busy \|\| provision\.provisioned \|\| provisionRateLimited\}/)
   })
 })

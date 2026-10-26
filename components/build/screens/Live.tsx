@@ -182,6 +182,17 @@ export function Live() {
   // rather than implying anything is broken, since auto-provision is already
   // retrying with backoff in the background.
   const [provisionPending, setProvisionPending] = useState(false)
+  // #1591: whether the most recent provision attempt hit core's real,
+  // non-transient 429 "max N instant databases per IP per day" rate limit —
+  // distinct from `provisionPending` (company-app generation still running,
+  // genuinely resolves on its own) because retrying THIS one will keep
+  // failing identically until the daily window resets, so the generic
+  // "this normally happens automatically" / "click to retry" copy is
+  // actively misleading here. Confirmed live: `dwello` hit this with
+  // provision.checked=true, busy=false, reason:'provision_failed',
+  // status:429 — surfaced to the founder as the same silent fall-through
+  // "Nothing's been provisioned yet" CTA with no explanation at all.
+  const [provisionRateLimited, setProvisionRateLimited] = useState(false)
   // Real visitor count (#483/#563) — was a permanent, hardcoded 0 with the copy
   // "Cody grows these nightly," but nothing ever grew it. Now reads the real
   // count of pageview beacons the generated landing page fires on mount.
@@ -979,7 +990,7 @@ export function Live() {
   // (a deliberate funnel, unchanged here), but auto-provision used to no-op
   // for the same anonymous founder, leaving their company's real waitlist
   // writes falling through to the shared fallback project and vanishing.
-  const provisionCompany = async (opts?: { allowAnonymous?: boolean }): Promise<'ok' | 'not_registered' | 'error'> => {
+  const provisionCompany = async (opts?: { allowAnonymous?: boolean }): Promise<'ok' | 'not_registered' | 'rate_limited' | 'error'> => {
     if (provision.busy || provision.provisioned) return 'ok'
     if (!signedIn && !opts?.allowAnonymous) { dispatch({ type: 'GOTO_SCREEN', screen: 'signup' }); return 'error' }
     setProvision((p) => ({ ...p, busy: true }))
@@ -994,6 +1005,7 @@ export function Live() {
       if (d?.ok) {
         setProvision({ provisioned: true, busy: false, checked: true, projectId: d.zerodbProjectId })
         setProvisionPending(false)
+        setProvisionRateLimited(false)
         // Re-read systems now that they point at the real provisioned project.
         fetch(`/api/build/systems?companyId=${encodeURIComponent(companyId)}&idea=${encodeURIComponent(state.idea || '')}`)
           .then((r) => (r.ok ? r.json() : null))
@@ -1003,8 +1015,14 @@ export function Live() {
       }
       setProvision((p) => ({ ...p, busy: false, checked: true }))
       const notRegistered = d?.reason === 'not_registered'
+      // #1591: core's own /api/build/provision route surfaces its instant-DB
+      // rate limit as { reason: 'provision_failed', status: 429 } (502 at the
+      // HTTP layer, since Builder's route wraps the real upstream status in
+      // the body rather than passing it through).
+      const rateLimited = !notRegistered && d?.reason === 'provision_failed' && d?.status === 429
       setProvisionPending(notRegistered)
-      return notRegistered ? 'not_registered' : 'error'
+      setProvisionRateLimited(rateLimited)
+      return notRegistered ? 'not_registered' : rateLimited ? 'rate_limited' : 'error'
     } catch {
       setProvision((p) => ({ ...p, busy: false, checked: true }))
       return 'error'
@@ -1179,20 +1197,26 @@ export function Live() {
         <div className="m-live-funnel is-provisioning" data-testid="provisioning-banner">
           <span>
             <strong>{company} is yours — setting it up now.</strong>{' '}
-            {provisionPending
-              ? "Still finishing your company's initial build — cloud setup will pick up automatically the moment that's done. No action needed."
-              : provision.busy || !provision.checked
-                ? "Cody is provisioning your real cloud (database, primitives) — this happens automatically, no action needed."
-                : "Nothing's been provisioned yet. Click below to set up your real database and primitives now — this normally happens automatically."}
+            {provisionRateLimited
+              // #1591: retrying right now will fail identically — this is a
+              // real daily per-IP cap on the shared provisioning endpoint,
+              // not a transient race, so don't tell the founder it "normally
+              // happens automatically" or imply a retry might help today.
+              ? "We've hit today's cloud-provisioning limit on this network. This resets daily — please try again later today, or contact support if it's urgent."
+              : provisionPending
+                ? "Still finishing your company's initial build — cloud setup will pick up automatically the moment that's done. No action needed."
+                : provision.busy || !provision.checked
+                  ? "Cody is provisioning your real cloud (database, primitives) — this happens automatically, no action needed."
+                  : "Nothing's been provisioned yet. Click below to set up your real database and primitives now — this normally happens automatically."}
           </span>
           <div className="m-live-funnel-cta">
             <button
               className="btn-primary"
               data-testid="provision-now-cta"
               onClick={() => provisionCompany()}
-              disabled={provision.busy}
+              disabled={provision.busy || provisionRateLimited}
             >
-              {provision.busy ? 'Provisioning…' : provisionPending ? 'Try again →' : 'Provision cloud now →'}
+              {provision.busy ? 'Provisioning…' : provisionRateLimited ? 'Limit reached' : provisionPending ? 'Try again →' : 'Provision cloud now →'}
             </button>
           </div>
         </div>
@@ -1601,10 +1625,15 @@ export function Live() {
                 <button
                   className="btn-secondary"
                   onClick={() => provisionCompany()}
-                  disabled={provision.busy || provision.provisioned}
-                  title={provision.provisioned ? 'This company has its own ZeroDB project' : 'Create a real per-company ZeroDB project + persistent deploy'}
+                  disabled={provision.busy || provision.provisioned || provisionRateLimited}
+                  title={provision.provisioned
+                    ? 'This company has its own ZeroDB project'
+                    : provisionRateLimited
+                      // #1591: same real daily per-IP cap as the banner above.
+                      ? "Today's cloud-provisioning limit on this network has been reached — resets daily"
+                      : 'Create a real per-company ZeroDB project + persistent deploy'}
                 >
-                  {provision.provisioned ? '✓ Cloud provisioned' : provision.busy ? 'Provisioning…' : 'Provision cloud'}
+                  {provision.provisioned ? '✓ Cloud provisioned' : provision.busy ? 'Provisioning…' : provisionRateLimited ? 'Limit reached' : 'Provision cloud'}
                 </button>
                 {/* Redeploy moved into the Website & app panel (#63) — the disabled
                     "Redeploy · soon" placeholder is now a real, health-checked redeploy
