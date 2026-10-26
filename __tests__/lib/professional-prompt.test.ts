@@ -108,6 +108,35 @@ describe('PROFESSIONAL_SYSTEM_PROMPT — every fetch needs a real error/empty st
 })
 
 /**
+ * #1576 — real, live-confirmed bug, found twice independently on real
+ * companies (beacon's "Get Started", wrench's "Log in"): a generated
+ * landing page's nav bar included a secondary CTA button alongside the real
+ * hero waitlist form, with no onClick at all — a dead no-op. A pre-launch
+ * product with no users yet has no real account system for a "Log in"
+ * button to open. C9 closes this gap explicitly, since the general
+ * no-decorative-buttons rule alone wasn't preventing this specific,
+ * recurring shape.
+ */
+describe('PROFESSIONAL_SYSTEM_PROMPT — no dead nav "Log in" CTA on a pre-launch page (C9, #1576)', () => {
+  it('explicitly calls out the nav-bar Log in / Sign in button case', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/nav bar "Log in" \/ "Sign in" button on a pre-launch waitlist page/)
+  })
+
+  it('explains WHY: no real account system exists yet for the button to open', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/has no real account system for that button to open/)
+  })
+
+  it('offers a real alternative: omit it, or route to the same real email capture', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/either omit it, or make it scroll to \/ focus the same real email capture/)
+  })
+
+  it('gives a concrete WRONG/CORRECT example', () => {
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/\/\/ ❌ WRONG: a second nav CTA with no real destination/)
+    expect(PROFESSIONAL_SYSTEM_PROMPT).toMatch(/\/\/ ✅ CORRECT: one real CTA, or a nav button that routes to the SAME real capture/)
+  })
+})
+
+/**
  * #815 — real, live-confirmed bug: /build/agentive-product rendered TWO real
  * <aside> elements simultaneously at every viewport width — the correct
  * desktop sidebar, and a second "mobile" drawer with className="translate-x-0"
