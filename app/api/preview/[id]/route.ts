@@ -330,10 +330,10 @@ export async function GET(
                 Start New Chat
               </button>
               <button
-                onclick="window.parent.postMessage({ type: 'ainative-preview-nav', action: 'retry' }, '*')"
+                onclick="window.parent.postMessage({ type: 'ainative-preview-nav', action: 'regenerate' }, '*')"
                 class="w-full bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-900 dark:text-white font-medium py-2 px-4 rounded-lg transition-colors"
               >
-                Try Again
+                ↻ Regenerate
               </button>
             </div>
           </div>
@@ -1770,7 +1770,7 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
             '<p style="font-size: 14px; color: #374151; margin-bottom: 8px; font-weight: 500;">Expected component names:</p>' +
             '<code style="display: block; font-size: 13px; color: #6b7280; line-height: 1.6;">Dashboard, ProjectDashboard, App, Counter, TodoList, ProductList, LandingPage, etc.</code>' +
             '</div>' +
-            '<button onclick="window.parent.postMessage({ type: &quot;ainative-preview-nav&quot;, action: &quot;reload&quot; }, &quot;*&quot;)" style="background: rgb(59, 130, 246); color: white; border: none; padding: 10px 24px; border-radius: 6px; font-weight: 500; cursor: pointer;">Try Regenerating</button>' +
+            '<button onclick="window.parent.postMessage({ type: &quot;ainative-preview-nav&quot;, action: &quot;regenerate&quot; }, &quot;*&quot;)" style="background: rgb(59, 130, 246); color: white; border: none; padding: 10px 24px; border-radius: 6px; font-weight: 500; cursor: pointer;">Try Regenerating</button>' +
             '</div>';
         }
       } catch (error) {
