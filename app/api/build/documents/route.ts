@@ -38,7 +38,7 @@ import {
   DOC_KINDS,
   type DocType,
 } from '@/lib/build/document-store'
-import { DOCUMENT_PROMPTS, isGeneratableDocType, type DocGenContext } from '@/lib/build/document-prompts'
+import { DOCUMENT_PROMPTS, isGeneratableDocType, isBareNameIdea, type DocGenContext } from '@/lib/build/document-prompts'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
 
 export const runtime = 'nodejs'
@@ -172,10 +172,26 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: `type "${type}" is not generatable` }, { status: 400 })
     }
     const idea = String(body?.idea || '').trim()
+    const companyName = String(body?.companyName || companyId).slice(0, 120)
     if (idea.length < 3) return Response.json({ error: 'idea required to generate' }, { status: 400 })
+    // #1540: `idea.length < 3` only catches EMPTY input, not a BARE company name
+    // with no real description — real production case, company "silo": idea was
+    // the literal string "silo" (4 chars, passes trivially). With nothing to
+    // ground in but a name, the model pattern-matched it to a real, unrelated
+    // public company sharing that name ("Silo AI" / a food-distribution
+    // marketplace) and confidently generated that company's actual roadmap,
+    // complete with real citations to ITS website — not a hallucinated-from-
+    // nothing doc, but someone else's real business presented as this founder's.
+    // isBareNameIdea() catches this upstream, before the model ever sees it,
+    // rather than relying on a prompt instruction to decline — a strict
+    // instruction CAN be followed loyally and still produce this exact failure
+    // (see STRUCTURE_CONTRACT below, independently hardened to say so too).
+    if (isBareNameIdea(idea, companyName)) {
+      return Response.json({ error: 'idea_too_sparse_to_ground' }, { status: 422 })
+    }
     const ctx: DocGenContext = {
       idea: idea.slice(0, 4000),
-      companyName: String(body?.companyName || companyId).slice(0, 120),
+      companyName,
       track: body?.track === 'company' ? 'company' : 'app',
     }
     const spec = DOCUMENT_PROMPTS[type]!

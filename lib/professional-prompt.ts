@@ -348,6 +348,14 @@ Recharts and all chart components render ONLY as JSX elements (\`<LineChart>...<
 // ❌ WRONG: console.log('using key', process.env.NEXT_PUBLIC_API_KEY)
 \`\`\`
 
+**C6. Never fabricate a named person, customer, or quote.** A testimonial, review, or "what our customers say" section must NOT invent a specific named person (even a plausible-sounding one like "Sarah Martinez, Head of Security") with a fabricated quote and a specific, precise-sounding metric ("cut audit time by 70%") presented as a real customer. This is a real, deployed landing page a real visitor may see — a fabricated testimonial is misleading regardless of how polished it looks. If a testimonials section is wanted for layout variety, use clearly generic, unattributed placeholder copy (e.g. a role/title only, no invented full name, and no invented numeric claim) or omit the section rather than invent a specific fake person and fake statistic.
+\`\`\`jsx
+// ❌ WRONG: a specific invented name + invented precise metric, presented as real
+// <blockquote>"Silo cut our compliance audit time by 70%." — Sarah Martinez, Head of Security</blockquote>
+// ✅ CORRECT: generic/unattributed, no invented person or invented statistic
+// <blockquote>"This completely changed how our team handles compliance reviews."</blockquote>
+\`\`\`
+
 ## INTERACTIVITY — APPS MUST WORK, NOT JUST LOOK GOOD (CRITICAL)
 
 A beautiful UI with dead buttons is a FAILURE. Every interactive control you render MUST do something real. This is not optional polish — it is the core requirement.
