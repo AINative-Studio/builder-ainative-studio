@@ -1349,7 +1349,23 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
               React.createElement('div', { key: 'icon', style: { fontSize: '40px', marginBottom: '12px' } }, '🛠️'),
               React.createElement('h1', { key: 'title', style: { fontSize: '20px', fontWeight: 700, color: '#0f172a', margin: '0 0 8px' } }, 'Refining your app'),
               React.createElement('p', { key: 'body', style: { fontSize: '14px', color: '#475569', lineHeight: 1.6, margin: '0 0 16px' } }, 'AINative built a first version but it needs another pass to render cleanly. Try regenerating — the next attempt usually gets it.'),
-              React.createElement('details', { key: 'details', style: { textAlign: 'left', marginTop: '8px' } }, [
+              // #1592 real bug found live (fluent, a React runtime crash — "TypeError:
+              // destroy is not a function" — caught by this exact boundary): the copy
+              // above has always said "Try regenerating," but no button existed to do
+              // it — this boundary only ever rendered the message and a <details>
+              // block, a genuine dead end identical in spirit to the #1550/#1560 fix
+              // for the OTHER two error pages in this same file (Preview Unavailable,
+              // Component Not Found), which this boundary was never given. Posts the
+              // same 'ainative-preview-nav'/'regenerate' message StandalonePreviewRegenerate.tsx
+              // already listens for everywhere else in this file.
+              React.createElement('button', {
+                key: 'regenerate',
+                onClick: function () {
+                  try { window.parent.postMessage({ type: 'ainative-preview-nav', action: 'regenerate' }, '*'); } catch (e) {}
+                },
+                style: { background: 'rgb(59, 130, 246)', color: '#fff', border: 'none', padding: '10px 24px', borderRadius: '6px', fontWeight: 500, cursor: 'pointer', fontSize: '14px' }
+              }, '↻ Regenerate'),
+              React.createElement('details', { key: 'details', style: { textAlign: 'left', marginTop: '16px' } }, [
                 React.createElement('summary', { key: 'summary', style: { fontSize: '12px', color: '#94a3b8', cursor: 'pointer' } }, 'Technical details'),
                 React.createElement('pre', { key: 'stack', style: { fontSize: '11px', color: '#64748b', background: '#f1f5f9', padding: '10px', borderRadius: '8px', overflow: 'auto', marginTop: '8px' } },
                   (this.state.error?.toString() || 'Unknown error') + '\\n\\n' + (this.state.errorInfo?.componentStack || '')
