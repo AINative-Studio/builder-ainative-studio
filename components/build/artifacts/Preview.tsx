@@ -280,6 +280,29 @@ export function Preview() {
   // 404'd forever, because the registry never actually got a row. `registered`
   // now tracks the real outcome so the UI can stop claiming a URL exists when
   // the server just refused to create it.
+  // #1574 — the Sandpack multi-file preview rendered HERE (inside the
+  // founder's own in-session Live dashboard) has no server boundary to mint
+  // a per-company data token from directly, unlike the standalone
+  // /build/{slug} share page (StandalonePreviewFrame, a Server Component —
+  // see app/build/[slug]/page.tsx). Without one, a generated app's /api/db
+  // calls silently fall through to app/api/db/[table]/route.ts's
+  // legacy/shared-project fallback: the write still 200s, so the UI shows a
+  // clean success, but it lands in the wrong ZeroDB project — invisible to
+  // the founder's own dashboard. Mints the SAME token via a tiny client-
+  // fetchable route (GET /api/build/sandpack-token) once chatId+appSub are
+  // known, mirroring the server-side mint exactly (same binding check, same
+  // lib/build/preview-tokens.ts functions).
+  const [sandpackDbToken, setSandpackDbToken] = useState('')
+  useEffect(() => {
+    if (!chatId || !state.appSub) return
+    let cancelled = false
+    fetch(`/api/build/sandpack-token?slug=${encodeURIComponent(state.appSub)}&chatId=${encodeURIComponent(chatId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!cancelled && d?.dbToken) setSandpackDbToken(String(d.dbToken)) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [chatId, state.appSub])
+
   const [registered, setRegistered] = useState<boolean | null>(null)
   // #1551: a single repair+retry cycle wasn't always enough — an LLM repair
   // attempt can itself fail to fix the real syntax error on the first try,
@@ -516,7 +539,13 @@ export function Preview() {
             // Sandpack runs in its own CodeSandbox sandbox origin (isolated by
             // construction), so it doesn't need our iframe sandbox attrs. (#291)
             <div className="m-preview-frame" style={{ height: '100%' }} data-testid="sandpack-preview-mount">
-              <SandpackPreview files={files} timeoutMs={15000} onTimeout={() => setSandpackTimedOut(true)} />
+              <SandpackPreview
+                files={files}
+                timeoutMs={15000}
+                onTimeout={() => setSandpackTimedOut(true)}
+                dbToken={sandpackDbToken}
+                dbOrigin={typeof window !== 'undefined' ? window.location.origin : undefined}
+              />
             </div>
           ) : previewUrl ? (
             <iframe
