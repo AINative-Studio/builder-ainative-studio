@@ -39,6 +39,29 @@ describe('flatten-multifile (#308)', () => {
     expect(out).not.toMatch(/export\s+default/)
   })
 
+  it('#1517: inlines a sibling imported via a COMBINED default+named clause (import Hero, { HeroProps } from \'./Hero\')', () => {
+    // Real bug: the old regex only matched a BARE default import or a BARE
+    // named-only import — never a combined clause on one line, an ordinary
+    // shape when a sibling also exports a TS prop-type alongside its default
+    // export. The combined form matched neither alternative, so the import
+    // was never detected: never inlined, never stubbed by the dangling-
+    // import fallback either. stripImportsAndExports() still removed the
+    // import LINE from App's code regardless, leaving `<Hero/>` referencing
+    // a wholly undeclared identifier — a ReferenceError at render.
+    const raw = [
+      '// --- FILE: App.tsx ---',
+      "import Hero, { HeroProps } from './Hero'",
+      'export default function App() { return <Hero/> }',
+      '// --- FILE: Hero.tsx ---',
+      'export interface HeroProps { title: string }',
+      'export default function Hero(props: HeroProps) { return <div>{props.title}</div> }',
+    ].join('\n')
+    const out = flattenMultiFile(raw)
+    expect(out).toContain('function Hero')
+    expect(out).toContain('function App')
+    expect(out).not.toMatch(/import\s+\w+.*from\s*['"]\.\.?\//)
+  })
+
   it('places children BEFORE App (definitions available when App renders)', () => {
     const out = flattenMultiFile(multi)
     expect(out.indexOf('function Header')).toBeLessThan(out.indexOf('function App'))

@@ -256,8 +256,25 @@ export function flattenMultiFile(raw: string): string {
   const seen = new Set<string>()
   const stubbed: string[] = []
   const inline = (code: string) => {
-    for (const m of code.matchAll(/import\s+(?:(\w+)|\{([^}]*)\})\s+from\s*['"]\.\.?\/([^'"]+)['"]/g)) {
-      const base = baseName(m[3])
+    // #1517: the old regex only matched a BARE default import (`import Hero
+    // from './Hero'`) or a BARE named-only import (`import { HeroProps }
+    // from './Hero'`) — never a combined clause on one line (`import Hero,
+    // { HeroProps } from './Hero'`), an ordinary shape when a sibling
+    // component also exports a TS prop-type alongside its default export.
+    // The combined form matched neither alternative, so the import was never
+    // detected here at all: never inlined (the byBase lookup never
+    // attempted) and never stubbed by the dangling-import fallback either
+    // (that only fires when the regex matched but no child file exists).
+    // stripImportsAndExports()'s own unconditional import-stripping regex
+    // still removed the import LINE from App's code regardless, leaving
+    // `<Hero/>` referencing a wholly undeclared identifier — a
+    // ReferenceError at render in the single-file preview's non-module
+    // <script> tag. The named clause is now absorbed (but not captured) as
+    // an optional trailing group on the default-name alternative, so a bare
+    // default-only or bare named-only import still matches exactly as
+    // before — only the previously-unmatched combined clause is new.
+    for (const m of code.matchAll(/import\s+(?:(\w+)(?:\s*,\s*\{[^}]*\})?|\{[^}]*\})\s+from\s*['"]\.\.?\/([^'"]+)['"]/g)) {
+      const base = baseName(m[2])
       const child = byBase[base]
       const defaultName = m[1]
       if (child && !seen.has(base)) {
