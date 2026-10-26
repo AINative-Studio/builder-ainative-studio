@@ -35,8 +35,13 @@ vi.mock('@/lib/build/useRealPreview', () => ({
 }))
 
 vi.mock('@/components/chat/sandpack-preview', () => ({
-  SandpackPreview: ({ files }: { files: Record<string, string> }) => (
-    React.createElement('div', { 'data-testid': 'mock-sandpack', 'data-file-count': Object.keys(files || {}).length })
+  SandpackPreview: ({ files, dbToken, dbOrigin }: { files: Record<string, string>; dbToken?: string; dbOrigin?: string }) => (
+    React.createElement('div', {
+      'data-testid': 'mock-sandpack',
+      'data-file-count': Object.keys(files || {}).length,
+      'data-db-token': dbToken || '',
+      'data-db-origin': dbOrigin || '',
+    })
   ),
 }))
 
@@ -325,6 +330,68 @@ describe('Preview — live-status chip + banners (render)', () => {
 
     expect(host.querySelector('[data-testid="sandpack-preview-mount"]')).not.toBeNull()
     expect(host.querySelector('iframe')).toBeNull()
+  })
+
+  // #1574 — a real company's Sandpack multi-file preview rendered inside
+  // the founder's own in-session Live dashboard (THIS component, not the
+  // standalone /build/{slug} share page) had no server boundary to mint a
+  // per-company data token from, so a generated app's /api/db writes
+  // silently landed in the wrong ZeroDB project (confirmed live on
+  // `groundwork`: a clean-looking waitlist signup never reached the
+  // founder's own dashboard). Fetches the token via the new
+  // /api/build/sandpack-token route and passes it through to
+  // SandpackPreview as soon as chatId+appSub are known.
+  it('fetches a real dbToken via /api/build/sandpack-token and passes it + the real origin into SandpackPreview (#1574)', async () => {
+    h.state = { ...baseState }
+    h.previewReturn = {
+      previewUrl: '/api/preview/chat-1', status: 'ready', chatId: 'chat-1', refreshKey: 0, designConformance: null,
+      files: { '/App.tsx': 'export default function App() { return null }', '/components/Foo.tsx': 'export default function Foo(){return null}' },
+    }
+    const tokenUrls: string[] = []
+    fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/build/sandpack-token')) {
+        tokenUrls.push(String(url))
+        return Promise.resolve({ ok: true, json: async () => ({ dbToken: 'real-signed-db-token', primitiveTokens: {} }) })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const Preview = await importPreview()
+    render(React.createElement(Preview))
+    await flush()
+    await flush()
+    await flush()
+
+    const mount = host.querySelector('[data-testid="mock-sandpack"]')
+    expect(mount).not.toBeNull()
+    expect(mount?.getAttribute('data-db-token')).toBe('real-signed-db-token')
+    expect(mount?.getAttribute('data-db-origin')).toBeTruthy()
+    expect(tokenUrls.length).toBeGreaterThan(0)
+    expect(tokenUrls[0]).toContain('slug=plumber-crm')
+    expect(tokenUrls[0]).toContain('chatId=chat-1')
+  })
+
+  it('renders Sandpack with an empty dbToken while the mint is still in flight — never blocks the preview on it', async () => {
+    h.state = { ...baseState }
+    h.previewReturn = {
+      previewUrl: '/api/preview/chat-1', status: 'ready', chatId: 'chat-1', refreshKey: 0, designConformance: null,
+      files: { '/App.tsx': 'export default function App() { return null }', '/components/Foo.tsx': 'export default function Foo(){return null}' },
+    }
+    fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/build/sandpack-token')) return new Promise(() => {}) // never resolves
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const Preview = await importPreview()
+    render(React.createElement(Preview))
+    await flush()
+    await flush()
+
+    const mount = host.querySelector('[data-testid="mock-sandpack"]')
+    expect(mount).not.toBeNull()
+    expect(mount?.getAttribute('data-db-token')).toBe('')
   })
 
   it('a ready single-file app renders the sandboxed iframe (no allow-same-origin) with the slug token', async () => {
