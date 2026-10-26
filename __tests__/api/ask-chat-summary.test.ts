@@ -57,13 +57,27 @@ describe('GET /api/build/ask — chat summary (#608)', () => {
     expect(h.ensureChatSummary).toHaveBeenCalledWith('guest:anon::ember-box', 'Ember Box', 'hot sauce', expect.any(Array))
   })
 
-  it('returns summary: null when none exists yet', async () => {
+  it('returns summary: null when none exists yet, WITHOUT consulting chat-summary storage at all (#1542)', async () => {
     h.loadChatWithFallback.mockResolvedValue([])
-    h.ensureChatSummary.mockResolvedValue(null)
+    // Deliberately configured to return a populated summary -- if the route
+    // called ensureChatSummary at all for zero real turns, this mock would
+    // make that bug invisible. Asserting the call never happens is the real
+    // regression guard: #1542's actual production bug was that a STALE
+    // stored summary got served for a company with turnsCount: 0, because
+    // ensureChatSummary's own internal "nothing new to regenerate" fallback
+    // returned whatever was already stored under the scope key -- with no
+    // check against the real turn count. The fix moves that check up to the
+    // route itself, which is what this test actually verifies.
+    h.ensureChatSummary.mockResolvedValue({
+      summary: 'A fully fabricated handoff note that must never be served for a brand-new company.',
+      turnsCovered: 0,
+      updatedAt: '',
+    })
 
     const res = await GET(req('https://x/api/build/ask?companyId=ember-box'))
     const json = await res.json()
     expect(json.summary).toBeNull()
+    expect(h.ensureChatSummary).not.toHaveBeenCalled()
   })
 
   it('returns an empty thread with no summary attempt when there is no companyId', async () => {
