@@ -60,6 +60,41 @@ describe('detectRootComponent', () => {
       expect(r.name).toBe('Zephyr')
       expect(r.source).toBe('default-export-named')
     })
+
+    it('#1536 — does NOT false-capture the namespace in `export default React.memo(Foo)`', () => {
+      const code = `
+        import React from "react";
+        function Dashboard() {
+          return (<div>Hello</div>);
+        }
+        export default React.memo(Dashboard);
+      `
+      const r = detectRootComponent(code)
+      expect(r.name).toBe('Dashboard')
+      expect(r.name).not.toBe('React')
+      expect(r.source).toBe('pascalcase-jsx')
+    })
+
+    it('#1536 — does NOT false-capture the namespace in `export default React.forwardRef(Foo)`', () => {
+      const code = `
+        import React from "react";
+        const Dashboard = (props, ref) => <div ref={ref}>Hello</div>;
+        export default React.forwardRef(Dashboard);
+      `
+      const r = detectRootComponent(code)
+      expect(r.name).toBe('Dashboard')
+      expect(r.name).not.toBe('React')
+      expect(r.source).toBe('pascalcase-jsx')
+    })
+
+    it('#1536 — bare `export default Foo()` (call, not a plain reference) falls through to priority 3', () => {
+      const code = `
+        function Dashboard() { return <div>dash</div> }
+        export default Dashboard();
+      `
+      const r = detectRootComponent(code)
+      expect(r.name).toBe('Dashboard')
+    })
   })
 
   describe('priority 2 — anonymous default export (needs rewrite)', () => {

@@ -169,7 +169,15 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
   const defClass = code.match(/export\s+default\s+class\s+([A-Z]\w*)/)
   if (defClass) return { name: defClass[1], source: 'default-export-named' }
   // export default Foo   (bare reference to a PascalCase name — NOT a keyword)
-  const defRef = code.match(/export\s+default\s+([A-Z]\w*)\s*;?/)
+  //
+  // #1536 — the lookahead rejects a name immediately followed by `.`, `(`, or
+  // another word character: `export default React.memo(Dashboard)` /
+  // `export default React.forwardRef(Dashboard)` would otherwise greedily
+  // capture just the namespace (`React`, itself PascalCase) and return it as
+  // THE root component — a confident wrong answer that skips priority 3
+  // entirely, rather than a miss. Rejecting here lets the real wrapped
+  // component (`Dashboard`) be found below by its own declaration + JSX scan.
+  const defRef = code.match(/export\s+default\s+([A-Z]\w*)(?![.\w(])\s*;?/)
   if (defRef && isPascalCase(defRef[1])) {
     return { name: defRef[1], source: 'default-export-named' }
   }
