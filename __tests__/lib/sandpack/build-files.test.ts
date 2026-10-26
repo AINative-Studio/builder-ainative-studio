@@ -404,3 +404,86 @@ describe('buildSandpackFiles — react-icons stub + malformed type-import fix (#
     expect(app).not.toContain('import type,')
   })
 })
+
+/**
+ * Real production bug (#1539, silo-product, confirmed live): a sibling
+ * component file genuinely exists and genuinely defines the requested
+ * identifier as a top-level `function Name(...)`, but the generation never
+ * wrote an `export` keyword on it at all. The import specifier resolves
+ * (the file exists), so stubMissingLocalComponents (which only reacts to a
+ * missing FILE) never fires, and fixExportShapeMismatches (which only
+ * redirects between an EXISTING default export and an EXISTING named
+ * export) has nothing to redirect to. `<SiloList/>` throws exactly
+ * "Element type is invalid: ... got: undefined" on first load — not a
+ * cross-company cache issue (#1126, separately fixed), a cold-load defect
+ * in the generation itself.
+ */
+describe('buildSandpackFiles — fixMissingExports injects a real export onto a defined-but-unexported sibling (#1539)', () => {
+  it('fixes the exact silo-product shape: a bare default import of a sibling whose function is never exported at all', () => {
+    const built = buildSandpackFiles({
+      '/src/App.tsx':
+        "import SiloList from './components/SiloList'\nexport default function App(){ return <SiloList silos={[]} /> }",
+      '/src/components/SiloList.tsx':
+        "function SiloList({ silos }) {\n  return <div>{silos.length}</div>\n}",
+    })
+    // The target file's declaration now genuinely carries a real export...
+    expect(built['/src/components/SiloList.tsx']).toMatch(/^export function SiloList\b/m)
+    // ...and the importer's bare default import was correctly redirected to
+    // a named import by fixExportShapeMismatches, since a named export (not
+    // a default) is what fixMissingExports actually added.
+    expect(built['/src/App.tsx']).toContain("import { SiloList } from './components/SiloList'")
+    expect(built['/src/App.tsx']).not.toMatch(/^import SiloList from/m)
+  })
+
+  it('fixes a named import of a defined-but-unexported sibling, unchanged import clause', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "import { Footer } from './components/Footer'\nexport default function App(){ return <Footer/> }",
+      '/components/Footer.tsx': 'function Footer() { return <footer/> }',
+    })
+    expect(built['/components/Footer.tsx']).toMatch(/^export function Footer\b/m)
+    expect(built['/App.tsx']).toContain("import { Footer } from './components/Footer'")
+  })
+
+  it('fixes an unexported top-level const component, not just function declarations', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "import Header from './components/Header'\nexport default function App(){ return <Header/> }",
+      '/components/Header.tsx': 'const Header = () => <header/>',
+    })
+    expect(built['/components/Header.tsx']).toMatch(/^export const Header\b/m)
+  })
+
+  it('never touches a file that already has a real export of its own — no double-export, no redundant rewrite', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "import { Footer } from './components/Footer'\nexport default function App(){ return <Footer/> }",
+      '/components/Footer.tsx': 'export function Footer() { return <footer/> }',
+    })
+    // Only the one real export — never doubled into "export export function".
+    const matches = built['/components/Footer.tsx'].match(/export/g) || []
+    expect(matches.length).toBe(1)
+  })
+
+  it('never fabricates an export for an identifier the target file genuinely does not define — leaves it for stubMissingLocalComponents/left alone', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "import Unrelated from './components/Footer'\nexport default function App(){ return <Unrelated/> }",
+      '/components/Footer.tsx': 'function Footer() { return <footer/> }',
+    })
+    // "Unrelated" isn't defined in Footer.tsx at all -- fixMissingExports
+    // must not invent an export for an identifier that was never declared.
+    expect(built['/components/Footer.tsx']).not.toContain('export')
+  })
+
+  it('exports multiple identifiers requested from the same unexported target in one pass', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "import { Header, Nav } from './components/Shared'\nexport default function App(){ return <div><Header/><Nav/></div> }",
+      '/components/Shared.tsx':
+        'function Header() { return <header/> }\nfunction Nav() { return <nav/> }',
+    })
+    expect(built['/components/Shared.tsx']).toMatch(/^export function Header\b/m)
+    expect(built['/components/Shared.tsx']).toMatch(/^export function Nav\b/m)
+  })
+})

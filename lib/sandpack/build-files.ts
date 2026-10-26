@@ -17,6 +17,23 @@
 import { fixJsxErrors } from './jsx-fixer'
 import { getBuiltinFiles } from './setup'
 import { sanitizeForSandpack } from '../code-validator'
+import { sandpackDbTokenShim } from './db-token-shim'
+
+/**
+ * #1561 — when provided, injects the db-token-shim module (see that file's
+ * doc comment for the full root-cause writeup) as /db-token-shim.ts and
+ * imports it FIRST in /index.tsx, before the real app's own `import App
+ * from './App'` — so window.fetch is patched before any of the generated
+ * app's own code can call it. `origin` is the real Builder origin
+ * (builder.ainative.studio in production) the Sandpack bundler's iframe
+ * must call back to; `dbToken` is the same per-company signed token the
+ * single-file preview's dbTokenShim attaches, minted via
+ * lib/build/preview-tokens.ts.
+ */
+export interface SandpackDbShimOptions {
+  origin: string
+  dbToken: string
+}
 
 /**
  * Build the final Sandpack `files` map from a generated app's raw files map,
@@ -25,8 +42,16 @@ import { sanitizeForSandpack } from '../code-validator'
  * the React/AIKit/shadcn/lucide import-injection safety nets + final de-dupe on
  * every generated .tsx file.
  */
-export function buildSandpackFiles(files: Record<string, string>): Record<string, string> {
+export function buildSandpackFiles(files: Record<string, string>, shim?: SandpackDbShimOptions): Record<string, string> {
   const sandpackFiles: Record<string, string> = { ...getBuiltinFiles() }
+
+  if (shim?.origin && shim?.dbToken) {
+    sandpackFiles['/db-token-shim.ts'] = sandpackDbTokenShim(shim.origin, shim.dbToken)
+    const indexEntry = sandpackFiles['/index.tsx']
+    if (indexEntry && !indexEntry.includes("'./db-token-shim'")) {
+      sandpackFiles['/index.tsx'] = `import './db-token-shim'\n${indexEntry}`
+    }
+  }
 
   for (const [rawPath, rawContent] of Object.entries(files)) {
     const path = rawPath
@@ -418,10 +443,99 @@ export function buildSandpackFiles(files: Record<string, string>): Record<string
     sandpackFiles[path] = fixed
   }
 
+  fixMissingExports(sandpackFiles)
   fixExportShapeMismatches(sandpackFiles)
   stubMissingLocalComponents(sandpackFiles)
 
   return sandpackFiles
+}
+
+/**
+ * Real bug class matching "Element type is invalid" (#1539, silo-product):
+ * a sibling component file genuinely EXISTS and genuinely DEFINES the
+ * requested identifier as a top-level `function Name(...)` / `const Name =`
+ * / `class Name` — but the generation never wrote an `export` keyword on it
+ * at all. Confirmed live: silo-product's App.tsx does
+ * `import SiloList from './components/SiloList'` and SiloList.tsx genuinely
+ * defines `function SiloList({ ... }) { ... }`, with zero occurrences of the
+ * word "export" anywhere in the file. The import specifier resolves (the
+ * file exists), so stubMissingLocalComponents() — which only reacts to a
+ * specifier matching NO file at all — never fires. And
+ * fixExportShapeMismatches() (below) only REDIRECTS between an existing
+ * default export and an existing named export; a file with NEITHER has
+ * nothing for it to redirect to, so that safety net's two branches also
+ * both silently decline. The result: neither existing safety net catches
+ * this, and `<SiloList/>` throws exactly "Element type is invalid: ...
+ * got: undefined" — the component was real, present, and fully-written;
+ * it just forgot to say `export`.
+ *
+ * Fix: for each relative import, if the target file defines (but doesn't
+ * export) a top-level declaration whose name matches what the import
+ * clause actually asks for (a bare default import's local identifier, or
+ * a named import's specifier), prepend the word `export` directly onto
+ * that declaration line — the identifier is exactly what a real
+ * generation almost certainly meant to export, so adding the export is
+ * the correct, minimal repair, not a guess. Deliberately produces the
+ * SAME `export (const|function|class) Name` shape fixExportShapeMismatches'
+ * own shapeOf() already recognizes (not a separate `export { Name }`
+ * re-export line, which that function's shape-detection regex does not
+ * match) — runs BEFORE fixExportShapeMismatches so a file fixed here
+ * already has a real, correctly-detected matching export shape by the
+ * time that pass looks at it and rewrites the IMPORTING file's clause to
+ * match (nothing left for it to redirect, it just reads the shape).
+ *
+ * Deliberately conservative: only matches a clause asking for an
+ * identifier that is unambiguously defined (exactly once) in the target
+ * file and not already exported under any name — never invents a new
+ * identifier, never touches a file with a genuine naming mismatch.
+ */
+function fixMissingExports(sandpackFiles: Record<string, string>): void {
+  const builtinPaths = new Set(Object.keys(getBuiltinFiles()))
+  const importRe = /^[ \t]*import\s+([^'";]*?)\s*from\s*['"](\.\.?\/[^'"]+)['"]/gm
+  // Captures the exact unexported declaration line so it can be rewritten
+  // in place (group 1: leading whitespace, group 2: function|class|const).
+  const declRe = (name: string) => new RegExp(`^([ \\t]*)(function|class|const)\\s+${name}\\b`, 'm')
+  const alreadyExportedRe = (name: string) =>
+    new RegExp(`export\\s+(?:default\\s+)?(?:function|class|const)\\s+${name}\\b|export\\s*\\{[^}]*\\b${name}\\b[^}]*\\}`)
+
+  function resolveTargetPath(resolved: string): string | null {
+    const candidates = [resolved, `${resolved}.tsx`, `${resolved}.ts`, `${resolved}/index.tsx`, `${resolved}/index.ts`]
+    return candidates.find((c) => c in sandpackFiles) ?? null
+  }
+
+  for (const [path, code] of Object.entries(sandpackFiles)) {
+    if (builtinPaths.has(path) || !/\.(t|j)sx?$/.test(path)) continue
+    const dir = path.slice(0, path.lastIndexOf('/')) || ''
+    let match: RegExpExecArray | null
+    importRe.lastIndex = 0
+    while ((match = importRe.exec(code))) {
+      const clause = match[1].trim()
+      if (/^type\s/.test(clause)) continue
+      const resolved = resolveRelativeImport(dir, match[2])
+      if (!resolved) continue
+      const targetPath = resolveTargetPath(resolved)
+      if (!targetPath) continue // genuinely missing — stubMissingLocalComponents' job
+
+      const wanted: string[] = []
+      const bareDefault = clause.match(/^([A-Za-z_$][\w$]*)$/)
+      if (bareDefault) wanted.push(bareDefault[1])
+      const namedList = clause.match(/^\{([^}]*)\}$/)
+      if (namedList) {
+        for (const part of namedList[1].split(',')) {
+          const name = part.trim().split(/\s+as\s+/)[0].trim()
+          if (name) wanted.push(name)
+        }
+      }
+
+      for (const name of wanted) {
+        const targetCode = sandpackFiles[targetPath]
+        if (alreadyExportedRe(name).test(targetCode)) continue
+        const declMatch = targetCode.match(declRe(name))
+        if (!declMatch) continue
+        sandpackFiles[targetPath] = targetCode.replace(declRe(name), `${declMatch[1]}export ${declMatch[2]} ${name}`)
+      }
+    }
+  }
 }
 
 /**

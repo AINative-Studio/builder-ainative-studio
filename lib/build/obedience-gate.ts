@@ -107,6 +107,42 @@ export function hasFakeLeadCaptureGap(code: string): boolean {
 }
 
 /**
+ * Real, live bug found on a real company (#1581, flipsight): a waitlist
+ * submit handler DID persist the real email via /api/db (so hasFakeLeadCaptureGap
+ * above correctly does NOT flag it) but ALSO called `alert(...)` as its success
+ * notification. A native alert() blocks the page's ENTIRE main thread until a
+ * human manually dismisses it — a real visitor submitting the form hit what
+ * looked like a completely frozen, dead page, with zero recovery short of a
+ * manual reload. This is a strictly worse outcome than the fake-lead-capture
+ * gap above (which at least leaves the page responsive); it was never caught
+ * because `hasAlertOnlyHandler` (used by hasFakeButtonGap) deliberately only
+ * flags a handler whose ENTIRE body is alert() — a handler that does real work
+ * AND also calls alert() was explicitly treated as fine. It isn't: alert() is
+ * never an acceptable success UI for a form that persists real user data,
+ * regardless of what else the handler does.
+ */
+export function hasAlertInLeadCaptureGap(code: string): boolean {
+  if (!looksLikeLeadCapture(code)) return false
+  // Scope the alert() search to each matched handler's own body (brace-balanced),
+  // not the whole file — an unrelated alert() elsewhere (e.g. a delete-confirm
+  // dialog) is a different, legitimate use this gap must not false-positive on.
+  const handlerNameRe = /(handleSubmit|handleEarlyAccess|handleWaitlist|handleSignup)\s*[:=]\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*\{/g
+  let match: RegExpExecArray | null
+  while ((match = handlerNameRe.exec(code))) {
+    const bodyStart = match.index + match[0].length - 1 // position of the opening {
+    let depth = 0
+    let end = bodyStart
+    for (; end < code.length; end++) {
+      if (code[end] === '{') depth++
+      else if (code[end] === '}') { depth--; if (depth === 0) { end++; break; } }
+    }
+    const body = code.slice(bodyStart, end)
+    if (/\balert\(/.test(body) && /\/api\/db\//.test(body)) return true
+  }
+  return false
+}
+
+/**
  * Real, live bug found on a real founder's live landing page (#844, agentive/
  * amador@selfpreneur.com): a top-nav "Sign In" button whose ONLY handler was
  * `onClick={() => alert('Sign In')}` — Cody-generated placeholder code that
@@ -443,6 +479,10 @@ export interface ObedienceResult {
   /** Real bug (found live, 4/4 recent generations): an email/waitlist capture
    *  form that never persists what it captures. */
   fakeLeadCaptureGap: boolean
+  /** Real bug (found live, #1581): a lead-capture handler that DOES persist
+   *  via /api/db but also calls alert() as its success UI — a native alert()
+   *  freezes the page's entire main thread until manually dismissed. */
+  alertInLeadCaptureGap: boolean
   /** Real bug (found live, #844): a CTA-shaped button (Sign In, Get Early
    *  Access, …) whose only behavior is a bare alert(), or no handler at all. */
   fakeButtonGap: boolean
@@ -500,6 +540,7 @@ export function checkObedience(
   const primitiveComplianceGaps = options?.landingPageOnly ? [] : findPrimitiveComplianceGaps(code, idea, role)
   const visitorTrackingGap = hasVisitorTrackingGap(code)
   const fakeLeadCaptureGap = hasFakeLeadCaptureGap(code)
+  const alertInLeadCaptureGap = hasAlertInLeadCaptureGap(code)
   const fakeButtonGap = hasFakeButtonGap(code)
   const hardcodedToggleGap = hasHardcodedToggleGap(code)
   const axLandmarkGap = hasAxLandmarkGap(code)
@@ -522,6 +563,9 @@ export function checkObedience(
   }
   if (fakeLeadCaptureGap) {
     reasons.push('Email/waitlist capture form never persists the email it collects — must save via /api/db.')
+  }
+  if (alertInLeadCaptureGap) {
+    reasons.push('Email/waitlist capture handler calls alert() as its success UI — a native alert() freezes the entire page until manually dismissed; use a toast or inline message instead.')
   }
   if (fakeButtonGap) {
     reasons.push('A CTA-shaped button (Sign In, Get Early Access, …) fires only alert() or has no handler at all — wire it to a real action or remove it.')
@@ -556,7 +600,7 @@ export function checkObedience(
   if (axComplexWidgetRoleGap) {
     reasons.push('A complex widget (tabs or a live status/loading region) is missing its ARIA role — agents/screen readers get no signal about its behavior.')
   }
-  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, visitorTrackingGap, fakeLeadCaptureGap, fakeButtonGap, hardcodedToggleGap, axLandmarkGap, axManifestGap, axJsonLdGap, axSkipNavGap, axNavLabelGap, axSectionLabelGap, axAgentAttributesGap, axComplexWidgetRoleGap, reasons }
+  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, visitorTrackingGap, fakeLeadCaptureGap, alertInLeadCaptureGap, fakeButtonGap, hardcodedToggleGap, axLandmarkGap, axManifestGap, axJsonLdGap, axSkipNavGap, axNavLabelGap, axSectionLabelGap, axAgentAttributesGap, axComplexWidgetRoleGap, reasons }
 }
 
 /**
@@ -626,7 +670,18 @@ export function buildObediencePrompt(idea: string, result: ObedienceResult): str
       "   const handleSubmit = async (e) => { e.preventDefault(); await fetch('/api/db/waitlist', { method: 'POST',",
       "     headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email, joinedAt: new Date().toISOString() }) })",
       '     .catch(() => {}); setSubmitted(true); setEmail(\'\') }',
-      '   Keep the existing success UI (alert/toast/inline message) — only the persistence is missing.',
+      '   Keep the existing success UI (toast/inline message) — NEVER alert(), only the persistence is missing.',
+      '',
+    )
+  }
+  if (result.alertInLeadCaptureGap) {
+    parts.push(
+      '5b) REMOVE alert() FROM THE EMAIL/WAITLIST CAPTURE SUCCESS UI — the handler correctly persists the email',
+      '    via /api/db, but also calls alert(...) to notify the visitor. A native alert() blocks the page\'s ENTIRE',
+      '    main thread until a human manually dismisses it — a real visitor submitting the form hits what looks',
+      '    like a completely frozen, dead page. Replace it with an inline message or toast, e.g.:',
+      "    setSubmitted(true) // then render: {submitted && <p>You're on the list!</p>} instead of alert(...)",
+      '    Keep the real persistence exactly as-is — only the alert() call must be removed.',
       '',
     )
   }
@@ -760,6 +815,7 @@ export function narrowToPrimitiveComplianceOnly(gaps: string[]): ObedienceResult
     primitiveComplianceGaps: gaps,
     visitorTrackingGap: false,
     fakeLeadCaptureGap: false,
+    alertInLeadCaptureGap: false,
     fakeButtonGap: false,
     hardcodedToggleGap: false,
     axLandmarkGap: false,

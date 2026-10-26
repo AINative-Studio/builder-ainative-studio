@@ -164,6 +164,15 @@ User describes idea in /build
 - **Instant DB workspace targeting** — add optional `workspace_id` so new company
   projects go straight into the AINative Builder workspace (core change). Until then,
   they inherit the key's default workspace.
+- **The same "one shared workspace, not per-founder" pattern existed on the Gitea
+  side too — found and FIXED (#1543/#1544, Oct 2026).** Unlike the Instant DB gap
+  above (deliberate, blocked on a core API change), the Gitea version was a real
+  regression against an already-decided design (#354): `ensureOrg(workspaceId)`
+  was always correctly generic, but every call site hardcoded
+  `BUILDER_WORKSPACE_ID` instead of the founder's real `session.workspaceId`. Now
+  fixed at the call sites — see `docs/GITEA_PROVISIONING.md`'s "Incident" section
+  for the full writeup. Existing company repos (provisioned before the fix) were
+  NOT migrated — only new repos land correctly now.
 - **Migrate the ~71 existing company projects** from "AINative Studio" → "AINative
   Builder" (re-parent `organization_id`).
 - **ZeroPipeline api-key auth** (`AINative-Studio/ZeroPipeline#460`) — needed so the

@@ -240,6 +240,54 @@ export async function createRepo(
 }
 
 /**
+ * Transfer a repo to a different org (#1545 — migrating repos provisioned
+ * before #1543/#1544 out of the single shared platform org into their real
+ * founder's own workspace org). Real, documented Gitea contract: `POST
+ * /repos/{owner}/{repo}/transfer` with `{new_owner}` — Gitea executes org-to-
+ * org repo transfers synchronously (no pending-invite step when the new
+ * owner is an org the admin token already controls, which every `ws-*` org
+ * this client creates always is), returning the repo's updated representation
+ * under its new `full_name`.
+ *
+ * IDEMPOTENT in the same spirit as ensureOrg/createRepo: if the repo is
+ * already under `toOrg` (checked via a pre-flight getRepo), this is a no-op
+ * success rather than an error — a migration script re-run after a partial
+ * failure must never fail on the rows it already fixed. Returns null when
+ * unconfigured or inputs are invalid, OR when the source repo genuinely
+ * doesn't exist under `fromOrg` (a 404 there is a real "nothing to
+ * transfer," not a failure to surface). THROWS on any other non-ok status
+ * (auth/server error, or Gitea refusing the transfer for a reason this
+ * caller should see, e.g. a name collision in the destination org).
+ */
+export async function transferRepo(
+  fromOrg: string,
+  toOrg: string,
+  slug: string,
+): Promise<GiteaRepo | null> {
+  if (!configured() || !fromOrg || !toOrg) return null
+  const repo = repoNameForSlug(slug)
+  if (!repo) return null
+
+  // Already there (a prior run got this far, or it was never actually in
+  // fromOrg to begin with) → idempotent no-op.
+  const already = await getRepo(toOrg, repo)
+  if (already) return already
+
+  const existing = await getRepo(fromOrg, repo)
+  if (!existing) return null
+
+  const res = await giteaFetch(
+    `/repos/${encodeURIComponent(fromOrg)}/${encodeURIComponent(repo)}/transfer`,
+    { method: 'POST', body: JSON.stringify({ new_owner: toOrg }) },
+  )
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`gitea transferRepo ${fromOrg}/${repo} -> ${toOrg} failed: ${res.status} ${text}`.slice(0, 300))
+  }
+  return (await res.json()) as GiteaRepo
+}
+
+/**
  * Grant a human collaborator access to a company repo (#349, decision 3) — the
  * OPTIONAL human-write grant on top of the founder's read-only mirror. Gitea's
  * add-collaborator endpoint is a PUT and is idempotent by nature (re-granting the
@@ -392,6 +440,52 @@ export async function createRepoWebhook(
   }
 }
 
+/**
+ * Builder's own repo-topic marker (#1531). Stamped on every provisioned
+ * company repo so ANY agent or human — in this codebase or a completely
+ * different one — can answer "is this Builder's?" via a single read-only
+ * API call (`GET /repos/search?topic=ainative-builder`, the exact endpoint
+ * a peer session already used while investigating an unrelated repo and
+ * couldn't self-verify ownership for, having to ask across sessions
+ * instead). The free-text `description` createRepo() already sets
+ * ("AINative company: {slug}") identifies the COMPANY but not the fact
+ * that Builder specifically owns/provisioned the repo, and isn't
+ * machine-filterable the way a topic is.
+ */
+export const BUILDER_REPO_TOPIC = 'ainative-builder'
+
+/**
+ * Replace a repo's topic list with Builder's own marker (idempotent — Gitea's
+ * PUT topics endpoint is a full replace, and re-setting the same single topic
+ * is a no-op 204 either way). Best-effort, same shape/convention as
+ * createRepoWebhook: a topic hiccup must never block the repo itself (the
+ * more critical half of provisioning) from being created or used.
+ */
+export async function setRepoTopics(
+  org: string,
+  repo: string,
+  topics: string[] = [BUILDER_REPO_TOPIC],
+): Promise<{ ok: boolean; reason?: string }> {
+  if (!configured()) return { ok: false, reason: 'not_configured' }
+  if (!org) return { ok: false, reason: 'no_org' }
+  const repoName = repoNameForSlug(repo)
+  if (!repoName) return { ok: false, reason: 'no_repo' }
+
+  try {
+    const res = await giteaFetch(
+      `/repos/${encodeURIComponent(org)}/${encodeURIComponent(repoName)}/topics`,
+      { method: 'PUT', body: JSON.stringify({ topics }) },
+    )
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      return { ok: false, reason: `gitea setRepoTopics ${org}/${repoName} failed: ${res.status} ${text}`.slice(0, 300) }
+    }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, reason: `setRepoTopics threw: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300) }
+  }
+}
+
 /** The Builder route Gitea webhooks POST to — same convention every other
  *  module deriving the app's own public URL already uses (lib/build/deploy.ts,
  *  comms-policy.ts, winback-email.ts, etc: `NEXT_PUBLIC_APP_URL` with a
@@ -412,10 +506,11 @@ export function webhookTargetUrl(): string {
  * repo URL/id onto the AppEntry is done by the caller via setAppGitRepo
  * (lib/build/app-registry).
  *
- * The webhook step never blocks or fails this function (see createRepoWebhook's
- * doc) — a webhook hiccup is logged to console, never thrown, so a transient
- * Gitea issue on the webhook call can never prevent a company's repo (the more
- * critical half of provisioning) from being created.
+ * The webhook and topic steps never block or fail this function (see
+ * createRepoWebhook's / setRepoTopics's own docs) — a hiccup on either is
+ * logged to console, never thrown, so a transient Gitea issue can never
+ * prevent a company's repo (the more critical half of provisioning) from
+ * being created.
  */
 export async function provisionCompanyRepo(
   workspaceId: string,
@@ -435,6 +530,13 @@ export async function provisionCompanyRepo(
   )
   if (!hookResult.ok) {
     console.error(`[gitea] createRepoWebhook failed for ${org.username}/${repo.name}: ${hookResult.reason}`)
+  }
+
+  // #1531 — stamp the Builder-ownership topic so this repo is self-identifying
+  // via Gitea's own search API, not just a human/agent asking across sessions.
+  const topicResult = await setRepoTopics(org.username, repo.name)
+  if (!topicResult.ok) {
+    console.error(`[gitea] setRepoTopics failed for ${org.username}/${repo.name}: ${topicResult.reason}`)
   }
 
   return { org, repo }

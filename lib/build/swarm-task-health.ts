@@ -203,8 +203,14 @@ function ainativeApi(): string {
  * audit used. Core-owned: this is a read of someone else's system, so every
  * failure mode (non-OK, unparseable, timeout, network down) degrades to
  * `unknown` rather than guessing. Never throws.
+ *
+ * Exported (beyond assessSwarmHealth's own aggregate use) so a caller that
+ * needs ONE task's real current status — not the whole-company verdict — can
+ * read it directly. First caller: the nightly loop's company-track backlog
+ * seed (app/api/build/nightly-loop/route.ts), which updates the PRIOR night's
+ * build_tasks row to its real stage before seeding tonight's.
  */
-async function readTaskStatus(ref: DispatchedTaskRef, key: string): Promise<SwarmTaskState> {
+export async function readTaskStatus(ref: DispatchedTaskRef, key: string): Promise<SwarmTaskState> {
   try {
     const res = await fetch(
       `${ainativeApi()}/api/v1/public/agent-swarm/tasks/${encodeURIComponent(ref.taskId)}`,

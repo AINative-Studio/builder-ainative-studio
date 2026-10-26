@@ -172,9 +172,19 @@ interface SandpackPreviewProps {
    *  existing behavior for any caller that doesn't opt in). */
   timeoutMs?: number
   onTimeout?: () => void
+  /** #1561 — the per-company data token + real Builder origin, forwarded
+   *  into buildSandpackFiles() so the generated app's relative /api/db
+   *  calls get rewritten to the real absolute origin + the auth header,
+   *  the same way the single-file preview's dbTokenShim already does for
+   *  same-origin requests. Omit to render exactly as before #1561 (no
+   *  shim injected — a company this wasn't wired up for yet, or a caller
+   *  with no server-side binding to mint a token from, like the in-session
+   *  client-side Preview.tsx case, documented as a fast-follow). */
+  dbToken?: string
+  dbOrigin?: string
 }
 
-export function SandpackPreview({ files, theme = 'light', className, showRefreshButton = true, timeoutMs, onTimeout }: SandpackPreviewProps) {
+export function SandpackPreview({ files, theme = 'light', className, showRefreshButton = true, timeoutMs, onTimeout, dbToken, dbOrigin }: SandpackPreviewProps) {
   // Build the final Sandpack files map (builtins + generated files, path
   // normalization, /App.tsx entry assembly, React/AIKit/shadcn/lucide
   // import-injection safety nets, final de-dupe) via the shared pipeline in
@@ -182,7 +192,10 @@ export function SandpackPreview({ files, theme = 'light', className, showRefresh
   // is extracted rather than inlined (keeps scripts/fixtures/sandpack-verify's
   // --chat-id harness from drifting out of sync with what this component
   // actually does).
-  const sandpackFiles = buildSandpackFiles(files)
+  const sandpackFiles = buildSandpackFiles(
+    files,
+    dbToken && dbOrigin ? { origin: dbOrigin, dbToken } : undefined,
+  )
   const { usesLucideReact, usesRecharts, usesStripeJs, usesA2UI } = detectSandpackDependencies(sandpackFiles)
 
   if (sandpackFiles['/App.tsx']) {

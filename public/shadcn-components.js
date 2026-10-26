@@ -266,73 +266,78 @@
   };
 
   // Select Components (simplified browser version)
+  //
+  // Previously a shallow-clone implementation: Select() cloned props only onto
+  // its DIRECT children (SelectTrigger, SelectContent), never onto SelectValue
+  // (SelectTrigger's own child, two levels down) -- so the trigger text could
+  // never reflect the selected value. SelectContent was also never actually
+  // removed/hidden when closed: Select()'s `isOpen &&` check only gated whether
+  // SelectContent got its onSelect prop, not whether it rendered at all, so the
+  // options panel stayed permanently visible in the DOM. Real shadcn/Radix reads
+  // selection state via context, not prop-drilling -- lib/sandpack/shadcn-bundle.ts's
+  // Select (the Sandpack multi-file path) already does this correctly; this
+  // single-file Babel preview's copy had drifted out of sync. Switched to the
+  // same context-based pattern so SelectValue and SelectContent read live state
+  // directly instead of depending on Select() cloning props onto the right depth.
+  const SelectContext = React.createContext({ value: '', onChange: () => {}, isOpen: false, setIsOpen: () => {} });
+
   const Select = ({ value, onValueChange, children }) => {
     const [isOpen, setIsOpen] = React.useState(false);
 
-    return React.createElement('div', {
-      className: 'relative'
+    return React.createElement(SelectContext.Provider, {
+      value: {
+        value,
+        onChange: (val) => {
+          if (onValueChange) onValueChange(val);
+          setIsOpen(false);
+        },
+        isOpen,
+        setIsOpen
+      }
     },
-      React.Children.map(children, child => {
-        if (child && child.type === SelectTrigger) {
-          return React.cloneElement(child, {
-            onClick: () => setIsOpen(!isOpen),
-            isOpen
-          });
-        }
-        if (child && child.type === SelectContent && isOpen) {
-          return React.cloneElement(child, {
-            onSelect: (val) => {
-              onValueChange(val);
-              setIsOpen(false);
-            }
-          });
-        }
-        return child;
-      })
+      React.createElement('div', { className: 'relative' }, children)
     );
   };
 
-  const SelectTrigger = ({ children, className = '', onClick, isOpen, ...props }) => {
+  const SelectTrigger = ({ children, className = '', ...props }) => {
+    const { isOpen, setIsOpen } = React.useContext(SelectContext);
     return React.createElement('button', {
       type: 'button',
       className: cn(
         'flex h-10 w-full items-center justify-between rounded-md border border-slate-300 bg-white px-3 py-2 text-sm',
         className
       ),
-      onClick,
+      onClick: () => setIsOpen(!isOpen),
       'aria-expanded': isOpen,
       ...props
     }, children);
   };
 
-  const SelectValue = ({ placeholder, value }) => {
+  const SelectValue = ({ placeholder }) => {
+    const { value } = React.useContext(SelectContext);
     return React.createElement('span', {}, value || placeholder);
   };
 
-  const SelectContent = ({ children, onSelect, className = '', ...props }) => {
+  const SelectContent = ({ children, className = '', ...props }) => {
+    const { isOpen } = React.useContext(SelectContext);
+    if (!isOpen) return null;
     return React.createElement('div', {
       className: cn(
         'absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border bg-white py-1 shadow-lg',
         className
       ),
       ...props
-    },
-      React.Children.map(children, child => {
-        if (child && child.type === SelectItem) {
-          return React.cloneElement(child, { onSelect });
-        }
-        return child;
-      })
-    );
+    }, children);
   };
 
-  const SelectItem = ({ children, value, onSelect, className = '', ...props }) => {
+  const SelectItem = ({ children, value, className = '', ...props }) => {
+    const { onChange } = React.useContext(SelectContext);
     return React.createElement('div', {
       className: cn(
         'relative flex cursor-pointer select-none items-center px-2 py-1.5 text-sm hover:bg-slate-100',
         className
       ),
-      onClick: () => onSelect && onSelect(value),
+      onClick: () => onChange(value),
       ...props
     }, children);
   };
