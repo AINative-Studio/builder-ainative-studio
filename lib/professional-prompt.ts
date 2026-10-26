@@ -356,6 +356,16 @@ Recharts and all chart components render ONLY as JSX elements (\`<LineChart>...<
 // <blockquote>"This completely changed how our team handles compliance reviews."</blockquote>
 \`\`\`
 
+**C7. Never use native \`alert\`/\`confirm\`/\`prompt\` dialogs.** A real, live-confirmed bug: a form handler called \`alert(...)\` to "confirm" a submission — this blocks the ENTIRE page (a real browser-native modal, not styled UI) until a real user manually dismisses it, which on a sandboxed preview can look and feel completely frozen. Even outside a sandbox, a native alert box looks broken/unprofessional on a page that is otherwise fully styled. Use real in-page UI instead: a \`useState\` toast/inline-message that renders and auto-dismisses, a styled success banner, or disabling the submit button with inline text — anything that is part of the rendered page, never a blocking native dialog.
+\`\`\`jsx
+// ❌ WRONG: blocks the whole page until manually dismissed
+// const handleSubmit = () => { alert('Thanks for signing up!'); setEmail('') }
+// ✅ CORRECT: real in-page state, never blocks
+// const [submitted, setSubmitted] = useState(false)
+// const handleSubmit = () => { setSubmitted(true); setEmail('') }
+// {submitted && <p className="text-emerald-600">Thanks! We'll reach out when we launch.</p>}
+\`\`\`
+
 ## INTERACTIVITY — APPS MUST WORK, NOT JUST LOOK GOOD (CRITICAL)
 
 A beautiful UI with dead buttons is a FAILURE. Every interactive control you render MUST do something real. This is not optional polish — it is the core requirement.
