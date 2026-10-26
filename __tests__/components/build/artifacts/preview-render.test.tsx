@@ -34,15 +34,24 @@ vi.mock('@/lib/build/useRealPreview', () => ({
   useRealPreview: () => h.previewReturn,
 }))
 
+// #1574 regression — mountCount lets a test tell "SandpackPreview re-rendered
+// in place" apart from "SandpackPreview actually remounted" (a real React
+// effect, driven by its `key` changing). The distinction matters because
+// Sandpack's bundler compiles once per mount: a prop update alone (e.g.
+// dbToken arriving after the bundle already started running shim-less)
+// never gets the generated app's /api/db calls patched, even though every
+// prop the component receives looks correct afterward.
+let sandpackMountCount = 0
 vi.mock('@/components/chat/sandpack-preview', () => ({
-  SandpackPreview: ({ files, dbToken, dbOrigin }: { files: Record<string, string>; dbToken?: string; dbOrigin?: string }) => (
-    React.createElement('div', {
+  SandpackPreview: ({ files, dbToken, dbOrigin }: { files: Record<string, string>; dbToken?: string; dbOrigin?: string }) => {
+    React.useEffect(() => { sandpackMountCount += 1 }, [])
+    return React.createElement('div', {
       'data-testid': 'mock-sandpack',
       'data-file-count': Object.keys(files || {}).length,
       'data-db-token': dbToken || '',
       'data-db-origin': dbOrigin || '',
     })
-  ),
+  },
 }))
 
 const baseState = {
@@ -87,6 +96,7 @@ afterEach(() => {
   h.dispatch.mockClear()
   h.state = {}
   h.previewReturn = {}
+  sandpackMountCount = 0
 })
 
 async function importPreview() {
@@ -392,6 +402,55 @@ describe('Preview — live-status chip + banners (render)', () => {
     const mount = host.querySelector('[data-testid="mock-sandpack"]')
     expect(mount).not.toBeNull()
     expect(mount?.getAttribute('data-db-token')).toBe('')
+  })
+
+  // #1574 real-world repro (live-confirmed on 3 companies: groundwork, wrench,
+  // shutter — waitlist signups showed a clean "You're on the list" success UI
+  // but never reached ZeroDB): the dbToken fetch resolves on a later tick, same
+  // as production's real network round trip. Before the fix, SandpackPreview
+  // re-rendered IN PLACE when sandpackDbToken populated — the mock's own
+  // data-db-token attribute looked correct (which is why the two tests above
+  // kept passing), but it never actually remounted, so Sandpack's bundler never
+  // recompiled with the db-token-shim module included. This test is the one
+  // that would have caught it: it asserts a real second mount happens once the
+  // token lands, not just that the final props look right.
+  it('remounts SandpackPreview once the async dbToken arrives, so the bundler recompiles WITH the shim (#1574)', async () => {
+    h.state = { ...baseState }
+    h.previewReturn = {
+      previewUrl: '/api/preview/chat-1', status: 'ready', chatId: 'chat-1', refreshKey: 0, designConformance: null,
+      files: { '/App.tsx': 'export default function App() { return null }', '/components/Foo.tsx': 'export default function Foo(){return null}' },
+    }
+    let resolveToken: (v: any) => void = () => {}
+    fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/build/sandpack-token')) {
+        return new Promise((resolve) => { resolveToken = resolve })
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const Preview = await importPreview()
+    render(React.createElement(Preview))
+    await flush()
+    await flush()
+
+    // Still pending: mounted once already, with no token.
+    expect(sandpackMountCount).toBe(1)
+    expect(host.querySelector('[data-testid="mock-sandpack"]')?.getAttribute('data-db-token')).toBe('')
+
+    // Token arrives on a later tick, exactly like the real network round trip.
+    await act(async () => {
+      resolveToken({ ok: true, json: async () => ({ dbToken: 'real-signed-db-token', primitiveTokens: {} }) })
+      await flush()
+      await flush()
+    })
+
+    const mount = host.querySelector('[data-testid="mock-sandpack"]')
+    expect(mount?.getAttribute('data-db-token')).toBe('real-signed-db-token')
+    // The real assertion: a second, genuine mount — not just an updated prop
+    // on the same instance — so the bundler's compile actually included the
+    // shim from the start.
+    expect(sandpackMountCount).toBe(2)
   })
 
   it('a ready single-file app renders the sandboxed iframe (no allow-same-origin) with the slug token', async () => {
