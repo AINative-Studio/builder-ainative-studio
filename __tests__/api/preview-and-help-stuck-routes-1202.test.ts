@@ -73,6 +73,36 @@ describe('#1202 POST /api/preview', () => {
     expect(html).toContain('const Component =')
   })
 
+  // Same bug class as #1523/#1596: a root component exported only via a bare
+  // `export { Name }` list (no `export default` anywhere) used to leave
+  // `Component` undefined — the old regex only matched the literal `export
+  // default` text — crashing the rendered preview with a ReferenceError.
+  it('binds the root component when it is exported only via a bare `export { Name }` list', async () => {
+    const { POST } = await import('@/app/api/preview/route')
+    const code = '```tsx\nfunction Dashboard() { return <div>Hi</div> }\nexport { Dashboard }\n```'
+    const res = await POST(postRequest('http://localhost/api/preview', { code }))
+
+    expect(res.status).toBe(200)
+    const html = await res.text()
+    expect(html).toContain('const Component = Dashboard;')
+    expect(html).not.toContain('export')
+  })
+
+  // `export default Dashboard;` referencing a component declared earlier in
+  // the file (not `export default function Dashboard() {}`) — the old regex
+  // turned this into `const Component = Dashboard;` by luck, but didn't
+  // detect the name, so it silently broke once the file order changed.
+  // detectRootComponent correctly resolves the referenced name either way.
+  it('binds the root component for `export default Name` referencing an earlier declaration', async () => {
+    const { POST } = await import('@/app/api/preview/route')
+    const code = '```tsx\nfunction Dashboard() { return <div>Hi</div> }\nexport default Dashboard;\n```'
+    const res = await POST(postRequest('http://localhost/api/preview', { code }))
+
+    expect(res.status).toBe(200)
+    const html = await res.text()
+    expect(html).toContain('const Component = Dashboard;')
+  })
+
   it('returns 500 when the request body is malformed JSON', async () => {
     const { POST } = await import('@/app/api/preview/route')
     const res = await POST(malformedPostRequest('http://localhost/api/preview'))
