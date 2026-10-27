@@ -22,6 +22,7 @@
  */
 
 import { isE2BEnabled, runSequenceInE2BSandbox } from './build/e2b-sandbox'
+import { detectRootComponent } from './component-detector'
 
 export interface BuildResult {
   success: boolean
@@ -89,43 +90,32 @@ function extractMainFileContent(rawOutput: string): string {
 }
 
 /**
- * A component declared plainly and exported only via a trailing bare list
- * (`function App() {...}` then, separately, `export { App }`) is a valid,
- * common export shape (shadcn/ui's own canonical source convention) that the
- * `export default function Name` regex below cannot see at all — it has no
- * `export default` anywhere. Excludes re-exports (`export { X } from './Y'`),
- * since those don't declare a local identifier this single-file script can
- * reference. Mirrors the equivalent helper added for the same bug class in
- * lib/sandpack/build-files.ts (#1541). PURE.
+ * Detect the founder's component to render. Delegates to the canonical
+ * detectRootComponent() (lib/component-detector.ts) — the same detector
+ * lib/sandpack/build-files.ts, lib/multi-file-parser.ts, and both
+ * app/api/preview/* routes already use — rather than a bespoke regex that
+ * only understood `export default function Name` and a bare `export {
+ * Name }` list. The bespoke version's miss (an identified-but-not-inline
+ * default export like `export default Dashboard;`, or any anonymous/class
+ * default export) used to fall through to a hardcoded 'App' guess; that was
+ * usually masked downstream by buildRenderScript()'s own generic
+ * `globalThis.__Default__` fallback, but NOT when the wrong guessed name
+ * happened to collide with something else already bound on `globalThis`
+ * (e.g. a Lucide icon of the same name, bound before "Component code" runs)
+ * — the wrong value would win over the real component. Returns the
+ * (possibly rewritten) code alongside the name: an anonymous default export
+ * has no name to bind, so detectRootComponent() supplies a `rewrite` that
+ * must be applied to the source BEFORE buildRenderScript() does its own
+ * `export default` stripping, exactly as app/api/preview/route.ts and
+ * showcase-client.tsx already do.
  */
-function extractBareExportListNames(code: string): string[] {
-  const names: string[] = []
-  const re = /export\s*\{([^}]*)\}\s*(from\s*['"][^'"]+['"])?\s*;?/g
-  let match: RegExpExecArray | null
-  while ((match = re.exec(code))) {
-    if (match[2]) continue // re-export, not a local declaration
-    for (const entry of match[1].split(',')) {
-      const trimmed = entry.trim()
-      if (!trimmed || trimmed.startsWith('type ')) continue
-      const aliased = trimmed.match(/^(\w+)\s+as\s+(\w+)$/)
-      const external = aliased ? aliased[2] : /^\w+$/.test(trimmed) ? trimmed : null
-      if (external) names.push(external)
-    }
+function detectComponentName(code: string): { name: string; code: string } {
+  const detection = detectRootComponent(code)
+  let out = code
+  if (detection.rewrite && out.includes(detection.rewrite.find)) {
+    out = out.replace(detection.rewrite.find, detection.rewrite.replace)
   }
-  return names
-}
-
-/**
- * Detect the founder's component's name from its default export, falling
- * back to a bare `export { Name }` list export (#1541-class gap — see
- * extractBareExportListNames() above) and finally to 'App'. PURE.
- */
-function detectComponentName(code: string): string {
-  const nameMatch = code.match(/export\s+default\s+function\s+(\w+)/)
-  if (nameMatch) return nameMatch[1]
-  const bareNames = extractBareExportListNames(code)
-  const pascalCased = bareNames.find(n => /^[A-Z]/.test(n))
-  return pascalCased || bareNames[0] || 'App'
+  return { name: detection.name || 'App', code: out }
 }
 
 /**
@@ -257,8 +247,8 @@ export async function buildInSandbox(componentCode: string): Promise<BuildResult
   }
 
   const stripped = extractMainFileContent(stripMarkdownFence(componentCode))
-  const compName = detectComponentName(stripped)
-  const renderScript = buildRenderScript(stripped, compName)
+  const { name: compName, code: detectedCode } = detectComponentName(stripped)
+  const renderScript = buildRenderScript(detectedCode, compName)
 
   try {
     const session = await runSequenceInE2BSandbox(
