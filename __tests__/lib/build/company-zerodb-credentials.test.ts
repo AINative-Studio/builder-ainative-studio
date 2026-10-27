@@ -182,7 +182,7 @@ describe('resolveCompanyZerodbKey', () => {
     expect(resolved.apiKey).toBeUndefined()
   })
 
-  it('FAILS CLOSED with trial_expired for a tmp_ key past its 72h window — never passes an expired key through to ZeroDB (#1579)', async () => {
+  it('FAILS CLOSED with trial_expired for a tmp_ key past its 72h window when renewal also fails — never passes an expired key through to ZeroDB (#1579)', async () => {
     const expired = {
       projectId: 'proj-expired',
       keyKind: 'tmp',
@@ -191,16 +191,21 @@ describe('resolveCompanyZerodbKey', () => {
       authTag: 'irrelevant',
       createdAt: new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString(), // 73h ago
     }
-    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ data: [{ row_data: expired }] }) }))
+    const fetchMock = vi.fn(async (url: any) => {
+      const u = String(url)
+      if (u.includes('/api-keys')) {
+        // Renewal attempt fails (#1605) — must fall through honestly.
+        return { ok: false, status: 404, json: async () => ({ detail: 'Project not found' }) }
+      }
+      return { ok: true, status: 200, json: async () => ({ data: [{ row_data: expired }] }) }
+    })
     vi.stubGlobal('fetch', fetchMock)
     const { resolveCompanyZerodbKey } = await load()
     const resolved = await resolveCompanyZerodbKey('proj-expired')
     expect(resolved.ok).toBe(false)
     expect(resolved.reason).toBe('trial_expired')
     expect(resolved.apiKey).toBeUndefined()
-    // Only one fetch (the row lookup) — the (irrelevant/undecryptable) key is
-    // never even attempted, let alone handed to a caller.
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    // The (irrelevant/undecryptable) stored key itself is never even attempted.
   })
 
   it('a tmp_ key still inside its 72h window resolves normally', async () => {
@@ -255,15 +260,19 @@ describe('resolveCompanyZerodbKey', () => {
       authTag: 'irrelevant',
       createdAt: new Date(mintedAt).toISOString(),
     }
-    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ data: [{ row_data: died24hAgo }] }) }))
+    const fetchMock = vi.fn(async (url: any) => {
+      if (String(url).includes('/api-keys')) {
+        return { ok: false, status: 404, json: async () => ({ detail: 'Project not found' }) }
+      }
+      return { ok: true, status: 200, json: async () => ({ data: [{ row_data: died24hAgo }] }) }
+    })
     vi.stubGlobal('fetch', fetchMock)
     const { resolveCompanyZerodbKey } = await load()
     const resolved = await resolveCompanyZerodbKey('proj-real-expiry')
     expect(resolved.ok).toBe(false)
     expect(resolved.reason).toBe('trial_expired')
     expect(resolved.apiKey).toBeUndefined()
-    // Never even attempts the (irrelevant/undecryptable) key once expiry is known.
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    // Never even attempts the (irrelevant/undecryptable) stored key once expiry is known.
   })
 
   it('a tmp_ key with a REAL expiresAt still in the future resolves normally, even past the old 72h-from-createdAt mark (#1602)', async () => {
@@ -324,6 +333,153 @@ describe('resolveCompanyZerodbKey', () => {
     const resolved = await resolveCompanyZerodbKey('proj-legacy')
     expect(resolved.ok).toBe(false)
     expect(resolved.reason).toBe('trial_expired')
+  })
+
+  it('renews an expired tmp_ key against the SAME project and serves the triggering request immediately, with no second round trip (#1605)', async () => {
+    const expired = {
+      projectId: 'proj-renew',
+      slug: 'acme',
+      keyKind: 'tmp',
+      encryptedKey: 'irrelevant',
+      iv: 'irrelevant',
+      authTag: 'irrelevant',
+      createdAt: new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString(),
+    }
+    const storedRows: any[] = [{ row_data: expired }]
+    const fetchMock = vi.fn(async (url: any, init: any) => {
+      const u = String(url)
+      if (u.includes('/api-keys')) {
+        expect(JSON.parse(init.body).project_id).toBe('proj-renew')
+        return { ok: true, status: 201, json: async () => ({ api_key: 'sk_renewed_fresh', project_id: 'proj-renew' }) }
+      }
+      if (init?.method === 'POST' && u.includes('/rows')) {
+        storedRows.push({ row_data: JSON.parse(init.body).row_data })
+        return { ok: true, status: 200, json: async () => ({}) }
+      }
+      if (u.includes('/rows?')) return { ok: true, status: 200, json: async () => ({ data: storedRows }) }
+      return { ok: true, status: 200, json: async () => ({}) }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const { resolveCompanyZerodbKey } = await load()
+    const resolved = await resolveCompanyZerodbKey('proj-renew')
+    expect(resolved.ok).toBe(true)
+    expect(resolved.apiKey).toBe('sk_renewed_fresh')
+
+    // The renewed key was persisted as permanent, not another tmp_ key.
+    const persisted = storedRows[storedRows.length - 1].row_data
+    expect(persisted.projectId).toBe('proj-renew')
+    expect(persisted.keyKind).toBe('permanent')
+    expect(persisted.slug).toBe('acme')
+  })
+
+  it('a renewal mint failure (404 — project not reachable by the service identity) falls through to trial_expired honestly, never throws (#1605)', async () => {
+    const expired = {
+      projectId: 'proj-renew-404',
+      keyKind: 'tmp',
+      encryptedKey: 'irrelevant',
+      iv: 'irrelevant',
+      authTag: 'irrelevant',
+      createdAt: new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString(),
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: any) => {
+        if (String(url).includes('/api-keys')) {
+          return { ok: false, status: 404, json: async () => ({ detail: 'Project not found or access denied' }) }
+        }
+        return { ok: true, status: 200, json: async () => ({ data: [{ row_data: expired }] }) }
+      }),
+    )
+    const { resolveCompanyZerodbKey } = await load()
+    const resolved = await resolveCompanyZerodbKey('proj-renew-404')
+    expect(resolved.ok).toBe(false)
+    expect(resolved.reason).toBe('trial_expired')
+    expect(resolved.apiKey).toBeUndefined()
+  })
+
+  it('a renewal that mints successfully but fails to PERSIST falls through to trial_expired and never hands back an unpersisted key (#1605)', async () => {
+    const expired = {
+      projectId: 'proj-renew-store-fail',
+      keyKind: 'tmp',
+      encryptedKey: 'irrelevant',
+      iv: 'irrelevant',
+      authTag: 'irrelevant',
+      createdAt: new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString(),
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: any, init: any) => {
+        const u = String(url)
+        if (u.includes('/api-keys')) {
+          return { ok: true, status: 201, json: async () => ({ api_key: 'sk_would_be_fresh', project_id: 'proj-renew-store-fail' }) }
+        }
+        if (init?.method === 'POST' && u.includes('/rows')) {
+          // The store write itself fails.
+          return { ok: false, status: 500, json: async () => ({}) }
+        }
+        if (u.includes('/rows?')) return { ok: true, status: 200, json: async () => ({ data: [{ row_data: expired }] }) }
+        return { ok: true, status: 200, json: async () => ({}) }
+      }),
+    )
+    const { resolveCompanyZerodbKey } = await load()
+    const resolved = await resolveCompanyZerodbKey('proj-renew-store-fail')
+    expect(resolved.ok).toBe(false)
+    expect(resolved.reason).toBe('trial_expired')
+    expect(resolved.apiKey).toBeUndefined()
+    expect(resolved.apiKey).not.toBe('sk_would_be_fresh')
+  })
+
+  it('a renewal whose minted key is scoped to a DIFFERENT project is rejected, not stored, falls through to trial_expired (#1605)', async () => {
+    const expired = {
+      projectId: 'proj-renew-mismatch',
+      keyKind: 'tmp',
+      encryptedKey: 'irrelevant',
+      iv: 'irrelevant',
+      authTag: 'irrelevant',
+      createdAt: new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString(),
+    }
+    const storeWrites: any[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: any, init: any) => {
+        const u = String(url)
+        if (u.includes('/api-keys')) {
+          // core returns a key, but scoped to a DIFFERENT project than requested.
+          return { ok: true, status: 201, json: async () => ({ api_key: 'sk_wrong_scope', project_id: 'some-other-project' }) }
+        }
+        if (init?.method === 'POST' && u.includes('/rows')) {
+          storeWrites.push(JSON.parse(init.body).row_data)
+          return { ok: true, status: 200, json: async () => ({}) }
+        }
+        if (u.includes('/rows?')) return { ok: true, status: 200, json: async () => ({ data: [{ row_data: expired }] }) }
+        return { ok: true, status: 200, json: async () => ({}) }
+      }),
+    )
+    const { resolveCompanyZerodbKey } = await load()
+    const resolved = await resolveCompanyZerodbKey('proj-renew-mismatch')
+    expect(resolved.ok).toBe(false)
+    expect(resolved.reason).toBe('trial_expired')
+    // The mis-scoped key must never reach the store.
+    expect(storeWrites.length).toBe(0)
+  })
+
+  it('a permanent key is never passed to the renewal path, however old (renewal only ever triggers for keyKind: tmp)', async () => {
+    const old = {
+      projectId: 'proj-paid-no-renew',
+      keyKind: 'permanent',
+      encryptedKey: 'irrelevant',
+      iv: 'irrelevant',
+      authTag: 'irrelevant',
+      createdAt: new Date(Date.now() - 1000 * 24 * 60 * 60 * 1000).toISOString(),
+    }
+    const fetchMock = vi.fn(async (url: any) => {
+      if (String(url).includes('/api-keys')) throw new Error('renewal must never be attempted for a permanent key')
+      return { ok: true, status: 200, json: async () => ({ data: [{ row_data: old }] }) }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const { resolveCompanyZerodbKey } = await load()
+    const resolved = await resolveCompanyZerodbKey('proj-paid-no-renew')
+    expect(resolved.reason).not.toBe('trial_expired')
   })
 
   it('FAILS CLOSED with unconfigured when the store itself has no credentials', async () => {

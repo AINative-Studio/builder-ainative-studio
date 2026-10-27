@@ -192,6 +192,32 @@ async function resolveStoredRow(projectId: string): Promise<StoredZerodbKeyRow |
 }
 
 /**
+ * Attempt to renew an expired tmp_ key in place (#1605, piece 1/3) by minting a
+ * fresh key against the SAME project and persisting it as 'permanent'. Returns
+ * the fresh key on success, or null on ANY failure — mint failure, scope
+ * mismatch, or a failed store write. Never throws: a caller treats null exactly
+ * like "no renewal available" and falls through to its existing 'trial_expired'
+ * response. Deliberately not de-duped across concurrent callers for the same
+ * expired row — the append-only/latest-wins store makes a duplicate mint
+ * harmless, and adding coordination state here would be pure complexity for a
+ * race that costs nothing.
+ */
+async function renewExpiredTmpKey(projectId: string, slug?: string): Promise<string | null> {
+  try {
+    const minted = await mintProjectScopedKey(projectId, slug ? { slug } : {})
+    if (!minted.ok || !minted.apiKey) return null
+    const stored = await storeCompanyZerodbKey(projectId, minted.apiKey, {
+      ...(slug ? { slug } : {}),
+      keyKind: 'permanent',
+    })
+    if (!stored) return null
+    return minted.apiKey
+  } catch {
+    return null
+  }
+}
+
+/**
  * Resolve the real, project-scoped data-plane key for a company's own ZeroDB
  * project. FAILS CLOSED: never returns the shared service key, never throws.
  *
@@ -211,16 +237,22 @@ async function resolveStoredRow(projectId: string): Promise<StoredZerodbKeyRow |
  * `expiresAt` when present; falls back to `createdAt + TRIAL_WINDOW_MS` only
  * for rows stored before this field existed (or when core ever omits
  * `expires_at`, per instant-db.ts's own fallback). ZeroDB itself enforces the
- * real expiry regardless of anything Builder does. There is no refresh path
- * for an unclaimed tmp_ project: core's key-mint endpoint (mintProjectScopedKey,
- * #1013) requires the Builder admin identity to OWN the project, and tmp_
- * anonymous provisions explicitly are NOT admin-owned (see
- * fileProjectUnderBuilderWorkspace's own doc comment in instant-db.ts) —
- * minting a replacement key would 404. So this checks expiry up front and
- * returns the honest 'trial_expired' reason BEFORE ever calling ZeroDB. A
- * company that's since been claimed/paid has its row's keyKind flipped to
- * 'permanent' by the claim flow (claimCompanyProject), so a real paid company
- * is never affected by this.
+ * real expiry regardless of anything Builder does.
+ *
+ * RENEWAL (#1605): core#9282 confirmed live that Builder's service identity CAN
+ * mint a fresh key against an existing, non-Builder-owned tmp_ project (the
+ * earlier assumption here — that this would 404 — was wrong). So on detecting
+ * expiry this now attempts `mintProjectScopedKey` against the SAME projectId
+ * before giving up, and on success persists it via `storeCompanyZerodbKey`
+ * with `keyKind: 'permanent'` (core's real mint response is `sk_`-prefixed, not
+ * another short-lived tmp_ key) and serves the triggering request immediately
+ * with the fresh key. Any failure along that path (mint failure, scope
+ * mismatch, a failed store write) falls through to the exact same honest
+ * 'trial_expired' response this returned before renewal existed — never
+ * throws, never changes the existing failure contract. A company that's since
+ * been claimed/paid has its row's keyKind flipped to 'permanent' by the claim
+ * flow (claimCompanyProject) already, so this renewal path only ever triggers
+ * for an unclaimed tmp_ row and never touches a real paid company.
  */
 export async function resolveCompanyZerodbKey(projectId: string): Promise<ResolvedZerodbKey> {
   if (!projectId) return { ok: false, reason: 'not_stored' }
@@ -234,13 +266,17 @@ export async function resolveCompanyZerodbKey(projectId: string): Promise<Resolv
   if (!row) return { ok: false, reason: 'not_stored' }
   if (row.keyKind === 'tmp') {
     const realExpiry = row.expiresAt ? new Date(row.expiresAt).getTime() : NaN
+    let expired = false
     if (Number.isFinite(realExpiry)) {
-      if (Date.now() > realExpiry) return { ok: false, reason: 'trial_expired' }
+      expired = Date.now() > realExpiry
     } else if (row.createdAt) {
       const mintedAt = new Date(row.createdAt).getTime()
-      if (Number.isFinite(mintedAt) && Date.now() - mintedAt > TRIAL_WINDOW_MS) {
-        return { ok: false, reason: 'trial_expired' }
-      }
+      expired = Number.isFinite(mintedAt) && Date.now() - mintedAt > TRIAL_WINDOW_MS
+    }
+    if (expired) {
+      const renewedKey = await renewExpiredTmpKey(projectId, row.slug)
+      if (renewedKey) return { ok: true, apiKey: renewedKey }
+      return { ok: false, reason: 'trial_expired' }
     }
   }
   try {
