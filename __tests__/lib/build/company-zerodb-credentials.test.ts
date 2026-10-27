@@ -243,6 +243,89 @@ describe('resolveCompanyZerodbKey', () => {
     expect(resolved.reason).not.toBe('trial_expired')
   })
 
+  it('FAILS CLOSED with trial_expired using the REAL expiresAt even when createdAt is well within the 72h fallback window (#1602) — the exact bug: core mints a tmp_ key that dies in 24h, not 72h', async () => {
+    const mintedAt = Date.now() - 25 * 60 * 60 * 1000 // 25h ago — inside 72h, so the OLD code would wrongly say "still fine"
+    const realExpiry = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString() // but the real expiry (24h from mint) already passed
+    const died24hAgo = {
+      projectId: 'proj-real-expiry',
+      keyKind: 'tmp',
+      expiresAt: realExpiry,
+      encryptedKey: 'irrelevant',
+      iv: 'irrelevant',
+      authTag: 'irrelevant',
+      createdAt: new Date(mintedAt).toISOString(),
+    }
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ data: [{ row_data: died24hAgo }] }) }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { resolveCompanyZerodbKey } = await load()
+    const resolved = await resolveCompanyZerodbKey('proj-real-expiry')
+    expect(resolved.ok).toBe(false)
+    expect(resolved.reason).toBe('trial_expired')
+    expect(resolved.apiKey).toBeUndefined()
+    // Never even attempts the (irrelevant/undecryptable) key once expiry is known.
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('a tmp_ key with a REAL expiresAt still in the future resolves normally, even past the old 72h-from-createdAt mark (#1602)', async () => {
+    let storedRow: any = null
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: any, init: any) => {
+        const u = String(url)
+        if (init?.method === 'POST' && u.includes('/rows')) {
+          storedRow = JSON.parse(init.body).row_data
+          return { ok: true, status: 200, json: async () => ({}) }
+        }
+        if (u.includes('/rows?')) {
+          return { ok: true, status: 200, json: async () => ({ data: [{ row_data: storedRow }] }) }
+        }
+        return { ok: true, status: 200, json: async () => ({}) }
+      }),
+    )
+    const { storeCompanyZerodbKey, resolveCompanyZerodbKey } = await load()
+    const farFutureExpiry = new Date(Date.now() + 1000 * 60 * 60 * 1000).toISOString() // way past 72h out
+    await storeCompanyZerodbKey('proj-long-lived', 'tmp_still_good_long', {
+      keyKind: 'tmp',
+      expiresAt: farFutureExpiry,
+    })
+    const resolved = await resolveCompanyZerodbKey('proj-long-lived')
+    expect(resolved.ok).toBe(true)
+    expect(resolved.apiKey).toBe('tmp_still_good_long')
+  })
+
+  it('storeCompanyZerodbKey persists expiresAt verbatim on the written row (#1602)', async () => {
+    const calls: Array<{ url: string; body: any }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: any, init: any) => {
+        calls.push({ url: String(url), body: init?.body ? JSON.parse(init.body) : null })
+        return { ok: true, status: 200, json: async () => ({}) }
+      }),
+    )
+    const { storeCompanyZerodbKey } = await load()
+    const expiresAt = '2026-10-27T04:28:50.113111+00:00'
+    await storeCompanyZerodbKey('proj-exp', 'tmp_x', { keyKind: 'tmp', expiresAt })
+    const write = calls.find((c) => c.url.includes('/rows'))
+    expect(write!.body.row_data.expiresAt).toBe(expiresAt)
+  })
+
+  it('a tmp_ row with no expiresAt (stored before #1602) still falls back to the 72h createdAt guess, unchanged', async () => {
+    const legacyNoExpiresAt = {
+      projectId: 'proj-legacy',
+      keyKind: 'tmp',
+      // no expiresAt field at all — simulates a row written before this fix
+      encryptedKey: 'irrelevant',
+      iv: 'irrelevant',
+      authTag: 'irrelevant',
+      createdAt: new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString(), // 73h ago
+    }
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ data: [{ row_data: legacyNoExpiresAt }] }) })))
+    const { resolveCompanyZerodbKey } = await load()
+    const resolved = await resolveCompanyZerodbKey('proj-legacy')
+    expect(resolved.ok).toBe(false)
+    expect(resolved.reason).toBe('trial_expired')
+  })
+
   it('FAILS CLOSED with unconfigured when the store itself has no credentials', async () => {
     process.env.ZERODB_API_KEY = ''
     process.env.AINATIVE_API_KEY = ''
