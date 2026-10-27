@@ -493,7 +493,11 @@ export async function POST(request: NextRequest) {
   // blocks provisioning — but it does mean that company's data calls will fail closed
   // until it is re-provisioned, which is the honest outcome.
   const zerodbKeyStored = prov.apiKey
-    ? await storeCompanyZerodbKey(prov.projectId, prov.apiKey, { slug, keyKind: prov.keyKind }).catch(() => false)
+    ? await storeCompanyZerodbKey(prov.projectId, prov.apiKey, {
+        slug,
+        keyKind: prov.keyKind,
+        expiresAt: prov.expiresAt,
+      }).catch(() => false)
     : false
   if (!zerodbKeyStored) {
     console.warn(

@@ -79,6 +79,13 @@ interface StoredZerodbKeyRow {
   slug?: string
   /** 'permanent' (sk_) or 'tmp' (72h trial) — mirrors InstantDbResult.keyKind. */
   keyKind?: 'tmp' | 'permanent'
+  /**
+   * The REAL expiry core returned at mint time (InstantDbResult.expiresAt,
+   * #1602) — not a fixed window. Optional: rows stored before this field
+   * existed have none, and fall back to TRIAL_WINDOW_MS in
+   * resolveCompanyZerodbKey, same as before.
+   */
+  expiresAt?: string
   encryptedKey: string
   iv: string
   authTag: string
@@ -117,7 +124,7 @@ async function ensureTable(): Promise<void> {
 export async function storeCompanyZerodbKey(
   projectId: string,
   apiKey: string,
-  options: { slug?: string; keyKind?: 'tmp' | 'permanent' } = {},
+  options: { slug?: string; keyKind?: 'tmp' | 'permanent'; expiresAt?: string } = {},
 ): Promise<boolean> {
   if (!configured() || !projectId || !apiKey) return false
   try {
@@ -127,6 +134,7 @@ export async function storeCompanyZerodbKey(
       projectId,
       ...(options.slug ? { slug: options.slug } : {}),
       ...(options.keyKind ? { keyKind: options.keyKind } : {}),
+      ...(options.expiresAt ? { expiresAt: options.expiresAt } : {}),
       encryptedKey: enc.encryptedToken,
       iv: enc.iv,
       authTag: enc.authTag,
@@ -192,19 +200,27 @@ async function resolveStoredRow(projectId: string): Promise<StoredZerodbKeyRow |
  * that isn't scoped to the target project is precisely the cross-tenant
  * mis-scoping bug this module fixes.
  *
- * TRIAL EXPIRY (#1579): a `tmp_` key minted for an anonymous/unpaid provision
- * is only valid for `TRIAL_WINDOW_MS` (72h) — ZeroDB itself enforces this and
- * starts rejecting it with a 401 after that window, regardless of anything
- * Builder does. There is no refresh path for an unclaimed tmp_ project: core's
- * key-mint endpoint (mintProjectScopedKey, #1013) requires the Builder admin
- * identity to OWN the project, and tmp_ anonymous provisions explicitly are
- * NOT admin-owned (see fileProjectUnderBuilderWorkspace's own doc comment in
- * instant-db.ts) — minting a replacement key would 404. So this checks the
- * stored row's own age up front and returns the honest 'trial_expired' reason
- * BEFORE ever calling ZeroDB, rather than passing a doomed request through to
- * get back ZeroDB's generic, hard-to-diagnose 401. A company that's since been
- * claimed/paid has its row's keyKind flipped to 'permanent' by the claim flow
- * (claimCompanyProject), so a real paid company is never affected by this.
+ * TRIAL EXPIRY (#1579, corrected by #1602): a `tmp_` key minted for an
+ * anonymous/unpaid provision has a REAL expiry core returns at mint time
+ * (`expires_at`) — confirmed live (#1602) to be 24h, not the `TRIAL_WINDOW_MS`
+ * (72h) fallback this used to check unconditionally. That 3x-too-generous
+ * guess left a real ~48h window where the key was already dead at ZeroDB but
+ * this function still said it was fine, so the request passed through and hit
+ * ZeroDB's own generic, hard-to-diagnose 401 — the exact failure #1579 was
+ * built to prevent, just shifted earlier. Now prefers the row's real
+ * `expiresAt` when present; falls back to `createdAt + TRIAL_WINDOW_MS` only
+ * for rows stored before this field existed (or when core ever omits
+ * `expires_at`, per instant-db.ts's own fallback). ZeroDB itself enforces the
+ * real expiry regardless of anything Builder does. There is no refresh path
+ * for an unclaimed tmp_ project: core's key-mint endpoint (mintProjectScopedKey,
+ * #1013) requires the Builder admin identity to OWN the project, and tmp_
+ * anonymous provisions explicitly are NOT admin-owned (see
+ * fileProjectUnderBuilderWorkspace's own doc comment in instant-db.ts) —
+ * minting a replacement key would 404. So this checks expiry up front and
+ * returns the honest 'trial_expired' reason BEFORE ever calling ZeroDB. A
+ * company that's since been claimed/paid has its row's keyKind flipped to
+ * 'permanent' by the claim flow (claimCompanyProject), so a real paid company
+ * is never affected by this.
  */
 export async function resolveCompanyZerodbKey(projectId: string): Promise<ResolvedZerodbKey> {
   if (!projectId) return { ok: false, reason: 'not_stored' }
@@ -216,10 +232,15 @@ export async function resolveCompanyZerodbKey(projectId: string): Promise<Resolv
     return { ok: false, reason: 'lookup_failed' }
   }
   if (!row) return { ok: false, reason: 'not_stored' }
-  if (row.keyKind === 'tmp' && row.createdAt) {
-    const mintedAt = new Date(row.createdAt).getTime()
-    if (Number.isFinite(mintedAt) && Date.now() - mintedAt > TRIAL_WINDOW_MS) {
-      return { ok: false, reason: 'trial_expired' }
+  if (row.keyKind === 'tmp') {
+    const realExpiry = row.expiresAt ? new Date(row.expiresAt).getTime() : NaN
+    if (Number.isFinite(realExpiry)) {
+      if (Date.now() > realExpiry) return { ok: false, reason: 'trial_expired' }
+    } else if (row.createdAt) {
+      const mintedAt = new Date(row.createdAt).getTime()
+      if (Number.isFinite(mintedAt) && Date.now() - mintedAt > TRIAL_WINDOW_MS) {
+        return { ok: false, reason: 'trial_expired' }
+      }
     }
   }
   try {
