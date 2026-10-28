@@ -379,6 +379,35 @@ function App(){
     expect(hasFakeButtonGap('function App(){return <div>hi</div>}')).toBe(false)
   })
 
+  // Same nested-paren regex-anti-pattern bug class as #1609/#1611/#1615/
+  // #1617/#1619/#1621/#1623: a flat `\([^)]*\)` can't cross a `)` INSIDE
+  // the span it's matching.
+  const FAKE_SIGN_IN_ALERT_NESTED_PAREN_PARAM = `
+function App(){
+  return (<nav><button onClick={function(e = getDefaultEvent()) { alert('Sign In') }}>Sign In</button></nav>)
+}`
+
+  const FAKE_SIGN_IN_ALERT_NESTED_PAREN_ARG = `
+function App(){
+  return (<nav><button onClick={() => { alert(getMessage()) }}>Sign In</button></nav>)
+}`
+
+  it('THE BUG (nested-paren default param): still flags a function-expression alert-only handler whose own param list has a call-expression default', () => {
+    expect(hasFakeButtonGap(FAKE_SIGN_IN_ALERT_NESTED_PAREN_PARAM)).toBe(true)
+  })
+
+  it('THE BUG (nested-paren alert arg): still flags an alert-only handler whose alert() argument is itself a call expression', () => {
+    expect(hasFakeButtonGap(FAKE_SIGN_IN_ALERT_NESTED_PAREN_ARG)).toBe(true)
+  })
+
+  it('does NOT flag a real handler (nested-paren param, no regression) that does real work and also alerts', () => {
+    const code = `
+function App(){
+  return (<nav><button onClick={function(e = getDefaultEvent()) { trackClick(); alert('Sign In') }}>Sign In</button></nav>)
+}`
+    expect(hasFakeButtonGap(code)).toBe(false)
+  })
+
   it('checkObedience surfaces fakeButtonGap and a reason string', () => {
     const r = checkObedience(FAKE_SIGN_IN_ALERT, 'a community platform')
     expect(r.fakeButtonGap).toBe(true)
