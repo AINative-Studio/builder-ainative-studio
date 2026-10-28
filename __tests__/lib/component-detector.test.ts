@@ -189,6 +189,33 @@ describe('detectRootComponent', () => {
       expect(rewritten).toContain('const WrenchHub = forwardRef(function WrenchHub(')
     })
 
+    it('#1645: detects an anonymous arrow with a nested-call default param declared inline inside memo()', () => {
+      // Same regex anti-pattern as #1619 (priority 2's plain `export default
+      // (x) => ...` check) and #1621 (dedupe-provided-components), but in the
+      // PRIORITY 1.5 memo()/forwardRef() inline-arg check, which #1619/#1620
+      // never touched. A flat `\([^)]*\)\s*=>` scan for the param list cannot
+      // cross a `)` that appears INSIDE it, e.g. a destructured default value
+      // that calls a function.
+      const code = `export default memo(({ x = getDefault() }) => {\n  return <div>{x}</div>\n});`
+      const r = detectRootComponent(code)
+      expect(r.name).toBe(ANON_DEFAULT_NAME)
+      expect(r.source).toBe('default-export-anonymous')
+      expect(r.rewrite).toBeDefined()
+      const rewritten = code.replace(r.rewrite!.find, r.rewrite!.replace)
+      expect(rewritten).toContain(`const ${ANON_DEFAULT_NAME} = memo(`)
+      expect(rewritten).not.toMatch(/export\s+default/)
+    })
+
+    it('#1645: detects an async anonymous arrow with a nested-paren default param declared inline inside forwardRef()', () => {
+      const code = `export default forwardRef(async ({ items = getItems() }, ref) => {\n  return <div ref={ref}>{items}</div>\n});`
+      const r = detectRootComponent(code)
+      expect(r.name).toBe(ANON_DEFAULT_NAME)
+      expect(r.source).toBe('default-export-anonymous')
+      const rewritten = code.replace(r.rewrite!.find, r.rewrite!.replace)
+      expect(rewritten).toContain(`const ${ANON_DEFAULT_NAME} = forwardRef(`)
+      expect(rewritten).not.toMatch(/export\s+default/)
+    })
+
     it('still falls through to priority 3 for a bare reference wrapped in memo() (no regression)', () => {
       const code = `
         import React from "react";

@@ -193,6 +193,21 @@ export function hasDefaultExport(code: string): boolean {
 }
 
 /**
+ * True if `afterWrap` starts with an anonymous arrow function's parenthesized
+ * param list immediately followed by `=>`, honoring arbitrarily nested parens
+ * in the param list (e.g. a destructured default value that calls a function:
+ * `({ x = getDefault() }) =>`). A flat `\([^)]*\)` scan cannot cross the `)`
+ * that closes the nested call, so it was used instead of a regex here.
+ */
+function isAnonymousArrowWithParenParams(afterWrap: string): boolean {
+  const open = afterWrap.match(/^(?:async\s+)?\(/)
+  if (!open) return false
+  const openIdx = open[0].length - 1
+  const closeIdx = findMatchingParen(afterWrap, openIdx)
+  return closeIdx !== -1 && /^\s*=>/.test(afterWrap.slice(closeIdx + 1))
+}
+
+/**
  * True if the source between `startIdx` and the next same-name declaration (or EOF)
  * appears to RETURN JSX. Heuristic: a `return (` / `return <` followed by a JSX-ish
  * `<Tag` or a top-level `<>` fragment. Deliberately lenient — a JSX-returning
@@ -278,9 +293,13 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
         },
       }
     }
+    // #1645: the arrow-with-paren-params alternative used to be a flat
+    // `\([^)]*\)\s*=>` regex — same anti-pattern as #1619, but here, inside
+    // the memo()/forwardRef() inline-arg check, which #1619/#1620 never
+    // touched. See isAnonymousArrowWithParenParams() above.
     const isAnonymousArg =
       /^(?:async\s+)?function\s*\(/.test(afterWrap) ||
-      /^(?:async\s+)?\([^)]*\)\s*=>/.test(afterWrap) ||
+      isAnonymousArrowWithParenParams(afterWrap) ||
       /^(?:async\s+)?\w+\s*=>/.test(afterWrap)
     if (isAnonymousArg) {
       return {
