@@ -53,6 +53,23 @@ describe('findUnsafeDangerousHtml', () => {
     `
     expect(findUnsafeDangerousHtml(code)).toHaveLength(2)
   })
+
+  it('flags a dynamic arg that is a call with an object-literal param (nested brace before the real close)', () => {
+    // A flat `[^}]+?` scan for the arg stops at the FIRST `}` — the object
+    // literal's own close — so the required trailing `}}` never lines up
+    // and this whole dangerouslySetInnerHTML call used to go completely
+    // unmatched (not flagged safe, not flagged unsafe — just invisible).
+    const code = `<div dangerouslySetInnerHTML={{ __html: renderMarkup({ body: userInput }) }} />`
+    expect(findUnsafeDangerousHtml(code)).toEqual(['renderMarkup({ body: userInput })'])
+  })
+
+  it('flags an unsafe arg immediately followed by another safe occurrence', () => {
+    const code = `
+      <div dangerouslySetInnerHTML={{ __html: buildHtml({ raw: userInput }) }} />
+      <script dangerouslySetInnerHTML={{ __html: JSON.stringify({ ok: true }) }} />
+    `
+    expect(findUnsafeDangerousHtml(code)).toEqual(['buildHtml({ raw: userInput })'])
+  })
 })
 
 describe('findSecretLoggingCalls', () => {

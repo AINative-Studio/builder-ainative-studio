@@ -43,13 +43,24 @@ import type { StandardsCheck, StandardsResult } from './coding-standards'
 // Rule 1: dangerouslySetInnerHTML on non-static content
 // ---------------------------------------------------------------------------
 
+/** Matches up to and including the opening `{{` of a dangerouslySetInnerHTML prop. */
+const DANGEROUS_HTML_HEAD_PATTERN = /dangerouslySetInnerHTML\s*=\s*\{\s*\{/g
+
 /**
- * Matches `dangerouslySetInnerHTML={{ __html: <arg> }}` and captures <arg>.
- * Handles the common single-line JSX form; a generated app's own multi-line
- * variants still match since JS expressions inside `__html:` rarely span a
- * hard newline before the closing `}}` in generated code.
+ * Find the index of the `}` that closes the `{` at `openIdx` (honoring
+ * arbitrarily nested braces), or -1 if unbalanced.
  */
-const DANGEROUS_HTML_PATTERN = /dangerouslySetInnerHTML\s*=\s*\{\{\s*__html:\s*([^}]+?)\s*\}\}/g
+function findMatchingBrace(code: string, openIdx: number): number {
+  let depth = 0
+  for (let i = openIdx; i < code.length; i++) {
+    if (code[i] === '{') depth++
+    else if (code[i] === '}') {
+      depth--
+      if (depth === 0) return i
+    }
+  }
+  return -1
+}
 
 /**
  * A literal/static argument is safe: a plain string literal, or a call to
@@ -67,13 +78,35 @@ function isStaticHtmlArg(arg: string): boolean {
   return false
 }
 
-/** PURE. Returns every dangerouslySetInnerHTML call whose argument isn't static. */
+/**
+ * PURE. Returns every dangerouslySetInnerHTML call whose argument isn't
+ * static.
+ *
+ * Real bug: a flat `\{\{\s*__html:\s*([^}]+?)\s*\}\}` for the arg stops at
+ * the FIRST `}`, which any arg shaped as a call with an object-literal
+ * parameter (`renderMarkup({ body: userInput })`) or a nested
+ * `JSON.stringify({ ... })` contains — the required trailing `\}\}` then
+ * never lines up, so the WHOLE call silently fails to match at all. That's
+ * strictly worse than a false positive: a genuinely dangerous dynamic
+ * `__html` value goes completely unflagged by this security rule whenever
+ * its expression contains a `}` before its real close. Finding the
+ * enclosing `{ __html: ... }` object's true closing brace by depth-counting
+ * fixes that without changing behavior for a flat arg with no inner braces
+ * (same boundary found either way).
+ */
 export function findUnsafeDangerousHtml(code: string): string[] {
   const matches: string[] = []
   let m: RegExpExecArray | null
-  DANGEROUS_HTML_PATTERN.lastIndex = 0
-  while ((m = DANGEROUS_HTML_PATTERN.exec(code)) !== null) {
-    const arg = m[1]
+  DANGEROUS_HTML_HEAD_PATTERN.lastIndex = 0
+  while ((m = DANGEROUS_HTML_HEAD_PATTERN.exec(code)) !== null) {
+    const openIdx = m.index + m[0].length - 1
+    const closeIdx = findMatchingBrace(code, openIdx)
+    if (closeIdx === -1) continue
+    DANGEROUS_HTML_HEAD_PATTERN.lastIndex = closeIdx + 1
+    const body = code.slice(openIdx + 1, closeIdx)
+    const htmlMatch = body.match(/^\s*__html\s*:\s*([\s\S]*)$/)
+    if (!htmlMatch) continue
+    const arg = htmlMatch[1]
     if (!isStaticHtmlArg(arg)) {
       matches.push(arg.trim().slice(0, 80))
     }
