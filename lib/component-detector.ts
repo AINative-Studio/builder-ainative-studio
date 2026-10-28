@@ -20,6 +20,13 @@
  *   1. IDENTIFIED default export — `export default function Foo`,
  *      `export default class Foo`, or `export default Foo` where Foo is a
  *      PascalCase name defined in the file. Render THAT regardless of its name.
+ *   1.5. INLINE memo()/forwardRef() wrapper — `export default memo(() => {})`,
+ *      `export default React.forwardRef(function Foo(...) {})`. A bare
+ *      reference wrapped this way (`memo(Foo)`) needs no special handling —
+ *      it falls through to priority 3's scan, which finds Foo's own
+ *      declaration — but a component declared INLINE as the HOC's own call
+ *      argument has no standalone declaration anywhere for any other
+ *      priority to find.
  *   2. ANONYMOUS default export — `export default function() {}`,
  *      `export default () => {}`, `export default class {}`. There is no name to
  *      bind, so we synthesize one (`__PreviewDefault`) and emit a `rewrite`
@@ -187,6 +194,57 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
   const defRef = code.match(/export\s+default\s+([A-Z]\w*)(?![.\w(\[])\s*;?/)
   if (defRef && isPascalCase(defRef[1])) {
     return { name: defRef[1], source: 'default-export-named' }
+  }
+
+  // --- PRIORITY 1.5: component declared INLINE inside memo()/forwardRef() ----
+  // export default memo(() => {...})
+  // export default React.forwardRef(function Name(props, ref) {...})
+  //
+  // #1536 already handles memo()/forwardRef() wrapping a BARE REFERENCE to a
+  // name declared elsewhere (`export default React.memo(Dashboard)`) -- that
+  // case correctly falls through to priority 3's scan, which finds Dashboard's
+  // own standalone declaration. But a component declared INLINE as the HOC's
+  // argument -- anonymous or a named function expression -- has no standalone
+  // top-level declaration anywhere for priority 1/2/3 to find. Confirmed via a
+  // direct repro against this function: `export default memo(() => {...})` and
+  // `export default forwardRef(function Name() {...})` both previously fell
+  // through everything to `{name: null, source: 'none'}` -- the same "Element
+  // type is invalid" blank-page crash class this whole detector exists to
+  // prevent. (A named function expression whose name happened to be on
+  // KNOWN_PAGE_NAMES was accidentally "rescued" by priority 4's tiebreaker --
+  // luck, not detection, and it masks the bug for any other name.)
+  const hocWrap = code.match(/export\s+default\s+((?:React\.)?(?:memo|forwardRef)\(\s*)/)
+  if (hocWrap) {
+    const wrapperPrefix = hocWrap[1] // e.g. "memo(" or "React.forwardRef("
+    const afterWrap = code.slice(hocWrap[0].length)
+    const namedFnExpr = afterWrap.match(/^(?:async\s+)?function\s+([A-Z]\w*)\s*\(/)
+    if (namedFnExpr) {
+      return {
+        name: namedFnExpr[1],
+        source: 'default-export-named',
+        rewrite: {
+          find: hocWrap[0],
+          replace: `const ${namedFnExpr[1]} = ${wrapperPrefix}`,
+        },
+      }
+    }
+    const isAnonymousArg =
+      /^(?:async\s+)?function\s*\(/.test(afterWrap) ||
+      /^(?:async\s+)?\([^)]*\)\s*=>/.test(afterWrap) ||
+      /^(?:async\s+)?\w+\s*=>/.test(afterWrap)
+    if (isAnonymousArg) {
+      return {
+        name: ANON_DEFAULT_NAME,
+        source: 'default-export-anonymous',
+        rewrite: {
+          find: hocWrap[0],
+          replace: `const ${ANON_DEFAULT_NAME} = ${wrapperPrefix}`,
+        },
+      }
+    }
+    // Neither a named nor anonymous inline declaration -- e.g. a bare
+    // reference (`memo(Dashboard)`), already handled by priority 3. Fall
+    // through without returning.
   }
 
   // --- PRIORITY 2: anonymous default export ----------------------------------
