@@ -367,6 +367,29 @@ describe('NO_PII_IN_LOGS_RULE', () => {
     );
     expect(result.passed).toBe(true);
   });
+
+  it('detects PII in console.log when a nested call precedes it in the same argument list', async () => {
+    // A flat `console\.log\([^)]*\bpassword\b` regex stops at the first `)`
+    // -- the one closing formatUser(user) -- so it never reaches `password`
+    // a few characters later in the SAME call's argument list.
+    const result = await NO_PII_IN_LOGS_RULE.check(
+      makeAction('file-edit', {
+        filePath: 'lib/auth.ts',
+        fileContent: "console.log('login', formatUser(user), user.password)",
+      })
+    );
+    expect(result.passed).toBe(false);
+  });
+
+  it('detects PII in logger.info when a nested call precedes it in the same argument list', async () => {
+    const result = await NO_PII_IN_LOGS_RULE.check(
+      makeAction('file-edit', {
+        filePath: 'lib/auth.ts',
+        fileContent: "logger.info('login', formatUser(user), user.password)",
+      })
+    );
+    expect(result.passed).toBe(false);
+  });
 });
 
 describe('INPUT_VALIDATION_RULE', () => {

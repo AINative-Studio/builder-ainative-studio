@@ -695,6 +695,46 @@ export const NO_SECRETS_IN_CODE_RULE: EnforcementRule = {
   ],
 };
 
+/** Index of the `)` that closes the `(` at `openIdx` (honoring arbitrarily nested parens), or -1 if unbalanced. */
+function findMatchingParen(code: string, openIdx: number): number {
+  let depth = 0;
+  for (let i = openIdx; i < code.length; i++) {
+    if (code[i] === '(') depth++;
+    else if (code[i] === ')') {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * True if some call whose head matches `headRe` (a global regex ending in
+ * the literal `(` that opens its argument list) has a FULL, balanced
+ * argument list containing a match for `argRe`.
+ *
+ * Real bug this replaces: a flat `console\.log\([^)]*\bpassword\b` can't
+ * cross a `)` INSIDE the call's own arguments — e.g.
+ * `console.log('login', formatUser(user), user.password)` — so a PII arg
+ * that comes after an earlier nested call expression in the SAME log call
+ * was silently invisible to this security/privacy rule (same unbalanced-
+ * delimiter class as output-validator.ts's findSecretLoggingCalls fix).
+ * Finding the call's true closing paren by depth-counting fixes that
+ * without changing behavior for a flat argument list with no nested calls.
+ */
+function callArgsMatch(content: string, headRe: RegExp, argRe: RegExp): boolean {
+  let m: RegExpExecArray | null;
+  headRe.lastIndex = 0;
+  while ((m = headRe.exec(content))) {
+    const openIdx = m.index + m[0].length - 1;
+    const closeIdx = findMatchingParen(content, openIdx);
+    if (closeIdx === -1) continue;
+    if (argRe.test(content.slice(openIdx + 1, closeIdx))) return true;
+    headRe.lastIndex = closeIdx + 1;
+  }
+  return false;
+}
+
 /**
  * Security Rule: No PII in Logs
  * Prevents logging sensitive user data
@@ -718,17 +758,19 @@ export const NO_PII_IN_LOGS_RULE: EnforcementRule = {
     // PII patterns in log statements
     const piiPatterns = [
       {
-        pattern: /console\.log\([^)]*\b(password|ssn|creditCard|email|phone)\b/i,
+        headRe: /console\.log\(/g,
+        argRe: /\b(password|ssn|creditCard|email|phone)\b/i,
         name: 'PII in console.log',
       },
       {
-        pattern: /logger\.(info|debug|warn)\([^)]*\b(password|ssn|creditCard)\b/i,
+        headRe: /logger\.(?:info|debug|warn)\(/g,
+        argRe: /\b(password|ssn|creditCard)\b/i,
         name: 'PII in logger',
       },
     ];
 
-    for (const { pattern, name } of piiPatterns) {
-      if (pattern.test(content)) {
+    for (const { headRe, argRe, name } of piiPatterns) {
+      if (callArgsMatch(content, headRe, argRe)) {
         violations.push({
           ruleId: RULE_IDS.NO_PII_IN_LOGS,
           level: 'error',
