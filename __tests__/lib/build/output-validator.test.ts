@@ -80,6 +80,25 @@ describe('findSecretLoggingCalls', () => {
     const code = `console.error(apiKey)`
     expect(findSecretLoggingCalls(code)).toEqual([])
   })
+
+  // Real bug: a flat `\(([^)]*)\)` for the call's arguments stops at the
+  // FIRST `)`, which a nested call expression among the arguments contains
+  // — silently dropping everything after it, including the secret-shaped
+  // argument that comes after the nested call.
+  it('flags a secret-shaped arg that comes after a nested call expression', () => {
+    const code = `console.log(formatValue(user), apiKey)`
+    expect(findSecretLoggingCalls(code)).toHaveLength(1)
+  })
+
+  it('flags a secret-shaped arg nested inside a call expression argument', () => {
+    const code = `console.warn('token is', wrap(getToken()))`
+    expect(findSecretLoggingCalls(code)).toHaveLength(1)
+  })
+
+  it('still finds a second, later console call after a nested-paren one', () => {
+    const code = `console.log(formatValue(user));\nconsole.log('secret', apiKey);`
+    expect(findSecretLoggingCalls(code)).toHaveLength(1)
+  })
 })
 
 describe('countH1Tags', () => {
