@@ -511,4 +511,24 @@ describe('buildSandpackFiles — main-file default-export synthesis handles more
     })
     expect(built['/App.tsx']).toMatch(/export default HomePage\s*$/m)
   })
+
+  // Real bug found this run (static analysis + direct repro, no live
+  // network access): the synthesis guard above used to be a plain
+  // `!mainCode.includes('export default')` check — literal-text, blind to
+  // a renamed default export via a named-export list (`export { Dashboard
+  // as default }`). That left the guard true even though a default export
+  // already existed, so a SECOND `export default <name>` got appended.
+  // Two `export default` statements in one module is a hard SyntaxError
+  // ("Only one default export allowed per module") — worse than the
+  // already-tracked "which name is the real default" ambiguity (#1617),
+  // since the assembled /App.tsx no longer parses at all.
+  it('does NOT append a second default export when the file already has a renamed default via `export { Name as default }`', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "function Dashboard() { return (<div>dash</div>) }\nfunction Footer() { return (<div>footer</div>) }\nexport { Dashboard as default }",
+    })
+    const exportDefaultCount = (built['/App.tsx'].match(/export\s+default\b/g) || []).length
+    expect(exportDefaultCount).toBe(0)
+    expect(built['/App.tsx']).toMatch(/export\s*\{\s*Dashboard\s+as\s+default\s*\}/)
+  })
 })

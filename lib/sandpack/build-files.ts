@@ -18,7 +18,7 @@ import { fixJsxErrors } from './jsx-fixer'
 import { getBuiltinFiles } from './setup'
 import { sanitizeForSandpack } from '../code-validator'
 import { sandpackDbTokenShim } from './db-token-shim'
-import { detectRootComponent } from '../component-detector'
+import { detectRootComponent, hasDefaultExport } from '../component-detector'
 
 /**
  * #1561 — when provided, injects the db-token-shim module (see that file's
@@ -176,7 +176,7 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
   // entire blob (wrong when a sibling helper component is declared before
   // the real root), and matched `function` only — a root component declared
   // as `const HomePage = () => {...}` with just a bare `export { HomePage }`
-  // list (no `export default` anywhere, so the `!mainCode.includes(...)`
+  // list (no `export default` anywhere, so the `!hasDefaultExport(...)`
   // guard above is true) never matched at all, leaving `/App.tsx` with NO
   // default export. Sandpack's `/index.tsx` does `import App from './App'`,
   // so that resolved to `undefined` and crashed with "Element type is
@@ -184,7 +184,16 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
   // fixed in sibling pipelines. detectRootComponent() handles arrow/class/
   // function declarations alike and picks the LAST JSX-returning PascalCase
   // candidate (root is conventionally last), not just the first `function`.
-  if (mainCode && !mainCode.includes('export default')) {
+  //
+  // Real bug found this run: a plain `!mainCode.includes('export default')`
+  // check (the literal text) is blind to a renamed default export via a
+  // named-export list (`export { Dashboard as default }`) — a real
+  // generated-code shape. That left this guard true even though a default
+  // export already exists, so a SECOND `export default <name>` got appended
+  // below — two default exports in one module is a hard SyntaxError, worse
+  // than the already-tracked "which name" ambiguity (#1617) since the file
+  // no longer parses at all. hasDefaultExport() recognizes both forms.
+  if (mainCode && !hasDefaultExport(mainCode)) {
     const detected = detectRootComponent(mainCode).name
     if (detected) {
       mainCode += `\n\nexport default ${detected}`

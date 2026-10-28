@@ -12,6 +12,7 @@ import { enhancePromptWithMockData } from '@/lib/mock-data-generator'
 import { updatePreviewPartial, storePreview, getChatDataDurable } from '@/lib/preview-store'
 import { validateGeneratedCode } from '@/lib/code-validator'
 import { validateOutput, validateFileImports } from '@/lib/build/output-validator'
+import { hasDefaultExport } from '@/lib/component-detector'
 import { buildValidationFallbackComponent } from '@/lib/validation-fallback'
 import { runValidationRetryLoop, buildRepairPrompt, extractErrorWindow } from '@/lib/generation-retry'
 import { checkObedience, buildObediencePrompt, narrowToPrimitiveComplianceOnly, evaluatePrimitiveComplianceRetry } from '@/lib/build/obedience-gate'
@@ -1469,8 +1470,14 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                     for (let i = 0; i < op - cp; i++) closure += ')'
                     if (op > cp) closure += ';\n'
                     for (let i = 0; i < ob - cb; i++) closure += '}\n'
-                    // Ensure there's a default export
-                    if (!fullContent.includes('export default')) {
+                    // Ensure there's a default export. hasDefaultExport() also
+                    // recognizes a renamed default via a named-export list
+                    // (`export { Foo as default }`) — a plain
+                    // `.includes('export default')` check missed that real
+                    // shape and could append a SECOND default export here,
+                    // a hard SyntaxError (see lib/component-detector.ts's
+                    // hasDefaultExport doc comment for the full writeup).
+                    if (!hasDefaultExport(fullContent)) {
                       const funcMatch = fullContent.match(/(?:function|const)\s+([A-Z]\w+)/)
                       if (funcMatch) closure += `\nexport default ${funcMatch[1]};\n`
                     }
