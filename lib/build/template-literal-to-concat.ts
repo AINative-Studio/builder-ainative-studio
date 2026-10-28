@@ -36,32 +36,177 @@
  * This is correct for every interpolation shape (plain identifiers, member
  * expressions, ternaries, `&&`, function calls, nested template literals) —
  * parenthesizing an already-simple expression is always a no-op.
+ *
+ * #1643 FOLLOW-UP BUG: locating the outer template literal and each `${}`
+ * interpolation inside it originally used flat regexes (`` [^`]* `` /
+ * `\$\{[^}]+\}`) that cannot cross a `}` or a backtick that appears INSIDE
+ * the interpolated expression itself — e.g. an inline object-literal arg to
+ * a `cn()`/`clsx()` call (`` ${isActive ? cn({active: true}) : 'x'} ``, an
+ * extremely common conditional-class pattern in this exact codebase's own
+ * shadcn/Tailwind ecosystem) or a nested template literal
+ * (`` ${open ? `${extra}-open` : 'closed'} ``). The flat scan stopped at the
+ * FIRST `}`/backtick — inside the nesting, not the interpolation's real end
+ * — so the join spliced static text and expression fragments at the wrong
+ * boundary, producing a hard SyntaxError (unbalanced parens/braces) that
+ * crashes the entire preview compile, the exact blank-page class this file
+ * exists to prevent. Fixed by depth-counting the braces (and skipping over
+ * nested strings/template literals while counting) to find each
+ * interpolation's TRUE extent instead of assuming it is itself brace-free.
  */
 export function convertTemplateLiteralAttrsToConcat(code: string): string {
-  const templateLiteralRegex = /(className|style)=\{`([^`]*)`\}/g
-  return code.replace(templateLiteralRegex, (_match, attr: string, content: string) => {
-    if (!content.includes('${')) {
-      const singleLine = content.replace(/\s+/g, ' ').trim()
-      return `${attr}={\`${singleLine}\`}`
+  const attrOpenRe = /(className|style)=\{`/g
+  let result = ''
+  let cursor = 0
+  let m: RegExpExecArray | null
+
+  while ((m = attrOpenRe.exec(code)) !== null) {
+    const attr = m[1]
+    const backtickIdx = m.index + m[0].length - 1
+    const closeBacktickIdx = findBacktickEnd(code, backtickIdx)
+
+    if (closeBacktickIdx === -1 || code[closeBacktickIdx + 1] !== '}') {
+      // Can't safely locate the end of this template literal (unbalanced
+      // input) — leave it untouched rather than guess at a wrong boundary.
+      attrOpenRe.lastIndex = m.index + m[0].length
+      continue
     }
 
-    const parts = content.split(/(\$\{[^}]+\})/)
-    const convertedParts = parts
-      .map((part: string) => {
-        if (part.startsWith('${') && part.endsWith('}')) {
-          // THE FIX: parenthesize the interpolated expression so `+` can
-          // never reach inside a ternary/logical-and/anything else it binds
-          // tighter than.
-          return `(${part.slice(2, -1).trim()})`
-        }
-        if (part) {
-          const cleaned = part.replace(/\s+/g, ' ')
-          return cleaned ? `"${cleaned}"` : ''
-        }
-        return ''
-      })
-      .filter((p: string) => p !== '')
+    const content = code.slice(backtickIdx + 1, closeBacktickIdx)
+    result += code.slice(cursor, m.index) + buildReplacement(attr, content)
+    cursor = closeBacktickIdx + 2
+    attrOpenRe.lastIndex = cursor
+  }
 
-    return `${attr}={${convertedParts.join(' + ')}}`
-  })
+  result += code.slice(cursor)
+  return result
+}
+
+function buildReplacement(attr: string, content: string): string {
+  if (!content.includes('${')) {
+    const singleLine = content.replace(/\s+/g, ' ').trim()
+    return `${attr}={\`${singleLine}\`}`
+  }
+
+  const parts = splitTemplateLiteralContent(content)
+  const convertedParts = parts
+    .map((part) => {
+      if (part.type === 'expr') {
+        // THE FIX: parenthesize the interpolated expression so `+` can
+        // never reach inside a ternary/logical-and/anything else it binds
+        // tighter than.
+        return `(${part.value.trim()})`
+      }
+      const cleaned = part.value.replace(/\s+/g, ' ')
+      return cleaned ? `"${cleaned}"` : ''
+    })
+    .filter((p) => p !== '')
+
+  return `${attr}={${convertedParts.join(' + ')}}`
+}
+
+/** A template literal's content split into alternating static-text and `${}`-expression parts, in source order. */
+function splitTemplateLiteralContent(
+  content: string,
+): Array<{ type: 'text' | 'expr'; value: string }> {
+  const parts: Array<{ type: 'text' | 'expr'; value: string }> = []
+  let i = 0
+  let textStart = 0
+
+  while (i < content.length) {
+    if (content[i] === '\\') {
+      i += 2
+      continue
+    }
+    if (content[i] === '$' && content[i + 1] === '{') {
+      if (i > textStart) parts.push({ type: 'text', value: content.slice(textStart, i) })
+      const closeIdx = findMatchingBrace(content, i + 1)
+      const end = closeIdx === -1 ? content.length : closeIdx
+      parts.push({ type: 'expr', value: content.slice(i + 2, end) })
+      i = end + 1
+      textStart = i
+      continue
+    }
+    i++
+  }
+  if (textStart < content.length) parts.push({ type: 'text', value: content.slice(textStart) })
+
+  return parts
+}
+
+/**
+ * Given the index of a `{` character, return the index of the `}` that
+ * closes it (honoring arbitrarily nested braces, and skipping over nested
+ * string/template literals so a quote or backtick character inside them is
+ * never mistaken for brace-relevant syntax), or -1 if unbalanced.
+ */
+function findMatchingBrace(code: string, openIdx: number): number {
+  let depth = 0
+  let i = openIdx
+  while (i < code.length) {
+    const ch = code[i]
+    if (ch === '\\') {
+      i += 2
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      if (end === -1) return -1
+      i = end + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      if (end === -1) return -1
+      i = end + 1
+      continue
+    }
+    if (ch === '{') {
+      depth++
+      i++
+      continue
+    }
+    if (ch === '}') {
+      depth--
+      if (depth === 0) return i
+      i++
+      continue
+    }
+    i++
+  }
+  return -1
+}
+
+/** Given the index of a `` ` `` character, return the index of the matching closing backtick, honoring nested `${}` interpolations. */
+function findBacktickEnd(code: string, openIdx: number): number {
+  let i = openIdx + 1
+  while (i < code.length) {
+    const ch = code[i]
+    if (ch === '\\') {
+      i += 2
+      continue
+    }
+    if (ch === '`') return i
+    if (ch === '$' && code[i + 1] === '{') {
+      const closeIdx = findMatchingBrace(code, i + 1)
+      if (closeIdx === -1) return -1
+      i = closeIdx + 1
+      continue
+    }
+    i++
+  }
+  return -1
+}
+
+/** Given the index of an opening quote character, return the index of the matching closing quote. */
+function findStringEnd(code: string, openIdx: number, quote: string): number {
+  let i = openIdx + 1
+  while (i < code.length) {
+    if (code[i] === '\\') {
+      i += 2
+      continue
+    }
+    if (code[i] === quote) return i
+    i++
+  }
+  return -1
 }

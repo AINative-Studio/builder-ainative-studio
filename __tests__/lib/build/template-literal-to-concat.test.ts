@@ -74,4 +74,44 @@ describe('convertTemplateLiteralAttrsToConcat', () => {
     const code = 'className="fixed top-0 left-0"'
     expect(convertTemplateLiteralAttrsToConcat(code)).toBe(code)
   })
+
+  it('#1643: a nested object-literal arg inside the interpolation (e.g. cn({...})) does not truncate the expression', () => {
+    // Real bug: the old flat `\$\{[^}]+\}` scan for the interpolation's
+    // extent stopped at the FIRST `}` — the one closing the nested object
+    // literal argument to cn(), not the real end of the `${}` — splicing
+    // static text and expression fragments at the wrong boundary and
+    // producing a hard SyntaxError (unbalanced parens/braces).
+    const code = 'className={`base ${isActive ? cn({active: true}) : "x"} end`}'
+    const out = convertTemplateLiteralAttrsToConcat(code)
+    expect(out).toContain('+ (isActive ? cn({active: true}) : "x")')
+
+    const cn = (opts: Record<string, boolean>) =>
+      Object.keys(opts).filter((k) => opts[k]).join(' ')
+    const evalClassName = (isActive: boolean) => {
+      const match = out.match(/=\{(.+)\}$/)
+      // eslint-disable-next-line no-new-func
+      return new Function('isActive', 'cn', `return ${match![1]}`)(isActive, cn)
+    }
+    expect(evalClassName(true)).toBe('base active end')
+    expect(evalClassName(false)).toBe('base x end')
+  })
+
+  it('#1643: a nested template literal inside the interpolation is handled, not left unconverted', () => {
+    const code = 'className={`base ${open ? `${extra}-open` : "closed"} end`}'
+    const out = convertTemplateLiteralAttrsToConcat(code)
+    expect(out).toContain('+ (open ? `${extra}-open` : "closed")')
+
+    const evalClassName = (open: boolean, extra: string) => {
+      const match = out.match(/=\{(.+)\}$/)
+      // eslint-disable-next-line no-new-func
+      return new Function('open', 'extra', `return ${match![1]}`)(open, extra)
+    }
+    expect(evalClassName(true, 'wide')).toBe('base wide-open end')
+    expect(evalClassName(false, 'wide')).toBe('base closed end')
+  })
+
+  it('#1643: a genuinely unbalanced interpolation is left untouched rather than mis-split', () => {
+    const code = 'className={`base ${isActive ? cn({active: true : "x"} end`}'
+    expect(convertTemplateLiteralAttrsToConcat(code)).toBe(code)
+  })
 })
