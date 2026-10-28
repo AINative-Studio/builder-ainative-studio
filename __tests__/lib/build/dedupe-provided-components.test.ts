@@ -47,6 +47,59 @@ describe('dedupeProvidedComponents', () => {
     expect(out).toMatch(/function App\(/)
   })
 
+  // Real bug (2026-10-28): a flat `\([^)]*\)` for the param list cannot
+  // cross a `)` INSIDE the param list — e.g. a destructured default value
+  // that calls a function. The redeclaration below was never matched at
+  // all, so it survived dedup and would throw "Identifier 'Button' has
+  // already been declared" alongside the real import.
+  it('#1619-class: removes a const-arrow redeclaration whose destructured param has a call-expression default', () => {
+    const code = [
+      "import { Button } from './components/ui/button'",
+      "const Button = ({ variant = getDefaultVariant() }) => {",
+      "  return (<button className={variant}>Click</button>);",
+      "}",
+      "",
+      "function App() {",
+      "  return <Button variant=\"primary\">Hi</Button>;",
+      "}",
+    ].join('\n')
+    const out = dedupeProvidedComponents(code)
+    expect(out).not.toMatch(/const Button\s*=/)
+    expect(out).toMatch(/function App\(/)
+  })
+
+  it('#1619-class: removes a single-line function redeclaration whose param has a call-expression default', () => {
+    const code = [
+      "function Card({ variant = getDefaultVariant() }){ return (variant); } // stub",
+      "",
+      "function Customers() {",
+      "  function helper() { return 1; }",
+      "  return <div>customers</div>;",
+      "}",
+    ].join('\n')
+    const out = dedupeProvidedComponents(code)
+    expect(out).not.toMatch(/function Card\(/)
+    expect(out).toMatch(/function Customers\(/)
+    expect(out).toMatch(/function helper\(/)
+  })
+
+  it('#1619-class: removes a multi-line function redeclaration whose param has a nested-destructure call-expression default', () => {
+    const code = [
+      "function Badge({ pair: [a, b] = getPair() }) {",
+      "  return (",
+      "    <span>{a}{b}</span>",
+      "  );",
+      "}",
+      "",
+      "function App() {",
+      "  return <Badge />;",
+      "}",
+    ].join('\n')
+    const out = dedupeProvidedComponents(code)
+    expect(out).not.toMatch(/function Badge\(/)
+    expect(out).toMatch(/function App\(/)
+  })
+
   /**
    * THE Dispatch bug, reproduced exactly. A single-line stub function using
    * a scaffold-provided name (Card) appears BEFORE a real, unrelated,

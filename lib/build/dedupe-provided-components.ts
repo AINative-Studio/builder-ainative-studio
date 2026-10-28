@@ -103,6 +103,59 @@ export const SCAFFOLD_PROVIDED_COMPONENTS = [
  * generated code, safely — never consuming past its own boundary into a
  * later, unrelated function.
  */
+/**
+ * Find the index of the `)` that closes the `(` at `openIdx` (honoring
+ * arbitrarily nested parens), or -1 if unbalanced.
+ */
+function findMatchingParen(code: string, openIdx: number): number {
+  let depth = 0
+  for (let i = openIdx; i < code.length; i++) {
+    if (code[i] === '(') depth++
+    else if (code[i] === ')') {
+      depth--
+      if (depth === 0) return i
+    }
+  }
+  return -1
+}
+
+/**
+ * Remove every occurrence of `headRe` (a global regex that must end in the
+ * literal `(` opening a parameter list) from `code`, where the text
+ * immediately following the param list's TRUE closing paren matches
+ * `afterParamsRe`.
+ *
+ * #builder (2026-10-28): all three removal patterns below used to match the
+ * param list itself with a flat `\([^)]*\)`, which cannot cross a `)`
+ * character INSIDE the param list — e.g. a destructured default value that
+ * calls a function (`({ variant = getDefaultVariant() }) => ...`). That
+ * left the redeclaration completely unmatched and therefore un-removed,
+ * producing the exact "Identifier 'X' has already been declared" crash
+ * this module exists to prevent. Finding the param list's real closing
+ * paren by depth-counting (no regex recursion needed) fixes this for all
+ * three call sites without changing behavior for any param list that
+ * already worked (a flat list with no nested parens finds the same paren
+ * either way).
+ */
+function removeBalancedParamDecl(code: string, headRe: RegExp, afterParamsRe: RegExp): string {
+  let out = ''
+  let lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = headRe.exec(code))) {
+    const openIdx = m.index + m[0].length - 1
+    const closeIdx = findMatchingParen(code, openIdx)
+    if (closeIdx === -1) continue
+    const afterMatch = code.slice(closeIdx + 1).match(afterParamsRe)
+    if (!afterMatch) continue
+    const declEnd = closeIdx + 1 + afterMatch[0].length
+    out += code.slice(lastIndex, m.index)
+    lastIndex = declEnd
+    headRe.lastIndex = declEnd
+  }
+  out += code.slice(lastIndex)
+  return out
+}
+
 export function dedupeProvidedComponents(
   code: string,
   names: readonly string[] = SCAFFOLD_PROVIDED_COMPONENTS,
@@ -111,20 +164,27 @@ export function dedupeProvidedComponents(
 
   for (const comp of names) {
     // Remove const declarations like: const Button = ({ children }) => ...
-    const constPattern = new RegExp(
-      `const\\s+${comp}\\s*=\\s*\\([^)]*\\)\\s*=>\\s*[\\s\\S]*?(?=\\n(?:const|function|class|let|var|$))`,
-      'g',
+    out = removeBalancedParamDecl(
+      out,
+      new RegExp(`const\\s+${comp}\\s*=\\s*\\(`, 'g'),
+      /^\s*=>\s*[\s\S]*?(?=\n(?:const|function|class|let|var|$))/,
     )
-    out = out.replace(constPattern, '')
 
     // Remove function declarations like: function Button() { ... } — try
     // the single-line shape first (see this module's doc comment for why).
-    const singleLineFuncPattern = new RegExp(`function\\s+${comp}\\s*\\([^)]*\\)\\s*\\{[^\\n{}]*\\}`, 'g')
-    if (singleLineFuncPattern.test(out)) {
-      out = out.replace(singleLineFuncPattern, '')
+    const singleLineRemoved = removeBalancedParamDecl(
+      out,
+      new RegExp(`function\\s+${comp}\\s*\\(`, 'g'),
+      /^\s*\{[^\n{}]*\}/,
+    )
+    if (singleLineRemoved !== out) {
+      out = singleLineRemoved
     } else {
-      const funcPattern = new RegExp(`function\\s+${comp}\\s*\\([^)]*\\)\\s*\\{[\\s\\S]*?\\n\\}`, 'g')
-      out = out.replace(funcPattern, '')
+      out = removeBalancedParamDecl(
+        out,
+        new RegExp(`function\\s+${comp}\\s*\\(`, 'g'),
+        /^\s*\{[\s\S]*?\n\}/,
+      )
     }
   }
 
