@@ -229,6 +229,64 @@ describe('detectRootComponent', () => {
       const r = detectRootComponent(code)
       expect(r.name).toBe('Orbit')
     })
+
+    // Real bug found via an overnight static-analysis sweep: a root component
+    // declared with an explicit TS type annotation (e.g. `: React.FC<Props>`)
+    // was invisible to the old `const\s+([A-Z]\w*)\s*=` regex, which required
+    // `=` immediately after the name. When such a component is exported only
+    // via a bare `export { Name }` list (no `export default`, so priorities
+    // 1/2 never fire), detection used to fall all the way through to
+    // `{name: null}` — the same "Element type is invalid" crash class this
+    // module's whole fix history exists to prevent.
+    it('detects a TS-typed arrow-const component (React.FC<Props> annotation), bare export list', () => {
+      const code = `
+        import React from 'react'
+        const WrenchHub: React.FC<{}> = () => {
+          return (<div>hub</div>)
+        }
+        export { WrenchHub }
+      `
+      const r = detectRootComponent(code)
+      expect(r.name).toBe('WrenchHub')
+      expect(r.source).toBe('pascalcase-jsx')
+    })
+
+    it('detects a TS-typed arrow-const component with a bare FC annotation (no namespace, no generic)', () => {
+      const code = `
+        import { FC } from 'react'
+        const QuartzPanel: FC = () => {
+          return <div>quartz</div>
+        }
+        export { QuartzPanel }
+      `
+      const r = detectRootComponent(code)
+      expect(r.name).toBe('QuartzPanel')
+    })
+
+    it('still picks the LAST-defined JSX component when earlier siblings are TS-typed', () => {
+      const code = `
+        const Header: React.FC<{}> = () => { return <header>h</header> }
+        const Footer: React.FC<{}> = () => { return <footer>f</footer> }
+        const GalaxyApp: React.FC<{}> = () => { return (<div><Header /><Footer /></div>) }
+      `
+      const r = detectRootComponent(code)
+      expect(r.name).toBe('GalaxyApp')
+    })
+
+    it('a preceding sibling with a function-type annotation does not confuse detection of the typed root component', () => {
+      // A sibling `const` with a function-type annotation (`: () => void`,
+      // containing a real `=` inside `=>`) is deliberately NOT matched by the
+      // narrowed type-annotation group (it only tolerates an identifier/
+      // dotted-generic type, not an arrow-type) — confirming the fix doesn't
+      // use a greedy `[^=]+` that could mis-scan past it, and that the real
+      // typed root component right after is still found correctly.
+      const code = `
+        const onReady: () => void = () => {}
+        const CometPage: React.FC<{}> = () => { return <div>comet</div> }
+      `
+      const r = detectRootComponent(code)
+      expect(r.name).toBe('CometPage')
+    })
   })
 
   describe('priority 4 — known-name tiebreaker', () => {

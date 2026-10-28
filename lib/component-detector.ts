@@ -243,9 +243,26 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
   // Collect every top-level function / arrow-const / class declaration with a
   // PascalCase name, in source order, then pick the LAST one that returns JSX and
   // is not a known non-root (library) name.
+  //
+  // The `const` branch originally required `=` immediately after the name
+  // (`const\s+([A-Z]\w*)\s*=`), which only matches an UNTYPED arrow-const —
+  // `const Dashboard = () => {...}`. A root component declared with an
+  // explicit TS type annotation, e.g. `const Dashboard: React.FC<Props> =
+  // () => {...}` (an extremely common LLM-codegen pattern), has a `:
+  // Type<...>` clause between the name and `=` that the old regex could not
+  // skip over, so the declaration was invisible to this scan entirely. When
+  // that component is exported only via a bare `export { Dashboard }` list
+  // (not `export default`) — so priorities 1/2 above never fire — detection
+  // fell all the way through to `{name: null, source: 'none'}`, the same
+  // "Component Not Found" / "Element type is invalid" outcome the rest of
+  // this module's fix history (#1523/#1536/#1524) exists to prevent. The
+  // optional non-capturing group below tolerates a type annotation (a
+  // dotted/generic type name, e.g. `React.FC<Props>`, `FC`, `Component<P,
+  // S>`) between the name and `=` without needing `[^=]+` (which would wrongly
+  // swallow a real `=` inside an arrow-type annotation like `: () => void`).
   const candidates: { name: string; index: number }[] = []
   const declRe =
-    /(?:^|\n)\s*(?:export\s+)?(?:async\s+)?(?:function\s+([A-Z]\w*)|const\s+([A-Z]\w*)\s*=|class\s+([A-Z]\w*))/g
+    /(?:^|\n)\s*(?:export\s+)?(?:async\s+)?(?:function\s+([A-Z]\w*)|const\s+([A-Z]\w*)\s*(?::\s*[\w.$]+(?:<[^>]*>)?)?\s*=|class\s+([A-Z]\w*))/g
   let m: RegExpExecArray | null
   while ((m = declRe.exec(code)) !== null) {
     const name = m[1] || m[2] || m[3]
