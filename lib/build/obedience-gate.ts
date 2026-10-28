@@ -121,15 +121,49 @@ export function hasFakeLeadCaptureGap(code: string): boolean {
  * never an acceptable success UI for a form that persists real user data,
  * regardless of what else the handler does.
  */
+/** Index of the `)` matching the `(` at `openIndex`, or -1 if unbalanced. */
+function findMatchingParen(code: string, openIndex: number): number {
+  let depth = 0
+  for (let i = openIndex; i < code.length; i++) {
+    if (code[i] === '(') depth++
+    else if (code[i] === ')') {
+      depth--
+      if (depth === 0) return i
+    }
+  }
+  return -1
+}
+
 export function hasAlertInLeadCaptureGap(code: string): boolean {
   if (!looksLikeLeadCapture(code)) return false
   // Scope the alert() search to each matched handler's own body (brace-balanced),
   // not the whole file — an unrelated alert() elsewhere (e.g. a delete-confirm
   // dialog) is a different, legitimate use this gap must not false-positive on.
-  const handlerNameRe = /(handleSubmit|handleEarlyAccess|handleWaitlist|handleSignup)\s*[:=]\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*\{/g
-  let match: RegExpExecArray | null
-  while ((match = handlerNameRe.exec(code))) {
-    const bodyStart = match.index + match[0].length - 1 // position of the opening {
+  //
+  // The param list after the handler name is walked with depth-aware
+  // findMatchingParen() rather than a flat `\([^)]*\)` regex — the same
+  // nested-paren bug class as #1619/#1621 (component-detector.ts,
+  // dedupe-provided-components.ts): `[^)]*` can't cross a `)` INSIDE the
+  // param list, so a destructured default that calls a function (e.g.
+  // `async (e = getDefaultEvent()) => {`) made the whole handler invisible
+  // to this gap, silently missing a real alert()-freezes-the-page bug.
+  const handlerStartRe = /(handleSubmit|handleEarlyAccess|handleWaitlist|handleSignup)\s*[:=]\s*(?:async\s*)?/g
+  let m: RegExpExecArray | null
+  while ((m = handlerStartRe.exec(code))) {
+    const pos = m.index + m[0].length
+    let paramEnd: number
+    if (code[pos] === '(') {
+      const close = findMatchingParen(code, pos)
+      if (close === -1) continue
+      paramEnd = close + 1
+    } else {
+      const ident = /^[A-Za-z_$][\w$]*/.exec(code.slice(pos))
+      if (!ident) continue
+      paramEnd = pos + ident[0].length
+    }
+    const arrow = /^\s*=>\s*\{/.exec(code.slice(paramEnd))
+    if (!arrow) continue
+    const bodyStart = paramEnd + arrow[0].length - 1 // position of the opening {
     let depth = 0
     let end = bodyStart
     for (; end < code.length; end++) {
