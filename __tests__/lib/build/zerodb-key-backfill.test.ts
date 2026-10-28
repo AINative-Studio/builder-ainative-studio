@@ -187,7 +187,7 @@ describe('runZerodbKeyBackfillSweep — repairing a missing key', () => {
     )
   })
 
-  it('records the minted key as permanent even when the registry row still says tmp — a freshly minted key is not the original 72h trial key', async () => {
+  it('records the minted key as permanent even when the registry row still says tmp — a freshly minted key is not the original trial key', async () => {
     const { runZerodbKeyBackfillSweep, storeCompanyZerodbKey } = await load({
       apps: [{ slug: 'trialco', zerodbProjectId: 'proj-trial', keyKind: 'tmp' }],
       mint: { 'proj-trial': 'sk_minted_for_trial' },

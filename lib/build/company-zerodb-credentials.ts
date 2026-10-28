@@ -77,7 +77,7 @@ interface StoredZerodbKeyRow {
   projectId: string
   /** Company slug, for operability only (never the lookup key). */
   slug?: string
-  /** 'permanent' (sk_) or 'tmp' (72h trial) — mirrors InstantDbResult.keyKind. */
+  /** 'permanent' (sk_) or 'tmp' (~24h trial, #1579/#1602) — mirrors InstantDbResult.keyKind. */
   keyKind?: 'tmp' | 'permanent'
   /**
    * The REAL expiry core returned at mint time (InstantDbResult.expiresAt,
@@ -159,9 +159,9 @@ export interface ResolvedZerodbKey {
    * Why resolution failed. 'not_stored' is the expected case for a company
    * provisioned before this fix shipped (#806) — it must surface as a real
    * error, never a shared-key fallback. 'trial_expired' (#1579) is a tmp_ key
-   * past its 72h window — detected here, before ever calling ZeroDB, so the
-   * caller gets an honest, distinct reason instead of ZeroDB's own opaque
-   * 401 AUTH_REQUIRED.
+   * past its real expiry window — detected here, before ever calling ZeroDB,
+   * so the caller gets an honest, distinct reason instead of ZeroDB's own
+   * opaque 401 AUTH_REQUIRED.
    */
   reason?: 'not_stored' | 'decrypt_failed' | 'unconfigured' | 'lookup_failed' | 'trial_expired'
 }
@@ -200,27 +200,37 @@ async function resolveStoredRow(projectId: string): Promise<StoredZerodbKeyRow |
  * that isn't scoped to the target project is precisely the cross-tenant
  * mis-scoping bug this module fixes.
  *
- * TRIAL EXPIRY (#1579, corrected by #1602): a `tmp_` key minted for an
- * anonymous/unpaid provision has a REAL expiry core returns at mint time
- * (`expires_at`) — confirmed live (#1602) to be 24h, not the `TRIAL_WINDOW_MS`
- * (72h) fallback this used to check unconditionally. That 3x-too-generous
- * guess left a real ~48h window where the key was already dead at ZeroDB but
- * this function still said it was fine, so the request passed through and hit
- * ZeroDB's own generic, hard-to-diagnose 401 — the exact failure #1579 was
- * built to prevent, just shifted earlier. Now prefers the row's real
- * `expiresAt` when present; falls back to `createdAt + TRIAL_WINDOW_MS` only
- * for rows stored before this field existed (or when core ever omits
- * `expires_at`, per instant-db.ts's own fallback). ZeroDB itself enforces the
- * real expiry regardless of anything Builder does. There is no refresh path
- * for an unclaimed tmp_ project: core's key-mint endpoint (mintProjectScopedKey,
- * #1013) requires the Builder admin identity to OWN the project, and tmp_
- * anonymous provisions explicitly are NOT admin-owned (see
- * fileProjectUnderBuilderWorkspace's own doc comment in instant-db.ts) —
- * minting a replacement key would 404. So this checks expiry up front and
- * returns the honest 'trial_expired' reason BEFORE ever calling ZeroDB. A
- * company that's since been claimed/paid has its row's keyKind flipped to
- * 'permanent' by the claim flow (claimCompanyProject), so a real paid company
- * is never affected by this.
+ * TRIAL EXPIRY + AUTO-RENEWAL (#1579, corrected by #1602, renewal added
+ * #1579-followup): a `tmp_` key minted for an anonymous/unpaid provision has
+ * a REAL expiry core returns at mint time (`expires_at`) — confirmed live
+ * (#1602) to be 24h, not the `TRIAL_WINDOW_MS` (72h) fallback this used to
+ * check unconditionally. Prefers the row's real `expiresAt` when present;
+ * falls back to `createdAt + TRIAL_WINDOW_MS` only for rows stored before
+ * that field existed (or when core ever omits `expires_at`).
+ *
+ * On a confirmed expiry, this now ATTEMPTS A RENEWAL via
+ * `mintProjectScopedKey` — minting a fresh key against the SAME existing
+ * project_id, never re-provisioning (which would orphan the founder's real
+ * data under an abandoned project). This only works because core confirmed
+ * (core#9282, 2026-10-27) that Builder's admin/service identity resolves to
+ * a real user who is a genuine member of the specific org anonymous
+ * instant-db projects get attributed to — NOT a universal ownership bypass,
+ * and NOT a contract core enforces or tests today. It depends on that
+ * account's org membership staying as-is, which could change for reasons
+ * entirely unrelated to this feature. So a renewal attempt is always
+ * best-effort: a 404/failure here must fall through to the same honest
+ * 'trial_expired' this already returned before renewal existed, never throw,
+ * and never block the caller waiting on a result. A successful renewal
+ * stores the fresh (permanent, `sk_`) key via `storeCompanyZerodbKey` and
+ * returns it immediately — the very request that triggered renewal is
+ * served too, not just the next one. Concurrent requests hitting the same
+ * expired key at once may each mint their own fresh key (core allows
+ * multiple keys per project); the append-only, latest-wins store makes that
+ * harmless — deliberately not de-duped, since the alternative is in-memory
+ * coordination state this module has otherwise never needed. A company
+ * that's since been claimed/paid has its row's keyKind flipped to
+ * 'permanent' by the claim flow (claimCompanyProject) before ever reaching
+ * this check, so a real paid company is never affected by any of this.
  */
 export async function resolveCompanyZerodbKey(projectId: string): Promise<ResolvedZerodbKey> {
   if (!projectId) return { ok: false, reason: 'not_stored' }
@@ -234,13 +244,13 @@ export async function resolveCompanyZerodbKey(projectId: string): Promise<Resolv
   if (!row) return { ok: false, reason: 'not_stored' }
   if (row.keyKind === 'tmp') {
     const realExpiry = row.expiresAt ? new Date(row.expiresAt).getTime() : NaN
-    if (Number.isFinite(realExpiry)) {
-      if (Date.now() > realExpiry) return { ok: false, reason: 'trial_expired' }
-    } else if (row.createdAt) {
-      const mintedAt = new Date(row.createdAt).getTime()
-      if (Number.isFinite(mintedAt) && Date.now() - mintedAt > TRIAL_WINDOW_MS) {
-        return { ok: false, reason: 'trial_expired' }
-      }
+    const expired = Number.isFinite(realExpiry)
+      ? Date.now() > realExpiry
+      : !!(row.createdAt && Date.now() - new Date(row.createdAt).getTime() > TRIAL_WINDOW_MS)
+    if (expired) {
+      const renewed = await renewExpiredKey(projectId, row.slug)
+      if (renewed.ok) return renewed
+      return { ok: false, reason: 'trial_expired' }
     }
   }
   try {
@@ -249,6 +259,27 @@ export async function resolveCompanyZerodbKey(projectId: string): Promise<Resolv
     return { ok: true, apiKey }
   } catch {
     return { ok: false, reason: 'decrypt_failed' }
+  }
+}
+
+/**
+ * Best-effort renewal for an expired `tmp_` key (#1579-followup). Mints a
+ * fresh key against the EXISTING project via `mintProjectScopedKey` (never
+ * re-provisioning), stores it, and returns it directly so the triggering
+ * request is served immediately rather than waiting for a second round trip.
+ * Never throws — a renewal failure (404, network error, scope_mismatch, …)
+ * is swallowed here and reported as {ok:false}, letting the caller fall back
+ * to the pre-existing honest 'trial_expired' behavior.
+ */
+async function renewExpiredKey(projectId: string, slug?: string): Promise<ResolvedZerodbKey> {
+  try {
+    const minted = await mintProjectScopedKey(projectId, { slug, name: `builder-auto-renew-1579-${slug || projectId}` })
+    if (!minted.ok || !minted.apiKey) return { ok: false, reason: 'not_stored' }
+    const stored = await storeCompanyZerodbKey(projectId, minted.apiKey, { slug, keyKind: 'permanent' }).catch(() => false)
+    if (!stored) return { ok: false, reason: 'not_stored' }
+    return { ok: true, apiKey: minted.apiKey }
+  } catch {
+    return { ok: false, reason: 'not_stored' }
   }
 }
 

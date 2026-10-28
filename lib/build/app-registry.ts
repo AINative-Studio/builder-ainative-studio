@@ -76,11 +76,12 @@ export interface AppEntry {
   // re-parent actually stuck (admin-owned projects) vs is still pending core support.
   workspaceId?: string
   workspaceFiled?: boolean
-  // When a tmp_ trial project expires (72h ISO from Instant DB). Undefined for
-  // permanent projects. Drives the "trial expires in X — upgrade to keep it" UI (#207).
+  // When a tmp_ trial project expires (ISO, from Instant DB's real expires_at —
+  // ~24h, #1579/#1602). Undefined for permanent projects. Drives the "trial
+  // expires in X — upgrade to keep it" UI (#207).
   trialExpiresAt?: string
   // Which kind of Instant DB key backs this project (#243, per user directive):
-  //  'tmp'       — UNPAID provision → tmp_ key, 72h trial, must be claimed on payment.
+  //  'tmp'       — UNPAID provision → tmp_ key, ~24h trial, must be claimed on payment.
   //  'permanent' — PAID provision (sk_ key) OR a tmp_ project already claimed.
   keyKind?: 'tmp' | 'permanent'
   // Claim token for a tmp_ project, needed to upgrade tmp_ → permanent on payment
@@ -1280,7 +1281,7 @@ export async function setAppGitRepo(
 /**
  * Upgrade a company's tmp_ Instant DB project to a PERMANENT one on payment (#243).
  *
- * When an anonymous founder provisions, they get a tmp_ key (72h expiry). Once they
+ * When an anonymous founder provisions, they get a tmp_ key (~24h expiry, #1579/#1602). Once they
  * pay and have an account, the #241 post-checkout return path calls this with the
  * founder's AINative JWT: it hits /api/v1/public/instant-db/claim with the stored
  * {project_id, token} to associate the project to their account and mint a permanent

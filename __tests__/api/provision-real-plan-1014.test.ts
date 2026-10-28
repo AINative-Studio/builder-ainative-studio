@@ -89,7 +89,7 @@ vi.mock('@/lib/build/instant-db', () => ({
   provisionInstantDb: h.provisionInstantDb,
   fileProjectUnderBuilderWorkspace: vi.fn(async () => ({ filed: true })),
   BUILDER_WORKSPACE_ID: 'test-workspace',
-  TRIAL_WINDOW_MS: 72 * 60 * 60 * 1000,
+  TRIAL_WINDOW_MS: 24 * 60 * 60 * 1000, // real value, #1579/#1602 — was wrongly 72h
 }))
 vi.mock('@/lib/build/zeropipeline', () => ({ provisionPipeline: vi.fn(async () => ({ ok: false })) }))
 vi.mock('@/lib/build/zerocommerce', () => ({ provisionStore: vi.fn(async () => ({ ok: false })) }))
@@ -205,7 +205,7 @@ describe('POST /api/build/provision — permanent/tmp gating follows the REAL li
   })
 
   // ── The free-trial path must NOT regress ────────────────────────────────
-  it('keeps a genuinely unpaid signed-in founder on a tmp_ 72h trial (unchanged behavior)', async () => {
+  it('keeps a genuinely unpaid signed-in founder on a tmp_ trial (unchanged behavior)', async () => {
     h.getPlanStatus.mockResolvedValue({ tier: 'hobbyist', verified: true })
 
     const res = await POST(postRequest({ slug: 'flo' }))
@@ -487,7 +487,7 @@ describe('POST /api/build/provision — the #73 MCP path honors the same resolve
   }
 
   // ── The over-grant itself ────────────────────────────────────────────────
-  it('gives a genuinely UNPAID founder a tmp_ 72h trial, not a permanent key (the #1021 over-grant)', async () => {
+  it('gives a genuinely UNPAID founder a tmp_ trial, not a permanent key (the #1021 over-grant)', async () => {
     h.getPlanStatus.mockResolvedValue({ tier: 'hobbyist', verified: true })
 
     const res = await POST(postRequest({ slug: 'flo', name: 'Flo' }))

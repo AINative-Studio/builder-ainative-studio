@@ -233,7 +233,8 @@ const UNAUTHORIZED = () =>
  * reason instead of an opaque ZeroDB 403.
  *
  * `trial_expired` (#1579) is a distinct, separately-detected case: a tmp_
- * (anonymous, unpaid) trial key past its 72h window. ZeroDB would otherwise
+ * (anonymous, unpaid) trial key past its real expiry window (~24h, #1602 —
+ * corrected from an earlier, wrong 72h assumption). ZeroDB would otherwise
  * reject it with a generic, hard-to-diagnose `401 AUTH_REQUIRED` that reads
  * identically to a wrong/corrupt key — this names the real cause so it's
  * diagnosable without reading ZeroDB's raw body, and so a generated app could
@@ -246,7 +247,7 @@ const KEY_UNAVAILABLE = (reason: string) =>
       reason,
       detail:
         reason === 'trial_expired'
-          ? "This company's free 72h trial window has ended, so its ZeroDB data-plane key is no longer valid. If the founder has since upgraded/paid, re-running the claim flow mints a permanent key; otherwise this trial project has lapsed."
+          ? "This company's free 24h trial window has ended, so its ZeroDB data-plane key is no longer valid. If the founder has since upgraded/paid, re-running the claim flow mints a permanent key; otherwise this trial project has lapsed."
           : "This company's ZeroDB project has no stored project-scoped API key, so the request cannot be authorized against it. Re-provision the company to mint and store one.",
     },
     { status: 502 },

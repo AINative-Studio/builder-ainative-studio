@@ -55,8 +55,8 @@ describe('exported constants', () => {
     expect(BUILDER_WORKSPACE_ID.length).toBeGreaterThan(0)
   })
 
-  it('TRIAL_WINDOW_MS is 72 hours in milliseconds', () => {
-    expect(TRIAL_WINDOW_MS).toBe(72 * 60 * 60 * 1000)
+  it('TRIAL_WINDOW_MS is 24 hours in milliseconds (#1579/#1602 — was wrongly 72h)', () => {
+    expect(TRIAL_WINDOW_MS).toBe(24 * 60 * 60 * 1000)
   })
 })
 

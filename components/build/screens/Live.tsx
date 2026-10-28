@@ -273,8 +273,9 @@ export function Live() {
       .catch(() => {})
   }, [signedIn, dispatch, companyId])
 
-  // Trial state (#207): an unpaid company runs on a 72h tmp_ project. We surface a
-  // countdown + upgrade CTA so the founder has an obvious, intuitive path to pay.
+  // Trial state (#207): an unpaid company runs on a ~24h tmp_ project (#1579/#1602
+  // corrected this from an earlier, wrong 72h assumption). We surface a countdown +
+  // upgrade CTA so the founder has an obvious, intuitive path to pay.
   const [trial, setTrial] = useState<{ trial: boolean; trialExpiresAt?: string | null; trialExpired?: boolean } | null>(null)
   useEffect(() => {
     if (activePlan) return // already paid — no trial banner
@@ -981,8 +982,8 @@ export function Live() {
   // anonymous founder's company instead of bouncing them to signup.
   // /api/build/provision (and provisionInstantDb underneath it) was always
   // built to support this — "anonymous OR signed-in-but-unpaid" gets a real
-  // tmp_ 72h-trial project with no auth required (see that route's own doc
-  // comment) — but this function's unconditional signedIn gate meant that
+  // tmp_ trial project (~24h, #1579/#1602) with no auth required (see that
+  // route's own doc comment) — but this function's unconditional signedIn gate meant that
   // path was never actually reachable for a company built anonymously. Real
   // incident this closes: an anonymous "Build a Company" session reaches a
   // fully live, publicly shareable /build/{slug} the moment generation
@@ -1048,7 +1049,7 @@ export function Live() {
   // signs in. Gating this on signedIn (as it used to be) left every such
   // company's real waitlist/visitor writes silently falling through to the
   // shared fallback project — provisionInstantDb has always supported a real,
-  // unauthenticated tmp_ 72h-trial project for exactly this case (see its own
+  // unauthenticated tmp_ trial project (~24h, #1579/#1602) for exactly this case (see its own
   // doc comment), this screen just never called it for an anonymous founder.
   // Idempotent by construction: provisionCompany() itself no-ops when
   // `provision.busy || provision.provisioned`, and /api/build/provision's own

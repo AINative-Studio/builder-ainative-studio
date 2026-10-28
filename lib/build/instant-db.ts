@@ -4,8 +4,11 @@
  * Instant DB is AINative's one-request per-company data layer:
  *   POST https://api.ainative.studio/api/v1/public/instant-db  (body { agree_terms: true })
  *
- *   - Anonymous            → tmp_ api_key, 72h expiry, returns a claim_url whose
- *                            ?token=… is the claim secret to later upgrade → permanent.
+ *   - Anonymous            → tmp_ api_key, ~24h expiry (TRIAL_WINDOW_MS, corrected
+ *                            by #1579/#1602 — core's real expires_at, confirmed live,
+ *                            is 24h; this file previously assumed 72h), returns a
+ *                            claim_url whose ?token=… is the claim secret to later
+ *                            upgrade → permanent.
  *   - Authorization: Bearer <user JWT> → PERMANENT sk_ api_key, auto-assigned to the
  *                            user's Default Workspace. No claim needed.
  *
@@ -34,18 +37,30 @@ export const BUILDER_WORKSPACE_ID =
   process.env.AINATIVE_BUILDER_WORKSPACE_ID || '5d2376e1-d4f0-4193-9a7f-84e4543a8f9a'
 
 /**
- * Trial window for an UNPAID (tmp_) Instant DB project, in milliseconds (72h).
- * Kept here as the single source of truth: Instant DB normally returns an
- * `expires_at`, but when it's missing/empty the provision route falls back to
- * `now + TRIAL_WINDOW_MS` so the Live "Free trial: Xh left" countdown always has
- * a real value (#260).
+ * FALLBACK trial window for an UNPAID (tmp_) Instant DB project, in
+ * milliseconds — used ONLY when core's own response omits `expires_at`
+ * (confirmed to happen live, e.g. for a 2026-09-11 provision of `triage`,
+ * where the resulting `trialExpiresAt` was exactly 72h from `provisionedAt`,
+ * proving the fallback fired rather than a real core value). When core DOES
+ * return `expires_at` (the common case, confirmed live), that real value is
+ * always preferred (see `provisionInstantDb`'s `expiresAt` field and its
+ * callers in provision/route.ts and company-zerodb-credentials.ts) — this
+ * constant never overrides a real one.
+ *
+ * Was 72h until #1579/#1602 (2026-10-27): live-verified against a real key
+ * (habanero-hub, via core#9241's investigation) that core's actual tmp_ key
+ * lifetime is 24h, not 72h — the OLD 72h guess was simply wrong, not a
+ * deliberately-different "fallback vs. real" number. Set to the one real
+ * duration we have direct evidence for. If core's real window ever differs
+ * from this again, prefer asking core to reliably return `expires_at` on
+ * every response over re-guessing a new fallback number.
  */
-export const TRIAL_WINDOW_MS = 72 * 60 * 60 * 1000
+export const TRIAL_WINDOW_MS = 24 * 60 * 60 * 1000
 
 export interface InstantDbResult {
   ok: boolean
   projectId?: string
-  /** 'tmp' for anonymous (72h) provisioning, 'permanent' for authenticated (sk_). */
+  /** 'tmp' for anonymous (~24h, #1579/#1602) provisioning, 'permanent' for authenticated (sk_). */
   keyKind?: 'tmp' | 'permanent'
   /** Data-plane key (sk_/tmp_). Returned to the caller for server-side/secret use — NOT persisted in the shared registry. */
   apiKey?: string
@@ -76,7 +91,7 @@ export function parseClaimToken(claimUrl?: string): string | undefined {
  * Policy (#207): a PERMANENT (sk_) key requires a PAID subscription. Pass
  * `permanent: true` (only when the founder has paid) together with their JWT to
  * mint a permanent sk_ key immediately. Otherwise — anonymous OR signed-in-but-
- * unpaid — we provision UNAUTHENTICATED to get a tmp_ key (72h) + a claim token,
+ * unpaid — we provision UNAUTHENTICATED to get a tmp_ key (~24h) + a claim token,
  * which the post-payment flow upgrades to permanent. We deliberately do NOT send
  * the JWT for a non-permanent provision, since an authenticated Instant DB call
  * would otherwise return a permanent key to an unpaid user.
