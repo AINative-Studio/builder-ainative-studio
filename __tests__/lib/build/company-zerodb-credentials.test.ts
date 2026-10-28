@@ -182,7 +182,7 @@ describe('resolveCompanyZerodbKey', () => {
     expect(resolved.apiKey).toBeUndefined()
   })
 
-  it('FAILS CLOSED with trial_expired for a tmp_ key past its 72h window — never passes an expired key through to ZeroDB (#1579)', async () => {
+  it('FAILS CLOSED with trial_expired for a tmp_ key past its window when renewal also fails — never passes an expired key through to ZeroDB (#1579)', async () => {
     const expired = {
       projectId: 'proj-expired',
       keyKind: 'tmp',
@@ -191,19 +191,125 @@ describe('resolveCompanyZerodbKey', () => {
       authTag: 'irrelevant',
       createdAt: new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString(), // 73h ago
     }
-    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ data: [{ row_data: expired }] }) }))
+    // The row lookup returns the expired row; the renewal attempt's own mint
+    // call (POST .../api-keys) gets a 200 with no api_key in the body, which
+    // mintProjectScopedKey treats as a failure — renewal legitimately fails,
+    // so this still ends in the same honest trial_expired as before renewal
+    // existed (#1579-followup added the attempt; this test pins the fallback).
+    const fetchMock = vi.fn(async (url: any) => {
+      if (String(url).includes('/api-keys')) return { ok: true, status: 200, json: async () => ({}) }
+      return { ok: true, status: 200, json: async () => ({ data: [{ row_data: expired }] }) }
+    })
     vi.stubGlobal('fetch', fetchMock)
     const { resolveCompanyZerodbKey } = await load()
     const resolved = await resolveCompanyZerodbKey('proj-expired')
     expect(resolved.ok).toBe(false)
     expect(resolved.reason).toBe('trial_expired')
     expect(resolved.apiKey).toBeUndefined()
-    // Only one fetch (the row lookup) — the (irrelevant/undecryptable) key is
-    // never even attempted, let alone handed to a caller.
-    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
-  it('a tmp_ key still inside its 72h window resolves normally', async () => {
+  it('auto-RENEWS a tmp_ key past its window by minting a fresh one against the SAME project — never re-provisions (#1579-followup)', async () => {
+    const expired = {
+      projectId: 'proj-renewable',
+      slug: 'renewable-co',
+      keyKind: 'tmp',
+      encryptedKey: 'irrelevant',
+      iv: 'irrelevant',
+      authTag: 'irrelevant',
+      createdAt: new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString(), // 73h ago
+    }
+    const storedRows: any[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: any, init: any) => {
+        const u = String(url)
+        if (u.includes('/api-keys')) {
+          const body = JSON.parse(init.body)
+          // Mirrors core's real contract: echoes project_id back on success.
+          return { ok: true, status: 201, json: async () => ({ api_key: 'sk_freshly_renewed', project_id: body.project_id }) }
+        }
+        if (init?.method === 'POST' && u.includes('/rows')) {
+          storedRows.push(JSON.parse(init.body).row_data)
+          return { ok: true, status: 200, json: async () => ({}) }
+        }
+        if (u.includes('/rows?')) {
+          // First call (inside resolveCompanyZerodbKey's own lookup) sees the
+          // expired row; any later lookup would see the newly-stored one too
+          // (append-only), but this path returns directly without a re-read.
+          return { ok: true, status: 200, json: async () => ({ data: [{ row_data: expired }] }) }
+        }
+        return { ok: true, status: 200, json: async () => ({}) }
+      }),
+    )
+    const { resolveCompanyZerodbKey } = await load()
+    const resolved = await resolveCompanyZerodbKey('proj-renewable')
+    // The TRIGGERING request itself gets the fresh key — no second round trip.
+    expect(resolved.ok).toBe(true)
+    expect(resolved.apiKey).toBe('sk_freshly_renewed')
+    // The fresh key was persisted as 'permanent' (matches core's real sk_
+    // response shape) against the SAME project_id — never a new one.
+    expect(storedRows).toHaveLength(1)
+    expect(storedRows[0].projectId).toBe('proj-renewable')
+    expect(storedRows[0].keyKind).toBe('permanent')
+    expect(storedRows[0].slug).toBe('renewable-co')
+  })
+
+  it('renewal failure (e.g. core 404s the mint) falls through to the ORIGINAL honest trial_expired, never throws (#1579-followup)', async () => {
+    const expired = {
+      projectId: 'proj-unrenewable',
+      keyKind: 'tmp',
+      encryptedKey: 'irrelevant',
+      iv: 'irrelevant',
+      authTag: 'irrelevant',
+      createdAt: new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString(),
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: any) => {
+        const u = String(url)
+        if (u.includes('/api-keys')) {
+          return { ok: false, status: 404, json: async () => ({ detail: 'Project not found or access denied' }) }
+        }
+        return { ok: true, status: 200, json: async () => ({ data: [{ row_data: expired }] }) }
+      }),
+    )
+    const { resolveCompanyZerodbKey } = await load()
+    const resolved = await resolveCompanyZerodbKey('proj-unrenewable')
+    expect(resolved.ok).toBe(false)
+    expect(resolved.reason).toBe('trial_expired')
+    expect(resolved.apiKey).toBeUndefined()
+  })
+
+  it('renewal success but the STORE write fails still falls through honestly rather than handing back an unstored key (#1579-followup)', async () => {
+    const expired = {
+      projectId: 'proj-store-fails',
+      keyKind: 'tmp',
+      encryptedKey: 'irrelevant',
+      iv: 'irrelevant',
+      authTag: 'irrelevant',
+      createdAt: new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString(),
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: any, init: any) => {
+        const u = String(url)
+        if (u.includes('/api-keys')) {
+          return { ok: true, status: 201, json: async () => ({ api_key: 'sk_x', project_id: 'proj-store-fails' }) }
+        }
+        if (init?.method === 'POST' && u.includes('/rows')) {
+          return { ok: false, status: 500, json: async () => ({}) } // the store write itself fails
+        }
+        return { ok: true, status: 200, json: async () => ({ data: [{ row_data: expired }] }) }
+      }),
+    )
+    const { resolveCompanyZerodbKey } = await load()
+    const resolved = await resolveCompanyZerodbKey('proj-store-fails')
+    expect(resolved.ok).toBe(false)
+    expect(resolved.reason).toBe('trial_expired')
+    expect(resolved.apiKey).toBeUndefined()
+  })
+
+  it('a tmp_ key still inside its trial window resolves normally', async () => {
     let storedRow: any = null
     vi.stubGlobal(
       'fetch',
@@ -243,9 +349,9 @@ describe('resolveCompanyZerodbKey', () => {
     expect(resolved.reason).not.toBe('trial_expired')
   })
 
-  it('FAILS CLOSED with trial_expired using the REAL expiresAt even when createdAt is well within the 72h fallback window (#1602) — the exact bug: core mints a tmp_ key that dies in 24h, not 72h', async () => {
-    const mintedAt = Date.now() - 25 * 60 * 60 * 1000 // 25h ago — inside 72h, so the OLD code would wrongly say "still fine"
-    const realExpiry = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString() // but the real expiry (24h from mint) already passed
+  it('FAILS CLOSED with trial_expired using the REAL expiresAt rather than any createdAt-based fallback math (#1602) — the exact bug: core can return an expires_at shorter than Builder ever assumed', async () => {
+    const mintedAt = Date.now() - 25 * 60 * 60 * 1000 // 25h ago
+    const realExpiry = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString() // but the real expiry core returned already passed
     const died24hAgo = {
       projectId: 'proj-real-expiry',
       keyKind: 'tmp',
@@ -255,18 +361,24 @@ describe('resolveCompanyZerodbKey', () => {
       authTag: 'irrelevant',
       createdAt: new Date(mintedAt).toISOString(),
     }
-    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ data: [{ row_data: died24hAgo }] }) }))
+    // Renewal attempt's own mint call gets a 200 with no api_key, which
+    // mintProjectScopedKey treats as a failure — falls through to the same
+    // honest trial_expired this returned before renewal existed.
+    const fetchMock = vi.fn(async (url: any) => {
+      if (String(url).includes('/api-keys')) return { ok: true, status: 200, json: async () => ({}) }
+      return { ok: true, status: 200, json: async () => ({ data: [{ row_data: died24hAgo }] }) }
+    })
     vi.stubGlobal('fetch', fetchMock)
     const { resolveCompanyZerodbKey } = await load()
     const resolved = await resolveCompanyZerodbKey('proj-real-expiry')
     expect(resolved.ok).toBe(false)
     expect(resolved.reason).toBe('trial_expired')
     expect(resolved.apiKey).toBeUndefined()
-    // Never even attempts the (irrelevant/undecryptable) key once expiry is known.
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    // The (irrelevant/undecryptable) stored key itself is never handed back
+    // or decrypted — only a renewal attempt, which also failed honestly.
   })
 
-  it('a tmp_ key with a REAL expiresAt still in the future resolves normally, even past the old 72h-from-createdAt mark (#1602)', async () => {
+  it('a tmp_ key with a REAL expiresAt still in the future resolves normally, even past the createdAt-based fallback mark (#1602)', async () => {
     let storedRow: any = null
     vi.stubGlobal(
       'fetch',
@@ -309,7 +421,7 @@ describe('resolveCompanyZerodbKey', () => {
     expect(write!.body.row_data.expiresAt).toBe(expiresAt)
   })
 
-  it('a tmp_ row with no expiresAt (stored before #1602) still falls back to the 72h createdAt guess, unchanged', async () => {
+  it('a tmp_ row with no expiresAt (stored before #1602) still falls back to the TRIAL_WINDOW_MS createdAt guess, unchanged', async () => {
     const legacyNoExpiresAt = {
       projectId: 'proj-legacy',
       keyKind: 'tmp',
