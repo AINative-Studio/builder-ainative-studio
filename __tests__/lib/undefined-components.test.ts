@@ -153,6 +153,18 @@ describe('findUnresolvedComponents (#76)', () => {
     expect(findUnresolvedComponents(code)).toEqual([])
   })
 
+  // A flat `[^}]*` capture on the destructuring brace can't balance a NESTED
+  // pattern — it stops at the inner `}`, so the whole clause fails to match
+  // and the bound name never becomes "available", flagging a perfectly real
+  // component as unresolved.
+  it('handles a NESTED destructuring pattern (const { theme: { Icon } } = ...)', () => {
+    const code = [
+      "import React from 'react'",
+      'export default function App(){ const { theme: { Icon } } = useTheme(); return <Icon/>; }',
+    ].join('\n')
+    expect(findUnresolvedComponents(code)).toEqual([])
+  })
+
   it('validateJavaScriptCode rejects code with a hallucinated component', () => {
     const code = [
       "import React from 'react'",

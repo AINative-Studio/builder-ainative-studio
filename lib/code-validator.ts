@@ -1102,12 +1102,38 @@ export function findUnresolvedComponents(code: string): string[] {
         }
       }
     }
-    // destructured from something (const { Foo } = ...) — treat as available
-    for (const m of file.matchAll(/(?:const|let|var)\s*\{([^}]*)\}\s*=/g)) {
-      for (const part of m[1].split(',')) {
-        const n = part.trim().split(':').pop()?.trim()
-        if (n && /^[A-Z]/.test(n)) available.add(n)
+    // destructured from something (const { Foo } = ...) — treat as available.
+    // A flat `[^}]*` here can't balance a NESTED destructuring pattern (e.g.
+    // `const { theme: { Icon } } = useTheme()`): it stops at the first `}`
+    // (the inner pattern's own close), so `\}\s*=` right after never matches
+    // and the whole clause is skipped — Icon never becomes "available" and a
+    // perfectly real `<Icon/>` gets flagged as an unresolved component. Scan
+    // brace depth to find the destructuring pattern's real matching `}`, then
+    // just collect every PascalCase identifier inside it: over-collecting is
+    // harmless here (this function only needs to avoid false positives), so
+    // there's no need to also replicate the per-binding alias/rename logic.
+    const destructureOpenRe = /(?:const|let|var)\s*\{/g
+    let dm: RegExpExecArray | null
+    while ((dm = destructureOpenRe.exec(file))) {
+      const openIdx = dm.index + dm[0].length - 1
+      let depth = 0
+      let closeIdx = -1
+      for (let i = openIdx; i < file.length; i++) {
+        if (file[i] === '{') depth++
+        else if (file[i] === '}') {
+          depth--
+          if (depth === 0) {
+            closeIdx = i
+            break
+          }
+        }
       }
+      if (closeIdx === -1) continue
+      const body = file.slice(openIdx + 1, closeIdx)
+      for (const idMatch of body.matchAll(/[A-Z][A-Za-z0-9]*/g)) {
+        available.add(idMatch[0])
+      }
+      destructureOpenRe.lastIndex = closeIdx
     }
 
     // components used in JSX: <Foo ...> or <Foo/> — PascalCase only, skip dotted
