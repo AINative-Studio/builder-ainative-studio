@@ -102,6 +102,64 @@ describe('detectRootComponent', () => {
     })
   })
 
+  describe('priority 1.5 — component declared inline inside memo()/forwardRef() (#1615)', () => {
+    it('detects an anonymous arrow declared inline inside React.memo() and emits a binding rewrite', () => {
+      const code = `export default React.memo(() => {\n  return <div>x</div>\n});`
+      const r = detectRootComponent(code)
+      expect(r.name).toBe(ANON_DEFAULT_NAME)
+      expect(r.source).toBe('default-export-anonymous')
+      expect(r.rewrite).toBeDefined()
+      const rewritten = code.replace(r.rewrite!.find, r.rewrite!.replace)
+      expect(rewritten).toContain(`const ${ANON_DEFAULT_NAME} = React.memo(`)
+      expect(rewritten).not.toMatch(/export\s+default/)
+    })
+
+    it('detects an anonymous (props, ref) arrow declared inline inside forwardRef() and emits a binding rewrite', () => {
+      const code = `export default forwardRef((props, ref) => {\n  return <div ref={ref}>x</div>\n});`
+      const r = detectRootComponent(code)
+      expect(r.name).toBe(ANON_DEFAULT_NAME)
+      expect(r.source).toBe('default-export-anonymous')
+      const rewritten = code.replace(r.rewrite!.find, r.rewrite!.replace)
+      expect(rewritten).toContain(`const ${ANON_DEFAULT_NAME} = forwardRef(`)
+      expect(rewritten).not.toMatch(/export\s+default/)
+    })
+
+    it('detects a named function expression declared inline inside memo(), with a name NOT on KNOWN_PAGE_NAMES', () => {
+      // Deliberately a name absent from KNOWN_PAGE_NAMES — a name like
+      // "Dashboard" would be accidentally "rescued" by priority 4's
+      // tiebreaker and mask this bug, same pitfall #1611's test suite flags.
+      const code = `export default memo(function WrenchHub() {\n  return <div>x</div>\n});`
+      const r = detectRootComponent(code)
+      expect(r.name).toBe('WrenchHub')
+      expect(r.source).toBe('default-export-named')
+      const rewritten = code.replace(r.rewrite!.find, r.rewrite!.replace)
+      expect(rewritten).toContain('const WrenchHub = memo(function WrenchHub(')
+      expect(rewritten).not.toMatch(/export\s+default/)
+    })
+
+    it('detects a named function expression declared inline inside forwardRef()', () => {
+      const code = `export default forwardRef(function WrenchHub(props, ref) {\n  return <div ref={ref}>x</div>\n});`
+      const r = detectRootComponent(code)
+      expect(r.name).toBe('WrenchHub')
+      expect(r.source).toBe('default-export-named')
+      const rewritten = code.replace(r.rewrite!.find, r.rewrite!.replace)
+      expect(rewritten).toContain('const WrenchHub = forwardRef(function WrenchHub(')
+    })
+
+    it('still falls through to priority 3 for a bare reference wrapped in memo() (no regression)', () => {
+      const code = `
+        import React from "react";
+        function Dashboard() {
+          return (<div>Hello</div>);
+        }
+        export default React.memo(Dashboard);
+      `
+      const r = detectRootComponent(code)
+      expect(r.name).toBe('Dashboard')
+      expect(r.rewrite).toBeUndefined()
+    })
+  })
+
   describe('priority 2 — anonymous default export (needs rewrite)', () => {
     it('detects `export default function () {}` and emits a binding rewrite', () => {
       const code = `export default function() {\n  return <div>anon</div>\n}`
