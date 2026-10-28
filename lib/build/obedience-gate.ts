@@ -172,10 +172,34 @@ function hasAlertOnlyHandler(code: string): boolean {
 function hasNoOpCtaButton(code: string): boolean {
   // A <button>/<a> whose visible text matches a CTA phrase, scanned within a
   // small window for an onClick/href — absent means genuinely no behavior.
-  const tagPattern = /<(button|a)\b([^>]*)>([^<]{0,60})<\/\1>/gi
+  //
+  // Real bug (#1641): a flat `[^>]*` for the attrs stops at the FIRST `>`,
+  // which a JSX expression container among the attributes can contain as an
+  // ordinary comparison operator (e.g. `className={x > 5 ? 'a' : 'b'}
+  // onClick={handleClick}`) — truncating `attrs` before it ever reaches the
+  // real `onClick=`, so a button with a genuine handler gets misread as
+  // having none and false-flagged as a no-op CTA. Tracking `{}` depth to
+  // find the tag's real closing `>` fixes that without changing behavior
+  // for attributes with no expression containers (same `>` found either
+  // way).
+  const openTagRe = /<(button|a)\b/gi
   let match: RegExpExecArray | null
-  while ((match = tagPattern.exec(code))) {
-    const [, , attrs, text] = match
+  while ((match = openTagRe.exec(code))) {
+    const tagName = match[1]
+    const attrsStart = match.index + match[0].length
+    let i = attrsStart
+    let depth = 0
+    while (i < code.length && !(code[i] === '>' && depth <= 0)) {
+      if (code[i] === '{') depth++
+      else if (code[i] === '}') depth--
+      i++
+    }
+    if (i >= code.length) continue // unterminated tag
+    const attrs = code.slice(attrsStart, i)
+    const rest = code.slice(i + 1, i + 1 + 60 + tagName.length + 3)
+    const textMatch = rest.match(new RegExp(`^([^<]{0,60})<\\/${tagName}>`, 'i'))
+    if (!textMatch) continue
+    const text = textMatch[1]
     if (!CTA_BUTTON_TEXT.test(text)) continue
     const hasHandler = /onClick=|href=|data-agent-action=/.test(attrs)
     if (!hasHandler) return true
