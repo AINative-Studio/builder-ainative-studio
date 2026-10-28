@@ -330,7 +330,7 @@ export { LandingPage }
       expect(script).toContain("typeof LandingPage !== 'undefined'")
     })
 
-    it('resolves an aliased bare export (`export { Internal as External }`) by its external name', async () => {
+    it('resolves an aliased bare export (`export { Internal as External }`) by the REAL local declared name, not the unusable external alias (#1605-sweep)', async () => {
       mockIsE2BEnabled.mockReturnValue(true)
       mockRunSequence.mockResolvedValue({
         commandResults: [
@@ -351,8 +351,17 @@ export { Internal as FounderPage }
 
       expect(result.success).toBe(true)
       const script = renderScriptSentToSandbox()
-      expect(script).toContain(`globalThis['FounderPage']`)
-      expect(script).toContain("typeof FounderPage !== 'undefined'")
+      // Pre-#1605-sweep, this resolved to the EXTERNAL alias 'FounderPage' —
+      // which looked plausible as script text, but `FounderPage` is never a
+      // declared identifier anywhere in this flattened, module-less script
+      // (only `Internal` is), so `typeof FounderPage` always evaluates to
+      // 'undefined' at runtime and the expose line was a silent no-op —
+      // this component would actually render "Component not found" despite
+      // the test (inspecting only script text, not executing it) passing.
+      // detectRootComponent()'s priority-3 PascalCase/JSX scan finds the
+      // REAL local declaration (`Internal`) instead, which genuinely works.
+      expect(script).toContain(`globalThis['Internal']`)
+      expect(script).toContain("typeof Internal !== 'undefined'")
     })
 
     it('does not treat a re-export (`export { X } from "./Y"`) as a local declaration', async () => {
@@ -396,6 +405,104 @@ function App() {
 
       const script = renderScriptSentToSandbox()
       expect(script).not.toContain("typeof App !== 'undefined'")
+    })
+  })
+
+  describe('arrow/class/bare-reference default exports (#1605-sweep — detectComponentName() now delegates to detectRootComponent())', () => {
+    function renderScriptSentToSandbox(): string {
+      const filesArg = mockRunSequence.mock.calls[0][0]
+      return filesArg['render.jsx']
+    }
+
+    beforeEach(() => {
+      mockIsE2BEnabled.mockReturnValue(true)
+      mockRunSequence.mockResolvedValue({
+        commandResults: [
+          { exitCode: 0, stdout: '', stderr: '', timedOut: false },
+          { exitCode: 0, stdout: '', stderr: '', timedOut: false },
+        ],
+        files: { 'output.html': REAL_HTML },
+      })
+    })
+
+    it('resolves an arrow-const default export referenced by a bare `export default Name;` (never matched the old `function`-only regex)', async () => {
+      const code = `
+const Dashboard = () => {
+  return <div className="app"><h1>Hello Founder</h1></div>
+}
+
+export default Dashboard;
+`
+      const result = await buildInSandbox(code)
+      expect(result.success).toBe(true)
+      const script = renderScriptSentToSandbox()
+      // The real, correctly-identified name — not the old hardcoded 'App' guess.
+      expect(script).toContain(`globalThis['Dashboard']`)
+    })
+
+    it('resolves a named class default export (the old regex only matched `function`, never `class`)', async () => {
+      const code = `
+class Dashboard extends React.Component {
+  render() {
+    return <div className="app"><h1>Hello Founder</h1></div>
+  }
+}
+
+export default Dashboard;
+`
+      const result = await buildInSandbox(code)
+      expect(result.success).toBe(true)
+      const script = renderScriptSentToSandbox()
+      expect(script).toContain(`globalThis['Dashboard']`)
+    })
+
+    it('does NOT let a wrongly-guessed fallback name collide with a Lucide icon global and shadow the real component — the exact failure class this fix closes', async () => {
+      // Pre-fix: detectComponentName()'s regex only understood `export
+      // default function Name` and a bare `export { Name }` list. Neither
+      // matched `export default Dashboard;` (a bare identifier reference to
+      // an arrow-const declared above), so it fell through to the OTHER
+      // bare-list export present in this file — a sibling helper aliased to
+      // `Home`, which also happens to be a real lucide-react icon name
+      // (bound to globalThis BEFORE "Component code" runs, see the render
+      // script's own Lucide-icon-globals block). The final
+      // `globalThis[compName] || globalThis.__Default__` pick would then
+      // resolve to the Lucide <Home> icon glyph instead of the real
+      // Dashboard component — rendering a tiny icon instead of the founder's
+      // actual app, with no crash and no error to notice it by.
+      const code = `
+const HomeLink = () => <a href="/">Home</a>
+export { HomeLink as Home }
+
+const Dashboard = () => {
+  return <div className="app"><h1>Hello Founder</h1></div>
+}
+
+export default Dashboard;
+`
+      const result = await buildInSandbox(code)
+      expect(result.success).toBe(true)
+      const script = renderScriptSentToSandbox()
+      // Must resolve to the REAL default-exported root, never the sibling
+      // bare-list export that happens to share a name with a Lucide icon.
+      expect(script).toContain(`globalThis['Dashboard']`)
+      expect(script).not.toContain(`globalThis['Home']`)
+    })
+
+    it('resolves an anonymous arrow default export by synthesizing a bindable name (the old regex had no anonymous-export handling at all)', async () => {
+      const code = `
+export default () => {
+  return <div className="app"><h1>Hello Founder</h1></div>
+}
+`
+      const result = await buildInSandbox(code)
+      expect(result.success).toBe(true)
+      const script = renderScriptSentToSandbox()
+      expect(script).toContain(`globalThis['__PreviewDefault']`)
+      // The rewrite must land BEFORE buildRenderScript's own export-default
+      // stripping — there must be no leftover `export default` in the
+      // script's embedded component code to trip up esbuild.
+      expect(script).toContain('const __PreviewDefault = ')
+      expect(script).not.toContain('export default')
     })
   })
 })
