@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyAppDataToken } from '@/lib/build/app-data-token'
 import { resolveCompanyZerodbKey } from '@/lib/build/company-zerodb-credentials'
+import { checkAndRecordTrialWrite } from '@/lib/build/trial-write-cap'
 import { isAllowedSandpackOrigin, sandpackCorsHeaders } from '@/lib/sandpack/cors'
 
 /**
@@ -116,6 +117,10 @@ function resolveProject(request: NextRequest): { projectId: string; shared: bool
 interface DbScope {
   projectId: string
   apiKey: string
+  /** #1606: 'trial' means WRITE calls must go through checkAndRecordTrialWrite
+   *  first. Undefined (shared project, or a paid/claimed company's key) means
+   *  unlimited — never passed to the cap check at all. */
+  usageTier?: 'trial' | 'paid'
 }
 
 /**
@@ -137,7 +142,7 @@ async function resolveScope(
   if (!resolved.ok || !resolved.apiKey) {
     return { keyReason: resolved.reason || 'not_stored' }
   }
-  return { scope: { projectId: project.projectId, apiKey: resolved.apiKey } }
+  return { scope: { projectId: project.projectId, apiKey: resolved.apiKey, usageTier: resolved.usageTier } }
 }
 
 /**
@@ -253,6 +258,25 @@ const KEY_UNAVAILABLE = (reason: string) =>
     { status: 502 },
   )
 
+/**
+ * 402 for a trial-tier project that has hit its write-volume cap (#1606).
+ * Deliberately distinct from KEY_UNAVAILABLE's 502 — this isn't an auth/
+ * resolution failure, it's an honest "you've used up the free tier" signal.
+ * NEVER returned for a read (GET) — see trial-write-cap.ts's own doc comment
+ * for why reads stay unrestricted (a founder can always see what they've
+ * already collected). 402 Payment Required is the closest honest HTTP
+ * semantic for "you hit the free limit, pay to continue."
+ */
+const USAGE_CAPPED = () =>
+  NextResponse.json(
+    {
+      error: 'usage_capped',
+      reason: 'usage_capped',
+      detail: "This trial project has reached its free write limit. Reads still work — upgrade (claim this company) to keep collecting new data.",
+    },
+    { status: 402 },
+  )
+
 // GET /api/db/{table} — list or query rows
 async function getHandler(
   request: NextRequest,
@@ -309,7 +333,12 @@ async function postHandler(
   const resolved = await resolveScope(request)
   if (resolved.unauthorized) return UNAUTHORIZED()
   if (!resolved.scope) return KEY_UNAVAILABLE(resolved.keyReason || 'not_stored')
-  const { projectId: PROJECT_ID, apiKey: API_KEY } = resolved.scope
+  const { projectId: PROJECT_ID, apiKey: API_KEY, usageTier } = resolved.scope
+  // #1606: write-volume cap, trial-tier projects only. Reads never call this.
+  if (usageTier === 'trial') {
+    const cap = await checkAndRecordTrialWrite(PROJECT_ID)
+    if (!cap.allowed) return USAGE_CAPPED()
+  }
   const { table } = await params
   const body = await request.json()
 
@@ -365,7 +394,12 @@ async function putHandler(
   const resolved = await resolveScope(request)
   if (resolved.unauthorized) return UNAUTHORIZED()
   if (!resolved.scope) return KEY_UNAVAILABLE(resolved.keyReason || 'not_stored')
-  const { projectId: PROJECT_ID, apiKey: API_KEY } = resolved.scope
+  const { projectId: PROJECT_ID, apiKey: API_KEY, usageTier } = resolved.scope
+  // #1606: write-volume cap, trial-tier projects only. Reads never call this.
+  if (usageTier === 'trial') {
+    const cap = await checkAndRecordTrialWrite(PROJECT_ID)
+    if (!cap.allowed) return USAGE_CAPPED()
+  }
   const { table } = await params
   const rowId = request.nextUrl.searchParams.get('id')
   if (!rowId) {
@@ -386,7 +420,12 @@ async function deleteHandler(
   const resolved = await resolveScope(request)
   if (resolved.unauthorized) return UNAUTHORIZED()
   if (!resolved.scope) return KEY_UNAVAILABLE(resolved.keyReason || 'not_stored')
-  const { projectId: PROJECT_ID, apiKey: API_KEY } = resolved.scope
+  const { projectId: PROJECT_ID, apiKey: API_KEY, usageTier } = resolved.scope
+  // #1606: write-volume cap, trial-tier projects only. Reads never call this.
+  if (usageTier === 'trial') {
+    const cap = await checkAndRecordTrialWrite(PROJECT_ID)
+    if (!cap.allowed) return USAGE_CAPPED()
+  }
   const { table } = await params
   const rowId = request.nextUrl.searchParams.get('id')
   if (!rowId) {

@@ -46,6 +46,8 @@ interface FakeApp {
   keyKind?: 'tmp' | 'permanent'
   lifecycleStatus?: string
   createdAt?: string
+  /** Stripe-verified tier (#1606) — presence is the signal storeCompanyZerodbKey's usageTier reads. */
+  plan?: string
 }
 
 /**
@@ -180,10 +182,12 @@ describe('runZerodbKeyBackfillSweep — repairing a missing key', () => {
       'f17d948d-c066-426a-bcb8-238b0ef6d3b1',
       expect.objectContaining({ slug: 'agentive' }),
     )
+    // #1606: no stamped plan on this fixture's registry row → genuinely
+    // unpaid → usageTier:'trial' so the repaired key is still write-capped.
     expect(storeCompanyZerodbKey).toHaveBeenCalledWith(
       'f17d948d-c066-426a-bcb8-238b0ef6d3b1',
       'sk_real_minted_key',
-      { slug: 'agentive', keyKind: 'permanent' },
+      { slug: 'agentive', keyKind: 'permanent', usageTier: 'trial' },
     )
   })
 
@@ -197,6 +201,21 @@ describe('runZerodbKeyBackfillSweep — repairing a missing key', () => {
 
     expect(storeCompanyZerodbKey).toHaveBeenCalledWith('proj-trial', 'sk_minted_for_trial', {
       slug: 'trialco',
+      keyKind: 'permanent',
+      usageTier: 'trial',
+    })
+  })
+
+  it('(#1606) a company with a real, Stripe-verified plan stamped on its registry row is repaired WITHOUT usageTier — never capped just because its key needed repair', async () => {
+    const { runZerodbKeyBackfillSweep, storeCompanyZerodbKey } = await load({
+      apps: [{ slug: 'paidco', zerodbProjectId: 'proj-paid', keyKind: 'permanent', plan: 'pro' }],
+      mint: { 'proj-paid': 'sk_minted_for_paid' },
+    })
+
+    await runZerodbKeyBackfillSweep({ dryRun: false })
+
+    expect(storeCompanyZerodbKey).toHaveBeenCalledWith('proj-paid', 'sk_minted_for_paid', {
+      slug: 'paidco',
       keyKind: 'permanent',
     })
   })
