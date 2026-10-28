@@ -18,8 +18,10 @@
  * priority order, most-reliable first:
  *
  *   1. IDENTIFIED default export — `export default function Foo`,
- *      `export default class Foo`, or `export default Foo` where Foo is a
- *      PascalCase name defined in the file. Render THAT regardless of its name.
+ *      `export default class Foo`, `export default Foo` where Foo is a
+ *      PascalCase name defined in the file, or a renamed default via a named-
+ *      export list (`export { Foo as default }`). Render THAT regardless of
+ *      its name, and regardless of where else in the file it was declared.
  *   1.5. INLINE memo()/forwardRef() wrapper — `export default memo(() => {})`,
  *      `export default React.forwardRef(function Foo(...) {})`. A bare
  *      reference wrapped this way (`memo(Foo)`) needs no special handling —
@@ -245,6 +247,32 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
     // Neither a named nor anonymous inline declaration -- e.g. a bare
     // reference (`memo(Dashboard)`), already handled by priority 3. Fall
     // through without returning.
+  }
+
+  // Renamed default export via a named-export list — `export { Dashboard as
+  // default }`, often alongside other, genuinely-non-default siblings:
+  // `export { Dashboard as default, Footer }`. None of the regexes above
+  // match this (they all require the literal text `export default`), so this
+  // fell through entirely to priority 3's PascalCase/JSX scan, which has NO
+  // way to know which declaration the export list actually marked as the
+  // real default — it just picks whichever matching declaration happens to
+  // be LAST in source order. A real, common generated-code shape breaks this:
+  // a root component declared early, followed later in the file by another
+  // PascalCase JSX-returning helper/section component (e.g. `Footer`) that
+  // is never exported as default at all. Priority 3 then confidently
+  // returns the wrong name — the exact "Element type is invalid" / wrong-
+  // component-rendered failure this whole module exists to prevent. An
+  // explicit `as default` marker is just as authoritative as a literal
+  // `export default Name` and must be checked before the ambiguous
+  // ordering heuristic in priority 3 ever runs.
+  const exportList = code.match(/export\s*\{([^}]*)\}/)
+  if (exportList) {
+    for (const item of exportList[1].split(',')) {
+      const parts = item.trim().split(/\s+as\s+/).map((p) => p.trim())
+      if (parts.length === 2 && parts[1] === 'default' && isPascalCase(parts[0])) {
+        return { name: parts[0], source: 'default-export-named' }
+      }
+    }
   }
 
   // --- PRIORITY 2: anonymous default export ----------------------------------

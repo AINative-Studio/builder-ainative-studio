@@ -100,6 +100,48 @@ describe('detectRootComponent', () => {
       expect(r.name).toBe('Zephyr')
       expect(r.source).toBe('default-export-named')
     })
+
+    it('detects a renamed default export via a named-export list: `export { Dashboard as default }`', () => {
+      // Real bug: none of the `export default ...` regexes above match this
+      // shape at all (no literal `export default` text), so detection fell
+      // through entirely to priority 3's PascalCase/JSX scan — which has no
+      // way to know Dashboard (not Footer) is the real default, and just
+      // picks whichever matching declaration is LAST in source order. Here
+      // that's the wrong one: Footer is a later, non-default helper/section
+      // component, never marked as default anywhere.
+      const code = `
+        function Dashboard() { return (<div>dash</div>) }
+        function Footer() { return (<div>footer</div>) }
+        export { Dashboard as default }
+      `
+      const r = detectRootComponent(code)
+      expect(r.name).toBe('Dashboard')
+      expect(r.source).toBe('default-export-named')
+    })
+
+    it('detects a renamed default export alongside other named siblings in the same list', () => {
+      const code = `
+        function Header() { return (<div>header</div>) }
+        function Dashboard() { return (<div>dash</div>) }
+        export { Header, Dashboard as default }
+      `
+      const r = detectRootComponent(code)
+      expect(r.name).toBe('Dashboard')
+      expect(r.source).toBe('default-export-named')
+    })
+
+    it('does not misfire on an ordinary named-export list with no `as default` alias', () => {
+      const code = `
+        function Dashboard() { return (<div>dash</div>) }
+        function Footer() { return (<div>footer</div>) }
+        export { Dashboard, Footer }
+      `
+      const r = detectRootComponent(code)
+      // No explicit default marker — falls through to priority 3's
+      // last-defined heuristic, same as before this fix.
+      expect(r.name).toBe('Footer')
+      expect(r.source).toBe('pascalcase-jsx')
+    })
   })
 
   describe('priority 1.5 — component declared inline inside memo()/forwardRef() (#1615)', () => {
