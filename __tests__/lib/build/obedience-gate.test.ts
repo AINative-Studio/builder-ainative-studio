@@ -386,6 +386,15 @@ function App(){
   return (<button onClick={handleSubmit}>Sign Up</button>)
 }`
 
+  // #1641: a `>` comparison inside an earlier attribute's expression
+  // container (not the handler itself) used to truncate the attrs scan
+  // before it ever reached the real onClick.
+  const REAL_CTA_HANDLER_WITH_COMPARISON_ATTR = `
+function App(){
+  const items = []
+  return (<nav><button className={items.length > 5 ? 'a' : 'b'} onClick={() => items.push(1)}>Sign In</button></nav>)
+}`
+
   it('THE BUG: flags a "Sign In" button whose only handler is alert() (the real agentive repro)', () => {
     expect(hasFakeButtonGap(FAKE_SIGN_IN_ALERT)).toBe(true)
   })
@@ -404,6 +413,10 @@ function App(){
 
   it('does NOT flag alert() used as error handling inside a real async flow', () => {
     expect(hasFakeButtonGap(ALERT_INSIDE_REAL_FLOW)).toBe(false)
+  })
+
+  it('does NOT flag a CTA with a real onClick when an earlier attribute has a `>` comparison (#1641)', () => {
+    expect(hasFakeButtonGap(REAL_CTA_HANDLER_WITH_COMPARISON_ATTR)).toBe(false)
   })
 
   it('does NOT flag an app with no CTA-shaped buttons at all', () => {
