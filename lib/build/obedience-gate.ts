@@ -196,11 +196,72 @@ export function hasAlertInLeadCaptureGap(code: string): boolean {
  */
 const CTA_BUTTON_TEXT = /sign\s*in|log\s*in|get\s*started|get\s*early\s*access|join\s*(now|waitlist)?|sign\s*up/i
 
+/** Index of the matching closing bracket for the opener at `openIdx` (depth-aware). */
+function findMatchingBracket(code: string, openIdx: number, open: string, close: string): number {
+  let depth = 0
+  for (let i = openIdx; i < code.length; i++) {
+    if (code[i] === open) depth++
+    else if (code[i] === close) {
+      depth--
+      if (depth === 0) return i
+    }
+  }
+  return -1
+}
+
 function hasAlertOnlyHandler(code: string): boolean {
-  // onClick={() => alert('...')} / onClick={function(){ alert('...') }} with
-  // nothing else in the handler body (a real handler calling alert() as part
-  // of a larger flow, e.g. after a real fetch(), is NOT flagged).
-  return /onClick=\{(?:\(\)\s*=>|function\s*\([^)]*\))\s*\{?\s*alert\([^)]*\)\s*;?\s*\}?\s*\}/.test(code)
+  // onClick={() => alert('...')} / onClick={() => { alert('...') }} /
+  // onClick={function(){ alert('...') }} with nothing else in the handler
+  // body (a real handler calling alert() as part of a larger flow, e.g.
+  // after a real fetch(), is NOT flagged).
+  //
+  // The function's own param list and alert()'s own argument list are
+  // walked with depth-aware findMatchingBracket() rather than a flat
+  // `\([^)]*\)` regex -- same nested-paren bug class as #1609/#1611/#1615/
+  // #1617/#1619/#1621/#1623: a default param that calls a function
+  // (`function(e = getDefaultEvent())`) or an alert() argument that is
+  // itself a call (`alert(getMessage())`) made this entirely invisible,
+  // silently missing a real fake-CTA bug.
+  const onClickRe = /onClick=\{/g
+  let m: RegExpExecArray | null
+  while ((m = onClickRe.exec(code))) {
+    const openBraceIdx = m.index + m[0].length - 1
+    const closeBraceIdx = findMatchingBracket(code, openBraceIdx, '{', '}')
+    if (closeBraceIdx === -1) continue
+    const inner = code.slice(openBraceIdx + 1, closeBraceIdx).trim()
+
+    let bodyStart = -1
+    const arrowNoParams = /^\(\)\s*=>\s*/.exec(inner)
+    if (arrowNoParams) {
+      bodyStart = arrowNoParams[0].length
+    } else {
+      const fnStart = /^function\s*\(/.exec(inner)
+      if (fnStart) {
+        const fnOpenIdx = fnStart[0].length - 1
+        const fnCloseIdx = findMatchingBracket(inner, fnOpenIdx, '(', ')')
+        if (fnCloseIdx === -1) continue
+        const afterParams = /^\s*/.exec(inner.slice(fnCloseIdx + 1))!
+        bodyStart = fnCloseIdx + 1 + afterParams[0].length
+      }
+    }
+    if (bodyStart === -1) continue
+
+    let body = inner.slice(bodyStart)
+    if (body.startsWith('{')) {
+      const blockCloseIdx = findMatchingBracket(body, 0, '{', '}')
+      if (blockCloseIdx === -1) continue
+      body = body.slice(1, blockCloseIdx).trim()
+    }
+    // The body must be ONLY a single alert(...) call (optional trailing `;`).
+    const alertStart = /^alert\(/.exec(body)
+    if (!alertStart) continue
+    const alertOpenIdx = alertStart[0].length - 1
+    const alertCloseIdx = findMatchingBracket(body, alertOpenIdx, '(', ')')
+    if (alertCloseIdx === -1) continue
+    const trailing = body.slice(alertCloseIdx + 1).trim()
+    if (trailing === '' || trailing === ';') return true
+  }
+  return false
 }
 
 function hasNoOpCtaButton(code: string): boolean {
