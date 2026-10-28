@@ -20,6 +20,13 @@
  *   1. IDENTIFIED default export — `export default function Foo`,
  *      `export default class Foo`, or `export default Foo` where Foo is a
  *      PascalCase name defined in the file. Render THAT regardless of its name.
+ *   1.5. INLINE memo()/forwardRef() wrapper — `export default memo(() => {})`,
+ *      `export default React.forwardRef(function Foo(...) {})`. A bare
+ *      reference wrapped this way (`memo(Foo)`) needs no special handling —
+ *      it falls through to priority 3's scan, which finds Foo's own
+ *      declaration — but a component declared INLINE as the HOC's own call
+ *      argument has no standalone declaration anywhere for any other
+ *      priority to find.
  *   2. ANONYMOUS default export — `export default function() {}`,
  *      `export default () => {}`, `export default class {}`. There is no name to
  *      bind, so we synthesize one (`__PreviewDefault`) and emit a `rewrite`
