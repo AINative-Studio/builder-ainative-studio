@@ -161,6 +161,38 @@ function findMatchingParen(code: string, openIdx: number): number {
 }
 
 /**
+ * True if `code` already has A default export, in EITHER form the rest of this
+ * module (and the pipelines that call it) treat as authoritative:
+ * `export default ...` or a renamed default via a named-export list
+ * (`export { Foo as default }`).
+ *
+ * Several call sites that inject a synthesized `export default <Name>` when a
+ * generated file is "missing" one (lib/sandpack/build-files.ts,
+ * app/api/chat-ws/route.ts's truncation-recovery path) used to do their own
+ * naive `code.includes('export default')` check. That literal-text check is
+ * blind to the named-export-list form — real generated-code shape, not
+ * contrived — so a file like:
+ *
+ *   function Dashboard() { ... }
+ *   function Footer() { ... }
+ *   export { Dashboard as default }
+ *
+ * was (wrongly) treated as having NO default export, and got a SECOND
+ * `export default Footer` appended at the end. Two `export default`
+ * statements in one module is a hard SyntaxError ("Only one default export
+ * allowed per module") — strictly worse than the already-tracked "which name
+ * is the real default" ambiguity (#1617), since the file no longer parses at
+ * all, the exact blank-page/"Element type is invalid" crash class this
+ * detector's whole fix history exists to prevent. Confirmed via a direct
+ * repro through `buildSandpackFiles()` before this fix: the assembled
+ * `/App.tsx` ended up with both the original `export { Dashboard as default
+ * }` AND an appended `export default Footer`.
+ */
+export function hasDefaultExport(code: string): boolean {
+  return /export\s+default\b/.test(code) || /export\s*\{[^}]*\bas\s+default\b/.test(code)
+}
+
+/**
  * True if the source between `startIdx` and the next same-name declaration (or EOF)
  * appears to RETURN JSX. Heuristic: a `return (` / `return <` followed by a JSX-ish
  * `<Tag` or a top-level `<>` fragment. Deliberately lenient — a JSX-returning

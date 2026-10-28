@@ -3,6 +3,7 @@ import {
   detectRootComponent,
   ANON_DEFAULT_NAME,
   KNOWN_PAGE_NAMES,
+  hasDefaultExport,
 } from '@/lib/component-detector'
 
 /**
@@ -503,5 +504,52 @@ describe('detectRootComponent', () => {
       const code = `function App() { return <div>app</div> }`
       expect(detectRootComponent(code).name).toBe('App')
     })
+  })
+})
+
+describe('hasDefaultExport', () => {
+  it('recognizes a plain `export default function Name`', () => {
+    expect(hasDefaultExport(`export default function Dashboard() {}`)).toBe(true)
+  })
+
+  it('recognizes a plain `export default Name` bare reference', () => {
+    expect(hasDefaultExport(`function Dashboard() {}\nexport default Dashboard`)).toBe(true)
+  })
+
+  it('recognizes a renamed default export via a named-export list: `export { Dashboard as default }`', () => {
+    // Real bug this guards against: a plain `code.includes('export default')`
+    // check (no literal "export default" text here) treated this shape as
+    // having NO default export, so callers that inject a synthesized
+    // `export default <Name>` when "missing" one appended a SECOND default
+    // export — a hard SyntaxError ("Only one default export allowed per
+    // module"), not just a wrong-component pick.
+    const code = `
+      function Dashboard() { return (<div>dash</div>) }
+      function Footer() { return (<div>footer</div>) }
+      export { Dashboard as default }
+    `
+    expect(hasDefaultExport(code)).toBe(true)
+  })
+
+  it('recognizes a renamed default export alongside other named siblings in the same list', () => {
+    const code = `
+      function Header() {}
+      function Dashboard() {}
+      export { Header, Dashboard as default }
+    `
+    expect(hasDefaultExport(code)).toBe(true)
+  })
+
+  it('returns false for an ordinary named-export list with no `as default` alias', () => {
+    const code = `
+      function Dashboard() {}
+      function Footer() {}
+      export { Dashboard, Footer }
+    `
+    expect(hasDefaultExport(code)).toBe(false)
+  })
+
+  it('returns false when there is genuinely no default export at all', () => {
+    expect(hasDefaultExport(`function Dashboard() { return <div/> }`)).toBe(false)
   })
 })
