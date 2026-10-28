@@ -303,6 +303,37 @@ function App(){
     expect(hasAlertInLeadCaptureGap('function App(){return <div>hi</div>}')).toBe(false)
   })
 
+  // Same nested-paren regex-anti-pattern bug class as #1619/#1621
+  // (component-detector.ts / dedupe-provided-components.ts): a flat
+  // `\([^)]*\)` param-list match can't cross a `)` INSIDE the param list.
+  const PERSISTS_AND_ALERTS_NESTED_PAREN_DEFAULT = `
+function App(){
+  const [email, setEmail] = useState('')
+  const handleEarlyAccess = async (e = getDefaultEvent()) => {
+    e.preventDefault()
+    await fetch('/api/db/waitlist', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email }) }).catch(()=>{})
+    alert("You're on the list!")
+    setEmail('')
+  }
+  return (<form onSubmit={handleEarlyAccess}><input type="email" value={email} onChange={e=>setEmail(e.target.value)} /></form>)
+}`
+
+  it('THE BUG (nested-paren default param): still flags a lead-capture handler whose param list has a call-expression default', () => {
+    expect(hasAlertInLeadCaptureGap(PERSISTS_AND_ALERTS_NESTED_PAREN_DEFAULT)).toBe(true)
+  })
+
+  it('does NOT flag a persisted-without-alert handler with a nested-paren default param (no regression)', () => {
+    const code = `
+function App(){
+  const handleSubmit = async (e = getDefaultEvent()) => {
+    e.preventDefault()
+    await fetch('/api/db/waitlist', { method: 'POST' }).catch(()=>{})
+  }
+  return (<form onSubmit={handleSubmit}><input type="email" /></form>)
+}`
+    expect(hasAlertInLeadCaptureGap(code)).toBe(false)
+  })
+
   it('checkObedience surfaces alertInLeadCaptureGap and a reason string', () => {
     const r = checkObedience(PERSISTS_BUT_ALERTS, 'a landing page')
     expect(r.alertInLeadCaptureGap).toBe(true)
