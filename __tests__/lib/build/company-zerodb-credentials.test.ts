@@ -438,6 +438,90 @@ describe('resolveCompanyZerodbKey', () => {
     expect(resolved.reason).toBe('trial_expired')
   })
 
+  it('storeCompanyZerodbKey persists usageTier verbatim, and resolveCompanyZerodbKey surfaces it back on ok:true (#1606)', async () => {
+    let storedRow: any = null
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: any, init: any) => {
+        const u = String(url)
+        if (init?.method === 'POST' && u.includes('/rows')) {
+          storedRow = JSON.parse(init.body).row_data
+          return { ok: true, status: 200, json: async () => ({}) }
+        }
+        if (u.includes('/rows?')) {
+          return { ok: true, status: 200, json: async () => ({ data: [{ row_data: storedRow }] }) }
+        }
+        return { ok: true, status: 200, json: async () => ({}) }
+      }),
+    )
+    const { storeCompanyZerodbKey, resolveCompanyZerodbKey } = await load()
+    await storeCompanyZerodbKey('proj-trial', 'sk_x', { keyKind: 'permanent', usageTier: 'trial' })
+    const resolved = await resolveCompanyZerodbKey('proj-trial')
+    expect(resolved.ok).toBe(true)
+    expect(resolved.usageTier).toBe('trial')
+  })
+
+  it('a key with usageTier omitted (paid/claimed, or a row stored before #1606) resolves with usageTier undefined', async () => {
+    let storedRow: any = null
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: any, init: any) => {
+        const u = String(url)
+        if (init?.method === 'POST' && u.includes('/rows')) {
+          storedRow = JSON.parse(init.body).row_data
+          return { ok: true, status: 200, json: async () => ({}) }
+        }
+        if (u.includes('/rows?')) {
+          return { ok: true, status: 200, json: async () => ({ data: [{ row_data: storedRow }] }) }
+        }
+        return { ok: true, status: 200, json: async () => ({}) }
+      }),
+    )
+    const { storeCompanyZerodbKey, resolveCompanyZerodbKey } = await load()
+    await storeCompanyZerodbKey('proj-paid', 'sk_x', { keyKind: 'permanent' }) // no usageTier
+    const resolved = await resolveCompanyZerodbKey('proj-paid')
+    expect(resolved.ok).toBe(true)
+    expect(resolved.usageTier).toBeUndefined()
+  })
+
+  it('a successful auto-renewal (#1579) tags the fresh key usageTier:"trial" — renewal alone is never a payment event (#1606)', async () => {
+    const expired = {
+      projectId: 'proj-renew-trial',
+      slug: 'renew-co',
+      keyKind: 'tmp',
+      encryptedKey: 'irrelevant',
+      iv: 'irrelevant',
+      authTag: 'irrelevant',
+      createdAt: new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString(),
+    }
+    const storedRows: any[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: any, init: any) => {
+        const u = String(url)
+        if (u.includes('/api-keys')) {
+          const body = JSON.parse(init.body)
+          return { ok: true, status: 201, json: async () => ({ api_key: 'sk_renewed', project_id: body.project_id }) }
+        }
+        if (init?.method === 'POST' && u.includes('/rows')) {
+          storedRows.push(JSON.parse(init.body).row_data)
+          return { ok: true, status: 200, json: async () => ({}) }
+        }
+        if (u.includes('/rows?')) {
+          return { ok: true, status: 200, json: async () => ({ data: [{ row_data: expired }] }) }
+        }
+        return { ok: true, status: 200, json: async () => ({}) }
+      }),
+    )
+    const { resolveCompanyZerodbKey } = await load()
+    const resolved = await resolveCompanyZerodbKey('proj-renew-trial')
+    expect(resolved.ok).toBe(true)
+    expect(resolved.usageTier).toBe('trial')
+    expect(storedRows).toHaveLength(1)
+    expect(storedRows[0].usageTier).toBe('trial')
+    expect(storedRows[0].keyKind).toBe('permanent')
+  })
+
   it('FAILS CLOSED with unconfigured when the store itself has no credentials', async () => {
     process.env.ZERODB_API_KEY = ''
     process.env.AINATIVE_API_KEY = ''

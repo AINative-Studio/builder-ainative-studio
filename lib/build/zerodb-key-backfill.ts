@@ -266,9 +266,17 @@ export async function runZerodbKeyBackfillSweep(
     // original 72h tmp_ trial key, so recording it as 'tmp' would misdescribe it
     // (and imply an expiry that does not apply). The registry's own keyKind —
     // which drives the separate trial/claim UI — is deliberately left untouched.
+    //
+    // #1606: usageTier, unlike keyKind, DOES read the registry — app.plan is
+    // the Stripe-verified tier stamped only by a real paid checkout, the one
+    // reliable payment signal this sweep has. A company with no stamped plan
+    // never had a real payment event, so a repaired key for it should still
+    // be subject to the write cap; one WITH a stamped plan is genuinely paid
+    // and must never be capped just because its key happened to need repair.
     const wrote = await storeCompanyZerodbKey(projectId, minted.apiKey, {
       slug,
       keyKind: 'permanent',
+      ...(app.plan ? {} : { usageTier: 'trial' }),
     }).catch(() => false)
 
     if (!wrote) {

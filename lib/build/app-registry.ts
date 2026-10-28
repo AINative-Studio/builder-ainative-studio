@@ -1356,6 +1356,9 @@ export async function claimCompanyProject(
       // Edge Runtime," confirmed via the actual failed deployment's logs.
       try {
         const { storeCompanyZerodbKey } = await import('./company-zerodb-credentials')
+        // #1606: deliberately no usageTier here — this IS the real claim/
+        // payment event, so the stored row has no 'trial' tag at all, which
+        // the write-cap check (trial-write-cap.ts) reads as unlimited.
         await storeCompanyZerodbKey(existing.zerodbProjectId, newApiKey, {
           slug, keyKind: 'permanent',
         })

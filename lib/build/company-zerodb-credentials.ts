@@ -86,6 +86,17 @@ interface StoredZerodbKeyRow {
    * resolveCompanyZerodbKey, same as before.
    */
   expiresAt?: string
+  /**
+   * 'trial' (#1606) marks a key that has never been backed by a real
+   * payment/claim event — an original tmp_ provision, OR a permanent key
+   * minted purely by #1605's auto-renewal (still no payment ever happened).
+   * 'paid' (or the field simply absent, for rows stored before this existed)
+   * means unlimited — the write-cap check in trial-write-cap.ts only ever
+   * applies to 'trial'. Set to 'paid' by the real claim flow
+   * (claimCompanyProject in app-registry.ts), which is the only path that
+   * confirms an actual payment.
+   */
+  usageTier?: 'trial' | 'paid'
   encryptedKey: string
   iv: string
   authTag: string
@@ -124,7 +135,7 @@ async function ensureTable(): Promise<void> {
 export async function storeCompanyZerodbKey(
   projectId: string,
   apiKey: string,
-  options: { slug?: string; keyKind?: 'tmp' | 'permanent'; expiresAt?: string } = {},
+  options: { slug?: string; keyKind?: 'tmp' | 'permanent'; expiresAt?: string; usageTier?: 'trial' | 'paid' } = {},
 ): Promise<boolean> {
   if (!configured() || !projectId || !apiKey) return false
   try {
@@ -135,6 +146,7 @@ export async function storeCompanyZerodbKey(
       ...(options.slug ? { slug: options.slug } : {}),
       ...(options.keyKind ? { keyKind: options.keyKind } : {}),
       ...(options.expiresAt ? { expiresAt: options.expiresAt } : {}),
+      ...(options.usageTier ? { usageTier: options.usageTier } : {}),
       encryptedKey: enc.encryptedToken,
       iv: enc.iv,
       authTag: enc.authTag,
@@ -164,6 +176,13 @@ export interface ResolvedZerodbKey {
    * opaque 401 AUTH_REQUIRED.
    */
   reason?: 'not_stored' | 'decrypt_failed' | 'unconfigured' | 'lookup_failed' | 'trial_expired'
+  /**
+   * The resolved key's usage tier (#1606), present only on {ok:true}. Callers
+   * that need to decide whether to enforce the write cap (trial-write-cap.ts)
+   * read this rather than re-fetching the stored row themselves. 'paid' or
+   * undefined (a row stored before this field existed) both mean unlimited.
+   */
+  usageTier?: 'trial' | 'paid'
 }
 
 /** Latest stored row for a projectId, or null. */
@@ -256,7 +275,7 @@ export async function resolveCompanyZerodbKey(projectId: string): Promise<Resolv
   try {
     const apiKey = decryptToken({ encryptedToken: row.encryptedKey, iv: row.iv, authTag: row.authTag })
     if (!apiKey) return { ok: false, reason: 'decrypt_failed' }
-    return { ok: true, apiKey }
+    return { ok: true, apiKey, usageTier: row.usageTier }
   } catch {
     return { ok: false, reason: 'decrypt_failed' }
   }
@@ -275,9 +294,17 @@ async function renewExpiredKey(projectId: string, slug?: string): Promise<Resolv
   try {
     const minted = await mintProjectScopedKey(projectId, { slug, name: `builder-auto-renew-1579-${slug || projectId}` })
     if (!minted.ok || !minted.apiKey) return { ok: false, reason: 'not_stored' }
-    const stored = await storeCompanyZerodbKey(projectId, minted.apiKey, { slug, keyKind: 'permanent' }).catch(() => false)
+    // #1606: a renewed key is PERMANENT-shaped (keyKind, matches core's real
+    // sk_ response) but still has no actual payment behind it — usageTier
+    // stays 'trial' so the write cap still applies. Only the real claim flow
+    // (claimCompanyProject) ever sets 'paid'.
+    const stored = await storeCompanyZerodbKey(projectId, minted.apiKey, {
+      slug,
+      keyKind: 'permanent',
+      usageTier: 'trial',
+    }).catch(() => false)
     if (!stored) return { ok: false, reason: 'not_stored' }
-    return { ok: true, apiKey: minted.apiKey }
+    return { ok: true, apiKey: minted.apiKey, usageTier: 'trial' }
   } catch {
     return { ok: false, reason: 'not_stored' }
   }

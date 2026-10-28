@@ -494,11 +494,15 @@ export async function POST(request: NextRequest) {
   // failure is surfaced (zerodbKeyStored:false) rather than swallowed, and never
   // blocks provisioning — but it does mean that company's data calls will fail closed
   // until it is re-provisioned, which is the honest outcome.
+  // #1606: a tmp_ key from THIS path is always unpaid by definition (the
+  // permanent/sk_ branch only fires when isPaid was already confirmed above),
+  // so usageTier mirrors keyKind here — never invented independently.
   const zerodbKeyStored = prov.apiKey
     ? await storeCompanyZerodbKey(prov.projectId, prov.apiKey, {
         slug,
         keyKind: prov.keyKind,
         expiresAt: prov.expiresAt,
+        ...(prov.keyKind === 'tmp' ? { usageTier: 'trial' } : {}),
       }).catch(() => false)
     : false
   if (!zerodbKeyStored) {
