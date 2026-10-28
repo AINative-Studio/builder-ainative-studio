@@ -162,14 +162,56 @@ export function extractBullets(markdown: string | undefined, max = 5): string[] 
   return out.slice(0, max)
 }
 
+/**
+ * Find the index of the `)` that closes the `(` at `openIdx` (honoring
+ * arbitrarily nested parens), or -1 if unbalanced.
+ */
+function findMatchingParen(s: string, openIdx: number): number {
+  let depth = 0
+  for (let i = openIdx; i < s.length; i++) {
+    if (s[i] === '(') depth++
+    else if (s[i] === ')') {
+      depth--
+      if (depth === 0) return i
+    }
+  }
+  return -1
+}
+
+/**
+ * Replace every markdown link `[text](url)` with just `text`. A flat
+ * `\([^)]*\)` for the url stops at the FIRST `)`, which a real URL can
+ * contain (e.g. a Wikipedia-style `.../wiki/Foo_(bar)`), leaving a stray
+ * `)` plus the unstripped url tail in founder-facing deck text. Finding the
+ * url's true closing paren by depth-counting fixes that without changing
+ * behavior for a url with no parens (same paren found either way).
+ */
+function stripMarkdownLinks(s: string): string {
+  const linkStart = /\[([^\]]+)\]\(/g
+  let out = ''
+  let lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = linkStart.exec(s))) {
+    const openIdx = m.index + m[0].length - 1
+    const closeIdx = findMatchingParen(s, openIdx)
+    if (closeIdx === -1) continue
+    out += s.slice(lastIndex, m.index) + m[1]
+    lastIndex = closeIdx + 1
+    linkStart.lastIndex = lastIndex
+  }
+  out += s.slice(lastIndex)
+  return out
+}
+
 /** Strip inline markdown (emphasis, links, code, heading marks) from one line. */
 function cleanInline(s: string): string {
-  return s
-    .replace(/`([^`]*)`/g, '$1')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/\*([^*]+)\*/g, '$1')
-    .replace(/__([^_]+)__/g, '$1')
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+  return stripMarkdownLinks(
+    s
+      .replace(/`([^`]*)`/g, '$1')
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/\*([^*]+)\*/g, '$1')
+      .replace(/__([^_]+)__/g, '$1'),
+  )
     .replace(/^#+\s*/, '')
     .replace(/\s+/g, ' ')
     .trim()

@@ -73,6 +73,14 @@ describe('extractBullets', () => {
     const b = extractBullets('- **Bold** point\n- a `code` bit\n- [link](http://x)')
     expect(b).toEqual(['Bold point', 'a code bit', 'link'])
   })
+  // Real bug: a flat `\([^)]*\)` for a markdown link's url stops at the
+  // FIRST `)`, which a real url can contain (e.g. a Wikipedia-style
+  // `.../wiki/Foo_(bar)`), leaving a stray `)` plus the unstripped url tail
+  // in the cleaned founder-facing deck text.
+  it('strips a markdown link whose url itself contains a nested paren', () => {
+    const b = extractBullets('- See [this reference](https://en.wikipedia.org/wiki/Foo_(bar)) for details.')
+    expect(b).toEqual(['See this reference for details.'])
+  })
   it('supports *, +, and numbered list markers', () => {
     expect(extractBullets('* one\n+ two\n1. three\n2) four')).toEqual(['one', 'two', 'three', 'four'])
   })
