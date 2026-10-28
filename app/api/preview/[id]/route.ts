@@ -26,6 +26,57 @@ export { mintPreviewPrimitiveTokens, FOUNDER_SCOPED_PRIMITIVES }
  *  /api/community/ (#505) requests, and (#443)
  *  the right primitive-proxy token on same-origin /api/primitive/{name}/...
  *  requests. No-op pieces omitted when there is no token to attach. */
+/** Index of the `}` that closes the `{` at `openIdx` (honoring arbitrarily nested braces), or -1 if unbalanced. */
+function findMatchingBrace(code: string, openIdx: number): number {
+  let depth = 0
+  for (let i = openIdx; i < code.length; i++) {
+    if (code[i] === '{') depth++
+    else if (code[i] === '}') {
+      depth--
+      if (depth === 0) return i
+    }
+  }
+  return -1
+}
+
+/**
+ * Strip every top-level `interface Name { ... }` declaration from `code`.
+ *
+ * This runs BEFORE the Babel-in-iframe transform below (which does carry a
+ * `typescript` preset and could parse a real interface on its own) because
+ * `validateJavaScriptCode()` (called further down this same handler with
+ * `importsStripped: true`) parses the result as plain JS and chokes on
+ * TS-only syntax that survives this cleanup pass.
+ *
+ * A flat `interface\s+\w+\s*{[^}]*}` regex cannot cross a `}` INSIDE the
+ * interface body — e.g. a nested object-type field (`interface Props {
+ * theme: { primary: string } }`) or a callback param's object type
+ * (`onSelect: (item: { id: string }) => void`), both idiomatic and common
+ * in generated TSX. On either shape the regex matched only up to that
+ * nested `}`, leaving the rest of the interface body (plus an orphan
+ * trailing `}`) behind as dangling, invalid JS passed straight into Babel —
+ * the same "blank preview" / crash class this file's whole fix history
+ * exists to prevent. Finding the interface's TRUE closing brace by
+ * depth-counting fixes this without changing behavior for an interface with
+ * no nested braces (same brace found either way).
+ */
+export function stripTypeScriptInterfaces(code: string): string {
+  const headRe = /interface\s+\w+\s*\{/g
+  let out = ''
+  let lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = headRe.exec(code))) {
+    const openIdx = m.index + m[0].length - 1
+    const closeIdx = findMatchingBrace(code, openIdx)
+    if (closeIdx === -1) continue
+    out += code.slice(lastIndex, m.index)
+    lastIndex = closeIdx + 1
+    headRe.lastIndex = lastIndex
+  }
+  out += code.slice(lastIndex)
+  return out
+}
+
 export function dbTokenShim(token: string, primitiveTokens: Partial<Record<FounderScopedPrimitive | 'contentworkflow', string>> = {}): string {
   if (!token && Object.keys(primitiveTokens).length === 0) return ''
   return `<script>(function(){
@@ -362,7 +413,7 @@ export async function GET(
     .replace(/:\s*string/g, '')
     .replace(/:\s*number/g, '')
     .replace(/:\s*boolean/g, '')
-    .replace(/interface\s+\w+\s*{[^}]*}/g, '')
+  componentCode = stripTypeScriptInterfaces(componentCode)
 
   // SERVER-SIDE JSX TRUNCATION FIXER
   // If code is truncated (common with 4096 max_tokens), close all open brackets
