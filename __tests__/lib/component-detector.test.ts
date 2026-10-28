@@ -263,6 +263,56 @@ describe('detectRootComponent', () => {
       expect(r.name).toBe(ANON_DEFAULT_NAME)
       expect(r.source).toBe('default-export-anonymous')
     })
+
+    it('#1619: detects an anonymous arrow whose destructured param has a call-expression default', () => {
+      // Real bug: the old flat `[^)]*` scan for the param list could not
+      // cross the `)` closing `getDefaultItems()` — a `)` INSIDE the param
+      // list — so the regex never matched at all. With no name declared
+      // anywhere else in the file (genuinely anonymous), priority 3 found
+      // nothing either, so this returned { name: null, source: 'none' }.
+      const code = `export default ({ items = getDefaultItems() }) => { return (<div>{items}</div>); }`
+      const r = detectRootComponent(code)
+      expect(r.name).toBe(ANON_DEFAULT_NAME)
+      expect(r.source).toBe('default-export-anonymous')
+      const rewritten = code.replace(r.rewrite!.find, r.rewrite!.replace)
+      expect(rewritten).toContain(`const ${ANON_DEFAULT_NAME} = `)
+      expect(rewritten).not.toMatch(/export\s+default/)
+    })
+
+    it('#1619: detects an anonymous arrow with a nested-destructure call-expression default', () => {
+      const code = `export default ({ pair: [a, b] = getPair() }) => { return (<div>{a}{b}</div>); }`
+      const r = detectRootComponent(code)
+      expect(r.name).toBe(ANON_DEFAULT_NAME)
+      expect(r.source).toBe('default-export-anonymous')
+    })
+
+    it('#1619: detects an anonymous async arrow with a call-expression default (depth-count + async group together)', () => {
+      const code = `export default async ({ data = fetchDefault() }) => { return (<div>{data}</div>); }`
+      const r = detectRootComponent(code)
+      expect(r.name).toBe(ANON_DEFAULT_NAME)
+      expect(r.source).toBe('default-export-anonymous')
+    })
+
+    it('#1619: no regression — a function-type param (`() => void`) still resolves correctly', () => {
+      // This shape already worked before #1619 (the rewrite only ever swaps
+      // the fixed "export default " prefix, never the regex's full match
+      // span), but it's the sibling case that motivated checking this fix
+      // doesn't change its outcome.
+      const code = `export default (handler: () => void) => { return (<div onClick={handler}>x</div>); }`
+      const r = detectRootComponent(code)
+      expect(r.name).toBe(ANON_DEFAULT_NAME)
+      expect(r.source).toBe('default-export-anonymous')
+      const rewritten = code.replace(r.rewrite!.find, r.rewrite!.replace)
+      expect(rewritten).toContain(`const ${ANON_DEFAULT_NAME} = `)
+      expect(rewritten).not.toMatch(/export\s+default/)
+    })
+
+    it('#1619: a genuinely unbalanced/malformed param list still falls through honestly (no false match)', () => {
+      const code = `export default ({ broken = foo( }) => { return <div/> }`
+      const r = detectRootComponent(code)
+      expect(r.name).toBeNull()
+      expect(r.source).toBe('none')
+    })
   })
 
   describe('priority 3 — PascalCase component returning JSX (no default export)', () => {

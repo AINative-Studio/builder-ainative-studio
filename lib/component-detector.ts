@@ -145,6 +145,22 @@ function isPascalCase(name: string): boolean {
 }
 
 /**
+ * Given the index of a `(` character, return the index of the `)` that
+ * closes it (honoring arbitrarily nested parens), or -1 if unbalanced.
+ */
+function findMatchingParen(code: string, openIdx: number): number {
+  let depth = 0
+  for (let i = openIdx; i < code.length; i++) {
+    if (code[i] === '(') depth++
+    else if (code[i] === ')') {
+      depth--
+      if (depth === 0) return i
+    }
+  }
+  return -1
+}
+
+/**
  * True if the source between `startIdx` and the next same-name declaration (or EOF)
  * appears to RETURN JSX. Heuristic: a `return (` / `return <` followed by a JSX-ish
  * `<Tag` or a top-level `<>` fragment. Deliberately lenient — a JSX-returning
@@ -311,17 +327,33 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
     }
   }
   // export default () => ... / export default (props) => ... / export default async () =>
-  const anonArrow = code.match(/export\s+default\s+(async\s+)?\([^)]*\)\s*=>/)
-  if (anonArrow) {
-    // Replace only the `export default ` prefix with `const __PreviewDefault = `.
-    const prefix = code.match(/export\s+default\s+/)![0]
-    return {
-      name: ANON_DEFAULT_NAME,
-      source: 'default-export-anonymous',
-      rewrite: {
-        find: prefix,
-        replace: `const ${ANON_DEFAULT_NAME} = `,
-      },
+  //
+  // #1619: a flat `[^)]*` scan for the param list cannot cross a `)` that
+  // appears INSIDE it — e.g. a destructured default value that calls a
+  // function (`({ items = getDefaultItems() }) =>`) or a nested destructure
+  // with a call-expression default (`({ pair: [a, b] = getPair() }) =>`).
+  // Both are real, renders-JSX anonymous default exports with no name
+  // declared anywhere else for priority 3 to fall back to — the flat regex
+  // simply never matched, so detection fell all the way through to `{name:
+  // null}`, the same blank-page "Component Not Found" class this detector's
+  // whole fix history exists to prevent. Find the arrow's true open/close
+  // paren by depth-counting (handles arbitrary nesting; no regex recursion
+  // needed) instead of assuming the param list is itself paren-free.
+  const anonArrowStart = code.match(/export\s+default\s+(async\s+)?\(/)
+  if (anonArrowStart) {
+    const openIdx = anonArrowStart.index! + anonArrowStart[0].length - 1
+    const closeIdx = findMatchingParen(code, openIdx)
+    if (closeIdx !== -1 && /^\s*=>/.test(code.slice(closeIdx + 1))) {
+      // Replace only the `export default ` prefix with `const __PreviewDefault = `.
+      const prefix = code.match(/export\s+default\s+/)![0]
+      return {
+        name: ANON_DEFAULT_NAME,
+        source: 'default-export-anonymous',
+        rewrite: {
+          find: prefix,
+          replace: `const ${ANON_DEFAULT_NAME} = `,
+        },
+      }
     }
   }
 
