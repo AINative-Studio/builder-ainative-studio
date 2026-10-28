@@ -5,6 +5,50 @@ import Link from 'next/link'
 import { SEED_SHOWCASE, SHOWCASE_CATEGORIES, type ShowcaseEntry } from '@/lib/showcase-data'
 import { detectRootComponent } from '@/lib/component-detector'
 
+/** Index of the `}` that closes the `{` at `openIdx` (honoring arbitrarily nested braces), or -1 if unbalanced. */
+function findMatchingBrace(code: string, openIdx: number): number {
+  let depth = 0
+  for (let i = openIdx; i < code.length; i++) {
+    if (code[i] === '{') depth++
+    else if (code[i] === '}') {
+      depth--
+      if (depth === 0) return i
+    }
+  }
+  return -1
+}
+
+/**
+ * Strip every top-level `interface Name { ... }` declaration from `code`.
+ *
+ * A flat `interface\s+\w+\s*{[^}]*}` regex cannot cross a `}` INSIDE the
+ * interface body — e.g. a nested object-type field or a callback param's
+ * object type, both idiomatic in generated TSX — leaving the rest of the
+ * body plus an orphan trailing `}` behind as dangling, invalid JS passed
+ * into the showcase preview's Babel-in-browser transform. Finding the
+ * interface's TRUE closing brace by depth-counting fixes this without
+ * changing behavior for an interface with no nested braces (same brace
+ * found either way). Same fix as app/api/preview/[id]/route.ts's
+ * stripTypeScriptInterfaces() (#1633) — duplicated locally since that one
+ * isn't exported for shared use.
+ */
+function stripTypeScriptInterfaces(code: string): string {
+  const headRe = /interface\s+\w+\s*\{/g
+  let out = ''
+  let lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = headRe.exec(code))) {
+    const openIdx = m.index + m[0].length - 1
+    const closeIdx = findMatchingBrace(code, openIdx)
+    if (closeIdx === -1) continue
+    out += code.slice(lastIndex, m.index)
+    lastIndex = closeIdx + 1
+    headRe.lastIndex = lastIndex
+  }
+  out += code.slice(lastIndex)
+  return out
+}
+
 // Build a self-contained HTML page that renders React code using CDN scripts
 export function buildPreviewHtml(code: string): string {
   let cleanCode = code
@@ -51,8 +95,8 @@ export function buildPreviewHtml(code: string): string {
     // Strip TypeScript types
     .replace(/:\s*React\.FC<.*?>/g, '')
     .replace(/:\s*React\.FC/g, '')
-    .replace(/interface\s+\w+\s*\{[^}]*\}/g, '')
     .trim()
+  cleanCode = stripTypeScriptInterfaces(cleanCode)
 
   return `<!DOCTYPE html>
 <html><head>
