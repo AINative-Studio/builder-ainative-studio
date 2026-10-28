@@ -70,7 +70,6 @@ vi.mock('@/components/build/WaitlistPanel', () => ({ WaitlistPanel: () => React.
 vi.mock('@/components/build/VisitorsPanel', () => ({ VisitorsPanel: () => React.createElement('div') }))
 vi.mock('@/components/build/WebsitePanel', () => ({ WebsitePanel: () => React.createElement('div') }))
 vi.mock('@/components/build/FeedbackPulse', () => ({ FeedbackPulse: () => null }))
-vi.mock('@/components/build/ZeroInvoiceConnect', () => ({ ZeroInvoiceConnect: () => React.createElement('div') }))
 vi.mock('@/components/build/ZeroVoiceConnect', () => ({ ZeroVoiceConnect: () => React.createElement('div') }))
 vi.mock('@/components/build/TextCodyCard', () => ({ TextCodyCard: () => React.createElement('div') }))
 vi.mock('@/components/build/DomainModal', () => ({ DomainModal: () => null }))

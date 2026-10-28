@@ -427,53 +427,6 @@ test.describe('Live-dashboard interaction flows (#1203)', () => {
     await restorePromise
   })
 
-  test('ZeroInvoice connect: clicking Connect opens a real authorize tab, and self-confirming updates the status', async ({ page, context }) => {
-    // ZeroInvoiceConnect.tsx's connect() POSTs /api/build/zeroinvoice with
-    // action:'authorize' and window.open()s the REAL authUrl it returns —
-    // this spec verifies that real round-trip actually opens a new tab, then
-    // immediately closes that tab without touching ZeroInvoice's own OAuth
-    // flow inside it (out of scope, and not something this spec should ever
-    // drive to completion). It never asserts a platform-verified "Connected"
-    // state — only the honest self-reported one the component itself claims.
-    const connectCard = page.getByTestId('zeroinvoice-connect')
-    await expect(connectCard).toBeVisible({ timeout: 15_000 })
-
-    const status = page.getByTestId('zeroinvoice-connect-status')
-    const alreadyConnected = (await status.textContent())?.includes('Connected')
-    if (alreadyConnected) {
-      test.skip(true, 'This real company already has a self-reported ZeroInvoice connection — covering the initial-connect flow another run')
-    }
-
-    const connectBtn = page.getByTestId('zeroinvoice-connect-btn')
-    await expect(connectBtn).toHaveText(/Connect ZeroInvoice/)
-
-    const postPromise = page.waitForResponse(
-      (resp) => resp.url().includes('/api/build/zeroinvoice') && resp.request().method() === 'POST',
-    )
-    const popupPromise = context.waitForEvent('page', { timeout: 10_000 })
-    await connectBtn.click()
-
-    const postResp = await postPromise
-    expect(postResp.ok(), 'the real zeroinvoice authorize POST must succeed for this signed-in founder').toBe(true)
-
-    const popup = await popupPromise
-    expect(popup.url(), 'Connect must open a real external authorize URL, not a blank/about tab').not.toBe('about:blank')
-    await popup.close()
-
-    await expect(status).toHaveText('Connect requested — finish in the new tab, then confirm below')
-    const confirmBtn = page.getByTestId('zeroinvoice-confirm-btn')
-    await expect(confirmBtn).toBeVisible()
-
-    const confirmPostPromise = page.waitForResponse(
-      (resp) => resp.url().includes('/api/build/zeroinvoice') && resp.request().method() === 'POST',
-    )
-    await confirmBtn.click()
-    const confirmResp = await confirmPostPromise
-    expect(confirmResp.ok(), 'the real zeroinvoice confirm POST must succeed').toBe(true)
-    await expect(status).toHaveText('✓ Connected (self-reported)')
-    await expect(confirmBtn).toBeHidden()
-  })
-
   test('Hire-the-swarm CTA: upgrading without a paid plan hits the real upgrade gate', async ({ page }) => {
     // Live.tsx wires the "Hire the swarm" card's button to goUpgrade() —
     // signed-in founders go straight to the Pricing screen (real Stripe

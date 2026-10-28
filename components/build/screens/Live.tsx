@@ -35,7 +35,6 @@ import { WaitlistPanel } from '@/components/build/WaitlistPanel'
 import { VisitorsPanel } from '@/components/build/VisitorsPanel'
 import { WebsitePanel } from '@/components/build/WebsitePanel'
 import { FeedbackPulse } from '@/components/build/FeedbackPulse'
-import { ZeroInvoiceConnect } from '@/components/build/ZeroInvoiceConnect'
 import { ZeroVoiceConnect } from '@/components/build/ZeroVoiceConnect'
 import { TextCodyCard } from '@/components/build/TextCodyCard'
 import { UPLOAD_ACCEPT_ATTR } from '@/lib/build/media-upload'
@@ -159,14 +158,6 @@ export function Live() {
   // entry; drives whether we show the subdomain vs the /build/{slug} path everywhere.
   const [subdomainClaimed, setSubdomainClaimed] = useState(false)
   const [claiming, setClaiming] = useState(false)
-  // Honest "founder clicked Connect ZeroInvoice" signal (#506, child of #418) —
-  // read from the app-registry entry. Never a confirmed-connected state; see
-  // ZeroInvoiceConnect's doc comment for why builder cannot verify more than this.
-  const [zeroInvoiceClickedAt, setZeroInvoiceClickedAt] = useState<string | null>(null)
-  // Real bug fix: the founder's own "I finished connecting" self-report — the
-  // only way past "Connect requested" since builder structurally cannot
-  // verify the OAuth completion server-side (see ZeroInvoiceConnect doc).
-  const [zeroInvoiceConfirmedAt, setZeroInvoiceConfirmedAt] = useState<string | null>(null)
   // Persistent-cloud provisioning (#243): once a company is provisioned it has
   // its own real ZeroDB project + persistent deploy target, and the systems grid
   // reads real per-company data. `checked` (#748) distinguishes "we haven't
@@ -716,8 +707,6 @@ export function Live() {
           if (!alive || !d?.entry) return
           if (d.entry.domain) setCustomDomain(String(d.entry.domain))
           setSubdomainClaimed(d.entry.subdomainClaimed === true)
-          if (d.entry.zeroinvoiceConnectClickedAt) setZeroInvoiceClickedAt(String(d.entry.zeroinvoiceConnectClickedAt))
-          if (d.entry.zeroinvoiceConnectConfirmedAt) setZeroInvoiceConfirmedAt(String(d.entry.zeroinvoiceConnectConfirmedAt))
         })
         .catch(() => { /* honest: no custom-domain line if unavailable */ })
     readDomain()
@@ -1496,19 +1485,6 @@ export function Live() {
                 )
               )}
             </div>
-            {/* Connect ZeroInvoice (#506, child of #418) — the real backend has
-                existed and been live since #418; this was the only missing piece:
-                a real, visible action wired to it. Rendered here (not as a system
-                card in the grid above) since ZeroInvoice has no per-company
-                provisioned instance URL to link to — it's an explicit one-time
-                connect action, not a live-data system card. */}
-            <ZeroInvoiceConnect
-              companyId={companyId}
-              signedIn={signedIn}
-              clickedAt={zeroInvoiceClickedAt}
-              confirmedAt={zeroInvoiceConfirmedAt}
-              onRequireAuth={() => dispatch({ type: 'GOTO_SCREEN', screen: 'signup' })}
-            />
             {/* Get a phone number (2026-09-16) — the real backend
                 (/api/build/zerovoice, correctly tier-gated to ANY paid plan)
                 existed with no dashboard entry point at all until now. */}

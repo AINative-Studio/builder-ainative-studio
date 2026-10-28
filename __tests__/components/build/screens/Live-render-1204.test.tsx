@@ -72,7 +72,6 @@ vi.mock('@/components/build/WaitlistPanel', () => ({ WaitlistPanel: () => React.
 vi.mock('@/components/build/VisitorsPanel', () => ({ VisitorsPanel: () => React.createElement('div', { 'data-testid': 'stub-visitors' }) }))
 vi.mock('@/components/build/WebsitePanel', () => ({ WebsitePanel: () => React.createElement('div', { 'data-testid': 'stub-website' }) }))
 vi.mock('@/components/build/FeedbackPulse', () => ({ FeedbackPulse: () => null }))
-vi.mock('@/components/build/ZeroInvoiceConnect', () => ({ ZeroInvoiceConnect: () => React.createElement('div', { 'data-testid': 'stub-zeroinvoice' }) }))
 vi.mock('@/components/build/ZeroVoiceConnect', () => ({ ZeroVoiceConnect: () => React.createElement('div', { 'data-testid': 'stub-zerovoice' }) }))
 vi.mock('@/components/build/TextCodyCard', () => ({ TextCodyCard: () => React.createElement('div', { 'data-testid': 'stub-textcody' }) }))
 vi.mock('@/components/build/DomainModal', () => ({ DomainModal: () => null }))
