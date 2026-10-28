@@ -85,19 +85,50 @@ export function findUnsafeDangerousHtml(code: string): string[] {
 // Rule 2: console.log/warn referencing secret-shaped values
 // ---------------------------------------------------------------------------
 
-const CONSOLE_CALL_PATTERN = /console\.(?:log|warn)\s*\(([^)]*)\)/g
+const CONSOLE_CALL_HEAD_PATTERN = /console\.(?:log|warn)\s*\(/g
 const SECRET_ARG_PATTERN = /apiKey|api_key|token|secret|password|process\.env\.\w*_KEY/i
 
-/** PURE. Returns every console.log/warn call whose arguments look secret-shaped. */
+/**
+ * Find the index of the `)` that closes the `(` at `openIdx` (honoring
+ * arbitrarily nested parens), or -1 if unbalanced.
+ */
+function findMatchingParen(code: string, openIdx: number): number {
+  let depth = 0
+  for (let i = openIdx; i < code.length; i++) {
+    if (code[i] === '(') depth++
+    else if (code[i] === ')') {
+      depth--
+      if (depth === 0) return i
+    }
+  }
+  return -1
+}
+
+/**
+ * PURE. Returns every console.log/warn call whose arguments look
+ * secret-shaped.
+ *
+ * Real bug: a flat `\(([^)]*)\)` for the call's arguments stops at the
+ * FIRST `)`, which a nested call expression among the arguments contains
+ * (e.g. `console.log(formatValue(user), apiKey)`) — silently dropping
+ * everything after it, including the secret-shaped argument this rule
+ * exists to catch. Finding the call's true closing paren by
+ * depth-counting fixes that without changing behavior for a flat
+ * argument list with no nested calls (same paren found either way).
+ */
 export function findSecretLoggingCalls(code: string): string[] {
   const matches: string[] = []
   let m: RegExpExecArray | null
-  CONSOLE_CALL_PATTERN.lastIndex = 0
-  while ((m = CONSOLE_CALL_PATTERN.exec(code)) !== null) {
-    const args = m[1]
+  CONSOLE_CALL_HEAD_PATTERN.lastIndex = 0
+  while ((m = CONSOLE_CALL_HEAD_PATTERN.exec(code)) !== null) {
+    const openIdx = m.index + m[0].length - 1
+    const closeIdx = findMatchingParen(code, openIdx)
+    if (closeIdx === -1) continue
+    const args = code.slice(openIdx + 1, closeIdx)
     if (SECRET_ARG_PATTERN.test(args)) {
       matches.push(args.trim().slice(0, 80))
     }
+    CONSOLE_CALL_HEAD_PATTERN.lastIndex = closeIdx + 1
   }
   return matches
 }
