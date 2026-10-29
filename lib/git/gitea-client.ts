@@ -276,6 +276,30 @@ export async function transferRepo(
   const existing = await getRepo(fromOrg, repo)
   if (!existing) return null
 
+  // Real bug found live (#1545 first real-run attempt, 2026-10-29): Gitea's
+  // transfer endpoint 404s with "The new owner does not exist or cannot be
+  // found" when toOrg has never been created — a real, common case for a
+  // founder whose companies have ALWAYS lived in the shared org, so their
+  // own real workspace org was never provisioned by anything until now.
+  // ensureOrg() (used at normal provision time) isn't callable directly here
+  // — it takes a workspaceId and re-derives the org name, but toOrg here is
+  // already that derived name — so this inlines the identical idempotent
+  // "GET, then POST if missing, tolerate a 409 race" shape ensureOrg itself
+  // uses, operating on the org name we already have.
+  const destOrg = await getOrg(toOrg)
+  if (!destOrg) {
+    const createRes = await giteaFetch('/orgs', {
+      method: 'POST',
+      body: JSON.stringify({ username: toOrg, visibility: 'private' }),
+    })
+    if (createRes.status === 409) {
+      // Created concurrently between our GET and POST — fine, proceed.
+    } else if (!createRes.ok) {
+      const text = await createRes.text().catch(() => '')
+      throw new Error(`gitea transferRepo: could not ensure destination org ${toOrg}: ${createRes.status} ${text}`.slice(0, 300))
+    }
+  }
+
   const res = await giteaFetch(
     `/repos/${encodeURIComponent(fromOrg)}/${encodeURIComponent(repo)}/transfer`,
     { method: 'POST', body: JSON.stringify({ new_owner: toOrg }) },
