@@ -865,6 +865,10 @@ describe('obedience-gate: AX root landmark (agent-accessibility)', () => {
     expect(hasAxLandmarkGap('function App(){ return <main className="app" aria-label="Scorch dashboard" data-x="1"><div>hi</div></main> }')).toBe(false)
   })
 
+  it('does NOT flag a <main> whose aria-label is preceded by a JSX-comparison attribute (#1668)', () => {
+    expect(hasAxLandmarkGap('function App(){ return <main data-count={n > 0 ? 1 : 0} aria-label="Scorch dashboard"><div>hi</div></main> }')).toBe(false)
+  })
+
   it('is unconditional — flags even a plain counter with no data-management idea at all', () => {
     const r = checkObedience('function App(){ return <div>0</div> }', 'a counter')
     expect(r.axLandmarkGap).toBe(true)
@@ -925,6 +929,10 @@ describe('obedience-gate: AX JSON-LD structured data (builder#687 item 6)', () =
     expect(hasAxJsonLdGap('function App(){ return <script type="application/ld+json">{}</script> }')).toBe(false)
   })
 
+  it('does NOT flag a JSON-LD script tag whose type attr is preceded by a JSX-comparison attribute (#1668)', () => {
+    expect(hasAxJsonLdGap('function App(){ return <script data-x={n > 0 ? 1 : 0} type="application/ld+json">{}</script> }')).toBe(false)
+  })
+
   it('checkObedience surfaces axJsonLdGap and a reason string', () => {
     const r = checkObedience('function App(){ return <div>hi</div> }', 'anything')
     expect(r.axJsonLdGap).toBe(true)
@@ -956,6 +964,10 @@ describe('obedience-gate: AX skip-navigation link (builder#687 item 8)', () => {
 
   it('also accepts the plain "Skip to main content" text pattern without the data-agent-action marker', () => {
     expect(hasAxSkipNavGap('function App(){ return <a href="#content">Skip to main content</a><main id="content">hi</main> }')).toBe(false)
+  })
+
+  it('does NOT flag a skip-nav link whose href is preceded by a JSX-comparison attribute (#1668)', () => {
+    expect(hasAxSkipNavGap('function App(){ return <a data-x={n > 0 ? 1 : 0} href="#main-content" data-agent-action="skip-nav">Skip</a><main id="main-content">hi</main> }')).toBe(false)
   })
 
   it('checkObedience surfaces axSkipNavGap and a reason string', () => {
