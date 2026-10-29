@@ -208,6 +208,60 @@ describe('dedupeProvidedComponents', () => {
     expect(() => babelParse(out, { sourceType: 'module', plugins: ['jsx', 'typescript'] })).not.toThrow()
   })
 
+  // Real bug (2026-10-29): findMatchingParen did a plain char-by-char `(`/`)`
+  // count with no notion of string content. A destructured default VALUE
+  // that is a string/template literal containing a lone, unmatched `)`
+  // (e.g. an emoticon) got counted as the param list's real close, so the
+  // redeclaration was never matched and survived dedup — reproducing the
+  // exact "Identifier already declared" crash this module exists to
+  // prevent (same class as #1654, different call site).
+  it('#1654-class: removes a const-arrow redeclaration whose destructured default is a string literal with a stray unmatched paren', () => {
+    const code = [
+      "import { Button } from './components/ui/button'",
+      "const Button = ({ label = 'Thanks :)' }) => {",
+      "  return (<button>{label}</button>);",
+      "}",
+      "",
+      "function App() {",
+      '  return <Button label="hi" />;',
+      "}",
+    ].join('\n')
+    const out = dedupeProvidedComponents(code)
+    expect(out).not.toMatch(/const Button\s*=/)
+    expect(out).toMatch(/function App\(/)
+  })
+
+  it('#1654-class: removes a const-arrow redeclaration whose destructured default is a template literal with a stray unmatched paren', () => {
+    const code = [
+      "import { Button } from './components/ui/button'",
+      "const Button = ({ label = `Thanks :)` }) => {",
+      "  return (<button>{label}</button>);",
+      "}",
+      "",
+      "function App() {",
+      '  return <Button label="hi" />;',
+      "}",
+    ].join('\n')
+    const out = dedupeProvidedComponents(code)
+    expect(out).not.toMatch(/const Button\s*=/)
+    expect(out).toMatch(/function App\(/)
+  })
+
+  it('#1654-class: removes a single-line function redeclaration whose default param value is a string literal with a stray unmatched paren', () => {
+    const code = [
+      "function Card({ label = 'Thanks :)' }){ return (label); } // stub",
+      "",
+      "function Customers() {",
+      "  function helper() { return 1; }",
+      "  return <div>customers</div>;",
+      "}",
+    ].join('\n')
+    const out = dedupeProvidedComponents(code)
+    expect(out).not.toMatch(/function Card\(/)
+    expect(out).toMatch(/function Customers\(/)
+    expect(out).toMatch(/function helper\(/)
+  })
+
   it('accepts a custom name list (defaults to the real SCAFFOLD_PROVIDED_COMPONENTS)', () => {
     const code = 'function Widget(props){ return null; }\nfunction App(){ return <Widget/>; }'
     const out = dedupeProvidedComponents(code, ['Widget'])

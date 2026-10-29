@@ -103,18 +103,81 @@ export const SCAFFOLD_PROVIDED_COMPONENTS = [
  * generated code, safely — never consuming past its own boundary into a
  * later, unrelated function.
  */
+/** Index of the closing `quote` that ends the string starting at `openIdx` (honoring `\`-escapes), or -1 if unterminated. */
+function findStringEnd(code: string, openIdx: number, quote: string): number {
+  let i = openIdx + 1
+  while (i < code.length) {
+    if (code[i] === '\\') { i += 2; continue }
+    if (code[i] === quote) return i
+    i++
+  }
+  return -1
+}
+
+/** Index of the closing `` ` `` that ends the template literal starting at `openIdx`, honoring nested `${}` interpolations. */
+function findBacktickEnd(code: string, openIdx: number): number {
+  let i = openIdx + 1
+  while (i < code.length) {
+    const ch = code[i]
+    if (ch === '\\') { i += 2; continue }
+    if (ch === '`') return i
+    if (ch === '$' && code[i + 1] === '{') {
+      const closeIdx = findMatchingParen(code, i + 1, '{', '}')
+      if (closeIdx === -1) return -1
+      i = closeIdx + 1
+      continue
+    }
+    i++
+  }
+  return -1
+}
+
 /**
- * Find the index of the `)` that closes the `(` at `openIdx` (honoring
- * arbitrarily nested parens), or -1 if unbalanced.
+ * Find the index of the matching `close` bracket for the `open` bracket at
+ * `openIdx` (honoring arbitrarily nested brackets of that kind), or -1 if
+ * unbalanced.
+ *
+ * Real bug this replaces: a plain char-by-char `(`/`)` count has no notion
+ * of string content — it miscounts the moment a default param VALUE it's
+ * scanning through is a string/template literal containing a lone,
+ * unmatched instance of the very character being tracked. A destructured
+ * default like `({ label = 'Thanks :)' }) => ...` has exactly that: the
+ * smiley's bare `)` inside the string gets counted as the param list's real
+ * close, so `removeBalancedParamDecl` slices mid-string, the required
+ * `afterParamsRe` match right after it fails, and the whole redeclaration
+ * survives dedup — reproducing the exact "Identifier 'X' has already been
+ * declared" crash this module exists to prevent (same bug class as #1654,
+ * just a different call site). Skipping over string/template-literal spans
+ * entirely (same technique already proven in obedience-gate.ts) fixes this
+ * without changing behavior for a param list with no stray bracket
+ * characters in its string content (same bracket found either way).
  */
-function findMatchingParen(code: string, openIdx: number): number {
+function findMatchingParen(code: string, openIdx: number, open = '(', close = ')'): number {
   let depth = 0
-  for (let i = openIdx; i < code.length; i++) {
-    if (code[i] === '(') depth++
-    else if (code[i] === ')') {
+  let i = openIdx
+  while (i < code.length) {
+    const ch = code[i]
+    if (ch === '\\') { i += 2; continue }
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      if (end === -1) return -1
+      i = end + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      if (end === -1) return -1
+      i = end + 1
+      continue
+    }
+    if (ch === open) { depth++; i++; continue }
+    if (ch === close) {
       depth--
       if (depth === 0) return i
+      i++
+      continue
     }
+    i++
   }
   return -1
 }
