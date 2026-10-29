@@ -536,6 +536,19 @@ describe('findUnwiredDuplicateSidebar', () => {
     expect(findUnwiredDuplicateSidebar(code)).toEqual([])
   })
 
+  it('still detects an unwired duplicate sidebar when it is self-closing with a ">" comparison attribute', () => {
+    // Same bracket-scan bug as the two JSX-expression cases above, but for a
+    // self-closing tag (`/>` instead of a child + `</aside>`) — a realistic
+    // generated-code shape this rule must handle too.
+    const code = `
+      <aside data-agent-context="sidebar" className="w-64 fixed inset-y-0" />
+      <aside aria-hidden={items.length > 0} data-agent-context="sidebar-mobile" className="translate-x-0" />
+    `
+    const findings = findUnwiredDuplicateSidebar(code)
+    expect(findings).toHaveLength(1)
+    expect(findings[0]).toMatch(/sidebar-mobile/)
+  })
+
   it('is a pure function — same input always produces the same result', () => {
     const code = `
       <aside data-agent-context="sidebar" className="w-64">Desktop</aside>
