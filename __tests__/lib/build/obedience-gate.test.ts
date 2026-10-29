@@ -865,6 +865,10 @@ describe('obedience-gate: AX root landmark (agent-accessibility)', () => {
     expect(hasAxLandmarkGap('function App(){ return <main className="app" aria-label="Scorch dashboard" data-x="1"><div>hi</div></main> }')).toBe(false)
   })
 
+  it('does NOT flag a <main> whose aria-label is preceded by a JSX-comparison attribute (#1668)', () => {
+    expect(hasAxLandmarkGap('function App(){ return <main data-count={n > 0 ? 1 : 0} aria-label="Scorch dashboard"><div>hi</div></main> }')).toBe(false)
+  })
+
   it('is unconditional — flags even a plain counter with no data-management idea at all', () => {
     const r = checkObedience('function App(){ return <div>0</div> }', 'a counter')
     expect(r.axLandmarkGap).toBe(true)
@@ -925,6 +929,10 @@ describe('obedience-gate: AX JSON-LD structured data (builder#687 item 6)', () =
     expect(hasAxJsonLdGap('function App(){ return <script type="application/ld+json">{}</script> }')).toBe(false)
   })
 
+  it('does NOT flag a JSON-LD script tag whose type attr is preceded by a JSX-comparison attribute (#1668)', () => {
+    expect(hasAxJsonLdGap('function App(){ return <script data-x={n > 0 ? 1 : 0} type="application/ld+json">{}</script> }')).toBe(false)
+  })
+
   it('checkObedience surfaces axJsonLdGap and a reason string', () => {
     const r = checkObedience('function App(){ return <div>hi</div> }', 'anything')
     expect(r.axJsonLdGap).toBe(true)
@@ -956,6 +964,10 @@ describe('obedience-gate: AX skip-navigation link (builder#687 item 8)', () => {
 
   it('also accepts the plain "Skip to main content" text pattern without the data-agent-action marker', () => {
     expect(hasAxSkipNavGap('function App(){ return <a href="#content">Skip to main content</a><main id="content">hi</main> }')).toBe(false)
+  })
+
+  it('does NOT flag a skip-nav link whose href is preceded by a JSX-comparison attribute (#1668)', () => {
+    expect(hasAxSkipNavGap('function App(){ return <a data-x={n > 0 ? 1 : 0} href="#main-content" data-agent-action="skip-nav">Skip</a><main id="main-content">hi</main> }')).toBe(false)
   })
 
   it('checkObedience surfaces axSkipNavGap and a reason string', () => {
@@ -997,6 +1009,16 @@ describe('obedience-gate: AX nav label (builder#687 item 2)', () => {
     expect(hasAxNavLabelGap(code)).toBe(false)
   })
 
+  it('does NOT flag a <nav> that HAS aria-label when an earlier attribute is a JSX expression containing a `>` comparison', () => {
+    // Real bug: a flat `[^>]*` stops at the FIRST `>`, and a JSX expression
+    // attribute containing an ordinary comparison operator (e.g.
+    // `aria-hidden={count > 0}`) supplies one — truncating the match before
+    // the real `aria-label=` later in the tag is ever reached, falsely
+    // flagging a genuinely-compliant <nav> as missing it.
+    const code = 'function App(){ return <nav aria-hidden={count > 0} aria-label="Main navigation"><a href="/">Home</a></nav> }'
+    expect(hasAxNavLabelGap(code)).toBe(false)
+  })
+
   it('checkObedience surfaces axNavLabelGap and a reason string only when a nav is actually present', () => {
     const noNav = checkObedience('function App(){ return <main aria-label="App"><div>hi</div></main> }', 'a counter')
     expect(noNav.axNavLabelGap).toBe(false)
@@ -1027,6 +1049,11 @@ describe('obedience-gate: AX section label (builder#687 item 3)', () => {
 
   it('does NOT flag a <section> that has aria-label', () => {
     expect(hasAxSectionLabelGap('function App(){ return <section aria-label="Recent activity"><div>hi</div></section> }')).toBe(false)
+  })
+
+  it('does NOT flag a <section> that HAS aria-label when an earlier attribute is a JSX expression containing a `>` comparison', () => {
+    const code = 'function App(){ return <section aria-hidden={count > 0} aria-label="Recent activity"><div>hi</div></section> }'
+    expect(hasAxSectionLabelGap(code)).toBe(false)
   })
 
   it('checkObedience + buildObediencePrompt wire through correctly', () => {
@@ -1078,6 +1105,16 @@ describe('obedience-gate: AX agent attribute coverage (builder#687 item 4)', () 
 
   it('a bare href="#" link does not count toward the interactive-element threshold', () => {
     expect(hasAxAgentAttributesGap('function App(){ return <><button onClick={a}>Go</button><a href="#">x</a></> }')).toBe(false)
+  })
+
+  it('a data-agent-* marker is still detected when an earlier attribute is a JSX expression containing a `>` comparison', () => {
+    // Same bug class as the nav/section label gaps: a flat `[^>]*` stops at
+    // the first `>`, and `disabled={count > 0}` supplies one before the
+    // real `data-agent-action=` is reached — falsely treating a tagged
+    // element as untagged.
+    const code = 'function App(){ return <><button disabled={count > 0} data-agent-action="add">Add</button><button data-agent-action="remove">Remove</button><button onClick={c}>Edit</button><a href="/settings">Settings</a></> }'
+    // 4 elements, floor(4*0.5)=2 required, 2 tagged -> no gap.
+    expect(hasAxAgentAttributesGap(code)).toBe(false)
   })
 
   it('checkObedience + buildObediencePrompt wire through correctly', () => {
