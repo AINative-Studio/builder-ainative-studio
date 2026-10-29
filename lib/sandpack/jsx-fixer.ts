@@ -291,6 +291,16 @@ const SHADCN_COMPONENT_FILE: Record<string, string> = {
   Card: 'card', CardHeader: 'card', CardContent: 'card', CardTitle: 'card', CardDescription: 'card', CardFooter: 'card',
   Badge: 'badge',
   Avatar: 'avatar', AvatarImage: 'avatar', AvatarFallback: 'avatar',
+  // Real export of shadcn-bundle.ts's input.tsx (`export const Input = ...`),
+  // and already correctly mapped in lib/sandpack/build-files.ts's own
+  // 'ui/input': ['Input'] table and lib/multi-file-parser.ts's `Input: 'input'`
+  // — this map alone never had it, so an Input imported from any wrong ui/*
+  // subpath (including the one rewriteBarrelImports() itself produces for a
+  // barrel `from './components'` import mixing Input with other shadcn names)
+  // stayed on that wrong path instead of being re-routed, leaving `Input`
+  // undefined at runtime — the exact "Element type is invalid" crash this
+  // function exists to prevent.
+  Input: 'input',
   Tabs: 'tabs', TabsList: 'tabs', TabsTrigger: 'tabs', TabsContent: 'tabs',
   Label: 'label',
   Table: 'table', TableHeader: 'table', TableBody: 'table', TableRow: 'table', TableHead: 'table', TableCell: 'table',

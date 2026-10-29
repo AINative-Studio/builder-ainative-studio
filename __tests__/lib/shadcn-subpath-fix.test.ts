@@ -41,7 +41,31 @@ describe('fixWrongShadcnSubpaths', () => {
     expect(out).toMatch(/\{ Button \} from '\.\/components\/ui\/button'/)
     expect(out).toMatch(/\{ Card \} from '\.\/components\/ui\/card'/)
     expect(out).toMatch(/\{ Badge \} from '\.\/components\/ui\/badge'/)
-    // Input lives in its own file if mapped; otherwise stays — either way must resolve
+    expect(out).toMatch(/\{ Input \} from '\.\/components\/ui\/input'/)
+  })
+
+  // SHADCN_COMPONENT_FILE had no entry for `Input` at all, even though it's a
+  // real export of shadcn-bundle.ts's input.tsx (`export const Input = ...`)
+  // and is correctly mapped in both lib/sandpack/build-files.ts's
+  // 'ui/input': ['Input'] table and lib/multi-file-parser.ts's own
+  // `Input: 'input'` map. An Input imported from any wrong ui/* subpath (e.g.
+  // grouped onto 'ui/card' by rewriteBarrelImports() when a barrel import
+  // mixes Input with other shadcn names) was never re-routed — `Input`
+  // resolved to `undefined` at runtime, the exact "Element type is invalid"
+  // crash this function exists to prevent.
+  it('re-routes Input off the wrong ui/* file', () => {
+    const code = "import { Card, Input } from './components/ui/card'"
+    const out = fixJsxErrors(code)
+    expect(out).toMatch(/\{ Card \} from '\.\/components\/ui\/card'/)
+    expect(out).toMatch(/\{ Input \} from '\.\/components\/ui\/input'/)
+    expect(out).not.toMatch(/Input[^']*from '\.\/components\/ui\/card'/)
+  })
+
+  it('re-routes Input out of a barrel import mixed with other shadcn names', () => {
+    const code = "import { Card, Badge, Input } from './components'"
+    const out = fixJsxErrors(code)
+    expect(out).toMatch(/\{ Input \} from '\.\/components\/ui\/input'/)
+    expect(out).not.toMatch(/Input[^']*from '\.\/components\/ui\/card'/)
   })
 
   it('handles ../components/ui/* (from a nested file)', () => {
