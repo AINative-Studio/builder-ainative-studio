@@ -1181,6 +1181,24 @@ export function findUnresolvedComponents(code: string): string[] {
  * A child that is a `.map()` return, `item.name`, `count`, a function call, or a
  * conditional is never flagged. Returns the first offending identifier, or null.
  */
+/**
+ * Find the index of the `)` that closes the `(` at `openIdx`, honoring
+ * arbitrarily nested parens (braces don't affect paren depth, so a
+ * `.find(i => { ... })` callback body is crossed correctly). Returns -1 if
+ * unbalanced. Scoped to findObjectRenderedAsChild's SHAPE 2 check below.
+ */
+function findMatchingParenIdxInChildCheck(code: string, openIdx: number): number {
+  let depth = 0
+  for (let i = openIdx; i < code.length; i++) {
+    if (code[i] === '(') depth++
+    else if (code[i] === ')') {
+      depth--
+      if (depth === 0) return i
+    }
+  }
+  return -1
+}
+
 export function findObjectRenderedAsChild(code: string): string | null {
   for (const file of code.split(FILE_MARKER)) {
     // Identifiers bound to a plain object literal at declaration:
@@ -1233,10 +1251,27 @@ export function findObjectRenderedAsChild(code: string): string | null {
   // Conservative: requires the child to be EXACTLY a `.find(...)` call with nothing
   // else after it (no `?.name`, no `&&`, no `?:` — those access a field or guard and
   // render fine). Scans the raw code (find-chains don't cross FILE_MARKER).
-  const findChild = code.match(
-    />\s*\{\s*([A-Za-z_$][\w$.]*\.(?:find|findLast)\s*\([^{}]*\))\s*\}\s*</,
-  )
-  if (findChild) return findChild[1]
+  //
+  // A flat `\([^{}]*\)` for the call's arguments can't cross any `{`/`}`, so a
+  // callback with a real body (`.find(i => { return i.id === x })`) or an
+  // object-literal arrow shorthand (`.find(i => ({ id: i.id }))`) never lines
+  // up with its true closing `)` — the whole occurrence silently fails to
+  // match, missing this exact crash. Find the call's true closing paren by
+  // depth-counting instead (braces don't affect paren depth), matching the
+  // same fix already applied to output-validator.ts's analogous
+  // findSecretLoggingCalls (PR #1630).
+  const findCallHead = /[A-Za-z_$][\w$.]*\.(?:find|findLast)\s*\(/g
+  let fm: RegExpExecArray | null
+  while ((fm = findCallHead.exec(code)) !== null) {
+    const openIdx = fm.index + fm[0].length - 1
+    const closeIdx = findMatchingParenIdxInChildCheck(code, openIdx)
+    if (closeIdx === -1) continue
+    const before = code.slice(Math.max(0, fm.index - 24), fm.index)
+    const after = code.slice(closeIdx + 1, closeIdx + 24)
+    if (/>\s*\{\s*$/.test(before) && /^\s*\}\s*</.test(after)) {
+      return code.slice(fm.index, closeIdx + 1)
+    }
+  }
 
   return null
 }
