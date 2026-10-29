@@ -530,6 +530,44 @@ describe('findUnwiredDuplicateSidebar', () => {
     expect(findUnwiredDuplicateSidebar(code)).toEqual([])
   })
 
+  it('still detects an unwired duplicate sidebar when an EARLIER attribute on the SAME tag has a JSX expression containing ">"', () => {
+    // Real bug: a flat `[^>]*` scan for the tag's attrs treats the `>` inside
+    // `{count > 0 ? ... : ...}` as the tag's own closing `>` and can never
+    // re-sync past it, so the whole <aside> fails to match and silently
+    // vanishes from this rule's view — the #815 duplicate-sidebar bug goes
+    // completely undetected instead of being flagged.
+    const code = `
+      <aside data-agent-context="sidebar" className="w-64 fixed inset-y-0">Desktop</aside>
+      <aside aria-label={count > 0 ? "has items" : "empty"} data-agent-context="sidebar-mobile" className="translate-x-0">Mobile</aside>
+    `
+    const findings = findUnwiredDuplicateSidebar(code)
+    expect(findings).toHaveLength(1)
+    expect(findings[0]).toMatch(/sidebar-mobile/)
+    expect(findings[0]).toMatch(/no off-canvas wiring/)
+  })
+
+  it('still resolves the real className when a later attribute expression on the same tag contains ">"', () => {
+    const code = `
+      <aside data-agent-context="sidebar" className="w-64">Desktop</aside>
+      <aside data-agent-context="sidebar-mobile" title={depth > 1 ? "nested" : "top"} className="fixed inset-y-0 -translate-x-full md:hidden">Mobile</aside>
+    `
+    // Correctly wired (fixed + -translate-x-full + md:hidden) — should NOT be flagged.
+    expect(findUnwiredDuplicateSidebar(code)).toEqual([])
+  })
+
+  it('still detects an unwired duplicate sidebar when it is self-closing with a ">" comparison attribute', () => {
+    // Same bracket-scan bug as the two JSX-expression cases above, but for a
+    // self-closing tag (`/>` instead of a child + `</aside>`) — a realistic
+    // generated-code shape this rule must handle too.
+    const code = `
+      <aside data-agent-context="sidebar" className="w-64 fixed inset-y-0" />
+      <aside aria-hidden={items.length > 0} data-agent-context="sidebar-mobile" className="translate-x-0" />
+    `
+    const findings = findUnwiredDuplicateSidebar(code)
+    expect(findings).toHaveLength(1)
+    expect(findings[0]).toMatch(/sidebar-mobile/)
+  })
+
   it('is a pure function — same input always produces the same result', () => {
     const code = `
       <aside data-agent-context="sidebar" className="w-64">Desktop</aside>

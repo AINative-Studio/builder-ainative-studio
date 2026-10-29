@@ -474,13 +474,9 @@ export function validateFileImports(files: Record<string, string>): StandardsRes
 // #366/#384's precedent — never blocks or auto-fixes the response.
 // ---------------------------------------------------------------------------
 
-/** Matches a JSX opening tag carrying data-agent-context="sidebar*" and
- *  captures the role suffix (empty for the plain "sidebar" tag, e.g.
- *  "-mobile" for "sidebar-mobile") plus that tag's own className value.
- *  Deliberately permissive about attribute order — data-agent-context and
- *  className may appear in either order across generated code. */
-const SIDEBAR_TAG_PATTERN =
-  /<[A-Za-z][\w.]*[^>]*\bdata-agent-context=["']sidebar([\w-]*)["'][^>]*>/g
+/** Matches the start of any JSX opening tag, to scan forward from for its
+ *  real closing `>` (see findSidebarTags below). */
+const TAG_START_PATTERN = /<[A-Za-z][\w.]*(?=[\s/>])/g
 
 /** Pulls the className value out of a single opening-tag match, whether it
  *  comes before or after data-agent-context, as a plain string or a
@@ -488,6 +484,49 @@ const SIDEBAR_TAG_PATTERN =
 function extractClassNameFromTag(tag: string): string {
   const m = tag.match(/\bclassName=(?:\{?\s*)["'`]([^"'`]*)["'`]/)
   return m ? m[1] : ''
+}
+
+/**
+ * Scan `code` for every JSX opening tag carrying data-agent-context=
+ * "sidebar*", returning each one's role suffix (empty for the plain
+ * "sidebar" tag, e.g. "-mobile" for "sidebar-mobile") and className value.
+ *
+ * Real bug: the previous flat SIDEBAR_TAG_PATTERN used `[^>]*` on either
+ * side of data-agent-context to span the tag's other attributes up to its
+ * closing `>`. A JSX expression container among those attributes can embed
+ * an ordinary `>` comparison (e.g. `aria-label={count > 0 ? 'x' : 'y'}
+ * data-agent-context="sidebar-mobile" className="translate-x-0"`) — the
+ * regex engine treats THAT `>` as the tag's end and can never re-sync past
+ * it, so the whole tag fails to match and the element vanishes from this
+ * rule's view entirely (not just a truncated className: the tag is never
+ * counted as a sidebar at all). That silently defeats #815's own detector —
+ * a second, unwired, permanently-visible mobile drawer sits right next to
+ * one with a `>` in an earlier attribute's expression and goes unflagged.
+ * Tracking `{}` depth to find the tag's real closing `>` instead — same
+ * pattern as obedience-gate.ts's hasNoOpCtaButton (#1641) — fixes this
+ * without changing behavior for tags with no expression containers (same
+ * `>` found either way).
+ */
+function findSidebarTags(code: string): { role: string; className: string; raw: string }[] {
+  const tags: { role: string; className: string; raw: string }[] = []
+  TAG_START_PATTERN.lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = TAG_START_PATTERN.exec(code)) !== null) {
+    const attrsStart = match.index + match[0].length
+    let i = attrsStart
+    let depth = 0
+    while (i < code.length && !(code[i] === '>' && depth <= 0)) {
+      if (code[i] === '{') depth++
+      else if (code[i] === '}') depth--
+      i++
+    }
+    if (i >= code.length) continue // unterminated tag
+    const tag = code.slice(match.index, i + 1)
+    const roleMatch = tag.match(/\bdata-agent-context=["']sidebar([\w-]*)["']/)
+    if (!roleMatch) continue
+    tags.push({ role: `sidebar${roleMatch[1]}`, className: extractClassNameFromTag(tag), raw: tag.slice(0, 120) })
+  }
+  return tags
 }
 
 /** True when a className string carries real off-canvas wiring: fixed/absolute
@@ -512,12 +551,7 @@ function hasOffCanvasWiring(className: string): boolean {
  * every extra one is correctly wired.
  */
 export function findUnwiredDuplicateSidebar(code: string): string[] {
-  const tags: { role: string; className: string; raw: string }[] = []
-  let m: RegExpExecArray | null
-  SIDEBAR_TAG_PATTERN.lastIndex = 0
-  while ((m = SIDEBAR_TAG_PATTERN.exec(code)) !== null) {
-    tags.push({ role: `sidebar${m[1]}`, className: extractClassNameFromTag(m[0]), raw: m[0].slice(0, 120) })
-  }
+  const tags = findSidebarTags(code)
   if (tags.length < 2) return []
 
   const findings: string[] = []
