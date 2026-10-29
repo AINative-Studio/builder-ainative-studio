@@ -334,6 +334,27 @@ function App(){
     expect(hasAlertInLeadCaptureGap(code)).toBe(false)
   })
 
+  // Same findMatchingBracket fix as hasFakeButtonGap's smiley tests above: a
+  // string-literal default param value containing an unmatched ")" (a
+  // smiley) used to throw off the depth-aware param-list scan here too,
+  // making the whole handler — and therefore its real alert()-after-persist
+  // bug — invisible to this gap.
+  const PERSISTS_AND_ALERTS_SMILEY_DEFAULT_PARAM = `
+function App(){
+  const [email, setEmail] = useState('')
+  const handleEarlyAccess = async (e = ':)') => {
+    e.preventDefault && e.preventDefault()
+    await fetch('/api/db/waitlist', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email }) }).catch(()=>{})
+    alert("You're on the list!")
+    setEmail('')
+  }
+  return (<form onSubmit={handleEarlyAccess}><input type="email" value={email} onChange={e=>setEmail(e.target.value)} /></form>)
+}`
+
+  it('THE BUG (stray paren inside a param default string): still flags a lead-capture handler whose param list has a string default containing an unmatched ")"', () => {
+    expect(hasAlertInLeadCaptureGap(PERSISTS_AND_ALERTS_SMILEY_DEFAULT_PARAM)).toBe(true)
+  })
+
   it('checkObedience surfaces alertInLeadCaptureGap and a reason string', () => {
     const r = checkObedience(PERSISTS_BUT_ALERTS, 'a landing page')
     expect(r.alertInLeadCaptureGap).toBe(true)
@@ -465,6 +486,49 @@ function App(){
     expect(r.fakeButtonGap).toBe(false)
     const prompt = buildObediencePrompt('a community platform', r)
     expect(prompt).not.toMatch(/FIX YOUR FAKE\/DEAD BUTTONS/)
+  })
+
+  // Real bug: findMatchingBracket's char-by-char `(`/`)`/`{`/`}` count had no
+  // notion of string content, so it miscounted the moment a string literal it
+  // scanned THROUGH contained a lone, unmatched instance of the tracked
+  // character — an emoticon in placeholder copy is exactly that. `alert('Thanks
+  // :)')`'s message contains a bare `)` with no matching `(`; the old counter
+  // hit it and returned the smiley's paren as if it closed the alert() call,
+  // truncating the rest of the handler out of view and making this exact
+  // alert()-only fake-CTA shape (#844) silently invisible.
+  const FAKE_SIGN_IN_ALERT_SMILEY_ARG = `
+function App(){
+  return (<nav><button onClick={() => alert('Thanks :)')}>Sign In</button></nav>)
+}`
+
+  const FAKE_SIGN_IN_ALERT_SMILEY_PARAM_DEFAULT = `
+function App(){
+  return (<nav><button onClick={function(label = ':)') { alert('Sign In') }}>Sign In</button></nav>)
+}`
+
+  const FAKE_SIGN_IN_ALERT_BACKTICK_SMILEY_ARG = `
+function App(){
+  return (<nav><button onClick={() => alert(\`Thanks :)\`)}>Sign In</button></nav>)
+}`
+
+  it('THE BUG (stray paren inside a string): still flags an alert-only handler whose message contains an unmatched ")" (a smiley)', () => {
+    expect(hasFakeButtonGap(FAKE_SIGN_IN_ALERT_SMILEY_ARG)).toBe(true)
+  })
+
+  it('THE BUG (stray paren inside a template-literal string): still flags an alert-only handler whose backtick message contains an unmatched ")"', () => {
+    expect(hasFakeButtonGap(FAKE_SIGN_IN_ALERT_BACKTICK_SMILEY_ARG)).toBe(true)
+  })
+
+  it('THE BUG (stray paren inside a param default string): still flags an alert-only handler whose own param list has a string default containing an unmatched ")"', () => {
+    expect(hasFakeButtonGap(FAKE_SIGN_IN_ALERT_SMILEY_PARAM_DEFAULT)).toBe(true)
+  })
+
+  it('does NOT flag a real handler whose message contains a smiley but that also does real work', () => {
+    const code = `
+function App(){
+  return (<nav><button onClick={() => { trackClick(); alert('Thanks :)') }}>Sign In</button></nav>)
+}`
+    expect(hasFakeButtonGap(code)).toBe(false)
   })
 })
 
