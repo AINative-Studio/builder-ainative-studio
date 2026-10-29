@@ -116,6 +116,25 @@ describe('findSecretLoggingCalls', () => {
     const code = `console.log(formatValue(user));\nconsole.log('secret', apiKey);`
     expect(findSecretLoggingCalls(code)).toHaveLength(1)
   })
+
+  // Real bug: the depth-counter had no notion of string content, so a lone,
+  // unmatched `)` INSIDE a string argument -- e.g. a sad-face emoticon in a
+  // user-facing error message -- was mistaken for the call's real closing
+  // paren, truncating the scan before it ever reached the secret-shaped arg.
+  it('flags a secret-shaped arg after a string argument containing an unmatched paren', () => {
+    const code = `console.log('Checkout failed :(', apiKey)`
+    expect(findSecretLoggingCalls(code)).toHaveLength(1)
+  })
+
+  it('flags a secret-shaped arg after a template-literal argument containing an unmatched paren', () => {
+    const code = 'console.warn(`Checkout failed :(`, authToken)'
+    expect(findSecretLoggingCalls(code)).toHaveLength(1)
+  })
+
+  it('flags a secret-shaped arg after a string argument containing an unmatched brace', () => {
+    const code = `console.log('Use the { placeholder', apiKey)`
+    expect(findSecretLoggingCalls(code)).toHaveLength(1)
+  })
 })
 
 describe('countH1Tags', () => {

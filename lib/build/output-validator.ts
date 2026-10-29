@@ -46,20 +46,89 @@ import type { StandardsCheck, StandardsResult } from './coding-standards'
 /** Matches up to and including the opening `{{` of a dangerouslySetInnerHTML prop. */
 const DANGEROUS_HTML_HEAD_PATTERN = /dangerouslySetInnerHTML\s*=\s*\{\s*\{/g
 
+/** Index of the closing `quote` that ends the string starting at `openIdx` (honoring `\`-escapes), or -1 if unterminated. */
+function findStringEnd(code: string, openIdx: number, quote: string): number {
+  let i = openIdx + 1
+  while (i < code.length) {
+    if (code[i] === '\\') {
+      i += 2
+      continue
+    }
+    if (code[i] === quote) return i
+    i++
+  }
+  return -1
+}
+
+/** Index of the closing `` ` `` that ends the template literal starting at `openIdx`, honoring nested `${}` interpolations. */
+function findBacktickEnd(code: string, openIdx: number): number {
+  let i = openIdx + 1
+  while (i < code.length) {
+    const ch = code[i]
+    if (ch === '\\') {
+      i += 2
+      continue
+    }
+    if (ch === '`') return i
+    if (ch === '$' && code[i + 1] === '{') {
+      const closeIdx = findMatchingBracket(code, i + 1, '{', '}')
+      if (closeIdx === -1) return -1
+      i = closeIdx + 1
+      continue
+    }
+    i++
+  }
+  return -1
+}
+
+/**
+ * Index of the matching `close` bracket for the `open` bracket at `openIdx`
+ * (honoring arbitrarily nested brackets of that kind), or -1 if unbalanced.
+ *
+ * Skips over string literals (`'...'`/`"..."`) it scans through so a lone,
+ * unmatched bracket character INSIDE one — e.g. an emoticon in user-facing
+ * copy (`alert('Thanks :)')`) or a parenthetical aside in a log message
+ * (`console.log('Checkout failed :(', apiKey)`) — is never mistaken for
+ * real bracket-relevant syntax. Same technique already proven in
+ * template-literal-to-concat.ts and obedience-gate.ts's findMatchingBracket
+ * (#1654); this module's two depth-counters shared the identical gap.
+ */
+function findMatchingBracket(code: string, openIdx: number, open: string, close: string): number {
+  let depth = 0
+  let i = openIdx
+  while (i < code.length) {
+    const ch = code[i]
+    if (ch === '\\') { i += 2; continue }
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      if (end === -1) return -1
+      i = end + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      if (end === -1) return -1
+      i = end + 1
+      continue
+    }
+    if (ch === open) { depth++; i++; continue }
+    if (ch === close) {
+      depth--
+      if (depth === 0) return i
+      i++
+      continue
+    }
+    i++
+  }
+  return -1
+}
+
 /**
  * Find the index of the `}` that closes the `{` at `openIdx` (honoring
  * arbitrarily nested braces), or -1 if unbalanced.
  */
 function findMatchingBrace(code: string, openIdx: number): number {
-  let depth = 0
-  for (let i = openIdx; i < code.length; i++) {
-    if (code[i] === '{') depth++
-    else if (code[i] === '}') {
-      depth--
-      if (depth === 0) return i
-    }
-  }
-  return -1
+  return findMatchingBracket(code, openIdx, '{', '}')
 }
 
 /**
@@ -126,15 +195,7 @@ const SECRET_ARG_PATTERN = /apiKey|api_key|token|secret|password|process\.env\.\
  * arbitrarily nested parens), or -1 if unbalanced.
  */
 function findMatchingParen(code: string, openIdx: number): number {
-  let depth = 0
-  for (let i = openIdx; i < code.length; i++) {
-    if (code[i] === '(') depth++
-    else if (code[i] === ')') {
-      depth--
-      if (depth === 0) return i
-    }
-  }
-  return -1
+  return findMatchingBracket(code, openIdx, '(', ')')
 }
 
 /**
