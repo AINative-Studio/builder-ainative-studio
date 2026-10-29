@@ -42,27 +42,72 @@ function matchesKeyword(hay: string, keyword: string): boolean {
 }
 
 /**
+ * Find every top-level (non-nested) `(...)` span in a line, with each
+ * span's start index and inner content.
+ *
+ * Real bug this replaces: a flat `\(([^)]+)\)` for the trailing route stops
+ * at the FIRST `)` on the line. That's wrong the moment the page NAME
+ * itself has its own parenthetical aside before the route — e.g.
+ * "**Pricing (Plans)** (/pricing)" — where the flat regex captures "Plans"
+ * as the "route" (fails the `startsWith('/')` check, so the whole page gets
+ * silently dropped) instead of the real "/pricing". It also mis-captures a
+ * route containing a Next.js route-group segment like "(/(shop)/products)",
+ * truncating it to "/(shop". Depth-counting instead finds each
+ * parenthetical group's TRUE matching close, so the LAST top-level group on
+ * the line — the real route — is used regardless of what came before it.
+ */
+function findTopLevelParenGroups(line: string): Array<{ start: number; end: number; content: string }> {
+  const groups: Array<{ start: number; end: number; content: string }> = []
+  let depth = 0
+  let start = -1
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]
+    if (ch === '(') {
+      if (depth === 0) start = i
+      depth++
+    } else if (ch === ')') {
+      if (depth > 0) {
+        depth--
+        if (depth === 0 && start !== -1) {
+          groups.push({ start, end: i, content: line.slice(start + 1, i) })
+          start = -1
+        }
+      }
+    }
+  }
+  return groups
+}
+
+/**
  * Parse explicitly listed pages from structured PRDs
  * Handles formats like:
  * - "1. **Homepage** (/)"
  * - "- Blog Detail (/blog/:slug)"
  * - "2. About Page (/about)"
+ * - "3. **Pricing (Plans)** (/pricing)" (a parenthetical aside in the name)
  */
 function parseExplicitPages(text: string): Array<{ name: string; route: string }> {
   const pages: Array<{ name: string; route: string }> = []
   const lines = text.split('\n')
+  const bulletPattern = /(?:^|\s)(?:\d+\.|[-*])\s*(.+)$/i
 
   for (const line of lines) {
-    // Match patterns like: "1. **Homepage** (/)" or "- Blog List (/blog)"
-    const match = line.match(/(?:^|\s)(?:\d+\.|[-*])\s*\*?\*?([^(]*?)\*?\*?\s*\(([^)]+)\)/i)
-    if (match) {
-      const name = match[1].trim()
-      const route = match[2].trim()
+    const bulletMatch = line.match(bulletPattern)
+    if (!bulletMatch) continue
 
-      // Only add if it looks like a page (has a name and starts with /)
-      if (name && route.startsWith('/')) {
-        pages.push({ name, route })
-      }
+    const rest = bulletMatch[1]
+    const groups = findTopLevelParenGroups(rest)
+    if (groups.length === 0) continue
+
+    // The route is the LAST top-level parenthetical group on the line; any
+    // earlier ones are asides inside the page name itself.
+    const routeGroup = groups[groups.length - 1]
+    const name = rest.slice(0, routeGroup.start).replace(/\*+/g, '').trim()
+    const route = routeGroup.content.trim()
+
+    // Only add if it looks like a page (has a name and starts with /)
+    if (name && route.startsWith('/')) {
+      pages.push({ name, route })
     }
   }
 
