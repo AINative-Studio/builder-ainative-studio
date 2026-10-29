@@ -161,6 +161,62 @@ function findMatchingParen(code: string, openIdx: number): number {
 }
 
 /**
+ * Given the index of a `<` character, return the index of the `>` that
+ * closes it (honoring arbitrarily nested `<...>`), or -1 if unbalanced.
+ * Mirrors findMatchingParen's depth-counting shape.
+ */
+function findMatchingAngleBracket(code: string, openIdx: number): number {
+  let depth = 0
+  for (let i = openIdx; i < code.length; i++) {
+    if (code[i] === '<') depth++
+    else if (code[i] === '>') {
+      depth--
+      if (depth === 0) return i
+    }
+  }
+  return -1
+}
+
+/**
+ * Starting right after a `const NAME` match, skip an optional TS type
+ * annotation (`: Dotted.Type<...>`) honoring ARBITRARILY NESTED generics in
+ * the `<...>` part — e.g. `: React.FC<{ metrics: Record<string, number> }>`.
+ *
+ * Returns the index of the first non-whitespace char after the annotation
+ * (where a real `=` is expected), or -1 if a `:` is present but the
+ * annotation is malformed (no identifier, or an unbalanced `<`).
+ *
+ * #1660: the annotation used to be matched inline by the same regex as the
+ * rest of this function, via a flat `(?:<[^>]*>)?` group. That group has no
+ * notion of nesting — `[^>]*` stops at the FIRST `>`, which for a nested
+ * generic (e.g. `Record<string, number>` inside `React.FC<{...}>`) lands
+ * INSIDE the outer generic, leaving a dangling `}>` that broke the `\s*=`
+ * that had to follow immediately. The whole alternative then failed to
+ * match at that position, making the declaration invisible to this scan —
+ * if it's exported only via a named list (not `export default`) and its
+ * name isn't on KNOWN_PAGE_NAMES, detection falls all the way through to
+ * `{name: null, source: 'none'}`, the same "Element type is invalid" /
+ * blank-page class this module's whole fix history exists to prevent.
+ */
+function skipArrowConstTypeAnnotation(code: string, idx: number): number {
+  let i = idx
+  while (i < code.length && /\s/.test(code[i])) i++
+  if (code[i] !== ':') return i // no annotation at all
+  i++
+  while (i < code.length && /\s/.test(code[i])) i++
+  const identStart = i
+  while (i < code.length && /[\w.$]/.test(code[i])) i++
+  if (i === identStart) return -1 // `:` with no identifier after it
+  if (code[i] === '<') {
+    const closeIdx = findMatchingAngleBracket(code, i)
+    if (closeIdx === -1) return -1
+    i = closeIdx + 1
+  }
+  while (i < code.length && /\s/.test(code[i])) i++
+  return i
+}
+
+/**
  * True if `code` already has A default export, in EITHER form the rest of this
  * module (and the pipelines that call it) treat as authoritative:
  * `export default ...` or a renamed default via a named-export list
@@ -425,19 +481,39 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
   // fell all the way through to `{name: null, source: 'none'}`, the same
   // "Component Not Found" / "Element type is invalid" outcome the rest of
   // this module's fix history (#1523/#1536/#1524) exists to prevent. The
-  // optional non-capturing group below tolerates a type annotation (a
-  // dotted/generic type name, e.g. `React.FC<Props>`, `FC`, `Component<P,
-  // S>`) between the name and `=` without needing `[^=]+` (which would wrongly
-  // swallow a real `=` inside an arrow-type annotation like `: () => void`).
+  // optional annotation (a dotted/generic type name, e.g. `React.FC<Props>`,
+  // `FC`, `Component<P, S>`) between the name and `=` is tolerated via
+  // skipArrowConstTypeAnnotation (#1660) rather than inline in this regex —
+  // see that helper's doc comment for why a flat `<[^>]*>` group couldn't
+  // handle a NESTED generic (e.g. `React.FC<{ metrics: Record<string,
+  // number> }>`). The const alternative below only matches up through the
+  // name; the `=` itself (and anything typed between it and the name) is
+  // verified manually below, same as the regex used to require inline
+  // (without needing `[^=]+`, which would wrongly swallow a real `=` inside
+  // an arrow-type annotation like `: () => void`).
   const candidates: { name: string; index: number }[] = []
   const declRe =
-    /(?:^|\n)\s*(?:export\s+)?(?:async\s+)?(?:function\s+([A-Z]\w*)|const\s+([A-Z]\w*)\s*(?::\s*[\w.$]+(?:<[^>]*>)?)?\s*=|class\s+([A-Z]\w*))/g
+    /(?:^|\n)\s*(?:export\s+)?(?:async\s+)?(?:function\s+([A-Z]\w*)|const\s+([A-Z]\w*)|class\s+([A-Z]\w*))/g
   let m: RegExpExecArray | null
   while ((m = declRe.exec(code)) !== null) {
     const name = m[1] || m[2] || m[3]
-    if (name && isPascalCase(name) && !NON_ROOT_NAMES.has(name)) {
-      candidates.push({ name, index: m.index })
+    if (!name || !isPascalCase(name) || NON_ROOT_NAMES.has(name)) continue
+    if (m[2]) {
+      // const branch: the name must actually be followed by (an optional
+      // type annotation, then) a real assignment `=` — not `==`/`=>` — or
+      // this isn't an arrow-const declaration at all.
+      const afterName = m.index + m[0].length
+      const afterAnnotation = skipArrowConstTypeAnnotation(code, afterName)
+      if (
+        afterAnnotation === -1 ||
+        code[afterAnnotation] !== '=' ||
+        code[afterAnnotation + 1] === '=' ||
+        code[afterAnnotation + 1] === '>'
+      ) {
+        continue
+      }
     }
+    candidates.push({ name, index: m.index })
   }
   // Prefer the last-defined candidate that returns JSX (root is conventionally last).
   for (let i = candidates.length - 1; i >= 0; i--) {
