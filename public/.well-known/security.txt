@@ -1,0 +1,3 @@
+Contact: mailto:admin@ainative.studio
+Expires: 2027-10-29T00:00:00.000Z
+Canonical: https://builder.ainative.studio/.well-known/security.txt
