@@ -390,6 +390,30 @@ describe('NO_PII_IN_LOGS_RULE', () => {
     );
     expect(result.passed).toBe(false);
   });
+
+  // Real bug: the depth-counter had no notion of string content, so a lone,
+  // unmatched `)` INSIDE a string argument -- e.g. a sad-face emoticon in a
+  // user-facing error message -- was mistaken for the call's real closing
+  // paren, truncating the scan before it ever reached `user.password`.
+  it('detects PII in console.log after a string argument containing an unmatched paren', async () => {
+    const result = await NO_PII_IN_LOGS_RULE.check(
+      makeAction('file-edit', {
+        filePath: 'lib/auth.ts',
+        fileContent: "console.log('Checkout failed :(', user.password)",
+      })
+    );
+    expect(result.passed).toBe(false);
+  });
+
+  it('detects PII in console.log after a template-literal argument containing an unmatched paren', async () => {
+    const result = await NO_PII_IN_LOGS_RULE.check(
+      makeAction('file-edit', {
+        filePath: 'lib/auth.ts',
+        fileContent: 'console.log(`Checkout failed :(`, user.password)',
+      })
+    );
+    expect(result.passed).toBe(false);
+  });
 });
 
 describe('INPUT_VALIDATION_RULE', () => {
