@@ -598,6 +598,35 @@ export function hasAxJsonLdGap(code: string): boolean {
 }
 
 /**
+ * All opening tags for `tagName` (e.g. "nav"), as the full attribute text up
+ * to the tag's real closing `>` — depth-aware over `{}` so a JSX expression
+ * attribute that itself contains a `>` (a comparison, e.g. `aria-hidden=
+ * {count > 0}`) is never mistaken for the tag's end. Same bug class as
+ * hasNoOpCtaButton's own fix (#1641): a flat `[^>]*` stops at the FIRST `>`,
+ * truncating the tag before a later real attribute (aria-label,
+ * data-agent-role, ...) is ever reached — making a genuinely-compliant
+ * element false-flagged as missing it.
+ */
+function matchOpeningTags(code: string, tagName: string): string[] {
+  const tags: string[] = []
+  const openTagRe = new RegExp(`<${tagName}\\b`, 'gi')
+  let match: RegExpExecArray | null
+  while ((match = openTagRe.exec(code))) {
+    const attrsStart = match.index + match[0].length
+    let i = attrsStart
+    let depth = 0
+    while (i < code.length && !(code[i] === '>' && depth <= 0)) {
+      if (code[i] === '{') depth++
+      else if (code[i] === '}') depth--
+      i++
+    }
+    if (i >= code.length) continue // unterminated tag
+    tags.push(code.slice(match.index, i + 1))
+  }
+  return tags
+}
+
+/**
  * AX compliance, follow-up (builder#687 item 2): every `<nav>` element must
  * carry `aria-label`. CONDITIONAL, unlike the root main landmark — a
  * legitimately simple single-section app (a plain counter, a single-form
@@ -608,7 +637,7 @@ export function hasAxJsonLdGap(code: string): boolean {
  */
 export function hasAxNavLabelGap(code: string): boolean {
   const src = code || ''
-  const navTags = src.match(/<nav\b[^>]*>/gi) || []
+  const navTags = matchOpeningTags(src, 'nav')
   if (navTags.length === 0) return false
   return navTags.some((tag) => !/\baria-label\s*=/.test(tag))
 }
@@ -620,7 +649,7 @@ export function hasAxNavLabelGap(code: string): boolean {
  */
 export function hasAxSectionLabelGap(code: string): boolean {
   const src = code || ''
-  const sectionTags = src.match(/<section\b[^>]*>/gi) || []
+  const sectionTags = matchOpeningTags(src, 'section')
   if (sectionTags.length === 0) return false
   return sectionTags.some((tag) => !/\baria-label\s*=/.test(tag))
 }
@@ -656,8 +685,8 @@ function elementHasAgentMarker(tag: string): boolean {
 
 export function hasAxAgentAttributesGap(code: string): boolean {
   const src = code || ''
-  const buttonTags = src.match(/<button\b[^>]*>/gi) || []
-  const linkTags = (src.match(/<a\b[^>]*>/gi) || []).filter((tag) => /\bhref\s*=\s*["'](?!#["'])[^"']+["']/.test(tag))
+  const buttonTags = matchOpeningTags(src, 'button')
+  const linkTags = matchOpeningTags(src, 'a').filter((tag) => /\bhref\s*=\s*["'](?!#["'])[^"']+["']/.test(tag))
   const interactiveTags = [...buttonTags, ...linkTags]
   if (interactiveTags.length < 2) return false // too little interactive surface to judge coverage at all
   const taggedCount = interactiveTags.filter(elementHasAgentMarker).length
