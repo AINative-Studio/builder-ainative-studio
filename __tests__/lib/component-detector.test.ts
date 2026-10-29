@@ -441,6 +441,26 @@ describe('detectRootComponent', () => {
       expect(r.name).toBe('QuartzPanel')
     })
 
+    // #1660: a NESTED generic inside the type annotation (e.g. a typed prop
+    // using `Record<K, V>`/`Array<T>` inline) broke the old flat `<[^>]*>`
+    // group — it stopped at the FIRST `>`, which lands inside the nested
+    // generic, leaving a dangling `}>` that broke the required `\s*=`
+    // immediately after. Exported only via a bare list (no `export
+    // default`) and with a name absent from KNOWN_PAGE_NAMES, this used to
+    // fall all the way through to `{name: null, source: 'none'}`.
+    it('detects a TS-typed arrow-const component whose annotation contains a NESTED generic', () => {
+      const code = `
+        import React from 'react'
+        const WidgetGrid: React.FC<{ metrics: Record<string, number> }> = ({ metrics }) => {
+          return (<div>{Object.keys(metrics).length}</div>)
+        }
+        export { WidgetGrid }
+      `
+      const r = detectRootComponent(code)
+      expect(r.name).toBe('WidgetGrid')
+      expect(r.source).toBe('pascalcase-jsx')
+    })
+
     it('still picks the LAST-defined JSX component when earlier siblings are TS-typed', () => {
       const code = `
         const Header: React.FC<{}> = () => { return <header>h</header> }
