@@ -279,6 +279,14 @@ export interface AppEntry {
   // AFTER a successful sendCompanyEmail — never advanced on a failed send, so
   // a transient failure doesn't silently drop that day's activity.
   lastDigestAt?: string
+  // Delta marker for the trial re-engagement email (#1607) — a SEPARATE
+  // cron/audience from comms-digest's lastDigestAt above (deliberately not
+  // reused: different trigger — trial/renewal state, not loop enrollment —
+  // and different content — real signup/visit activity, not a dev standup).
+  // The last instant this cron successfully SENT for this company; the next
+  // run's activity window is [this value, now). Advanced ONLY after a
+  // confirmed send, same discipline as lastDigestAt.
+  lastTrialEngagementEmailAt?: string
   // Real, durable "this recipient is undeliverable" flag (#840) — set ONLY
   // from a verified Resend webhook event (a permanent `email.bounced`, or
   // `email.complained`), never speculatively. Before this, Resend returned a
@@ -669,6 +677,19 @@ export async function setAppLastDigestAt(slug: string, atIso: string): Promise<b
   const existing = await requireVerifiedApp('setAppLastDigestAt', slug)
   if (!existing) return false
   return registerApp({ ...existing, lastDigestAt: atIso })
+}
+
+/**
+ * Record a successful trial re-engagement send (#1607) — advances
+ * lastTrialEngagementEmailAt so the NEXT run's activity-since window starts
+ * from here. Called ONLY after a confirmed send, mirroring
+ * setAppLastDigestAt's own discipline (never advanced on a failed send).
+ */
+export async function setAppLastTrialEngagementEmailAt(slug: string, atIso: string): Promise<boolean> {
+  if (!atIso) return false
+  const existing = await requireVerifiedApp('setAppLastTrialEngagementEmailAt', slug)
+  if (!existing) return false
+  return registerApp({ ...existing, lastTrialEngagementEmailAt: atIso })
 }
 
 /**

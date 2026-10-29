@@ -18,6 +18,7 @@ import {
   setAppZeroVoice,
   setAppCommsMode,
   setAppLastDigestAt,
+  setAppLastTrialEngagementEmailAt,
   setAppWiring,
   setAppGrowthAdTest,
   setAppGrowthAdBudgetFunded,
@@ -102,6 +103,7 @@ const SETTERS: Array<{
   { name: 'setAppZeroVoice', call: (s) => setAppZeroVoice(s, { numberId: 'n1', e164: '+15555550123' }) },
   { name: 'setAppCommsMode', call: (s) => setAppCommsMode(s, 'pairProgramming') },
   { name: 'setAppLastDigestAt', call: (s) => setAppLastDigestAt(s, '2026-10-24T09:00:00Z') },
+  { name: 'setAppLastTrialEngagementEmailAt', call: (s) => setAppLastTrialEngagementEmailAt(s, '2026-10-24T09:00:00Z') },
   { name: 'setAppWiring', call: (s) => setAppWiring(s, { pipelineWired: true }) },
   { name: 'setAppGrowthAdTest', call: (s) => setAppGrowthAdTest(s, { campaignId: 'camp-1' }) },
   {
@@ -209,6 +211,7 @@ describe('setApp* unverified-lookup handling (#1486)', () => {
       ['setAppZeroVoice (missing e164)', () => setAppZeroVoice('acme', { numberId: 'n1', e164: '' })],
       ['setAppCommsMode (invalid mode)', () => setAppCommsMode('acme', 'nope' as any)],
       ['setAppLastDigestAt (empty iso)', () => setAppLastDigestAt('acme', '')],
+      ['setAppLastTrialEngagementEmailAt (empty iso)', () => setAppLastTrialEngagementEmailAt('acme', '')],
       ['setAppGrowthAdTest (empty campaignId)', () => setAppGrowthAdTest('acme', { campaignId: '' })],
       [
         'setAppGrowthAdBudgetFunded (empty paymentIntentId)',
