@@ -68,6 +68,49 @@ describe('dedupeProvidedComponents', () => {
     expect(out).toMatch(/function App\(/)
   })
 
+  // #1661: the removal regex required `=` immediately after the name, so a
+  // TS type annotation between the name and `=` — very common when a model
+  // imports bare `FC` from 'react' instead of `React.FC` (the caller only
+  // pre-strips the `React.FC`/`any`/`string`/`number`/`boolean` spellings,
+  // not bare `FC<...>`) — left the redeclaration completely un-removed,
+  // reproducing the exact "Identifier has already been declared" crash
+  // this module exists to prevent.
+  it('#1661: removes a const-arrow redeclaration with a bare `FC<...>` type annotation between the name and `=`', () => {
+    const code = [
+      "import { FC } from 'react'",
+      "import { Button } from './components/ui/button'",
+      "const Button: FC<{ children: React.ReactNode }> = (props) => {",
+      "  return (<button>{props.children}</button>);",
+      "}",
+      "",
+      "function App() {",
+      "  return <Button>Hi</Button>;",
+      "}",
+    ].join('\n')
+    const out = dedupeProvidedComponents(code)
+    expect(out).not.toMatch(/const Button\s*:/)
+    expect(out).toMatch(/function App\(/)
+  })
+
+  // Same gap, but with a NESTED generic in the annotation (e.g. a typed prop
+  // using Record<K, V> inline) — confirms the fix depth-counts `<...>`
+  // rather than stopping at the first `>`.
+  it('#1661: removes a const-arrow redeclaration whose type annotation contains a NESTED generic', () => {
+    const code = [
+      "import { Badge } from './components/ui/badge'",
+      "const Badge: React.FC<{ counts: Record<string, number> }> = ({ counts }) => {",
+      "  return (<span>{Object.keys(counts).length}</span>);",
+      "}",
+      "",
+      "function App() {",
+      "  return <Badge counts={{}} />;",
+      "}",
+    ].join('\n')
+    const out = dedupeProvidedComponents(code)
+    expect(out).not.toMatch(/const Badge\s*:/)
+    expect(out).toMatch(/function App\(/)
+  })
+
   it('#1619-class: removes a single-line function redeclaration whose param has a call-expression default', () => {
     const code = [
       "function Card({ variant = getDefaultVariant() }){ return (variant); } // stub",

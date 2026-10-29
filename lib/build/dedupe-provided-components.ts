@@ -156,6 +156,87 @@ function removeBalancedParamDecl(code: string, headRe: RegExp, afterParamsRe: Re
   return out
 }
 
+/**
+ * Given the index of a `<` character, return the index of the `>` that
+ * closes it (honoring arbitrarily nested `<...>`), or -1 if unbalanced.
+ * Mirrors findMatchingParen's depth-counting shape.
+ */
+function findMatchingAngleBracket(code: string, openIdx: number): number {
+  let depth = 0
+  for (let i = openIdx; i < code.length; i++) {
+    if (code[i] === '<') depth++
+    else if (code[i] === '>') {
+      depth--
+      if (depth === 0) return i
+    }
+  }
+  return -1
+}
+
+/**
+ * Starting right after `const COMP`, skip an optional TS type annotation
+ * (`: Dotted.Type<...>`, honoring arbitrarily nested generics in the
+ * `<...>` part) and the real `=`, returning the index of the arrow's
+ * opening `(` — or -1 if this isn't actually `const COMP[: Type] = (...`.
+ */
+function skipTypeAnnotationToOpenParen(code: string, idx: number): number {
+  let i = idx
+  while (i < code.length && /\s/.test(code[i])) i++
+  if (code[i] === ':') {
+    i++
+    while (i < code.length && /\s/.test(code[i])) i++
+    const identStart = i
+    while (i < code.length && /[\w.$]/.test(code[i])) i++
+    if (i === identStart) return -1 // `:` with no identifier after it
+    if (code[i] === '<') {
+      const closeIdx = findMatchingAngleBracket(code, i)
+      if (closeIdx === -1) return -1
+      i = closeIdx + 1
+    }
+    while (i < code.length && /\s/.test(code[i])) i++
+  }
+  if (code[i] !== '=') return -1
+  i++
+  while (i < code.length && /\s/.test(code[i])) i++
+  return code[i] === '(' ? i : -1
+}
+
+/**
+ * Remove a `const COMP[: Type] = (...) => ...` redeclaration, same as
+ * removeBalancedParamDecl's const use, but tolerating an optional TS type
+ * annotation between the name and `=` (honoring nested generics).
+ *
+ * #1661: the previous removal regex (`const\s+${comp}\s*=\s*\(`) required
+ * `=` immediately after the name, so a type-annotated redeclaration — e.g.
+ * `const Button: FC<{ children: React.ReactNode }> = (props) => {...}`
+ * (very common when a model imports bare `FC` instead of `React.FC`; this
+ * file's caller only pre-strips a few hardcoded `React.FC`/`any`/`string`/
+ * `number`/`boolean` spellings before calling this, not bare `FC<...>` or
+ * any custom type) — was invisible to the scan and left completely
+ * un-removed, reproducing the exact "Identifier has already been declared"
+ * crash this module exists to prevent.
+ */
+function removeConstArrowDecl(code: string, comp: string, afterParamsRe: RegExp): string {
+  const headRe = new RegExp(`const\\s+${comp}\\b`, 'g')
+  let out = ''
+  let lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = headRe.exec(code))) {
+    const openIdx = skipTypeAnnotationToOpenParen(code, m.index + m[0].length)
+    if (openIdx === -1) continue
+    const closeIdx = findMatchingParen(code, openIdx)
+    if (closeIdx === -1) continue
+    const afterMatch = code.slice(closeIdx + 1).match(afterParamsRe)
+    if (!afterMatch) continue
+    const declEnd = closeIdx + 1 + afterMatch[0].length
+    out += code.slice(lastIndex, m.index)
+    lastIndex = declEnd
+    headRe.lastIndex = declEnd
+  }
+  out += code.slice(lastIndex)
+  return out
+}
+
 export function dedupeProvidedComponents(
   code: string,
   names: readonly string[] = SCAFFOLD_PROVIDED_COMPONENTS,
@@ -164,9 +245,11 @@ export function dedupeProvidedComponents(
 
   for (const comp of names) {
     // Remove const declarations like: const Button = ({ children }) => ...
-    out = removeBalancedParamDecl(
+    // (tolerating an optional `: Type<...>` annotation before the `=` — see
+    // removeConstArrowDecl's doc comment, #1661).
+    out = removeConstArrowDecl(
       out,
-      new RegExp(`const\\s+${comp}\\s*=\\s*\\(`, 'g'),
+      comp,
       /^\s*=>\s*[\s\S]*?(?=\n(?:const|function|class|let|var|$))/,
     )
 
