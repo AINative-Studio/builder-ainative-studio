@@ -631,15 +631,63 @@ export function hasAxComplexWidgetRoleGap(code: string): boolean {
 }
 
 /**
- * AIKit patterns the model tends to hand-roll. Each entry: a regex that matches a
- * HAND-ROLLED version in the generated code, and the AIKit component to use instead.
- * We only flag when the AIKit component is NOT already imported/used.
+ * True when some `className="..."` attribute's value matches `classNameRe`
+ * AND, within `maxGap` characters after that same tag's REAL closing `>`,
+ * `contentRe` matches.
+ *
+ * Real bug this replaces: the three callers below used to splice the two
+ * halves together as one regex with a flat `[^>]*>` bridging them (e.g.
+ * `className="[^"]*\btext-3xl\b[^"]*"[^>]*>\s*\{?[^<]*(\$|%|\d)`). Any OTHER
+ * attribute on that same tag whose JSX expression embeds an ordinary `>`
+ * comparison (`data-flag={count > 0}`, `aria-current={i > 0}`, ...) is
+ * common in generated code and gives the regex a premature `>` to stop at.
+ * The content check then runs against text INSIDE that expression instead
+ * of the element's real children — e.g. the `0` in `{count > 0}` satisfies
+ * `\d` — so a plain `<div className="text-3xl" data-flag={count > 0}>
+ * Loading</div>` (not a metric at all) gets misreported as a hand-rolled
+ * MetricCard. Same `{}`-depth-aware technique as obedience-gate's own
+ * matchOpeningTags (#1664/#1665) and output-validator's findSidebarTags
+ * (#1666/#1667), applied here to land on the tag's real `>` before running
+ * the content check.
  */
-const AIKIT_PATTERNS: Array<{ handRolled: RegExp; component: string; label: string }> = [
+function hasClassNameFollowedByContent(code: string, classNameRe: RegExp, contentRe: RegExp, maxGap: number): boolean {
+  const classAttrRe = /className="([^"]*)"/g
+  let m: RegExpExecArray | null
+  while ((m = classAttrRe.exec(code))) {
+    if (!classNameRe.test(m[1])) continue
+    let i = classAttrRe.lastIndex
+    let depth = 0
+    while (i < code.length && !(code[i] === '>' && depth <= 0)) {
+      if (code[i] === '{') depth++
+      else if (code[i] === '}') depth--
+      i++
+    }
+    if (i >= code.length) continue // unterminated tag
+    if (contentRe.test(code.slice(i + 1, i + 1 + maxGap))) return true
+  }
+  return false
+}
+
+/**
+ * AIKit patterns the model tends to hand-roll. Each entry: either a regex, or a
+ * predicate function for patterns that need to look past a tag's real closing `>`
+ * (see hasClassNameFollowedByContent), that matches a HAND-ROLLED version in the
+ * generated code, and the AIKit component to use instead. We only flag when the
+ * AIKit component is NOT already imported/used.
+ */
+const AIKIT_PATTERNS: Array<{ handRolled: RegExp | ((code: string) => boolean); component: string; label: string }> = [
   // A stat/metric card: a number + a label/change, hand-built with divs.
-  { handRolled: /className="[^"]*\b(text-3xl|text-4xl)[^"]*"[^>]*>\s*\{?[^<]*(\$|%|\d)/, component: 'MetricCard', label: 'stat/metric cards' },
+  {
+    handRolled: (code) => hasClassNameFollowedByContent(code, /\b(text-3xl|text-4xl)\b/, /^\s*\{?[^<]*(\$|%|\d)/, Infinity),
+    component: 'MetricCard',
+    label: 'stat/metric cards',
+  },
   // A left nav column (w-NN sidebar) OR an <aside> element used as nav.
-  { handRolled: /className="[^"]*\b(w-64|w-56|w-72)\b[^"]*"[^>]*>[\s\S]{0,400}(nav|aside|sidebar)/i, component: 'AIKitSidebar', label: 'sidebar navigation' },
+  {
+    handRolled: (code) => hasClassNameFollowedByContent(code, /\b(w-64|w-56|w-72)\b/, /(nav|aside|sidebar)/i, 400),
+    component: 'AIKitSidebar',
+    label: 'sidebar navigation',
+  },
   { handRolled: /<aside[\s>][\s\S]{0,300}(<nav|onClick|href|menu|item)/i, component: 'AIKitSidebar', label: 'sidebar navigation' },
   // A data table built from <table>.
   { handRolled: /<table[\s>]/i, component: 'AIKitTable', label: 'data table' },
@@ -656,7 +704,12 @@ const AIKIT_PATTERNS: Array<{ handRolled: RegExp; component: string; label: stri
   // Multi-step wizard/stepper hand-built.
   { handRolled: /(step\s*\d|currentStep|activeStep)[\s\S]{0,160}(map\(|rounded-full|border)/i, component: 'AIKitStepper', label: 'multi-step / stepper' },
   // Banner / alert bar hand-built.
-  { handRolled: /className="[^"]*\b(bg-(red|yellow|green|blue|amber)-(50|100|500))\b[^"]*"[^>]*>[\s\S]{0,140}(alert|warning|success|error|dismiss|notice)/i, component: 'AIKitBanner', label: 'banner / alert' },
+  {
+    handRolled: (code) =>
+      hasClassNameFollowedByContent(code, /\b(bg-(red|yellow|green|blue|amber)-(50|100|500))\b/, /(alert|warning|success|error|dismiss|notice)/i, 140),
+    component: 'AIKitBanner',
+    label: 'banner / alert',
+  },
   // Star rating hand-built with SVG/★ stars.
   { handRolled: /(★|<svg[\s\S]{0,120}star)[\s\S]{0,80}(★|map\(|rating)/i, component: 'AIKitRating', label: 'star rating' },
 ]
@@ -681,7 +734,8 @@ export function findAikitGaps(code: string): string[] {
   const gaps: string[] = []
   for (const p of AIKIT_PATTERNS) {
     if (have.has(p.component)) continue
-    if (p.handRolled.test(src)) gaps.push(`${p.component} (${p.label})`)
+    const matched = typeof p.handRolled === 'function' ? p.handRolled(src) : p.handRolled.test(src)
+    if (matched) gaps.push(`${p.component} (${p.label})`)
   }
   return [...new Set(gaps)]
 }

@@ -102,6 +102,37 @@ describe('obedience-gate: AIKit (#297)', () => {
     expect(findAikitGaps(code).some(g => g.includes('AIKitRating'))).toBe(true)
   })
 
+  // #1668-class bug: a stray `>` inside an unrelated JSX expression attribute
+  // (a numeric/boolean comparison) used to give these three className-based
+  // patterns a premature tag close to stop at, so the content check ran
+  // against the expression's own text instead of the element's real
+  // children — e.g. the `0` in `{count > 0}` satisfied the metric card's
+  // own `\d` check even though the element's real content was plain text.
+  it('does NOT flag MetricCard when a later attribute embeds a > comparison and the real content is not a metric', () => {
+    const code = 'function App(){const count=5;return <div className="text-3xl font-bold" data-flag={count > 0}>Loading</div>}'
+    expect(findAikitGaps(code).some(g => g.includes('MetricCard'))).toBe(false)
+  })
+
+  it('still flags a genuine MetricCard even when a later attribute embeds a > comparison', () => {
+    const code = 'function App(){const count=5;return <div className="text-3xl font-bold" data-flag={count > 0}>$42</div>}'
+    expect(findAikitGaps(code).some(g => g.includes('MetricCard'))).toBe(true)
+  })
+
+  it('does NOT flag AIKitSidebar when a later attribute embeds a > comparison and there is no real nav/aside/sidebar content', () => {
+    const code = 'function App(){const i=2;return <div className="w-64" data-flag={i > 0}>Just some panel text</div>}'
+    expect(findAikitGaps(code).some(g => g.includes('AIKitSidebar'))).toBe(false)
+  })
+
+  it('does NOT flag AIKitBanner when a later attribute embeds a > comparison and there is no real alert content', () => {
+    const code = 'function App(){const n=2;return <div className="bg-red-50" data-flag={n > 0}>Just some other text here</div>}'
+    expect(findAikitGaps(code).some(g => g.includes('AIKitBanner'))).toBe(false)
+  })
+
+  it('still flags a genuine AIKitBanner even when a later attribute embeds a > comparison', () => {
+    const code = 'function App(){const n=2;return <div className="bg-red-50" data-flag={n > 0}>This is an alert/warning</div>}'
+    expect(findAikitGaps(code).some(g => g.includes('AIKitBanner'))).toBe(true)
+  })
+
   it('does NOT flag AIKit components that are already used', () => {
     const code = 'function App(){return <div><AIKitHeader title="x"/><AIKitSidebar items={[]}/></div>}'
     const gaps = findAikitGaps(code)
