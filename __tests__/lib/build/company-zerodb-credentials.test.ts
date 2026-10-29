@@ -535,3 +535,103 @@ describe('resolveCompanyZerodbKey', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 })
+
+describe('listRenewedTrialProjectIds (#1607)', () => {
+  function row(overrides: Record<string, any>) {
+    return {
+      projectId: 'proj-x',
+      encryptedKey: 'irrelevant',
+      iv: 'irrelevant',
+      authTag: 'irrelevant',
+      createdAt: new Date().toISOString(),
+      ...overrides,
+    }
+  }
+
+  it('returns a project whose LATEST row is usageTier:trial + keyKind:permanent — a genuinely renewed trial', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [{ row_data: row({ projectId: 'proj-renewed', usageTier: 'trial', keyKind: 'permanent' }) }] }),
+      })),
+    )
+    const { listRenewedTrialProjectIds } = await load()
+    expect(await listRenewedTrialProjectIds()).toEqual(['proj-renewed'])
+  })
+
+  it('EXCLUDES a project whose latest row is still tmp_ (never renewed) even though usageTier is trial', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [{ row_data: row({ projectId: 'proj-unrenewed', usageTier: 'trial', keyKind: 'tmp' }) }] }),
+      })),
+    )
+    const { listRenewedTrialProjectIds } = await load()
+    expect(await listRenewedTrialProjectIds()).toEqual([])
+  })
+
+  it('EXCLUDES a paid/claimed project (usageTier absent) even if keyKind is permanent', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [{ row_data: row({ projectId: 'proj-paid', keyKind: 'permanent' }) }] }), // no usageTier
+      })),
+    )
+    const { listRenewedTrialProjectIds } = await load()
+    expect(await listRenewedTrialProjectIds()).toEqual([])
+  })
+
+  it('uses only the LATEST row per project — an older tmp_/trial row does not leak a stale inclusion once renewed', async () => {
+    const older = row({ projectId: 'proj-y', usageTier: 'trial', keyKind: 'tmp', createdAt: '2026-01-01T00:00:00Z' })
+    const newer = row({ projectId: 'proj-y', usageTier: 'trial', keyKind: 'permanent', createdAt: '2026-01-02T00:00:00Z' })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ data: [{ row_data: older }, { row_data: newer }] }) })),
+    )
+    const { listRenewedTrialProjectIds } = await load()
+    expect(await listRenewedTrialProjectIds()).toEqual(['proj-y'])
+  })
+
+  it('returns each distinct project at most once, even with multiple matching rows', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: [
+            { row_data: row({ projectId: 'proj-a', usageTier: 'trial', keyKind: 'permanent', createdAt: '2026-01-01T00:00:00Z' }) },
+            { row_data: row({ projectId: 'proj-a', usageTier: 'trial', keyKind: 'permanent', createdAt: '2026-01-02T00:00:00Z' }) },
+            { row_data: row({ projectId: 'proj-b', usageTier: 'trial', keyKind: 'permanent' }) },
+          ],
+        }),
+      })),
+    )
+    const { listRenewedTrialProjectIds } = await load()
+    const result = await listRenewedTrialProjectIds()
+    expect(result.sort()).toEqual(['proj-a', 'proj-b'])
+  })
+
+  it('returns an empty array (never throws) on a lookup failure', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network down') }))
+    const { listRenewedTrialProjectIds } = await load()
+    expect(await listRenewedTrialProjectIds()).toEqual([])
+  })
+
+  it('returns an empty array when unconfigured, no network call at all', async () => {
+    process.env.ZERODB_API_KEY = ''
+    process.env.AINATIVE_API_KEY = ''
+    process.env.API_Key = ''
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { listRenewedTrialProjectIds } = await load()
+    expect(await listRenewedTrialProjectIds()).toEqual([])
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})

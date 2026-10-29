@@ -1,0 +1,38 @@
+name: Trial Re-engagement Email
+
+# Fires the #1607 daily trial-activity email: for each company whose ZeroDB
+# key is usageTier:'trial' and has gone through at least one #1605
+# auto-renewal, reports real signup/visit activity since the last send (or
+# an honest "nothing new today").
+#
+# TIMING: 15:30 UTC — same fixed-UTC-offset tradeoff as comms-digest.yml
+# (exact at 7:30am PST, 1hr late at 8:30am PDT), scheduled 30 minutes after
+# comms-digest (15:00 UTC) so the two daily email sweeps don't contend for
+# the same minute.
+
+on:
+  schedule:
+    - cron: '30 15 * * *'
+  workflow_dispatch: {} # allow manual trigger
+
+jobs:
+  send-trial-engagement-email:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send trial re-engagement emails
+        run: |
+          echo "Triggering trial-engagement sweep…"
+          code=$(curl -sS -o /tmp/resp.json -w "%{http_code}" \
+            "https://builder.ainative.studio/api/cron/trial-engagement?send=true" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            --max-time 280)
+          echo "HTTP $code"
+          cat /tmp/resp.json
+          echo
+          if [ "$code" != "200" ]; then
+            echo "::error::Trial engagement sweep returned HTTP $code"
+            exit 1
+          fi
+          sent=$(cat /tmp/resp.json | jq -r '.sent // 0')
+          failed=$(cat /tmp/resp.json | jq -r '.failed // 0')
+          echo "Sent: $sent, Failed: $failed"

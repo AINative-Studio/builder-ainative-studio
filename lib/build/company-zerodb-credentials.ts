@@ -315,6 +315,54 @@ export async function hasCompanyZerodbKey(projectId: string): Promise<boolean> {
   return (await resolveStoredRow(projectId)) !== null
 }
 
+/**
+ * Every project whose LATEST stored key is `usageTier:'trial'` AND
+ * `keyKind:'permanent'` — i.e. a trial that has gone through at least one
+ * #1605 auto-renewal (the original tmp_ provision-time row is 'trial' +
+ * 'tmp'; only a renewal ever flips keyKind to 'permanent' while LEAVING
+ * usageTier at 'trial', since renewal alone is never a payment event — see
+ * renewExpiredKey's own doc comment). Used by #1607's trial-engagement cron
+ * to find its real audience: a founder who is both genuinely unpaid AND
+ * genuinely past their original trial window, not someone who signed up
+ * minutes ago. Read-only; empty array on any configuration/network failure
+ * (fails to "no audience this run" rather than throwing — an engagement
+ * email sweep skipping a run is a far safer failure than it crashing
+ * something else that depends on this module).
+ */
+export async function listRenewedTrialProjectIds(): Promise<string[]> {
+  if (!configured()) return []
+  try {
+    const res = await fetch(`${rowsUrl()}?limit=1000`, {
+      headers: headers(),
+      signal: AbortSignal.timeout(20000),
+    })
+    if (!res.ok) return []
+    const data = await res.json().catch(() => null)
+    const rows = Array.isArray(data) ? data : data?.data || data?.rows || []
+    const all: StoredZerodbKeyRow[] = (Array.isArray(rows) ? rows : [])
+      .map((r: { row_data?: StoredZerodbKeyRow }) => r?.row_data ?? (r as unknown as StoredZerodbKeyRow))
+      .filter(
+        (rd: StoredZerodbKeyRow | undefined): rd is StoredZerodbKeyRow =>
+          !!rd?.projectId && !!rd.encryptedKey && !!rd.iv && !!rd.authTag,
+      )
+    // Latest row per projectId (append-only store — the same "sort desc by
+    // createdAt, take first" resolution resolveStoredRow uses per project,
+    // applied here across every project in one pass).
+    const latestByProject = new Map<string, StoredZerodbKeyRow>()
+    for (const row of all) {
+      const prev = latestByProject.get(row.projectId)
+      if (!prev || (row.createdAt || '').localeCompare(prev.createdAt || '') > 0) {
+        latestByProject.set(row.projectId, row)
+      }
+    }
+    return [...latestByProject.values()]
+      .filter((row) => row.usageTier === 'trial' && row.keyKind === 'permanent')
+      .map((row) => row.projectId)
+  } catch {
+    return []
+  }
+}
+
 export interface MintedProjectKey {
   ok: boolean
   /** The full, one-time-visible data-plane key. Present only when ok. */
