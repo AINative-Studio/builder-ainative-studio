@@ -90,6 +90,45 @@ const spec = {
         },
       },
     },
+    '/ask': {
+      post: {
+        operationId: 'askBuilder',
+        summary: 'NLWeb-convention conversational endpoint: ask a question about AINative Builder itself (what it does, pricing, how it works), grounded in curated docs/FAQ — not an LLM free-generating uncited claims',
+        security: [],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['question'],
+                properties: {
+                  question: { type: 'string', description: 'Also accepts `query` as an alias.' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Grounded answer with cited sources.',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    answer: { type: 'string' },
+                    sources: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, question: { type: 'string' } } } },
+                    provider: { type: 'string' },
+                    model: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
     '/api/build/artifact': {
       post: {
         operationId: 'generateBuildArtifact',
