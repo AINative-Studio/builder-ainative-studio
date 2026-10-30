@@ -34,6 +34,7 @@
  * (e.g. a counter).
  */
 import { scorePrimitives, RUNTIME_PROXY_PATH_SUBSTRINGS, getRuntimeProxyInstruction, type CompanyRole } from './primitive-catalog'
+import { findMatchingBracket, findMatchingParen } from './bracket-scanner'
 
 /** Does the code call the ZeroDB proxy for real persistence? */
 export function usesDataLayer(code: string): boolean {
@@ -121,89 +122,11 @@ export function hasFakeLeadCaptureGap(code: string): boolean {
  * never an acceptable success UI for a form that persists real user data,
  * regardless of what else the handler does.
  */
-/** Index of a quote's matching closing quote (honoring `\` escapes), or -1 if unterminated. */
-function findStringEnd(code: string, openIdx: number, quote: string): number {
-  let i = openIdx + 1
-  while (i < code.length) {
-    if (code[i] === '\\') { i += 2; continue }
-    if (code[i] === quote) return i
-    i++
-  }
-  return -1
-}
-
-/** Index of a template literal's closing backtick (honoring `\` escapes and skipping over `${}` interpolations), or -1 if unterminated. */
-function findBacktickEnd(code: string, openIdx: number): number {
-  let i = openIdx + 1
-  while (i < code.length) {
-    const ch = code[i]
-    if (ch === '\\') { i += 2; continue }
-    if (ch === '`') return i
-    if (ch === '$' && code[i + 1] === '{') {
-      const closeIdx = findMatchingBracket(code, i + 1, '{', '}')
-      if (closeIdx === -1) return -1
-      i = closeIdx + 1
-      continue
-    }
-    i++
-  }
-  return -1
-}
-
-/**
- * Index of the matching closing bracket for the opener at `openIdx` (depth-aware,
- * honoring arbitrarily nested brackets of the SAME kind), skipping over nested
- * string/template literals so a quote/backtick-delimited character is never
- * mistaken for bracket-relevant syntax. Or -1 if unbalanced.
- *
- * Real bug this replaces: a flat char-by-char `(`/`)` (or `{`/`}`) count has no
- * notion of string content — it miscounts the moment a string literal it's
- * scanning THROUGH contains a lone, unmatched instance of the very character
- * being tracked. An emoticon in user-facing copy is exactly that: `alert('Thanks
- * :)')`'s message contains a bare `)` with no matching `(`, so counting hit that
- * `)` as if it closed the call, returning the SMILEY's paren instead of the real
- * one — truncating hasAlertOnlyHandler's view of the call and making an
- * alert()-only fake-CTA handler (#844, the exact bug this gate exists to catch)
- * silently invisible the moment its placeholder text includes a smiley or any
- * other lone `)`/`}`. Skipping over string/template-literal spans entirely (same
- * technique already proven in template-literal-to-concat.ts) fixes this without
- * changing behavior for a string with no stray bracket characters (same bracket
- * found either way).
- */
-function findMatchingBracket(code: string, openIdx: number, open: string, close: string): number {
-  let depth = 0
-  let i = openIdx
-  while (i < code.length) {
-    const ch = code[i]
-    if (ch === '\\') { i += 2; continue }
-    if (ch === '"' || ch === "'") {
-      const end = findStringEnd(code, i, ch)
-      if (end === -1) return -1
-      i = end + 1
-      continue
-    }
-    if (ch === '`') {
-      const end = findBacktickEnd(code, i)
-      if (end === -1) return -1
-      i = end + 1
-      continue
-    }
-    if (ch === open) { depth++; i++; continue }
-    if (ch === close) {
-      depth--
-      if (depth === 0) return i
-      i++
-      continue
-    }
-    i++
-  }
-  return -1
-}
-
-/** Index of the `)` matching the `(` at `openIndex`, or -1 if unbalanced. */
-function findMatchingParen(code: string, openIndex: number): number {
-  return findMatchingBracket(code, openIndex, '(', ')')
-}
+// findMatchingBracket/findMatchingParen (string/template-literal/comment-
+// aware bracket matching) now live in the shared lib/build/bracket-scanner.ts
+// utility — see its import above. #1710: this file's own copy (added for
+// #1654) was one of over a dozen near-identical reimplementations of the
+// same technique scattered across the codebase.
 
 export function hasAlertInLeadCaptureGap(code: string): boolean {
   if (!looksLikeLeadCapture(code)) return false

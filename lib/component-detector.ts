@@ -45,6 +45,8 @@
  * honest outcome.
  */
 
+import { findMatchingBracket } from './build/bracket-scanner'
+
 /** Synthetic name bound to an anonymous default export so the runtime can find it. */
 export const ANON_DEFAULT_NAME = '__PreviewDefault'
 
@@ -146,35 +148,22 @@ function isPascalCase(name: string): boolean {
 
 /**
  * Given the index of a `(` character, return the index of the `)` that
- * closes it (honoring arbitrarily nested parens), or -1 if unbalanced.
+ * closes it (honoring arbitrarily nested parens, and skipping over string/
+ * template-literal/comment content — #1710/#1686), or -1 if unbalanced.
  */
 function findMatchingParen(code: string, openIdx: number): number {
-  let depth = 0
-  for (let i = openIdx; i < code.length; i++) {
-    if (code[i] === '(') depth++
-    else if (code[i] === ')') {
-      depth--
-      if (depth === 0) return i
-    }
-  }
-  return -1
+  return findMatchingBracket(code, openIdx, '(', ')')
 }
 
 /**
  * Given the index of a `<` character, return the index of the `>` that
- * closes it (honoring arbitrarily nested `<...>`), or -1 if unbalanced.
- * Mirrors findMatchingParen's depth-counting shape.
+ * closes it (honoring arbitrarily nested `<...>`, and skipping over string/
+ * template-literal content so a comparison-operator string type like
+ * `'>' | '<' | '='` in a generic argument is never mistaken for real
+ * `<`/`>` syntax — #1710/#1698), or -1 if unbalanced.
  */
 function findMatchingAngleBracket(code: string, openIdx: number): number {
-  let depth = 0
-  for (let i = openIdx; i < code.length; i++) {
-    if (code[i] === '<') depth++
-    else if (code[i] === '>') {
-      depth--
-      if (depth === 0) return i
-    }
-  }
-  return -1
+  return findMatchingBracket(code, openIdx, '<', '>')
 }
 
 /**
