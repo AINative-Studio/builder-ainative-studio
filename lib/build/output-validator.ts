@@ -132,6 +132,45 @@ function findMatchingBrace(code: string, openIdx: number): number {
 }
 
 /**
+ * Scan forward from just after a JSX tag's name (`attrsStart`) to the index
+ * of the `>` that closes it — depth-aware over `{}` so a `>` inside a JSX
+ * expression attribute (e.g. `aria-hidden={count > 0}`) is never mistaken
+ * for the tag's end (the bug findSidebarTags already fixes, #1666/#1667),
+ * AND skipping over quoted string/template-literal attribute values
+ * entirely (same technique as findMatchingBracket above) — without that, a
+ * stray, UNMATCHED `{` inside a literal attribute string (e.g. `title="Price:
+ * {amount"`, as opposed to the balanced `title="Save {10}% today"`) throws
+ * depth permanently out of balance, so the scanner never finds the tag's
+ * real `>` and the whole element is misread as unterminated and silently
+ * skipped. Returns -1 if genuinely unterminated.
+ */
+function findTagClose(code: string, attrsStart: number): number {
+  let depth = 0
+  let i = attrsStart
+  while (i < code.length) {
+    const ch = code[i]
+    if (ch === '\\') { i += 2; continue }
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      if (end === -1) return -1
+      i = end + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      if (end === -1) return -1
+      i = end + 1
+      continue
+    }
+    if (ch === '{') { depth++; i++; continue }
+    if (ch === '}') { depth--; i++; continue }
+    if (ch === '>' && depth <= 0) return i
+    i++
+  }
+  return -1
+}
+
+/**
  * A literal/static argument is safe: a plain string literal, or a call to
  * JSON.stringify(...) on an inline object literal (the JSON-LD pattern the AX
  * rubric itself prescribes, AX-8). Anything referencing a variable, prop,
@@ -513,14 +552,8 @@ function findSidebarTags(code: string): { role: string; className: string; raw: 
   let match: RegExpExecArray | null
   while ((match = TAG_START_PATTERN.exec(code)) !== null) {
     const attrsStart = match.index + match[0].length
-    let i = attrsStart
-    let depth = 0
-    while (i < code.length && !(code[i] === '>' && depth <= 0)) {
-      if (code[i] === '{') depth++
-      else if (code[i] === '}') depth--
-      i++
-    }
-    if (i >= code.length) continue // unterminated tag
+    const i = findTagClose(code, attrsStart)
+    if (i === -1) continue // unterminated tag
     const tag = code.slice(match.index, i + 1)
     const roleMatch = tag.match(/\bdata-agent-context=["']sidebar([\w-]*)["']/)
     if (!roleMatch) continue
