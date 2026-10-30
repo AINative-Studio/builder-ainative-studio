@@ -47,7 +47,18 @@
  * yet"), and nothing ever retried them. An inconclusive lookup now returns
  * the task to `todo` with a third, non-terminal `stage: 'deferred'` outcome —
  * the only state lib/build/task-resolution-loop.ts's existing retry selection
- * actually honors. A CONFIRMED miss still fails terminally, unchanged.
+ * actually honors. A CONFIRMED miss (no such company) still fails terminally.
+ *
+ * #1700 — #1483 only split "couldn't check" from "checked, and the company
+ * doesn't exist." It still collapsed a THIRD case into the same terminal
+ * fail(): a real, existing company that just hasn't been git-provisioned
+ * YET (e.g. chat-ws's obedience-gate createTask() fires for an anonymous
+ * session with no Gitea org at all). That's a timing race, not a confirmed-
+ * permanent miss — the company can get a gitOrg later once claimed/upgraded,
+ * but the terminal `failed` stage this used to land on is never re-picked,
+ * so the gap it found was lost for good. Only "no such company" (entry is
+ * null/soft-deleted) is treated as the real terminal miss now; an existing
+ * company with no gitOrg yet defers instead, same as an unverified read.
  *
  * #906 — the issue body's "## Estimate" section now carries the task's REAL
  * Fibonacci storyPoints/estimateRationale (populated at creation time by
@@ -250,10 +261,24 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
       'Could not confirm this company’s git provisioning just now (a temporary problem reading the registry) — the task was left queued and will be retried.',
     )
   }
-  if (!app?.gitOrg) {
-    // A CONFIRMED miss: the registry really was read, and this company really
-    // has no Gitea org. Unchanged — still a genuine, terminal failure.
-    return fail('Company is not git-provisioned yet — cannot resolve tasks without a Gitea repo.')
+  if (!app) {
+    // A CONFIRMED miss: the registry really was read, and no company with
+    // this slug exists (or it was soft-deleted). Nothing will ever
+    // provision a Gitea org for it — a genuine, permanent failure.
+    return fail('Company no longer exists — cannot resolve tasks for a deleted or unknown company.')
+  }
+  if (!app.gitOrg) {
+    // #1700 — "not git-provisioned YET" is not the same confirmed-permanent
+    // miss as the company not existing at all. A real, existing company
+    // (e.g. one still on an anonymous session, per chat-ws's createTask()
+    // call) can get its Gitea org only later, once claimed/upgraded. Failing
+    // this terminally burns the task forever (fail() is never re-picked —
+    // see the defer() doc above), even though the gap it found is still
+    // real and still worth the founder seeing once provisioning catches up.
+    // Defer instead, so a later nightly run retries once gitOrg is set.
+    return defer(
+      'This company is not git-provisioned yet — the task was left queued and will be retried once it is.',
+    )
   }
 
   // #905 — open a real tracked issue on the company's own Gitea repo BEFORE
