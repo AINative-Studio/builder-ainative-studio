@@ -216,6 +216,83 @@ function skipArrowConstTypeAnnotation(code: string, idx: number): number {
   return i
 }
 
+/** Index of the closing `quote` that ends the string starting at `openIdx` (honoring `\`-escapes), or -1 if unterminated. */
+function findStringEnd(code: string, openIdx: number, quote: string): number {
+  let i = openIdx + 1
+  while (i < code.length) {
+    if (code[i] === '\\') {
+      i += 2
+      continue
+    }
+    if (code[i] === quote) return i
+    i++
+  }
+  return -1
+}
+
+/** Index of the closing `` ` `` that ends the template literal starting at `openIdx` (honoring `\`-escapes), or -1 if unterminated. */
+function findBacktickEnd(code: string, openIdx: number): number {
+  let i = openIdx + 1
+  while (i < code.length) {
+    if (code[i] === '\\') {
+      i += 2
+      continue
+    }
+    if (code[i] === '`') return i
+    i++
+  }
+  return -1
+}
+
+/**
+ * Returns `code` with every `'...'`/`"..."`/`` `...` `` string/template
+ * literal and every `//`/`/* *\/` comment replaced by same-length runs of
+ * spaces, so a literal mention of `export default` inside a comment or a
+ * string (a TODO note, placeholder copy, a "remember to export default
+ * this" reminder) can never be mistaken for a real export statement by the
+ * plain-regex checks below. Positions/length are preserved; only content is
+ * blanked.
+ */
+function maskStringsAndComments(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '/' && next === '/') {
+      const nl = code.indexOf('\n', i)
+      const stop = nl === -1 ? code.length : nl
+      out += ' '.repeat(stop - i)
+      i = stop
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      const close = code.indexOf('*/', i + 2)
+      const stop = close === -1 ? code.length : close + 2
+      out += ' '.repeat(stop - i)
+      i = stop
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      const close = findStringEnd(code, i, ch)
+      const stop = close === -1 ? code.length : close + 1
+      out += ' '.repeat(stop - i)
+      i = stop
+      continue
+    }
+    if (ch === '`') {
+      const close = findBacktickEnd(code, i)
+      const stop = close === -1 ? code.length : close + 1
+      out += ' '.repeat(stop - i)
+      i = stop
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
 /**
  * True if `code` already has A default export, in EITHER form the rest of this
  * module (and the pipelines that call it) treat as authoritative:
@@ -243,9 +320,18 @@ function skipArrowConstTypeAnnotation(code: string, idx: number): number {
  * repro through `buildSandpackFiles()` before this fix: the assembled
  * `/App.tsx` ended up with both the original `export { Dashboard as default
  * }` AND an appended `export default Footer`.
+ *
+ * The regexes below run against `maskStringsAndComments(code)`, not the raw
+ * source — otherwise a comment or string literal that merely MENTIONS
+ * `export default` (e.g. `// TODO: add export default Foo later`) makes this
+ * wrongly return true for a file that has no real default export at all,
+ * which then skips the synthesized-export injection the callers above exist
+ * to perform — the exact missing-default-export crash this function was
+ * written to prevent, just reached a different way.
  */
 export function hasDefaultExport(code: string): boolean {
-  return /export\s+default\b/.test(code) || /export\s*\{[^}]*\bas\s+default\b/.test(code)
+  const masked = maskStringsAndComments(code)
+  return /export\s+default\b/.test(masked) || /export\s*\{[^}]*\bas\s+default\b/.test(masked)
 }
 
 /**
