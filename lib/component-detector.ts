@@ -45,6 +45,8 @@
  * honest outcome.
  */
 
+import { findMatchingBracket, findStringEnd, findBacktickEnd } from './build/bracket-scanner'
+
 /** Synthetic name bound to an anonymous default export so the runtime can find it. */
 export const ANON_DEFAULT_NAME = '__PreviewDefault'
 
@@ -144,87 +146,10 @@ function isPascalCase(name: string): boolean {
   return /^[A-Z][A-Za-z0-9]*$/.test(name) && name.length > 1
 }
 
-/** Index of the closing `quote` that ends the string starting at `openIdx` (honoring `\`-escapes), or -1 if unterminated. */
-function findStringEnd(code: string, openIdx: number, quote: string): number {
-  let i = openIdx + 1
-  while (i < code.length) {
-    if (code[i] === '\\') {
-      i += 2
-      continue
-    }
-    if (code[i] === quote) return i
-    i++
-  }
-  return -1
-}
-
-/** Index of the closing `` ` `` that ends the template literal starting at `openIdx`, honoring nested `${}` interpolations. */
-function findBacktickEnd(code: string, openIdx: number): number {
-  let i = openIdx + 1
-  while (i < code.length) {
-    const ch = code[i]
-    if (ch === '\\') {
-      i += 2
-      continue
-    }
-    if (ch === '`') return i
-    if (ch === '$' && code[i + 1] === '{') {
-      const closeIdx = findMatchingBracket(code, i + 1, '{', '}')
-      if (closeIdx === -1) return -1
-      i = closeIdx + 1
-      continue
-    }
-    i++
-  }
-  return -1
-}
-
-/**
- * Index of the matching `close` bracket for the `open` bracket at `openIdx`
- * (honoring arbitrarily nested brackets of that kind), or -1 if unbalanced.
- *
- * Skips over string literals (`'...'`/`"..."`) and template literals it
- * scans through, so a stray unmatched bracket-shaped character INSIDE one
- * — e.g. a default param value like `greeting = "Thanks :)"`, or a type
- * annotation like `cmp: '>' | '<'` — is never mistaken for real
- * bracket-relevant syntax. Same technique proven in output-validator.ts /
- * obedience-gate.ts's findMatchingBracket (#1654 and friends); this file's
- * two depth-counters had the identical comment-blind/string-blind gap.
- */
-function findMatchingBracket(code: string, openIdx: number, open: string, close: string): number {
-  let depth = 0
-  let i = openIdx
-  while (i < code.length) {
-    const ch = code[i]
-    if (ch === '\\') { i += 2; continue }
-    if (ch === '"' || ch === "'") {
-      const end = findStringEnd(code, i, ch)
-      if (end === -1) return -1
-      i = end + 1
-      continue
-    }
-    if (ch === '`') {
-      const end = findBacktickEnd(code, i)
-      if (end === -1) return -1
-      i = end + 1
-      continue
-    }
-    if (ch === open) { depth++; i++; continue }
-    if (ch === close) {
-      depth--
-      if (depth === 0) return i
-      i++
-      continue
-    }
-    i++
-  }
-  return -1
-}
-
 /**
  * Given the index of a `(` character, return the index of the `)` that
  * closes it (honoring arbitrarily nested parens, and skipping over string/
- * template-literal content), or -1 if unbalanced.
+ * template-literal/comment content — #1710/#1686), or -1 if unbalanced.
  */
 function findMatchingParen(code: string, openIdx: number): number {
   return findMatchingBracket(code, openIdx, '(', ')')
@@ -233,7 +158,9 @@ function findMatchingParen(code: string, openIdx: number): number {
 /**
  * Given the index of a `<` character, return the index of the `>` that
  * closes it (honoring arbitrarily nested `<...>`, and skipping over string/
- * template-literal content), or -1 if unbalanced. Mirrors findMatchingParen.
+ * template-literal content so a comparison-operator string type like
+ * `'>' | '<' | '='` in a generic argument is never mistaken for real
+ * `<`/`>` syntax — #1710/#1698), or -1 if unbalanced.
  */
 function findMatchingAngleBracket(code: string, openIdx: number): number {
   return findMatchingBracket(code, openIdx, '<', '>')

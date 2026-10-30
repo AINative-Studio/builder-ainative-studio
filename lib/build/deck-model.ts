@@ -165,6 +165,16 @@ export function extractBullets(markdown: string | undefined, max = 5): string[] 
 /**
  * Find the index of the `)` that closes the `(` at `openIdx` (honoring
  * arbitrarily nested parens), or -1 if unbalanced.
+ *
+ * #1710: deliberately NOT delegated to the shared lib/build/bracket-
+ * scanner.ts utility. `s` here is markdown PROSE (a markdown link's url
+ * text — see stripMarkdownLinks below), not source code: a bare `"`/`'`
+ * mid-sentence (e.g. an apostrophe in "don't") is not string-literal
+ * syntax, and treating it as one would make this scanner wrongly skip
+ * ahead looking for a closing quote that may never legitimately arrive —
+ * a real regression for this call site, not a fix. Plain depth-counting
+ * (with no string/comment opacity) is the CORRECT behavior for markdown
+ * text, so this stays its own local implementation.
  */
 function findMatchingParen(s: string, openIdx: number): number {
   let depth = 0

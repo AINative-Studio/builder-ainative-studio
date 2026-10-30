@@ -4,82 +4,7 @@ import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { SEED_SHOWCASE, SHOWCASE_CATEGORIES, type ShowcaseEntry } from '@/lib/showcase-data'
 import { detectRootComponent } from '@/lib/component-detector'
-
-/** Index of the closing `quote` that ends the string starting at `openIdx` (honoring `\`-escapes), or -1 if unterminated. */
-function findStringEnd(code: string, openIdx: number, quote: string): number {
-  let i = openIdx + 1
-  while (i < code.length) {
-    if (code[i] === '\\') {
-      i += 2
-      continue
-    }
-    if (code[i] === quote) return i
-    i++
-  }
-  return -1
-}
-
-/** Index of the closing `` ` `` that ends the template literal starting at `openIdx`, honoring nested `${}` interpolations. */
-function findBacktickEnd(code: string, openIdx: number): number {
-  let i = openIdx + 1
-  while (i < code.length) {
-    const ch = code[i]
-    if (ch === '\\') {
-      i += 2
-      continue
-    }
-    if (ch === '`') return i
-    if (ch === '$' && code[i + 1] === '{') {
-      const closeIdx = findMatchingBrace(code, i + 1)
-      if (closeIdx === -1) return -1
-      i = closeIdx + 1
-      continue
-    }
-    i++
-  }
-  return -1
-}
-
-/**
- * Index of the `}` that closes the `{` at `openIdx` (honoring arbitrarily
- * nested braces), or -1 if unbalanced.
- *
- * Skips over string/template literals it scans through so a lone, unmatched
- * `}` INSIDE one — e.g. a literal-type union member like
- * `'close-}-bracket'` in an interface field's type — is never mistaken for
- * the interface's real closing brace. Same technique already proven in
- * lib/build/output-validator.ts's findMatchingBracket (#1654 and friends);
- * this file's depth-counter shared the identical gap.
- */
-function findMatchingBrace(code: string, openIdx: number): number {
-  let depth = 0
-  let i = openIdx
-  while (i < code.length) {
-    const ch = code[i]
-    if (ch === '\\') { i += 2; continue }
-    if (ch === '"' || ch === "'") {
-      const end = findStringEnd(code, i, ch)
-      if (end === -1) return -1
-      i = end + 1
-      continue
-    }
-    if (ch === '`') {
-      const end = findBacktickEnd(code, i)
-      if (end === -1) return -1
-      i = end + 1
-      continue
-    }
-    if (ch === '{') { depth++; i++; continue }
-    if (ch === '}') {
-      depth--
-      if (depth === 0) return i
-      i++
-      continue
-    }
-    i++
-  }
-  return -1
-}
+import { findMatchingBrace } from '@/lib/build/bracket-scanner'
 
 /**
  * Strip every top-level `interface Name { ... }` declaration from `code`.
@@ -89,11 +14,11 @@ function findMatchingBrace(code: string, openIdx: number): number {
  * object type, both idiomatic in generated TSX — leaving the rest of the
  * body plus an orphan trailing `}` behind as dangling, invalid JS passed
  * into the showcase preview's Babel-in-browser transform. Finding the
- * interface's TRUE closing brace by depth-counting fixes this without
- * changing behavior for an interface with no nested braces (same brace
- * found either way). Same fix as app/api/preview/[id]/route.ts's
- * stripTypeScriptInterfaces() (#1633) — duplicated locally since that one
- * isn't exported for shared use.
+ * interface's TRUE closing brace via the shared, string/comment-aware
+ * bracket-scanner (#1710) fixes this without changing behavior for an
+ * interface with no nested braces (same brace found either way). Same fix
+ * as app/api/preview/[id]/route.ts's stripTypeScriptInterfaces() (#1633),
+ * now sharing the same underlying utility instead of each duplicating it.
  */
 function stripTypeScriptInterfaces(code: string): string {
   const headRe = /interface\s+\w+\s*\{/g

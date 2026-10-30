@@ -12,6 +12,7 @@ import {
   RuleViolation,
   RULE_IDS,
 } from '@/lib/types/enforcement-rules';
+import { findMatchingParen as sharedFindMatchingParen } from '@/lib/build/bracket-scanner';
 
 /**
  * Git Rule: No AI Attribution
@@ -695,85 +696,14 @@ export const NO_SECRETS_IN_CODE_RULE: EnforcementRule = {
   ],
 };
 
-/** Index of the closing `quote` that ends the string starting at `openIdx` (honoring `\`-escapes), or -1 if unterminated. */
-function findStringEnd(code: string, openIdx: number, quote: string): number {
-  let i = openIdx + 1;
-  while (i < code.length) {
-    if (code[i] === '\\') {
-      i += 2;
-      continue;
-    }
-    if (code[i] === quote) return i;
-    i++;
-  }
-  return -1;
-}
-
 /**
  * Index of the `)` that closes the `(` at `openIdx` (honoring arbitrarily
- * nested parens), or -1 if unbalanced.
- *
- * Skips over string/template literals it scans through so a lone, unmatched
- * paren INSIDE one — e.g. a parenthetical aside or emoticon in a log message
- * (`console.log('Checkout failed :(', user.email)`) — is never mistaken for
- * a real call's closing paren. Same technique already proven in
- * obedience-gate.ts's findMatchingBracket (#1654) and
- * output-validator.ts's findMatchingParen/findMatchingBrace, which shared
- * this identical gap.
+ * nested parens, and skipping over string/template-literal/comment content
+ * — #1710, delegating to the shared bracket-scanner instead of this file's
+ * own copy).
  */
 function findMatchingParen(code: string, openIdx: number): number {
-  let depth = 0;
-  let i = openIdx;
-  while (i < code.length) {
-    const ch = code[i];
-    if (ch === '\\') {
-      i += 2;
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      const end = findStringEnd(code, i, ch);
-      if (end === -1) return -1;
-      i = end + 1;
-      continue;
-    }
-    if (ch === '`') {
-      const end = findTemplateLiteralEnd(code, i);
-      if (end === -1) return -1;
-      i = end + 1;
-      continue;
-    }
-    if (ch === '(') {
-      depth++;
-      i++;
-      continue;
-    }
-    if (ch === ')') {
-      depth--;
-      if (depth === 0) return i;
-      i++;
-      continue;
-    }
-    i++;
-  }
-  return -1;
-}
-
-/** Index of the closing `` ` `` that ends the template literal starting at `openIdx`, honoring nested `${}` interpolations containing their own parens/braces. */
-function findTemplateLiteralEnd(code: string, openIdx: number): number {
-  let i = openIdx + 1;
-  let depth = 0;
-  while (i < code.length) {
-    const ch = code[i];
-    if (ch === '\\') {
-      i += 2;
-      continue;
-    }
-    if (depth === 0 && ch === '`') return i;
-    if (ch === '{') depth++;
-    else if (ch === '}') depth = Math.max(0, depth - 1);
-    i++;
-  }
-  return -1;
+  return sharedFindMatchingParen(code, openIdx);
 }
 
 /**
