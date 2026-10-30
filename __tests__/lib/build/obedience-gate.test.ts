@@ -386,6 +386,42 @@ function App(){
     expect(hasAlertInLeadCaptureGap(PERSISTS_AND_ALERTS_SMILEY_DEFAULT_PARAM)).toBe(true)
   })
 
+  // The handler BODY's own closing-brace scan (distinct from the param-list
+  // scan covered above) used to be a separate, naive `{`/`}` depth counter
+  // with no notion of string content. A body statement containing a lone,
+  // unmatched "}" inside a string literal — e.g. a status message like
+  // 'oops }' — got mistaken for the body's real closing brace, truncating
+  // the handler body BEFORE the real alert()/`/api/db/` calls further down,
+  // so this gap never saw them.
+  const PERSISTS_AND_ALERTS_STRAY_BRACE_IN_BODY = `
+function App(){
+  const [email, setEmail] = useState('')
+  const handleEarlyAccess = async (e) => {
+    e.preventDefault()
+    const note = 'Status: }'
+    await fetch('/api/db/waitlist', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email }) }).catch(()=>{})
+    alert("You're on the list!")
+    setEmail('')
+  }
+  return (<form onSubmit={handleEarlyAccess}><input type="email" value={email} onChange={e=>setEmail(e.target.value)} /></form>)
+}`
+
+  it('THE BUG (stray brace inside a body string): still flags a lead-capture handler whose body contains a string with an unmatched "}" before the real alert()/persist calls', () => {
+    expect(hasAlertInLeadCaptureGap(PERSISTS_AND_ALERTS_STRAY_BRACE_IN_BODY)).toBe(true)
+  })
+
+  it('does NOT flag a persisted-without-alert handler with a stray brace inside a body string (no regression)', () => {
+    const code = `
+function App(){
+  const handleSubmit = async (e) => {
+    const note = 'Status: }'
+    await fetch('/api/db/waitlist', { method: 'POST' }).catch(()=>{})
+  }
+  return (<form onSubmit={handleSubmit}><input type="email" /></form>)
+}`
+    expect(hasAlertInLeadCaptureGap(code)).toBe(false)
+  })
+
   it('checkObedience surfaces alertInLeadCaptureGap and a reason string', () => {
     const r = checkObedience(PERSISTS_BUT_ALERTS, 'a landing page')
     expect(r.alertInLeadCaptureGap).toBe(true)

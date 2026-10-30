@@ -218,6 +218,15 @@ export function hasAlertInLeadCaptureGap(code: string): boolean {
   // param list, so a destructured default that calls a function (e.g.
   // `async (e = getDefaultEvent()) => {`) made the whole handler invisible
   // to this gap, silently missing a real alert()-freezes-the-page bug.
+  //
+  // The handler BODY's own closing brace used to be found by a separate,
+  // inline `{`/`}` depth counter with no notion of string content — the
+  // identical gap findMatchingBracket above exists to close, just not yet
+  // routed through here. A body statement containing a lone, unmatched `}`
+  // in a string literal (e.g. `const msg = 'oops }'`) got mistaken for the
+  // body's real closing brace, truncating `body` before the real alert()/
+  // /api/db/ calls that come later in the handler — silently missing the
+  // exact alert()-freezes-the-page bug this gap exists to catch.
   const handlerStartRe = /(handleSubmit|handleEarlyAccess|handleWaitlist|handleSignup)\s*[:=]\s*(?:async\s*)?/g
   let m: RegExpExecArray | null
   while ((m = handlerStartRe.exec(code))) {
@@ -235,13 +244,9 @@ export function hasAlertInLeadCaptureGap(code: string): boolean {
     const arrow = /^\s*=>\s*\{/.exec(code.slice(paramEnd))
     if (!arrow) continue
     const bodyStart = paramEnd + arrow[0].length - 1 // position of the opening {
-    let depth = 0
-    let end = bodyStart
-    for (; end < code.length; end++) {
-      if (code[end] === '{') depth++
-      else if (code[end] === '}') { depth--; if (depth === 0) { end++; break; } }
-    }
-    const body = code.slice(bodyStart, end)
+    const bodyEnd = findMatchingBracket(code, bodyStart, '{', '}')
+    if (bodyEnd === -1) continue
+    const body = code.slice(bodyStart, bodyEnd + 1)
     if (/\balert\(/.test(body) && /\/api\/db\//.test(body)) return true
   }
   return false
