@@ -1,5 +1,6 @@
 import { parse } from '@babel/parser'
 import { detectRootComponent } from './component-detector'
+import { findMatchingParen } from './build/bracket-scanner'
 
 /**
  * Multi-file output boundary marker — mirrors lib/multi-file-parser.ts.
@@ -1184,19 +1185,14 @@ export function findUnresolvedComponents(code: string): string[] {
 /**
  * Find the index of the `)` that closes the `(` at `openIdx`, honoring
  * arbitrarily nested parens (braces don't affect paren depth, so a
- * `.find(i => { ... })` callback body is crossed correctly). Returns -1 if
+ * `.find(i => { ... })` callback body is crossed correctly), and skipping
+ * over string/template-literal/comment content (#1710 — delegates to the
+ * shared bracket-scanner so a stray unmatched paren inside a callback's
+ * string content is never mistaken for the real close). Returns -1 if
  * unbalanced. Scoped to findObjectRenderedAsChild's SHAPE 2 check below.
  */
 function findMatchingParenIdxInChildCheck(code: string, openIdx: number): number {
-  let depth = 0
-  for (let i = openIdx; i < code.length; i++) {
-    if (code[i] === '(') depth++
-    else if (code[i] === ')') {
-      depth--
-      if (depth === 0) return i
-    }
-  }
-  return -1
+  return findMatchingParen(code, openIdx)
 }
 
 export function findObjectRenderedAsChild(code: string): string | null {

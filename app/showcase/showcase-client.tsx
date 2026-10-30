@@ -4,19 +4,7 @@ import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { SEED_SHOWCASE, SHOWCASE_CATEGORIES, type ShowcaseEntry } from '@/lib/showcase-data'
 import { detectRootComponent } from '@/lib/component-detector'
-
-/** Index of the `}` that closes the `{` at `openIdx` (honoring arbitrarily nested braces), or -1 if unbalanced. */
-function findMatchingBrace(code: string, openIdx: number): number {
-  let depth = 0
-  for (let i = openIdx; i < code.length; i++) {
-    if (code[i] === '{') depth++
-    else if (code[i] === '}') {
-      depth--
-      if (depth === 0) return i
-    }
-  }
-  return -1
-}
+import { findMatchingBrace } from '@/lib/build/bracket-scanner'
 
 /**
  * Strip every top-level `interface Name { ... }` declaration from `code`.
@@ -26,11 +14,11 @@ function findMatchingBrace(code: string, openIdx: number): number {
  * object type, both idiomatic in generated TSX — leaving the rest of the
  * body plus an orphan trailing `}` behind as dangling, invalid JS passed
  * into the showcase preview's Babel-in-browser transform. Finding the
- * interface's TRUE closing brace by depth-counting fixes this without
- * changing behavior for an interface with no nested braces (same brace
- * found either way). Same fix as app/api/preview/[id]/route.ts's
- * stripTypeScriptInterfaces() (#1633) — duplicated locally since that one
- * isn't exported for shared use.
+ * interface's TRUE closing brace via the shared, string/comment-aware
+ * bracket-scanner (#1710) fixes this without changing behavior for an
+ * interface with no nested braces (same brace found either way). Same fix
+ * as app/api/preview/[id]/route.ts's stripTypeScriptInterfaces() (#1633),
+ * now sharing the same underlying utility instead of each duplicating it.
  */
 function stripTypeScriptInterfaces(code: string): string {
   const headRe = /interface\s+\w+\s*\{/g
