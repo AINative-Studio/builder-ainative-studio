@@ -216,6 +216,19 @@ describe('detectRootComponent', () => {
       expect(rewritten).not.toMatch(/export\s+default/)
     })
 
+    it('detects an anonymous arrow with a string-literal default param containing a stray unmatched paren declared inline inside memo()', () => {
+      // Same root cause as the priority-2 case below (findMatchingParen has
+      // no notion of string content), but via isAnonymousArrowWithParenParams,
+      // the memo()/forwardRef() priority-1.5 check that shares the same helper.
+      const code = `export default memo(({ title = 'Welcome :)' }) => {\n  return <div>{title}</div>\n});`
+      const r = detectRootComponent(code)
+      expect(r.name).toBe(ANON_DEFAULT_NAME)
+      expect(r.source).toBe('default-export-anonymous')
+      const rewritten = code.replace(r.rewrite!.find, r.rewrite!.replace)
+      expect(rewritten).toContain(`const ${ANON_DEFAULT_NAME} = memo(`)
+      expect(rewritten).not.toMatch(/export\s+default/)
+    })
+
     it('still falls through to priority 3 for a bare reference wrapped in memo() (no regression)', () => {
       const code = `
         import React from "react";
@@ -258,6 +271,28 @@ describe('detectRootComponent', () => {
       const r = detectRootComponent(code)
       expect(r.name).toBe(ANON_DEFAULT_NAME)
       expect(r.rewrite).toBeDefined()
+    })
+
+    it('detects an anonymous arrow whose destructured default param is a string literal containing a stray unmatched paren', () => {
+      // Real bug: a plain char-by-char `(`/`)` count has no notion of string
+      // content, so `'Welcome :)'`'s bare `)` got counted as the param
+      // list's real close — detection fell through to {name: null}, the
+      // blank-page "Component Not Found" crash this detector exists to
+      // prevent. Same bug class as #1654/#1675, a third call site.
+      const code = `export default ({ title = 'Welcome :)' }) => {\n  return <div>{title}</div>\n}`
+      const r = detectRootComponent(code)
+      expect(r.name).toBe(ANON_DEFAULT_NAME)
+      expect(r.source).toBe('default-export-anonymous')
+      const rewritten = code.replace(r.rewrite!.find, r.rewrite!.replace)
+      expect(rewritten).toContain(`const ${ANON_DEFAULT_NAME} = `)
+      expect(rewritten).not.toMatch(/export\s+default/)
+    })
+
+    it('detects an anonymous arrow whose destructured default param is a template literal containing a stray unmatched paren', () => {
+      const code = 'export default ({ label = `Thanks :)` }) => {\n  return <div>{label}</div>\n}'
+      const r = detectRootComponent(code)
+      expect(r.name).toBe(ANON_DEFAULT_NAME)
+      expect(r.source).toBe('default-export-anonymous')
     })
 
     it('detects anonymous `export default class {}`', () => {

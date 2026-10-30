@@ -144,18 +144,96 @@ function isPascalCase(name: string): boolean {
   return /^[A-Z][A-Za-z0-9]*$/.test(name) && name.length > 1
 }
 
-/**
- * Given the index of a `(` character, return the index of the `)` that
- * closes it (honoring arbitrarily nested parens), or -1 if unbalanced.
- */
-function findMatchingParen(code: string, openIdx: number): number {
+/** Index of the closing `quote` that ends the string starting at `openIdx` (honoring `\`-escapes), or -1 if unterminated. */
+function findStringEnd(code: string, openIdx: number, quote: string): number {
+  let i = openIdx + 1
+  while (i < code.length) {
+    if (code[i] === '\\') { i += 2; continue }
+    if (code[i] === quote) return i
+    i++
+  }
+  return -1
+}
+
+/** Index of the `}` that closes the `{` at `openIdx` (honoring arbitrarily nested braces), or -1 if unbalanced. Used only to skip over a template literal's `${}` interpolation. */
+function findMatchingBrace(code: string, openIdx: number): number {
   let depth = 0
   for (let i = openIdx; i < code.length; i++) {
-    if (code[i] === '(') depth++
-    else if (code[i] === ')') {
+    if (code[i] === '{') depth++
+    else if (code[i] === '}') {
       depth--
       if (depth === 0) return i
     }
+  }
+  return -1
+}
+
+/** Index of the closing `` ` `` that ends the template literal starting at `openIdx`, honoring nested `${}` interpolations. */
+function findBacktickEnd(code: string, openIdx: number): number {
+  let i = openIdx + 1
+  while (i < code.length) {
+    const ch = code[i]
+    if (ch === '\\') { i += 2; continue }
+    if (ch === '`') return i
+    if (ch === '$' && code[i + 1] === '{') {
+      const closeIdx = findMatchingBrace(code, i + 1)
+      if (closeIdx === -1) return -1
+      i = closeIdx + 1
+      continue
+    }
+    i++
+  }
+  return -1
+}
+
+/**
+ * Given the index of a `(` character, return the index of the `)` that
+ * closes it (honoring arbitrarily nested parens), or -1 if unbalanced.
+ *
+ * Real bug this replaces: a plain char-by-char `(`/`)` count has no notion
+ * of string content — it miscounts the moment a destructured default param
+ * VALUE it's scanning through is a string/template literal containing a
+ * lone, unmatched instance of `)`. An anonymous default-exported arrow like
+ * `export default ({ title = 'Welcome :)' }) => ...` has exactly that: the
+ * smiley's bare `)` inside the string gets counted as the param list's real
+ * close, `code.slice(closeIdx + 1)` no longer starts with `=>`, and this
+ * priority-2 anonymous-arrow check (and the memo()/forwardRef()-wrapped
+ * priority-1.5 check via isAnonymousArrowWithParenParams, which shares this
+ * same helper) both fail to match — detection falls all the way through to
+ * `{name: null}`, the blank-page "Component Not Found" crash class this
+ * detector's whole fix history exists to prevent. Same bug class already
+ * fixed in obedience-gate.ts (#1654) and dedupe-provided-components.ts
+ * (#1675), just a third call site. Skipping over string/template-literal
+ * spans entirely fixes this without changing behavior for a param list with
+ * no stray paren characters in its string content (same paren found either
+ * way).
+ */
+function findMatchingParen(code: string, openIdx: number): number {
+  let depth = 0
+  let i = openIdx
+  while (i < code.length) {
+    const ch = code[i]
+    if (ch === '\\') { i += 2; continue }
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      if (end === -1) return -1
+      i = end + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      if (end === -1) return -1
+      i = end + 1
+      continue
+    }
+    if (ch === '(') { depth++; i++; continue }
+    if (ch === ')') {
+      depth--
+      if (depth === 0) return i
+      i++
+      continue
+    }
+    i++
   }
   return -1
 }
