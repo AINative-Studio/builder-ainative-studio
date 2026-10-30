@@ -15,6 +15,7 @@ import type { FounderScopedPrimitive } from '@/lib/build/primitive-credentials'
 // Re-exported from here too (existing tests import them from this route
 // file directly) so this extraction is not a breaking change for callers.
 import { mintPreviewDbToken, mintPreviewPrimitiveTokens, FOUNDER_SCOPED_PRIMITIVES } from '@/lib/build/preview-tokens'
+import { findMatchingBrace } from '@/lib/build/bracket-scanner'
 export { mintPreviewPrimitiveTokens, FOUNDER_SCOPED_PRIMITIVES }
 // Sucrase removed — builds were failing. Using client-side Babel.
 // The key fix is using models that produce COMPLETE code (not maverick 512-tok)
@@ -26,19 +27,6 @@ export { mintPreviewPrimitiveTokens, FOUNDER_SCOPED_PRIMITIVES }
  *  /api/community/ (#505) requests, and (#443)
  *  the right primitive-proxy token on same-origin /api/primitive/{name}/...
  *  requests. No-op pieces omitted when there is no token to attach. */
-/** Index of the `}` that closes the `{` at `openIdx` (honoring arbitrarily nested braces), or -1 if unbalanced. */
-function findMatchingBrace(code: string, openIdx: number): number {
-  let depth = 0
-  for (let i = openIdx; i < code.length; i++) {
-    if (code[i] === '{') depth++
-    else if (code[i] === '}') {
-      depth--
-      if (depth === 0) return i
-    }
-  }
-  return -1
-}
-
 /**
  * Strip every top-level `interface Name { ... }` declaration from `code`.
  *
@@ -56,9 +44,10 @@ function findMatchingBrace(code: string, openIdx: number): number {
  * nested `}`, leaving the rest of the interface body (plus an orphan
  * trailing `}`) behind as dangling, invalid JS passed straight into Babel —
  * the same "blank preview" / crash class this file's whole fix history
- * exists to prevent. Finding the interface's TRUE closing brace by
- * depth-counting fixes this without changing behavior for an interface with
- * no nested braces (same brace found either way).
+ * exists to prevent. Finding the interface's TRUE closing brace via the
+ * shared, string/comment-aware bracket-scanner (#1710) fixes this without
+ * changing behavior for an interface with no nested braces (same brace
+ * found either way).
  */
 export function stripTypeScriptInterfaces(code: string): string {
   const headRe = /interface\s+\w+\s*\{/g
