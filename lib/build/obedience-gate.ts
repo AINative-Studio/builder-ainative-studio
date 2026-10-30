@@ -37,7 +37,7 @@ import { scorePrimitives, RUNTIME_PROXY_PATH_SUBSTRINGS, getRuntimeProxyInstruct
 
 /** Does the code call the ZeroDB proxy for real persistence? */
 export function usesDataLayer(code: string): boolean {
-  return /\/api\/db\//.test(code || '')
+  return /\/api\/db\//.test(maskComments(code || ''))
 }
 
 /** Ideas whose apps clearly manage USER RECORDS and therefore SHOULD persist. */
@@ -203,6 +203,61 @@ function findMatchingBracket(code: string, openIdx: number, open: string, close:
 /** Index of the `)` matching the `(` at `openIndex`, or -1 if unbalanced. */
 function findMatchingParen(code: string, openIndex: number): number {
   return findMatchingBracket(code, openIndex, '(', ')')
+}
+
+/**
+ * Blanks out `//` and `/* *\/` comments (replacing their characters with
+ * spaces, preserving length/newlines) while leaving string and
+ * template-literal CONTENTS untouched. Real, live bug class: usesDataLayer()
+ * and hasVisitorTrackingGap() below used to test a raw `/api/db/...` regex
+ * against the WHOLE file, including comments — a model that writes
+ * `// TODO: wire this to /api/db/visitors` (or any other comment that merely
+ * MENTIONS the path) without ever actually calling it made both checks
+ * wrongly report "already compliant," hiding the exact fake-visitor-count /
+ * unpersisted-data gap #483/#563/#297 exist to catch. Strings must stay
+ * intact here (unlike the sibling bracket-matching helpers above) because the
+ * one thing these two checks are LOOKING for — `fetch('/api/db/visitors')` —
+ * has its real path literally inside a string argument; masking strings too
+ * would make them never match anything real.
+ */
+function maskComments(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += ' '.repeat(Math.min(end, code.length) - i)
+      i = Math.min(end, code.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
 }
 
 export function hasAlertInLeadCaptureGap(code: string): boolean {
@@ -471,7 +526,7 @@ export function hasUnpersistedComposerGap(code: string): boolean {
  * idea-conditional).
  */
 export function hasVisitorTrackingGap(code: string): boolean {
-  return !/\/api\/db\/visitors/.test(code || '')
+  return !/\/api\/db\/visitors/.test(maskComments(code || ''))
 }
 
 /**

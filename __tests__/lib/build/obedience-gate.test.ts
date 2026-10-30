@@ -40,6 +40,25 @@ describe('obedience-gate: persistence (#297)', () => {
     expect(usesDataLayer('const x = 1')).toBe(false)
   })
 
+  // Real bug class (same family as #1696's comment-blind hasDefaultExport):
+  // a model that writes a comment MENTIONING the path, without ever actually
+  // calling it, used to satisfy the blunt whole-file regex and wrongly mark
+  // the app as already persisting.
+  it('does NOT treat a //-comment merely mentioning /api/db/ as real persistence', () => {
+    const code = "// TODO: wire this up to /api/db/todos\nfunction App(){const[items,setItems]=useState([{id:1,text:'x'}]);return <div onClick={()=>setItems([...items,{}])}>{items.map(i=><div key={i.id}>{i.text}</div>)}</div>}"
+    expect(usesDataLayer(code)).toBe(false)
+  })
+
+  it('does NOT treat a /* */ block comment merely mentioning /api/db/ as real persistence', () => {
+    const code = "/* persists via /api/db/todos once backend is ready */\nfunction App(){return <div>hi</div>}"
+    expect(usesDataLayer(code)).toBe(false)
+  })
+
+  it('still detects a real call even when an unrelated comment ALSO mentions /api/db/', () => {
+    const code = "// legacy note: used to call /api/db/old-endpoint\nfetch('/api/db/todos')"
+    expect(usesDataLayer(code)).toBe(true)
+  })
+
   it('flags a record-managing app that hardcodes data (todo, no /api/db)', () => {
     expect(hasPersistenceGap(dataManagingApp(false), 'a todo list to add and remove tasks')).toBe(true)
   })
@@ -158,6 +177,15 @@ describe('obedience-gate: visitor tracking (#483/#563)', () => {
 
   it('is unconditional — flags even a plain counter with no data-management idea at all', () => {
     expect(hasVisitorTrackingGap('function App(){ return <button>+1</button> }')).toBe(true)
+  })
+
+  // Real bug class: a comment that merely MENTIONS the visitor beacon path,
+  // without the app ever actually firing it, used to satisfy the blunt
+  // whole-file regex and wrongly report "no gap" — exactly reviving the
+  // hardcoded-0-visitors bug #483/#563 exist to prevent.
+  it('still flags the gap when only a comment mentions /api/db/visitors (no real beacon)', () => {
+    const code = "// should POST to /api/db/visitors on mount\nfunction App(){const[visitors]=useState(42);return <div>{visitors}</div>}"
+    expect(hasVisitorTrackingGap(code)).toBe(true)
   })
 
   it('checkObedience surfaces visitorTrackingGap and a reason string', () => {
