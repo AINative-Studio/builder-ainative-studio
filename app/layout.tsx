@@ -35,9 +35,11 @@ const geistMono = Geist_Mono({
 // specific family intermittently fails ("next/font/google queries have
 // exactly one entry" / can't resolve the generated font CSS module), making
 // the "Coding Standards" CI check flaky on main and on PRs unrelated to
-// fonts (see #1706). The vendored file is Google's own Archivo variable
-// woff2 (latin subset) covering weight 400-800, matching the prior
-// next/font/google config exactly.
+// fonts (see #1706). The vendored file (app/fonts/archivo-variable-latin.woff2)
+// is Google's own Archivo variable woff2, latin subset, fetched directly
+// from fonts.gstatic.com (the same file Google's CSS2 API serves for every
+// weight 400-800 request, since Archivo ships as one variable master),
+// matching the prior next/font/google config's weight range exactly.
 const archivo = localFont({
   src: './fonts/archivo-variable-latin.woff2',
   weight: '400 800',
