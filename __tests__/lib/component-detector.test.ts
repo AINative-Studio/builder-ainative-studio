@@ -461,6 +461,26 @@ describe('detectRootComponent', () => {
       expect(r.source).toBe('pascalcase-jsx')
     })
 
+    // #1698: a string-literal type inside the generic (e.g. a comparison-
+    // operator union prop type, idiomatic for a filter/condition-picker
+    // component) has a bare `<`/`>` INSIDE the quotes that the old
+    // findMatchingAngleBracket counted as real generic syntax — the `>`
+    // inside `'>'` closed the depth count before the generic's own real
+    // `>`, so skipArrowConstTypeAnnotation's required `=` right after never
+    // matched and the declaration fell through this scan entirely.
+    it('detects a TS-typed arrow-const component whose generic contains a string-literal comparison-operator type', () => {
+      const code = `
+        import React from 'react'
+        const ConditionBuilder: React.FC<{ operator: '>' | '<' | '=' }> = ({ operator }) => {
+          return (<div>{operator}</div>)
+        }
+        export { ConditionBuilder }
+      `
+      const r = detectRootComponent(code)
+      expect(r.name).toBe('ConditionBuilder')
+      expect(r.source).toBe('pascalcase-jsx')
+    })
+
     it('still picks the LAST-defined JSX component when earlier siblings are TS-typed', () => {
       const code = `
         const Header: React.FC<{}> = () => { return <header>h</header> }

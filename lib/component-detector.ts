@@ -164,15 +164,61 @@ function findMatchingParen(code: string, openIdx: number): number {
  * Given the index of a `<` character, return the index of the `>` that
  * closes it (honoring arbitrarily nested `<...>`), or -1 if unbalanced.
  * Mirrors findMatchingParen's depth-counting shape.
+ *
+ * Skips over string/template-literal spans it scans through, so a lone,
+ * unmatched `<`/`>` INSIDE one never throws the depth count out of balance.
+ * TypeScript string-literal types make this reachable in real generated
+ * code: a generic prop type unioning comparison-operator strings (e.g.
+ * `React.FC<{ operator: '>' | '<' | '=' }>`, an idiomatic shape for a
+ * filter/condition-picker component) has a bare `>` inside `'>'` that used
+ * to get counted as the generic's own closing `>` — returning that bogus
+ * index instead of the real one, so `skipArrowConstTypeAnnotation`'s
+ * required `=` right after never matched and the whole typed arrow-const
+ * declaration fell through Priority 3's scan, reproducing the exact
+ * "Element type is invalid" / blank-page crash class this module's whole
+ * fix history (#1523/#1536/#1524/#1617/#1660) exists to prevent (#1698).
+ * No separate findStringEnd/findBacktickEnd helpers here (unlike this
+ * file's own findMatchingParen, #1686) to avoid colliding with that pending
+ * fix — the skip logic is self-contained to this function instead.
  */
 function findMatchingAngleBracket(code: string, openIdx: number): number {
   let depth = 0
-  for (let i = openIdx; i < code.length; i++) {
-    if (code[i] === '<') depth++
-    else if (code[i] === '>') {
+  let i = openIdx
+  while (i < code.length) {
+    const ch = code[i]
+    if (ch === '\\') { i += 2; continue }
+    if (ch === '"' || ch === "'") {
+      let j = i + 1
+      while (j < code.length && code[j] !== ch) {
+        if (code[j] === '\\') j++
+        j++
+      }
+      if (j >= code.length) return -1
+      i = j + 1
+      continue
+    }
+    if (ch === '`') {
+      let j = i + 1
+      let tplDepth = 0
+      while (j < code.length) {
+        if (code[j] === '\\') { j += 2; continue }
+        if (tplDepth === 0 && code[j] === '`') break
+        else if (code[j] === '{') tplDepth++
+        else if (code[j] === '}') tplDepth = Math.max(0, tplDepth - 1)
+        j++
+      }
+      if (j >= code.length) return -1
+      i = j + 1
+      continue
+    }
+    if (ch === '<') { depth++; i++; continue }
+    if (ch === '>') {
       depth--
       if (depth === 0) return i
+      i++
+      continue
     }
+    i++
   }
   return -1
 }

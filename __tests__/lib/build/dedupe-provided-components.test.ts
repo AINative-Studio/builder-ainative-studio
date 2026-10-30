@@ -111,6 +111,29 @@ describe('dedupeProvidedComponents', () => {
     expect(out).toMatch(/function App\(/)
   })
 
+  // #1698: same gap as #1661 above, but in findMatchingAngleBracket (used by
+  // skipTypeAnnotationToOpenParen) rather than findMatchingParen — a TS
+  // string-literal type inside the generic (e.g. a comparison-operator
+  // union prop type) has a bare `<`/`>` INSIDE the quotes that got counted
+  // as the generic's own closing `>`, so the scan never reached the real
+  // `(` that opens the arrow's param list and the redeclaration survived
+  // dedup un-removed.
+  it('#1698: removes a const-arrow redeclaration whose generic contains a string-literal comparison-operator type', () => {
+    const code = [
+      "import { Button } from './components/ui/button'",
+      "const Button: React.FC<{ variant: '>' | '<' | '=' }> = (props) => {",
+      "  return (<button>{props.variant}</button>);",
+      "}",
+      "",
+      "function App() {",
+      "  return <Button variant=\">\" />;",
+      "}",
+    ].join('\n')
+    const out = dedupeProvidedComponents(code)
+    expect(out).not.toMatch(/const Button\s*:/)
+    expect(out).toMatch(/function App\(/)
+  })
+
   it('#1619-class: removes a single-line function redeclaration whose param has a call-expression default', () => {
     const code = [
       "function Card({ variant = getDefaultVariant() }){ return (variant); } // stub",

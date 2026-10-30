@@ -223,15 +223,48 @@ function removeBalancedParamDecl(code: string, headRe: RegExp, afterParamsRe: Re
  * Given the index of a `<` character, return the index of the `>` that
  * closes it (honoring arbitrarily nested `<...>`), or -1 if unbalanced.
  * Mirrors findMatchingParen's depth-counting shape.
+ *
+ * Same bug class as findMatchingParen above (#1674/#1675) and
+ * component-detector.ts's analogous `<`/`>` matcher (#1698): a plain
+ * char-by-char count has no notion of string content, so a TS
+ * string-literal type with a lone, unmatched `<`/`>` inside it — e.g. a
+ * comparison-operator union prop type on a redeclared scaffold component
+ * (`const Button: React.FC<{ variant: '>' | '<' | '=' }> = (props) => ...`)
+ * — gets mistaken for the generic's own closing `>`. That left
+ * `skipTypeAnnotationToOpenParen` unable to find the real `(` that opens
+ * the arrow's param list, so `removeConstArrowDecl` silently left the
+ * redeclaration un-removed, reproducing the exact "Identifier 'Button' has
+ * already been declared" crash this module exists to prevent the moment
+ * the generated app also imports the scaffold's own Button. Reuses the
+ * same findStringEnd/findBacktickEnd helpers findMatchingParen already
+ * proved for this file.
  */
 function findMatchingAngleBracket(code: string, openIdx: number): number {
   let depth = 0
-  for (let i = openIdx; i < code.length; i++) {
-    if (code[i] === '<') depth++
-    else if (code[i] === '>') {
+  let i = openIdx
+  while (i < code.length) {
+    const ch = code[i]
+    if (ch === '\\') { i += 2; continue }
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      if (end === -1) return -1
+      i = end + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      if (end === -1) return -1
+      i = end + 1
+      continue
+    }
+    if (ch === '<') { depth++; i++; continue }
+    if (ch === '>') {
       depth--
       if (depth === 0) return i
+      i++
+      continue
     }
+    i++
   }
   return -1
 }
