@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
-import { Geist, Geist_Mono, Poppins, Archivo, Newsreader, IBM_Plex_Mono } from 'next/font/google'
+import { Geist, Geist_Mono, Poppins, Newsreader, IBM_Plex_Mono } from 'next/font/google'
+import localFont from 'next/font/local'
 import './globals.css'
 import './modernist.css'
 import { StreamingProvider } from '@/contexts/streaming-context'
@@ -28,10 +29,20 @@ const geistMono = Geist_Mono({
 
 // Modernist design-system fonts (builder chrome only — see docs/AINATIVE_PRIMITIVES.md pivot).
 // Archivo = UI chrome, Newsreader = Cody's generated "artifact" prose, IBM Plex Mono = machine text.
-const archivo = Archivo({
-  weight: ['400', '500', '600', '700', '800'],
+//
+// Archivo is vendored locally (next/font/local) instead of fetched via
+// next/font/google at build time: Turbopack's font-metadata fetch for this
+// specific family intermittently fails ("next/font/google queries have
+// exactly one entry" / can't resolve the generated font CSS module), making
+// the "Coding Standards" CI check flaky on main and on PRs unrelated to
+// fonts (see #1706). The vendored file is Google's own Archivo variable
+// woff2 (latin subset) covering weight 400-800, matching the prior
+// next/font/google config exactly.
+const archivo = localFont({
+  src: './fonts/archivo-variable-latin.woff2',
+  weight: '400 800',
   variable: '--font-archivo',
-  subsets: ['latin'],
+  display: 'swap',
 })
 
 const newsreader = Newsreader({
