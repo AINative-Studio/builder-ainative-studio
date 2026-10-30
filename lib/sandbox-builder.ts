@@ -22,7 +22,7 @@
  */
 
 import { isE2BEnabled, runSequenceInE2BSandbox } from './build/e2b-sandbox'
-import { detectRootComponent } from './component-detector'
+import { detectRootComponent, hasDefaultExport as hasRealDefaultExport } from './component-detector'
 
 export interface BuildResult {
   success: boolean
@@ -129,7 +129,17 @@ function buildRenderScript(rawCode: string, compName: string): string {
 
   // Handle export default — convert to a globalThis assignment so the
   // render script below can find it without a module system.
-  const hasDefaultExport = /export\s+default\s+/.test(code)
+  //
+  // `hasDefaultExport` must be the shared, comment/string-aware check from
+  // component-detector.ts, not a plain `/export\s+default\s+/.test(code)`
+  // regex — a bare `export { Name }`-only file that merely MENTIONS "export
+  // default" inside a comment or string (e.g. `// TODO: add export default
+  // Name later`) made the naive regex wrongly report true, which skipped the
+  // `exposeBareExport` fallback below with no real `export default` for the
+  // replace() calls after it to convert either — `Comp` then resolves to
+  // `null` and the SSR preview silently shows the "Component not found"
+  // placeholder in place of the founder's real app.
+  const hasDefaultExport = hasRealDefaultExport(code)
   code = code.replace(/export\s+default\s+function\s+(\w+)/g, 'globalThis.$1 = function $1')
   code = code.replace(/export\s+default\s+/g, 'globalThis.__Default__ = ')
 
