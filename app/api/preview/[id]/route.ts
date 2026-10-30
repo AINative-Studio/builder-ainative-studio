@@ -26,15 +26,78 @@ export { mintPreviewPrimitiveTokens, FOUNDER_SCOPED_PRIMITIVES }
  *  /api/community/ (#505) requests, and (#443)
  *  the right primitive-proxy token on same-origin /api/primitive/{name}/...
  *  requests. No-op pieces omitted when there is no token to attach. */
-/** Index of the `}` that closes the `{` at `openIdx` (honoring arbitrarily nested braces), or -1 if unbalanced. */
+/** Index of the closing `quote` that ends the string starting at `openIdx` (honoring `\`-escapes), or -1 if unterminated. */
+function findStringEnd(code: string, openIdx: number, quote: string): number {
+  let i = openIdx + 1
+  while (i < code.length) {
+    if (code[i] === '\\') {
+      i += 2
+      continue
+    }
+    if (code[i] === quote) return i
+    i++
+  }
+  return -1
+}
+
+/** Index of the closing `` ` `` that ends the template literal starting at `openIdx`, honoring nested `${}` interpolations. */
+function findBacktickEnd(code: string, openIdx: number): number {
+  let i = openIdx + 1
+  while (i < code.length) {
+    const ch = code[i]
+    if (ch === '\\') {
+      i += 2
+      continue
+    }
+    if (ch === '`') return i
+    if (ch === '$' && code[i + 1] === '{') {
+      const closeIdx = findMatchingBrace(code, i + 1)
+      if (closeIdx === -1) return -1
+      i = closeIdx + 1
+      continue
+    }
+    i++
+  }
+  return -1
+}
+
+/**
+ * Index of the `}` that closes the `{` at `openIdx` (honoring arbitrarily
+ * nested braces), or -1 if unbalanced.
+ *
+ * Skips over string/template literals it scans through so a lone, unmatched
+ * `}` INSIDE one — e.g. a literal-type union member like
+ * `'close-}-bracket'` in an interface field's type — is never mistaken for
+ * the interface's real closing brace. Same technique already proven in
+ * lib/build/output-validator.ts's findMatchingBracket (#1654 and friends);
+ * this file's depth-counter shared the identical gap.
+ */
 function findMatchingBrace(code: string, openIdx: number): number {
   let depth = 0
-  for (let i = openIdx; i < code.length; i++) {
-    if (code[i] === '{') depth++
-    else if (code[i] === '}') {
+  let i = openIdx
+  while (i < code.length) {
+    const ch = code[i]
+    if (ch === '\\') { i += 2; continue }
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      if (end === -1) return -1
+      i = end + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      if (end === -1) return -1
+      i = end + 1
+      continue
+    }
+    if (ch === '{') { depth++; i++; continue }
+    if (ch === '}') {
       depth--
       if (depth === 0) return i
+      i++
+      continue
     }
+    i++
   }
   return -1
 }
