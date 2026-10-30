@@ -539,8 +539,62 @@ export function hasAxLandmarkGap(code: string): boolean {
  * different, coverage-style check design, not a single presence/absence
  * regex) — tracked separately.
  */
+/**
+ * Blanks out `//` and `/* *\/` comments (replacing their characters with
+ * spaces, preserving length/newlines) while leaving string and
+ * template-literal CONTENTS untouched. Same technique, same bug class, and
+ * same rationale as obedience-gate.ts's sibling `usesDataLayer`/
+ * `hasVisitorTrackingGap` comment-blindness fix (#1704/#1705): a model that
+ * writes `// TODO: add data-agent-manifest="true"` (or any other comment
+ * merely MENTIONING the required marker, without the app ever actually
+ * rendering it) used to satisfy hasAxManifestGap's raw whole-file regex and
+ * wrongly report "already compliant" — hiding a real AX gap from the
+ * re-prompt loop. Strings must stay intact (the real marker this check looks
+ * for, `data-agent-manifest="true"`, is itself inside a JSX attribute
+ * string) so only comment text is blanked, never string/template content.
+ */
+function maskComments(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += ' '.repeat(Math.min(end, code.length) - i)
+      i = Math.min(end, code.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
 export function hasAxManifestGap(code: string): boolean {
-  return !/data-agent-manifest\s*=\s*["']true["']/.test(code || '')
+  return !/data-agent-manifest\s*=\s*["']true["']/.test(maskComments(code || ''))
 }
 
 /**

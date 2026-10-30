@@ -935,6 +935,25 @@ describe('obedience-gate: AX agent manifest (builder#687 item 5)', () => {
     expect(hasAxManifestGap('function App(){ return <div hidden data-agent-manifest="true"></div> }')).toBe(false)
   })
 
+  // Real bug class (same family as #1704/#1705's comment-blind usesDataLayer/
+  // hasVisitorTrackingGap): a model that writes a comment MENTIONING the
+  // required marker, without ever actually rendering it, used to satisfy the
+  // blunt whole-file regex and wrongly report "already compliant".
+  it('still flags the gap when only a //-comment mentions data-agent-manifest', () => {
+    const code = "// TODO: add data-agent-manifest=\"true\" to the root div\nfunction App(){ return <div>hi</div> }"
+    expect(hasAxManifestGap(code)).toBe(true)
+  })
+
+  it('still flags the gap when only a /* */ comment mentions data-agent-manifest', () => {
+    const code = '/* add data-agent-manifest="true" once ready */\nfunction App(){ return <div>hi</div> }'
+    expect(hasAxManifestGap(code)).toBe(true)
+  })
+
+  it('still detects the real marker even when an unrelated comment ALSO mentions it', () => {
+    const code = '// legacy note: used to use data-agent-manifest="false"\nfunction App(){ return <div hidden data-agent-manifest="true"></div> }'
+    expect(hasAxManifestGap(code)).toBe(false)
+  })
+
   it('checkObedience surfaces axManifestGap and a reason string', () => {
     const r = checkObedience('function App(){ return <div>hi</div> }', 'anything')
     expect(r.axManifestGap).toBe(true)
