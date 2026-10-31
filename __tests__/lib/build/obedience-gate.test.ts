@@ -57,6 +57,24 @@ describe('obedience-gate: persistence (#297)', () => {
     const landing = "function App(){return <div><h1>Welcome</h1></div>}"
     expect(hasPersistenceGap(landing, 'a contact directory')).toBe(false)
   })
+
+  // Real bug class: a model that writes a comment MENTIONING the path,
+  // without ever actually calling it, used to satisfy the blunt whole-file
+  // regex and wrongly mark the app as already persisting.
+  it('does NOT treat a //-comment merely mentioning /api/db/ as real persistence', () => {
+    const code = "// TODO: wire this up to /api/db/todos\nfunction App(){const[items,setItems]=useState([{id:1,text:'x'}]);return <div onClick={()=>setItems([...items,{}])}>{items.map(i=><div key={i.id}>{i.text}</div>)}</div>}"
+    expect(usesDataLayer(code)).toBe(false)
+  })
+
+  it('does NOT treat a /* */ block comment merely mentioning /api/db/ as real persistence', () => {
+    const code = "/* persists via /api/db/todos once backend is ready */\nfunction App(){return <div>hi</div>}"
+    expect(usesDataLayer(code)).toBe(false)
+  })
+
+  it('still detects a real call even when an unrelated comment ALSO mentions /api/db/', () => {
+    const code = "// legacy note: used to call /api/db/old-endpoint\nfetch('/api/db/todos')"
+    expect(usesDataLayer(code)).toBe(true)
+  })
 })
 
 describe('obedience-gate: AIKit (#297)', () => {
@@ -158,6 +176,15 @@ describe('obedience-gate: visitor tracking (#483/#563)', () => {
 
   it('is unconditional — flags even a plain counter with no data-management idea at all', () => {
     expect(hasVisitorTrackingGap('function App(){ return <button>+1</button> }')).toBe(true)
+  })
+
+  // Real bug class: a comment that merely MENTIONS the visitor beacon path,
+  // without the app ever actually firing it, used to satisfy the blunt
+  // whole-file regex and wrongly report "no gap" — exactly reviving the
+  // hardcoded-0-visitors bug #483/#563 exist to prevent.
+  it('still flags the gap when only a comment mentions /api/db/visitors (no real beacon)', () => {
+    const code = "// should POST to /api/db/visitors on mount\nfunction App(){const[visitors]=useState(42);return <div>{visitors}</div>}"
+    expect(hasVisitorTrackingGap(code)).toBe(true)
   })
 
   it('checkObedience surfaces visitorTrackingGap and a reason string', () => {
@@ -900,6 +927,24 @@ describe('obedience-gate: AX root landmark (agent-accessibility)', () => {
     expect(hasAxLandmarkGap('function App(){ return <main data-count={n > 0 ? 1 : 0} aria-label="Scorch dashboard"><div>hi</div></main> }')).toBe(false)
   })
 
+  // Real bug (#1713): a leftover commented-out example mentioning a
+  // compliant <main> used to satisfy this check even with no real <main>
+  // landmark anywhere in the actual rendered output.
+  it('still flags a missing landmark when only a //-comment mentions a compliant <main>', () => {
+    const code = '// example: <main aria-label="App content">...</main>\nfunction App(){ return <div>hi</div> }'
+    expect(hasAxLandmarkGap(code)).toBe(true)
+  })
+
+  it('still flags a missing landmark when only a /* */ comment mentions a compliant <main>', () => {
+    const code = '/* was: <main aria-label="App content">...</main> */\nfunction App(){ return <div>hi</div> }'
+    expect(hasAxLandmarkGap(code)).toBe(true)
+  })
+
+  it('still detects a real compliant <main> even when an unrelated comment also mentions one', () => {
+    const code = '// old shape: <main>...</main>\nfunction App(){ return <main aria-label="App content"><div>hi</div></main> }'
+    expect(hasAxLandmarkGap(code)).toBe(false)
+  })
+
   it('is unconditional — flags even a plain counter with no data-management idea at all', () => {
     const r = checkObedience('function App(){ return <div>0</div> }', 'a counter')
     expect(r.axLandmarkGap).toBe(true)
@@ -935,6 +980,25 @@ describe('obedience-gate: AX agent manifest (builder#687 item 5)', () => {
     expect(hasAxManifestGap('function App(){ return <div hidden data-agent-manifest="true"></div> }')).toBe(false)
   })
 
+  // Real bug class (same family as #1704/#1705's comment-blind usesDataLayer/
+  // hasVisitorTrackingGap): a model that writes a comment MENTIONING the
+  // required marker, without ever actually rendering it, used to satisfy the
+  // blunt whole-file regex and wrongly report "already compliant".
+  it('still flags the gap when only a //-comment mentions data-agent-manifest', () => {
+    const code = "// TODO: add data-agent-manifest=\"true\" to the root div\nfunction App(){ return <div>hi</div> }"
+    expect(hasAxManifestGap(code)).toBe(true)
+  })
+
+  it('still flags the gap when only a /* */ comment mentions data-agent-manifest', () => {
+    const code = '/* add data-agent-manifest="true" once ready */\nfunction App(){ return <div>hi</div> }'
+    expect(hasAxManifestGap(code)).toBe(true)
+  })
+
+  it('still detects the real marker even when an unrelated comment ALSO mentions it', () => {
+    const code = '// legacy note: used to use data-agent-manifest="false"\nfunction App(){ return <div hidden data-agent-manifest="true"></div> }'
+    expect(hasAxManifestGap(code)).toBe(false)
+  })
+
   it('checkObedience surfaces axManifestGap and a reason string', () => {
     const r = checkObedience('function App(){ return <div>hi</div> }', 'anything')
     expect(r.axManifestGap).toBe(true)
@@ -962,6 +1026,13 @@ describe('obedience-gate: AX JSON-LD structured data (builder#687 item 6)', () =
 
   it('does NOT flag a JSON-LD script tag whose type attr is preceded by a JSX-comparison attribute (#1668)', () => {
     expect(hasAxJsonLdGap('function App(){ return <script data-x={n > 0 ? 1 : 0} type="application/ld+json">{}</script> }')).toBe(false)
+  })
+
+  // Real bug (#1713): a commented-out example JSON-LD script tag used to
+  // satisfy this check with no real structured-data script anywhere.
+  it('still flags a missing JSON-LD script when only a comment mentions one', () => {
+    const code = '/* add: <script type="application/ld+json">{}</script> */\nfunction App(){ return <div>hi</div> }'
+    expect(hasAxJsonLdGap(code)).toBe(true)
   })
 
   it('checkObedience surfaces axJsonLdGap and a reason string', () => {
@@ -999,6 +1070,13 @@ describe('obedience-gate: AX skip-navigation link (builder#687 item 8)', () => {
 
   it('does NOT flag a skip-nav link whose href is preceded by a JSX-comparison attribute (#1668)', () => {
     expect(hasAxSkipNavGap('function App(){ return <a data-x={n > 0 ? 1 : 0} href="#main-content" data-agent-action="skip-nav">Skip</a><main id="main-content">hi</main> }')).toBe(false)
+  })
+
+  // Real bug (#1713): a commented-out example skip-link (and its matching
+  // id target) used to satisfy this check with no real skip-nav anywhere.
+  it('still flags a missing skip-nav link when only a comment mentions a compliant one', () => {
+    const code = '// example: <a href="#main-content" data-agent-action="skip-nav">Skip</a><main id="main-content">hi</main>\nfunction App(){ return <div>hi</div> }'
+    expect(hasAxSkipNavGap(code)).toBe(true)
   })
 
   it('checkObedience surfaces axSkipNavGap and a reason string', () => {
@@ -1047,6 +1125,14 @@ describe('obedience-gate: AX nav label (builder#687 item 2)', () => {
     // the real `aria-label=` later in the tag is ever reached, falsely
     // flagging a genuinely-compliant <nav> as missing it.
     const code = 'function App(){ return <nav aria-hidden={count > 0} aria-label="Main navigation"><a href="/">Home</a></nav> }'
+    expect(hasAxNavLabelGap(code)).toBe(false)
+  })
+
+  // Real bug (#1713): matchOpeningTags used to match a commented-out
+  // example <nav> with no real <nav> anywhere in the app, wrongly flagging
+  // a gap the app doesn't actually have (the app legitimately has no nav).
+  it('does NOT flag an app with no real <nav> when only a comment mentions an unlabeled one', () => {
+    const code = '// old shape: <nav><a href="/">Home</a></nav>\nfunction App(){ return <main aria-label="App"><div>hi</div></main> }'
     expect(hasAxNavLabelGap(code)).toBe(false)
   })
 
@@ -1186,6 +1272,33 @@ describe('obedience-gate: AX complex widget roles (builder#687 item 7)', () => {
   it('does NOT flag a loading pattern that already has role="status" or aria-live', () => {
     const code = 'function App(){ const [isLoading,setIsLoading]=useState(true); return <div role="status" className="animate-spin">Loading...</div> }'
     expect(hasAxComplexWidgetRoleGap(code)).toBe(false)
+  })
+
+  it('still flags a tab-like widget when the only role="tablist"/"tab" mention is inside a line comment', () => {
+    const code = `function App(){
+      // TODO: add role="tablist" and role="tab" here once designs land
+      const [activeTab,setActiveTab]=useState(0)
+      return <button onClick={()=>setActiveTab(1)}>Tab</button>
+    }`
+    expect(hasAxComplexWidgetRoleGap(code)).toBe(true)
+  })
+
+  it('still flags a tab-like widget when the only role="tablist"/"tab" mention is inside a block comment', () => {
+    const code = `function App(){
+      /* example: <div role="tablist"><button role="tab">Tab</button></div> */
+      const [activeTab,setActiveTab]=useState(0)
+      return <button onClick={()=>setActiveTab(1)}>Tab</button>
+    }`
+    expect(hasAxComplexWidgetRoleGap(code)).toBe(true)
+  })
+
+  it('still flags a loading pattern when the only role="status"/aria-live mention is inside a comment', () => {
+    const code = `function App(){
+      // TODO: add role="status" or aria-live="polite" to the spinner below
+      const [isLoading,setIsLoading]=useState(true)
+      return <div className="animate-spin">Loading...</div>
+    }`
+    expect(hasAxComplexWidgetRoleGap(code)).toBe(true)
   })
 
   it('checkObedience + buildObediencePrompt wire through correctly', () => {
