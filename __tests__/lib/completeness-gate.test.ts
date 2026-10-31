@@ -259,4 +259,54 @@ describe('findMissingLocalImports — concatenated blob mode (no files map)', ()
     expect(findMissingLocalImports('import from from from')).toEqual([])
     expect(findMissingLocalImports(null as unknown as string)).toEqual([])
   })
+
+  // Real bug class (same family as #1696/#1704's comment-blind obedience-gate
+  // checks): a comment merely MENTIONING a function/const declaration, or a
+  // commented-out import, used to satisfy the blunt whole-file regexes below
+  // and wrongly suppress a genuinely missing import — exactly the truncated-
+  // generation crash ("X is not defined") this gate exists to catch.
+  it('still flags a missing import when a //-comment merely mentions "function Analytics"', () => {
+    const files = {
+      '/src/App.tsx': [
+        `import Analytics from './components/Analytics'`,
+        `// TODO: function Analytics() { return <div>charts</div> } once backend is ready`,
+        `export default function App(){ return <Analytics/> }`,
+      ].join('\n'),
+    }
+    expect(findMissingLocalImports(files['/src/App.tsx'], files)).toEqual(['./components/Analytics'])
+  })
+
+  it('still flags a missing import when a /* */ comment merely mentions "const Analytics ="', () => {
+    const files = {
+      '/src/App.tsx': [
+        `import Analytics from './components/Analytics'`,
+        `/* const Analytics = () => <div/> — placeholder note, not real code */`,
+        `export default function App(){ return <Analytics/> }`,
+      ].join('\n'),
+    }
+    expect(findMissingLocalImports(files['/src/App.tsx'], files)).toEqual(['./components/Analytics'])
+  })
+
+  it('does not treat a commented-out import as a real (satisfied) import', () => {
+    const files = {
+      '/src/App.tsx': [
+        `// import Analytics from './components/Analytics'`,
+        `export default function App(){ return <div/> }`,
+      ].join('\n'),
+    }
+    // The only "import" is commented out, so there is nothing real to flag.
+    expect(findMissingLocalImports(files['/src/App.tsx'], files)).toEqual([])
+  })
+
+  it('still resolves a real definition even when an unrelated comment ALSO mentions the name', () => {
+    const files = {
+      '/src/App.tsx': [
+        `import Analytics from './components/Analytics'`,
+        `// Analytics dashboard TODO: add more charts`,
+        `function Analytics(){ return <div>real</div> }`,
+        `export default function App(){ return <Analytics/> }`,
+      ].join('\n'),
+    }
+    expect(findMissingLocalImports(files['/src/App.tsx'], files)).toEqual([])
+  })
 })

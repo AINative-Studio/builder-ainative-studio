@@ -93,6 +93,102 @@ const RUNTIME_PROVIDED: RegExp[] = [
 
 const FILE_MARKER = /^\/\/\s*---\s*FILE:\s*(.+?)\s*---\s*$/
 
+/** Index of a quote's matching closing quote (honoring `\` escapes), or -1 if unterminated. */
+function findStringEnd(code: string, openIdx: number, quote: string): number {
+  let i = openIdx + 1
+  while (i < code.length) {
+    if (code[i] === '\\') { i += 2; continue }
+    if (code[i] === quote) return i
+    i++
+  }
+  return -1
+}
+
+/** Index of a template literal's closing backtick (honoring `\` escapes and skipping over `${}` interpolations), or -1 if unterminated. */
+function findBacktickEnd(code: string, openIdx: number): number {
+  let i = openIdx + 1
+  while (i < code.length) {
+    const ch = code[i]
+    if (ch === '\\') { i += 2; continue }
+    if (ch === '`') return i
+    if (ch === '$' && code[i + 1] === '{') {
+      let depth = 1
+      let j = i + 2
+      while (j < code.length && depth > 0) {
+        if (code[j] === '{') depth++
+        else if (code[j] === '}') depth--
+        j++
+      }
+      i = j
+      continue
+    }
+    i++
+  }
+  return -1
+}
+
+/**
+ * Blanks out `//` and `/* *\/` comments (replacing their characters with
+ * spaces, preserving length/newlines and leaving string/template-literal
+ * CONTENTS untouched) — same `maskComments()` technique already proven in
+ * lib/build/obedience-gate.ts (#1696/#1704/#1705/#1713/#1714).
+ *
+ * Real bug this fixes: every scanner below (definesIdentifier,
+ * collectKnownIdentifiers's import/function/const regexes, and the JSX_TAG
+ * match in findUndeclaredJsxComponents) used to run against the RAW payload
+ * text, comments included. A model that writes an explanatory comment like
+ * `// function Analytics() { ... } will render the chart` or
+ * `// import Analytics from './components/Analytics'` — without ever really
+ * defining or importing it — made definesIdentifier()/collectKnownIdentifiers()
+ * wrongly believe the identifier was defined/imported, which SUPPRESSES the
+ * real "missing import" / "undeclared JSX component" finding these two
+ * detectors exist to catch. That's a false negative in the dangerous
+ * direction: the truncated/incomplete generation this gate is specifically
+ * meant to block (builder#333's own `Analytics` repro) ships anyway and dies
+ * in the browser with "Analytics is not defined" / "Element type is invalid"
+ * — exactly the crash class the completeness gate exists to prevent.
+ */
+function maskComments(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '\\') { out += code.slice(i, i + 2); i += 2; continue }
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += ' '.repeat(Math.min(end, code.length) - i)
+      i = Math.min(end, code.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
 /** Is this specifier a LOCAL module reference (relative or @/ alias)? */
 function isLocalSpecifier(spec: string): boolean {
   return /^(\.\.?\/|@\/)/.test(spec)
@@ -116,8 +212,12 @@ function isRuntimeProvided(spec: string): boolean {
  *   import * as NS from '…'        → bindings [NS]
  *   import './x'                   → bindings [] (side-effect)
  *   import type { T } from '…'     → skipped (erased at runtime)
+ *
+ * Scans comment-masked source — a commented-out `// import Foo from './Foo'`
+ * must never be parsed as a real import (see maskComments() above).
  */
-export function parseLocalImports(code: string): LocalImport[] {
+export function parseLocalImports(rawCode: string): LocalImport[] {
+  const code = maskComments(rawCode)
   const out: LocalImport[] = []
   // Statement-level regex: clause is everything between `import` and `from`.
   const withClause = /import\s+([^'";]+?)\s+from\s*['"]([^'"]+)['"]/g
@@ -163,14 +263,19 @@ function parseClauseBindings(clause: string): string[] {
   return bindings.filter((b) => /^[A-Za-z_$][\w$]*$/.test(b))
 }
 
-/** Does the payload define this identifier (function/class/const/let/var)? */
+/**
+ * Does the payload define this identifier (function/class/const/let/var)?
+ * Scans comment-masked content — a comment merely MENTIONING `function Foo`/
+ * `const Foo` (e.g. a TODO or usage example) must never satisfy this, or a
+ * truly-missing definition goes undetected (see maskComments() above).
+ */
 function definesIdentifier(content: string, name: string): boolean {
   const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const re = new RegExp(
     `(?:^|[\\n;{(\\s])(?:export\\s+(?:default\\s+)?)?(?:async\\s+)?(?:function|class)\\s+${esc}\\b` +
       `|(?:^|[\\n;{(\\s])(?:export\\s+)?(?:const|let|var)\\s+${esc}\\b`,
   )
-  return re.test(content)
+  return re.test(maskComments(content))
 }
 
 /** Directory part of a file path ('/src/App.tsx' → '/src'). */
@@ -315,8 +420,15 @@ const KNOWN_GLOBAL_JSX = new Set([
   'ErrorBoundary',
 ])
 
-/** Every capitalized identifier the payload defines OR imports from a non-local (npm) specifier. */
-function collectKnownIdentifiers(content: string): Set<string> {
+/**
+ * Every capitalized identifier the payload defines OR imports from a
+ * non-local (npm) specifier. Scans comment-masked content — a comment like
+ * `// import Analytics from './components/Analytics'` or `// function Logo()
+ * {...}` must never count as a real import/definition, or a genuinely
+ * undeclared JSX component goes undetected (see maskComments() above).
+ */
+function collectKnownIdentifiers(rawContent: string): Set<string> {
+  const content = maskComments(rawContent)
   const known = new Set<string>(KNOWN_GLOBAL_JSX)
   const withClause = /import\s+([^'";]+?)\s+from\s*['"]([^'"]+)['"]/g
   let m: RegExpExecArray | null
@@ -357,7 +469,9 @@ export function findUndeclaredJsxComponents(
     for (const [path, content] of Object.entries(map)) {
       if (!CODE_FILE.test(path) || path.endsWith('.d.ts') || typeof content !== 'string') continue
       const known = collectKnownIdentifiers(content)
-      for (const m of content.matchAll(JSX_TAG)) {
+      // Comment-masked too — a tag only MENTIONED in a comment (e.g. a usage
+      // example) is not real JSX usage and must not be flagged as undeclared.
+      for (const m of maskComments(content).matchAll(JSX_TAG)) {
         const name = m[1]
         if (!known.has(name)) problems.add(name)
       }
