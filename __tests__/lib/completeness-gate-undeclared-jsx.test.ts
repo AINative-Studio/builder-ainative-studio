@@ -118,4 +118,41 @@ describe('findUndeclaredJsxComponents', () => {
     expect(findUndeclaredJsxComponents('<<<not real jsx')).toEqual([])
     expect(findUndeclaredJsxComponents(null as unknown as string)).toEqual([])
   })
+
+  // Real bug class (same family as #1696/#1704's comment-blind obedience-gate
+  // checks): a comment merely MENTIONING an import/definition, or mentioning a
+  // JSX tag that is never actually rendered, used to satisfy the blunt
+  // whole-file regexes below and either hide a real undeclared component or
+  // flag one that was never really used.
+  it('still flags an undeclared component when a comment merely mentions importing it', () => {
+    const files = {
+      '/src/App.tsx': [
+        `// TODO: import Card from './components/ui/card'`,
+        `export default function App(){ return <Card/> }`,
+      ].join('\n'),
+      '/src/components/ui/card.tsx': `export function Card(){ return <div/> }`,
+    }
+    expect(findUndeclaredJsxComponents(files['/src/App.tsx'], files)).toEqual(['Card'])
+  })
+
+  it('still flags an undeclared component when a comment merely mentions "function Card() {}"', () => {
+    const files = {
+      '/src/App.tsx': [
+        `// function Card(){ return <div/> } — placeholder note, not real code`,
+        `export default function App(){ return <Card/> }`,
+      ].join('\n'),
+      '/src/components/ui/card.tsx': `export function Card(){ return <div/> }`,
+    }
+    expect(findUndeclaredJsxComponents(files['/src/App.tsx'], files)).toEqual(['Card'])
+  })
+
+  it('does not flag a tag that only appears inside a comment as real JSX usage', () => {
+    const files = {
+      '/src/App.tsx': [
+        `// usage example: <Ghost/> renders a placeholder`,
+        `export default function App(){ return <div/> }`,
+      ].join('\n'),
+    }
+    expect(findUndeclaredJsxComponents(files['/src/App.tsx'], files)).toEqual([])
+  })
 })
