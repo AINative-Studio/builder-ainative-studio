@@ -905,6 +905,24 @@ describe('obedience-gate: AX root landmark (agent-accessibility)', () => {
     expect(r.axLandmarkGap).toBe(true)
   })
 
+  // Real bug (#1713): a leftover commented-out example mentioning a
+  // compliant <main> used to satisfy this check even with no real <main>
+  // landmark anywhere in the actual rendered output.
+  it('still flags a missing landmark when only a //-comment mentions a compliant <main>', () => {
+    const code = '// example: <main aria-label="App content">...</main>\nfunction App(){ return <div>hi</div> }'
+    expect(hasAxLandmarkGap(code)).toBe(true)
+  })
+
+  it('still flags a missing landmark when only a /* */ comment mentions a compliant <main>', () => {
+    const code = '/* was: <main aria-label="App content">...</main> */\nfunction App(){ return <div>hi</div> }'
+    expect(hasAxLandmarkGap(code)).toBe(true)
+  })
+
+  it('still detects a real compliant <main> even when an unrelated comment also mentions one', () => {
+    const code = '// old shape: <main>...</main>\nfunction App(){ return <main aria-label="App content"><div>hi</div></main> }'
+    expect(hasAxLandmarkGap(code)).toBe(false)
+  })
+
   it('checkObedience surfaces axLandmarkGap and a reason string', () => {
     const r = checkObedience('function App(){ return <div>hi</div> }', 'anything')
     expect(r.axLandmarkGap).toBe(true)
@@ -964,6 +982,13 @@ describe('obedience-gate: AX JSON-LD structured data (builder#687 item 6)', () =
     expect(hasAxJsonLdGap('function App(){ return <script data-x={n > 0 ? 1 : 0} type="application/ld+json">{}</script> }')).toBe(false)
   })
 
+  // Real bug (#1713): a commented-out example JSON-LD script tag used to
+  // satisfy this check with no real structured-data script anywhere.
+  it('still flags a missing JSON-LD script when only a comment mentions one', () => {
+    const code = '/* add: <script type="application/ld+json">{}</script> */\nfunction App(){ return <div>hi</div> }'
+    expect(hasAxJsonLdGap(code)).toBe(true)
+  })
+
   it('checkObedience surfaces axJsonLdGap and a reason string', () => {
     const r = checkObedience('function App(){ return <div>hi</div> }', 'anything')
     expect(r.axJsonLdGap).toBe(true)
@@ -999,6 +1024,13 @@ describe('obedience-gate: AX skip-navigation link (builder#687 item 8)', () => {
 
   it('does NOT flag a skip-nav link whose href is preceded by a JSX-comparison attribute (#1668)', () => {
     expect(hasAxSkipNavGap('function App(){ return <a data-x={n > 0 ? 1 : 0} href="#main-content" data-agent-action="skip-nav">Skip</a><main id="main-content">hi</main> }')).toBe(false)
+  })
+
+  // Real bug (#1713): a commented-out example skip-link (and its matching
+  // id target) used to satisfy this check with no real skip-nav anywhere.
+  it('still flags a missing skip-nav link when only a comment mentions a compliant one', () => {
+    const code = '// example: <a href="#main-content" data-agent-action="skip-nav">Skip</a><main id="main-content">hi</main>\nfunction App(){ return <div>hi</div> }'
+    expect(hasAxSkipNavGap(code)).toBe(true)
   })
 
   it('checkObedience surfaces axSkipNavGap and a reason string', () => {

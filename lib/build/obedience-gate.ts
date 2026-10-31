@@ -493,6 +493,63 @@ export function hasVisitorTrackingGap(code: string): boolean {
  */
 
 /**
+ * Blanks out `//` and `/* *\/` comments (replacing their characters with
+ * spaces, preserving length/newlines/indices) while leaving string and
+ * template-literal CONTENTS untouched. Real bug this fixes (#1713): every
+ * tag-matching AX check below (hasAxLandmarkGap, hasAxNavLabelGap,
+ * hasAxSectionLabelGap, hasAxJsonLdGap, hasAxAgentAttributesGap via
+ * matchOpeningTags, plus hasAxSkipNavGap's own inline `<a>` scan) used to
+ * search the RAW file text for `<tagname` — including inside comments. A
+ * model that leaves a commented-out example (`// <main aria-label="...">
+ * ...` or `{/* <script type="application/ld+json">...*\/}`) satisfies the
+ * tag-presence check even when no such element is actually rendered,
+ * hiding a real accessibility gap exactly like #1708's hasAxManifestGap did
+ * for its own plain-regex check. Strings must stay intact (unlike the
+ * sibling bracket-matching helpers in this file) since real JSX attribute
+ * values this file inspects (`aria-label="..."`, `href="#id"`) are strings
+ * `matchOpeningTags`/`hasAxSkipNavGap` must still see.
+ */
+function maskComments(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += ' '.repeat(Math.min(end, code.length) - i)
+      i = Math.min(end, code.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
+/**
  * All opening tags for `tagName` (e.g. "main"), as the full attribute text
  * up to the tag's real closing `>` — depth-aware over `{}` so a JSX
  * expression attribute that itself contains a `>` (a comparison, e.g.
@@ -501,21 +558,27 @@ export function hasVisitorTrackingGap(code: string): boolean {
  * FIRST `>`, truncating the tag before a later real attribute (aria-label,
  * type="application/ld+json", ...) is ever reached — making a genuinely-
  * compliant element false-flagged as missing it.
+ *
+ * Matches against a comment-masked view of `code` (#1713) so a commented-out
+ * example tag is never mistaken for a real one, but returns each tag's text
+ * sliced from the ORIGINAL `code` (same indices, since masking preserves
+ * length) so callers still see real attribute values.
  */
 function matchOpeningTags(code: string, tagName: string): string[] {
   const tags: string[] = []
+  const masked = maskComments(code)
   const openTagRe = new RegExp(`<${tagName}\\b`, 'gi')
   let match: RegExpExecArray | null
-  while ((match = openTagRe.exec(code))) {
+  while ((match = openTagRe.exec(masked))) {
     const attrsStart = match.index + match[0].length
     let i = attrsStart
     let depth = 0
-    while (i < code.length && !(code[i] === '>' && depth <= 0)) {
-      if (code[i] === '{') depth++
-      else if (code[i] === '}') depth--
+    while (i < masked.length && !(masked[i] === '>' && depth <= 0)) {
+      if (masked[i] === '{') depth++
+      else if (masked[i] === '}') depth--
       i++
     }
-    if (i >= code.length) continue // unterminated tag
+    if (i >= masked.length) continue // unterminated tag
     tags.push(code.slice(match.index, i + 1))
   }
   return tags
@@ -560,9 +623,14 @@ export function hasAxManifestGap(code: string): boolean {
  * (the `data-agent-action="skip-nav"` marker anywhere in the tag, or the
  * "skip to main" text immediately following it) regardless of attribute
  * order — subsuming the original's two separately-ordered regex branches.
+ *
+ * Scans a comment-masked view of `code` (#1713), same reasoning as
+ * matchOpeningTags above — a commented-out example skip-link (and its
+ * matching `id="..."` target) must never satisfy this check in place of a
+ * real one.
  */
 export function hasAxSkipNavGap(code: string): boolean {
-  const src = code || ''
+  const src = maskComments(code || '')
   const anchorRe = /<a\b/gi
   let m: RegExpExecArray | null
   let targetId: string | null = null
