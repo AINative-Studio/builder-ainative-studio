@@ -36,6 +36,75 @@ export interface SandpackDbShimOptions {
   dbToken: string
 }
 
+/** Index of the closing `quote` that ends the string starting at `openIdx` (honoring `\`-escapes), or -1 if unterminated. */
+function findStringEnd(code: string, openIdx: number, quote: string): number {
+  let i = openIdx + 1
+  while (i < code.length) {
+    if (code[i] === '\\') { i += 2; continue }
+    if (code[i] === quote) return i
+    i++
+  }
+  return -1
+}
+
+/** Index of the closing `` ` `` that ends the template literal starting at `openIdx` (honoring `\`-escapes), or -1 if unterminated. */
+function findBacktickEnd(code: string, openIdx: number): number {
+  let i = openIdx + 1
+  while (i < code.length) {
+    if (code[i] === '\\') { i += 2; continue }
+    if (code[i] === '`') return i
+    i++
+  }
+  return -1
+}
+
+/**
+ * `code` with every `//` line comment and `/* ... *\/` block comment blanked
+ * to spaces of the same length (preserving every other character's index,
+ * including newlines and string/template-literal CONTENTS), so a literal
+ * mention of real import/hook text inside a comment can never be mistaken
+ * for a real import statement by the plain `.includes()` checks below.
+ */
+function maskComments(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += ' '.repeat(Math.min(end, code.length) - i)
+      i = Math.min(end, code.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
 /**
  * Build the final Sandpack `files` map from a generated app's raw files map,
  * exactly as components/chat/sandpack-preview.tsx does: overlay onto builtins,
@@ -161,10 +230,24 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
   mainCode = mainCode.replace(/from\s+['"]\.\/src\//g, "from './")
   mainCode = mainCode.replace(/from\s+['"]\.\/app\/page['"]/g, "from './app/page'")
 
-  if (mainCode && !mainCode.includes('import React')) {
-    const needsHooks = /\b(useState|useEffect|useRef|useMemo|useCallback|useContext|useReducer)\b/.test(mainCode)
+  // Real bug found this run: a plain `!mainCode.includes('import React')`
+  // check (the literal text) is blind to the SAME text appearing inside a
+  // `//`/`/* */` comment (e.g. a leftover `// TODO: import React from
+  // 'react' once we wire this up` note) rather than a real import
+  // statement. That made this guard wrongly believe React was already
+  // imported, so no `import React[, { hooks }] from 'react'` line ever got
+  // prepended -- a generated app that genuinely uses `useState`/`useEffect`
+  // etc. with no real import crashes at render with "useState is not
+  // defined" the moment this guard is fooled, the same blank-preview crash
+  // class this whole file's safety nets exist to prevent. Matching against
+  // a comment-masked view (string/template-literal CONTENTS left intact,
+  // since a real import statement is never itself inside a string) fixes
+  // this without changing behavior for a file with no such comment.
+  const mainCodeNoComments = mainCode ? maskComments(mainCode) : mainCode
+  if (mainCode && !mainCodeNoComments.includes('import React')) {
+    const needsHooks = /\b(useState|useEffect|useRef|useMemo|useCallback|useContext|useReducer)\b/.test(mainCodeNoComments)
     const hooks = ['useState', 'useEffect', 'useRef', 'useMemo', 'useCallback', 'useContext', 'useReducer']
-      .filter(h => mainCode.includes(h))
+      .filter(h => mainCodeNoComments.includes(h))
     if (needsHooks) {
       mainCode = `import React, { ${hooks.join(', ')} } from 'react'\n${mainCode}`
     } else {
