@@ -1188,6 +1188,33 @@ describe('obedience-gate: AX complex widget roles (builder#687 item 7)', () => {
     expect(hasAxComplexWidgetRoleGap(code)).toBe(false)
   })
 
+  it('still flags a tab-like widget when the only role="tablist"/"tab" mention is inside a line comment', () => {
+    const code = `function App(){
+      // TODO: add role="tablist" and role="tab" here once designs land
+      const [activeTab,setActiveTab]=useState(0)
+      return <button onClick={()=>setActiveTab(1)}>Tab</button>
+    }`
+    expect(hasAxComplexWidgetRoleGap(code)).toBe(true)
+  })
+
+  it('still flags a tab-like widget when the only role="tablist"/"tab" mention is inside a block comment', () => {
+    const code = `function App(){
+      /* example: <div role="tablist"><button role="tab">Tab</button></div> */
+      const [activeTab,setActiveTab]=useState(0)
+      return <button onClick={()=>setActiveTab(1)}>Tab</button>
+    }`
+    expect(hasAxComplexWidgetRoleGap(code)).toBe(true)
+  })
+
+  it('still flags a loading pattern when the only role="status"/aria-live mention is inside a comment', () => {
+    const code = `function App(){
+      // TODO: add role="status" or aria-live="polite" to the spinner below
+      const [isLoading,setIsLoading]=useState(true)
+      return <div className="animate-spin">Loading...</div>
+    }`
+    expect(hasAxComplexWidgetRoleGap(code)).toBe(true)
+  })
+
   it('checkObedience + buildObediencePrompt wire through correctly', () => {
     const code = 'function App(){ const [activeTab,setActiveTab]=useState(0); return <button onClick={()=>setActiveTab(1)}>Tab</button> }'
     const r = checkObedience(code, 'anything')

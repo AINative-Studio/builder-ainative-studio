@@ -666,6 +666,52 @@ export function hasAxAgentAttributesGap(code: string): boolean {
 }
 
 /**
+ * `code` with every `//` line comment and `/* ... *\/` block comment blanked
+ * out to spaces of the same length (so any caller working on raw character
+ * offsets stays correct), skipping over string/template literals while
+ * scanning so a `//`/`/*` that appears INSIDE a string (e.g. a URL) is never
+ * mistaken for a real comment.
+ */
+function maskComments(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      if (end === -1) { out += code.slice(i); break }
+      out += code.slice(i, end + 1)
+      i = end + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      if (end === -1) { out += code.slice(i); break }
+      out += code.slice(i, end + 1)
+      i = end + 1
+      continue
+    }
+    if (ch === '/' && code[i + 1] === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && code[i + 1] === '*') {
+      const closeIdx = code.indexOf('*/', i + 2)
+      const end = closeIdx === -1 ? code.length : closeIdx + 2
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
+/**
  * AX compliance, follow-up (builder#687 item 7): ARIA roles on complex
  * widgets. Rather than trying to detect every possible "complex widget"
  * shape (high false-positive risk per this file's own philosophy), this
@@ -675,9 +721,16 @@ export function hasAxAgentAttributesGap(code: string): boolean {
  * loading region — since both are common in generated dashboards and both
  * have a well-known, unambiguous correct ARIA role with no legitimate
  * reason to omit it once the pattern is already present.
+ *
+ * Comment-blindness bug (#1713/#1704's class, found here too): the two
+ * "already compliant" checks (hasTabRoles, hasStatusSignal) matched raw
+ * `role="tablist"` / `aria-live=` text anywhere in the file, including
+ * inside a comment — a generated app with `// TODO: add role="tablist"`
+ * and nothing real rendered satisfied the check, silently hiding a real AX
+ * gap. All four regexes now run against a comment-masked view of the code.
  */
 export function hasAxComplexWidgetRoleGap(code: string): boolean {
-  const src = code || ''
+  const src = maskComments(code || '')
   // Tab-like widget: multiple sibling buttons driving an `activeTab`/
   // `currentTab`-style state, with no tablist/tab roles anywhere.
   const looksLikeTabs = /(activeTab|currentTab|selectedTab)/i.test(src) && /<button\b/i.test(src)
