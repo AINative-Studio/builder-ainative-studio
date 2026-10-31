@@ -1082,6 +1082,14 @@ describe('obedience-gate: AX nav label (builder#687 item 2)', () => {
     expect(hasAxNavLabelGap(code)).toBe(false)
   })
 
+  // Real bug (#1713): matchOpeningTags used to match a commented-out
+  // example <nav> with no real <nav> anywhere in the app, wrongly flagging
+  // a gap the app doesn't actually have (the app legitimately has no nav).
+  it('does NOT flag an app with no real <nav> when only a comment mentions an unlabeled one', () => {
+    const code = '// old shape: <nav><a href="/">Home</a></nav>\nfunction App(){ return <main aria-label="App"><div>hi</div></main> }'
+    expect(hasAxNavLabelGap(code)).toBe(false)
+  })
+
   it('checkObedience surfaces axNavLabelGap and a reason string only when a nav is actually present', () => {
     const noNav = checkObedience('function App(){ return <main aria-label="App"><div>hi</div></main> }', 'a counter')
     expect(noNav.axNavLabelGap).toBe(false)
