@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
-import { Geist, Geist_Mono, Poppins, Archivo, Newsreader, IBM_Plex_Mono } from 'next/font/google'
+import { Geist, Geist_Mono, Poppins, Archivo, IBM_Plex_Mono } from 'next/font/google'
+import localFont from 'next/font/local'
 import './globals.css'
 import './modernist.css'
 import { StreamingProvider } from '@/contexts/streaming-context'
@@ -34,11 +35,22 @@ const archivo = Archivo({
   subsets: ['latin'],
 })
 
-const newsreader = Newsreader({
-  weight: ['400', '500', '600'],
-  style: ['normal', 'italic'],
+// Newsreader is also vendored locally (next/font/local), same reason as Archivo
+// above: Turbopack's next/font/google metadata fetch intermittently fails for
+// this family too ("next/font/google queries have exactly one entry" /
+// can't resolve the generated font CSS module), flaking the "Coding
+// Standards" CI check on unrelated PRs (see #1706, #1723). Both vendored
+// files are Newsreader's own variable-weight (400-600) latin woff2s, one per
+// style, fetched directly from fonts.gstatic.com — the same files Google's
+// CSS2 API serves for every weight 400/500/600 request in each style, since
+// Newsreader ships as one variable master per style axis.
+const newsreader = localFont({
+  src: [
+    { path: './fonts/newsreader-normal-latin.woff2', weight: '400 600', style: 'normal' },
+    { path: './fonts/newsreader-italic-latin.woff2', weight: '400 600', style: 'italic' },
+  ],
   variable: '--font-newsreader',
-  subsets: ['latin'],
+  display: 'swap',
 })
 
 const plexMono = IBM_Plex_Mono({
