@@ -70,6 +70,26 @@ describe('findUnsafeDangerousHtml', () => {
     `
     expect(findUnsafeDangerousHtml(code)).toEqual(['buildHtml({ raw: userInput })'])
   })
+
+  // Real bug: a comment between the opening `{{` and the real `__html:`
+  // containing a stray, unmatched `}` used to close the brace-depth-count
+  // right there, silently dropping the WHOLE call (not just truncating the
+  // captured value) — a genuinely dangerous dynamic __html went completely
+  // unflagged.
+  it('still flags a dynamic __html value when a comment before it contains a stray }', () => {
+    const code = `<div dangerouslySetInnerHTML={{ /* safe? (yes}) */ __html: userInput }} />`
+    expect(findUnsafeDangerousHtml(code)).toHaveLength(1)
+  })
+
+  it('still flags a dynamic __html value when a //-comment on its own line contains a stray }', () => {
+    const code = `<div dangerouslySetInnerHTML={{\n  // note: legacy shape used a wrapper object }\n  __html: userInput\n}} />`
+    expect(findUnsafeDangerousHtml(code)).toHaveLength(1)
+  })
+
+  it('does not flag a static value when only a comment (no stray bracket) sits alongside it', () => {
+    const code = `<div dangerouslySetInnerHTML={{ /* trusted, see #42 */ __html: "<b>Static</b>" }} />`
+    expect(findUnsafeDangerousHtml(code)).toEqual([])
+  })
 })
 
 describe('findSecretLoggingCalls', () => {
@@ -134,6 +154,24 @@ describe('findSecretLoggingCalls', () => {
   it('flags a secret-shaped arg after a string argument containing an unmatched brace', () => {
     const code = `console.log('Use the { placeholder', apiKey)`
     expect(findSecretLoggingCalls(code)).toHaveLength(1)
+  })
+
+  // Real bug: a comment before the secret-shaped arg containing a stray,
+  // unmatched `)` used to close the paren-depth-count right there, silently
+  // dropping the real arg this rule exists to catch.
+  it('flags a secret-shaped arg after a comment containing a stray )', () => {
+    const code = `console.log(/* ok) */ apiKey)`
+    expect(findSecretLoggingCalls(code)).toHaveLength(1)
+  })
+
+  it('flags a secret-shaped arg after a //-comment containing a stray )', () => {
+    const code = `console.warn(\n  // legacy call shape) no longer used\n  authToken\n)`
+    expect(findSecretLoggingCalls(code)).toHaveLength(1)
+  })
+
+  it('does not flag an ordinary call when only a comment (no stray paren) sits alongside it', () => {
+    const code = `console.log(/* mounted */ 'Component mounted')`
+    expect(findSecretLoggingCalls(code)).toEqual([])
   })
 })
 
@@ -574,6 +612,26 @@ describe('findUnwiredDuplicateSidebar', () => {
       <aside data-agent-context="sidebar-mobile" className="translate-x-0">Mobile</aside>
     `
     expect(findUnwiredDuplicateSidebar(code)).toEqual(findUnwiredDuplicateSidebar(code))
+  })
+
+  it('still detects an unwired duplicate sidebar when an earlier comment contains a stray } that throws off a later ">" comparison attribute', () => {
+    // Real bug: a comment inside an earlier attribute's JSX expression
+    // containing a stray, unmatched `}` decremented the brace-depth-count
+    // one extra time. That alone is harmless IF nothing else follows before
+    // the tag's real closing `>` — but a later attribute's own legitimate
+    // ">" comparison (already handled correctly on its own, see the test
+    // above) now lands at an off-by-one depth that reads as "outside any
+    // expression", so ITS internal `>` is mistaken for the tag's real
+    // closing `>`, truncating the tag early and dropping it from this
+    // rule's view entirely.
+    const code = `
+      <aside data-agent-context="sidebar" className="w-64 fixed inset-y-0">Desktop</aside>
+      <aside aria-label={/* note (see}ticket) */ 'nav'} aria-hidden={count > 0} data-agent-context="sidebar-mobile" className="translate-x-0">Mobile</aside>
+    `
+    const findings = findUnwiredDuplicateSidebar(code)
+    expect(findings).toHaveLength(1)
+    expect(findings[0]).toMatch(/sidebar-mobile/)
+    expect(findings[0]).toMatch(/no off-canvas wiring/)
   })
 })
 

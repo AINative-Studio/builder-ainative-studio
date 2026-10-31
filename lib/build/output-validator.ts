@@ -82,6 +82,67 @@ function findBacktickEnd(code: string, openIdx: number): number {
 }
 
 /**
+ * Blanks out `//` and `/* *\/` comments (replacing their characters with
+ * spaces, preserving length/newlines/indices) while leaving string and
+ * template-literal CONTENTS untouched (found via the same findStringEnd/
+ * findBacktickEnd scanners findMatchingBracket itself uses, so a `//` or
+ * `/*` inside a real string is never mistaken for a comment start).
+ *
+ * Real bug this fixes: a code comment containing a stray, unmatched bracket
+ * character — e.g. `console.log(/* ok) *\/ apiKey)` or
+ * `dangerouslySetInnerHTML={{ /* safe? (yes}) *\/ __html: userInput }}` —
+ * used to be scanned as real syntax by findMatchingBracket's depth-counter,
+ * closing the match early (right at the comment's stray character) and
+ * silently truncating the captured args/body BEFORE it ever reached the
+ * real secret-shaped arg or dynamic `__html` value. That's strictly worse
+ * than a false positive for these two security rules (checkNoSecretLogging,
+ * checkNoUnsafeDangerousHtml): a genuinely dangerous call goes completely
+ * unflagged. The same early-close also made findSidebarTags (rule 5) miss a
+ * real unwired duplicate sidebar whenever an earlier attribute's expression
+ * contained a commented-out aside with a stray `}`. Same masking technique
+ * as obedience-gate.ts's maskComments (#1713).
+ */
+function maskComments(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += ' '.repeat(Math.min(end, code.length) - i)
+      i = Math.min(end, code.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
+/**
  * Index of the matching `close` bracket for the `open` bracket at `openIdx`
  * (honoring arbitrarily nested brackets of that kind), or -1 if unbalanced.
  *
@@ -92,6 +153,11 @@ function findBacktickEnd(code: string, openIdx: number): number {
  * real bracket-relevant syntax. Same technique already proven in
  * template-literal-to-concat.ts and obedience-gate.ts's findMatchingBracket
  * (#1654); this module's two depth-counters shared the identical gap.
+ *
+ * Callers that also need comment-blindness fixed (findUnsafeDangerousHtml,
+ * findSecretLoggingCalls) pass an already comment-masked `code` — this
+ * function itself stays comment-agnostic, matching findBacktickEnd's own
+ * recursive call below which must see the same masking its caller applied.
  */
 function findMatchingBracket(code: string, openIdx: number, open: string, close: string): number {
   let depth = 0
@@ -162,20 +228,29 @@ function isStaticHtmlArg(arg: string): boolean {
  * enclosing `{ __html: ... }` object's true closing brace by depth-counting
  * fixes that without changing behavior for a flat arg with no inner braces
  * (same boundary found either way).
+ *
+ * Scans a comment-masked view of `code`: a comment between the opening
+ * `{{` and the real `__html:`/value containing a stray `}` used to close
+ * the depth-count there instead, silently dropping the WHOLE call from
+ * this rule's view — same failure mode as the bug above, different trigger.
  */
 export function findUnsafeDangerousHtml(code: string): string[] {
   const matches: string[] = []
+  const masked = maskComments(code)
   let m: RegExpExecArray | null
   DANGEROUS_HTML_HEAD_PATTERN.lastIndex = 0
-  while ((m = DANGEROUS_HTML_HEAD_PATTERN.exec(code)) !== null) {
+  while ((m = DANGEROUS_HTML_HEAD_PATTERN.exec(masked)) !== null) {
     const openIdx = m.index + m[0].length - 1
-    const closeIdx = findMatchingBrace(code, openIdx)
+    const closeIdx = findMatchingBrace(masked, openIdx)
     if (closeIdx === -1) continue
     DANGEROUS_HTML_HEAD_PATTERN.lastIndex = closeIdx + 1
-    const body = code.slice(openIdx + 1, closeIdx)
-    const htmlMatch = body.match(/^\s*__html\s*:\s*([\s\S]*)$/)
-    if (!htmlMatch) continue
-    const arg = htmlMatch[1]
+    // Locate "__html:" against the MASKED body (a leading comment there must
+    // not stop this prefix match), but slice the actual value out of the
+    // ORIGINAL code so isStaticHtmlArg still sees real string/call text —
+    // same split responsibility as matchOpeningTags in obedience-gate.ts.
+    const maskedPrefix = masked.slice(openIdx + 1, closeIdx).match(/^\s*__html\s*:\s*/)
+    if (!maskedPrefix) continue
+    const arg = code.slice(openIdx + 1 + maskedPrefix[0].length, closeIdx)
     if (!isStaticHtmlArg(arg)) {
       matches.push(arg.trim().slice(0, 80))
     }
@@ -209,14 +284,21 @@ function findMatchingParen(code: string, openIdx: number): number {
  * exists to catch. Finding the call's true closing paren by
  * depth-counting fixes that without changing behavior for a flat
  * argument list with no nested calls (same paren found either way).
+ *
+ * Scans a comment-masked view of `code`: a comment before the real
+ * secret-shaped arg containing a stray, unmatched `)` used to close the
+ * depth-count there instead, silently dropping the real arg this rule
+ * exists to catch — same failure mode, different trigger from the bug
+ * above.
  */
 export function findSecretLoggingCalls(code: string): string[] {
   const matches: string[] = []
+  const masked = maskComments(code)
   let m: RegExpExecArray | null
   CONSOLE_CALL_HEAD_PATTERN.lastIndex = 0
-  while ((m = CONSOLE_CALL_HEAD_PATTERN.exec(code)) !== null) {
+  while ((m = CONSOLE_CALL_HEAD_PATTERN.exec(masked)) !== null) {
     const openIdx = m.index + m[0].length - 1
-    const closeIdx = findMatchingParen(code, openIdx)
+    const closeIdx = findMatchingParen(masked, openIdx)
     if (closeIdx === -1) continue
     const args = code.slice(openIdx + 1, closeIdx)
     if (SECRET_ARG_PATTERN.test(args)) {
@@ -506,21 +588,28 @@ function extractClassNameFromTag(tag: string): string {
  * pattern as obedience-gate.ts's hasNoOpCtaButton (#1641) — fixes this
  * without changing behavior for tags with no expression containers (same
  * `>` found either way).
+ *
+ * Scans a comment-masked view of `code` for the same reason the two
+ * security rules above do: an earlier attribute's expression containing a
+ * commented-out aside with a stray `}` used to close the depth-count early,
+ * silently dropping the tag (and any real unwired duplicate it carries)
+ * from this rule's view entirely — not just a truncated className.
  */
 function findSidebarTags(code: string): { role: string; className: string; raw: string }[] {
   const tags: { role: string; className: string; raw: string }[] = []
+  const masked = maskComments(code)
   TAG_START_PATTERN.lastIndex = 0
   let match: RegExpExecArray | null
-  while ((match = TAG_START_PATTERN.exec(code)) !== null) {
+  while ((match = TAG_START_PATTERN.exec(masked)) !== null) {
     const attrsStart = match.index + match[0].length
     let i = attrsStart
     let depth = 0
-    while (i < code.length && !(code[i] === '>' && depth <= 0)) {
-      if (code[i] === '{') depth++
-      else if (code[i] === '}') depth--
+    while (i < masked.length && !(masked[i] === '>' && depth <= 0)) {
+      if (masked[i] === '{') depth++
+      else if (masked[i] === '}') depth--
       i++
     }
-    if (i >= code.length) continue // unterminated tag
+    if (i >= masked.length) continue // unterminated tag
     const tag = code.slice(match.index, i + 1)
     const roleMatch = tag.match(/\bdata-agent-context=["']sidebar([\w-]*)["']/)
     if (!roleMatch) continue
