@@ -532,3 +532,41 @@ describe('buildSandpackFiles — main-file default-export synthesis handles more
     expect(built['/App.tsx']).toMatch(/export\s*\{\s*Dashboard\s+as\s+default\s*\}/)
   })
 })
+
+describe('buildSandpackFiles — React/hooks import injection is comment-blind to a merely-mentioned "import React" (overnight-loop 2026-10-31)', () => {
+  // Real bug found this run, confirmed via a direct repro before filing: the
+  // guard deciding whether to prepend `import React[, { hooks }] from
+  // 'react'` used to be a plain `!mainCode.includes('import React')` check —
+  // literal text, blind to the SAME text appearing inside a `//`/`/* */`
+  // comment rather than a real import statement. A generated app with a
+  // leftover `// TODO: import React from 'react'` note and real `useState`
+  // usage but NO real import wrongly skipped the injection entirely, so the
+  // assembled /App.tsx referenced `useState`/React's JSX runtime with
+  // nothing actually importing them — "useState is not defined" /
+  // "React is not defined" at render, the exact blank-preview crash class
+  // this file's safety nets exist to prevent.
+  it('still injects a real `import React` when the only "import React" text is inside a line comment', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "// TODO: import React from 'react' once we wire this up\nfunction App() { const [count, setCount] = useState(0); return (<div onClick={() => setCount(count + 1)}>{count}</div>) }\nexport default App",
+    })
+    expect(built['/App.tsx']).toMatch(/^import React/m)
+  })
+
+  it('still injects the real hooks import (not just bare React) when the only "import React" mention is inside a block comment', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "/* import React from 'react' -- leftover note */\nfunction App() { const [count, setCount] = useState(0); return (<div onClick={() => setCount(count + 1)}>{count}</div>) }\nexport default App",
+    })
+    expect(built['/App.tsx']).toMatch(/^import React, \{ useState \} from 'react'/m)
+  })
+
+  it('does NOT double-import when a real `import React` statement is already present', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "import React, { useState } from 'react'\nfunction App() { const [count, setCount] = useState(0); return (<div>{count}</div>) }\nexport default App",
+    })
+    const importReactCount = (built['/App.tsx'].match(/^import React\b/gm) || []).length
+    expect(importReactCount).toBe(1)
+  })
+})
