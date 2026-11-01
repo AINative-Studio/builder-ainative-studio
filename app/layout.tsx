@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
-import { Geist, Geist_Mono, Poppins, Archivo, Newsreader, IBM_Plex_Mono } from 'next/font/google'
+import { Archivo, Newsreader } from 'next/font/google'
+import localFont from 'next/font/local'
 import './globals.css'
 import './modernist.css'
 import { StreamingProvider } from '@/contexts/streaming-context'
@@ -10,20 +11,42 @@ import { CommandPaletteProvider } from '@/components/providers/command-palette-p
 import GoogleAnalytics from '@/components/analytics/google-analytics'
 import MetaPixel from '@/components/analytics/meta-pixel'
 
-const poppins = Poppins({
-  weight: ['300', '400', '500', '600', '700'],
+// Geist, Geist Mono, Poppins and IBM Plex Mono are vendored locally
+// (next/font/local) instead of fetched via next/font/google at build time:
+// Turbopack's font-metadata fetch intermittently fails for a next/font/google
+// family ("next/font/google queries have exactly one entry" / can't resolve
+// the generated font CSS module), flaking the "Coding Standards" CI check on
+// unrelated PRs (see #1706, #1723 — Archivo and Newsreader respectively; this
+// generalizes the same fix to the repo's four other next/font/google calls,
+// see #1738). Each vendored file is Google's/Vercel's own woff2, latin
+// subset, fetched directly from fonts.gstatic.com — Geist/Geist Mono are
+// single variable-weight (100-900) files, Poppins/IBM Plex Mono are one
+// static-weight file per weight already in use, matching the prior
+// next/font/google configs' weight ranges exactly.
+const poppins = localFont({
+  src: [
+    { path: './fonts/poppins-300-latin.woff2', weight: '300', style: 'normal' },
+    { path: './fonts/poppins-400-latin.woff2', weight: '400', style: 'normal' },
+    { path: './fonts/poppins-500-latin.woff2', weight: '500', style: 'normal' },
+    { path: './fonts/poppins-600-latin.woff2', weight: '600', style: 'normal' },
+    { path: './fonts/poppins-700-latin.woff2', weight: '700', style: 'normal' },
+  ],
   variable: '--font-poppins',
-  subsets: ['latin'],
+  display: 'swap',
 })
 
-const geistSans = Geist({
+const geistSans = localFont({
+  src: './fonts/geist-variable-latin.woff2',
+  weight: '100 900',
   variable: '--font-geist-sans',
-  subsets: ['latin'],
+  display: 'swap',
 })
 
-const geistMono = Geist_Mono({
+const geistMono = localFont({
+  src: './fonts/geist-mono-variable-latin.woff2',
+  weight: '100 900',
   variable: '--font-geist-mono',
-  subsets: ['latin'],
+  display: 'swap',
 })
 
 // Modernist design-system fonts (builder chrome only — see docs/AINATIVE_PRIMITIVES.md pivot).
@@ -41,10 +64,14 @@ const newsreader = Newsreader({
   subsets: ['latin'],
 })
 
-const plexMono = IBM_Plex_Mono({
-  weight: ['400', '500', '600'],
+const plexMono = localFont({
+  src: [
+    { path: './fonts/ibm-plex-mono-400-latin.woff2', weight: '400', style: 'normal' },
+    { path: './fonts/ibm-plex-mono-500-latin.woff2', weight: '500', style: 'normal' },
+    { path: './fonts/ibm-plex-mono-600-latin.woff2', weight: '600', style: 'normal' },
+  ],
   variable: '--font-plex-mono',
-  subsets: ['latin'],
+  display: 'swap',
 })
 
 export const metadata: Metadata = {
