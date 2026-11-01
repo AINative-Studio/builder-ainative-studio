@@ -59,7 +59,7 @@
  * near-identical reimplementations of the same string/comment-aware
  * bracket-matching technique.
  */
-import { findMatchingBrace, findBacktickEnd } from './bracket-scanner'
+import { findMatchingBrace, findBacktickEnd, findStringEnd } from './bracket-scanner'
 
 export function convertTemplateLiteralAttrsToConcat(code: string): string {
   const attrOpenRe = /(className|style)=\{`/g

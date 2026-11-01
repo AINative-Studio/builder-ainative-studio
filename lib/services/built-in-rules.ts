@@ -12,7 +12,7 @@ import {
   RuleViolation,
   RULE_IDS,
 } from '@/lib/types/enforcement-rules';
-import { findMatchingParen as sharedFindMatchingParen } from '@/lib/build/bracket-scanner';
+import { findMatchingParen as sharedFindMatchingParen, findStringEnd } from '@/lib/build/bracket-scanner';
 
 /**
  * Git Rule: No AI Attribution

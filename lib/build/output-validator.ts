@@ -38,7 +38,7 @@
  */
 
 import type { StandardsCheck, StandardsResult } from './coding-standards'
-import { findMatchingBracket as sharedFindMatchingBracket } from './bracket-scanner'
+import { findMatchingBracket as sharedFindMatchingBracket, findStringEnd, findBacktickEnd } from './bracket-scanner'
 
 // ---------------------------------------------------------------------------
 // Rule 1: dangerouslySetInnerHTML on non-static content
