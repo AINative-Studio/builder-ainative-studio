@@ -569,4 +569,25 @@ describe('buildSandpackFiles — React/hooks import injection is comment-blind t
     const importReactCount = (built['/App.tsx'].match(/^import React\b/gm) || []).length
     expect(importReactCount).toBe(1)
   })
+
+  // Follow-up found this same run: masking comments alone isn't enough -- a
+  // landing page rendering a "Quickstart" code sample as a quoted/template
+  // string containing the literal text "import React from 'react'" is just
+  // as real-world as a leftover comment, and fooled the comment-only mask
+  // the same way.
+  it('still injects a real `import React` when the only "import React" text is inside a double-quoted string (e.g. a rendered code sample)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "function App() { const [count, setCount] = useState(0); const sample = \"import React from 'react'\"; return (<div><pre>{sample}</pre><span onClick={() => setCount(count + 1)}>{count}</span></div>) }\nexport default App",
+    })
+    expect(built['/App.tsx']).toMatch(/^import React, \{ useState \} from 'react'/m)
+  })
+
+  it('still injects a real `import React` when the only "import React" text is inside a template-literal code sample', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        'function App() { const [count, setCount] = useState(0); const sample = `import React from \'react\'\\nfunction Widget() {}`; return (<div><pre>{sample}</pre><span onClick={() => setCount(count + 1)}>{count}</span></div>) }\nexport default App',
+    })
+    expect(built['/App.tsx']).toMatch(/^import React, \{ useState \} from 'react'/m)
+  })
 })

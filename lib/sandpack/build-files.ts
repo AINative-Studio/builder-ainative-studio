@@ -59,13 +59,18 @@ function findBacktickEnd(code: string, openIdx: number): number {
 }
 
 /**
- * `code` with every `//` line comment and `/* ... *\/` block comment blanked
- * to spaces of the same length (preserving every other character's index,
- * including newlines and string/template-literal CONTENTS), so a literal
- * mention of real import/hook text inside a comment can never be mistaken
- * for a real import statement by the plain `.includes()` checks below.
+ * `code` with every `//` line comment, `/* ... *\/` block comment, and
+ * string/template-literal CONTENT blanked to spaces of the same length
+ * (preserving delimiters and every other character's index, including
+ * newlines), so a literal mention of real import/hook text inside a
+ * comment OR inside a quoted/backtick string (e.g. a landing page
+ * rendering a "Quickstart" code sample as a string) can never be mistaken
+ * for a real import statement or a real hook call by the plain
+ * `.includes()`/regex checks below. Safe to blank string/template-literal
+ * content for this purpose specifically: a real `import` statement or a
+ * real hook call is never itself written inside a string literal.
  */
-function maskComments(code: string): string {
+function maskCommentsAndStrings(code: string): string {
   let out = ''
   let i = 0
   while (i < code.length) {
@@ -74,14 +79,14 @@ function maskComments(code: string): string {
     if (ch === '"' || ch === "'") {
       const end = findStringEnd(code, i, ch)
       const realEnd = end === -1 ? code.length - 1 : end
-      out += code.slice(i, realEnd + 1)
+      out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
       i = realEnd + 1
       continue
     }
     if (ch === '`') {
       const end = findBacktickEnd(code, i)
       const realEnd = end === -1 ? code.length - 1 : end
-      out += code.slice(i, realEnd + 1)
+      out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
       i = realEnd + 1
       continue
     }
@@ -239,11 +244,19 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
   // prepended -- a generated app that genuinely uses `useState`/`useEffect`
   // etc. with no real import crashes at render with "useState is not
   // defined" the moment this guard is fooled, the same blank-preview crash
-  // class this whole file's safety nets exist to prevent. Matching against
-  // a comment-masked view (string/template-literal CONTENTS left intact,
-  // since a real import statement is never itself inside a string) fixes
-  // this without changing behavior for a file with no such comment.
-  const mainCodeNoComments = mainCode ? maskComments(mainCode) : mainCode
+  // class this whole file's safety nets exist to prevent.
+  //
+  // Follow-up found this same run: masking comments alone still leaves a
+  // SECOND, equally real way to fool this guard -- a landing page that
+  // renders a "Quickstart"/example code snippet as a quoted or template
+  // string containing the literal text "import React from 'react'" (an
+  // ordinary thing for an SDK/API product page to show). That text is
+  // still visible after comment-only masking, so the guard still wrongly
+  // believes React is already imported. Blanking string/template-literal
+  // CONTENT too (not just comments) closes this without any behavior
+  // change for real code, since a real `import` statement or a real hook
+  // call is never itself written inside a string literal.
+  const mainCodeNoComments = mainCode ? maskCommentsAndStrings(mainCode) : mainCode
   if (mainCode && !mainCodeNoComments.includes('import React')) {
     const needsHooks = /\b(useState|useEffect|useRef|useMemo|useCallback|useContext|useReducer)\b/.test(mainCodeNoComments)
     const hooks = ['useState', 'useEffect', 'useRef', 'useMemo', 'useCallback', 'useContext', 'useReducer']
