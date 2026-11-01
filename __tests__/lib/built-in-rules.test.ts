@@ -414,6 +414,32 @@ describe('NO_PII_IN_LOGS_RULE', () => {
     );
     expect(result.passed).toBe(false);
   });
+
+  // Real bug: the depth-counter had no notion of comments, so a stray
+  // unmatched `(` inside a `//` line comment INSIDE the call's argument
+  // list was mistaken for a new nesting level, which meant the real
+  // closing paren was never found (depth never returned to 0) -- the call
+  // was treated as unbalanced and skipped entirely, letting `user.password`
+  // through uncaught.
+  it('detects PII in console.log after a line comment containing an unmatched paren', async () => {
+    const result = await NO_PII_IN_LOGS_RULE.check(
+      makeAction('file-edit', {
+        filePath: 'lib/auth.ts',
+        fileContent: 'console.log(\n  // see issue (#123\n  user.password\n)',
+      })
+    );
+    expect(result.passed).toBe(false);
+  });
+
+  it('detects PII in console.log after a block comment containing an unmatched paren', async () => {
+    const result = await NO_PII_IN_LOGS_RULE.check(
+      makeAction('file-edit', {
+        filePath: 'lib/auth.ts',
+        fileContent: "console.log('login', /* legacy (temp */ user.password)",
+      })
+    );
+    expect(result.passed).toBe(false);
+  });
 });
 
 describe('INPUT_VALIDATION_RULE', () => {

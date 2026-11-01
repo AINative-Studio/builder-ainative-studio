@@ -720,6 +720,14 @@ function findStringEnd(code: string, openIdx: number, quote: string): number {
  * obedience-gate.ts's findMatchingBracket (#1654) and
  * output-validator.ts's findMatchingParen/findMatchingBrace, which shared
  * this identical gap.
+ *
+ * Also skips over `//` and `/* *\/` comments for the same reason: a stray
+ * unmatched paren inside a comment inside the argument list (e.g.
+ * `console.log(\n  // see issue (#123\n  user.password\n)`) previously threw
+ * off the depth count enough that the real closing paren was never found,
+ * so `callArgsMatch()` silently treated the whole call as unbalanced and
+ * skipped it — a false negative that let PII/secrets logging through the
+ * NO_PII_IN_LOGS / NO_SECRETS_IN_CODE rules uncaught.
  */
 function findMatchingParen(code: string, openIdx: number): number {
   let depth = 0;
@@ -728,6 +736,16 @@ function findMatchingParen(code: string, openIdx: number): number {
     const ch = code[i];
     if (ch === '\\') {
       i += 2;
+      continue;
+    }
+    if (ch === '/' && code[i + 1] === '/') {
+      const end = code.indexOf('\n', i);
+      i = end === -1 ? code.length : end + 1;
+      continue;
+    }
+    if (ch === '/' && code[i + 1] === '*') {
+      const end = code.indexOf('*/', i + 2);
+      i = end === -1 ? code.length : end + 2;
       continue;
     }
     if (ch === '"' || ch === "'") {
