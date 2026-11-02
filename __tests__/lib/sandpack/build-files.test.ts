@@ -590,4 +590,33 @@ describe('buildSandpackFiles — React/hooks import injection is comment-blind t
     })
     expect(built['/App.tsx']).toMatch(/^import React, \{ useState \} from 'react'/m)
   })
+
+  // Found this run: the template-literal scanner feeding
+  // maskCommentsAndStrings() didn't skip over a `${}` interpolation's OWN
+  // nested backtick template literal, so it stopped masking at that inner
+  // backtick instead of the real outer closing one — leaving a literal
+  // "import React"/hook mention inside the unmasked tail unmasked too.
+  it('still masks a template literal whose `${}` interpolation nests its own backtick strings (so a lookalike "import React" inside stays masked)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        'function App() { const [count, setCount] = useState(0); const cls = `base ${count > 0 ? `import React` : `idle`}`; return (<div className={cls} onClick={() => setCount(count + 1)}>{count}</div>) }\nexport default App',
+    })
+    expect(built['/App.tsx']).toMatch(/^import React, \{ useState \} from 'react'/m)
+  })
+
+  // Found this run: the react/hooks import-injection check for a SIBLING
+  // (non-entry) generated file never masked comments/strings at all — unlike
+  // the mainCode/App.tsx check right above, which only got the masking fix
+  // because of this exact false-positive shape. A sibling component using a
+  // hook, with no real import, but rendering a "Quickstart" code sample
+  // string that merely mentions `from 'react'`, wrongly read as "already
+  // imported" and silently shipped with zero react import at all.
+  it('still injects a real `import React` into a SIBLING (non-entry) file when its only "from \'react\'" text is inside a rendered string sample', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "import Header from './components/Header'\nexport default function App() { return <Header/> }",
+      '/components/Header.tsx':
+        'export default function Header() { const [open, setOpen] = useState(false); const sample = "import React from \'react\'"; return (<pre>{sample}</pre>) }',
+    })
+    expect(built['/components/Header.tsx']).toMatch(/^import React, \{ useState \} from 'react'/m)
+  })
 })
