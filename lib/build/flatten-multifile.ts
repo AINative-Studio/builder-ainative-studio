@@ -19,6 +19,160 @@
 
 const FILE_MARKER = /^\/\/\s*---\s*FILE:\s*(.+?)\s*---\s*$/
 
+/** Index of the closing `quote` ending the string starting at `openIdx` (honoring `\`-escapes), or -1 if unterminated. */
+function findStringEnd(code: string, openIdx: number, quote: string): number {
+  let i = openIdx + 1
+  while (i < code.length) {
+    if (code[i] === '\\') {
+      i += 2
+      continue
+    }
+    if (code[i] === quote) return i
+    i++
+  }
+  return -1
+}
+
+/** Index of the matching `}` for the `${` interpolation opener at `openIdx` (honoring nested `{}`), or -1 if unbalanced. */
+function findMatchingCurly(code: string, openIdx: number): number {
+  let depth = 1
+  let i = openIdx + 1
+  while (i < code.length) {
+    if (code[i] === '{') depth++
+    else if (code[i] === '}') {
+      depth--
+      if (depth === 0) return i
+    }
+    i++
+  }
+  return -1
+}
+
+/** Index of the closing backtick ending the template literal starting at `openIdx`, honoring nested `${}` interpolations. */
+function findBacktickEnd(code: string, openIdx: number): number {
+  let i = openIdx + 1
+  while (i < code.length) {
+    const ch = code[i]
+    if (ch === '\\') {
+      i += 2
+      continue
+    }
+    if (ch === '`') return i
+    if (ch === '$' && code[i + 1] === '{') {
+      const closeIdx = findMatchingCurly(code, i + 1)
+      if (closeIdx === -1) return -1
+      i = closeIdx + 1
+      continue
+    }
+    i++
+  }
+  return -1
+}
+
+/**
+ * Position-preserving mask: every char inside a string/template literal or
+ * `//`/`/* *\/` comment becomes a space, with newlines left as real newlines
+ * so a line-anchored `^...$/gm` regex still lines up 1:1 against the real
+ * code. Unlike a collapsing mask (e.g. jsx-fixer.ts's own
+ * maskStringsAndComments, which replaces a whole literal with ONE space),
+ * this keeps `code` and the mask the same length, so a regex match's exact
+ * span can be compared between the two (see safeReplace below).
+ *
+ * Real bug this guards against: every regex this file runs below
+ * (stripBareNamedExports, nameAnonymousDefaultExport, stripImportsAndExports,
+ * hasLocalImports, and the local-import matchAll in flattenMultiFile's
+ * inline()) is line-anchored or otherwise scans the RAW, unmasked code — so
+ * a generated landing page's own example/demo code block (an ordinary thing
+ * for an API/SDK product page: `const snippet = \`\nimport Foo from
+ * './foo'\nexport { Foo }\n\`` rendered inside a <pre>/syntax-highlighter)
+ * has its import/export-SHAPED demo text matched exactly like a real
+ * top-level statement. Confirmed with a direct repro: a two-line demo
+ * snippet inside a backtick string gets its `export { Foo }` line silently
+ * rewritten by stripBareNamedExports, corrupting the example-code text the
+ * founder's own page displays — the same comment/string-blindness class
+ * already fixed across obedience-gate.ts / output-validator.ts /
+ * jsx-fixer.ts / etc., not yet applied in this file.
+ */
+function maskStringsAndComments(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    // Single/double-quoted strings are left COMPLETELY UNMASKED (just
+    // skipped over, content intact) — unlike a template literal, a `'...'`
+    // or `"..."` string can never contain a literal newline in valid JS, so
+    // it can never introduce a spurious extra "line" for the line-anchored
+    // regexes below to match against. It also means a REAL import/export
+    // path string (always single/double-quoted — ES module specifiers can't
+    // be template literals) stays exactly as-is, which several of this
+    // file's regexes need (`from\s*['"]`, `['"]\.\.?\//`): an earlier
+    // version of this mask blanked quoted content unconditionally, which
+    // made it indistinguishable from a decoy and broke every real import
+    // line too (caught by this file's own test suite before this landed).
+    // Only skipped so a quote-char doesn't trip the backtick/comment checks
+    // below (e.g. a `//` or backtick appearing inside an ordinary string).
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const stop = end === -1 ? code.length : end + 1
+      out += code.slice(i, stop)
+      i = stop
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      if (end === -1) {
+        out += ch + code.slice(i + 1).replace(/[^\n]/g, ' ')
+        i = code.length
+        continue
+      }
+      out += ch + code.slice(i + 1, end).replace(/[^\n]/g, ' ') + ch
+      i = end + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += '//' + code.slice(i + 2, end).replace(/[^\n]/g, ' ')
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      const closeIdx = code.indexOf('*/', i + 2)
+      if (closeIdx === -1) {
+        out += '/*' + code.slice(i + 2).replace(/[^\n]/g, ' ')
+        i = code.length
+        continue
+      }
+      out += '/*' + code.slice(i + 2, closeIdx).replace(/[^\n]/g, ' ') + '*/'
+      i = closeIdx + 2
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
+/**
+ * Apply `regex` to `code`, but only actually transform a match whose exact
+ * span is byte-identical between `code` and its mask — i.e. contains no
+ * string/template-literal/comment content at all. A match that differs
+ * under masking is inside (or straddles into) a string/comment and is left
+ * untouched, matching this file's existing conservative stance elsewhere
+ * (e.g. nameAnonymousDefaultExport's own doc comment).
+ */
+function safeReplace(code: string, regex: RegExp, replacer: (...args: any[]) => string): string {
+  const masked = maskStringsAndComments(code)
+  return code.replace(regex, (...args: any[]) => {
+    const match = args[0] as string
+    const offset = args[args.length - 2] as number
+    const maskedSlice = masked.slice(offset, offset + match.length)
+    if (maskedSlice !== match) return match
+    return replacer(...args)
+  })
+}
+
 /**
  * Strip a wrapping markdown code fence (```jsx ... ``` / ```tsx ... ``` / bare
  * ``` ... ```), if present, before FILE-marker parsing (builder#499).
@@ -124,21 +278,29 @@ const GLOBALLY_PROVIDED_PACKAGES = new Set(['react', 'react-dom', 'lucide-react'
  * untouched rather than guessing where it ends.
  */
 function nameAnonymousDefaultExport(code: string, fallbackName: string): string {
-  const namedFunction = code.replace(
+  const namedFunction = safeReplace(
+    code,
     /(^|\n)(\s*)export\s+default\s+function(\s*)\(/,
     (_m, pre: string, indent: string) => `${pre}${indent}export default function ${fallbackName}(`,
   )
   if (namedFunction !== code) return namedFunction
 
-  const namedClass = code.replace(
+  const namedClass = safeReplace(
+    code,
     /(^|\n)(\s*)export\s+default\s+class(\s*)(\{|extends\b)/,
     (_m, pre: string, indent: string, _sp: string, after: string) =>
       `${pre}${indent}export default class ${fallbackName} ${after}`,
   )
   if (namedClass !== code) return namedClass
 
+  const masked = maskStringsAndComments(code)
   const trailingMatch = code.match(/(^|\n)(\s*)export\s+default\s+([\s\S]+?);?\s*$/)
-  if (trailingMatch && trailingMatch.index !== undefined && !/^[A-Za-z_$][\w$]*$/.test(trailingMatch[3].trim())) {
+  if (
+    trailingMatch &&
+    trailingMatch.index !== undefined &&
+    masked.slice(trailingMatch.index, trailingMatch.index + trailingMatch[0].length) === trailingMatch[0] &&
+    !/^[A-Za-z_$][\w$]*$/.test(trailingMatch[3].trim())
+  ) {
     const prefix = code.slice(0, trailingMatch.index)
     const [, pre, indent, expr] = trailingMatch
     return `${prefix}${pre}${indent}const ${fallbackName} = ${expr};\nexport default ${fallbackName};`
@@ -194,7 +356,7 @@ function nameAnonymousDefaultExport(code: string, fallbackName: string): string 
  * plain `export default Foo;` (also never renames).
  */
 function stripBareNamedExports(code: string): string {
-  return code.replace(/^\s*export\s*\{([^}]*)\}\s*;?\s*$/gm, (_m, namesClause: string) => {
+  return safeReplace(code, /^\s*export\s*\{([^}]*)\}\s*;?\s*$/gm, (_m, namesClause: string) => {
     const aliases = namesClause
       .split(',')
       .map((n) => n.trim())
@@ -225,7 +387,8 @@ function stripImportsAndExports(code: string, fallbackName = 'DefaultComponent')
   // already fixed for. The named clause is now optional, covering all three
   // shapes a generated sibling actually uses: bare default-only, bare
   // named-only, and the combined default+named clause.
-  const withStubbedExternals = named.replace(
+  const withStubbedExternals = safeReplace(
+    named,
     /^\s*import\s+(?:(\w+)(?:\s*,\s*\{([^}]*)\})?|\{([^}]*)\})\s*from\s*['"]([^'"]+)['"];?\s*$/gm,
     (full, defaultName: string | undefined, namedWithDefault: string | undefined, namedOnly: string | undefined, pkg: string) => {
       if (GLOBALLY_PROVIDED_PACKAGES.has(pkg) || pkg.startsWith('./') || pkg.startsWith('../')) return full
@@ -247,27 +410,33 @@ function stripImportsAndExports(code: string, fallbackName = 'DefaultComponent')
     },
   )
 
-  const stripped = withStubbedExternals
-    // whole import lines (single and multi-line handled by the `from '...'` anchor)
-    // — local/relative and now-stubbed-external ones are already gone above;
-    // this still needs to remove the GLOBALLY_PROVIDED_PACKAGES imports and
-    // any bare default-only import this session's regex above didn't match.
-    .replace(/^\s*import\s+[^\n]*?from\s*['"][^'"]+['"];?\s*$/gm, '')
-    .replace(/^\s*import\s+['"][^'"]+['"];?\s*$/gm, '')
-    // `export default function X` → `function X` ; `export default X` dropped later
-    .replace(/^\s*export\s+default\s+function/gm, 'function')
-    .replace(/^\s*export\s+default\s+class/gm, 'class')
-    .replace(/^\s*export\s+(const|let|function|class)/gm, '$1')
-    // a trailing `export default Foo;` line (component already defined above)
-    .replace(/^\s*export\s+default\s+\w+\s*;?\s*$/gm, '')
-    .trim()
+  // whole import lines (single and multi-line handled by the `from '...'` anchor)
+  // — local/relative and now-stubbed-external ones are already gone above;
+  // this still needs to remove the GLOBALLY_PROVIDED_PACKAGES imports and
+  // any bare default-only import this session's regex above didn't match.
+  // Each step below is a safeReplace (not a plain .replace chain) because
+  // every regex is line-anchored and re-run against the PRIOR step's output
+  // each time — so a demo code snippet's own import/export-shaped text, still
+  // present at this point, needs re-masking at every step, not just once.
+  let stripped = safeReplace(withStubbedExternals, /^\s*import\s+[^\n]*?from\s*['"][^'"]+['"];?\s*$/gm, () => '')
+  stripped = safeReplace(stripped, /^\s*import\s+['"][^'"]+['"];?\s*$/gm, () => '')
+  // `export default function X` → `function X` ; `export default X` dropped later
+  stripped = safeReplace(stripped, /^\s*export\s+default\s+function/gm, () => 'function')
+  stripped = safeReplace(stripped, /^\s*export\s+default\s+class/gm, () => 'class')
+  stripped = safeReplace(stripped, /^\s*export\s+(const|let|function|class)/gm, (_m, kw: string) => kw)
+  // a trailing `export default Foo;` line (component already defined above)
+  stripped = safeReplace(stripped, /^\s*export\s+default\s+\w+\s*;?\s*$/gm, () => '')
+  stripped = stripped.trim()
 
   return stubs.length ? [...stubs, stripped].join('\n') : stripped
 }
 
 /** Does the App code import any LOCAL (relative) modules? */
 export function hasLocalImports(appCode: string): boolean {
-  return /^\s*import\s+[^\n]*?from\s*['"]\.\.?\//m.test(appCode || '')
+  // Tested against the masked copy, not the raw code — same comment/string-
+  // blindness fix as the rest of this file: a demo code block merely
+  // mentioning a relative import shouldn't make this true.
+  return /^\s*import\s+[^\n]*?from\s*['"]\.\.?\//m.test(maskStringsAndComments(appCode || ''))
 }
 
 /**
@@ -324,7 +493,16 @@ export function flattenMultiFile(raw: string): string {
     // an optional trailing group on the default-name alternative, so a bare
     // default-only or bare named-only import still matches exactly as
     // before — only the previously-unmatched combined clause is new.
+    // Not line-anchored like the rest of this file's regexes, so a decoy
+    // mention needs its own masked-span check rather than safeReplace's
+    // (which assumes a .replace callback): skip any match whose span was
+    // altered by masking — i.e. one that lives inside a string/template
+    // literal/comment, such as a demo code block's own `import Foo from
+    // './foo'` example line.
+    const maskedCode = maskStringsAndComments(code)
     for (const m of code.matchAll(/import\s+(?:(\w+)(?:\s*,\s*\{[^}]*\})?|\{[^}]*\})\s+from\s*['"]\.\.?\/([^'"]+)['"]/g)) {
+      if (m.index === undefined) continue
+      if (maskedCode.slice(m.index, m.index + m[0].length) !== m[0]) continue
       const base = baseName(m[2])
       const child = byBase[base]
       const defaultName = m[1]
