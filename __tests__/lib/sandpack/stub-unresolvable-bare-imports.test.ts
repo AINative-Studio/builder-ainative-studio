@@ -126,4 +126,43 @@ describe('stubUnresolvableBareImports', () => {
     expect(typeof Icon.Solid).toBe('function')
     expect(Icon.Solid({ children: 'ok' })).toBe('ok')
   })
+
+  it('a hook merely MENTIONED as a JSX tag in a comment is still classified as hook-shaped, not component-shaped', () => {
+    // `isUsedAsJsxTag` used to regex-match the raw, unmasked source, so a
+    // comment like this one — which never renders `<CustomHook` as a real
+    // tag — wrongly classified `CustomHook` as component-shaped. The
+    // resulting stub, called with no args, returns `null` instead of an
+    // object, and the very next line's destructure
+    // (`const { data } = CustomHook()`) throws "Cannot destructure
+    // property 'data' of null" at render.
+    const code = [
+      '// TODO: wrap this in <CustomHook /> later for consistency',
+      "import { CustomHook } from 'some-weird-lib'",
+      'const { data } = CustomHook()',
+    ].join('\n')
+    const out = fixJsxErrors(code)
+    const constLine = out.match(/const CustomHook = new Proxy[^\n]*/)![0]
+
+    const CustomHook = new Function(`${constLine}\nreturn CustomHook`)()
+    expect(() => {
+      const { data } = CustomHook()
+      return data
+    }).not.toThrow()
+  })
+
+  it('a hook merely MENTIONED as a JSX tag inside a string literal is still classified as hook-shaped, not component-shaped', () => {
+    const code = [
+      "import { CustomHook } from 'some-weird-lib'",
+      "const helpText = 'wrap your content in <CustomHook /> for data loading'",
+      'const { data } = CustomHook()',
+    ].join('\n')
+    const out = fixJsxErrors(code)
+    const constLine = out.match(/const CustomHook = new Proxy[^\n]*/)![0]
+
+    const CustomHook = new Function(`${constLine}\nreturn CustomHook`)()
+    expect(() => {
+      const { data } = CustomHook()
+      return data
+    }).not.toThrow()
+  })
 })
