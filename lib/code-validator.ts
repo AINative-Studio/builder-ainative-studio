@@ -1073,6 +1073,87 @@ const KNOWN_AVAILABLE_COMPONENTS = new Set<string>([
  * never lowercase HTML tags or dotted members (Foo.Bar), and treats any name
  * that appears anywhere as defined/imported as resolved.
  */
+/** Index of the closing `quote` that ends the string starting at `openIdx` (honoring `\`-escapes), or -1 if unterminated. Scoped to findUnresolvedComponents' destructuring check below. */
+function findStringEndInDestructureCheck(code: string, openIdx: number, quote: string): number {
+  let i = openIdx + 1
+  while (i < code.length) {
+    if (code[i] === '\\') {
+      i += 2
+      continue
+    }
+    if (code[i] === quote) return i
+    i++
+  }
+  return -1
+}
+
+/** Index of the closing `` ` `` that ends the template literal starting at `openIdx`, honoring nested `${}` interpolations. Scoped to findUnresolvedComponents' destructuring check below. */
+function findTemplateLiteralEndInDestructureCheck(code: string, openIdx: number): number {
+  let i = openIdx + 1
+  while (i < code.length) {
+    const ch = code[i]
+    if (ch === '\\') {
+      i += 2
+      continue
+    }
+    if (ch === '`') return i
+    if (ch === '$' && code[i + 1] === '{') {
+      const closeIdx = findMatchingBraceInDestructureCheck(code, i + 1)
+      if (closeIdx === -1) return -1
+      i = closeIdx + 1
+      continue
+    }
+    i++
+  }
+  return -1
+}
+
+/**
+ * Index of the `}` that closes the `{` at `openIdx` (honoring arbitrarily
+ * nested braces), or -1 if unbalanced.
+ *
+ * Skips over string/template literals it scans through so a lone, unmatched
+ * `}` inside a destructured default value's string content is never
+ * mistaken for the destructuring pattern's real closing brace. Scoped to
+ * findUnresolvedComponents' destructuring check below.
+ */
+function findMatchingBraceInDestructureCheck(code: string, openIdx: number): number {
+  let depth = 0
+  let i = openIdx
+  while (i < code.length) {
+    const ch = code[i]
+    if (ch === '\\') {
+      i += 2
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      const end = findStringEndInDestructureCheck(code, i, ch)
+      if (end === -1) return -1
+      i = end + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findTemplateLiteralEndInDestructureCheck(code, i)
+      if (end === -1) return -1
+      i = end + 1
+      continue
+    }
+    if (ch === '{') {
+      depth++
+      i++
+      continue
+    }
+    if (ch === '}') {
+      depth--
+      if (depth === 0) return i
+      i++
+      continue
+    }
+    i++
+  }
+  return -1
+}
+
 export function findUnresolvedComponents(code: string): string[] {
   const unresolved = new Set<string>()
 
@@ -1112,22 +1193,18 @@ export function findUnresolvedComponents(code: string): string[] {
     // just collect every PascalCase identifier inside it: over-collecting is
     // harmless here (this function only needs to avoid false positives), so
     // there's no need to also replicate the per-binding alias/rename logic.
+    //
+    // That brace-depth scan is itself string/template-literal-blind: a
+    // destructured default value containing a lone, unmatched `}` (e.g.
+    // `const { label = 'Status }', Icon } = props`) gets mistaken for the
+    // pattern's real close, truncating the slice before any binding that
+    // comes after it — same bug class as #1654/#1675/#1686/#1688/#1690's
+    // string-blind depth-counters, just this function's own call site.
     const destructureOpenRe = /(?:const|let|var)\s*\{/g
     let dm: RegExpExecArray | null
     while ((dm = destructureOpenRe.exec(file))) {
       const openIdx = dm.index + dm[0].length - 1
-      let depth = 0
-      let closeIdx = -1
-      for (let i = openIdx; i < file.length; i++) {
-        if (file[i] === '{') depth++
-        else if (file[i] === '}') {
-          depth--
-          if (depth === 0) {
-            closeIdx = i
-            break
-          }
-        }
-      }
+      const closeIdx = findMatchingBraceInDestructureCheck(file, openIdx)
       if (closeIdx === -1) continue
       const body = file.slice(openIdx + 1, closeIdx)
       for (const idMatch of body.matchAll(/[A-Z][A-Za-z0-9]*/g)) {
