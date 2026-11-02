@@ -200,6 +200,48 @@ function findMatchingBracket(code: string, openIdx: number, open: string, close:
   return -1
 }
 
+/**
+ * Scan forward from just after a JSX tag's name (`attrsStart`) to the index
+ * of the `>` that closes it — depth-aware over `{}` so a `>` inside a JSX
+ * expression attribute (e.g. `aria-hidden={count > 0}`) is never mistaken
+ * for the tag's end (the bug hasNoOpCtaButton/matchOpeningTags/etc already
+ * fix, #1641/#1664-1671), AND skipping over quoted string/template-literal
+ * attribute values entirely (same technique as findMatchingBracket above) —
+ * without that, a stray, UNMATCHED `{` inside a literal attribute string
+ * (e.g. `title="Price: {amount"`, as opposed to the balanced `title="Save
+ * {10}% today"`) throws depth permanently out of balance, so the scanner
+ * never finds the tag's real `>` and the whole element is misread as
+ * unterminated and silently skipped — hiding a real compliance gap (no-op
+ * CTA, missing landmark/skip-nav, hand-rolled AIKit pattern) behind nothing
+ * more than ordinary user-facing copy containing a brace character.
+ * Returns -1 if genuinely unterminated.
+ */
+function findTagClose(code: string, attrsStart: number): number {
+  let depth = 0
+  let i = attrsStart
+  while (i < code.length) {
+    const ch = code[i]
+    if (ch === '\\') { i += 2; continue }
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      if (end === -1) return -1
+      i = end + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      if (end === -1) return -1
+      i = end + 1
+      continue
+    }
+    if (ch === '{') { depth++; i++; continue }
+    if (ch === '}') { depth--; i++; continue }
+    if (ch === '>' && depth <= 0) return i
+    i++
+  }
+  return -1
+}
+
 /** Index of the `)` matching the `(` at `openIndex`, or -1 if unbalanced. */
 function findMatchingParen(code: string, openIndex: number): number {
   return findMatchingBracket(code, openIndex, '(', ')')
@@ -340,14 +382,8 @@ function hasNoOpCtaButton(code: string): boolean {
   while ((match = openTagRe.exec(code))) {
     const tagName = match[1]
     const attrsStart = match.index + match[0].length
-    let i = attrsStart
-    let depth = 0
-    while (i < code.length && !(code[i] === '>' && depth <= 0)) {
-      if (code[i] === '{') depth++
-      else if (code[i] === '}') depth--
-      i++
-    }
-    if (i >= code.length) continue // unterminated tag
+    const i = findTagClose(code, attrsStart)
+    if (i === -1) continue // unterminated tag
     const attrs = code.slice(attrsStart, i)
     const rest = code.slice(i + 1, i + 1 + 60 + tagName.length + 3)
     const textMatch = rest.match(new RegExp(`^([^<]{0,60})<\\/${tagName}>`, 'i'))
@@ -508,14 +544,8 @@ function matchOpeningTags(code: string, tagName: string): string[] {
   let match: RegExpExecArray | null
   while ((match = openTagRe.exec(code))) {
     const attrsStart = match.index + match[0].length
-    let i = attrsStart
-    let depth = 0
-    while (i < code.length && !(code[i] === '>' && depth <= 0)) {
-      if (code[i] === '{') depth++
-      else if (code[i] === '}') depth--
-      i++
-    }
-    if (i >= code.length) continue // unterminated tag
+    const i = findTagClose(code, attrsStart)
+    if (i === -1) continue // unterminated tag
     tags.push(code.slice(match.index, i + 1))
   }
   return tags
@@ -568,14 +598,8 @@ export function hasAxSkipNavGap(code: string): boolean {
   let targetId: string | null = null
   while ((m = anchorRe.exec(src))) {
     const attrsStart = m.index + m[0].length
-    let i = attrsStart
-    let depth = 0
-    while (i < src.length && !(src[i] === '>' && depth <= 0)) {
-      if (src[i] === '{') depth++
-      else if (src[i] === '}') depth--
-      i++
-    }
-    if (i >= src.length) continue // unterminated tag
+    const i = findTagClose(src, attrsStart)
+    if (i === -1) continue // unterminated tag
     const tag = src.slice(m.index, i + 1)
     const hrefMatch = tag.match(/\bhref\s*=\s*["']#([\w-]+)["']/)
     if (!hrefMatch) continue
@@ -716,14 +740,8 @@ function hasClassNameFollowedByContent(code: string, classNameRe: RegExp, conten
   let m: RegExpExecArray | null
   while ((m = classAttrRe.exec(code))) {
     if (!classNameRe.test(m[1])) continue
-    let i = classAttrRe.lastIndex
-    let depth = 0
-    while (i < code.length && !(code[i] === '>' && depth <= 0)) {
-      if (code[i] === '{') depth++
-      else if (code[i] === '}') depth--
-      i++
-    }
-    if (i >= code.length) continue // unterminated tag
+    const i = findTagClose(code, classAttrRe.lastIndex)
+    if (i === -1) continue // unterminated tag
     if (contentRe.test(code.slice(i + 1, i + 1 + maxGap))) return true
   }
   return false

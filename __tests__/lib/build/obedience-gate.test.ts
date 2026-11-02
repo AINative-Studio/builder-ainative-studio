@@ -133,6 +133,16 @@ describe('obedience-gate: AIKit (#297)', () => {
     expect(findAikitGaps(code).some(g => g.includes('AIKitBanner'))).toBe(true)
   })
 
+  // #1694: same {}-depth tag-close scanner as the ">"-comparison cases above,
+  // broken a different way — a stray, UNMATCHED "{" inside a quoted
+  // attribute's ordinary string content (not a JSX expression) throws depth
+  // permanently out of balance, so the element is misread as unterminated
+  // and the content check never runs — a genuine MetricCard goes unflagged.
+  it('still flags a genuine MetricCard even when an earlier attribute has a stray unmatched { (#1694)', () => {
+    const code = 'function App(){return <div className="text-3xl font-bold" data-x="Price: {amount">$42</div>}'
+    expect(findAikitGaps(code).some(g => g.includes('MetricCard'))).toBe(true)
+  })
+
   it('does NOT flag AIKit components that are already used', () => {
     const code = 'function App(){return <div><AIKitHeader title="x"/><AIKitSidebar items={[]}/></div>}'
     const gaps = findAikitGaps(code)
@@ -473,6 +483,27 @@ function App(){
 
   it('does NOT flag an app with no CTA-shaped buttons at all', () => {
     expect(hasFakeButtonGap('function App(){return <div>hi</div>}')).toBe(false)
+  })
+
+  // #1694: a stray, UNMATCHED "{" inside a quoted attribute value (ordinary
+  // string content, e.g. "Price: {amount" — not a JSX expression) throws the
+  // {}-depth tag-close scanner permanently out of balance, so the button is
+  // misread as unterminated and silently skipped — hiding a genuine no-op CTA.
+  it('flags a genuine no-op CTA even when an earlier attribute has a stray unmatched { (#1694)', () => {
+    const code = `
+function App(){
+  return (<nav><button title="Price: {amount" className="btn">Get Early Access</button></nav>)
+}`
+    expect(hasFakeButtonGap(code)).toBe(true)
+  })
+
+  it('does NOT flag a CTA with a real onClick even when an earlier attribute has a stray unmatched { (#1694)', () => {
+    const code = `
+function App(){
+  const scrollToWaitlist = () => document.getElementById('waitlist')?.scrollIntoView()
+  return (<nav><button title="Price: {amount" onClick={scrollToWaitlist}>Get Early Access</button></nav>)
+}`
+    expect(hasFakeButtonGap(code)).toBe(false)
   })
 
   // Same nested-paren regex-anti-pattern bug class as #1609/#1611/#1615/
@@ -900,6 +931,10 @@ describe('obedience-gate: AX root landmark (agent-accessibility)', () => {
     expect(hasAxLandmarkGap('function App(){ return <main data-count={n > 0 ? 1 : 0} aria-label="Scorch dashboard"><div>hi</div></main> }')).toBe(false)
   })
 
+  it('does NOT flag a <main> with aria-label when an earlier attribute has a stray unmatched { (#1694)', () => {
+    expect(hasAxLandmarkGap('function App(){ return <main title="Price: {amount" aria-label="Scorch dashboard"><div>hi</div></main> }')).toBe(false)
+  })
+
   it('is unconditional — flags even a plain counter with no data-management idea at all', () => {
     const r = checkObedience('function App(){ return <div>0</div> }', 'a counter')
     expect(r.axLandmarkGap).toBe(true)
@@ -999,6 +1034,10 @@ describe('obedience-gate: AX skip-navigation link (builder#687 item 8)', () => {
 
   it('does NOT flag a skip-nav link whose href is preceded by a JSX-comparison attribute (#1668)', () => {
     expect(hasAxSkipNavGap('function App(){ return <a data-x={n > 0 ? 1 : 0} href="#main-content" data-agent-action="skip-nav">Skip</a><main id="main-content">hi</main> }')).toBe(false)
+  })
+
+  it('does NOT flag a skip-nav link whose href is preceded by an attribute with a stray unmatched { (#1694)', () => {
+    expect(hasAxSkipNavGap('function App(){ return <a title="Price: {amount" href="#main-content" data-agent-action="skip-nav">Skip</a><main id="main-content">hi</main> }')).toBe(false)
   })
 
   it('checkObedience surfaces axSkipNavGap and a reason string', () => {
