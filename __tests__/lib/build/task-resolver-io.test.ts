@@ -107,16 +107,34 @@ describe('resolveTask — end-to-end orchestration', () => {
     expect(h.updateTask).toHaveBeenNthCalledWith(1, 'owner::slug', 't_abc123', { stage: 'in_progress' })
   })
 
-  it('fails honestly when the company is CONFIRMED not git-provisioned', async () => {
-    // #1483 — the real, verified miss: the registry WAS read and this company
-    // genuinely has no Gitea org. Still terminal, still the original message.
-    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: undefined }, verified: true })
+  it('fails honestly when the company is CONFIRMED gone (no such company / soft-deleted)', async () => {
+    // #1700 — the real, verified, PERMANENT miss: the registry was read and no
+    // entry exists at all (resolveAppVerified() returns entry: null for both a
+    // never-existed slug and a soft-deleted one). Still terminal.
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: true })
     const result = await resolveTask('owner::slug', TASK, 'slug')
     expect(result.ok).toBe(false)
     expect(result.stage).toBe('failed')
-    expect(result.reason).toMatch(/not git-provisioned/i)
+    expect(result.reason).toMatch(/no longer exists/i)
     expect(h.updateTask).toHaveBeenLastCalledWith('owner::slug', 't_abc123', { stage: 'failed', output: result.reason })
-    // Never reaches implement/commit/coverage once git-provisioning is missing.
+    // Never reaches implement/commit/coverage once the company is confirmed gone.
+    expect(h.implementTask).not.toHaveBeenCalled()
+  })
+
+  it('#1700: defers (does NOT fail) when the company EXISTS but is not git-provisioned YET', async () => {
+    // A real company found by the registry, just without a Gitea org yet —
+    // e.g. an anonymous session's task fired before the company was claimed.
+    // This is a timing race, not a confirmed-permanent miss: it must defer
+    // back to `todo` so a later nightly run retries once gitOrg is set,
+    // exactly like the unverified-read path below.
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: undefined }, verified: true })
+    const result = await resolveTask('owner::slug', TASK, 'slug')
+    expect(result.ok).toBe(false)
+    expect(result.stage).toBe('deferred')
+    expect(result.reason).toMatch(/not git-provisioned yet/i)
+    expect(result.reason).toMatch(/retried/i)
+    expect(h.updateTask).toHaveBeenLastCalledWith('owner::slug', 't_abc123', { stage: 'todo', output: result.reason })
+    // Never reaches implement/commit/coverage while un-provisioned.
     expect(h.implementTask).not.toHaveBeenCalled()
   })
 
@@ -530,10 +548,17 @@ describe('resolveTask — Decision Trace (#685)', () => {
   })
 
   it('completes the trace with success:false and the real reason on failure', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: true })
+
+    await resolveTask('owner::slug', TASK, 'slug')
+    expect(h.completeDecisionTrace).toHaveBeenCalledWith('trace-1', expect.stringMatching(/no longer exists/i), false)
+  })
+
+  it('#1700: completes the trace with success:false on a DEFERRED (not-yet-provisioned) outcome too', async () => {
     h.resolveApp.mockResolvedValue({ gitOrg: undefined })
 
     await resolveTask('owner::slug', TASK, 'slug')
-    expect(h.completeDecisionTrace).toHaveBeenCalledWith('trace-1', expect.stringMatching(/not git-provisioned/i), false)
+    expect(h.completeDecisionTrace).toHaveBeenCalledWith('trace-1', expect.stringMatching(/not git-provisioned yet/i), false)
   })
 
   it('never fails task resolution when startDecisionTrace itself fails (returns null)', async () => {
@@ -584,14 +609,25 @@ describe('resolveTask — deployment-health stage reporting (#868)', () => {
     })
   })
 
-  it('reports "implement" failed when the company is not git-provisioned', async () => {
-    h.resolveApp.mockResolvedValue({ gitOrg: undefined })
+  it('reports "implement" failed when the company is CONFIRMED gone (no such company)', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: null, verified: true })
 
     await resolveTask('owner::slug', TASK, 'slug')
 
     expect(h.reportDeploymentHealthStage).toHaveBeenCalledWith(
-      'builder_company_task', 't_abc123', 'implement', 'failed', expect.stringMatching(/not git-provisioned/i),
+      'builder_company_task', 't_abc123', 'implement', 'failed', expect.stringMatching(/no longer exists/i),
     )
+  })
+
+  it('#1700: reports NO failed stage when the company merely is not git-provisioned YET (deferred, not failed)', async () => {
+    h.resolveApp.mockResolvedValue({ gitOrg: undefined })
+
+    await resolveTask('owner::slug', TASK, 'slug')
+
+    // No implement/commit/coverage stage ran, so claiming one failed would be
+    // fabricating a verdict — same honesty rule the #1483 unverified-read
+    // path already follows.
+    expect(h.reportDeploymentHealthStage).not.toHaveBeenCalled()
   })
 
   it('reports "commit" failed when the git commit fails', async () => {
