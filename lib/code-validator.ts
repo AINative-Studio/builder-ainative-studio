@@ -1220,13 +1220,14 @@ function findTemplateLiteralEndInChildCheck(code: string, openIdx: number): numb
  * Find the index of the `close` that closes the `open` at `openIdx`, honoring
  * arbitrarily nested brackets of that same pair.
  *
- * Skips over string/template literals it scans through so a lone, unmatched
- * bracket INSIDE one — e.g. a parenthetical aside in callback-body text
- * (`.find(i => i.label === 'Checkout :)')`) — is never mistaken for the
- * call's real closing paren. Same gap already fixed in component-detector.ts,
- * obedience-gate.ts, output-validator.ts, built-in-rules.ts, and
- * dedupe-provided-components.ts's analogous matchers. Scoped to
- * findObjectRenderedAsChild's SHAPE 2 check below.
+ * Skips over string/template literals AND line (`//`) / block comments it
+ * scans through so a lone, unmatched bracket INSIDE one — e.g. a parenthetical
+ * aside in callback-body text (`.find(i => i.label === 'Checkout :)')`) or a
+ * commented-out aside (`.find(i => { // note: legacy (unused\n ... })`) — is
+ * never mistaken for the call's real closing paren. Same gap already fixed
+ * in component-detector.ts, obedience-gate.ts, output-validator.ts,
+ * built-in-rules.ts, and dedupe-provided-components.ts's analogous
+ * matchers. Scoped to findObjectRenderedAsChild's SHAPE 2 check below.
  */
 function findMatchingBracketInChildCheck(code: string, openIdx: number, open: string, close: string): number {
   let depth = 0
@@ -1235,6 +1236,16 @@ function findMatchingBracketInChildCheck(code: string, openIdx: number, open: st
     const ch = code[i]
     if (ch === '\\') {
       i += 2
+      continue
+    }
+    if (ch === '/' && code[i + 1] === '/') {
+      const nl = code.indexOf('\n', i + 2)
+      i = nl === -1 ? code.length : nl + 1
+      continue
+    }
+    if (ch === '/' && code[i + 1] === '*') {
+      const end = code.indexOf('*/', i + 2)
+      i = end === -1 ? code.length : end + 2
       continue
     }
     if (ch === '"' || ch === "'") {
