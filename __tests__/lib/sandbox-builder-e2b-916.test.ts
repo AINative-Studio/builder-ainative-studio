@@ -456,6 +456,31 @@ export default Dashboard;
       expect(script).toContain(`globalThis['Dashboard']`)
     })
 
+    it('still exposes a bare `export { Name }` component when an unrelated comment elsewhere happens to mention "export default"', async () => {
+      // Real bug: buildRenderScript() used to decide `hasDefaultExport` with
+      // its own plain `/export\s+default\s+/.test(code)` regex over the raw
+      // source. A comment like the one below contains that literal text, so
+      // the naive check wrongly believed a real default export existed, the
+      // `exposeBareExport` fallback below was skipped, and `globalThis.
+      // __Default__` was never actually set either (there's no real `export
+      // default` statement for the replace() calls to convert) — `Comp`
+      // resolves to null and the SSR preview silently renders the
+      // "Component not found" placeholder instead of the founder's real app.
+      const code = `
+// TODO: add export default LandingPage later
+function LandingPage() {
+  return <div className="app"><h1>Hello Founder</h1></div>
+}
+
+export { LandingPage }
+`
+      const result = await buildInSandbox(code)
+      expect(result.success).toBe(true)
+      const script = renderScriptSentToSandbox()
+      expect(script).toContain(`globalThis['LandingPage']`)
+      expect(script).toContain("typeof LandingPage !== 'undefined'")
+    })
+
     it('does NOT let a wrongly-guessed fallback name collide with a Lucide icon global and shadow the real component — the exact failure class this fix closes', async () => {
       // Pre-fix: detectComponentName()'s regex only understood `export
       // default function Name` and a bare `export { Name }` list. Neither

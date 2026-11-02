@@ -599,4 +599,55 @@ describe('hasDefaultExport', () => {
   it('returns false when there is genuinely no default export at all', () => {
     expect(hasDefaultExport(`function Dashboard() { return <div/> }`)).toBe(false)
   })
+
+  it('returns false for a bare `export {}` list when the ONLY mention of "export default" is inside a line comment', () => {
+    // Real bug: a plain regex over the raw source matches "export default"
+    // text inside a `//` comment just as readily as a real statement. A
+    // caller that trusts this to decide whether to inject a synthesized
+    // `export default <Name>` then wrongly believes one already exists,
+    // leaves the file with NO real default export, and the module's default
+    // import resolves to undefined downstream — "Element type is invalid".
+    const code = `
+      // TODO: add export default LandingPage later
+      function LandingPage() { return (<div>hi</div>) }
+      export { LandingPage }
+    `
+    expect(hasDefaultExport(code)).toBe(false)
+  })
+
+  it('returns false for a bare `export {}` list when the ONLY mention of "export default" is inside a block comment', () => {
+    const code = `
+      /* export default LandingPage */
+      function LandingPage() { return (<div>hi</div>) }
+      export { LandingPage }
+    `
+    expect(hasDefaultExport(code)).toBe(false)
+  })
+
+  it('returns false for a bare `export {}` list when the ONLY mention of "export default" is inside a string literal', () => {
+    const code = `
+      const hint = "remember to export default this component"
+      function LandingPage() { return (<div>{hint}</div>) }
+      export { LandingPage }
+    `
+    expect(hasDefaultExport(code)).toBe(false)
+  })
+
+  it('returns false for a bare `export {}` list when the ONLY mention of "export default" is inside a template literal', () => {
+    const code = `
+      const hint = \`remember to export default this component\`
+      function LandingPage() { return (<div>{hint}</div>) }
+      export { LandingPage }
+    `
+    expect(hasDefaultExport(code)).toBe(false)
+  })
+
+  it('still recognizes a REAL default export even when a comment elsewhere also mentions "export default"', () => {
+    const code = `
+      // export default was considered here but we use a named list instead
+      function LandingPage() { return (<div>hi</div>) }
+      export default LandingPage
+    `
+    expect(hasDefaultExport(code)).toBe(true)
+  })
 })
