@@ -213,6 +213,14 @@ function skipArrowConstTypeAnnotation(code: string, idx: number): number {
  * this" reminder) can never be mistaken for a real export statement by the
  * plain-regex checks below. Positions/length are preserved; only content is
  * blanked.
+ *
+ * Reuses the findStringEnd/findBacktickEnd pair declared above (for
+ * findMatchingBracket) rather than a second, less capable copy — the two
+ * had independently accreted in this file from separate PRs and, until
+ * fixed here, were a literal duplicate-declaration TS compile error
+ * (#1748). The shared pair is a strict superset of what this function
+ * needs (it additionally honors nested `${}` interpolation inside a
+ * template literal, which this function's masking only benefits from).
  */
 function maskStringsAndComments(code: string): string {
   let out = ''

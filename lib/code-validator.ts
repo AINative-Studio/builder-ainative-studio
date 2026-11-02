@@ -1115,8 +1115,14 @@ function findTemplateLiteralEndInDestructureCheck(code: string, openIdx: number)
  *
  * Skips over string/template literals it scans through so a lone, unmatched
  * `}` inside a destructured default value's string content is never
- * mistaken for the destructuring pattern's real closing brace. Scoped to
- * findUnresolvedComponents' destructuring check below.
+ * mistaken for the destructuring pattern's real closing brace. Also skips
+ * over `//` and `/* *\/` comments for the same reason: a lone, unmatched `}`
+ * inside a comment between bindings (e.g. `// legacy shape was }`) was
+ * previously mistaken for the pattern's real close, truncating the slice
+ * scanned for PascalCase identifiers before any binding written after the
+ * comment — same bug class as #1715/#1729/#1733/#1744/#1745's comment-blind
+ * depth-counters. Scoped to findUnresolvedComponents' destructuring check
+ * below.
  */
 function findMatchingBraceInDestructureCheck(code: string, openIdx: number): number {
   let depth = 0
@@ -1125,6 +1131,16 @@ function findMatchingBraceInDestructureCheck(code: string, openIdx: number): num
     const ch = code[i]
     if (ch === '\\') {
       i += 2
+      continue
+    }
+    if (ch === '/' && code[i + 1] === '/') {
+      const end = code.indexOf('\n', i)
+      i = end === -1 ? code.length : end + 1
+      continue
+    }
+    if (ch === '/' && code[i + 1] === '*') {
+      const end = code.indexOf('*/', i + 2)
+      i = end === -1 ? code.length : end + 2
       continue
     }
     if (ch === '"' || ch === "'") {
