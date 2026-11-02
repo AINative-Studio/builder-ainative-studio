@@ -26,7 +26,89 @@ export { mintPreviewPrimitiveTokens, FOUNDER_SCOPED_PRIMITIVES }
  *  /api/community/ (#505) requests, and (#443)
  *  the right primitive-proxy token on same-origin /api/primitive/{name}/...
  *  requests. No-op pieces omitted when there is no token to attach. */
-/** Index of the `}` that closes the `{` at `openIdx` (honoring arbitrarily nested braces), or -1 if unbalanced. */
+/** Index of the closing `quote` that ends the string starting at `openIdx` (honoring `\`-escapes), or -1 if unterminated. */
+function findStringEnd(code: string, openIdx: number, quote: string): number {
+  let i = openIdx + 1
+  while (i < code.length) {
+    if (code[i] === '\\') {
+      i += 2
+      continue
+    }
+    if (code[i] === quote) return i
+    i++
+  }
+  return -1
+}
+
+/** Index of the closing `` ` `` that ends the template literal starting at `openIdx`, honoring nested `${}` interpolations. */
+function findBacktickEnd(code: string, openIdx: number): number {
+  let i = openIdx + 1
+  let depth = 0
+  while (i < code.length) {
+    const ch = code[i]
+    if (ch === '\\') {
+      i += 2
+      continue
+    }
+    if (depth === 0 && ch === '`') return i
+    if (ch === '{') depth++
+    else if (ch === '}') depth = Math.max(0, depth - 1)
+    i++
+  }
+  return -1
+}
+
+/**
+ * Blanks out string/template-literal contents and `//`/`/* *\/` comments
+ * (replacing their characters with spaces, preserving length/newlines/
+ * indices) so the brace depth-counter below never mistakes a stray,
+ * unmatched `{`/`}` inside either for real interface syntax. Same masking
+ * technique as lib/build/output-validator.ts's maskComments (#1716) and
+ * obedience-gate.ts's maskComments (#1713), extended here to also mask
+ * string/template-literal bodies since this scanner never special-cased
+ * quotes before.
+ */
+function maskStringsAndComments(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += ' '.repeat(realEnd - i + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += ' '.repeat(realEnd - i + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += ' '.repeat(Math.min(end, code.length) - i)
+      i = Math.min(end, code.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
+/** Index of the `}` that closes the `{` at `openIdx` (honoring arbitrarily nested braces) in an already comment/string-masked `code`, or -1 if unbalanced. */
 function findMatchingBrace(code: string, openIdx: number): number {
   let depth = 0
   for (let i = openIdx; i < code.length; i++) {
@@ -59,15 +141,25 @@ function findMatchingBrace(code: string, openIdx: number): number {
  * exists to prevent. Finding the interface's TRUE closing brace by
  * depth-counting fixes this without changing behavior for an interface with
  * no nested braces (same brace found either way).
+ *
+ * Scans a comment/string-masked view of `code` (see maskStringsAndComments)
+ * so neither a literal-type union's stray `}` (e.g. `'close-}-bracket'`,
+ * #1690) nor a code comment's stray `}` (e.g. `// deprecated, see issue
+ * }1200`) is ever mistaken for the interface's real closing brace — both
+ * previously left the rest of the interface body, plus an orphan trailing
+ * `}`, dangling in the output as invalid JS. The final slice still comes
+ * from the ORIGINAL `code` so real content is never altered, only the
+ * boundary search is comment/string-aware.
  */
 export function stripTypeScriptInterfaces(code: string): string {
   const headRe = /interface\s+\w+\s*\{/g
+  const masked = maskStringsAndComments(code)
   let out = ''
   let lastIndex = 0
   let m: RegExpExecArray | null
-  while ((m = headRe.exec(code))) {
+  while ((m = headRe.exec(masked))) {
     const openIdx = m.index + m[0].length - 1
-    const closeIdx = findMatchingBrace(code, openIdx)
+    const closeIdx = findMatchingBrace(masked, openIdx)
     if (closeIdx === -1) continue
     out += code.slice(lastIndex, m.index)
     lastIndex = closeIdx + 1
