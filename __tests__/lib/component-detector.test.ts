@@ -341,6 +341,27 @@ describe('detectRootComponent', () => {
       expect(r.name).toBeNull()
       expect(r.source).toBe('none')
     })
+
+    it('detects an anonymous arrow whose destructured default is a string literal containing an unmatched `)`', () => {
+      // Real bug: findMatchingParen's depth counter had no string-literal
+      // awareness — a stray `)` INSIDE a string default value (e.g. emoticon
+      // copy, or any parenthetical aside) was mistaken for the real closing
+      // paren of the param list, so the counter returned too early, the
+      // `=>` check right after it failed, and detection fell through to
+      // `{name: null, source: 'none'}` for a genuinely renderable anonymous
+      // default export.
+      const code = `export default ({ greeting = "Thanks :)" }) => { return (<div>{greeting}</div>); }`
+      const r = detectRootComponent(code)
+      expect(r.name).toBe(ANON_DEFAULT_NAME)
+      expect(r.source).toBe('default-export-anonymous')
+    })
+
+    it('detects an anonymous arrow whose destructured default is a template literal containing an unmatched `)`', () => {
+      const code = 'export default ({ label = `Status: )` }) => { return (<div>{label}</div>); }'
+      const r = detectRootComponent(code)
+      expect(r.name).toBe(ANON_DEFAULT_NAME)
+      expect(r.source).toBe('default-export-anonymous')
+    })
   })
 
   describe('priority 3 — PascalCase component returning JSX (no default export)', () => {
@@ -458,6 +479,26 @@ describe('detectRootComponent', () => {
       `
       const r = detectRootComponent(code)
       expect(r.name).toBe('WidgetGrid')
+      expect(r.source).toBe('pascalcase-jsx')
+    })
+
+    it('detects a TS-typed arrow-const component whose annotation contains a string literal with an unmatched `<`/`>`', () => {
+      // Real bug: findMatchingAngleBracket's depth counter had no
+      // string-literal awareness — a comparison-operator string type like
+      // `'>' | '<'` is real, valid TS (not contrived), and its own `>`/`<`
+      // characters threw off the depth count, leaving skipArrowConstTypeAnnotation
+      // unable to find where the annotation actually ends — the same
+      // blank-page "Element type is invalid" class #1660 already fixed for
+      // nested generics.
+      const code = `
+        import React from 'react'
+        const CompareWidget: React.FC<{ cmp: '>' | '<' }> = ({ cmp }) => {
+          return (<div>{cmp}</div>)
+        }
+        export { CompareWidget }
+      `
+      const r = detectRootComponent(code)
+      expect(r.name).toBe('CompareWidget')
       expect(r.source).toBe('pascalcase-jsx')
     })
 
