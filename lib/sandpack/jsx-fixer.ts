@@ -673,6 +673,28 @@ function fixMalformedTypeImport(code: string): string {
  *     Card,
  * This function detects and fixes these patterns.
  */
+/**
+ * True if `line` contains a `}` that isn't inside a string/template-literal
+ * value or after a `//` line comment — scoped to a single line to match
+ * sanitizeImports()'s own per-line design (it doesn't track multi-line
+ * block comments either, consistent with the rest of the function).
+ */
+function lineHasRealClosingBrace(line: string): boolean {
+  let inString: '"' | "'" | '`' | null = null
+  for (let k = 0; k < line.length; k++) {
+    const ch = line[k]
+    if (inString) {
+      if (ch === '\\') { k++; continue }
+      if (ch === inString) inString = null
+      continue
+    }
+    if (ch === '"' || ch === "'" || ch === '`') { inString = ch; continue }
+    if (ch === '/' && line[k + 1] === '/') break
+    if (ch === '}') return true
+  }
+  return false
+}
+
 function sanitizeImports(code: string): string {
   const lines = code.split('\n')
   const result: string[] = []
@@ -697,14 +719,18 @@ function sanitizeImports(code: string): string {
 
       // Otherwise collect the multi-line import normally
       let importBlock = line
+      let brokenMidImport = false
       i++
       while (i < lines.length) {
         importBlock += '\n' + lines[i]
-        if (lines[i].includes('}')) break
+        if (lineHasRealClosingBrace(lines[i])) break
         // If we hit another import statement inside the block, the block is broken
         if (/^import\s+/.test(lines[i].trim())) {
-          // Broken mid-import — discard the incomplete outer import,
-          // rewind to this line and let the loop handle it fresh
+          // Broken mid-import — discard the incomplete outer import, but
+          // leave `i` pointing at this line (it was only appended to
+          // importBlock above, not consumed) so the outer loop reprocesses
+          // it fresh instead of silently dropping it.
+          brokenMidImport = true
           importBlock = ''
           break
         }
@@ -713,7 +739,7 @@ function sanitizeImports(code: string): string {
       if (importBlock) {
         result.push(importBlock)
       }
-      i++
+      if (!brokenMidImport) i++
       continue
     }
 
