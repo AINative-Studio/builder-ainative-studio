@@ -66,7 +66,7 @@ describe('GoogleAnalytics — real GA_ID/script/trackEvent/trackPageView coverag
     render(React.createElement(mod.default))
 
     const srcScript = host.querySelector('[data-testid="script-src"]') as HTMLScriptElement
-    expect(srcScript.getAttribute('src')).toBe('https://www.googletagmanager.com/gtag/js?id=G-L8T0TB6M2C')
+    expect(srcScript.getAttribute('src')).toBe('https://www.googletagmanager.com/gtag/js?id=G-07VZBQ4LBY')
   })
 
   it('embeds the real GA_ID inside the inline gtag config script', async () => {

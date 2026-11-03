@@ -61,6 +61,11 @@ Ad click (?gclid=…) → landing → captureAttribution() writes ax_gclid cooki
 
 ## 2. GA4 on production (verified live)
 
+> **Update 2026-11-02:** the measurement ID below (`G-L8T0TB6M2C`) was replaced
+> with the correct property, `G-07VZBQ4LBY`. This section's findings (that GA4
+> was correctly wired and loading on all key pages) still hold; only the ID
+> itself changed.
+
 `components/analytics/google-analytics.tsx` mounted in `app/layout.tsx:232` (root layout → all routes).
 
 - Measurement ID `G-L8T0TB6M2C`; env `NEXT_PUBLIC_GA_ID` with a **hardcoded fallback** (`|| 'G-L8T0TB6M2C'`), so GA works even if the env var is unset.
