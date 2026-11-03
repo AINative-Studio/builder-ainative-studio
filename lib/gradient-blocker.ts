@@ -49,7 +49,14 @@ export function stripGradients(code: string): string {
  * Detect if code contains gradients
  */
 export function hasGradients(code: string): boolean {
-  return GRADIENT_PATTERNS.some((pattern) => pattern.test(code))
+  // Each pattern is a shared, global-flagged RegExp singleton — `.test()` on
+  // a global regex advances its own `lastIndex` on a match and leaves it
+  // there for the NEXT call, so a later string can be scanned from the
+  // wrong offset unless lastIndex is reset first (#1758).
+  return GRADIENT_PATTERNS.some((pattern) => {
+    pattern.lastIndex = 0
+    return pattern.test(code)
+  })
 }
 
 /**
