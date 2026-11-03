@@ -26,7 +26,16 @@ const EMOTICON_PATTERNS = [
  * Check if code contains emoticons
  */
 export function hasEmoticons(code: string): boolean {
-  return EMOTICON_PATTERNS.some((pattern) => pattern.test(code))
+  // EMOTICON_PATTERNS are module-level singleton /g (/gu) regexes, so
+  // .test() is stateful across calls: a match leaves lastIndex pointing
+  // past it, and the NEXT call (on a different code string) silently
+  // starts scanning from there instead of index 0, missing an earlier real
+  // match. Resetting lastIndex before each test keeps every call
+  // independent of call order.
+  return EMOTICON_PATTERNS.some((pattern) => {
+    pattern.lastIndex = 0
+    return pattern.test(code)
+  })
 }
 
 /**
