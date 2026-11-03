@@ -40,6 +40,24 @@ describe('obedience-gate: persistence (#297)', () => {
     expect(usesDataLayer('const x = 1')).toBe(false)
   })
 
+  // #1704: a comment merely MENTIONING /api/db/ (without ever calling it)
+  // used to satisfy the blunt whole-file regex and wrongly report "already
+  // persisting."
+  it('does NOT treat a //-comment merely mentioning /api/db/ as real persistence', () => {
+    const code = "// TODO: wire this up to /api/db/todos\nfunction App(){return <div>hi</div>}"
+    expect(usesDataLayer(code)).toBe(false)
+  })
+
+  it('does NOT treat a /* */ block comment merely mentioning /api/db/ as real persistence', () => {
+    const code = '/* persists via /api/db/todos once backend is ready */\nfunction App(){return <div>hi</div>}'
+    expect(usesDataLayer(code)).toBe(false)
+  })
+
+  it('still detects a real call even when an unrelated comment ALSO mentions /api/db/', () => {
+    const code = "// legacy note: used to call /api/db/old-endpoint\nfetch('/api/db/todos')"
+    expect(usesDataLayer(code)).toBe(true)
+  })
+
   it('flags a record-managing app that hardcodes data (todo, no /api/db)', () => {
     expect(hasPersistenceGap(dataManagingApp(false), 'a todo list to add and remove tasks')).toBe(true)
   })
@@ -159,6 +177,14 @@ describe('obedience-gate: AIKit (#297)', () => {
 describe('obedience-gate: visitor tracking (#483/#563)', () => {
   it('flags a plain app with no visitor beacon at all', () => {
     expect(hasVisitorTrackingGap('function App(){return <div>hi</div>}')).toBe(true)
+  })
+
+  // #1704: a comment merely MENTIONING the visitor beacon path, without the
+  // app ever actually firing it, used to satisfy the blunt whole-file regex
+  // and wrongly report "no gap."
+  it('still flags the gap when only a comment mentions /api/db/visitors (no real beacon)', () => {
+    const code = "// should POST to /api/db/visitors on mount\nfunction App(){const[visitors]=useState(42);return <div>{visitors}</div>}"
+    expect(hasVisitorTrackingGap(code)).toBe(true)
   })
 
   it('does NOT flag an app that fires the real beacon', () => {
@@ -1006,6 +1032,24 @@ describe('obedience-gate: AX agent manifest (builder#687 item 5)', () => {
     expect(hasAxManifestGap('function App(){ return <div hidden data-agent-manifest="true"></div> }')).toBe(false)
   })
 
+  // #1708: a comment merely MENTIONING the required marker, without the app
+  // ever actually rendering it, used to satisfy the blunt whole-file regex
+  // and wrongly report "already compliant."
+  it('still flags the gap when only a //-comment mentions data-agent-manifest', () => {
+    const code = '// TODO: add data-agent-manifest="true" to the root div\nfunction App(){ return <div>hi</div> }'
+    expect(hasAxManifestGap(code)).toBe(true)
+  })
+
+  it('still flags the gap when only a /* */ comment mentions data-agent-manifest', () => {
+    const code = '/* add data-agent-manifest="true" once ready */\nfunction App(){ return <div>hi</div> }'
+    expect(hasAxManifestGap(code)).toBe(true)
+  })
+
+  it('still detects the real marker even when an unrelated comment ALSO mentions it', () => {
+    const code = '// legacy note: used to use data-agent-manifest="false"\nfunction App(){ return <div hidden data-agent-manifest="true"></div> }'
+    expect(hasAxManifestGap(code)).toBe(false)
+  })
+
   it('checkObedience surfaces axManifestGap and a reason string', () => {
     const r = checkObedience('function App(){ return <div>hi</div> }', 'anything')
     expect(r.axManifestGap).toBe(true)
@@ -1074,6 +1118,18 @@ describe('obedience-gate: AX skip-navigation link (builder#687 item 8)', () => {
 
   it('does NOT flag a skip-nav link whose href is preceded by an attribute with a stray unmatched { (#1694)', () => {
     expect(hasAxSkipNavGap('function App(){ return <a title="Price: {amount" href="#main-content" data-agent-action="skip-nav">Skip</a><main id="main-content">hi</main> }')).toBe(false)
+  })
+
+  // #1713: a commented-out example skip-link (or a commented-out id target)
+  // must never satisfy this check.
+  it('flags the gap when a skip-nav link only appears inside a comment', () => {
+    const code = '// example: <a href="#main-content" data-agent-action="skip-nav">Skip</a>\nfunction App(){ return <main id="main-content">hi</main> }'
+    expect(hasAxSkipNavGap(code)).toBe(true)
+  })
+
+  it('does NOT accept a target id that only appears inside a comment', () => {
+    const code = 'function App(){ return <a href="#main-content" data-agent-action="skip-nav">Skip</a>/* <main id="main-content">hi</main> */<main>hi</main> }'
+    expect(hasAxSkipNavGap(code)).toBe(true)
   })
 
   it('checkObedience surfaces axSkipNavGap and a reason string', () => {
@@ -1261,6 +1317,18 @@ describe('obedience-gate: AX complex widget roles (builder#687 item 7)', () => {
   it('does NOT flag a loading pattern that already has role="status" or aria-live', () => {
     const code = 'function App(){ const [isLoading,setIsLoading]=useState(true); return <div role="status" className="animate-spin">Loading...</div> }'
     expect(hasAxComplexWidgetRoleGap(code)).toBe(false)
+  })
+
+  // #1717: a mere mention of role="tablist"/"status"/aria-live inside a
+  // comment, with the app never actually rendering it, must still flag.
+  it('still flags a tab-like widget when role="tablist" only appears in a comment', () => {
+    const code = 'function App(){ /* TODO: add role="tablist" */ const [activeTab,setActiveTab]=useState(0); return <div><button onClick={()=>setActiveTab(1)}>Tab</button></div> }'
+    expect(hasAxComplexWidgetRoleGap(code)).toBe(true)
+  })
+
+  it('still flags a loading pattern when role="status" only appears in a comment', () => {
+    const code = 'function App(){ // TODO: add role="status"\n const [isLoading,setIsLoading]=useState(true); return <div className="animate-spin">Loading...</div> }'
+    expect(hasAxComplexWidgetRoleGap(code)).toBe(true)
   })
 
   it('checkObedience + buildObediencePrompt wire through correctly', () => {
