@@ -568,6 +568,25 @@ describe('findUnwiredDuplicateSidebar', () => {
     expect(findings[0]).toMatch(/sidebar-mobile/)
   })
 
+  it('still detects an unwired duplicate sidebar when an earlier attribute has a stray unmatched "{" inside its quoted string value (#1694)', () => {
+    // Same {}-depth tag-close scanner as the ">"-comparison cases above, but
+    // broken a different way: a literal, UNMATCHED "{" inside a quoted
+    // attribute value (not a JSX expression at all — just ordinary string
+    // content, e.g. "Price: {amount") throws the depth counter permanently
+    // out of balance. The scanner never finds the tag's real ">", the whole
+    // <aside> is misread as unterminated, and this rule silently skips it —
+    // the #815 duplicate-sidebar bug goes undetected again, by a different
+    // route than the already-fixed ">"-comparison case.
+    const code = `
+      <aside data-agent-context="sidebar" className="w-64 fixed inset-y-0">Desktop</aside>
+      <aside title="Price: {amount" data-agent-context="sidebar-mobile" className="translate-x-0">Mobile</aside>
+    `
+    const findings = findUnwiredDuplicateSidebar(code)
+    expect(findings).toHaveLength(1)
+    expect(findings[0]).toMatch(/sidebar-mobile/)
+    expect(findings[0]).toMatch(/no off-canvas wiring/)
+  })
+
   it('is a pure function — same input always produces the same result', () => {
     const code = `
       <aside data-agent-context="sidebar" className="w-64">Desktop</aside>

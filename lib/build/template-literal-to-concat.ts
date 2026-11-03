@@ -138,6 +138,16 @@ function splitTemplateLiteralContent(
  * closes it (honoring arbitrarily nested braces, and skipping over nested
  * string/template literals so a quote or backtick character inside them is
  * never mistaken for brace-relevant syntax), or -1 if unbalanced.
+ *
+ * Also skips over `//` and `/* *\/` comments for the same reason: a stray
+ * unmatched `}` inside a comment inside a `${}` interpolation (e.g.
+ * `${isActive /* note: } *\/ ? 'a' : 'b'}`) previously threw off the depth
+ * count enough that this returned the COMMENT's `}` as the interpolation's
+ * end — truncating the expression mid-comment and splicing the remainder
+ * into the following static-text part, producing the exact unbalanced-
+ * parens/braces SyntaxError that crashes the whole preview compile (same
+ * blank-page class as the #1643 nested-object/nested-template-literal fix
+ * above).
  */
 function findMatchingBrace(code: string, openIdx: number): number {
   let depth = 0
@@ -146,6 +156,16 @@ function findMatchingBrace(code: string, openIdx: number): number {
     const ch = code[i]
     if (ch === '\\') {
       i += 2
+      continue
+    }
+    if (ch === '/' && code[i + 1] === '/') {
+      const end = code.indexOf('\n', i)
+      i = end === -1 ? code.length : end + 1
+      continue
+    }
+    if (ch === '/' && code[i + 1] === '*') {
+      const end = code.indexOf('*/', i + 2)
+      i = end === -1 ? code.length : end + 2
       continue
     }
     if (ch === '"' || ch === "'") {

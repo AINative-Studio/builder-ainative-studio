@@ -114,4 +114,37 @@ describe('convertTemplateLiteralAttrsToConcat', () => {
     const code = 'className={`base ${isActive ? cn({active: true : "x"} end`}'
     expect(convertTemplateLiteralAttrsToConcat(code)).toBe(code)
   })
+
+  // Real bug: findMatchingBrace's depth-counter had no notion of comments,
+  // so a stray unmatched `}` inside a `//`/`/* */` comment INSIDE a `${}`
+  // interpolation was mistaken for the interpolation's real closing brace,
+  // truncating the expression mid-comment and splicing the remainder into
+  // the following static-text part — producing an unbalanced-braces
+  // SyntaxError that crashes the whole preview compile.
+  it('a block comment containing a stray } inside the interpolation does not truncate it', () => {
+    const code = "className={`base ${isActive /* note: } */ ? 'a' : 'b'} end`}"
+    const out = convertTemplateLiteralAttrsToConcat(code)
+    expect(out).toContain("+ (isActive /* note: } */ ? 'a' : 'b')")
+
+    const evalClassName = (isActive: boolean) => {
+      const match = out.match(/=\{(.+)\}$/)
+      // eslint-disable-next-line no-new-func
+      return new Function('isActive', `return ${match![1]}`)(isActive)
+    }
+    expect(evalClassName(true)).toBe('base a end')
+    expect(evalClassName(false)).toBe('base b end')
+  })
+
+  it('a line comment containing a stray } inside the interpolation does not truncate it', () => {
+    const code = "className={`base ${\n  // note: }\n  isActive ? 'a' : 'b'\n} end`}"
+    const out = convertTemplateLiteralAttrsToConcat(code)
+
+    const evalClassName = (isActive: boolean) => {
+      const match = out.match(/=\{([\s\S]+)\}$/)
+      // eslint-disable-next-line no-new-func
+      return new Function('isActive', `return ${match![1]}`)(isActive)
+    }
+    expect(evalClassName(true)).toBe('base a end')
+    expect(evalClassName(false)).toBe('base b end')
+  })
 })

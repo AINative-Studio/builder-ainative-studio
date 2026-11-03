@@ -673,6 +673,28 @@ function fixMalformedTypeImport(code: string): string {
  *     Card,
  * This function detects and fixes these patterns.
  */
+/**
+ * True if `line` contains a `}` that isn't inside a string/template-literal
+ * value or after a `//` line comment — scoped to a single line to match
+ * sanitizeImports()'s own per-line design (it doesn't track multi-line
+ * block comments either, consistent with the rest of the function).
+ */
+function lineHasRealClosingBrace(line: string): boolean {
+  let inString: '"' | "'" | '`' | null = null
+  for (let k = 0; k < line.length; k++) {
+    const ch = line[k]
+    if (inString) {
+      if (ch === '\\') { k++; continue }
+      if (ch === inString) inString = null
+      continue
+    }
+    if (ch === '"' || ch === "'" || ch === '`') { inString = ch; continue }
+    if (ch === '/' && line[k + 1] === '/') break
+    if (ch === '}') return true
+  }
+  return false
+}
+
 function sanitizeImports(code: string): string {
   const lines = code.split('\n')
   const result: string[] = []
@@ -697,14 +719,18 @@ function sanitizeImports(code: string): string {
 
       // Otherwise collect the multi-line import normally
       let importBlock = line
+      let brokenMidImport = false
       i++
       while (i < lines.length) {
         importBlock += '\n' + lines[i]
-        if (lines[i].includes('}')) break
+        if (lineHasRealClosingBrace(lines[i])) break
         // If we hit another import statement inside the block, the block is broken
         if (/^import\s+/.test(lines[i].trim())) {
-          // Broken mid-import — discard the incomplete outer import,
-          // rewind to this line and let the loop handle it fresh
+          // Broken mid-import — discard the incomplete outer import, but
+          // leave `i` pointing at this line (it was only appended to
+          // importBlock above, not consumed) so the outer loop reprocesses
+          // it fresh instead of silently dropping it.
+          brokenMidImport = true
           importBlock = ''
           break
         }
@@ -713,7 +739,7 @@ function sanitizeImports(code: string): string {
       if (importBlock) {
         result.push(importBlock)
       }
-      i++
+      if (!brokenMidImport) i++
       continue
     }
 
@@ -882,10 +908,118 @@ function stubUnresolvableReExports(code: string): string {
   return fixed
 }
 
-/** Whether `name` ever appears as a JSX tag in the file (`<Name`, `<Name.Sub>`), including self-closing/with-attrs/compound usage. */
+/** Index of the closing `quote` ending the string starting at `openIdx` (honoring `\`-escapes), or -1 if unterminated. */
+function findStringEnd(code: string, openIdx: number, quote: string): number {
+  let i = openIdx + 1
+  while (i < code.length) {
+    if (code[i] === '\\') {
+      i += 2
+      continue
+    }
+    if (code[i] === quote) return i
+    i++
+  }
+  return -1
+}
+
+/** Index of the matching `close` bracket for the `open` bracket at `openIdx` (honoring nested brackets of that kind), or -1 if unbalanced. */
+function findMatchingBracket(code: string, openIdx: number, open: string, close: string): number {
+  let depth = 1
+  let i = openIdx + 1
+  while (i < code.length) {
+    if (code[i] === open) depth++
+    else if (code[i] === close) {
+      depth--
+      if (depth === 0) return i
+    }
+    i++
+  }
+  return -1
+}
+
+/** Index of the closing backtick ending the template literal starting at `openIdx`, honoring nested `${}` interpolations. */
+function findBacktickEnd(code: string, openIdx: number): number {
+  let i = openIdx + 1
+  while (i < code.length) {
+    const ch = code[i]
+    if (ch === '\\') {
+      i += 2
+      continue
+    }
+    if (ch === '`') return i
+    if (ch === '$' && code[i + 1] === '{') {
+      const closeIdx = findMatchingBracket(code, i + 1, '{', '}')
+      if (closeIdx === -1) return -1
+      i = closeIdx + 1
+      continue
+    }
+    i++
+  }
+  return -1
+}
+
+/**
+ * Blanks out every string literal, template literal, and `//`/`/* *\/`
+ * comment in `code` (replacing each with a single space) so a structural
+ * scan like isUsedAsJsxTag() below only ever matches a REAL JSX tag.
+ *
+ * Real bug this guards against: `isUsedAsJsxTag` used to run its regex
+ * against the raw, unmasked source — so a stub-candidate name merely
+ * MENTIONED inside a comment (`// TODO: wrap in <CustomHook />`) or a
+ * user-facing string (a help string containing literal `<div>` markup)
+ * was indistinguishable from the name actually being rendered as a tag.
+ * A false positive there builds a JSX-tag-shaped stub for what's really a
+ * hook/utility import; calling it with no JSX props (`CustomHook()`) then
+ * returns `null` instead of an object, and the caller's very next line
+ * (`const { data } = CustomHook()`) throws "Cannot destructure property
+ * 'data' of null" at render — the exact class of crash this stub exists
+ * to prevent. Same technique as obedience-gate.ts's maskComments()
+ * (#1705/#1709/#1714/#1718, consolidated in #1722), extended here to also
+ * mask strings/template literals, since this check has no legitimate
+ * reason to look inside either.
+ */
+function maskStringsAndComments(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      i = end === -1 ? code.length : end + 1
+      out += ' '
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      i = end === -1 ? code.length : end + 1
+      out += ' '
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      i = end
+      out += ' '
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      i = end
+      out += ' '
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
+/** Whether `name` ever appears as a REAL JSX tag in the file (`<Name`, `<Name.Sub>`), including self-closing/with-attrs/compound usage — blind to a merely mentioned one inside a comment or string. */
 function isUsedAsJsxTag(code: string, name: string): boolean {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return new RegExp(`<\\s*${escaped}(?:[\\s/>]|\\.[A-Za-z_$])`).test(code)
+  return new RegExp(`<\\s*${escaped}(?:[\\s/>]|\\.[A-Za-z_$])`).test(maskStringsAndComments(code))
 }
 
 /** Extracts the local binding name(s) an import clause introduces (before `from`). */

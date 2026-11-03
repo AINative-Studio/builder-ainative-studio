@@ -68,6 +68,8 @@ generated from YOUR idea — every build is idea-specific, never a template.
 - Generate an app from an idea: POST /api/chat-ws  { "message": "<idea>" }
 - Generate a build artifact: POST /api/build/artifact
   { "view": "thesis|prd|dataModel|...", "idea": "<idea>", "track": "app|company" }
+- Ask a question about Builder itself (grounded, cited): POST /ask
+  { "question": "<q>" }
 - Ask Cody about a company: POST /api/build/ask
   { "question": "<q>", "idea": "<idea>", "companyName": "<name>" }
 - Live business systems: GET /api/build/systems?companyId=<id>

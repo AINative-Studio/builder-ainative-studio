@@ -341,6 +341,27 @@ describe('detectRootComponent', () => {
       expect(r.name).toBeNull()
       expect(r.source).toBe('none')
     })
+
+    it('detects an anonymous arrow whose destructured default is a string literal containing an unmatched `)`', () => {
+      // Real bug: findMatchingParen's depth counter had no string-literal
+      // awareness — a stray `)` INSIDE a string default value (e.g. emoticon
+      // copy, or any parenthetical aside) was mistaken for the real closing
+      // paren of the param list, so the counter returned too early, the
+      // `=>` check right after it failed, and detection fell through to
+      // `{name: null, source: 'none'}` for a genuinely renderable anonymous
+      // default export.
+      const code = `export default ({ greeting = "Thanks :)" }) => { return (<div>{greeting}</div>); }`
+      const r = detectRootComponent(code)
+      expect(r.name).toBe(ANON_DEFAULT_NAME)
+      expect(r.source).toBe('default-export-anonymous')
+    })
+
+    it('detects an anonymous arrow whose destructured default is a template literal containing an unmatched `)`', () => {
+      const code = 'export default ({ label = `Status: )` }) => { return (<div>{label}</div>); }'
+      const r = detectRootComponent(code)
+      expect(r.name).toBe(ANON_DEFAULT_NAME)
+      expect(r.source).toBe('default-export-anonymous')
+    })
   })
 
   describe('priority 3 — PascalCase component returning JSX (no default export)', () => {
@@ -458,6 +479,26 @@ describe('detectRootComponent', () => {
       `
       const r = detectRootComponent(code)
       expect(r.name).toBe('WidgetGrid')
+      expect(r.source).toBe('pascalcase-jsx')
+    })
+
+    it('detects a TS-typed arrow-const component whose annotation contains a string literal with an unmatched `<`/`>`', () => {
+      // Real bug: findMatchingAngleBracket's depth counter had no
+      // string-literal awareness — a comparison-operator string type like
+      // `'>' | '<'` is real, valid TS (not contrived), and its own `>`/`<`
+      // characters threw off the depth count, leaving skipArrowConstTypeAnnotation
+      // unable to find where the annotation actually ends — the same
+      // blank-page "Element type is invalid" class #1660 already fixed for
+      // nested generics.
+      const code = `
+        import React from 'react'
+        const CompareWidget: React.FC<{ cmp: '>' | '<' }> = ({ cmp }) => {
+          return (<div>{cmp}</div>)
+        }
+        export { CompareWidget }
+      `
+      const r = detectRootComponent(code)
+      expect(r.name).toBe('CompareWidget')
       expect(r.source).toBe('pascalcase-jsx')
     })
 
@@ -598,5 +639,56 @@ describe('hasDefaultExport', () => {
 
   it('returns false when there is genuinely no default export at all', () => {
     expect(hasDefaultExport(`function Dashboard() { return <div/> }`)).toBe(false)
+  })
+
+  it('returns false for a bare `export {}` list when the ONLY mention of "export default" is inside a line comment', () => {
+    // Real bug: a plain regex over the raw source matches "export default"
+    // text inside a `//` comment just as readily as a real statement. A
+    // caller that trusts this to decide whether to inject a synthesized
+    // `export default <Name>` then wrongly believes one already exists,
+    // leaves the file with NO real default export, and the module's default
+    // import resolves to undefined downstream — "Element type is invalid".
+    const code = `
+      // TODO: add export default LandingPage later
+      function LandingPage() { return (<div>hi</div>) }
+      export { LandingPage }
+    `
+    expect(hasDefaultExport(code)).toBe(false)
+  })
+
+  it('returns false for a bare `export {}` list when the ONLY mention of "export default" is inside a block comment', () => {
+    const code = `
+      /* export default LandingPage */
+      function LandingPage() { return (<div>hi</div>) }
+      export { LandingPage }
+    `
+    expect(hasDefaultExport(code)).toBe(false)
+  })
+
+  it('returns false for a bare `export {}` list when the ONLY mention of "export default" is inside a string literal', () => {
+    const code = `
+      const hint = "remember to export default this component"
+      function LandingPage() { return (<div>{hint}</div>) }
+      export { LandingPage }
+    `
+    expect(hasDefaultExport(code)).toBe(false)
+  })
+
+  it('returns false for a bare `export {}` list when the ONLY mention of "export default" is inside a template literal', () => {
+    const code = `
+      const hint = \`remember to export default this component\`
+      function LandingPage() { return (<div>{hint}</div>) }
+      export { LandingPage }
+    `
+    expect(hasDefaultExport(code)).toBe(false)
+  })
+
+  it('still recognizes a REAL default export even when a comment elsewhere also mentions "export default"', () => {
+    const code = `
+      // export default was considered here but we use a named list instead
+      function LandingPage() { return (<div>hi</div>) }
+      export default LandingPage
+    `
+    expect(hasDefaultExport(code)).toBe(true)
   })
 })

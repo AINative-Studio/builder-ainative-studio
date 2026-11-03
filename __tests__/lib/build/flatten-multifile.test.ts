@@ -472,4 +472,100 @@ describe('flatten-multifile (#308)', () => {
       ).not.toThrow()
     })
   })
+
+  describe('a demo/example code snippet in a template literal is not mistaken for a real import/export statement', () => {
+    // Real bug found this run via static analysis + a direct repro (not yet
+    // filed under its own issue number at the time this landed): every
+    // regex in this file that strips/rewrites import/export lines is
+    // line-anchored (`^...$/gm`) and scans the RAW, unmasked code. An
+    // ordinary thing for an API/SDK product's generated landing page to
+    // render — a "quickstart" code sample inside a template literal, shown
+    // in a <pre>/syntax-highlighter block — can contain lines that are
+    // SHAPED like a real import/export statement without being one. Before
+    // this fix, stripBareNamedExports/stripImportsAndExports corrupted the
+    // middle of that template literal (e.g. silently rewriting its
+    // `export { Foo }` demo line), mangling founder-visible example-code
+    // content.
+    it('an `export { Name }`-shaped line inside a template literal survives untouched', () => {
+      const raw = [
+        '// --- FILE: src/App.tsx ---',
+        "import Header from './components/Header'",
+        'function App(){',
+        '  const snippet = `',
+        "import Foo from './foo'",
+        'export { Foo }',
+        '`',
+        '  return (<div><Header/><pre>{snippet}</pre></div>)',
+        '}',
+        'export default App;',
+        '// --- FILE: src/components/Header.tsx ---',
+        'export default function Header(){ return <header>Brand</header> }',
+      ].join('\n')
+      const out = flattenMultiFile(raw)
+      expect(out).toMatch(/export \{ Foo \}/)
+      expect(out).toMatch(/import Foo from '\.\/foo'/)
+      expect(() =>
+        babelParse(out, { sourceType: 'script', plugins: ['jsx', 'typescript'] }),
+      ).not.toThrow()
+    })
+
+    it('an `export default ...`-shaped line inside a template literal is not renamed or stripped', () => {
+      const raw = [
+        '// --- FILE: src/App.tsx ---',
+        "import Header from './components/Header'",
+        'function App(){',
+        '  const snippet = `',
+        'function Widget() { return null }',
+        'export default Widget',
+        '`',
+        '  return (<div><Header/><pre>{snippet}</pre></div>)',
+        '}',
+        'export default App;',
+        '// --- FILE: src/components/Header.tsx ---',
+        'export default function Header(){ return <header>Brand</header> }',
+      ].join('\n')
+      const out = flattenMultiFile(raw)
+      expect(out).toMatch(/export default Widget/)
+      expect(() =>
+        babelParse(out, { sourceType: 'script', plugins: ['jsx', 'typescript'] }),
+      ).not.toThrow()
+    })
+
+    it('an `import ... from "./..."`-shaped line inside a template literal is not stripped as a real local import', () => {
+      const raw = [
+        '// --- FILE: src/App.tsx ---',
+        "import Header from './components/Header'",
+        'function App(){',
+        '  const snippet = `',
+        "import Header from './components/Header'",
+        '`',
+        '  return (<div><Header/><pre>{snippet}</pre></div>)',
+        '}',
+        'export default App;',
+        '// --- FILE: src/components/Header.tsx ---',
+        'export default function Header(){ return <header>Brand</header> }',
+      ].join('\n')
+      const out = flattenMultiFile(raw)
+      // The REAL import of Header is inlined (function declaration present);
+      // the demo line inside the template literal is preserved verbatim,
+      // not stripped as if it were a second, bare top-level import.
+      expect(out).toMatch(/function\s+Header\s*\(/)
+      expect(out).toMatch(/const snippet = `\nimport Header from '\.\/components\/Header'\n`/)
+      expect(() =>
+        babelParse(out, { sourceType: 'script', plugins: ['jsx', 'typescript'] }),
+      ).not.toThrow()
+    })
+
+    it('hasLocalImports is not fooled by a relative-import-shaped line inside a template literal', () => {
+      const appCode = [
+        'function App(){',
+        '  const snippet = `',
+        "import Foo from './foo'",
+        '`',
+        '  return <pre>{snippet}</pre>',
+        '}',
+      ].join('\n')
+      expect(hasLocalImports(appCode)).toBe(false)
+    })
+  })
 })
