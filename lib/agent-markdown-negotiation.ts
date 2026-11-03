@@ -51,7 +51,15 @@ export function homepageMarkdown(): string {
 - Pricing: ${SITE}/pricing
 - Docs: ${SITE}/docs
 - Full agent index: ${SITE}/llms.txt
+- Ask a question about Builder: ${SITE}/ask
+
+## Agent discovery documents
+
 - API reference: ${SITE}/openapi.json
+- API catalog (RFC 9727): ${SITE}/.well-known/api-catalog
+- OAuth authorization server metadata (RFC 8414): ${SITE}/.well-known/oauth-authorization-server
+- Provisioning (per-company data layer): ${SITE}/.well-known/provisioning
+- Payment capability (x402): ${SITE}/.well-known/x402
 
 ## What it is
 
