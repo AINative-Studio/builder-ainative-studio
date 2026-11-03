@@ -112,15 +112,41 @@ jobs:
 
       - name: TypeScript check
         run: |
-          echo "Running TypeScript check..."
-          pnpm tsc --noEmit 2>&1 | tee /tmp/tsc.txt
-          # Allow up to 28 pre-existing errors (baseline)
-          errors=$(grep -c "error TS" /tmp/tsc.txt || echo "0")
-          if [ "$errors" -gt 28 ]; then
-            echo "::error::TypeScript errors ($errors) exceed baseline (28)"
-            exit 1
+          echo "Running TypeScript check on this ref..."
+          pnpm tsc --noEmit 2>&1 | tee /tmp/tsc-head.txt || true
+          head_errors=$(grep -c "error TS" /tmp/tsc-head.txt || echo "0")
+          echo "TypeScript errors on this ref: ${head_errors}"
+
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # main must never carry a type error -- there is no "base" to
+            # diff against post-merge, so this is an absolute check.
+            if [ "$head_errors" -gt 0 ]; then
+              echo "::error::main has $head_errors TypeScript error(s). This merge introduced a regression -- fix forward."
+              exit 1
+            fi
+            echo "✅ TypeScript check passed (0 errors on main)"
+          else
+            # A fixed baseline (e.g. "28") can't catch a regression smaller
+            # than the gap between it and the real count -- #1748/#1752 slipped
+            # through exactly that way. Diff against the PR's own merge-base
+            # instead: any error count increase is a regression, regardless
+            # of the absolute number of pre-existing errors on main.
+            echo "Checking out merge-base for comparison..."
+            git fetch origin "${{ github.base_ref }}" --quiet
+            base_sha=$(git merge-base HEAD "origin/${{ github.base_ref }}")
+            echo "Base: ${base_sha}"
+            git worktree add --quiet --detach /tmp/base-check "$base_sha"
+            ln -s "$(pwd)/node_modules" /tmp/base-check/node_modules
+            (cd /tmp/base-check && pnpm tsc --noEmit 2>&1 | tee /tmp/tsc-base.txt || true)
+            base_errors=$(grep -c "error TS" /tmp/tsc-base.txt || echo "0")
+            echo "TypeScript errors on base (${base_sha}): ${base_errors}"
+
+            if [ "$head_errors" -gt "$base_errors" ]; then
+              echo "::error::This PR increases TypeScript errors from $base_errors to $head_errors. No new type errors may be introduced."
+              exit 1
+            fi
+            echo "✅ TypeScript check passed (${head_errors} errors, base had ${base_errors} -- no regression)"
           fi
-          echo "✅ TypeScript check passed (${errors} pre-existing errors)"
 
       - name: Build check
         env:
