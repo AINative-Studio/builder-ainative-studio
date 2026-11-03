@@ -15,7 +15,7 @@ describe('GET /openapi.json (AX/agent-readiness scan, 2026-09-30)', () => {
     const spec = await res.json()
     const paths = Object.keys(spec.paths)
     // Real, already-agent-callable routes (per public/llms.txt + "AX: agent-accessible" doc comments).
-    for (const p of ['/api/health', '/api/chat-ws', '/api/build/artifact', '/api/build/ask', '/api/build/systems', '/api/preview/{chatId}', '/api/build/enroll', '/api/build/secrets', '/api/build/redeploy', '/api/build/deck']) {
+    for (const p of ['/api/health', '/api/chat-ws', '/api/build/artifact', '/api/build/ask', '/api/build/systems', '/api/preview/{chatId}', '/api/build/enroll', '/api/build/provision', '/api/build/secrets', '/api/build/redeploy', '/api/build/deck']) {
       expect(paths).toContain(p)
     }
   })
