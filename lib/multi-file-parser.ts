@@ -10,6 +10,89 @@ import { detectRootComponent } from './component-detector'
 const FILE_MARKER = /^\/\/\s*---\s*FILE:\s*(.+?)\s*---\s*$/
 
 /**
+ * Real production bug (customer-reported, "shoplo", 2026-11-03): the model's
+ * raw output for the LAST `// --- FILE:` section has no following marker to
+ * bound it, so when the model appends a trailing chat-style summary after
+ * finishing the actual code (a markdown `---` rule, then prose like "**Key
+ * Points**" / a bullet list), that commentary gets captured into the file's
+ * content verbatim — a guaranteed Babel "Unexpected token" at render, since
+ * every EARLIER file is naturally bounded by the next marker and never hits
+ * this, only the last one can.
+ *
+ * Fix: once a file's component code is syntactically complete (its braces
+ * balance back to 0 after the last top-level declaration), anything after
+ * that point is no longer code — drop it rather than ship it verbatim. Only
+ * trims when there's clearly-non-code trailing content (a markdown rule,
+ * bold/prose text, or a bullet list), so a file whose last real line simply
+ * doesn't end in `}` (e.g. a one-line re-export) is left untouched.
+ */
+export function stripTrailingProse(content: string): string {
+  const trimmed = content.replace(/\s+$/, '')
+  // A lone markdown horizontal rule on its own line — trailing commentary
+  // after it (the bug's main shape), or a bare rule with nothing after it at
+  // all (a leftover file-separator artifact, still a real syntax error on
+  // its own) — is the exact shape this bug produces. Find the LAST such line
+  // (there can legitimately be no earlier one — JSX/TS source never contains
+  // a bare `---` line) and check whether code before it already balances.
+  const ruleRe = /\n---[ \t]*(?:\n|$)/g
+  let match: RegExpExecArray | null = null
+  let lastMatch: RegExpExecArray | null = null
+  while ((match = ruleRe.exec(trimmed)) !== null) lastMatch = match
+  if (!lastMatch) return trimmed
+
+  const before = trimmed.slice(0, lastMatch.index)
+  const after = trimmed.slice(lastMatch.index + lastMatch[0].length)
+
+  // Only treat this as trailing prose (not real code) if what follows is
+  // EITHER empty (a bare leftover rule with nothing after it) OR looks like
+  // markdown commentary, not JS/TSX — bold text, a heading, or a bullet list
+  // are the shapes an LLM's trailing summary actually takes.
+  const looksLikeProse = after.trim() === '' || /^\s*(\*\*|#|-\s|\d+\.\s)/.test(after)
+  if (!looksLikeProse) return trimmed
+
+  // Confirm `before` is actually complete code: its braces balance, masking
+  // string/template-literal/comment content first so a brace inside a JSX
+  // string attribute never miscounts.
+  if (!bracesBalance(before)) return trimmed
+
+  return before.replace(/\s+$/, '')
+}
+
+/** True if `code`'s `{`/`}` count balances once string/template-literal and
+ *  `//`/`/* *\/` comment content is ignored (a brace inside either is not
+ *  real structural syntax). */
+function bracesBalance(code: string): boolean {
+  let depth = 0
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    if (ch === '/' && code[i + 1] === '/') {
+      const end = code.indexOf('\n', i)
+      i = end === -1 ? code.length : end
+      continue
+    }
+    if (ch === '/' && code[i + 1] === '*') {
+      const end = code.indexOf('*/', i + 2)
+      i = end === -1 ? code.length : end + 2
+      continue
+    }
+    if (ch === '"' || ch === "'" || ch === '`') {
+      let j = i + 1
+      while (j < code.length && code[j] !== ch) {
+        if (code[j] === '\\') j++
+        j++
+      }
+      i = j + 1
+      continue
+    }
+    if (ch === '{') depth++
+    else if (ch === '}') depth--
+    i++
+  }
+  return depth === 0
+}
+
+/**
  * Parse multi-file output from Claude into a file map.
  * Falls back to single-file if no markers found.
  */
@@ -33,9 +116,10 @@ export function parseMultiFileOutput(rawOutput: string, userPrompt?: string): Re
     }
   }
 
-  // Save last file
+  // Save last file — the only one that can carry trailing chat-style
+  // commentary with no following marker to bound it (see stripTrailingProse).
   if (currentFile) {
-    files[normalizeFilePath(currentFile)] = currentContent.join('\n').trim()
+    files[normalizeFilePath(currentFile)] = stripTrailingProse(currentContent.join('\n').trim())
   }
 
   // Fallback: if no file markers found, treat entire output as single page
