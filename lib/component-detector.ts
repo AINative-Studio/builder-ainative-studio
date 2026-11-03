@@ -278,34 +278,6 @@ function skipArrowConstTypeAnnotation(code: string, idx: number): number {
   return i
 }
 
-/** Index of the closing `quote` that ends the string starting at `openIdx` (honoring `\`-escapes), or -1 if unterminated. */
-function findStringEnd(code: string, openIdx: number, quote: string): number {
-  let i = openIdx + 1
-  while (i < code.length) {
-    if (code[i] === '\\') {
-      i += 2
-      continue
-    }
-    if (code[i] === quote) return i
-    i++
-  }
-  return -1
-}
-
-/** Index of the closing `` ` `` that ends the template literal starting at `openIdx` (honoring `\`-escapes), or -1 if unterminated. */
-function findBacktickEnd(code: string, openIdx: number): number {
-  let i = openIdx + 1
-  while (i < code.length) {
-    if (code[i] === '\\') {
-      i += 2
-      continue
-    }
-    if (code[i] === '`') return i
-    i++
-  }
-  return -1
-}
-
 /**
  * Returns `code` with every `'...'`/`"..."`/`` `...` `` string/template
  * literal and every `//`/`/* *\/` comment replaced by same-length runs of
