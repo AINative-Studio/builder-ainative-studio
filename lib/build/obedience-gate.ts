@@ -36,9 +36,62 @@
 import { scorePrimitives, RUNTIME_PROXY_PATH_SUBSTRINGS, getRuntimeProxyInstruction, type CompanyRole } from './primitive-catalog'
 import { findMatchingBracket, findMatchingParen, findStringEnd, findBacktickEnd } from './bracket-scanner'
 
+/**
+ * Blanks out `//` and `/* *\/` comments (replacing their characters with
+ * spaces, preserving length/newlines) while leaving string and
+ * template-literal CONTENTS untouched. Real, live bug class (#1704/#1708/
+ * #1713/#1717): several of this file's gap checks ran a raw regex against
+ * the WHOLE file, including comments — a model that writes a comment
+ * MERELY MENTIONING a required path/marker/role, without the app ever
+ * actually using it, satisfied the regex and wrongly reported "already
+ * compliant," hiding a real gap from the re-prompt loop. Strings must stay
+ * intact (the real markers these checks look for are often inside JSX
+ * attribute strings) so only comment text is blanked, never string/
+ * template content.
+ */
+function maskComments(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += ' '.repeat(Math.min(end, code.length) - i)
+      i = Math.min(end, code.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
 /** Does the code call the ZeroDB proxy for real persistence? */
 export function usesDataLayer(code: string): boolean {
-  return /\/api\/db\//.test(code || '')
+  return /\/api\/db\//.test(maskComments(code || ''))
 }
 
 /** Ideas whose apps clearly manage USER RECORDS and therefore SHOULD persist. */
@@ -435,7 +488,7 @@ export function hasUnpersistedComposerGap(code: string): boolean {
  * idea-conditional).
  */
 export function hasVisitorTrackingGap(code: string): boolean {
-  return !/\/api\/db\/visitors/.test(code || '')
+  return !/\/api\/db\/visitors/.test(maskComments(code || ''))
 }
 
 /**
@@ -468,11 +521,17 @@ export function hasVisitorTrackingGap(code: string): boolean {
  */
 function matchOpeningTags(code: string, tagName: string): string[] {
   const tags: string[] = []
+  // #1713: scan a comment-masked view so a commented-out example tag (e.g.
+  // `// <main aria-label="...">` left over from a prior draft) is never
+  // mistaken for a real one — but slice the matched range from the
+  // ORIGINAL code (same length, masking preserves offsets) so real
+  // attribute string content is returned verbatim.
+  const masked = maskComments(code)
   const openTagRe = new RegExp(`<${tagName}\\b`, 'gi')
   let match: RegExpExecArray | null
-  while ((match = openTagRe.exec(code))) {
+  while ((match = openTagRe.exec(masked))) {
     const attrsStart = match.index + match[0].length
-    const i = findTagClose(code, attrsStart)
+    const i = findTagClose(masked, attrsStart)
     if (i === -1) continue // unterminated tag
     tags.push(code.slice(match.index, i + 1))
   }
@@ -498,7 +557,7 @@ export function hasAxLandmarkGap(code: string): boolean {
  * regex) — tracked separately.
  */
 export function hasAxManifestGap(code: string): boolean {
-  return !/data-agent-manifest\s*=\s*["']true["']/.test(code || '')
+  return !/data-agent-manifest\s*=\s*["']true["']/.test(maskComments(code || ''))
 }
 
 /**
@@ -520,7 +579,10 @@ export function hasAxManifestGap(code: string): boolean {
  * order — subsuming the original's two separately-ordered regex branches.
  */
 export function hasAxSkipNavGap(code: string): boolean {
-  const src = code || ''
+  // #1713-class fix: scan a comment-masked view throughout, so a
+  // commented-out example skip-link (or a commented-out `id="..."` target)
+  // is never mistaken for a real one.
+  const src = maskComments(code || '')
   const anchorRe = /<a\b/gi
   let m: RegExpExecArray | null
   let targetId: string | null = null
@@ -629,7 +691,10 @@ export function hasAxAgentAttributesGap(code: string): boolean {
  * reason to omit it once the pattern is already present.
  */
 export function hasAxComplexWidgetRoleGap(code: string): boolean {
-  const src = code || ''
+  // #1717: scan a comment-masked view — a mere mention of role="tablist"/
+  // "status"/aria-live in a comment (e.g. "// TODO: add role=\"tab\"")
+  // must not satisfy these checks when the app never actually renders it.
+  const src = maskComments(code || '')
   // Tab-like widget: multiple sibling buttons driving an `activeTab`/
   // `currentTab`-style state, with no tablist/tab roles anywhere.
   const looksLikeTabs = /(activeTab|currentTab|selectedTab)/i.test(src) && /<button\b/i.test(src)
