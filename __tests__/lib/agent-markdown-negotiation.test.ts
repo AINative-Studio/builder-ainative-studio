@@ -44,6 +44,23 @@ describe('homepageMarkdown', () => {
     expect(md).toContain('/llms.txt')
     expect(md).toContain('/openapi.json')
   })
+
+  it('links to the real .well-known agent discovery documents (#1680)', () => {
+    const md = homepageMarkdown()
+    expect(md).toContain('/.well-known/provisioning')
+    expect(md).toContain('/.well-known/api-catalog')
+    expect(md).toContain('/.well-known/oauth-authorization-server')
+    expect(md).toContain('/.well-known/x402')
+    expect(md).toContain('/ask')
+  })
+
+  it('is a small fraction of the full homepage HTML byte count (#1681 Token Efficiency)', () => {
+    const md = homepageMarkdown()
+    // The full React homepage renders at ~38KB; this must stay well under
+    // 1/4 of that to be a genuine token-efficiency win, not just a different
+    // format of the same bloat.
+    expect(md.length).toBeLessThan(10_000)
+  })
 })
 
 describe('notFoundMarkdown', () => {

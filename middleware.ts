@@ -54,7 +54,19 @@ export async function middleware(request: NextRequest) {
   //    Markdown body (when Markdown was requested) pointing to the sitemap,
   //    llms.txt, and the OpenAPI spec — never the login-redirect soft-404
   //    this same scan found (fixed separately, below, for the HTML case).
-  if (pathname === '/' && prefersMarkdown(request.headers.get('accept'))) {
+  //
+  // ?mode=agent (#1680, AX "dedicated agent view" gap, 2026-10-29): some
+  // agent HTTP clients can't easily set a custom Accept header but CAN add a
+  // query param. Rather than build a second, parallel "agent view" of the
+  // homepage, this reuses the SAME real homepageMarkdown() content the
+  // Accept-header path already serves — one honest agent-facing
+  // representation, two ways to ask for it. Also directly fixes #1681 (Token
+  // Efficiency): this response is a small fraction of the full React shell's
+  // token count by construction (no marketing chrome, no client bundle).
+  const wantsAgentView =
+    pathname === '/' &&
+    (prefersMarkdown(request.headers.get('accept')) || request.nextUrl.searchParams.get('mode') === 'agent')
+  if (wantsAgentView) {
     return new Response(homepageMarkdown(), {
       status: 200,
       headers: { 'Content-Type': 'text/markdown; charset=utf-8', Vary: 'Accept' },

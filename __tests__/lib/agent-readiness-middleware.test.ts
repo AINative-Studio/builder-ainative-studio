@@ -96,3 +96,26 @@ describe('middleware — Markdown content negotiation', () => {
     expect(res.status).not.toBe(404)
   })
 })
+
+describe('middleware — ?mode=agent dedicated agent view (#1680)', () => {
+  beforeEach(() => vi.clearAllMocks())
+  afterEach(() => vi.clearAllMocks())
+
+  it('?mode=agent on the homepage serves the same real Markdown summary as Accept: text/markdown', async () => {
+    const res = await middleware(req('/?mode=agent'))
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('text/markdown')
+    const body = await res.text()
+    expect(body.startsWith('# ')).toBe(true)
+  })
+
+  it('a plain homepage request with no mode param and no markdown Accept header passes through unaffected', async () => {
+    const res = await middleware(req('/'))
+    expect(res.headers.get('content-type')).not.toBe('text/markdown; charset=utf-8')
+  })
+
+  it('mode=agent on a non-homepage path does not trigger the homepage Markdown response', async () => {
+    const res = await middleware(req('/pricing?mode=agent'))
+    expect(res.headers.get('content-type')).not.toBe('text/markdown; charset=utf-8')
+  })
+})
