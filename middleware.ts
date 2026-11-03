@@ -288,6 +288,11 @@ export async function middleware(request: NextRequest) {
       // the session gate below (a generated app has no session).
       pathname.startsWith('/api/primitive/') ||
       pathname.startsWith('/api/build/') ||
+      // NLWeb-convention discovery alias (#1679) — thin forward to the
+      // already-public /api/build/help handler. It inherited no auth of its
+      // own, but lives outside the /api/build/ prefix above, so the session
+      // gate below 401'd every request before it ever reached the handler.
+      pathname === '/api/ask' ||
       // "I'm stuck" jump-to-answer retrieval (#321) — pure local search over the
       // guides/FAQ catalog. Lives on /help + /guides/[slug], both anonymous
       // surfaces, so it MUST work without auth (same class of bug that bit
