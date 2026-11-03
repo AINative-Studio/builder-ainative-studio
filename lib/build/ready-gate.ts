@@ -53,8 +53,23 @@ export interface StoredApp {
  *
  * Exported for the seeded-data check (#343, lib/build/seed-check.ts), which
  * needs the same "what code will this app actually run" resolution.
+ *
+ * `opts.requireFiles` (real bug found live via repair-app's mechanical
+ * trailing-prose fix, 2026-11-03): memFiles (lib/preview-store-v2.ts) is
+ * PER-INSTANCE — populated only by the replica that originally ran
+ * generation. A later request landing on a DIFFERENT Railway replica gets a
+ * truthy in-memory `mem` code blob (if that replica also served a render in
+ * between) but a null memFiles, so the plain in-memory branch used to ship
+ * `files: null` even though the real multi-file map exists durably in
+ * ZeroDB. Most callers (checkAppReady) only need `code` and must NOT pay for
+ * an extra durable round-trip on every call just to backfill a field they
+ * never read — so this backfill is opt-in, only for a caller (repair-app)
+ * that genuinely needs per-file granularity.
  */
-export async function resolveStoredApp(chatId: string): Promise<StoredApp | null> {
+export async function resolveStoredApp(
+  chatId: string,
+  opts: { requireFiles?: boolean } = {},
+): Promise<StoredApp | null> {
   // The in-memory V2 store holds the parsed files map from this instance's
   // generation — best-effort in both branches (never required).
   let memFiles: Record<string, string> | null = null
@@ -66,7 +81,18 @@ export async function resolveStoredApp(chatId: string): Promise<StoredApp | null
 
   // 1) In-memory preview store (populated during generation / on prior render).
   const mem = getPreview(chatId)
-  if (mem && mem.trim()) return { code: mem, files: memFiles }
+  if (mem && mem.trim()) {
+    if (opts.requireFiles && (!memFiles || Object.keys(memFiles).length === 0)) {
+      try {
+        const { loadGeneration } = await import('@/lib/zerodb-store')
+        const gen = await loadGeneration(chatId)
+        if (gen?.files && Object.keys(gen.files).length > 0) memFiles = gen.files
+      } catch {
+        /* durable store unavailable — code-only checks still run on `mem` */
+      }
+    }
+    return { code: mem, files: memFiles }
+  }
 
   // 2) Durable ZeroDB copy. Dynamic import keeps this off the hot path and avoids
   //    pulling the ZeroDB client into modules that never need it.
