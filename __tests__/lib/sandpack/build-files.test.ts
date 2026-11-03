@@ -591,3 +591,41 @@ describe('buildSandpackFiles — React/hooks import injection is comment-blind t
     expect(built['/App.tsx']).toMatch(/^import React, \{ useState \} from 'react'/m)
   })
 })
+
+describe('buildSandpackFiles — shadcn/AIKit auto-import "already imported" guard is comment-blind to a merely-mentioned import line (overnight-loop 2026-10-31)', () => {
+  // Real bug found this run, confirmed via a direct repro before filing:
+  // both the shadcn and the AIKit auto-import safety nets decide a
+  // component is "already imported" (and so skip injecting the real
+  // import) via a plain `import\s+.*\bName\b.*from\s+` regex run against
+  // the WHOLE raw file text — blind to that same text appearing inside a
+  // `//`/`/* */` comment (e.g. a leftover
+  // `// import { Button } from './components/ui/button'` note) rather than
+  // a real import statement. A generated app with such a comment, a REAL
+  // `<Button>` JSX usage, and no real import wrongly has its import
+  // injection skipped — "Button is not defined" at render, the exact
+  // blank-preview crash class this file's safety nets exist to prevent.
+  it('still injects the real shadcn import when the only "already imported"-looking text is inside a line comment', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "// import { Button } from './components/ui/button'\nfunction App() { return (<div><Button>Click</Button></div>) }\nexport default App",
+    })
+    expect(built['/App.tsx']).toMatch(/^import \{ Button \} from/m)
+  })
+
+  it('still injects the real AIKit import when the only "already imported"-looking text is inside a block comment', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "/* import { MetricCard } from './components/aikit' -- leftover note */\nfunction App() { return (<div><MetricCard label=\"x\" value={1} /></div>) }\nexport default App",
+    })
+    expect(built['/App.tsx']).toMatch(/^import \{ MetricCard \} from/m)
+  })
+
+  it('does NOT double-import a shadcn component when a real import statement is already present', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "import { Button } from './components/ui/button'\nfunction App() { return (<div><Button>Click</Button></div>) }\nexport default App",
+    })
+    const importCount = (built['/App.tsx'].match(/^import \{ Button \} from/gm) || []).length
+    expect(importCount).toBe(1)
+  })
+})

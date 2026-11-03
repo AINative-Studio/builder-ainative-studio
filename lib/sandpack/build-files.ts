@@ -69,6 +69,10 @@ function findBacktickEnd(code: string, openIdx: number): number {
  * `.includes()`/regex checks below. Safe to blank string/template-literal
  * content for this purpose specifically: a real `import` statement or a
  * real hook call is never itself written inside a string literal.
+ *
+ * Introduced for the React/hooks import-injection guard (#1725); reused
+ * below by the shadcn/AIKit auto-import guards' own "already imported"
+ * checks (#1729) rather than each adding its own copy.
  */
 function maskCommentsAndStrings(code: string): string {
   let out = ''
@@ -381,6 +385,22 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
       }
     }
 
+    // Real bug found this run: both the AIKit and shadcn auto-import safety
+    // nets below decide a component is "already imported" (and so skip
+    // injecting the real import) via a plain `import\s+.*\bName\b.*from\s+`
+    // regex run against the WHOLE raw `fixed` text — blind to that same
+    // text appearing inside a `//`/`/* */` comment (e.g. a leftover
+    // `// import { Button } from './components/ui/button'` note) rather
+    // than a real import statement. A generated app with such a comment, a
+    // REAL `<Button>` JSX usage, and no real import had its import
+    // injection wrongly skipped — "Button is not defined" at render, the
+    // exact blank-preview crash class this file's safety nets exist to
+    // prevent. Matching against a comment-masked view (same `maskCommentsAndStrings`
+    // used by the React/hooks injection guard above) fixes this without
+    // changing behavior for a file with no such comment. Re-derived fresh
+    // right before each block below (rather than once, upfront) since
+    // `fixed` is mutated in between by the aikit block's own injection.
+
     {
       const aikitComponents = [
         'MetricCard', 'AIKitPriceCard', 'AIKitRating', 'AgentCard', 'SwarmView',
@@ -390,9 +410,10 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
         'EmptyState', 'AIKitProductCard', 'AIKitPagination', 'AIKitBreadcrumb',
         'AIKitStepper', 'VideoPlayer', 'StreamingText', 'MediaGallery', 'AgentTimeline',
       ]
+      const fixedNoComments = maskCommentsAndStrings(fixed)
       const usedAikit = aikitComponents.filter(c =>
-        new RegExp(`<${c}[\\s/>]`).test(fixed) &&
-        !new RegExp(`import\\s+.*\\b${c}\\b.*from\\s+`).test(fixed)
+        new RegExp(`<${c}[\\s/>]`).test(fixedNoComments) &&
+        !new RegExp(`import\\s+.*\\b${c}\\b.*from\\s+`).test(fixedNoComments)
       )
       if (usedAikit.length > 0) {
         fixed = `import { ${usedAikit.join(', ')} } from '${componentsPrefix}aikit'\n${fixed}`
@@ -431,6 +452,7 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
         'ui/toast': ['Toast', 'ToastDescription', 'ToastTitle'],
       }
       const imports: string[] = []
+      const fixedNoComments = maskCommentsAndStrings(fixed)
       for (const [mod, components] of Object.entries(shadcnMap)) {
         const used = components.filter(c =>
           // #1165: was `<${c}[\\s/>]|\\b${c}\\b` — the bare `\b${c}\b`
@@ -442,8 +464,12 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
           // Only the real JSX-tag-opening pattern is a legitimate signal
           // this component is actually rendered — matches the AIKit
           // injection guard just below, which never had this bug.
-          new RegExp(`<${c}[\\s/>]`).test(fixed) &&
-          !new RegExp(`import\\s+.*\\b${c}\\b.*from\\s+`).test(fixed)
+          // Matched against a comment-masked view (see block comment
+          // above the AIKit guard) so a leftover `// import { X } from
+          // ...'` note can't fool the "already imported" half of this
+          // check either.
+          new RegExp(`<${c}[\\s/>]`).test(fixedNoComments) &&
+          !new RegExp(`import\\s+.*\\b${c}\\b.*from\\s+`).test(fixedNoComments)
         )
         if (used.length > 0) {
           imports.push(`import { ${used.join(', ')} } from '${componentsPrefix}${mod}'`)
