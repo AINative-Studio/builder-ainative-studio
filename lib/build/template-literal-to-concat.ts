@@ -52,7 +52,15 @@
  * exists to prevent. Fixed by depth-counting the braces (and skipping over
  * nested strings/template literals while counting) to find each
  * interpolation's TRUE extent instead of assuming it is itself brace-free.
+ *
+ * #1710: the local findMatchingBrace/findBacktickEnd/findStringEnd helpers
+ * this file used to define are now the shared lib/build/bracket-scanner.ts
+ * utility (imported below) — this file was one of over a dozen independent,
+ * near-identical reimplementations of the same string/comment-aware
+ * bracket-matching technique.
  */
+import { findMatchingBrace, findBacktickEnd, findStringEnd } from './bracket-scanner'
+
 export function convertTemplateLiteralAttrsToConcat(code: string): string {
   const attrOpenRe = /(className|style)=\{`/g
   let result = ''
@@ -133,100 +141,4 @@ function splitTemplateLiteralContent(
   return parts
 }
 
-/**
- * Given the index of a `{` character, return the index of the `}` that
- * closes it (honoring arbitrarily nested braces, and skipping over nested
- * string/template literals so a quote or backtick character inside them is
- * never mistaken for brace-relevant syntax), or -1 if unbalanced.
- *
- * Also skips over `//` and `/* *\/` comments for the same reason: a stray
- * unmatched `}` inside a comment inside a `${}` interpolation (e.g.
- * `${isActive /* note: } *\/ ? 'a' : 'b'}`) previously threw off the depth
- * count enough that this returned the COMMENT's `}` as the interpolation's
- * end — truncating the expression mid-comment and splicing the remainder
- * into the following static-text part, producing the exact unbalanced-
- * parens/braces SyntaxError that crashes the whole preview compile (same
- * blank-page class as the #1643 nested-object/nested-template-literal fix
- * above).
- */
-function findMatchingBrace(code: string, openIdx: number): number {
-  let depth = 0
-  let i = openIdx
-  while (i < code.length) {
-    const ch = code[i]
-    if (ch === '\\') {
-      i += 2
-      continue
-    }
-    if (ch === '/' && code[i + 1] === '/') {
-      const end = code.indexOf('\n', i)
-      i = end === -1 ? code.length : end + 1
-      continue
-    }
-    if (ch === '/' && code[i + 1] === '*') {
-      const end = code.indexOf('*/', i + 2)
-      i = end === -1 ? code.length : end + 2
-      continue
-    }
-    if (ch === '"' || ch === "'") {
-      const end = findStringEnd(code, i, ch)
-      if (end === -1) return -1
-      i = end + 1
-      continue
-    }
-    if (ch === '`') {
-      const end = findBacktickEnd(code, i)
-      if (end === -1) return -1
-      i = end + 1
-      continue
-    }
-    if (ch === '{') {
-      depth++
-      i++
-      continue
-    }
-    if (ch === '}') {
-      depth--
-      if (depth === 0) return i
-      i++
-      continue
-    }
-    i++
-  }
-  return -1
-}
-
-/** Given the index of a `` ` `` character, return the index of the matching closing backtick, honoring nested `${}` interpolations. */
-function findBacktickEnd(code: string, openIdx: number): number {
-  let i = openIdx + 1
-  while (i < code.length) {
-    const ch = code[i]
-    if (ch === '\\') {
-      i += 2
-      continue
-    }
-    if (ch === '`') return i
-    if (ch === '$' && code[i + 1] === '{') {
-      const closeIdx = findMatchingBrace(code, i + 1)
-      if (closeIdx === -1) return -1
-      i = closeIdx + 1
-      continue
-    }
-    i++
-  }
-  return -1
-}
-
-/** Given the index of an opening quote character, return the index of the matching closing quote. */
-function findStringEnd(code: string, openIdx: number, quote: string): number {
-  let i = openIdx + 1
-  while (i < code.length) {
-    if (code[i] === '\\') {
-      i += 2
-      continue
-    }
-    if (code[i] === quote) return i
-    i++
-  }
-  return -1
-}
+// findMatchingBrace/findBacktickEnd are now imported from ./bracket-scanner (#1710).

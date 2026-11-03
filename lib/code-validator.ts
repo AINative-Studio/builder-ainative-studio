@@ -1,5 +1,6 @@
 import { parse } from '@babel/parser'
 import { detectRootComponent } from './component-detector'
+import { findMatchingParen } from './build/bracket-scanner'
 
 /**
  * Multi-file output boundary marker — mirrors lib/multi-file-parser.ts.
@@ -1258,109 +1259,17 @@ export function findUnresolvedComponents(code: string): string[] {
  * A child that is a `.map()` return, `item.name`, `count`, a function call, or a
  * conditional is never flagged. Returns the first offending identifier, or null.
  */
-/** Index of the closing `quote` that ends the string starting at `openIdx` (honoring `\`-escapes), or -1 if unterminated. Scoped to findObjectRenderedAsChild's SHAPE 2 check below. */
-function findStringEndInChildCheck(code: string, openIdx: number, quote: string): number {
-  let i = openIdx + 1
-  while (i < code.length) {
-    if (code[i] === '\\') {
-      i += 2
-      continue
-    }
-    if (code[i] === quote) return i
-    i++
-  }
-  return -1
-}
-
-/** Index of the closing `` ` `` that ends the template literal starting at `openIdx`, honoring nested `${}` interpolations. Scoped to findObjectRenderedAsChild's SHAPE 2 check below. */
-function findTemplateLiteralEndInChildCheck(code: string, openIdx: number): number {
-  let i = openIdx + 1
-  while (i < code.length) {
-    const ch = code[i]
-    if (ch === '\\') {
-      i += 2
-      continue
-    }
-    if (ch === '`') return i
-    if (ch === '$' && code[i + 1] === '{') {
-      const closeIdx = findMatchingBracketInChildCheck(code, i + 1, '{', '}')
-      if (closeIdx === -1) return -1
-      i = closeIdx + 1
-      continue
-    }
-    i++
-  }
-  return -1
-}
-
 /**
- * Find the index of the `close` that closes the `open` at `openIdx`, honoring
- * arbitrarily nested brackets of that same pair.
- *
- * Skips over string/template literals AND line (`//`) / block comments it
- * scans through so a lone, unmatched bracket INSIDE one — e.g. a parenthetical
- * aside in callback-body text (`.find(i => i.label === 'Checkout :)')`) or a
- * commented-out aside (`.find(i => { // note: legacy (unused\n ... })`) — is
- * never mistaken for the call's real closing paren. Same gap already fixed
- * in component-detector.ts, obedience-gate.ts, output-validator.ts,
- * built-in-rules.ts, and dedupe-provided-components.ts's analogous
- * matchers. Scoped to findObjectRenderedAsChild's SHAPE 2 check below.
- */
-function findMatchingBracketInChildCheck(code: string, openIdx: number, open: string, close: string): number {
-  let depth = 0
-  let i = openIdx
-  while (i < code.length) {
-    const ch = code[i]
-    if (ch === '\\') {
-      i += 2
-      continue
-    }
-    if (ch === '/' && code[i + 1] === '/') {
-      const nl = code.indexOf('\n', i + 2)
-      i = nl === -1 ? code.length : nl + 1
-      continue
-    }
-    if (ch === '/' && code[i + 1] === '*') {
-      const end = code.indexOf('*/', i + 2)
-      i = end === -1 ? code.length : end + 2
-      continue
-    }
-    if (ch === '"' || ch === "'") {
-      const end = findStringEndInChildCheck(code, i, ch)
-      if (end === -1) return -1
-      i = end + 1
-      continue
-    }
-    if (ch === '`') {
-      const end = findTemplateLiteralEndInChildCheck(code, i)
-      if (end === -1) return -1
-      i = end + 1
-      continue
-    }
-    if (ch === open) {
-      depth++
-      i++
-      continue
-    }
-    if (ch === close) {
-      depth--
-      if (depth === 0) return i
-      i++
-      continue
-    }
-    i++
-  }
-  return -1
-}
-
-/**
- * Find the index of the `)` that closes the `(` at `openIdx` (honoring
- * arbitrarily nested parens; braces don't affect paren depth, so a
- * `.find(i => { ... })` callback body is crossed correctly). Returns -1 if
+ * Find the index of the `)` that closes the `(` at `openIdx`, honoring
+ * arbitrarily nested parens (braces don't affect paren depth, so a
+ * `.find(i => { ... })` callback body is crossed correctly), and skipping
+ * over string/template-literal/comment content (#1710 — delegates to the
+ * shared bracket-scanner so a stray unmatched paren inside a callback's
+ * string content is never mistaken for the real close). Returns -1 if
  * unbalanced. Scoped to findObjectRenderedAsChild's SHAPE 2 check below.
  */
 function findMatchingParenIdxInChildCheck(code: string, openIdx: number): number {
-  return findMatchingBracketInChildCheck(code, openIdx, '(', ')')
+  return findMatchingParen(code, openIdx)
 }
 
 export function findObjectRenderedAsChild(code: string): string | null {

@@ -15,6 +15,7 @@ import type { FounderScopedPrimitive } from '@/lib/build/primitive-credentials'
 // Re-exported from here too (existing tests import them from this route
 // file directly) so this extraction is not a breaking change for callers.
 import { mintPreviewDbToken, mintPreviewPrimitiveTokens, FOUNDER_SCOPED_PRIMITIVES } from '@/lib/build/preview-tokens'
+import { findMatchingBrace } from '@/lib/build/bracket-scanner'
 export { mintPreviewPrimitiveTokens, FOUNDER_SCOPED_PRIMITIVES }
 // Sucrase removed — builds were failing. Using client-side Babel.
 // The key fix is using models that produce COMPLETE code (not maverick 512-tok)
@@ -26,82 +27,6 @@ export { mintPreviewPrimitiveTokens, FOUNDER_SCOPED_PRIMITIVES }
  *  /api/community/ (#505) requests, and (#443)
  *  the right primitive-proxy token on same-origin /api/primitive/{name}/...
  *  requests. No-op pieces omitted when there is no token to attach. */
-/** Index of the closing `quote` that ends the string starting at `openIdx` (honoring `\`-escapes), or -1 if unterminated. */
-function findStringEnd(code: string, openIdx: number, quote: string): number {
-  let i = openIdx + 1
-  while (i < code.length) {
-    if (code[i] === '\\') {
-      i += 2
-      continue
-    }
-    if (code[i] === quote) return i
-    i++
-  }
-  return -1
-}
-
-/** Index of the closing `` ` `` that ends the template literal starting at `openIdx`, honoring nested `${}` interpolations. */
-function findBacktickEnd(code: string, openIdx: number): number {
-  let i = openIdx + 1
-  while (i < code.length) {
-    const ch = code[i]
-    if (ch === '\\') {
-      i += 2
-      continue
-    }
-    if (ch === '`') return i
-    if (ch === '$' && code[i + 1] === '{') {
-      const closeIdx = findMatchingBrace(code, i + 1)
-      if (closeIdx === -1) return -1
-      i = closeIdx + 1
-      continue
-    }
-    i++
-  }
-  return -1
-}
-
-/**
- * Index of the `}` that closes the `{` at `openIdx` (honoring arbitrarily
- * nested braces), or -1 if unbalanced.
- *
- * Skips over string/template literals it scans through so a lone, unmatched
- * `}` INSIDE one — e.g. a literal-type union member like
- * `'close-}-bracket'` in an interface field's type — is never mistaken for
- * the interface's real closing brace. Same technique already proven in
- * lib/build/output-validator.ts's findMatchingBracket (#1654 and friends);
- * this file's depth-counter shared the identical gap.
- */
-function findMatchingBrace(code: string, openIdx: number): number {
-  let depth = 0
-  let i = openIdx
-  while (i < code.length) {
-    const ch = code[i]
-    if (ch === '\\') { i += 2; continue }
-    if (ch === '"' || ch === "'") {
-      const end = findStringEnd(code, i, ch)
-      if (end === -1) return -1
-      i = end + 1
-      continue
-    }
-    if (ch === '`') {
-      const end = findBacktickEnd(code, i)
-      if (end === -1) return -1
-      i = end + 1
-      continue
-    }
-    if (ch === '{') { depth++; i++; continue }
-    if (ch === '}') {
-      depth--
-      if (depth === 0) return i
-      i++
-      continue
-    }
-    i++
-  }
-  return -1
-}
-
 /**
  * Strip every top-level `interface Name { ... }` declaration from `code`.
  *
@@ -119,9 +44,10 @@ function findMatchingBrace(code: string, openIdx: number): number {
  * nested `}`, leaving the rest of the interface body (plus an orphan
  * trailing `}`) behind as dangling, invalid JS passed straight into Babel —
  * the same "blank preview" / crash class this file's whole fix history
- * exists to prevent. Finding the interface's TRUE closing brace by
- * depth-counting fixes this without changing behavior for an interface with
- * no nested braces (same brace found either way).
+ * exists to prevent. Finding the interface's TRUE closing brace via the
+ * shared, string/comment-aware bracket-scanner (#1710) fixes this without
+ * changing behavior for an interface with no nested braces (same brace
+ * found either way).
  */
 export function stripTypeScriptInterfaces(code: string): string {
   const headRe = /interface\s+\w+\s*\{/g
