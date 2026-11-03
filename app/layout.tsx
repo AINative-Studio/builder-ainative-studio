@@ -1,5 +1,4 @@
 import type { Metadata } from 'next'
-import { Geist, Geist_Mono, Poppins, Newsreader, IBM_Plex_Mono } from 'next/font/google'
 import localFont from 'next/font/local'
 import './globals.css'
 import './modernist.css'
@@ -11,35 +10,45 @@ import { CommandPaletteProvider } from '@/components/providers/command-palette-p
 import GoogleAnalytics from '@/components/analytics/google-analytics'
 import MetaPixel from '@/components/analytics/meta-pixel'
 
-const poppins = Poppins({
-  weight: ['300', '400', '500', '600', '700'],
+// Every font below is vendored locally (next/font/local) instead of fetched
+// via next/font/google at build time: Turbopack's font-metadata fetch
+// intermittently fails ("next/font/google queries have exactly one entry" /
+// can't resolve the generated font CSS module) for ANY next/font/google
+// family, not just one — #1706 (Archivo) and #1723 (Newsreader) each found
+// the identical failure on a different font, so the whole file was
+// migrated at once (#1738) rather than fixing one family at a time. Each
+// vendored file is Google's own woff2, latin subset, fetched directly from
+// fonts.gstatic.com (the same files Google's CSS2 API serves), matching the
+// prior next/font/google configs' weights/styles exactly.
+
+const poppins = localFont({
+  src: [
+    { path: './fonts/poppins-300-latin.woff2', weight: '300', style: 'normal' },
+    { path: './fonts/poppins-400-latin.woff2', weight: '400', style: 'normal' },
+    { path: './fonts/poppins-500-latin.woff2', weight: '500', style: 'normal' },
+    { path: './fonts/poppins-600-latin.woff2', weight: '600', style: 'normal' },
+    { path: './fonts/poppins-700-latin.woff2', weight: '700', style: 'normal' },
+  ],
   variable: '--font-poppins',
-  subsets: ['latin'],
+  display: 'swap',
 })
 
-const geistSans = Geist({
+const geistSans = localFont({
+  src: './fonts/geist-variable-latin.woff2',
+  weight: '100 900',
   variable: '--font-geist-sans',
-  subsets: ['latin'],
+  display: 'swap',
 })
 
-const geistMono = Geist_Mono({
+const geistMono = localFont({
+  src: './fonts/geist-mono-variable-latin.woff2',
+  weight: '100 900',
   variable: '--font-geist-mono',
-  subsets: ['latin'],
+  display: 'swap',
 })
 
 // Modernist design-system fonts (builder chrome only — see docs/AINATIVE_PRIMITIVES.md pivot).
 // Archivo = UI chrome, Newsreader = Cody's generated "artifact" prose, IBM Plex Mono = machine text.
-//
-// Archivo is vendored locally (next/font/local) instead of fetched via
-// next/font/google at build time: Turbopack's font-metadata fetch for this
-// specific family intermittently fails ("next/font/google queries have
-// exactly one entry" / can't resolve the generated font CSS module), making
-// the "Coding Standards" CI check flaky on main and on PRs unrelated to
-// fonts (see #1706). The vendored file (app/fonts/archivo-variable-latin.woff2)
-// is Google's own Archivo variable woff2, latin subset, fetched directly
-// from fonts.gstatic.com (the same file Google's CSS2 API serves for every
-// weight 400-800 request, since Archivo ships as one variable master),
-// matching the prior next/font/google config's weight range exactly.
 const archivo = localFont({
   src: './fonts/archivo-variable-latin.woff2',
   weight: '400 800',
@@ -47,17 +56,27 @@ const archivo = localFont({
   display: 'swap',
 })
 
-const newsreader = Newsreader({
-  weight: ['400', '500', '600'],
-  style: ['normal', 'italic'],
+const newsreader = localFont({
+  src: [
+    { path: './fonts/newsreader-400-normal-latin.woff2', weight: '400', style: 'normal' },
+    { path: './fonts/newsreader-500-normal-latin.woff2', weight: '500', style: 'normal' },
+    { path: './fonts/newsreader-600-normal-latin.woff2', weight: '600', style: 'normal' },
+    { path: './fonts/newsreader-400-italic-latin.woff2', weight: '400', style: 'italic' },
+    { path: './fonts/newsreader-500-italic-latin.woff2', weight: '500', style: 'italic' },
+    { path: './fonts/newsreader-600-italic-latin.woff2', weight: '600', style: 'italic' },
+  ],
   variable: '--font-newsreader',
-  subsets: ['latin'],
+  display: 'swap',
 })
 
-const plexMono = IBM_Plex_Mono({
-  weight: ['400', '500', '600'],
+const plexMono = localFont({
+  src: [
+    { path: './fonts/ibm-plex-mono-400-latin.woff2', weight: '400', style: 'normal' },
+    { path: './fonts/ibm-plex-mono-500-latin.woff2', weight: '500', style: 'normal' },
+    { path: './fonts/ibm-plex-mono-600-latin.woff2', weight: '600', style: 'normal' },
+  ],
   variable: '--font-plex-mono',
-  subsets: ['latin'],
+  display: 'swap',
 })
 
 export const metadata: Metadata = {
