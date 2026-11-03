@@ -49,7 +49,15 @@ export function stripGradients(code: string): string {
  * Detect if code contains gradients
  */
 export function hasGradients(code: string): boolean {
-  return GRADIENT_PATTERNS.some((pattern) => pattern.test(code))
+  // GRADIENT_PATTERNS are module-level singleton /g regexes, so .test() is
+  // stateful across calls: a match leaves lastIndex pointing past it, and
+  // the NEXT call (on a different code string) silently starts scanning
+  // from there instead of index 0, missing an earlier real match. Resetting
+  // lastIndex before each test keeps every call independent of call order.
+  return GRADIENT_PATTERNS.some((pattern) => {
+    pattern.lastIndex = 0
+    return pattern.test(code)
+  })
 }
 
 /**
