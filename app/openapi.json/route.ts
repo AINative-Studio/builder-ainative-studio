@@ -292,6 +292,55 @@ const spec = {
         responses: { '200': { description: 'Enrollment confirmed' } },
       },
     },
+    '/api/build/provision': {
+      post: {
+        operationId: 'provisionCompany',
+        summary: 'Provision a real, persistent per-company data layer (AINative Instant DB) for a company shipped from /build',
+        description:
+          'Signed-in founder (session cookie present) provisions a PERMANENT key immediately. Anonymous caller provisions a TEMPORARY (~24h) key plus a claim token that a later signed-in payment can upgrade to permanent with no data loss. See /.well-known/provisioning for the full discovery document.',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['slug'],
+                properties: { slug: { type: 'string' }, name: { type: 'string' } },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Provisioning result',
+            content: {
+              'application/json': {
+                schema: {
+                  oneOf: [
+                    {
+                      type: 'object',
+                      properties: {
+                        ok: { type: 'boolean', enum: [true] },
+                        zerodbProjectId: { type: 'string' },
+                        keyKind: { type: 'string', enum: ['permanent', 'tmp'] },
+                        created: { type: 'boolean' },
+                        claimable: { type: 'boolean' },
+                        deployUrl: { type: 'string' },
+                        dnsPointable: { type: 'boolean' },
+                      },
+                    },
+                    {
+                      type: 'object',
+                      properties: { ok: { type: 'boolean', enum: [false] }, reason: { type: 'string' } },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    },
     '/api/build/secrets': {
       get: {
         operationId: 'listAppSecrets',
