@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
   const error = String(body?.error || '').trim()
   if (!chatId) return Response.json({ ok: false, reason: 'chatId required' }, { status: 400 })
 
-  const stored = await resolveStoredApp(chatId).catch(() => null)
+  const stored = await resolveStoredApp(chatId, { requireFiles: true }).catch(() => null)
   if (!stored?.code) return Response.json({ ok: false, reason: 'no_stored_code' })
 
   // Deterministic pre-check (real bug, "shoplo", 2026-11-03): a multi-file
