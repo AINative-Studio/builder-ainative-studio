@@ -432,6 +432,41 @@ function App(){
     expect(hasAlertInLeadCaptureGap(code)).toBe(false)
   })
 
+  // #1760: same body-closing-brace scan as above, but the stray unmatched
+  // "}" is inside a `//` line comment instead of a string literal — the
+  // string-literal fix above (findMatchingBracket skipping quoted content)
+  // did nothing for this, since a comment is neither a string nor a
+  // template literal. Truncates the body before the real alert()/
+  // `/api/db/` calls further down, same silent miss.
+  const PERSISTS_AND_ALERTS_STRAY_BRACE_IN_COMMENT = `
+function App(){
+  const [email, setEmail] = useState('')
+  const handleEarlyAccess = async (e) => {
+    e.preventDefault()
+    // note: legacy cleanup }
+    await fetch('/api/db/waitlist', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ email }) }).catch(()=>{})
+    alert("You're on the list!")
+    setEmail('')
+  }
+  return (<form onSubmit={handleEarlyAccess}><input type="email" value={email} onChange={e=>setEmail(e.target.value)} /></form>)
+}`
+
+  it('THE BUG (#1760, stray brace inside a // comment in the body): still flags a lead-capture handler whose body contains a comment with an unmatched "}" before the real alert()/persist calls', () => {
+    expect(hasAlertInLeadCaptureGap(PERSISTS_AND_ALERTS_STRAY_BRACE_IN_COMMENT)).toBe(true)
+  })
+
+  it('does NOT flag a persisted-without-alert handler with a stray brace inside a body comment (no regression)', () => {
+    const code = `
+function App(){
+  const handleSubmit = async (e) => {
+    // note: legacy cleanup }
+    await fetch('/api/db/waitlist', { method: 'POST' }).catch(()=>{})
+  }
+  return (<form onSubmit={handleSubmit}><input type="email" /></form>)
+}`
+    expect(hasAlertInLeadCaptureGap(code)).toBe(false)
+  })
+
   it('checkObedience surfaces alertInLeadCaptureGap and a reason string', () => {
     const r = checkObedience(PERSISTS_BUT_ALERTS, 'a landing page')
     expect(r.alertInLeadCaptureGap).toBe(true)

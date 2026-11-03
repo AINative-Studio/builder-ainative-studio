@@ -169,6 +169,15 @@ function findBacktickEnd(code: string, openIdx: number): number {
  * technique already proven in template-literal-to-concat.ts) fixes this without
  * changing behavior for a string with no stray bracket characters (same bracket
  * found either way).
+ *
+ * Also skips `//` line comments and `/* *\/` block comments it scans through
+ * — same gap as the string/template-literal one above, just for comments: a
+ * handler body's `// TODO: cleanup }` left the depth counter mistaking the
+ * comment's stray `}` for the body's real closing brace, truncating `body`
+ * in hasAlertInLeadCaptureGap before the real alert()//api/db/ calls later
+ * in the handler — silently missing the exact bug this gate exists to catch
+ * (#1760). Same technique already proven in code-validator.ts's
+ * findMatchingBracketInChildCheck (#1749).
  */
 function findMatchingBracket(code: string, openIdx: number, open: string, close: string): number {
   let depth = 0
@@ -176,6 +185,16 @@ function findMatchingBracket(code: string, openIdx: number, open: string, close:
   while (i < code.length) {
     const ch = code[i]
     if (ch === '\\') { i += 2; continue }
+    if (ch === '/' && code[i + 1] === '/') {
+      const nl = code.indexOf('\n', i + 2)
+      i = nl === -1 ? code.length : nl + 1
+      continue
+    }
+    if (ch === '/' && code[i + 1] === '*') {
+      const end = code.indexOf('*/', i + 2)
+      i = end === -1 ? code.length : end + 2
+      continue
+    }
     if (ch === '"' || ch === "'") {
       const end = findStringEnd(code, i, ch)
       if (end === -1) return -1

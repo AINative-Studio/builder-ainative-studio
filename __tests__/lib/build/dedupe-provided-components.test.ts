@@ -247,6 +247,41 @@ describe('dedupeProvidedComponents', () => {
     expect(out).toMatch(/function App\(/)
   })
 
+  // #1760: same findMatchingParen gap as above, but the stray unmatched `)`
+  // is inside a `/* */` block comment instead of a string/template literal
+  // — the string-literal fix above did nothing for this, since a comment is
+  // neither a string nor a template literal.
+  it('#1760: removes a const-arrow redeclaration whose param list has a block comment with a stray unmatched paren', () => {
+    const code = [
+      "import { Button } from './components/ui/button'",
+      "const Button = (props /* legacy ) note */) => {",
+      "  return (<button {...props} />);",
+      "}",
+      "",
+      "function App() {",
+      '  return <Button label="hi" />;',
+      "}",
+    ].join('\n')
+    const out = dedupeProvidedComponents(code)
+    expect(out).not.toMatch(/const Button\s*=/)
+    expect(out).toMatch(/function App\(/)
+  })
+
+  it('#1760: removes a single-line function redeclaration whose param list has a block comment with a stray unmatched paren', () => {
+    const code = [
+      "function Card(/* legacy ) note */ props){ return (props && props.children) || null; } // stub",
+      "",
+      "function Customers() {",
+      "  function helper() { return 1; }",
+      "  return <div>customers</div>;",
+      "}",
+    ].join('\n')
+    const out = dedupeProvidedComponents(code)
+    expect(out).not.toMatch(/function Card\(/)
+    expect(out).toMatch(/function Customers\(/)
+    expect(out).toMatch(/function helper\(/)
+  })
+
   it('#1654-class: removes a single-line function redeclaration whose default param value is a string literal with a stray unmatched paren', () => {
     const code = [
       "function Card({ label = 'Thanks :)' }){ return (label); } // stub",

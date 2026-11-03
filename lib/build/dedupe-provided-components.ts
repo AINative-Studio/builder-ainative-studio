@@ -151,6 +151,16 @@ function findBacktickEnd(code: string, openIdx: number): number {
  * entirely (same technique already proven in obedience-gate.ts) fixes this
  * without changing behavior for a param list with no stray bracket
  * characters in its string content (same bracket found either way).
+ *
+ * Also skips `//` line comments and `/* *\/` block comments it scans
+ * through — same gap as the string/template-literal one above, just for
+ * comments: a param list like `(props /* legacy ) note *\/) => {...}` had
+ * its stray `)` inside the comment mistaken for the param list's real
+ * close, so the redeclaration's `afterParamsRe` check (expecting `=>`/`{`
+ * right after) failed and the whole redeclaration survived un-removed —
+ * reproducing the exact "Identifier already declared" crash this module
+ * exists to prevent (#1760). Same technique already proven in
+ * code-validator.ts's findMatchingBracketInChildCheck (#1749).
  */
 function findMatchingParen(code: string, openIdx: number, open = '(', close = ')'): number {
   let depth = 0
@@ -158,6 +168,16 @@ function findMatchingParen(code: string, openIdx: number, open = '(', close = ')
   while (i < code.length) {
     const ch = code[i]
     if (ch === '\\') { i += 2; continue }
+    if (ch === '/' && code[i + 1] === '/') {
+      const nl = code.indexOf('\n', i + 2)
+      i = nl === -1 ? code.length : nl + 1
+      continue
+    }
+    if (ch === '/' && code[i + 1] === '*') {
+      const end = code.indexOf('*/', i + 2)
+      i = end === -1 ? code.length : end + 2
+      continue
+    }
     if (ch === '"' || ch === "'") {
       const end = findStringEnd(code, i, ch)
       if (end === -1) return -1
