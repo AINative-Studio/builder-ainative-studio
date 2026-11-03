@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { BuildApp } from '@/components/build/BuildApp'
 import { EnvSetup } from '@/components/env-setup'
+import { WebMcpModelContext } from '@/components/webmcp-model-context'
 import { hasEnvVars, checkRequiredEnvVars } from '@/lib/env-check'
 
 /**
@@ -83,6 +84,7 @@ export default function Home() {
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(productJsonLd) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(webSiteJsonLd) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationJsonLd) }} />
+      <WebMcpModelContext />
       <BuildApp />
     </>
   )
