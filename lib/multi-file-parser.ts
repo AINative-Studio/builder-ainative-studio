@@ -28,23 +28,26 @@ const FILE_MARKER = /^\/\/\s*---\s*FILE:\s*(.+?)\s*---\s*$/
  */
 export function stripTrailingProse(content: string): string {
   const trimmed = content.replace(/\s+$/, '')
-  // A lone markdown horizontal rule on its own line, with non-code content
-  // after it, is the exact shape this bug produces. Find the LAST such line
+  // A lone markdown horizontal rule on its own line — trailing commentary
+  // after it (the bug's main shape), or a bare rule with nothing after it at
+  // all (a leftover file-separator artifact, still a real syntax error on
+  // its own) — is the exact shape this bug produces. Find the LAST such line
   // (there can legitimately be no earlier one — JSX/TS source never contains
   // a bare `---` line) and check whether code before it already balances.
-  const ruleMatch = trimmed.match(/\n---\s*\n/g)
-  if (!ruleMatch) return trimmed
+  const ruleRe = /\n---[ \t]*(?:\n|$)/g
+  let match: RegExpExecArray | null = null
+  let lastMatch: RegExpExecArray | null = null
+  while ((match = ruleRe.exec(trimmed)) !== null) lastMatch = match
+  if (!lastMatch) return trimmed
 
-  const lastRuleIdx = trimmed.lastIndexOf('\n---\n')
-  if (lastRuleIdx === -1) return trimmed
+  const before = trimmed.slice(0, lastMatch.index)
+  const after = trimmed.slice(lastMatch.index + lastMatch[0].length)
 
-  const before = trimmed.slice(0, lastRuleIdx)
-  const after = trimmed.slice(lastRuleIdx + 5)
-
-  // Only treat this as trailing prose (not real code) if what follows looks
-  // like markdown commentary, not JS/TSX — bold text, a heading, or a bullet
-  // list are the shapes an LLM's trailing summary actually takes.
-  const looksLikeProse = /^\s*(\*\*|#|-\s|\d+\.\s)/.test(after)
+  // Only treat this as trailing prose (not real code) if what follows is
+  // EITHER empty (a bare leftover rule with nothing after it) OR looks like
+  // markdown commentary, not JS/TSX — bold text, a heading, or a bullet list
+  // are the shapes an LLM's trailing summary actually takes.
+  const looksLikeProse = after.trim() === '' || /^\s*(\*\*|#|-\s|\d+\.\s)/.test(after)
   if (!looksLikeProse) return trimmed
 
   // Confirm `before` is actually complete code: its braces balance, masking

@@ -38,6 +38,26 @@ describe('stripTrailingProse (unit)', () => {
     expect(result.trim().endsWith('}')).toBe(true)
   })
 
+  it('drops a bare trailing "---" with nothing after it (the real shoplo App.tsx shape — leftover file-separator artifact)', () => {
+    const content = [
+      "import React from 'react';",
+      "import Footer from './components/Footer';",
+      'export default function App() {',
+      '  return (',
+      '    <div>',
+      '      <Footer />',
+      '    </div>',
+      '  );',
+      '}',
+      '---',
+    ].join('\n')
+
+    const result = stripTrailingProse(content)
+    expect(result).not.toMatch(/---\s*$/)
+    expect(result).toContain('export default function App')
+    expect(result.trim().endsWith('}')).toBe(true)
+  })
+
   it('leaves content with no trailing markdown rule untouched', () => {
     const content = [
       "import React from 'react';",
