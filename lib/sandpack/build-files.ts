@@ -47,12 +47,39 @@ function findStringEnd(code: string, openIdx: number, quote: string): number {
   return -1
 }
 
-/** Index of the closing `` ` `` that ends the template literal starting at `openIdx` (honoring `\`-escapes), or -1 if unterminated. */
+/**
+ * Index of the closing `` ` `` that ends the template literal starting at
+ * `openIdx` (honoring `\`-escapes and skipping over `${}` interpolations),
+ * or -1 if unterminated.
+ *
+ * The `${}` skip matters because a `${}` interpolation can itself contain a
+ * nested backtick template literal (e.g. a ternary picking between two
+ * backtick-quoted strings) — without it, this returns the index of that
+ * INNER backtick instead of the real outer closing one, so
+ * maskCommentsAndStrings() below stops masking too early and leaves the
+ * rest of the outer literal's content (plus whatever real code follows the
+ * true closing backtick) unmasked. A generated landing page rendering a
+ * "Quickstart" code sample via `` `base ${active ? `import React` : `x`}` ``
+ * then has its own literal "import React" text read as if it were real
+ * code, which can fool the "is React already imported" / hooks-usage check
+ * this function feeds into.
+ */
 function findBacktickEnd(code: string, openIdx: number): number {
   let i = openIdx + 1
   while (i < code.length) {
     if (code[i] === '\\') { i += 2; continue }
     if (code[i] === '`') return i
+    if (code[i] === '$' && code[i + 1] === '{') {
+      let depth = 1
+      let j = i + 2
+      while (j < code.length && depth > 0) {
+        if (code[j] === '{') depth++
+        else if (code[j] === '}') depth--
+        j++
+      }
+      i = j
+      continue
+    }
     i++
   }
   return -1
@@ -375,9 +402,37 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
       (_match, quote: string, _dots: string, rest: string) => `from ${quote}${componentsPrefix}${rest}${quote}`
     )
 
-    if (!fixed.includes("from 'react'") && !fixed.includes('from "react"')) {
+    // Real bug found this run: unlike the mainCode/App.tsx react-import
+    // check above (which masks comments/strings via
+    // maskCommentsAndStrings() specifically because of this same false-
+    // positive class, see #1165-era history), this per-FILE check ran
+    // directly against raw `fixed` text with no masking at all — a SIBLING
+    // component (never routed through the mainCode check above) using a
+    // hook with no real import, but containing a string/template literal
+    // that merely mentions `from 'react'` (e.g. a landing page rendering a
+    // "Quickstart" code sample as text, the exact realistic shape already
+    // covered for mainCode), wrongly read as "react is already imported"
+    // and skipped injection entirely — "useState is not defined" at render
+    // for that component, the exact blank/crashed-preview class this safety
+    // net exists to prevent.
+    //
+    // Can't just blank-mask strings the way the mainCode check above does
+    // and then look for "from 'react'" — maskCommentsAndStrings() blanks a
+    // string's quote characters along with its content, so a REAL import's
+    // own `'react'` specifier gets blanked just as thoroughly as a fake
+    // one inside an arbitrary string, making the two indistinguishable
+    // (confirmed: that approach broke 2 existing tests whose fixtures have
+    // a real, already-present `import React from 'react'` line). Instead,
+    // require the REAL-import shape to start a line (`^` or after a
+    // newline) — a real import is always its own top-level statement; a
+    // string/template literal merely containing import-like text embedded
+    // mid-statement (e.g. `const sample = "import React from 'react'"`)
+    // never starts a line this way.
+    const hasRealReactImport = /(^|\n)\s*import\b[^\n]*\bfrom\s+['"]react['"]/.test(fixed)
+    if (!hasRealReactImport) {
+      const fixedNoComments = maskCommentsAndStrings(fixed)
       const hooks = ['useState', 'useEffect', 'useRef', 'useMemo', 'useCallback', 'useContext', 'useReducer']
-        .filter(h => fixed.includes(h))
+        .filter(h => fixedNoComments.includes(h))
       if (hooks.length > 0) {
         fixed = `import React, { ${hooks.join(', ')} } from 'react'\n${fixed}`
       } else {
