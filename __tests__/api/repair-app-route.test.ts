@@ -95,4 +95,56 @@ describe('POST /api/build/repair-app', () => {
     const json = await res.json()
     expect(json.ok).toBe(false)
   })
+
+  /**
+   * Real bug fix (customer-reported, "shoplo", 2026-11-03): a multi-file
+   * app's LAST file carried trailing chat-style commentary (a markdown
+   * '---' rule + "**Key Points**" prose) the model appended after finishing
+   * the real code — see lib/multi-file-parser.ts's stripTrailingProse().
+   * An app generated before that generation-time fix shipped can still
+   * have it baked into its stored files map. This mechanical pre-check
+   * must fix it for FREE (no LLM call) rather than fall through to the
+   * 3-attempt repair loop, which was observed failing on this exact shape.
+   */
+  it('fixes trailing chat commentary mechanically, with zero LLM calls, when a files map is present', async () => {
+    const brokenFooter =
+      "import React from 'react';\nexport default function Footer() {\n  return <footer>hi</footer>;\n}\n---\n\n**Key Points**\n\n- Some commentary the model appended."
+    h.resolveStoredApp.mockResolvedValue({
+      code: 'irrelevant combined blob',
+      files: {
+        '/src/App.tsx': "import Footer from './components/Footer';\nexport default function App() { return <Footer />; }",
+        '/src/components/Footer.tsx': brokenFooter,
+      },
+    })
+
+    const res: any = await POST(postReq({ chatId: 'c1', error: 'Unexpected token (5:0)' }))
+    const json = await res.json()
+
+    expect(json).toEqual({ ok: true, recovered: true, attempts: 0, method: 'mechanical' })
+    expect(h.createCompletion).not.toHaveBeenCalled()
+    expect(h.storeFiles).toHaveBeenCalledWith(
+      'c1',
+      expect.objectContaining({
+        '/src/components/Footer.tsx': expect.not.stringContaining('Key Points'),
+      }),
+    )
+    expect(h.saveGeneration).toHaveBeenCalledWith(expect.objectContaining({ chatId: 'c1', model: 'strip-trailing-prose' }))
+  })
+
+  it('falls through to the LLM repair loop when the files map has nothing stripTrailingProse can fix', async () => {
+    h.resolveStoredApp.mockResolvedValue({
+      code: BROKEN_CODE,
+      files: { '/src/App.tsx': BROKEN_CODE }, // genuinely broken, no trailing-prose shape
+    })
+    h.createCompletion.mockResolvedValue({
+      choices: [{ message: { content: '```jsx\n' + FIXED_CODE + '\n```' } }],
+    })
+
+    const res: any = await POST(postReq({ chatId: 'c1', error: 'Unterminated template (2:15)' }))
+    const json = await res.json()
+
+    expect(json.ok).toBe(true)
+    expect(json.method).not.toBe('mechanical')
+    expect(h.createCompletion).toHaveBeenCalled()
+  })
 })

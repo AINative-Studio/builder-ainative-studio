@@ -28,6 +28,7 @@ import OpenAI from 'openai'
 import { resolveStoredApp } from '@/lib/build/ready-gate'
 import { runValidationRetryLoop, buildRepairPrompt, extractErrorWindow } from '@/lib/generation-retry'
 import { isRenderable, extractRenderableCode } from '@/lib/code-validator'
+import { stripTrailingProse } from '@/lib/multi-file-parser'
 import { storePreview } from '@/lib/preview-store'
 import { storeFiles } from '@/lib/preview-store-v2'
 import { saveGeneration } from '@/lib/zerodb-store'
@@ -60,6 +61,40 @@ export async function POST(request: NextRequest) {
 
   const stored = await resolveStoredApp(chatId).catch(() => null)
   if (!stored?.code) return Response.json({ ok: false, reason: 'no_stored_code' })
+
+  // Deterministic pre-check (real bug, "shoplo", 2026-11-03): a multi-file
+  // generation's LAST file can carry trailing chat-style commentary the
+  // model appended after finishing the real code — the same class of bug
+  // parseMultiFileOutput's stripTrailingProse() now prevents at generation
+  // time, but an app generated before that fix shipped can still have it
+  // baked into its stored files map. Try this free, instant, no-LLM-call
+  // fix FIRST: it's exactly the failure shape the 3-attempt LLM repair loop
+  // below was observed failing on for this exact bug (the model kept
+  // "fixing" other things while leaving the real syntax error in place).
+  if (stored.files && Object.keys(stored.files).length > 0) {
+    const mechanicallyFixed: Record<string, string> = {}
+    let anyChanged = false
+    for (const [path, content] of Object.entries(stored.files)) {
+      const fixed = stripTrailingProse(content)
+      if (fixed !== content) anyChanged = true
+      mechanicallyFixed[path] = fixed
+    }
+    if (anyChanged) {
+      const stillBroken = Object.entries(mechanicallyFixed).some(
+        ([path, content]) => (path.endsWith('.tsx') || path.endsWith('.jsx')) && !isRenderable(content).ok,
+      )
+      if (!stillBroken) {
+        storeFiles(chatId, mechanicallyFixed)
+        const combined = Object.values(mechanicallyFixed).join('\n')
+        storePreview(chatId, combined)
+        await saveGeneration({
+          chatId, prompt: 'repair-mechanical', generatedCode: combined,
+          model: 'strip-trailing-prose', codeLength: combined.length, files: mechanicallyFixed,
+        }).catch(() => {})
+        return Response.json({ ok: true, recovered: true, attempts: 0, method: 'mechanical' })
+      }
+    }
+  }
 
   try {
     const result = await runValidationRetryLoop(
