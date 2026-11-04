@@ -1105,6 +1105,11 @@ export async function POST(request: NextRequest) {
                 console.log(`   [Phase ${phase}/${totalPhases}] ${message}`)
               },
               responseId,
+              // #1802/#1804: a rate-limit-shaped phase failure (confirmed
+              // live: a Bedrock daily-quota 429 hit every phase of a real
+              // e-commerce product generation) now retries with a different
+              // model instead of the identical, still-rate-limited one.
+              { fallbackModels: STANDARD_FALLBACKS.filter((m) => m !== DEFAULT_MODEL) },
             )
 
             // Log generation summary

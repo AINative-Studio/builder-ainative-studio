@@ -33,6 +33,10 @@ export interface GeneratedChunk {
   success: boolean
   validationPassed: boolean
   error?: string
+  /** HTTP status of the underlying failure, when it's a rate-limit/overload
+   *  shaped error (429/502/503/504) — see isRateLimitedError below. Undefined
+   *  for a content/validation failure or any error with no `.status`. */
+  errorStatus?: number
   generationTime: number
 }
 
@@ -80,6 +84,31 @@ export interface ExecuteChunkPlanOptions {
   budget?: GenerationBudget
   /** Plan tier, used to pick the cap when `budget` is omitted. */
   tier?: string
+  /**
+   * Model(s) to retry a failed phase with when the failure is rate-limit
+   * shaped (issue #1802/#1804). Real incident, found live 2026-11-04: a
+   * Bedrock daily-token-quota 429 hit EVERY phase of a multi-pass e-commerce
+   * product generation — the existing single retry re-called the SAME
+   * (client, modelId) pair, so the retry 429d identically every time (0
+   * successful phases, "build failed"). When the first attempt's error is a
+   * 429 (or a 5xx from the same overloaded backend) and fallbackModels is
+   * non-empty, the retry uses the first entry here instead of the original
+   * model — a genuinely different model/provider that doesn't share the same
+   * quota. Omit (or pass []) to keep the prior same-model retry behavior.
+   */
+  fallbackModels?: string[]
+}
+
+/** True for a rate-limit/overload-shaped failure (matches lib/utils/retry.ts's
+ *  isRetryableError — same OpenAI SDK APIError.status shape). A 429 retried
+ *  against the IDENTICAL model/provider fails the same way every time; only
+ *  these statuses justify switching to a different model on retry. */
+function isRateLimitedError(error: unknown): boolean {
+  if (error && typeof error === 'object' && 'status' in error) {
+    const status = (error as { status: unknown }).status
+    return status === 429 || status === 502 || status === 503 || status === 504
+  }
+  return false
 }
 
 export interface ChunkPlanResult {
@@ -192,8 +221,25 @@ export async function executeChunkPlanWithBudget(
           break
         }
 
-        onProgress(phaseNum, totalPhases, `Retrying phase ${phaseNum}...`)
-        const retryChunk = await generateChunk(phase, client, modelId, phaseNum, totalPhases, onProgress)
+        // #1802/#1804: a 429/5xx-shaped failure retried against the SAME
+        // model/provider fails identically every time (confirmed live: 6-7
+        // phases, 0 successful, "build failed" from one exhausted Bedrock
+        // quota). Switch to the first configured fallback model for the
+        // retry in that case — a genuinely different model/provider that
+        // doesn't share the same rate limit. A content/validation failure
+        // (no .status, or a non-retryable one) keeps retrying the original
+        // model, unchanged from prior behavior.
+        const retryModel =
+          chunk.errorStatus !== undefined && options.fallbackModels && options.fallbackModels.length > 0
+            ? options.fallbackModels[0]
+            : modelId
+        onProgress(
+          phaseNum, totalPhases,
+          retryModel !== modelId
+            ? `Retrying phase ${phaseNum} with fallback model ${retryModel} (primary rate-limited)...`
+            : `Retrying phase ${phaseNum}...`,
+        )
+        const retryChunk = await generateChunk(phase, client, retryModel, phaseNum, totalPhases, onProgress)
         budget = recordCall(budget, {
           inputTokens: retryChunk.tokenUsage.input,
           outputTokens: retryChunk.tokenUsage.output,
@@ -410,6 +456,9 @@ DEPENDENCIES: ${phase.dependencies.join(', ')}
       success: false,
       validationPassed: false,
       error: errorMsg,
+      errorStatus: isRateLimitedError(error)
+        ? (error as { status: number }).status
+        : undefined,
       generationTime
     }
   }
