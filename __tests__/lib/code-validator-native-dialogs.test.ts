@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { sanitizeForSandpack, validateGeneratedCode } from '@/lib/code-validator'
+import { sanitizeForSandpack, validateGeneratedCode, isRenderable } from '@/lib/code-validator'
 
 /**
  * #1559/#1565 real bug, single-file path: a generated handler's native,
@@ -114,5 +114,32 @@ describe('code-validator — autoFixCode neutralizes blocking native dialogs (#1
     expect(result.code).not.toMatch(/(?<![.\w$])alert\(/)
     expect(result.code).toContain('__previewSafeAlert')
     expect(result.fixes).toContain('Neutralized blocking native alert()/confirm()/prompt() call(s) — a real browser dialog freezes the entire preview tab until manually dismissed (#1559)')
+  })
+
+  /**
+   * Real bug found live (shoplo repair, 2026-11-04): isRenderable() is the
+   * parse gate register-app and repair-app's explicit-files mode use to
+   * decide whether stored code is safe to persist. Its KNOWN_RUNTIME_GLOBALS
+   * allowlist never learned __previewSafeAlert/__previewSafeConfirm/
+   * __previewSafePrompt — this file's OWN sanitizeForSandpack rewrites a raw
+   * alert()/confirm()/prompt() into exactly those names — so isRenderable
+   * rejected its own rewriter's correct output as an undefined-reference
+   * error. Confirmed live: a real company's Pricing.tsx (already correctly
+   * sanitized, calling __previewSafeAlert) was rejected by repair-app's
+   * explicit-files gate with that exact false positive.
+   */
+  it('isRenderable accepts the __previewSafeAlert/__previewSafeConfirm/__previewSafePrompt shim names sanitizeForSandpack produces', () => {
+    const code = [
+      "import React from 'react'",
+      'export default function App() {',
+      '  const handleSelect = (tier) => {',
+      "    __previewSafeAlert(`You selected the ${tier} plan!`)",
+      '  }',
+      "  const handleDelete = () => { if (__previewSafeConfirm('Sure?')) { __previewSafeAlert('Deleted') } }",
+      "  const handleAsk = () => { const name = __previewSafePrompt('Name?', 'default') }",
+      '  return (<button onClick={() => handleSelect(\'Pro\')}>Select Pro</button>)',
+      '}',
+    ].join('\n')
+    expect(isRenderable(code)).toEqual({ ok: true })
   })
 })
