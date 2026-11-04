@@ -13,6 +13,59 @@
  * (same generating instance → no cross-instance store fetch), so this runs
  * client-side on the exact map Sandpack would receive.
  */
+import { findStringEnd, findBacktickEnd } from './bracket-scanner'
+
+/**
+ * Blanks out `//` and `/* *\/` comments (replacing their characters with
+ * spaces, preserving length/newlines) while leaving string/template-literal
+ * CONTENTS untouched — same technique as obedience-gate.ts's own
+ * maskComments (#1704/#1708/#1713/#1717 and friends). Same bug class found
+ * here: `hasCrossFileImports` used to run its import regex against the
+ * WHOLE file including comments, so a single-file app with nothing but a
+ * COMMENT mentioning a removed/old relative import (e.g. `// import { util }
+ * from './lib/util' — no longer needed`) was misclassified as genuinely
+ * multi-file and routed to Sandpack instead of the simpler, hardened Babel
+ * path for no real reason.
+ */
+function maskComments(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += ' '.repeat(Math.min(end, code.length) - i)
+      i = Math.min(end, code.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
 
 /**
  * Files that are not real APP-COMPONENT source and must not count toward
@@ -54,7 +107,7 @@ export function hasCrossFileImports(files: Record<string, string> | null | undef
   const localImport = /\bimport\b[^'"]*['"](\.\.?\/|@\/)/
   for (const [path, content] of Object.entries(files)) {
     if (!isSourceFile(path) || typeof content !== 'string') continue
-    if (localImport.test(content)) return true
+    if (localImport.test(maskComments(content))) return true
   }
   return false
 }

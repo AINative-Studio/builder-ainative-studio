@@ -34,6 +34,21 @@ describe('preview-engine routing (#291)', () => {
     it('ignores npm imports (react, lucide)', () => {
       expect(hasCrossFileImports({ '/App.tsx': "import React from 'react'\nimport { X } from 'lucide-react'" })).toBe(false)
     })
+
+    // Same comment-blind bug class as obedience-gate.ts's maskComments
+    // (#1704 and friends): a commented-out relative import must not count
+    // as a real cross-file dependency.
+    it('#builder THE BUG: does NOT flag a single-file app whose only relative-import mention is inside a comment', () => {
+      expect(hasCrossFileImports({
+        '/App.tsx': "// import { util } from './lib/util' — no longer needed\nimport React from 'react'\nexport default function App(){return <div/>}",
+      })).toBe(false)
+    })
+
+    it('still detects a genuine relative import even with an unrelated comment present', () => {
+      expect(hasCrossFileImports({
+        '/App.tsx': "// A simple app\nimport Foo from './Foo'\nexport default function App(){return <Foo/>}",
+      })).toBe(true)
+    })
   })
 
   describe('shouldUseSandpack', () => {
