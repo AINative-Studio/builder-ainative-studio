@@ -187,4 +187,82 @@ describe('multi-pass-generator model fallback on rate-limit (#1802/#1804)', () =
 
     expect(callsByModel).toEqual([PRIMARY_MODEL, PRIMARY_MODEL])
   })
+
+  /**
+   * Real incident, found live (2026-11-04), AFTER the 429-fallback fix above
+   * was already deployed: Phase 1 of multi-pass chunking consistently failed
+   * in 94.7s-119.8s — right at CHUNK_GENERATION_TIMEOUT_MS (120s) — with
+   * "Request was aborted." (the OpenAI SDK's APIUserAbortError, whose
+   * `.status` is always `undefined` by construction, never a numeric code,
+   * so the existing 429-only check didn't match it). Because Phase 1 must
+   * succeed for mergeChunks() to produce anything ("Core structure (Phase 1)
+   * failed or is missing - cannot merge"), and BOTH the first attempt and
+   * its retry timed out identically against the same overloaded
+   * model/provider, this silently killed 100% of real generations even with
+   * the 429 fix in place. A request that hangs until the client gives up is
+   * the same underlying overload as a clean 429 — just without the status
+   * code — and should trigger the same fallback-model retry.
+   */
+  it('retries with a fallback model when the primary call times out (APIUserAbortError), not just on a 429', async () => {
+    const callsByModel: string[] = []
+    const client = {
+      chat: {
+        completions: {
+          create: vi.fn(async ({ model }: { model: string }) => {
+            callsByModel.push(model)
+            if (model === PRIMARY_MODEL) {
+              // Matches the OpenAI SDK's real APIUserAbortError shape:
+              // status is undefined (not a number), message is fixed text.
+              const err: any = new Error('Request was aborted.')
+              err.status = undefined
+              throw err
+            }
+            return {
+              choices: [{ message: { content: '```jsx\nexport default function App(){return <div/>}\n```' } }],
+              usage: { prompt_tokens: 1000, completion_tokens: 1000, total_tokens: 2000 },
+            }
+          }),
+        },
+      },
+    } as any
+
+    const result = await executeChunkPlanWithBudget(
+      planWithPhases(1), client, PRIMARY_MODEL, vi.fn(), 'chat-timeout-fallback-1',
+      { budget: createGenerationBudget({ limitUsd: 5.0, model: PRIMARY_MODEL }), fallbackModels: FALLBACK_MODELS },
+    )
+
+    expect(callsByModel[0]).toBe(PRIMARY_MODEL)
+    expect(callsByModel[1]).not.toBe(PRIMARY_MODEL)
+    expect(FALLBACK_MODELS).toContain(callsByModel[1])
+    expect(result.chunks[0].success).toBe(true)
+  })
+
+  it('does NOT treat an ordinary non-abort Error as timeout-shaped — only the specific aborted-request message triggers the fallback', async () => {
+    const callsByModel: string[] = []
+    const client = {
+      chat: {
+        completions: {
+          create: vi.fn(async ({ model }: { model: string }) => {
+            callsByModel.push(model)
+            if (callsByModel.length === 1) throw new Error('some unrelated content/validation failure')
+            return {
+              choices: [{ message: { content: '```jsx\nexport default function App(){return <div/>}\n```' } }],
+              usage: { prompt_tokens: 1000, completion_tokens: 1000, total_tokens: 2000 },
+            }
+          }),
+        },
+      },
+    } as any
+
+    await executeChunkPlanWithBudget(
+      planWithPhases(1), client, PRIMARY_MODEL, vi.fn(), 'chat-timeout-fallback-2',
+      { budget: createGenerationBudget({ limitUsd: 5.0, model: PRIMARY_MODEL }), fallbackModels: FALLBACK_MODELS },
+    )
+
+    // An unrelated error message (not "Request was aborted.") must NOT
+    // trigger the fallback — swapping models wouldn't help a genuine
+    // content/validation problem, and this must not become a blanket
+    // "always use the fallback on any retry" behavior.
+    expect(callsByModel[1]).toBe(PRIMARY_MODEL)
+  })
 })

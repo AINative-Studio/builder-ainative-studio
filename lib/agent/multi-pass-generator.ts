@@ -33,10 +33,21 @@ export interface GeneratedChunk {
   success: boolean
   validationPassed: boolean
   error?: string
-  /** HTTP status of the underlying failure, when it's a rate-limit/overload
-   *  shaped error (429/502/503/504) — see isRateLimitedError below. Undefined
-   *  for a content/validation failure or any error with no `.status`. */
-  errorStatus?: number
+  /**
+   * True when the failure is rate-limit/overload shaped (a 429/5xx status,
+   * OR a client-side request timeout against an overloaded provider) — see
+   * isRateLimitedError below. False for a content/validation failure.
+   *
+   * Deliberately a boolean, not the raw status code: a timeout-shaped
+   * failure (APIUserAbortError) has `.status === undefined` BY
+   * CONSTRUCTION even though it IS rate-limit shaped — storing the raw
+   * status here previously made that case indistinguishable from "not
+   * rate-limited" downstream (both ended up `undefined`), silently
+   * defeating the fallback-model retry for exactly the timeout case it was
+   * most needed for (found live, 2026-11-04: Phase 1 timed out identically
+   * on both the original attempt and its retry, every single time).
+   */
+  isRateLimited?: boolean
   generationTime: number
 }
 
@@ -123,14 +134,36 @@ function coerceMessageContentToString(content: unknown): string {
   return ''
 }
 
-/** True for a rate-limit/overload-shaped failure (matches lib/utils/retry.ts's
- *  isRetryableError — same OpenAI SDK APIError.status shape). A 429 retried
- *  against the IDENTICAL model/provider fails the same way every time; only
- *  these statuses justify switching to a different model on retry. */
+/**
+ * True for a rate-limit/overload-shaped failure — a 429/5xx (matches
+ * lib/utils/retry.ts's isRetryableError), OR a client-side request timeout
+ * (AbortSignal firing before the provider ever responded).
+ *
+ * Real incident, found live (2026-11-04): Phase 1 of multi-pass chunking
+ * consistently failed in 94.7s-119.8s — right at CHUNK_GENERATION_TIMEOUT_MS
+ * (120s) — with "Request was aborted." (the OpenAI SDK's
+ * APIUserAbortError, whose .status is always `undefined` by construction,
+ * never a numeric code). Because Phase 1 must succeed for mergeChunks() to
+ * produce anything at all ("Core structure (Phase 1) failed or is missing
+ * - cannot merge"), and the SAME retry against the SAME overloaded
+ * model/provider timed out identically every time, this silently killed
+ * the entire generation even after the 429-specific fallback (above) was
+ * already fixed — a request that hangs until the client gives up is the
+ * same underlying overload/backpressure as a clean 429, just without the
+ * clean status code to detect it by. Treated the same way: switch to a
+ * fallback model on retry instead of hammering the identical timeout again.
+ */
 function isRateLimitedError(error: unknown): boolean {
   if (error && typeof error === 'object' && 'status' in error) {
     const status = (error as { status: unknown }).status
-    return status === 429 || status === 502 || status === 503 || status === 504
+    if (status === 429 || status === 502 || status === 503 || status === 504) return true
+  }
+  if (
+    error instanceof Error &&
+    (error as { status?: unknown }).status === undefined &&
+    /request was aborted/i.test(error.message)
+  ) {
+    return true
   }
   return false
 }
@@ -254,7 +287,7 @@ export async function executeChunkPlanWithBudget(
         // (no .status, or a non-retryable one) keeps retrying the original
         // model, unchanged from prior behavior.
         const retryModel =
-          chunk.errorStatus !== undefined && options.fallbackModels && options.fallbackModels.length > 0
+          chunk.isRateLimited && options.fallbackModels && options.fallbackModels.length > 0
             ? options.fallbackModels[0]
             : modelId
         onProgress(
@@ -480,9 +513,7 @@ DEPENDENCIES: ${phase.dependencies.join(', ')}
       success: false,
       validationPassed: false,
       error: errorMsg,
-      errorStatus: isRateLimitedError(error)
-        ? (error as { status: number }).status
-        : undefined,
+      isRateLimited: isRateLimitedError(error),
       generationTime
     }
   }
