@@ -296,9 +296,16 @@ export function findSecretLoggingCalls(code: string): string[] {
 
 const H1_OPEN_TAG_PATTERN = /<h1[\s>]/gi
 
-/** PURE. Counts top-level <h1> opening tags in the generated code. */
+/**
+ * PURE. Counts top-level <h1> opening tags in the generated code.
+ *
+ * Scans a comment-masked view of `code` (#1826, same technique as #1715's
+ * fix elsewhere in this file): a commented-out example or leftover-draft
+ * mention of `<h1>` must not inflate the count and wrongly fail an
+ * otherwise-compliant single-h1 page.
+ */
 export function countH1Tags(code: string): number {
-  const matches = code.match(H1_OPEN_TAG_PATTERN)
+  const matches = maskComments(code).match(H1_OPEN_TAG_PATTERN)
   return matches ? matches.length : 0
 }
 
