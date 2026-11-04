@@ -98,6 +98,34 @@ describe('#1056 extractWiredPrimitives', () => {
     expect(extractWiredPrimitives('')).toEqual([])
     expect(extractWiredPrimitives(undefined as unknown as string)).toEqual([])
   })
+
+  // #1815: same comment-blind bug family as #1704/#1708/#1713/#1717/#1794/
+  // #1796/#1799/#1801/#1807/#1813 — a comment merely MENTIONING a primitive's
+  // real proxy path (e.g. a leftover TODO) used to satisfy this regex even
+  // though the app's real code never calls it, writing a fabricated
+  // `*Wired: true` into the founder-facing app registry.
+  it('#1815 THE BUG: ignores a primitive-proxy path mentioned only in a // comment', () => {
+    const code = `
+      function App() {
+        // TODO: wire up real checkout via /api/primitive/zerocommerce/checkout
+        return <div>hi</div>
+      }
+    `
+    expect(extractWiredPrimitives(code)).toEqual([])
+  })
+
+  it('#1815 THE BUG: ignores a primitive-proxy path mentioned only in a /* */ comment', () => {
+    const code = `/* old: fetch('/api/primitive/zeroinvoice/api/v1/invoices') */\nfunction App(){ return <div>hi</div> }`
+    expect(extractWiredPrimitives(code)).toEqual([])
+  })
+
+  it('#1815: still finds a genuine call even with an unrelated, harmless comment present', () => {
+    const code = `
+      // A simple invoicing dashboard.
+      fetch('/api/primitive/zeroinvoice/api/v1/invoices')
+    `
+    expect(extractWiredPrimitives(code)).toEqual(['zeroinvoice'])
+  })
 })
 
 describe('#1056 computeWiringFlags', () => {
@@ -133,5 +161,18 @@ describe('#1056 computeWiringFlags', () => {
     expect(flags.pipelineWired).toBe(true)
     expect(flags.zerovoiceWired).toBe(true)
     expect(flags.zeroinvoiceWired).toBe(false)
+  })
+
+  // #1815: capstackWired's own CAPSTACK_RE check had the identical
+  // comment-blindness bug — a comment mentioning /api/opencapstack/ could
+  // mark it wired with no real call anywhere in the code.
+  it('#1815 THE BUG: does NOT set capstackWired from a comment-only /api/opencapstack/ mention', () => {
+    const code = `// TODO: call /api/opencapstack/api/v1/captable\nfunction App(){ return <div>hi</div> }`
+    expect(computeWiringFlags(code).capstackWired).toBe(false)
+  })
+
+  it('#1815: still sets capstackWired true for a genuine call', () => {
+    const code = `fetch('/api/opencapstack/api/v1/captable')`
+    expect(computeWiringFlags(code).capstackWired).toBe(true)
   })
 })

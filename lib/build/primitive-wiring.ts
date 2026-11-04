@@ -32,6 +32,59 @@
  */
 
 import type { FounderScopedPrimitive } from '@/lib/build/primitive-credentials'
+import { findStringEnd, findBacktickEnd } from '@/lib/build/bracket-scanner'
+
+/**
+ * Blanks out `//` and `/* *\/` comments (replacing their characters with
+ * spaces, preserving length/newlines) while leaving string/template-literal
+ * CONTENTS untouched. #1815: extractWiredPrimitives/computeWiringFlags used
+ * to scan raw code, so a comment merely MENTIONING a primitive's real proxy
+ * path (e.g. a TODO) satisfied the check and wrote a fabricated
+ * `*Wired: true` into the founder-facing app registry for a primitive the
+ * app's real code never calls. Scoped to this file rather than importing
+ * one of the near-identical copies in obedience-gate.ts/completeness-gate.ts/
+ * output-validator.ts, since several sibling PRs are currently open against
+ * those files' own local copy.
+ */
+function maskComments(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += ' '.repeat(Math.min(end, code.length) - i)
+      i = Math.min(end, code.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
 
 /** Primitives recognized in the /api/primitive/{name}/... path, including
  *  contentworkflow — which has no founder credential (it uses Builder's own
@@ -64,8 +117,9 @@ const KNOWN_PRIMITIVES: ReadonlySet<string> = new Set<WirablePrimitive>([
 export function extractWiredPrimitives(code: string): WirablePrimitive[] {
   const out: WirablePrimitive[] = []
   const re = /\/api\/primitive\/([a-z]+)\//g
+  const masked = maskComments(code || '')
   let m: RegExpExecArray | null
-  while ((m = re.exec(code || '')) !== null) {
+  while ((m = re.exec(masked)) !== null) {
     const name = m[1]
     if (KNOWN_PRIMITIVES.has(name) && !out.includes(name as WirablePrimitive)) {
       out.push(name as WirablePrimitive)
@@ -118,6 +172,6 @@ export function computeWiringFlags(code: string): WiringFlags {
   for (const [primitive, flagKey] of Object.entries(WIRING_FLAG_BY_PRIMITIVE)) {
     flags[flagKey] = wired.has(primitive as WirablePrimitive)
   }
-  flags.capstackWired = CAPSTACK_RE.test(code || '')
+  flags.capstackWired = CAPSTACK_RE.test(maskComments(code || ''))
   return flags as WiringFlags
 }
