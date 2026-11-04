@@ -436,8 +436,34 @@ async function closePrimitiveComplianceGap(
 // this file's own already-proven-safer runValidationRetryLoop rotation
 // below (qwen-coder-32b, gpt-oss-20b, ministral-14b) instead of a third,
 // inconsistent ordering.
-const STANDARD_FALLBACKS = ['qwen-coder-32b', 'gpt-oss-20b', 'ministral-14b']
-const PREMIUM_FALLBACKS = ['kimi-k2.6', 'qwen-coder-32b', 'nemotron-70b', 'ministral-14b']
+//
+// #1832: qwen-coder-32b, gpt-oss-20b, and ministral-14b are all FREE/BASIC
+// tier and single-provider (NIM-only) by deliberate design on core's side
+// (verified directly against core's model_registry.py, not guessed —
+// `_add(ModelSpec("qwen-coder-32b", {NIM: ...}, (NIM,), "basic", ...))`;
+// ministral-14b isn't in the unified registry at all, only as an
+// NVIDIA-NIM-provider-level alias). Builder's founders are PAID/enterprise
+// accounts — a generation falling back onto free-tier, single-provider
+// models when Bedrock is rate-limited is the wrong tier entirely, not just
+// a reliability gap. Confirmed live 2026-11-04: a multi-hour window of
+// 403s on ministral-14b and 503s on qwen-coder-32b (#1818/core#9948) left
+// Builder's ENTIRE post-Bedrock fallback chain with nothing to fall
+// through to, because every entry in it was single-provider.
+//
+// Replaced with core's real DigitalOcean-backed, PAID ("pro") coding
+// fallback: 'qwen3-coder-flash' (`_add(ModelSpec("qwen3-coder-flash",
+// {DO: "qwen3-coder-flash"}, (DO,), "pro", ...))`, under core's own
+// "DigitalOcean serverless coding models (pro+)" section) and 'kimi-k2'
+// (paid, dual-provider NIM+DO — deliberately NOT 'kimi-k2.6', which is
+// NIM-only). Both stay on the enterprise/paid tier end-to-end: Bedrock
+// (primary) -> DigitalOcean-backed paid coding model (fallback) -> the
+// SAME DO model again via kimi-k2's DO leg, never free/basic tier.
+const STANDARD_FALLBACKS = ['qwen3-coder-flash', 'kimi-k2']
+// nemotron-70b deliberately NOT included — verified it doesn't exist in
+// core's model_registry.py under that exact name (only nemotron-super-49b
+// does, and that's NIM-only/single-provider); kept out of the active
+// fallback chain rather than perpetuating an unverified/dead model name.
+const PREMIUM_FALLBACKS = ['kimi-k2', 'qwen3-coder-flash']
 
 // Model routing config — all models route through AINative API.
 // NOTE: 'tier' here is a COMPUTE-COST-ROUTING concept (cheap/fast model vs.
@@ -452,6 +478,14 @@ const MODEL_CONFIG: Record<string, { provider: 'meta' | 'ainative'; modelId: str
   'kimi-k2.6': { provider: 'ainative', modelId: 'kimi-k2.6', tier: 'premium' },
   'kimi-k2': { provider: 'ainative', modelId: 'kimi-k2', tier: 'premium' },
   'nemotron-70b': { provider: 'ainative', modelId: 'nemotron-70b', tier: 'premium' },
+  // #1832: core's real DigitalOcean-backed, paid ("pro") coding model —
+  // verified directly in core's model_registry.py: `_add(ModelSpec(
+  // "qwen3-coder-flash", {DO: "qwen3-coder-flash"}, (DO,), "pro", ...))`,
+  // under the "DigitalOcean serverless coding models (pro+)" section. This
+  // is the enterprise-tier fallback for a Bedrock-rate-limited generation —
+  // see STANDARD_FALLBACKS/PREMIUM_FALLBACKS below for why this replaced
+  // the free-tier/NIM-only models previously in those lists.
+  'qwen3-coder-flash': { provider: 'ainative', modelId: 'qwen3-coder-flash', tier: 'premium' },
   // === STANDARD COMPUTE TIER — fast, reliable ===
   // 'nous-coder' REMOVED — fully deprecated, core hard-fails it (Ref #360).
   'qwen-coder-32b': { provider: 'ainative', modelId: 'qwen-coder-32b', tier: 'standard' },
