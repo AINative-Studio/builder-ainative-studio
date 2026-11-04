@@ -924,6 +924,48 @@ function App(){
     expect(hasUnpersistedComposerGap('function App(){return <div>hi</div>}')).toBe(false)
   })
 
+  // #1807 (2026-11-04, found live): same comment-blind bug class as #1704/
+  // #1708/#1713/#1717/#1794/#1796/#1799/#1801 — but a distinct mechanism:
+  // `looksLikeUnpersistedComposer`'s three shape regexes AND
+  // `extractComposerHandlerBody`'s own name match all ran against raw code.
+  // A comment-only old/removed draft composer (hardcoded array + handler
+  // name + list-append, all "kept for reference") independently satisfies
+  // every shape check, AND its handler-name mention — appearing earlier in
+  // the file than the real handler — hijacks extractComposerHandlerBody's
+  // bounded window, pushing the REAL handler's persistence call out of
+  // range. Net effect: a fully-working, already-persisting composer gets
+  // wrongly flagged as unpersisted, purely because of an unrelated comment.
+  it('#1807: does NOT flag a real, persisting composer when an unrelated comment mentions an old draft composer far enough away to push the real handler out of the extraction window', () => {
+    const padding = Array.from(
+      { length: 30 },
+      (_, i) => `  // filler line ${i} — pushes the real handler past the 600-char extraction window`,
+    ).join('\n')
+    const COMMENT_SHADOWED_APP = `
+function App(){
+  // Old draft, kept for reference:
+  // const [feed, setFeed] = useState([{ id: 1, text: 'hi' }])
+  // const handlePost = () => { setFeed(prev => [newItem, ...prev]) }
+${padding}
+  const [posts, setPosts] = useState([])
+  const [draft, setDraft] = useState('')
+  useEffect(() => { fetch('/api/db/posts').then(r=>r.json()).then(d=>setPosts(d.data||[])) }, [])
+  const handlePost = async () => {
+    const saved = await fetch('/api/db/posts', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ text: draft }) }).then(r=>r.json()).catch(()=>null)
+    setPosts(prev => [saved?.data || saved, ...prev])
+    setDraft('')
+  }
+  return (<div><input value={draft} onChange={e=>setDraft(e.target.value)} /><button onClick={handlePost}>Post</button>{posts.map(p => <div key={p.id}>{p.text}</div>)}</div>)
+}`
+    expect(hasUnpersistedComposerGap(COMMENT_SHADOWED_APP)).toBe(false)
+  })
+
+  it('#1807: STILL flags a genuinely unpersisted composer even with an unrelated, harmless comment present', () => {
+    const WITH_HARMLESS_COMMENT = `
+// A social feed for AI agents to post updates.
+${AGENTIS_APP}`
+    expect(hasUnpersistedComposerGap(WITH_HARMLESS_COMMENT)).toBe(true)
+  })
+
   it('does NOT flag a lead-capture form (different shape — single capture + static success, not an append-to-visible-list)', () => {
     const LEAD_CAPTURE_APP = `
 function App(){

@@ -433,7 +433,12 @@ export function hasHardcodedToggleGap(code: string): boolean {
  * keyword list can never enumerate every possible app shape).
  */
 function extractComposerHandlerBody(code: string): string | null {
-  const nameMatch = code.match(
+  // #1807: match against masked code so a COMMENT merely mentioning one of
+  // these handler names (e.g. an old/removed draft kept "for reference")
+  // can never anchor `start` — masking preserves length/offsets, so the
+  // matched index is still valid for slicing the REAL source below.
+  const masked = maskComments(code)
+  const nameMatch = masked.match(
     /\b(handlePost|handleBroadcast|handleSend|handlePublish|handleCreatePost|handleSubmitPost|handleShare)\s*[:=]/,
   )
   if (!nameMatch) return null
@@ -448,20 +453,27 @@ function extractComposerHandlerBody(code: string): string | null {
 }
 
 function looksLikeUnpersistedComposer(code: string): boolean {
+  // #1807: all three shape checks below ran on raw code — a comment-only
+  // old/removed composer draft (kept "for reference") could independently
+  // satisfy all three regexes using nothing but its own comment text, even
+  // though the real, live code is a completely different (and possibly
+  // already-persisting) composer. Mask comments first, matching every other
+  // detector in this file.
+  const masked = maskComments(code)
   // A hardcoded seed array of post/feed-shaped objects to append to.
-  const hasHardcodedArray = /useState\(\s*\[\s*\{/.test(code)
+  const hasHardcodedArray = /useState\(\s*\[\s*\{/.test(masked)
   // A composer: a text input/textarea PAIRED with a submit handler whose
   // name suggests posting/broadcasting/sending content (not a generic form
   // submit — that's `looksLikeLeadCapture`'s territory, a different shape:
   // single capture + static success state, never an append-to-a-visible-list).
   const hasComposerHandler =
-    /\b(handlePost|handleBroadcast|handleSend|handlePublish|handleCreatePost|handleSubmitPost|handleShare)\s*[:=]/.test(code)
+    /\b(handlePost|handleBroadcast|handleSend|handlePublish|handleCreatePost|handleSubmitPost|handleShare)\s*[:=]/.test(masked)
   // The composer's own setter PREPENDS/APPENDS a new item onto the existing
   // array — `setX(prev => [newItem, ...prev])` or `[...prev, newItem]` — the
   // exact "it shows up immediately" optimistic-UI shape that makes the bug
   // invisible without a reload. A toggle (per-item field flip via `.map`)
   // does not match this and is the sibling check's own territory instead.
-  const hasListAppend = /set\w+\(\s*\(?prev\)?\s*=>\s*\[(?:[\s\S]{0,80}\.\.\.prev|prev,)[\s\S]{0,200}\]\s*\)/.test(code)
+  const hasListAppend = /set\w+\(\s*\(?prev\)?\s*=>\s*\[(?:[\s\S]{0,80}\.\.\.prev|prev,)[\s\S]{0,200}\]\s*\)/.test(masked)
   return hasHardcodedArray && hasComposerHandler && hasListAppend
 }
 
