@@ -99,6 +99,30 @@ export interface ExecuteChunkPlanOptions {
   fallbackModels?: string[]
 }
 
+/**
+ * Coerce a chat-completion message's `content` to a plain string.
+ *
+ * Real bug, found live (2026-11-04): two concurrent founder generations
+ * failed Phase 1 with "content.match is not a function" (confirmed via a
+ * direct repro against the real validateGeneratedCode()). `content` was
+ * typed/assumed to always be a string (`response.choices?.[0]?.message
+ * ?.content || ''`), but some OpenAI-compatible providers return it as an
+ * ARRAY of content blocks (`[{type:'text', text:'...'}]`, the same shape
+ * OpenAI's own multi-modal responses use) instead of a plain string for
+ * certain models/response shapes — an array has no .match/.replace, so
+ * validateGeneratedCode() -> extractCodeFromMarkdown() threw immediately on
+ * a response that actually contained perfectly usable generated code.
+ */
+function coerceMessageContentToString(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    return content
+      .map((block) => (block && typeof block === 'object' && typeof (block as any).text === 'string' ? (block as any).text : ''))
+      .join('')
+  }
+  return ''
+}
+
 /** True for a rate-limit/overload-shaped failure (matches lib/utils/retry.ts's
  *  isRetryableError — same OpenAI SDK APIError.status shape). A 429 retried
  *  against the IDENTICAL model/provider fails the same way every time; only
@@ -408,7 +432,7 @@ DEPENDENCIES: ${phase.dependencies.join(', ')}
       { signal: AbortSignal.timeout(CHUNK_GENERATION_TIMEOUT_MS) },
     )
 
-    const rawResponse = response.choices?.[0]?.message?.content || ''
+    const rawResponse = coerceMessageContentToString(response.choices?.[0]?.message?.content)
     const tokenUsage = {
       input: response.usage?.prompt_tokens || 0,
       output: response.usage?.completion_tokens || 0,
