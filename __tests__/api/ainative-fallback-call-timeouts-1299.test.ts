@@ -34,15 +34,26 @@ describe('AINative/OpenAI-proxy fallback calls carry a timeout signal (#1299)', 
 
     const fnIdx = src.indexOf('async function runClaudePass(')
     expect(fnIdx).toBeGreaterThan(-1)
-    // #1331: a fixed-size window this tight (2200) silently broke once #1296
-    // independently added its own timeout handling + comments to this same
-    // function's primary-call branch — the combined (clean-merge, non-
-    // conflicting) result pushed the fallback's timeout call past the old
-    // window with no textual conflict to flag it. 3000 is a deliberately
-    // generous margin past the function's current ~2528-char body, not a
-    // tight fit, so a future small addition here doesn't retrigger this.
-    const fnBody = src.slice(fnIdx, fnIdx + 3000)
-    expect(fnBody).toContain("process.env.DEFAULT_MODEL || 'qwen-coder-32b'")
+    // #1331/#1822: a fixed-size window this tight silently broke twice now —
+    // first at 2200 (#1296 added timeout handling + comments to the primary-
+    // call branch), then again at 3000 (#1819 added a multi-paragraph comment
+    // + the STANDARD_FALLBACKS rotation to the fallback branch), each time by
+    // an unrelated, legitimate change to this same function with no textual
+    // conflict to flag it. 4000 is a deliberately generous margin past the
+    // function's current ~3575-char body, not a tight fit, so a future small
+    // addition here doesn't retrigger this a third time.
+    const fnBody = src.slice(fnIdx, fnIdx + 4000)
+    // #1819: the fallback rotates through STANDARD_FALLBACKS (qwen-coder-32b,
+    // gpt-oss-20b, ministral-14b) instead of a single hardcoded model, so a
+    // single model's outage can't defeat this path on its own. Assert the
+    // rotation itself rather than the old single-model literal
+    // (`process.env.DEFAULT_MODEL || 'qwen-coder-32b'`) that #1819 legitimately
+    // replaced — pinning to that exact string just made this test re-break on
+    // the next legitimate resilience improvement, the same bitrot class #1331
+    // already hit once for this exact test.
+    expect(fnBody).toContain('process.env.DEFAULT_MODEL, ...STANDARD_FALLBACKS')
+    // The property that actually matters (#1299): every fallback attempt,
+    // whichever model it lands on, stays bounded by a real timeout.
     expect(fnBody).toContain('{ signal: AbortSignal.timeout(PRIMARY_CLAUDE_TIMEOUT_MS) }')
   })
 
