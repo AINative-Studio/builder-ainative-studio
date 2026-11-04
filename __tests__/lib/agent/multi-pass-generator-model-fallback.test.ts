@@ -265,4 +265,81 @@ describe('multi-pass-generator model fallback on rate-limit (#1802/#1804)', () =
     // "always use the fallback on any retry" behavior.
     expect(callsByModel[1]).toBe(PRIMARY_MODEL)
   })
+
+  /**
+   * Real bug, found live (2026-11-04), AFTER both the 429 fallback (#1805)
+   * and timeout fallback (above) were deployed: Phase 1 started succeeding
+   * (the timeout fix worked), but EVERY subsequent phase's fallback-model
+   * retry still failed — "Phase N failed after retry" for phases 2-6,
+   * every single time. Root cause: generateChunk's system prompt was
+   * `PROFESSIONAL_SYSTEM_PROMPT.split('## FEW-SHOT EXAMPLES')[0] + ...` —
+   * but that marker string doesn't exist anywhere in professional-prompt.ts
+   * (confirmed via direct indexOf()), so the split was a no-op returning
+   * the FULL ~13,000-token prompt unchanged, sent to ministral-14b
+   * (~4K-token context) on every fallback retry — mathematically
+   * guaranteed to overflow before any phase content was even considered.
+   */
+  it('uses a meaningfully SHORTER system prompt on a fallback-model retry than on the primary attempt', async () => {
+    const systemPromptsSent: string[] = []
+    const client = {
+      chat: {
+        completions: {
+          create: vi.fn(async ({ model, messages }: { model: string; messages: Array<{ role: string; content: string }> }) => {
+            const systemMsg = messages.find((m) => m.role === 'system')
+            systemPromptsSent.push(systemMsg?.content || '')
+            if (model === PRIMARY_MODEL) {
+              const err: any = new Error('429 status code (no body)')
+              err.status = 429
+              throw err
+            }
+            return {
+              choices: [{ message: { content: '```jsx\nexport default function App(){return <div/>}\n```' } }],
+              usage: { prompt_tokens: 500, completion_tokens: 500, total_tokens: 1000 },
+            }
+          }),
+        },
+      },
+    } as any
+
+    await executeChunkPlanWithBudget(
+      planWithPhases(1), client, PRIMARY_MODEL, vi.fn(), 'chat-small-prompt-1',
+      { budget: createGenerationBudget({ limitUsd: 5.0, model: PRIMARY_MODEL }), fallbackModels: FALLBACK_MODELS },
+    )
+
+    expect(systemPromptsSent).toHaveLength(2)
+    const [primaryPrompt, fallbackPrompt] = systemPromptsSent
+    // The real bug: without the fix, these are the same length (both the
+    // full ~13,000-token prompt) because the split() was a no-op.
+    expect(fallbackPrompt.length).toBeLessThan(primaryPrompt.length / 4)
+    // Small-context models (~4K tokens) need the fallback prompt to fit
+    // comfortably within that budget alongside the phase prompt itself.
+    expect(fallbackPrompt.length).toBeLessThan(4000)
+  })
+
+  it('still uses the FULL system prompt on the original (non-fallback) attempt — this fix does not shrink primary-model quality', async () => {
+    const systemPromptsSent: string[] = []
+    const client = {
+      chat: {
+        completions: {
+          create: vi.fn(async ({ messages }: { messages: Array<{ role: string; content: string }> }) => {
+            const systemMsg = messages.find((m) => m.role === 'system')
+            systemPromptsSent.push(systemMsg?.content || '')
+            return {
+              choices: [{ message: { content: '```jsx\nexport default function App(){return <div/>}\n```' } }],
+              usage: { prompt_tokens: 500, completion_tokens: 500, total_tokens: 1000 },
+            }
+          }),
+        },
+      },
+    } as any
+
+    await executeChunkPlanWithBudget(
+      planWithPhases(1), client, PRIMARY_MODEL, vi.fn(), 'chat-small-prompt-2',
+      { budget: createGenerationBudget({ limitUsd: 5.0, model: PRIMARY_MODEL }), fallbackModels: FALLBACK_MODELS },
+    )
+
+    expect(systemPromptsSent).toHaveLength(1)
+    // A real, full-size professional prompt — not the condensed fallback one.
+    expect(systemPromptsSent[0].length).toBeGreaterThan(10000)
+  })
 })
