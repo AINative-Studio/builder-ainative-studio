@@ -64,6 +64,56 @@ export interface ProgressCallback {
 export const CHUNK_MAX_TOKENS = 16000
 
 /**
+ * Condensed system prompt used ONLY when retrying a phase against a
+ * fallback model (issue #1802/#1804/#1808 follow-up).
+ *
+ * Real bug, found live (2026-11-04): after the rate-limit/timeout fallback
+ * fix landed, every fallback-model retry STILL failed — "Phase N failed
+ * after retry" for every single phase, with Phase 1 now succeeding (the
+ * timeout fix worked) but every subsequent phase's ministral-14b retry
+ * failing too. Root cause: `generateChunk`'s system prompt is
+ * `PROFESSIONAL_SYSTEM_PROMPT.split('## FEW-SHOT EXAMPLES')[0] +
+ * phaseGuidance + codingStandards` — but the string `'## FEW-SHOT
+ * EXAMPLES'` does not exist anywhere in professional-prompt.ts (confirmed:
+ * `.indexOf()` returns -1), so `.split(...)[0]` is a no-op that returns the
+ * ENTIRE ~52KB (~13,000-token) prompt unchanged. ministral-14b's context
+ * window is ~4K tokens (already documented in app/api/chat-ws/route.ts's
+ * own condensing comment for its single-pass path) — the system prompt
+ * alone overflows it before any phase content is even considered, so a
+ * fallback retry to ministral-14b was mathematically guaranteed to fail
+ * every time, defeating the whole point of the fallback.
+ *
+ * Mirrors the proven condensed-prompt pattern already used by chat-ws's
+ * single-pass fallback path, trimmed to the essentials a small-context
+ * model can actually act on: output structure, the core DB-persistence
+ * pattern, and the "must be interactive" rule — intentionally far shorter
+ * than PROFESSIONAL_SYSTEM_PROMPT.
+ */
+const FALLBACK_MODEL_SYSTEM_PROMPT = `Generate a complete, production-ready React component.
+
+STRUCTURE:
+\`\`\`jsx
+import React, { useState } from 'react'
+export default function App() {
+  const [state, setState] = useState(initialValue)
+  return (
+    <div className="min-h-screen bg-white">
+      {/* Full UI here */}
+    </div>
+  )
+}
+\`\`\`
+
+RULES:
+- Mobile-first responsive: w-full max-w-* mx-auto px-4, flex-col md:flex-row, grid-cols-1 sm:grid-cols-2
+- Every button needs a real onClick with a useState handler — no dead buttons
+- For persisted data: fetch('/api/db/{table}') to list (returns { data: [...] }), POST to insert, PUT/DELETE with ?id=ID to update/remove. Never localStorage, never a real backend/DB package.
+- Import icons from 'lucide-react' only
+- export default function App()
+- Return ONLY the code wrapped in \`\`\`jsx and \`\`\` markers
+`
+
+/**
  * Issue #1299: this per-phase call had no timeout/AbortSignal at all, unlike
  * the primary Claude call (#1253/#1259) it's a sibling of on the live
  * chunked-generation path (executeChunkPlan/executeChunkPlanWithBudget, wired
@@ -296,7 +346,7 @@ export async function executeChunkPlanWithBudget(
             ? `Retrying phase ${phaseNum} with fallback model ${retryModel} (primary rate-limited)...`
             : `Retrying phase ${phaseNum}...`,
         )
-        const retryChunk = await generateChunk(phase, client, retryModel, phaseNum, totalPhases, onProgress)
+        const retryChunk = await generateChunk(phase, client, retryModel, phaseNum, totalPhases, onProgress, retryModel !== modelId)
         budget = recordCall(budget, {
           inputTokens: retryChunk.tokenUsage.input,
           outputTokens: retryChunk.tokenUsage.output,
@@ -306,7 +356,15 @@ export async function executeChunkPlanWithBudget(
           chunks[chunks.length - 1] = retryChunk
           onProgress(phaseNum, totalPhases, `Phase ${phaseNum} succeeded on retry`)
         } else {
-          onProgress(phaseNum, totalPhases, `Phase ${phaseNum} failed after retry`)
+          // #1802/#1804/#1808 follow-up: this previously logged no detail at
+          // all about WHY the retry (including a fallback-model retry) also
+          // failed — every multi-phase generation's retry failure looked
+          // identical in logs, with no way to tell a second rate-limit from
+          // a fallback model choking on a prompt sized for the primary
+          // model from a genuine content/validation problem. Surface it.
+          onProgress(phaseNum, totalPhases, `Phase ${phaseNum} failed after retry: ${retryChunk.error}`, {
+            error: retryChunk.error,
+          })
         }
       } else {
         onProgress(phaseNum, totalPhases, `Phase ${phaseNum} completed successfully`, {
@@ -391,7 +449,13 @@ async function generateChunk(
   modelId: string,
   phaseNum: number,
   totalPhases: number,
-  onProgress: ProgressCallback
+  onProgress: ProgressCallback,
+  /** True when `modelId` is a fallback model (not the original primary
+   *  model) — uses FALLBACK_MODEL_SYSTEM_PROMPT instead of the full
+   *  ~13,000-token PROFESSIONAL_SYSTEM_PROMPT, which overflows a
+   *  small-context fallback model's window before any phase content is
+   *  even considered (see FALLBACK_MODEL_SYSTEM_PROMPT's doc comment). */
+  isFallbackModel = false,
 ): Promise<GeneratedChunk> {
   const startTime = Date.now()
 
@@ -447,7 +511,8 @@ DEPENDENCIES: ${phase.dependencies.join(', ')}
 - Return ONLY the code wrapped in \`\`\`jsx and \`\`\` markers.
 `
 
-    const systemPrompt = PROFESSIONAL_SYSTEM_PROMPT.split('## FEW-SHOT EXAMPLES')[0] + phaseGuidance + codingStandards
+    const basePrompt = isFallbackModel ? FALLBACK_MODEL_SYSTEM_PROMPT : PROFESSIONAL_SYSTEM_PROMPT
+    const systemPrompt = basePrompt + phaseGuidance + codingStandards
 
     onProgress(phaseNum, totalPhases, `Calling LLM API for phase ${phaseNum}...`)
 
