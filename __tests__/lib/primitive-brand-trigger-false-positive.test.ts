@@ -54,7 +54,13 @@ describe('ZeroCommerce trigger no longer false-matches generic "brand" language 
     // wording to document what changed and why).
     const idx = source.indexOf('const message =')
     expect(idx).toBeGreaterThan(-1)
-    const messageBlock = source.slice(idx, idx + 600)
+    // #1792 split this into an isDirectStorefront ? ... : ... ternary with two
+    // full template-literal branches — the whole statement now runs ~1460
+    // chars, well past the old fixed 600-char window, which cut it off before
+    // either branch's "main accent color" line and made this assertion a
+    // false negative on an unrelated, unregressed file. 2000 comfortably
+    // covers both branches with margin.
+    const messageBlock = source.slice(idx, idx + 2000)
     expect(messageBlock).not.toMatch(/brand color/i)
     expect(messageBlock).toMatch(/main accent color/i)
   })
