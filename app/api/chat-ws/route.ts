@@ -15,7 +15,7 @@ import { validateOutput, validateFileImports } from '@/lib/build/output-validato
 import { hasDefaultExport } from '@/lib/component-detector'
 import { buildValidationFallbackComponent } from '@/lib/validation-fallback'
 import { runValidationRetryLoop, buildRepairPrompt, extractErrorWindow } from '@/lib/generation-retry'
-import { checkObedience, buildObediencePrompt, narrowToPrimitiveComplianceOnly, evaluatePrimitiveComplianceRetry } from '@/lib/build/obedience-gate'
+import { checkObedience, buildObediencePrompt, narrowToPrimitiveComplianceOnly, evaluatePrimitiveComplianceRetry, findPrimitiveComplianceGaps } from '@/lib/build/obedience-gate'
 import { traceComplianceRetry } from '@/lib/build/primitive-compliance-trace'
 import { buildRagContext } from '@/lib/build/rag-context'
 import { shouldDecompose, buildDecompositionPrompt, buildFixAndDecomposePrompt } from '@/lib/build/decomposition'
@@ -1805,6 +1805,17 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                       validation = validateGeneratedCode(finalContent)
                       checkpoint.record('primitive-compliance', finalContent, true)
                     }
+                    // Real bug found live (#1056/#1785, confirmed via a real
+                    // "Cartly" storefront generation shipping /api/db-backed
+                    // fake products despite ZeroCommerce being the correct,
+                    // explicitly-FORBIDDEN-to-skip primitive): adopting
+                    // purely on "did the code change" let a retry that fixed
+                    // something UNRELATED still count as a successful
+                    // compliance close. Log the real outcome honestly so
+                    // this is finally observable, not silently shipped.
+                    if (!closeResult.closed) {
+                      console.warn(`⚠️ Primitive-compliance retry (combined-multi-file) did NOT close the gap: ${after.primitiveComplianceGaps.join(', ')}`)
+                    }
                   }
                 } else if (v.valid && obeyImproved && (v.code?.length || 0) > 200) {
                   // split didn't take but the fixes did — still an improvement.
@@ -1822,6 +1833,9 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                       finalContent = closeResult.code
                       validation = validateGeneratedCode(finalContent)
                       checkpoint.record('primitive-compliance', finalContent, true)
+                    }
+                    if (!closeResult.closed) {
+                      console.warn(`⚠️ Primitive-compliance retry (combined-single-file) did NOT close the gap: ${after.primitiveComplianceGaps.join(', ')}`)
                     }
                   }
                 } else {
@@ -1844,6 +1858,9 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                       finalContent, message, validRole, obedienceOptions, selectedGenModel,
                       responseId, 'combined-rejected-fallback',
                     )
+                    if (!closeResult.closed) {
+                      console.warn(`⚠️ Primitive-compliance retry (combined-rejected-fallback) did NOT close the gap: ${ob.primitiveComplianceGaps.join(', ')}`)
+                    }
                     if (closeResult.code !== finalContent) {
                       finalContent = closeResult.code
                       validation = validateGeneratedCode(finalContent)
@@ -1911,6 +1928,9 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                       finalContent, message, validRole, obedienceOptions, selectedGenModel,
                       responseId, 'non-combined',
                     )
+                    if (!closeResult.closed) {
+                      console.warn(`⚠️ Primitive-compliance retry (non-combined) did NOT close the gap: ${after.primitiveComplianceGaps.join(', ')}`)
+                    }
                     if (closeResult.code !== finalContent) {
                       finalContent = closeResult.code
                       validation = validateGeneratedCode(finalContent)
@@ -1934,6 +1954,9 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                     finalContent, message, validRole, obedienceOptions, selectedGenModel,
                     responseId, 'non-combined-repair-invalid-fallback',
                   )
+                  if (!closeResult.closed) {
+                    console.warn(`⚠️ Primitive-compliance retry (non-combined-repair-invalid-fallback) did NOT close the gap: ${ob.primitiveComplianceGaps.join(', ')}`)
+                  }
                   if (closeResult.code !== finalContent) {
                     finalContent = closeResult.code
                     validation = validateGeneratedCode(finalContent)
@@ -1972,6 +1995,23 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
             console.log(`♻️ Serving last-good checkpoint from '${degradation.stage}' stage`)
             finalContent = degradation.code
             validation = { valid: true, code: degradation.code }
+          }
+
+          // Real bug found live (#1056/#1785, confirmed via a real "Cartly"
+          // e-commerce generation): every closePrimitiveComplianceGap() call
+          // site above only checked "did the retry change the code" before
+          // adopting it — never "did the SPECIFIC gap actually close" — so a
+          // generation could ship with an idea-matched primitive (e.g.
+          // ZeroCommerce) never called, and nothing downstream ever knew.
+          // One final, fresh check against what's ACTUALLY being served
+          // (not a stale intermediate check) closes that visibility gap —
+          // loud and unmissable in logs, not just the per-attempt warnings
+          // above (which can each individually recover on a later retry).
+          if (finalContent) {
+            const shippedGaps = findPrimitiveComplianceGaps(finalContent, message, validRole)
+            if (shippedGaps.length > 0) {
+              console.warn(`🚨 SHIPPING with unclosed primitive-compliance gap(s): ${shippedGaps.join(', ')} — idea matched these primitives but the generated app never calls their real proxy path.`)
+            }
           }
 
           // Consolidate this build outcome to ZeroMemory (#82 · Phase 7b): fire-and-

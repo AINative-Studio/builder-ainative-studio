@@ -125,6 +125,7 @@ vi.mock('@/lib/build/obedience-gate', () => ({
   buildObediencePrompt: vi.fn(() => 'obedience-fix-prompt'),
   narrowToPrimitiveComplianceOnly: vi.fn((gaps: string[]) => gaps),
   evaluatePrimitiveComplianceRetry: vi.fn(() => ({ madeProgress: false, closed: false })),
+  findPrimitiveComplianceGaps: vi.fn(() => [] as string[]),
 }))
 
 vi.mock('@/lib/build/primitive-compliance-trace', () => ({
