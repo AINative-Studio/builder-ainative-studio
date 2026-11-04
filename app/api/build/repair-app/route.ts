@@ -21,6 +21,19 @@
  * POST { chatId, error } → { ok, recovered, attempts }
  *   Best-effort: any failure returns `{ ok:false }`, never a 500 — a repair
  *   hiccup must not be worse than the pre-existing "stuck forever" state.
+ *
+ * POST { chatId, files } (real bug fix, "shoplo", 2026-11-03) — an explicit
+ * replace-files mode for when a human/operator already has a KNOWN-CORRECT
+ * files map in hand (e.g. deterministically derived via stripTrailingProse,
+ * not freshly LLM-generated) and the normal repair path can't reach it —
+ * e.g. an earlier repair already collapsed the stored files map into a
+ * single flattened blob with no `// --- FILE:` markers, so there's nothing
+ * left for the mechanical/LLM repair above to re-split. This is NOT a free
+ * "write anything" backdoor: every `.tsx`/`.jsx` entry in `files` MUST
+ * independently pass the SAME `isRenderable` parse gate register-app uses
+ * before anything is persisted — a caller cannot push code the gate would
+ * otherwise reject.
+ * → { ok, recovered: true, method: 'explicit-files' } | { ok:false, reason }
  */
 
 import { NextRequest } from 'next/server'
@@ -58,6 +71,34 @@ export async function POST(request: NextRequest) {
   const chatId = String(body?.chatId || '').trim()
   const error = String(body?.error || '').trim()
   if (!chatId) return Response.json({ ok: false, reason: 'chatId required' }, { status: 400 })
+
+  // Explicit replace-files mode (see doc comment above) — validated against
+  // the SAME gate as every other path before anything is persisted.
+  if (body?.files && typeof body.files === 'object' && !Array.isArray(body.files)) {
+    const files = body.files as Record<string, unknown>
+    const entries = Object.entries(files).filter(
+      (entry): entry is [string, string] => typeof entry[1] === 'string',
+    )
+    if (entries.length === 0) return Response.json({ ok: false, reason: 'files must be a non-empty string map' })
+    const invalid = entries.find(
+      ([path, content]) => (path.endsWith('.tsx') || path.endsWith('.jsx')) && !isRenderable(content).ok,
+    )
+    if (invalid) {
+      return Response.json({
+        ok: false,
+        reason: `rejected: ${invalid[0]} fails the parse gate — ${isRenderable(invalid[1]).error}`,
+      })
+    }
+    const validatedFiles = Object.fromEntries(entries)
+    storeFiles(chatId, validatedFiles)
+    const combined = entries.map(([, content]) => content).join('\n')
+    storePreview(chatId, combined)
+    await saveGeneration({
+      chatId, prompt: 'repair-explicit-files', generatedCode: combined,
+      model: 'explicit-files', codeLength: combined.length, files: validatedFiles,
+    }).catch(() => {})
+    return Response.json({ ok: true, recovered: true, method: 'explicit-files' })
+  }
 
   const stored = await resolveStoredApp(chatId, { requireFiles: true }).catch(() => null)
   if (!stored?.code) return Response.json({ ok: false, reason: 'no_stored_code' })
