@@ -24,6 +24,59 @@
  */
 
 import type { DesignSystem, DesignSystemPalette } from '../design-systems/types'
+import { findStringEnd, findBacktickEnd } from './bracket-scanner'
+
+/**
+ * Blanks out `//` and `/* *\/` comments (replacing their characters with
+ * spaces, preserving length/newlines) while leaving string/template-literal
+ * CONTENTS untouched. Same technique, same bug class, as obedience-gate.ts's
+ * maskComments (#1704/#1708/#1713/#1717 class): without this,
+ * extractColorsFromCode scanned the WHOLE file including comments, so a
+ * comment merely MENTIONING the founder's chosen palette's hex value (e.g.
+ * `// TODO: switch the hero to #ff2fa0`) counted as a real match even though
+ * the color never actually appears in any rendered output — inflating the
+ * conformance score and hiding a real "model ignored the chosen design
+ * system" gap from the founder-facing status/score this module reports.
+ */
+function maskComments(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += ' '.repeat(Math.min(end, code.length) - i)
+      i = Math.min(end, code.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
 
 export type ConformanceStatus = 'pass' | 'partial' | 'fail'
 
@@ -70,11 +123,12 @@ function rgbToHex(r: number, g: number, b: number): string | null {
 export function extractColorsFromCode(code: string): Set<string> {
   const found = new Set<string>()
   if (!code) return found
+  const src = maskComments(code)
 
   // #rgb / #rrggbb / #rrggbbaa (8-digit alpha hex — take just the color part)
   const hexRe = /#([0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b/g
   let m: RegExpExecArray | null
-  while ((m = hexRe.exec(code))) {
+  while ((m = hexRe.exec(src))) {
     const raw = m[1]
     const colorPart = raw.length === 8 ? raw.slice(0, 6) : raw
     const normalized = normalizeHex(`#${colorPart}`)
@@ -83,7 +137,7 @@ export function extractColorsFromCode(code: string): Set<string> {
 
   // rgb()/rgba()
   const rgbRe = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*[\d.]+\s*)?\)/g
-  while ((m = rgbRe.exec(code))) {
+  while ((m = rgbRe.exec(src))) {
     const hex = rgbToHex(Number(m[1]), Number(m[2]), Number(m[3]))
     if (hex) found.add(hex)
   }
