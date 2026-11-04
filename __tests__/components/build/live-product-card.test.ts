@@ -78,4 +78,32 @@ describe('Live screen — real product card and company-product wiring (2026-09-
     const nearby = source.slice(idx, idx + 200)
     expect(nearby).toMatch(/\$\{state\.appSub\}-product/)
   })
+
+  /**
+   * Issue #1782 (customer-reported, 2026-11-04, "shoplo"): the masthead's
+   * primary "is live" link is the marketing landing page, and the real
+   * product card lives ~150 lines further down — founders never scrolled
+   * past the masthead and judged Builder by the landing page alone. The
+   * masthead now also surfaces the real product link, at the same
+   * prominence as the landing-page link, so it's visible without scrolling.
+   */
+  it('surfaces the real product link in the masthead itself, not only in the below-the-fold card (#1782)', () => {
+    const headerIdx = source.indexOf('m-live-masthead-right')
+    const cardIdx = source.indexOf('data-testid="product-card"')
+    expect(headerIdx).toBeGreaterThan(-1)
+    expect(cardIdx).toBeGreaterThan(headerIdx)
+
+    const mastheadIdx = source.indexOf('data-testid="masthead-product-link"')
+    expect(mastheadIdx).toBeGreaterThan(headerIdx)
+    expect(mastheadIdx).toBeLessThan(cardIdx)
+
+    const nearby = source.slice(mastheadIdx, mastheadIdx + 200)
+    expect(nearby).toMatch(/\$\{state\.appSub\}-product/)
+  })
+
+  it('the masthead product link is gated on productChatId, same as the card below it', () => {
+    const idx = source.indexOf('data-testid="masthead-product-link"')
+    const before = source.slice(idx - 300, idx)
+    expect(before).toMatch(/state\.productChatId\s*&&/)
+  })
 })
