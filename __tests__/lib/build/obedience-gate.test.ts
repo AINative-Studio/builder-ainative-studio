@@ -167,6 +167,39 @@ describe('obedience-gate: AIKit (#297)', () => {
     expect(gaps.some(g => g.includes('AIKitHeader'))).toBe(false)
     expect(gaps.some(g => g.includes('AIKitSidebar'))).toBe(false)
   })
+
+  // #1813, same comment-blind bug family as #1704/#1708/#1713/#1717/#1794/
+  // #1796/#1799/#1801/#1807: AIKIT_PATTERNS/hasClassNameFollowedByContent/
+  // usedAikit used to scan raw code, so a comment merely MENTIONING an old/
+  // removed hand-rolled pattern (or an already-used component) could
+  // false-flag a gap that isn't in live code, or hide a real one.
+  it('#1813 THE BUG: does NOT flag MetricCard when the className+content shape exists only in a comment, not in real code', () => {
+    const code = `
+function App(){
+  // Old design draft, removed — kept for reference:
+  // <div className="text-3xl font-bold">$42</div>
+  return <div>Hello, no metrics here</div>
+}`
+    expect(findAikitGaps(code).some(g => g.includes('MetricCard'))).toBe(false)
+  })
+
+  it('#1813: still flags a genuine MetricCard even with an unrelated, harmless comment present', () => {
+    const code = `
+function App(){
+  // A simple dashboard.
+  return <div className="text-3xl font-bold">$42</div>
+}`
+    expect(findAikitGaps(code).some(g => g.includes('MetricCard'))).toBe(true)
+  })
+
+  it('#1813 THE BUG: a comment merely mentioning an already-used component does not suppress a genuine hand-rolled gap for a DIFFERENT component', () => {
+    const code = `
+function App(){
+  // <MetricCard value="$42" /> — removed, now hand-rolled below
+  return <table><tr><td>x</td></tr></table>
+}`
+    expect(findAikitGaps(code).some(g => g.includes('AIKitTable'))).toBe(true)
+  })
 })
 
 // #483/#563: the Live dashboard's "visitors" hero metric was a permanent,
