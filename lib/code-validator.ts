@@ -1391,6 +1391,15 @@ const KNOWN_RUNTIME_GLOBALS = new Set<string>([
   'CustomEvent', 'Event', 'AbortController', 'IntersectionObserver',
   'ResizeObserver', 'MutationObserver', 'crypto', 'performance', 'process',
   'module', 'exports', 'require', 'globalReactErrorHandler',
+  // Real bug found live (shoplo repair, 2026-11-04): this file's OWN
+  // sanitizeForSandpack (below, #1559) rewrites raw alert()/confirm()/
+  // prompt() calls into __previewSafeAlert/__previewSafeConfirm/
+  // __previewSafePrompt (defined once by the preview scaffold at render
+  // time — app/api/preview/[id]/route.ts), but this allowlist never
+  // learned the new names — so isRenderable() rejected its OWN rewriter's
+  // output as an undefined-reference error, a false positive on
+  // perfectly valid, already-correctly-sanitized code.
+  '__previewSafeAlert', '__previewSafeConfirm', '__previewSafePrompt',
   // React hooks (exposed on window in the preview; imported in Sandpack)
   'useState', 'useEffect', 'useCallback', 'useMemo', 'useRef', 'useContext',
   'createContext', 'useReducer', 'useLayoutEffect', 'useId', 'useTransition',
