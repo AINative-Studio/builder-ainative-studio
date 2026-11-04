@@ -61,6 +61,30 @@ describe('extractDbTables', () => {
     expect(extractDbTables('const x = 1')).toEqual([])
     expect(extractDbTables('')).toEqual([])
   })
+
+  it('ignores a table path that only appears in a // comment (#1813-class comment-blind scan)', () => {
+    // A leftover draft note mentioning a table the app never actually calls
+    // must not make this fail-open "is this data-backed" measurement see a
+    // real /api/db reference that isn't there.
+    const code = `
+      // TODO: wire up /api/db/orders once the backend route exists
+      export default function App() { return <div>static</div> }
+    `
+    expect(extractDbTables(code)).toEqual([])
+  })
+
+  it('ignores a table path that only appears in a /* */ comment', () => {
+    const code = `/* removed: used to call /api/db/legacy_notes */\nconst x = 1`
+    expect(extractDbTables(code)).toEqual([])
+  })
+
+  it('still extracts a real reference alongside an unrelated comment mentioning a different table', () => {
+    const code = `
+      // previously also tried /api/db/archive, removed
+      fetch('/api/db/tasks')
+    `
+    expect(extractDbTables(code)).toEqual(['tasks'])
+  })
 })
 
 describe('checkSeededData', () => {

@@ -33,6 +33,58 @@ export interface SeededDataCheck {
 }
 
 import { getAinativeApiKey } from '@/lib/build/env-keys'
+import { findStringEnd, findBacktickEnd } from '@/lib/build/bracket-scanner'
+
+/**
+ * Blanks out `//` and `/* *\/` comments (replacing their characters with
+ * spaces, preserving length/newlines) while leaving string/template-literal
+ * CONTENTS untouched. Same technique, same bug class, as obedience-gate.ts's
+ * maskComments (#1704/#1708/#1713/#1717 class): without this, extractDbTables
+ * scanned the WHOLE file including comments, so a comment merely MENTIONING
+ * a `/api/db/{table}` path (e.g. a removed draft feature's leftover `//
+ * TODO: wire up /api/db/orders`) made this fail-open "is this app
+ * data-backed" measurement see a table reference that was never actually
+ * called anywhere in the real code.
+ */
+function maskComments(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += ' '.repeat(Math.min(end, code.length) - i)
+      i = Math.min(end, code.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
 
 const ZERODB_API = 'https://api.ainative.studio/api'
 const SHARED_PROJECT_ID = '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
@@ -51,9 +103,10 @@ const READ_TIMEOUT_MS = 4000
  */
 export function extractDbTables(code: string): string[] {
   const out: string[] = []
+  const src = maskComments(code || '')
   const re = /\/api\/db\/([A-Za-z0-9_-]+)/g
   let m: RegExpExecArray | null
-  while ((m = re.exec(code || '')) !== null) {
+  while ((m = re.exec(src)) !== null) {
     const table = m[1]
     if (!out.includes(table)) out.push(table)
   }

@@ -152,6 +152,42 @@ describe('extractColorsFromCode', () => {
   it('returns an empty set for code with no colors', () => {
     expect(extractColorsFromCode('<div>hello</div>').size).toBe(0)
   })
+
+  it('ignores a hex color that only appears in a // comment', () => {
+    const code = `
+      // TODO: switch the hero background to #ff2fa0 once design signs off
+      <div className="bg-white"></div>
+    `
+    expect(extractColorsFromCode(code).has('#ff2fa0')).toBe(false)
+  })
+
+  it('ignores a hex color that only appears in a /* */ comment', () => {
+    const code = `/* old palette used #2ee6ff, now removed */\n<div className="bg-white"></div>`
+    expect(extractColorsFromCode(code).has('#2ee6ff')).toBe(false)
+  })
+
+  it('still extracts a hex color that legitimately appears inside a string/template literal', () => {
+    const code = `const accent = "#ff2fa0" // the real one is here, not in this note`
+    expect(extractColorsFromCode(code).has('#ff2fa0')).toBe(true)
+  })
+})
+
+describe('checkDesignConformance — comment-blind regression (#1813-class)', () => {
+  it('a comment merely mentioning the palette color does not count as conformance', () => {
+    const outrun = getDesignSystem('outrun')!
+    // Real rendered output uses none of Outrun's colors; the only mention of
+    // the real accent hex is in a leftover comment. Must still report FAIL —
+    // a comment is not evidence the model actually used the palette.
+    const code = `
+      // consider using #ff2fa0 for the CTA someday
+      <main aria-label="Nightdrive">
+        <button className="bg-blue-600 text-white">Get Started</button>
+      </main>
+    `
+    const result = checkDesignConformance(outrun, code)
+    expect(result.status).toBe('fail')
+    expect(result.matchedColors).toHaveLength(0)
+  })
 })
 
 describe('paletteColorsToCheck', () => {
