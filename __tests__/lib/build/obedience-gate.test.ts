@@ -824,6 +824,53 @@ function App(){
     expect(() => findPrimitiveComplianceGaps('function App(){}', 'a small business', 'sales')).not.toThrow()
     expect(Array.isArray(findPrimitiveComplianceGaps('function App(){}', 'a small business', 'sales'))).toBe(true)
   })
+
+  // #1785: confirmed live (shoplo-product, idea "an e-commerce store") — the
+  // generated storefront's product list was a fully hardcoded/simulated
+  // array, with a comment literally saying "Simulated fetch; replace with
+  // real API call". That comment happens to also contain the literal
+  // ZeroCommerce proxy-path substring the compliance check looks for
+  // (`/api/primitive/zerocommerce/storefront/_/products`) elsewhere in a
+  // realistic retry transcript, or a model can add a bare mention of the
+  // path in a comment without ever wiring a real call — before this fix,
+  // findPrimitiveComplianceGaps scanned the WHOLE file including comments
+  // (every OTHER gap check in this file already masks comments first, see
+  // maskComments' own doc comment, #1704/#1708/#1713/#1717 — this was the
+  // one check still missing it), so a comment-only mention satisfied
+  // compliance and hid a real, user-visible fake-data bug from the re-prompt
+  // loop and from the final obFinal backlog-task check (#1138/#1140).
+  const ECOMMERCE_IDEA = 'an e-commerce store'
+
+  const fakeStorefrontWithCommentOnlyMention = `
+function App(){
+  // Note: could fetch '/api/primitive/zerocommerce/storefront/_/products' here
+  const [products, setProducts] = useState([])
+  useEffect(() => {
+    // Simulated fetch; replace with real API call
+    const data = [{ id: 1, name: 'Minimal T-Shirt', price: 20, description: 'High quality cotton T-shirt.' }]
+    setProducts(data)
+  }, [])
+  return (<div>{products.map(p => <div key={p.id}><img src="/placeholder.png" /></div>)}</div>)
+}`
+
+  const realStorefrontCall = `
+function App(){
+  const [products, setProducts] = useState([])
+  useEffect(() => {
+    fetch('/api/primitive/zerocommerce/storefront/_/products').then(r=>r.json()).then(setProducts)
+  }, [])
+  return (<div>{products.map(p => <div key={p.id}><img src={p.image} /></div>)}</div>)
+}`
+
+  it('reproduces #1785: a comment-only mention of the real proxy path no longer hides a fully fake/hardcoded product list', () => {
+    const gaps = findPrimitiveComplianceGaps(fakeStorefrontWithCommentOnlyMention, ECOMMERCE_IDEA)
+    expect(gaps).toContain('ZeroCommerce')
+  })
+
+  it('still does NOT flag ZeroCommerce when the real proxy is actually called (no false positive from masking)', () => {
+    const gaps = findPrimitiveComplianceGaps(realStorefrontCall, ECOMMERCE_IDEA)
+    expect(gaps).not.toContain('ZeroCommerce')
+  })
 })
 
 // Real bug found live (same investigation as #566): a "favorite this gallery
