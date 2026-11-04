@@ -1127,6 +1127,23 @@ export function Live() {
           <a className="m-mono m-live-url" href={liveHref} target="_blank" rel="noreferrer">
             {appReady ? `${customDomain ? 'Live at ' : ''}${liveLabel} ↗` : 'building your site…'}
           </a>
+          {/* #1782: the link above is the marketing LANDING PAGE
+              (company-app) — founders confused it for their real product and
+              never scrolled down to the "Your product" card further below.
+              Surface the real product (company-product) at the SAME
+              prominence, right here in the masthead, instead of only below
+              the fold. */}
+          {state.productChatId && (
+            <a
+              className="m-mono m-live-url"
+              data-testid="masthead-product-link"
+              href={`/build/${state.appSub}-product`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open your product ↗
+            </a>
+          )}
           {/* Polsia-parity account MENU on the operating dashboard. */}
           <MenuChip />
         </div>
