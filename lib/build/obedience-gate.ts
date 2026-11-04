@@ -287,8 +287,15 @@ export function hasAlertInLeadCaptureGap(code: string): boolean {
  * ("sign in", "log in", "get started", "get early access", "join", "sign up")
  * and no click handler / href at all, is always a defect — there is no
  * legitimate reason for either shape in generated code.
+ *
+ * #1783 (real, click-tested live on "shoplo-product"): a styled, no-op
+ * "Checkout" button at the end of an otherwise-real, working cart flow
+ * (add to cart, quantity, running total all worked) — commerce-terminal CTAs
+ * are exactly as deceptive as the sign-in/sign-up CTAs above (arguably more
+ * so: they imply a transaction that cannot actually happen), so they get the
+ * same unconditional no-op check.
  */
-const CTA_BUTTON_TEXT = /sign\s*in|log\s*in|get\s*started|get\s*early\s*access|join\s*(now|waitlist)?|sign\s*up/i
+const CTA_BUTTON_TEXT = /sign\s*in|log\s*in|get\s*started|get\s*early\s*access|join\s*(now|waitlist)?|sign\s*up|checkout|buy\s*now|place\s*order|pay\s*now/i
 
 function hasAlertOnlyHandler(code: string): boolean {
   // onClick={() => alert('...')} / onClick={() => { alert('...') }} /
