@@ -863,7 +863,13 @@ function usedAikit(code: string): Set<string> {
  * NOT already used are reported. Empty array = no AIKit gap.
  */
 export function findAikitGaps(code: string): string[] {
-  const src = code || ''
+  // #1813: same comment-blind bug class as #1704/#1708/#1713/#1717/#1794/
+  // #1796/#1799/#1801/#1807 — usedAikit() and every AIKIT_PATTERNS entry
+  // used to scan raw code, so a comment merely MENTIONING an old/removed
+  // hand-rolled pattern (or an already-used component) could false-flag a
+  // gap that doesn't exist in live code, or hide a real one. Mask comments
+  // once here, mirroring matchOpeningTags' own pattern elsewhere in this file.
+  const src = maskComments(code || '')
   const have = usedAikit(src)
   const gaps: string[] = []
   for (const p of AIKIT_PATTERNS) {
