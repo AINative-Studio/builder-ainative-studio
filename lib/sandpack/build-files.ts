@@ -696,6 +696,17 @@ function fixNativeDialogCalls(sandpackFiles: Record<string, string>): void {
   const builtinPaths = new Set(Object.keys(getBuiltinFiles()))
   const dialogCallRe = /(?<![.\w$])(?:window\.)?(alert|confirm|prompt)\s*\(/
   const globalDialogCallRe = /(?<![.\w$])(?:window\.)?(alert|confirm|prompt)\s*\(/g
+  // Real bug found live (shoplo repair, 2026-11-04): a stored generation can
+  // ALREADY call __previewSafeAlert/__previewSafeConfirm/__previewSafePrompt
+  // directly (e.g. a repair pass, or a generation saved before this pipeline
+  // ran on it) without a raw alert()/confirm()/prompt() left to rewrite — the
+  // old `if (!dialogCallRe.test(code)) continue` guard skipped those files
+  // entirely, so the shim function definitions were never injected and the
+  // call crashed at runtime with "X is not defined", even though
+  // lib/code-validator.ts's parse gate (#1780) correctly allowlists the name
+  // as a known global. Detect an already-rewritten call the same way.
+  const shimCallRe = /(?<![.\w$])__previewSafe(Alert|Confirm|Prompt)\s*\(/
+  const shimDefRe = /function\s+__previewSafe(?:Alert|Confirm|Prompt)\s*\(/
 
   const SHIM = [
     "function __previewSafeAlert(message) { if (typeof console !== 'undefined') console.info('[preview alert]', message) }",
@@ -706,12 +717,26 @@ function fixNativeDialogCalls(sandpackFiles: Record<string, string>): void {
   for (const [path, code] of Object.entries(sandpackFiles)) {
     if (!/\.(t|j)sx?$/.test(path)) continue
     if (builtinPaths.has(path)) continue
-    if (!dialogCallRe.test(code)) continue
 
-    const fixed = code.replace(globalDialogCallRe, (_match, fn: string) => {
-      const capitalized = fn.charAt(0).toUpperCase() + fn.slice(1)
-      return `__previewSafe${capitalized}(`
-    })
+    const hasRawDialogCall = dialogCallRe.test(code)
+    const hasShimCall = shimCallRe.test(code)
+    if (!hasRawDialogCall && !hasShimCall) continue
+    // Already has its own local shim definition (e.g. a second pass over
+    // the same file) — nothing to inject, rewriting raw calls (if any) is
+    // still safe and handled below.
+    const alreadyDefined = shimDefRe.test(code)
+
+    const fixed = hasRawDialogCall
+      ? code.replace(globalDialogCallRe, (_match, fn: string) => {
+          const capitalized = fn.charAt(0).toUpperCase() + fn.slice(1)
+          return `__previewSafe${capitalized}(`
+        })
+      : code
+
+    if (alreadyDefined) {
+      sandpackFiles[path] = fixed
+      continue
+    }
 
     // A leading "use client"/"use strict" directive must stay the very
     // first statement in the file — insert the shim just after it instead
