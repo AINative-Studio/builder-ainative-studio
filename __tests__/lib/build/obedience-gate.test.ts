@@ -75,6 +75,22 @@ describe('obedience-gate: persistence (#297)', () => {
     const landing = "function App(){return <div><h1>Welcome</h1></div>}"
     expect(hasPersistenceGap(landing, 'a contact directory')).toBe(false)
   })
+
+  // #1799-class bug, same family as #1704/#1708/#1713/#1717/#1794/#1796:
+  // looksDataManaging() used to scan raw, unmasked code, so a comment merely
+  // MENTIONING an old/removed add/list surface (kept for reference) made a
+  // page with no real data-managing UI at all look like it had one.
+  it('#1799 THE BUG: does NOT flag a record idea whose add/list surface exists only in a comment, not in real code', () => {
+    const code = `
+function App(){
+  // Old draft, removed — kept for reference:
+  // <button onClick={addTask}>Add Task</button>
+  // {tasks.map(t => <div key={t.id}>{t.name}</div>)}
+  // const [tasks, setTasks] = useState([])
+  return <div>hello</div>
+}`
+    expect(hasPersistenceGap(code, 'a todo list app')).toBe(false)
+  })
 })
 
 describe('obedience-gate: AIKit (#297)', () => {
@@ -1012,6 +1028,21 @@ function App(){
 
   it('does NOT flag an app with no toggle-on-array pattern at all', () => {
     expect(hasHardcodedToggleGap('function App(){return <div>hi</div>}')).toBe(false)
+  })
+
+  // #1799-class bug, same family as #1704/#1708/#1713/#1717/#1794/#1796:
+  // looksLikeToggleOnHardcodedList() used to scan raw, unmasked code, so a
+  // comment merely MENTIONING an old/removed hardcoded-toggle (kept for
+  // reference) made a page with no real toggle UI at all look like it had
+  // one.
+  it('#1799 THE BUG: does NOT flag a page whose hardcoded-toggle shape exists only in a comment, not in real code', () => {
+    const code = `
+function App(){
+  // old: const [items, setItems] = useState([{id:1, fav:false}])
+  // old: items.map(i => i.id === id ? {...i, fav: !i.fav} : i)
+  return <div>hello</div>
+}`
+    expect(hasHardcodedToggleGap(code)).toBe(false)
   })
 
   it('checkObedience surfaces hardcodedToggleGap and a reason string', () => {
