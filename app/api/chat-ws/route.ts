@@ -1801,6 +1801,15 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                       responseId, 'combined-multi-file',
                     )
                     if (closeResult.code !== finalContent) {
+                      // #1787: adopting on "code changed" alone can't tell a
+                      // genuine fix apart from a retry that rewrote
+                      // something without actually closing the gap — log
+                      // closeResult.closed here so that distinction survives
+                      // in this request's own logs, not only in
+                      // traceComplianceRetry's durable (but separate) record.
+                      console.log(closeResult.closed
+                        ? '🔌 Primitive-compliance retry closed the gap — adopting.'
+                        : '🔌 Primitive-compliance retry changed the code but did NOT close the gap — adopting anyway.')
                       finalContent = closeResult.code
                       validation = validateGeneratedCode(finalContent)
                       checkpoint.record('primitive-compliance', finalContent, true)
@@ -1819,6 +1828,15 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                       responseId, 'combined-single-file',
                     )
                     if (closeResult.code !== finalContent) {
+                      // #1787: adopting on "code changed" alone can't tell a
+                      // genuine fix apart from a retry that rewrote
+                      // something without actually closing the gap — log
+                      // closeResult.closed here so that distinction survives
+                      // in this request's own logs, not only in
+                      // traceComplianceRetry's durable (but separate) record.
+                      console.log(closeResult.closed
+                        ? '🔌 Primitive-compliance retry closed the gap — adopting.'
+                        : '🔌 Primitive-compliance retry changed the code but did NOT close the gap — adopting anyway.')
                       finalContent = closeResult.code
                       validation = validateGeneratedCode(finalContent)
                       checkpoint.record('primitive-compliance', finalContent, true)
@@ -1845,6 +1863,15 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                       responseId, 'combined-rejected-fallback',
                     )
                     if (closeResult.code !== finalContent) {
+                      // #1787: adopting on "code changed" alone can't tell a
+                      // genuine fix apart from a retry that rewrote
+                      // something without actually closing the gap — log
+                      // closeResult.closed here so that distinction survives
+                      // in this request's own logs, not only in
+                      // traceComplianceRetry's durable (but separate) record.
+                      console.log(closeResult.closed
+                        ? '🔌 Primitive-compliance retry closed the gap — adopting.'
+                        : '🔌 Primitive-compliance retry changed the code but did NOT close the gap — adopting anyway.')
                       finalContent = closeResult.code
                       validation = validateGeneratedCode(finalContent)
                       checkpoint.record('primitive-compliance', finalContent, true)
@@ -1912,6 +1939,15 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                       responseId, 'non-combined',
                     )
                     if (closeResult.code !== finalContent) {
+                      // #1787: adopting on "code changed" alone can't tell a
+                      // genuine fix apart from a retry that rewrote
+                      // something without actually closing the gap — log
+                      // closeResult.closed here so that distinction survives
+                      // in this request's own logs, not only in
+                      // traceComplianceRetry's durable (but separate) record.
+                      console.log(closeResult.closed
+                        ? '🔌 Primitive-compliance retry closed the gap — adopting.'
+                        : '🔌 Primitive-compliance retry changed the code but did NOT close the gap — adopting anyway.')
                       finalContent = closeResult.code
                       validation = validateGeneratedCode(finalContent)
                       checkpoint.record('primitive-compliance', finalContent, true)
@@ -1935,6 +1971,11 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                     responseId, 'non-combined-repair-invalid-fallback',
                   )
                   if (closeResult.code !== finalContent) {
+                    // #1787: see the sibling call sites above for why this
+                    // logs closeResult.closed instead of adopting silently.
+                    console.log(closeResult.closed
+                      ? '🔌 Primitive-compliance retry closed the gap — adopting.'
+                      : '🔌 Primitive-compliance retry changed the code but did NOT close the gap — adopting anyway.')
                     finalContent = closeResult.code
                     validation = validateGeneratedCode(finalContent)
                     checkpoint.record('primitive-compliance', finalContent, true)

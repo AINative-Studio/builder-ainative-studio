@@ -129,7 +129,9 @@ describe('chat-ws wires the targeted primitive-compliance retry (2026-09-10, #62
   it('runs the targeted retry on the pre-repair content when the repair pass itself fails validation (non-combined branch)', () => {
     const idx = source.indexOf('const obValidation = validateGeneratedCode(obRaw)')
     expect(idx).toBeGreaterThan(-1)
-    const nearby = source.slice(idx, idx + 4500)
+    // Window widened past 4500 (#1787): the closed:boolean logging this
+    // call site gained pushes the branch-label string further out.
+    const nearby = source.slice(idx, idx + 5000)
     expect(nearby).toMatch(/\}\s*else if \(ob\.primitiveComplianceGaps\.length > 0\)/)
     expect(nearby).toMatch(/closePrimitiveComplianceGap/)
     expect(nearby).toMatch(/'non-combined-repair-invalid-fallback'/)
@@ -182,5 +184,25 @@ describe('chat-ws wires the targeted primitive-compliance retry (2026-09-10, #62
     const gapsAfterAssignIdx = finalBlock.indexOf('gapsAfter = final.primitiveComplianceGaps')
     expect(gapsAfterAssignIdx).toBeGreaterThan(-1)
     expect(finishCallIdx).toBeGreaterThan(gapsAfterAssignIdx)
+  })
+
+  /**
+   * Issue #1787 (2026-11-04): all 5 call sites above adopt a
+   * closePrimitiveComplianceGap() result on "code changed"
+   * (`closeResult.code !== finalContent`) alone — never checking the
+   * `closed: boolean` the function already freshly computes (see #786
+   * above). A retry that rewrites code without actually closing the gap
+   * was adopted identically to a retry that genuinely closed it, with no
+   * way to tell the two apart from this request's own logs. Each site now
+   * logs `closeResult.closed` right where it adopts.
+   */
+  it('#1787: every closeResult adoption site logs closeResult.closed, not just that the code changed', () => {
+    const sites = [...source.matchAll(/if \(closeResult\.code !== finalContent\) \{([\s\S]{0,1000}?)\n\s*\}/g)]
+    expect(sites.length).toBe(5)
+    for (const [, body] of sites) {
+      expect(body).toMatch(/console\.log\(closeResult\.closed/)
+      expect(body).toMatch(/closed the gap — adopting/)
+      expect(body).toMatch(/did NOT close the gap — adopting anyway/)
+    }
   })
 })
