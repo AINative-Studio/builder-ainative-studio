@@ -105,8 +105,15 @@ const PERSISTENCE_IDEA_HINTS = [
 
 /** Does the code contain a data-management surface (add/create/save/list of items)? */
 function looksDataManaging(code: string): boolean {
-  const addBtn = /(Add|New|Create|Save)\b/i.test(code) && /(onClick|onSubmit)=/.test(code)
-  const listState = /\.map\(/.test(code) && /useState\(\s*\[/.test(code)
+  // #1799-class bug, same family as #1704/#1708/#1713/#1717/#1794/#1796: scan
+  // a comment-masked view so a comment merely MENTIONING an old/removed
+  // add/list surface (kept for reference) never makes a page with no real
+  // data-managing UI at all look like it has one, which — combined with it
+  // genuinely having no /api/db call — would false-flag hasPersistenceGap on
+  // a page that was never supposed to need persistence in the first place.
+  const masked = maskComments(code || '')
+  const addBtn = /(Add|New|Create|Save)\b/i.test(masked) && /(onClick|onSubmit)=/.test(masked)
+  const listState = /\.map\(/.test(masked) && /useState\(\s*\[/.test(masked)
   return addBtn && listState
 }
 
@@ -403,8 +410,15 @@ export function hasFakeButtonGap(code: string): boolean {
  * with a per-item toggle regardless of its core idea.
  */
 function looksLikeToggleOnHardcodedList(code: string): boolean {
-  const hasHardcodedArray = /useState\(\s*\[\s*\{/.test(code)
-  const hasItemToggle = /\.map\(\s*\(?\w+\s*=>\s*\w+\.id\s*===[\s\S]{0,60}\?\s*\{\s*\.\.\.\w+,\s*\w+:\s*!\w+\.\w+\s*\}/.test(code)
+  // #1799-class bug, same family as #1704/#1708/#1713/#1717/#1794/#1796: scan
+  // a comment-masked view so a comment merely MENTIONING an old/removed
+  // hardcoded-list toggle (kept for reference) never makes a page with no
+  // real toggle UI at all look like it has one, which — combined with it
+  // genuinely having no /api/db call — would false-flag hasHardcodedToggleGap
+  // on a page that never had this UI shape in the first place.
+  const masked = maskComments(code || '')
+  const hasHardcodedArray = /useState\(\s*\[\s*\{/.test(masked)
+  const hasItemToggle = /\.map\(\s*\(?\w+\s*=>\s*\w+\.id\s*===[\s\S]{0,60}\?\s*\{\s*\.\.\.\w+,\s*\w+:\s*!\w+\.\w+\s*\}/.test(masked)
   return hasHardcodedArray && hasItemToggle
 }
 
