@@ -310,58 +310,75 @@ export async function executeChunkPlanWithBudget(
           error: chunk.error
         })
 
-        // Try one retry on failure — but the retry is a REAL billed call, so it
-        // goes through the same cap. Previously a failing phase could double
-        // its own spend with no check at all.
-        const retryGate = checkBudget(budget, {
-          maxOutputTokens: CHUNK_MAX_TOKENS,
-          estimatedInputTokens: estimatePromptTokens(phase.prompt),
-        })
-        budget = retryGate.budget
-        if (!retryGate.allowed) {
-          budgetStop = budgetStopMessage(budget)
-          onProgress(phaseNum, totalPhases, `Phase ${phaseNum} failed; retry skipped — ${budgetStop.message}`, {
-            budgetExceeded: true,
-            spentUsd: budget.spentUsd,
-            limitUsd: budget.limitUsd,
+        // #1813: a SINGLE fallback model is not resilient enough on its own
+        // — confirmed live, 2026-11-04: after #1812 fixed STANDARD_FALLBACKS'
+        // ordering (ministral-14b no longer first), TWO separate real
+        // generations ("Mossgrove", "Copperfield") still failed ALL 6
+        // phases, every single time, because the NEW first fallback
+        // (qwen-coder-32b) itself returned "503 status code (no body)" on
+        // every attempt — a different model, same single-point-of-failure
+        // shape. Rather than chase whichever specific model is unreliable
+        // THIS hour (confirmed unproductive twice now), the retry loop
+        // itself tries EACH remaining fallback model in sequence — stopping
+        // at the first success, or when the list and/or budget is
+        // exhausted — so no single model's outage can defeat generation on
+        // its own. A content/validation failure (not rate-limit shaped)
+        // still retries the ORIGINAL model exactly once, unchanged from
+        // prior behavior — only a rate-limit/overload-shaped failure
+        // triggers the fallback rotation.
+        const rateLimited = chunk.isRateLimited
+        const candidateModels = rateLimited && options.fallbackModels?.length
+          ? options.fallbackModels
+          : [modelId] // non-rate-limited failure: exactly one retry, same model (prior behavior)
+
+        let retryChunk: GeneratedChunk | undefined
+        for (const retryModel of candidateModels) {
+          const retryGate = checkBudget(budget, {
+            maxOutputTokens: CHUNK_MAX_TOKENS,
+            estimatedInputTokens: estimatePromptTokens(phase.prompt),
           })
-          break
+          budget = retryGate.budget
+          if (!retryGate.allowed) {
+            budgetStop = budgetStopMessage(budget)
+            onProgress(phaseNum, totalPhases, `Phase ${phaseNum} failed; retry skipped — ${budgetStop.message}`, {
+              budgetExceeded: true,
+              spentUsd: budget.spentUsd,
+              limitUsd: budget.limitUsd,
+            })
+            break
+          }
+
+          onProgress(
+            phaseNum, totalPhases,
+            retryModel !== modelId
+              ? `Retrying phase ${phaseNum} with fallback model ${retryModel} (primary rate-limited)...`
+              : `Retrying phase ${phaseNum}...`,
+          )
+          const attempt = await generateChunk(phase, client, retryModel, phaseNum, totalPhases, onProgress, retryModel !== modelId)
+          budget = recordCall(budget, {
+            inputTokens: attempt.tokenUsage.input,
+            outputTokens: attempt.tokenUsage.output,
+          })
+          retryChunk = attempt
+
+          if (attempt.success) break
+          // #1802/#1804/#1808 follow-up: surface WHY each attempt failed —
+          // previously every retry failure looked identical in logs, with
+          // no way to tell a rate-limit from a fallback model choking on a
+          // too-large prompt from a genuine content/validation problem.
+          onProgress(phaseNum, totalPhases, `Phase ${phaseNum} attempt with ${retryModel} failed: ${attempt.error}`, {
+            error: attempt.error,
+          })
+          // Only keep trying the NEXT fallback model if this failure was
+          // itself rate-limit shaped — a genuine content/validation failure
+          // from a fallback model wouldn't be fixed by trying yet another one.
+          if (!attempt.isRateLimited) break
         }
 
-        // #1802/#1804: a 429/5xx-shaped failure retried against the SAME
-        // model/provider fails identically every time (confirmed live: 6-7
-        // phases, 0 successful, "build failed" from one exhausted Bedrock
-        // quota). Switch to the first configured fallback model for the
-        // retry in that case — a genuinely different model/provider that
-        // doesn't share the same rate limit. A content/validation failure
-        // (no .status, or a non-retryable one) keeps retrying the original
-        // model, unchanged from prior behavior.
-        const retryModel =
-          chunk.isRateLimited && options.fallbackModels && options.fallbackModels.length > 0
-            ? options.fallbackModels[0]
-            : modelId
-        onProgress(
-          phaseNum, totalPhases,
-          retryModel !== modelId
-            ? `Retrying phase ${phaseNum} with fallback model ${retryModel} (primary rate-limited)...`
-            : `Retrying phase ${phaseNum}...`,
-        )
-        const retryChunk = await generateChunk(phase, client, retryModel, phaseNum, totalPhases, onProgress, retryModel !== modelId)
-        budget = recordCall(budget, {
-          inputTokens: retryChunk.tokenUsage.input,
-          outputTokens: retryChunk.tokenUsage.output,
-        })
-
-        if (retryChunk.success) {
+        if (retryChunk?.success) {
           chunks[chunks.length - 1] = retryChunk
           onProgress(phaseNum, totalPhases, `Phase ${phaseNum} succeeded on retry`)
-        } else {
-          // #1802/#1804/#1808 follow-up: this previously logged no detail at
-          // all about WHY the retry (including a fallback-model retry) also
-          // failed — every multi-phase generation's retry failure looked
-          // identical in logs, with no way to tell a second rate-limit from
-          // a fallback model choking on a prompt sized for the primary
-          // model from a genuine content/validation problem. Surface it.
+        } else if (retryChunk) {
           onProgress(phaseNum, totalPhases, `Phase ${phaseNum} failed after retry: ${retryChunk.error}`, {
             error: retryChunk.error,
           })

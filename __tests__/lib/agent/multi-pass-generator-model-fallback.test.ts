@@ -127,7 +127,7 @@ describe('multi-pass-generator model fallback on rate-limit (#1802/#1804)', () =
     expect(messages.some((m) => m === 'All phases completed')).toBe(true)
   })
 
-  it('still fails the phase honestly when EVERY model (primary + all fallbacks) 429s', async () => {
+  it('still fails the phase honestly when EVERY model (primary + all fallbacks) 429s — and does not loop forever', async () => {
     const { client, callsByModel } = fakeClientRejectingModels(
       new Set([PRIMARY_MODEL, ...FALLBACK_MODELS]),
     )
@@ -138,9 +138,89 @@ describe('multi-pass-generator model fallback on rate-limit (#1802/#1804)', () =
     )
 
     expect(result.chunks[0].success).toBe(false)
-    // Only ONE retry still happens (no change to the retry COUNT, only which
-    // model the retry uses) — this must not silently start looping forever.
-    expect(callsByModel.length).toBe(2)
+    // #1813: when EVERY model is rate-limited, the retry loop now tries
+    // each fallback model in turn (not just the first) before giving up —
+    // bounded by the fallback list length, never infinite: 1 primary +
+    // FALLBACK_MODELS.length fallback attempts.
+    expect(callsByModel.length).toBe(1 + FALLBACK_MODELS.length)
+  })
+
+  /**
+   * Real incident, found live (2026-11-04, issue #1813): TWO separate real
+   * e-commerce generations ("Mossgrove", "Copperfield") both failed ALL 6
+   * phases, every time, because the single fallback model
+   * (fallbackModels[0]) itself returned "503 status code (no body)" on
+   * every attempt — even AFTER #1812 fixed which model was tried first. A
+   * SINGLE fallback model is not resilient enough on its own; the retry
+   * loop now tries EACH remaining fallback model in sequence until one
+   * succeeds (or the list/budget is exhausted), so no single model's
+   * outage can defeat generation by itself.
+   */
+  it('tries the SECOND fallback model when the first fallback model ALSO fails (rate-limit shaped)', async () => {
+    // Primary AND the first fallback (qwen-coder-32b) both 429/503; the
+    // SECOND fallback (gpt-oss-20b) succeeds.
+    const { client, callsByModel } = fakeClientRejectingModels(
+      new Set([PRIMARY_MODEL, FALLBACK_MODELS[0]]),
+    )
+
+    const result = await executeChunkPlanWithBudget(
+      planWithPhases(1), client, PRIMARY_MODEL, vi.fn(), 'chat-fallback-rotation-1',
+      { budget: createGenerationBudget({ limitUsd: 5.0, model: PRIMARY_MODEL }), fallbackModels: FALLBACK_MODELS },
+    )
+
+    expect(callsByModel).toEqual([PRIMARY_MODEL, FALLBACK_MODELS[0], FALLBACK_MODELS[1]])
+    expect(result.chunks[0].success).toBe(true)
+  })
+
+  it('tries the THIRD fallback model when the first two fallbacks ALSO fail', async () => {
+    const { client, callsByModel } = fakeClientRejectingModels(
+      new Set([PRIMARY_MODEL, FALLBACK_MODELS[0], FALLBACK_MODELS[1]]),
+    )
+
+    const result = await executeChunkPlanWithBudget(
+      planWithPhases(1), client, PRIMARY_MODEL, vi.fn(), 'chat-fallback-rotation-2',
+      { budget: createGenerationBudget({ limitUsd: 5.0, model: PRIMARY_MODEL }), fallbackModels: FALLBACK_MODELS },
+    )
+
+    expect(callsByModel).toEqual([PRIMARY_MODEL, FALLBACK_MODELS[0], FALLBACK_MODELS[1], FALLBACK_MODELS[2]])
+    expect(result.chunks[0].success).toBe(true)
+  })
+
+  it('stops rotating fallbacks on a non-rate-limited failure — a genuine content/validation error from a fallback model is not retried with yet another model', async () => {
+    const callsByModel: string[] = []
+    const client = {
+      chat: {
+        completions: {
+          create: vi.fn(async ({ model }: { model: string }) => {
+            callsByModel.push(model)
+            if (model === PRIMARY_MODEL) {
+              const err: any = new Error('429 status code (no body)')
+              err.status = 429
+              throw err
+            }
+            if (model === FALLBACK_MODELS[0]) {
+              // A genuine non-rate-limit failure from the fallback model —
+              // trying yet another model wouldn't fix a content problem.
+              throw new Error('some non-rate-limit failure from this fallback')
+            }
+            return {
+              choices: [{ message: { content: '```jsx\nexport default function App(){return <div/>}\n```' } }],
+              usage: { prompt_tokens: 1000, completion_tokens: 1000, total_tokens: 2000 },
+            }
+          }),
+        },
+      },
+    } as any
+
+    const result = await executeChunkPlanWithBudget(
+      planWithPhases(1), client, PRIMARY_MODEL, vi.fn(), 'chat-fallback-rotation-3',
+      { budget: createGenerationBudget({ limitUsd: 5.0, model: PRIMARY_MODEL }), fallbackModels: FALLBACK_MODELS },
+    )
+
+    // Stops after the fallback's non-rate-limit failure — never reaches
+    // FALLBACK_MODELS[1] or [2], even though they would have succeeded.
+    expect(callsByModel).toEqual([PRIMARY_MODEL, FALLBACK_MODELS[0]])
+    expect(result.chunks[0].success).toBe(false)
   })
 
   it('does not change behavior when no fallbackModels are supplied (backward compatible)', async () => {
