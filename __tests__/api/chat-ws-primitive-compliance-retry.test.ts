@@ -183,4 +183,54 @@ describe('chat-ws wires the targeted primitive-compliance retry (2026-09-10, #62
     expect(gapsAfterAssignIdx).toBeGreaterThan(-1)
     expect(finishCallIdx).toBeGreaterThan(gapsAfterAssignIdx)
   })
+
+  /**
+   * Real bug found live (#1056/#1785, confirmed via a real "Cartly"
+   * e-commerce generation, 2026-11-04): every one of the 5 call sites above
+   * adopted closePrimitiveComplianceGap()'s result purely on
+   * `closeResult.code !== finalContent` — did the code change at ALL —
+   * never on `closeResult.closed`, the field this function's own `finish()`
+   * wrapper already computes correctly (see the gapsAfter/closed tests
+   * above). A retry that fixed something UNRELATED while leaving the real
+   * compliance gap wide open was adopted and recorded as a successful
+   * 'primitive-compliance' checkpoint regardless. Confirmed live: a real
+   * "Cartly" storefront generation shipped with `/api/db/products` instead
+   * of the explicitly-FORBIDDEN-to-skip ZeroCommerce proxy — the idea
+   * correctly matched ZeroCommerce, the gap was correctly detected, and the
+   * served app still crashed with "products.map is not a function" because
+   * the API envelope shape didn't match what the hand-rolled /api/db call
+   * expected (exactly the class of bug the ZeroCommerce anti-pattern
+   * warning exists to prevent).
+   */
+  it('each of the 5 call sites checks closeResult.closed and logs a warning when the gap is NOT actually closed', () => {
+    const branches = [
+      'combined-multi-file', 'combined-single-file', 'combined-rejected-fallback',
+      'non-combined', 'non-combined-repair-invalid-fallback',
+    ]
+    for (const branch of branches) {
+      const branchIdx = source.indexOf(`responseId, '${branch}',`)
+      expect(branchIdx, `branch '${branch}' call site not found`).toBeGreaterThan(-1)
+      const nearby = source.slice(branchIdx, branchIdx + 1200)
+      expect(nearby, `branch '${branch}' must check closeResult.closed`).toMatch(/if \(!closeResult\.closed\)/)
+      expect(nearby, `branch '${branch}' must warn when the gap is not closed`).toMatch(/console\.warn\(/)
+    }
+  })
+
+  it('does a final, honest check of what is ACTUALLY being served for any remaining primitive-compliance gaps', () => {
+    const degradationIdx = source.indexOf('const degradation = resolveDegradation(finalContent')
+    expect(degradationIdx).toBeGreaterThan(-1)
+    const nearby = source.slice(degradationIdx, degradationIdx + 1500)
+    expect(nearby).toMatch(/findPrimitiveComplianceGaps\(finalContent, message, validRole\)/)
+    expect(nearby).toMatch(/SHIPPING with unclosed primitive-compliance gap/)
+    // Must run AFTER the degradation decision, so it checks what's actually
+    // served (including a checkpoint fallback), not a stale pre-degradation
+    // value.
+    const shippedCheckIdx = nearby.indexOf('findPrimitiveComplianceGaps(finalContent, message, validRole)')
+    const degradationBlockIdx = nearby.indexOf("degradation.kind === 'checkpoint'")
+    expect(shippedCheckIdx).toBeGreaterThan(degradationBlockIdx)
+  })
+
+  it('imports findPrimitiveComplianceGaps from obedience-gate', () => {
+    expect(source).toMatch(/import \{[^}]*findPrimitiveComplianceGaps[^}]*\} from '@\/lib\/build\/obedience-gate'/)
+  })
 })
