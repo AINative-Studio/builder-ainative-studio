@@ -149,7 +149,8 @@ function maskCommentsAndStrings(code: string): string {
  * every generated .tsx file.
  */
 export function buildSandpackFiles(files: Record<string, string>, shim?: SandpackDbShimOptions): Record<string, string> {
-  const sandpackFiles: Record<string, string> = { ...getBuiltinFiles() }
+  const builtinFiles = getBuiltinFiles()
+  const sandpackFiles: Record<string, string> = { ...builtinFiles }
 
   if (shim?.origin && shim?.dbToken) {
     sandpackFiles['/db-token-shim.ts'] = sandpackDbTokenShim(shim.origin, shim.dbToken)
@@ -209,6 +210,27 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
     let content = rawContent
     if (/\.(t|j)sx?$/.test(path)) {
       try { content = sanitizeForSandpack(rawContent) } catch { content = rawContent }
+    }
+    // Real bug found live (2026-11-04, "me-product"): a fresh generation can
+    // write its OWN /src/components/ui/*.tsx file importing from a
+    // HALLUCINATED 'shadcn'/'shadcn/*' package — not a real npm package, not
+    // anything this pipeline provides — e.g.
+    //   import { Button as ShadcnButton } from 'shadcn'
+    // Confirmed: all 5 shadcn wrapper files (button/input/card/dialog/table)
+    // had this identical bug in one real generation, each shadowing the
+    // real, working, self-contained builtin at the SAME path (shadcnFiles,
+    // ./shadcn-bundle.ts) with a broken one — Sandpack's bundler then fails
+    // the ENTIRE compile trying to resolve the fictional package (same
+    // whole-compile-fails mechanism as the next/font/google case documented
+    // above: an unresolvable import in ANY file rejects the shared promise).
+    // Detect this exact hallucination and let the real builtin win instead
+    // of overwriting it with broken content — the generated file adds
+    // nothing a real founder's app needs here; the builtin already is a
+    // complete, dependency-free implementation at this path.
+    const isBuiltinPath = Object.prototype.hasOwnProperty.call(builtinFiles, path)
+    const importsHallucinatedShadcnPackage = /from\s+['"]shadcn(?:\/[^'"]*)?['"]/.test(content)
+    if (isBuiltinPath && importsHallucinatedShadcnPackage) {
+      continue
     }
     sandpackFiles[path] = content
 
