@@ -62,6 +62,7 @@ import {
 import { loadGeneration } from '@/lib/zerodb-store'
 import { reportDeploymentHealthStage } from '@/lib/build/deployment-health'
 import { looksLikeUnsubstitutedPlaceholder } from '@/lib/build/placeholder-guard'
+import { selectPrimitives } from '@/lib/build/primitive-catalog'
 
 export const runtime = 'nodejs'
 
@@ -272,13 +273,41 @@ export async function POST(request: NextRequest) {
   // primitive than ZeroCommerce was), left as "marketing" since that's an
   // accurate, load-bearing description of what's being built, not swapped
   // out reflexively.
-  const message =
-    `Build a polished, production-quality single-page marketing LANDING PAGE for "${name}"` +
-    (tagline ? ` (tagline: "${tagline}")` : '') +
-    ` — a real company for this idea: ${idea}. ` +
-    `Include: a hero with the value prop and a "Get early access" CTA, a 3-feature section, ` +
-    `a how-it-works section, pricing (3 tiers), and a footer. Use ${color} as the main accent color. ` +
-    `Make it visually distinctive and specific to this company, with realistic copy — not a generic template.`
+  // Real gap, direct founder feedback (2026-11-04): the template below is a
+  // SaaS-waitlist shape ("Get early access" CTA + "pricing (3 tiers)") —
+  // structurally wrong for a direct-to-consumer storefront idea ("build me
+  // an e-commerce store"), where a founder expects a store they can sell
+  // FROM, not a waitlist for a tool that builds stores. Confirmed live: this
+  // exact template produced "BuildYourStore — One-page e-commerce platform…
+  // Build your own e-commerce store in minutes with zero coding" for an
+  // idea that was itself "build me an e-commerce store" — the landing page
+  // ended up marketing Builder's OWN category back at the founder.
+  //
+  // Reuse selectPrimitives()'s real, already-hardened idea→primitive scoring
+  // (lib/build/primitive-catalog.ts) rather than a naive keyword match here
+  // — a prior incident (see the 'brand'-trigger note above) showed a loose
+  // substring match on this exact template caused false positives. Only
+  // ZeroCommerce actually composing in means the idea itself is a genuine
+  // storefront.
+  const isDirectStorefront = selectPrimitives(idea, 'company').names.includes('ZeroCommerce')
+
+  const message = isDirectStorefront
+    ? `Build a polished, production-quality single-page STORE TEASER for "${name}"` +
+      (tagline ? ` (tagline: "${tagline}")` : '') +
+      ` — a real, direct-to-consumer storefront for this idea: ${idea}. ` +
+      `This is NOT a SaaS tool or a waitlist — it's a preview of an actual store a shopper can buy from. ` +
+      `Include: a hero with the brand/value prop and a "Shop Now" CTA (never "Get early access" or ` +
+      `"join the waitlist"), a featured-products preview section (3-6 realistic products with name, ` +
+      `price, and a short description — invented but plausible for this idea, not placeholder text), ` +
+      `a "why shop here" section (shipping/quality/returns — not generic SaaS features), and a footer. ` +
+      `Use ${color} as the main accent color. Make it visually distinctive and specific to this company, ` +
+      `with realistic copy — not a generic template.`
+    : `Build a polished, production-quality single-page marketing LANDING PAGE for "${name}"` +
+      (tagline ? ` (tagline: "${tagline}")` : '') +
+      ` — a real company for this idea: ${idea}. ` +
+      `Include: a hero with the value prop and a "Get early access" CTA, a 3-feature section, ` +
+      `a how-it-works section, pricing (3 tiers), and a footer. Use ${color} as the main accent color. ` +
+      `Make it visually distinctive and specific to this company, with realistic copy — not a generic template.`
 
   // Detached: NOT awaited. This container is a persistent Railway service
   // (not serverless), so this keeps running after the response below is
