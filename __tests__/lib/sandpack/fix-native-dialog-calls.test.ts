@@ -100,4 +100,65 @@ describe('buildSandpackFiles — fixNativeDialogCalls neutralizes blocking nativ
     expect(code.split('\n')[0]).toBe("'use client'")
     expect(code).toContain('__previewSafeAlert')
   })
+
+  /**
+   * Real bug found live (shoplo repair, 2026-11-04): a stored generation can
+   * ALREADY call __previewSafeAlert directly — no raw alert()/confirm()/
+   * prompt() left for dialogCallRe to match — e.g. a repair pass restoring
+   * known-correct, already-sanitized source. The old guard
+   * (`if (!dialogCallRe.test(code)) continue`) skipped these files entirely,
+   * so the shim function was never injected and the call crashed at runtime:
+   * "__previewSafeAlert is not defined". lib/code-validator.ts's parse gate
+   * (#1780) correctly treats the name as a known global, but that's a STATIC
+   * check — it never guaranteed a real runtime definition exists in the
+   * bundle, which is this function's job.
+   */
+  it('injects the shim when the file ALREADY calls __previewSafeAlert directly (no raw alert() left to rewrite)', () => {
+    const built = buildSandpackFiles({
+      '/src/components/Pricing.tsx': [
+        "import React from 'react'",
+        'export default function Pricing() {',
+        '  const handleSelect = (tier) => {',
+        '    __previewSafeAlert(`You selected the ${tier} plan!`)',
+        '  }',
+        "  return (<button onClick={() => handleSelect('Pro')}>Select Pro</button>)",
+        '}',
+      ].join('\n'),
+    })
+    const code = built['/src/components/Pricing.tsx']
+    expect(code).toContain('function __previewSafeAlert(message)')
+    expect(code).toContain('__previewSafeAlert(`You selected')
+  })
+
+  it('injects all three shims when a file calls __previewSafeConfirm/__previewSafePrompt directly', () => {
+    const built = buildSandpackFiles({
+      '/src/App.tsx': [
+        "import React from 'react'",
+        'export default function App() {',
+        "  const onDelete = () => { if (__previewSafeConfirm('Sure?')) { __previewSafeAlert('Deleted') } }",
+        "  const onRename = () => { const name = __previewSafePrompt('Name?', 'default') }",
+        '  return (<div><button onClick={onDelete}>Delete</button></div>)',
+        '}',
+      ].join('\n'),
+    })
+    const code = built['/src/App.tsx']
+    expect(code).toContain('function __previewSafeAlert(message)')
+    expect(code).toContain('function __previewSafeConfirm(message)')
+    expect(code).toContain('function __previewSafePrompt(message, defaultValue)')
+  })
+
+  it('does not double-inject when the file already defines its own __previewSafeAlert', () => {
+    const built = buildSandpackFiles({
+      '/src/App.tsx': [
+        "import React from 'react'",
+        "function __previewSafeAlert(message) { console.info('already defined', message) }",
+        'export default function App() {',
+        "  return (<button onClick={() => __previewSafeAlert('hi')}>Go</button>)",
+        '}',
+      ].join('\n'),
+    })
+    const code = built['/src/App.tsx']
+    const defCount = (code.match(/function __previewSafeAlert\(/g) || []).length
+    expect(defCount).toBe(1)
+  })
 })
