@@ -384,7 +384,14 @@ function hasNoOpCtaButton(code: string): boolean {
  * Sign In / Get Started / Get Early Access buttons regardless of its idea.
  */
 export function hasFakeButtonGap(code: string): boolean {
-  return hasAlertOnlyHandler(code) || hasNoOpCtaButton(code)
+  // #1796: mask comments first, same as every other check in this file
+  // (matchOpeningTags() etc., #1704/#1708/#1713/#1717/#1794) — a comment
+  // merely MENTIONING a no-op/alert-only button (an old version kept for
+  // reference, an example snippet) must never false-flag a page whose real,
+  // rendered button is fully wired. Masking preserves string length/offsets,
+  // so neither helper's index-based scanning below needs to change.
+  const masked = maskComments(code || '')
+  return hasAlertOnlyHandler(masked) || hasNoOpCtaButton(masked)
 }
 
 /**
