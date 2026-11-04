@@ -572,6 +572,44 @@ function App(){
     expect(hasFakeButtonGap('function App(){return <div>hi</div>}')).toBe(false)
   })
 
+  // #1796: hasAlertOnlyHandler/hasNoOpCtaButton used to scan the raw,
+  // unmasked code — a comment merely MENTIONING a no-op/alert-only button
+  // (an old version kept for reference, an example snippet) false-flagged a
+  // page whose real, rendered button is fully wired. Same bug class as
+  // #1704/#1708/#1713/#1717/#1794, just never applied to this gap.
+  const REAL_HANDLER_WITH_NO_OP_MENTIONED_IN_COMMENT = `
+function App(){
+  return (
+    <nav>
+      {/* old version, kept for reference: <button>Get Started</button> */}
+      <button onClick={() => console.log('go')}>Get Started</button>
+    </nav>
+  )
+}`
+
+  const REAL_HANDLER_WITH_ALERT_EXAMPLE_IN_COMMENT = `
+function App(){
+  // example: onClick={() => alert('hi')}
+  return (<nav><button onClick={() => doRealThing()}>Sign In</button></nav>)
+}`
+
+  it('#1796 THE BUG: does NOT flag a real, wired CTA merely because an unrelated comment mentions a no-op button', () => {
+    expect(hasFakeButtonGap(REAL_HANDLER_WITH_NO_OP_MENTIONED_IN_COMMENT)).toBe(false)
+  })
+
+  it('#1796 THE BUG: does NOT flag a real, wired CTA merely because an unrelated comment mentions an alert()-only example', () => {
+    expect(hasFakeButtonGap(REAL_HANDLER_WITH_ALERT_EXAMPLE_IN_COMMENT)).toBe(false)
+  })
+
+  it('#1796: still flags a genuinely no-op CTA even when an unrelated comment is also present', () => {
+    const code = `
+function App(){
+  // unrelated comment
+  return (<nav><button className="btn">Get Early Access</button></nav>)
+}`
+    expect(hasFakeButtonGap(code)).toBe(true)
+  })
+
   // #1694: a stray, UNMATCHED "{" inside a quoted attribute value (ordinary
   // string content, e.g. "Price: {amount" — not a JSX expression) throws the
   // {}-depth tag-close scanner permanently out of balance, so the button is
