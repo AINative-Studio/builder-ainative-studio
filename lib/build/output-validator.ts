@@ -406,9 +406,14 @@ export function validateOutput(code: string): StandardsResult {
  */
 function parseImportBindings(code: string): Set<string> {
   const bindings = new Set<string>()
+  // #1831-class fix: scan a comment-masked view — a commented-out import
+  // line (a leftover draft, a removed dependency) must not register its
+  // names as real bindings, or a genuinely missing import for the same
+  // name goes completely unflagged by findMissingJsxImports below.
+  const masked = maskComments(code)
   const withClause = /import\s+([^'";]+?)\s+from\s*['"][^'"]+['"]/g
   let m: RegExpExecArray | null
-  while ((m = withClause.exec(code)) !== null) {
+  while ((m = withClause.exec(masked)) !== null) {
     const clause = m[1].trim()
     if (/^type\s/.test(clause)) continue // import type — erased at runtime, not a value binding
     const ns = clause.match(/\*\s*as\s+([A-Za-z_$][\w$]*)/)
@@ -432,11 +437,16 @@ function parseImportBindings(code: string): Set<string> {
 /** Local component/value definitions in `code`: function/class/const/let/var. */
 function parseLocalDefinitions(code: string): Set<string> {
   const defs = new Set<string>()
+  // #1831-class fix: scan a comment-masked view — a commented-out local
+  // definition (an old draft component left in a `//`/`/* */` block) must
+  // not register as a real definition, or a genuinely missing import for
+  // that same name goes completely unflagged by findMissingJsxImports below.
+  const masked = maskComments(code)
   const re = /(?:^|[\n;{(\s])(?:export\s+(?:default\s+)?)?(?:async\s+)?(?:function|class)\s+([A-Za-z_$][\w$]*)/g
   const re2 = /(?:^|[\n;{(\s])(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g
   let m: RegExpExecArray | null
-  while ((m = re.exec(code)) !== null) defs.add(m[1])
-  while ((m = re2.exec(code)) !== null) defs.add(m[1])
+  while ((m = re.exec(masked)) !== null) defs.add(m[1])
+  while ((m = re2.exec(masked)) !== null) defs.add(m[1])
   return defs
 }
 
@@ -455,9 +465,14 @@ const AMBIENT_JSX_GLOBALS = new Set(['Fragment'])
  */
 export function findMissingJsxImports(code: string): string[] {
   const used = new Set<string>()
+  // #1831-class fix: scan a comment-masked view — a commented-out JSX
+  // mention (an old draft, a removed usage left as a note) must not be
+  // counted as real usage, or it gets phantom-flagged as a missing import
+  // for a component the app never actually renders.
+  const masked = maskComments(code)
   const jsxTag = /<([A-Z][\w$]*)(?:\.[A-Za-z_$][\w$]*)?[\s/>]/g
   let m: RegExpExecArray | null
-  while ((m = jsxTag.exec(code)) !== null) {
+  while ((m = jsxTag.exec(masked)) !== null) {
     used.add(m[1])
   }
   if (used.size === 0) return []

@@ -437,6 +437,46 @@ describe('findMissingJsxImports', () => {
   it('returns empty for code with no JSX at all', () => {
     expect(findMissingJsxImports('const x = 1')).toEqual([])
   })
+
+  it('does not flag a commented-out JSX mention as real usage (#1831)', () => {
+    const code = `
+      // <OldWidget />
+      export default function App() {
+        return <div>hi</div>
+      }
+    `
+    expect(findMissingJsxImports(code)).toEqual([])
+  })
+
+  it('does not let a commented-out import satisfy a real JSX usage (#1831)', () => {
+    const code = `
+      // import { Card } from './components/ui/card'
+      export default function App() {
+        return <Card />
+      }
+    `
+    expect(findMissingJsxImports(code)).toEqual(['Card'])
+  })
+
+  it('does not let a commented-out local definition satisfy a real JSX usage (#1831)', () => {
+    const code = `
+      // function Badge() { return <span>New</span> }
+      export default function App() {
+        return <div><Badge /></div>
+      }
+    `
+    expect(findMissingJsxImports(code)).toEqual(['Badge'])
+  })
+
+  it('does not let a block-commented import satisfy a real JSX usage (#1831)', () => {
+    const code = `
+      /* import { Card } from './components/ui/card' */
+      export default function App() {
+        return <Card />
+      }
+    `
+    expect(findMissingJsxImports(code)).toEqual(['Card'])
+  })
 })
 
 describe('checkJsxImportsResolved', () => {
