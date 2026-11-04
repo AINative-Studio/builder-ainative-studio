@@ -588,15 +588,31 @@ interface LandmarkMatch {
   openingTag: string
 }
 
-/** Find every element carrying a data-agent-context attribute, with its full opening tag. */
+/**
+ * Find every element carrying a data-agent-context attribute, with its full
+ * opening tag.
+ *
+ * Scans a comment-masked view of `content` (#1827, same technique this file
+ * already uses for parseLocalImports/definesIdentifier/collectKnownIdentifiers/
+ * findUndeclaredJsxComponents): a comment merely MENTIONING a
+ * `data-agent-context="sidebar..."` value (a leftover draft note, a removed
+ * implementation left commented out) must not be counted as a real landmark
+ * instance — that silently manufactures a phantom duplicate and false-flags
+ * findDuplicateLandmarkElements on a page that only has ONE real instance.
+ * Matching happens against the masked view; the matched tag text itself is
+ * still sliced from the ORIGINAL `content` (masking preserves length/indices)
+ * so baseLandmarkRole/hasHideOrOffCanvasIndicator still see real attribute
+ * string content verbatim.
+ */
 function findLandmarkElements(content: string): LandmarkMatch[] {
   const out: LandmarkMatch[] = []
   // Match a full opening tag `<Tag ...>` (non-greedy, no nested `<`/`>` inside
   // attribute values we care about — generated JSX attributes don't nest raw
   // angle brackets), then confirm it carries data-agent-context.
+  const masked = maskComments(content)
   const tagRe = /<[A-Za-z][\w.]*(?:\s[^<>]*)?>/g
-  for (const m of content.matchAll(tagRe)) {
-    const tag = m[0]
+  for (const m of masked.matchAll(tagRe)) {
+    const tag = content.slice(m.index, m.index + m[0].length)
     const ctx = tag.match(/data-agent-context\s*=\s*(?:["']([^"']*)["']|\{['"`]([^'"`]*)['"`]\})/)
     if (!ctx) continue
     const value = ctx[1] ?? ctx[2] ?? ''
