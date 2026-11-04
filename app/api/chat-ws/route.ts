@@ -410,7 +410,16 @@ async function closePrimitiveComplianceGap(
 // 'nous-coder' is FULLY DEPRECATED, no upstream at all (core's registry
 // hard-fails it — confirmed live during #360 investigation). Replaced with
 // qwen-coder-32b, core's own suggested live replacement.
-const STANDARD_FALLBACKS = ['ministral-14b', 'qwen-coder-32b', 'gpt-oss-20b']
+// #1812: ministral-14b first here was a recurring live failure — "403
+// status code (no body)" on 3 separate real e-commerce generations this
+// session ("Hearthglow", "Rivercraft", and an earlier capture). Since
+// executeChunkPlanWithBudget's rate-limit/timeout retry (#1805/#1808) only
+// ever tries fallbackModels[0], putting the one persistently-broken model
+// first silently defeated that whole fallback mechanism. Reordered to match
+// this file's own already-proven-safer runValidationRetryLoop rotation
+// below (qwen-coder-32b, gpt-oss-20b, ministral-14b) instead of a third,
+// inconsistent ordering.
+const STANDARD_FALLBACKS = ['qwen-coder-32b', 'gpt-oss-20b', 'ministral-14b']
 const PREMIUM_FALLBACKS = ['kimi-k2.6', 'qwen-coder-32b', 'nemotron-70b', 'ministral-14b']
 
 // Model routing config — all models route through AINative API.
