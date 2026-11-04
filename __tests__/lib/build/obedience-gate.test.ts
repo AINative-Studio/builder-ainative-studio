@@ -527,6 +527,31 @@ function App(){
     expect(hasFakeButtonGap(NO_OP_NAV_CTA)).toBe(true)
   })
 
+  // #1783 (real, click-tested live on "shoplo-product"): a fully-wired cart
+  // (add to cart, quantity, running total) silently dead-ends at Checkout.
+  it('THE BUG: flags a no-op "Checkout" button at the end of an otherwise-real cart flow (#1783)', () => {
+    const code = `
+function App(){
+  return (<div><button className="w-full mt-4 px-4 py-2 bg-green-600 rounded text-white">Checkout</button></div>)
+}`
+    expect(hasFakeButtonGap(code)).toBe(true)
+  })
+
+  it('does NOT flag a "Checkout" button wired to a real handler (#1783)', () => {
+    const code = `
+function App(){
+  const handleCheckout = () => fetch('/api/db/orders', { method: 'POST' })
+  return (<div><button onClick={handleCheckout}>Checkout</button></div>)
+}`
+    expect(hasFakeButtonGap(code)).toBe(false)
+  })
+
+  it('THE BUG: flags other no-op commerce-terminal CTAs — "Buy Now", "Place Order", "Pay Now" (#1783)', () => {
+    expect(hasFakeButtonGap('function App(){return (<button>Buy Now</button>)}')).toBe(true)
+    expect(hasFakeButtonGap('function App(){return (<button>Place Order</button>)}')).toBe(true)
+    expect(hasFakeButtonGap('function App(){return (<button>Pay Now</button>)}')).toBe(true)
+  })
+
   it('does NOT flag a real auth link (href to a real route)', () => {
     expect(hasFakeButtonGap(REAL_AUTH_LINK)).toBe(false)
   })
