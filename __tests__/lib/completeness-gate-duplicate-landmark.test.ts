@@ -235,4 +235,28 @@ describe('findDuplicateLandmarkElements', () => {
     `
     expect(findDuplicateLandmarkElements(code)).toEqual([])
   })
+
+  it('#1827: does not count a data-agent-context mention inside a //-comment as a real instance', () => {
+    const code = `
+      export default function App() {
+        return (
+          <div>
+            <aside data-agent-context="sidebar" className="w-64">real sidebar</aside>
+            {/* older draft also had <aside data-agent-context="sidebar-mobile">x</aside> here, removed */}
+          </div>
+        )
+      }
+    `
+    expect(findDuplicateLandmarkElements(code)).toEqual([])
+  })
+
+  it('#1827: does not count a data-agent-context mention inside a /* */ comment as a real instance', () => {
+    const code = [
+      `export default function App() {`,
+      `  // removed: <aside data-agent-context="sidebar-mobile" className="w-64">old</aside>`,
+      `  return <aside data-agent-context="sidebar" className="w-64">real sidebar</aside>`,
+      `}`,
+    ].join('\n')
+    expect(findDuplicateLandmarkElements(code)).toEqual([])
+  })
 })
