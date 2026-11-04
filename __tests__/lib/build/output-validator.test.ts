@@ -196,6 +196,21 @@ describe('countH1Tags', () => {
     // Not a real HTML tag, but guards the regex against loose matching.
     expect(countH1Tags('<h10>Not a heading</h10>')).toBe(0)
   })
+
+  it('#1826: does not count a <h1> mention inside a //-comment', () => {
+    const code = '<h1>Real Title</h1>\n// an earlier draft used <h1>Old Title</h1> here'
+    expect(countH1Tags(code)).toBe(1)
+  })
+
+  it('#1826: does not count a <h1> mention inside a /* */ comment', () => {
+    const code = '<h1>Real Title</h1>\n/* replaces the old <h1>hero</h1> */'
+    expect(countH1Tags(code)).toBe(1)
+  })
+
+  it('#1826: still counts zero when the only <h1> mention is inside a comment', () => {
+    const code = '<h2>Section</h2>\n// TODO: add back <h1>Title</h1>'
+    expect(countH1Tags(code)).toBe(0)
+  })
 })
 
 describe('checkNoUnsafeDangerousHtml', () => {
