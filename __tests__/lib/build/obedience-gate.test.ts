@@ -458,6 +458,64 @@ function App(){
     expect(hasAlertInLeadCaptureGap(code)).toBe(false)
   })
 
+  // #1793-class bug, same family as #1704/#1708/#1713/#1717/#1794/#1796:
+  // hasAlertInLeadCaptureGap (and the looksLikeLeadCapture()/#1581 guard it
+  // shares with hasFakeLeadCaptureGap) used to scan raw, unmasked code, so a
+  // comment merely MENTIONING an old/removed draft handler satisfied the
+  // handler-name + alert()+/api/db/ regexes using nothing but the comment's
+  // own literal text, false-flagging a page whose real, wired handler is
+  // fine.
+  it('#1793 THE BUG: does NOT flag a real, persisting, alert()-free lead-capture form merely because an old commented-out draft handler mentions alert() and /api/db/ together', () => {
+    const code = `
+function App(){
+  // old draft kept for reference, replaced below:
+  // const handleWaitlist = async (e) => { await fetch('/api/db/waitlist'); alert('Thanks for joining!') }
+  const handleRealSubmit = async (e) => {
+    e.preventDefault()
+    await fetch('/api/db/waitlist', { method: 'POST' })
+    setSubmitted(true)
+  }
+  return (
+    <form onSubmit={handleRealSubmit}>
+      <input type="email" />
+      <button type="submit">Join</button>
+    </form>
+  )
+}`
+    expect(hasAlertInLeadCaptureGap(code)).toBe(false)
+  })
+
+  it('#1793 THE BUG: hasFakeLeadCaptureGap does NOT flag a page with no real lead-capture form at all, just a comment mentioning an old removed one', () => {
+    const code = `
+function App(){
+  // Old draft, removed — kept for reference:
+  // <input type="email" />
+  // const handleWaitlist = async (e) => { alert('joined') }
+  const [count, setCount] = useState(0)
+  return <button onClick={() => setCount(count+1)}>Count: {count}</button>
+}`
+    expect(hasFakeLeadCaptureGap(code)).toBe(false)
+  })
+
+  it('#1793: still flags a genuinely alert()-only lead-capture handler even with an unrelated comment present', () => {
+    const code = `
+function App(){
+  // unrelated comment
+  const handleWaitlist = async (e) => {
+    e.preventDefault()
+    await fetch('/api/db/waitlist', { method: 'POST' })
+    alert('Thanks for joining!')
+  }
+  return (
+    <form onSubmit={handleWaitlist}>
+      <input type="email" />
+      <button type="submit">Join</button>
+    </form>
+  )
+}`
+    expect(hasAlertInLeadCaptureGap(code)).toBe(true)
+  })
+
   it('checkObedience surfaces alertInLeadCaptureGap and a reason string', () => {
     const r = checkObedience(PERSISTS_BUT_ALERTS, 'a landing page')
     expect(r.alertInLeadCaptureGap).toBe(true)

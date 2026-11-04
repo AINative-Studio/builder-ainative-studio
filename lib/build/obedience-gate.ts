@@ -134,8 +134,17 @@ export function hasPersistenceGap(code: string, idea: string): boolean {
  * form + submit, no list at all) — so it never matched.
  */
 function looksLikeLeadCapture(code: string): boolean {
-  const hasEmailInput = /type=["']email["']/i.test(code)
-  const hasSubmitHandler = /(handleSubmit|handleEarlyAccess|handleWaitlist|handleSignup|onSubmit)\s*[:=]/.test(code)
+  // #1793-class bug, same family as #1704/#1708/#1713/#1717/#1794/#1796: this
+  // used to scan raw code, so a comment merely MENTIONING an old/removed
+  // email-capture draft (`// <input type="email" />` / `// const
+  // handleWaitlist = ...`, kept for reference) satisfied both halves and
+  // made a page with no real lead-capture form at all get treated as if it
+  // had one — which, combined with it genuinely having no /api/db call,
+  // false-flagged hasFakeLeadCaptureGap on a page that was never supposed to
+  // have a waitlist form in the first place.
+  const masked = maskComments(code || '')
+  const hasEmailInput = /type=["']email["']/i.test(masked)
+  const hasSubmitHandler = /(handleSubmit|handleEarlyAccess|handleWaitlist|handleSignup|onSubmit)\s*[:=]/.test(masked)
   return hasEmailInput && hasSubmitHandler
 }
 
@@ -225,6 +234,19 @@ function findTagClose(code: string, attrsStart: number): number {
 
 export function hasAlertInLeadCaptureGap(code: string): boolean {
   if (!looksLikeLeadCapture(code)) return false
+  // #1793-class bug, same family as #1704/#1708/#1713/#1717/#1794/#1796: this
+  // used to scan the raw, unmasked code for a handler name/body — a comment
+  // merely MENTIONING an old/removed draft handler that happened to combine
+  // alert() with /api/db/ in its text (e.g. "// old draft, kept for
+  // reference: const handleWaitlist = async (e) => { await
+  // fetch('/api/db/waitlist'); alert('Thanks!') }") satisfied the handler-name
+  // regex and the alert()+/api/db/ body check using nothing but the comment's
+  // own literal characters, false-flagging a page whose REAL, wired handler
+  // persists correctly and never calls alert() at all. Masking comments
+  // first (same technique as every other check in this file) removes that
+  // text from the scan entirely while preserving string/offset content, so
+  // the depth-aware helpers below need no other change.
+  const masked = maskComments(code || '')
   // Scope the alert() search to each matched handler's own body (brace-balanced),
   // not the whole file — an unrelated alert() elsewhere (e.g. a delete-confirm
   // dialog) is a different, legitimate use this gap must not false-positive on.
@@ -247,24 +269,24 @@ export function hasAlertInLeadCaptureGap(code: string): boolean {
   // exact alert()-freezes-the-page bug this gap exists to catch.
   const handlerStartRe = /(handleSubmit|handleEarlyAccess|handleWaitlist|handleSignup)\s*[:=]\s*(?:async\s*)?/g
   let m: RegExpExecArray | null
-  while ((m = handlerStartRe.exec(code))) {
+  while ((m = handlerStartRe.exec(masked))) {
     const pos = m.index + m[0].length
     let paramEnd: number
-    if (code[pos] === '(') {
-      const close = findMatchingParen(code, pos)
+    if (masked[pos] === '(') {
+      const close = findMatchingParen(masked, pos)
       if (close === -1) continue
       paramEnd = close + 1
     } else {
-      const ident = /^[A-Za-z_$][\w$]*/.exec(code.slice(pos))
+      const ident = /^[A-Za-z_$][\w$]*/.exec(masked.slice(pos))
       if (!ident) continue
       paramEnd = pos + ident[0].length
     }
-    const arrow = /^\s*=>\s*\{/.exec(code.slice(paramEnd))
+    const arrow = /^\s*=>\s*\{/.exec(masked.slice(paramEnd))
     if (!arrow) continue
     const bodyStart = paramEnd + arrow[0].length - 1 // position of the opening {
-    const bodyEnd = findMatchingBracket(code, bodyStart, '{', '}')
+    const bodyEnd = findMatchingBracket(masked, bodyStart, '{', '}')
     if (bodyEnd === -1) continue
-    const body = code.slice(bodyStart, bodyEnd + 1)
+    const body = masked.slice(bodyStart, bodyEnd + 1)
     if (/\balert\(/.test(body) && /\/api\/db\//.test(body)) return true
   }
   return false
