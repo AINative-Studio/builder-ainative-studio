@@ -390,6 +390,41 @@ describe('POST /api/build/company-product', () => {
       expect(h.registerApp).toHaveBeenCalledWith(expect.objectContaining({ slug: 'orphan4-product', chatId: 'fresh-retry-chat' }))
     })
 
+    /**
+     * Real bug found live (issue #1803, 2026-11-04): `force: true` correctly
+     * bypasses the FIRST cache check (resolveAppVerified, above) — but this
+     * SECOND "recover an orphaned prior attempt" block runs unconditionally,
+     * ignoring `force` entirely, and only checks `generatedCode` for mere
+     * truthiness, not that the generation actually succeeded. Confirmed live:
+     * a Bedrock-quota-429 generation that produced 0 successful phases
+     * (`[Trajectory] ... reward=0 (build failed)`) still had SOME
+     * `generatedCode` string persisted, so this block "recovered" the SAME
+     * dead chatId every time — `force: true` could never actually start a
+     * fresh attempt for a company whose prior generation had failed this way.
+     */
+    it('force:true skips the orphan-recovery block too, starting a genuinely fresh generation instead of re-registering a prior (possibly failed) attempt', async () => {
+      h.resolveApp.mockResolvedValue({ chatId: 'dead-chat-id' })
+      h.resolvePendingProductGeneration.mockResolvedValue({
+        productSlug: 'orphan6-product', chatId: 'dead-chat-id', status: 'pending', createdAt: new Date().toISOString(),
+      })
+      // Some generatedCode IS present — exactly the live failure mode: a
+      // build that failed with 0 successful phases can still have a
+      // non-empty (garbage/placeholder) generatedCode string persisted.
+      h.loadGeneration.mockResolvedValue({ generatedCode: '// placeholder — build failed', prompt: 'x' })
+      const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => ({ body: sseBody('genuinely-fresh-chat') }) as any)
+      vi.stubGlobal('fetch', fetchMock)
+
+      const res = await POST(req({ idea: 'x', slug: 'orphan6', name: 'Orphan', force: true }))
+      const data = await res.json()
+      await flush()
+
+      expect(data.status).toBe('processing')
+      // The real bug: without the fix, this call never happens — the orphan
+      // block "recovers" dead-chat-id and the response is {status:'recovered'}.
+      expect(fetchMock).toHaveBeenCalled()
+      expect(h.registerApp).toHaveBeenCalledWith(expect.objectContaining({ slug: 'orphan6-product', chatId: 'genuinely-fresh-chat' }))
+    })
+
     it('a pending record already marked registered is ignored by the recovery check (resolveApp\'s own cache already covers it)', async () => {
       h.resolvePendingProductGeneration.mockResolvedValue({
         productSlug: 'orphan5-product', chatId: 'already-done-chat', status: 'registered', createdAt: new Date().toISOString(),

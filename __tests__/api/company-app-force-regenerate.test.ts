@@ -109,4 +109,32 @@ describe('POST /api/build/company-app — force regenerate (2026-09-21)', () => 
     expect(data.chatId).toBe('broken-chat-id')
     expect(fetchMock).not.toHaveBeenCalled()
   })
+
+  /**
+   * Real bug found live (issue #1803, 2026-11-04, same gap as
+   * company-product/route.ts's sibling fix): `force: true` bypasses the
+   * FIRST cache check above — but the "recover an orphaned prior attempt"
+   * block runs unconditionally, ignoring `force`, and only checks
+   * `generatedCode` for truthiness, not that the generation actually
+   * succeeded. A build that failed completely (0 successful phases) can
+   * still have a non-empty, garbage `generatedCode` string persisted, so
+   * this block silently "recovered" the SAME dead chatId regardless of
+   * `force`.
+   */
+  it('force:true skips the orphan-recovery block too, starting a genuinely fresh generation instead of re-registering a prior (possibly failed) attempt', async () => {
+    h.resolveApp.mockResolvedValue({ chatId: 'dead-chat-id' })
+    h.resolvePendingProductGeneration.mockResolvedValue({
+      productSlug: 'meridian-force3', chatId: 'dead-chat-id', status: 'pending', createdAt: new Date().toISOString(),
+    })
+    h.loadGeneration.mockResolvedValue({ generatedCode: '// placeholder — build failed', prompt: 'x' })
+    const fetchMock = vi.fn(async () => new Response(sseBody('genuinely-fresh-chat'), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await POST(req({ idea: 'x', slug: 'meridian-force3', name: 'Meridian', force: true }))
+    await flush()
+    const data = await res.json()
+
+    expect(data.cached).not.toBe(true)
+    expect(fetchMock).toHaveBeenCalled()
+  })
 })

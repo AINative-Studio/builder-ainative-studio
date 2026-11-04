@@ -219,7 +219,17 @@ export async function POST(request: NextRequest) {
       error: 'Could not confirm whether a generation is already in flight for this company — not starting a new one.',
     })
   }
-  if (pending?.chatId && pending.status === 'pending') {
+  // #1803: `force: true` is an explicit "start genuinely fresh" request —
+  // this orphan-recovery block must never silently re-attach to a PRIOR
+  // attempt in that case. Confirmed live: a generation that failed
+  // completely (0 successful phases, a Bedrock-quota 429 on every phase)
+  // can still have a non-empty, garbage `generatedCode` string persisted
+  // (truthy but not actually a working build) — `pending?.chatId` and
+  // `gen?.generatedCode` alone can't tell a genuinely succeeded orphan apart
+  // from a dead one, so a caller that already knows the prior attempt is
+  // broken (that's what `force` means) must bypass this recovery path
+  // entirely and fall through to starting a brand-new chatId below.
+  if (pending?.chatId && pending.status === 'pending' && !force) {
     const gen = await loadGeneration(pending.chatId).catch(() => null)
     if (gen?.generatedCode) {
       const name = String(b?.name || slug).slice(0, 120)
