@@ -231,24 +231,41 @@ async function runClaudePass(system: string, user: string, maxTokens = 16000, mo
   // Fallback: AINative OpenAI-compatible proxy with a model it actually serves.
   // 'nous-coder' is FULLY DEPRECATED, no upstream at all (core's registry
   // hard-fails it — confirmed live during #360 investigation).
-  try {
-    // #1299: this fallback itself had no timeout — a hang here (after the
-    // primary Claude call above already failed/timed out) still stalled the
-    // obedience-gate retry loop indefinitely with nothing left to fall back
-    // to. Bound it the same way as the primary call just above.
-    const res = await ainativeClient.chat.completions.create(
-      {
-        model: process.env.DEFAULT_MODEL || 'qwen-coder-32b',
-        max_tokens: maxTokens,
-        messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
-      },
-      { signal: AbortSignal.timeout(PRIMARY_CLAUDE_TIMEOUT_MS) },
-    )
-    return res.choices?.[0]?.message?.content || ''
-  } catch (err: any) {
-    console.warn('[runClaudePass] AINative fallback also failed:', err?.message?.slice(0, 80))
-    return ''
+  //
+  // #1819: a SINGLE hardcoded fallback model here is not resilient enough —
+  // confirmed live, 2026-11-04, same incident class as #1813 (the
+  // generateChunk sibling this function doesn't share code with): a real
+  // "Saltmarsh" e-commerce generation shipped with its ZeroCommerce
+  // primitive-compliance gap still open specifically because EVERY
+  // primitive-compliance repair attempt hit this exact fallback — hardcoded
+  // to qwen-coder-32b — while that model was returning "503 status code (no
+  // body)" on every call (the same outage #1813 fixed for generateChunk).
+  // Rotate through STANDARD_FALLBACKS (qwen-coder-32b, gpt-oss-20b,
+  // ministral-14b, in that already-proven-safer order) instead of a single
+  // hardcoded model, so one model's outage can no longer defeat the
+  // obedience-repair / primitive-compliance retry loop on its own.
+  for (const fallbackModel of [process.env.DEFAULT_MODEL, ...STANDARD_FALLBACKS].filter(
+    (m, i, arr): m is string => !!m && arr.indexOf(m) === i,
+  )) {
+    try {
+      // #1299: this fallback itself had no timeout — a hang here (after the
+      // primary Claude call above already failed/timed out) still stalled
+      // the obedience-gate retry loop indefinitely with nothing left to
+      // fall back to. Bound it the same way as the primary call just above.
+      const res = await ainativeClient.chat.completions.create(
+        {
+          model: fallbackModel,
+          max_tokens: maxTokens,
+          messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+        },
+        { signal: AbortSignal.timeout(PRIMARY_CLAUDE_TIMEOUT_MS) },
+      )
+      return res.choices?.[0]?.message?.content || ''
+    } catch (err: any) {
+      console.warn(`[runClaudePass] AINative fallback (${fallbackModel}) failed:`, err?.message?.slice(0, 80))
+    }
   }
+  return ''
 }
 
 /**
