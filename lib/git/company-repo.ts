@@ -22,7 +22,6 @@ import {
   type GiteaPermission,
 } from './gitea-client'
 import {
-  resolveApp,
   resolveAppVerified,
   setAppGitRepo,
   isRegistryLookupUnverified,
@@ -243,8 +242,23 @@ export async function provisionCompanyRepo(opts: {
     return { ok: false, reason: validation.reason }
   }
 
-  // Check if already provisioned (idempotent)
-  const existing = await resolveApp(opts.slug)
+  // Check if already provisioned (idempotent).
+  //
+  // Real gap found live: this used to call plain resolveApp(), whose null
+  // return doesn't distinguish "confirmed not provisioned yet" from "the
+  // registry read failed." gitea-client's ensureOrg/createRepo ARE
+  // idempotent against a raced/duplicate org+repo, but pushFilesToRepo()
+  // below is NOT idempotent for an initial commit — it skips the SHA
+  // lookup and unconditionally POSTs (create), which Gitea rejects for a
+  // path that already has content. So a transient lookup failure on an
+  // already-provisioned company fell through to a push that always failed,
+  // reporting a false `initial_commit_failed` (and a false `git_commit:
+  // 'failed'` deployment-health stage) for a company that was already
+  // fine. Fail closed on an unverified read instead of guessing.
+  const { entry: existing, verified } = await resolveAppVerified(opts.slug)
+  if (!verified) {
+    return { ok: false, reason: 'lookup_failed' }
+  }
   if (existing?.gitRepoId) {
     return {
       ok: true,
