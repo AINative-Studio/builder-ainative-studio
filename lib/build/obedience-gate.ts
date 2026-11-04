@@ -823,7 +823,17 @@ export function findAikitGaps(code: string): string[] {
  * only fires for record-managing ideas rather than every app.
  */
 export function findPrimitiveComplianceGaps(code: string, idea: string, role?: CompanyRole): string[] {
-  const src = code || ''
+  // #1785: was a raw `(code || '')` scan — a model that writes a comment
+  // merely MENTIONING a primitive's real proxy path (or leaves a dead/
+  // unreachable reference to it), without any live component actually
+  // calling it, satisfied this check and shipped with a fully hardcoded/
+  // simulated data array instead (confirmed live: shoplo-product's "Simulated
+  // fetch; replace with real API call" comment happened to contain
+  // ZeroCommerce's proxy-path substring, hiding a real compliance gap from
+  // the re-prompt loop). Every other gap check in this file already masks
+  // comments first (see maskComments' own doc comment, #1704/#1708/#1713/
+  // #1717) — this was the one check that didn't.
+  const src = maskComments(code || '')
   const scored = scorePrimitives(idea, 'company', role)
   const gaps: string[] = []
   for (const [name, paths] of Object.entries(RUNTIME_PROXY_PATH_SUBSTRINGS)) {
