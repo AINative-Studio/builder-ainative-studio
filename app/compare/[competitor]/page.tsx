@@ -219,9 +219,13 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const data = COMPETITOR_DATA[competitor as CompetitorSlug]
 
   const isPolsia = competitor === 'polsia'
+  // #1845: the root layout's title.template ('%s | AINative Builder') already
+  // appends the suffix — these used to START with "AINative Builder" too,
+  // producing "...AINative Builder | AINative Builder" and tripping OnPage's
+  // title_too_long check.
   const title = isPolsia
-    ? `AINative Builder vs Polsia — Best Polsia Alternative 2026`
-    : `AINative Builder vs ${data.displayName} - Best Alternative 2026`
+    ? `vs Polsia — Best Polsia Alternative 2026`
+    : `vs ${data.displayName} - Best Alternative 2026`
   const description = isPolsia
     ? `Is Polsia legit? See Polsia pricing, reviews, and why AINative Builder is the best Polsia alternative. Builder builds a real app first, then runs it autonomously on primitives you own.`
     : `Compare AINative Builder vs ${data.displayName}. AINative offers multi-model AI (Claude, Qwen, Gemma, DeepSeek), built-in AX optimization, automatic SEO, and open-source code — features ${data.displayName} doesn't provide.`
