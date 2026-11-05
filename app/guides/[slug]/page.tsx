@@ -26,10 +26,14 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const guide = getGuideBySlug(slug)
 
   if (!guide) {
-    return { title: 'Guide Not Found | AINative Builder' }
+    return { title: 'Guide Not Found' }
   }
 
-  const title = `${guide.title} | AINative Builder`
+  // #1845: don't append "| AINative Builder" here — the root layout's
+  // title.template ('%s | AINative Builder') already does, so appending it
+  // twice produced "<title> | AINative Builder | AINative Builder" and
+  // tripped OnPage's title_too_long check.
+  const title = guide.title
 
   return {
     title,
