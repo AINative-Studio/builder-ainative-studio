@@ -260,6 +260,28 @@ describe('Preview — live-status chip + banners (render)', () => {
     expect(host.textContent).toContain("couldn't build the live preview")
   })
 
+  // #1802: when chat-ws sent an honest, specific reason (upstream capacity
+  // limit, account quota), Preview must show THAT instead of the generic
+  // "Cody couldn't build the live preview" copy — a founder hitting a
+  // platform-side 429 cascade should never read it as their idea being broken.
+  it('status error with a server-sent errorMessage shows that specific reason, not the generic fallback copy', async () => {
+    h.state = { ...baseState }
+    h.previewReturn = {
+      previewUrl: null, status: 'error', chatId: null, files: null, designConformance: null, refreshKey: 0,
+      errorMessage: "We're at capacity right now — every attempt to build this hit a temporary upstream limit. Nothing is wrong with your idea; please try again in a few minutes.",
+    }
+    fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const Preview = await importPreview()
+    render(React.createElement(Preview))
+    await flush()
+
+    const reason = host.querySelector('[data-testid="preview-error-reason"]')
+    expect(reason?.textContent).toMatch(/at capacity/i)
+    expect(host.textContent).not.toContain("Cody couldn't build the live preview this time.")
+  })
+
   it('design-conformance badge renders only once ready, with the real pass/partial/fail label + glyph', async () => {
     h.state = { ...baseState, designSystemId: 'ds-1' }
     h.previewReturn = {

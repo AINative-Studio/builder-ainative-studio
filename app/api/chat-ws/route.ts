@@ -52,6 +52,7 @@ import { isClaudeAgentEnabled, isClaudeAgentFallbackEnabled, runHeadlessAgent } 
 import { cleanupWorktree } from '@/lib/agent/worktree-manager'
 import { logAgentRun } from '@/lib/services/agent-runs.service'
 import { isQuotaError, QUOTA_USER_MESSAGE } from '@/lib/quota-error'
+import { isCapacityExhaustedError, makeCapacityExhaustedError, CAPACITY_USER_MESSAGE } from '@/lib/capacity-error'
 import { getBedrockClient, isBedrockEnabled } from '@/lib/bedrock-client'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
 import { applyChatBudget } from '@/lib/build/context-budget-chat'
@@ -1174,6 +1175,18 @@ export async function POST(request: NextRequest) {
 
             // Log generation summary
             console.log('\n' + getGenerationSummary(chunks))
+
+            // #1802: when EVERY phase (primary model and every #1804 fallback
+            // attempt) failed in a rate-limit/overload-shaped way, mergeChunks()
+            // below would throw its generic "Core structure (Phase 1) failed or
+            // is missing - cannot merge" — indistinguishable, by the time it
+            // reaches the outer catch, from a genuine code bug. Detect the
+            // upstream-capacity case here, where the real per-chunk signal
+            // (isRateLimited) is still available, and tag it so the founder sees
+            // an honest "we're at capacity" message instead of a generic failure.
+            if (chunks.length > 0 && chunks.every((c) => !c.success && c.isRateLimited)) {
+              throw makeCapacityExhaustedError()
+            }
 
             // Merge all chunks into final application
             console.log('\n🔀 Merging chunks...')
@@ -2501,9 +2514,15 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
           console.error('Streaming error:', error)
           keepaliveActive = false
           clearInterval(keepaliveInterval)
+          // #1802: tell the founder this was an upstream capacity limit, not a
+          // code/content failure — same honesty bar as the quota_exhausted
+          // (402/billing) short-circuit above, for the distinct "every phase
+          // hit rate limiting" case tagged just above (chunk generation).
+          const capacityExhausted = isCapacityExhaustedError(error)
           safeEnqueue(encoder.encode(`data: ${JSON.stringify({
             type: 'error',
-            error: 'Stream failed'
+            error: capacityExhausted ? CAPACITY_USER_MESSAGE : 'Stream failed',
+            ...(capacityExhausted ? { code: 'generation_capacity_exhausted' } : {}),
           })}\n\n`))
 
           // RLHF: Log failure for training data
