@@ -5,6 +5,7 @@ import {
   findAikitGaps,
   findPrimitiveComplianceGaps,
   hasVisitorTrackingGap,
+  hasDynamicTailwindClassGap,
   hasFakeLeadCaptureGap,
   hasAlertInLeadCaptureGap,
   hasFakeButtonGap,
@@ -265,6 +266,76 @@ describe('obedience-gate: visitor tracking (#483/#563)', () => {
     expect(r.visitorTrackingGap).toBe(false)
     const prompt = buildObediencePrompt('a counter', r)
     expect(prompt).not.toMatch(/FIRE THE MANDATED VISITOR-TRACKING BEACON/)
+  })
+})
+
+// Rendering-correctness risk found via static sweep (2026-11-07): Tailwind's
+// content scanner matches complete, literal class-name-shaped strings in the
+// raw source text — it never evaluates JS — so a className template literal
+// that splices a `${}` expression INSIDE a single utility token (e.g.
+// `bg-${color}-500`) can never be found, and the element silently renders
+// unstyled. A ternary/`&&` between whole, complete class strings is safe
+// (each branch is itself a literal string Tailwind's scanner finds).
+describe('obedience-gate: dynamic Tailwind class interpolation (rendering-correctness sweep)', () => {
+  it('flags a color/variant split mid-token: bg-${color}-500', () => {
+    const code = 'function App(){ return <div className={`bg-${color}-500 rounded`}>hi</div> }'
+    expect(hasDynamicTailwindClassGap(code)).toBe(true)
+  })
+
+  it('flags a suffix-only split: text-${size}', () => {
+    const code = 'function App(){ return <span className={`text-${size}`}>hi</span> }'
+    expect(hasDynamicTailwindClassGap(code)).toBe(true)
+  })
+
+  it('flags a static suffix glued onto a fully-dynamic prefix: ${size}-lg', () => {
+    const code = 'function App(){ return <span className={`text-${size}-lg`}>hi</span> }'
+    expect(hasDynamicTailwindClassGap(code)).toBe(true)
+  })
+
+  it('does NOT flag a ternary between whole, complete class strings', () => {
+    const code =
+      "function App(){ return <div className={`base ${isActive ? 'bg-blue-500' : 'bg-gray-200'}`}>hi</div> }"
+    expect(hasDynamicTailwindClassGap(code)).toBe(false)
+  })
+
+  it('does NOT flag a plain static className template literal with no interpolation', () => {
+    const code = 'function App(){ return <div className={`flex items-center gap-2`}>hi</div> }'
+    expect(hasDynamicTailwindClassGap(code)).toBe(false)
+  })
+
+  it('does NOT flag a fully-dynamic className with whitespace boundaries on both sides', () => {
+    const code = 'function App(){ return <div className={`base ${extraClasses}`}>hi</div> }'
+    expect(hasDynamicTailwindClassGap(code)).toBe(false)
+  })
+
+  it('still flags the gap when the interpolation is a nested expression (clsx/cn call)', () => {
+    const code = "function App(){ return <div className={`bg-${cn(isActive, 'active')}-500`}>hi</div> }"
+    expect(hasDynamicTailwindClassGap(code)).toBe(true)
+  })
+
+  it('does not false-positive on a comment-only mention of the bad pattern', () => {
+    const code = "// avoid patterns like className={`bg-${color}-500`}\nfunction App(){ return <div className={`bg-blue-500`}>hi</div> }"
+    expect(hasDynamicTailwindClassGap(code)).toBe(false)
+  })
+
+  it('checkObedience surfaces dynamicTailwindClassGap and a reason string', () => {
+    const r = checkObedience('function App(){ return <div className={`bg-${color}-500`}>hi</div> }', 'a counter')
+    expect(r.dynamicTailwindClassGap).toBe(true)
+    expect(r.reasons.some((x) => x.includes('Tailwind utility class'))).toBe(true)
+  })
+
+  it('buildObediencePrompt includes the lookup-map fix guidance when this gap fires', () => {
+    const r = checkObedience('function App(){ return <div className={`bg-${color}-500`}>hi</div> }', 'a counter')
+    const prompt = buildObediencePrompt('a counter', r)
+    expect(prompt).toMatch(/STOP SPLICING VARIABLES INSIDE TAILWIND CLASS NAMES/)
+  })
+
+  it('buildObediencePrompt omits the dynamic-class section when there is no split token', () => {
+    const code = "function App(){ return <div className={`base ${isActive ? 'bg-blue-500' : 'bg-gray-200'}`}>hi</div> }"
+    const r = checkObedience(code, 'a counter')
+    expect(r.dynamicTailwindClassGap).toBe(false)
+    const prompt = buildObediencePrompt('a counter', r)
+    expect(prompt).not.toMatch(/STOP SPLICING VARIABLES INSIDE TAILWIND CLASS NAMES/)
   })
 })
 
