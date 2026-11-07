@@ -12,11 +12,15 @@ beforeAll(() => {
 
 /**
  * WebMCP tool registration (#1683, AX "WebMCP Tool Quality" gap, 0/3; fixed
- * for real in #1836 — see components/webmcp-tools.tsx's doc comment: the
- * previous version only registered onto a PRE-EXISTING document.modelContext,
- * which no shipping browser provides, so every registerTool() call was dead
- * on arrival. It now creates a minimal, real registry when one doesn't
- * already exist.
+ * for real in #1836 — see components/webmcp-tools.tsx's doc comment for the
+ * full history. The real root cause, confirmed by reading AINative's own AX
+ * audit checker source directly: it calls `document.modelContext.getTools()`
+ * and gates on `typeof mc.getTools === 'function'` BEFORE anything else —
+ * an object with only registerTool()/unregisterTool() and no getTools()
+ * was invisible to the real checker no matter how correctly registration
+ * itself worked. getOrCreateModelContext() now also requires getTools() to
+ * exist before treating an existing document.modelContext as usable; an
+ * incomplete pre-existing object is replaced, not reused as-is.
  */
 
 let host: HTMLElement
@@ -55,9 +59,9 @@ describe('WebMcpTools', () => {
     expect(modelContext).toBeTruthy()
   })
 
-  it('registers list_capabilities and start_build when document.modelContext is present', () => {
+  it('registers list_capabilities and start_build when a COMPLIANT document.modelContext (with getTools) is present', () => {
     const registerTool = vi.fn()
-    ;(document as any).modelContext = { registerTool, unregisterTool: vi.fn() }
+    ;(document as any).modelContext = { registerTool, unregisterTool: vi.fn(), getTools: vi.fn(async () => []) }
 
     render(<WebMcpTools />)
 
@@ -67,9 +71,9 @@ describe('WebMcpTools', () => {
     expect(names).toContain('start_build')
   })
 
-  it('reuses a pre-existing document.modelContext instead of overwriting it', () => {
+  it('reuses a pre-existing document.modelContext that already implements getTools()', () => {
     const registerTool = vi.fn()
-    const existing = { registerTool, unregisterTool: vi.fn() }
+    const existing = { registerTool, unregisterTool: vi.fn(), getTools: vi.fn(async () => []) }
     ;(document as any).modelContext = existing
 
     render(<WebMcpTools />)
@@ -77,9 +81,31 @@ describe('WebMcpTools', () => {
     expect(document.modelContext).toBe(existing)
   })
 
+  it('REPLACES an incomplete pre-existing document.modelContext that lacks getTools() — the real bug this issue was about', () => {
+    const incomplete = { registerTool: vi.fn(), unregisterTool: vi.fn() }
+    ;(document as any).modelContext = incomplete
+
+    render(<WebMcpTools />)
+
+    expect(document.modelContext).not.toBe(incomplete)
+    expect(typeof document.modelContext!.getTools).toBe('function')
+  })
+
+  it('getTools() resolves to the real registered tools, each with a readOnlyHint annotation', async () => {
+    render(<WebMcpTools />)
+
+    const tools = await document.modelContext!.getTools()
+    const names = tools.map((t) => t.name)
+    expect(names).toContain('list_capabilities')
+    expect(names).toContain('start_build')
+    for (const tool of tools) {
+      expect(tool.annotations?.readOnlyHint).toBe(true)
+    }
+  })
+
   it('list_capabilities fetches the real /openapi.json document', async () => {
     const registerTool = vi.fn()
-    ;(document as any).modelContext = { registerTool, unregisterTool: vi.fn() }
+    ;(document as any).modelContext = { registerTool, unregisterTool: vi.fn(), getTools: vi.fn(async () => []) }
     const fetchMock = vi.fn(async () => ({ json: async () => ({ openapi: '3.1.0' }) }))
     ;(globalThis as any).fetch = fetchMock
 
@@ -94,7 +120,7 @@ describe('WebMcpTools', () => {
 
   it('unregisters its tools on unmount', () => {
     const unregisterTool = vi.fn()
-    ;(document as any).modelContext = { registerTool: vi.fn(), unregisterTool }
+    ;(document as any).modelContext = { registerTool: vi.fn(), unregisterTool, getTools: vi.fn(async () => []) }
 
     render(<WebMcpTools />)
     act(() => { root.unmount() })
