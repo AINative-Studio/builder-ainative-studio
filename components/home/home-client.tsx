@@ -59,11 +59,22 @@ const AINATIVE_API_BASE =
 
 // Static fallback — used only if GET /models/catalog/coding is unreachable, so
 // the dropdown never goes empty. Keep in sync with the backend's verified set.
+//
+// #1818 follow-up (2026-11-07): 'qwen3-coder-flash' was removed from this list
+// — it was never actually in core's live, verified GET /api/v1/models/catalog/
+// coding response (confirmed via a real unauthenticated call against
+// production), only in this static fallback. Core's registry has had it
+// hard-deprecated since 2026-09-01 (DO removed it from its serverless
+// catalog). The live catalog's 4th entry, 'llama-4-maverick-17b-128e',
+// resolves to the SAME DO upstream ("llama-4-maverick") that chat-ws/
+// route.ts's MODEL_CONFIG explicitly blocks elsewhere in this repo for a
+// confirmed 512-token truncation bug (AINative caps it) — not safe to add
+// here even though core's catalog lists it; dropped rather than
+// reintroducing that bug under a different alias name.
 const BUILDER_MODEL_FALLBACK: Array<{
   id: string; label: string; group: string; default?: boolean
 }> = [
   { id: 'deepseek-4-flash', label: 'DeepSeek 4 Flash', group: 'Recommended (Fast + Reliable)', default: true },
-  { id: 'qwen3-coder-flash', label: 'Qwen3 Coder Flash', group: 'Recommended (Fast + Reliable)' },
   { id: 'qwen-coder-32b', label: 'Qwen Coder 32B', group: 'Recommended (Fast + Reliable)' },
   { id: 'kimi-k2', label: 'Kimi K2', group: 'High Quality (Slower)' },
 ]

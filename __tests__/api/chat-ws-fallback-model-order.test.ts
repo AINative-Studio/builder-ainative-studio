@@ -19,13 +19,24 @@ import { describe, it, expect } from 'vitest'
  * fragility.
  *
  * Fixed by replacing the whole chain with core's real DigitalOcean-backed,
- * PAID ("pro") coding fallback — 'qwen3-coder-flash' (DO-only, core's
- * "DigitalOcean serverless coding models (pro+)" section) and 'kimi-k2'
- * (paid, dual-provider NIM+DO) — so an enterprise generation stays on the
- * paid tier end-to-end: Bedrock (primary) -> DigitalOcean-backed paid
- * coding model (fallback), never free/basic tier.
+ * PAID ("pro") coding fallback — originally 'qwen3-coder-flash' (DO-only)
+ * and 'kimi-k2' (paid, dual-provider NIM+DO).
+ *
+ * #1818 follow-up (2026-11-07): 'qwen3-coder-flash' turned out to have been
+ * picked against a STALE snapshot of core's model_registry.py. Re-verified
+ * live against the actual current origin/main and against core's own
+ * public, unauthenticated GET /v1/models: 'qwen3-coder-flash' has NO live
+ * registration anywhere in the current registry, only a _DEPRECATED
+ * hard-fail entry ("removed from DigitalOcean's serverless catalog...
+ * Refs #6793") that has been in effect since 2026-09-01 — before the
+ * #1832/#1833 fix that added it here even shipped. Confirmed absent from
+ * https://api.ainative.studio/v1/models' id list. Replaced with
+ * 'deepseek-4-flash': confirmed live in core's registry (DO + NIM,
+ * genuinely dual-provider, "pro" tier) and confirmed as core's own curated
+ * DEFAULT entry in the live-verified GET /api/v1/models/catalog/coding
+ * Builder coding-model list.
  */
-describe('chat-ws fallback model chain stays on paid/enterprise tier, DigitalOcean-backed (2026-11-04, #1832)', () => {
+describe('chat-ws fallback model chain stays on paid/enterprise tier, DigitalOcean-backed, and on a LIVE model (#1818 follow-up, 2026-11-07)', () => {
   const source = fs.readFileSync(
     path.join(__dirname, '../../app/api/chat-ws/route.ts'),
     'utf-8',
@@ -37,9 +48,14 @@ describe('chat-ws fallback model chain stays on paid/enterprise tier, DigitalOce
     return m![1].split(',').map((s) => s.trim().replace(/['"]/g, '')).filter(Boolean)
   }
 
-  it('STANDARD_FALLBACKS contains the real DigitalOcean-backed paid coding model, qwen3-coder-flash', () => {
+  it('STANDARD_FALLBACKS contains deepseek-4-flash, a live DigitalOcean-backed paid coding model', () => {
     const models = extractList('STANDARD_FALLBACKS')
-    expect(models).toContain('qwen3-coder-flash')
+    expect(models).toContain('deepseek-4-flash')
+  })
+
+  it('STANDARD_FALLBACKS no longer contains qwen3-coder-flash — confirmed dead in core\'s registry', () => {
+    const models = extractList('STANDARD_FALLBACKS')
+    expect(models).not.toContain('qwen3-coder-flash')
   })
 
   it('STANDARD_FALLBACKS no longer contains any free/basic-tier, single-provider model', () => {
@@ -52,14 +68,15 @@ describe('chat-ws fallback model chain stays on paid/enterprise tier, DigitalOce
     expect(models).not.toContain('ministral-14b')
   })
 
-  it('PREMIUM_FALLBACKS also stays on the DigitalOcean-backed paid chain, not the old free-tier models', () => {
+  it('PREMIUM_FALLBACKS also stays on the DigitalOcean-backed paid chain, not the old free-tier models or the dead qwen3-coder-flash', () => {
     const models = extractList('PREMIUM_FALLBACKS')
-    expect(models).toContain('qwen3-coder-flash')
+    expect(models).toContain('deepseek-4-flash')
+    expect(models).not.toContain('qwen3-coder-flash')
     expect(models).not.toContain('qwen-coder-32b')
     expect(models).not.toContain('ministral-14b')
   })
 
-  it('qwen3-coder-flash is registered in MODEL_CONFIG so it actually routes correctly', () => {
-    expect(source).toMatch(/'qwen3-coder-flash':\s*\{\s*provider:\s*'ainative',\s*modelId:\s*'qwen3-coder-flash'/)
+  it('deepseek-4-flash is registered in MODEL_CONFIG so it actually routes correctly', () => {
+    expect(source).toMatch(/'deepseek-4-flash':\s*\{\s*provider:\s*'ainative',\s*modelId:\s*'deepseek-4-flash'/)
   })
 })
