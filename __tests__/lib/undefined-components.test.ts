@@ -209,3 +209,66 @@ describe('findUnresolvedComponents (#76)', () => {
     expect(r2.error).toMatch(/Header/)
   })
 })
+
+// #1858: findUnresolvedComponents' available-name collectors and its
+// JSX-usage scan were comment/string-blind — a comment merely mentioning a
+// declaration/import/destructure/JSX tag was indistinguishable from the
+// real thing.
+describe('findUnresolvedComponents is comment-blind (#1858)', () => {
+  it('still flags a real unresolved component when a comment mentions a fake local declaration for it', () => {
+    const code = [
+      "import React from 'react'",
+      '// we used to have: function Header(){ return null }',
+      'export default function App(){ return <div><Header/></div>; }',
+    ].join('\n')
+    expect(findUnresolvedComponents(code)).toContain('Header')
+  })
+
+  it('still flags a real unresolved component when a block comment mentions a fake import for it', () => {
+    const code = [
+      "import React from 'react'",
+      "/* import { Header } from './header' */",
+      'export default function App(){ return <div><Header/></div>; }',
+    ].join('\n')
+    expect(findUnresolvedComponents(code)).toContain('Header')
+  })
+
+  it('still flags a real unresolved component when a comment mentions a fake destructured binding for it', () => {
+    const code = [
+      "import React from 'react'",
+      'export default function App(){',
+      '  // const { Header } = useLegacyShim()',
+      '  return <div><Header/></div>;',
+      '}',
+    ].join('\n')
+    expect(findUnresolvedComponents(code)).toContain('Header')
+  })
+
+  it('does NOT flag a component only MENTIONED in a comment, never actually rendered in JSX', () => {
+    const code = [
+      "import React from 'react'",
+      '// TODO: bring back <OldBanner/> once design approves it',
+      'export default function App(){ return <div>hi</div>; }',
+    ].join('\n')
+    expect(findUnresolvedComponents(code)).toEqual([])
+  })
+
+  it('does NOT flag a component only mentioned inside a block comment JSX example', () => {
+    const code = [
+      "import React from 'react'",
+      '/* usage: <Legacy/> — deprecated, do not use */',
+      'export default function App(){ return <div>hi</div>; }',
+    ].join('\n')
+    expect(findUnresolvedComponents(code)).toEqual([])
+  })
+
+  it('a real declaration/import/JSX usage still works normally alongside unrelated comments', () => {
+    const code = [
+      "import React from 'react'",
+      '// Header renders the page title',
+      'function Header(){ return <h1>Hi</h1>; }',
+      'export default function App(){ return <div><Header/></div>; }',
+    ].join('\n')
+    expect(findUnresolvedComponents(code)).toEqual([])
+  })
+})
