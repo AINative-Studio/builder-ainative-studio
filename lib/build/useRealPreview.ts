@@ -44,6 +44,13 @@ interface Gen {
   files: Record<string, string> | null
   refreshKey: number
   designConformance: DesignConformanceSummary | null
+  /** The server's own `error`/`code` from the chat-ws 'error' SSE event
+   *  (#1802) — e.g. the honest "we're at capacity" message for an upstream
+   *  rate-limit cascade, or the quota_exhausted billing message. null for a
+   *  generic/unspecified failure, so callers can still fall back to their
+   *  own default copy. */
+  errorMessage: string | null
+  errorCode: string | null
   listeners: Set<() => void>
 }
 
@@ -59,7 +66,7 @@ export function __resetRealPreviewGens(): void {
 function genFor(idea: string): Gen {
   let g = gens.get(idea)
   if (!g) {
-    g = { chatId: null, status: 'idle', files: null, refreshKey: 0, designConformance: null, listeners: new Set() }
+    g = { chatId: null, status: 'idle', files: null, refreshKey: 0, designConformance: null, errorMessage: null, errorCode: null, listeners: new Set() }
     gens.set(idea, g)
   }
   return g
@@ -133,6 +140,12 @@ async function runGeneration(idea: string, g: Gen, dataModel?: unknown, designSy
           notify(g)
         } else if (payload.type === 'error') {
           g.status = 'error'
+          // #1802: keep the server's own honest error text/code (capacity or
+          // quota short-circuits) instead of discarding it — this used to
+          // drop straight to the generic "Preview unavailable" copy below
+          // regardless of why generation actually failed.
+          g.errorMessage = typeof payload.error === 'string' ? payload.error : null
+          g.errorCode = typeof payload.code === 'string' ? payload.code : null
           notify(g)
         } else if (payload.type === 'complete' && payload.designConformance) {
           // #751: real post-generation check result, when a design system was
@@ -214,7 +227,16 @@ export function useRealPreview(idea: string, enabled: boolean, dataModel?: unkno
   // event) — Preview uses its changes to keep the ribbon narrating genuine
   // progress for the full generation call, instead of going quiet once the
   // scripted deploy lines run out.
-  return { previewUrl, status: g.status, chatId: g.chatId, files: g.files, designConformance: g.designConformance, refreshKey: g.refreshKey }
+  return {
+    previewUrl,
+    status: g.status,
+    chatId: g.chatId,
+    files: g.files,
+    designConformance: g.designConformance,
+    refreshKey: g.refreshKey,
+    errorMessage: g.errorMessage,
+    errorCode: g.errorCode,
+  }
 }
 
 /**

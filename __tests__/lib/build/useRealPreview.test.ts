@@ -208,6 +208,49 @@ describe('useRealPreview — error paths', () => {
     await waitFor(() => expect(result.current.status).toBe('error'), { timeout: 3000 })
   })
 
+  // #1802: the server's own honest error text/code (upstream capacity limit,
+  // account quota) must reach the UI instead of being silently discarded —
+  // it used to drop straight to a generic error status with no message at all.
+  it('captures the server-sent error message and code from the error SSE event', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(sseResponse([
+        sseEvent({ type: 'init', chatId: 'chat-capacity' }),
+        sseEvent({
+          type: 'error',
+          error: "We're at capacity right now — every attempt to build this hit a temporary upstream limit. Nothing is wrong with your idea; please try again in a few minutes.",
+          code: 'generation_capacity_exhausted',
+        }),
+      ]))
+      .mockResolvedValueOnce(filesNotFound())
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => '<html>' + 'x'.repeat(200) + '</html>',
+      } as unknown as Response),
+    )
+    const { result } = renderHook(() => useRealPreview('Capacity-limited idea', true))
+    await waitFor(() => expect(result.current.status).toBe('error'), { timeout: 3000 })
+    expect(result.current.errorCode).toBe('generation_capacity_exhausted')
+    expect(result.current.errorMessage).toMatch(/at capacity/i)
+  })
+
+  it('leaves errorMessage/errorCode null when the error event has no error/code fields', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(sseResponse([
+        sseEvent({ type: 'init', chatId: 'chat-generic-err' }),
+        sseEvent({ type: 'error' }),
+      ]))
+      .mockResolvedValueOnce(filesNotFound())
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => '<html>' + 'x'.repeat(200) + '</html>',
+      } as unknown as Response),
+    )
+    const { result } = renderHook(() => useRealPreview('Generically broken idea', true))
+    await waitFor(() => expect(result.current.status).toBe('error'), { timeout: 3000 })
+    expect(result.current.errorMessage).toBeNull()
+    expect(result.current.errorCode).toBeNull()
+  })
+
   it('sets status=error when no chatId is received (no init event)', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(sseResponse([
       sseEvent({ type: 'refresh' }), // no init
