@@ -1,11 +1,12 @@
 /**
  * GET /.well-known/provisioning (AX/agent-readiness scan, AR-PROV gap, 2026-10-29;
- * field-shape fix #1834) — Builder already has real, working, production
- * provisioning: POST /api/build/provision (see
- * app/api/build/provision/route.ts), which gives a company shipped from
- * /build its own real per-company data layer via AINative Instant DB. This
- * document points an external agent at that REAL, already-functioning
- * endpoint — it does not stand up new provisioning logic.
+ * field-shape fix #1834; anonymous-claim accuracy fix #1848) — Builder
+ * already has real, working, production provisioning: POST
+ * /api/build/provision (see app/api/build/provision/route.ts), which gives a
+ * company shipped from /build its own real per-company data layer via
+ * AINative Instant DB. This document points an external agent at that REAL,
+ * already-functioning endpoint — it does not stand up new provisioning
+ * logic.
  *
  * Shape follows the AR-PROV spec (agentready-org/standard PR #9), matching
  * the field names used by ainative.ax's own reference implementation at
@@ -17,15 +18,22 @@
  * spec at all, so AX audits correctly flagged every required field as
  * missing even though a real, working endpoint exists.
  *
- * Two real paths, resolved server-side from the caller's own session (never
- * from a client-sent `plan` field, which has never been read — #1014):
- *  - Signed-in founder (NextAuth session cookie) → PERMANENT sk_ key
- *    immediately, auto-assigned to their Default Workspace.
- *  - Anonymous → TEMPORARY tmp_ key (~24h expiry) + a claim token, upgradeable
- *    to permanent later via a signed-in payment with no data loss.
- *
- * See /openapi.json's '/api/build/provision' entry for the full request/
- * response schema.
+ * #1848 found this document's `anonymous-claimable` consent model, while
+ * technically accurate about THIS ONE ROUTE in isolation (provision/
+ * route.ts's own `auth().catch(() => null)` really does tolerate a null
+ * session and really does mint a tmp_ key), was misleading about the
+ * overall product: confirmed live (an actual anonymous browser session
+ * against builder.ainative.studio/build) that a visitor with no account
+ * cannot reach the point where a slug/company even EXISTS for this route to
+ * act on — /build itself requires "Get started" → signup before any idea
+ * input is shown, no code generation or preview happens pre-auth. The
+ * anonymous tmp_-key path this route describes is reachable only via a
+ * DIFFERENT, already-authenticated-adjacent flow (a company created through
+ * the signed-in UI, provisioned with a session that then expires/is
+ * cleared) — not a true "zero-signup" entry point an agent could use cold.
+ * Removed the anonymous-claimable consent model and the step-up limits
+ * block accordingly, since advertising them here implied a capability
+ * reachable from the front door that isn't.
  */
 
 const ORIGIN = process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio'
@@ -82,13 +90,9 @@ export async function GET() {
         },
       ],
       consent: {
-        models: ['session-cookie', 'anonymous-claimable'],
+        models: ['session-cookie'],
         description:
-          "Signed-in: a valid NextAuth session cookie provisions a PERMANENT key immediately, auto-assigned to the founder's Default Workspace. Anonymous: provisions a TEMPORARY key (~24h expiry) plus a claim token; a later signed-in payment can upgrade it to permanent with no data loss. A `plan` field sent in the request body is ignored — entitlement is always resolved server-side from the caller's own session, never taken from the caller.",
-      },
-      limits: {
-        step_up_possible: true,
-        step_up_description: 'Anonymous tmp_ key can step up to a permanent sk_ key via a signed-in payment, with no data loss.',
+          "Requires a signed-in NextAuth session cookie, which provisions a PERMANENT key immediately, auto-assigned to the founder's Default Workspace. Builder's /build flow itself requires account creation before a company/slug exists for this endpoint to act on — there is no unauthenticated entry point an agent can reach cold. A `plan` field sent in the request body is ignored — entitlement is always resolved server-side from the caller's own session, never taken from the caller.",
       },
       openapi_reference: `${ORIGIN}/openapi.json`,
     },

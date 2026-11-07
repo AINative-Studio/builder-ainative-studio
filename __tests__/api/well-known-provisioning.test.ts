@@ -76,4 +76,12 @@ describe('GET /.well-known/provisioning (AR-PROV spec-shape fix, #1834)', () => 
     const res = await GET()
     expect(res.headers.get('Cache-Control')).toContain('max-age')
   })
+
+  it('#1848: does not claim an anonymous-claimable entry point, since /build requires signup before any slug/company exists', async () => {
+    const res = await GET()
+    const doc = await res.json()
+    expect(doc.consent.models).not.toContain('anonymous-claimable')
+    expect(doc.consent.models).toEqual(['session-cookie'])
+    expect(doc.limits).toBeUndefined()
+  })
 })
