@@ -452,19 +452,46 @@ async function closePrimitiveComplianceGap(
 // through to, because every entry in it was single-provider.
 //
 // Replaced with core's real DigitalOcean-backed, PAID ("pro") coding
-// fallback: 'qwen3-coder-flash' (`_add(ModelSpec("qwen3-coder-flash",
-// {DO: "qwen3-coder-flash"}, (DO,), "pro", ...))`, under core's own
-// "DigitalOcean serverless coding models (pro+)" section) and 'kimi-k2'
-// (paid, dual-provider NIM+DO — deliberately NOT 'kimi-k2.6', which is
-// NIM-only). Both stay on the enterprise/paid tier end-to-end: Bedrock
-// (primary) -> DigitalOcean-backed paid coding model (fallback) -> the
-// SAME DO model again via kimi-k2's DO leg, never free/basic tier.
-const STANDARD_FALLBACKS = ['qwen3-coder-flash', 'kimi-k2']
+// fallback: originally 'qwen3-coder-flash' and 'kimi-k2' (paid,
+// dual-provider NIM+DO — deliberately NOT 'kimi-k2.6', which is NIM-only).
+//
+// #1818 follow-up (2026-11-07): 'qwen3-coder-flash' was picked above
+// against a STALE snapshot of core's model_registry.py — re-verified live
+// against the actual current origin/main (git show origin/main:src/backend/
+// app/services/model_registry.py) and core's own public, unauthenticated
+// GET /v1/models: there is NO live _add(ModelSpec("qwen3-coder-flash", ...))
+// anywhere in the current registry, only a _DEPRECATED hard-fail entry
+// ("Qwen3 Coder Flash has been removed from DigitalOcean's serverless
+// catalog... Refs #6793", dead since 2026-09-01 — BEFORE the #1832/#1833 fix
+// that added it here even shipped). Confirmed live: 'qwen3-coder-flash' is
+// absent from https://api.ainative.studio/v1/models' id list today.
+// 'qwen-coder-32b' and 'ministral-14b' — the two models #1818 originally
+// flagged with 403/503s — were re-checked the same way: 'ministral-14b' is
+// confirmed fully removed from core's entire codebase (core commit
+// 981a41da, 2026-10-31, PR #9692 — explicitly called a "phantom and dead
+// model" with a regression test asserting it never reappears), while
+// 'qwen-coder-32b' IS live today (in /v1/models, in core's own curated
+// "live-verified" GET /api/v1/models/catalog/coding list, no
+// registry_status:"substituted:..." flag) — so the original free-tier
+// concern from #1832 still applies to it, but it is not itself dead.
+// Replaced the dead 'qwen3-coder-flash' with 'deepseek-4-flash': confirmed
+// live in core's registry (`_add(ModelSpec("deepseek-4-flash", {DO:
+// "deepseek-4-flash", NIM: "deepseek-ai/deepseek-v4-flash"}, (DO, NIM),
+// "pro", ...))` — "pro" tier like qwen3-coder-flash was meant to be, AND
+// genuinely dual-provider (DO + NIM) unlike qwen3-coder-flash's single DO
+// leg — plus it is core's own curated DEFAULT entry in the live-verified
+// Builder coding-model list (GET /api/v1/models/catalog/coding, "default":
+// true, group "Recommended (Fast + Reliable)"), confirmed via a real,
+// unauthenticated call against production moments before this fix. Both
+// fallback entries stay on the enterprise/paid tier end-to-end: Bedrock
+// (primary) -> DigitalOcean-backed paid coding model (fallback) -> kimi-k2
+// (paid, dual-provider), never free/basic tier.
+const STANDARD_FALLBACKS = ['deepseek-4-flash', 'kimi-k2']
 // nemotron-70b deliberately NOT included — verified it doesn't exist in
 // core's model_registry.py under that exact name (only nemotron-super-49b
 // does, and that's NIM-only/single-provider); kept out of the active
 // fallback chain rather than perpetuating an unverified/dead model name.
-const PREMIUM_FALLBACKS = ['kimi-k2', 'qwen3-coder-flash']
+const PREMIUM_FALLBACKS = ['kimi-k2', 'deepseek-4-flash']
 
 // Model routing config — all models route through AINative API.
 // NOTE: 'tier' here is a COMPUTE-COST-ROUTING concept (cheap/fast model vs.
@@ -479,14 +506,20 @@ const MODEL_CONFIG: Record<string, { provider: 'meta' | 'ainative'; modelId: str
   'kimi-k2.6': { provider: 'ainative', modelId: 'kimi-k2.6', tier: 'premium' },
   'kimi-k2': { provider: 'ainative', modelId: 'kimi-k2', tier: 'premium' },
   'nemotron-70b': { provider: 'ainative', modelId: 'nemotron-70b', tier: 'premium' },
-  // #1832: core's real DigitalOcean-backed, paid ("pro") coding model —
-  // verified directly in core's model_registry.py: `_add(ModelSpec(
-  // "qwen3-coder-flash", {DO: "qwen3-coder-flash"}, (DO,), "pro", ...))`,
-  // under the "DigitalOcean serverless coding models (pro+)" section. This
-  // is the enterprise-tier fallback for a Bedrock-rate-limited generation —
-  // see STANDARD_FALLBACKS/PREMIUM_FALLBACKS below for why this replaced
-  // the free-tier/NIM-only models previously in those lists.
-  'qwen3-coder-flash': { provider: 'ainative', modelId: 'qwen3-coder-flash', tier: 'premium' },
+  // #1818 follow-up: 'qwen3-coder-flash' (the #1832 choice) has NO live
+  // registration in core's current model_registry.py — only a _DEPRECATED
+  // hard-fail entry, dead since 2026-09-01 per core's own commit history,
+  // and confirmed absent from the live, public GET /v1/models today.
+  // Replaced with 'deepseek-4-flash': verified live in core's registry
+  // (`_add(ModelSpec("deepseek-4-flash", {DO: "deepseek-4-flash", NIM:
+  // "deepseek-ai/deepseek-v4-flash"}, (DO, NIM), "pro", ...))`) and in
+  // core's own curated, live-verified Builder coding-model list (GET
+  // /api/v1/models/catalog/coding — "default": true). This is the
+  // enterprise-tier fallback for a Bedrock-rate-limited generation — see
+  // STANDARD_FALLBACKS/PREMIUM_FALLBACKS below for the full history of why
+  // this replaced the free-tier/NIM-only models previously in those lists,
+  // and why qwen3-coder-flash itself had to be replaced again.
+  'deepseek-4-flash': { provider: 'ainative', modelId: 'deepseek-4-flash', tier: 'premium' },
   // === STANDARD COMPUTE TIER — fast, reliable ===
   // 'nous-coder' REMOVED — fully deprecated, core hard-fails it (Ref #360).
   'qwen-coder-32b': { provider: 'ainative', modelId: 'qwen-coder-32b', tier: 'standard' },
