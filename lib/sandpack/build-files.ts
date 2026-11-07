@@ -14,7 +14,7 @@
  * './components/ui/separator'` line. Extracting this logic once means the harness
  * can never drift out of sync with what production actually does again.
  */
-import { fixJsxErrors } from './jsx-fixer'
+import { fixJsxErrors, isAllowlistedPackage } from './jsx-fixer'
 import { getBuiltinFiles } from './setup'
 import { sanitizeForSandpack } from '../code-validator'
 import { sandpackDbTokenShim } from './db-token-shim'
@@ -142,6 +142,36 @@ function maskCommentsAndStrings(code: string): string {
 }
 
 /**
+ * Does this code import a bare (non-relative, non-aliased) package specifier
+ * that isn't actually declared as a Sandpack dependency? Mirrors jsx-fixer's
+ * own `isAllowlistedPackage` (the real `customSetup.dependencies` list), but
+ * only needs a yes/no answer here rather than a full stub rewrite — this is
+ * used to decide whether a generated override at a known builtin path is
+ * safe to keep, not to repair the file in place (see its call site below).
+ * Matches both `import ... from 'pkg'` and `export ... from 'pkg'` — Sandpack
+ * resolves either form identically, so a re-export is just as crash-prone.
+ */
+function hasUnresolvableBareImport(code: string): boolean {
+  // Matches the original #1790 fix's own scan exactly (unmasked, same as
+  // `/from\s+['"]shadcn(?:\/[^'"]*)?['"]/.test(content)` it replaces) —
+  // deliberately NOT comment-masked here, since `content` at this call site
+  // is the generated file's RAW text (only sanitizeForSandpack has run), and
+  // unlike obedience-gate.ts's compliance checks this only ever widens which
+  // files get the safe known-good builtin kept over a broken override; a
+  // false positive from a comment merely mentioning a bad package name costs
+  // nothing worse than keeping the builtin it would otherwise have kept
+  // anyway if the import were real.
+  const re = /\bfrom\s+['"]([^'"]+)['"]/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(code))) {
+    const spec = m[1]
+    if (spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('@/')) continue
+    if (!isAllowlistedPackage(spec)) return true
+  }
+  return false
+}
+
+/**
  * Build the final Sandpack `files` map from a generated app's raw files map,
  * exactly as components/chat/sandpack-preview.tsx does: overlay onto builtins,
  * normalize /src and /app paths, assemble /App.tsx as the entry point, then run
@@ -227,9 +257,26 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
     // of overwriting it with broken content — the generated file adds
     // nothing a real founder's app needs here; the builtin already is a
     // complete, dependency-free implementation at this path.
+    //
+    // Generalized (overnight loop, 2026-11-07): the original fix only
+    // matched the literal 'shadcn'/'shadcn/*' specifier, but the real root
+    // cause isn't specific to that one package name — ANY bare import at a
+    // builtin path that doesn't resolve in Sandpack crashes the whole
+    // compile the same way, and the model can just as easily hallucinate
+    // '@shadcn/ui', 'shadcn-ui', 'radix-ui', or any other plausible-sounding
+    // package name here. Worse, this file at a builtin path is structurally
+    // exempt from the SECOND loop's `fixJsxErrors()` generic bare-import
+    // safety net below (`if (builtinPaths.has(path)) continue`) — that net
+    // only runs on files that are NOT at a known builtin path, on the
+    // assumption builtin-path content is always the known-safe original.
+    // Once a generated override has already replaced that content here,
+    // nothing downstream ever re-checks it. Reusing jsx-fixer's own
+    // `ALLOWLISTED_PACKAGE_ROOTS` (the same real Sandpack dependency list
+    // this pipeline actually declares) generalizes the shadcn-only check to
+    // every hallucinated-package shape, not just this one confirmed repro.
     const isBuiltinPath = Object.prototype.hasOwnProperty.call(builtinFiles, path)
-    const importsHallucinatedShadcnPackage = /from\s+['"]shadcn(?:\/[^'"]*)?['"]/.test(content)
-    if (isBuiltinPath && importsHallucinatedShadcnPackage) {
+    const importsUnresolvablePackage = isBuiltinPath && hasUnresolvableBareImport(content)
+    if (importsUnresolvablePackage) {
       continue
     }
     sandpackFiles[path] = content

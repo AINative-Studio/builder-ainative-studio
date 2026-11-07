@@ -782,7 +782,7 @@ function packageRoot(spec: string): string {
   return spec.split('/')[0]
 }
 
-function isAllowlistedPackage(spec: string): boolean {
+export function isAllowlistedPackage(spec: string): boolean {
   return ALLOWLISTED_PACKAGE_ROOTS.has(packageRoot(spec))
 }
 
