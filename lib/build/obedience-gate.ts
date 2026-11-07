@@ -34,7 +34,7 @@
  * (e.g. a counter).
  */
 import { scorePrimitives, RUNTIME_PROXY_PATH_SUBSTRINGS, getRuntimeProxyInstruction, type CompanyRole } from './primitive-catalog'
-import { findMatchingBracket, findMatchingParen, findStringEnd, findBacktickEnd } from './bracket-scanner'
+import { findMatchingBracket, findMatchingParen, findMatchingBrace, findStringEnd, findBacktickEnd } from './bracket-scanner'
 
 /**
  * Blanks out `//` and `/* *\/` comments (replacing their characters with
@@ -598,6 +598,88 @@ export function hasVisitorTrackingGap(code: string): boolean {
 }
 
 /**
+ * Real rendering-correctness risk (priority-1 static-analysis sweep,
+ * 2026-11-07, agentive-product/#1265-adjacent): a `className={\`...\`}`
+ * template literal that splices a `${}` expression INSIDE a single
+ * Tailwind utility token instead of choosing between whole, statically-
+ * complete class strings — e.g. `className={\`bg-${color}-500\`}` or
+ * `className={\`text-${size}\`}`.
+ *
+ * WHY THIS BREAKS RENDERING: Tailwind's content scanner (v3 JIT and v4's
+ * automatic source detection alike) finds utility classes by regex-scanning
+ * the RAW SOURCE TEXT for complete class-name-shaped tokens — it never runs
+ * the JS, so it never evaluates the expression. A token split by `${...}`
+ * never appears in the source as one complete string (the file literally
+ * contains the disconnected fragments `bg-` and `-500`, neither of which is
+ * a real utility name on its own), so Tailwind never generates CSS for it.
+ * At runtime the className resolves to e.g. `"bg-blue-500"`, but no
+ * `.bg-blue-500 { ... }` rule exists anywhere in the compiled stylesheet —
+ * the element silently renders unstyled. Invisible in a code read (the
+ * string looks like an ordinary Tailwind class) and invisible to every
+ * import/syntax check already in this pipeline, since the code is
+ * syntactically and semantically valid JS/JSX — only Tailwind's static-scan
+ * requirement is violated.
+ *
+ * Deliberately does NOT flag the standard, SAFE conditional-class pattern —
+ * `className={\`base ${isActive ? 'bg-blue-500' : 'bg-gray-200'}\`}` —
+ * because each ternary/`&&` branch there is itself a COMPLETE literal class
+ * string that appears whole in the source; Tailwind's scanner finds it
+ * regardless of which branch executes at runtime. The bug is specifically
+ * an expression glued onto adjacent static text with NO boundary (no space/
+ * quote) between them: the character immediately touching `${` on either
+ * side is a hyphen/colon/word character, never whitespace or the start/end
+ * of the template literal. Conservative per this file's "a false 'no gap'
+ * is fine" philosophy — reuses `findMatchingBrace`/`findBacktickEnd` (same
+ * depth-aware `${}`/backtick extent-finding every other check here relies
+ * on) rather than a flat regex, and masks comments first like every other
+ * detector in this file.
+ */
+export function hasDynamicTailwindClassGap(code: string): boolean {
+  const masked = maskComments(code || '')
+  const attrOpenRe = /className=\{`/g
+  let m: RegExpExecArray | null
+
+  while ((m = attrOpenRe.exec(masked)) !== null) {
+    const backtickIdx = m.index + m[0].length - 1
+    const closeBacktickIdx = findBacktickEnd(masked, backtickIdx)
+    if (closeBacktickIdx === -1) {
+      attrOpenRe.lastIndex = m.index + m[0].length
+      continue
+    }
+    const content = masked.slice(backtickIdx + 1, closeBacktickIdx)
+    if (templateLiteralHasGluedInterpolation(content)) return true
+    attrOpenRe.lastIndex = closeBacktickIdx + 1
+  }
+  return false
+}
+
+const WORD_OR_JOINER_CHAR = /[-:\w]/
+
+/** True if any `${...}` in `content` directly touches a hyphen/colon/word character in the adjoining static text, with no whitespace/quote boundary between them. */
+function templateLiteralHasGluedInterpolation(content: string): boolean {
+  let i = 0
+  while (i < content.length) {
+    if (content[i] === '\\') {
+      i += 2
+      continue
+    }
+    if (content[i] === '$' && content[i + 1] === '{') {
+      const precedingChar = i > 0 ? content[i - 1] : ''
+      const closeIdx = findMatchingBrace(content, i + 1)
+      const end = closeIdx === -1 ? content.length : closeIdx
+      const followingChar = end + 1 < content.length ? content[end + 1] : ''
+      if (WORD_OR_JOINER_CHAR.test(precedingChar) || WORD_OR_JOINER_CHAR.test(followingChar)) {
+        return true
+      }
+      i = end + 1
+      continue
+    }
+    i++
+  }
+  return false
+}
+
+/**
  * AX compliance (agent-accessibility, prompt-only per lib/professional-prompt.ts's
  * 10-item checklist — never code-enforced before this). Audited live: real
  * generations scored ~1/10 against that checklist, because nothing here ever
@@ -965,6 +1047,11 @@ export interface ObedienceResult {
   primitiveComplianceGaps: string[]
   /** #483/#563: the mandated visitor-tracking beacon was never fired. */
   visitorTrackingGap: boolean
+  /** Rendering-correctness risk (2026-11-07 static sweep): a className template
+   *  literal splices a ${} expression inside a single Tailwind utility token
+   *  (e.g. `bg-${color}-500`), which Tailwind's static content scanner can
+   *  never resolve, so the element silently renders unstyled. */
+  dynamicTailwindClassGap: boolean
   /** Real bug (found live, 4/4 recent generations): an email/waitlist capture
    *  form that never persists what it captures. */
   fakeLeadCaptureGap: boolean
@@ -1038,6 +1125,7 @@ export function checkObedience(
   const aikitGaps = findAikitGaps(code)
   const primitiveComplianceGaps = options?.landingPageOnly ? [] : findPrimitiveComplianceGaps(code, idea, role)
   const visitorTrackingGap = hasVisitorTrackingGap(code)
+  const dynamicTailwindClassGap = hasDynamicTailwindClassGap(code)
   const fakeLeadCaptureGap = hasFakeLeadCaptureGap(code)
   const alertInLeadCaptureGap = hasAlertInLeadCaptureGap(code)
   const fakeButtonGap = hasFakeButtonGap(code)
@@ -1077,6 +1165,9 @@ export function checkObedience(
   if (visitorTrackingGap) {
     reasons.push('Landing/home page never fires the mandated visitor-tracking beacon (POST /api/db/visitors on mount).')
   }
+  if (dynamicTailwindClassGap) {
+    reasons.push('A className template literal splices a dynamic expression inside a Tailwind utility class (e.g. `bg-${color}-500`) — Tailwind cannot statically detect it, so the element renders unstyled.')
+  }
   if (hardcodedToggleGap) {
     reasons.push('A favorite/like/save toggle on a hardcoded list resets on reload — must persist via /api/db.')
   }
@@ -1107,7 +1198,7 @@ export function checkObedience(
   if (axComplexWidgetRoleGap) {
     reasons.push('A complex widget (tabs or a live status/loading region) is missing its ARIA role — agents/screen readers get no signal about its behavior.')
   }
-  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, visitorTrackingGap, fakeLeadCaptureGap, alertInLeadCaptureGap, fakeButtonGap, nonSemanticInteractiveElementGap, hardcodedToggleGap, unpersistedComposerGap, axLandmarkGap, axManifestGap, axJsonLdGap, axSkipNavGap, axNavLabelGap, axSectionLabelGap, axAgentAttributesGap, axComplexWidgetRoleGap, reasons }
+  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, visitorTrackingGap, dynamicTailwindClassGap, fakeLeadCaptureGap, alertInLeadCaptureGap, fakeButtonGap, nonSemanticInteractiveElementGap, hardcodedToggleGap, unpersistedComposerGap, axLandmarkGap, axManifestGap, axJsonLdGap, axSkipNavGap, axNavLabelGap, axSectionLabelGap, axAgentAttributesGap, axComplexWidgetRoleGap, reasons }
 }
 
 /**
@@ -1319,6 +1410,19 @@ export function buildObediencePrompt(idea: string, result: ObedienceResult): str
       '',
     )
   }
+  if (result.dynamicTailwindClassGap) {
+    parts.push(
+      '17) STOP SPLICING VARIABLES INSIDE TAILWIND CLASS NAMES — a className like `bg-${color}-500` or',
+      '    `text-${size}` can never be found by Tailwind\'s static scanner (it only ever sees the disconnected',
+      '    fragments "bg-" and "-500" in the source, never the assembled string), so the element renders with NO',
+      '    background/text styling at all. Fix it by choosing between COMPLETE, literal class strings instead:',
+      '    const colorClass = { blue: "bg-blue-500", green: "bg-green-500" }[color] ?? "bg-gray-500"',
+      '    <div className={`rounded ${colorClass}`}>   // each branch is a whole string Tailwind can see',
+      '    A ternary/&& between whole class strings (e.g. `${isActive ? \'bg-blue-500\' : \'bg-gray-200\'}`) is',
+      '    fine — only an expression glued onto part of a class name (no space on either side) is the bug.',
+      '',
+    )
+  }
   parts.push('Return the corrected full app. Do not remove features.')
   return parts.join('\n')
 }
@@ -1345,6 +1449,7 @@ export function narrowToPrimitiveComplianceOnly(gaps: string[]): ObedienceResult
     aikitGaps: [],
     primitiveComplianceGaps: gaps,
     visitorTrackingGap: false,
+    dynamicTailwindClassGap: false,
     fakeLeadCaptureGap: false,
     alertInLeadCaptureGap: false,
     fakeButtonGap: false,
