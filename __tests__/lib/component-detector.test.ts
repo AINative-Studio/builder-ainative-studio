@@ -593,6 +593,71 @@ describe('detectRootComponent', () => {
       expect(detectRootComponent(code).name).toBe('App')
     })
   })
+
+  describe('comment/string masking — a mention inside a comment or string is never mistaken for real code', () => {
+    // Real bug: every regex/scan in this function ran against the raw,
+    // unmasked source, unlike hasDefaultExport (above) which already guards
+    // against exactly this. A model-written comment or string that merely
+    // MENTIONS `export default`/a component name — an extremely common LLM
+    // habit ("removed old header, was: ...", a "don't do this" example, a
+    // placeholder note) — was read as a real declaration, returning a name
+    // that doesn't actually exist. The runtime then tries to render that
+    // nonexistent component: the exact "Element type is invalid" / blank-page
+    // crash class this whole detector's fix history exists to prevent.
+
+    it('priority 1: ignores a line comment that mentions `export default function OtherName`', () => {
+      const code = `
+        // Removed old header, was:
+        // export default function Header(props) { ... }
+
+        function Dashboard() {
+          return <div>Real App</div>
+        }
+      `
+      const r = detectRootComponent(code)
+      expect(r.name).not.toBe('Header')
+      expect(r.name).toBe('Dashboard')
+    })
+
+    it('priority 1: ignores a string literal that mentions `export default function OtherName`', () => {
+      const code = `
+        const note = "export default function LegacyWidget() {}"
+        function Dashboard() {
+          return <div>Real</div>
+        }
+      `
+      const r = detectRootComponent(code)
+      expect(r.name).not.toBe('LegacyWidget')
+      expect(r.name).toBe('Dashboard')
+    })
+
+    it('named-export-list priority: ignores an `export { X as default }` mention inside a comment that appears before the real one', () => {
+      const code = `
+        // export { Ghost as default }
+        function Dashboard() { return <div>ok</div> }
+        export { Dashboard as default }
+      `
+      const r = detectRootComponent(code)
+      expect(r.name).not.toBe('Ghost')
+      expect(r.name).toBe('Dashboard')
+      expect(r.source).toBe('default-export-named')
+    })
+
+    it('priority 3: a comment inside a LATER-declared function that merely mentions `return (<...>)` does not make that function win over the real JSX-returning component declared earlier', () => {
+      const code = `
+        function Dashboard() {
+          return <div>Real content</div>
+        }
+        function Footer() {
+          // historically this returned JSX: return (<div>old note</div>)
+          return null
+        }
+      `
+      const r = detectRootComponent(code)
+      expect(r.name).not.toBe('Footer')
+      expect(r.name).toBe('Dashboard')
+    })
+  })
 })
 
 describe('hasDefaultExport', () => {

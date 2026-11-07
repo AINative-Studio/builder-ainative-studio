@@ -344,12 +344,23 @@ function returnsJsx(source: string): boolean {
 export function detectRootComponent(rawCode: string): ComponentDetection {
   const code = (rawCode || '').trim()
   if (!code) return { name: null, source: 'none' }
+  // Every scan below runs against `masked`, not `code` — otherwise a comment
+  // or string literal that merely MENTIONS `export default`/a PascalCase name
+  // (a "don't do this" example, a removed-code note, a TODO) is read as a
+  // real declaration by these plain-regex checks, exactly like the bug
+  // `hasDefaultExport` above already guards against. Positions/length are
+  // preserved by maskStringsAndComments, so every index/slice below (and
+  // every captured group, which can only ever land on real, unmasked
+  // characters) still lines up with `code` — real matched text is identical
+  // between `code` and `masked` by construction, since masking only blanks
+  // out characters that are INSIDE a string/comment span, never real code.
+  const masked = maskStringsAndComments(code)
 
   // --- PRIORITY 1: identified default export ---------------------------------
   // export default function Foo(...)   |   export default class Foo ...
-  const defFn = code.match(/export\s+default\s+function\s+([A-Z]\w*)/)
+  const defFn = masked.match(/export\s+default\s+function\s+([A-Z]\w*)/)
   if (defFn) return { name: defFn[1], source: 'default-export-named' }
-  const defClass = code.match(/export\s+default\s+class\s+([A-Z]\w*)/)
+  const defClass = masked.match(/export\s+default\s+class\s+([A-Z]\w*)/)
   if (defClass) return { name: defClass[1], source: 'default-export-named' }
   // export default Foo   (bare reference to a PascalCase name — NOT a keyword)
   //
@@ -367,7 +378,7 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
   // rejects a captured identifier immediately followed by `.`, `(`, or `[`
   // (member access, call, or index expression) so this branch only matches a
   // genuine bare reference, letting the real case correctly fall through.
-  const defRef = code.match(/export\s+default\s+([A-Z]\w*)(?![.\w(\[])\s*;?/)
+  const defRef = masked.match(/export\s+default\s+([A-Z]\w*)(?![.\w(\[])\s*;?/)
   if (defRef && isPascalCase(defRef[1])) {
     return { name: defRef[1], source: 'default-export-named' }
   }
@@ -389,10 +400,10 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
   // prevent. (A named function expression whose name happened to be on
   // KNOWN_PAGE_NAMES was accidentally "rescued" by priority 4's tiebreaker --
   // luck, not detection, and it masks the bug for any other name.)
-  const hocWrap = code.match(/export\s+default\s+((?:React\.)?(?:memo|forwardRef)\(\s*)/)
+  const hocWrap = masked.match(/export\s+default\s+((?:React\.)?(?:memo|forwardRef)\(\s*)/)
   if (hocWrap) {
     const wrapperPrefix = hocWrap[1] // e.g. "memo(" or "React.forwardRef("
-    const afterWrap = code.slice(hocWrap[0].length)
+    const afterWrap = masked.slice(hocWrap[0].length)
     const namedFnExpr = afterWrap.match(/^(?:async\s+)?function\s+([A-Z]\w*)\s*\(/)
     if (namedFnExpr) {
       return {
@@ -443,7 +454,7 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
   // explicit `as default` marker is just as authoritative as a literal
   // `export default Name` and must be checked before the ambiguous
   // ordering heuristic in priority 3 ever runs.
-  const exportList = code.match(/export\s*\{([^}]*)\}/)
+  const exportList = masked.match(/export\s*\{([^}]*)\}/)
   if (exportList) {
     for (const item of exportList[1].split(',')) {
       const parts = item.trim().split(/\s+as\s+/).map((p) => p.trim())
@@ -455,7 +466,7 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
 
   // --- PRIORITY 2: anonymous default export ----------------------------------
   // export default function() {}   |   export default function () {}
-  const anonFn = code.match(/export\s+default\s+function\s*\(/)
+  const anonFn = masked.match(/export\s+default\s+function\s*\(/)
   if (anonFn) {
     return {
       name: ANON_DEFAULT_NAME,
@@ -477,7 +488,7 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
   // either, so the function incorrectly returned the "no renderable
   // component" case even though a real, renderable component exists. Widened
   // to `[\w.]+` so a dotted base class matches too.
-  const anonClass = code.match(/export\s+default\s+class(\s+extends\s+[\w.]+)?\s*\{/)
+  const anonClass = masked.match(/export\s+default\s+class(\s+extends\s+[\w.]+)?\s*\{/)
   if (anonClass) {
     return {
       name: ANON_DEFAULT_NAME,
@@ -501,13 +512,13 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
   // whole fix history exists to prevent. Find the arrow's true open/close
   // paren by depth-counting (handles arbitrary nesting; no regex recursion
   // needed) instead of assuming the param list is itself paren-free.
-  const anonArrowStart = code.match(/export\s+default\s+(async\s+)?\(/)
+  const anonArrowStart = masked.match(/export\s+default\s+(async\s+)?\(/)
   if (anonArrowStart) {
     const openIdx = anonArrowStart.index! + anonArrowStart[0].length - 1
-    const closeIdx = findMatchingParen(code, openIdx)
-    if (closeIdx !== -1 && /^\s*=>/.test(code.slice(closeIdx + 1))) {
+    const closeIdx = findMatchingParen(masked, openIdx)
+    if (closeIdx !== -1 && /^\s*=>/.test(masked.slice(closeIdx + 1))) {
       // Replace only the `export default ` prefix with `const __PreviewDefault = `.
-      const prefix = code.match(/export\s+default\s+/)![0]
+      const prefix = masked.match(/export\s+default\s+/)![0]
       return {
         name: ANON_DEFAULT_NAME,
         source: 'default-export-anonymous',
@@ -550,7 +561,7 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
   const declRe =
     /(?:^|\n)\s*(?:export\s+)?(?:async\s+)?(?:function\s+([A-Z]\w*)|const\s+([A-Z]\w*)|class\s+([A-Z]\w*))/g
   let m: RegExpExecArray | null
-  while ((m = declRe.exec(code)) !== null) {
+  while ((m = declRe.exec(masked)) !== null) {
     const name = m[1] || m[2] || m[3]
     if (!name || !isPascalCase(name) || NON_ROOT_NAMES.has(name)) continue
     if (m[2]) {
@@ -558,12 +569,12 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
       // type annotation, then) a real assignment `=` — not `==`/`=>` — or
       // this isn't an arrow-const declaration at all.
       const afterName = m.index + m[0].length
-      const afterAnnotation = skipArrowConstTypeAnnotation(code, afterName)
+      const afterAnnotation = skipArrowConstTypeAnnotation(masked, afterName)
       if (
         afterAnnotation === -1 ||
-        code[afterAnnotation] !== '=' ||
-        code[afterAnnotation + 1] === '=' ||
-        code[afterAnnotation + 1] === '>'
+        masked[afterAnnotation] !== '=' ||
+        masked[afterAnnotation + 1] === '=' ||
+        masked[afterAnnotation + 1] === '>'
       ) {
         continue
       }
@@ -573,8 +584,8 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
   // Prefer the last-defined candidate that returns JSX (root is conventionally last).
   for (let i = candidates.length - 1; i >= 0; i--) {
     const start = candidates[i].index
-    const end = i + 1 < candidates.length ? candidates[i + 1].index : code.length
-    if (returnsJsx(code.slice(start, end))) {
+    const end = i + 1 < candidates.length ? candidates[i + 1].index : masked.length
+    if (returnsJsx(masked.slice(start, end))) {
       return { name: candidates[i].name, source: 'pascalcase-jsx' }
     }
   }
@@ -585,7 +596,7 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
   for (const known of KNOWN_PAGE_NAMES) {
     // Word-boundary match so we only pick names actually declared/present.
     const re = new RegExp(`(?:function\\s+|const\\s+|class\\s+)${known}\\b`)
-    if (re.test(code)) return { name: known, source: 'known-name' }
+    if (re.test(masked)) return { name: known, source: 'known-name' }
   }
 
   // Weak final guess: any PascalCase declaration we saw (even if JSX wasn't
