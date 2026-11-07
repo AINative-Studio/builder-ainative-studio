@@ -359,4 +359,61 @@ describe('dedupeProvidedComponents', () => {
       expect(SCAFFOLD_PROVIDED_COMPONENTS).toContain(name)
     }
   })
+
+  // Real bug found live (overnight loop, 2026-11-07): the opening regex
+  // match for every removal pattern ran against raw, unmasked code, so a
+  // doc comment merely MENTIONING a scaffold name as a code example — an
+  // extremely common thing for a model to write ("don't do this, do that
+  // instead") — matched it from inside the comment. The naive, non-comment-
+  // aware body search that follows then hunted for the next literal `\n}`
+  // textually and, for a multi-line example, that was often the REAL
+  // following function's own closing brace — silently deleting an entire
+  // real component. See the module's own maskComments doc comment.
+  describe('comment-mention immunity (#dedupe-mask-comments)', () => {
+    it('a JSDoc "what NOT to do" example mentioning function Button() does not consume the real App below it', () => {
+      const code = [
+        '/**',
+        ' * Example of what NOT to do:',
+        ' * function Button() {',
+        ' *   return <button>raw</button>',
+        ' * }',
+        ' */',
+        'export default function App() {',
+        '  return <button className="btn">Click me</button>',
+        '}',
+        '',
+      ].join('\n')
+      const out = dedupeProvidedComponents(code)
+      expect(out).toContain('export default function App')
+      expect(out).toContain('Click me')
+    })
+
+    it('a line comment mentioning const Card = (...) does not consume real code below it', () => {
+      const code = [
+        '// e.g. const Card = (props) => <div className="old">{props.children}</div>',
+        'export default function App() {',
+        '  return <div className="card">real content</div>',
+        '}',
+      ].join('\n')
+      const out = dedupeProvidedComponents(code)
+      expect(out).toContain('export default function App')
+      expect(out).toContain('real content')
+    })
+
+    it('still removes a genuine redeclaration sitting right next to an unrelated comment mentioning another scaffold name', () => {
+      const code = [
+        '// Note: this file intentionally avoids redefining Card (see docs)',
+        'function Button({ children }) {',
+        '  return <button>{children}</button>;',
+        '}',
+        '',
+        'function App() {',
+        '  return <Button>Click</Button>;',
+        '}',
+      ].join('\n')
+      const out = dedupeProvidedComponents(code)
+      expect(out).not.toMatch(/function Button\(/)
+      expect(out).toMatch(/function App\(/)
+    })
+  })
 })

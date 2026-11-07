@@ -27,7 +27,77 @@
  * its own boundary into a later function; only falling back to the
  * original multi-line pattern when the single-line shape doesn't match.
  */
-import { findMatchingBracket as sharedFindMatchingBracket } from './bracket-scanner'
+import {
+  findMatchingBracket as sharedFindMatchingBracket,
+  findStringEnd,
+  findBacktickEnd,
+} from './bracket-scanner'
+
+/**
+ * Blanks out `//` and `/* *\/` comments (replacing their characters with
+ * spaces, preserving length/newlines) while leaving string/template-literal
+ * CONTENTS untouched — same technique as obedience-gate.ts's maskComments
+ * (#1704/#1708/#1713/#1717 class).
+ *
+ * Real bug found live (overnight loop, 2026-11-07): every removal pattern
+ * below used to run its OPENING match (`headRe.exec`) directly against the
+ * raw, unmasked code. A generated app's own doc comment merely MENTIONING
+ * one of SCAFFOLD_PROVIDED_COMPONENTS as a "don't do this" example — e.g.
+ * `/** function Button() { return <button>raw</button> } *\/` right above a
+ * real `export default function App() {...}` — matched `headRe` from
+ * *inside the comment*, and the naive (non-brace-balanced, non-comment-aware)
+ * `afterParamsRe` body-search that follows it then hunted for the next
+ * literal `\n}` textually with no regard for what's comment vs. real code —
+ * which, for a multi-line example, is often the REAL App function's own
+ * closing brace. That deleted the entire real component body (confirmed:
+ * the whole `export default function App` declaration silently vanished),
+ * the exact "basic UI components are missing" / blank-render failure mode
+ * this module exists to prevent — just triggered by a comment instead of a
+ * real redeclaration. Masking comments before the opening match (while still
+ * slicing all OUTPUT from the original, unmasked `code` — masking never
+ * changes length, so offsets agree) makes a comment-only mention of any
+ * scaffold name completely inert, matching how every other regex-driven
+ * scanner in lib/build/ already treats comments.
+ */
+function maskComments(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += ' '.repeat(Math.min(end, code.length) - i)
+      i = Math.min(end, code.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
 
 export const SCAFFOLD_PROVIDED_COMPONENTS = [
   // shadcn
@@ -132,14 +202,15 @@ function findMatchingParen(code: string, openIdx: number, open = '(', close = ')
  * either way).
  */
 function removeBalancedParamDecl(code: string, headRe: RegExp, afterParamsRe: RegExp): string {
+  const masked = maskComments(code)
   let out = ''
   let lastIndex = 0
   let m: RegExpExecArray | null
-  while ((m = headRe.exec(code))) {
+  while ((m = headRe.exec(masked))) {
     const openIdx = m.index + m[0].length - 1
-    const closeIdx = findMatchingParen(code, openIdx)
+    const closeIdx = findMatchingParen(masked, openIdx)
     if (closeIdx === -1) continue
-    const afterMatch = code.slice(closeIdx + 1).match(afterParamsRe)
+    const afterMatch = masked.slice(closeIdx + 1).match(afterParamsRe)
     if (!afterMatch) continue
     const declEnd = closeIdx + 1 + afterMatch[0].length
     out += code.slice(lastIndex, m.index)
@@ -205,16 +276,17 @@ function skipTypeAnnotationToOpenParen(code: string, idx: number): number {
  * crash this module exists to prevent.
  */
 function removeConstArrowDecl(code: string, comp: string, afterParamsRe: RegExp): string {
+  const masked = maskComments(code)
   const headRe = new RegExp(`const\\s+${comp}\\b`, 'g')
   let out = ''
   let lastIndex = 0
   let m: RegExpExecArray | null
-  while ((m = headRe.exec(code))) {
-    const openIdx = skipTypeAnnotationToOpenParen(code, m.index + m[0].length)
+  while ((m = headRe.exec(masked))) {
+    const openIdx = skipTypeAnnotationToOpenParen(masked, m.index + m[0].length)
     if (openIdx === -1) continue
-    const closeIdx = findMatchingParen(code, openIdx)
+    const closeIdx = findMatchingParen(masked, openIdx)
     if (closeIdx === -1) continue
-    const afterMatch = code.slice(closeIdx + 1).match(afterParamsRe)
+    const afterMatch = masked.slice(closeIdx + 1).match(afterParamsRe)
     if (!afterMatch) continue
     const declEnd = closeIdx + 1 + afterMatch[0].length
     out += code.slice(lastIndex, m.index)
