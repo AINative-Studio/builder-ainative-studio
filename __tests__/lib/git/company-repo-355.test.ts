@@ -229,7 +229,7 @@ describe('company-repo (#355 GIT-2)', () => {
       // This documents the expected flow
       const steps = [
         'validateFileMap',
-        'resolveApp (check existing)',
+        'resolveAppVerified (check existing)',
         'giteaProvisionRepo',
         'pushFilesToRepo (initial)',
         'setAppGitRepo',

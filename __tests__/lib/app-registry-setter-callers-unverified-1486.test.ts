@@ -179,18 +179,22 @@ describe('applyDangerAction — unverified setAppLifecycle lookup (#1486)', () =
 describe('provisionCompanyRepo — unverified setAppGitRepo lookup (#1486)', () => {
   const hRepo = vi.hoisted(() => ({
     setAppGitRepo: vi.fn(),
-    resolveApp: vi.fn(async () => null),
+    // provisionCompanyRepo's own idempotency pre-flight (#1265/#832-class fix)
+    // reads through resolveAppVerified now — a CONFIRMED "no existing app yet"
+    // so these tests exercise the SECOND lookup, setAppGitRepo's own internal
+    // verified read, not this pre-flight one.
+    resolveAppVerified: vi.fn(async () => ({ entry: null, verified: true })),
   }))
 
   beforeEach(() => {
     vi.resetModules()
     vi.clearAllMocks()
-    hRepo.resolveApp.mockResolvedValue(null)
+    hRepo.resolveAppVerified.mockResolvedValue({ entry: null, verified: true })
   })
 
   async function loadCompanyRepo() {
     vi.doMock('@/lib/build/app-registry', () => ({
-      resolveApp: hRepo.resolveApp,
+      resolveAppVerified: hRepo.resolveAppVerified,
       setAppGitRepo: hRepo.setAppGitRepo,
       isRegistryLookupUnverified,
     }))
