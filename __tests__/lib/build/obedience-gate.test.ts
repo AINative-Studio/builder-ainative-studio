@@ -8,6 +8,7 @@ import {
   hasFakeLeadCaptureGap,
   hasAlertInLeadCaptureGap,
   hasFakeButtonGap,
+  hasNonSemanticInteractiveElementGap,
   hasHardcodedToggleGap,
   hasUnpersistedComposerGap,
   hasAxLandmarkGap,
@@ -823,6 +824,64 @@ function App(){
   return (<nav><button onClick={() => { trackClick(); alert('Thanks :)') }}>Sign In</button></nav>)
 }`
     expect(hasFakeButtonGap(code)).toBe(false)
+  })
+})
+
+describe('obedience-gate: hasNonSemanticInteractiveElementGap (#1784)', () => {
+  it('THE BUG: flags a <div> standing in for a CTA button', () => {
+    const code = `
+function App(){
+  return (<nav><div onClick={() => setShowModal(true)}>Sign Up</div></nav>)
+}`
+    expect(hasNonSemanticInteractiveElementGap(code)).toBe(true)
+  })
+
+  it('THE BUG: flags a <span> standing in for a CTA button', () => {
+    const code = `
+function App(){
+  return (<div><span onClick={handleCheckout}>Checkout</span></div>)
+}`
+    expect(hasNonSemanticInteractiveElementGap(code)).toBe(true)
+  })
+
+  it('does NOT flag a real <button> with the same CTA text', () => {
+    const code = `
+function App(){
+  return (<button onClick={() => setShowModal(true)}>Sign Up</button>)
+}`
+    expect(hasNonSemanticInteractiveElementGap(code)).toBe(false)
+  })
+
+  it('does NOT flag a <div onClick> that already carries role="button" (legitimate accessible pattern)', () => {
+    const code = `
+function App(){
+  return (<div role="button" tabIndex={0} onClick={handleCheckout} onKeyDown={handleKeyDown}>Checkout</div>)
+}`
+    expect(hasNonSemanticInteractiveElementGap(code)).toBe(false)
+  })
+
+  it('does NOT flag a modal/drawer backdrop <div onClick> with no CTA text (extremely common, legitimate pattern)', () => {
+    const code = `
+function App(){
+  return (<div onClick={closeModal} className="fixed inset-0 bg-black/50">
+    <div className="modal-content">real content here</div>
+  </div>)
+}`
+    expect(hasNonSemanticInteractiveElementGap(code)).toBe(false)
+  })
+
+  it('does NOT flag a plain non-interactive <div>/<span> with CTA-shaped text and no onClick', () => {
+    const code = `function App(){ return (<div><span>Sign Up</span> for updates below</div>) }`
+    expect(hasNonSemanticInteractiveElementGap(code)).toBe(false)
+  })
+
+  it('does NOT flag a comment merely mentioning a <div onClick> CTA example', () => {
+    const code = `
+function App(){
+  // old approach: <div onClick={go}>Sign Up</div>
+  return (<button onClick={go}>Sign Up</button>)
+}`
+    expect(hasNonSemanticInteractiveElementGap(code)).toBe(false)
   })
 })
 
