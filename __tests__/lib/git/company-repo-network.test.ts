@@ -21,7 +21,6 @@ vi.mock('@/lib/git/gitea-client', () => ({
 }))
 
 vi.mock('@/lib/build/app-registry', () => ({
-  resolveApp: vi.fn(),
   resolveAppVerified: vi.fn(),
   setAppGitRepo: vi.fn(),
   isRegistryLookupUnverified: (err: unknown) =>
@@ -33,7 +32,7 @@ import {
   provisionCompanyRepo as giteaProvisionRepo,
   addCollaborator,
 } from '@/lib/git/gitea-client'
-import { resolveApp, resolveAppVerified, setAppGitRepo } from '@/lib/build/app-registry'
+import { resolveAppVerified, setAppGitRepo } from '@/lib/build/app-registry'
 import {
   provisionCompanyRepo,
   commitRegeneration,
@@ -48,8 +47,11 @@ const VALID_FILES = { 'App.tsx': 'export default function App() { return null }'
  * resolveAppVerified so an unverified read (`{ entry: null, verified: false }`,
  * spelled out at its use sites) is logged as itself instead of masquerading as
  * "no repo yet" / "no git org". provisionCompanyRepo's own idempotency
- * pre-flight still uses plain resolveApp (deliberately out of #1494's scope —
- * gitea-client's ensureOrg/createRepo are independently idempotent).
+ * pre-flight now reads through resolveAppVerified too — a real gap found
+ * live: gitea-client's ensureOrg/createRepo ARE idempotent against a raced
+ * org+repo, but pushFilesToRepo()'s initial-commit push is NOT idempotent
+ * against a repo that already has content, so an unverified read used to
+ * fall through to a push that always failed.
  */
 const verifiedApp = (entry: Record<string, unknown> | null) => ({ entry, verified: true })
 
@@ -77,7 +79,7 @@ describe('#1201 lib/git/company-repo — network-touching functions', () => {
       })
 
       expect(result).toEqual({ ok: false, reason: 'gitea_not_configured' })
-      expect(resolveApp).not.toHaveBeenCalled()
+      expect(resolveAppVerified).not.toHaveBeenCalled()
     })
 
     it('rejects an invalid file map before touching the registry or Gitea', async () => {
@@ -91,16 +93,33 @@ describe('#1201 lib/git/company-repo — network-touching functions', () => {
 
       expect(result.ok).toBe(false)
       expect(result.reason).toContain('missing entry file')
-      expect(resolveApp).not.toHaveBeenCalled()
+      expect(resolveAppVerified).not.toHaveBeenCalled()
+    })
+
+    it('returns lookup_failed without touching Gitea when the registry read is unverified', async () => {
+      vi.mocked(configured).mockReturnValue(true)
+      vi.mocked(resolveAppVerified).mockResolvedValue({ entry: null, verified: false } as never)
+
+      const result = await provisionCompanyRepo({
+        workspaceId: 'ws-1',
+        slug: 'my-co',
+        files: VALID_FILES,
+      })
+
+      expect(result).toEqual({ ok: false, reason: 'lookup_failed' })
+      expect(giteaProvisionRepo).not.toHaveBeenCalled()
+      expect(fetch).not.toHaveBeenCalled()
     })
 
     it('short-circuits as already_provisioned when the app already has a gitRepoId', async () => {
       vi.mocked(configured).mockReturnValue(true)
-      vi.mocked(resolveApp).mockResolvedValue({
-        gitRepoId: 'repo-1',
-        gitRepoUrl: 'https://gitea.example/org/repo.git',
-        gitOrg: 'org-1',
-      } as never)
+      vi.mocked(resolveAppVerified).mockResolvedValue(
+        verifiedApp({
+          gitRepoId: 'repo-1',
+          gitRepoUrl: 'https://gitea.example/org/repo.git',
+          gitOrg: 'org-1',
+        }) as never
+      )
 
       const result = await provisionCompanyRepo({
         workspaceId: 'ws-1',
@@ -120,7 +139,7 @@ describe('#1201 lib/git/company-repo — network-touching functions', () => {
 
     it('returns gitea_provision_failed when org/repo creation fails', async () => {
       vi.mocked(configured).mockReturnValue(true)
-      vi.mocked(resolveApp).mockResolvedValue(null)
+      vi.mocked(resolveAppVerified).mockResolvedValue(verifiedApp(null) as never)
       vi.mocked(giteaProvisionRepo).mockResolvedValue(null)
 
       const result = await provisionCompanyRepo({
@@ -134,7 +153,7 @@ describe('#1201 lib/git/company-repo — network-touching functions', () => {
 
     it('provisions the repo, pushes the initial commit, and records it in the registry on full success', async () => {
       vi.mocked(configured).mockReturnValue(true)
-      vi.mocked(resolveApp).mockResolvedValue(null)
+      vi.mocked(resolveAppVerified).mockResolvedValue(verifiedApp(null) as never)
       vi.mocked(giteaProvisionRepo).mockResolvedValue({
         org: { username: 'org-1' },
         repo: { name: 'my-co', id: 42 },
@@ -159,7 +178,7 @@ describe('#1201 lib/git/company-repo — network-touching functions', () => {
 
     it('returns initial_commit_failed (but keeps the repo handle) when the push fails', async () => {
       vi.mocked(configured).mockReturnValue(true)
-      vi.mocked(resolveApp).mockResolvedValue(null)
+      vi.mocked(resolveAppVerified).mockResolvedValue(verifiedApp(null) as never)
       vi.mocked(giteaProvisionRepo).mockResolvedValue({
         org: { username: 'org-1' },
         repo: { name: 'my-co', id: 42 },
@@ -180,7 +199,7 @@ describe('#1201 lib/git/company-repo — network-touching functions', () => {
 
     it('still returns ok:true when the push succeeds but the registry write fails (logs a warning)', async () => {
       vi.mocked(configured).mockReturnValue(true)
-      vi.mocked(resolveApp).mockResolvedValue(null)
+      vi.mocked(resolveAppVerified).mockResolvedValue(verifiedApp(null) as never)
       vi.mocked(giteaProvisionRepo).mockResolvedValue({
         org: { username: 'org-1' },
         repo: { name: 'my-co', id: 42 },
