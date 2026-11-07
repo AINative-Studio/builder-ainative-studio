@@ -19,48 +19,68 @@ import { useEffect } from 'react'
  * this is exactly what the WebMCP draft spec's own reference polyfill
  * pattern does, not a Builder-specific workaround.
  *
+ * #1836 (second pass): still 0/3 after that fix. Root cause was WRONGLY
+ * diagnosed as an SSR/hydration-timing problem (the audit "never executes
+ * JS") — an SSR inline-script bootstrap (WEBMCP_SSR_BOOTSTRAP below) was
+ * added on that theory, and it IS harmless/correct to keep, but it did not
+ * fix the real bug, because the premise was wrong: the real AX audit
+ * backend (core's ax_audit_service.py::check_webmcp_quality, confirmed by
+ * reading core's source directly — this is NOT a static-fetch/curl-style
+ * check) launches a real headless Chromium page via Playwright, executes
+ * the page's real JS, and waits up to ~2s before reading results. It was
+ * never blind to a useEffect.
+ *
+ * #1836 (third pass, the REAL root cause): core's checker does not read
+ * `document.modelContext.registerTool`/a tools Map at all. It calls
+ * `document.modelContext.getTools()` — an async method that must resolve
+ * to an array of `{name, description, inputSchema, annotations}` — and
+ * explicitly checks `typeof mc.getTools !== 'function'` as its FIRST gate;
+ * if that gate fails, the check reports "no WebMCP" regardless of anything
+ * else on the page. This component never implemented `getTools()` at all,
+ * on either the SSR bootstrap or the client-side registry — registerTool()
+ * populated an internal Map, but nothing ever exposed it the way the real
+ * checker (and, per the WebMCP draft spec itself, any real MCP-speaking
+ * client) actually reads it. That is the entire reason this was 0/3 the
+ * whole time; it was never about SSR timing.
+ *
+ * Also previously missing: `annotations` (readOnlyHint/consequentialHint)
+ * on each tool, worth 0.2 of the 3-point weight on its own — added below,
+ * both tools are read-only from the caller's perspective (list_capabilities
+ * only fetches; start_build only navigates, it does not mutate any Builder
+ * state), so both correctly carry `annotations: { readOnlyHint: true }`.
+ *
  * Registers a SMALL, REAL tool set — each maps to an already-working
  * Builder capability, not a stub:
  *  - list_capabilities: reads the real, already-served /openapi.json (the
  *    same document /.well-known/api-catalog points agents at) rather than
  *    hand-maintaining a second description of what Builder can do.
  *  - start_build: navigates to /build, the real product entry point.
- *
- * #1836 (second pass): re-running `npx ainative-ax audit` against prod after
- * the fix above STILL showed 0/3. Root cause: the audit tool does a static
- * HTTP fetch of the HTML (like curl) and never executes JS, so it can never
- * observe anything set via a React useEffect, no matter how correct the
- * runtime behavior is in a real browser — the effect only runs post-hydration.
- * `curl -s https://builder.ainative.studio/ | grep modelContext` confirmed
- * zero matches in the raw SSR HTML, even though the component was mounted.
- *
- * Fix: WEBMCP_SSR_BOOTSTRAP is a plain-JS source string rendered via a
- * `<script>` + `dangerouslySetInnerHTML` directly in app/page.tsx — the same
- * pattern that page already uses for its JSON-LD blocks, just executable JS
- * instead of a JSON payload. It runs synchronously at parse time, before any
- * React hydration, so it's present in the raw HTML a static fetch sees and
- * creates a REAL (not placeholder) document.modelContext with the same two
- * tools, same names, same real fetch/navigate behavior as below — it is not
- * a stub that something else has to detect-and-replace later.
- *
- * No conflict with the useEffect below: getOrCreateModelContext() reuses
- * document.modelContext if it already exists (the inline script already
- * created it), and registerTool() keys tools by name in a Map, so React's
- * later registerTool() calls simply overwrite the inline script's tool
- * entries by name — same result, idempotent, no duplicate registration, no
- * detection logic needed on either side.
  */
+
+interface ModelContextToolAnnotations {
+  readOnlyHint?: boolean
+  consequentialHint?: boolean
+}
 
 interface ModelContextTool {
   name: string
   description: string
   inputSchema: Record<string, unknown>
+  annotations?: ModelContextToolAnnotations
   execute: (input: Record<string, unknown>) => Promise<unknown> | unknown
 }
 
 interface ModelContext {
   registerTool: (tool: ModelContextTool) => void
   unregisterTool?: (name: string) => void
+  /** Required by the real WebMCP consumer contract (and by AINative's own
+   *  AX audit checker — confirmed directly against its source, not
+   *  guessed) — a caller discovers what's registered by calling this, not
+   *  by reaching into implementation internals. Must resolve async even
+   *  though this implementation can answer synchronously, since the real
+   *  spec models tool discovery as inherently async (a native browser
+   *  implementation may need to ask an extension/host process). */
+  getTools: () => Promise<ModelContextTool[]>
 }
 
 declare global {
@@ -72,28 +92,30 @@ declare global {
 const TOOL_NAMES = ['list_capabilities', 'start_build'] as const
 
 /**
- * Raw JS source for the SSR inline bootstrap (see module doc comment above).
- * Kept as a plain string (not JSON.stringify'd) because it's executable
- * code, not data — the same reason analytics init scripts in this repo are
- * authored as template strings rather than objects. Mirrors
- * getOrCreateModelContext() + the two registerTool() calls below exactly;
- * if you change a tool's name/description/behavior here, change it there
- * too (and vice versa).
+ * Raw JS source for the SSR inline bootstrap. Kept as a plain string (not
+ * JSON.stringify'd) because it's executable code, not data — the same
+ * reason analytics init scripts in this repo are authored as template
+ * strings rather than objects. Mirrors getOrCreateModelContext() + the two
+ * registerTool() calls below exactly, INCLUDING getTools() and
+ * annotations — if you change a tool's name/description/behavior/
+ * annotations here, change it there too (and vice versa).
  */
 export const WEBMCP_SSR_BOOTSTRAP = `
 (function () {
   if (typeof document === 'undefined') return;
-  if (!document.modelContext) {
+  if (!document.modelContext || typeof document.modelContext.getTools !== 'function') {
     var tools = new Map();
     document.modelContext = {
       registerTool: function (tool) { tools.set(tool.name, tool); },
       unregisterTool: function (name) { tools.delete(name); },
+      getTools: function () { return Promise.resolve(Array.from(tools.values())); },
     };
   }
   document.modelContext.registerTool({
     name: 'list_capabilities',
     description: "Lists AINative Builder's real, callable API surface — the same OpenAPI document served at /openapi.json.",
     inputSchema: { type: 'object', properties: {} },
+    annotations: { readOnlyHint: true },
     execute: function () {
       return fetch('/openapi.json').then(function (res) { return res.json(); });
     },
@@ -102,6 +124,7 @@ export const WEBMCP_SSR_BOOTSTRAP = `
     name: 'start_build',
     description: 'Navigates to /build, the real entry point where a founder describes an idea and Cody generates a working app or company from it.',
     inputSchema: { type: 'object', properties: {} },
+    annotations: { readOnlyHint: true },
     execute: function () {
       window.location.href = '/build';
       return { navigated: true, to: '/build' };
@@ -123,7 +146,9 @@ export function WebMcpSsrBootstrap() {
 }
 
 function getOrCreateModelContext(): ModelContext {
-  if (document.modelContext) return document.modelContext
+  if (document.modelContext && typeof document.modelContext.getTools === 'function') {
+    return document.modelContext
+  }
 
   const tools = new Map<string, ModelContextTool>()
   const modelContext: ModelContext = {
@@ -133,6 +158,7 @@ function getOrCreateModelContext(): ModelContext {
     unregisterTool: (name) => {
       tools.delete(name)
     },
+    getTools: () => Promise.resolve(Array.from(tools.values())),
   }
   document.modelContext = modelContext
   return modelContext
@@ -148,6 +174,7 @@ export function WebMcpTools() {
       description:
         "Lists AINative Builder's real, callable API surface — the same OpenAPI document served at /openapi.json.",
       inputSchema: { type: 'object', properties: {} },
+      annotations: { readOnlyHint: true },
       execute: async () => {
         const res = await fetch('/openapi.json')
         return res.json()
@@ -159,6 +186,7 @@ export function WebMcpTools() {
       description:
         'Navigates to /build, the real entry point where a founder describes an idea and Cody generates a working app or company from it.',
       inputSchema: { type: 'object', properties: {} },
+      annotations: { readOnlyHint: true },
       execute: () => {
         window.location.href = '/build'
         return { navigated: true, to: '/build' }
