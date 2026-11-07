@@ -704,6 +704,72 @@ describe('POST /api/chat-ws — route-level coverage (#1202)', () => {
     expect(events.some((e) => e.type === 'complete')).toBe(true)
   })
 
+  it('#1802: surfaces an honest "at capacity" error, not a generic failure, when every chunk phase is rate-limit/overload shaped', async () => {
+    analyzeComplexityImpl = () => ({
+      overallComplexity: 'complex',
+      shouldUseAgent: false,
+      requiresChunking: true,
+      chunkingStrategy: 'phased',
+      estimatedTokens: 20000,
+    })
+    const { executeChunkPlan } = await import('@/lib/agent/multi-pass-generator')
+    ;(executeChunkPlan as any).mockImplementationOnce(async (_plan: any, _client: any, _model: any, onProgress: any) => {
+      onProgress(1, 1, 'chunking', {})
+      // Every phase failed, and every failure is rate-limit/overload shaped —
+      // the live #1802 incident (Bedrock daily-quota 429 on all 7 phases).
+      return [
+        { phase: 1, phaseType: 'core', success: false, isRateLimited: true, tokenUsage: { input: 10, output: 0, total: 10 } },
+        { phase: 2, phaseType: 'feature', success: false, isRateLimited: true, tokenUsage: { input: 10, output: 0, total: 10 } },
+      ]
+    })
+    const { mergeChunks } = await import('@/lib/agent/chunk-merger')
+    const { POST } = await import('@/app/api/chat-ws/route')
+    const req = mockJsonRequest('http://localhost/api/chat-ws', { message: 'Build an entire multi-page company app' })
+    const res = await POST(req)
+    const { events } = await drainSSE(res)
+    const errorEvent = events.find((e) => e.type === 'error')
+    expect(errorEvent).toBeTruthy()
+    expect(errorEvent.code).toBe('generation_capacity_exhausted')
+    expect(errorEvent.error).toMatch(/capacity/i)
+    expect(errorEvent.error).not.toBe('Stream failed')
+    // Never reaches mergeChunks/complete — the capacity check short-circuits
+    // before the merge step that would otherwise throw its generic error.
+    expect(mergeChunks).not.toHaveBeenCalled()
+    expect(events.some((e) => e.type === 'complete')).toBe(false)
+  })
+
+  it('does NOT treat an ordinary (non-rate-limited) all-chunk failure as a capacity error — still a generic failure', async () => {
+    analyzeComplexityImpl = () => ({
+      overallComplexity: 'complex',
+      shouldUseAgent: false,
+      requiresChunking: true,
+      chunkingStrategy: 'phased',
+      estimatedTokens: 20000,
+    })
+    const { executeChunkPlan } = await import('@/lib/agent/multi-pass-generator')
+    ;(executeChunkPlan as any).mockImplementationOnce(async (_plan: any, _client: any, _model: any, onProgress: any) => {
+      onProgress(1, 1, 'chunking', {})
+      // Core chunk failed, but NOT rate-limit shaped (a real validation/content
+      // failure) — must fall through to mergeChunks' own generic error path,
+      // not be misreported as "at capacity."
+      return [
+        { phase: 1, phaseType: 'core', success: false, isRateLimited: false, tokenUsage: { input: 10, output: 0, total: 10 } },
+      ]
+    })
+    const { mergeChunks } = await import('@/lib/agent/chunk-merger')
+    ;(mergeChunks as any).mockImplementationOnce(() => {
+      throw new Error('Core structure (Phase 1) failed or is missing - cannot merge')
+    })
+    const { POST } = await import('@/app/api/chat-ws/route')
+    const req = mockJsonRequest('http://localhost/api/chat-ws', { message: 'Build an entire multi-page company app' })
+    const res = await POST(req)
+    const { events } = await drainSSE(res)
+    const errorEvent = events.find((e) => e.type === 'error')
+    expect(errorEvent).toBeTruthy()
+    expect(errorEvent.error).toBe('Stream failed')
+    expect(errorEvent.code).toBeUndefined()
+  })
+
   it('does not chunk a continuation turn even when complexity requires it (previousMessages non-empty)', async () => {
     getChatDataDurableMock.mockResolvedValueOnce({
       messages: [{ role: 'user', content: 'first turn' }, { role: 'assistant', content: 'first reply' }],
