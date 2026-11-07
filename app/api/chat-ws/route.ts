@@ -1848,7 +1848,8 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                   (ob.axNavLabelGap && !after.axNavLabelGap) ||
                   (ob.axSectionLabelGap && !after.axSectionLabelGap) ||
                   (ob.axAgentAttributesGap && !after.axAgentAttributesGap) ||
-                  (ob.axComplexWidgetRoleGap && !after.axComplexWidgetRoleGap)
+                  (ob.axComplexWidgetRoleGap && !after.axComplexWidgetRoleGap) ||
+                  (ob.nonSemanticInteractiveElementGap && !after.nonSemanticInteractiveElementGap)
                 if (v.valid && multi && (v.code?.length || 0) > finalContent.length * 0.7) {
                   console.log('🔧 Combined pass produced a valid multi-file, rule-following app — adopting.')
                   finalContent = v.code; validation = v; checkpoint.record('fix+split', finalContent, true)
@@ -1976,7 +1977,8 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                     (ob.axNavLabelGap && !after.axNavLabelGap) ||
                     (ob.axSectionLabelGap && !after.axSectionLabelGap) ||
                     (ob.axAgentAttributesGap && !after.axAgentAttributesGap) ||
-                    (ob.axComplexWidgetRoleGap && !after.axComplexWidgetRoleGap)
+                    (ob.axComplexWidgetRoleGap && !after.axComplexWidgetRoleGap) ||
+                    (ob.nonSemanticInteractiveElementGap && !after.nonSemanticInteractiveElementGap)
                   if (improved) {
                     console.log('📏 Obedience re-prompt improved the app — adopting.')
                     finalContent = obValidation.code; validation = obValidation; checkpoint.record('obedience', finalContent, true)
@@ -2099,6 +2101,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
               fakeLeadCaptureGap: obFinal.fakeLeadCaptureGap,
               alertInLeadCaptureGap: obFinal.alertInLeadCaptureGap,
               fakeButtonGap: obFinal.fakeButtonGap,
+              nonSemanticInteractiveElementGap: obFinal.nonSemanticInteractiveElementGap,
               hardcodedToggleGap: obFinal.hardcodedToggleGap,
               unpersistedComposerGap: obFinal.unpersistedComposerGap,
               axLandmarkGap: obFinal.axLandmarkGap,

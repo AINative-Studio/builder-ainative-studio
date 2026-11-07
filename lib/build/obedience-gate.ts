@@ -431,6 +431,50 @@ export function hasFakeButtonGap(code: string): boolean {
 }
 
 /**
+ * #1784: every button/CTA check above validates FUNCTION (does the element
+ * have an onClick/href) — none validate that a clickable element is actually
+ * a semantic, stylable control in the first place. `lib/theme-system.ts`'s
+ * button-styling guidance (and the catalog-driven design-conformance check
+ * in `design-conformance.ts`) only ever targets real `<button>`/`<a>`
+ * elements, so a `<div>`/`<span>` standing in for a CTA button never gets
+ * styled at all — it renders indistinguishable from plain body text, exactly
+ * the "cumbersome, not clear what's clickable" complaint #1784 quotes.
+ *
+ * Deliberately scoped the SAME way as hasNoOpCtaButton() above (CTA-shaped
+ * TEXT directly inside the tag, onClick present, no nested elements in
+ * between) rather than "any div/span with onClick": a modal/drawer backdrop
+ * (`<div onClick={close} className="fixed inset-0 bg-black/50" />` wrapping
+ * real child content) is an extremely common, entirely legitimate pattern —
+ * it is never meant to look clickable itself, so flagging every onClick div
+ * would be a flood of false positives unrelated to #1784's actual complaint.
+ * Also NOT flagged when the element already carries `role="button"` — that
+ * is the legitimate, intentional way to make a non-button element
+ * keyboard-and-screen-reader interactive.
+ */
+function hasNonSemanticCtaElement(code: string, tagName: 'div' | 'span'): boolean {
+  const openTagRe = new RegExp(`<${tagName}\\b`, 'gi')
+  let match: RegExpExecArray | null
+  while ((match = openTagRe.exec(code))) {
+    const attrsStart = match.index + match[0].length
+    const i = findTagClose(code, attrsStart)
+    if (i === -1) continue // unterminated tag
+    const attrs = code.slice(attrsStart, i)
+    if (!/\bonClick\s*=/.test(attrs)) continue
+    if (/\brole\s*=\s*["']button["']/.test(attrs)) continue
+    const rest = code.slice(i + 1, i + 1 + 60 + tagName.length + 3)
+    const textMatch = rest.match(new RegExp(`^([^<]{0,60})<\\/${tagName}>`, 'i'))
+    if (!textMatch) continue
+    if (CTA_BUTTON_TEXT.test(textMatch[1])) return true
+  }
+  return false
+}
+
+export function hasNonSemanticInteractiveElementGap(code: string): boolean {
+  const masked = maskComments(code || '')
+  return hasNonSemanticCtaElement(masked, 'div') || hasNonSemanticCtaElement(masked, 'span')
+}
+
+/**
  * Real, live bug found live (same investigation as #566): a "favorite this
  * gallery item" toggle on a HARDCODED array (`useState([{...}, {...}])`, an
  * item-level boolean flipped via `.map()` inside the setter) is genuine user
@@ -931,6 +975,10 @@ export interface ObedienceResult {
   /** Real bug (found live, #844): a CTA-shaped button (Sign In, Get Early
    *  Access, …) whose only behavior is a bare alert(), or no handler at all. */
   fakeButtonGap: boolean
+  /** #1784: a <div>/<span> wired up with onClick instead of a real
+   *  <button>/<a> — never gets the catalog/theme button styling, so it
+   *  renders indistinguishable from plain body text. */
+  nonSemanticInteractiveElementGap: boolean
   /** Real bug (found live): a favorite/like/save toggle on a hardcoded array
    *  — genuine interaction silently lost on reload. */
   hardcodedToggleGap: boolean
@@ -993,6 +1041,7 @@ export function checkObedience(
   const fakeLeadCaptureGap = hasFakeLeadCaptureGap(code)
   const alertInLeadCaptureGap = hasAlertInLeadCaptureGap(code)
   const fakeButtonGap = hasFakeButtonGap(code)
+  const nonSemanticInteractiveElementGap = hasNonSemanticInteractiveElementGap(code)
   const hardcodedToggleGap = hasHardcodedToggleGap(code)
   const unpersistedComposerGap = hasUnpersistedComposerGap(code)
   const axLandmarkGap = hasAxLandmarkGap(code)
@@ -1021,6 +1070,9 @@ export function checkObedience(
   }
   if (fakeButtonGap) {
     reasons.push('A CTA-shaped button (Sign In, Get Early Access, …) fires only alert() or has no handler at all — wire it to a real action or remove it.')
+  }
+  if (nonSemanticInteractiveElementGap) {
+    reasons.push('A <div>/<span> has onClick instead of a real <button>/<a> — it never gets button styling, so it looks like plain text instead of something clickable.')
   }
   if (visitorTrackingGap) {
     reasons.push('Landing/home page never fires the mandated visitor-tracking beacon (POST /api/db/visitors on mount).')
@@ -1055,7 +1107,7 @@ export function checkObedience(
   if (axComplexWidgetRoleGap) {
     reasons.push('A complex widget (tabs or a live status/loading region) is missing its ARIA role — agents/screen readers get no signal about its behavior.')
   }
-  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, visitorTrackingGap, fakeLeadCaptureGap, alertInLeadCaptureGap, fakeButtonGap, hardcodedToggleGap, unpersistedComposerGap, axLandmarkGap, axManifestGap, axJsonLdGap, axSkipNavGap, axNavLabelGap, axSectionLabelGap, axAgentAttributesGap, axComplexWidgetRoleGap, reasons }
+  return { ok: reasons.length === 0, persistenceGap, aikitGaps, primitiveComplianceGaps, visitorTrackingGap, fakeLeadCaptureGap, alertInLeadCaptureGap, fakeButtonGap, nonSemanticInteractiveElementGap, hardcodedToggleGap, unpersistedComposerGap, axLandmarkGap, axManifestGap, axJsonLdGap, axSkipNavGap, axNavLabelGap, axSectionLabelGap, axAgentAttributesGap, axComplexWidgetRoleGap, reasons }
 }
 
 /**
@@ -1256,6 +1308,17 @@ export function buildObediencePrompt(idea: string, result: ObedienceResult): str
       '',
     )
   }
+  if (result.nonSemanticInteractiveElementGap) {
+    parts.push(
+      '16) USE A REAL <button>/<a>, NOT A CLICKABLE <div>/<span> — a <div> or <span> with onClick never gets the',
+      '    app\'s button styling (background color, border, shadow), so it renders exactly like plain body text —',
+      '    a real visitor cannot tell it is clickable at all. Change the element itself to <button> (or <a> for',
+      '    navigation), keeping the same onClick/className/children. If it must stay a non-button element for a',
+      '    layout reason, it needs role="button" AND the full accessible pattern (tabIndex={0}, onKeyDown for',
+      '    Enter/Space) — not onClick alone.',
+      '',
+    )
+  }
   parts.push('Return the corrected full app. Do not remove features.')
   return parts.join('\n')
 }
@@ -1285,6 +1348,7 @@ export function narrowToPrimitiveComplianceOnly(gaps: string[]): ObedienceResult
     fakeLeadCaptureGap: false,
     alertInLeadCaptureGap: false,
     fakeButtonGap: false,
+    nonSemanticInteractiveElementGap: false,
     hardcodedToggleGap: false,
     unpersistedComposerGap: false,
     axLandmarkGap: false,
