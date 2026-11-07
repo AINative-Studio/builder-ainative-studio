@@ -1171,10 +1171,66 @@ function findMatchingBraceInDestructureCheck(code: string, openIdx: number): num
   return -1
 }
 
+/**
+ * Blanks out `//` and `/* *\/` comments (replacing their characters with
+ * spaces, preserving length/newlines) while leaving string/template-literal
+ * CONTENTS untouched. Without this, findUnresolvedComponents' available-name
+ * collectors and its JSX-usage scan ran their regexes over the WHOLE file
+ * including comments: a comment merely mentioning `const Foo = ...` /
+ * `import { Foo }` / a destructured name made an actually-unresolved
+ * component look "available" (false negative — a real broken render slips
+ * past the gate), while a comment merely mentioning `<Foo/>` could flag a
+ * component nothing in the real code renders (false positive — a working
+ * app gets rejected). Same bug class as #1654/#1675/#1686/#1688/#1690/
+ * #1715/#1729/#1733/#1744/#1745, just this function's own call site. Reuses
+ * this file's existing string/template-literal boundary scanners rather
+ * than re-deriving them.
+ */
+function maskCommentsForUnresolvedScan(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEndInDestructureCheck(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findTemplateLiteralEndInDestructureCheck(code, i)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += ' '.repeat(Math.min(end, code.length) - i)
+      i = Math.min(end, code.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
 export function findUnresolvedComponents(code: string): string[] {
   const unresolved = new Set<string>()
 
-  for (const file of code.split(FILE_MARKER)) {
+  for (const rawFile of code.split(FILE_MARKER)) {
+    const file = maskCommentsForUnresolvedScan(rawFile)
     // Names available in this file: known globals + local decls + imports.
     const available = new Set<string>(KNOWN_AVAILABLE_COMPONENTS)
 
