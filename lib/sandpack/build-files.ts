@@ -666,16 +666,28 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
       // `icon={Icon}` object-property-reference pattern (see this
       // injection's own doc comment above, written for exactly that case)
       // — require one of those, not a bare word appearing anywhere.
+      // 'Tool' was renamed to 'Wrench' upstream and isn't a real export of
+      // either this repo's own lucide-react or the older version pinned for
+      // Sandpack preview rendering (sandpack-preview.tsx's customSetup.
+      // dependencies) — confirmed against both packages' actual exports.
+      // JSX still using `<Tool />` (a plausible model guess for a
+      // wrench/settings icon) needs the real export aliased back to the
+      // name the JSX already uses, not a literal `{ Tool }` import, which
+      // resolves to undefined and crashes the render ("Element type is
+      // invalid").
+      const iconImportAliases: Record<string, string> = { Tool: 'Wrench' }
       const missingIcons = allLucideIcons.filter(icon =>
         new RegExp(`<${icon}[\\s/>]|\\bicon:\\s*${icon}\\b|\\bicon=\\{${icon}\\}`).test(fixed) &&
         !alreadyImported.has(icon)
       )
+      const toSpecifier = (icon: string) =>
+        iconImportAliases[icon] ? `${iconImportAliases[icon]} as ${icon}` : icon
       if (missingIcons.length > 0) {
         if (existingImportMatch) {
-          const merged = [...alreadyImported, ...missingIcons].join(', ')
+          const merged = [...alreadyImported, ...missingIcons.map(toSpecifier)].join(', ')
           fixed = fixed.replace(existingImportMatch[0], `import { ${merged} } from 'lucide-react'`)
         } else {
-          fixed = `import { ${missingIcons.join(', ')} } from 'lucide-react'\n${fixed}`
+          fixed = `import { ${missingIcons.map(toSpecifier).join(', ')} } from 'lucide-react'\n${fixed}`
         }
       }
     }
