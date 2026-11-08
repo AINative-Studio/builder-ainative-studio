@@ -608,20 +608,10 @@ function rewriteBarrelImports(code: string): string {
         'EmptyState', 'AIKitProductCard', 'AIKitPagination', 'AIKitBreadcrumb',
         'AIKitStepper', 'VideoPlayer', 'StreamingText', 'MediaGallery', 'AgentTimeline',
       ])
-      // Known shadcn components
-      const shadcnNames = new Set([
-        'Button', 'Card', 'CardHeader', 'CardContent', 'CardTitle', 'CardDescription', 'CardFooter',
-        'Badge', 'Avatar', 'AvatarImage', 'AvatarFallback', 'Input', 'Label',
-        'Tabs', 'TabsList', 'TabsTrigger', 'TabsContent',
-        'Table', 'TableHeader', 'TableBody', 'TableRow', 'TableHead', 'TableCell',
-        'Separator', 'Progress', 'CircularProgress',
-        'Alert', 'AlertTitle', 'AlertDescription',
-        'Dialog', 'DialogContent', 'DialogHeader', 'DialogTitle', 'DialogDescription', 'DialogFooter',
-        'Select', 'SelectTrigger', 'SelectValue', 'SelectContent', 'SelectItem',
-        'Checkbox', 'RadioGroup', 'RadioGroupItem',
-        'Accordion', 'AccordionItem', 'AccordionTrigger', 'AccordionContent',
-      ])
-      // Known recharts components
+      // Known recharts components. Checked BEFORE the shadcn map below so the
+      // genuinely ambiguous 'Tooltip' (a real export of both recharts and
+      // shadcn-bundle.ts's tooltip.tsx) keeps resolving to recharts here,
+      // same as before this function started consulting SHADCN_COMPONENT_FILE.
       const rechartsNames = new Set([
         'ResponsiveContainer', 'LineChart', 'Line', 'BarChart', 'Bar', 'PieChart', 'Pie', 'Cell',
         'AreaChart', 'Area', 'RadarChart', 'Radar', 'RadialBarChart', 'RadialBar',
@@ -630,20 +620,33 @@ function rewriteBarrelImports(code: string): string {
       ])
 
       const aikit: string[] = []
-      const shadcn: string[] = []
+      const shadcnByFile: Record<string, string[]> = {}
       const recharts: string[] = []
       const unknown: string[] = []
 
       for (const c of components) {
         if (aikitNames.has(c)) aikit.push(c)
-        else if (shadcnNames.has(c)) shadcn.push(c)
         else if (rechartsNames.has(c)) recharts.push(c)
+        // This used to check a local, narrower `shadcnNames` Set that only had
+        // the shadcn components known when it was first written, and dumped
+        // every match onto a single hardcoded './components/ui/card' import.
+        // SHADCN_COMPONENT_FILE (above) is the list fixWrongShadcnSubpaths
+        // already keeps in sync with shadcn-bundle.ts's real exports — reusing
+        // it here means a name this function doesn't recognize as shadcn can
+        // no longer silently fall into the 'unknown' bucket below and get
+        // imported from './components/aikit', which doesn't export it
+        // (confirmed real crash for Switch/Toast/DropdownMenu/ScrollArea/
+        // Skeleton/Tooltip/Popover/Textarea/Slider — none of those were in
+        // the old local Set even though they're real shadcn-bundle.ts exports).
+        else if (SHADCN_COMPONENT_FILE[c]) (shadcnByFile[SHADCN_COMPONENT_FILE[c]] ||= []).push(c)
         else unknown.push(c)
       }
 
       const imports: string[] = []
       if (aikit.length > 0) imports.push(`import { ${aikit.join(', ')} } from './components/aikit'`)
-      if (shadcn.length > 0) imports.push(`import { ${shadcn.join(', ')} } from './components/ui/card'`)
+      for (const [file, names] of Object.entries(shadcnByFile)) {
+        imports.push(`import { ${names.join(', ')} } from './components/ui/${file}'`)
+      }
       if (recharts.length > 0) imports.push(`import { ${recharts.join(', ')} } from 'recharts'`)
       // Unknown components — still import from aikit as best guess
       if (unknown.length > 0) imports.push(`import { ${unknown.join(', ')} } from './components/aikit'`)
