@@ -630,29 +630,75 @@ function rewriteHallucinatedPackages(code: string): string {
  * sizes, loader) are dropped since they're not valid DOM attributes on a
  * plain <img>; next/image's optional static-import src shape ({ src: '...' })
  * is unwrapped to a plain string.
+ *
+ * #1887: both regexes below are unanchored and non-global-matched-by-index,
+ * so a `//`-commented-out example import (e.g. `// import NextImg from
+ * 'next/image'  (old approach)`) can be the first/only match found. The
+ * replacement text ends in `\n`, so splicing it in mid-comment leaves
+ * whatever trailing text followed the matched span on the comment's own
+ * line (here, "(old approach)") stranded on a brand-new line with no `//`
+ * of its own — bare, invalid JS that crashes the whole compile. Guarded via
+ * a length-preserving comment/string mask (same technique as #1879/#1880,
+ * #1872/#1873 etc. elsewhere in this pipeline): a match whose span is
+ * entirely inside a comment or string is left untouched, and the search
+ * continues (now global) to the next, real occurrence.
  */
+function maskPreservingLength(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const stop = end === -1 ? code.length : end + 1
+      out += ' '.repeat(stop - i)
+      i = stop
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      const stop = end === -1 ? code.length : end + 1
+      out += ' '.repeat(stop - i)
+      i = stop
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
 function stubNextOnlyImports(code: string): string {
   let fixed = code
 
-  const imageImport = /import\s+(\w+)(?:\s*,\s*\{[^}]*\})?\s+from\s+['"]next\/image['"]\s*;?\n?/
-  const imageMatch = fixed.match(imageImport)
-  if (imageMatch) {
-    const name = imageMatch[1]
-    fixed = fixed.replace(
-      imageImport,
-      `const ${name} = ({ src, alt, fill, priority, quality, placeholder, loader, sizes, ...rest }: any) => <img src={typeof src === 'object' && src !== null ? src.src : src} alt={alt || ''} {...rest} />\n`
-    )
-  }
+  const imageImport = /import\s+(\w+)(?:\s*,\s*\{[^}]*\})?\s+from\s+['"]next\/image['"]\s*;?\n?/g
+  const maskedForImage = maskPreservingLength(fixed)
+  fixed = fixed.replace(imageImport, (match, name: string, offset: number) => {
+    if (maskedForImage.slice(offset, offset + match.length).trim() === '') return match
+    return `const ${name} = ({ src, alt, fill, priority, quality, placeholder, loader, sizes, ...rest }: any) => <img src={typeof src === 'object' && src !== null ? src.src : src} alt={alt || ''} {...rest} />\n`
+  })
 
-  const linkImport = /import\s+(\w+)(?:\s*,\s*\{[^}]*\})?\s+from\s+['"]next\/link['"]\s*;?\n?/
-  const linkMatch = fixed.match(linkImport)
-  if (linkMatch) {
-    const name = linkMatch[1]
-    fixed = fixed.replace(
-      linkImport,
-      `const ${name} = ({ href, children, prefetch, replace, scroll, ...rest }: any) => <a href={href} {...rest}>{children}</a>\n`
-    )
-  }
+  const linkImport = /import\s+(\w+)(?:\s*,\s*\{[^}]*\})?\s+from\s+['"]next\/link['"]\s*;?\n?/g
+  const maskedForLink = maskPreservingLength(fixed)
+  fixed = fixed.replace(linkImport, (match, name: string, offset: number) => {
+    if (maskedForLink.slice(offset, offset + match.length).trim() === '') return match
+    return `const ${name} = ({ href, children, prefetch, replace, scroll, ...rest }: any) => <a href={href} {...rest}>{children}</a>\n`
+  })
 
   return fixed
 }
