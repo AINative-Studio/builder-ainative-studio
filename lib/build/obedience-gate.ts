@@ -633,22 +633,48 @@ export function hasVisitorTrackingGap(code: string): boolean {
  * depth-aware `${}`/backtick extent-finding every other check here relies
  * on) rather than a flat regex, and masks comments first like every other
  * detector in this file.
+ *
+ * Scans the WHOLE `className={...}` attribute value, not just a template
+ * literal glued directly to the opening brace — the generation prompt
+ * itself instructs the model to use `cn()` for className merging
+ * (lib/professional-prompt.ts:238), so the realistic shape is
+ * `className={cn(\`bg-${color}-500\`, "rounded")}` or
+ * `className={cn("flex", isActive && \`bg-${color}-500\`)}`, where the
+ * template literal is nested inside a call rather than sitting right after
+ * `={`. A narrower check anchored to `className={\`` misses exactly the
+ * pattern the model is actively told to write.
  */
 export function hasDynamicTailwindClassGap(code: string): boolean {
   const masked = maskComments(code || '')
-  const attrOpenRe = /className=\{`/g
+  const attrOpenRe = /className=\{/g
   let m: RegExpExecArray | null
 
   while ((m = attrOpenRe.exec(masked)) !== null) {
-    const backtickIdx = m.index + m[0].length - 1
-    const closeBacktickIdx = findBacktickEnd(masked, backtickIdx)
-    if (closeBacktickIdx === -1) {
+    const openBraceIdx = m.index + m[0].length - 1
+    const closeBraceIdx = findMatchingBrace(masked, openBraceIdx)
+    if (closeBraceIdx === -1) {
       attrOpenRe.lastIndex = m.index + m[0].length
       continue
     }
-    const content = masked.slice(backtickIdx + 1, closeBacktickIdx)
-    if (templateLiteralHasGluedInterpolation(content)) return true
-    attrOpenRe.lastIndex = closeBacktickIdx + 1
+    let i = openBraceIdx + 1
+    while (i < closeBraceIdx) {
+      const ch = masked[i]
+      if (ch === '"' || ch === "'") {
+        const end = findStringEnd(masked, i, ch)
+        i = (end === -1 ? masked.length : end) + 1
+        continue
+      }
+      if (ch === '`') {
+        const backtickEnd = findBacktickEnd(masked, i)
+        if (backtickEnd === -1 || backtickEnd > closeBraceIdx) break
+        const content = masked.slice(i + 1, backtickEnd)
+        if (templateLiteralHasGluedInterpolation(content)) return true
+        i = backtickEnd + 1
+        continue
+      }
+      i++
+    }
+    attrOpenRe.lastIndex = closeBraceIdx + 1
   }
   return false
 }

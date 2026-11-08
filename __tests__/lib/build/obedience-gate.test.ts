@@ -318,6 +318,37 @@ describe('obedience-gate: dynamic Tailwind class interpolation (rendering-correc
     expect(hasDynamicTailwindClassGap(code)).toBe(false)
   })
 
+  // Real miss found via static sweep (2026-11-08): the generation prompt itself
+  // instructs the model to use cn() for className merging
+  // (lib/professional-prompt.ts:238), so the realistic shape is a template
+  // literal NESTED inside a cn()/clsx() call, not one sitting directly after
+  // `className={`. The original detector anchored to `className={\`` and
+  // missed this entirely.
+  it('flags a glued interpolation nested inside a cn() call', () => {
+    const code = "function App(){ return <div className={cn(`bg-${color}-500`, 'rounded')}>hi</div> }"
+    expect(hasDynamicTailwindClassGap(code)).toBe(true)
+  })
+
+  it('flags a glued interpolation nested inside a clsx() call', () => {
+    const code = 'function App(){ return <div className={clsx(`text-${size}`)}>hi</div> }'
+    expect(hasDynamicTailwindClassGap(code)).toBe(true)
+  })
+
+  it('flags a glued interpolation inside a cn() call that also has a static string argument with a stray backtick-unrelated quote', () => {
+    const code = "function App(){ return <div className={cn('flex', isActive && `bg-${color}-500`)}>hi</div> }"
+    expect(hasDynamicTailwindClassGap(code)).toBe(true)
+  })
+
+  it('does NOT flag a cn() call whose template literal has no glued interpolation', () => {
+    const code = "function App(){ return <div className={cn('flex', `base ${extraClasses}`)}>hi</div> }"
+    expect(hasDynamicTailwindClassGap(code)).toBe(false)
+  })
+
+  it('does NOT flag a cn() call with only whole literal strings and no template literal at all', () => {
+    const code = "function App(){ return <div className={cn('flex', isActive && 'bg-blue-500')}>hi</div> }"
+    expect(hasDynamicTailwindClassGap(code)).toBe(false)
+  })
+
   it('checkObedience surfaces dynamicTailwindClassGap and a reason string', () => {
     const r = checkObedience('function App(){ return <div className={`bg-${color}-500`}>hi</div> }', 'a counter')
     expect(r.dynamicTailwindClassGap).toBe(true)
