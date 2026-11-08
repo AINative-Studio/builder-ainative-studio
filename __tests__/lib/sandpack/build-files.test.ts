@@ -102,6 +102,28 @@ describe('buildSandpackFiles — shadcn/AIKit import-injection path correctness 
     expect(built['/App.tsx']).toMatch(/import\s*\{[^}]*\bCircleDot\b[^}]*\}\s*from\s*['"]lucide-react['"]/)
   })
 
+  it('aliases an injected `<Tool/>` to the real `Wrench` export instead of importing a non-existent `Tool` named export (Tool was renamed to Wrench upstream; it is not a real export of either this repo\'s own lucide-react or the older version pinned for Sandpack preview — importing it literally crashes the render with "Tool is not defined" / "Element type is invalid")', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <Tool/> }",
+    })
+    const app = built['/App.tsx']
+    expect(app).toMatch(/import\s*\{[^}]*\bWrench\s+as\s+Tool\b[^}]*\}\s*from\s*['"]lucide-react['"]/)
+    const lucideImportLine = app.match(/import\s*\{([^}]*)\}\s*from\s*['"]lucide-react['"]/)?.[1] ?? ''
+    // A literal, un-aliased `Tool` specifier is not a real lucide-react
+    // export and would crash the render — only `Wrench as Tool` may appear.
+    expect(lucideImportLine.replace('Wrench as Tool', '')).not.toMatch(/\bTool\b/)
+  })
+
+  it('aliases `Tool` to `Wrench` even when merging into an existing lucide-react import', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "import { Tag } from 'lucide-react'\nexport default function App(){ return <div><Tag/><Tool/></div> }",
+    })
+    const app = built['/App.tsx']
+    expect(app).toMatch(/import\s*\{[^}]*\bWrench\s+as\s+Tool\b[^}]*\}\s*from\s*['"]lucide-react['"]/)
+    expect(app.match(/from\s*['"]lucide-react['"]/g)?.length).toBe(1)
+  })
+
   it('merges a missing lucide icon into an EXISTING lucide-react import rather than skipping injection entirely (confirmed live 2026-10-15 — real app imported Tag but used Shield as a value, not JSX, in an object literal)', () => {
     const built = buildSandpackFiles({
       '/App.tsx':
