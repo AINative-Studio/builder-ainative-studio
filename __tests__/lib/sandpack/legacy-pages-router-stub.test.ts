@@ -73,4 +73,15 @@ describe('fixJsxErrors — stubs legacy Pages Router module specifiers (#1174)',
     const code = "import React from 'react'\nexport default function App() { return <div>hi</div> }"
     expect(fixJsxErrors(code)).toContain(code)
   })
+
+  // #1879: next/document's stub map has 4 entries, so a commented-out
+  // multi-name import could expand into several output lines — only the
+  // first inherits the source line's leading `//`, resurrecting the rest as
+  // real code.
+  it('does not resurrect a commented-out next/document import as real code', () => {
+    const code = ["// import { Html, Main } from 'next/document'", 'const x = 1'].join('\n')
+    const fixed = fixJsxErrors(code)
+    expect(fixed).not.toMatch(/^const Main/m)
+    expect(fixed).toContain('const x = 1')
+  })
 })
