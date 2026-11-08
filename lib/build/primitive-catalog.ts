@@ -1793,10 +1793,14 @@ export function codegenCompositionBlock(idea: string, track: 'app' | 'company' =
     `- EMAIL / WAITLIST CAPTURE (real gap fix — found live: every one of 4 recently sampled real generated apps\n` +
     `  had this exact bug): ANY form that collects an email — "Get Early Access", "Join the waitlist", a newsletter\n` +
     `  signup, etc. — MUST persist the email via the same /api/db proxy. Do NOT just call alert() or flip a local\n` +
-    `  "submitted" flag and discard what the visitor typed — that silently loses every real signup:\n` +
+    `  "submitted" flag and discard what the visitor typed — that silently loses every real signup. Also include\n` +
+    `  \`path: window.location.pathname\` in the body (same field the mandatory visitor-tracking beacon above already\n` +
+    `  sends) — for a company with no dedicated database yet, signups land in a shared table with no per-company\n` +
+    `  column, and this path is the ONLY way the founder's own dashboard can later tell which company's signup is\n` +
+    `  which, exactly as it already does for pageviews:\n` +
     `    const handleSubmit = async (e) => { e.preventDefault();\n` +
     `      await fetch('/api/db/waitlist', { method: 'POST', headers: {'Content-Type':'application/json'},\n` +
-    `        body: JSON.stringify({ email, joinedAt: new Date().toISOString() }) }).catch(() => {});\n` +
+    `        body: JSON.stringify({ email, joinedAt: new Date().toISOString(), path: window.location.pathname }) }).catch(() => {});\n` +
     `      setSubmitted(true); setEmail('') }\n` +
     `  Keep whatever success UI you'd naturally build (toast/inline message) — only the persistence is\n` +
     `  mandatory; best-effort, a failed save must never block the visitor-facing success state. NEVER use\n` +

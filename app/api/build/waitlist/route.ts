@@ -36,6 +36,10 @@ export async function GET(request: NextRequest) {
   }
   if (!app) return Response.json({ entries: [] })
 
-  const entries = await listWaitlist(app.zerodbProjectId)
+  // chatId is passed through even when zerodbProjectId is absent (the common,
+  // unprovisioned case — see visitor-metrics.ts's module doc) so listWaitlist
+  // can scope the shared-project fallback correctly instead of reading
+  // nothing. See waitlist-metrics.ts's SHARED-PROJECT SCOPING doc.
+  const entries = await listWaitlist(app.zerodbProjectId, app.chatId)
   return Response.json({ entries })
 }

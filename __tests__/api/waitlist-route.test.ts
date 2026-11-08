@@ -51,20 +51,35 @@ describe('GET /api/build/waitlist', () => {
     expect(h.listWaitlist).not.toHaveBeenCalled()
   })
 
-  it('returns the real entries from the company\'s own ZeroDB project', async () => {
-    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'agentive', zerodbProjectId: 'proj-agentive' }, verified: true })
+  it('returns the real entries from the company\'s own ZeroDB project, passing both projectId and chatId through', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'agentive', zerodbProjectId: 'proj-agentive', chatId: 'chat-agentive' }, verified: true })
     h.listWaitlist.mockResolvedValue([{ email: 'a@x.com', joinedAt: '2026-09-20T00:00:00.000Z' }])
     const res: any = await GET(getReq('http://localhost/api/build/waitlist?slug=agentive'))
     const json = await res.json()
     expect(json).toEqual({ entries: [{ email: 'a@x.com', joinedAt: '2026-09-20T00:00:00.000Z' }] })
-    expect(h.listWaitlist).toHaveBeenCalledWith('proj-agentive')
+    expect(h.listWaitlist).toHaveBeenCalledWith('proj-agentive', 'chat-agentive')
   })
 
   it('a never-signed-up, provisioned company honestly reads [] — never fabricated', async () => {
-    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'fresh', zerodbProjectId: 'proj-fresh' }, verified: true })
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'fresh', zerodbProjectId: 'proj-fresh', chatId: 'chat-fresh' }, verified: true })
     h.listWaitlist.mockResolvedValue([])
     const res: any = await GET(getReq('http://localhost/api/build/waitlist?slug=fresh'))
     const json = await res.json()
     expect(json).toEqual({ entries: [] })
+  })
+
+  // Real bug fix (overnight founder-dashboard-integrity sweep, same class as
+  // visitors-route.test.ts's matching case): an UNPROVISIONED company (no
+  // zerodbProjectId — confirmed live to be the common case, see
+  // visitor-metrics.ts's module doc) still passes its real chatId through, so
+  // listWaitlist can scope the shared-project fallback correctly instead of
+  // reading nothing.
+  it('an unprovisioned company (no zerodbProjectId) still passes chatId through for shared-project scoping', async () => {
+    h.resolveAppVerified.mockResolvedValue({ entry: { slug: 'pulsar', chatId: 'chat-pulsar' }, verified: true })
+    h.listWaitlist.mockResolvedValue([{ email: 'lead@x.com', joinedAt: '2026-10-19T00:00:00.000Z' }])
+    const res: any = await GET(getReq('http://localhost/api/build/waitlist?slug=pulsar'))
+    const json = await res.json()
+    expect(json).toEqual({ entries: [{ email: 'lead@x.com', joinedAt: '2026-10-19T00:00:00.000Z' }] })
+    expect(h.listWaitlist).toHaveBeenCalledWith(undefined, 'chat-pulsar')
   })
 })
