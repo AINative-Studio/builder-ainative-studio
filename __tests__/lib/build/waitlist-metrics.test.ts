@@ -25,11 +25,11 @@ afterEach(() => {
 })
 
 describe('listWaitlist', () => {
-  it('returns [] without a projectId — no dedicated table to read', async () => {
+  it('returns [] without a projectId AND without a chatId — nothing to scope by', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
-    expect(await listWaitlist(undefined)).toEqual([])
-    expect(await listWaitlist(null)).toEqual([])
+    expect(await listWaitlist(undefined, undefined)).toEqual([])
+    expect(await listWaitlist(null, null)).toEqual([])
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -40,11 +40,46 @@ describe('listWaitlist', () => {
     ]
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: rows }) })
     vi.stubGlobal('fetch', fetchMock)
-    const entries = await listWaitlist('proj-1')
+    const entries = await listWaitlist('proj-1', 'irrelevant-chat-id')
     expect(entries).toHaveLength(2)
     expect(String(fetchMock.mock.calls[0][0])).toContain('/projects/proj-1/')
     expect(h.resolveCompanyZerodbKey).toHaveBeenCalledWith('proj-1')
     expect(fetchMock.mock.calls[0][1].headers['X-API-Key']).toBe('sk_company_scoped_key')
+  })
+
+  // ---- THE REAL BUG (overnight founder-dashboard-integrity sweep): an
+  // unprovisioned company (no projectId) falls back to the shared project and
+  // must scope by chatId, since the shared table holds every unprovisioned
+  // company's rows commingled with no company column — mirrors
+  // visitor-metrics.ts's listVisitors() fix (#806/#1055) exactly. ----
+  it('THE BUG: an unprovisioned company (no projectId) falls back to the shared project, scoped by chatId', async () => {
+    const rows = [
+      { row_data: { email: 'a@x.com', joinedAt: '2026-10-19T00:00:00.000Z', path: '/build/chat-A' } },
+      { row_data: { email: 'b@x.com', joinedAt: '2026-10-18T00:00:00.000Z', path: '/build/chat-A' } },
+      { row_data: { email: 'c@x.com', joinedAt: '2026-10-19T00:00:00.000Z', path: '/build/chat-B' } }, // a DIFFERENT company's signup — must not count
+    ]
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: rows }) })
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await listWaitlist(undefined, 'chat-A')).toEqual([
+      { email: 'a@x.com', joinedAt: '2026-10-19T00:00:00.000Z', path: '/build/chat-A' },
+      { email: 'b@x.com', joinedAt: '2026-10-18T00:00:00.000Z', path: '/build/chat-A' },
+    ])
+    expect(await listWaitlist(undefined, 'chat-B')).toHaveLength(1)
+    expect(await listWaitlist(undefined, 'chat-C')).toEqual([])
+  })
+
+  it('never commingles two different companies\' shared-project signups', async () => {
+    const rows = [
+      { row_data: { email: 'a@x.com', joinedAt: '2026-10-19T00:00:00.000Z', path: '/build/chat-A' } },
+      { row_data: { email: 'b@x.com', joinedAt: '2026-10-19T00:00:00.000Z', path: '/build/chat-B' } },
+    ]
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: rows }) }))
+    const a = await listWaitlist(undefined, 'chat-A')
+    const b = await listWaitlist(undefined, 'chat-B')
+    expect(a).toHaveLength(1)
+    expect(b).toHaveLength(1)
+    expect(a[0].email).toBe('a@x.com')
+    expect(b[0].email).toBe('b@x.com')
   })
 
   it('sorts newest-first by joinedAt', async () => {
