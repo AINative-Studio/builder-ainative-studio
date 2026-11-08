@@ -736,6 +736,14 @@ describe('buildSandpackFiles — lucide "already imported" and local-sibling-imp
     expect(built['/App.tsx']).toMatch(/^import\s*\{[^}]*\bZap\b[^}]*\}\s*from\s*['"]lucide-react['"]/m)
   })
 
+  it('still injects the real lucide-react import when the stale commented-out import line is indented (leading whitespace before `//`)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "export default function App() {\n  // import { Zap } from 'lucide-react'\n  return (<div><Zap className=\"h-5 w-5\" /></div>)\n}",
+    })
+    expect(built['/App.tsx']).toMatch(/^import\s*\{[^}]*\bZap\b[^}]*\}\s*from\s*['"]lucide-react['"]/m)
+  })
+
   it('still merges a missing lucide icon into a REAL existing import even when a commented-out lucide import line also appears earlier in the file', () => {
     const built = buildSandpackFiles({
       '/App.tsx':
