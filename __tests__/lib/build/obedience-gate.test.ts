@@ -349,6 +349,16 @@ describe('obedience-gate: dynamic Tailwind class interpolation (rendering-correc
     expect(hasDynamicTailwindClassGap(code)).toBe(false)
   })
 
+  it('flags a glued interpolation nested inside a ternary branch inside cn()', () => {
+    const code = "function App(){ return <div className={cn('flex', isActive ? `bg-${color}-500` : 'bg-gray-200')}>hi</div> }"
+    expect(hasDynamicTailwindClassGap(code)).toBe(true)
+  })
+
+  it('does NOT flag a ternary inside cn() whose template literal has no glued interpolation', () => {
+    const code = "function App(){ return <div className={cn('flex', isActive ? `base ${extraClasses}` : 'bg-gray-200')}>hi</div> }"
+    expect(hasDynamicTailwindClassGap(code)).toBe(false)
+  })
+
   it('checkObedience surfaces dynamicTailwindClassGap and a reason string', () => {
     const r = checkObedience('function App(){ return <div className={`bg-${color}-500`}>hi</div> }', 'a counter')
     expect(r.dynamicTailwindClassGap).toBe(true)
