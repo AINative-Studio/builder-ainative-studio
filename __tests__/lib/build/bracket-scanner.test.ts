@@ -134,4 +134,64 @@ describe('bracket-scanner (#1710)', () => {
       expect(findBacktickEnd(code, 0)).toBe(code.indexOf(' rest') - 1)
     })
   })
+
+  /**
+   * Real bug (overnight loop, 2026-11-08): a regex literal's unescaped
+   * bracket-shaped characters (a `{`/`}` quantifier or character class) were
+   * scanned as real bracket syntax, since this module had no regex-literal
+   * opacity at all — the one source-code construct the module's own doc
+   * comment doesn't mention alongside strings/templates/comments. A regex
+   * with a genuinely unbalanced brace count inside it (e.g. a character
+   * class matching a single literal `{`) could desync a caller's depth
+   * count enough to return -1 (unbalanced) for a perfectly valid, balanced
+   * function body — confirmed via `findMatchingBrace` on
+   * `function Validate() { const re = /^[{]/; return re.test('{'); }`,
+   * which returned -1 before this fix.
+   */
+  describe('regex literal opacity (2026-11-08)', () => {
+    it('is not fooled by an unescaped single brace inside a regex character class', () => {
+      const code = "function Validate() {\n  const re = /^[{]/;\n  return re.test('{');\n}"
+      const openIdx = code.indexOf('{')
+      expect(findMatchingBrace(code, openIdx)).toBe(code.lastIndexOf('}'))
+    })
+
+    it('is not fooled by a lone unescaped closing brace inside a regex character class', () => {
+      const code = "function Validate() {\n  const re = /[}]$/;\n  return re.test(x);\n}"
+      const openIdx = code.indexOf('{')
+      expect(findMatchingBrace(code, openIdx)).toBe(code.lastIndexOf('}'))
+    })
+
+    it('is not fooled by a self-balancing {n,m} quantifier in a regex (sanity check, worked before too)', () => {
+      const code = "function Validate() {\n  const re = /^\\d{3,5}$/;\n  return re.test(x);\n}"
+      const openIdx = code.indexOf('{')
+      expect(findMatchingBrace(code, openIdx)).toBe(code.lastIndexOf('}'))
+    })
+
+    it('still treats a plain division as division, not a regex literal', () => {
+      const code = 'function Compute() { const half = total / 2; return { half }; }'
+      const openIdx = code.indexOf('{')
+      expect(findMatchingBrace(code, openIdx)).toBe(code.lastIndexOf('}'))
+    })
+
+    it('does not mistake a JSX closing tag\'s "</" for a regex literal start', () => {
+      // If `</Foo>`'s `/` were ever treated as a regex opener, the scanner
+      // would hunt forward for a closing `/` and swallow real JSX as regex
+      // content — this must keep matching the component's real closing brace.
+      const code = 'function App() { return <div><Foo>{x}</Foo></div>; }'
+      const openIdx = code.indexOf('{')
+      expect(findMatchingBrace(code, openIdx)).toBe(code.lastIndexOf('}'))
+    })
+
+    it('treats a regex literal after `return` as opaque even with an unbalanced brace inside', () => {
+      const code = 'function Check(s) { return /^[{]/.test(s); }'
+      const openIdx = code.indexOf('{')
+      expect(findMatchingBrace(code, openIdx)).toBe(code.lastIndexOf('}'))
+    })
+
+    it('treats a regex literal passed as a call argument as opaque', () => {
+      const code = "function Strip(s) { return s.replace(/[{]/g, ''); }"
+      const openIdx = code.indexOf('{')
+      expect(findMatchingBrace(code, openIdx)).toBe(code.lastIndexOf('}'))
+    })
+  })
 })

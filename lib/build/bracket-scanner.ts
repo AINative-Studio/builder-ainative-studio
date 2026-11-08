@@ -116,6 +116,17 @@ export function findMatchingBracket(
       i = end === -1 ? code.length : end + 2
       continue
     }
+    if (ch === '/' && isRegexLiteralStart(code, i)) {
+      const end = findRegexLiteralEnd(code, i)
+      if (end !== -1) {
+        i = end + 1
+        continue
+      }
+      // Unterminated as a regex (e.g. a stray division `/` this heuristic
+      // misjudged, or genuinely broken source) — fall through and let `/`
+      // scan as an ordinary, non-bracket character rather than failing the
+      // whole match.
+    }
     if (ch === '"' || ch === "'") {
       const end = findStringEnd(code, i, ch)
       if (end === -1) return -1
@@ -209,6 +220,92 @@ export function maskComments(code: string): string {
     i++
   }
   return out
+}
+
+/**
+ * Keywords/operators after which a bare `/` is (almost) always a regex
+ * literal's opening delimiter rather than division — used by
+ * isRegexLiteralStart() below. Deliberately not exhaustive: a false
+ * negative here just leaves findMatchingBracket's pre-existing (non-regex-
+ * aware) behavior in place for that one `/`, which is no worse than before
+ * this fix; a false POSITIVE would make findRegexLiteralEnd swallow real
+ * code as if it were regex content, which is strictly worse — so this list
+ * only grows with cases confirmed safe, never speculatively.
+ */
+const REGEX_PRECEDING_KEYWORDS = new Set([
+  'return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void',
+  'throw', 'yield', 'case', 'do', 'await', 'extends',
+])
+
+/**
+ * Whether the `/` at `slashIdx` starts a regex literal rather than being a
+ * division operator — a classic JS ambiguity this scanner must resolve
+ * without a real tokenizer. Heuristic: look back past whitespace to the
+ * last significant character; a `/` right after an operator/punctuation
+ * (`(`, `,`, `=`, `!`, `&&`, `||`, etc.) or one of REGEX_PRECEDING_KEYWORDS
+ * is a regex start, a `/` right after an identifier/number/`)`/`]`/`}` is
+ * division.
+ *
+ * `<` and `>` are deliberately EXCLUDED from the "regex follows" set even
+ * though they're ordinary binary operators too: in this (TSX-heavy)
+ * codebase a `/` directly after `<` is overwhelmingly a JSX closing tag
+ * (`</Foo>`), never `a < /regex/`, and misreading that as a regex start
+ * would make findRegexLiteralEnd swallow real JSX markup looking for a
+ * closing `/` — a strictly worse bug than the one this function exists to
+ * fix. Treating `</Foo>` as "not a regex" just falls back to this scanner's
+ * pre-existing behavior for the `/`, which is safe (it isn't a bracket
+ * character either way).
+ */
+function isRegexLiteralStart(code: string, slashIdx: number): boolean {
+  let j = slashIdx - 1
+  while (j >= 0 && /\s/.test(code[j])) j--
+  if (j < 0) return true
+  const prevChar = code[j]
+  if (prevChar === '<' || prevChar === '>') return false
+  if ('([{,;:=&|!?+-*%^~'.includes(prevChar)) return true
+  if (/[A-Za-z0-9_$]/.test(prevChar)) {
+    let k = j
+    while (k >= 0 && /[A-Za-z0-9_$]/.test(code[k])) k--
+    return REGEX_PRECEDING_KEYWORDS.has(code.slice(k + 1, j + 1))
+  }
+  return false
+}
+
+/**
+ * Index of the last character (the closing `/`, or a trailing flag letter
+ * after it) of the regex literal starting at `openIdx` (which must point at
+ * the opening `/`), honoring `\`-escapes and `[...]` character classes
+ * (where an unescaped `/` does NOT end the literal). Returns -1 if
+ * unterminated (a regex literal can't span a newline).
+ */
+function findRegexLiteralEnd(code: string, openIdx: number): number {
+  let i = openIdx + 1
+  let inClass = false
+  while (i < code.length) {
+    const ch = code[i]
+    if (ch === '\n') return -1
+    if (ch === '\\') {
+      i += 2
+      continue
+    }
+    if (ch === '[') {
+      inClass = true
+      i++
+      continue
+    }
+    if (ch === ']') {
+      inClass = false
+      i++
+      continue
+    }
+    if (ch === '/' && !inClass) {
+      let end = i
+      while (end + 1 < code.length && /[a-zA-Z]/.test(code[end + 1])) end++
+      return end
+    }
+    i++
+  }
+  return -1
 }
 
 /** Index of the `)` matching the `(` at `openIdx`, or -1 if unbalanced. */
