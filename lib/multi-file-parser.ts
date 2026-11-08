@@ -6,6 +6,7 @@
 import { generateAINativeFileSet } from './ainative-file-generator'
 import { sanitizeForSandpack } from './code-validator'
 import { detectRootComponent } from './component-detector'
+import { findStringEnd, findBacktickEnd } from './build/bracket-scanner'
 
 const FILE_MARKER = /^\/\/\s*---\s*FILE:\s*(.+?)\s*---\s*$/
 
@@ -409,6 +410,60 @@ const SHADCN_COMPONENT_FILE: Record<string, string> = {
  * Also fixes @/ import aliases to relative paths for Sandpack.
  */
 /**
+ * `code` with every `//` line comment, `/* ... *\/` block comment, and
+ * string/template-literal CONTENT blanked to spaces of the same length
+ * (preserving delimiters, length and newlines) — same technique and same
+ * bug class (#1704/#1708/#1713/#1717, #1856/#1857, #1858/#1862, #1859/#1860)
+ * already fixed in the sibling injector lib/sandpack/build-files.ts's own
+ * `maskCommentsAndStrings`, just never ported here. Every detection regex
+ * below (AIKit/shadcn/recharts/lucide `<Name[\s/>]` usage, plus
+ * `collectImportedNames`' own `import ... from` scan) ran against raw
+ * `code` until this fix — a comment such as
+ * `// Consider adding <Badge className="ml-2">New</Badge> for emphasis`
+ * matched `<Badge[\s/>]` and injected an unused `import { Badge } from
+ * './components/ui/badge'` for a component never actually rendered.
+ */
+function maskCommentsAndStrings(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += ' '.repeat(Math.min(end, code.length) - i)
+      i = Math.min(end, code.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
+/**
  * Collect every identifier already bound by an existing import in the code
  * (default, named, and aliased). Used to ensure auto-injection never adds a
  * name that's already imported from another module — which would produce
@@ -470,15 +525,21 @@ function injectMissingImports(code: string, filePath = '/src/App.tsx'): string {
 
   const imports: string[] = []
 
+  // Masked once, up front — every detection regex below must run against
+  // this, not raw `code` (see maskCommentsAndStrings' own doc comment).
+  // `code` itself is left untouched: the actual import-statement splicing
+  // at the bottom of this function still needs the real text.
+  const masked = maskCommentsAndStrings(code)
+
   // Names already imported anywhere in the file — never re-inject these, even
   // from a different module (e.g. LineChart/BarChart/PieChart exist in BOTH
   // lucide-react and recharts). Re-injecting caused duplicate-declaration
   // crashes in Sandpack (builder#64).
-  const alreadyImported = collectImportedNames(code)
+  const alreadyImported = collectImportedNames(masked)
 
   // Check for AIKit component usage — skip any already imported individually
   const usedAikit = AIKIT_COMPONENTS.filter(c =>
-    new RegExp(`<${c}[\\s/>]`).test(code) && !alreadyImported.has(c)
+    new RegExp(`<${c}[\\s/>]`).test(masked) && !alreadyImported.has(c)
   )
   if (usedAikit.length > 0) {
     imports.push(`import { ${usedAikit.join(', ')} } from '${componentsPrefix}aikit'`)
@@ -492,7 +553,7 @@ function injectMissingImports(code: string, filePath = '/src/App.tsx'): string {
     const byFile: Record<string, string[]> = {}
     for (const [name, file] of Object.entries(SHADCN_COMPONENT_FILE)) {
       if (alreadyImported.has(name)) continue
-      if (new RegExp(`<${name}[\\s/>]`).test(code)) {
+      if (new RegExp(`<${name}[\\s/>]`).test(masked)) {
         (byFile[file] ||= []).push(name)
         alreadyImported.add(name)
       }
@@ -509,13 +570,13 @@ function injectMissingImports(code: string, filePath = '/src/App.tsx'): string {
   // so a used-but-unimported chart part no longer renders "X is not defined".
   const rechartsSpecs: string[] = []
   for (const real of RECHARTS_COMPONENTS) {
-    if (new RegExp(`<${real}[\\s/>]`).test(code) && !alreadyImported.has(real)) {
+    if (new RegExp(`<${real}[\\s/>]`).test(masked) && !alreadyImported.has(real)) {
       rechartsSpecs.push(real)
       alreadyImported.add(real)
     }
   }
   for (const [alias, real] of Object.entries(RECHARTS_ALIASES)) {
-    if (new RegExp(`<${alias}[\\s/>]`).test(code) && !alreadyImported.has(alias)) {
+    if (new RegExp(`<${alias}[\\s/>]`).test(masked) && !alreadyImported.has(alias)) {
       rechartsSpecs.push(`${real} as ${alias}`)
       alreadyImported.add(alias)
     }
@@ -529,7 +590,7 @@ function injectMissingImports(code: string, filePath = '/src/App.tsx'): string {
   // uses more), so a used-but-unimported icon no longer renders "X is not
   // defined" (builder#64).
   const usedIcons = LUCIDE_ICONS.filter(icon =>
-    new RegExp(`<${icon}[\\s/>]`).test(code) && !alreadyImported.has(icon)
+    new RegExp(`<${icon}[\\s/>]`).test(masked) && !alreadyImported.has(icon)
   )
   if (usedIcons.length > 0) {
     imports.push(`import { ${usedIcons.join(', ')} } from 'lucide-react'`)

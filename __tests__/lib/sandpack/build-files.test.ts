@@ -680,3 +680,41 @@ describe('buildSandpackFiles — shadcn/AIKit auto-import "already imported" gua
     expect(importCount).toBe(1)
   })
 })
+
+/**
+ * Real bug, same shape as the shadcn/AIKit guard above but found in the
+ * lucide-react missing-icon injector itself (overnight-loop, 2026-11-08):
+ * that block was the one left testing raw, unmasked `fixed` instead of
+ * `maskCommentsAndStrings(fixed)` — the AIKit block and the shadcn block in
+ * this same function both already switched. A comment merely mentioning
+ * `<Icon` or `icon: Icon` (never actually rendered) got read as real usage
+ * and injected an unused `import { Icon } from 'lucide-react'`.
+ */
+describe('buildSandpackFiles — lucide-react missing-icon injector is comment-blind to a merely-mentioned icon (overnight-loop 2026-11-08)', () => {
+  it('does NOT inject an icon whose only mention is inside a line comment as a JSX-tag-shaped example', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        '// e.g. <Shield className="h-4 w-4" />\nfunction App() { return (<div>Hello</div>) }\nexport default App',
+    })
+    // The comment text itself is untouched (only detection is masked) — only
+    // a spurious IMPORT of Shield would be the bug.
+    expect(built['/App.tsx']).not.toMatch(/from ['"]lucide-react['"]/)
+  })
+
+  it('does NOT inject an icon whose only mention is inside a comment as an "icon: Name" example', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        '// uses icon: Settings for the config page\nfunction App() { return (<div>Hello</div>) }\nexport default App',
+    })
+    expect(built['/App.tsx']).not.toMatch(/from ['"]lucide-react['"]/)
+  })
+
+  it('still injects a genuinely-used icon alongside an unrelated comment mentioning a different icon', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        '// e.g. <Shield className="h-4 w-4" />\nfunction App() { return (<div><Bell/></div>) }\nexport default App',
+    })
+    const lucideImport = built['/App.tsx'].match(/import \{ ([^}]*) \} from 'lucide-react'/)
+    expect(lucideImport?.[1]).toBe('Bell')
+  })
+})

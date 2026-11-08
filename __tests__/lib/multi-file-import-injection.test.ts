@@ -176,6 +176,64 @@ describe('multi-file import injection: no cross-module duplicates (#64)', () => 
 })
 
 /**
+ * Overnight loop, 2026-11-08: injectMissingImports' detection regexes
+ * (AIKit/shadcn/recharts/lucide `<Name[\s/>]` usage, plus
+ * collectImportedNames' own `import ... from` scan) ran against raw `code`,
+ * never masking comments/strings first — the same bug class already fixed
+ * in the sibling injector lib/sandpack/build-files.ts (AIKit/shadcn blocks,
+ * via maskCommentsAndStrings). A component name that appears only inside a
+ * comment (never actually rendered) was wrongly treated as real JSX usage
+ * and got an unused import injected.
+ */
+describe('multi-file import injection: comment/string masking before detection (2026-11-08)', () => {
+  it('does not inject a shadcn import for a component name that only appears inside a comment', () => {
+    const raw = [
+      "import React from 'react'",
+      '// Consider adding <Badge className="ml-2">New</Badge> for emphasis',
+      'export default function App(){ return <div>Hello</div>; }',
+    ].join('\n')
+    const app = Object.values(parseMultiFileOutput(raw))[0]
+    expect(/from ['"]\.\/components\/ui\/badge['"]/.test(app)).toBe(false)
+    expect(strictParses(app)).toBe(true)
+  })
+
+  it('does not inject an AIKit import for a component name that only appears inside a comment', () => {
+    const raw = [
+      "import React from 'react'",
+      '// TODO: maybe use <MetricCard/> here once we have real stats',
+      'export default function App(){ return <div>Hello</div>; }',
+    ].join('\n')
+    const app = Object.values(parseMultiFileOutput(raw))[0]
+    expect(/from ['"]\.\/components\/aikit['"]/.test(app)).toBe(false)
+    expect(strictParses(app)).toBe(true)
+  })
+
+  it('does not inject a lucide-react import for an icon name that only appears inside a comment', () => {
+    const raw = [
+      "import React from 'react'",
+      '// e.g. <Bell className="h-4 w-4" /> for notifications',
+      'export default function App(){ return <div>Hello</div>; }',
+    ].join('\n')
+    const app = Object.values(parseMultiFileOutput(raw))[0]
+    expect(/from ['"]lucide-react['"]/.test(app)).toBe(false)
+    expect(strictParses(app)).toBe(true)
+  })
+
+  it('still injects a real, actually-rendered shadcn/AIKit/lucide usage alongside an unrelated comment', () => {
+    const raw = [
+      "import React from 'react'",
+      '// Consider adding <Badge/> for emphasis later',
+      'export default function App(){ return <div><Button>Go</Button><Bell/></div>; }',
+    ].join('\n')
+    const app = Object.values(parseMultiFileOutput(raw))[0]
+    expect(/import\s*\{[^}]*\bButton\b[^}]*\}\s*from\s*['"]\.\/components\/ui\/button['"]/.test(app)).toBe(true)
+    expect(/import\s*\{[^}]*\bBell\b[^}]*\}\s*from\s*['"]lucide-react['"]/.test(app)).toBe(true)
+    expect(/from ['"]\.\/components\/ui\/badge['"]/.test(app)).toBe(false)
+    expect(strictParses(app)).toBe(true)
+  })
+})
+
+/**
  * Issue #1087 (real production bug, found live on
  * https://builder.ainative.studio/build/wallkind-product, 2026-10-13):
  * injectMissingImports only auto-injects missing AIKit, recharts, and
