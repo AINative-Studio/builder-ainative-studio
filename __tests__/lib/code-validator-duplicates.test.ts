@@ -149,13 +149,13 @@ describe('code-validator: duplicate declaration handling (#64)', () => {
 })
 
 /**
- * #1887: this function scanned raw, unmasked lines, so a plain (non-jsdoc)
+ * #1885: this function scanned raw, unmasked lines, so a plain (non-jsdoc)
  * `/* ... *\/` or `//` comment containing a column-0-looking `const x = ...`
  * line was read as a REAL top-level declaration — a file with exactly one
  * genuine `x` then wrongly reported it as a duplicate and got rejected/
  * retried for a defect that doesn't actually exist.
  */
-describe('code-validator: comment-embedded declarations are not false duplicates (#1887)', () => {
+describe('code-validator: comment-embedded declarations are not false duplicates (#1885)', () => {
   it('does not flag a single real declaration that is also mentioned in a block comment', () => {
     const code = [
       '/*',

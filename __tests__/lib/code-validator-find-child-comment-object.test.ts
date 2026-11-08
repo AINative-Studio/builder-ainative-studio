@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { findObjectRenderedAsChild } from '@/lib/code-validator'
 
 /**
- * Regression for #1887: findObjectRenderedAsChild's SHAPE 1 check (builder#184)
+ * Regression for #1885: findObjectRenderedAsChild's SHAPE 1 check (builder#184)
  * scanned raw, unmasked file text for `const x = { ... }` to decide which
  * identifiers are object-bound. A plain (non-jsdoc) `/* ... *\/` or `//`
  * comment containing that exact shape (a stale draft, a "don't do this"
@@ -11,7 +11,7 @@ import { findObjectRenderedAsChild } from '@/lib/code-validator'
  * code that renders a same-named, legitimately non-object identifier
  * (e.g. a destructured prop) as a JSX child.
  */
-describe('findObjectRenderedAsChild — comment-embedded object literal is not a false positive (#1887)', () => {
+describe('findObjectRenderedAsChild — comment-embedded object literal is not a false positive (#1885)', () => {
   it('does not flag a destructured prop rendered as a child, mentioned only in a block comment', () => {
     const code = [
       '/*',

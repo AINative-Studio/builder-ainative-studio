@@ -973,7 +973,7 @@ function maskCommentsPreservingLines(code: string): string {
  * Scans module-scope import bindings and top-level const/let/function/class
  * declarations. Returns the first duplicated name, or null if none.
  *
- * Masks comments first (#1887): without it, a plain (non-jsdoc) `/* ... *\/`
+ * Masks comments first (#1885): without it, a plain (non-jsdoc) `/* ... *\/`
  * or `//` comment containing a column-0-looking `const x = ...` / `import
  * {...} from '...'` line (e.g. a "before" example, a disabled draft left in
  * a comment) registered as a real declaration, so a file with exactly ONE
@@ -1000,7 +1000,7 @@ export function findDuplicateTopLevelDeclaration(code: string): string | null {
     // names (App, imports) legitimately across files. Checked against the
     // ORIGINAL (unmasked) line: the marker itself is a `// --- FILE: ... ---`
     // comment, so masking it would blank it out and this check would never
-    // fire again, silently merging every file's scope into one (#1887).
+    // fire again, silently merging every file's scope into one (#1885).
     if (FILE_MARKER.test(rawLines[li].trim())) { seen = new Set(); continue }
 
     // import bindings: default + named specifiers. The optional leading
@@ -1409,7 +1409,7 @@ function findMatchingParenIdxInChildCheck(code: string, openIdx: number): number
 
 export function findObjectRenderedAsChild(code: string): string | null {
   for (const rawFile of code.split(FILE_MARKER)) {
-    // Mask comments first (#1887): a plain `/* ... */` or `//` comment
+    // Mask comments first (#1885): a plain `/* ... */` or `//` comment
     // containing `const x = { ... }` (e.g. a stale draft, a "don't do this"
     // example) otherwise registered `x` as object-bound here even though
     // it's never really declared that way — false-flagging valid code that
