@@ -915,12 +915,69 @@ export function sanitizeForSandpack(code: string): string {
 }
 
 /**
+ * Length-preserving comment mask: `//` and `/* ... *\/` content becomes
+ * spaces (newlines kept, unlike maskCommentsForUnresolvedScan above, whose
+ * block-comment branch collapses embedded newlines into spaces too — fine
+ * for that function's single matchAll() pass, but it would merge a
+ * multi-line comment into its neighboring code line here, corrupting
+ * findDuplicateTopLevelDeclaration's per-line scan). Skips over string/
+ * template-literal content first so a `//`/`/*` INSIDE a string is never
+ * mistaken for a real comment start. Reuses this file's existing
+ * string/template boundary scanners.
+ */
+function maskCommentsPreservingLines(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEndInDestructureCheck(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findTemplateLiteralEndInDestructureCheck(code, i)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += code.slice(i, Math.min(end, code.length)).replace(/[^\n]/g, ' ')
+      i = Math.min(end, code.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
+/**
  * Detect duplicate top-level identifier declarations that Babel's
  * error-recovery parser silently accepts but the browser/Sandpack transform
  * rejects (e.g. "Identifier 'Card' has already been declared").
  *
  * Scans module-scope import bindings and top-level const/let/function/class
  * declarations. Returns the first duplicated name, or null if none.
+ *
+ * Masks comments first (#1887): without it, a plain (non-jsdoc) `/* ... *\/`
+ * or `//` comment containing a column-0-looking `const x = ...` / `import
+ * {...} from '...'` line (e.g. a "before" example, a disabled draft left in
+ * a comment) registered as a real declaration, so a file with exactly ONE
+ * real top-level `x` got wrongly flagged as a duplicate and rejected/retried.
  */
 export function findDuplicateTopLevelDeclaration(code: string): string | null {
   let seen = new Set<string>()
@@ -933,12 +990,18 @@ export function findDuplicateTopLevelDeclaration(code: string): string | null {
     return null
   }
 
-  for (const raw of code.split('\n')) {
+  const rawLines = code.split('\n')
+  const maskedLines = maskCommentsPreservingLines(code).split('\n')
+  for (let li = 0; li < maskedLines.length; li++) {
+    const raw = maskedLines[li]
     const line = raw.trim()
 
     // Reset scope at each file boundary — multi-file output repeats top-level
-    // names (App, imports) legitimately across files.
-    if (FILE_MARKER.test(line)) { seen = new Set(); continue }
+    // names (App, imports) legitimately across files. Checked against the
+    // ORIGINAL (unmasked) line: the marker itself is a `// --- FILE: ... ---`
+    // comment, so masking it would blank it out and this check would never
+    // fire again, silently merging every file's scope into one (#1887).
+    if (FILE_MARKER.test(rawLines[li].trim())) { seen = new Set(); continue }
 
     // import bindings: default + named specifiers. The optional leading
     // `type\s+` group must be consumed explicitly and separately from the
@@ -1345,7 +1408,15 @@ function findMatchingParenIdxInChildCheck(code: string, openIdx: number): number
 }
 
 export function findObjectRenderedAsChild(code: string): string | null {
-  for (const file of code.split(FILE_MARKER)) {
+  for (const rawFile of code.split(FILE_MARKER)) {
+    // Mask comments first (#1887): a plain `/* ... */` or `//` comment
+    // containing `const x = { ... }` (e.g. a stale draft, a "don't do this"
+    // example) otherwise registered `x` as object-bound here even though
+    // it's never really declared that way — false-flagging valid code that
+    // separately renders a same-named, legitimately non-object identifier
+    // (e.g. a destructured prop) as a JSX child.
+    const file = maskCommentsPreservingLines(rawFile)
+
     // Identifiers bound to a plain object literal at declaration:
     //   const x = { ... }   /   let x = {   (multi-line object opener)
     // The char after `=` `{` must NOT be `}` on the same token in a way that

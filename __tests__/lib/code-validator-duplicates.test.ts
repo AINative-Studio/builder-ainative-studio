@@ -149,6 +149,44 @@ describe('code-validator: duplicate declaration handling (#64)', () => {
 })
 
 /**
+ * #1887: this function scanned raw, unmasked lines, so a plain (non-jsdoc)
+ * `/* ... *\/` or `//` comment containing a column-0-looking `const x = ...`
+ * line was read as a REAL top-level declaration — a file with exactly one
+ * genuine `x` then wrongly reported it as a duplicate and got rejected/
+ * retried for a defect that doesn't actually exist.
+ */
+describe('code-validator: comment-embedded declarations are not false duplicates (#1887)', () => {
+  it('does not flag a single real declaration that is also mentioned in a block comment', () => {
+    const code = [
+      '/*',
+      'const data = 1',
+      '*/',
+      'const data = buildSomething()',
+      'export default function App() { return <div>{data}</div> }',
+    ].join('\n')
+    expect(findDuplicateTopLevelDeclaration(code)).toBeNull()
+  })
+
+  it('does not flag a single real import that is also mentioned in a line comment', () => {
+    const code = [
+      "// old approach: import { Card } from './components/ui/card'",
+      "import { Card } from './components/aikit'",
+      'export default function App() { return <Card/> }',
+    ].join('\n')
+    expect(findDuplicateTopLevelDeclaration(code)).toBeNull()
+  })
+
+  it('still catches a real duplicate even with an unrelated comment present', () => {
+    const code = [
+      '// some unrelated note',
+      'const data = 1',
+      'const data = 2',
+    ].join('\n')
+    expect(findDuplicateTopLevelDeclaration(code)).toBe('data')
+  })
+})
+
+/**
  * Same class of defect surfaced by the #64 regression run: a stray semicolon
  * splitting a ternary (accepted by Babel errorRecovery, fatal in Sandpack →
  * "Unexpected token, expected ':'"). Must be auto-fixed to strict-valid, or
