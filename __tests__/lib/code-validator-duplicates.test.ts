@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   validateJavaScriptCode,
   findDuplicateTopLevelDeclaration,
+  sanitizeForSandpack,
 } from '@/lib/code-validator'
 
 /**
@@ -341,5 +342,73 @@ describe('code-validator: type-only imports are not mistaken for default-import 
     expect(result.valid).toBe(true)
     expect(result.code).not.toContain("import type { Incident }")
     expect(result.code).not.toContain('import type,')
+  })
+})
+
+/**
+ * Real bug found this run: the LOCAL DECL SHADOWS IMPORT fix's `declRe` scan
+ * (the sibling of the two tests above, "drops an import shadowed by a local
+ * function"/"const") ran its `^...$`-anchored, multiline regex directly
+ * against raw, unmasked `fixedCode`. A commented-out declaration whose text
+ * happens to sit at the start of a line inside a `/* ... *\/` block comment
+ * (a disabled draft kept "for reference"), or inside a multi-line
+ * template-literal demo snippet (an ordinary thing for an API/SDK landing
+ * page showing its own source as text), registered as a REAL local
+ * declaration. The fix then stripped the file's only real import for that
+ * name as "shadowed" — "X is not defined" the moment the component renders,
+ * strictly worse than the duplicate-declaration crash this fix exists to
+ * prevent.
+ *
+ * These exercise `sanitizeForSandpack()` (autoFixCode only) directly, rather
+ * than `validateJavaScriptCode()`, since the comment/string text left behind
+ * by these exact repros would otherwise also trip the separate (already
+ * tracked elsewhere) comment-blindness in `findDuplicateTopLevelDeclaration`,
+ * which would reject the code before this fix's own behavior could be
+ * observed in isolation.
+ */
+describe('code-validator: LOCAL DECL SHADOWS IMPORT is comment/string-blind', () => {
+  it('does NOT drop a real import whose only "shadowing" declaration lives inside a block comment', () => {
+    const code = [
+      "import { Button } from './components/ui/button'",
+      '/*',
+      'function Button() {',
+      '  return null',
+      '}',
+      '*/',
+      'export default function App() { return <Button>Click</Button> }',
+    ].join('\n')
+    const out = sanitizeForSandpack(code)
+    expect(/import\s*\{[^}]*\bButton\b[^}]*\}\s*from/.test(out)).toBe(true)
+  })
+
+  it('does NOT drop a real import whose only "shadowing" declaration lives inside a multi-line template-literal demo snippet', () => {
+    const code = [
+      "import { Card } from './components/ui/card'",
+      'const demoSource = `',
+      'function Card() {',
+      '  return null',
+      '}',
+      '`',
+      'export default function App() { return <div><Card>Hi</Card><pre>{demoSource}</pre></div> }',
+    ].join('\n')
+    const out = sanitizeForSandpack(code)
+    expect(/import\s*\{[^}]*\bCard\b[^}]*\}\s*from/.test(out)).toBe(true)
+  })
+
+  it('still drops a REAL local-function shadow even with an unrelated decoy comment nearby', () => {
+    const code = [
+      "import React from 'react'",
+      "import { Button } from './components/ui/button'",
+      '// old approach, replaced below:',
+      "function Button({ children, className = '', onClick }) {",
+      '  return <button className={className} onClick={onClick}>{children}</button>;',
+      '}',
+      'export default function App(){ return <Button>Hi</Button>; }',
+    ].join('\n')
+    const result = validateJavaScriptCode(code)
+    expect(result.valid).toBe(true)
+    expect(findDuplicateTopLevelDeclaration(result.code)).toBeNull()
+    expect(/import\s*\{[^}]*\bButton\b[^}]*\}\s*from/.test(result.code)).toBe(false)
+    expect(/function Button\b/.test(result.code)).toBe(true)
   })
 })
