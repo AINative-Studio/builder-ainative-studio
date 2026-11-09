@@ -807,7 +807,18 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
   // breakpoint anywhere, rewrite the highest-leverage layout classes to be
   // mobile-first. Skipped entirely for apps that already use any breakpoint (they
   // opted into their own responsive design — never second-guess that).
-  const hasBreakpoints = /(?:^|[\s"'`])(?:sm|md|lg|xl):/.test(fixedCode)
+  //
+  // #1904: both this check and `hadStructure` below used to scan the raw,
+  // unmasked `fixedCode` — a comment merely MENTIONING a breakpoint prefix
+  // (e.g. "// use sm: or md: prefixes if needed") made `hasBreakpoints` true
+  // and silently skipped the whole floor-fix for an app with zero real
+  // responsive classes, exactly the regression #188 exists to prevent. Mask
+  // comments first (real breakpoint usage legitimately lives inside
+  // className STRING literals, so only comments — not strings — are
+  // blanked, reusing this file's existing findUnresolvedComponents() helper
+  // rather than adding a new masking copy, #1893).
+  const maskedForBreakpointCheck = maskCommentsForUnresolvedScan(fixedCode)
+  const hasBreakpoints = /(?:^|[\s"'`])(?:sm|md|lg|xl):/.test(maskedForBreakpointCheck)
   if (!hasBreakpoints) {
     let floored = fixedCode
     const flooredFixes: string[] = []
@@ -847,9 +858,13 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
 
     // Only accept the rewrite if it actually introduced responsiveness AND the app
     // had enough structure to warrant it (avoid touching trivial single-widget UIs
-    // where it makes no difference but adds churn).
+    // where it makes no difference but adds churn). Uses the same comment-masked
+    // text as `hasBreakpoints` above (#1904) — a comment mentioning "grid" or
+    // "flex-row" shouldn't count as real layout structure either.
     const hadStructure =
-      /grid\b/.test(fixedCode) || /flex-row\b/.test(fixedCode) || /(?<![-:\w])text-[4567]xl\b/.test(fixedCode)
+      /grid\b/.test(maskedForBreakpointCheck) ||
+      /flex-row\b/.test(maskedForBreakpointCheck) ||
+      /(?<![-:\w])text-[4567]xl\b/.test(maskedForBreakpointCheck)
     if (flooredFixes.length > 0 && hadStructure) {
       fixedCode = floored
       fixes.push('Added mobile-first responsive classes (grid/flex/heading breakpoints) to a layout that had none (#188)')
