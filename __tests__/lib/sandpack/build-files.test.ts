@@ -510,6 +510,66 @@ describe('buildSandpackFiles — fixMissingExports injects a real export onto a 
   })
 })
 
+/**
+ * Real bug found this run (#1900): buildLocalExportMap's sibling-import
+ * injector — added for #1099 item 4, "LoginIcon is not defined" — scanned
+ * raw, unmasked code for both `export const/function/class Name` and bare
+ * `export { Name }` lists. A comment merely MENTIONING an old/removed export
+ * line (kept "for reference" after a refactor) registered as a real export
+ * of that file, so a sibling using the same name in JSX got an import
+ * injected pointing at a component that doesn't actually exist at runtime —
+ * a genuine "does not provide an export named 'X'" crash the moment Sandpack
+ * evaluates the injected import, same failure mode #1539 above exists to
+ * prevent, just triggered by a comment instead of a real sibling export.
+ */
+describe('buildSandpackFiles — buildLocalExportMap is comment-blind to a merely-mentioned export (#1900)', () => {
+  it('never injects a sibling import for a bare export list only present in a comment', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App() { return <div><Footer /></div> }",
+      '/components/Footer.tsx': [
+        '// An older draft of this file additionally did:',
+        '// export { Footer }',
+        'function Footer() { return <footer>hi</footer> }',
+      ].join('\n'),
+    })
+    expect(built['/App.tsx']).not.toContain("import { Footer }")
+  })
+
+  it('never injects a sibling import for an export const/function/class only present in a comment', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App() { return <div><Header /></div> }",
+      '/components/Header.tsx': [
+        '/* removed, kept for reference:',
+        '   export function Header() { return <header>old</header> }',
+        '*/',
+        'const Header = () => <header>new</header>',
+      ].join('\n'),
+    })
+    expect(built['/App.tsx']).not.toContain("import { Header }")
+  })
+
+  it('never injects a sibling import for a component name only mentioned in a comment/string on the consuming side', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': [
+        'export default function App() {',
+        "  // <Footer /> used to live here, removed",
+        "  return <div>{'Example: <Footer />'}</div>",
+        '}',
+      ].join('\n'),
+      '/components/Footer.tsx': 'export function Footer() { return <footer>hi</footer> }',
+    })
+    expect(built['/App.tsx']).not.toContain("import { Footer }")
+  })
+
+  it('still injects a real sibling import when the export and JSX usage are both genuine', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App() { return <div><Footer /></div> }",
+      '/components/Footer.tsx': 'export function Footer() { return <footer>hi</footer> }',
+    })
+    expect(built['/App.tsx']).toContain("import { Footer } from './components/Footer'")
+  })
+})
+
 describe('buildSandpackFiles — main-file default-export synthesis handles more than `export default function Name` (#1523-class)', () => {
   it('synthesizes a default export for a root component declared as an arrow const with only a bare `export { Name }` list (real crash: /index.tsx does `import App from \'./App\'`, which resolved to undefined pre-fix)', () => {
     const built = buildSandpackFiles({
