@@ -144,6 +144,73 @@ export function findMatchingBracket(
   return -1
 }
 
+/**
+ * Blanks out `//` and `/* ... *\/` comments (replacing their characters with
+ * spaces, preserving length/newlines) while leaving string/template-literal
+ * CONTENTS untouched. The canonical home for a technique that was
+ * independently reinvented, byte-for-byte identical, across 7 separate files
+ * (#1893's audit) — design-conformance.ts, preview-engine.ts,
+ * output-validator.ts, primitive-wiring.ts, seed-check.ts, obedience-gate.ts,
+ * and dedupe-provided-components.ts, plus completeness-gate.ts's own
+ * near-identical copy (one extra bare-backslash branch, folded in here as a
+ * strict superset — it only changes output for a standalone `\` outside any
+ * string/comment, which doesn't occur in valid generated code). Each of
+ * those files now re-exports this as a thin local `maskComments` so their
+ * existing call sites never needed to change.
+ *
+ * Deliberately NOT merged with the several other mask* variants still living
+ * in lib/code-validator.ts, lib/component-detector.ts,
+ * lib/sandpack/build-files.ts, lib/build/flatten-multifile.ts, and
+ * lib/sandpack/jsx-fixer.ts — those have genuine behavioral divergences
+ * (string-content masking on/off, collapsing vs. length-preserving output)
+ * that need a deliberate opt-in design, not a byte-identical swap; see
+ * #1893 for the full audit before touching any of those.
+ */
+export function maskComments(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '\\') {
+      out += code.slice(i, i + 2)
+      i += 2
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += ' '.repeat(Math.min(end, code.length) - i)
+      i = Math.min(end, code.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
 /** Index of the `)` matching the `(` at `openIdx`, or -1 if unbalanced. */
 export function findMatchingParen(code: string, openIdx: number): number {
   return findMatchingBracket(code, openIdx, '(', ')')

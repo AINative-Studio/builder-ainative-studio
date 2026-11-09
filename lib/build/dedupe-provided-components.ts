@@ -29,75 +29,8 @@
  */
 import {
   findMatchingBracket as sharedFindMatchingBracket,
-  findStringEnd,
-  findBacktickEnd,
+  maskComments,
 } from './bracket-scanner'
-
-/**
- * Blanks out `//` and `/* *\/` comments (replacing their characters with
- * spaces, preserving length/newlines) while leaving string/template-literal
- * CONTENTS untouched — same technique as obedience-gate.ts's maskComments
- * (#1704/#1708/#1713/#1717 class).
- *
- * Real bug found live (overnight loop, 2026-11-07): every removal pattern
- * below used to run its OPENING match (`headRe.exec`) directly against the
- * raw, unmasked code. A generated app's own doc comment merely MENTIONING
- * one of SCAFFOLD_PROVIDED_COMPONENTS as a "don't do this" example — e.g.
- * `/** function Button() { return <button>raw</button> } *\/` right above a
- * real `export default function App() {...}` — matched `headRe` from
- * *inside the comment*, and the naive (non-brace-balanced, non-comment-aware)
- * `afterParamsRe` body-search that follows it then hunted for the next
- * literal `\n}` textually with no regard for what's comment vs. real code —
- * which, for a multi-line example, is often the REAL App function's own
- * closing brace. That deleted the entire real component body (confirmed:
- * the whole `export default function App` declaration silently vanished),
- * the exact "basic UI components are missing" / blank-render failure mode
- * this module exists to prevent — just triggered by a comment instead of a
- * real redeclaration. Masking comments before the opening match (while still
- * slicing all OUTPUT from the original, unmasked `code` — masking never
- * changes length, so offsets agree) makes a comment-only mention of any
- * scaffold name completely inert, matching how every other regex-driven
- * scanner in lib/build/ already treats comments.
- */
-function maskComments(code: string): string {
-  let out = ''
-  let i = 0
-  while (i < code.length) {
-    const ch = code[i]
-    const next = code[i + 1]
-    if (ch === '"' || ch === "'") {
-      const end = findStringEnd(code, i, ch)
-      const realEnd = end === -1 ? code.length - 1 : end
-      out += code.slice(i, realEnd + 1)
-      i = realEnd + 1
-      continue
-    }
-    if (ch === '`') {
-      const end = findBacktickEnd(code, i)
-      const realEnd = end === -1 ? code.length - 1 : end
-      out += code.slice(i, realEnd + 1)
-      i = realEnd + 1
-      continue
-    }
-    if (ch === '/' && next === '/') {
-      let end = code.indexOf('\n', i)
-      if (end === -1) end = code.length
-      out += ' '.repeat(end - i)
-      i = end
-      continue
-    }
-    if (ch === '/' && next === '*') {
-      let end = code.indexOf('*/', i + 2)
-      end = end === -1 ? code.length : end + 2
-      out += ' '.repeat(Math.min(end, code.length) - i)
-      i = Math.min(end, code.length)
-      continue
-    }
-    out += ch
-    i++
-  }
-  return out
-}
 
 export const SCAFFOLD_PROVIDED_COMPONENTS = [
   // shadcn

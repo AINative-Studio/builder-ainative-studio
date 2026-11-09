@@ -38,7 +38,7 @@
  */
 
 import type { StandardsCheck, StandardsResult } from './coding-standards'
-import { findMatchingBracket as sharedFindMatchingBracket, findStringEnd, findBacktickEnd } from './bracket-scanner'
+import { findMatchingBracket as sharedFindMatchingBracket, findStringEnd, findBacktickEnd, maskComments } from './bracket-scanner'
 
 // ---------------------------------------------------------------------------
 // Rule 1: dangerouslySetInnerHTML on non-static content
@@ -46,67 +46,6 @@ import { findMatchingBracket as sharedFindMatchingBracket, findStringEnd, findBa
 
 /** Matches up to and including the opening `{{` of a dangerouslySetInnerHTML prop. */
 const DANGEROUS_HTML_HEAD_PATTERN = /dangerouslySetInnerHTML\s*=\s*\{\s*\{/g
-
-/**
- * Blanks out `//` and `/* *\/` comments (replacing their characters with
- * spaces, preserving length/newlines/indices) while leaving string and
- * template-literal CONTENTS untouched (found via the same findStringEnd/
- * findBacktickEnd scanners findMatchingBracket itself uses, so a `//` or
- * `/*` inside a real string is never mistaken for a comment start).
- *
- * Real bug this fixes: a code comment containing a stray, unmatched bracket
- * character — e.g. `console.log(/* ok) *\/ apiKey)` or
- * `dangerouslySetInnerHTML={{ /* safe? (yes}) *\/ __html: userInput }}` —
- * used to be scanned as real syntax by findMatchingBracket's depth-counter,
- * closing the match early (right at the comment's stray character) and
- * silently truncating the captured args/body BEFORE it ever reached the
- * real secret-shaped arg or dynamic `__html` value. That's strictly worse
- * than a false positive for these two security rules (checkNoSecretLogging,
- * checkNoUnsafeDangerousHtml): a genuinely dangerous call goes completely
- * unflagged. The same early-close also made findSidebarTags (rule 5) miss a
- * real unwired duplicate sidebar whenever an earlier attribute's expression
- * contained a commented-out aside with a stray `}`. Same masking technique
- * as obedience-gate.ts's maskComments (#1713).
- */
-function maskComments(code: string): string {
-  let out = ''
-  let i = 0
-  while (i < code.length) {
-    const ch = code[i]
-    const next = code[i + 1]
-    if (ch === '"' || ch === "'") {
-      const end = findStringEnd(code, i, ch)
-      const realEnd = end === -1 ? code.length - 1 : end
-      out += code.slice(i, realEnd + 1)
-      i = realEnd + 1
-      continue
-    }
-    if (ch === '`') {
-      const end = findBacktickEnd(code, i)
-      const realEnd = end === -1 ? code.length - 1 : end
-      out += code.slice(i, realEnd + 1)
-      i = realEnd + 1
-      continue
-    }
-    if (ch === '/' && next === '/') {
-      let end = code.indexOf('\n', i)
-      if (end === -1) end = code.length
-      out += ' '.repeat(end - i)
-      i = end
-      continue
-    }
-    if (ch === '/' && next === '*') {
-      let end = code.indexOf('*/', i + 2)
-      end = end === -1 ? code.length : end + 2
-      out += ' '.repeat(Math.min(end, code.length) - i)
-      i = Math.min(end, code.length)
-      continue
-    }
-    out += ch
-    i++
-  }
-  return out
-}
 
 /**
  * Index of the matching `close` bracket for the `open` bracket at `openIdx`

@@ -37,6 +37,8 @@
  * a raw "Unexpected token" panel.
  */
 
+import { maskComments } from './bracket-scanner'
+
 /** One parsed import statement with its local specifier and local bindings. */
 interface LocalImport {
   /** The module specifier as written (e.g. './components/Analytics'). */
@@ -92,102 +94,6 @@ const RUNTIME_PROVIDED: RegExp[] = [
 ]
 
 const FILE_MARKER = /^\/\/\s*---\s*FILE:\s*(.+?)\s*---\s*$/
-
-/** Index of a quote's matching closing quote (honoring `\` escapes), or -1 if unterminated. */
-function findStringEnd(code: string, openIdx: number, quote: string): number {
-  let i = openIdx + 1
-  while (i < code.length) {
-    if (code[i] === '\\') { i += 2; continue }
-    if (code[i] === quote) return i
-    i++
-  }
-  return -1
-}
-
-/** Index of a template literal's closing backtick (honoring `\` escapes and skipping over `${}` interpolations), or -1 if unterminated. */
-function findBacktickEnd(code: string, openIdx: number): number {
-  let i = openIdx + 1
-  while (i < code.length) {
-    const ch = code[i]
-    if (ch === '\\') { i += 2; continue }
-    if (ch === '`') return i
-    if (ch === '$' && code[i + 1] === '{') {
-      let depth = 1
-      let j = i + 2
-      while (j < code.length && depth > 0) {
-        if (code[j] === '{') depth++
-        else if (code[j] === '}') depth--
-        j++
-      }
-      i = j
-      continue
-    }
-    i++
-  }
-  return -1
-}
-
-/**
- * Blanks out `//` and `/* *\/` comments (replacing their characters with
- * spaces, preserving length/newlines and leaving string/template-literal
- * CONTENTS untouched) — same `maskComments()` technique already proven in
- * lib/build/obedience-gate.ts (#1696/#1704/#1705/#1713/#1714).
- *
- * Real bug this fixes: every scanner below (definesIdentifier,
- * collectKnownIdentifiers's import/function/const regexes, and the JSX_TAG
- * match in findUndeclaredJsxComponents) used to run against the RAW payload
- * text, comments included. A model that writes an explanatory comment like
- * `// function Analytics() { ... } will render the chart` or
- * `// import Analytics from './components/Analytics'` — without ever really
- * defining or importing it — made definesIdentifier()/collectKnownIdentifiers()
- * wrongly believe the identifier was defined/imported, which SUPPRESSES the
- * real "missing import" / "undeclared JSX component" finding these two
- * detectors exist to catch. That's a false negative in the dangerous
- * direction: the truncated/incomplete generation this gate is specifically
- * meant to block (builder#333's own `Analytics` repro) ships anyway and dies
- * in the browser with "Analytics is not defined" / "Element type is invalid"
- * — exactly the crash class the completeness gate exists to prevent.
- */
-function maskComments(code: string): string {
-  let out = ''
-  let i = 0
-  while (i < code.length) {
-    const ch = code[i]
-    const next = code[i + 1]
-    if (ch === '\\') { out += code.slice(i, i + 2); i += 2; continue }
-    if (ch === '"' || ch === "'") {
-      const end = findStringEnd(code, i, ch)
-      const realEnd = end === -1 ? code.length - 1 : end
-      out += code.slice(i, realEnd + 1)
-      i = realEnd + 1
-      continue
-    }
-    if (ch === '`') {
-      const end = findBacktickEnd(code, i)
-      const realEnd = end === -1 ? code.length - 1 : end
-      out += code.slice(i, realEnd + 1)
-      i = realEnd + 1
-      continue
-    }
-    if (ch === '/' && next === '/') {
-      let end = code.indexOf('\n', i)
-      if (end === -1) end = code.length
-      out += ' '.repeat(end - i)
-      i = end
-      continue
-    }
-    if (ch === '/' && next === '*') {
-      let end = code.indexOf('*/', i + 2)
-      end = end === -1 ? code.length : end + 2
-      out += ' '.repeat(Math.min(end, code.length) - i)
-      i = Math.min(end, code.length)
-      continue
-    }
-    out += ch
-    i++
-  }
-  return out
-}
 
 /** Is this specifier a LOCAL module reference (relative or @/ alias)? */
 function isLocalSpecifier(spec: string): boolean {
