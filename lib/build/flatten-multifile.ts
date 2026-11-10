@@ -201,13 +201,76 @@ function stripWrappingCodeFence(raw: string): string {
   return m ? m[1] : raw
 }
 
+/**
+ * Line indices (0-based) of `code` that sit INSIDE a still-open backtick
+ * template literal or block comment (`/* ... *\/`) carried over from an
+ * earlier line, rather than at top level. A single/double-quoted string or
+ * a `//` line comment can never contain a literal newline in valid JS, so
+ * they can't hide an embedded line this way — only these two multi-line
+ * constructs can.
+ *
+ * Real bug this guards against: parseFiles() below is the one scan in this
+ * file that was never routed through this file's existing masking helpers
+ * — it matches `FILE_MARKER` against every RAW line of the blob. A
+ * generated file demonstrating or documenting this exact `// --- FILE:
+ * ... ---` convention inside its own multi-line `/* *\/` comment or a
+ * backtick demo-code string (an ordinary thing on a docs/API-product page)
+ * has that line split off as a bogus extra "file", corrupting the real
+ * file it actually belongs to and potentially clobbering whatever file
+ * follows under the same (reused) marker name.
+ */
+function linesInsideMultilineConstruct(code: string): Set<number> {
+  const inside = new Set<number>()
+  const markSpan = (from: number, to: number, line: number): number => {
+    for (let j = from; j < to; j++) if (code[j] === '\n') { line++; inside.add(line) }
+    return line
+  }
+  let line = 0
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      i = end === -1 ? code.length : end + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      const end = code.indexOf('\n', i)
+      i = end === -1 ? code.length : end
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      const stop = end === -1 ? code.length : end + 1
+      line = markSpan(i, stop, line)
+      i = stop
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      const closeIdx = code.indexOf('*/', i + 2)
+      const stop = closeIdx === -1 ? code.length : closeIdx + 2
+      line = markSpan(i, stop, line)
+      i = stop
+      continue
+    }
+    if (ch === '\n') { line++; i++; continue }
+    i++
+  }
+  return inside
+}
+
 /** Parse `// --- FILE: path ---` markers into { normalizedBasename: code }. */
 export function parseFiles(raw: string): Record<string, string> {
   const files: Record<string, string> = {}
   let cur: string | null = null
   let buf: string[] = []
-  for (const line of stripWrappingCodeFence(raw).split('\n')) {
-    const m = line.match(FILE_MARKER)
+  const stripped = stripWrappingCodeFence(raw)
+  const hiddenLines = linesInsideMultilineConstruct(stripped)
+  const lines = stripped.split('\n')
+  for (let idx = 0; idx < lines.length; idx++) {
+    const line = lines[idx]
+    const m = hiddenLines.has(idx) ? null : line.match(FILE_MARKER)
     if (m) {
       if (cur) files[cur] = buf.join('\n').trim()
       cur = m[1].trim()
