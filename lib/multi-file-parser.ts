@@ -93,17 +93,81 @@ function bracesBalance(code: string): boolean {
 }
 
 /**
+ * Line indices (0-based) of `code` that sit INSIDE a still-open backtick
+ * template literal or block comment (`/* ... *\/`) carried over from an
+ * earlier line, rather than at top level. A single/double-quoted string or
+ * a `//` line comment can never contain a literal newline in valid JS, so
+ * they can't hide an embedded line this way — only these two multi-line
+ * constructs can (same helper shape as flatten-multifile.ts's
+ * `linesInsideMultilineConstruct`, #1933/PR #1934).
+ *
+ * Real bug this guards against: parseMultiFileOutput() below matched
+ * FILE_MARKER against every RAW line of the model's output, with no
+ * awareness of a line sitting inside another file's own block comment or
+ * backtick template literal. A file that documents or demonstrates this
+ * project's own `// --- FILE:` convention inside such a construct (an
+ * ordinary thing for a generated docs/API-product page) had that embedded
+ * line mistaken for a real file boundary, splitting the real file
+ * mid-content and clobbering whatever followed under the reused name.
+ */
+function linesInsideMultilineConstruct(code: string): Set<number> {
+  const inside = new Set<number>()
+  const markSpan = (from: number, to: number, line: number): number => {
+    for (let j = from; j < to; j++) if (code[j] === '\n') { line++; inside.add(line) }
+    return line
+  }
+  let line = 0
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '\\') { i += 2; continue }
+    if (ch === '"' || ch === "'") {
+      let j = i + 1
+      while (j < code.length && code[j] !== ch) { if (code[j] === '\\') j++; j++ }
+      i = j + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      const end = code.indexOf('\n', i)
+      i = end === -1 ? code.length : end
+      continue
+    }
+    if (ch === '`') {
+      let j = i + 1
+      while (j < code.length && code[j] !== '`') { if (code[j] === '\\') j++; j++ }
+      const stop = j >= code.length ? code.length : j + 1
+      line = markSpan(i, stop, line)
+      i = stop
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      const closeIdx = code.indexOf('*/', i + 2)
+      const stop = closeIdx === -1 ? code.length : closeIdx + 2
+      line = markSpan(i, stop, line)
+      i = stop
+      continue
+    }
+    if (ch === '\n') { line++; i++; continue }
+    i++
+  }
+  return inside
+}
+
+/**
  * Parse multi-file output from Claude into a file map.
  * Falls back to single-file if no markers found.
  */
 export function parseMultiFileOutput(rawOutput: string, userPrompt?: string): Record<string, string> {
   const lines = rawOutput.split('\n')
+  const hiddenLines = linesInsideMultilineConstruct(rawOutput)
   const files: Record<string, string> = {}
   let currentFile: string | null = null
   let currentContent: string[] = []
 
-  for (const line of lines) {
-    const match = line.match(FILE_MARKER)
+  for (let idx = 0; idx < lines.length; idx++) {
+    const line = lines[idx]
+    const match = hiddenLines.has(idx) ? null : line.match(FILE_MARKER)
     if (match) {
       // Save previous file
       if (currentFile) {
