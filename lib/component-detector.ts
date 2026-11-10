@@ -135,10 +135,47 @@ export interface ComponentDetection {
   /**
    * When set, the caller MUST apply this rewrite to the source BEFORE stripping
    * `export default` — it converts an anonymous default export into a named
-   * declaration so the compiled module can bind `name`. `find` is a literal
-   * substring present in the source; `replace` is the replacement.
+   * declaration so the compiled module can bind `name`.
+   *
+   * `find`/`replace` are the literal text to substitute; `index` is `find`'s
+   * start offset in `code` (the same `code` passed to `detectRootComponent`).
+   *
+   * A caller MUST splice at `index` —
+   * `code.slice(0, index) + replace + code.slice(index + find.length)`,
+   * after confirming `code.slice(index, index + find.length) === find` — and
+   * must NOT call `code.replace(find, replace)`. `find` is typically a short,
+   * generic snippet (`'export default '`, `'export default function('`, …)
+   * that can ALSO appear, verbatim, inside an unrelated comment or string
+   * earlier in the same file (e.g. a reminder comment like `// don't forget
+   * export default at the bottom`) — `String.prototype.replace` with a
+   * string needle rewrites only the FIRST occurrence, so a decoy earlier in
+   * the file silently absorbs the rewrite instead of the real declaration:
+   * the comment gets corrupted AND the real anonymous export is never named,
+   * leaving the synthesized name (e.g. `__PreviewDefault`) unbound anywhere —
+   * the exact "Element type is invalid" / blank-page crash this whole
+   * detector exists to prevent, just reached through its own rewrite
+   * contract. `index` is computed from the same match that already produced
+   * `find`, so it always points at the real, in-code occurrence.
    */
-  rewrite?: { find: string; replace: string }
+  rewrite?: { find: string; replace: string; index: number }
+}
+
+/**
+ * Apply a `ComponentDetection.rewrite` to `code`, splicing at its `index`
+ * rather than doing a blind `code.replace(find, replace)` — see the
+ * `rewrite` field's own doc comment for the decoy-comment/string bug a
+ * literal-text replace reproduces. Returns `code` unchanged if `rewrite` is
+ * absent or `code` no longer has `find` at `index` (e.g. the caller already
+ * transformed the source since `detectRootComponent` ran).
+ */
+export function applyComponentRewrite(
+  code: string,
+  rewrite: ComponentDetection['rewrite'],
+): string {
+  if (!rewrite) return code
+  const { find, replace, index } = rewrite
+  if (code.slice(index, index + find.length) !== find) return code
+  return code.slice(0, index) + replace + code.slice(index + find.length)
 }
 
 /** True if `name` is PascalCase (starts uppercase, has at least one more char). */
@@ -342,8 +379,17 @@ function returnsJsx(source: string): boolean {
  *   pre export-stripping). Imports may still be present.
  */
 export function detectRootComponent(rawCode: string): ComponentDetection {
-  const code = (rawCode || '').trim()
+  const safeRawCode = rawCode || ''
+  const code = safeRawCode.trim()
   if (!code) return { name: null, source: 'none' }
+  // `code` is TRIMMED `rawCode` — every match index below is relative to
+  // `code`, not the caller's original `rawCode`. `applyComponentRewrite()`
+  // (and every caller before it) applies the rewrite to the UNTRIMMED
+  // source the caller holds (which may have leading blank lines/whitespace
+  // a markdown-fence/indentation extraction left behind), so every returned
+  // `index` below is offset by this trimmed-away leading whitespace to stay
+  // valid in that coordinate space.
+  const leadingTrimLen = safeRawCode.length - safeRawCode.trimStart().length
   // Every scan below runs against `masked`, not `code` — otherwise a comment
   // or string literal that merely MENTIONS `export default`/a PascalCase name
   // (a "don't do this" example, a removed-code note, a TODO) is read as a
@@ -412,6 +458,7 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
         rewrite: {
           find: hocWrap[0],
           replace: `const ${namedFnExpr[1]} = ${wrapperPrefix}`,
+          index: hocWrap.index! + leadingTrimLen,
         },
       }
     }
@@ -430,6 +477,7 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
         rewrite: {
           find: hocWrap[0],
           replace: `const ${ANON_DEFAULT_NAME} = ${wrapperPrefix}`,
+          index: hocWrap.index! + leadingTrimLen,
         },
       }
     }
@@ -474,6 +522,7 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
       rewrite: {
         find: anonFn[0],
         replace: `function ${ANON_DEFAULT_NAME}(`,
+        index: anonFn.index! + leadingTrimLen,
       },
     }
   }
@@ -496,6 +545,7 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
       rewrite: {
         find: anonClass[0],
         replace: `class ${ANON_DEFAULT_NAME}${anonClass[1] || ''} {`,
+        index: anonClass.index! + leadingTrimLen,
       },
     }
   }
@@ -517,14 +567,22 @@ export function detectRootComponent(rawCode: string): ComponentDetection {
     const openIdx = anonArrowStart.index! + anonArrowStart[0].length - 1
     const closeIdx = findMatchingParen(masked, openIdx)
     if (closeIdx !== -1 && /^\s*=>/.test(masked.slice(closeIdx + 1))) {
-      // Replace only the `export default ` prefix with `const __PreviewDefault = `.
-      const prefix = masked.match(/export\s+default\s+/)![0]
+      // Replace only the `export default ` (optionally `async `) prefix with
+      // `const __PreviewDefault = `. Derived from `anonArrowStart` itself —
+      // trimming its own trailing `(` — rather than a second, independent
+      // `masked.match(/export\s+default\s+/)` call: that second call re-scans
+      // `masked` from position 0 with no anchor to `anonArrowStart.index`, so
+      // `find`/its implied position could drift from the arrow this branch
+      // actually found (see `rewrite`'s own doc comment on why a caller must
+      // use `index`, not a text search, to apply this rewrite).
+      const prefix = anonArrowStart[0].slice(0, -1) // drop the trailing "("
       return {
         name: ANON_DEFAULT_NAME,
         source: 'default-export-anonymous',
         rewrite: {
           find: prefix,
           replace: `const ${ANON_DEFAULT_NAME} = `,
+          index: anonArrowStart.index! + leadingTrimLen,
         },
       }
     }

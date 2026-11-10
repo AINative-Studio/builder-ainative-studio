@@ -22,7 +22,7 @@
  */
 
 import { isE2BEnabled, runSequenceInE2BSandbox } from './build/e2b-sandbox'
-import { detectRootComponent, hasDefaultExport as hasRealDefaultExport } from './component-detector'
+import { detectRootComponent, applyComponentRewrite, hasDefaultExport as hasRealDefaultExport } from './component-detector'
 
 export interface BuildResult {
   success: boolean
@@ -111,10 +111,12 @@ function extractMainFileContent(rawOutput: string): string {
  */
 function detectComponentName(code: string): { name: string; code: string } {
   const detection = detectRootComponent(code)
-  let out = code
-  if (detection.rewrite && out.includes(detection.rewrite.find)) {
-    out = out.replace(detection.rewrite.find, detection.rewrite.replace)
-  }
+  // Via applyComponentRewrite(), which splices at the match's own `index`
+  // instead of a blind `code.replace(find, replace)` — a plain text replace
+  // would rewrite a decoy occurrence of the same short, generic text (e.g.
+  // inside an earlier comment) instead of the real declaration, leaving the
+  // real one unnamed (see lib/component-detector.ts's `rewrite` doc comment).
+  const out = applyComponentRewrite(code, detection.rewrite)
   return { name: detection.name || 'App', code: out }
 }
 

@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { SEED_SHOWCASE, SHOWCASE_CATEGORIES, type ShowcaseEntry } from '@/lib/showcase-data'
-import { detectRootComponent } from '@/lib/component-detector'
+import { detectRootComponent, applyComponentRewrite } from '@/lib/component-detector'
 import { findMatchingBrace } from '@/lib/build/bracket-scanner'
 
 /**
@@ -70,9 +70,12 @@ export function buildPreviewHtml(code: string): string {
   // `export default` strip below would leave an anonymous *statement* (a
   // syntax error). Apply the detector's rewrite here to give the component a
   // stable, bindable name FIRST — same pattern as app/api/preview/[id]/route.ts.
-  if (detection.rewrite && cleanCode.includes(detection.rewrite.find)) {
-    cleanCode = cleanCode.replace(detection.rewrite.find, detection.rewrite.replace)
-  }
+  // Via applyComponentRewrite(), which splices at the match's own `index`
+  // instead of a blind `code.replace(find, replace)` — a plain text replace
+  // would rewrite a decoy occurrence of the same short, generic text (e.g.
+  // inside an earlier comment) instead of the real declaration, leaving the
+  // real one unnamed (see lib/component-detector.ts's `rewrite` doc comment).
+  cleanCode = applyComponentRewrite(cleanCode, detection.rewrite)
   const componentName = detection.name || 'App'
 
   // Strip imports and exports

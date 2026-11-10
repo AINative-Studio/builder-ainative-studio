@@ -3,7 +3,7 @@ import { getPreview, isPreviewStreaming, storePreview, getSSRPreview, getChatDat
 import { getDesignSystem } from '@/lib/design-systems/catalog'
 import { googleFontsUrl } from '@/lib/theme-system'
 import { validateJavaScriptCode, sanitizeForSandpack } from '@/lib/code-validator'
-import { detectRootComponent } from '@/lib/component-detector'
+import { detectRootComponent, applyComponentRewrite } from '@/lib/component-detector'
 import { flattenMultiFile } from '@/lib/build/flatten-multifile'
 import { convertTemplateLiteralAttrsToConcat } from '@/lib/build/template-literal-to-concat'
 import { dedupeProvidedComponents } from '@/lib/build/dedupe-provided-components'
@@ -339,9 +339,12 @@ export async function GET(
   // `export default class {}`) have no name to bind AND the blanket `export default`
   // strip below would leave an anonymous *statement* (a syntax error). Apply the
   // detector's rewrite here to give the component a stable, bindable name FIRST.
-  if (detection.rewrite && componentCode.includes(detection.rewrite.find)) {
-    componentCode = componentCode.replace(detection.rewrite.find, detection.rewrite.replace)
-  }
+  // Via applyComponentRewrite(), which splices at the match's own `index`
+  // instead of a blind `componentCode.replace(find, replace)` — a plain text
+  // replace would rewrite a decoy occurrence of the same short, generic text
+  // (e.g. inside an earlier comment) instead of the real declaration, leaving
+  // the real one unnamed (see lib/component-detector.ts's `rewrite` doc comment).
+  componentCode = applyComponentRewrite(componentCode, detection.rewrite)
   const detectedComponentName = detection.name || 'App'
   console.log(`[Preview] Detected component name: ${detectedComponentName} (via ${detection.source})`)
 

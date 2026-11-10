@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
-import { detectRootComponent } from '@/lib/component-detector'
+import { detectRootComponent, applyComponentRewrite } from '@/lib/component-detector'
 
 function generateNonce(): string {
   return crypto.randomBytes(16).toString('base64')
@@ -27,9 +27,13 @@ export async function POST(request: NextRequest) {
     // referencing a component declared earlier in the file, left `Component`
     // undefined and crashed the preview (the same bug class as #1523/#1596).
     const detection = detectRootComponent(componentCode)
-    if (detection.rewrite && componentCode.includes(detection.rewrite.find)) {
-      componentCode = componentCode.replace(detection.rewrite.find, detection.rewrite.replace)
-    }
+    // Via applyComponentRewrite(), which splices at the match's own `index`
+    // instead of a blind `componentCode.replace(find, replace)` — a plain
+    // text replace would rewrite a decoy occurrence of the same short,
+    // generic text (e.g. inside an earlier comment) instead of the real
+    // declaration, leaving the real one unnamed (see
+    // lib/component-detector.ts's `rewrite` doc comment).
+    componentCode = applyComponentRewrite(componentCode, detection.rewrite)
     const detectedComponentName = detection.name || 'App'
     // Strip export statements (not just `export default`) so e.g. a trailing
     // `export { Name }` list doesn't survive into the non-module <script> below,
