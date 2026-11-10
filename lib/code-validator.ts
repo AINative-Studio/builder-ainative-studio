@@ -758,10 +758,26 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
   // wraps `<table` opening tags, matches the corresponding `</table>` for that
   // opener via a simple non-nested assumption (generated tables aren't nested),
   // and skips ones already inside an overflow wrapper. (builder#196)
+  //
+  // #1923: this used to regex-scan the raw, unmasked `fixedCode` — a `<table>`
+  // merely MENTIONED in a comment (or, worse, a comment whose own `<table>`
+  // mention has no matching `</table>` before a real, unrelated `<table>...
+  // </table>` later in the file) got treated as real JSX. In the worst case the
+  // non-greedy `[\s\S]*?` then spans from inside the comment, across its
+  // closing delimiter and any real code in between, to that real `</table>`,
+  // and the wrap corrupts all of it — broken JSX, not just a corrupted comment.
+  // Mask comments first (this file's existing maskCommentsForUnresolvedScan(),
+  // already reused by #1904/#1918/#1922's sibling fixes in this same function)
+  // and skip any match whose opening `<table` tag falls inside a masked
+  // (blanked) region.
   const beforeTableFix = fixedCode
+  const maskedForTableFix = maskCommentsForUnresolvedScan(fixedCode)
   fixedCode = fixedCode.replace(
     /(<table\b[^>]*>)([\s\S]*?<\/table>)/g,
     (full, open, rest, offset, str) => {
+      // Skip if the opening <table> tag itself is inside a comment (masked
+      // region reads as blank space there, so it no longer contains "<table").
+      if (!maskedForTableFix.slice(offset, offset + open.length).includes('<table')) return full
       // Skip if the ~80 chars before this <table> already set up horizontal scroll.
       const before = str.slice(Math.max(0, offset - 90), offset)
       if (/overflow-x|overflow-auto|overflow-scroll/.test(before)) return full
