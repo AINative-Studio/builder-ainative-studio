@@ -683,6 +683,34 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
     fixes.push('Removed stray semicolon after open paren ((;)')
   }
 
+  // Runs `pattern` against a comment-masked view of `code` (so a `//`/`/* */`
+  // comment that merely MENTIONS a matching shape can never trigger a match)
+  // and splices `replacer`'s output into the corresponding offsets of the
+  // real, unmasked `code` — never running `pattern` directly against raw
+  // text. `maskCommentsForUnresolvedScan` is offset-preserving (comments are
+  // blanked to same-length spaces, everything else copied verbatim), so a
+  // match found in the masked view always has identical text at the same
+  // offset in `code`, and splicing is safe. See #1926 (same bug class as
+  // #1872-#1923): without this, UNGUARDED PROPERTY ACCESS / NATIVE BLOCKING
+  // DIALOGS below used to rewrite comment text that only mentions their
+  // target call shape.
+  const replaceOutsideComments = (
+    code: string,
+    pattern: RegExp,
+    replacer: (...args: any[]) => string,
+  ): string => {
+    const masked = maskCommentsForUnresolvedScan(code)
+    let out = ''
+    let lastIndex = 0
+    for (const m of masked.matchAll(pattern)) {
+      const start = m.index as number
+      out += code.slice(lastIndex, start) + replacer(...m, start, masked)
+      lastIndex = start + m[0].length
+    }
+    out += code.slice(lastIndex)
+    return out
+  }
+
   // Fix UNGUARDED PROPERTY ACCESS: the #1 runtime crash class in generated apps
   // is calling a string/number method on a possibly-undefined field — e.g.
   // `row.name.toLowerCase()` where a row loaded from /api/db is missing `name`,
@@ -690,15 +718,18 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
   // killing the whole list. Guard the common string/number coercions so a single
   // bad row can't crash the render. Only rewrites the specific unsafe shape
   // `<ident>.<prop>.<method>(` — optional-chained (`?.`) and already-guarded
-  // (`|| ''`) accesses are left untouched.
+  // (`|| ''`) accesses are left untouched. Scanned outside comments only (#1926):
+  // a comment merely mentioning this call shape must not have its text rewritten.
   const beforeGuards = fixedCode
   // String methods → default to '' :  a.b.toLowerCase()  ->  (a.b || '').toLowerCase()
-  fixedCode = fixedCode.replace(
+  fixedCode = replaceOutsideComments(
+    fixedCode,
     /(?<![.\w?])([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\.(toLowerCase|toUpperCase|trim|includes|startsWith|endsWith|split|charAt|slice|replace|match|padStart|padEnd)\(/g,
     (m, obj, prop, method) => `(${obj}.${prop} || '').${method}(`,
   )
   // Number methods → default to 0 :  a.b.toFixed(2)  ->  (a.b || 0).toFixed(2)
-  fixedCode = fixedCode.replace(
+  fixedCode = replaceOutsideComments(
+    fixedCode,
     /(?<![.\w?])([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)\.(toFixed|toLocaleString|toPrecision)\(/g,
     (m, obj, prop, method) => `(${obj}.${prop} || 0).${method}(`,
   )
@@ -968,35 +999,22 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
   {
     const dialogCallRe = /(?<![.\w$])(?:window\.)?(alert|confirm|prompt)\s*\(/
     const globalDialogCallRe = /(?<![.\w$])(?:window\.)?(alert|confirm|prompt)\s*\(/g
-    // #1921: this scan used to run directly against raw `fixedCode`, blind to
-    // a `//`/`/* */` comment that merely *mentions* alert(/confirm(/prompt( —
-    // the exact same bug already fixed in the Sandpack pipeline's twin
-    // (build-files.ts's fixNativeDialogCalls). Reuses this file's own
-    // existing comment masker (maskCommentsForUnresolvedScan) rather than
-    // adding yet another copy. It preserves exact character offsets, so the
-    // replace below can still splice into the ORIGINAL fixedCode at the
-    // offsets found here instead of running the replace against raw text.
-    const maskedForDialogScan = maskCommentsForUnresolvedScan(fixedCode)
-    if (dialogCallRe.test(maskedForDialogScan)) {
+    // Scanned outside comments only (#1921/#1926): a comment merely mentioning
+    // alert(/confirm(/prompt( must not trigger the shim injection or have
+    // its own text rewritten to the internal __previewSafe* shim name.
+    // Reuses replaceOutsideComments (see its own doc comment above), which is
+    // offset-preserving against this file's existing maskCommentsForUnresolvedScan,
+    // so the splice below still lands at the correct offsets in the real code.
+    if (dialogCallRe.test(maskCommentsForUnresolvedScan(fixedCode))) {
       const SHIM = [
         "function __previewSafeAlert(message) { if (typeof console !== 'undefined') console.info('[preview alert]', message) }",
         "function __previewSafeConfirm(message) { if (typeof console !== 'undefined') console.info('[preview confirm]', message); return true }",
         "function __previewSafePrompt(message, defaultValue) { if (typeof console !== 'undefined') console.info('[preview prompt]', message); return defaultValue !== undefined ? defaultValue : '' }",
       ].join('\n')
-      const reScan = new RegExp(globalDialogCallRe.source, globalDialogCallRe.flags)
-      let cursor = 0
-      let out = ''
-      let m: RegExpExecArray | null
-      while ((m = reScan.exec(maskedForDialogScan))) {
-        const start = m.index
-        const end = start + m[0].length
-        const fn = m[1]
+      fixedCode = replaceOutsideComments(fixedCode, globalDialogCallRe, (_match: string, fn: string) => {
         const capitalized = fn.charAt(0).toUpperCase() + fn.slice(1)
-        out += fixedCode.slice(cursor, start) + `__previewSafe${capitalized}(`
-        cursor = end
-      }
-      out += fixedCode.slice(cursor)
-      fixedCode = out
+        return `__previewSafe${capitalized}(`
+      })
       const directiveMatch = fixedCode.match(/^(['"]use (?:client|strict)['"];?\s*\n)/)
       fixedCode = directiveMatch
         ? directiveMatch[1] + SHIM + '\n' + fixedCode.slice(directiveMatch[1].length)

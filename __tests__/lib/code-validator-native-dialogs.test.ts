@@ -129,8 +129,8 @@ describe('code-validator — autoFixCode neutralizes blocking native dialogs (#1
    * explicit-files gate with that exact false positive.
    */
   /**
-   * #1921: this scan used to run against raw, unmasked code — a comment
-   * merely mentioning alert(/confirm(/prompt( (or the shim's own
+   * #1921/#1926: this scan used to run against raw, unmasked code — a
+   * comment merely mentioning alert(/confirm(/prompt( (or the shim's own
    * signature) changed the outcome, the same bug class already fixed in
    * build-files.ts's fixNativeDialogCalls for the Sandpack pipeline.
    */
@@ -143,6 +143,42 @@ describe('code-validator — autoFixCode neutralizes blocking native dialogs (#1
     const fixed = sanitizeForSandpack(code)
     expect(fixed).not.toContain('__previewSafe')
     expect(fixed).toContain('// this used to call alert(message) before we switched to a toast')
+  })
+
+  it('does not rewrite a comment that only mentions alert(), and does not inject the shim', () => {
+    const code = [
+      "import React from 'react'",
+      "// NOTE: an older draft called alert('Thanks!') here directly.",
+      'export default function Confirm() { return (<p>Done</p>) }',
+    ].join('\n')
+    const fixed = sanitizeForSandpack(code)
+    expect(fixed).toContain("// NOTE: an older draft called alert('Thanks!') here directly.")
+    expect(fixed).not.toContain('__previewSafe')
+  })
+
+  it('does not rewrite a block comment that only mentions confirm()/prompt()', () => {
+    const code = [
+      "import React from 'react'",
+      "/* old behavior: confirm('Are you sure?') and prompt('Name?') blocked the page */",
+      'export default function App() { return (<div>hi</div>) }',
+    ].join('\n')
+    const fixed = sanitizeForSandpack(code)
+    expect(fixed).toContain(
+      "/* old behavior: confirm('Are you sure?') and prompt('Name?') blocked the page */",
+    )
+    expect(fixed).not.toContain('__previewSafe')
+  })
+
+  it('still rewrites a real alert() call even when a comment elsewhere only mentions it', () => {
+    const code = [
+      "import React from 'react'",
+      "// NOTE: an older draft called alert('Thanks!') here directly.",
+      "export default function App() { return (<button onClick={() => alert('hi')}>Go</button>) }",
+    ].join('\n')
+    const fixed = sanitizeForSandpack(code)
+    expect(fixed).toContain("// NOTE: an older draft called alert('Thanks!') here directly.")
+    expect(fixed).toContain("__previewSafeAlert('hi')")
+    expect(fixed).toContain('function __previewSafeAlert(message)')
   })
 
   it('isRenderable accepts the __previewSafeAlert/__previewSafeConfirm/__previewSafePrompt shim names sanitizeForSandpack produces', () => {
