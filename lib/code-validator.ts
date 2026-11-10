@@ -643,8 +643,16 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
 
   // Fix 10: AX Standard — Enforce single h1 per page
   // Convert all <h1> after the first one to <h2> (and </h1> to </h2>)
+  // Masked against comments first: an unmasked scan counts a `<h1>` mentioned
+  // inside a `//`/`/* */` comment (e.g. a leftover draft or JSDoc example) as
+  // a real heading, which can demote the page's only real <h1> to <h2>, or —
+  // when the comment's snippet has an opening tag with no matching closing
+  // tag — desync the independent open/close counters below and emit
+  // mismatched `<h2>...</h1>` JSX, a guaranteed Babel/Sandpack parse error.
+  const maskedForH1 = maskCommentsForUnresolvedScan(fixedCode)
   let h1Count = 0
-  fixedCode = fixedCode.replace(/<h1(\s|>)/g, (match) => {
+  fixedCode = fixedCode.replace(/<h1(\s|>)/g, (match, _p1, offset: number) => {
+    if (maskedForH1.slice(offset, offset + match.length).trim() === '') return match
     h1Count++
     if (h1Count > 1) {
       fixes.push('Converted extra <h1> to <h2> (AX-5: single h1 rule)')
@@ -655,7 +663,8 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
   if (h1Count > 1) {
     // Also fix closing tags — convert extra </h1> to </h2>
     let closeCount = 0
-    fixedCode = fixedCode.replace(/<\/h1>/g, () => {
+    fixedCode = fixedCode.replace(/<\/h1>/g, (match, offset: number) => {
+      if (maskedForH1.slice(offset, offset + match.length).trim() === '') return match
       closeCount++
       return closeCount > 1 ? '</h2>' : '</h1>'
     })
