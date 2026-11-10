@@ -799,20 +799,39 @@ function fixNativeDialogCalls(sandpackFiles: Record<string, string>): void {
     if (!/\.(t|j)sx?$/.test(path)) continue
     if (builtinPaths.has(path)) continue
 
-    const hasRawDialogCall = dialogCallRe.test(code)
-    const hasShimCall = shimCallRe.test(code)
+    // Real bug found live: these three decisions used to run against raw
+    // `code`, blind to a `//`/`/* */` comment that merely *mentions*
+    // alert()/__previewSafeAlert(/the shim's own `function` signature
+    // (e.g. a leftover draft note). maskCommentsAndStrings() preserves
+    // exact character offsets, so the actual rewrite below can still
+    // splice into the ORIGINAL `code` at the offsets found here, rather
+    // than risk the replace() itself mutating comment text.
+    const maskedCode = maskCommentsAndStrings(code)
+    const hasRawDialogCall = dialogCallRe.test(maskedCode)
+    const hasShimCall = shimCallRe.test(maskedCode)
     if (!hasRawDialogCall && !hasShimCall) continue
     // Already has its own local shim definition (e.g. a second pass over
     // the same file) — nothing to inject, rewriting raw calls (if any) is
     // still safe and handled below.
-    const alreadyDefined = shimDefRe.test(code)
+    const alreadyDefined = shimDefRe.test(maskedCode)
 
-    const fixed = hasRawDialogCall
-      ? code.replace(globalDialogCallRe, (_match, fn: string) => {
-          const capitalized = fn.charAt(0).toUpperCase() + fn.slice(1)
-          return `__previewSafe${capitalized}(`
-        })
-      : code
+    let fixed = code
+    if (hasRawDialogCall) {
+      const re = new RegExp(globalDialogCallRe.source, globalDialogCallRe.flags)
+      let cursor = 0
+      let out = ''
+      let m: RegExpExecArray | null
+      while ((m = re.exec(maskedCode))) {
+        const start = m.index
+        const end = start + m[0].length
+        const fn = m[1]
+        const capitalized = fn.charAt(0).toUpperCase() + fn.slice(1)
+        out += code.slice(cursor, start) + `__previewSafe${capitalized}(`
+        cursor = end
+      }
+      out += code.slice(cursor)
+      fixed = out
+    }
 
     if (alreadyDefined) {
       sandpackFiles[path] = fixed

@@ -147,6 +147,52 @@ describe('buildSandpackFiles — fixNativeDialogCalls neutralizes blocking nativ
     expect(code).toContain('function __previewSafePrompt(message, defaultValue)')
   })
 
+  /**
+   * #1921: `alreadyDefined` used to be decided from raw, unmasked text, so
+   * a COMMENT merely mentioning the shim's function signature made the
+   * function wrongly believe a real definition already existed — skipping
+   * injection of the real SHIM even though the real alert() call just got
+   * rewritten to call it, leaving "__previewSafeAlert is not defined" at
+   * runtime.
+   */
+  it('still injects the real shim when only a COMMENT mentions the shim function signature', () => {
+    const built = buildSandpackFiles({
+      '/src/components/Pricing.tsx': [
+        "import React from 'react'",
+        "// NOTE: an older draft defined its own helper here:",
+        "// function __previewSafeAlert(msg) { console.log(msg) }",
+        'export default function Pricing() {',
+        '  const handleSelect = (tier) => {',
+        '    alert(`You selected the ${tier} plan!`)',
+        '  }',
+        "  return (<button onClick={() => handleSelect('Pro')}>Select Pro</button>)",
+        '}',
+      ].join('\n'),
+    })
+    const code = built['/src/components/Pricing.tsx']
+    expect(code).toContain('function __previewSafeAlert(message)')
+    expect(code).toContain('__previewSafeAlert(`You selected')
+    expect(code).not.toMatch(/(?<![.\w$])alert\(/)
+  })
+
+  /**
+   * #1921: a comment that only *mentions* alert( with no real call anywhere
+   * used to still match the unmasked scan and get "rewritten" in place,
+   * corrupting the comment's own text. The comment text must be left
+   * untouched since there is no real dialog call in the file.
+   */
+  it('leaves a comment that only mentions alert( untouched when there is no real call', () => {
+    const files = {
+      '/src/App.tsx': [
+        "import React from 'react'",
+        '// this used to call alert(message) before we switched to a toast',
+        'export default function App() { return (<div>hello</div>) }',
+      ].join('\n'),
+    }
+    const built = buildSandpackFiles(files)
+    expect(built['/src/App.tsx']).toBe(files['/src/App.tsx'])
+  })
+
   it('does not double-inject when the file already defines its own __previewSafeAlert', () => {
     const built = buildSandpackFiles({
       '/src/App.tsx': [

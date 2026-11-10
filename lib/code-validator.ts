@@ -968,16 +968,35 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
   {
     const dialogCallRe = /(?<![.\w$])(?:window\.)?(alert|confirm|prompt)\s*\(/
     const globalDialogCallRe = /(?<![.\w$])(?:window\.)?(alert|confirm|prompt)\s*\(/g
-    if (dialogCallRe.test(fixedCode)) {
+    // #1921: this scan used to run directly against raw `fixedCode`, blind to
+    // a `//`/`/* */` comment that merely *mentions* alert(/confirm(/prompt( —
+    // the exact same bug already fixed in the Sandpack pipeline's twin
+    // (build-files.ts's fixNativeDialogCalls). Reuses this file's own
+    // existing comment masker (maskCommentsForUnresolvedScan) rather than
+    // adding yet another copy. It preserves exact character offsets, so the
+    // replace below can still splice into the ORIGINAL fixedCode at the
+    // offsets found here instead of running the replace against raw text.
+    const maskedForDialogScan = maskCommentsForUnresolvedScan(fixedCode)
+    if (dialogCallRe.test(maskedForDialogScan)) {
       const SHIM = [
         "function __previewSafeAlert(message) { if (typeof console !== 'undefined') console.info('[preview alert]', message) }",
         "function __previewSafeConfirm(message) { if (typeof console !== 'undefined') console.info('[preview confirm]', message); return true }",
         "function __previewSafePrompt(message, defaultValue) { if (typeof console !== 'undefined') console.info('[preview prompt]', message); return defaultValue !== undefined ? defaultValue : '' }",
       ].join('\n')
-      fixedCode = fixedCode.replace(globalDialogCallRe, (_match, fn: string) => {
+      const reScan = new RegExp(globalDialogCallRe.source, globalDialogCallRe.flags)
+      let cursor = 0
+      let out = ''
+      let m: RegExpExecArray | null
+      while ((m = reScan.exec(maskedForDialogScan))) {
+        const start = m.index
+        const end = start + m[0].length
+        const fn = m[1]
         const capitalized = fn.charAt(0).toUpperCase() + fn.slice(1)
-        return `__previewSafe${capitalized}(`
-      })
+        out += fixedCode.slice(cursor, start) + `__previewSafe${capitalized}(`
+        cursor = end
+      }
+      out += fixedCode.slice(cursor)
+      fixedCode = out
       const directiveMatch = fixedCode.match(/^(['"]use (?:client|strict)['"];?\s*\n)/)
       fixedCode = directiveMatch
         ? directiveMatch[1] + SHIM + '\n' + fixedCode.slice(directiveMatch[1].length)
