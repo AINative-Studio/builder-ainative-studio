@@ -84,3 +84,55 @@ describe('buildSandpackFiles — fixExportShapeMismatches corrects a real file i
     expect(built['/src/App.tsx']).toMatch(/^import NotReal from ['"]\.\/components\/Footer['"]/m)
   })
 })
+
+/**
+ * Real bug found this run (#1919): shapeOf()'s hasDefault/named/defaultRhs
+ * scans all read the target file's RAW, unmasked text — same bug class as
+ * #1900 (buildLocalExportMap), just in this sibling function. A comment
+ * merely MENTIONING an "export default Name" or "export const Name" line
+ * (an old approach kept "for reference" after a refactor) reads as a real
+ * export shape, which doesn't just fail to help — it actively SUPPRESSES
+ * the real fix a genuinely wrong-shaped import still needs, leaving the
+ * exact "Element type is invalid: ... got: undefined" crash this function
+ * exists to prevent.
+ */
+describe('buildSandpackFiles — fixExportShapeMismatches is comment-blind to a merely-mentioned export shape (#1919)', () => {
+  it('still redirects a bare default import to named when a comment falsely claims a default export exists', () => {
+    const built = buildSandpackFiles({
+      '/src/App.tsx': [
+        "import Footer from './components/Footer'",
+        'export default function App() { return (<div><Footer/></div>) }',
+      ].join('\n'),
+      '/src/components/Footer.tsx': [
+        "import React from 'react'",
+        '// old approach: export default Footer',
+        'export const Footer = () => <footer>hi</footer>',
+      ].join('\n'),
+    })
+    // Footer.tsx's ONLY real export is the named one. Pre-fix, the decoy
+    // comment made shapeOf().hasDefault wrongly read true, which gates off
+    // this branch entirely (`!shape.hasDefault`) and leaves the bare
+    // default import unfixed — it must still get corrected here.
+    expect(built['/src/App.tsx']).toMatch(/import \{ Footer \} from ['"]\.\/components\/Footer['"]/)
+    expect(built['/src/App.tsx']).not.toMatch(/^import Footer from/m)
+  })
+
+  it('still redirects a named import to default when a comment falsely claims a matching named export exists', () => {
+    const built = buildSandpackFiles({
+      '/src/App.tsx': [
+        "import { Footer } from './components/Footer'",
+        'export default function App() { return (<div><Footer/></div>) }',
+      ].join('\n'),
+      '/src/components/Footer.tsx': [
+        "import React from 'react'",
+        '// old: export const Footer = () => <footer>old</footer>',
+        'export default function Footer() { return <footer>hi</footer> }',
+      ].join('\n'),
+    })
+    // Footer.tsx's ONLY real export is the default one. Pre-fix, the decoy
+    // comment made shapeOf().named wrongly contain 'Footer', which suppresses
+    // this branch (`!shape.named.has(exported)`) and leaves the named import
+    // unfixed — it must still get corrected here.
+    expect(built['/src/App.tsx']).toMatch(/^import Footer from ['"]\.\/components\/Footer['"]/m)
+  })
+})
