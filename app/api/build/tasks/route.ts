@@ -56,6 +56,8 @@ import {
   type TaskSource,
 } from '@/lib/build/task-store'
 import { isEnrolled, getLastRun } from '@/lib/build/loop-enrollment'
+import { resolveApp } from '@/lib/build/app-registry'
+import { issueWebUrl } from '@/lib/git/gitea-client'
 
 export const runtime = 'nodejs'
 
@@ -87,15 +89,24 @@ export async function GET(request: NextRequest) {
   // Persisted tasks (company-wide, #1086) + the synthetic "Recurring" task
   // that reflects the REAL nightly loop (#55 req 5). Both reads degrade to
   // empty/false on failure.
-  const [persisted, enrolled, lastRun] = await Promise.all([
+  const [persisted, enrolled, lastRun, app] = await Promise.all([
     listTasksForCompany(slug).catch(() => []),
     isEnrolled(companyId).catch(() => false),
     getLastRun(companyId).catch(() => null),
+    resolveApp(slug).catch(() => null),
   ])
   const recurring = recurringTaskFromLoop(slug, enrolled, lastRun)
   const all = withRecurringTask(persisted, recurring)
   const tasks = filterByStage(all, stage)
-  return Response.json({ tasks, counts: countByStage(all), stages: STAGE_META })
+  // A real Gitea issue gets opened per #905 before a task is implemented, but
+  // until now nothing surfaced it — the founder could never click through to
+  // it. Compute the browsable URL from the company's own repo at read time
+  // (never persisted — the clone URL can change, and it's cheap to derive).
+  const withIssueUrls = tasks.map((t) => ({
+    ...t,
+    giteaIssueUrl: issueWebUrl(app?.gitRepoUrl, t.giteaIssueNumber),
+  }))
+  return Response.json({ tasks: withIssueUrls, counts: countByStage(all), stages: STAGE_META })
 }
 
 /**

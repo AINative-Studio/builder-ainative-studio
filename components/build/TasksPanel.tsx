@@ -201,6 +201,25 @@ export function TasksPanel({ companyId }: { companyId: string }) {
             {selected.taskId && (
               <div><dt>task_id</dt><dd data-testid="task-detail-taskid">{selected.taskId}</dd></div>
             )}
+            {selected.giteaIssueNumber != null && (
+              <div>
+                <dt>gitea issue</dt>
+                <dd data-testid="task-detail-gitea-issue">
+                  {selected.giteaIssueUrl ? (
+                    <a
+                      href={selected.giteaIssueUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      data-testid="task-detail-gitea-issue-link"
+                    >
+                      #{selected.giteaIssueNumber}
+                    </a>
+                  ) : (
+                    `#${selected.giteaIssueNumber}`
+                  )}
+                </dd>
+              </div>
+            )}
           </dl>
           {selected.output ? (
             <pre className="m-task-detail-output" data-testid="task-detail-output">{selected.output}</pre>

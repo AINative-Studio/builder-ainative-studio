@@ -19,6 +19,7 @@ const h = vi.hoisted(() => ({
   updateTask: vi.fn(),
   isEnrolled: vi.fn(async () => false),
   getLastRun: vi.fn(async () => null),
+  resolveApp: vi.fn(async (): Promise<{ gitRepoUrl?: string } | null> => null),
 }))
 
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
@@ -26,6 +27,7 @@ vi.mock('@/lib/build/loop-enrollment', () => ({
   isEnrolled: h.isEnrolled,
   getLastRun: h.getLastRun,
 }))
+vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
 vi.mock('@/lib/build/task-store', async () => {
   const actual = await vi.importActual<typeof import('@/lib/build/task-store')>('@/lib/build/task-store')
   return {
@@ -67,6 +69,7 @@ describe('GET /api/build/tasks (#1086 — company-wide read)', () => {
     h.listTasksForCompany.mockReset().mockResolvedValue([])
     h.isEnrolled.mockReset().mockResolvedValue(false)
     h.getLastRun.mockReset().mockResolvedValue(null)
+    h.resolveApp.mockReset().mockResolvedValue(null)
   })
 
   it('reads by companySlug directly — does not gate on the viewing session at all', async () => {
@@ -120,6 +123,48 @@ describe('GET /api/build/tasks (#1086 — company-wide read)', () => {
     const res = await GET(getReq('http://x/api/build/tasks?companyId=acme&stage=completed'))
     const json = await res.json()
     expect(json.tasks.map((t: any) => t.id)).toEqual(['b'])
+  })
+})
+
+describe('GET /api/build/tasks — giteaIssueUrl (#1912)', () => {
+  beforeEach(() => {
+    h.auth.mockReset().mockResolvedValue({ user: { email: 'founderA@x.com' } })
+    h.listTasksForCompany.mockReset().mockResolvedValue([])
+    h.isEnrolled.mockReset().mockResolvedValue(false)
+    h.getLastRun.mockReset().mockResolvedValue(null)
+    h.resolveApp.mockReset().mockResolvedValue(null)
+  })
+
+  it('attaches a computed giteaIssueUrl when the task has an issue number and the company has a gitRepoUrl', async () => {
+    h.resolveApp.mockResolvedValue({ gitRepoUrl: 'https://git.example.test/ws-acme/acme.git' })
+    h.listTasksForCompany.mockResolvedValue([mkTask({ id: 'a', giteaIssueNumber: 42 })])
+    const res = await GET(getReq('http://x/api/build/tasks?companyId=acme'))
+    const json = await res.json()
+    expect(json.tasks[0].giteaIssueUrl).toBe('https://git.example.test/ws-acme/acme/issues/42')
+  })
+
+  it('omits a usable giteaIssueUrl when the task has no issue number yet', async () => {
+    h.resolveApp.mockResolvedValue({ gitRepoUrl: 'https://git.example.test/ws-acme/acme.git' })
+    h.listTasksForCompany.mockResolvedValue([mkTask({ id: 'a', giteaIssueNumber: null })])
+    const res = await GET(getReq('http://x/api/build/tasks?companyId=acme'))
+    const json = await res.json()
+    expect(json.tasks[0].giteaIssueUrl).toBeNull()
+  })
+
+  it('omits a usable giteaIssueUrl when the company has no gitRepoUrl on record (not git-provisioned yet)', async () => {
+    h.resolveApp.mockResolvedValue(null)
+    h.listTasksForCompany.mockResolvedValue([mkTask({ id: 'a', giteaIssueNumber: 42 })])
+    const res = await GET(getReq('http://x/api/build/tasks?companyId=acme'))
+    const json = await res.json()
+    expect(json.tasks[0].giteaIssueUrl).toBeNull()
+  })
+
+  it('never 500s when resolveApp rejects — degrades to a null giteaIssueUrl', async () => {
+    h.resolveApp.mockRejectedValue(new Error('registry down'))
+    h.listTasksForCompany.mockResolvedValue([mkTask({ id: 'a', giteaIssueNumber: 42 })])
+    const res = await GET(getReq('http://x/api/build/tasks?companyId=acme'))
+    const json = await res.json()
+    expect(json.tasks[0].giteaIssueUrl).toBeNull()
   })
 })
 

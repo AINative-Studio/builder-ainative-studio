@@ -522,6 +522,25 @@ export function webhookTargetUrl(): string {
 }
 
 /**
+ * Derive the browsable Gitea issue URL from a company's clone URL
+ * (`AppEntry.gitRepoUrl`, e.g. `https://gitea.example.com/ws-acme/acme.git`)
+ * and a real issue number (#905's `giteaIssueNumber`). PURE — no I/O, so the
+ * founder-facing tasks route (#1874-class gap: a real Gitea issue gets opened
+ * per #905 but the dashboard never links to it) can compute this at read time
+ * without a second Gitea call. Returns null for any missing/malformed input
+ * so a caller can render without a link rather than a broken `undefined`.
+ */
+export function issueWebUrl(
+  gitRepoUrl: string | null | undefined,
+  issueNumber: number | null | undefined,
+): string | null {
+  if (!gitRepoUrl || !Number.isFinite(issueNumber) || (issueNumber as number) <= 0) return null
+  const repoBase = gitRepoUrl.replace(/\/+$/, '').replace(/\.git$/, '')
+  if (!repoBase) return null
+  return `${repoBase}/issues/${issueNumber}`
+}
+
+/**
  * One-shot provision helper: ensure the workspace org, then the company's private
  * repo, then (#1092) register the Builder webhook on it so Gitea actually calls
  * back into the committee PR gate / build_tasks sync (#1091) for this repo's PRs

@@ -159,6 +159,39 @@ describe('TasksPanel — real load/filter/detail coverage (#1204)', () => {
     expect(byTestId('task-detail-output')).toBeNull()
   })
 
+  it('a real VIEW click shows a clickable Gitea issue link when giteaIssueUrl is present (#1912)', async () => {
+    const task = makeTask({ giteaIssueNumber: 42, giteaIssueUrl: 'https://git.example.test/ws-acme/acme/issues/42' })
+    global.fetch = vi.fn(async () => jsonResponse({ tasks: [task], counts: { todo: 1 } })) as any
+    render(React.createElement(TasksPanel, { companyId: 'co-1' }))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+    await act(async () => { byTestId('task-view')!.click() })
+    const link = byTestId('task-detail-gitea-issue-link') as HTMLAnchorElement
+    expect(link.textContent).toBe('#42')
+    expect(link.getAttribute('href')).toBe('https://git.example.test/ws-acme/acme/issues/42')
+  })
+
+  it('a real VIEW click shows a plain (non-clickable) issue number when the company has no gitRepoUrl yet (#1912)', async () => {
+    const task = makeTask({ giteaIssueNumber: 42, giteaIssueUrl: null })
+    global.fetch = vi.fn(async () => jsonResponse({ tasks: [task], counts: { todo: 1 } })) as any
+    render(React.createElement(TasksPanel, { companyId: 'co-1' }))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+    await act(async () => { byTestId('task-view')!.click() })
+    expect(byTestId('task-detail-gitea-issue')?.textContent).toBe('#42')
+    expect(byTestId('task-detail-gitea-issue-link')).toBeNull()
+  })
+
+  it('never shows a Gitea issue row when the real task genuinely has none (#1912)', async () => {
+    const task = makeTask({ giteaIssueNumber: null })
+    global.fetch = vi.fn(async () => jsonResponse({ tasks: [task], counts: { todo: 1 } })) as any
+    render(React.createElement(TasksPanel, { companyId: 'co-1' }))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+    await act(async () => { byTestId('task-view')!.click() })
+    expect(byTestId('task-detail-gitea-issue')).toBeNull()
+  })
+
   it('never shows a task_id row when the real task genuinely has none', async () => {
     const task = makeTask({ taskId: null })
     global.fetch = vi.fn(async () => jsonResponse({ tasks: [task], counts: { todo: 1 } })) as any
