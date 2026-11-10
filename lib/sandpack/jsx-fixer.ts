@@ -916,22 +916,85 @@ function lineHasRealClosingBrace(line: string): boolean {
   return false
 }
 
+/**
+ * Real bug found live: sanitizeImports() below decides whether a line LOOKS
+ * like the start/continuation of a broken multi-line `import { ... }` block
+ * purely from the RAW line text — with no notion of a string or template
+ * literal left open by an EARLIER line. A demo/example code snippet shown on
+ * the page inside a template literal (common on docs/SDK-style landing
+ * pages, e.g. `const codeSnippet = \`\nimport {\n  Foo\n\``) contains text
+ * that is line-for-line indistinguishable from a genuinely broken import —
+ * so sanitizeImports() "repairs" it by discarding those lines entirely,
+ * including the literal's own closing backtick. The template literal is left
+ * unterminated, a real syntax error the generation never had. Same bug class
+ * as #1872/#1879/#1885/etc. (comment/string opacity gaps in this exact
+ * fixer pipeline), just this function's own line-based scan.
+ *
+ * Mirrors maskStringsAndComments() above, but preserves the original length
+ * and every `\n` (maskStringsAndComments collapses each masked span to a
+ * single space, which would desync `code.split('\n')` from
+ * `masked.split('\n')` — unusable for a line-indexed scan). A line that is
+ * entirely inside an open string/template literal/comment masks down to an
+ * empty line, so sanitizeImports' `import`-shape checks correctly see it as
+ * ordinary non-import text and leave it untouched.
+ */
+function maskStringsAndCommentsPreservingLines(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += code.slice(i, Math.min(end, code.length)).replace(/[^\n]/g, ' ')
+      i = Math.min(end, code.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
 function sanitizeImports(code: string): string {
   const lines = code.split('\n')
+  const maskedLines = maskStringsAndCommentsPreservingLines(code).split('\n')
   const result: string[] = []
   let i = 0
 
   while (i < lines.length) {
     const line = lines[i]
-    const trimmed = line.trim()
+    const trimmed = maskedLines[i].trim()
 
     // Detect an import that opens a brace but never closes it on this line
     if (/^import\s+\{[^}]*$/.test(trimmed)) {
       // Look ahead: does the next non-empty line start with another import?
       let j = i + 1
-      while (j < lines.length && lines[j].trim() === '') j++
+      while (j < lines.length && maskedLines[j].trim() === '') j++
 
-      if (j < lines.length && /^import\s+/.test(lines[j].trim())) {
+      if (j < lines.length && /^import\s+/.test(maskedLines[j].trim())) {
         // This is a broken import — the brace was never closed.
         // Skip this line entirely (the next import will be kept).
         i++
@@ -946,7 +1009,7 @@ function sanitizeImports(code: string): string {
         importBlock += '\n' + lines[i]
         if (lineHasRealClosingBrace(lines[i])) break
         // If we hit another import statement inside the block, the block is broken
-        if (/^import\s+/.test(lines[i].trim())) {
+        if (/^import\s+/.test(maskedLines[i].trim())) {
           // Broken mid-import — discard the incomplete outer import, but
           // leave `i` pointing at this line (it was only appended to
           // importBlock above, not consumed) so the outer loop reprocesses
