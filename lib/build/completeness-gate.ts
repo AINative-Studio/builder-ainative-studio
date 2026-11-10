@@ -232,13 +232,75 @@ function resolvesInIndex(idx: Set<string>, fromDir: string, spec: string): boole
   return false
 }
 
-/** Split a concatenated `// --- FILE:` blob into a files map (lightweight, no sanitizing). */
+/**
+ * Line indices (0-based) of `code` that sit INSIDE a still-open backtick
+ * template literal or block comment (`/* ... *\/`) carried over from an
+ * earlier line, rather than at top level. A single/double-quoted string or
+ * a `//` line comment can never contain a literal newline in valid JS, so
+ * they can't hide an embedded line this way — only these two multi-line
+ * constructs can (same reasoning, same helper shape as
+ * flatten-multifile.ts's `linesInsideMultilineConstruct`, #1933/PR #1934).
+ */
+function linesInsideMultilineConstruct(code: string): Set<number> {
+  const inside = new Set<number>()
+  const markSpan = (from: number, to: number, line: number): number => {
+    for (let j = from; j < to; j++) if (code[j] === '\n') { line++; inside.add(line) }
+    return line
+  }
+  let line = 0
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      i = end === -1 ? code.length : end + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      const end = code.indexOf('\n', i)
+      i = end === -1 ? code.length : end
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      const stop = end === -1 ? code.length : end + 1
+      line = markSpan(i, stop, line)
+      i = stop
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      const closeIdx = code.indexOf('*/', i + 2)
+      const stop = closeIdx === -1 ? code.length : closeIdx + 2
+      line = markSpan(i, stop, line)
+      i = stop
+      continue
+    }
+    if (ch === '\n') { line++; i++; continue }
+    i++
+  }
+  return inside
+}
+
+/**
+ * Split a concatenated `// --- FILE:` blob into a files map (lightweight, no sanitizing).
+ *
+ * The marker test skips any line sitting inside a still-open block comment
+ * or backtick template literal carried over from an earlier line, so a
+ * `// --- FILE: ... ---` line that only appears inside another file's own
+ * multi-line comment/template — e.g. a docs page demonstrating this
+ * project's own multi-file convention — is never mistaken for a real file
+ * boundary.
+ */
 function splitMarkerBlob(code: string): Record<string, string> {
   const files: Record<string, string> = {}
   let current: string | null = null
   let buf: string[] = []
-  for (const line of code.split('\n')) {
-    const m = line.match(FILE_MARKER)
+  const hiddenLines = linesInsideMultilineConstruct(code)
+  const lines = code.split('\n')
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const m = hiddenLines.has(i) ? null : line.match(FILE_MARKER)
     if (m) {
       if (current) files[current.startsWith('/') ? current : `/${current}`] = buf.join('\n')
       current = m[1].trim()

@@ -310,3 +310,66 @@ describe('findMissingLocalImports — concatenated blob mode (no files map)', ()
     expect(findMissingLocalImports(files['/src/App.tsx'], files)).toEqual([])
   })
 })
+
+// Real bug (this loop's overnight comment/string-blindness sweep, issue
+// #1935): splitMarkerBlob() — the raw-blob (no `files` map) code path that
+// findMissingLocalImports/findUndeclaredJsxComponents fall back to — matched
+// FILE_MARKER against every RAW line with zero masking. A docs/API-product
+// page demonstrating this project's own `// --- FILE:` convention inside its
+// own block comment had that embedded line mistaken for a real file
+// boundary, splitting the real file mid-content and clobbering the next
+// marker name. Same bug class, same fix shape as #1933/PR #1934
+// (flatten-multifile.ts's parseFiles), applied here via this file's own
+// maskComments() helper instead of a bespoke multi-line-span tracker.
+describe('splitMarkerBlob (raw-blob FILE-marker path) — comment-blindness (#1935)', () => {
+  it('a FILE-marker-shaped line nested inside a block comment is not treated as a real file boundary', () => {
+    const raw = [
+      '// --- FILE: src/components/Docs.tsx ---',
+      'import React from "react"',
+      '',
+      '/**',
+      ' * Example of our multi-file generation convention:',
+      ' * // --- FILE: src/components/Example.tsx ---',
+      ' */',
+      'export default function Docs() {',
+      '  return <div>Docs page explaining our convention</div>',
+      '}',
+    ].join('\n')
+    expect(findMissingLocalImports(raw)).toEqual([])
+  })
+
+  it('a FILE-marker-shaped line nested inside a single-line // comment is not treated as a real file boundary', () => {
+    const raw = [
+      '// --- FILE: src/components/Docs.tsx ---',
+      'import React from "react"',
+      "// Example: '// --- FILE: src/components/Example.tsx ---' starts a new file",
+      'export default function Docs() {',
+      '  return <div>Docs page explaining our convention</div>',
+      '}',
+    ].join('\n')
+    expect(findMissingLocalImports(raw)).toEqual([])
+  })
+
+  it('a real FILE marker at top level still splits the blob normally', () => {
+    const raw = [
+      '// --- FILE: src/App.tsx ---',
+      `import Sidebar from './components/Sidebar'`,
+      `export default function App(){ return <Sidebar/> }`,
+      '// --- FILE: src/components/Sidebar.tsx ---',
+      `export default function Sidebar(){ return <aside/> }`,
+    ].join('\n')
+    expect(findMissingLocalImports(raw)).toEqual([])
+  })
+
+  it('still flags a genuinely missing import across a real multi-file marker split', () => {
+    const raw = [
+      '// --- FILE: src/App.tsx ---',
+      `import Sidebar from './components/Sidebar'`,
+      `import Analytics from './components/Analytics'`,
+      `export default function App(){ return <div><Sidebar/><Analytics/></div> }`,
+      '// --- FILE: src/components/Sidebar.tsx ---',
+      `export default function Sidebar(){ return <aside/> }`,
+    ].join('\n')
+    expect(findMissingLocalImports(raw)).toEqual(['./components/Analytics'])
+  })
+})
